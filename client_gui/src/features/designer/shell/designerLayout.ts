@@ -1,0 +1,53 @@
+// flowgate.v02.0025 — Designer Shell layout state (0003-D §3.8).
+//
+// Screen state owned by one DesignerShell instance: which left Explorer is showing, whether
+// the left Dock is collapsed, and the Dock sizes the Body / CenterColumn apply. It is not a
+// Pinia store and is never persisted — leaving the Designer and coming back starts again
+// from these initial values. Children receive it as props and ask the Shell to change it
+// through events.
+//
+// The sizes are initial proposals to review on the real screen (0025-R §11), not final UX
+// values. Drag resize is not implemented yet; a later handle will change these same fields.
+
+export type DesignerLeftMode = 'project' | 'file'
+
+export const DESIGNER_LEFT_MODES: readonly DesignerLeftMode[] = ['project', 'file']
+
+export interface DesignerLayoutState {
+  activeLeftMode: DesignerLeftMode
+  leftCollapsed: boolean
+  /** Expanded left Dock width in px. Kept while collapsed. */
+  leftWidth: number
+  /** No trigger yet (Right collapse UI is a later group); the Body already honours it. */
+  rightCollapsed: boolean
+  rightWidth: number
+  bottomHeight: number
+}
+
+/** Width of a collapsed Dock (the rail that keeps the expand button). */
+export const DESIGNER_RAIL_WIDTH = 40
+/** The Center column never shrinks below this; the Body scrolls sideways instead. */
+export const DESIGNER_CENTER_MIN_WIDTH = 360
+
+export const DESIGNER_LAYOUT_DEFAULTS: Readonly<DesignerLayoutState> = Object.freeze({
+  activeLeftMode: 'project',
+  leftCollapsed: false,
+  leftWidth: 280,
+  rightCollapsed: false,
+  rightWidth: 300,
+  bottomHeight: 200,
+})
+
+export function createDesignerLayout(): DesignerLayoutState {
+  return { ...DESIGNER_LAYOUT_DEFAULTS }
+}
+
+/** Width the Body gives the left column for the current state. */
+export function leftColumnWidth(layout: DesignerLayoutState): number {
+  return layout.leftCollapsed ? DESIGNER_RAIL_WIDTH : layout.leftWidth
+}
+
+/** Width the Body gives the right column for the current state. */
+export function rightColumnWidth(layout: DesignerLayoutState): number {
+  return layout.rightCollapsed ? DESIGNER_RAIL_WIDTH : layout.rightWidth
+}

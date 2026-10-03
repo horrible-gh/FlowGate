@@ -1,8 +1,8 @@
 <template>
-  <div class="gui-app-shell">
-    <Topbar />
+  <div class="gui-app-shell" :class="{ 'is-fullscreen': route.meta.fullscreen }">
+    <Topbar v-if="!route.meta.fullscreen" />
     <div class="gui-app-body">
-      <Sidebar />
+      <Sidebar v-if="!route.meta.fullscreen" />
       <main class="gui-route-content">
         <RouterView />
       </main>
@@ -18,10 +18,16 @@
 // and ProjectDialog is reached only through features/project's public surface (D0004 §4.1)
 // — this file never touches ProjectList/ProjectRow/ProjectCreateDialog or Dialog-local
 // state. The GUI-generation switch stays in the Topbar (T0009 §8).
-import { RouterView } from 'vue-router'
+//
+// A route with `meta.fullscreen` (the Designer, flowgate.v02.0025 T0006 §1) is a dedicated
+// workspace: Topbar and Sidebar are not rendered and the routed screen gets the whole
+// viewport. Every other route keeps the App chrome exactly as before.
+import { RouterView, useRoute } from 'vue-router'
 import { ProjectDialog } from '@/features/project'
 import Sidebar from './components/Sidebar.vue'
 import Topbar from './components/Topbar.vue'
+
+const route = useRoute()
 </script>
 
 <style scoped>
@@ -69,5 +75,15 @@ import Topbar from './components/Topbar.vue'
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto 1fr;
   }
+}
+
+/* Full-screen workspace route: no Topbar row, no Sidebar column, at every width. */
+.gui-app-shell.is-fullscreen {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.gui-app-shell.is-fullscreen .gui-app-body {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 </style>

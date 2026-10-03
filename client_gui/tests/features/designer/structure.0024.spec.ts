@@ -4,7 +4,11 @@ import { describe, expect, it } from 'vitest'
 import * as DesignerFeature from '@/features/designer'
 
 // flowgate.v02.0024 T0005 — source-level guards for the Designer File Explorer boundary
-// that a DOM test cannot see.
+// that a DOM test cannot see. Scope adjusted in flowgate.v02.0025 (0003-D §4.2.3): the
+// public surface is the whole features/designer boundary (0023 + 0024 + 0025 Shell), the
+// fixed file list covers only what 0024 owns (projectExplorer/ is pinned by the 0023 spec,
+// shell/ by structure.0025), and the import / Base literal guards still cover all of
+// features/designer.
 const SRC = resolve(__dirname, '../../../src')
 const DESIGNER = join(SRC, 'features/designer')
 
@@ -21,8 +25,8 @@ const importsOf = (src: string) => [...src.matchAll(/^\s*import\s[^'"]*['"]([^'"
 const FILES = filesUnder(DESIGNER).filter((f) => /\.(ts|vue)$/.test(f))
 
 describe('features/designer structure (0024 T0005)', () => {
-  it('exposes only DesignerFileExplorer at runtime', () => {
-    expect(Object.keys(DesignerFeature)).toEqual(['DesignerFileExplorer'])
+  it('exposes only ProjectExplorer, DesignerFileExplorer and DesignerShell at runtime', () => {
+    expect(Object.keys(DesignerFeature).sort()).toEqual(['DesignerFileExplorer', 'DesignerShell', 'ProjectExplorer'])
   })
 
   it('owns no API/transport/store of its own: data comes only through the features/project public surface', () => {
@@ -44,7 +48,8 @@ describe('features/designer structure (0024 T0005)', () => {
   })
 
   it('keeps the Toolbar / Scope / Filter / Tree / Folder / File split and shares only thin row primitives', () => {
-    const names = FILES.map(rel).sort()
+    const OWNED = /^features\/designer\/(fileExplorer\/|shared\/|index\.ts$)/
+    const names = FILES.map(rel).filter((name) => OWNED.test(name)).sort()
     expect(names).toEqual([
       'features/designer/fileExplorer/DesignerFileExplorer.vue',
       'features/designer/fileExplorer/FileExplorerToolbar.vue',
@@ -57,6 +62,7 @@ describe('features/designer structure (0024 T0005)', () => {
       'features/designer/fileExplorer/fileExplorerModel.ts',
       'features/designer/fileExplorer/useFlowFileExplorer.ts',
       'features/designer/index.ts',
+      'features/designer/shared/ExplorerIcon.vue',
       'features/designer/shared/ExplorerRowFrame.vue',
       'features/designer/shared/TreeCaret.vue',
     ].sort())

@@ -4,8 +4,32 @@
        activation upward. It never opens tabs, touches the Canvas, or owns the left dock's
        tab switch / collapse / resize — those belong to the Designer around it. -->
   <section class="project-explorer" :aria-label="t('gui.designer.project_explorer.title')" data-test="project-explorer">
-    <header class="project-explorer-head">
-      <span class="project-explorer-title">{{ t('gui.designer.project_explorer.title') }}</span>
+    <!-- No visible title row: the surrounding Dock tab already names this view
+         (0025 T0006 §2/§6). Search and refresh share one compact row. -->
+    <div class="project-explorer-search">
+      <div class="project-explorer-search-field">
+        <Input
+          v-model="query"
+          type="search"
+          :placeholder="t('gui.designer.project_explorer.search_placeholder')"
+          :aria-label="t('gui.designer.project_explorer.search_placeholder')"
+          :disabled="!projectId"
+          data-test="project-explorer-search"
+        />
+        <IconButton
+          v-if="isSearching"
+          class="project-explorer-search-clear"
+          size="sm"
+          :label="t('gui.designer.project_explorer.search_clear')"
+          :title="t('gui.designer.project_explorer.search_clear')"
+          data-test="project-explorer-search-clear"
+          @click="query = ''"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+        </IconButton>
+      </div>
       <IconButton
         size="sm"
         :label="t('gui.designer.project_explorer.refresh')"
@@ -16,30 +40,6 @@
       >
         <svg viewBox="0 0 16 16" aria-hidden="true" :class="{ 'is-spinning': refreshing }">
           <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-      </IconButton>
-    </header>
-
-    <div class="project-explorer-search">
-      <Input
-        v-model="query"
-        type="search"
-        :placeholder="t('gui.designer.project_explorer.search_placeholder')"
-        :aria-label="t('gui.designer.project_explorer.search_placeholder')"
-        :disabled="!projectId"
-        data-test="project-explorer-search"
-      />
-      <IconButton
-        v-if="isSearching"
-        class="project-explorer-search-clear"
-        size="sm"
-        :label="t('gui.designer.project_explorer.search_clear')"
-        :title="t('gui.designer.project_explorer.search_clear')"
-        data-test="project-explorer-search-clear"
-        @click="query = ''"
-      >
-        <svg viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
         </svg>
       </IconButton>
     </div>
@@ -353,31 +353,23 @@ defineExpose({ refresh })
   font-family: var(--fg2-font);
 }
 
-.project-explorer-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 8px 4px 12px;
-}
-
-.project-explorer-title {
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--fg2-muted);
-}
-
-.project-explorer-head svg.is-spinning {
+.project-explorer-search svg.is-spinning {
   animation: project-explorer-spin 0.8s linear infinite;
 }
 
 .project-explorer-search {
-  position: relative;
   display: flex;
   align-items: center;
-  padding: 4px 8px 8px;
+  gap: 4px;
+  padding: 8px 6px 8px 8px;
+}
+
+.project-explorer-search-field {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
 }
 
 .project-explorer-search :deep(.ui-input) {
@@ -387,7 +379,7 @@ defineExpose({ refresh })
 
 .project-explorer-search-clear {
   position: absolute;
-  right: 10px;
+  right: 2px;
   width: 24px;
   height: 24px;
 }

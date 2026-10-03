@@ -1,7 +1,7 @@
 <template>
   <div class="dfx-toolbar-wrap">
     <div class="dfx-toolbar">
-      <span class="dfx-toolbar-title">{{ t('gui.designer.file_explorer.title') }}</span>
+      <div class="dfx-toolbar-lead"><slot /></div>
       <div class="dfx-toolbar-acts">
         <IconButton
           size="sm"
@@ -52,6 +52,8 @@
 // flowgate.v02.0024 T0005 — Designer toolbar (0024-D §3): refresh and find only. The v0.1
 // Dashboard explorer's branch/group selector and Git update row are deliberately absent.
 // "찾기" filters the tree already loaded for the Flow (name match), so it needs no API.
+// 0025 T0006 §2/§6: no title text (the Dock tab already says 파일); the default slot holds
+// the container's 전체 / 변경됨 filter on the left of the actions.
 import { nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import IconButton from '../../../components/ui/IconButton.vue'
@@ -83,18 +85,20 @@ async function toggleSearch() {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 8px 6px 12px;
+  min-height: 44px;
+  padding: 8px 6px 8px 8px;
 }
 
-.dfx-toolbar-title {
+.dfx-toolbar-lead {
+  display: flex;
   flex: 1 1 auto;
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--fg2-text);
+  align-items: center;
+  min-width: 0;
 }
 
 .dfx-toolbar-acts {
   display: inline-flex;
+  flex: none;
   gap: 2px;
 }
 

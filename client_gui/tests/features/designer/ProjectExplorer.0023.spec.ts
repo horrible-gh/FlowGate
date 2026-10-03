@@ -197,7 +197,7 @@ describe('ProjectExplorer — selection vs activation', () => {
     expect(w.emitted('select-flow')).toEqual([[canvas]])
     expect(w.emitted('activate-flow')).toBeUndefined()
     expect(row(w, 'Canvas').attributes('aria-selected')).toBe('true')
-    expect(row(w, 'Canvas').find('[data-test="project-explorer-active-badge"]').exists()).toBe(false)
+    expect(row(w, 'Canvas').find('.explorer-row').classes()).not.toContain('is-active')
 
     // A real double click (click 1, click 2, dblclick): the first click selects, the second
     // click adds nothing, dblclick adds activate. Select comes before activate.
@@ -211,7 +211,10 @@ describe('ProjectExplorer — selection vs activation', () => {
 
     await w.setProps({ activeFlowId: 'p.ui.0001' })
     expect(row(w, 'Designer v0.2').attributes('aria-current')).toBe('true')
-    expect(row(w, 'Designer v0.2').find('[data-test="project-explorer-active-badge"]').exists()).toBe(true)
+    // 0025 T0006 §5: the active Flow is shown by row styling only — no "열림" badge/text.
+    expect(row(w, 'Designer v0.2').find('.explorer-row').classes()).toContain('is-active')
+    expect(row(w, 'Designer v0.2').find('.ui-badge').exists()).toBe(false)
+    expect(row(w, 'Designer v0.2').find('.explorer-row').text()).toBe('Designer v0.2')
 
     // Selecting another Flow moves selection but leaves the active Flow alone.
     await clickRow(w, 'Canvas')
@@ -416,6 +419,8 @@ describe('ProjectExplorer — structure (T0006 §1-§3)', () => {
           spec === 'vue-i18n' ||
           spec === '@/features/project' ||
           spec.startsWith('../../../components/ui/') ||
+          // 0025 T0006 §4: the one Designer Explorer glyph set (shared with the File Explorer).
+          spec === '../shared/ExplorerIcon.vue' ||
           spec.startsWith('./')
         expect(allowed, `${file}: ${spec}`).toBe(true)
       }

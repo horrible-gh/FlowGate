@@ -152,17 +152,25 @@ function focusParentRow(el: HTMLElement) {
 }
 
 /* selected (single click) and active (Designer-opened Flow) are separate states
-   (D0002 §10): selected gets the tinted background, active adds an accent bar and weight
-   so a selected-but-not-active Flow never looks opened. */
+   (D0002 §10, 0025 T0006 §5), told apart without any badge or text:
+   - selected: neutral highlight only;
+   - active:   accent left bar + faint accent tint + weight;
+   - both:     the accent tint and bar with the neutral highlight layered on top.
+   Hover never overrides either, and keyboard focus is the separate outline above. */
 .explorer-row.is-selected {
-  background: var(--fg2-status-info-bg);
+  background: var(--fg2-line);
   color: var(--fg2-text);
 }
 
 .explorer-row.is-active {
+  background: var(--fg2-status-info-bg);
   box-shadow: inset 2px 0 0 var(--fg2-blue);
   color: var(--fg2-text);
   font-weight: 650;
+}
+
+.explorer-row.is-selected.is-active {
+  background: linear-gradient(var(--fg2-line), var(--fg2-line)), var(--fg2-status-info-bg);
 }
 
 .explorer-caret {
