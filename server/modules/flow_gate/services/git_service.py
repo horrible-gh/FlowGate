@@ -1152,12 +1152,38 @@ def read_group_tree(project_id: str, group_id: str) -> dict:
     }}
 
 
-def _group_diff_context(project_id: str, group_id: str) -> tuple[str, str, str, Path, str]:
+def _validate_compare_base(base_root: Path, base_ref: str) -> str:
+    """An explicitly requested comparison base: an existing local branch, nothing else.
+
+    flowgate.v02.0024 TR0004 rev2: the Designer File Explorer compares a Flow against the
+    PROJECT Base even when the group is pinned to another work base, so ``/changes`` and
+    ``/diff`` take the base as a parameter. Revision expressions, remote-only refs and
+    option-looking values are refused rather than handed to ``git merge-base``.
+    """
+    ref = base_ref.strip() if isinstance(base_ref, str) else ""
+    if not ref or ref != base_ref or ref == "HEAD" or ref.startswith("-"):
+        raise GitServiceError(422, "invalid_base", "base must be a local branch name")
+    checked = _run_git(
+        ["check-ref-format", "--branch", ref], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC
+    )
+    if checked.returncode != 0:
+        raise GitServiceError(422, "invalid_base", "base must be a local branch name")
+    if not _ref_exists(base_root, f"refs/heads/{ref}"):
+        raise GitServiceError(404, "base_not_found", f"base branch '{ref}' not found")
+    return ref
+
+
+def _group_diff_context(
+    project_id: str, group_id: str, base_ref: Optional[str] = None
+) -> tuple[str, str, str, Path, str]:
     """(base_branch, branch, commit, worktree_path, merge_base) for group-vs-base diffs.
 
     Shared by the changes list and the per-file diff reader (0325 TR0007 rev1) so both
     compare against the SAME merge-base — otherwise the summary and the diff a reviewer
     opens from it could disagree about what this group changed.
+
+    ``base_ref`` overrides the group's own work base with an explicitly requested local
+    branch (flowgate.v02.0024 TR0004 rev2); omitted, the behaviour is unchanged.
     """
     base_root, branch, commit = resolve_group_ref(project_id, group_id)
     cfg = db_git.get_config(project_id) or {}
@@ -1174,7 +1200,10 @@ def _group_diff_context(project_id: str, group_id: str) -> tuple[str, str, str, 
     # worktree actually forked from (git/worktree.py already resolves it that way).
     # Comparing against the project-wide base_branch instead made every such group's
     # scope diff include every sibling group already merged into that rolling branch.
-    base_branch = resolve_group_work_base_ref(project_id, group_id, config=cfg) or "main"
+    if base_ref is not None:
+        base_branch = _validate_compare_base(base_root, base_ref)
+    else:
+        base_branch = resolve_group_work_base_ref(project_id, group_id, config=cfg) or "main"
     merge_proc = _run_git(
         ["merge-base", f"refs/heads/{base_branch}", commit],
         cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
@@ -1187,9 +1216,15 @@ def _group_diff_context(project_id: str, group_id: str) -> tuple[str, str, str, 
     return base_branch, branch, commit, wt_path, merge_base
 
 
-def read_group_changes(project_id: str, group_id: str) -> dict:
-    """Tracked paths changed from the group's base commit through its worktree."""
-    base_branch, branch, commit, wt_path, merge_base = _group_diff_context(project_id, group_id)
+def read_group_changes(project_id: str, group_id: str, base_ref: Optional[str] = None) -> dict:
+    """Tracked paths changed from the group's base commit through its worktree.
+
+    ``base_ref`` names the comparison branch explicitly (see ``_group_diff_context``);
+    the response's ``base_branch`` always reports the branch actually compared against.
+    """
+    base_branch, branch, commit, wt_path, merge_base = _group_diff_context(
+        project_id, group_id, base_ref=base_ref
+    )
 
     diff_proc = _run_git(
         ["diff", "--name-status", "--no-renames", "-z", merge_base, "--"],
@@ -1595,7 +1630,8 @@ def read_base_file_diff(project_id: str, path: str) -> dict:
 
 
 def read_group_file_diff(
-    project_id: str, group_id: str, path: str, ref: Optional[str] = None
+    project_id: str, group_id: str, path: str, ref: Optional[str] = None,
+    base_ref: Optional[str] = None,
 ) -> dict:
     """old (merge-base blob) / new (group worktree, else branch commit) content.
 
@@ -1604,7 +1640,9 @@ def read_group_file_diff(
     this view can never disagree. The new side prefers the live worktree file (which
     is what ``read_group_changes`` measures, so uncommitted work shows up) and falls
     back to the branch commit's blob for a finalized group whose worktree is gone.
-    ``ref`` pins the commit exactly as ``read_group_blob`` does."""
+    ``ref`` pins the commit exactly as ``read_group_blob`` does. ``base_ref`` is the
+    same explicit comparison branch ``read_group_changes`` accepts, so a file opened
+    from a Project-Base change list is diffed against that same merge-base."""
     _validate_blob_path(path)
     normalized = path.replace("\\", "/")
     if _is_hidden_source_path(normalized):
@@ -1624,7 +1662,10 @@ def read_group_file_diff(
     # collect_scope_changes/_group_diff_context (see their notes) -- otherwise a
     # reviewer opening one of THIS group's files from the summary list could see a
     # different old/new pair than what the summary itself compared against.
-    base_branch = resolve_group_work_base_ref(project_id, group_id, config=cfg) or "main"
+    if base_ref is not None:
+        base_branch = _validate_compare_base(base_root, base_ref)
+    else:
+        base_branch = resolve_group_work_base_ref(project_id, group_id, config=cfg) or "main"
     merge_proc = _run_git(
         ["merge-base", f"refs/heads/{base_branch}", commit],
         cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
