@@ -315,6 +315,7 @@ def env(monkeypatch, tmp_path, migrated_sqlite_db):
     monkeypatch.setenv("DB_TYPE", "sqlite")
     from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
     from modules.flow_gate.db import test_runs as db_test_runs
+    from modules.flow_gate.db import events as db_events
     from modules.flow_gate.db import tokens as db_tokens
     from modules.flow_gate.db import workflow_sequences as db_wfseq
     from modules.flow_gate.services import ai_invoke_service, failure_origin_review_service
@@ -324,6 +325,7 @@ def env(monkeypatch, tmp_path, migrated_sqlite_db):
 
     store = _Store(migrated_sqlite_db("spec_0549.db"))
     monkeypatch.setattr(db_test_runs, "get_store", lambda: store)
+    monkeypatch.setattr(db_events, "insert_event", lambda *args, **kwargs: 1)
     e = _Env()
     e.docs[TS_ID] = {
         "doc_id": TS_ID, "project_id": "flowgate", "branch": "main", "module": "default",
@@ -603,6 +605,29 @@ def test_ts_approval_requires_a_valid_specification(env):
         pipeline_service._require_test_gate_for_approval(ts)
     env.contents[TS_ID] = LEGACY_TS  # legacy TS: no new rule
     pipeline_service._require_test_gate_for_approval(ts)
+
+
+def test_tr_approval_does_not_require_test_pass_or_snapshot(monkeypatch):
+    from modules.flow_gate.workflow import pipeline_service as pipeline
+    from modules.flow_gate.services import test_run_service as runner
+    from modules.flow_gate.services import workflow_rework_service
+
+    doc = {"doc_id": "flowgate.default.0632.0012-TR", "type_code": "TR",
+           "group_id": GROUP, "project_id": "flowgate", "id": 52,
+           "doc_review_status": "pending_review", "revision_no": 1, "meta": "{}"}
+    monkeypatch.setattr(pipeline.db_docs, "get_by_id", lambda _id: doc)
+    monkeypatch.setattr(pipeline.db_docs, "update", lambda _id, values: {**doc, **values})
+    monkeypatch.setattr(pipeline, "_require_document_body_for_approval", lambda *a: None)
+    monkeypatch.setattr(pipeline, "log_state_changed", lambda **kw: None)
+    monkeypatch.setattr(workflow_rework_service, "clear_return_point_if_complete", lambda *a: None)
+    monkeypatch.setattr(runner, "tsr_gate_state", lambda *a: pytest.fail("TR read TSR gate"))
+
+    result = pipeline.transition_document_review(
+        doc_id=doc["doc_id"], action="approve", actor_user_id="u",
+        user_permissions={"document.approve"},
+    )
+    assert result["doc_review_status"] == "approved"
+    assert "test_basis" not in result and "spec_initialization" not in result
 
 
 def _chain(env, *, target_seq, tsr_seq=11, next_incomplete=None, row=True, row_target="same"):
@@ -1133,6 +1158,8 @@ def test_0632_approval_rolls_back_if_skeleton_fails(monkeypatch):
     from modules.flow_gate.services import test_basis_service as basis
     from modules.flow_gate.services import test_run_service as runner
     from modules.flow_gate.services import workflow_rework_service
+    from modules.flow_gate.db import events as db_events
+    monkeypatch.setattr(db_events, "insert_event", lambda *a, **kw: None)
     doc = {"doc_id": TS_ID, "type_code": "TS", "group_id": GROUP,
            "project_id": "flowgate", "doc_review_status": "pending_review",
            "revision_no": 2, "id": 42, "meta": "{}"}

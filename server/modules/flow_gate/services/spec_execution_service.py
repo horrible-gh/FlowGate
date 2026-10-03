@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shlex
 import shutil
@@ -107,6 +108,18 @@ class ExecutionRootResolver:
                     raise ValueError("unsafe_execution_archive_member")
                 packed.extract(member, root)
         archive.unlink(missing_ok=True)
+        # Overlay only the manifest assets after extracting immutable product source.
+        for asset in basis.get("manifest") or []:
+            path = asset["path"]
+            source_asset = (source / path).resolve()
+            target_asset = (root / path).resolve()
+            if not source_asset.is_relative_to(source.resolve()) or not target_asset.is_relative_to(root.resolve()):
+                raise ValueError("unsafe_test_asset_path")
+            body = source_asset.read_bytes()
+            if hashlib.sha256(body).hexdigest() != asset["content_hash"]:
+                raise ValueError("basis_changed_during_copy")
+            target_asset.parent.mkdir(parents=True, exist_ok=True)
+            target_asset.write_bytes(body)
         after = test_basis_service.resolve(doc, test_spec_service.parse_spec(
             runner._read_doc_content_or_empty(doc))["cases"])
         if after["basis_id"] != basis["basis_id"]:

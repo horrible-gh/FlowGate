@@ -819,6 +819,14 @@ def transition_document_review(
             if not updated:
                 raise TransitionError("Review status transition failed")
             initialized = test_basis_service.initialize(updated, parsed, basis, locale=locale)
+            from modules.flow_gate.db import events as db_events
+            db_events.insert_event(doc_id, "test_spec_basis_created", note=json.dumps({
+                "basis_id": basis["basis_id"], "ts_revision_no": doc.get("revision_no"),
+                "run_id": initialized["run_id"], "tsr_doc_id": initialized["tsr_doc_id"],
+                "source": basis["source"],
+                "manifest_hash": basis["test_assets"]["manifest_hash"],
+                "actor": actor_user_id,
+            }, ensure_ascii=False))
             updated["test_basis"] = basis
             updated["spec_initialization"] = initialized
     else:

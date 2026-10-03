@@ -14,6 +14,20 @@
           </div>
         </div>
       </div>
+      <section v-if="view.test_basis" class="tsr-basis" data-testid="tsr-basis">
+        <strong>Current Test Basis</strong> <code>{{ view.test_basis.basis_id }}</code>
+        <div>Source: {{ view.source_identity?.kind }} / {{ view.source_identity?.git_revision || view.source_identity?.bundle_id }}</div>
+        <div>Test assets: {{ view.test_asset_identity?.manifest_hash }}</div>
+        <div v-if="view.basis_valid === false">Current basis is stale</div>
+        <div v-if="view.active_run">Execution: {{ view.active_run.status }} ({{ view.active_run.run_id }})</div>
+      </section>
+      <section v-if="view.stale_previous_result" class="tsr-stale" data-testid="tsr-stale">
+        <strong>STALE previous result</strong>
+        <div>Run {{ view.stale_previous_result.run_id }} · {{ view.stale_previous_result.overall }}</div>
+        <div v-for="row in view.stale_previous_result.cases || []" :key="row.case_no || ''">
+          {{ row.case_no }}: {{ row.case_status }}
+        </div>
+      </section>
       <div class="tsr-tiles" data-testid="tsr-tiles">
         <div v-for="tile in tiles" :key="tile.key" class="tsr-tile" :class="`tsr-tile--${tile.key}`" :data-testid="`tsr-tile-${tile.key}`">
           <div class="tsr-tile-n">{{ tile.value }}</div>
@@ -78,6 +92,12 @@
         </tbody>
       </table>
 
+      <section v-if="view.run_history?.length" class="tsr-extra" data-testid="tsr-run-history">
+        <h4>Run history</h4>
+        <ul><li v-for="run in view.run_history" :key="run.run_id || ''">
+          {{ run.run_id }} · {{ run.run_kind }} · {{ run.status }} · {{ run.overall }} · {{ run.basis_id }}
+        </li></ul>
+      </section>
       <section class="tsr-extra" data-testid="tsr-unmapped">
         <h4>{{ t('main.test_document.unmapped_title', { count: unmapped.length }) }}</h4>
         <p v-if="!unmapped.length" class="tsr-muted">{{ t('main.test_document.none') }}</p>
@@ -105,7 +125,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 
-import type { TestCounts, TestDocumentView } from '../../types/testRun'
+import type { TestCounts, TestDocumentView, TestResultRecord } from '../../types/testRun'
 import { useTestVerdictLabels } from './testVerdict'
 
 const props = defineProps<{ view: TestDocumentView }>()
@@ -113,7 +133,23 @@ const props = defineProps<{ view: TestDocumentView }>()
 const { t } = useI18n()
 const { verdictLabel, verdictBadge, modeLabel } = useTestVerdictLabels()
 
-const report = computed(() => props.view.report ?? null)
+const report = computed<TestResultRecord | null>(() => {
+  const stored = props.view.report ?? null
+  const effective = props.view.effective_result
+  if (!stored || !effective) return stored
+  return {
+    ...stored,
+    overall: effective.summary.overall,
+    summary: effective.summary,
+    cases: effective.cases.map((row) => ({
+      ...row,
+      case_no: row.case_id,
+      case_title: row.title,
+      expect: row.expected,
+      case_status: row.status,
+    })),
+  }
+})
 const rows = computed(() => report.value?.cases ?? [])
 const unmapped = computed(() => report.value?.unmapped ?? [])
 const conflicts = computed(() => report.value?.conflicts ?? [])
@@ -162,4 +198,6 @@ const tiles = computed(() => [
 .tsr-extra h4 { font-size: .8125rem; margin: 0 0 6px; }
 .tsr-extra ul { margin: 0 0 0 18px; padding: 0; }
 .tsr-muted { color: var(--text-m); font-size: .8rem; }
+.tsr-basis, .tsr-stale { border: 1px solid var(--border); border-radius: var(--r); padding: 10px; margin-bottom: 10px; font-size: .8rem; overflow-wrap: anywhere; }
+.tsr-stale { border-color: var(--warning); }
 </style>

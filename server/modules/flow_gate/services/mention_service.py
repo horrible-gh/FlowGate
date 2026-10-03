@@ -2251,7 +2251,15 @@ def build_mention(
         source_crud_section = _remote_source_crud_section(
             base, raw_token, scope_type, action_scope=action_scope, locale=locale
         )
-        if source_crud_section:
+        if source_crud_section and str(scope_type or "").upper() == "TR":
+            snapshot_policy_section = _section(
+                "TR test responsibility and Source Bundle",
+                "Write test code, fixtures and mocks and run available self-checks. "
+                "Formal test PASS and its gate belong to the approved TS/TSR stage. "
+                "No approval-based Snapshot is required for TR completion or formal testing. "
+                "Use the automatically prepared Source Bundle and disposable Scratch for execution."
+            )
+        elif source_crud_section:
             snapshot_policy_section = _section(
                 "AI source snapshot policy",
                 "Request a snapshot only when a real filesystem tree is required for build/test/"
@@ -2816,7 +2824,11 @@ def _scope_context_section(target_doc: dict) -> Optional[str]:
     else:
         lines.append("  (no actual changes detected in the assigned worktree)")
 
-    unconfirmed = verdict.get("unconfirmed") or []
+    unconfirmed_field = verdict.get("unconfirmed") or []
+    unconfirmed = (
+        unconfirmed_field.get("items") or []
+        if isinstance(unconfirmed_field, dict) else unconfirmed_field
+    )
     lines.append("")
     lines.append(
         "Reported by this TR but NOT found in the worktree (unconfirmed -- may mean the "

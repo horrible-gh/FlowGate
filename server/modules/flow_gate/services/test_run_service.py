@@ -1627,6 +1627,13 @@ def describe_test_document(doc: dict) -> dict:
                 active_tsr = None
             out["tsr_doc_id"] = (active_tsr or {}).get("doc_id")
             out["tsr_review_status"] = (active_tsr or {}).get("doc_review_status")
+            history = db_test_runs.list_by_doc(doc["doc_id"])
+            out["run_history"] = [shape_run(item) for item in history
+                                  if item.get("contract_version") == test_spec_service.CONTRACT_SPEC][:30]
+            running = db_test_runs.get_running_by_doc(doc["doc_id"])
+            out["active_run"] = (shape_run(running) if running and
+                                 running.get("contract_version") == test_spec_service.CONTRACT_SPEC
+                                 else None)
             from modules.flow_gate.services import test_basis_service
             basis = test_basis_service.current(doc)
             if basis:
@@ -1647,7 +1654,16 @@ def describe_test_document(doc: dict) -> dict:
                     effective_run = None
                 out["basis_valid"] = basis_valid
                 out["effective_run_id"] = (effective_run or {}).get("run_id")
+                previous = next((
+                    item for item in history
+                    if item.get("contract_version") == test_spec_service.CONTRACT_SPEC
+                    and test_spec_service.load_result_meta(item.get("result_meta")).get("basis_id")
+                    not in (None, basis["basis_id"])
+                    and test_spec_service.load_result_meta(item.get("result_meta")).get("run_kind")
+                    != "spec_execution"
+                ), None)
                 out["stale_previous_result"] = (
+                    shape_run(previous, include_cases=True) if previous else
                     shape_run(latest, include_cases=True) if latest and not basis_valid else None
                 )
                 effective_rows = (
@@ -1659,6 +1675,13 @@ def describe_test_document(doc: dict) -> dict:
                     "summary": test_spec_service.compute_overall(effective_rows),
                     "cases": effective_rows,
                 }
+                automated = [case for case in parsed["cases"]
+                             if case.get("execution_mode") == "automated"]
+                completed = sum(1 for row in effective_rows if row.get("case_id") in
+                                {case["case_id"] for case in automated}
+                                and row.get("result_origin") != "missing")
+                out["progress"] = {"automated_total": len(automated),
+                                   "automated_completed": completed}
         return out
     if type_code == "TSR":
         run = db_test_runs.latest_by_tsr_doc(doc["doc_id"])
@@ -1669,6 +1692,14 @@ def describe_test_document(doc: dict) -> dict:
             out["report"] = shape_run(run, include_cases=True)
             out["gate"] = tsr_gate_state(doc)
             out["doc_review_status"] = doc.get("doc_review_status")
+            target = db_docs.get_by_id(doc.get("target_id")) if doc.get("target_id") else None
+            if target:
+                ts_view = describe_test_document(target)
+                for key in ("test_basis", "basis_valid", "effective_result",
+                            "stale_previous_result", "run_history", "active_run", "progress"):
+                    out[key] = ts_view.get(key)
+                out["source_identity"] = (ts_view.get("test_basis") or {}).get("source")
+                out["test_asset_identity"] = (ts_view.get("test_basis") or {}).get("test_assets")
         return out
     return {"kind": type_code, "doc_id": doc.get("doc_id"), "contract_version": None}
 
@@ -2790,6 +2821,8 @@ def _revise_active_tsr(
     doc: dict, active: dict, content: str, title: str, *, run_chain: bool = True
 ) -> str:
     """Rewrite the active TSR in place for a fresh run, keeping its doc_id and slot."""
+    if active.get("doc_review_status") == "approved":
+        raise _http_error(409, "tsr_already_approved", tsr_doc_id=active.get("doc_id"))
     tsr_doc_id = str(active["doc_id"])
     project_id = doc["project_id"]
     group_id = doc["group_id"]
@@ -3275,6 +3308,14 @@ def _emit_auto_reopen_refresh(doc: dict, run: dict, result: dict) -> None:
 
 
 def _emit_started(doc: dict, run: dict) -> None:
+    if run.get("contract_version") == test_spec_service.CONTRACT_SPEC:
+        from modules.flow_gate.db import events as db_events
+        meta = test_spec_service.load_result_meta(run.get("result_meta"))
+        db_events.insert_event(doc["doc_id"], "test_spec_execution_started",
+                               note=json.dumps({"run_id": run["run_id"],
+                                                "basis_id": meta.get("basis_id"),
+                                                "case_ids": meta.get("selected_case_ids"),
+                                                "actor": run.get("runner_id")}, ensure_ascii=False))
     items = db_test_runs.list_cases(run["run_id"])
     _broadcast(
         "test_run_started",
@@ -3337,6 +3378,20 @@ def _emit_case_finished(doc: dict, run: dict, case: dict, idx: int, total: int) 
 
 
 def _emit_finished(doc: dict, run: dict, tsr_doc_id: Optional[str]) -> None:
+    if run.get("contract_version") == test_spec_service.CONTRACT_SPEC:
+        from modules.flow_gate.db import events as db_events
+        meta = test_spec_service.load_result_meta(run.get("result_meta"))
+        kind = meta.get("run_kind")
+        event = ("test_spec_execution_cancelled" if run.get("status") == "cancelled" else
+                 "test_spec_execution_completed" if kind == "spec_execution" else
+                 "test_spec_result_recorded")
+        db_events.insert_event(doc["doc_id"], event,
+                               note=json.dumps({"run_id": run["run_id"],
+                                                "basis_id": meta.get("basis_id"),
+                                                "tsr_doc_id": tsr_doc_id,
+                                                "overall": run.get("overall"),
+                                                "status": run.get("status"),
+                                                "actor": run.get("runner_id")}, ensure_ascii=False))
     _broadcast(
         "test_run_finished",
         doc,

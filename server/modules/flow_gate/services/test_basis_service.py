@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from modules.flow_gate.storage import paths as storage_paths
 
@@ -44,23 +44,65 @@ def _git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _test_only_path(path: str) -> bool:
+    """Eligibility check; the approved manifest remains the write authority."""
+    pure = PurePosixPath(path)
+    return (not pure.is_absolute() and ".." not in pure.parts
+            and len(pure.parts) >= 2 and pure.parts[0] in {"test", "tests"}
+            and pure.suffix.lower() in {".py", ".json", ".yaml", ".yml", ".toml",
+                                        ".ini", ".txt", ".csv", ".xml"})
+
+
+def _dirty_paths(root: Path) -> set[str]:
+    result = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1", "-z",
+                             "--untracked-files=all"], capture_output=True, timeout=20)
+    if result.returncode:
+        raise ValueError("source_identity_unavailable")
+    fields = result.stdout.split(b"\0")
+    dirty: set[str] = set()
+    index = 0
+    while index < len(fields):
+        field = fields[index]
+        index += 1
+        if not field:
+            continue
+        status = field[:2].decode("ascii", errors="replace")
+        dirty.add(field[3:].decode("utf-8", errors="surrogateescape").replace("\\", "/"))
+        if "R" in status or "C" in status:
+            if index < len(fields):
+                dirty.add(fields[index].decode("utf-8", errors="surrogateescape").replace("\\", "/"))
+                index += 1
+    return dirty
+
+
 def resolve(doc: dict, cases: list[dict]) -> dict:
     root = source_root(doc)
-    # Until Source Bundle service lands in the product tree, exact clean git identity is
-    # the compatibility authority. Never use a mutable working directory as the run root.
-    if _git(root, "status", "--porcelain", "--untracked-files=all"):
-        raise ValueError("source_worktree_dirty")
     revision = _git(root, "rev-parse", "HEAD")
     tree = _git(root, "rev-parse", "HEAD^{tree}")
+    roles: dict[str, str] = {}
+    for case in cases:
+        loc = locator(case)
+        if loc.get("path"):
+            roles[loc["path"]] = "test"
+        for raw in re.split(r"[,\n]", str(case.get("test_assets") or "")):
+            path = raw.strip().replace("\\", "/")
+            if path:
+                roles.setdefault(path, "fixture")
     manifest = []
-    for path in sorted({entry["path"] for case in cases
-                        if (entry := locator(case)).get("path")}):
+    for path, role in sorted(roles.items()):
+        if not _test_only_path(path):
+            raise ValueError("product_source_or_invalid_test_asset: " + path)
         target = (root / path).resolve()
-        if not target.is_relative_to(root.resolve()) or not target.is_file():
+        if (not target.is_relative_to(root.resolve()) or target != root.resolve() / path
+                or not target.is_file()):
             raise ValueError("automation_asset_missing: " + path)
         _git(root, "ls-files", "--error-unmatch", "--", path)
         manifest.append({"path": path, "content_hash": hashlib.sha256(target.read_bytes()).hexdigest(),
-                         "role": "test"})
+                         "role": role})
+    allowlist = {entry["path"] for entry in manifest}
+    dirty = _dirty_paths(root)
+    if dirty - allowlist:
+        raise ValueError("source_worktree_dirty: " + ", ".join(sorted(dirty - allowlist)))
     identity = {
         "basis_version": 1,
         "ts_document_id": doc["doc_id"],
@@ -70,7 +112,8 @@ def resolve(doc: dict, cases: list[dict]) -> dict:
         "test_assets": {"manifest_hash": canonical_hash(manifest), "asset_count": len(manifest)},
         "execution_profile": {"runner_generation": 1},
     }
-    return {"basis_id": canonical_hash(identity), **identity, "manifest": manifest}
+    return {"basis_id": canonical_hash(identity), **identity, "manifest": manifest,
+            "compat_dirty_paths": sorted(dirty)}
 
 
 def current(doc: dict) -> dict | None:
@@ -136,6 +179,13 @@ def initialize(doc: dict, parsed: dict, basis: dict, *, locale: str = "ko") -> d
         slot = test_run_service._tsr_slot_item(doc, db_wfseq)
         if slot is not None and not db_wfseq.get_item_by_result_doc_id(report_id):
             raise RuntimeError("tsr_workflow_pair_missing")
+        from modules.flow_gate.db import events as db_events
+        db_events.insert_event(doc["doc_id"], "test_spec_initialized", note=json.dumps({
+            "basis_id": basis["basis_id"], "run_id": run["run_id"],
+            "tsr_doc_id": report_id, "ts_revision_no": doc.get("revision_no"),
+            "source": basis["source"],
+            "manifest_hash": basis["test_assets"]["manifest_hash"],
+        }, ensure_ascii=False))
         return {"run_id": run["run_id"], "tsr_doc_id": report_id}
     except Exception:
         if old_path and old_body is not None:

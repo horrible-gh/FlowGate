@@ -1770,6 +1770,7 @@ export default {
         expected: 'Expected result',
         check_points: 'Check points',
         automation_ref: 'Automation ref',
+        test_assets: 'Test assets',
         actual: 'Actual result',
         evidence: 'Evidence',
         defect_ref: 'Defect / ref',

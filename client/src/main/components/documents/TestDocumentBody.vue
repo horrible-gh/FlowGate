@@ -82,6 +82,7 @@ const view = ref<TestDocumentView | null>(null)
 const loading = ref(true)
 const mode = ref<'structured' | 'source'>('structured')
 let generation = 0
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 /** Contract-2 documents, plus an empty TS that the user may start as a specification. */
 const structured = computed(() => {
@@ -133,10 +134,14 @@ watch(
 onMounted(() => {
   void reload()
   window.addEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
+  pollTimer = setInterval(() => {
+    if (view.value?.active_run) void reload()
+  }, 2000)
 })
 
 onBeforeUnmount(() => {
   generation += 1
+  if (pollTimer) clearInterval(pollTimer)
   window.removeEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
 })
 

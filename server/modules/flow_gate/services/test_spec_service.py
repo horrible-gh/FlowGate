@@ -53,7 +53,7 @@ MAX_JUNIT_BYTES = 5 * 1024 * 1024
 # in render order, plus the aliases a human or an AI may type.
 SPEC_FIELDS = (
     "category", "requirement", "execution_mode", "required", "precondition", "input",
-    "procedure", "expected", "check_points", "automation_ref",
+    "procedure", "expected", "check_points", "automation_ref", "test_assets",
 )
 REQUIRED_SPEC_FIELDS = (
     "category", "requirement", "execution_mode", "required", "procedure", "expected",
@@ -79,6 +79,7 @@ _FIELD_ALIASES = {
     "check_points": "check_points", "checkpoints": "check_points",
     "확인 관점": "check_points", "確認観点": "check_points",
     "automation_ref": "automation_ref", "자동화 참조": "automation_ref",
+    "test_assets": "test_assets", "시험 자산": "test_assets",
 }
 # Legacy executable-TS field names. Inside a contract-2 TS they are a boundary violation,
 # not a silently ignored extra: the whole point of the marker is that a specification TS is
@@ -367,6 +368,7 @@ def _build_case(case_id: str, title: str, values: dict, errors: list[dict]) -> d
         "expected": values.get("expected") or "",
         "check_points": values.get("check_points") or "",
         "automation_ref": values.get("automation_ref") or "",
+        "test_assets": values.get("test_assets") or "",
     }
 
 
@@ -414,7 +416,7 @@ def render_spec_body(cases: Iterable[dict], *, title: str, locale: str = "ko",
                 value = "" if parsed is None and value in (None, "") else (
                     "true" if parsed else ("false" if parsed is False else str(value))
                 )
-            if field == "automation_ref" and not str(value or "").strip():
+            if field in ("automation_ref", "test_assets") and not str(value or "").strip():
                 continue
             out.append(f"- {field}: {_render_value(value)}".rstrip())
         out.append("")

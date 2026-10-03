@@ -96,7 +96,7 @@ def test_scope_context_section_shows_rename_old_path_and_unconfirmed():
     meta = {
         "tr_scope": {
             "verdict": "warn", "codes": ["TRV-003"],
-            "unconfirmed": ["server/ghost.py"],
+            "unconfirmed": {"count": 1, "items": ["server/ghost.py"]},
             "file_manifest": {
                 "total": 1, "truncated": False,
                 "items": [
@@ -114,6 +114,8 @@ def test_scope_context_section_shows_rename_old_path_and_unconfirmed():
 
     assert "renamed from server/old_name.py" in m
     assert "server/ghost.py" in m
+    assert "  - count" not in m
+    assert "  - items" not in m
     assert "unconfirmed" in m.lower()
 
 

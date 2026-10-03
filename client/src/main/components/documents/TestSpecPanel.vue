@@ -14,9 +14,9 @@
           <span
             v-if="latest"
             class="badge"
-            :class="verdictBadge(latest.overall)"
+            :class="verdictBadge(view.effective_result?.summary.overall ?? latest.overall)"
             data-testid="test-spec-latest-overall"
-          >{{ t('main.test_document.latest_overall', { overall: verdictLabel(latest.overall) }) }}</span>
+          >{{ t('main.test_document.latest_overall', { overall: verdictLabel(view.effective_result?.summary.overall ?? latest.overall) }) }}</span>
           <span v-else class="badge badge-gray">{{ t('main.test_document.no_result') }}</span>
           <span v-if="reportLocked" class="badge badge-green" data-testid="test-spec-report-locked">
             {{ t('main.test_document.report_locked') }}
@@ -44,6 +44,33 @@
         </div>
       </div>
 
+      <section v-if="view.test_basis" class="ts-basis" data-testid="test-basis">
+        <strong>Test Basis</strong> <code>{{ view.test_basis.basis_id }}</code>
+        <div>Source: {{ view.test_basis.source.kind }} / {{ view.test_basis.source.git_revision || view.test_basis.source.bundle_id }}</div>
+        <div>Test assets: {{ view.test_basis.test_assets.manifest_hash }} ({{ view.test_basis.test_assets.asset_count }})</div>
+        <div v-if="view.basis_valid === false" class="ts-basis-stale">Current basis is stale</div>
+        <div>Automated progress: {{ view.progress?.automated_completed ?? 0 }}/{{ view.progress?.automated_total ?? 0 }}</div>
+        <div v-if="view.active_run">Execution: {{ view.active_run.status }} ({{ view.active_run.run_id }})</div>
+        <button type="button" class="btn btn-primary btn-sm" data-testid="test-spec-run-all"
+          :disabled="!canRun" @click="runAutomated()">Run all automated Cases</button>
+      </section>
+      <div v-if="actionError" class="ts-spec-errors" role="alert">{{ actionError }}</div>
+      <section v-if="view.test_basis?.manifest?.length" class="ts-assets" data-testid="test-asset-manifest">
+        <h4>Approved test assets</h4>
+        <ul><li v-for="asset in view.test_basis.manifest" :key="asset.path">
+          <button type="button" class="btn btn-secondary btn-sm"
+            @click="openAsset(asset.path)">{{ asset.path }}</button>
+          <span>{{ asset.role }} · {{ asset.content_hash }}</span>
+        </li></ul>
+        <div v-if="assetPath" class="ts-asset-editor" data-testid="test-asset-editor">
+          <strong>{{ assetPath }}</strong>
+          <textarea v-model="assetContent" class="form-ctrl" rows="14" aria-label="Test asset content" />
+          <button type="button" class="btn btn-primary btn-sm" :disabled="assetBusy || reportLocked"
+            @click="saveAsset">Save with expected hash</button>
+          <button type="button" class="btn btn-secondary btn-sm" @click="assetPath = ''">Close</button>
+        </div>
+      </section>
+
       <div v-if="errors.length" class="ts-spec-errors" role="alert" data-testid="test-spec-errors">
         <strong><AppIcon name="warning-circle" /> {{ t('main.test_document.errors_title', { count: errors.length }) }}</strong>
         <ul>
@@ -69,6 +96,16 @@
           <span class="badge" :class="c.required ? 'badge-blue' : 'badge-gray'">
             {{ c.required ? t('main.test_document.required') : t('main.test_document.optional') }}
           </span>
+          <span class="badge badge-gray" data-testid="test-spec-case-capability">
+            {{ view.case_capabilities?.[c.case_id] || c.execution_mode }}
+          </span>
+          <button v-if="view.case_capabilities?.[c.case_id] === 'case_selectable'"
+            type="button" class="btn btn-secondary btn-sm" :disabled="!canRun"
+            data-testid="test-spec-run-case" @click="runAutomated(c.case_id)">Run Case</button>
+          <span v-else-if="view.case_capabilities?.[c.case_id] === 'suite_only'"
+            class="ts-case-note">Run all required</span>
+          <span v-else-if="c.execution_mode === 'manual' || c.execution_mode === 'external'"
+            class="ts-case-note">Use result entry</span>
           <span
             v-if="resultFor(c.case_id)"
             class="badge ts-case-verdict"
@@ -76,6 +113,13 @@
             data-testid="test-spec-case-verdict"
           >{{ verdictLabel(resultFor(c.case_id)?.case_status) }}</span>
         </header>
+        <div v-if="effectiveFor(c.case_id)" class="ts-case-effective">
+          Effective: {{ effectiveFor(c.case_id)?.status }}
+          <span v-if="staleFor(c.case_id)"> · STALE previous {{ staleFor(c.case_id)?.case_status }}</span>
+          <div v-for="(e, index) in effectiveFor(c.case_id)?.evidence || []" :key="index">
+            {{ e.kind }}: {{ e.value }}
+          </div>
+        </div>
         <dl class="ts-case-fields">
           <template v-for="field in FIELDS" :key="field">
             <template v-if="c[field]">
@@ -113,6 +157,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
+import { getRequest, postRequest, putRequest } from '@shared/api'
 
 import type { TestDocumentView, TestReportCase, TestSpecCase } from '../../types/testRun'
 import TestResultEntryDialog from './TestResultEntryDialog.vue'
@@ -132,16 +177,71 @@ const { t } = useI18n()
 const { verdictLabel, verdictBadge, categoryLabel, modeLabel } = useTestVerdictLabels()
 
 const FIELDS = [
-  'requirement', 'precondition', 'input', 'procedure', 'expected', 'check_points', 'automation_ref',
+  'requirement', 'precondition', 'input', 'procedure', 'expected', 'check_points', 'automation_ref', 'test_assets',
 ] as const satisfies readonly (keyof TestSpecCase)[]
 
 const editorOpen = ref(false)
 const resultsOpen = ref(false)
+const actionError = ref('')
+const assetPath = ref('')
+const assetContent = ref('')
+const assetHash = ref('')
+const assetBusy = ref(false)
+const runBusy = ref(false)
 
 const cases = computed<TestSpecCase[]>(() => props.view.cases ?? [])
 const errors = computed(() => props.view.errors ?? [])
 const latest = computed(() => props.view.latest_result ?? null)
 const requiredCount = computed(() => cases.value.filter((c) => c.required).length)
+const canRun = computed(() => !props.readOnly && !reportLocked.value && !runBusy.value
+  && !props.view.active_run && props.view.doc_review_status === 'approved'
+  && props.view.basis_valid !== false && !!props.view.test_basis && !errors.value.length)
+const effectiveFor = (id: string) => props.view.effective_result?.cases.find((row) => row.case_id === id)
+const staleFor = (id: string) => props.view.stale_previous_result?.cases?.find((row) => row.case_no === id)
+
+async function runAutomated(caseId?: string) {
+  actionError.value = ''
+  runBusy.value = true
+  try {
+    const base = '/api/v1/documents/' + encodeURIComponent(props.docId) + '/test-spec'
+    await postRequest(caseId ? base + '/cases/' + encodeURIComponent(caseId) + '/run' : base + '/runs', {})
+    emit('changed')
+  } catch (error) {
+    actionError.value = String(error)
+  } finally {
+    runBusy.value = false
+  }
+}
+
+async function openAsset(path: string) {
+  actionError.value = ''
+  try {
+    const res = await getRequest<{ content: string; content_hash: string }>(
+      '/api/v1/documents/' + encodeURIComponent(props.docId)
+      + '/test-spec/assets/' + encodeURIComponent(path))
+    assetPath.value = path
+    assetContent.value = res.data.content
+    assetHash.value = res.data.content_hash
+  } catch (error) {
+    actionError.value = String(error)
+  }
+}
+
+async function saveAsset() {
+  assetBusy.value = true
+  actionError.value = ''
+  try {
+    await putRequest('/api/v1/documents/' + encodeURIComponent(props.docId)
+      + '/test-spec/assets/' + encodeURIComponent(assetPath.value),
+      { expected_hash: assetHash.value, content: assetContent.value })
+    assetPath.value = ''
+    emit('changed')
+  } catch (error) {
+    actionError.value = String(error)
+  } finally {
+    assetBusy.value = false
+  }
+}
 
 // The spec is the approved test basis: it is edited before approval, not after.
 const canEditSpec = computed(
@@ -197,4 +297,12 @@ function onSubmitted() {
 .ts-case-fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: .8rem; }
 .ts-case-fields dt { color: var(--text-s); font-weight: 500; }
 .ts-case-fields dd { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.ts-basis, .ts-assets { border: 1px solid var(--border); border-radius: var(--r); padding: 10px; margin: 10px 0; font-size: .8rem; }
+.ts-basis code { overflow-wrap: anywhere; }
+.ts-basis-stale { color: var(--danger); }
+.ts-assets ul { padding-left: 18px; }
+.ts-assets li { margin: 4px 0; overflow-wrap: anywhere; }
+.ts-assets li span { margin-left: 8px; color: var(--text-s); }
+.ts-asset-editor textarea { width: 100%; margin: 8px 0; font-family: monospace; }
+.ts-case-note, .ts-case-effective { font-size: .75rem; color: var(--text-s); }
 </style>
