@@ -2130,3 +2130,25 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
         _emit_explorer_refresh(grant, op)
     continuation = _continuation(grant, locale) if op in _MUTATING_OPS else None
     return 200, _envelope(True, op, extra=extra, continuation=continuation)
+
+def _emit_explorer_refresh(grant: dict, op: str) -> None:
+    """Best-effort file_explorer_refresh broadcast after a worker source mutation
+    (0192 T0005 2-d). Scoped to the worker's project (and group when known) so
+    the operator's explorer re-fetches the tree / change list / dirty markers."""
+    try:
+        from modules.flow_gate.api.v1.events.publisher import (
+            FlowEvent,
+            broadcast_event_threadsafe,
+        )
+        from modules.flow_gate.api.v1.events.event_types import EventType
+
+        broadcast_event_threadsafe(FlowEvent(
+            event_type=EventType.FILE_EXPLORER_REFRESH,
+            payload={"operation": op, "source": "remote_worker"},
+            audience="*",
+            project=grant.get("project"),
+            group_id=grant.get("group_id"),
+            doc_id=None,
+        ))
+    except Exception:
+        pass
