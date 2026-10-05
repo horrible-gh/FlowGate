@@ -2296,6 +2296,20 @@ export default {
       git_settle_deferred: 'Git マージが競合で保留されました。競合解決画面から続けてください。',
       git_settle_retry: 'Git 作業は完了しましたが承認が反映されていません。もう一度承認すると Git を再実行せずに承認のみ反映します。',
       git_settle_unknown: 'サーバーの Git 結果をまだ確認できていません。少し待ってから Git 状態を確認し、再試行してください。',
+      // 0674 T0004 §2-3 — Git 後処理が待機/復旧状態に残った最終承認(ジョブが引き継いで処理する)。
+      approval_job_queued: '最終承認の Git 後処理が待機中です ({stage}、ジョブ {job})。終わるまで承認ボタンをロックします。',
+      approval_job_recovery: '最終承認の Git 後処理が復旧待ちです (ジョブ {job})。サーバーが再判定します。続く場合は管理者の確認が必要です。その間は承認ボタンをロックします。',
+      approval_job_blocker: '待機理由: {domain} ロック、保持 {holder}。',
+      approval_job_done: '待機していた最終承認が完了しました。',
+      approval_job_stage: {
+        freezing: '固定中',
+        freeze_wait: '固定待ち',
+        pending: '実行待ち',
+        blocked: 'ロック待ち',
+        running: '実行中',
+        retry_wait: '再試行待ち',
+        recovery_required: '復旧が必要',
+      },
       // 0332 D0005 §6.5 — TR 承認の通知。二つとも承認は成功したという文で始まる。
       tr_commit_toast: '承認しました — コミット {commit} を残しました',
       tr_commit_failed_toast: '承認しました — コミットできませんでした（{reason}）',
@@ -3408,6 +3422,10 @@ export default {
       no_conflicts_hint: '残っている競合ファイルはありません — 一覧を再読み込みするか、AIを呼び出すか、マージを中断できます。',
       reload_conflicts: '一覧を再読み込み',
       conflict_ai_starting: 'AI 呼び出しを送信しました — 実行が始まるとこの行が進捗に変わります。',
+      // 0674 T0004 §2-1 — 競合解消 AI 実行が競合を解消できずに終わったとき。
+      conflict_ai_failed: 'AI 競合解消は競合を解消できずに終了しました: {reason}',
+      conflict_ai_failed_no_reason: 'AI 競合解消は競合を解消できずに終了しました。サーバーに理由の記録がありません。',
+      conflict_ai_failed_next: '別のプロバイダーやモデルで AI を再度呼び出すか、手動で解決して提出するか、マージを中止してください。',
       provider_loading: 'AI プロバイダー一覧を読み込んでいます — 読み終わると [AI 呼び出し] を押せます。',
       provider_load_failed: 'AI プロバイダー一覧を読み込めませんでした。再読み込みするまで [AI 呼び出し] は押せません。',
       provider_none: 'このプロジェクトに登録された AI プロバイダーがありません。AI 設定で登録してから再読み込みしてください。',

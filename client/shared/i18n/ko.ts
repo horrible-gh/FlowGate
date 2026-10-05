@@ -2306,6 +2306,20 @@ export default {
       git_settle_deferred: 'Git 병합이 충돌로 보류되었습니다. 충돌 해결 화면에서 이어서 진행하세요.',
       git_settle_retry: 'Git 작업은 끝났지만 승인이 반영되지 않았습니다. 승인을 다시 누르면 Git 작업 없이 승인만 반영합니다.',
       git_settle_unknown: '서버의 Git 작업 결과를 아직 확인하지 못했습니다. 잠시 뒤 Git 상태를 확인한 다음 다시 시도하세요.',
+      // 0674 T0004 §2-3 — Git 후처리가 대기/복구 상태로 남은 최종 승인(job 이 이어서 처리한다).
+      approval_job_queued: '최종 승인의 Git 후처리가 대기 중입니다 ({stage}, 작업 {job}). 끝날 때까지 승인 버튼을 잠급니다.',
+      approval_job_recovery: '최종 승인의 Git 후처리가 복구 필요 상태입니다 (작업 {job}). 서버가 다시 판정하며, 계속되면 관리자 확인이 필요합니다. 그동안 승인 버튼을 잠급니다.',
+      approval_job_blocker: '대기 원인: {domain} 잠금, 점유 {holder}.',
+      approval_job_done: '대기 중이던 최종 승인이 완료되었습니다.',
+      approval_job_stage: {
+        freezing: '고정 중',
+        freeze_wait: '고정 대기',
+        pending: '실행 대기',
+        blocked: '잠금 대기',
+        running: '실행 중',
+        retry_wait: '재시도 대기',
+        recovery_required: '복구 필요',
+      },
       // 0332 D0005 §6.5 — TR 승인 알림. 둘 다 승인은 성공했다는 말로 시작한다.
       tr_commit_toast: '승인했습니다 — 커밋 {commit} 을 남겼습니다',
       tr_commit_failed_toast: '승인했습니다 — 커밋하지 못했습니다 ({reason})',
@@ -3420,6 +3434,10 @@ export default {
       // 누를 수 없는지를 다이얼로그 안에서 말하는 줄들. rev4 까지 이 자리는 버튼의 title
       // 속성 하나뿐이어서, 못 누르는 버튼과 눌러도 아무 일이 없는 버튼이 구분되지 않았다.
       conflict_ai_starting: 'AI 호출을 보냈습니다 — 실행이 시작되면 이 줄이 진행 상황으로 바뀝니다.',
+      // 0674 T0004 §2-1 — 충돌 해소 AI 실행이 충돌을 풀지 못하고 끝났을 때(실패·부분·유실).
+      conflict_ai_failed: 'AI 충돌 해소가 충돌을 해결하지 못하고 끝났습니다: {reason}',
+      conflict_ai_failed_no_reason: 'AI 충돌 해소가 충돌을 해결하지 못하고 끝났습니다. 서버가 남긴 사유가 없습니다.',
+      conflict_ai_failed_next: '다른 공급자나 모델로 다시 AI 호출하거나, 직접 해결해 제출하거나, 병합을 중단하세요.',
       provider_loading: 'AI 공급자 목록을 읽는 중입니다 — 다 읽으면 [AI 호출]을 누를 수 있습니다.',
       provider_load_failed: 'AI 공급자 목록을 읽지 못했습니다. 다시 읽기 전에는 [AI 호출]을 누를 수 없습니다.',
       provider_none: '이 프로젝트에 등록된 AI 공급자가 없습니다. AI 설정에서 등록한 뒤 다시 읽어 주세요.',

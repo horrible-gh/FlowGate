@@ -2309,6 +2309,20 @@ export default {
       git_settle_deferred: 'The Git merge stopped on a conflict. Continue from the conflict resolution screen.',
       git_settle_retry: 'Git finished but the approval was not recorded. Approve again to record it without running Git again.',
       git_settle_unknown: 'The server has not reported the Git result yet. Check the Git status in a moment, then try again.',
+      // 0674 T0004 §2-3 — a final approval whose Git post-step is waiting or needs recovery.
+      approval_job_queued: 'The Git post-step of this final approval is queued ({stage}, job {job}). Approve stays locked until it finishes.',
+      approval_job_recovery: 'The Git post-step of this final approval needs recovery (job {job}). The server re-checks it; if it stays, an operator has to look. Approve stays locked meanwhile.',
+      approval_job_blocker: 'Waiting on the {domain} lock, held by {holder}.',
+      approval_job_done: 'The queued final approval has completed.',
+      approval_job_stage: {
+        freezing: 'freezing',
+        freeze_wait: 'waiting to freeze',
+        pending: 'waiting to run',
+        blocked: 'waiting for a lock',
+        running: 'running',
+        retry_wait: 'waiting to retry',
+        recovery_required: 'needs recovery',
+      },
       // 0332 D0005 §6.5 — TR approval notices. Both start from "approved".
       tr_commit_toast: 'Approved — commit {commit} recorded',
       tr_commit_failed_toast: 'Approved — could not commit ({reason})',
@@ -3415,6 +3429,10 @@ export default {
       no_conflicts_hint: 'No conflicted files are left — you can reload the list, call the AI, or abort the merge.',
       reload_conflicts: 'Reload list',
       conflict_ai_starting: 'The AI call was sent — this line turns into the run progress once it starts.',
+      // 0674 T0004 §2-1 — the conflict AI run ended without resolving the conflict.
+      conflict_ai_failed: 'The AI conflict resolution ended without resolving the conflict: {reason}',
+      conflict_ai_failed_no_reason: 'The AI conflict resolution ended without resolving the conflict. The server recorded no reason.',
+      conflict_ai_failed_next: 'Call the AI again with another provider or model, resolve the files yourself and submit, or abort the merge.',
       provider_loading: 'Loading the AI provider list — [Invoke AI] becomes available once it is read.',
       provider_load_failed: 'The AI provider list could not be read. [Invoke AI] stays unavailable until it is reloaded.',
       provider_none: 'No AI provider is registered for this project. Register one in AI settings, then reload the list.',

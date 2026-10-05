@@ -723,6 +723,27 @@ export function useFlowGateSse(refreshAll: (epoch: number | null) => void) {
       } catch { /* ignore parse errors */ }
     }
     on('git_finalize_done', onGitFinalizeDone)
+    // 0674 T0004 §2-5: a final approval job moved into a waiting state (freeze_wait /
+    // blocked / retry_wait / recovery_required) — from the request or the Job Runner.
+    // Re-broadcast it for the approve bar, and as a git_status_refresh so every Git
+    // surface of that group re-reads its finalize state (which carries `approval_job`).
+    on('git_approval_job_changed', (e: Event) => {
+      try {
+        const data = JSON.parse((e as MessageEvent).data)
+        const payload = data.payload ?? {}
+        const detail = {
+          ...payload,
+          project: payload.project ?? data.project ?? null,
+          group_id: payload.group_id ?? data.group_id ?? null,
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('fg:git_approval_job_changed', { detail }))
+          window.dispatchEvent(new CustomEvent('fg:git_status_refresh', {
+            detail: { project: detail.project, group_id: detail.group_id, status: null },
+          }))
+        }
+      } catch { /* ignore parse errors */ }
+    })
     on('git_worktree_ready', onGitSlotLifecycle)
     on('git_merge_conflict', onGitSlotLifecycle)
     // 0205 P scenarios 4·6·7: a conflict auto-aborted by the sweep/boot recovery
