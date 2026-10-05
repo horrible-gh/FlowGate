@@ -315,6 +315,7 @@ def _finalize_run(run: dict) -> None:
         ("stop", lambda: _finalize_stop(run, respawn_pending)),
         ("scratch", lambda: _finalize_scratch(run)),
         ("source", lambda: _finalize_source(run)),
+        ("chat_commands", lambda: _finalize_chat_run(run)),
         ("diagnostics", lambda: _finalize_diagnostics(run)),
         ("stop_row", lambda: _apply_stop_row(run, respawn_pending)),
         ("review_checkpoint", lambda: _finalize_review_checkpoint(run)),
@@ -416,6 +417,23 @@ def _finalize_source(run: dict) -> None:
         spilled = sorted(now_paths - baseline)
         run["source_dirty"] = bool(spilled)
         run["source_dirty_files"] = spilled[:SOURCE_DIRTY_FILES_LIMIT]
+
+
+def _finalize_chat_run(run: dict) -> None:
+    """0670 T0004: close the run's open command requests, then measure its changes.
+
+    Commands first: nothing of a finished run may stay pending or running, and the end
+    snapshot must not race a test still writing files. Both halves are chat-only.
+    """
+    if run.get("action_scope") != "chat" or run.get("post_process_recovered"):
+        return
+    from modules.flow_gate.services import chat_command_service, chat_run_changes_service
+
+    try:
+        chat_command_service.cancel_for_run(run["run_id"])
+    except Exception:
+        logger.warning("chat command cleanup failed for %s", run.get("run_id"), exc_info=True)
+    chat_run_changes_service.finalize_run(run)
 
 
 def _finalize_diagnostics(run: dict) -> None:

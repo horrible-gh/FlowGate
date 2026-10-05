@@ -31,6 +31,7 @@ from modules.flow_gate.db import questions as db_questions
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.services import api_server_tools
 from modules.flow_gate.services import chat_settings_service
+from modules.flow_gate.services import chat_command_service
 from modules.flow_gate.services import q_service
 from modules.flow_gate.services import register_binding
 from modules.flow_gate.services import token_service
@@ -1172,6 +1173,14 @@ def _chat_tool_definitions() -> list[dict]:
             "schema": api_server_tools.READ_HELP_SCHEMA,
         },
         {
+            # 0670 T0004: command execution is a capability of the chat run itself, not
+            # a mode -- read/edit stays exactly what the token was issued with, and the
+            # user's command policy decides (always / ask / refuse) per request.
+            "name": chat_command_service.TOOL_NAME,
+            "description": chat_command_service.TOOL_DESCRIPTION,
+            "schema": chat_command_service.TOOL_SCHEMA,
+        },
+        {
             "name": _CHAT_TOOL_NAME,
             "description": _CHAT_TOOL_DESC,
             "schema": _CHAT_TOOL_SCHEMA,
@@ -1305,7 +1314,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 "The server fetched this invocation's configured conversation context window. "
                 "Reply from it directly. If `older_history` is present and earlier context is "
                 "needed, call `read_chat_history` with its `before_seq`; `read_help` with "
-                "item=document_access explains the paging contract.\n"
+                "item=document_access explains the paging contract. When the work needs a test, "
+                "build or git command, call `run_command`; its result (or the user's refusal) "
+                "comes back here and you continue from it.\n"
                 + json.dumps(chat_context, ensure_ascii=False)
             ),
         })
@@ -1574,6 +1585,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         _status, resp = _conversation_history_read(
                             run, current_token, call["input"]
                         )
+                    elif is_chat and call["name"] == chat_command_service.TOOL_NAME:
+                        # 0670 T0004: blocks this same loop while the request waits for the
+                        # user's decision and runs; the result returns to this conversation.
+                        _status, resp = chat_command_service.run_tool(
+                            run, call["input"], min(_svc()._remaining_sec(run), _absolute_remaining_sec(run))
+                        )
                     else:
                         _status, resp = _api_create_question(run, current_token, call["input"])
                 except api_server_tools.ToolError as exc:
@@ -1601,7 +1618,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 if (
                     call["name"] not in api_server_tools.SOURCE_OPS
                     and call["name"] not in (
-                        "run_test", "read_help", _CHAT_HISTORY_TOOL_NAME,
+                        "run_test", "read_help", _CHAT_HISTORY_TOOL_NAME, chat_command_service.TOOL_NAME,
                         *api_server_tools.SNAPSHOT_NAMES, *api_server_tools.BUNDLE_NAMES,
                     )
                 ):

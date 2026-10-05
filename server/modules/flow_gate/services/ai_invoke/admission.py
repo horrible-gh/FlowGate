@@ -1588,6 +1588,10 @@ def start_run(
         "finished_at": None,
         "dirty_baseline": _svc()._git_status_paths(source_root),
         "source_root": str(source_root) if source_root else None,
+        # 0670 T0004 (NR0003 §11.3): a chat run's start content as an isolated-index Git
+        # tree. finalize diffs it against the end tree, so the run's change summary is
+        # measured by FlowGate -- never reported by the model. None for every other scope.
+        "source_start_tree": _chat_start_tree(action_scope, source_root),
         "api_base_url": api_base_url,
         # 0505 T0006 (DB0005 2/3.3): operator_api_base is a one-time sanitized snapshot
         # of this same value, taken here at run start. transport_api_base starts empty
@@ -2535,4 +2539,17 @@ def _resolve_continuation_hop_note(
         return str(note).strip()
     except Exception:  # noqa: BLE001 — a resolution failure must not stall the hop
         logger.warning("continuation hop note resolution failed for %s", doc_ref, exc_info=True)
+        return None
+
+
+def _chat_start_tree(action_scope: Optional[str], source_root) -> Optional[str]:
+    """0670 T0004: start-tree snapshot for chat runs only; never raises."""
+    if action_scope != "chat":
+        return None
+    try:
+        from modules.flow_gate.services import chat_run_changes_service
+
+        return chat_run_changes_service.start_snapshot(action_scope, source_root)
+    except Exception:
+        logger.warning("chat run start-tree snapshot failed", exc_info=True)
         return None

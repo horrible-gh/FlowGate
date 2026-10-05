@@ -72,6 +72,18 @@ def recover_git_sessions():
         logger.warning(f"[startup] git session recovery failed: {exc}")
 
 
+def recover_chat_commands():
+    """0670 T0004: chat command rows a dead server left open are closed, never resumed."""
+    try:
+        from modules.flow_gate.services import chat_command_service
+
+        closed = chat_command_service.recover()
+        if closed:
+            logger.info(f"[startup] closed {closed} interrupted chat command request(s)")
+    except Exception as exc:
+        logger.warning(f"[startup] chat command recovery failed: {exc}")
+
+
 def encrypt_ai_provider_keys():
     """0371 NR0007 §3: move legacy plaintext ai_providers.api_key rows to AES-256-GCM.
 
@@ -126,3 +138,4 @@ def run_all():
     encrypt_ai_provider_keys()
     start_snapshot_cleanup()
     start_source_bundle_cleanup()
+    recover_chat_commands()

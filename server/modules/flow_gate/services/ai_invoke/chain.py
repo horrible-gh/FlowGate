@@ -67,7 +67,22 @@ def cancel_run(run_id: str) -> dict:
     if run["status"] == "finished":
         # Cancel raced the natural finish — idempotent OK, no kill (L0006 §5).
         return {"ok": True, "run_id": run_id, "status": "finished"}
-    run["status"] = "cancelling"
+    def announce() -> None:
+        run["status"] = "cancelling"
+
+    if run.get("action_scope") == "chat":
+        # 0670: the cancel is announced only under the run's command launch gate, after
+        # the gate has closed launches -- so no chat command process can start once the
+        # run is cancelling (a launch already past its live check spawned before the
+        # announcement and is killed by the stop).
+        from modules.flow_gate.services import chat_command_service
+
+        try:
+            chat_command_service.stop_run(run_id, on_closed=announce)
+        except Exception:
+            logger.warning("chat command stop failed for %s", run_id, exc_info=True)
+    if run["status"] != "cancelling":
+        announce()
     run["cancel_event"].set()
     proc = run.get("proc")
     if proc is not None:

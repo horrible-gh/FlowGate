@@ -654,6 +654,17 @@ export function useFlowGateSse(refreshAll: (epoch: number | null) => void) {
       } catch { /* REST polling remains available */ }
     })
 
+    // 0670 T0004: chat command request state and per-run change summaries. Payloads
+    // carry doc_id; ConversationView re-reads /chat-activity for its own document.
+    for (const kind of ['chat_command_updated', 'chat_run_changes']) {
+      on(kind, (e: Event) => {
+        try {
+          const data = JSON.parse((e as MessageEvent).data)
+          window.dispatchEvent(new CustomEvent(`fg:${kind}`, { detail: data.payload ?? {} }))
+        } catch { /* the run poll re-reads the same endpoint */ }
+      })
+    }
+
     on('git_pending_changed', (e: Event) => {
       // Git finalize-pending set changed (flowgate.default.0162 §4-3). The
       // payload carries the server-recomputed absolute pending_count — the
