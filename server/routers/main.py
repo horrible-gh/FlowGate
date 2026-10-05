@@ -12,6 +12,8 @@ from modules.flow_gate.documents.routers.work_plan import router as _work_plan_r
 from modules.flow_gate.documents.routers.tr2 import router as _tr2_router
 from modules.flow_gate.settings.routers.system import router as _settings_system_router
 from modules.flow_gate.settings.routers.users import router as _settings_users_router
+from modules.flow_gate.settings.routers.system_users import router as _system_users_router
+from modules.flow_gate.settings.routers.workspaces import router as _workspaces_router
 from modules.flow_gate.settings.routers.project_settings import router as _settings_project_router
 from modules.flow_gate.settings.routers.env_vars_commands import router as _env_vars_commands_router
 from modules.flow_gate.settings.routers.ai_settings import router as _ai_settings_router
@@ -174,6 +176,8 @@ app.include_router(_work_plan_router, prefix=f"{CONTEXT}/api/v1", tags=["Documen
 app.include_router(_tr2_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
 app.include_router(_settings_system_router, prefix=f"{CONTEXT}/api/v1", tags=["SystemSettings"])
 app.include_router(_settings_users_router, prefix=f"{CONTEXT}/api/v1", tags=["UserAdmin"])
+app.include_router(_system_users_router, prefix=f"{CONTEXT}/api/v1", tags=["SystemUsers"])
+app.include_router(_workspaces_router, prefix=f"{CONTEXT}/api/v1", tags=["Workspaces"])
 app.include_router(_settings_project_router, prefix=f"{CONTEXT}/api/v1", tags=["ProjectSettings"])
 app.include_router(_env_vars_commands_router, prefix=f"{CONTEXT}/api/v1", tags=["EnvVarsCommands"])
 app.include_router(_ai_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["AiSettings"])

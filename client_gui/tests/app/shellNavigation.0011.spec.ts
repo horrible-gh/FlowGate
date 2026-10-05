@@ -103,7 +103,6 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
     ['/projects', 'projects', '프로젝트'],
     ['/designer', 'designer', '디자이너'],
     ['/git', 'git', 'Git'],
-    ['/settings', 'settings', '환경 설정'],
   ])('direct access to %s renders an explicit "준비 중" placeholder with that section active', async (url, key, title) => {
     const { wrapper, router } = await mountAt(url)
     mounted = wrapper
@@ -120,6 +119,17 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
     expect(placeholder.get('a.gui-coming-soon-back').attributes('href')).toBe('/app/')
     // A placeholder never embeds a v0.1 screen.
     expect(wrapper.find('iframe').exists()).toBe(false)
+  })
+
+  it('direct access to /settings renders the Environment Settings hub with that section active', async () => {
+    // flowgate.v02.0020: /settings is no longer a placeholder (시안 11 #hub).
+    const { wrapper, router } = await mountAt('/settings')
+    mounted = wrapper
+
+    expect(router.currentRoute.value.fullPath).toBe('/settings')
+    expect(activeKeys(wrapper)).toEqual(['settings'])
+    expect(wrapper.find('.settings-hub').exists()).toBe(true)
+    expect(wrapper.find('.gui-coming-soon').exists()).toBe(false)
   })
 
   it('direct access to /ai renders the real AI Settings view with AI section active', async () => {

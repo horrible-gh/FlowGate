@@ -114,6 +114,26 @@ export default {
         },
       },
     },
+    totp_setup: {
+      title: '2단계 인증 등록',
+      instruction: '관리자 정책에 따라 2단계 인증을 등록해야 로그인할 수 있습니다.',
+      start: '등록 시작',
+      secret_label: '인증 앱에 입력할 키',
+      uri_label: '인증 앱으로 열기 (otpauth)',
+      backup_title: '백업 코드 — 지금 한 번만 표시됩니다',
+      code_label: '인증 앱의 6자리 코드',
+      submit: '등록 완료',
+      pending_hint: '코드를 확인해야 등록이 끝납니다. 그 전에 이 화면을 벗어나면 아무것도 저장되지 않으며, 다시 로그인하면 새 키로 등록을 시작합니다.',
+      failed: '2단계 인증을 등록하지 못했습니다.',
+    },
+    invite: {
+      title: '초대 수락',
+      instruction: '{username} ({email}) 계정의 비밀번호를 설정하세요.',
+      submit: '비밀번호 설정',
+      back: '로그인으로',
+      invalid: '초대 링크가 유효하지 않거나 만료되었습니다. 관리자에게 다시 요청하세요.',
+      accepted: '비밀번호가 설정되었습니다. 로그인하세요.',
+    },
     password: {
       change: {
         title: '비밀번호 변경 필수',

@@ -1,6 +1,13 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { installAuthGuard } from '@/core/router/guard'
 import { AiSettingsView } from '@/features/ai'
+import {
+  SettingsHubView,
+  SystemSecurityView,
+  SystemUsersView,
+  WorkspaceDetailView,
+  WorkspaceListView,
+} from '@/features/settings'
 import DashboardView from '../dashboard/DashboardView.vue'
 import { PLACEHOLDER_NAV_KEYS } from '../navigation'
 import ComingSoonView from '../views/ComingSoonView.vue'
@@ -10,7 +17,9 @@ import NotFoundView from '../views/NotFoundView.vue'
 // exist as honest "준비 중" placeholders. Each placeholder also owns everything below it
 // (`/projects/...`), so a deep link keeps its section highlighted in the Sidebar.
 // /app/ai is implemented by AiSettingsView (T0003), including 시스템 AI / 내 AI
-// (flowgate.v02.0017 T0004 §1).
+// (flowgate.v02.0017 T0004 §1). /app/settings is 환경 설정 (flowgate.v02.0020 시안 11~14): the
+// scope hub, 워크스페이스 목록/상세 and 시스템 › 사용자 / 보안; any other /settings path keeps the
+// section highlighted and renders NotFoundView in place.
 //
 // Nothing here redirects: a `redirect` rewrites the URL bar, and the T#1 contract is that an
 // authenticated deep link (e.g. `/app/projects?tab=x`) and a browser refresh keep exactly the
@@ -25,6 +34,18 @@ const placeholderRoutes: RouteRecordRaw[] = PLACEHOLDER_NAV_KEYS.map((key) => ({
 const routes: RouteRecordRaw[] = [
   { path: '/', name: 'dashboard', component: DashboardView, meta: { navKey: 'dashboard' } },
   { path: '/ai/:rest(.*)*', name: 'ai', component: AiSettingsView, meta: { navKey: 'ai' } },
+  { path: '/settings', name: 'settings', component: SettingsHubView, meta: { navKey: 'settings' } },
+  { path: '/settings/workspaces', name: 'settings-workspaces', component: WorkspaceListView, meta: { navKey: 'settings' } },
+  {
+    path: '/settings/workspaces/:workspaceId',
+    name: 'settings-workspace',
+    component: WorkspaceDetailView,
+    props: true,
+    meta: { navKey: 'settings' },
+  },
+  { path: '/settings/system/users', name: 'settings-system-users', component: SystemUsersView, meta: { navKey: 'settings' } },
+  { path: '/settings/system/security', name: 'settings-system-security', component: SystemSecurityView, meta: { navKey: 'settings' } },
+  { path: '/settings/:rest(.*)*', name: 'settings-not-found', component: NotFoundView, meta: { navKey: 'settings' } },
   ...placeholderRoutes,
   { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView },
 ]

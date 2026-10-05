@@ -37,10 +37,8 @@ from modules.flow_gate.db import permissions as db_permissions
 from modules.flow_gate.rbac.decorators import require_system_permission
 from modules.flow_gate.rbac.permission_service import get_user_permissions
 from modules.flow_gate.rbac.role_service import (
-    assign_role,
     list_project_members,
     list_user_roles,
-    revoke_role,
 )
 
 router = APIRouter()
@@ -199,13 +197,16 @@ def assign_user_role(
             detail=f"Invalid role: {body.role_id}",
         )
 
+    # flowgate.v02.0020: a project role is granted through its workspace (membership/exception
+    # and the role row in one transaction), never around it (R0001 §3.1).
+    from modules.flow_gate.settings import workspace_service
+
     try:
-        return assign_role(
-            user_id=user_id,
-            project_id=body.project_id,
-            role_id=body.role_id,
-            granted_by=current_user["user_id"],
+        return workspace_service.assign_direct_project_role(
+            user_id, body.project_id, body.role_id, actor=current_user,
         )
+    except workspace_service.WorkspaceError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code}) from None
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -224,7 +225,9 @@ def revoke_user_role(
         perms = get_user_permissions(current_user["user_id"], project_id)
         if "perm_role_revoke" not in perms:
             raise HTTPException(status_code=403, detail="Permission denied: perm_role_revoke")
-    revoke_role(user_id, project_id)
+    from modules.flow_gate.settings import workspace_service
+
+    workspace_service.revoke_direct_project_role(user_id, project_id, actor=current_user)
 
 
 # ── Current user permission query ─────────────────────────────────────────────

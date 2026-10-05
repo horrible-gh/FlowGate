@@ -25,6 +25,6 @@ export const APP_NAV_ITEMS: readonly AppNavItem[] = [
 ]
 
 /** Screens that exist only as a "준비 중" placeholder in this step (T0011 §8/§9).
- *  시스템 AI / 내 AI live in /ai (AI 관리) since flowgate.v02.0017 T0004 §1, so /settings has
- *  no v0.2 content yet. */
-export const PLACEHOLDER_NAV_KEYS: readonly AppNavKey[] = ['projects', 'designer', 'git', 'settings']
+ *  시스템 AI / 내 AI live in /ai (AI 관리) since flowgate.v02.0017 T0004 §1; /settings is the
+ *  Environment Settings feature since flowgate.v02.0020 (워크스페이스 / 시스템 사용자 · 보안). */
+export const PLACEHOLDER_NAV_KEYS: readonly AppNavKey[] = ['projects', 'designer', 'git']

@@ -107,6 +107,8 @@ class ProjectCreate(BaseModel):
     project_id: str | None = None
     description: str | None = None
     color: str | None = None
+    # flowgate.v02.0020: the workspace the project belongs to (default workspace when omitted).
+    workspace_id: str | None = None
 
 
 class ProjectStatusPatch(BaseModel):
@@ -172,6 +174,13 @@ def create_project_endpoint(
     body: ProjectCreate,
     user=Depends(get_current_user),
 ):
+    from modules.flow_gate.settings import workspace_service
+
+    # 워크스페이스 › 공용 정책 › 새 프로젝트를 만들 수 있는 사람 (flowgate.v02.0020).
+    try:
+        workspace_id = workspace_service.resolve_create_workspace(user, body.workspace_id)
+    except workspace_service.WorkspaceError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code}) from None
     if projects_db.get_by_name(body.project_name):
         raise HTTPException(
             status_code=422,
@@ -199,7 +208,8 @@ def create_project_endpoint(
         "color": body.color,
         "is_active": 1,
     })
-    return project
+    workspace_service.on_project_created(user, project_id, workspace_id)
+    return projects_db.get_by_id(project_id) or project
 
 
 def _doc_type_to_view(row: dict) -> dict:

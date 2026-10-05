@@ -5,13 +5,14 @@ import jwt
 from fastapi import APIRouter,Depends,HTTPException,Request
 from pydantic import BaseModel
 from modules.flow_gate.db import users as db_users
-from .backup_codes import generate_codes,store_codes,verify_backup_code
+from .backup_codes import generate_codes,hash_codes,store_codes,store_hashes,verify_backup_code
 from .jwt_service import create_access_token,create_refresh_token,create_temp_token,decode_token,decode_token_no_verify_exp
 from .middleware import get_current_user,verify_token
 from .password import hash_password,validate_password,verify_password
 from .token_store import blacklist_token,get_refresh_token,revoke_refresh_token,rotate_refresh_token,store_refresh_token
 from .session_store import create_request_session,create_session,get_session,list_active_sessions,revoke_all_sessions,revoke_other_sessions,revoke_session,touch_session
 from .totp_service import TOTP_LOCK_MAX_ATTEMPTS,TOTP_LOCK_MINUTES,encrypt_totp_secret,generate_totp_secret,get_totp_provisioning_uri,verify_totp_code
+from modules.flow_gate.settings import security_policy_service as _security
 router=APIRouter()
 # 0275 T0005 (NR0003 cause 2): every handler here does sync DB work (and login/
 # password_change run bcrypt, ~100ms+ of CPU), so they are plain `def` — FastAPI
@@ -24,6 +25,8 @@ def _roles(uid):
     except Exception:return []
 def _tokens(user,request):
     uid=user["user_id"]; sid=create_request_session(uid,request); roles=_roles(uid)
+    # flowgate.v02.0020 (시스템 › 사용자): the last successful sign-in, shown per user.
+    db_users.update(uid,{"last_login_at":_now_utc().isoformat(timespec="seconds")})
     access,_=create_access_token(uid,user["username"],roles,bool(user.get("is_admin")),sid=sid)
     refresh,jti,expires=create_refresh_token(uid,sid=sid); store_refresh_token(jti,uid,expires,sid)
     return {"access_token":access,"refresh_token":refresh,"token_type":"bearer","first_login_required":bool(user.get("first_login_required")),"user":{"user_id":uid,"username":user["username"],"email":user["email"]}}
@@ -35,8 +38,10 @@ def _lock(user,prefix):
         if _now_utc()<until:raise HTTPException(423,{"code":"account_locked","locked_until":value})
 def _failed(user,prefix):
     from datetime import timedelta
+    # flowgate.v02.0020 (시스템 › 보안 › 실패 잠금): attempts and lock time come from the policy.
+    attempts,minutes=_security.lock_rule()
     count=(user.get(prefix+"_failed_count") or 0)+1; values={prefix+"_failed_count":count}
-    if count>=5:values[prefix+"_locked_until"]=(_now_utc()+timedelta(minutes=15)).isoformat(timespec="seconds")
+    if count>=attempts:values[prefix+"_locked_until"]=(_now_utc()+timedelta(minutes=minutes)).isoformat(timespec="seconds")
     db_users.update(user["user_id"],values)
 def _reset(uid,prefix):db_users.update(uid,{prefix+"_failed_count":0,prefix+"_locked_until":None})
 class LoginRequest(BaseModel):username:str; password:str; locale:str="en"
@@ -45,6 +50,8 @@ class TotpBackupRequest(BaseModel):temp_token:str; backup_code:str
 class RefreshRequest(BaseModel):refresh_token:str
 class LogoutRequest(BaseModel):refresh_token:Optional[str]=None
 class PasswordChangeRequest(BaseModel):current_password:Optional[str]=None; new_password:str
+class TotpEnrollRequest(BaseModel):temp_token:str
+class InviteAcceptRequest(BaseModel):token:str; password:str
 @router.post("/login")
 def login(request:Request,body:LoginRequest):
     user=db_users.get_by_username(body.username) or (db_users.get_by_email(body.username) if "@" in body.username else None)
@@ -55,29 +62,80 @@ def login(request:Request,body:LoginRequest):
     if not user.get("is_active"):raise HTTPException(403,"account_inactive")
     if user.get("totp_secret"):
         token,_=create_temp_token(user["user_id"]); return {"totp_required":True,"temp_token":token}
+    # flowgate.v02.0020 (시스템 › 보안 › 2단계 인증): a user the policy covers and whose grace
+    # period is over enrols before any token is issued (POST /totp/enroll, then /totp/verify).
+    if _security.tfa_enrollment_due(user):
+        token,_=create_temp_token(user["user_id"]); return {"totp_setup_required":True,"temp_token":token}
     return _tokens(user,request)
-def _temp_user(token):
+def _temp_user(token):return _temp_payload(token)[0]
+def _temp_payload(token):
     try:payload=decode_token(token)
     except jwt.ExpiredSignatureError:raise HTTPException(401,"token_expired")
     except jwt.InvalidTokenError:raise HTTPException(401,"token_expired")
     if payload.get("type")!="temp" or not payload.get("totp_pending"):raise HTTPException(401,"token_expired")
     user=db_users.get_by_id(payload.get("sub"))
     if not user:raise HTTPException(401,"token_expired")
-    return user
+    return user,payload
 @router.post("/totp/verify")
+# The login page posts the code to /auth/totp; both paths are the same verification.
+@router.post("/totp")
 def totp_verify(request:Request,body:TotpVerifyRequest):
-    user=_temp_user(body.temp_token); _lock(user,"totp")
-    if not verify_totp_code(user.get("totp_secret"),body.code):_failed(user,"totp"); raise HTTPException(401,"invalid_code")
+    user,payload=_temp_payload(body.temp_token); _lock(user,"totp")
+    # A pending enrolment (token from /totp/enroll) is checked against its own secret and saved
+    # only once the code matches; a user who already has a confirmed secret is checked against it.
+    pending=None if user.get("totp_secret") else payload.get("totp_enroll")
+    secret=user.get("totp_secret") or (pending or {}).get("secret")
+    if not verify_totp_code(secret,body.code):_failed(user,"totp"); raise HTTPException(401,"invalid_code")
+    if pending:
+        from modules.flow_gate.db.connection import get_store
+        with get_store().transaction():
+            store_hashes(user["user_id"],pending.get("backup_codes") or []); db_users.update(user["user_id"],{"totp_secret":secret})
     _reset(user["user_id"],"totp"); return _tokens(user,request)
 @router.post("/totp/backup")
 def totp_backup(request:Request,body:TotpBackupRequest):
     user=_temp_user(body.temp_token); _lock(user,"totp")
+    if not _security.recovery_codes_enabled():raise HTTPException(403,"recovery_codes_disabled")
+    # Backup codes stand in for a confirmed authenticator only; they never complete an enrolment.
+    if not user.get("totp_secret"):raise HTTPException(409,"totp_not_enrolled")
     if not verify_backup_code(user["user_id"],body.backup_code):_failed(user,"totp"); raise HTTPException(401,"invalid_backup_code")
     _reset(user["user_id"],"totp"); return _tokens(user,request)
 @router.post("/totp/setup")
 def totp_setup(request:Request,current_user:dict=Depends(get_current_user)):
-    secret=generate_totp_secret(); db_users.update(current_user["user_id"],{"totp_secret":encrypt_totp_secret(secret)}); codes=generate_codes(); store_codes(current_user["user_id"],codes)
+    secret=generate_totp_secret(); db_users.update(current_user["user_id"],{"totp_secret":encrypt_totp_secret(secret)}); codes=_issue_backup_codes(current_user["user_id"])
     return {"qr_uri":get_totp_provisioning_uri(secret,current_user.get("username",current_user["user_id"])),"backup_codes":codes,"secret_masked":secret[:4]+"****"}
+def _issue_backup_codes(uid):
+    # 시스템 › 보안 › 복구 코드 off: no codes are issued (and /totp/backup refuses).
+    if not _security.recovery_codes_enabled():return []
+    codes=generate_codes(); store_codes(uid,codes); return codes
+@router.post("/totp/enroll")
+def totp_enroll(body:TotpEnrollRequest):
+    """Enrolment required by the 2FA policy at sign-in: the temp token from /login stands in for
+    a session. The secret is shown once in full (no QR renderer on the login page); the user then
+    confirms a code through /totp/verify with the temp_token this returns.
+
+    Nothing is saved here: the encrypted secret and the backup-code hashes travel in that signed,
+    short-lived token and are written only when /totp/verify accepts a code. An enrolment that is
+    left (page closed, Back, lost response, token expired) leaves the user unenrolled, so the next
+    sign-in asks for enrolment again with a new secret."""
+    user=_temp_user(body.temp_token)
+    if user.get("totp_secret"):raise HTTPException(409,"totp_already_enrolled")
+    if not _security.tfa_required(user):raise HTTPException(409,"totp_not_required")
+    secret=generate_totp_secret(); codes=generate_codes() if _security.recovery_codes_enabled() else []
+    token,_=create_temp_token(user["user_id"],{"totp_enroll":{"secret":encrypt_totp_secret(secret),"backup_codes":hash_codes(codes)}})
+    return {"qr_uri":get_totp_provisioning_uri(secret,user.get("username",user["user_id"])),"secret":secret,"backup_codes":codes,"temp_token":token}
+@router.get("/invite")
+def invite_info(token:str):
+    from modules.flow_gate.settings.system_user_service import find_invited
+    row=find_invited(token)
+    if not row:raise HTTPException(404,"invite_invalid")
+    return {"username":row["username"],"email":row.get("email")}
+@router.post("/invite/accept")
+def invite_accept(body:InviteAcceptRequest):
+    from modules.flow_gate.settings.system_user_service import SystemUserError,accept_invite
+    try:return accept_invite(body.token,body.password)
+    except SystemUserError as exc:
+        if exc.code=="invalid_password_policy":raise HTTPException(400,{"code":"invalid_password_policy","violations":validate_password(body.password)})
+        raise HTTPException(exc.status,exc.code)
 @router.post("/refresh")
 def refresh(request:Request,body:RefreshRequest):
     try:payload=decode_token(body.refresh_token)
@@ -99,10 +157,20 @@ def refresh(request:Request,body:RefreshRequest):
     if sid:
         session=get_session(sid)
         if not session or session.get("revoked_at"):raise HTTPException(401,"session_revoked")
-    else:sid=create_session(uid)
+        # 시스템 › 보안 › 자동 로그아웃: the background token refresh is not activity, so it
+        # neither extends last_used_at (API requests do, see middleware) nor survives idleness.
+        if _session_idle(session):revoke_session(sid,uid,"admin"); raise HTTPException(401,"session_idle")
+    else:sid=create_session(uid); touch_session(sid)
     access,_=create_access_token(uid,user["username"],_roles(uid),bool(user.get("is_admin")),sid=sid)
-    refresh_token,new_jti,_=create_refresh_token(uid,expires,sid); rotate_refresh_token(jti,new_jti,uid,expires,sid); touch_session(sid)
+    refresh_token,new_jti,_=create_refresh_token(uid,expires,sid); rotate_refresh_token(jti,new_jti,uid,expires,sid)
     return {"access_token":access,"refresh_token":refresh_token,"token_type":"bearer"}
+def _session_idle(session):
+    last=session.get("last_used_at") or session.get("created_at")
+    try:
+        at=datetime.fromisoformat(str(last).replace(" ","T"))
+    except (TypeError,ValueError):return False
+    if at.tzinfo is None:at=at.replace(tzinfo=timezone.utc)
+    return (_now_utc()-at).total_seconds()>_security.idle_seconds()
 @router.post("/logout")
 def logout(request:Request,body:LogoutRequest,payload:dict=Depends(verify_token)):
     uid=payload.get("sub"); sid=payload.get("sid")
