@@ -1105,7 +1105,12 @@ async function approve() {
       { attempt_id: attemptId.value, review_fingerprint: review.value.review_fingerprint },
     )
     const status = String(data.result?.status ?? '')
-    if (status === 'completed' || status === 'merged' || status === 'pushed' || status === 'already_applied') {
+    // 0668 T0004: a TR conflict is approved here too; its terminal outcome is the TR
+    // commit's own `committed` / `empty` (review_state `completed`).
+    if (
+      status === 'completed' || status === 'merged' || status === 'pushed'
+      || status === 'already_applied' || status === 'committed' || status === 'empty'
+    ) {
       showToast(t('main.git_review.approved_toast'), 'success')
       refreshTerminalSurfaces(status)
       emit('resolved')
@@ -1126,10 +1131,13 @@ async function approve() {
   } catch (e: any) {
     const message = resolveGitError(e, t, 'main.git_finalize.failed')
     showToast(message, 'danger')
-    approveOutcome.value = {
-      status: String(e?.response?.data?.error?.code || ''),
-      errors: [],
-      message,
+    const code = String(e?.response?.data?.error?.code || '')
+    approveOutcome.value = { status: code, errors: [], message }
+    // 0668 T0004: the reviewed tree moved (the server re-froze it) — show the new
+    // candidate and its fingerprint so the next [승인] is about what is really there.
+    if (code === 'stale_review') {
+      attemptId.value = newAttemptId()
+      await loadReview({ background: true })
     }
   } finally {
     busy.value = false

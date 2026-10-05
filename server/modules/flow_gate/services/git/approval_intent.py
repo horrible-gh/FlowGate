@@ -298,12 +298,15 @@ def consume_intent(merge_id: int, approval_intent_id: str) -> bool:
     return _gs.db_git.cas_session_context(merge_id, session.get("context"), next_context)
 
 
-def discard_intent(merge_id: int) -> Optional[dict]:
+def discard_intent(merge_id: int, *, reason: str = "merge_abort") -> Optional[dict]:
     """Drop the intent a merge abort invalidates (D0005 §3.6 B10).
 
     The abort ends the Git attempt the approval was riding on, so the approval has
     to start over from a fresh id — the discarded one is kept only as a trace and
     is never reusable, because nothing reads it back.
+
+    0668 T0004: the sweep's TTL abort and orphan close end the attempt just the same
+    and discard through here too (``reason`` records which of them did).
     """
     from modules.flow_gate.services import git_service as _gs
 
@@ -317,7 +320,7 @@ def discard_intent(merge_id: int) -> Optional[dict]:
         "approval_intent_id": intent.get("approval_intent_id"),
         "ac_doc_id": intent.get("ac_doc_id"),
         "discarded_at": now_iso(),
-        "reason": "merge_abort",
+        "reason": reason,
     }
     _gs.db_git.set_session_context(merge_id, context)
     return intent

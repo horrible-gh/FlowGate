@@ -1172,6 +1172,16 @@ def post_merge_review_approve(
     if not _UUID_RE.match(body.attempt_id or ""):
         return _error_response(400, "invalid_attempt_id", "attempt_id must be a UUID")
     try:
+        parked = git_service.tr_conflict_session(group_id)
+        if parked and int(parked.get("merge_id") or -1) == int(merge_id):
+            # 0668 T0004 — a TR conflict is approved on the common review screen. The
+            # fingerprint it showed travels into the TR commit, which still runs under its
+            # own lock (TR commit and merge review apply never share one lock span) and
+            # still writes the ledger through the service that owns it. `tr-commit` stays
+            # as the compatibility alias of this branch.
+            return tr_commit_service.commit_conflict_resolution(
+                group_id, merge_id, review_fingerprint=body.review_fingerprint,
+            )
         return git_service.approve_merge_review(
             group_id, merge_id,
             attempt_id=body.attempt_id, review_fingerprint=body.review_fingerprint,

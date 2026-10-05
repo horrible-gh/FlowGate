@@ -70,7 +70,8 @@ describe('GitStatusPanel — who owns the base-checkout changes', () => {
     expect(summary.text()).toContain('진행 중인 병합')
     // … the one button is the way out …
     const labels = summary.findAll('button').map((b) => b.text())
-    expect(labels.some((l) => l.includes('충돌 해소'))).toBe(true)
+    // 0668 T0004: the button is the direct-resolution entry, whatever its label now reads.
+    expect(labels.some((l) => l.includes(i18n.global.t('main.git_status.resolve_inline')))).toBe(true)
     // … and the action that would break the merge is not offered.
     expect(labels.some((l) => l.includes('AI에게 맡기기'))).toBe(false)
 
@@ -111,7 +112,7 @@ describe('GitStatusPanel — who owns the base-checkout changes', () => {
     const wrapper = await render(status(null))
     const resolve = wrapper
       .findAll('.git-status-row-main button')
-      .find((b) => b.text().includes('충돌 해소'))
+      .find((b) => b.text().includes(i18n.global.t('main.git_status.resolve_inline')))
     expect(resolve).toBeTruthy()
     expect(resolve!.classes()).toContain('btn-danger')
     expect(resolve!.classes()).not.toContain('btn-danger-ol')

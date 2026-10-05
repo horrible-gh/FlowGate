@@ -426,7 +426,9 @@ describe('deck 4543n0ab v9 shape parity (0482 R0001 rev2)', () => {
     const conflict = card.find('.git-trc-conflict')
     expect(conflict.exists()).toBe(true)
     expect(card.find('.git-trc-list').exists()).toBe(false)
-    expect(conflict.findAll('button')).toHaveLength(2)
+    // 0668 T0004: [AI로 해결] (card) + [직접 해결] + [중단].
+    expect(conflict.findAll('button')).toHaveLength(3)
+    expect(conflict.find('[data-test="conflict-card-ai"]').exists()).toBe(true)
   })
 })
 

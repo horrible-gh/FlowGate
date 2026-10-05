@@ -369,7 +369,9 @@ def tr_conflict_session(group_id: str) -> Optional[dict]:
     }
 
 
-def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
+def commit_tr_conflict(
+    group_id: str, merge_id: int, *, review_fingerprint: Optional[str] = None,
+) -> dict:
     """Commit a resolved TR conflict — the second press, and the reason there is one.
 
     A merge conflict may finish itself: both sides were written by people, "keep both" is
@@ -384,6 +386,13 @@ def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
     So: the session parks at ``review_state='resolved'``, the person reads the diff, and
     this is what they press. Returns the new commit and the session context; the ledger
     writes are the caller's (tr_commit_service owns the ledger, this module owns git).
+
+    0668 T0004: the common review screen's [승인] arrives here with the
+    ``review_fingerprint`` it showed. Under the lock the fingerprint must still be the
+    session's and the live tree must still be the frozen one; otherwise nothing is
+    committed, the candidate is re-frozen and ``stale_review`` asks for a fresh look —
+    the same contract ``approve_merge_review`` gives a merge. The legacy ``tr-commit``
+    route passes no fingerprint and keeps its old behaviour.
     """
     from modules.flow_gate.services import git_service as _gs
     session, cfg, project_id, root = _gs._session_context(group_id, merge_id)
@@ -416,6 +425,23 @@ def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
             409, "git_busy", f"another git operation is in progress for '{project_id}'"
         )
     try:
+        if review_fingerprint is not None:
+            fresh = _gs.db_git.session_context(_gs.db_git.get_session(merge_id))
+            if not fresh.get("review_fingerprint"):
+                fresh.update(_freeze_tr_candidate(root, fresh))
+                _gs.db_git.set_session_context(merge_id, fresh)
+            stale = review_fingerprint != fresh.get("review_fingerprint")
+            if not stale and not _live_tr_candidate_matches(root, fresh):
+                fresh.update(_freeze_tr_candidate(root, fresh))
+                fresh["last_error"] = {"code": "identity_mismatch"}
+                _gs.db_git.set_session_context(merge_id, fresh)
+                stale = True
+            if stale:
+                raise GitServiceError(
+                    409, "stale_review",
+                    "the reviewed tree has changed since this fingerprint was shown",
+                    {"review_fingerprint": fresh.get("review_fingerprint")},
+                )
         # A resolution that keeps the tree exactly as HEAD has it — "take ours" on every
         # chunk, which is a perfectly reasonable answer and one an AI will sometimes give.
         # There is nothing to commit then, and an empty commit is noise in the history
@@ -448,6 +474,8 @@ def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
         "ok": True,
         "result": {
             "status": "empty" if empty else "committed", "kind": kind, "commit": commit,
+            # 0668: the common review vocabulary, next to the TR-specific status.
+            "review_state": "completed",
             "doc_id": context.get("doc_id"), "doc_code": context.get("doc_code"),
             "ledger_row_id": context.get("ledger_row_id"),
             "target_sha": context.get("target_sha"),
@@ -483,6 +511,139 @@ def abort_tr_conflict(group_id: str, merge_id: int) -> dict:
             "ledger_row_id": context.get("ledger_row_id"),
         },
     }
+
+
+def _freeze_tr_candidate(root: Path, context: dict) -> dict:
+    """0668 T0004 — the TR conflict's review candidate, frozen like a merge's.
+
+    A TR conflict used to end at ``review_state='resolved'`` with no record of WHAT was
+    resolved, so the commit press could not tell the tree it was shown from the tree it
+    commits. This records the same fields the merge review gate reads (``base_head``,
+    ``snapshot_tree``, ``changes``, ``review_fingerprint``) so the common review screen can
+    show the diff and ``approve`` can demand the fingerprint the person actually saw.
+    There is no MERGE_HEAD in a revert; the reverted commit stands in for it in the
+    fingerprint so two TRs resolving to the same tree still fingerprint differently.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    unmerged = _gs._unmerged_paths(root)
+    if unmerged:
+        raise GitServiceError(
+            409, "conflict_markers_remain",
+            f"git still reports {len(unmerged)} unmerged path(s)",
+        )
+    base_head = _gs._rev_parse(root, "HEAD")
+    write_tree = _gs._run_git(["write-tree"], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+    if write_tree.returncode != 0:
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(write_tree.stderr))
+    snapshot_tree = (write_tree.stdout or "").strip()
+    ls = _gs._run_git(["ls-tree", "-r", "-z", snapshot_tree], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+    if ls.returncode != 0:
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(ls.stderr))
+    manifest = _gs._parse_ls_tree_z(ls.stdout or "")
+    diff_proc = _gs._run_git(
+        ["diff", "--name-status", "-M", "-z", base_head or "", snapshot_tree, "--"],
+        cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC,
+    )
+    if diff_proc.returncode != 0:
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(diff_proc.stderr))
+    return {
+        "base_head": base_head,
+        "snapshot_tree": snapshot_tree,
+        "changes": _gs._parse_name_status_manifest(diff_proc.stdout or ""),
+        "review_fingerprint": _gs._compute_review_fingerprint(
+            base_head, context.get("target_sha"), None, manifest,
+        ),
+    }
+
+
+def _live_tr_candidate_matches(root: Path, context: dict) -> bool:
+    """Is the tree the TR commit would record RIGHT NOW the one that was reviewed?"""
+    from modules.flow_gate.services import git_service as _gs
+    if _gs._unmerged_paths(root):
+        return False
+    if _gs._rev_parse(root, "HEAD") != context.get("base_head"):
+        return False
+    write_tree = _gs._run_git(["write-tree"], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+    if write_tree.returncode != 0:
+        return False
+    return (write_tree.stdout or "").strip() == context.get("snapshot_tree")
+
+
+def _tr_review_context(group_id: str, merge_id: int) -> tuple[dict, dict, Path]:
+    """``(session, context, root)`` of a resolved TR conflict, freezing a candidate for a
+    session parked before 0668 (resolved, but never fingerprinted)."""
+    from modules.flow_gate.services import git_service as _gs
+    session, _cfg, _project_id, root = _gs._session_context(group_id, merge_id)
+    if _gs.db_git.session_kind(session) not in _gs.db_git.TR_SESSION_KINDS:
+        raise GitServiceError(409, "review_not_ready", "not a TR conflict session")
+    context = _gs.db_git.session_context(session)
+    if context.get("review_state") != TR_CONFLICT_REVIEW_RESOLVED:
+        raise GitServiceError(409, "review_not_ready", "this conflict has not been resolved yet")
+    if not context.get("review_fingerprint"):
+        context.update(_freeze_tr_candidate(root, context))
+        _gs.db_git.set_session_context(merge_id, context)
+    return session, context, root
+
+
+def tr_conflict_review(group_id: str, merge_id: int) -> dict:
+    """0668 T0004 — GET …/review for a TR conflict: the common review screen's payload.
+
+    Same shape as ``get_merge_review`` so one screen serves both. What a TR review does
+    not have is said with the capability flags rather than with a different screen: no
+    review conversation and no reject (there is no resolver baseline to re-run a revert
+    from — the resolver itself is where a TR resolution is redone), only approve.
+    Opening the review is activity, so it resets the sweep TTL (0205 L §1).
+    """
+    from modules.flow_gate.services import git_service as _gs
+    session, context, _root = _tr_review_context(group_id, merge_id)
+    _gs._touch_review_activity(merge_id)
+    return {
+        "ok": True,
+        "result": {
+            "group_id": group_id,
+            "merge_id": merge_id,
+            "kind": _gs.db_git.session_kind(session),
+            "review_state": _gs.REVIEW_STATE_PENDING,
+            "review_fingerprint": context.get("review_fingerprint"),
+            "instruction_generation": 0,
+            "base_head": context.get("base_head"),
+            "merge_head": None,
+            "snapshot_tree": context.get("snapshot_tree"),
+            "changes": context.get("changes") or [],
+            "conflict_origins": [],
+            "conflict_supersedes": [],
+            "conversation": [],
+            "held_test_operations": [],
+            "pending_conversation": None,
+            "resolver_provider": context.get("resolver_provider"),
+            "auto_authority": False,
+            "reconciliation_kind": None,
+            "last_error": context.get("last_error"),
+            "can_approve": True,
+            "can_reject": False,
+            "can_send": False,
+            "owner_type": _session_owner_type(session),
+            "tr_conflict": {
+                "doc_id": context.get("doc_id"),
+                "doc_code": context.get("doc_code"),
+                "target_sha": (context.get("target_sha") or "")[:7] or None,
+                "subject": context.get("subject"),
+            },
+        },
+    }
+
+
+def tr_conflict_review_file_diff(group_id: str, merge_id: int, path: str) -> dict:
+    """Old(``base_head``)/new(``snapshot_tree``) of one path in a TR review candidate."""
+    from modules.flow_gate.services import git_service as _gs
+    normalized = path.replace("\\", "/")
+    _session, context, root = _tr_review_context(group_id, merge_id)
+    old = _gs._diff_side_from_commit(root, context.get("base_head"), normalized)
+    new = _gs._diff_side_from_commit(root, context.get("snapshot_tree"), normalized)
+    return {"ok": True, "data": {
+        "group_id": group_id, "merge_id": merge_id, "path": path,
+        "status": _gs._diff_status(old, new, path), "old": old, "new": new,
+    }}
 
 
 def _split_content_segments(content: str) -> Optional[list[dict]]:
@@ -1284,7 +1445,15 @@ def _apply_conflict_resolution_locked(
                 },
             }
         elif _gs.db_git.session_kind(session) in _gs.db_git.TR_SESSION_KINDS:
-            _set_tr_review_state(merge_id, TR_CONFLICT_REVIEW_RESOLVED)
+            # 0668 T0004: freeze the candidate under the same mutex as the writes, so the
+            # common review screen shows exactly what the commit press will record.
+            context = _gs.db_git.session_context(session)
+            context.update(_freeze_tr_candidate(root, context))
+            context["review_state"] = TR_CONFLICT_REVIEW_RESOLVED
+            provider_id, provider_name = _resolver_run_provider(resolver_run_id)
+            context["resolver_provider"] = provider_name or provider_id
+            context["last_error"] = None
+            _gs.db_git.set_session_context(merge_id, context)
             result = {
                 "ok": True,
                 "result": {
@@ -1292,6 +1461,7 @@ def _apply_conflict_resolution_locked(
                     "merge_commit": None,
                     "pushed": False,
                     "remaining_conflicts": [],
+                    "review_fingerprint": context["review_fingerprint"],
                 },
             }
         else:

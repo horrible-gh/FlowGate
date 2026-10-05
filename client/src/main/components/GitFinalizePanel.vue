@@ -187,10 +187,24 @@
           </span>
           <span v-if="firstResidualMarker" class="git-marker-warning">{{ firstResidualMarker }}</span>
         </div>
-        <div class="flex" style="justify-content:flex-end; gap:10px; margin-top:10px;">
+        <div class="flex" style="justify-content:flex-end; gap:10px; margin-top:10px; flex-wrap:wrap;">
           <button class="btn btn-secondary" :disabled="busy" @click="abortMerge">
             <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
           </button>
+          <!-- 0668 T0004 (R1) — the AI call starts here, on the conflict card; the resolver
+               below is the direct-resolution editor and detail view, not a gate in front of it. -->
+          <GitConflictCardActions
+            :providers="aiProviderStore.providers"
+            :selected-provider="aiProviderStore.selectedProviderId"
+            :provider-loading="aiProviderStore.loading"
+            :provider-errored="!!aiProviderStore.error"
+            :busy="busy"
+            :starting="conflictAiStarting"
+            :running-notice="conflictAiRunNotice"
+            hide-direct
+            @ai-resolve="invokeConflictAi('', false)"
+            @update:provider="aiProviderStore.selectProvider"
+          />
           <button class="btn btn-primary" :disabled="busy" @click="openConflictDialog">
             <AppIcon name="git-diff" /> {{ t('main.git_finalize.open_resolver') }}
           </button>
@@ -285,7 +299,7 @@ import { getRequest, postRequest } from '@shared/api'
 import { resolveGitError } from '@shared/gitErrors'
 import { useProjectStore } from '../stores/project'
 import { useAiProviderStore } from '../stores/aiProvider'
-import { isScreenOwnedRun, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { useToast } from './common/useToast'
 // 0182 NR0003 §6: the chunk parser/assembler state machine lives in a shared
 // composable; 0212 T0009 moved the resolver dialog itself into
@@ -298,7 +312,18 @@ import {
   type ConflictFileState,
 } from '../composables/useConflictChunks'
 import GitConflictResolverDialog from './GitConflictResolverDialog.vue'
+import GitConflictCardActions from './GitConflictCardActions.vue'
 import GitMergeReviewDialog from './GitMergeReviewDialog.vue'
+// 0668 T0004 — the conflict lifecycle shared with GitStatusPanel.
+import {
+  conflictRunElapsed,
+  groupParts,
+  isReviewPendingState,
+  reviewBadgeKeyOf,
+  runningConflictRun,
+  useConflictAiStarter,
+  watchConflictRunsEnded,
+} from '../composables/useConflictSession'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
 import GitUntrackedConflictDialog from './GitUntrackedConflictDialog.vue'
 import GitFinalizeAxis from './GitFinalizeAxis.vue'
@@ -441,18 +466,9 @@ function restoreSuggested() {
   commitMessage.value = commitSuggested.value
 }
 // 0481 D0006 §6.4 — same states approve_merge_review/reconcile_push_session use.
-const REVIEW_PENDING_STATES = new Set(['resolved_pending_review', 're_review', 'applying', 'reconciling'])
-const reviewPending = computed(() => {
-  const rs = state.value?.review_state
-  return !!rs && REVIEW_PENDING_STATES.has(rs)
-})
-const reviewBadgeKey = computed(() => {
-  const rs = state.value?.review_state
-  if (rs === 'reconciling') return 'reconciling'
-  if (rs === 're_review') return 're_review'
-  if (rs === 'applying') return 'applying'
-  return 'pending'
-})
+// 0668 T0004: a resolved TR conflict arrives here in the same vocabulary (finalize state).
+const reviewPending = computed(() => isReviewPendingState(state.value?.review_state))
+const reviewBadgeKey = computed(() => reviewBadgeKeyOf(state.value?.review_state))
 const resolvedFileCount = computed(() => conflictFiles.value.filter(isFileResolved).length)
 const allConflictsResolved = computed(
   () => conflictFiles.value.length > 0 && conflictFiles.value.every(isFileResolved),
@@ -543,11 +559,6 @@ function closeConflictDialog() {
   conflictDialogOpen.value = false
 }
 
-function groupParts(groupId: string) {
-  const [project, module = 'none', ...rest] = groupId.split('.')
-  return { project, module, group: rest.join('.') }
-}
-
 // Project id used to load the runtime provider list. The group id's first segment is the
 // project; fall back to the active project store when the group id is not yet set.
 const providerProject = computed(() => groupParts(props.groupId).project || projectStore.currentProjectId || '')
@@ -579,45 +590,22 @@ async function reloadProviders() {
 // 0481 T0010 rev5 (반려 #1): the window between "the start request returned" and "this
 // browser has a run entry". Before rev5 nothing was drawn in it, so a pressed [AI 호출]
 // and an unpressed one looked exactly alike.
-const conflictAiStarting = ref(false)
+const conflictAiStarter = useConflictAiStarter(() => providerProject.value)
+const conflictAiStarting = computed(() => conflictAiStarter.starting.value === props.groupId)
 
 async function invokeConflictAi(message: string, auto: boolean) {
   const mergeId = state.value?.merge_id
   if (!props.groupId || mergeId == null || busy.value) return
   busy.value = true
-  conflictAiStarting.value = true
   try {
-    // RC1: forward the current provider selection so the run honours it instead of
-    // silently falling back to the server default chain.
-    await aiProviderStore.ensureLoaded(providerProject.value)
-    const body: Record<string, unknown> = {
-      ...groupParts(props.groupId),
-      action_scope: 'resolve_conflict',
-      mode: 'single',
-      merge_id: mergeId,
-      // 0481 D0006 §3.2 / L0007 §2.2: [자동] is stamped onto the session at THIS
-      // human-authenticated moment (record_auto_authority), never at resolution
-      // submission time.
-      auto,
-    }
-    if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
-    if (message) body.messages = [message]
-    const response = await postRequest<Record<string, unknown>>('/api/v1/ai-invoke/start', body)
-    // 0481 T0010 rev5 (반려 #1): adopt our own start response so the dialog shows the run
-    // immediately rather than whenever the worker thread's SSE frame lands. group_id and
-    // action_scope are re-stamped so a server whose start payload predates this revision
-    // still yields a screen-owned entry (isScreenOwnedRun) instead of a covered dialog.
-    aiInvokeRunsStore.trackStarted({
-      ...response.data,
-      group_id: props.groupId,
-      action_scope: 'resolve_conflict',
-    })
+    // RC1 + 0481 rev5: provider = the card/dialog selection; the start response is adopted
+    // at once so the run shows before the worker's SSE frame (useConflictAiStarter).
+    await conflictAiStarter.start({ group_id: props.groupId, merge_id: mergeId }, { message, auto })
     showToast(t('main.git_finalize.conflict_ai_started'), 'success')
   } catch (e: any) {
     showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
-    conflictAiStarting.value = false
     await fetchState()
   }
 }
@@ -908,42 +896,32 @@ watch(() => props.groupId, () => {
  * 0481 T0010 rev3 — this group's own conflict AI run, as a sentence for the
  * resolver dialog. `null` while nothing of this scope is running.
  */
-const conflictAiRun = computed(() => {
-  const entry = aiInvokeRunsStore.runsByGroup[props.groupId]
-  if (!entry || !isScreenOwnedRun(entry)) return null
-  return entry.phase === 'running' || entry.phase === 'pause_requested' ? entry : null
-})
+const conflictAiRun = computed(() => runningConflictRun(aiInvokeRunsStore, props.groupId))
 const conflictAiRunNotice = computed(() => {
   const entry = conflictAiRun.value
   if (!entry) return null
-  const total = Math.floor(aiInvokeRunsStore.elapsedMsFor(props.groupId) / 1000)
   return t('main.git_finalize.conflict_ai_running', {
     provider: entry.provider?.name || t('main.git_review.unknown_provider'),
-    elapsed: `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`,
+    elapsed: conflictRunElapsed(aiInvokeRunsStore, props.groupId),
   })
 })
 // The run used to end by REMOVING the cover, which remounted this panel and
 // refetched everything. Now that the panel stays, the end of the run is the
-// signal to re-read the conflict list and the finalize state ourselves —
-// otherwise the resolver keeps showing the pre-run files and looks like the
-// call did nothing.
-watch(conflictAiRun, (run, previous) => {
-  if (run || !previous) return
-  void (async () => {
-    const resolverWasOpen = conflictDialogOpen.value
-    await fetchState()
-    const mergeId = state.value?.merge_id
-    if (!resolverWasOpen || mergeId == null) return
-    if (reviewPending.value) {
-      // The run resolved it. The resolver has nothing left to show, and its
-      // successor screen is the approval gate — hand straight over instead of
-      // leaving a dialog full of stale conflicts the operator cannot act on.
-      conflictDialogOpen.value = false
-      reviewDialogOpen.value = true
-      return
-    }
-    await fetchConflicts(mergeId)
-  })()
+// signal to re-read the conflict list and the finalize state ourselves.
+// 0668 T0004: follow the SERVER state, not whether the resolver happened to be open —
+// a run started from the card (or a resolver closed meanwhile) reaching review opens
+// the review screen too; a run that left conflicts refreshes an open resolver.
+watchConflictRunsEnded(() => [props.groupId], async () => {
+  const resolverWasOpen = conflictDialogOpen.value
+  await fetchState()
+  const mergeId = state.value?.merge_id
+  if (mergeId == null) return
+  if (reviewPending.value) {
+    conflictDialogOpen.value = false
+    reviewDialogOpen.value = true
+    return
+  }
+  if (resolverWasOpen) await fetchConflicts(mergeId)
 })
 
 defineExpose({ fetchState })

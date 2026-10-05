@@ -1560,6 +1560,7 @@ export default {
       btn_pause: '일시정지',
       btn_resume: '재개',
       btn_open_doc: '문서 열기',
+      btn_open_review: '검토 열기',
       btn_remove: '목록에서 제거',
       btn_release_lease: '잠금 해제',
       error_release_lease_failed: '잠금 해제에 실패했습니다.',
@@ -3489,6 +3490,10 @@ export default {
       base_dirty_summary: '기준 브랜치 미커밋 변경 {n}개',
       base_dirty_guide: '기본은 접혀 있습니다. AI에게 정리를 맡기거나 펼쳐서 개별 파일을 되돌릴 수 있습니다.',
       ai_delegate: 'AI에게 맡기기',
+      // 0668 T0004 — the conflict card's own controls (R1).
+      ai_resolve: 'AI로 해결',
+      direct_resolve: '직접 해결',
+      ai_resolve_starting: 'AI 해결을 요청하는 중…',
       base_ai_ready: '미커밋 파일을 AI가 커밋 또는 되돌리기로 정리합니다.',
       base_ai_running: '이 프로젝트의 AI 정리가 진행 중입니다.',
       base_ai_started: '기준 브랜치 AI 정리를 시작했습니다.',
@@ -3496,7 +3501,7 @@ export default {
       base_ai_failed: '기준 브랜치 AI 정리를 시작하지 못했습니다.',
       // 0481 T0010 #1 — 병합이 충돌에서 멈춰 있으면 이 변경들은 "정리할 미커밋 파일"이 아니라
       // 병합 그 자체다. 커밋도 되돌리기도 AI 정리도 하면 안 되고, 갈 곳은 충돌 해소뿐이다.
-      base_ai_merge_in_progress: '진행 중인 병합이 이 변경을 갖고 있습니다 — [충돌 해소]에서 이어서 처리하세요.',
+      base_ai_merge_in_progress: '진행 중인 병합이 이 변경을 갖고 있습니다 — [직접 해결]에서 이어서 처리하세요.',
       base_dirty_merge_summary: '진행 중인 병합의 변경 {n}개',
       base_dirty_merge_guide: '충돌에서 멈춘 병합입니다. 커밋·되돌리기·AI 정리 대신 충돌을 해소하세요.',
       base_dirty_merge_alert: '이 파일들은 진행 중인 병합의 것입니다. 여기서 커밋하거나 되돌리면 병합이 깨집니다.',
@@ -3508,7 +3513,7 @@ export default {
       no_pending: '마무리 대기 중인 항목이 없습니다.',
       conflict_open_hint: '충돌은 마무리 패널에서 해소하세요',
       action_label: '동작',
-      resolve_inline: '충돌 해소',
+      resolve_inline: '직접 해결',
       open: '열기',
       slots_header: '활성 브랜치 슬롯',
       // 0332 D0005 §6.2 — 슬롯마다의 '이 그룹의 커밋'. 개수는 늘 보이고 목록만 접힌다.
@@ -3544,11 +3549,11 @@ export default {
         block_git_inactive: 'git 연동이 꺼져 있습니다',
         conflict_tr_revert: '{code} 의 소스 되돌리기가 충돌했습니다 (파일 {n}개).',
         conflict_tr_reapply: '{code} 의 소스 되살리기가 충돌했습니다 (파일 {n}개).',
-        conflict_review_ready: '해결한 내용이 커밋을 기다리고 있습니다.',
-        conflict_resolve_btn: '충돌 해결',
+        conflict_review_ready: '해결한 내용이 검토를 기다리고 있습니다.',
+        conflict_resolve_btn: '직접 해결',
         conflict_commit_btn: '해결 결과 커밋',
         conflict_abort_btn: '되돌리기 중단',
-        conflict_resolved_toast: '충돌을 해결했습니다. 내용을 확인하고 [해결 결과 커밋]을 눌러 주세요.',
+        conflict_resolved_toast: '충돌을 해결했습니다. 검토 화면에서 확인한 뒤 승인하세요.',
         conflict_committed_toast: '커밋 {commit} 을 남겼습니다.',
         conflict_aborted_toast: '되돌리기를 중단하고 워크트리를 원래대로 되돌렸습니다.',
       },
@@ -3712,6 +3717,7 @@ export default {
     git_review: {
       title: '승인 대기',
       open_review: '승인 화면 열기',
+      no_review_pending: '검토를 기다리는 충돌이 없습니다.',
       file_count: '변경 {n}개 파일',
       resolved_by: '이 해결은 [{provider}]로 생성됨',
       // 0630 T0005 (D0004 §27) — 수동 해결을 AI 해결로 말하지 않는다.
