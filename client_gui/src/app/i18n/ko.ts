@@ -95,6 +95,37 @@ export default {
     footer_mark: 'Build the Flow, Not Just the Document.',
   },
   designer: {
+    // flowgate.v02.0026 — Designer Center (Flow Tabs + read-only Canvas).
+    center: {
+      tabs_label: '열린 플로우',
+      close_tab: '{name} 닫기',
+      no_open_flow: '열린 플로우 없음',
+      no_open_flow_desc: '프로젝트 탐색기에서 플로우를 더블클릭하면 여기에 열립니다',
+      graph_loading: '그래프를 불러오는 중',
+      graph_load_failed: '그래프를 불러오지 못했습니다',
+      retry: '다시 시도',
+      empty_graph: '표시할 노드가 없습니다',
+      sample_data: '샘플 데이터',
+      canvas_label: '{name} 캔버스',
+      node_kinds: {
+        requirement: '요구사항',
+        research: '조사',
+        plan: '작업계획',
+        task: '작업',
+        test: '테스트',
+        approval: '승인',
+        design: '설계',
+        memo: '메모',
+        unknown: '노드',
+      },
+      node_states: {
+        draft: '작성 중',
+        in_progress: '진행 중',
+        review: '검토 중',
+        done: '완료',
+        blocked: '보류',
+      },
+    },
     // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
     project_explorer: {
       title: '프로젝트',
@@ -160,14 +191,10 @@ export default {
       expand_left: '좌측 패널 펼치기',
       top_label: 'TOP',
       top_parts: 'Header / MenuBar / Toolbar',
-      workspace_label: 'CENTER / WORKSPACE',
-      workspace_parts: '플로우 탭 / Canvas',
       bottom_label: 'BOTTOM',
       bottom_parts: 'Inspector / Minimap',
       right_label: 'RIGHT',
       right_parts: 'Palette / Git',
-      active_flow: '활성 플로우: {name}',
-      no_active_flow: '활성 플로우 없음',
     },
   },
   placeholder: {

@@ -1,35 +1,27 @@
 <template>
-  <!-- Final container for the center work area (Flow Tabs / Canvas). -->
+  <!-- Final container for the center work area. flowgate.v02.0026: holds the Designer Center
+       (Flow Tabs + read-only Canvas); the tab strip and the Canvas scroll / pan themselves. -->
   <section class="designer-workspace" data-test="designer-workspace">
-    <ShellPlaceholder
-      area="workspace"
-      :label="t('gui.designer.shell.workspace_label')"
-      :parts="t('gui.designer.shell.workspace_parts')"
-    >
-      <span data-test="designer-workspace-flow">
-        {{ activeFlow ? t('gui.designer.shell.active_flow', { name: activeFlow.name }) : t('gui.designer.shell.no_active_flow') }}
-      </span>
-    </ShellPlaceholder>
+    <DesignerCenter :center="center" />
   </section>
 </template>
 
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n'
-import type { FlowRef } from '@/features/project'
-import ShellPlaceholder from './ShellPlaceholder.vue'
+import DesignerCenter from '../center/DesignerCenter.vue'
+import type { DesignerCenterSession } from '../center/designerCenterSession'
 
 defineProps<{
-  activeFlow: FlowRef | null
+  center: DesignerCenterSession
 }>()
-
-const { t } = useI18n()
 </script>
 
 <style scoped>
 .designer-workspace {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 </style>

@@ -1,14 +1,15 @@
 <template>
   <!-- flowgate.v02.0025 — Designer Shell (0003-D §2.1): the Designer route screen.
        DesignerShell > Top + Body, Body > Left + Center + Right, Center > Workspace + Bottom.
-       Only the Left Dock is real this step; Top / Workspace / Bottom / Right are the final
-       containers with a placeholder inside. -->
+       The Left Dock (0023/0024 Explorers) and the Workspace (0026 Designer Center: Flow Tabs +
+       read-only Canvas) are real; Top / Bottom / Right are the final containers with a
+       placeholder inside. -->
   <div class="designer-shell" data-test="designer-shell">
     <DesignerTop />
     <DesignerBody :left-width="leftColumnWidth(layout)" :right-width="rightColumnWidth(layout)">
       <DesignerLeftDock
         :project-id="projectId"
-        :active-flow="activeFlow"
+        :active-flow="activeFlowRef"
         :mode="layout.activeLeftMode"
         :collapsed="layout.leftCollapsed"
         @update:mode="layout.activeLeftMode = $event"
@@ -16,23 +17,29 @@
         @expand="layout.leftCollapsed = false"
         @activate-flow="onActivateFlow"
       />
-      <DesignerCenterColumn :active-flow="activeFlow" :bottom-height="layout.bottomHeight" />
+      <DesignerCenterColumn :center="center" :bottom-height="layout.bottomHeight" />
       <DesignerRightDock :collapsed="layout.rightCollapsed" />
     </DesignerBody>
   </div>
 </template>
 
 <script setup lang="ts">
-// State owned here (0003-D §3.8): the layout state (designerLayout.ts) and the one piece of
-// Designer context, the active Flow. Project / Group / Flow / file data stays with the
-// Explorers and features/project; the Shell calls no API. It reads the current Project id
-// once and hands the same value to both Explorers, so they always look at one Project.
+// State owned here (0003-D §3.8): the layout state (designerLayout.ts) and the Designer Center
+// session (flowgate.v02.0026 — center/designerCenterSession.ts), which this Shell only creates
+// and keeps for its own lifetime. Open Flow tabs, the active Flow, Graphs, Selection and
+// Viewport all live in that session; the Shell feeds it the current Project and the Project
+// Explorer's Flow activation, and hands its active FlowRef to the left Dock, so the Project
+// Explorer mark, the File Explorer target and the active tab are one and the same value.
+// Project / Group / Flow / file data stays with the Explorers and features/project; the Shell
+// calls no API. It reads the current Project id once and hands the same value to both
+// Explorers, so they always look at one Project.
 //
 // File Explorer intents (select / open / open-diff / context) and Project Explorer plain
-// selection are intentionally not handled yet — their targets (Viewer, Modeless Window,
-// Flow Tabs) do not exist (0003-D DEFERRED).
-import { computed, reactive, ref, watch } from 'vue'
-import { useProjectStore, type FlowRef } from '@/features/project'
+// selection are intentionally not handled yet — their targets (Viewer, Modeless Window) do
+// not exist (0003-D DEFERRED).
+import { computed, reactive, watch } from 'vue'
+import { useProjectStore } from '@/features/project'
+import { createDesignerCenterSession } from '../center/designerCenterSession'
 import type { ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
 import DesignerBody from './DesignerBody.vue'
 import DesignerCenterColumn from './DesignerCenterColumn.vue'
@@ -47,19 +54,19 @@ const layout = reactive(createDesignerLayout())
 
 const projectId = computed<string | null>(() => projectStore.currentProjectId)
 
+const center = createDesignerCenterSession()
+
 // The Project Explorer's Flow id is the v0.1 group id, which is exactly FlowRef.groupId of
 // the File Explorer — no lookup or conversion needed.
-const activeFlow = ref<FlowRef | null>(null)
+const activeFlowRef = center.activeFlowRef
 
+// The session ignores an activation for another Project.
 function onActivateFlow(payload: ProjectExplorerFlowEvent) {
-  if (payload.projectId !== projectId.value) return
-  activeFlow.value = { groupId: payload.flowId, name: payload.flowName }
+  center.openFlow(payload)
 }
 
-// A Flow of the previous Project is never carried over.
-watch(projectId, () => {
-  activeFlow.value = null
-})
+// A Flow of the previous Project is never carried over: a new Project clears the Center.
+watch(projectId, (id) => center.setProject(id), { immediate: true })
 </script>
 
 <style scoped>

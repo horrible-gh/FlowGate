@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@vue-flow/core": "1.48.2",
     "axios": "^1.10.0",
     "pinia": "^2.2.0",
     "vue": "^3.4.0",

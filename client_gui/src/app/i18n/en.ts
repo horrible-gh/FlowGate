@@ -92,6 +92,37 @@ export default {
     footer_mark: 'Build the Flow, Not Just the Document.',
   },
   designer: {
+    // flowgate.v02.0026 — Designer Center (Flow Tabs + read-only Canvas).
+    center: {
+      tabs_label: 'Open flows',
+      close_tab: 'Close {name}',
+      no_open_flow: 'No open flow',
+      no_open_flow_desc: 'Double-click a flow in the Project Explorer to open it here',
+      graph_loading: 'Loading graph',
+      graph_load_failed: 'Could not load the graph',
+      retry: 'Retry',
+      empty_graph: 'No nodes to show',
+      sample_data: 'Sample data',
+      canvas_label: '{name} canvas',
+      node_kinds: {
+        requirement: 'Requirement',
+        research: 'Research',
+        plan: 'Work plan',
+        task: 'Task',
+        test: 'Test',
+        approval: 'Approval',
+        design: 'Design',
+        memo: 'Memo',
+        unknown: 'Node',
+      },
+      node_states: {
+        draft: 'Draft',
+        in_progress: 'In progress',
+        review: 'In review',
+        done: 'Done',
+        blocked: 'On hold',
+      },
+    },
     // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
     project_explorer: {
       title: 'Project',
@@ -157,14 +188,10 @@ export default {
       expand_left: 'Expand left panel',
       top_label: 'TOP',
       top_parts: 'Header / MenuBar / Toolbar',
-      workspace_label: 'CENTER / WORKSPACE',
-      workspace_parts: 'Flow tabs / Canvas',
       bottom_label: 'BOTTOM',
       bottom_parts: 'Inspector / Minimap',
       right_label: 'RIGHT',
       right_parts: 'Palette / Git',
-      active_flow: 'Active Flow: {name}',
-      no_active_flow: 'No active Flow',
     },
   },
   placeholder: {

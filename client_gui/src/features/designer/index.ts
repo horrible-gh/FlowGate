@@ -18,4 +18,6 @@ export type {
   ExplorerFilter,
 } from './fileExplorer/fileExplorerModel'
 // flowgate.v02.0025 — Designer Shell (Top + Body(Left + Center(Workspace + Bottom) + Right)).
+// flowgate.v02.0026 — the Designer Center (center/: Flow Tabs + read-only Canvas) is assembled
+// inside the Shell only and has no consumer outside it, so it adds no export here.
 export { default as DesignerShell } from './shell/DesignerShell.vue'

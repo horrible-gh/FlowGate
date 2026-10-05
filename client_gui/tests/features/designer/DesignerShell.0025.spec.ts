@@ -4,10 +4,14 @@
  * The Shell is mounted with the real 0023 Project Explorer, the real 0024 File Explorer and
  * the real project store; only the HTTP layer (`@shared/api`) is mocked. Assertions go
  * through the DOM the user sees and the props the Explorers receive.
+ *
+ * flowgate.v02.0026 (0003-D §7.1): the Workspace now holds the Designer Center (Flow Tabs +
+ * Canvas) instead of its placeholder, and an activated Flow opens a tab rendered with the
+ * real Vue Flow — this file gives the Canvas a size and a ResizeObserver stand-in.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
@@ -22,6 +26,35 @@ vi.mock('@shared/api', () => ({
 }))
 
 registerAppMessages(i18n)
+
+// --- Canvas environment for Vue Flow under jsdom (this file only) ---------------------------
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+const sizeProps = ['offsetWidth', 'offsetHeight'] as const
+const originalSize = sizeProps.map((p) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, p))
+let paneStyle: HTMLStyleElement
+
+beforeAll(() => {
+  vi.stubGlobal('ResizeObserver', ResizeObserverStub)
+  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 })
+  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 600 })
+  paneStyle = document.createElement('style')
+  paneStyle.textContent = '.vue-flow__pane { z-index: 1; }'
+  document.head.appendChild(paneStyle)
+})
+
+afterAll(() => {
+  vi.unstubAllGlobals()
+  sizeProps.forEach((p, i) => {
+    if (originalSize[i]) Object.defineProperty(HTMLElement.prototype, p, originalSize[i]!)
+    else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[p]
+  })
+  paneStyle.remove()
+})
+// -------------------------------------------------------------------------------------------
 
 function n(partial: Record<string, unknown>) {
   return { type_code: null, number: null, filename: null, has_md: false, md_path: null, ...partial }
@@ -91,6 +124,8 @@ async function mountShell(projectId: string | null = 'p') {
 }
 
 const get = (w: VueWrapper<any>, test: string) => w.get(`[data-test="${test}"]`)
+const tabNames = (w: VueWrapper<any>) => w.findAll('[data-test="designer-flow-tab"] [role="tab"]').map((t) => t.text())
+const activeTabName = (w: VueWrapper<any>) => w.find('[data-test="designer-flow-tab"] [role="tab"][aria-selected="true"]')
 const isShown = (el: Element) => (el as HTMLElement).style.display !== 'none'
 
 function explorerRow(w: VueWrapper<any>, label: string) {
@@ -152,9 +187,12 @@ describe('DesignerShell — container hierarchy', () => {
 
     expect(label('designer-top')).toBe('TOP')
     expect(get(w, 'designer-top').text()).toContain('Header / MenuBar / Toolbar')
-    expect(label('designer-workspace')).toBe('CENTER / WORKSPACE')
-    expect(get(w, 'designer-workspace').text()).toContain('플로우 탭 / Canvas')
-    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 플로우 없음')
+    // flowgate.v02.0026: the Workspace holds the Designer Center, no placeholder.
+    const workspace = get(w, 'designer-workspace')
+    expect(workspace.find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
+    expect([...workspace.element.children].map((c) => c.getAttribute('data-test'))).toEqual(['designer-center'])
+    expect(workspace.get('[data-test="designer-center-no-flow"]').text()).toContain('열린 플로우 없음')
+    expect(w.find('[data-test="designer-workspace-flow"]').exists()).toBe(false)
     expect(label('designer-bottom-dock')).toBe('BOTTOM')
     expect(get(w, 'designer-bottom-dock').text()).toContain('Inspector / Minimap')
     expect(label('designer-right-dock')).toBe('RIGHT')
@@ -217,7 +255,8 @@ describe('DesignerShell — active Flow', () => {
     const w = await mountShell()
     await activateCanvas(w)
 
-    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 플로우: Canvas')
+    expect(tabNames(w)).toEqual(['Canvas'])
+    expect(activeTabName(w).text()).toBe('Canvas')
     expect(w.findComponent(ProjectExplorer).props('activeFlowId')).toBe('p.ui.0002')
     expect(explorerRow(w, 'Canvas').classes()).toContain('is-active')
     expect(explorerRow(w, 'Canvas').element.closest('[data-explorer-row]')!.getAttribute('aria-current')).toBe('true')
@@ -235,7 +274,8 @@ describe('DesignerShell — active Flow', () => {
     await doubleClick(w, 'UI 개선')
     explorerRow(w, 'Canvas').element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
     await settle()
-    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 플로우 없음')
+    expect(tabNames(w)).toEqual([])
+    expect(w.find('[data-test="designer-center-no-flow"]').exists()).toBe(true)
     expect(w.findComponent(ProjectExplorer).props('activeFlowId')).toBeNull()
   })
 
@@ -248,7 +288,8 @@ describe('DesignerShell — active Flow', () => {
     useProjectStore().setCurrentProject(project('q', 'Beta'))
     await settle()
 
-    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 플로우 없음')
+    expect(tabNames(w)).toEqual([])
+    expect(w.find('[data-test="designer-center-no-flow"]').exists()).toBe(true)
     expect(w.findComponent(DesignerFileExplorer).props('flow')).toBeNull()
     expect(w.findComponent(DesignerFileExplorer).props('projectId')).toBe('q')
     expect(w.findComponent(ProjectExplorer).props('projectId')).toBe('q')
@@ -378,7 +419,7 @@ describe('DesignerShell — UI refinements (T0006)', () => {
   it('names the Flow object 플로우 everywhere in the Korean Designer UI', async () => {
     const w = await mountShell()
     await activateCanvas(w)
-    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 플로우: Canvas')
+    expect(activeTabName(w).text()).toBe('Canvas')
     const text = get(w, 'designer-shell').text()
     expect(text).not.toMatch(/Flow|흐름|플로(?!우)/)
   })
@@ -396,7 +437,9 @@ describe('Korean Flow wording (T0006 §3)', () => {
     const texts = [...strings(ko.designer), ko.nav.designer.sub, ko.dashboard.cards.designer.desc]
     for (const text of texts) expect(text).not.toMatch(/Flow|흐름|플로(?!우)/)
     expect(ko.nav.designer.sub).toBe('그룹 · 플로우 설계')
-    expect(ko.designer.shell.active_flow).toBe('활성 플로우: {name}')
+    expect(ko.designer.center.tabs_label).toBe('열린 플로우')
+    expect(ko.designer.center.no_open_flow).toBe('열린 플로우 없음')
+    expect(ko.designer.shell).not.toHaveProperty('active_flow')
   })
 
   it('ja Designer strings use フロー consistently', async () => {
