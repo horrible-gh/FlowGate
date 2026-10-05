@@ -369,6 +369,25 @@ describe('시스템 › 사용자 (시안 13)', () => {
       name: 'Han Seojun', email: 'han@example.com', start: 'invite', is_admin: false, workspace_id: 'ws_default',
     })
     expect(wrapper.get('[data-testid="credential-value"]').text()).toContain('/login?invite=tok123')
+
+    const oldClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const oldExec = Object.getOwnPropertyDescriptor(document, 'execCommand')
+    try {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+      Object.defineProperty(document, 'execCommand', { configurable: true, value: vi.fn(() => {
+        expect(wrapper.get('.ui-modal-surface').element.contains(wrapper.get('textarea[aria-hidden="true"]').element)).toBe(true)
+        return true
+      }) })
+      await wrapper.get('.fgs-secret + button').trigger('click')
+      await flushPromises()
+      expect(document.execCommand).toHaveBeenCalledWith('copy')
+      expect(wrapper.text()).toContain('복사했습니다')
+    } finally {
+      if (oldClipboard) Object.defineProperty(navigator, 'clipboard', oldClipboard)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+      if (oldExec) Object.defineProperty(document, 'execCommand', oldExec)
+      else Reflect.deleteProperty(document, 'execCommand')
+    }
   })
 
   it('shows the temporary password after a password reset', async () => {

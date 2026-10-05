@@ -7,25 +7,33 @@
         </h2>
       </div>
     </template>
-    <div class="info-modal-content">
+    <div ref="contentRef" class="info-modal-content">
       <template v-if="provider?.exec_type === 'cli'">
         <div class="info-field">
           <span class="info-k">{{ t('gui.ai.providers.field_cli_command') }}</span>
           <div class="code-box">
-            <pre class="info-v">{{ provider?.cli_command || t('gui.ai.providers.default_command') }}</pre>
+            <pre class="info-v">{{ displayedCommand }}</pre>
             <IconButton
-              v-if="provider?.cli_command"
               class="code-copy"
               :class="{ 'is-copied': copied }"
               :label="t('gui.ai.providers.copy_command')"
               :title="t('gui.ai.providers.copy_command')"
               size="sm"
-              @click="copyCommand(provider?.cli_command)"
+              @click="copyCommand"
             >
               <AiIcon :name="copied ? 'check' : 'copy'" />
             </IconButton>
           </div>
         </div>
+        <textarea
+          v-if="manualCopy"
+          ref="manualCopyRef"
+          class="manual-copy"
+          :aria-label="t('gui.ai.providers.manual_copy')"
+          :value="displayedCommand"
+          readonly
+          @focus="selectManualCopy"
+        />
       </template>
       <template v-else>
         <div class="info-field">
@@ -56,12 +64,13 @@
 
 <script setup lang="ts">
 // Command / connection info of one AI, with the small copy button next to the command.
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 import type { ToastHostItem } from '@/components/ui/ToastHost.vue'
+import { copyToClipboard } from '@/core/interaction/clipboard'
 import type { ProviderItem } from '../types'
 import AiIcon from '../AiIcon.vue'
 
@@ -73,45 +82,42 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const copied = ref(false)
+const manualCopy = ref(false)
+const manualCopyRef = ref<HTMLTextAreaElement | null>(null)
+const contentRef = ref<HTMLElement | null>(null)
+const displayedCommand = computed(() => props.provider?.cli_command || t('gui.ai.providers.default_command'))
 let copiedTimer: ReturnType<typeof setTimeout> | null = null
 
-watch(() => props.provider, () => (copied.value = false))
+watch(() => props.provider, () => {
+  copied.value = false
+  manualCopy.value = false
+})
 
 onBeforeUnmount(() => {
   if (copiedTimer) clearTimeout(copiedTimer)
 })
 
-async function writeClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-  // Non-secure contexts (plain http on a LAN address) have no Clipboard API.
-  const area = document.createElement('textarea')
-  area.value = text
-  area.setAttribute('readonly', '')
-  area.style.position = 'fixed'
-  area.style.opacity = '0'
-  document.body.appendChild(area)
-  area.select()
-  try {
-    if (!document.execCommand('copy')) throw new Error('copy command rejected')
-  } finally {
-    document.body.removeChild(area)
-  }
+function selectManualCopy() {
+  manualCopyRef.value?.select()
 }
 
-async function copyCommand(command: string | null | undefined) {
-  if (!command) return
-  try {
-    await writeClipboard(command)
+async function copyCommand() {
+  const surface = contentRef.value?.closest('.ui-modal-surface')
+  const success = await copyToClipboard(displayedCommand.value, surface as HTMLElement | null)
+  if (success) {
+    manualCopy.value = false
     copied.value = true
     if (copiedTimer) clearTimeout(copiedTimer)
     copiedTimer = setTimeout(() => (copied.value = false), 1600)
     emit('toast', t('gui.ai.providers.copy_success'), 'success')
-  } catch {
-    emit('toast', t('gui.ai.providers.copy_failed'), 'danger')
+    return
   }
+  copied.value = false
+  manualCopy.value = true
+  emit('toast', t('gui.ai.providers.copy_failed'), 'danger')
+  await nextTick()
+  manualCopyRef.value?.focus()
+  selectManualCopy()
 }
 </script>
 
@@ -157,6 +163,18 @@ async function copyCommand(command: string | null | undefined) {
   padding: 8px 10px;
   border-radius: 6px;
   border: 1px solid var(--fg2-line);
+}
+
+.manual-copy {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 6px;
+  background: #091522;
+  color: var(--fg2-text);
+  font: 12.5px var(--fg2-font-mono, monospace);
 }
 
 .text-warn {

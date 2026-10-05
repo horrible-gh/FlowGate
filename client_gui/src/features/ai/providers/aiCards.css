@@ -289,13 +289,6 @@
   display: block;
 }
 
-.name-box small {
-  margin-top: 3px;
-  font-size: 10.5px;
-  color: var(--fg2-muted);
-  display: block;
-}
-
 .name-title-row {
   display: flex;
   align-items: center;

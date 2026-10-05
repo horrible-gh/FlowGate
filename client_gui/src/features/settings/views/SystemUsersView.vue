@@ -305,7 +305,7 @@
       <template #header><h2 class="fgs-modal-title">{{ t('gui.settings.users.credential_title') }}</h2></template>
       <template v-if="credential">
         <p class="fgs-muted">{{ credential.invite_path ? t('gui.settings.users.invite_hint', { name: credential.user.username }) : t('gui.settings.users.password_hint', { name: credential.user.username }) }}</p>
-        <div class="fgs-secret" data-testid="credential-value">{{ credentialValue }}</div>
+        <div ref="credentialValueRef" class="fgs-secret" data-testid="credential-value">{{ credentialValue }}</div>
         <button type="button" class="fgs-link" style="margin-top: 10px" @click="copyCredential"><SettingsIcon name="check" size="sm" />{{ t('gui.settings.users.copy') }}</button>
       </template>
       <template #footer>
@@ -331,6 +331,7 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 import ToastHost from '@/components/ui/ToastHost.vue'
+import { copyToClipboard } from '@/core/interaction/clipboard'
 import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
@@ -614,6 +615,7 @@ async function submitCreate() {
 
 // ── credential hand-over ──
 const credential = ref<UserCredentialResult | null>(null)
+const credentialValueRef = ref<HTMLElement | null>(null)
 const credentialValue = computed(() => {
   const value = credential.value
   if (!value) return ''
@@ -621,10 +623,10 @@ const credentialValue = computed(() => {
 })
 
 async function copyCredential() {
-  try {
-    await navigator.clipboard.writeText(credentialValue.value)
+  const surface = credentialValueRef.value?.closest('.ui-modal-surface') as HTMLElement | null
+  if (await copyToClipboard(credentialValue.value, surface)) {
     pushToast(t('gui.settings.users.copied'))
-  } catch {
+  } else {
     pushToast(t('gui.settings.users.copy_failed'), 'warning')
   }
 }
