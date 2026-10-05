@@ -234,6 +234,54 @@ def set_work_base_record(
     )
 
 
+def record_legacy_work_base_if_missing(
+    group_id: str, project_id: str, *, work_base_ref: str, work_base_sha: str,
+    evidence: dict,
+) -> bool:
+    """Atomically pin a legacy base, record a verified floor, and audit it once.
+
+    A conditional state update makes concurrent resolver calls idempotent. A
+    different base pin means the classification is stale and must not be saved.
+    """
+    from . import groups as db_groups
+
+    store = get_store()
+    with store.transaction():
+        row = get_state(group_id) or {}
+        if row.get("work_base_state") is not None:
+            return False
+        group = db_groups.get_by_id(group_id) or {}
+        if group.get("project_id") != project_id:
+            raise ValueError("group project changed during work-base recovery")
+        stored_ref = (group.get("work_base_ref") or "").strip()
+        if stored_ref and stored_ref != work_base_ref:
+            raise ValueError("group work-base ref changed during recovery")
+        if not stored_ref:
+            pinned = store._execute_affected(
+                "UPDATE groups SET work_base_ref = ?, updated_at = ? "
+                "WHERE group_id = ? AND work_base_ref IS NULL",
+                [work_base_ref, now_iso(), group_id],
+            )
+            if pinned != 1:
+                return False  # another request pinned it; re-read its record
+        now = now_iso()
+        recorded = store._execute_affected(
+            "UPDATE group_git_state SET work_base_sha = ?, work_base_sync_sha = NULL, "
+            "work_base_state = 'verified', work_base_evidence = ?, "
+            "work_base_recorded_at = ?, updated_at = ? "
+            "WHERE group_id = ? AND work_base_state IS NULL",
+            [work_base_sha, json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+             now, now, group_id],
+        )
+        if recorded != 1:
+            return False
+        append_work_base_log(
+            group_id, project_id, "backfill", source_sha=work_base_sha,
+            evidence={"state": "verified", "origin": evidence.get("origin")},
+        )
+    return True
+
+
 def set_work_base_sync(group_id: str, sync_sha: str, expected_floor: Optional[str]) -> bool:
     """Advance ``work_base_sync_sha`` after a completed update-from-base.
 

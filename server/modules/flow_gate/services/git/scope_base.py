@@ -212,6 +212,38 @@ def describe(state: Optional[dict]) -> dict:
     }
 
 
+def _recover_legacy_floor(project_id: str, group_id: str, config: Optional[dict]) -> tuple[dict, Optional[dict]]:
+    """Classify a missing legacy record, then save only a provably safe floor."""
+    from modules.flow_gate.services import git_service as _gs
+
+    current = _gs.db_git.get_state(group_id) or {}
+    if current.get("work_base_state") is not None:
+        return current, None
+    result = classify_group(project_id, group_id, config=config)
+    if result["verdict"] == "already_recorded":
+        return _gs.db_git.get_state(group_id) or {}, None
+    if result["verdict"] != "verified":
+        return current, result
+    evidence = {
+        "origin": result.get("origin") or "backfill",
+        "reason": result.get("reason"),
+        "details": result.get("details") or {},
+        "recorded_at": now_iso(),
+    }
+    try:
+        _gs.db_git.record_legacy_work_base_if_missing(
+            group_id, project_id, work_base_ref=result["work_base_ref"],
+            work_base_sha=result["work_base_sha"], evidence=evidence,
+        )
+    except Exception as exc:
+        _log.warning("automatic work-base recovery failed for %s", group_id, exc_info=True)
+        raise GitServiceError(
+            409, ERR_RECORD_FAILED, "automatic work-base recovery could not be recorded",
+            details={"group_id": group_id, "reason": str(exc)[:200]},
+        ) from exc
+    return _gs.db_git.get_state(group_id) or {}, None
+
+
 def resolve_scope_floor(
     project_id: str,
     group_id: str,
@@ -228,19 +260,23 @@ def resolve_scope_floor(
     """
     from modules.flow_gate.services import git_service as _gs
     state = _state_of(group_id, state)
+    recovery = None
+    if not state.get("work_base_state"):
+        state, recovery = _recover_legacy_floor(project_id, group_id, config)
     work_base_ref = _gs.resolve_group_work_base_ref(project_id, group_id, config=config)
     wb_state = state.get("work_base_state") or None
     evidence = _gs.db_git.work_base_evidence(state)
     if wb_state not in USABLE_STATES:
         raise GitServiceError(
             409, ERR_UNVERIFIED,
-            "the group's work-base commit is not verified; an administrator must confirm it",
+            "the group's work-base commit could not be verified automatically",
             details={
                 "group_id": group_id,
                 "work_base_ref": work_base_ref,
                 "work_base_state": wb_state,
-                "reason": evidence.get("reason") or REASON_NOT_MIGRATED,
-                "candidates": evidence.get("candidates") or [],
+                "reason": (recovery or {}).get("reason") or evidence.get("reason") or REASON_NOT_MIGRATED,
+                "candidates": (recovery or {}).get("candidates") or evidence.get("candidates") or [],
+                "recovery_details": (recovery or {}).get("details") or {},
             },
         )
     try:
