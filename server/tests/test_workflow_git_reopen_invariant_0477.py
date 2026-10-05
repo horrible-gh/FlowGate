@@ -40,7 +40,6 @@ _SERVER_DIR = Path(__file__).resolve().parents[1]
 _SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 sys.path.insert(0, str(_SERVER_DIR))
 
-import modules.flow_gate.documents  # noqa: E402,F401  (import order: documents before utils.id_validators, or a lone run hits the DOC_ID import cycle)
 from modules.flow_gate.db import git_integration as db_git  # noqa: E402
 from modules.flow_gate.services import git_service as svc  # noqa: E402
 from modules.flow_gate.services.git import lock_manager  # noqa: E402

@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-import modules.flow_gate.documents  # noqa: F401  (import order: documents before utils.id_validators, or a lone run hits the DOC_ID import cycle)
 from modules.flow_gate import process_service
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.services import git_service
