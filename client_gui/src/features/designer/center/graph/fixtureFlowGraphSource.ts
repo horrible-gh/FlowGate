@@ -24,16 +24,17 @@ interface SampleGraph {
 }
 
 // Free placement with branches and joins — never one row (R0001 §4: no sequence-first UI).
+// Columns are 260px apart like 03-designer-shell (176px card + 84px Edge).
 const SAMPLES: readonly SampleGraph[] = [
   // Branching progress: one requirement, two investigations, one plan fanning out again.
   {
     nodes: [
       { key: 'n1', kind: 'requirement', title: '로그인 실패 요구사항', state: 'done', x: 0, y: 120 },
-      { key: 'n2', kind: 'research', title: '세션 만료 원인 조사', state: 'in_progress', x: 300, y: 10 },
-      { key: 'n3', kind: 'research', title: '토큰 갱신 경로 조사', state: 'review', x: 300, y: 230 },
-      { key: 'n4', kind: 'plan', title: '수정 계획', state: 'draft', x: 600, y: 120 },
-      { key: 'n5', kind: 'task', title: '세션 갱신 수정', x: 900, y: 20 },
-      { key: 'n6', kind: 'test', title: '재현 테스트', x: 900, y: 240 },
+      { key: 'n2', kind: 'research', title: '세션 만료 원인 조사', state: 'in_progress', x: 260, y: 10 },
+      { key: 'n3', kind: 'research', title: '토큰 갱신 경로 조사', state: 'review', x: 260, y: 230 },
+      { key: 'n4', kind: 'plan', title: '수정 계획', state: 'draft', x: 520, y: 120 },
+      { key: 'n5', kind: 'task', title: '세션 갱신 수정', x: 780, y: 20 },
+      { key: 'n6', kind: 'test', title: '재현 테스트', x: 780, y: 240 },
     ],
     edges: [['n1', 'n2'], ['n1', 'n3'], ['n2', 'n4'], ['n3', 'n4'], ['n4', 'n5'], ['n4', 'n6']],
   },
@@ -42,10 +43,10 @@ const SAMPLES: readonly SampleGraph[] = [
     nodes: [
       { key: 'n1', kind: 'requirement', title: '알림 요구사항', state: 'done', x: 0, y: 0 },
       { key: 'n2', kind: 'design', title: '알림 화면 설계', state: 'review', x: 0, y: 260 },
-      { key: 'n3', kind: 'task', title: '알림 서버 작업', state: 'in_progress', x: 320, y: 0 },
-      { key: 'n4', kind: 'task', title: '알림 화면 작업', state: 'in_progress', x: 320, y: 260 },
-      { key: 'n5', kind: 'test', title: '통합 테스트', state: 'blocked', x: 640, y: 130 },
-      { key: 'n6', kind: 'approval', title: '배포 승인', x: 940, y: 130 },
+      { key: 'n3', kind: 'task', title: '알림 서버 작업', state: 'in_progress', x: 260, y: 0 },
+      { key: 'n4', kind: 'task', title: '알림 화면 작업', state: 'in_progress', x: 260, y: 260 },
+      { key: 'n5', kind: 'test', title: '통합 테스트', state: 'blocked', x: 520, y: 130 },
+      { key: 'n6', kind: 'approval', title: '배포 승인', x: 780, y: 130 },
     ],
     edges: [['n1', 'n3'], ['n1', 'n4'], ['n2', 'n4'], ['n3', 'n5'], ['n4', 'n5'], ['n5', 'n6']],
   },
@@ -53,11 +54,11 @@ const SAMPLES: readonly SampleGraph[] = [
   {
     nodes: [
       { key: 'n1', kind: 'requirement', title: '검색 개선 요구사항', x: 0, y: 140 },
-      { key: 'n2', kind: 'plan', title: '작업계획 수립', state: 'done', x: 290, y: 140 },
-      { key: 'n3', kind: 'task', title: '색인 작업', state: 'in_progress', x: 590, y: 0 },
-      { key: 'n4', kind: 'task', title: '검색 화면 작업', state: 'draft', x: 590, y: 200 },
-      { key: 'n5', kind: 'memo', title: '성능 확인 메모', x: 590, y: 390 },
-      { key: 'n6', kind: 'approval', title: '검토 승인', state: 'review', x: 890, y: 100 },
+      { key: 'n2', kind: 'plan', title: '작업계획 수립', state: 'done', x: 260, y: 140 },
+      { key: 'n3', kind: 'task', title: '색인 작업', state: 'in_progress', x: 520, y: 0 },
+      { key: 'n4', kind: 'task', title: '검색 화면 작업', state: 'draft', x: 520, y: 200 },
+      { key: 'n5', kind: 'memo', title: '성능 확인 메모', x: 520, y: 390 },
+      { key: 'n6', kind: 'approval', title: '검토 승인', state: 'review', x: 780, y: 100 },
     ],
     edges: [['n1', 'n2'], ['n2', 'n3'], ['n2', 'n4'], ['n2', 'n5'], ['n3', 'n6'], ['n4', 'n6']],
   },

@@ -1,7 +1,9 @@
 <template>
-  <!-- flowgate.v02.0026 — FlowGate Node card (0003-D §6.3): kind glyph + kind name + state on
-       top, the title below (two lines at most). The handles only give Edges an anchor (target
-       on the left, source on the right); they are invisible and never connectable. -->
+  <!-- flowgate.v02.0026 — FlowGate Node card (0003-D §6.3, look of MirageGlass 03-designer-shell):
+       a fixed 176x92 card in a kind-colored frame. The head row holds the kind icon box, the kind
+       name and the state; the body holds the one-line title. The handles only give Edges an
+       anchor (target on the left, source on the right); they are invisible and never
+       connectable. -->
   <div
     class="flow-node-card"
     :class="{ 'is-selected': data.selected, 'is-unknown': kind.key === 'unknown' }"
@@ -12,9 +14,11 @@
   >
     <Handle type="target" :position="Position.Left" :connectable="false" class="flow-node-handle" />
     <div class="flow-node-head">
-      <svg class="flow-node-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path :d="kind.icon" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
+      <span class="flow-node-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path :d="kind.icon" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </span>
       <span class="flow-node-kind" data-test="designer-canvas-node-kind">{{ t(`gui.designer.center.node_kinds.${kind.key}`) }}</span>
       <span
         v-if="state"
@@ -23,7 +27,9 @@
         data-test="designer-canvas-node-state"
       >{{ t(`gui.designer.center.node_states.${state.key}`) }}</span>
     </div>
-    <p class="flow-node-title" :title="data.title" data-test="designer-canvas-node-title">{{ data.title }}</p>
+    <div class="flow-node-body">
+      <p class="flow-node-title" :title="data.title" data-test="designer-canvas-node-title">{{ data.title }}</p>
+    </div>
     <Handle type="source" :position="Position.Right" :connectable="false" class="flow-node-handle" />
   </div>
 </template>
@@ -47,100 +53,101 @@ const state = computed(() => flowNodeStateDisplay(props.data.state))
 </script>
 
 <style scoped>
-/* Card width is defined here only (initial 200px, 0003-D §6.3). */
+/* Card size is defined here only: fixed 176x92 (03-designer-shell `.node`). Long text never
+   grows the card — every text line stays one line and ends with an ellipsis. */
 .flow-node-card {
   position: relative;
   box-sizing: border-box;
-  width: 200px;
-  padding: 9px 12px 10px;
-  border: 1px solid var(--fg2-line-strong);
-  border-left: 3px solid var(--flow-node-accent);
-  border-radius: var(--fg2-control-radius);
-  background: var(--fg2-control-surface-strong);
+  width: 176px;
+  height: 92px;
+  overflow: hidden;
+  border: 1.5px solid var(--flow-node-accent);
+  border-radius: 10px;
+  background: linear-gradient(145deg, #13243a, #0f1e31);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.47);
   color: var(--fg2-text);
   font-family: var(--fg2-font);
   cursor: pointer;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  transition: box-shadow 0.16s ease;
 }
 
 .flow-node-card:hover:not(.is-selected) {
-  border-color: var(--fg2-control-hover-border);
-  border-left-color: var(--flow-node-accent);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--flow-node-accent) 25%, transparent),
+    0 8px 22px rgba(0, 0, 0, 0.53);
 }
 
 .flow-node-card.is-selected {
-  border-color: var(--fg2-blue);
-  border-left-color: var(--fg2-blue);
-  box-shadow: 0 0 0 1px var(--fg2-blue), 0 8px 22px rgba(75, 163, 255, 0.22);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--flow-node-accent) 70%, transparent),
+    0 0 0 5px color-mix(in srgb, var(--flow-node-accent) 18%, transparent),
+    0 8px 22px rgba(0, 0, 0, 0.53);
 }
 
 .flow-node-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  box-sizing: border-box;
+  height: 32px;
   min-width: 0;
-  font-size: 11px;
-  font-weight: 650;
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(128, 160, 199, 0.18);
+  background: color-mix(in srgb, var(--flow-node-accent) 11%, transparent);
 }
 
 .flow-node-icon {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  color: var(--flow-node-accent);
+  display: grid;
+  flex: 0 0 24px;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--flow-node-accent) 88%, #0a1422);
+  color: #fff;
 }
 
+.flow-node-icon svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+
+/* When the head row runs short the state shrinks first; the kind name keeps its place. */
 .flow-node-kind {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  margin-left: 7px;
   overflow: hidden;
-  color: var(--flow-node-accent);
+  color: #c8d7e7;
+  font-size: 10.5px;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .flow-node-state {
-  flex: none;
-  padding: 1px 7px;
-  border: 1px solid var(--fg2-line-strong);
-  border-radius: var(--fg2-control-radius-pill);
-  color: var(--fg2-muted);
-  font-size: 10px;
-  font-weight: 600;
+  flex: 0 100 auto;
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 6px;
+  overflow: hidden;
+  color: #8fa7bf;
+  font-size: 9px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.flow-node-state--info {
-  border-color: var(--fg2-status-info-border);
-  color: var(--fg2-status-info-fg);
-}
-
-.flow-node-state--success {
-  border-color: var(--fg2-status-success-border);
-  color: var(--fg2-status-success-fg);
-}
-
-.flow-node-state--warning {
-  border-color: var(--fg2-status-warning-border);
-  color: var(--fg2-status-warning-fg);
-}
-
-.flow-node-state--danger {
-  border-color: var(--fg2-status-danger-border);
-  color: var(--fg2-status-danger-fg);
+.flow-node-body {
+  padding: 8px 11px;
 }
 
 .flow-node-title {
-  display: -webkit-box;
-  margin: 6px 0 0;
+  margin: 0;
   overflow: hidden;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.4;
-  word-break: break-all;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  font-size: 12px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Edge anchors only: invisible and inert. */

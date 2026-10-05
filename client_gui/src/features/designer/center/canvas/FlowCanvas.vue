@@ -22,6 +22,7 @@
       :default-viewport="initialViewport"
       :min-zoom="CANVAS_MIN_ZOOM"
       :max-zoom="CANVAS_MAX_ZOOM"
+      :translate-extent="translateExtent"
       :nodes-draggable="false"
       :nodes-connectable="false"
       :edges-updatable="false"
@@ -77,10 +78,19 @@
 // measured (never above 1x) and the result is reported like any pan / zoom. A Viewport the
 // session gets from elsewhere (later Minimap / Toolbar) is applied only when it differs from
 // the last one this Canvas reported, so the two never feed each other.
+//
+// Pan bound: the view never goes further up or left than CANVAS_EDGE_MARGIN past the top-most /
+// left-most Node; right and down stay open. Vue Flow applies it to pan, zoom, fit and restore.
 import '@vue-flow/core/dist/style.css'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { VueFlow, type NodeMouseEvent, type ViewportTransform, type VueFlowStore } from '@vue-flow/core'
+import {
+  VueFlow,
+  type CoordinateExtent,
+  type NodeMouseEvent,
+  type ViewportTransform,
+  type VueFlowStore,
+} from '@vue-flow/core'
 import Badge from '../../../../components/ui/Badge.vue'
 import {
   CANVAS_FIT_MAX_ZOOM,
@@ -112,9 +122,20 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const GRID_GAP = 22
+const CANVAS_EDGE_MARGIN = 40
 
 const nodes = computed(() => toVueFlowNodes(props.graph, props.selectedNodeId))
 const edges = computed(() => toVueFlowEdges(props.graph))
+
+const translateExtent = computed<CoordinateExtent>(() => {
+  const { nodes: graphNodes } = props.graph
+  const left = graphNodes.length ? Math.min(...graphNodes.map((node) => node.x)) : 0
+  const top = graphNodes.length ? Math.min(...graphNodes.map((node) => node.y)) : 0
+  return [
+    [left - CANVAS_EDGE_MARGIN, top - CANVAS_EDGE_MARGIN],
+    [Infinity, Infinity],
+  ]
+})
 
 const initialViewport: CanvasViewport = props.viewport ?? DEFAULT_CANVAS_VIEWPORT
 /** The Viewport on screen = the last one reported to the session. */
