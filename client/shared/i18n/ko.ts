@@ -2524,6 +2524,7 @@ export default {
       run_changes_period: '작업 시작 {start} → 종료 {end}',
       run_changes_files: '{n} files',
       run_changes_detail_title: '작업 변경 상세',
+      unplaced_activity_title: '대화 위치를 확정할 수 없는 이전 실행 기록',
       run_changes_back: '대화로 돌아가기',
     },
     review_reject_dialog: {

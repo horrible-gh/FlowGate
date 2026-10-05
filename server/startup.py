@@ -82,6 +82,17 @@ def recover_chat_commands():
             logger.info(f"[startup] closed {closed} interrupted chat command request(s)")
     except Exception as exc:
         logger.warning(f"[startup] chat command recovery failed: {exc}")
+    try:
+        # 0675 T0004 §2-5: decide the conversation anchor of rows written before it
+        # existed, and repair rows a failed reply-time re-anchor left at run_start; the
+        # counts per state before/after are the backfill's audit trail.
+        from modules.flow_gate.services import chat_activity_anchor_service
+
+        report = chat_activity_anchor_service.backfill()
+        if report["resolved"] or report["after"]["commands"]["pending"] or report["after"]["changes"]["pending"]:
+            logger.info(f"[startup] chat activity anchor backfill: {report}")
+    except Exception as exc:
+        logger.warning(f"[startup] chat activity anchor backfill failed: {exc}")
 
 
 def encrypt_ai_provider_keys():

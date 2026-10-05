@@ -1592,6 +1592,10 @@ def start_run(
         # tree. finalize diffs it against the end tree, so the run's change summary is
         # measured by FlowGate -- never reported by the model. None for every other scope.
         "source_start_tree": _chat_start_tree(action_scope, source_root),
+        # 0675 T0004 §2-3: the conversation head this chat run started from. Its command
+        # and change rows are anchored after it until the run's reply turn lands, and
+        # stay there when the run ends without one. None for every other scope.
+        "chat_start_seq": _chat_start_seq(action_scope, doc_ref),
         "api_base_url": api_base_url,
         # 0505 T0006 (DB0005 2/3.3): operator_api_base is a one-time sanitized snapshot
         # of this same value, taken here at run start. transport_api_base starts empty
@@ -2540,6 +2544,15 @@ def _resolve_continuation_hop_note(
     except Exception:  # noqa: BLE001 — a resolution failure must not stall the hop
         logger.warning("continuation hop note resolution failed for %s", doc_ref, exc_info=True)
         return None
+
+
+def _chat_start_seq(action_scope: Optional[str], doc_ref: Optional[str]) -> Optional[int]:
+    """0675 T0004: conversation head seq at chat run admission; never raises."""
+    if action_scope != "chat":
+        return None
+    from modules.flow_gate.services import chat_activity_anchor_service
+
+    return chat_activity_anchor_service.run_start_seq(doc_ref)
 
 
 def _chat_start_tree(action_scope: Optional[str], source_root) -> Optional[str]:

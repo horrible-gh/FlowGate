@@ -9,6 +9,8 @@ User side (session):
 
     POST /api/v1/chat-commands/{request_id}/decision   {"decision": "approve"|"reject"|"cancel"}
     GET  /api/v1/chat-activity/{doc_id}                commands + change summaries of one CH
+         ?from_seq=&to_seq=&unplaced=              (0675 T0004) only rows anchored in that
+                                                   turn range, plus rows with no anchor seq
     GET  /api/v1/chat-activity/{doc_id}/runs/{run_id}/diff?path=   one file of one run
 
 API providers never come through here -- their ``run_command`` tool calls the same
@@ -31,6 +33,7 @@ from pydantic import BaseModel, ConfigDict
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.rbac.decorators import _has_permission
+from modules.flow_gate.services import chat_activity_anchor_service as anchors
 from modules.flow_gate.services import chat_command_service as commands
 from modules.flow_gate.services import chat_run_changes_service as changes
 from modules.flow_gate.services import token_service
@@ -107,11 +110,21 @@ def decide_chat_command(request_id: str, body: DecisionBody, user=Depends(get_cu
 
 
 @router.get("/chat-activity/{doc_id}")
-def chat_activity(doc_id: str, user=Depends(get_current_user)) -> Any:
+def chat_activity(doc_id: str, user=Depends(get_current_user),
+                  from_seq: Optional[int] = Query(default=None, ge=0),
+                  to_seq: Optional[int] = Query(default=None, ge=0),
+                  unplaced: bool = Query(default=True)) -> Any:
+    """0675 T0004 §2-4: each row carries its server-decided anchor; a screen asks for the
+    turn range it holds (inclusive), so paging never leaves a row on the wrong page."""
     try:
         _readable_chat_doc(doc_id, user)
-        return {"ok": True, "doc_id": doc_id,
-                "commands": commands.list_for_doc(doc_id), "changes": changes.list_for_doc(doc_id)}
+        # A reply-time re-anchor that failed after its turn committed is repaired here,
+        # so a reconnect or re-entry reads the reply position, not the stale one.
+        anchors.reconcile(doc_id)
+        window = {"from_seq": from_seq, "to_seq": to_seq, "include_unplaced": unplaced}
+        return {"ok": True, "doc_id": doc_id, "from_seq": from_seq, "to_seq": to_seq,
+                "commands": commands.list_for_doc(doc_id, **window),
+                "changes": changes.list_for_doc(doc_id, **window)}
     except commands.ChatCommandError as exc:
         return _error(exc.status, exc.code, exc.message)
 

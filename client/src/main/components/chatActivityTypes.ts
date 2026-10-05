@@ -1,7 +1,18 @@
 // flowgate.default.0670 T0004 — wire shapes of GET /api/v1/chat-activity/{doc_id}.
 // Mirrors chat_command_service.public() and chat_run_changes_service.public().
 
-export interface ChatCommand {
+// flowgate.default.0675 T0004 — the server-decided conversation position of a row.
+// anchor_state absent = a server without the anchor contract (legacy placement).
+export type AnchorPosition = 'before' | 'after'
+export type AnchorState = 'reply' | 'run_start' | 'ambiguous' | 'unresolved'
+
+export interface ActivityAnchor {
+  anchor_seq?: number | null
+  anchor_position?: AnchorPosition | null
+  anchor_state?: AnchorState | null
+}
+
+export interface ChatCommand extends ActivityAnchor {
   request_id: string
   ai_run_id: string
   doc_id: string
@@ -35,7 +46,7 @@ export interface RunChangeFile {
   deletions: number | null
 }
 
-export interface RunChange {
+export interface RunChange extends ActivityAnchor {
   run_id: string
   doc_id: string
   run_started_at?: string | null
@@ -44,7 +55,13 @@ export interface RunChange {
   insertions: number | null
   deletions: number | null
   files: RunChangeFile[]
+  created_at?: string | null
 }
+
+// One command or change row as ConversationView places it (0675 T0004).
+export type ActivityItem =
+  | { kind: 'command'; key: string; createdAt: string; command: ChatCommand }
+  | { kind: 'change'; key: string; createdAt: string; change: RunChange }
 
 export const COMMAND_POLICIES = ['always_approve', 'user_approval', 'reject'] as const
 export const COMMAND_POLICY_DEFAULT = 'user_approval'

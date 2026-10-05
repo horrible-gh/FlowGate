@@ -28,29 +28,69 @@
           {{ t('main.conversation_view.empty') }}
         </p>
 
+        <!-- 0675 T0004 §2-5: run records whose place in the conversation cannot be known
+             (written before anchors existed, with no single reply turn of their run). They
+             are kept, labelled as such, at the very start of the conversation -- never
+             guessed into a position, never dropped. -->
+        <div v-if="!hasMoreBefore && activitySlots.unplaced.length > 0" class="conv-unplaced">
+          <p class="conv-unplaced-title">
+            <AppIcon name="clock" />
+            {{ t('main.conversation_view.unplaced_activity_title') }}
+          </p>
+          <div
+            v-for="item in activitySlots.unplaced"
+            :key="item.key"
+            class="conv-row conv-row--ai conv-activity conv-unplaced-activity"
+          >
+            <ChatActivityItemCard
+              :item="item"
+              :can-decide="!readOnly"
+              :deciding-id="decidingCommandId"
+              @decide="decideCommand"
+              @open="openRunChanges"
+            />
+          </div>
+        </div>
+        <template v-if="!hasMoreBefore">
+          <div
+            v-for="item in activitySlots.top"
+            :key="item.key"
+            class="conv-row conv-row--ai conv-activity"
+            data-anchor-seq="0"
+          >
+            <ChatActivityItemCard
+              :item="item"
+              :can-decide="!readOnly"
+              :deciding-id="decidingCommandId"
+              @decide="decideCommand"
+              @open="openRunChanges"
+            />
+          </div>
+        </template>
+
         <template v-for="turn in turns" :key="turn.localId ?? turn.seq">
           <!-- Read boundary (D0002 §6): drawn immediately above the first turn this user
                has not seen, so re-entering a conversation shows where the new talk starts. -->
           <div v-if="isBoundaryBefore(turn)" class="conv-boundary">
             <span>{{ t('main.conversation_view.read_boundary') }}</span>
           </div>
-          <!-- 0670 T0004: the commands this AI turn's run executed, each on its own AI-side
-               row ahead of the reply -- where they stood while the run was live -- so the
-               reply lands below them instead of wrapping them (source_run_id == ai_run_id). -->
-          <template v-if="isFirstTurnOfRun(turn)">
-            <div
-              v-for="cmd in commandsByRun[turn.source_run_id!] ?? []"
-              :key="cmd.request_id"
-              class="conv-row conv-row--ai conv-activity"
-            >
-              <ChatCommandCard
-                :command="cmd"
-                :can-decide="!readOnly"
-                :deciding="decidingCommandId === cmd.request_id"
-                @decide="(decision) => decideCommand(cmd, decision)"
-              />
-            </div>
-          </template>
+          <!-- 0670 T0004 / 0675 T0004: command and change rows anchored BEFORE this turn by
+               the server (a run's commands sit ahead of its reply), each its own AI-side row
+               so the reply lands below them instead of wrapping them. -->
+          <div
+            v-for="item in slotItems('before', turn)"
+            :key="item.key"
+            class="conv-row conv-row--ai conv-activity"
+            :data-anchor-seq="turn.seq"
+          >
+            <ChatActivityItemCard
+              :item="item"
+              :can-decide="!readOnly"
+              :deciding-id="decidingCommandId"
+              @decide="decideCommand"
+              @open="openRunChanges"
+            />
+          </div>
           <div
             class="conv-row"
             :class="[
@@ -93,40 +133,39 @@
               </p>
             </div>
           </div>
-          <!-- 0670 T0004: what the run changed, measured at its end -- its own row after the
-               reply. A run with no stored change summary adds nothing (NR0003 §11.4). -->
+          <!-- Rows anchored AFTER this turn: a run's change summary after its reply, and the
+               commands/changes of a run that has no reply (yet) after the turn it started
+               from. A run with no stored change summary adds nothing (NR0003 §11.4). -->
           <div
-            v-if="isFirstTurnOfRun(turn) && runChanges[turn.source_run_id!]"
+            v-for="item in slotItems('after', turn)"
+            :key="item.key"
             class="conv-row conv-row--ai conv-activity"
+            :data-anchor-seq="turn.seq"
           >
-            <ChatRunChangeCard
-              :change="runChanges[turn.source_run_id!]"
-              @open="(path) => openRunChanges(runChanges[turn.source_run_id!], path)"
+            <ChatActivityItemCard
+              :item="item"
+              :can-decide="!readOnly"
+              :deciding-id="decidingCommandId"
+              @decide="decideCommand"
+              @open="openRunChanges"
             />
           </div>
         </template>
-        <!-- 0670 T0004: commands of a run whose AI turn has not landed yet -- above all the
-             pending approval the run is waiting on -- and the change summary of a run that
-             ended without a reply. Each is its own AI-side row; when the reply arrives it is
-             appended below them and nothing moves. -->
+        <!-- Rows whose anchor turn is not on screen yet because it is newer than the last
+             loaded turn (it is still on its way over SSE), plus a still-open command with no
+             anchor. When the turn lands they move to it; nothing is drawn twice. -->
         <div
-          v-for="cmd in liveCommands"
-          :key="cmd.request_id"
+          v-for="item in activitySlots.tail"
+          :key="item.key"
           class="conv-row conv-row--ai conv-activity conv-live-activity"
         >
-          <ChatCommandCard
-            :command="cmd"
-            :can-decide="!readOnly"
-            :deciding="decidingCommandId === cmd.request_id"
-            @decide="(decision) => decideCommand(cmd, decision)"
-          />
-        </div>
-        <div
-          v-for="change in orphanChanges"
-          :key="change.run_id"
-          class="conv-row conv-row--ai conv-activity conv-live-activity"
-        >
-          <ChatRunChangeCard :change="change" @open="(path) => openRunChanges(change, path)" />
+            <ChatActivityItemCard
+              :item="item"
+              :can-decide="!readOnly"
+              :deciding-id="decidingCommandId"
+              @decide="decideCommand"
+              @open="openRunChanges"
+            />
         </div>
       </template>
     </div>
@@ -449,8 +488,7 @@ import { consumeLastFailedCopyText, copyToClipboard } from '../utils/clipboard'
 import AppIcon from '@shared/AppIcon.vue'
 import { randomUuid } from '@shared/utils/uuid'
 import AiProviderSelect from './AiProviderSelect.vue'
-import ChatCommandCard from './ChatCommandCard.vue'
-import ChatRunChangeCard from './ChatRunChangeCard.vue'
+import ChatActivityItemCard from './ChatActivityItemCard.vue'
 import GroupChangesDialog from './GroupChangesDialog.vue'
 import type { GroupFileDiffData } from '../stores/explorer'
 import {
@@ -458,6 +496,7 @@ import {
   COMMAND_POLICY_DEFAULT,
   OPEN_COMMAND_STATUSES,
   runClock,
+  type ActivityItem,
   type ChatCommand,
   type RunChange,
 } from './chatActivityTypes'
@@ -1195,6 +1234,8 @@ async function load(): Promise<ConvTurn[]> {
         await loadOlder({ keepScroll: false })
       }
     }
+    // 0675 T0004: read activity for exactly the turns now on screen (anchor window).
+    await loadActivity({ follow: false })
     scrollToBottom()
     scheduleViewedReport()
     return turns.value
@@ -1218,6 +1259,13 @@ async function loadOlder(opts: { keepScroll?: boolean } = {}): Promise<void> {
     if (!page) return
     applyPage(page)
     hasMoreBefore.value = page.prev_before_seq != null || oldestSeq() > 1
+    // 0675 T0004 §2-4: the activity anchored to the turns that just arrived, fetched
+    // before the scroll compensation below so their height is counted in it. When this
+    // page reaches the first turn, the window opens at 0 so a run started on an empty
+    // conversation (anchor_seq 0, drawn before the first turn) comes with it.
+    if (oldestSeq() < before) {
+      await loadActivityWindow(hasMoreBefore.value ? oldestSeq() : 0, before - 1)
+    }
     if (opts.keepScroll !== false) {
       await nextTick()
       const target = scrollEl.value
@@ -1697,6 +1745,11 @@ function onSseTurn(e: Event) {
   // reader who scrolled up into history is worse than a missed scroll.
   if (atBottom) scrollToBottom()
   scheduleViewedReport()
+  // 0675 T0004: the server moved this run's command/change rows to the reply before it
+  // broadcast the turn; re-read them so they land around it (follow decided above).
+  if (detail.turn.speaker !== 'user' && detail.turn.source_run_id) {
+    void loadActivity({ follow: atBottom })
+  }
 }
 
 /** Fill the gap left by a dropped stream (P0003 scenario 7). Live delivery is an
@@ -1727,61 +1780,181 @@ const runChanges = ref<Record<string, RunChange>>({})
 const decidingCommandId = ref<string | null>(null)
 let activitySeq = 0
 
-const aiTurnRunIds = computed(() => {
-  const ids = new Set<string>()
-  for (const turn of turns.value) {
-    if (turn.speaker !== 'user' && turn.source_run_id) ids.add(turn.source_run_id)
-  }
-  return ids
-})
-// The first AI turn of each run carries that run's command and change rows, so a run
-// that somehow produced two turns never draws them twice.
-const firstTurnKeyByRun = computed(() => {
-  const map: Record<string, string | number> = {}
-  for (const turn of turns.value) {
-    if (turn.speaker === 'user' || !turn.source_run_id) continue
-    if (!(turn.source_run_id in map)) map[turn.source_run_id] = turn.localId ?? turn.seq
-  }
-  return map
-})
-function isFirstTurnOfRun(turn: ConvTurn): boolean {
-  if (turn.speaker === 'user' || !turn.source_run_id) return false
-  return firstTurnKeyByRun.value[turn.source_run_id] === (turn.localId ?? turn.seq)
+// 0675 T0004 §2-4: where each row is drawn. The server decides the anchor (anchor_seq /
+// anchor_position / anchor_state); the screen only looks that turn up among the turns it
+// holds. It never infers a position from created_at or from which page is loaded:
+//   * anchor turn on screen        -> right before / after it
+//   * anchor 0                     -> before the first turn (shown once that is loaded)
+//   * anchor older than the oldest
+//     loaded turn                  -> not drawn yet; loadOlder fetches it with its page
+//   * anchor newer than the newest
+//     loaded turn                  -> tail, until that turn arrives (then it moves there)
+//   * no anchor seq                -> an open command / the active run's command at the
+//                                     tail; anything else in the labelled unplaced block
+// A row from a server without the anchor contract (anchor_state absent) keeps the 0670
+// placement by source_run_id, except that a finished command is no longer hidden just
+// because a later turn exists (§2-2).
+interface ActivitySlots {
+  before: Record<number, ActivityItem[]>
+  after: Record<number, ActivityItem[]>
+  top: ActivityItem[]
+  unplaced: ActivityItem[]
+  tail: ActivityItem[]
 }
-const commandsByRun = computed(() => {
-  const map: Record<string, ChatCommand[]> = {}
-  for (const cmd of chatCommands.value) (map[cmd.ai_run_id] ||= []).push(cmd)
-  return map
-})
-// A run whose AI turn has not arrived yet. Terminal commands of a run that ended with
-// no turn at all still show here, so a refusal or a failure is never silently lost.
-const liveCommands = computed(() =>
-  chatCommands.value.filter((cmd) => !aiTurnRunIds.value.has(cmd.ai_run_id)
-    && (OPEN_COMMAND_STATUSES.includes(cmd.status) || cmd.ai_run_id === activeRunId.value
-      || !turns.value.some((turn) => turn.created_at && cmd.created_at && turn.created_at > cmd.created_at))),
-)
-const orphanChanges = computed(() =>
-  Object.values(runChanges.value).filter((change) => !aiTurnRunIds.value.has(change.run_id)),
-)
 
-async function loadActivity(): Promise<void> {
+function hasAnchorContract(row: ChatCommand | RunChange): boolean {
+  return row.anchor_state !== undefined
+}
+
+function compareItems(a: ActivityItem, b: ActivityItem): number {
+  // Stable tie-breakers (§2-3 item 5): time, then commands before the change summary
+  // written at the end of the same run, then the unique id.
+  if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1
+  if (a.kind !== b.kind) return a.kind === 'command' ? -1 : 1
+  return a.key < b.key ? -1 : a.key > b.key ? 1 : 0
+}
+
+const activityItems = computed<ActivityItem[]>(() => [
+  ...chatCommands.value.map((command) => ({
+    kind: 'command' as const, key: `cmd:${command.request_id}`, createdAt: command.created_at ?? '', command,
+  })),
+  ...Object.values(runChanges.value).map((change) => ({
+    kind: 'change' as const, key: `chg:${change.run_id}`, createdAt: change.created_at ?? change.run_finished_at ?? '', change,
+  })),
+])
+
+const activitySlots = computed<ActivitySlots>(() => {
+  const slots: ActivitySlots = { before: {}, after: {}, top: [], unplaced: [], tail: [] }
+  const loaded = new Set<number>()
+  let newest = 0
+  // Legacy placement only: the first AI turn of each run on screen.
+  const firstAiSeqByRun: Record<string, number> = {}
+  for (const turn of turns.value) {
+    if (!turn.seq) continue
+    loaded.add(turn.seq)
+    newest = Math.max(newest, turn.seq)
+    if (turn.speaker !== 'user' && turn.source_run_id && !(turn.source_run_id in firstAiSeqByRun)) {
+      firstAiSeqByRun[turn.source_run_id] = turn.seq
+    }
+  }
+  const oldest = oldestSeq()
+  const put = (position: 'before' | 'after', seq: number, item: ActivityItem) => {
+    (slots[position][seq] ||= []).push(item)
+  }
+  for (const item of activityItems.value) {
+    const row = item.kind === 'command' ? item.command : item.change
+    const runId = item.kind === 'command' ? item.command.ai_run_id : item.change.run_id
+    const open = item.kind === 'command'
+      && (OPEN_COMMAND_STATUSES.includes(item.command.status) || runId === activeRunId.value)
+    if (!hasAnchorContract(row)) {
+      const seq = firstAiSeqByRun[runId]
+      if (seq) put(item.kind === 'command' ? 'before' : 'after', seq, item)
+      else slots.tail.push(item)
+      continue
+    }
+    const anchorSeq = row.anchor_seq
+    if (anchorSeq == null) {
+      if (open) slots.tail.push(item)
+      else slots.unplaced.push(item)
+    } else if (anchorSeq <= 0) {
+      slots.top.push(item)
+    } else if (loaded.has(anchorSeq)) {
+      put(row.anchor_position === 'before' ? 'before' : 'after', anchorSeq, item)
+    } else if (anchorSeq > newest) {
+      slots.tail.push(item)
+    } else if (anchorSeq >= oldest) {
+      // Inside the loaded range but that turn is missing (a gap SSE has not filled):
+      // keep it visible at the tail rather than lose it.
+      slots.tail.push(item)
+    }
+    // else: anchored on an older page -- drawn when that page is loaded.
+  }
+  for (const list of [...Object.values(slots.before), ...Object.values(slots.after),
+    slots.top, slots.unplaced, slots.tail]) list.sort(compareItems)
+  return slots
+})
+
+function slotItems(position: 'before' | 'after', turn: ConvTurn): ActivityItem[] {
+  if (!turn.seq) return []
+  return activitySlots.value[position][turn.seq] ?? []
+}
+
+function keepChange(change: RunChange | undefined): change is RunChange {
+  // NR0003 §11.4: a change card only for a run that changed something.
+  return !!change?.run_id && Number(change.files_changed) > 0
+}
+
+function activitySignature(): string {
+  return activityItems.value.map((item) => {
+    const row = item.kind === 'command' ? item.command : item.change
+    const status = item.kind === 'command' ? item.command.status : item.change.files_changed
+    return `${item.key}|${status}|${row.anchor_seq ?? ''}|${row.anchor_position ?? ''}`
+  }).sort().join(',')
+}
+
+/** The oldest turn seq this screen holds, or undefined when the whole conversation is
+ *  loaded -- then every row (anchor 0 and unplaced ones included) is wanted. */
+function activityFloor(): number | undefined {
+  if (!hasMoreBefore.value) return undefined
+  const floor = oldestSeq()
+  return floor > 0 ? floor : undefined
+}
+
+/** Re-read the activity anchored to the turns on screen (plus open/unplaced rows).
+ *  ``follow``: the reader was at the bottom when the triggering event arrived, so a
+ *  change in what is drawn may take the view to the new bottom (§2-1). Defaults to
+ *  "at the bottom right now", which is "right before the event" for every event-driven
+ *  caller because they call this synchronously from the handler. */
+async function loadActivity(opts: { follow?: boolean } = {}): Promise<void> {
   if (disposed || !props.docId) return
+  const follow = opts.follow ?? isPinnedToBottom()
   const seq = ++activitySeq
+  const floor = activityFloor()
   try {
     const res = await getRequest<{ commands?: ChatCommand[]; changes?: RunChange[] }>(
       `/api/v1/chat-activity/${encodeURIComponent(props.docId)}`,
+      floor !== undefined ? { from_seq: floor } : undefined,
     )
     if (disposed || seq !== activitySeq) return
     const data = res.data as any
-    chatCommands.value = Array.isArray(data?.commands) ? data.commands : []
+    const before = activitySignature()
+    // Rows anchored below the window were not asked for; keep the ones an older page
+    // already brought in instead of dropping them on every refresh.
+    const below = (row: ChatCommand | RunChange) =>
+      floor !== undefined && hasAnchorContract(row) && row.anchor_seq != null && row.anchor_seq < floor
+    const commands = chatCommands.value.filter(below)
+    commands.push(...(Array.isArray(data?.commands) ? data.commands : []))
+    chatCommands.value = commands
     const map: Record<string, RunChange> = {}
+    for (const change of Object.values(runChanges.value)) if (below(change)) map[change.run_id] = change
     for (const change of Array.isArray(data?.changes) ? data.changes : []) {
-      // NR0003 §11.4: a change card only for a run that changed something.
-      if (change?.run_id && Number(change.files_changed) > 0) map[change.run_id] = change
+      if (keepChange(change)) map[change.run_id] = change
+    }
+    runChanges.value = map
+    if (follow && activitySignature() !== before) scrollToBottom()
+  } catch {
+    // Best effort: the conversation itself must keep working without this panel.
+  }
+}
+
+/** Merge the rows anchored in [fromSeq, toSeq] -- the page loadOlder just prepended. */
+async function loadActivityWindow(fromSeq: number, toSeq: number): Promise<void> {
+  if (disposed || !props.docId || toSeq < fromSeq) return
+  try {
+    const res = await getRequest<{ commands?: ChatCommand[]; changes?: RunChange[] }>(
+      `/api/v1/chat-activity/${encodeURIComponent(props.docId)}`,
+      { from_seq: Math.max(0, fromSeq), to_seq: toSeq, unplaced: false },
+    )
+    if (disposed) return
+    const data = res.data as any
+    for (const cmd of Array.isArray(data?.commands) ? data.commands : []) upsertCommand(cmd)
+    const map = { ...runChanges.value }
+    for (const change of Array.isArray(data?.changes) ? data.changes : []) {
+      if (keepChange(change)) map[change.run_id] = change
     }
     runChanges.value = map
   } catch {
-    // Best effort: the conversation itself must keep working without this panel.
+    // Best effort, as loadActivity.
   }
 }
 
@@ -1814,7 +1987,9 @@ async function decideCommand(cmd: ChatCommand, decision: 'approve' | 'reject' | 
 function onChatActivityEvent(e: Event): void {
   const detail = (e as CustomEvent).detail as { doc_id?: string } | undefined
   if (detail?.doc_id !== props.docId) return
-  void loadActivity()
+  // 0675 T0004 §2-1: same tail-follow rule as a turn -- decided right before the event
+  // is applied, honoured only once the re-read rows are on screen.
+  void loadActivity({ follow: isPinnedToBottom() })
 }
 
 // The detail screen is the group change viewer itself, fed this run's two snapshots.
@@ -1866,11 +2041,10 @@ watch(() => props.docId, (docId) => {
   draft.value = loadDraft(docId)
   reportedViewed = 0
   void nextTick(autoGrow)
-  void load()
   chatCommands.value = []
   runChanges.value = {}
   closeRunChanges()
-  void loadActivity()
+  void load()
 })
 
 // Load the provider list whenever the RESOLVED project changes — either the
@@ -1887,7 +2061,6 @@ onMounted(() => {
   // Chat settings are per-user, not per-document, so this loads once per mount —
   // not on every props.docId change (group 0362).
   void loadChatSettings()
-  void loadActivity()
   window.addEventListener('fg:chat_command_updated', onChatActivityEvent)
   window.addEventListener('fg:chat_run_changes', onChatActivityEvent)
   window.addEventListener('fg:conversation_turn', onSseTurn)
@@ -2008,6 +2181,24 @@ defineExpose({ load, scrollToBottom, jumpToSeq, refreshChatSettings })
 .conv-activity > .crc {
   width: 78%;
   min-width: 0;
+}
+
+/* 0675 T0004 §2-5: run records with no knowable conversation position, kept and labelled. */
+.conv-unplaced {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.conv-unplaced-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
 }
 
 /* 0351 T4 — brief flash on the turn a search result jumped to, so the reader's eye
