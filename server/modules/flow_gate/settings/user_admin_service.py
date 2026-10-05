@@ -153,8 +153,9 @@ def create_user(data: dict, created_by: str | None = None) -> dict:
             )
             role_service.assign_role(uid, role_service.SYSTEM_PROJECT, role_id, granted_by=created_by)
             for assignment in project_roles:
-                role_service.assign_role(
-                    uid, assignment["project_id"], assignment["role_id"], granted_by=created_by
+                _workspace_service().assign_direct_project_role(
+                    uid, assignment["project_id"], assignment["role_id"],
+                    _actor(created_by), system_grant=True,
                 )
     except Exception as exc:
         if _is_unique_violation(exc) and _db_users.get_by_username(data["username"]):
@@ -267,13 +268,28 @@ def assign_project_role(
     role_id: str,
     granted_by: str | None = None,
 ) -> dict:
-    return role_service.assign_role(user_id, project_id, role_id, granted_by=granted_by)
+    """flowgate.v02.0020: a project role always goes through the workspace (membership/exception
+    and the role row in one transaction, R0001 §3.1). The caller holds a system-level grant."""
+    return _workspace_service().assign_direct_project_role(
+        user_id, project_id, role_id, _actor(granted_by), system_grant=True)
 
 
 
 def revoke_project_role(user_id: str, project_id: str) -> bool:
-    role_service.revoke_role(user_id, project_id)
+    _workspace_service().revoke_direct_project_role(user_id, project_id)
     return True
+
+
+
+def _workspace_service():
+    from modules.flow_gate.settings import workspace_service
+
+    return workspace_service
+
+
+
+def _actor(user_id: str | None) -> dict | None:
+    return {"user_id": user_id} if user_id else None
 
 
 

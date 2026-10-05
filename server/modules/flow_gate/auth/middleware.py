@@ -26,7 +26,29 @@ def verify_token(token:str=Depends(oauth2_scheme)):
     except Exception:
         if os.environ.get("TESTING")=="1":return payload
         raise credentials
+    if payload.get("sid"):_note_activity(payload["sid"],payload.get("sub"))
     return payload
+# flowgate.v02.0020 (시스템 › 보안 › 자동 로그아웃): an API request is session activity. It is
+# stamped at most once a minute per session, and that same read signs out a session that sat
+# idle longer than the policy allows (the access token alone would otherwise outlive it).
+_ACTIVITY_EVERY=60.0
+_activity_seen:dict={}
+def _note_activity(sid,uid):
+    import time
+    now=time.monotonic(); last=_activity_seen.get(sid)
+    if last is not None and now-last<_ACTIVITY_EVERY:return
+    if len(_activity_seen)>20000:_activity_seen.clear()
+    _activity_seen[sid]=now
+    try:
+        from .session_store import get_session,revoke_session,touch_session
+        from .auth_api import _session_idle
+        session=get_session(sid)
+        if session and not session.get("revoked_at") and _session_idle(session):
+            _activity_seen.pop(sid,None); revoke_session(sid,uid or session.get("user_id"),"admin")
+            raise HTTPException(401,"session_idle")
+        touch_session(sid)
+    except HTTPException:raise
+    except Exception:pass
 def get_current_user(payload:dict=Depends(verify_token)):
     user_id=payload.get("sub")
     if not user_id:raise HTTPException(401,"Invalid token subject")

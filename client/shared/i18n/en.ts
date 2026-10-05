@@ -114,6 +114,26 @@ export default {
         },
       },
     },
+    totp_setup: {
+      title: 'Set up two-step verification',
+      instruction: 'Your administrator requires two-step verification before you can sign in.',
+      start: 'Start setup',
+      secret_label: 'Key for your authenticator app',
+      uri_label: 'Open in authenticator app (otpauth)',
+      backup_title: 'Backup codes — shown only this once',
+      code_label: '6-digit code from the app',
+      submit: 'Finish setup',
+      pending_hint: 'Setup is finished only when the code is confirmed. If you leave before that, nothing is saved and signing in again starts over with a new key.',
+      failed: 'Two-step verification could not be set up.',
+    },
+    invite: {
+      title: 'Accept invitation',
+      instruction: 'Set a password for {username} ({email}).',
+      submit: 'Set password',
+      back: 'Back to sign in',
+      invalid: 'This invitation link is invalid or has expired. Ask your administrator for a new one.',
+      accepted: 'Your password is set. Please sign in.',
+    },
     password: {
       change: {
         title: 'Password change required',

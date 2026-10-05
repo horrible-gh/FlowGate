@@ -23,11 +23,21 @@ def generate_codes() -> list[str]:
     return [f"{_random_segment()}-{_random_segment()}-{_random_segment()}" for _ in range(_NUM_CODES)]
 
 
+def hash_codes(codes: list[str]) -> list[str]:
+    """bcrypt hashes of the codes, in the form store_hashes() keeps."""
+    return [_ctx.hash(code) for code in codes]
+
+
+def store_hashes(user_id: str, hashes: list[str]) -> None:
+    """Delete existing backup codes and store the given bcrypt hashes."""
+    _db.delete_all(user_id)
+    for stored_hash in hashes:
+        _db.create({"user_id": user_id, "code": stored_hash})
+
+
 def store_codes(user_id: str, codes: list[str]) -> None:
     """Delete existing backup codes and store bcrypt hashes."""
-    _db.delete_all(user_id)
-    for code in codes:
-        _db.create({"user_id": user_id, "code": _ctx.hash(code)})
+    store_hashes(user_id, hash_codes(codes))
 
 
 def verify_backup_code(user_id: str, code: str) -> bool:

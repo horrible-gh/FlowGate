@@ -41,6 +41,7 @@ from modules.flow_gate.settings.user_admin_service import (
     update_user,
     UsernameAlreadyExists,
 )
+from modules.flow_gate.settings.workspace_service import WorkspaceError
 
 router = APIRouter(tags=["UserAdmin"])
 
@@ -87,6 +88,8 @@ def create_user_endpoint(
         return create_user(body.model_dump(), created_by=user.get("user_id"))
     except UsernameAlreadyExists:
         raise HTTPException(status_code=409, detail={"code": "username_already_exists"}) from None
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code}) from None
 
 
 @router.get("/users/{uid}")
@@ -165,7 +168,10 @@ def assign_role(
     body: AssignRoleBody,
     user: dict = Depends(require_permission("system.user.assign_role")),
 ):
-    return assign_project_role(uid, body.project_id, body.role_id, granted_by=user.get("user_id"))
+    try:
+        return assign_project_role(uid, body.project_id, body.role_id, granted_by=user.get("user_id"))
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code}) from None
 
 
 @router.delete("/users/{uid}/project-roles/{project_id}", status_code=200)

@@ -906,9 +906,27 @@ def resolve_global(user_id: Optional[str] = None) -> dict:
 
 def resolve_effective(project_id: str, user_id: Optional[str] = None) -> dict:
     """resolve_global() behind the project-exists check the project routes and the run path
-    rely on (LookupError for an unknown project). The chain itself is the same everywhere."""
+    rely on (LookupError for an unknown project).
+
+    flowgate.v02.0020 (워크스페이스 › 공용 정책 › 사용할 수 있는 AI): when the project's workspace
+    allows only selected AI, the chain keeps just the approved ones. Every run start, provider
+    pin and runtime provider list reads this chain, so a revoked AI cannot start a new run in
+    that workspace; a run already started is not stopped (R0001 §4.6)."""
     _require_project(project_id)
-    return resolve_global(user_id)
+    result = resolve_global(user_id)
+    from modules.flow_gate.settings import workspace_service
+
+    allowed = workspace_service.allowed_resource_ids(project_id, "provider")
+    if allowed is None:
+        return result
+    chain = [p for p in result.get("providers") or [] if p["id"] in allowed]
+    default_id = result.get("default_provider_id")
+    return {
+        **result,
+        "providers": chain,
+        "default_provider_id": _pick_default(default_id, chain),
+        "workspace_policy": "allowlist",
+    }
 
 
 def get_provider_secret(project_id: Optional[str], provider_id: str) -> Optional[str]:

@@ -9,7 +9,7 @@
     </template>
 
     <div class="dialog-form">
-      <div v-if="error" class="form-error">{{ error }}</div>
+      <div v-if="saveError" class="form-error" role="alert">{{ saveError }}</div>
 
       <div class="form-group">
         <label class="form-label" for="provider-name">{{ t('gui.ai.providers.field_name') }} *</label>
@@ -18,7 +18,13 @@
           v-model="form.name"
           :placeholder="t('gui.ai.providers.placeholder_name')"
           :disabled="saving"
+          :invalid="!!nameError"
+          :aria-describedby="nameError ? 'provider-name-error' : undefined"
+          @update:model-value="onNameChange"
         />
+        <small v-if="nameError" id="provider-name-error" class="field-hint text-warn" role="alert">
+          {{ nameError }}
+        </small>
       </div>
 
       <!-- Owner: only when adding, and only when more than one list can take the new AI -->
@@ -164,19 +170,24 @@ const props = withDefaults(defineProps<{
   owner?: AiOwnerScope
   ownerChoices?: AiOwnerScope[]
   saving?: boolean
+  existingProvidersByOwner?: Record<AiOwnerScope, ProviderItem[]>
+  saveError?: string
+  nameSaveError?: string
 }>(), {
   owner: 'user',
   ownerChoices: () => ['user'],
+  existingProvidersByOwner: () => ({ system: [], user: [] }),
 })
 
 const emit = defineEmits<{
   close: []
   save: [item: ProviderItem, owner: AiOwnerScope]
+  nameChange: []
 }>()
 
 const { t } = useI18n()
 
-const error = ref('')
+const nameTouched = ref(false)
 
 const isEdit = computed(() => !!props.provider?.id)
 
@@ -262,7 +273,7 @@ watch(
         api_key_set: false,
       }
     }
-    error.value = ''
+    nameTouched.value = false
   },
   { immediate: true }
 )
@@ -272,9 +283,21 @@ watch(() => [props.open, props.owner] as const, () => {
   selectedOwner.value = props.owner
 })
 
-const isValid = computed(() => {
-  return form.value.name.trim().length > 0
+const normalizedName = computed(() => form.value.name.trim())
+const duplicateName = computed(() => props.existingProvidersByOwner[isEdit.value ? props.owner : selectedOwner.value].some(
+  (provider) => provider.id !== form.value.id && provider.name.trim().toLowerCase() === normalizedName.value.toLowerCase(),
+))
+const nameError = computed(() => {
+  if (nameTouched.value && !normalizedName.value) return t('gui.ai.providers.name_required')
+  if (normalizedName.value && duplicateName.value) return t('gui.ai.providers.name_duplicate')
+  return props.nameSaveError || ''
 })
+const isValid = computed(() => !!normalizedName.value && !duplicateName.value)
+
+function onNameChange() {
+  nameTouched.value = true
+  emit('nameChange')
+}
 
 function onClose() {
   if (props.saving) return

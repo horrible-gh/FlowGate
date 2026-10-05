@@ -23,16 +23,25 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+def _min_length() -> int:
+    try:
+        from modules.flow_gate.settings.security_policy_service import password_min_length
+        return password_min_length()
+    except Exception:  # noqa: BLE001 — no readable policy keeps the original 12
+        return 12
+
+
 def validate_password(plain: str) -> list[str]:
     """Validate password against policy. Returns: list of violations (empty list = pass).
 
     Policy:
-    - At least 12 characters
+    - At least N characters — N is 시스템 › 보안 › 비밀번호 길이 (8 / 10 / 12, default 12)
     - At least 3 of the following: uppercase, lowercase, digits, special characters
     """
     errors: list[str] = []
-    if len(plain) < 12:
-        errors.append("Password must be at least 12 characters long.")
+    min_length = _min_length()
+    if len(plain) < min_length:
+        errors.append(f"Password must be at least {min_length} characters long.")
 
     type_count = sum([
         bool(re.search(r"[A-Z]", plain)),

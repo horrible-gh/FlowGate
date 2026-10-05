@@ -10,6 +10,10 @@ export type AuthState =
   | 'SUBMITTING'
   | 'TOTP_INPUT'
   | 'TOTP_SUBMITTING'
+  | 'TOTP_SETUP'
+  | 'TOTP_SETUP_SUBMITTING'
+  | 'INVITE'
+  | 'INVITE_SUBMITTING'
   | 'BACKUP_CODE_INPUT'
   | 'BACKUP_CODE_SUBMITTING'
   | 'PW_CHANGE_REQUIRED'
@@ -39,12 +43,27 @@ interface TokenResponse {
 
 interface LoginResponse {
   totp_required?: boolean
+  /** flowgate.v02.0020: the 2FA policy covers this user and the grace period is over. */
+  totp_setup_required?: boolean
   temp_token?: string
   access_token?: string
   refresh_token?: string
   token_type?: string
   user?: UserProfile
   pw_change_required?: boolean
+}
+
+export interface TotpSetupInfo {
+  secret: string
+  qr_uri: string
+  backup_codes: string[]
+  /** Carries the pending enrolment; the code is confirmed with this token. */
+  temp_token: string
+}
+
+export interface InviteInfo {
+  username: string
+  email: string | null
 }
 
 interface ErrorPayload {
@@ -106,9 +125,13 @@ export const useAuthStore = defineStore('auth', () => {
   const rememberMe = ref(false)
   const failedCount = ref(0)
   const passwordChangeLoading = ref(false)
+  const totpSetup = ref<TotpSetupInfo | null>(null)
+  const invite = ref<InviteInfo | null>(null)
+  const inviteToken = ref<string | null>(null)
+  const notice = ref<string | null>(null)
 
   const isBusy = computed(() =>
-    ['SUBMITTING', 'TOTP_SUBMITTING', 'BACKUP_CODE_SUBMITTING'].includes(state.value),
+    ['SUBMITTING', 'TOTP_SUBMITTING', 'BACKUP_CODE_SUBMITTING', 'TOTP_SETUP_SUBMITTING', 'INVITE_SUBMITTING'].includes(state.value),
   )
 
   function clearRefreshTokens() {
@@ -192,6 +215,13 @@ export const useAuthStore = defineStore('auth', () => {
         return
       }
 
+      if (data.totp_setup_required && data.temp_token) {
+        tempToken.value = data.temp_token
+        totpSetup.value = null
+        state.value = 'TOTP_SETUP'
+        return
+      }
+
       if (data.access_token && data.refresh_token && data.user && data.token_type) {
         await completeLogin(
           {
@@ -270,6 +300,92 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  // flowgate.v02.0020 (시스템 › 보안): enrolment the 2FA policy requires before sign-in.
+  async function startTotpSetup() {
+    state.value = 'TOTP_SETUP_SUBMITTING'
+    error.value = null
+    try {
+      const response = await postRequest<TotpSetupInfo | { data: TotpSetupInfo }>('/auth/totp/enroll', {
+        temp_token: tempToken.value,
+      })
+      const setup = unwrapResponseData(response.data)
+      // Nothing is saved until the code is confirmed: leaving this step leaves the user
+      // unenrolled, and the next sign-in starts the enrolment again with a new key.
+      tempToken.value = setup.temp_token
+      totpSetup.value = setup
+      state.value = 'TOTP_SETUP'
+    } catch (caughtError: unknown) {
+      if (getErrorDetail(caughtError) === 'token_expired') {
+        tempToken.value = null
+        error.value = 'code_expired'
+        state.value = 'IDLE'
+        return
+      }
+      error.value = getErrorDetail(caughtError)
+      state.value = 'TOTP_SETUP'
+    }
+  }
+
+  async function confirmTotpSetup(code: string) {
+    state.value = 'TOTP_SETUP_SUBMITTING'
+    error.value = null
+    try {
+      const response = await postRequest<TokenResponse | { data: TokenResponse }>('/auth/totp', {
+        temp_token: tempToken.value,
+        code,
+      })
+      totpSetup.value = null
+      await completeLogin(unwrapResponseData(response.data))
+    } catch (caughtError: unknown) {
+      if (getErrorStatus(caughtError) === 423) {
+        lockedUntil.value = getErrorPayload(caughtError)?.locked_until ?? null
+        state.value = 'LOCKED'
+        return
+      }
+      if (getErrorDetail(caughtError) === 'token_expired') {
+        // The pending enrolment expired unsaved; signing in again starts over.
+        tempToken.value = null
+        totpSetup.value = null
+        error.value = 'code_expired'
+        state.value = 'IDLE'
+        return
+      }
+      error.value = getErrorDetail(caughtError)
+      state.value = 'TOTP_SETUP'
+    }
+  }
+
+  // flowgate.v02.0020 (시스템 › 사용자 › 초대): /login?invite=<token>.
+  async function openInvite(token: string) {
+    inviteToken.value = token
+    invite.value = null
+    error.value = null
+    state.value = 'INVITE_SUBMITTING'
+    try {
+      const response = await getRequest<InviteInfo | { data: InviteInfo }>('/auth/invite', { token })
+      invite.value = unwrapResponseData(response.data)
+    } catch (caughtError: unknown) {
+      error.value = getErrorStatus(caughtError) === 404 ? 'invite_invalid' : getErrorDetail(caughtError)
+    }
+    state.value = 'INVITE'
+  }
+
+  async function acceptInvite(password: string) {
+    state.value = 'INVITE_SUBMITTING'
+    error.value = null
+    try {
+      await postRequest('/auth/invite/accept', { token: inviteToken.value, password })
+      inviteToken.value = null
+      invite.value = null
+      notice.value = 'invite_accepted'
+      state.value = 'IDLE'
+    } catch (caughtError: unknown) {
+      const status = getErrorStatus(caughtError)
+      error.value = status === 400 ? 'policy_violation' : status === 404 ? 'invite_invalid' : getErrorDetail(caughtError)
+      state.value = 'INVITE'
+    }
+  }
+
   async function changePassword(payload: { current_password?: string; new_password: string }) {
     error.value = null
     passwordChangeLoading.value = true
@@ -300,6 +416,9 @@ export const useAuthStore = defineStore('auth', () => {
     rememberMe.value = false
     failedCount.value = 0
     passwordChangeLoading.value = false
+    totpSetup.value = null
+    invite.value = null
+    inviteToken.value = null
     clearAccessToken()
     clearRefreshTokens()
   }
@@ -319,9 +438,16 @@ export const useAuthStore = defineStore('auth', () => {
     rememberMe,
     failedCount,
     passwordChangeLoading,
+    totpSetup,
+    invite,
+    notice,
     isBusy,
     login,
     verifyTotp,
+    startTotpSetup,
+    confirmTotpSetup,
+    openInvite,
+    acceptInvite,
     verifyBackupCode,
     changePassword,
     goToBackup,
