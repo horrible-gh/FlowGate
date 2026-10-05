@@ -44,5 +44,17 @@ flowgate.v02.0025 T0006에서 Designer route는 `meta.fullscreen`으로 App Topb
 ([프로젝트] [파일] + 접기)로 합쳤습니다. 활성 Flow는 Badge 없이 행 스타일로만 표시하고,
 정상 상태에서는 Base 비교 기준·현재 Flow 이름 같은 설명 문구를 노출하지 않습니다.
 
+flowgate.v02.0026에서 `designer/center/`에 Designer Center 1단계(Flow Tabs + 읽기 전용
+Canvas)를 추가하고 Workspace Placeholder를 `DesignerCenter`로 바꿨습니다. Center 상태(열린
+탭·순서, 활성 Flow, Flow별 Graph 읽기 상태·Viewport·Selection)는 `designerCenterSession.ts`의
+Center 세션이 단일 소유하며(Pinia 아님), DesignerShell 인스턴스가 세션을 한 번 만들어 수명을
+같이 합니다. Project Explorer 활성 표시·File Explorer 대상 Flow·활성 탭은 모두 세션의 활성
+FlowRef 하나를 봅니다. Graph는 `graph/flowGraphSource.ts` 경계로 받으며, 서버 Graph API가 생기기
+전까지 기본 공급원은 샘플 공급원 `graph/fixtureFlowGraphSource.ts`입니다(Canvas에 "샘플 데이터"
+배지). Canvas 엔진은 `@vue-flow/core`(1.48.2 정확 고정)이고 import는 `center/canvas/` 안에서만
+하며, FlowGate Graph Model은 `canvas/vueFlowMapping.ts`로 단방향 변환해 그립니다. Node/Edge 모양은
+FlowGate 전용 `FlowNodeCard`/`FlowEdgePath`이고 라이브러리 기본 테마는 쓰지 않습니다. 편집(이동·
+연결·저장), Inspector, Minimap, Toolbar는 후속 작업 대상입니다.
+
 Git / AI Settings / Environment Settings 등 나머지 기능 이식은 별도 그룹의 후속 작업
 대상입니다.

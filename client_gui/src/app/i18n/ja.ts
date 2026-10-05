@@ -92,6 +92,37 @@ export default {
     footer_mark: 'Build the Flow, Not Just the Document.',
   },
   designer: {
+    // flowgate.v02.0026 — Designer Center (Flow Tabs + read-only Canvas).
+    center: {
+      tabs_label: '開いているフロー',
+      close_tab: '{name} を閉じる',
+      no_open_flow: '開いているフローはありません',
+      no_open_flow_desc: 'プロジェクトエクスプローラーでフローをダブルクリックすると、ここに開きます',
+      graph_loading: 'グラフを読み込み中',
+      graph_load_failed: 'グラフを読み込めませんでした',
+      retry: '再試行',
+      empty_graph: '表示するノードがありません',
+      sample_data: 'サンプルデータ',
+      canvas_label: '{name} キャンバス',
+      node_kinds: {
+        requirement: '要件',
+        research: '調査',
+        plan: '作業計画',
+        task: '作業',
+        test: 'テスト',
+        approval: '承認',
+        design: '設計',
+        memo: 'メモ',
+        unknown: 'ノード',
+      },
+      node_states: {
+        draft: '作成中',
+        in_progress: '進行中',
+        review: 'レビュー中',
+        done: '完了',
+        blocked: '保留',
+      },
+    },
     // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
     project_explorer: {
       title: 'プロジェクト',
@@ -157,14 +188,10 @@ export default {
       expand_left: '左パネルを展開',
       top_label: 'TOP',
       top_parts: 'Header / MenuBar / Toolbar',
-      workspace_label: 'CENTER / WORKSPACE',
-      workspace_parts: 'フロータブ / Canvas',
       bottom_label: 'BOTTOM',
       bottom_parts: 'Inspector / Minimap',
       right_label: 'RIGHT',
       right_parts: 'Palette / Git',
-      active_flow: 'アクティブなフロー: {name}',
-      no_active_flow: 'アクティブなフローなし',
     },
   },
   placeholder: {

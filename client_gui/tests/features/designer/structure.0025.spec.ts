@@ -28,7 +28,7 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
     ].sort())
   })
 
-  it('imports only vue / vue-i18n, the features/project surface, ui primitives, its own files and the two Explorer entry points', () => {
+  it('imports only vue / vue-i18n, the features/project surface, ui primitives, its own files, the two Explorer entry points and the two Center entry points', () => {
     const allowed = [
       /^vue$/,
       /^vue-i18n$/,
@@ -38,6 +38,9 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       /^\.\.\/projectExplorer\/ProjectExplorer\.vue$/,
       /^\.\.\/projectExplorer\/projectExplorerTree$/,
       /^\.\.\/fileExplorer\/DesignerFileExplorer\.vue$/,
+      // flowgate.v02.0026 — Designer Center (0003-D §2.3): the screen and the session only.
+      /^\.\.\/center\/DesignerCenter\.vue$/,
+      /^\.\.\/center\/designerCenterSession$/,
     ]
     for (const name of SHELL_FILES) {
       for (const spec of importsOf(read(join(SHELL, name)))) {
@@ -74,10 +77,10 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
     expect(router).not.toMatch(/features\/designer\/shell/)
   })
 
-  it.each(['ko', 'en', 'ja'])('i18n %s has exactly one top-level designer key holding all three blocks', async (locale) => {
+  it.each(['ko', 'en', 'ja'])('i18n %s has exactly one top-level designer key holding all four blocks', async (locale) => {
     const file = join(SRC, `app/i18n/${locale}.ts`)
     expect(read(file).match(/^ {2}designer:\s*\{/gm)).toHaveLength(1)
     const messages = (await import(`@/app/i18n/${locale}.ts`)).default as Record<string, Record<string, unknown>>
-    expect(Object.keys(messages.designer).sort()).toEqual(['file_explorer', 'project_explorer', 'shell'])
+    expect(Object.keys(messages.designer).sort()).toEqual(['center', 'file_explorer', 'project_explorer', 'shell'])
   })
 })
