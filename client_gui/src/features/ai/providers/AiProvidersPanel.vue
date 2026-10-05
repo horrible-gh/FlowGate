@@ -138,7 +138,6 @@
                   {{ probeBadge(row.item.id)!.label }}
                 </Badge>
               </div>
-              <small>{{ row.item.id }}</small>
             </div>
 
             <div class="status-cell">
@@ -237,7 +236,11 @@
       :owner="editingOwner"
       :owner-choices="ownerChoices"
       :saving="saving"
+      :existing-providers-by-owner="{ system: systemList, user: myList }"
+      :save-error="dialogSaveError"
+      :name-save-error="dialogNameError"
       @close="dialogOpen = false"
+      @name-change="clearDialogErrors"
       @save="onSaveProvider"
     />
 
@@ -274,6 +277,7 @@ import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import {
+  AiRequestError,
   fetchMyAi,
   fetchSystemAi,
   fetchVisibleSystemAi,
@@ -319,6 +323,8 @@ const searchQuery = ref('')
 const ownerFilter = ref<OwnerFilter>('all')
 
 const dialogOpen = ref(false)
+const dialogSaveError = ref('')
+const dialogNameError = ref('')
 const editingProvider = ref<ProviderItem | null>(null)
 const editingOwner = ref<AiOwnerScope>('user')
 const deleting = ref<Row | null>(null)
@@ -447,11 +453,13 @@ async function persist(
   owner: AiOwnerScope,
   list: ProviderItem[],
   nextDefault: string | null = systemDefaultId.value,
-): Promise<void> {
-  if (saving.value) return
+  showError = true,
+): Promise<unknown | null> {
+  if (saving.value) return new Error('save_in_progress')
   if (list.length > PROVIDERS_MAX) {
-    pushToast(t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX }), 'danger')
-    return
+    const error = new Error(t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX }))
+    if (showError) pushToast(error.message, 'danger')
+    return error
   }
   saving.value = true
   try {
@@ -465,8 +473,10 @@ async function persist(
       myDefaultId.value = data.default_provider_id ?? null
     }
     emit('changed')
+    return null
   } catch (err: unknown) {
-    pushToast(err instanceof Error ? err.message : t('gui.ai.providers.save_failed'), 'danger')
+    if (showError) pushToast(err instanceof Error ? err.message : t('gui.ai.providers.save_failed'), 'danger')
+    return err
   } finally {
     saving.value = false
   }
@@ -561,14 +571,21 @@ function onDragEnd() {
   overId.value = null
 }
 
+function clearDialogErrors() {
+  dialogSaveError.value = ''
+  dialogNameError.value = ''
+}
+
 function openAddDialog() {
   if (addBlocked.value) return
+  clearDialogErrors()
   editingProvider.value = null
   editingOwner.value = ownerChoices.value[0]
   dialogOpen.value = true
 }
 
 function openEditDialog(row: Row) {
+  clearDialogErrors()
   editingProvider.value = { ...row.item }
   editingOwner.value = row.owner
   dialogOpen.value = true
@@ -623,9 +640,9 @@ function onDeleteConfirmed() {
   }
 }
 
-function onSaveProvider(item: ProviderItem, owner: AiOwnerScope) {
-  dialogOpen.value = false
-  if (!canEdit(owner)) return
+async function onSaveProvider(item: ProviderItem, owner: AiOwnerScope) {
+  if (!canEdit(owner) || saving.value) return
+  clearDialogErrors()
   const current = [...listOf(owner)]
   const idx = current.findIndex((p) => p.id === item.id)
   if (idx >= 0) {
@@ -633,7 +650,18 @@ function onSaveProvider(item: ProviderItem, owner: AiOwnerScope) {
   } else {
     current.push(item)
   }
-  void persist(owner, current, owner === 'system' ? systemDefaultId.value ?? item.id : systemDefaultId.value)
+  const error = await persist(
+    owner, current, owner === 'system' ? systemDefaultId.value ?? item.id : systemDefaultId.value, false,
+  )
+  if (error === null) {
+    dialogOpen.value = false
+  } else if (error instanceof AiRequestError && error.fieldErrors.some(
+    (field) => field.index === (idx >= 0 ? idx : current.length - 1) && field.field === 'name' && field.reason === 'duplicate_name',
+  )) {
+    dialogNameError.value = t('gui.ai.providers.name_duplicate')
+  } else {
+    dialogSaveError.value = error instanceof Error ? error.message : t('gui.ai.providers.save_failed')
+  }
 }
 </script>
 
