@@ -62,6 +62,7 @@ from modules.flow_gate.db import connection as db_connection  # noqa: E402
 from modules.flow_gate.db import git_integration as db_git  # noqa: E402
 from modules.flow_gate.db import tr_commit_ledger as db_ledger  # noqa: E402
 from modules.flow_gate.services import git_service as svc  # noqa: E402
+from group_lock_stub import stub_group_lock  # noqa: E402
 from modules.flow_gate.services import tr_commit_service as trc  # noqa: E402
 from modules.flow_gate.services.git_service import GitServiceError  # noqa: E402
 
@@ -106,6 +107,11 @@ class _SqliteStore:
     def _execute(self, sql, params=None):
         self._conn.execute(sql, params or [])
         self._conn.commit()
+
+    def _execute_affected(self, sql, params=None):
+        cur = self._conn.execute(sql, params or [])
+        self._conn.commit()
+        return cur.rowcount
 
     def _fetch_one(self, sql, params=None):
         row = self._conn.execute(sql, params or []).fetchone()
@@ -173,8 +179,7 @@ def git_active(monkeypatch, repo):
     })
     monkeypatch.setattr(svc, "_project_name", lambda project_id: "flowgate")
     monkeypatch.setattr(svc, "src_root", lambda project_name, branch: repo)
-    monkeypatch.setattr(svc.db_git, "try_acquire_lock", lambda project_id, holder: True)
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda project_id, holder: None)
+    stub_group_lock(monkeypatch)
     return repo
 
 

@@ -552,11 +552,11 @@ def list_recovery_incomplete_project_ids() -> list[str]:
     return [r["project_id"] for r in rows if r and "project_id" in r]
 
 
-def has_recovery_incomplete(project_id: str) -> bool:
-    """Check if given project has any active recovery_incomplete runs."""
+def has_group_recovery_incomplete(project_id: str, group_id: str) -> bool:
+    """Active recovery_incomplete run of this Group (0666 L 2.24.3; idx on project_id, group_id)."""
     row = get_store()._fetch_one(
-        "SELECT 1 FROM tr_self_check_runs WHERE project_id = ? AND recovery_state = 'incomplete' AND status IN ('pending', 'running') LIMIT 1",
-        [project_id],
+        "SELECT 1 FROM tr_self_check_runs WHERE project_id = ? AND group_id = ? AND recovery_state = 'incomplete' AND status IN ('pending', 'running') LIMIT 1",
+        [project_id, group_id],
     )
     return row is not None
 

@@ -40,16 +40,34 @@ def recover_ai_invoke_leases():
         logger.warning(f"[startup] AI-run lease recovery failed: {exc}")
 
 
+def register_server_instance():
+    """0669 1a (0666 L 2.26 steps 1~2): register this process before any lock recovery.
+
+    Lock rows written from here on carry this instance id, so a later recovery can tell
+    a dead owner's leftover from a live one. Failure keeps the old behaviour (rows are
+    stamped NULL = owner unknown) and is only logged.
+    """
+    try:
+        from modules.flow_gate.services.git import instance_registry
+
+        instance_id = instance_registry.startup()
+        logger.info(f"[startup] server instance registered: {instance_id}")
+    except Exception as exc:
+        logger.warning(f"[startup] server instance registration failed: {exc}")
+
+
 def recover_git_sessions():
-    """Recover Self-check ownership before generic stale Git lock cleanup."""
+    """Recover Self-check ownership before Git session recovery.
+
+    Self-check protection lives on the Group's G row (0669 unit 4). A run whose
+    protection could not be written there stays recovery_incomplete, which keeps the
+    Group's G closed on its own (0669 unit 9c removed the old project lock row).
+    """
     try:
         from modules.flow_gate.services import git_service, tr_self_check_service
 
-        protected = tr_self_check_service.recover()
-        if protected:
-            git_service.startup_recovery(protected_project_ids=protected)
-        else:
-            git_service.startup_recovery()
+        tr_self_check_service.recover()
+        git_service.startup_recovery()
     except Exception as exc:
         logger.warning(f"[startup] git session recovery failed: {exc}")
 
@@ -103,6 +121,7 @@ def run_all():
     record_deployment()
     preload_singletons()
     recover_ai_invoke_leases()
+    register_server_instance()
     recover_git_sessions()
     encrypt_ai_provider_keys()
     start_snapshot_cleanup()

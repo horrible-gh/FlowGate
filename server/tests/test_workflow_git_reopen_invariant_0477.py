@@ -40,8 +40,11 @@ _SERVER_DIR = Path(__file__).resolve().parents[1]
 _SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 sys.path.insert(0, str(_SERVER_DIR))
 
+import modules.flow_gate.documents  # noqa: E402,F401  (import order: documents before utils.id_validators, or a lone run hits the DOC_ID import cycle)
 from modules.flow_gate.db import git_integration as db_git  # noqa: E402
 from modules.flow_gate.services import git_service as svc  # noqa: E402
+from modules.flow_gate.services.git import lock_manager  # noqa: E402
+from group_lock_stub import group_store as lock_store  # noqa: E402,F401
 from modules.flow_gate.services import workflow_rework_service as rework  # noqa: E402
 
 
@@ -412,7 +415,7 @@ def test_8_merging_blocks_while_awaiting_choice_reopens_cleanly(reopen_store):
 
 
 @pytest.fixture
-def finalize_pending_state(tmp_path, monkeypatch):
+def finalize_pending_state(tmp_path, monkeypatch, lock_store):
     """A deterministic finalize context that exposes every ledger field T#2 protects."""
     state = {
         "status": "awaiting_choice",
@@ -423,7 +426,7 @@ def finalize_pending_state(tmp_path, monkeypatch):
     }
     calls: list[str] = []
     root_check = MagicMock(return_value=False)
-    lock = MagicMock(return_value=True)
+    lock = MagicMock()      # none of these paths may take a domain lock
 
     monkeypatch.setattr(
         svc,
@@ -439,7 +442,7 @@ def finalize_pending_state(tmp_path, monkeypatch):
     monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: state.copy())
     monkeypatch.setattr(svc.db_git, "get_open_session_by_group", lambda group_id: None)
     monkeypatch.setattr(svc, "_group_root_wf_done", root_check)
-    monkeypatch.setattr(svc, "_acquire_lock", lock)
+    monkeypatch.setattr(lock_manager, "acquire", lock)       # every domain lock goes through it
 
     def set_status(group_id, status, **kwargs):
         state["status"] = status

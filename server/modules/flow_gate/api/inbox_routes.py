@@ -12,7 +12,6 @@ import os
 import pathlib
 import re
 import shutil
-import uuid
 from typing import Any, Optional
 
 import anyio.to_thread
@@ -739,8 +738,13 @@ def _archive_group_git(
     actor_user_id: Optional[str] = None,
     approval_context: Optional[Any] = None,
 ) -> dict:
-    """Pin branch/worktree state to named refs, then release and hide the slot."""
+    """Pin branch/worktree state to named refs, then release and hide the slot.
+
+    0669 unit 8b: a manual archive is an ``archive_preserve`` job (G + M, no project
+    mutex); the approval-coupled one runs inline in the approval job with M from its
+    context (``services/git/archive_publish.py``)."""
     from modules.flow_gate.services import git_service
+    from modules.flow_gate.services.git import archive_publish
 
     group = db_groups.get_by_id(group_id)
     if group is None:
@@ -798,52 +802,77 @@ def _archive_group_git(
                 f"group '{group_id}' cannot be archived from git state '{current or 'none'}'",
             )
 
-    holder = (
-        approval_context.lock_holder
-        if approval_context is not None
-        else f"archive:{uuid.uuid4()}"
-    )
-    if not borrowed_lock and not git_service._acquire_lock(project_id, holder):
-        _git_archive_error(409, "git_busy", "another Git operation is in progress")
-    try:
-        record = _git_archive_record(group_id)
-        state = git_service.db_git.get_state(group_id)
-        if record and record.get("status") == "archived":
-            if (
-                state is not None and state.get("worktree_registered")
-                and not borrowed_lock
-            ):
-                _git_archive_error(
-                    409,
-                    "archive_already_exists",
-                    f"group '{group_id}' already has a completed archive; "
-                    "restore or permanently delete it before archiving new work",
-                )
-            return {"ok": True, "result": {**record, "idempotent": True}}
-        if record and record.get("status") != "archiving":
+    payload = {"reason": reason, "actor_user_id": actor_user_id}
+    if borrowed_lock:
+        step = archive_publish.inline_step(project_id, approval_context.job_ctx.lock_ctx)
+        result, done_writes = _archive_preserve_locked(
+            group_id, payload, step, borrowed=True,
+        )
+        if done_writes is not None:
+            done_writes()
+        return {"ok": True, "result": result}
+    return {"ok": True, "result": archive_publish.request(
+        archive_publish.PRESERVE, project_id, group_id, payload,
+    )}
+
+
+def _archive_preserve_locked(
+    group_id: str, payload: dict, step: Any, *, borrowed: bool = False,
+) -> tuple:
+    """The archive_preserve body, under the Group's G (job) or inside the approval job
+    (``borrowed``). Returns (result, done_writes) -- done_writes runs in the job's
+    terminal transaction."""
+    from modules.flow_gate.services import git_service
+
+    reason = payload.get("reason")
+    actor_user_id = payload.get("actor_user_id")
+    group = db_groups.get_by_id(group_id)
+    if group is None:
+        _git_archive_error(404, "not_found", f"group '{group_id}' not found")
+    project_id = group.get("project_id") or group_id.split(".", 1)[0]
+    cfg = git_service.db_git.get_config(project_id) or {}
+    record = _git_archive_record(group_id)
+    state = git_service.db_git.get_state(group_id)
+    if record and record.get("status") == "archived":
+        if state is not None and state.get("worktree_registered") and not borrowed:
             _git_archive_error(
                 409,
-                "invalid_state",
-                f"archive for '{group_id}' has unsupported status "
-                f"'{record.get('status') or 'none'}'",
+                "archive_already_exists",
+                f"group '{group_id}' already has a completed archive; "
+                "restore or permanently delete it before archiving new work",
             )
-        if record is None:
-            if state is None or not state.get("worktree_registered"):
-                _git_archive_error(
-                    409, "invalid_state",
-                    f"Git integration is not active for group '{group_id}'",
-                )
-            base_root, branch, head_sha = git_service.resolve_group_ref(project_id, group_id)
-            worktree_root, root_reason = git_service.effective_src_root_ex(project_id, group_id)
-            if worktree_root is None:
-                _git_archive_error(
-                    409, "invalid_state",
-                    f"group worktree is unavailable ({root_reason})",
-                )
+        return {**record, "idempotent": True}, None
+    if record and record.get("status") != "archiving":
+        _git_archive_error(
+            409,
+            "invalid_state",
+            f"archive for '{group_id}' has unsupported status "
+            f"'{record.get('status') or 'none'}'",
+        )
+    if record is None:
+        if state is None or not state.get("worktree_registered"):
+            _git_archive_error(
+                409, "invalid_state",
+                f"Git integration is not active for group '{group_id}'",
+            )
+        base_root, branch, head_sha = git_service.resolve_group_ref(project_id, group_id)
+        worktree_root, root_reason = git_service.effective_src_root_ex(project_id, group_id)
+        if worktree_root is None:
+            _git_archive_error(
+                409, "invalid_state",
+                f"group worktree is unavailable ({root_reason})",
+            )
 
-            ref_segment = _git_archive_ref_segment(group_id)
-            head_ref = f"refs/flowgate/archive/{ref_segment}/head"
-            stash_ref = f"refs/flowgate/archive/{ref_segment}/stash"
+        ref_segment = _git_archive_ref_segment(group_id)
+        head_ref = f"refs/flowgate/archive/{ref_segment}/head"
+        stash_ref = f"refs/flowgate/archive/{ref_segment}/stash"
+        step.phase("start", plan={
+            "branch": branch, "head_sha": head_sha, "head_ref": head_ref,
+            "stash_ref": stash_ref, "base_root": str(base_root),
+        })
+        # refs/stash is one stack for every worktree of the shared gitdir: the whole
+        # stash push / pin / drop sequence runs under M (0669 unit 8b).
+        with step.m():
             # A module-qualified ref with no archive record can only be this
             # group's interrupted transaction.  Re-pin head to the current
             # branch and carry a completed partial stash forward instead of
@@ -889,102 +918,101 @@ def _archive_group_git(
                     ["update-ref", stash_ref, stash_sha], cwd=base_root,
                     code="archive_ref_failed", message="could not pin the preserved changes",
                 )
-                # The project mutex makes this shared-stack operation exclusive.
                 _git_archive_run(
                     ["stash", "drop", "stash@{0}"], cwd=base_root,
                     code="archive_snapshot_failed",
                     message="could not release the temporary stash entry",
                 )
 
-            # ``base_branch`` stays the project base: restore/purge use it to locate
-            # the shared base checkout.  The metadata base is the group's recorded
-            # scope floor (0665 T0004, W5) -- measuring against the project base
-            # counted a non-base work branch's whole history as this group's commits.
-            base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-            work_base_ref = None
-            work_base_error = None
-            base_sha = None
-            commit_count = None
+        # ``base_branch`` stays the project base: restore/purge use it to locate
+        # the shared base checkout.  The metadata base is the group's recorded
+        # scope floor (0665 T0004, W5) -- measuring against the project base
+        # counted a non-base work branch's whole history as this group's commits.
+        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+        work_base_ref = None
+        work_base_error = None
+        base_sha = None
+        commit_count = None
+        try:
+            floor = git_service.resolve_scope_floor(
+                project_id, group_id, base_root, state=state, config=cfg,
+                head=f"refs/heads/{branch}",
+            )
+            base_sha = floor["floor_sha"]
+            work_base_ref = floor["work_base_ref"]
+        except git_service.GitServiceError as exc:
+            work_base_ref = git_service.resolve_group_work_base_ref(project_id, group_id)
+            work_base_error = exc.code
+        if base_sha:
+            commits_proc = git_service._run_git(
+                ["rev-list", "--count", f"{base_sha}..refs/heads/{branch}"], cwd=base_root
+            )
             try:
-                floor = git_service.resolve_scope_floor(
-                    project_id, group_id, base_root, state=state, config=cfg,
-                    head=f"refs/heads/{branch}",
-                )
-                base_sha = floor["floor_sha"]
-                work_base_ref = floor["work_base_ref"]
-            except git_service.GitServiceError as exc:
-                work_base_ref = git_service.resolve_group_work_base_ref(project_id, group_id)
-                work_base_error = exc.code
-            if base_sha:
-                commits_proc = git_service._run_git(
-                    ["rev-list", "--count", f"{base_sha}..refs/heads/{branch}"], cwd=base_root
-                )
-                try:
-                    commit_count = int((commits_proc.stdout or "0").strip())
-                except ValueError:
-                    commit_count = None
+                commit_count = int((commits_proc.stdout or "0").strip())
+            except ValueError:
+                commit_count = None
 
-            record = {
-                "status": "archiving",
-                "project_id": project_id,
-                "group_id": group_id,
-                "branch": branch,
-                "git_status": state.get("status") or "awaiting_choice",
-                "base_branch": base_branch,
-                "work_base_ref": work_base_ref,
-                "work_base_error": work_base_error,
-                "reason": re.sub(r"\s+", " ", reason or "").strip()[:500] or None,
-                "actor_user_id": actor_user_id,
-                "archived_at": now_iso(),
-                "base_sha": base_sha,
-                "head_sha": head_sha,
-                "stash_sha": stash_sha,
-                "head_ref": head_ref,
-                "stash_ref": stash_ref if stash_sha else None,
-                "commit_count": commit_count,
-                "changed_file_count": len(changed_entries),
-            }
-            _save_git_archive_record(record, actor_user_id)
+        record = {
+            "status": "archiving",
+            "project_id": project_id,
+            "group_id": group_id,
+            "branch": branch,
+            "git_status": state.get("status") or "awaiting_choice",
+            "base_branch": base_branch,
+            "work_base_ref": work_base_ref,
+            "work_base_error": work_base_error,
+            "reason": re.sub(r"\s+", " ", reason or "").strip()[:500] or None,
+            "actor_user_id": actor_user_id,
+            "archived_at": now_iso(),
+            "base_sha": base_sha,
+            "head_sha": head_sha,
+            "stash_sha": stash_sha,
+            "head_ref": head_ref,
+            "stash_ref": stash_ref if stash_sha else None,
+            "commit_count": commit_count,
+            "changed_file_count": len(changed_entries),
+        }
+        _save_git_archive_record(record, actor_user_id)
+        step.phase("refs_written", refs={head_ref: head_sha, stash_ref: stash_sha})
 
-        # Existing cleanup handles live, missing, and half-removed worktrees.  It
-        # is safe to force-discard because the named refs now own every byte.
+    # Existing cleanup handles live, missing, and half-removed worktrees.  It
+    # is safe to force-discard because the named refs now own every byte.
+    # Approval-coupled archive keeps its slot until the AC/root commit.
+    if not borrowed:
         state = git_service.db_git.get_state(group_id)
-        if (
-            not borrowed_lock
-            and state is not None
-            and state.get("worktree_registered")
-        ):
-            if not git_service._cleanup_group_slot(
-                project_id, group_id, force_discard=True
-            ):
+        if state is not None and state.get("worktree_registered"):
+            # worktree remove + branch delete: shared gitdir metadata, under M.
+            with step.m():
+                released = git_service._cleanup_group_slot(
+                    project_id, group_id, force_discard=True
+                )
+            if not released:
                 _git_archive_error(
                     500, "archive_cleanup_failed",
                     "the archive refs are safe, but the worktree could not be released; retry",
                 )
+        step.phase("workspace_done")
 
-        # Approval-coupled archive keeps its slot until the AC/root commit. Manual
-        # archive preserves the existing immediate teardown and neutral status.
-        if not borrowed_lock and git_service.db_git.get_state(group_id) is not None:
+    # Do not soft-delete the group row. The document tree fetches project
+    # documents independently of active groups, so deleting only the group
+    # turned every retained document into a visible "Uncategorized" orphan.
+    # Final-approved groups already use the explorer's normal hidden toggle;
+    # the archive record and inactive Git slot are the archive source of truth.
+    record = {**record, "status": "archived"}
+
+    def done_writes() -> None:
+        # Manual archive preserves the existing immediate teardown and neutral status.
+        if not borrowed and git_service.db_git.get_state(group_id) is not None:
             git_service.db_git.set_status(group_id, "none")
-
-        # Do not soft-delete the group row. The document tree fetches project
-        # documents independently of active groups, so deleting only the group
-        # turned every retained document into a visible "Uncategorized" orphan.
-        # Final-approved groups already use the explorer's normal hidden toggle;
-        # the archive record and inactive Git slot are the archive source of truth.
-        record["status"] = "archived"
         _save_git_archive_record(record, actor_user_id)
-    finally:
-        if not borrowed_lock:
-            git_service.db_git.release_lock(project_id, holder)
 
-    if not borrowed_lock:
-        _emit_git_archive_refresh(project_id, group_id, "archived")
-    return {"ok": True, "result": record}
+    return record, done_writes
 
 
 def _restore_group_git_archive(group_id: str, actor_user_id: Optional[str]) -> dict:
+    """0669 unit 8b: an ``archive_restore`` job (G + M, no project mutex)."""
     from modules.flow_gate.services import git_service
+    from modules.flow_gate.services.git import archive_publish
 
     record = _git_archive_record(group_id)
     if record is None or record.get("status") not in _GIT_ARCHIVE_STATUSES:
@@ -996,42 +1024,80 @@ def _restore_group_git_archive(group_id: str, actor_user_id: Optional[str]) -> d
     cfg = git_service.db_git.get_config(project_id)
     if cfg is None or not cfg.get("enabled"):
         _git_archive_error(409, "invalid_state", "git integration is not enabled")
+    return {"ok": True, "result": archive_publish.request(
+        archive_publish.RESTORE, project_id, group_id, {"actor_user_id": actor_user_id},
+    )}
+
+
+def _archive_restore_locked(group_id: str, payload: dict, step: Any) -> tuple:
+    """The archive_restore body under the Group's G: the work branch back at the archived
+    head (refs_written, M), the worktree and the preserved changes (workspace_done), then
+    the archive refs dropped (M). Returns (result, done_writes)."""
+    from modules.flow_gate.services import git_service
+    from modules.flow_gate.services.git import archive_publish
+
+    record = _git_archive_record(group_id)
+    if record is None or record.get("status") not in _GIT_ARCHIVE_STATUSES:
+        _git_archive_error(404, "archive_not_found", f"archive for '{group_id}' not found")
+    group = db_groups.get_by_id(group_id)
+    if group is None:
+        _git_archive_error(404, "not_found", f"group '{group_id}' not found")
+    project_id = record.get("project_id") or group.get("project_id")
+    cfg = git_service.db_git.get_config(project_id) or {}
     state = git_service.db_git.get_state(group_id)
+    project_name = git_service._project_name(project_id)
+    if not project_name:
+        _git_archive_error(404, "not_found", f"project '{project_id}' not found")
+    base_branch = record.get("base_branch") or cfg.get("base_branch") or "main"
+    base_root = git_service.src_root(project_name, base_branch)
+    if not (base_root / ".git").exists():
+        _git_archive_error(409, "invalid_state", "base checkout is not provisioned")
 
-    holder = f"archive-restore:{uuid.uuid4()}"
-    if not git_service._acquire_lock(project_id, holder):
-        _git_archive_error(409, "git_busy", "another Git operation is in progress")
-    try:
-        project_name = git_service._project_name(project_id)
-        if not project_name:
-            _git_archive_error(404, "not_found", f"project '{project_id}' not found")
-        base_branch = record.get("base_branch") or cfg.get("base_branch") or "main"
-        base_root = git_service.src_root(project_name, base_branch)
-        if not (base_root / ".git").exists():
-            _git_archive_error(409, "invalid_state", "base checkout is not provisioned")
+    branch = str(record.get("branch") or "").strip()
+    head_ref = str(record.get("head_ref") or "").strip()
+    stash_ref = str(record.get("stash_ref") or "").strip()
+    branch_ref = f"refs/heads/{branch}"
+    worktree_root = git_service.src_root(project_name, branch)
 
-        branch = str(record.get("branch") or "").strip()
-        head_ref = str(record.get("head_ref") or "").strip()
-        stash_ref = str(record.get("stash_ref") or "").strip()
-        if not branch or not head_ref or not git_service._ref_exists(base_root, head_ref):
-            _git_archive_error(409, "archive_corrupt", "the archived branch ref is missing")
-        if git_service._ref_exists(base_root, f"refs/heads/{branch}"):
-            _git_archive_error(409, "restore_conflict", f"local branch '{branch}' already exists")
-        worktree_root = git_service.src_root(project_name, branch)
-        if worktree_root.exists():
-            _git_archive_error(
-                409, "restore_conflict", f"worktree path already exists: {worktree_root}",
+    def drop_branch() -> None:
+        with step.m():
+            git_service._run_git(["update-ref", "-d", branch_ref], cwd=base_root)
+
+    if not step.reached("workspace_done"):
+        if not step.reached("refs_written"):
+            if not branch or not head_ref or not git_service._ref_exists(base_root, head_ref):
+                _git_archive_error(409, "archive_corrupt", "the archived branch ref is missing")
+            if git_service._ref_exists(base_root, branch_ref):
+                _git_archive_error(409, "restore_conflict", f"local branch '{branch}' already exists")
+            if worktree_root.exists():
+                _git_archive_error(
+                    409, "restore_conflict", f"worktree path already exists: {worktree_root}",
+                )
+            head_sha = _git_archive_existing_ref(base_root, head_ref)
+            step.phase("start", plan={
+                "branch": branch, "head_sha": head_sha, "base_root": str(base_root),
+                "worktree": str(worktree_root),
+            })
+            with step.m():
+                _git_archive_run(
+                    ["update-ref", branch_ref, head_sha, "0" * 40], cwd=base_root,
+                    code="restore_failed", message="could not recreate the archived branch",
+                )
+            step.phase("refs_written")
+        else:
+            # Resumed after the branch was recreated: it must still be ours.
+            planned = step.plan().get("head_sha")
+            if not planned or _git_archive_existing_ref(base_root, branch_ref) != planned:
+                raise archive_publish.recovery("restore_branch_unexpected")
+            if worktree_root.exists():
+                raise archive_publish.recovery("restore_workspace_unsettled")
+
+        with step.m():
+            added = git_service._run_git(
+                ["worktree", "add", str(worktree_root), branch], cwd=base_root
             )
-
-        _git_archive_run(
-            ["update-ref", f"refs/heads/{branch}", head_ref], cwd=base_root,
-            code="restore_failed", message="could not recreate the archived branch",
-        )
-        added = git_service._run_git(
-            ["worktree", "add", str(worktree_root), branch], cwd=base_root
-        )
         if added.returncode != 0:
-            git_service._run_git(["update-ref", "-d", f"refs/heads/{branch}"], cwd=base_root)
+            drop_branch()
             _git_archive_error(
                 500, "restore_failed",
                 f"could not recreate the worktree: {git_service._last_line(added.stderr)}",
@@ -1045,51 +1111,74 @@ def _restore_group_git_archive(group_id: str, actor_user_id: Optional[str]) -> d
                 # Roll back only the worktree created from immutable archive refs.
                 git_service._run_git(["reset", "--hard", "HEAD"], cwd=worktree_root)
                 git_service._run_git(["clean", "-fd"], cwd=worktree_root)
-                git_service._run_git(
-                    ["worktree", "remove", "--force", str(worktree_root)],
-                    cwd=base_root,
-                    timeout=git_service.GIT_WORKTREE_RM_TIMEOUT_SEC,
-                )
-                git_service._run_git(
-                    ["update-ref", "-d", f"refs/heads/{branch}"], cwd=base_root
-                )
+                with step.m():
+                    git_service._run_git(
+                        ["worktree", "remove", "--force", str(worktree_root)],
+                        cwd=base_root,
+                        timeout=git_service.GIT_WORKTREE_RM_TIMEOUT_SEC,
+                    )
+                drop_branch()
                 _git_archive_error(
                     409, "restore_conflict",
                     "the archived working changes could not be applied; the archive is intact",
                     details={"git": git_service._last_line(applied.stderr)},
                 )
+        step.phase("workspace_done")
 
+    with step.m():
+        if head_ref:
+            git_service._run_git(["update-ref", "-d", head_ref], cwd=base_root)
+        if stash_ref:
+            git_service._run_git(["update-ref", "-d", stash_ref], cwd=base_root)
+
+    restored_status = (
+        record.get("git_status")
+        or (state or {}).get("status")
+        or "awaiting_choice"
+    )
+
+    def done_writes() -> None:
         git_service.db_git.register_worktree(group_id, project_id, branch)
-        restored_status = (
-            record.get("git_status")
-            or (state or {}).get("status")
-            or "awaiting_choice"
-        )
         git_service.db_git.set_status(group_id, restored_status)
         # Backward compatibility for archives created before group soft deletion
         # was removed: restoring an old record also repairs its tree membership.
         db_groups.update(group_id, {"deleted_at": None})
-        git_service._run_git(["update-ref", "-d", head_ref], cwd=base_root)
-        if stash_ref:
-            git_service._run_git(["update-ref", "-d", stash_ref], cwd=base_root)
         db_settings.delete(_git_archive_key(group_id))
-    finally:
-        git_service.db_git.release_lock(project_id, holder)
 
-    _emit_git_archive_refresh(project_id, group_id, "restored")
     return {
-        "ok": True,
-        "result": {
-            "group_id": group_id,
-            "status": "restored",
-            "branch": record.get("branch"),
-            "head_sha": record.get("head_sha"),
-            "changed_file_count": record.get("changed_file_count", 0),
-        },
-    }
+        "group_id": group_id,
+        "status": "restored",
+        "branch": record.get("branch"),
+        "head_sha": record.get("head_sha"),
+        "changed_file_count": record.get("changed_file_count", 0),
+    }, done_writes
 
 
 def _purge_group_git_archive(group_id: str, actor_user_id: Optional[str]) -> dict:
+    """0669 unit 8b: an ``archive_purge`` job (M only, no project mutex)."""
+    from modules.flow_gate.services import git_service
+    from modules.flow_gate.services.git import archive_publish
+
+    record = _git_archive_record(group_id)
+    if record is None or record.get("status") != "archived":
+        _git_archive_error(404, "archive_not_found", f"archive for '{group_id}' not found")
+    group = db_groups.get_by_id(group_id)
+    if group is None:
+        _git_archive_error(
+            409, "invalid_state", "the archived group no longer exists",
+        )
+    project_id = record.get("project_id") or group.get("project_id")
+    state = git_service.db_git.get_state(group_id)
+    if state is not None and state.get("worktree_registered"):
+        _git_archive_error(409, "invalid_state", "an active group worktree cannot be purged")
+    return {"ok": True, "result": archive_publish.request(
+        archive_publish.PURGE, project_id, group_id, {"actor_user_id": actor_user_id},
+    )}
+
+
+def _archive_purge_locked(group_id: str, payload: dict, step: Any) -> tuple:
+    """The archive_purge body: the archive refs deleted under M (refs_written), no
+    workspace, the record dropped in the terminal transaction."""
     from modules.flow_gate.services import git_service
 
     record = _git_archive_record(group_id)
@@ -1104,39 +1193,36 @@ def _purge_group_git_archive(group_id: str, actor_user_id: Optional[str]) -> dic
     state = git_service.db_git.get_state(group_id)
     if state is not None and state.get("worktree_registered"):
         _git_archive_error(409, "invalid_state", "an active group worktree cannot be purged")
-
-    holder = f"archive-purge:{uuid.uuid4()}"
-    if not git_service._acquire_lock(project_id, holder):
-        _git_archive_error(409, "git_busy", "another Git operation is in progress")
-    try:
-        project_name = git_service._project_name(project_id)
-        cfg = git_service.db_git.get_config(project_id)
-        base_branch = record.get("base_branch") or (cfg or {}).get("base_branch") or "main"
-        base_root = git_service.src_root(project_name, base_branch) if project_name else None
-        if base_root is None or not (base_root / ".git").exists():
-            _git_archive_error(409, "invalid_state", "base checkout is not provisioned")
-        for ref_name in (record.get("stash_ref"), record.get("head_ref")):
-            if ref_name:
+    project_name = git_service._project_name(project_id)
+    cfg = git_service.db_git.get_config(project_id)
+    base_branch = record.get("base_branch") or (cfg or {}).get("base_branch") or "main"
+    base_root = git_service.src_root(project_name, base_branch) if project_name else None
+    if base_root is None or not (base_root / ".git").exists():
+        _git_archive_error(409, "invalid_state", "base checkout is not provisioned")
+    refs = [str(r) for r in (record.get("stash_ref"), record.get("head_ref")) if r]
+    if not step.reached("refs_written"):
+        step.phase("start", plan={"refs": refs, "base_root": str(base_root)})
+        with step.m():
+            for ref_name in refs:
                 deleted = git_service._run_git(
-                    ["update-ref", "-d", str(ref_name)], cwd=base_root
+                    ["update-ref", "-d", ref_name], cwd=base_root
                 )
                 if deleted.returncode != 0:
                     _git_archive_error(
                         500, "purge_failed", f"could not remove archive ref '{ref_name}'",
                     )
-        db_settings.delete(_git_archive_key(group_id))
-    finally:
-        git_service.db_git.release_lock(project_id, holder)
+        step.phase("refs_written")
+    if not step.reached("workspace_done"):
+        step.phase("workspace_done")
 
-    _emit_git_archive_refresh(project_id, group_id, "purged")
+    def done_writes() -> None:
+        db_settings.delete(_git_archive_key(group_id))
+
     return {
-        "ok": True,
-        "result": {
-            "group_id": group_id,
-            "status": "purged",
-            "purged_by": actor_user_id,
-        },
-    }
+        "group_id": group_id,
+        "status": "purged",
+        "purged_by": payload.get("actor_user_id"),
+    }, done_writes
 
 
 @router.get("/projects/{project_id}/git/archives")
@@ -1222,7 +1308,7 @@ def _git_finalize_state_with_archive(
                     ])
         except Exception:
             # Preview is advisory. The archive transaction performs its own
-            # authoritative status/ref validation under the project mutex.
+            # authoritative status/ref validation under its own job locks.
             pass
         state["archive_preview"] = preview
     return result
@@ -1235,6 +1321,7 @@ def _git_finalize_with_archive(
     *,
     approval_context: Optional[Any] = None,
     target_branch: Optional[str] = None,
+    job_holder: Optional[str] = None,
 ) -> dict:
     if action == "stash":
         # Direct API callers may use commit_message as the optional archive reason.
@@ -1272,21 +1359,16 @@ def _git_finalize_with_archive(
                 "terminal_retry": bool(archive.get("idempotent")),
             }}
         return outcome
-    if target_branch is None:
-        return _GIT_ARCHIVE_ORIGINAL_FINALIZE(
-            group_id,
-            action,
-            commit_message,
-            approval_context=approval_context,
-        )
-    # 0594 T0012: the finalize target carrier must survive this seam.
-    return _GIT_ARCHIVE_ORIGINAL_FINALIZE(
-        group_id,
-        action,
-        commit_message,
-        approval_context=approval_context,
-        target_branch=target_branch,
-    )
+    kwargs: dict = {"approval_context": approval_context}
+    if target_branch is not None:
+        # 0594 T0012: the finalize target carrier must survive this seam.
+        kwargs["target_branch"] = target_branch
+    if job_holder is not None:
+        # 0669 unit 9a: a manual finalize runs as a base_publish job whose id the attempt
+        # records as its holder; this wrapper replaces git_service.finalize at startup, so
+        # it has to pass the job through (the job calls finalize with ``job_holder``).
+        kwargs["job_holder"] = job_holder
+    return _GIT_ARCHIVE_ORIGINAL_FINALIZE(group_id, action, commit_message, **kwargs)
 
 
 def _complete_approve_git_action_with_archive(

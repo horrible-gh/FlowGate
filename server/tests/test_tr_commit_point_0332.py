@@ -45,6 +45,7 @@ sys.path.insert(0, str(_SERVER_DIR))
 from modules.flow_gate.db import connection as db_connection  # noqa: E402
 from modules.flow_gate.db import tr_commit_ledger as db_ledger  # noqa: E402
 from modules.flow_gate.services import git_service as svc  # noqa: E402
+from group_lock_stub import stub_group_lock  # noqa: E402
 from modules.flow_gate.services import tr_commit_service as trc  # noqa: E402
 
 _GIT = shutil.which("git") is not None
@@ -88,6 +89,11 @@ class _SqliteStore:
     def _execute(self, sql, params=None):
         self._conn.execute(sql, params or [])
         self._conn.commit()
+
+    def _execute_affected(self, sql, params=None):
+        cur = self._conn.execute(sql, params or [])
+        self._conn.commit()
+        return cur.rowcount
 
     def _fetch_one(self, sql, params=None):
         row = self._conn.execute(sql, params or []).fetchone()
@@ -765,6 +771,7 @@ def _git(args, cwd):
     })
     proc = subprocess.run(
         ["git", *args], cwd=str(cwd), capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
     )
     assert proc.returncode == 0, f"git {args} failed: {proc.stderr}"
     return proc.stdout
@@ -784,7 +791,7 @@ def repo():
 
 
 @pytest.fixture
-def git_active(monkeypatch, repo):
+def git_active(monkeypatch, repo, real_store):
     """그룹이 git 활성이고 워크트리가 이 repo 라고 서버에 알려 준다."""
     monkeypatch.setattr(svc.db_git, "get_config", lambda project_id: {
         "enabled": 1, "base_branch": "main", "author_name": None, "author_email": None,
@@ -794,8 +801,7 @@ def git_active(monkeypatch, repo):
     })
     monkeypatch.setattr(svc, "_project_name", lambda project_id: "flowgate")
     monkeypatch.setattr(svc, "src_root", lambda project_name, branch: repo)
-    monkeypatch.setattr(svc.db_git, "try_acquire_lock", lambda project_id, holder: True)
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda project_id, holder: None)
+    stub_group_lock(monkeypatch)
     return repo
 
 
@@ -853,7 +859,7 @@ def test_a_held_lock_gives_up_immediately_instead_of_stalling_the_approval(
     git_active, repo, monkeypatch,
 ):
     """L0007 §1 tr_commit_lock_wait_sec = 0 — 마무리 한 번이 승인 전부를 멈추면 안 된다."""
-    monkeypatch.setattr(svc.db_git, "try_acquire_lock", lambda project_id, holder: False)
+    stub_group_lock(monkeypatch, grant=False)
     (repo / "server").mkdir()
     (repo / "server" / "real.py").write_text("y = 2\n", encoding="utf-8")
 

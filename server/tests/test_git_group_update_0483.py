@@ -9,6 +9,19 @@ from modules.flow_gate.services import git_service
 from modules.flow_gate.services.git_service import GitServiceError
 
 
+from group_lock_stub import group_store, stub_work_base_floor  # noqa: F401
+import pytest as _pytest_locks
+
+# Group/base/remote work takes domain locks from the real lock manager (0669): these tests
+# run on the real SQLite lock/job store instead of stubbing the removed project mutex.
+pytestmark = _pytest_locks.mark.usefixtures("group_store")
+
+
+@_pytest_locks.fixture(autouse=True)
+def _verified_work_base_floor(monkeypatch):
+    stub_work_base_floor(monkeypatch)
+
+
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args], cwd=repo, text=True, capture_output=True, check=True,
@@ -47,8 +60,6 @@ def _patch_recovery(monkeypatch, repo: Path) -> None:
     )
     monkeypatch.setattr(git_service, "git_available", lambda: True)
     monkeypatch.setattr(git_service, "guard_base_free", lambda _project: None)
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda _project, _holder: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda _project, _holder: None)
     monkeypatch.setattr(git_service.db_git, "get_open_session_by_group", lambda _gid: None)
 
 
@@ -202,8 +213,6 @@ def _patch_group_update(
     monkeypatch.setattr(git_service.db_git, "get_open_session_by_group", lambda _gid: None)
     monkeypatch.setattr(git_service, "guard_base_free", lambda _pid: None)
     monkeypatch.setattr(git_service, "git_available", lambda: True)
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda _pid, _holder: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda _pid, _holder: None)
 
     monkeypatch.setattr(git_service, "resolve_group_work_base_ref", lambda *_a, **_k: cfg["base_branch"])
     from modules.flow_gate.services.git import finalize as finalize_service
@@ -235,7 +244,11 @@ def test_group_update_records_conflict_status_merge_id_and_files(tmp_path, monke
     assert len(calls) == 1
     assert calls[0]["files"] == ["shared.txt"]
     assert calls[0]["kind"] == git_service.db_git.SESSION_KIND_GROUP_UPDATE
-    assert calls[0]["context"] == {"prev_status": "waiting", "branch": "group/test"}
+    # 0665 T0004 added the pinned source and floor to the session context; the original
+    # keys stay.
+    assert {k: calls[0]["context"][k] for k in ("prev_status", "branch")} == {
+        "prev_status": "waiting", "branch": "group/test"}
+    assert {"source_ref", "source_sha", "floor_before"} <= set(calls[0]["context"])
 
     still_unmerged = subprocess.run(
         ["git", "diff", "--name-only", "--diff-filter=U"],
@@ -275,8 +288,6 @@ def test_update_from_base_creates_session_for_real_content_conflict(tmp_path, mo
     ))
     monkeypatch.setattr(git_service, "git_available", lambda: True)
     monkeypatch.setattr(git_service, "guard_base_free", lambda _project: None)
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda _project, _holder: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda _project, _holder: None)
     monkeypatch.setattr(git_service.db_git, "get_open_session_by_group", lambda _gid: None)
     created = {}
 
@@ -290,9 +301,10 @@ def test_update_from_base_creates_session_for_real_content_conflict(tmp_path, mo
     monkeypatch.setattr(finalize_service, "_guard_group_update_ai_idle", lambda _gid: None)
     result = git_service.update_from_base(group_id)
 
-    assert result["result"] == {
+    assert {k: result["result"][k] for k in ("status", "merge_id", "conflict_files")} == {
         "status": "conflict", "merge_id": 73, "conflict_files": ["conflict.txt"],
     }
+    assert result["result"]["source_sha"]       # 0665 T0004: the pinned source rides along
     assert created["group_id"] == group_id
     assert created["files"] == result["result"]["conflict_files"]
     assert created["kind"] == git_service.db_git.SESSION_KIND_GROUP_UPDATE

@@ -3,17 +3,23 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
 os.environ.setdefault("TESTING", "1")
+# pymysql calls getpass.getuser() at import time; a Self-check host may export no user name.
+os.environ.setdefault("USERNAME", "flowgate-test")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 _MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 _REPO_ROOT = _SERVER_DIR.parent
+# Some suites import `modules.*` without adding server/ themselves; make single-file runs work.
+if str(_SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(_SERVER_DIR))
 
 
 # ── 저장소 오염 감시자 (0382 B0001 / NR0003 제안 2-b) ─────────────────────────
@@ -526,6 +532,27 @@ def flowgate_env_returned_as_found(request):
             what = f"{key} 를 바꿔 놓았다"
             os.environ[key] = old_value
         _env_leaks.append(f"{module}: {what}")
+
+
+# ── 0669: one server instance per test ───────────────────────────────────────
+# The Group lock registers this process as a server_instance the first time it is used
+# outside server startup, and every resource_lock row points at that row (FK). Tests
+# swap in a fresh DB per test, so an id registered against the previous test's DB would
+# fail the next insert. Drop it around every test; the next lock use registers again.
+# Only acts when the registry is already imported, so other suites pay nothing.
+
+def _drop_server_instance() -> None:
+    import sys
+    registry = sys.modules.get("modules.flow_gate.services.git.instance_registry")
+    if registry is not None:
+        registry.shutdown()
+
+
+@pytest.fixture(autouse=True)
+def server_instance_per_test():
+    _drop_server_instance()
+    yield
+    _drop_server_instance()
 
 
 def get_migration_files() -> list[Path]:

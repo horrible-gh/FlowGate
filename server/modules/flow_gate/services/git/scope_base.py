@@ -691,9 +691,13 @@ def confirm_work_base(
     sync = (work_base_sync_sha or "").strip() or None
     if sync and sync.lower() == "none":
         sync = None
-    holder = f"work_base_confirm:{group_id}"
-    if not _gs._acquire_lock(project_id, holder):
-        raise GitServiceError(409, "git_busy", "another git operation is in progress")
+    # 0669 unit 9b: the Group's G (the floor check reads only its worktree) through the
+    # freeze guard, instead of the project mutex.
+    from .worktree import _slot_lock, _slot_unlock
+    lock_ctx, held, refused = _slot_lock(project_id, group_id, holder_kind="work_base_confirm")
+    if held is None:
+        raise GitServiceError(409, "git_busy", "another git operation is in progress",
+                              details=refused)
     try:
         try:
             checked = check_floor(
@@ -725,7 +729,7 @@ def confirm_work_base(
                             "work_base_sync_sha": checked["work_base_sync_sha"],
                             "basis": basis})
     finally:
-        _gs.db_git.release_lock(project_id, holder)
+        _slot_unlock(lock_ctx, held)
     return {"ok": True, "group_id": group_id, "work_base_ref": work_base_ref,
             "work_base_sha": checked["work_base_sha"],
             "work_base_sync_sha": checked["work_base_sync_sha"],

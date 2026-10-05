@@ -22,19 +22,18 @@ UPDATE … WHERE status=<expected_status>. If a race is detected, it raises 409.
 from __future__ import annotations
 
 import os
-import uuid
 from typing import Any, Optional
 
 from fastapi import HTTPException
 
 from modules.flow_gate.db import documents as db_docs
-from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import tr_history_recovery as db_recovery
 from modules.flow_gate.db import workflow_events as db_events
 from modules.flow_gate.db import workflow_sequences as db_sequences
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.numbering import id_formatter
-from modules.flow_gate.services import git_service, tr2_file_policy
+from modules.flow_gate.services import tr2_file_policy
+from modules.flow_gate.services.git import lock_manager
 from modules.flow_gate.storage import paths as storage_paths
 
 # ── State-machine definitions ─────────────────────────────────────────────────
@@ -222,14 +221,17 @@ def delete_document(doc_id: str, actor_user_id: str) -> None:
             "message": "TR2 document is missing project/group ownership metadata.",
         })
 
-    holder = f"tr2-document-delete:{group_id}:{uuid.uuid4().hex}"
-    if not git_service._acquire_lock(project_id, holder):
+    # 0666 D 3.10: no Git command runs here, but ownership/history must not move under
+    # the decision, so the Group's G (not the whole project) serializes it.
+    outcome, ctx = lock_manager.acquire_group(project_id, group_id, holder_kind="source_mutation")
+    if not outcome.ok:
         raise HTTPException(status_code=409, detail={
             "code": "SOURCE_MUTATION_BUSY",
             "message": "Source history is busy; retry document deletion.",
+            "details": lock_manager.outcome_details(outcome),
         })
     try:
-        # The pre-lock read is admission only. All authority is re-read under the mutex.
+        # The pre-lock read is admission only. All authority is re-read under the lock.
         fresh = db_docs.get_by_id(doc_id)
         if fresh is None:
             raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
@@ -267,10 +269,10 @@ def delete_document(doc_id: str, actor_user_id: str) -> None:
                 "message": "This TR2 still has an active source effect. Cancel it with Time Machine before deletion.",
             })
 
-        # Decision and DELETE remain in one project-mutex window.
+        # Decision and DELETE remain in one lock window.
         _delete_document_row(fresh, actor_user_id)
     finally:
-        db_git.release_lock(project_id, holder)
+        lock_manager.release(ctx, outcome.lock_key)
 
 
 # ── State machine ─────────────────────────────────────────────────────────────

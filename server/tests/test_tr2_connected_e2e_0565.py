@@ -32,6 +32,7 @@ from unittest.mock import patch
 import pytest
 
 from scratch_support import remove_tree, session_scratch
+from group_lock_stub import hold_group_lock
 
 os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -616,18 +617,14 @@ def test_drift_is_not_retryable_and_a_new_revision_regrounds(env):
 
 
 def test_source_lock_is_retryable_and_creates_no_attempt(env):
-    from modules.flow_gate.db import git_integration as db_git
     from modules.flow_gate.db import tr2_approval_attempts as db_attempts
     client = api()
     group, t2, tr2 = ready_tr2("0004")
-    assert db_git.try_acquire_lock(PROJECT, "someone-else")
-    try:
+    with hold_group_lock(PROJECT, group["group_id"]):
         resp = approve(client, tr2, 1, request_key="human:locked")
         assert resp.status_code == 409, resp.text
         assert resp.json()["code"] == "tr2_source_locked" and resp.json()["retryable"] is True
         assert db_attempts.list_by_doc(tr2) == []
-    finally:
-        db_git.release_lock(PROJECT, "someone-else")
 
 
 def test_proposal_is_read_only_while_applying(env, monkeypatch):

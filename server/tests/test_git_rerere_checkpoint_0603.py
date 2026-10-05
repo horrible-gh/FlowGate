@@ -28,6 +28,22 @@ from modules.flow_gate.services.git.credentials import GitServiceError  # noqa: 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git unavailable")
 
 
+from group_lock_stub import group_store  # noqa: F401
+import pytest as _pytest_locks
+
+# Group/base/remote work takes domain locks from the real lock manager (0669): these tests
+# run on the real SQLite lock/job store instead of stubbing the removed project mutex.
+pytestmark = _pytest_locks.mark.usefixtures("group_store")
+
+
+def _main_target():
+    """The base-branch merge target a rerere hold locks (B) — the attributes the lock domain
+    is derived from (``branch_merge_publish.attempt_lock``)."""
+    from types import SimpleNamespace
+    return SimpleNamespace(project_id="demo", target_kind="branch", target_branch="main",
+                           target_group_id=None, base_branch="main")
+
+
 def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
     if check:
@@ -166,13 +182,11 @@ def test_checkpoint_persist_failure_keeps_merge_open(monkeypatch, tmp_path):
     }}
     db = gs.db_git
     monkeypatch.setattr(gs, "_session_context", lambda *a, **k: (session, {}, "demo", repo))
-    monkeypatch.setattr(gs, "_acquire_lock", lambda *a, **k: True)
-    monkeypatch.setattr(db, "release_lock", lambda *a, **k: None)
     monkeypatch.setattr(db, "session_kind", lambda _s: "merge")
     monkeypatch.setattr(db, "session_files", lambda _m: [{"path": "f0.txt", "resolved": 1}])
     monkeypatch.setattr(db, "session_context", lambda _s: context)
     monkeypatch.setattr(db, "get_state", lambda _g: {"branch": "group"})
-    monkeypatch.setattr(merge_target, "resolve_session_target", lambda _s: type("Target", (), {"target_branch": "main"})())
+    monkeypatch.setattr(merge_target, "resolve_session_target", lambda _s: _main_target())
     monkeypatch.setattr(merge_target, "raise_if_not_workspace_owner", lambda _t: None)
     monkeypatch.setattr(db, "active_resolution_checkpoint", lambda *_a: None)
     monkeypatch.setattr(db, "create_resolution_checkpoint", lambda _d: (_ for _ in ()).throw(RuntimeError("db unavailable")))
@@ -290,7 +304,7 @@ def test_start_session_reuses_only_ledger_paths_and_rejects_validator_failure(mo
     monkeypatch.setattr(gs, "db_git", db)
     monkeypatch.setattr(gs, "_project_of_group", lambda _g: "demo")
     monkeypatch.setattr(merge_target, "resolve_session_target",
-                        lambda _s: type("Target", (), {"target_branch": "main"})())
+                        lambda _s: _main_target())
     original_validator = conflict._conflict_side_violations
     # Force one validator rejection without changing the real Git replay result.
     calls = iter([True] + [False] * 8)
@@ -363,18 +377,14 @@ def test_hold_persists_before_actual_abort_and_abort_does_not_checkpoint(monkeyp
             events.append("persist")
             return {"checkpoint_id": "cp1"}
 
-        def release_lock(self, *_args):
-            pass
-
     db = FakeDB()
     monkeypatch.setattr(gs, "db_git", db)
     monkeypatch.setattr(gs, "_session_context",
                         lambda *a, **k: (session, {}, "demo", repo))
-    monkeypatch.setattr(gs, "_acquire_lock", lambda *a, **k: True)
     monkeypatch.setattr(gs, "_set_status",
                         lambda group, status: events.append(("status", status)))
     monkeypatch.setattr(merge_target, "resolve_session_target",
-                        lambda _s: type("Target", (), {"target_branch": "main"})())
+                        lambda _s: _main_target())
     monkeypatch.setattr(merge_target, "raise_if_not_workspace_owner", lambda _t: None)
     monkeypatch.setattr(merge_target, "close_session_attempt",
                         lambda *a, **k: events.append("close"))
@@ -456,9 +466,6 @@ class CheckpointDB:
         self.checkpoint = {"checkpoint_id": "cp2", **data}
         return self.checkpoint
 
-    def release_lock(self, *_args):
-        pass
-
 
 def wire_checkpoint(monkeypatch, repo, checkpoint):
     from modules.flow_gate.services import git_service as gs
@@ -468,10 +475,9 @@ def wire_checkpoint(monkeypatch, repo, checkpoint):
     monkeypatch.setattr(gs, "_project_of_group", lambda _g: "demo")
     monkeypatch.setattr(gs, "_session_context",
                         lambda *a, **k: (db.get_session(db.merge_id), {}, "demo", repo))
-    monkeypatch.setattr(gs, "_acquire_lock", lambda *a, **k: True)
     monkeypatch.setattr(gs, "_set_status", lambda *a, **k: None)
     monkeypatch.setattr(merge_target, "resolve_session_target",
-                        lambda _s: type("Target", (), {"target_branch": "main"})())
+                        lambda _s: _main_target())
     monkeypatch.setattr(merge_target, "raise_if_not_workspace_owner", lambda _t: None)
     monkeypatch.setattr(merge_target, "close_session_attempt", lambda *a, **k: None)
     return db
@@ -671,13 +677,11 @@ def test_abort_failure_restores_previous_checkpoint(monkeypatch, tmp_path):
             state["cp-new"] = "invalidated"
             state["cp-old"] = "active"
             events.append("rollback")
-        def release_lock(self, *_a): pass
 
     db = FakeDB()
     monkeypatch.setattr(gs, "db_git", db)
     monkeypatch.setattr(gs, "_session_context", lambda *a, **k: (session, {}, "demo", repo))
-    monkeypatch.setattr(gs, "_acquire_lock", lambda *a, **k: True)
-    monkeypatch.setattr(merge_target, "resolve_session_target", lambda _s: type("T", (), {"target_branch": "main"})())
+    monkeypatch.setattr(merge_target, "resolve_session_target", lambda _s: _main_target())
     monkeypatch.setattr(merge_target, "raise_if_not_workspace_owner", lambda _s: None)
     original_git = gs._run_git
     def fail_abort(args, **kwargs):

@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/documents", tags=["TR Self-check"])
 def _error(exc: selfcheck.SelfCheckError) -> JSONResponse:
     return JSONResponse(status_code=exc.status, content={"ok": False,
         "error": {"code": exc.code, "message": exc.code,
-                  "details": {"self_check_run_id": exc.detail} if exc.code == "selfcheck_already_running" else {}}})
+                  "details": {"self_check_run_id": exc.detail} if exc.code == "selfcheck_already_running" else exc.details}})
 
 
 def _forbidden() -> JSONResponse:

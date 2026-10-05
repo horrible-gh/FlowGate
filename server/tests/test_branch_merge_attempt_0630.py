@@ -26,6 +26,7 @@ checkout), so nothing leaks between cases. The numbers are T0005 §15's required
 from __future__ import annotations
 
 import base64
+import copy
 import itertools
 import os
 import shutil
@@ -466,9 +467,9 @@ def test_07_route_conflict_does_not_auto_start_resolver(proj, monkeypatch):
     events = [e["type"] for e in _ctx(body["merge_id"])["attempt_events"]]
     assert "git_branch_merge_conflict" in events
     assert "git_branch_merge_ai_started" not in events, "ai_started must not appear (T#3)"
-    # Git lock is released (nothing blocking)
-    from modules.flow_gate.db import git_integration as db_git
-    assert p.pid not in {row["project_id"] for row in db_git.list_locks()}
+    # the merge's domain locks (target W/B and R) are released (nothing blocking)
+    from modules.flow_gate.db import git_concurrency as gc
+    assert gc.list_locks_in_scope(p.pid) == []
 
 
 def test_08_explicit_ai_resolve_route_starts_resolver_and_duplicate_is_guarded(proj, monkeypatch):
@@ -623,7 +624,8 @@ def test_08c_start_resolver_claims_ownership_through_db_cas(proj, monkeypatch):
     cas_calls = []
 
     def spy_cas(mid, expected_raw, context):
-        cas_calls.append((mid, expected_raw, context))
+        # a snapshot: start_resolver goes on mutating the same dict (ai.status -> running)
+        cas_calls.append((mid, expected_raw, copy.deepcopy(context)))
         return real_cas(mid, expected_raw, context)
 
     monkeypatch.setattr(db_git, "cas_session_context", spy_cas)
@@ -862,7 +864,25 @@ def test_16c_crash_after_a_landed_base_merge_is_applied_on_recovery(proj, monkey
     session = db_git.list_branch_merge_sessions(p.pid)[0]
     assert _ctx(session["merge_id"])["attempt_state"] == "in_progress"
     assert p.sha("refs/heads/main") == main_before               # the crash left main behind
-    branch_merge.verify_open_attempt(session, at_boot=True)
+
+    # 0669 unit 8a: the attempt belongs to its branch_merge_publish job (holder ``job:{id}``),
+    # which is still running while its lease is valid -- boot recovery leaves it alone.
+    from modules.flow_gate.db import operation_job as db_jobs
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.services.git import job_runner, job_sweeper
+    assert merge_target.attempt_phase(session, at_boot=True) == merge_target.PHASE_IN_PROGRESS
+    job_id = merge_target.target_record(session)["lock_holder"][len(merge_target.JOB_HOLDER_PREFIX):]
+    assert db_jobs.get_job(job_id)["status"] == "running"
+    # the process is gone: its lease expires, the Sweeper reconciles the job, and the job's
+    # next claim settles the attempt (landed merge -> applied) under the target's locks.
+    with get_store().transaction():
+        get_store()._execute("UPDATE operation_job SET lease_until = ? WHERE job_id = ?",
+                             ["2000-01-01T00:00:00+00:00", job_id])
+    assert job_sweeper.step_expired_leases(full=True) >= 1
+    claim = job_runner.try_claim(job_id)
+    assert claim is not None, db_jobs.get_job(job_id)
+    job_runner.execute(claim)
+    assert db_jobs.get_job(job_id)["status"] == "succeeded"
     merged = _session(session["merge_id"])
     assert merged["status"] == "done"
     result = _ctx(session["merge_id"])["attempt_result"]

@@ -762,6 +762,25 @@ def _write_lease_admission_rejected(
         )
 
 
+def _refuse_frozen_group(group_id: str) -> None:
+    """0669 unit 6b (0666 D 3.7, L 2.10 ai_run_start): a Group frozen for a final
+    approval (freeze claim from F1 until the approval commits or is released) starts
+    no AI run. Judged on the durable claim; a claim that cannot be read refuses too."""
+    from modules.flow_gate.db import operation_job as db_jobs
+    from modules.flow_gate.db import request_cache as _request_cache
+    try:
+        _request_cache.invalidate()
+        claim = db_jobs.get_group_freeze_claim(group_id)
+    except Exception:
+        raise _http_error(503, "store_error", "The group's approval state could not be read.",
+                          reason_code="freeze_claim_unreadable", retryable=True)
+    if claim is not None:
+        raise _http_error(409, "group_frozen_for_approval",
+                          "This group is frozen for a final approval in progress.",
+                          job_id=claim.get("job_id"), state=claim.get("state"),
+                          retryable=False)
+
+
 def start_run(
     *,
     project_id: str,
@@ -1060,6 +1079,8 @@ def start_run(
     # release, handoff, update_token) already no-ops on a missing row.
     # (Deliberately ASCII: the 0430 census caps this file's Korean lines and it is full.)
     project_scoped = _is_project_scoped_run(action_scope, merge_id)
+    if not project_scoped:
+        _refuse_frozen_group(group_id)
     # Durable lease admission is authoritative. Memory remains only a UI/live-process signal.
     active = None if project_scoped else db_group_ai_leases.get_active(group_id)
     handoff_allowed = bool(
