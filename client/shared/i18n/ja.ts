@@ -114,6 +114,26 @@ export default {
         },
       },
     },
+    totp_setup: {
+      title: '2段階認証の登録',
+      instruction: '管理者のポリシーにより、2段階認証を登録しないとログインできません。',
+      start: '登録を開始',
+      secret_label: '認証アプリに入力するキー',
+      uri_label: '認証アプリで開く (otpauth)',
+      backup_title: 'バックアップコード — この一度だけ表示されます',
+      code_label: '認証アプリの6桁コード',
+      submit: '登録を完了',
+      pending_hint: 'コードを確認すると登録が完了します。その前にこの画面を離れると何も保存されず、再度ログインすると新しいキーで登録をやり直せます。',
+      failed: '2段階認証を登録できませんでした。',
+    },
+    invite: {
+      title: '招待の承諾',
+      instruction: '{username} ({email}) のパスワードを設定してください。',
+      submit: 'パスワードを設定',
+      back: 'ログインへ',
+      invalid: '招待リンクが無効か期限切れです。管理者に再発行を依頼してください。',
+      accepted: 'パスワードを設定しました。ログインしてください。',
+    },
     password: {
       change: {
         title: 'パスワード変更が必要です',

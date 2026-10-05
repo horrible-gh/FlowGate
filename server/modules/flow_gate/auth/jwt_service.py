@@ -24,8 +24,9 @@ def create_refresh_token(user_id,expires_at=None,sid=None):
     jti,now=str(uuid.uuid4()),datetime.now(timezone.utc); expires_at=expires_at or now+timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS); payload={"sub":user_id,"jti":jti,"type":"refresh","iat":int(now.timestamp()),"exp":int(expires_at.timestamp())}
     if sid:payload["sid"]=sid
     return jwt.encode(payload,_get_secret(),algorithm=ALGORITHM),jti,expires_at
-def create_temp_token(user_id):
+def create_temp_token(user_id,claims=None):
+    # claims: extra signed fields, e.g. the pending 2FA enrolment (auth_api /totp/enroll).
     jti,now=str(uuid.uuid4()),datetime.now(timezone.utc)
-    return jwt.encode({"sub":user_id,"jti":jti,"type":"temp","totp_pending":True,"iat":int(now.timestamp()),"exp":int((now+timedelta(minutes=TOTP_PENDING_EXPIRE_MINUTES)).timestamp())},_get_secret(),algorithm=ALGORITHM),jti
+    return jwt.encode({**(claims or {}),"sub":user_id,"jti":jti,"type":"temp","totp_pending":True,"iat":int(now.timestamp()),"exp":int((now+timedelta(minutes=TOTP_PENDING_EXPIRE_MINUTES)).timestamp())},_get_secret(),algorithm=ALGORITHM),jti
 def decode_token(token):return jwt.decode(token,_get_secret(),algorithms=[ALGORITHM])
 def decode_token_no_verify_exp(token):return jwt.decode(token,_get_secret(),algorithms=[ALGORITHM],options={"verify_exp":False})
