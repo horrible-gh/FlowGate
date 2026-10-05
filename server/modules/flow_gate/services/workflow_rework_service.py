@@ -603,6 +603,12 @@ def reopen_to_target(
             )
         if cancel_result is not None:
             result["tr_commit_cancel"] = cancel_result
+        if terminal_session is not None:
+            # 0669 unit 7d: the C1 re-provision runs as a job after the commit; the
+            # session's G is handed over to it here (the finally below is then a no-op).
+            reprovision = git_service.finish_terminal_reopen(terminal_session)
+            if reprovision is not None:
+                result["terminal_reprovision"] = reprovision
         # 0660 T0004 §3 (RC3, approach B): the rewind stands even when git blocked the
         # commit cancel (D0005 K8), but a reopened TR2 whose approval commit is still live
         # is NOT reopened for editing yet — tr2_service.revert_pending keeps it immutable

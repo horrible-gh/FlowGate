@@ -1,7 +1,6 @@
 """Git integration storage (flowgate.default.0115 DB0007, migration 056).
 
-project_git_config / group_git_state / git_merge_session(+_file) / git_project_lock
-CRUD. Follows the dominant inline-SQL pattern (get_store()._fetch_one/_fetch_all/
+project_git_config / group_git_state / git_merge_session(+_file) CRUD. Follows the dominant inline-SQL pattern (get_store()._fetch_one/_fetch_all/
 _execute) used by db/remote_tool_grants.py.
 
 Secret handling invariant (DB0007 I5): ``secret_enc`` only ever receives values
@@ -11,10 +10,13 @@ and never logs it.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Optional
 
 from . import meta_cache
 from .connection import get_store, now_iso
+
+_log = logging.getLogger(__name__)
 
 PROVIDER_VALUES = ("github", "gitlab", "gitea", "gitbucket", "generic")
 ACTION_VALUES = ("merge", "merge_only", "push", "wait")
@@ -908,59 +910,4 @@ def list_states_of_project_any(project_id: str) -> list[dict]:
     idx_group_git_state_project(project_id, status) left prefix (DB0005 §4)."""
     return get_store()._fetch_all(
         "SELECT * FROM group_git_state WHERE project_id = ?", [project_id]
-    )
-
-
-# ── git_project_lock (INSERT = acquire, DELETE = release; DB0007 §2.5) ───────
-
-def try_acquire_lock(project_id: str, holder: str) -> bool:
-    """Attempt to take the project mutex. False when another holder owns it."""
-    try:
-        get_store()._execute(
-            "INSERT INTO git_project_lock (project_id, holder, acquired_at) "
-            "VALUES (?, ?, ?)",
-            [project_id, holder, now_iso()],
-        )
-    except Exception:
-        return False
-    # Verify the row is ours: some drivers swallow duplicate-key errors differently.
-    row = get_lock(project_id)
-    return bool(row and row.get("holder") == holder)
-
-
-def get_lock(project_id: str) -> Optional[dict]:
-    return get_store()._fetch_one(
-        "SELECT * FROM git_project_lock WHERE project_id = ?", [project_id]
-    )
-
-
-def release_lock(project_id: str, holder: str) -> None:
-    get_store()._execute(
-        "DELETE FROM git_project_lock WHERE project_id = ? AND holder = ?",
-        [project_id, holder],
-    )
-
-
-def transfer_lock(project_id: str, old_holder: str, new_holder: str) -> None:
-    """Hand the mutex to a merge session (L0006 §2.8 persistent inheritance)."""
-    store = get_store()
-    with store.transaction():
-        store._execute(
-            "DELETE FROM git_project_lock WHERE project_id = ? AND holder = ?",
-            [project_id, old_holder],
-        )
-        store._execute(
-            "INSERT INTO git_project_lock (project_id, holder, acquired_at) "
-            "VALUES (?, ?, ?)",
-            [project_id, new_holder, now_iso()],
-        )
-
-
-def list_locks() -> list[dict]:
-    return get_store()._fetch_all("SELECT * FROM git_project_lock", [])
-
-
-def force_release_lock(project_id: str) -> None:
-    get_store()._execute(
-        "DELETE FROM git_project_lock WHERE project_id = ?", [project_id]
     )

@@ -25,7 +25,7 @@ from modules.flow_gate.db.git_integration import (
 from . import approval_intent
 from . import merge_target
 from .command import GIT_LOCAL_TIMEOUT_SEC
-from .commit import _release_cancel_lock
+from .commit import _acquire_group_lock, _release_group_lock
 from .credentials import GitServiceError, _author_env_from_cfg
 
 _log = logging.getLogger(__name__)
@@ -410,8 +410,9 @@ def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
             f"git still reports {len(unmerged)} unmerged path(s)",
         )
 
-    holder = f"trconflict:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder, wait_sec=_gs.CANCEL_LOCK_WAIT_SEC):
+    # 0666 D 3.10: the Group's G — another Group's work no longer blocks this commit.
+    lock = _acquire_group_lock(project_id, group_id, "tr_conflict")
+    if lock is None:
         raise GitServiceError(
             409, "git_busy", f"another git operation is in progress for '{project_id}'"
         )
@@ -440,7 +441,7 @@ def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
         # Either way the revert is over; the sequencer state is what is left of it.
         _gs._run_git(["revert", "--quit"], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
     finally:
-        _release_cancel_lock(project_id, holder)
+        _release_group_lock(lock)
 
     _gs.db_git.close_session(merge_id, "done")
     _gs._set_status(group_id, context.get("prev_status") or "waiting")
@@ -1127,34 +1128,42 @@ def _apply_conflict_resolution_locked(
     *,
     expected_project_id: str,
 ) -> dict:
-    """Apply a validated conflict submission inside the owning project's Git mutex.
+    """Apply a validated conflict submission inside the session's workspace lock.
 
     The pre-lock pass in resolve_conflicts performs expensive semantic validation.
     This boundary then re-reads the authoritative session/root and verifies both the
     registered path set and the exact pre-write file content before the first write.
-    Thus no TR2 approval or other project Git mutation can interleave between the
-    final ownership check and write/git-add/session update.
+    Thus no Git mutation of the same workspace (TR2 approval, review action, merge)
+    can interleave between the final ownership check and write/git-add/session update.
+    0669 unit 8b: that lock is the session's G / W / B, no longer the project mutex.
     """
     from modules.flow_gate.services import git_service as _gs
     from modules.flow_gate.storage.safe_path import resolve_in_root
 
-    holder = f"resolve:{merge_id}:{uuid.uuid4().hex}"
-    if not _gs._acquire_lock(expected_project_id, holder, wait_sec=_gs.LOCK_WAIT_SEC):
-        raise GitServiceError(
-            409, "git_busy",
-            f"another git operation is in progress for '{expected_project_id}'",
-        )
+    # 0669 unit 8b: the session's workspace domain (TR / group update: the Group's G;
+    # finalize / branch merge: the target's G / W / B) instead of the project mutex. The
+    # domain comes from a pre-lock read; everything below re-reads under it as before.
+    from . import branch_merge_publish as _bmp
+    session_kwargs = (
+        {"project_id": expected_project_id} if group_id is None else {}
+    )
+    prelock_session = _gs._session_context(group_id, merge_id, **session_kwargs)[0]
+    lock_ctx, held = _bmp.session_lock(
+        prelock_session, expected_project_id,
+        holder_kind=(
+            "tr_conflict"
+            if _gs.db_git.session_kind(prelock_session) in _gs.db_git.TR_SESSION_KINDS
+            else "merge_resolve"
+        ),
+    )
 
     automatic = False
     snapshot: Optional[dict] = None
     result: Optional[dict] = None
     try:
-        # Owner identity and source root are authoritative only after the project mutex
-        # is ours. Branch-merge sessions are project-addressed; all other sessions stay
-        # group-addressed exactly as before.
-        session_kwargs = (
-            {"project_id": expected_project_id} if group_id is None else {}
-        )
+        # Owner identity and source root are authoritative only after the session's
+        # domain is ours. Branch-merge sessions are project-addressed; all other sessions
+        # stay group-addressed exactly as before.
         session, cfg, project_id, root = _gs._session_context(
             group_id, merge_id, **session_kwargs
         )
@@ -1331,10 +1340,11 @@ def _apply_conflict_resolution_locked(
                 },
             }
     finally:
-        _gs.db_git.release_lock(expected_project_id, holder)
+        _bmp.session_unlock(lock_ctx, held)
 
-    # approve_merge_review owns/acquires its own project-lock boundary. Calling it while
-    # the resolver mutex is still held would deadlock because the DB lock is not re-entrant.
+    # approve_merge_review takes its own locks (the same target domain plus R). Taking R
+    # while this hold is still open would be legal now, but the review keeps its own
+    # boundary as before.
     if automatic:
         assert snapshot is not None
         return _gs.approve_merge_review(
@@ -1579,7 +1589,6 @@ def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[
         session, merge_target.ATTEMPT_ABORTED, error={"code": "user_abort"},
     )
     _gs._set_status(group_id, "waiting")
-    _gs.db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
     return {"ok": True, "result": {
         "status": "waiting", "branch_preserved": True,
         "final_approval_intent_discarded": discarded is not None,

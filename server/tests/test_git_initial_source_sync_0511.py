@@ -23,6 +23,14 @@ import pytest
 from modules.flow_gate.services import git_service
 
 
+from group_lock_stub import group_store, hold_lock  # noqa: F401
+import pytest as _pytest_locks
+
+# Group/base/remote work takes domain locks from the real lock manager (0669): these tests
+# run on the real SQLite lock/job store instead of stubbing the removed project mutex.
+pytestmark = _pytest_locks.mark.usefixtures("group_store")
+
+
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args], cwd=repo, text=True, capture_output=True, check=True,
@@ -84,8 +92,6 @@ def _wire(monkeypatch, fx: _Fixture, *, enabled=True, base_branch="main",
         git_service, "src_root",
         lambda name, br: fx.base if br == base_branch else fx.wt,
     )
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda _project, _holder: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda _project, _holder: None)
     monkeypatch.setattr(git_service.db_tr_ledger, "commit_rows_by_group", lambda _gid: [])
 
 
@@ -208,8 +214,8 @@ def test_worktree_missing_blocks_rather_than_resets(monkeypatch, tmp_path):
 def test_git_busy_does_not_reset(monkeypatch, tmp_path):
     fx = _Fixture(tmp_path)
     _wire(monkeypatch, fx)
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda _project, _holder: False)
-    result = git_service.ensure_initial_group_source_sync("p", "default", "g")
+    with hold_lock("G", "p", group_id="g", holder_kind="source_mutation"):   # the Group's G is busy
+        result = git_service.ensure_initial_group_source_sync("p", "default", "g")
     assert result == {"performed": False, "reason": "git_busy", "sha": None}
     assert _git(fx.wt, "rev-parse", "HEAD").stdout.strip() == fx.fork_head
 

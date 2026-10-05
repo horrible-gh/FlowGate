@@ -343,16 +343,26 @@ def hold(group_id: str, merge_id: int) -> dict:
     session, _cfg, project_id, root = gs._session_context(group_id, merge_id)
     if gs.db_git.session_kind(session) != gs.db_git.SESSION_KIND_MERGE:
         raise GitServiceError(409, "hold_not_supported", "Only finalize merge conflicts can be held")
-    holder = f"hold:{merge_id}"
-    if not gs._acquire_lock(project_id, holder, wait_sec=gs.LOCK_WAIT_SEC):
-        raise GitServiceError(409, "git_busy", "Another Git operation is in progress")
+    # 0669 unit 8a (D §3.11, §7 "rerere checkpoint"): the session target's W or B, and M
+    # only for the moment the shared rerere cache is written — not the project mutex.
+    from . import branch_merge_publish
+    from . import lock_manager as locks
+    lock_ctx, lock_key = branch_merge_publish.attempt_lock(
+        merge_target.resolve_session_target(session), holder_kind="rerere")
     try:
         merge_target.raise_if_not_workspace_owner(merge_target.resolve_session_target(session))
         rows = gs.db_git.session_files(merge_id)
         resolved = [row["path"] for row in rows if row["resolved"]]
         if not resolved:
             raise GitServiceError(409, "nothing_to_hold", "Resolve and submit at least one file before holding")
-        _run(root)
+        m = locks.acquire("M", project_id, holder_kind="rerere", ctx=lock_ctx)
+        if not m.ok:
+            raise GitServiceError(409, "git_busy", "Another Git operation is in progress",
+                                  details=locks.outcome_details(m))
+        try:
+            _run(root)
+        finally:
+            locks.release(lock_ctx, m.lock_key)
         context = gs.db_git.session_context(session)
         ids = context.get("rerere_ids") or {}
         stages = context.get("rerere_stages") or {}
@@ -418,7 +428,6 @@ def hold(group_id: str, merge_id: int) -> dict:
             session, merge_target.ATTEMPT_ABORTED, error={"code": "user_hold"},
         )
         gs._set_status(group_id, "waiting")
-        gs.db_git.release_lock(project_id, f"merge:{merge_id}")
         return {"ok": True, "result": {
             "status": "held", "checkpoint_id": checkpoint["checkpoint_id"],
             "preserved_paths": sorted(provenance),
@@ -426,4 +435,5 @@ def hold(group_id: str, merge_id: int) -> dict:
             "final_approval_intent_discarded": discarded is not None,
         }}
     finally:
-        gs.db_git.release_lock(project_id, holder)
+        if lock_ctx.find_held(lock_key) is not None:
+            locks.release(lock_ctx, lock_key)

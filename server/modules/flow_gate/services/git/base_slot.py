@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import subprocess
-import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +32,33 @@ BOOTSTRAP_SEED_MSG = "flowgate: initialize {base_branch} ({project_id})"
 ADOPT_PENDING_MARKER = ".git/flowgate_adopt_pending"
 
 ATTEMPT_RECORD_KEY = "git.provision.last_attempt.{project_id}"
+
+
+@contextmanager
+def _domain_locks(project_id: str, *domains: str):
+    """0669 unit 7c: B (base checkout) / R (remote) instead of the project mutex for the
+    direct base operations. Taken in order, held for the block, released in reverse. A
+    refusal is the old git_busy 409, with the lock manager's reason (lock_busy /
+    recovery_required / store_error) and blocker in details."""
+    from . import lock_manager as locks
+    ctx = locks.current_context() or locks.new_context("req")
+    taken: list[str] = []
+    try:
+        for domain in domains:
+            o = locks.acquire(domain, project_id, ctx=ctx,
+                              holder_kind="publish" if domain == "R" else "base_mutation")
+            if not o.ok:
+                raise GitServiceError(
+                    409, "git_busy",
+                    f"Another git operation is in progress for project '{project_id}' (try again shortly)",
+                    details=locks.outcome_details(o),
+                )
+            taken.append(o.lock_key)
+        yield
+    finally:
+        for key in reversed(taken):
+            if ctx.find_held(key) is not None:
+                locks.release(ctx, key)
 
 
 def _judge_base_slot(base_root: Path, base_branch: str) -> str:
@@ -344,8 +371,7 @@ def _bootstrap_empty_remote(
 def _provision_base_locked(cfg: dict, project_id: str, project_name: str, trigger: str) -> dict:
     """Judge the base slot and establish it (none / clone / adopt) — L0005 §2.2.
 
-    The caller must hold the project git mutex (hook path already does; the
-    manual path acquires it in provision_base).
+    The caller holds B and R (0669 unit 9b: ``provision_base`` takes them).
     """
     from modules.flow_gate.services import git_service as _gs
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
@@ -439,13 +465,16 @@ def provision_base(project_id: str, trigger: str) -> dict:
     if not _gs.git_available():
         return _blocked("git_unavailable")
 
-    holder = f"op:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
-        return _blocked("git_busy")
+    # 0669 unit 9b: B (the base slot) and R (clone / origin) instead of the project
+    # mutex, held for the whole judge-and-establish. Still synchronous: the manual
+    # route and the worktree hook read the result in the same call.
     try:
-        return _gs._provision_base_locked(cfg, project_id, project_name, trigger)
-    finally:
-        _gs.db_git.release_lock(project_id, holder)
+        with _domain_locks(project_id, "B", "R"):
+            return _gs._provision_base_locked(cfg, project_id, project_name, trigger)
+    except GitServiceError as exc:
+        if exc.code != "git_busy":
+            raise
+        return _blocked("git_busy")
 
 
 def provision_view(project_id: str) -> dict:
@@ -524,13 +553,7 @@ def manual_fetch(project_id: str) -> dict:
             500, "git_unavailable",
             "git binary not found on server (install git in the runtime image)",
         )
-    holder = f"op:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
-        raise GitServiceError(
-            409, "git_busy",
-            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
-        )
-    try:
+    with _domain_locks(project_id, "R"):
         # flowgate.default.0361 NR0003 §3/§8.1: this recovery fetch used to trust
         # whatever `origin` already pointed at — the very entry point B0001's
         # symptom (`/remote/show` 404 on a GitHub-only commit) traced back to.
@@ -542,6 +565,9 @@ def manual_fetch(project_id: str) -> dict:
         )
         if proc.returncode != 0:
             raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+    # 0669 unit 7c: the fetch ran under R alone; the fast-forward of the base checkout
+    # takes B, so a slow network never holds the base slot.
+    with _domain_locks(project_id, "B"):
         # 0320 B0001: a bare `fetch` only moved refs/remotes/origin/{base} and then
         # *reported* behind_count — the local base branch never advanced, so the
         # base checkout stayed behind upstream forever and the operator-facing
@@ -566,8 +592,6 @@ def manual_fetch(project_id: str) -> dict:
             "fetched": True, "advanced": advanced, "base_branch": base_branch,
             "ahead_count": ahead, "behind_count": behind,
         }}
-    finally:
-        _gs.db_git.release_lock(project_id, holder)
 
 
 def default_base_commit_message(files: list[str]) -> str:
@@ -710,11 +734,11 @@ def base_commit(
     An empty dirty set is an idempotent success so the FE's commit-then-merge
     retry never turns a lost race into an error.
 
-    `_holder` (internal): when the caller already holds the project git lock
-    under this holder id, reuse it instead of acquiring a fresh one — lets
-    `resolve_base_dirty` (0482 T0011) keep baseline capture, discard, and
-    commit atomic under a single lock instead of three independently-locked
-    calls that leave a race window between them.
+    `_holder` (internal): when the caller already holds the base checkout's B
+    (its lock key; 0669 unit 9a, before that the project git lock), reuse it
+    instead of acquiring a fresh one — lets `resolve_base_dirty` (0482 T0011) keep
+    baseline capture, discard, and commit atomic under a single lock instead of
+    three independently-locked calls that leave a race window between them.
     """
     from modules.flow_gate.services import git_service as _gs
     _, base_root = _gs._require_base_checkout(project_id)
@@ -743,16 +767,8 @@ def base_commit(
         )
     if _holder is not None:
         return _gs._base_commit_locked(project_id, base_root, subject, selected)
-    holder = f"op:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
-        raise GitServiceError(
-            409, "git_busy",
-            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
-        )
-    try:
+    with _domain_locks(project_id, "B"):
         return _gs._base_commit_locked(project_id, base_root, subject, selected)
-    finally:
-        _gs.db_git.release_lock(project_id, holder)
 
 
 def _base_revert_locked(project_id: str, base_root: Path, cleaned: list[str]) -> dict:
@@ -791,9 +807,9 @@ def base_revert(project_id: str, files: list[str], _holder: Optional[str] = None
     L0002 §2.4). Per-file results; a file that is not dirty reports "not_dirty"
     and counts as success (idempotent against races and double clicks).
 
-    `_holder` (internal): when the caller already holds the project git lock
-    under this holder id, reuse it instead of acquiring a fresh one — see
-    `base_commit`'s `_holder` docstring for why.
+    `_holder` (internal): when the caller already holds the base checkout's B,
+    reuse it instead of acquiring a fresh one — see `base_commit`'s `_holder`
+    docstring for why.
     """
     from modules.flow_gate.services import git_service as _gs
     _, base_root = _gs._require_base_checkout(project_id)
@@ -815,16 +831,8 @@ def base_revert(project_id: str, files: list[str], _holder: Optional[str] = None
         )
     if _holder is not None:
         return _gs._base_revert_locked(project_id, base_root, cleaned)
-    holder = f"op:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
-        raise GitServiceError(
-            409, "git_busy",
-            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
-        )
-    try:
+    with _domain_locks(project_id, "B"):
         return _gs._base_revert_locked(project_id, base_root, cleaned)
-    finally:
-        _gs.db_git.release_lock(project_id, holder)
 
 
 def base_remove(project_id: str, files: list[str]) -> dict:
@@ -865,13 +873,7 @@ def base_remove(project_id: str, files: list[str]) -> dict:
             500, "git_unavailable",
             "git binary not found on server (install git in the runtime image)",
         )
-    holder = f"op:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
-        raise GitServiceError(
-            409, "git_busy",
-            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
-        )
-    try:
+    with _domain_locks(project_id, "B"):
         _gs.guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
         if _merge_in_progress(base_root):
             raise GitServiceError(
@@ -912,5 +914,3 @@ def base_remove(project_id: str, files: list[str]) -> dict:
                 "remaining_untracked": _untracked_files(base_root),
             },
         }
-    finally:
-        _gs.db_git.release_lock(project_id, holder)

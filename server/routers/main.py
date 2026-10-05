@@ -101,6 +101,11 @@ async def lifespan(app: FastAPI):
         source_bundle_cleanup_service.shutdown()
     except Exception:
         logger.warning("Source Bundle cleanup shutdown failed", exc_info=True)
+    try:
+        from modules.flow_gate.services.git import instance_registry
+        instance_registry.shutdown()
+    except Exception:
+        logger.warning("server instance shutdown failed", exc_info=True)
 
 
 app = FastAPI(lifespan=lifespan)
