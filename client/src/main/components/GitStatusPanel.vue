@@ -429,6 +429,7 @@
             :provider-loading="aiProviderStore.loading"
             :provider-errored="!!aiProviderStore.error"
             :ai-run-notice="conflictAiRunNotice(p.group_id)"
+            :ai-run-failure="conflictAiFailureText(p.group_id)"
             :ai-run-pending="conflictAiStarting === p.group_id"
             @close="collapseResolve"
             @abort="abortInline(p)"
@@ -541,6 +542,7 @@
             :provider-loading="aiProviderStore.loading"
             :provider-errored="!!aiProviderStore.error"
             :ai-run-notice="conflictAiRunNotice(s.group_id)"
+            :ai-run-failure="conflictAiFailureText(s.group_id)"
             :ai-run-pending="conflictAiStarting === s.group_id"
             @close="collapseResolve"
             @abort="abortTrConflict(s)"
@@ -684,6 +686,7 @@ import { confirm } from '../composables/useDialogStack'
 import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { isScreenOwnedRun, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { useConflictAiRunFailures } from '../composables/useConflictAiRunFailures'
 import AppIcon from '@shared/AppIcon.vue'
 // 0182 NR0003 §6: chunk-based conflict resolution shared with GitFinalizePanel
 // (parser state machine + reassembly + residual-marker guard). 0212 T0009: the
@@ -1016,6 +1019,7 @@ async function abortTrConflict(slot: Slot) {
     await postRequest(
       `/api/v1/groups/${slot.group_id}/git/merge/${cs.merge_id}/abort`, {},
     )
+    conflictAiFailures.clear(slot.group_id)
     showToast(t('main.git_status.tr_commits.conflict_aborted_toast'), 'warning')
     collapseResolve()
   } catch (e: any) {
@@ -1783,6 +1787,7 @@ async function submitResolveInline(p: ConflictTarget | null, auto: boolean) {
   if (!p || p.merge_id == null || busy.value || (!inlineResolved.value && !conflictFiles.value.some(isFileResolved))) return
   busy.value = true
   conflictError.value = ''
+  conflictAiFailures.clear(p.group_id)
   try {
     const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
       `/api/v1/groups/${p.group_id}/git/merge/${p.merge_id}/resolve`,
@@ -1890,6 +1895,7 @@ async function invokeConflictAi(p: ConflictTarget | null, message?: string, auto
   if (!p || p.merge_id == null || busy.value) return
   busy.value = true
   conflictAiStarting.value = p.group_id
+  conflictAiFailures.clear(p.group_id)
   try {
     // RC1: forward the header/dialog provider selection so the run honours it instead
     // of silently falling back to the server default chain (first = e.g. Fable).
@@ -1949,26 +1955,33 @@ function conflictAiRunNotice(groupId: string): string | null {
 // the status and the conflict list so the result of the call is what the operator
 // sees next -- the old "the AI-run surface covered this and its removal remounted
 // everything" refresh is gone by design.
-watch(
-  () => (expanded.value ? !!conflictAiRunNotice(expanded.value) : false),
-  async (running, wasRunning) => {
-    if (running || !wasRunning) return
-    const groupId = expanded.value
-    await fetchStatus()
-    if (!groupId || expanded.value !== groupId) return
-    // 0481 T0010 rev5 (반려 #3) — if the run RESOLVED it, the resolver's successor screen is
-    // the approval gate. Re-opening the resolver on an emptied session was the header panel's
-    // version of "알아서 승인화면으로 가세요": a dialog with nothing left in it and no way on.
-    // GitFinalizePanel already handed over here; this panel had been left out.
-    const pending = status.value?.pending.find((p) => p.group_id === groupId)
-    if (pending && pending.merge_id != null && isReviewPending(pending)) {
-      collapseResolve()
-      reviewDialogTarget.value = { group_id: groupId, merge_id: pending.merge_id }
-      return
-    }
-    await openResolve(groupId)
-  },
-)
+//
+// 0674 T0004 §2-1 (D1): the end is also JUDGED (useConflictAiRunFailures, shared with
+// GitFinalizePanel). A run that did not land `complete` is recorded after the refresh
+// below, and the reopened resolver says it failed, why, and what is left to do.
+const conflictAiFailures = useConflictAiRunFailures(async (groupId) => {
+  if (expanded.value !== groupId) return
+  await fetchStatus()
+  if (expanded.value !== groupId) return
+  // 0481 T0010 rev5 (반려 #3) — if the run RESOLVED it, the resolver's successor screen is
+  // the approval gate. Re-opening the resolver on an emptied session was the header panel's
+  // version of "알아서 승인화면으로 가세요": a dialog with nothing left in it and no way on.
+  // GitFinalizePanel already handed over here; this panel had been left out.
+  const pending = status.value?.pending.find((p) => p.group_id === groupId)
+  if (pending && pending.merge_id != null && isReviewPending(pending)) {
+    collapseResolve()
+    reviewDialogTarget.value = { group_id: groupId, merge_id: pending.merge_id }
+    return
+  }
+  await openResolve(groupId)
+})
+
+function conflictAiFailureText(groupId: string): string {
+  if (conflictAiRunNotice(groupId)) return ''
+  const pending = status.value?.pending.find((p) => p.group_id === groupId)
+  if (pending && isReviewPending(pending)) return ''
+  return conflictAiFailures.failureText(groupId)
+}
 
 watch(
   // 0563 T0007: a finished/lost run leaves runsByGroup the moment it lands (it moves
@@ -2065,6 +2078,7 @@ async function abortInline(p: Pending) {
   busy.value = true
   try {
     await postRequest(`/api/v1/groups/${p.group_id}/git/merge/${p.merge_id}/abort`, {})
+    conflictAiFailures.clear(p.group_id)
     showToast(t('main.git_finalize.aborted_toast'), 'success')
     collapseResolve()
   } catch (e: any) {

@@ -220,6 +220,7 @@
           v-if="showAiActions && aiStrip"
           class="git-conflict-ai-strip"
           :class="'git-conflict-ai-strip--' + aiStrip.kind"
+          :data-kind="aiStrip.kind"
           data-test="conflict-ai-run"
         >
           <AppIcon :name="aiStrip.icon" :spin="aiStrip.spin" />
@@ -381,6 +382,10 @@ const props = defineProps<{
   // has to be the one that says the run is happening. A string (not a boolean)
   // because the host owns i18n and the provider/elapsed values.
   aiRunNotice?: string | null
+  // 0674 T0004 §2-1 (D1): the host's sentence for a conflict AI run that ENDED without
+  // resolving the conflict (failed, partial, lost), reason and next steps included. Until
+  // 0674 the end of a run only re-read the list, so a failed run looked like no run at all.
+  aiRunFailure?: string | null
   // 0481 T0010 rev5 (반려 #1): [AI 호출]을 눌러 요청은 나갔지만 이 브라우저에 아직 실행
   // 기록이 없는 구간. 그 구간이 rev3 까지는 화면에 존재하지 않아서, 누른 사람에게는
   // "눌렀는데 아무 일도 안 일어난다"로 보였다. 호출 성공 여부와 무관하게 호스트가 켜고 끈다.
@@ -481,6 +486,9 @@ const aiStrip = computed<{ kind: string; text: string; icon: string; spin: boole
   }
   if (props.aiRunPending) {
     return { kind: 'run', text: t('main.git_finalize.conflict_ai_starting'), icon: 'spinner', spin: true, retry: false }
+  }
+  if (props.aiRunFailure) {
+    return { kind: 'failed', text: props.aiRunFailure, icon: 'warning', spin: false, retry: false }
   }
   if (props.providerLoading) {
     return { kind: 'wait', text: t('main.git_finalize.provider_loading'), icon: 'spinner', spin: true, retry: false }
@@ -1109,6 +1117,17 @@ watch(
   border-top-color: #fecaca;
   background: #fef2f2;
   color: #b91c1c;
+}
+/* 0674 T0004 §2-1: a failed run's line carries the reason and the next steps, so it
+   wraps instead of being cut at one line. */
+.git-conflict-ai-strip--failed {
+  border-top-color: #fde68a;
+  background: #fffbeb;
+  color: #b45309;
+}
+.git-conflict-ai-strip--failed .git-conflict-ai-strip-text {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .git-conflict-ai-strip--wait {
   border-top-color: var(--border, #e2e8f0);

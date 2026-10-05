@@ -51,6 +51,7 @@ Deviations from L, recorded as design changes (0669 chat):
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -89,6 +90,18 @@ _TRANSIENT_CODES = frozenset(("git_busy",))
 _LEASE_CLEARED = {"lease_owner": None, "lease_token": None, "lease_until": None}
 _HANDOFF_RESULT = "handed_off_to_conflict_review"
 
+# 0674 T0004 §2-6: what a terminal job's ``status`` alone cannot say. A conflict hand-off
+# and an approval committed through the approval-retry route both end ``succeeded`` (the
+# Runner's terminal contract), so the result's meaning rides beside it as ``outcome``.
+OUTCOME_EXECUTED = "executed"
+OUTCOME_HANDED_OFF = "handed_off"
+OUTCOME_APPROVED_ELSEWHERE = "approved_elsewhere"
+
+# 0674 T0004 §2-5: the non-terminal transitions the screen is told about (SSE
+# ``git_approval_job_changed``). Terminal ones keep their own events (git_finalize_done).
+NOTIFY_STATUSES = frozenset(("freeze_wait", "blocked", "retry_wait", "recovery_required"))
+APPROVAL_JOB_EVENT = "git_approval_job_changed"
+
 
 @dataclass
 class Outcome:
@@ -117,6 +130,39 @@ def holder_of(job_id: str) -> str:
 
 # ── job view (P "Job 조회" shape, the fields the approval response carries) ──
 
+def job_outcome(job: Optional[dict]) -> Optional[str]:
+    """0674 T0004 §2-6: the meaning of a ``succeeded`` job — executed, handed off to the
+    conflict review, or approved elsewhere (approval-retry route). failed/cancelled answer
+    their status; a job that is not terminal has no outcome yet."""
+    status = (job or {}).get("status")
+    if status in ("failed", "cancelled"):
+        return status
+    if status != "succeeded":
+        return None
+    result = job.get("result")
+    if result == _HANDOFF_RESULT:
+        return OUTCOME_HANDED_OFF
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except ValueError:
+            result = None
+    if isinstance(result, dict) and result.get("approved_elsewhere"):
+        return OUTCOME_APPROVED_ELSEWHERE
+    return OUTCOME_EXECUTED
+
+
+def job_stage(job: Optional[dict]) -> Optional[str]:
+    """The screen's reading of a job status (0674 T0004 §2-4): every waiting/executing
+    status as it is, every terminal one as ``terminal`` (``outcome`` tells which)."""
+    status = (job or {}).get("status")
+    if not status:
+        return None
+    if status in runner.TERMINAL:
+        return "terminal"
+    return status
+
+
 def job_view(job: Optional[dict]) -> Optional[dict]:
     if not job:
         return None
@@ -128,6 +174,9 @@ def job_view(job: Optional[dict]) -> Optional[dict]:
     view["retryable"] = job.get("retryable") in (1, True, None)
     view["cancelable"] = (job.get("status") in ("freeze_wait", "pending", "blocked", "retry_wait")
                           and job.get("phase") in ("freeze_pending", "F1", "F3", "publish_pending"))
+    view["outcome"] = job_outcome(job)
+    view["stage"] = job_stage(job)
+    view["doc_id"] = _payload(job).get("doc_id")
     return view
 
 
@@ -137,6 +186,37 @@ def blocker_of(job: Optional[dict]) -> Optional[dict]:
     return {"domain": job.get("blocked_domain"), "lock_key": job.get("blocked_lock_key"),
             "holder": job.get("blocked_holder"), "holder_kind": job.get("blocked_operation"),
             "since": job.get("wait_started_at")}
+
+
+def approval_job_state(group_id: str) -> Optional[dict]:
+    """0674 T0004 §2-4: the Group's live final approval job for the finalize state — the
+    job view plus its blocker (the same ``blocker_of`` the approval response carries).
+    None when no approval job of this Group is waiting or running."""
+    job = active_job_of_group(group_id)
+    if job is None:
+        return None
+    view = job_view(job)
+    view["blocker"] = blocker_of(job)
+    return view
+
+
+def notify_progress(job: Optional[dict]) -> None:
+    """0674 T0004 §2-5: tell the screen a final approval job moved into a waiting state
+    (freeze_wait / blocked / retry_wait / recovery_required), from the request and from
+    the Runner/Sweeper alike. Best effort: the screen re-reads the finalize state."""
+    if not job or job.get("status") not in NOTIFY_STATUSES or not job.get("group_id"):
+        return
+    from modules.flow_gate.services import git_service as _gs
+    try:
+        view = job_view(job)
+        view["blocker"] = blocker_of(job)
+        _gs._emit(APPROVAL_JOB_EVENT, job["project_id"], job["group_id"], {
+            "project": job["project_id"], "group_id": job["group_id"],
+            "doc_id": view.get("doc_id"), "status": job.get("status"),
+            "stage": view.get("stage"), "job": view,
+        })
+    except Exception:
+        _log.warning("approval job progress event failed: %s", job.get("job_id"), exc_info=True)
 
 
 def describe(job: Optional[dict]) -> Outcome:
@@ -219,6 +299,8 @@ def _drive_request(ctx: store.JobContext) -> Outcome:
             _log.warning("approval job context unbind failed: %s", ctx.job_id, exc_info=True)
         if ctx.job.get("status") in runner.TERMINAL:
             notifier.job_terminal(ctx.job)
+        else:
+            notify_progress(ctx.job)
 
 
 # ── executor (Runner entry, L 4.5) ───────────────────────────────────────────
@@ -559,6 +641,7 @@ def install() -> None:
     runner.register_executor(KIND, run)
     for phase in PUBLISH_PHASES:
         runner.register_decider(KIND, phase, _decide_resume)
+    runner.register_observer(KIND, notify_progress)
 
 
 def active_job_of_group(group_id: str) -> Optional[dict]:

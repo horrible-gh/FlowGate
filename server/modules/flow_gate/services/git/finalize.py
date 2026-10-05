@@ -443,9 +443,24 @@ def approval_git_in_flight(group_id: str) -> Optional[bool]:
         return None
 
 
+def approval_job_of_group(group_id: str) -> Optional[dict]:
+    """0674 T0004 §2-4: the Group's live final approval job as the screen reads it —
+    ``approval_publish.job_view`` (``stage``: freezing / freeze_wait / pending / blocked /
+    running / retry_wait / recovery_required) plus ``blocker`` (``blocker_of``). None when
+    no approval job is waiting or running, i.e. the last one (if any) is terminal. A failed
+    read is None too: ``approval_in_flight`` beside it keeps the "unknown" answer."""
+    from . import approval_publish
+    try:
+        return approval_publish.approval_job_state(group_id)
+    except Exception:
+        _log.warning("approval job lookup failed for %s", group_id, exc_info=True)
+        return None
+
+
 def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
     out = _finalize_state(group_id, preview_ac=preview_ac)
     out["state"]["approval_in_flight"] = approval_git_in_flight(group_id)
+    out["state"]["approval_job"] = approval_job_of_group(group_id)
     return out
 
 

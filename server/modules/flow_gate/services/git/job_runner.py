@@ -74,6 +74,9 @@ _executors: dict[str, Executor] = {}
 _deciders: dict[tuple[str, str], Callable[[dict], "Decision"]] = {}
 _freeze_reconciler: Optional[Callable[[store.JobContext], None]] = None
 _freeze_releaser: Optional[Callable[[store.JobContext, str, str], None]] = None
+# 0674 T0004 §2-5: per kind, told the job row after a claim/reconcile/recovery body
+# changed it (status, blocker or error code) — the screen's SSE, never a side effect.
+_observers: dict[str, Callable[[dict], None]] = {}
 _reg_guard = threading.Lock()
 
 
@@ -88,6 +91,30 @@ def register_decider(kind: str, phase: str, decide_fn: Callable[[dict], "Decisio
     """One row of L table 4.4-1: (kind, recorded phase P) -> evidence check of step S."""
     with _reg_guard:
         _deciders[(kind, phase)] = decide_fn
+
+
+def register_observer(kind: str, observe: Callable[[dict], None]) -> None:
+    """0674 T0004 §2-5: ``observe(job)`` after a Runner/Sweeper body moved the job."""
+    with _reg_guard:
+        _observers[kind] = observe
+
+
+def _progress_key(job: dict, status: Optional[str]) -> tuple:
+    return (status, job.get("blocked_lock_key"), job.get("last_error_code"))
+
+
+def _observe(job: dict, before: tuple) -> None:
+    """Best effort, after the body's writes committed; unchanged rows say nothing."""
+    if _progress_key(job, job.get("status")) == before:
+        return
+    with _reg_guard:
+        observe = _observers.get(job.get("kind"))
+    if observe is None:
+        return
+    try:
+        observe(job)
+    except Exception:
+        _log.warning("job observer failed: %s", job.get("job_id"), exc_info=True)
 
 
 def register_freeze_hooks(reconciler: Callable[[store.JobContext], None],
@@ -218,6 +245,8 @@ def execute(cr: store.ClaimResult) -> None:
     """Run one WON claim to the end of this attempt. Never raises."""
     ctx, entry = cr.ctx, cr.phase_entry
     job = ctx.job
+    # the claim CAS recorded where the job was waiting; that is the state the screen knows
+    before = _progress_key(job, job.get("claimed_from") or job.get("status"))
     locks.bind(ctx.lock_ctx)
     try:
         with store.lease_scope(ctx):
@@ -250,10 +279,13 @@ def execute(cr: store.ClaimResult) -> None:
             _log.warning("job context unbind failed: %s", ctx.job_id, exc_info=True)
         if ctx.job.get("status") in TERMINAL:
             notifier.job_terminal(ctx.job)
+        else:
+            _observe(ctx.job, before)
 
 
 def reconcile_expired(ctx: store.JobContext) -> None:
     """L 2.17.2 after a won reconcile claim: running -> 4.4, freezing -> unit 6 hook."""
+    before = _progress_key(ctx.job, ctx.job.get("status"))
     locks.bind(ctx.lock_ctx)
     try:
         with store.lease_scope(ctx):
@@ -273,10 +305,13 @@ def reconcile_expired(ctx: store.JobContext) -> None:
             locks.unbind(ctx.lock_ctx)
         except Exception:
             _log.warning("reconcile context unbind failed: %s", ctx.job_id, exc_info=True)
+        if ctx.job.get("status") not in TERMINAL:
+            _observe(ctx.job, before)
 
 
 def retry_recovery(ctx: store.JobContext) -> None:
     """L 2.18 body for one recovery_required job whose retry lease we won."""
+    before = _progress_key(ctx.job, ctx.job.get("status"))
     locks.bind(ctx.lock_ctx)
     try:
         with store.lease_scope(ctx):
@@ -303,6 +338,8 @@ def retry_recovery(ctx: store.JobContext) -> None:
             locks.unbind(ctx.lock_ctx)
         except Exception:
             _log.warning("recovery context unbind failed: %s", ctx.job_id, exc_info=True)
+        if ctx.job.get("status") not in TERMINAL:
+            _observe(ctx.job, before)
 
 
 # ── claim helpers ────────────────────────────────────────────────────────────
