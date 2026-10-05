@@ -34,6 +34,23 @@
           <div v-if="isBoundaryBefore(turn)" class="conv-boundary">
             <span>{{ t('main.conversation_view.read_boundary') }}</span>
           </div>
+          <!-- 0670 T0004: the commands this AI turn's run executed, each on its own AI-side
+               row ahead of the reply -- where they stood while the run was live -- so the
+               reply lands below them instead of wrapping them (source_run_id == ai_run_id). -->
+          <template v-if="isFirstTurnOfRun(turn)">
+            <div
+              v-for="cmd in commandsByRun[turn.source_run_id!] ?? []"
+              :key="cmd.request_id"
+              class="conv-row conv-row--ai conv-activity"
+            >
+              <ChatCommandCard
+                :command="cmd"
+                :can-decide="!readOnly"
+                :deciding="decidingCommandId === cmd.request_id"
+                @decide="(decision) => decideCommand(cmd, decision)"
+              />
+            </div>
+          </template>
           <div
             class="conv-row"
             :class="[
@@ -76,7 +93,41 @@
               </p>
             </div>
           </div>
+          <!-- 0670 T0004: what the run changed, measured at its end -- its own row after the
+               reply. A run with no stored change summary adds nothing (NR0003 §11.4). -->
+          <div
+            v-if="isFirstTurnOfRun(turn) && runChanges[turn.source_run_id!]"
+            class="conv-row conv-row--ai conv-activity"
+          >
+            <ChatRunChangeCard
+              :change="runChanges[turn.source_run_id!]"
+              @open="(path) => openRunChanges(runChanges[turn.source_run_id!], path)"
+            />
+          </div>
         </template>
+        <!-- 0670 T0004: commands of a run whose AI turn has not landed yet -- above all the
+             pending approval the run is waiting on -- and the change summary of a run that
+             ended without a reply. Each is its own AI-side row; when the reply arrives it is
+             appended below them and nothing moves. -->
+        <div
+          v-for="cmd in liveCommands"
+          :key="cmd.request_id"
+          class="conv-row conv-row--ai conv-activity conv-live-activity"
+        >
+          <ChatCommandCard
+            :command="cmd"
+            :can-decide="!readOnly"
+            :deciding="decidingCommandId === cmd.request_id"
+            @decide="(decision) => decideCommand(cmd, decision)"
+          />
+        </div>
+        <div
+          v-for="change in orphanChanges"
+          :key="change.run_id"
+          class="conv-row conv-row--ai conv-activity conv-live-activity"
+        >
+          <ChatRunChangeCard :change="change" @open="(path) => openRunChanges(change, path)" />
+        </div>
       </template>
     </div>
 
@@ -142,10 +193,17 @@
         ></textarea>
       </div>
       <!-- Chat settings panel (D0008 §6-2/§6-3, P0009 §1, L0010 §2-7, group 0362).
-           Inline in the composer's flow like .conv-manualcopy below — never a
-           full-screen overlay, so the conversation stays visible behind it and a
-           close control is always on screen. -->
-      <div v-if="showChatSettings" class="conv-settings">
+           0670 T0004 (NR0003 §8.2/§8.3): the same fields and the same save contract, but
+           drawn as a compact popover anchored above the gear instead of an inline block
+           that pushed the conversation up. Still never a full-screen overlay, and a close
+           control is always on screen. The only new field is [명령 실행]. -->
+      <div
+        v-if="showChatSettings"
+        class="conv-settings conv-settings--popover"
+        role="dialog"
+        :aria-label="t('main.conversation_view.chat_settings_title')"
+        @keydown.esc.stop="closeChatSettings"
+      >
         <div class="conv-settings-hd">
           <span class="conv-settings-title">
             <AppIcon name="gear" />
@@ -206,13 +264,29 @@
                 :max="chatSettingsDomain.context_turns_max"
               />
             </div>
-            <p class="conv-settings-hint">{{ t('main.conversation_view.context_range_hint') }}</p>
             <p v-if="chatSettingsErrorField === 'context_turns'" class="conv-settings-error">
               {{ chatSettingsErrorMessage }}
             </p>
           </div>
 
-          <p v-if="chatSettingsErrorMessage && chatSettingsErrorField !== 'context_turns'" class="conv-settings-error">
+          <div v-if="commandPolicyOptions.length > 0" class="conv-settings-group">
+            <span class="conv-settings-group-label">{{ t('main.conversation_view.command_policy_label') }}</span>
+            <div
+              class="conv-settings-radios"
+              role="radiogroup"
+              :aria-label="t('main.conversation_view.command_policy_label')"
+            >
+              <label v-for="policy in commandPolicyOptions" :key="policy" class="conv-radio">
+                <input type="radio" :value="policy" v-model="draftCommandPolicy" />
+                {{ t(`main.conversation_view.command_policy_${policy}`) }}
+              </label>
+            </div>
+            <p v-if="chatSettingsErrorField === 'command_policy'" class="conv-settings-error">
+              {{ chatSettingsErrorMessage }}
+            </p>
+          </div>
+
+          <p v-if="chatSettingsErrorMessage && chatSettingsErrorField !== 'context_turns' && chatSettingsErrorField !== 'command_policy'" class="conv-settings-error">
             {{ chatSettingsErrorMessage }}
           </p>
         </div>
@@ -350,6 +424,18 @@
         </button>
       </div>
     </form>
+    <GroupChangesDialog
+      v-if="openedRunChange"
+      :project-id="projectCode"
+      :group-id="conversationGroupId"
+      :changes="openedRunChange.files"
+      :diff-loader="loadRunDiff"
+      :title-text="t('main.conversation_view.run_changes_detail_title')"
+      :subtitle-text="openedRunChangeSubtitle"
+      :back-label="t('main.conversation_view.run_changes_back')"
+      :initial-path="openedRunChangePath"
+      @close="closeRunChanges"
+    />
   </div>
 </template>
 
@@ -363,6 +449,18 @@ import { consumeLastFailedCopyText, copyToClipboard } from '../utils/clipboard'
 import AppIcon from '@shared/AppIcon.vue'
 import { randomUuid } from '@shared/utils/uuid'
 import AiProviderSelect from './AiProviderSelect.vue'
+import ChatCommandCard from './ChatCommandCard.vue'
+import ChatRunChangeCard from './ChatRunChangeCard.vue'
+import GroupChangesDialog from './GroupChangesDialog.vue'
+import type { GroupFileDiffData } from '../stores/explorer'
+import {
+  COMMAND_POLICIES,
+  COMMAND_POLICY_DEFAULT,
+  OPEN_COMMAND_STATUSES,
+  runClock,
+  type ChatCommand,
+  type RunChange,
+} from './chatActivityTypes'
 
 // P0003 §0-2. The conversation of record is a list of turns, not a markdown body, so
 // this component no longer parses a document — it receives turn objects and appends
@@ -517,6 +615,8 @@ interface ChatSettingsValue {
   // Group 0515 (T0009 server contract): per-user CH write capability. read_only/edit
   // are sticky; edit_once is consumed by the next successful CH token handoff.
   source_access_mode: string
+  // 0670 T0004: chat command execution policy (own server storage, default user_approval).
+  command_policy?: string
   updated_at: string | null
 }
 interface ChatSettingsDomain {
@@ -526,6 +626,7 @@ interface ChatSettingsDomain {
   context_turns_min: number
   context_turns_max: number
   source_access_mode: string[]
+  command_policy?: string[]
 }
 interface ChatSettingsResponse {
   ok: boolean
@@ -629,11 +730,22 @@ async function setSourceAccessMode(mode: string): Promise<void> {
   }
 }
 
+// 0670 T0004: [명령 실행] -- the last server-confirmed value and its domain. A response
+// predating the field (older server/mock) falls back to the default and the known three.
+const commandPolicy = ref<string>(COMMAND_POLICY_DEFAULT)
+const draftCommandPolicy = ref<string>(COMMAND_POLICY_DEFAULT)
+const commandPolicyOptions = computed(() =>
+  (chatSettingsDomain.value.command_policy ?? [...COMMAND_POLICIES]).filter((policy) =>
+    (COMMAND_POLICIES as readonly string[]).includes(policy),
+  ),
+)
+
 function applyChatSettings(data: ChatSettingsResponse): void {
   sendAction.value = data.settings.send_action
   contextMode.value = data.settings.context_mode
   contextTurns.value = data.settings.context_turns
   sourceAccessMode.value = data.settings.source_access_mode
+  commandPolicy.value = data.settings.command_policy ?? COMMAND_POLICY_DEFAULT
   chatSettingsIsDefault.value = data.is_default
   chatSettingsDomain.value = data.domain
 }
@@ -729,6 +841,7 @@ function openChatSettings(): void {
   draftSendAction.value = sendAction.value
   draftRangeChoice.value = draftRangeChoiceFor(contextMode.value, contextTurns.value)
   draftContextTurnsCustom.value = contextTurns.value
+  draftCommandPolicy.value = commandPolicy.value
   chatSettingsErrorField.value = null
   chatSettingsErrorMessage.value = null
   showChatSettings.value = true
@@ -761,6 +874,11 @@ async function saveChatSettings(): Promise<void> {
       return
     }
     patch.context_turns = turnsValue
+  }
+  // 0670 T0004: sent only when it changed, so a save that does not touch [명령 실행]
+  // keeps the exact payload it always had.
+  if (draftCommandPolicy.value !== commandPolicy.value) {
+    patch.command_policy = draftCommandPolicy.value
   }
 
   savingChatSettings.value = true
@@ -1376,6 +1494,8 @@ async function pollRun(runId: string, baselineAiTurns: number): Promise<void> {
   for (let i = 0; i < 480 && !disposed; i++) {
     await new Promise((r) => setTimeout(r, 2500))
     if (disposed) return
+    // 0670 T0004: a command waiting for approval must show up even when SSE is down.
+    void loadActivity()
     try {
       const res = await getRequest<Record<string, any>>(
         `/api/v1/ai-invoke/${encodeURIComponent(runId)}`,
@@ -1389,6 +1509,8 @@ async function pollRun(runId: string, baselineAiTurns: number): Promise<void> {
         // cancelled. The server always stamps end_reason='cancelled' on a real kill.
         const stopped = data?.end_reason === 'cancelled'
         releaseRun()
+        // The change summary is written at finalization, right before 'finished'.
+        void loadActivity()
         // The reply has usually already arrived over SSE; catchUp() only closes a gap,
         // so verifying the run no longer costs a full reload of the conversation.
         await catchUp()
@@ -1593,6 +1715,142 @@ async function catchUp(): Promise<void> {
 
 function onSseReconnected() {
   void catchUp()
+  void loadActivity()
+}
+
+// ── Chat command execution / run changes (0670 T0004) ────────────────────────
+// The server's chat_command_requests rows and ai_run_source_changes summaries are the
+// record; this list is only their latest rendering. Live updates arrive over SSE and
+// the run poll above, and both simply re-read the one activity endpoint.
+const chatCommands = ref<ChatCommand[]>([])
+const runChanges = ref<Record<string, RunChange>>({})
+const decidingCommandId = ref<string | null>(null)
+let activitySeq = 0
+
+const aiTurnRunIds = computed(() => {
+  const ids = new Set<string>()
+  for (const turn of turns.value) {
+    if (turn.speaker !== 'user' && turn.source_run_id) ids.add(turn.source_run_id)
+  }
+  return ids
+})
+// The first AI turn of each run carries that run's command and change rows, so a run
+// that somehow produced two turns never draws them twice.
+const firstTurnKeyByRun = computed(() => {
+  const map: Record<string, string | number> = {}
+  for (const turn of turns.value) {
+    if (turn.speaker === 'user' || !turn.source_run_id) continue
+    if (!(turn.source_run_id in map)) map[turn.source_run_id] = turn.localId ?? turn.seq
+  }
+  return map
+})
+function isFirstTurnOfRun(turn: ConvTurn): boolean {
+  if (turn.speaker === 'user' || !turn.source_run_id) return false
+  return firstTurnKeyByRun.value[turn.source_run_id] === (turn.localId ?? turn.seq)
+}
+const commandsByRun = computed(() => {
+  const map: Record<string, ChatCommand[]> = {}
+  for (const cmd of chatCommands.value) (map[cmd.ai_run_id] ||= []).push(cmd)
+  return map
+})
+// A run whose AI turn has not arrived yet. Terminal commands of a run that ended with
+// no turn at all still show here, so a refusal or a failure is never silently lost.
+const liveCommands = computed(() =>
+  chatCommands.value.filter((cmd) => !aiTurnRunIds.value.has(cmd.ai_run_id)
+    && (OPEN_COMMAND_STATUSES.includes(cmd.status) || cmd.ai_run_id === activeRunId.value
+      || !turns.value.some((turn) => turn.created_at && cmd.created_at && turn.created_at > cmd.created_at))),
+)
+const orphanChanges = computed(() =>
+  Object.values(runChanges.value).filter((change) => !aiTurnRunIds.value.has(change.run_id)),
+)
+
+async function loadActivity(): Promise<void> {
+  if (disposed || !props.docId) return
+  const seq = ++activitySeq
+  try {
+    const res = await getRequest<{ commands?: ChatCommand[]; changes?: RunChange[] }>(
+      `/api/v1/chat-activity/${encodeURIComponent(props.docId)}`,
+    )
+    if (disposed || seq !== activitySeq) return
+    const data = res.data as any
+    chatCommands.value = Array.isArray(data?.commands) ? data.commands : []
+    const map: Record<string, RunChange> = {}
+    for (const change of Array.isArray(data?.changes) ? data.changes : []) {
+      // NR0003 §11.4: a change card only for a run that changed something.
+      if (change?.run_id && Number(change.files_changed) > 0) map[change.run_id] = change
+    }
+    runChanges.value = map
+  } catch {
+    // Best effort: the conversation itself must keep working without this panel.
+  }
+}
+
+function upsertCommand(updated: ChatCommand): void {
+  const at = chatCommands.value.findIndex((cmd) => cmd.request_id === updated.request_id)
+  if (at >= 0) chatCommands.value.splice(at, 1, updated)
+  else chatCommands.value.push(updated)
+}
+
+async function decideCommand(cmd: ChatCommand, decision: 'approve' | 'reject' | 'cancel'): Promise<void> {
+  if (decidingCommandId.value) return
+  decidingCommandId.value = cmd.request_id
+  try {
+    const res = await postRequest<{ ok: boolean; request?: ChatCommand }>(
+      `/api/v1/chat-commands/${encodeURIComponent(cmd.request_id)}/decision`,
+      { decision },
+    )
+    const updated = (res.data as any)?.request
+    if (updated) upsertCommand(updated)
+  } catch (e: any) {
+    const data = e?.response?.data
+    const detail = describeErrorDetail(data?.error?.message ?? data?.detail ?? data ?? e)
+    showToast(t('main.conversation_view.command_decision_failed', { detail }), 'danger')
+    void loadActivity()
+  } finally {
+    decidingCommandId.value = null
+  }
+}
+
+function onChatActivityEvent(e: Event): void {
+  const detail = (e as CustomEvent).detail as { doc_id?: string } | undefined
+  if (detail?.doc_id !== props.docId) return
+  void loadActivity()
+}
+
+// The detail screen is the group change viewer itself, fed this run's two snapshots.
+const conversationGroupId = computed(() => {
+  const parts = props.docId.split('.')
+  return parts.length >= 3 ? `${projectCode.value || parts[0]}.${parts[1]}.${parts[2]}` : ''
+})
+const openedRunChange = ref<RunChange | null>(null)
+const openedRunChangePath = ref<string | null>(null)
+const openedRunChangeSubtitle = computed(() => {
+  const change = openedRunChange.value
+  if (!change) return ''
+  const start = runClock(change.run_started_at)
+  const end = runClock(change.run_finished_at)
+  return start && end ? `${start} → ${end}` : t('main.conversation_view.run_changes_title')
+})
+
+function openRunChanges(change: RunChange | undefined, path: string | null): void {
+  if (!change) return
+  openedRunChangePath.value = path
+  openedRunChange.value = change
+}
+
+function closeRunChanges(): void {
+  openedRunChange.value = null
+  openedRunChangePath.value = null
+}
+
+async function loadRunDiff(path: string): Promise<GroupFileDiffData> {
+  const change = openedRunChange.value
+  if (!change) throw new Error('no run change open')
+  const res = await getRequest<{ data: GroupFileDiffData }>(
+    `/api/v1/chat-activity/${encodeURIComponent(props.docId)}/runs/${encodeURIComponent(change.run_id)}/diff`,
+    { path },
+  )
+  return (res.data as any).data as GroupFileDiffData
 }
 
 // A CH document changed out-of-band by something other than a turn append (a rename,
@@ -1609,6 +1867,10 @@ watch(() => props.docId, (docId) => {
   reportedViewed = 0
   void nextTick(autoGrow)
   void load()
+  chatCommands.value = []
+  runChanges.value = {}
+  closeRunChanges()
+  void loadActivity()
 })
 
 // Load the provider list whenever the RESOLVED project changes — either the
@@ -1625,6 +1887,9 @@ onMounted(() => {
   // Chat settings are per-user, not per-document, so this loads once per mount —
   // not on every props.docId change (group 0362).
   void loadChatSettings()
+  void loadActivity()
+  window.addEventListener('fg:chat_command_updated', onChatActivityEvent)
+  window.addEventListener('fg:chat_run_changes', onChatActivityEvent)
   window.addEventListener('fg:conversation_turn', onSseTurn)
   window.addEventListener('fg:sse_reconnected', onSseReconnected)
   window.addEventListener('fg:document_content_changed', onContentChanged)
@@ -1639,6 +1904,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('fg:conversation_turn', onSseTurn)
   window.removeEventListener('fg:sse_reconnected', onSseReconnected)
   window.removeEventListener('fg:document_content_changed', onContentChanged)
+  window.removeEventListener('fg:chat_command_updated', onChatActivityEvent)
+  window.removeEventListener('fg:chat_run_changes', onChatActivityEvent)
 })
 
 // 0351 T4 (P0003 scenario 16): a conversation-turn search result names a seq that may
@@ -1733,6 +2000,14 @@ defineExpose({ load, scrollToBottom, jumpToSeq, refreshChatSettings })
 .conv-row--ai .conv-bubble {
   background: var(--bg-card, #fff);
   border-bottom-left-radius: 3px;
+}
+
+/* 0670 T0004: a command / change card is its own AI-side row, not part of a reply bubble.
+   Same width cap as a bubble so it never becomes a full-width panel (NR0003 §12). */
+.conv-activity > .ccmd,
+.conv-activity > .crc {
+  width: 78%;
+  min-width: 0;
 }
 
 /* 0351 T4 — brief flash on the turn a search result jumped to, so the reader's eye
@@ -1934,6 +2209,8 @@ defineExpose({ load, scrollToBottom, jumpToSeq, refreshChatSettings })
    pill that holds the textarea + a circular send button. Group 0235: the helper row
    splits into a send-time action radio group (left) and the manual buttons (right). */
 .conv-composer {
+  /* 0670 T0004: anchor for the settings popover. */
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -2106,6 +2383,19 @@ defineExpose({ load, scrollToBottom, jumpToSeq, refreshChatSettings })
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-card, #fff);
+}
+
+/* 0670 T0004 (NR0003 §8.2): floats above the composer next to the gear instead of
+   taking layout space, so opening it no longer pushes the conversation around. */
+.conv-settings--popover {
+  position: absolute;
+  left: 14px;
+  bottom: calc(100% - 6px);
+  z-index: 30;
+  width: min(360px, calc(100% - 28px));
+  box-sizing: border-box;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18);
+  gap: 8px;
 }
 
 .conv-settings-hd {
