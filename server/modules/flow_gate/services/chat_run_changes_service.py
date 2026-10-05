@@ -147,6 +147,7 @@ def finalize_run(run: dict) -> Optional[dict]:
         group_id=run["group_id"], start_tree=start_tree, end_tree=end_tree,
         run_started_at=run.get("started_at"), run_finished_at=run.get("finished_at") or now_iso(),
         files=files, insertions=insertions, deletions=deletions,
+        run_start_seq=run.get("chat_start_seq"),
     )
     git_service._emit("chat_run_changes", run["project_id"], run["group_id"], {
         "project_id": run["project_id"], "group_id": run["group_id"], "doc_id": run["doc_ref"],
@@ -162,11 +163,17 @@ def public(row: dict) -> dict:
         "files_changed": row["files_changed"], "insertions": row.get("insertions"),
         "deletions": row.get("deletions"), "files": row.get("files") or [],
         "start_tree": row["start_tree"], "end_tree": row["end_tree"],
+        "created_at": row.get("created_at"),
+        # 0675 T0004: where the summary sits in the conversation, decided by the server.
+        "anchor_seq": row.get("anchor_seq"), "anchor_position": row.get("anchor_position"),
+        "anchor_state": row.get("anchor_state"),
     }
 
 
-def list_for_doc(doc_id: str) -> list[dict]:
-    return [public(row) for row in db.list_for_doc(doc_id)]
+def list_for_doc(doc_id: str, *, from_seq: Optional[int] = None, to_seq: Optional[int] = None,
+                 include_unplaced: bool = True) -> list[dict]:
+    return [public(row) for row in db.list_for_doc(
+        doc_id, from_seq=from_seq, to_seq=to_seq, include_unplaced=include_unplaced)]
 
 
 def file_diff(doc_id: str, run_id: str, path: str) -> dict:

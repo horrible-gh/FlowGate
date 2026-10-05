@@ -2512,6 +2512,7 @@ export default {
       run_changes_period: 'Started {start} → finished {end}',
       run_changes_files: '{n} files',
       run_changes_detail_title: 'Run changes',
+      unplaced_activity_title: 'Earlier run records whose place in the conversation is unknown',
       run_changes_back: 'Back to the conversation',
     },
     review_reject_dialog: {

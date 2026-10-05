@@ -2507,6 +2507,7 @@ export default {
       run_changes_period: '作業開始 {start} → 終了 {end}',
       run_changes_files: '{n} files',
       run_changes_detail_title: '作業の変更詳細',
+      unplaced_activity_title: '会話内の位置を特定できない以前の実行記録',
       run_changes_back: '会話に戻る',
     },
     review_reject_dialog: {

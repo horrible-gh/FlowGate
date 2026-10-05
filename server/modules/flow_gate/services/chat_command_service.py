@@ -297,6 +297,9 @@ def public(row: dict) -> dict:
         "stdout_tail": _redact(row.get("stdout_tail")), "stderr_tail": _redact(row.get("stderr_tail")),
         "error_code": row.get("error_code"), "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+        # 0675 T0004: where the row sits in the conversation, decided by the server.
+        "anchor_seq": row.get("anchor_seq"), "anchor_position": row.get("anchor_position"),
+        "anchor_state": row.get("anchor_state"),
     }
 
 
@@ -361,6 +364,7 @@ def create_request(run: dict, payload: object, *, token_id: Optional[str] = None
         program=command.program, args=list(command.args), cwd_relative=command.cwd,
         timeout_seconds=command.timeout_seconds, category=command.category, policy=user_policy,
         status=status, decision_source=None if status == "pending_approval" else "policy",
+        run_start_seq=run.get("chat_start_seq"),
     )
     if _run_closed(run["run_id"]):
         # cancel_for_run listed the run's rows before this insert became visible to it.
@@ -724,5 +728,7 @@ def _cli_wait(value: object) -> float:
     return float(min(max(0, value), CLI_WAIT_MAX_SEC))
 
 
-def list_for_doc(doc_id: str) -> list[dict]:
-    return [public(row) for row in db.list_for_doc(doc_id)]
+def list_for_doc(doc_id: str, *, from_seq: Optional[int] = None, to_seq: Optional[int] = None,
+                 include_unplaced: bool = True) -> list[dict]:
+    return [public(row) for row in db.list_for_doc(
+        doc_id, from_seq=from_seq, to_seq=to_seq, include_unplaced=include_unplaced)]
