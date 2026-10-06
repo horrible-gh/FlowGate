@@ -184,11 +184,17 @@ def readiness(doc: dict, body: dict) -> dict:
     A screen may call a revision ready only when this says so.
     """
     from modules.flow_gate.db import tr2_approval_attempts as db_attempts
+    from modules.flow_gate.db import tr_history_recovery as db_recovery
     spec = body["edit_spec"]
     result = {"ready": False, "code": None, "loc": None, "reason": None,
               "edits": [], "worktree_clean": None}
     if get_doc_review_rule(doc.get("doc_review_status") or "", "approve") != "approved":
         return {**result, "reason": "review_status"}
+    if db_recovery.has_unresolved(doc["group_id"]):
+        # 0658 T0004: approval refuses an interrupted Time Machine reapply before anything
+        # else; the read model must not call the revision ready while it would.
+        return {**result, "reason": "history_recovery_required",
+                "code": "tr_history_recovery_required"}
     if tr2.revert_pending(doc):
         # 0660 T0004 §3 (RC3): the reopen's commit cancel has not happened yet.
         return {**result, "reason": "revert_pending", "code": "tr2_revert_pending"}

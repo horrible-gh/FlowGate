@@ -744,6 +744,14 @@ def cancel_tr_commits(
         if int(row["id"]) not in excluded
     ]
     if not targets:
+        # 0658 T0004: an interrupted reapply leaves its commit in the tree with no live
+        # row yet, so while its journal is open "no targets" does not mean "nothing to
+        # cancel". Refuse exactly as the gated path below does instead of reporting the
+        # quiet no-op (the G1 case above has no journal, so it still ends quiet).
+        if db_recovery.has_unresolved(group_id):
+            return _blocked(
+                result, group_id, "history_recovery_required", "recovery_required"
+            )
         result["attempted"] = True
         return result
 
@@ -851,6 +859,20 @@ def _blocked(
     return result
 
 
+def _recover_before_cancel(group_id: str) -> None:
+    """Run the durable reapply recovery ahead of a cancel, as the reapply retry does.
+
+    Best effort and fail-closed: whatever recovery cannot prove stays unresolved, and the
+    cancel that follows still refuses with ``history_recovery_required``. Must be called
+    without the project lock held — recovery opens its own cancel session.
+    """
+    try:
+        if db_recovery.has_unresolved(group_id):
+            recover_tr_history(group_id)
+    except Exception:
+        _log.warning("tr cancel: history recovery failed for %s", group_id, exc_info=True)
+
+
 def _terminal_reopen(
     result: dict[str, Any], targets: list[dict], codes: dict[str, str],
 ) -> dict[str, Any]:
@@ -892,8 +914,21 @@ def cancel_for_reopen(
     durable = any((docs.get(doc_id) or {}).get("type_code") == "TR2"
                   for doc_id in reopened_doc_ids)
     result["history_mode"] = "durable_revert" if durable else "legacy_uncommit"
+    if terminal_session is None:
+        # 0658 T0004: settle an interrupted reapply BEFORE reading the targets. Its Git
+        # commit may be in the tree with no ledger row yet; read first, and the rewind
+        # cancels nothing and reopens the TR2 over source it can never apply to again.
+        # The strict terminal path already holds the project lock recovery would take.
+        _recover_before_cancel(group_id)
     targets = db_ledger.live_rows(group_id, reopened_doc_ids)
     if not targets:
+        # Recovery above could not settle it (lock contention, an unprovable journal):
+        # the reapply commit may still be in the tree with no row to cancel, so the
+        # rewind must not report "nothing to cancel" over it. Fail closed.
+        if db_recovery.has_unresolved(group_id):
+            return _blocked(
+                result, group_id, "history_recovery_required", "recovery_required"
+            )
         result["attempted"] = True
         return result
 
@@ -980,9 +1015,20 @@ def cancel_retry(group_id: str) -> dict[str, Any]:
     live row of a re-approved document, and nothing else.
 
     Touches no document — this endpoint re-runs a cancel, it does not rewind anything.
+
+    0658 T0004: this is the one workflow path ``revert_pending`` leaves open, so it has to
+    reach every document that guard holds. The guard reads the ledger (a reopened TR2 with
+    a live commit), the return point only says what the last rewind captured — a group
+    whose return point is gone or never listed the TR2 (the ``chat.0006`` shape) answered
+    "nothing to cancel" here forever while every other mutation stayed refused. Those TR2s
+    are added to the targets; they are not approved, so the re-approval exclusion below
+    never touches them. An interrupted reapply is settled first for the same reason: the
+    cancel refuses while one is unresolved, and the restore paths that used to be its only
+    way out are themselves closed by ``revert_pending``.
     """
     from modules.flow_gate.db import workflow_return_points as db_rp
 
+    _recover_before_cancel(group_id)
     doc_ids: list[str] = []
     reapproved: list[str] = []
     rp = db_rp.get_by_group(group_id)
@@ -997,8 +1043,17 @@ def cancel_retry(group_id: str) -> dict[str, Any]:
             doc = db_docs.get_by_id(doc_id)
             if doc and (doc.get("doc_review_status") or "") == "approved":
                 reapproved.append(doc_id)
+    for doc_id in db_ledger.revert_pending_doc_ids(group_id):
+        if doc_id not in doc_ids:
+            doc_ids.append(doc_id)
     if not doc_ids:
         result = empty_cancel_result()
+        # Same fail-closed rule as :func:`cancel_tr_commits`: an unsettled reapply has no
+        # live row, so it names no document, yet the retry has not succeeded.
+        if db_recovery.has_unresolved(group_id):
+            return _blocked(
+                result, group_id, "history_recovery_required", "recovery_required"
+            )
         result["attempted"] = True
         return result
     exclude: set[int] = set()
