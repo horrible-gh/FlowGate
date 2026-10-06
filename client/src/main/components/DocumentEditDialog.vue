@@ -35,14 +35,6 @@
             class="btn btn-outline btn-sm"
             type="button"
             :disabled="saving"
-            @click="urlMode = !urlMode"
-          >
-            {{ t('main.document_preview.url_import') }}
-          </button>
-          <button
-            class="btn btn-outline btn-sm"
-            type="button"
-            :disabled="saving"
             :title="headerVisible ? t('main.main_panel.header_hide') : t('main.main_panel.header_show')"
             @click="emit('toggle-header')"
           >
@@ -133,6 +125,7 @@ import type { Tab } from '../stores/tabs'
 
 const props = defineProps<{
   visible: boolean
+  initialUrlMode: boolean
   tab: Tab | null
   body: string
   fullContent: string
@@ -155,8 +148,15 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const urlMode = ref(false)
+const urlMode = ref(props.initialUrlMode)
 const urlInput = ref('')
+
+watch(
+  () => [props.visible, props.initialUrlMode] as const,
+  ([visible, initialUrlMode]) => {
+    if (visible) urlMode.value = initialUrlMode
+  },
+)
 const urlLoading = ref(false)
 const urlError = ref('')
 const urlPreview = ref('')
