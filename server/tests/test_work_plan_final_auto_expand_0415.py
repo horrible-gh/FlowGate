@@ -59,6 +59,8 @@ def test_tc_1_final_wp_expands_through_shared_edit_ssot(monkeypatch):
             "provider_id", "provider_display_name", "review_count",
             "reviewer_provider_id", "reviewer_provider_display_name",
             "pre_instruction_text", "pre_instruction_attachment",
+            # 0649 T#1 (NR0003 O0): the row records which card it came from.
+            "source_wp_card_id",
         )
     }
     assert seen["args"] == (OWNER_ID, [expected_row])

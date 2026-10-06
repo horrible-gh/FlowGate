@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import tempfile
 import unicodedata
 from pathlib import Path
@@ -55,6 +56,18 @@ ERRORS_REPORTED_MAX = 50
 BINDING_ADVISORY = "advisory"
 LOCKED_REASON_SERVER_ASSEMBLED = "server_assembled"
 
+# 0649 T#1 (NR0003 §5.1 / O0): a card's identity survives renumbering and revisions. A set's
+# instruction and result share one value; single cards have their own. The ``retired:``
+# prefix is reserved for sequence rows whose card no longer exists (O0 backfill), so a live
+# card can never carry it and can never be matched to such a row.
+CARD_ID_MAX_CHARS = 64
+CARD_ID_RESERVED_PREFIX = "retired:"
+CARD_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_#.:-]{0,63}$")
+# Fields a step may omit. ``card_id`` is optional on the wire: a new card is sent without
+# one and the server assigns it (assign_card_ids), and a legacy body without any card_id is
+# filled with ``card_id = key`` in memory when read.
+OPTIONAL_STEP_FIELDS = frozenset({"card_id"})
+
 from modules.flow_gate.documents.type_code import STEP_KEY_RE as KEY_PATTERN
 PROVIDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 # L0010 §1.1 note_forbidden_chars: C0 controls plus DEL. Newlines and tabs are
@@ -80,6 +93,7 @@ TOP_LEVEL_ORDER = (
 )
 STEP_FIELD_ORDER = (
     "key",
+    "card_id",
     "type",
     "ordinal",
     "pair_key",
@@ -145,6 +159,9 @@ def step_contract() -> dict:
         "review_count_choices": list(review_count_choices()),
         "pre_instruction_text_max_chars": PRE_INSTRUCTION_TEXT_MAX_CHARS,
         "pre_instruction_attachment_fields": list(PRE_INSTRUCTION_ATTACHMENT_FIELD_ORDER),
+        "optional_step_fields": sorted(OPTIONAL_STEP_FIELDS),
+        "card_id_max_chars": CARD_ID_MAX_CHARS,
+        "card_id_reserved_prefix": CARD_ID_RESERVED_PREFIX,
     }
 
 
@@ -275,6 +292,47 @@ _ERROR_COPY: dict[str, dict[str, str]] = {
         "ko": "이 단계의 type·ordinal·pair_key·pair_role 이 논리 키와 맞지 않습니다.",
         "en": "This step's type/ordinal/pair_key/pair_role do not match its key.",
         "ja": "この段階の type・ordinal・pair_key・pair_role がキーと一致しません。",
+    },
+    # 0649 T#1 (NR0003 §5.1): mixed-mode structure rules and card identity.
+    "pair_not_adjacent": {
+        "ko": "세트의 지시 단계 바로 다음에는 그 결과 단계가 와야 하며, 결과 단계는 단독으로 둘 수 없습니다.",
+        "en": "A set's instruction step must be immediately followed by its result step, and a result step cannot stand alone.",
+        "ja": "セットの指示段階の直後にはその結果段階が来なければならず、結果段階を単独で置くことはできません。",
+    },
+    "ordinal_order_invalid": {
+        "ko": "같은 타입 안에서는 회차가 등장 순서대로 1부터 이어져야 합니다.",
+        "en": "Within one type, ordinals must appear in order starting from 1.",
+        "ja": "同じタイプ内では回次が出現順に 1 から続かなければなりません。",
+    },
+    "card_id_invalid": {
+        "ko": "card_id 는 {max}자 이내의 영문·숫자·_#.:- 문자열이어야 하며 'retired:' 로 시작할 수 없습니다.",
+        "en": "card_id must be at most {max} characters of letters, digits and _#.:-, and cannot start with 'retired:'.",
+        "ja": "card_id は {max} 文字以内の英数字・_#.:- の文字列で、'retired:' で始めることはできません。",
+    },
+    "card_id_duplicate": {
+        "ko": "서로 다른 카드가 같은 card_id({value})를 가질 수 없습니다.",
+        "en": "Two different cards cannot share card_id {value}.",
+        "ja": "異なるカードが同じ card_id({value})を持つことはできません。",
+    },
+    "card_id_pair_mismatch": {
+        "ko": "세트의 지시 단계와 결과 단계는 같은 card_id 를 가져야 합니다.",
+        "en": "A set's instruction and result steps must carry the same card_id.",
+        "ja": "セットの指示段階と結果段階は同じ card_id を持たなければなりません。",
+    },
+    "card_id_missing": {
+        "ko": "기존 카드의 card_id 가 빠졌습니다. 카드를 옮기거나 다시 번호를 매겨도 card_id 는 그대로 보내야 합니다.",
+        "en": "An existing card is missing its card_id. Keep sending a card's card_id unchanged even after moving or renumbering it.",
+        "ja": "既存カードの card_id がありません。カードを移動・再採番しても card_id はそのまま送ってください。",
+    },
+    "card_id_unknown": {
+        "ko": "직전 본문에 없는 card_id({value})입니다. 새 카드는 card_id 없이 보내면 서버가 부여합니다.",
+        "en": "card_id {value} is not in the previous body. Send a new card without card_id and the server assigns one.",
+        "ja": "直前の本文にない card_id({value})です。新しいカードは card_id なしで送るとサーバーが付与します。",
+    },
+    "card_id_type_changed": {
+        "ko": "card_id({value})의 카드 타입을 바꿀 수 없습니다.",
+        "en": "The card type of card_id {value} cannot change.",
+        "ja": "card_id({value})のカードタイプは変更できません。",
     },
     "locked_flag_mismatch": {
         "ko": "잠금 표시가 타입과 다릅니다.",
@@ -795,10 +853,31 @@ def make_key(type_code: str, ordinal: int) -> str:
     return f"{type_code}#{ordinal}"
 
 
-def make_step(type_code: str, ordinal: int, pair_key: Optional[str], pair_role: str) -> dict:
+def legacy_card_id(key: str, pair_key: Optional[str], pair_role: Optional[str]) -> str:
+    """The card id a body without stored card ids implies: the instruction/single key.
+
+    0649 T#1 (NR0003 §5.1): this value tells cards apart *inside one body* only. It does not
+    claim that the same key in another revision is the same card (§3.8) — linking across
+    revisions is O0's continuity check, not this function.
+    """
+    if pair_role == "result" and pair_key:
+        return pair_key
+    return key
+
+
+def make_step(
+    type_code: str,
+    ordinal: int,
+    pair_key: Optional[str],
+    pair_role: str,
+    card_id: Optional[str] = None,
+) -> dict:
     locked = type_code in WORK_PLAN_LOCKED_TYPES
+    key = make_key(type_code, ordinal)
     return {
-        "key": make_key(type_code, ordinal),
+        "key": key,
+        # 0649 T#1: a freshly expanded body is deterministic — card_id = the card's key.
+        "card_id": card_id or legacy_card_id(key, pair_key, pair_role),
         "type": type_code,
         "ordinal": ordinal,
         "pair_key": pair_key,
@@ -1235,6 +1314,16 @@ def _check_defaults(
     return errors
 
 
+def card_id_is_valid(value: Any) -> bool:
+    """Format rule for a live card id (NR0003 §5.1): non-empty, bounded, not reserved."""
+    return (
+        isinstance(value, str)
+        and len(value) <= CARD_ID_MAX_CHARS
+        and not value.startswith(CARD_ID_RESERVED_PREFIX)
+        and CARD_ID_PATTERN.match(value) is not None
+    )
+
+
 def _check_step_shape(step: Any, loc: str) -> list[dict]:
     if not isinstance(step, dict):
         return [_error("type_invalid", loc, field=loc)]
@@ -1244,8 +1333,15 @@ def _check_step_shape(step: Any, loc: str) -> list[dict]:
         errors.append(_error("key_format_invalid", f"{loc}.key", value=key))
         key = None
     for field in STEP_FIELD_ORDER:
+        if field in OPTIONAL_STEP_FIELDS:
+            continue
         if field not in step:
             errors.append(_error("missing_field", f"{loc}.{field}", key, field=f"{loc}.{field}"))
+    card_id = step.get("card_id")
+    if card_id is not None and not card_id_is_valid(card_id):
+        errors.append(_error(
+            "card_id_invalid", f"{loc}.card_id", key, value=card_id, max=CARD_ID_MAX_CHARS,
+        ))
     type_code = step.get("type")
     if type_code not in WORK_PLAN_STEP_TYPES:
         errors.append(_error("enum_not_allowed", f"{loc}.type", key, field=f"{loc}.type"))
@@ -1318,6 +1414,51 @@ def _check_step_shape(step: Any, loc: str) -> list[dict]:
             f"{loc}.pre_instruction_attachment",
             key,
         ))
+    return errors
+
+
+def _structure_errors(steps: list[dict], expected_by_key: dict[str, dict]) -> list[dict]:
+    """Layer 6 structure rules for a mixed-order body (NR0003 §5.1 rules 2-3 and card ids).
+
+    Roles are read from the expected step of the same key, not from the submitted step, so
+    a step that lies about its own pair_role is reported once — by layer 7 as
+    step_shape_mismatch — instead of also derailing the adjacency walk here.
+    """
+    errors: list[dict] = []
+    seen_ordinals: dict[str, int] = {}
+    for index, step in enumerate(steps):
+        expected = expected_by_key[step["key"]]
+        code = expected["type"]
+        ordinal = expected["ordinal"]
+        if ordinal != seen_ordinals.get(code, 0) + 1:
+            errors.append(_error("ordinal_order_invalid", f"steps[{index}]", step["key"]))
+        seen_ordinals[code] = max(seen_ordinals.get(code, 0), ordinal)
+
+    card_owner: dict[str, int] = {}
+    for index, step in enumerate(steps):
+        expected = expected_by_key[step["key"]]
+        role = expected["pair_role"]
+        loc = f"steps[{index}]"
+        if role == "instruction":
+            nxt = steps[index + 1] if index + 1 < len(steps) else None
+            if nxt is None or nxt.get("key") != expected["pair_key"]:
+                errors.append(_error("pair_not_adjacent", loc, step["key"]))
+            elif nxt.get("card_id") != step.get("card_id"):
+                errors.append(_error(
+                    "card_id_pair_mismatch", f"steps[{index + 1}].card_id", nxt.get("key"),
+                ))
+        elif role == "result":
+            prev = steps[index - 1] if index > 0 else None
+            if prev is None or prev.get("key") != expected["pair_key"]:
+                errors.append(_error("pair_not_adjacent", loc, step["key"]))
+            continue
+        card_id = step.get("card_id")
+        if card_id in card_owner:
+            errors.append(_error(
+                "card_id_duplicate", f"{loc}.card_id", step["key"], value=card_id,
+            ))
+        else:
+            card_owner[card_id] = index
     return errors
 
 
@@ -1443,15 +1584,47 @@ def validate(
         if key in seen_keys:
             errors.append(_error("duplicate_key", f"steps[{index}].key", key, value=key))
         seen_keys.add(key)
+    # 0649 T#1 (NR0003 §5.1): a body with no card_id anywhere is a legacy body — fill
+    # card_id = key in memory. A body where only some steps carry one is not a legacy body
+    # and not a complete one either; the save path assigns ids before this runs
+    # (assign_card_ids), so a partial body here is refused rather than guessed at.
+    with_card_id = [
+        step for step in steps
+        if isinstance(step, dict) and step.get("card_id") is not None
+    ]
+    if not with_card_id:
+        steps = [
+            {**step, "card_id": legacy_card_id(
+                step.get("key"), step.get("pair_key"), step.get("pair_role"),
+            )} if isinstance(step, dict) else step
+            for step in steps
+        ]
+        body = {**body, "steps": steps}
+    else:
+        for index, step in enumerate(steps):
+            if isinstance(step, dict) and step.get("card_id") is None:
+                errors.append(_error(
+                    "card_id_missing", f"steps[{index}].card_id", step.get("key"),
+                ))
     if errors:
         fail(errors)
 
-    # ── layer 6: do the steps match the counts ──────────────────────────────
+    # ── layer 6: do the steps match the counts and the card structure ──────
+    # 0649 T#1 (NR0003 §5.1, mixed mode): the array order IS the plan order, so the steps
+    # are no longer compared with expand_steps() position by position. What is fixed is the
+    # set of keys a quantity box expands to, and two structural invariants:
+    #   (a) an instruction is immediately followed by its result, and a result never stands
+    #       alone — a set card moves as one unit;
+    #   (b) inside one type, ordinals appear in order 1..n.
     expected_steps = expand_steps(counted_types, quantities, project_id)
-    if [s["key"] for s in steps] != [s["key"] for s in expected_steps]:
+    expected_by_key = {step["key"]: step for step in expected_steps}
+    if {s["key"] for s in steps} != set(expected_by_key) or len(steps) != len(expected_steps):
         errors.append(_error("steps_quantity_mismatch", "steps"))
     if len(steps) > STEPS_MAX:
         errors.append(_error("steps_too_many", "steps", max=STEPS_MAX))
+    if errors:
+        fail(errors)
+    errors.extend(_structure_errors(steps, expected_by_key))
     if errors:
         fail(errors)
 
@@ -1466,8 +1639,8 @@ def validate(
     allowed_review_counts = set(review_count_choices())
     for index, step in enumerate(steps):
         loc = f"steps[{index}]"
-        expected = expected_steps[index]
         key = step.get("key")
+        expected = expected_by_key[key]
         if (
             step.get("type") != expected["type"]
             or step.get("ordinal") != expected["ordinal"]
@@ -1696,6 +1869,204 @@ def load_body(
         raise WorkPlanUnreadable(
             "schema_invalid", f"{first['loc']}: {first['msg']}", raw=raw
         ) from exc
+
+
+def load_previous_body(doc: Optional[dict]) -> Optional[dict]:
+    """The body a save is about to replace, or None when there is nothing readable.
+
+    0649 T#1 (NR0003 §5.1): the card-id save checks compare against this. A missing or
+    unreadable file has no cards to protect, so the checks fall back to creation rules.
+    """
+    if not doc:
+        return None
+    try:
+        path = Path(str(plan_path_for_doc(doc)))
+    except Exception:  # noqa: BLE001 — a path that cannot be resolved has no body behind it
+        return None
+    if not path.is_file():
+        return None
+    try:
+        return load_body(path, project_id=doc.get("project_id"), doc_id=doc.get("doc_id"))
+    except WorkPlanUnreadable:
+        return None
+
+
+def body_stores_card_ids(parsed: Any) -> bool:
+    """Whether a body *as stored* (not as read) carries card ids.
+
+    load_body() fills ``card_id = key`` for a legacy body, so after reading the two are
+    indistinguishable. O0's continuity check needs the difference: it is the boundary between
+    revisions whose keys are only legacy ids and revisions whose ids the server assigned.
+    """
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("steps"), list):
+        return False
+    return any(
+        isinstance(step, dict) and step.get("card_id") is not None
+        for step in parsed["steps"]
+    )
+
+
+_BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+def new_card_id(taken: Iterable[str] = ()) -> str:
+    """A server-assigned card id that was never used before (NR0003 §5.1).
+
+    ``c_`` + 12 base36 digits of randomness: never the ``<TYPE>#<n>`` shape a legacy id has,
+    and never the reserved ``retired:`` prefix, so a re-added card can never collide with a
+    deleted card's key-shaped legacy id.
+    """
+    taken_set = set(taken)
+    while True:
+        number = secrets.randbits(62)
+        digits = []
+        for _ in range(12):
+            number, rest = divmod(number, 36)
+            digits.append(_BASE36[rest])
+        value = "c_" + "".join(digits)
+        if value not in taken_set:
+            return value
+
+
+def card_type_of_step(step: dict) -> Optional[str]:
+    """The type that names a card: the instruction (or single) step's type."""
+    code = step.get("type")
+    if step.get("pair_role") == "result":
+        for instruction, result in WORK_PLAN_PAIR_MAP.items():
+            if result == code:
+                return instruction
+    return code
+
+
+def _fixed_order_keys(body: dict, project_id: Optional[str]) -> Optional[list[str]]:
+    try:
+        return [
+            step["key"]
+            for step in expand_steps(
+                body.get("counted_types") or [], body.get("quantities") or {}, project_id,
+            )
+        ]
+    except Exception:  # noqa: BLE001 — a malformed body is validate()'s to report
+        return None
+
+
+def assign_card_ids(
+    body: Any,
+    previous: Optional[dict],
+    *,
+    project_id: Optional[str] = None,
+    action: str = "save",
+) -> Any:
+    """Apply the card-id save contract against the body being replaced (NR0003 §5.1).
+
+    validate() only sees one body, so the rules that need the previous one live here and
+    run before it, on every save path (PUT work-plan, inbox WP new/edit):
+
+    * a sent ``card_id`` must exist in the previous body (``card_id_unknown``) and keep its
+      card type (``card_id_type_changed``) — a client cannot invent an id or revive a
+      deleted card's id and so get linked to that card's sequence rows;
+    * a step without ``card_id`` is a new card only if its key is new; the server gives it a
+      fresh id. A step whose key existed but which lost its id is refused
+      (``card_id_missing``) — after renumbering, the old key may belong to another card;
+    * a body with no card_id at all whose steps are in the fixed expand_steps() order (an
+      old import or an old AI answer) inherits the ids of the same keys.
+
+    With no previous body (creation), sent ids are kept and missing ones are assigned.
+    Revision restore deliberately does not come through here: it brings back a snapshot's
+    own ids. A malformed body is returned untouched for validate() to report.
+    """
+    if not isinstance(body, dict) or not isinstance(body.get("steps"), list):
+        return body
+    steps = body["steps"]
+    if any(not isinstance(step, dict) for step in steps):
+        return body
+    sent_any = any(step.get("card_id") is not None for step in steps)
+    prev_steps = (
+        [step for step in previous.get("steps") or [] if isinstance(step, dict)]
+        if isinstance(previous, dict) else None
+    )
+    if prev_steps is None and not sent_any:
+        return body  # creation of a legacy-shaped body: validate() fills card_id = key
+
+    prev_card_types: dict[str, Optional[str]] = {}
+    prev_card_by_key: dict[str, str] = {}
+    prev_keys: set = set()
+    for step in prev_steps or []:
+        prev_keys.add(step.get("key"))
+        card_id = step.get("card_id")
+        if card_id is None or step.get("pair_role") == "result":
+            continue
+        prev_card_types[card_id] = card_type_of_step(step)
+        prev_card_by_key[step.get("key")] = card_id
+
+    out = [dict(step) for step in steps]
+    taken = set(prev_card_types) | {
+        step["card_id"] for step in out if isinstance(step.get("card_id"), str)
+    }
+    errors: list[dict] = []
+
+    if prev_steps is not None and not sent_any:
+        fixed = _fixed_order_keys(body, project_id)
+        if fixed is None or [step.get("key") for step in out] != fixed:
+            for index, step in enumerate(out):
+                if step.get("key") in prev_keys:
+                    errors.append(_error(
+                        "card_id_missing", f"steps[{index}].card_id", step.get("key"),
+                    ))
+            if errors:
+                raise WorkPlanValidationError(errors, action=action)
+        inherited: dict[str, str] = {}
+        for step in out:
+            card_key = legacy_card_id(step.get("key"), step.get("pair_key"), step.get("pair_role"))
+            if card_key not in inherited:
+                card_id = prev_card_by_key.get(card_key)
+                if card_id is None or prev_card_types.get(card_id) != card_type_of_step(step):
+                    card_id = new_card_id(taken)
+                    taken.add(card_id)
+                inherited[card_key] = card_id
+            step["card_id"] = inherited[card_key]
+        return {**body, "steps": out}
+
+    if prev_steps is not None:
+        for index, step in enumerate(out):
+            card_id = step.get("card_id")
+            if card_id is None:
+                continue
+            if card_id not in prev_card_types:
+                errors.append(_error(
+                    "card_id_unknown", f"steps[{index}].card_id", step.get("key"), value=card_id,
+                ))
+            elif prev_card_types[card_id] != card_type_of_step(step):
+                errors.append(_error(
+                    "card_id_type_changed", f"steps[{index}].card_id", step.get("key"),
+                    value=card_id,
+                ))
+
+    # Instruction/single steps first, so a new result step can take its own instruction's id.
+    for index, step in enumerate(out):
+        if step.get("card_id") is not None or step.get("pair_role") == "result":
+            continue
+        if step.get("key") in prev_keys:
+            errors.append(_error("card_id_missing", f"steps[{index}].card_id", step.get("key")))
+            continue
+        step["card_id"] = new_card_id(taken)
+        taken.add(step["card_id"])
+    by_key = {step.get("key"): step for step in out}
+    for index, step in enumerate(out):
+        if step.get("card_id") is not None or step.get("pair_role") != "result":
+            continue
+        if step.get("key") in prev_keys:
+            errors.append(_error("card_id_missing", f"steps[{index}].card_id", step.get("key")))
+            continue
+        partner = by_key.get(step.get("pair_key"))
+        if partner is not None and partner.get("card_id") is not None:
+            step["card_id"] = partner["card_id"]
+        else:
+            step["card_id"] = new_card_id(taken)
+            taken.add(step["card_id"])
+    if errors:
+        raise WorkPlanValidationError(errors, action=action)
+    return {**body, "steps": out}
 
 
 def write_body_atomically(path, body: dict) -> None:
@@ -2097,6 +2468,10 @@ def canonical_step_examples() -> dict[str, dict]:
 def contract_example(project_id: Optional[str] = None) -> dict:
     """A worked WP body -- T x2, TS x2, D x1 -- built with expand_steps()/canonicalize().
 
+    0649 T#1 (NR0003 §5.1): the cards are laid out in a mixed order (T#1, D#1, TS#1, T#2,
+    TS#2) so the example itself shows that the array order is the plan order, that a set
+    stays adjacent, and that every step carries its card_id.
+
     T0004 §13/§20: the help item must show a canonical example that actually passes
     validate() unchanged, so it is built from the very functions validate() itself
     calls instead of a second hand-written JSON blob that could silently drift from
@@ -2111,7 +2486,11 @@ def contract_example(project_id: Optional[str] = None) -> dict:
         "T": {"unit": WORK_PLAN_TYPE_UNITS["T"], "count": 2},
         "TS": {"unit": WORK_PLAN_TYPE_UNITS["TS"], "count": 2},
     }
-    steps = expand_steps(counted_types, quantities, project_id)
+    expanded = {step["key"]: step for step in expand_steps(counted_types, quantities, project_id)}
+    mixed_order = (
+        "T#1", "TR#1", "D#1", "TS#1", "TSR#1", "T#2", "TR#2", "TS#2", "TSR#2",
+    )
+    steps = [expanded[key] for key in mixed_order]
     for step in steps:
         if not step["locked"]:
             step["origin"] = "ai_suggested"
@@ -2132,7 +2511,9 @@ TEMPLATE_RULES = {
         "본문은 Markdown 이 아니라 UTF-8 JSON 입니다.",
         "제목과 연결 대상은 인박스 요청의 title / prev_doc_id 를 쓰고 본문에 적지 않습니다.",
         "steps 의 key 는 <타입코드>#<회차> 서식이며 문서 안에서 유일해야 합니다.",
-        "steps 는 quantities 에서 펼쳐지는 목록과 순서까지 같아야 합니다.",
+        "steps 의 key 집합은 quantities 에서 펼쳐지는 목록과 같아야 하지만, 배열 순서는 자유입니다. steps 배열 순서가 곧 실행 순서이며 서로 다른 타입을 섞어 둘 수 있습니다.",
+        "세트 타입(N/T/T2/TS)은 instruction 바로 다음에 그 result 가 와야 하고(카드 하나), result 를 따로 두거나 앞에 둘 수 없습니다. 같은 타입 안의 회차(ordinal)는 등장 순서대로 1, 2, 3… 이어야 합니다.",
+        "steps[].card_id 는 카드의 정체성입니다. 세트의 instruction·result 는 같은 값을 가집니다. 카드를 옮기거나 회차를 다시 매겨도 기존 card_id 는 그대로 두고 새로 만들거나 바꾸지 않습니다. 새 카드는 card_id 를 빼고 보내면 서버가 부여합니다.",
         f"steps[].note 는 그 단계를 맡을 AI에게 줄 한 줄 지시입니다. TSR 외 단계는 null이어도 되지만, 값을 채우면 한 줄로 {NOTE_MAX_CHARS}자 이내여야 하며 줄바꿈과 탭은 쓰지 않습니다.",
         "수량은 근거(부모 R/B, workflow_type_counts, group_documents)에서 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 0으로 둡니다. 1을 기본값으로 추측하지 않습니다.",
         "defaults.note 는 모든 단계에 공통으로 붙일 한 줄입니다. 요청 멘트의 '작업계획 맡길 범위' 절에 '전달 멘트'가 있으면 그것을 입력 삼아 이 한 줄을 새로 작성합니다(그대로 옮겨 적지 않습니다).",
@@ -2153,7 +2534,9 @@ TEMPLATE_RULES = {
         "The body is UTF-8 JSON, not Markdown.",
         "Title and parent come from the inbox request (title / prev_doc_id); never write them in the body.",
         "Each steps[].key is <TYPE>#<ordinal> and must be unique in the document.",
-        "steps must equal the list expanded from quantities, in the same order.",
+        "The set of steps keys must equal the list expanded from quantities, but the array order is free. The steps array order is the execution order, and different types may be mixed.",
+        "A set type (N/T/T2/TS) must have its result immediately after its instruction (one card); a result can never stand alone or come first. Within one type, ordinals appear in order 1, 2, 3...",
+        "steps[].card_id is the card's identity; a set's instruction and result share one value. When moving or renumbering cards keep every existing card_id unchanged — never invent or change one. Send a new card without card_id and the server assigns it.",
         f"steps[].note is a one-line instruction for the AI assigned to that step; non-TSR steps may leave it null, but a non-null note must be one line, within {NOTE_MAX_CHARS} characters, and without newlines or tabs.",
         "Quantities are derived from evidence (the parent R/B, workflow_type_counts, group_documents); when there is no basis, keep the key in counted_types/quantities with count 0. Never guess 1 as a default.",
         "defaults.note is the one-line instruction shared by every step; when the request mention carries a Delivery note in its work-plan scope section, use it as input to write this one line fresh (never copy it verbatim).",
@@ -2174,7 +2557,9 @@ TEMPLATE_RULES = {
         "本文は Markdown ではなく UTF-8 の JSON です。",
         "タイトルと連結対象はインボックス要求の title / prev_doc_id を使い、本文には書きません。",
         "steps の key は <タイプコード>#<回次> の書式で、文書内で一意でなければなりません。",
-        "steps は quantities から展開されるリストと順序まで一致していなければなりません。",
+        "steps の key の集合は quantities から展開されるリストと一致しなければなりませんが、配列の順序は自由です。steps 配列の順序がそのまま実行順序であり、異なるタイプを混在できます。",
+        "セット型(N/T/T2/TS)は instruction の直後にその result を置き(一枚のカード)、result を単独や先頭に置くことはできません。同じタイプ内の回次(ordinal)は出現順に 1, 2, 3… と続けます。",
+        "steps[].card_id はカードの同一性です。セットの instruction・result は同じ値を持ちます。カードを移動・再採番しても既存の card_id はそのまま残し、新たに作ったり変えたりしません。新しいカードは card_id を省いて送るとサーバーが付与します。",
         f"steps[].note はその段階を担当するAIへの一行指示です。TSR以外の段階は null でも構いませんが、値を入れる場合は一行・{NOTE_MAX_CHARS}文字以内、改行・タブなしとします。",
         "数量は根拠(親 R/B、workflow_type_counts、group_documents)から算定し、根拠がなければ counted_types/quantities にキーを残したまま 0 とします。1 を既定値として推測しません。",
         "defaults.note は全段階に共通する一行指示です。要求メモの「作業計画を任せる範囲」節に「伝達メモ」があれば、それを入力としてこの一行を新たに書きます(そのまま書き写しません)。",
@@ -2207,7 +2592,8 @@ def _contract_rule_lines(locale: str) -> list[str]:
     field were added. Building the sentence from STEP_FIELD_ORDER/PAIR_ROLES/ORIGINS/
     WORK_PLAN_PAIR_MAP means it can only ever describe what validate() enforces today.
     """
-    fields = ", ".join(STEP_FIELD_ORDER)
+    required_fields = [field for field in STEP_FIELD_ORDER if field not in OPTIONAL_STEP_FIELDS]
+    fields = ", ".join(required_fields)
     pair_roles = " | ".join(PAIR_ROLES)
     origins = " | ".join(ORIGINS)
     locked_reasons = " | ".join("null" if v is None else v for v in LOCKED_REASON_VALUES)
@@ -2215,7 +2601,8 @@ def _contract_rule_lines(locale: str) -> list[str]:
     single_types = ", ".join(WORK_PLAN_SHEET_TYPES)
     if locale == "en":
         return [
-            f"Every steps[] entry must carry exactly these {len(STEP_FIELD_ORDER)} required fields, in any JSON key order: {fields}. Never omit a key just because its value is null. Extra fields are rejected unless their name starts with x_, which is preserved as an optional extension.",
+            f"Every steps[] entry must carry exactly these {len(required_fields)} required fields, in any JSON key order: {fields}. Never omit a key just because its value is null. Extra fields are rejected unless their name starts with x_, which is preserved as an optional extension.",
+            "card_id is the one optional field: keep the value an existing card already has (also when the card moves), and omit it only on a brand-new card so the server can assign one.",
             f"pair_role allowed values: {pair_roles}. origin allowed values: {origins}. locked_reason allowed values: {locked_reasons}.",
             f"A set type's instruction/result steps pair with each other: {pairs}. The instruction step has pair_role=instruction and pair_key = the result step's key; the result step has pair_role=result and pair_key = the instruction step's key.",
             f"Sheet types ({single_types}) are unpaired single steps: pair_role=single, pair_key=null.",
@@ -2225,7 +2612,8 @@ def _contract_rule_lines(locale: str) -> list[str]:
         ]
     if locale == "ja":
         return [
-            f"steps[] の各項目は必ず次の{len(STEP_FIELD_ORDER)}個の必須フィールドを持ちます(JSON内の順序は問いません): {fields}。値が null でもキー自体を省略しません。x_ で始まる名前の追加フィールドは任意の拡張として許可され、それ以外の未知のフィールドは拒否されます。",
+            f"steps[] の各項目は必ず次の{len(required_fields)}個の必須フィールドを持ちます(JSON内の順序は問いません): {fields}。値が null でもキー自体を省略しません。x_ で始まる名前の追加フィールドは任意の拡張として許可され、それ以外の未知のフィールドは拒否されます。",
+            "card_id だけは任意フィールドです。既存カードが持つ値は(カードを移動しても)そのまま保ち、まったく新しいカードでだけ省略してサーバーに付与させます。",
             f"pair_role の許容値: {pair_roles}。origin の許容値: {origins}。locked_reason の許容値: {locked_reasons}。",
             f"セット型の instruction/result 段階は互いに対になります: {pairs}。instruction 段階は pair_role=instruction、pair_key=result 段階の key。result 段階は pair_role=result、pair_key=instruction 段階の key です。",
             f"シート型({single_types})は対のない単独段階です: pair_role=single, pair_key=null。",
@@ -2234,7 +2622,8 @@ def _contract_rule_lines(locale: str) -> list[str]:
             "同じ契約はこの項目の `contract` フィールドにもデータとして載っており、`example` は validate() をそのまま通る最小の本文全体、`examples` は pair_role ごとに値を埋めた単一段階の見本です。",
         ]
     return [
-        f"steps[] 각 항목은 JSON 키 순서와 무관하게 반드시 다음 {len(STEP_FIELD_ORDER)}개 필수 필드를 가져야 합니다: {fields}. 값이 null이어도 키 자체를 생략하지 않습니다. x_ 로 시작하는 이름의 추가 필드는 선택적 확장으로 허용되며, 그 외 알 수 없는 필드는 거부됩니다.",
+        f"steps[] 각 항목은 JSON 키 순서와 무관하게 반드시 다음 {len(required_fields)}개 필수 필드를 가져야 합니다: {fields}. 값이 null이어도 키 자체를 생략하지 않습니다. x_ 로 시작하는 이름의 추가 필드는 선택적 확장으로 허용되며, 그 외 알 수 없는 필드는 거부됩니다.",
+        "card_id 만 선택 필드입니다. 기존 카드가 가진 값은 (카드를 옮겨도) 그대로 두고, 완전히 새 카드에서만 생략해 서버가 부여하게 합니다.",
         f"pair_role 허용값: {pair_roles}. origin 허용값: {origins}. locked_reason 허용값: {locked_reasons}.",
         f"set 타입의 instruction/result 단계는 서로 짝입니다: {pairs}. instruction 단계는 pair_role=instruction, pair_key=result 단계의 key이고, result 단계는 pair_role=result, pair_key=instruction 단계의 key입니다.",
         f"sheet 타입({single_types})은 짝이 없는 단일 단계입니다: pair_role=single, pair_key=null.",

@@ -74,7 +74,10 @@ def test_the_registered_queries_carry_the_three_columns_both_ways():
     for column in ("note", "source_doc_id", "source_revision_no"):
         assert column in queries["insert_sequence_item"]
         assert f"wsi.{column}" in queries["get_sequence_items"]
-    assert queries["insert_sequence_item"].count("?") == 16
+    # 0649 T#1 (NR0003 §5.4): source_wp_card_id is the 17th bound value.
+    assert queries["insert_sequence_item"].count("?") == 17
+    assert "source_wp_card_id" in queries["insert_sequence_item"]
+    assert "wsi.source_wp_card_id" in queries["get_sequence_items"]
 
 from modules.flow_gate.services import work_plan_apply_service as wpa
 from modules.flow_gate.services import work_plan_sequence_service as wpseq
@@ -188,6 +191,10 @@ def test_append_carries_plan_notes_and_their_origin(wired):
         "review_count": 0, "reviewer_provider_id": None,
         "reviewer_provider_display_name": None, "pre_instruction_text": None,
         "pre_instruction_attachment": None,
+        # 0649 T#1 (NR0003 O0/O1): a new report row carries its instruction's card id and is
+        # not stored yet. PLAN is a hand-built dict without card ids (a loaded plan always has
+        # them), so the inherited value is None here.
+        "source_wp_card_id": None, "item_id": None, "protected": False,
     }
 
 

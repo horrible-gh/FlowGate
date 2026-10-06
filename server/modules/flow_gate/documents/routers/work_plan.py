@@ -92,6 +92,9 @@ class WorkPlanSuggest(BaseModel):
 
 class WorkPlanApplyPreview(BaseModel):
     instruction_mode: str = "auto_approved"
+    # 0649 T#1 (NR0003 O0/§5.4): codes the person already confirmed, e.g.
+    # "legacy_card_unresolved" — the preview then no longer counts it as a blocker.
+    acknowledged_codes: Optional[list[str]] = None
 
 
 class WorkPlanSequenceCandidates(BaseModel):
@@ -106,6 +109,9 @@ class WorkPlanApply(BaseModel):
     change_workflow: bool
     workflow_tag: str
     wp_revision_no: int
+    # 0649 T#1 (NR0003 O0/§5.4): without "legacy_card_unresolved" here, an apply over started
+    # legacy rows whose card cannot be proven is refused with 409 legacy_card_unresolved.
+    acknowledged_codes: Optional[list[str]] = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -947,8 +953,16 @@ def save_work_plan(
     # user throw away their edits with [reload] only to be told the values were
     # invalid anyway — two rounds of wasted work for one mistake.
     try:
-        plan = wp.validate(
+        # 0649 T#1 (NR0003 §5.1): card ids are checked against the body this save replaces
+        # and new cards get a server-assigned id, before the single-body validator runs.
+        submitted = wp.assign_card_ids(
             body.body,
+            wp.load_previous_body(doc),
+            project_id=doc.get("project_id"),
+            action="save",
+        )
+        plan = wp.validate(
+            submitted,
             project_id=doc.get("project_id"),
             doc_id=doc_id,
             action="save",
@@ -1307,6 +1321,7 @@ def _preview_sync(doc_id: str, body: WorkPlanApplyPreview, locale: str) -> dict:
         providers=_providers(doc.get("project_id") or ""),
         instruction_mode=body.instruction_mode,
         locale=locale,
+        acknowledged_codes=body.acknowledged_codes,
     )
 
 
@@ -1354,6 +1369,7 @@ def _apply_sync(
             wp_revision_no=body.wp_revision_no,
             applied_by=applied_by,
             locale=locale,
+            acknowledged_codes=body.acknowledged_codes,
         )
     except wpa.ApplyConflict as exc:
         copy = {
@@ -1366,6 +1382,13 @@ def _apply_sync(
                 "ko": "미리보기를 연 뒤 작업계획이 바뀌었습니다. 다시 읽어 주세요.",
                 "en": "The work plan changed after preview. Re-read it.",
                 "ja": "プレビュー後に作業計画が変わりました。読み直してください。",
+            },
+            # 0649 T#1 (NR0003 O0): the same copy the preview warning shows.
+            "legacy_card_unresolved": {
+                lang: wpa._COPY[lang]["legacy_card_unresolved"].format(
+                    count=len(exc.payload.get("rows") or []),
+                )
+                for lang in ("ko", "en", "ja")
             },
         }
         payload = dict(exc.payload)

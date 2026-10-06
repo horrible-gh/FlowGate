@@ -135,6 +135,7 @@ class FakeWfseq:
         provider_id=None, provider_display_name=None, review_count=0,
         reviewer_provider_id=None, reviewer_provider_display_name=None,
         pre_instruction_text=None, pre_instruction_attachment=None,
+        source_wp_card_id=None,
     ):
         import json as _json
 
@@ -152,6 +153,7 @@ class FakeWfseq:
             "reviewer_provider_display_name": reviewer_provider_display_name,
             "pre_instruction_text": pre_instruction_text,
             "pre_instruction_attachment_json": attachment_json,
+            "source_wp_card_id": source_wp_card_id,
             "result_doc_id": None, "status": "pending",
         })
 
@@ -160,6 +162,7 @@ class FakeWfseq:
         provider_id, provider_display_name, review_count=0,
         reviewer_provider_id=None, reviewer_provider_display_name=None,
         pre_instruction_text=None, pre_instruction_attachment=None,
+        source_wp_card_id=None,
     ):
         import json as _json
 

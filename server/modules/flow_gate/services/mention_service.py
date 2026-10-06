@@ -867,6 +867,31 @@ _SEQUENCE_EDIT_METADATA_COPY: dict[str, dict[str, str]] = {
 }
 
 
+# 0649 T#1 (NR0003 O1): rows are recognised by id only. Always shown, because a protected
+# row exists in exactly the situations where an id-less echo is refused.
+_SEQUENCE_EDIT_ITEM_ID_COPY: dict[str, str] = {
+    "ko": (
+        "기존 행을 되돌려 보낼 때는 받은 item_id 를 그대로 붙이고, 새로 넣는 행에는 item_id 를 넣지 마십시오. "
+        "Locked 목록의 행(protected)은 바꾸거나 빼지 않습니다 — 보내지 않아도 서버가 그대로 지키며, 보낸다면 item_id 와 함께 값을 바꾸지 않고 보내야 합니다. "
+        "item_id 없이 앞에 지시 행이 없는 NR/TR/TSR 행을 보내면, 같은 타입의 보호 행이 있을 때 protected_row_echo_ambiguous(409)로 거부됩니다. "
+        "현재 시퀀스에 없는 item_id 는 sequence_item_stale(409)이니 시퀀스를 다시 읽으십시오."
+    ),
+    "ja": (
+        "既存の行を返すときは受け取った item_id をそのまま付け、新しく入れる行には item_id を付けないでください。"
+        "Locked 一覧の行(protected)は変更も削除もしません — 送らなくてもサーバーがそのまま守り、送る場合は item_id と共に値を変えずに送ります。"
+        "item_id がなく直前に指示行のない NR/TR/TSR 行を送ると、同じタイプの保護行がある場合 protected_row_echo_ambiguous(409)で拒否されます。"
+        "現在のシーケンスにない item_id は sequence_item_stale(409)なので、シーケンスを読み直してください。"
+    ),
+    "en": (
+        "When you send an existing row back, keep the item_id you received; never put an item_id on a new row. "
+        "Rows in the Locked list (protected) are never changed or removed — the server keeps them even if you omit them, "
+        "and if you do send one it must carry its item_id and unchanged values. "
+        "An NR/TR/TSR row with no item_id and no instruction right before it is refused with protected_row_echo_ambiguous (409) "
+        "while a protected row of that type exists. An item_id the sequence no longer has is sequence_item_stale (409): re-read the sequence."
+    ),
+}
+
+
 # 0393 T0005 §2-7: the review submission's file form. Kept to one sentence so the
 # "address + pointer" shape of the section (0372 set 3) is preserved.
 _REVIEW_FILE_SUBMIT_TEXT: dict[str, str] = {
@@ -2695,9 +2720,18 @@ def build_sequence_edit_mention(
     )
 
     # Current sequence, split into locked (immutable) vs pending (editable).
+    # 0649 T#1 (NR0003 O1): "locked" is the server's ``protected`` mark when it is given — a
+    # pending report row right after a started instruction is protected too. Callers that
+    # predate the mark fall back to the status split.
     items = sequence_items or []
-    locked = [it for it in items if (it.get("status") or "") != "pending"]
-    pending = [it for it in items if (it.get("status") or "") == "pending"]
+
+    def _is_locked(it: dict) -> bool:
+        if "protected" in it:
+            return bool(it.get("protected"))
+        return (it.get("status") or "") != "pending"
+
+    locked = [it for it in items if _is_locked(it)]
+    pending = [it for it in items if not _is_locked(it)]
     has_pending_metadata = any(
         bool(it.get("note"))
         or it.get("source_doc_id") is not None
@@ -2713,6 +2747,7 @@ def build_sequence_edit_mention(
         copy = _SEQUENCE_EDIT_METADATA_COPY[template_provision.normalize_locale(locale)]
         payload = [
             {
+                **({"item_id": it.get("item_id")} if it.get("item_id") is not None else {}),
                 "type": it.get("type", ""),
                 "label": it.get("label", ""),
                 "note": it.get("note") or "",
@@ -2736,7 +2771,8 @@ def build_sequence_edit_mention(
         for i, it in enumerate(rows, start=1):
             tcode = it.get("type", "")
             label = it.get("label", "") or get_type_name(tcode, locale)
-            lines.append(f"  {i}. [{tcode}] {label}")
+            suffix = f" (item_id={it.get('item_id')})" if it.get("item_id") is not None else ""
+            lines.append(f"  {i}. [{tcode}] {label}{suffix}")
         return "\n".join(lines)
 
     seq_body = (
@@ -2758,6 +2794,7 @@ def build_sequence_edit_mention(
         "You may not empty a decided workflow that has no locked\n"
         "step — an empty pending list in that case is rejected (invalid_sequence_empty)."
         f"{metadata_rules}"
+        f"\n{_SEQUENCE_EDIT_ITEM_ID_COPY[template_provision.normalize_locale(locale)]}"
     )
 
     s3_body = (

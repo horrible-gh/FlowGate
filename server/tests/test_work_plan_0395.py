@@ -63,6 +63,36 @@ def _plan(**over):
     return body
 
 
+def _without_card_ids(body):
+    """A body with every step's card_id removed (0649 T#1).
+
+    Used where a test compares a saved body with the body it sent: new cards come back with
+    a random server-assigned id, which the comparison of everything else must not depend on.
+    """
+    import copy
+
+    out = copy.deepcopy(body)
+    for step in out.get("steps") or []:
+        step.pop("card_id", None)
+    return out
+
+
+def _legacy_client_steps(counted_types, quantities):
+    """Steps as a client that predates card ids rebuilds them on a quantity change.
+
+    0649 T#1 (NR0003 §5.1): server-side expand_steps() stamps ``card_id = key`` on a fresh
+    body, but a save that grows the plan must not invent ids for its new cards — an id the
+    previous body never had is ``card_id_unknown``. A body with no card_id at all in the fixed
+    order inherits the previous ids and gets server-assigned ids for the new cards.
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    steps = wp.expand_steps(counted_types, quantities)
+    for step in steps:
+        step.pop("card_id", None)
+    return steps
+
+
 def test_expand_steps_matches_the_designed_order():
     """P0009 §2.6: DS · D · D · P · L · N · NR · T · TR ×3 · TS · TSR — 15 steps."""
     from modules.flow_gate.services import work_plan_service as wp
@@ -1478,10 +1508,12 @@ def test_ai_inbox_edit_reuses_derived_title_and_frozen_creation_locale(
     doc_id = created["doc_id"]
     assert created["title"] == "Work plan — 2 design sheet(s) · 1 work set(s)"
 
-    uploaded = wp.validate(
+    # 0649 T#1: an AI that grows the plan sends no card ids (fixed order) — the existing
+    # cards inherit theirs and the new ones get server-assigned ids.
+    uploaded = _without_card_ids(wp.validate(
         _plan(counted_types=["D", "T"], counts={"D": 4, "T": 3}),
         project_id=PROJECT,
-    )
+    ))
     edited_response = _inbox_edit(
         tmp_path, doc_id, wp.dumps(uploaded), locale="ja",
     )
@@ -1489,17 +1521,23 @@ def test_ai_inbox_edit_reuses_derived_title_and_frozen_creation_locale(
     edited = edited_response.json()
     assert edited["revision_no"] == 1
     assert edited["title"] == "Work plan — 4 design sheet(s) · 3 work set(s)"
-    assert edited["body"] == uploaded
+    assert _without_card_ids(edited["body"]) == uploaded
 
     row = db_docs.get_by_id(doc_id)
     assert row["title"] == edited["title"]
     assert json.loads(row["meta"])["work_plan"]["title_locale"] == "en"
-    assert (storage_root / row["file_path"]).read_text(encoding="utf-8") == wp.dumps(uploaded)
+    stored = json.loads((storage_root / row["file_path"]).read_text(encoding="utf-8"))
+    assert stored == edited["body"]
+    assert _without_card_ids(stored) == uploaded
 
     reread = _client().get(f"/api/v1/documents/{doc_id}/work-plan")
     assert reread.status_code == 200, reread.text
     assert reread.json()["title"] == edited["title"]
-    assert reread.json()["body"] == uploaded
+    assert _without_card_ids(reread.json()["body"]) == uploaded
+    card_ids = {step["key"]: step["card_id"] for step in reread.json()["body"]["steps"]}
+    assert [card_ids[key] for key in ("D#1", "D#2", "T#1", "TR#1")] == ["D#1", "D#2", "T#1", "T#1"]
+    assert all(card_ids[key].startswith("c_") for key in ("D#3", "D#4", "T#2", "T#3"))
+    assert card_ids["T#2"] == card_ids["TR#2"] and card_ids["T#3"] == card_ids["TR#3"]
 
 
 def test_ai_inbox_edit_cas_loser_rolls_back_body_and_keeps_title_meta(
@@ -1521,10 +1559,10 @@ def test_ai_inbox_edit_cas_loser_rolls_back_body_and_keeps_title_meta(
     before = dict(db_docs.get_by_id(doc_id))
     before_file = (storage_root / before["file_path"]).read_text(encoding="utf-8")
 
-    uploaded = wp.validate(
+    uploaded = _without_card_ids(wp.validate(
         _plan(counted_types=["D", "T"], counts={"D": 4, "T": 3}),
         project_id=PROJECT,
-    )
+    ))
     store = get_store()
     execute = store._execute
 
@@ -2204,7 +2242,7 @@ def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
     updated_body = json.loads(json.dumps(created["body"]))
     updated_body["quantities"]["D"]["count"] = 4
     updated_body["quantities"]["T"]["count"] = 3
-    updated_body["steps"] = wp.expand_steps(
+    updated_body["steps"] = _legacy_client_steps(
         updated_body["counted_types"], updated_body["quantities"],
     )
     published = []
@@ -2228,7 +2266,9 @@ def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
     assert explorer_event.payload["revision_no"] == saved["revision_no"]
     assert saved["revision_no"] == 1
     assert saved["title"] == "作業計画 — 設計4枚 · 作業3セット"
-    assert saved["body"] == wp.validate(updated_body, project_id=PROJECT)
+    assert _without_card_ids(saved["body"]) == _without_card_ids(
+        wp.validate(updated_body, project_id=PROJECT)
+    )
     assert saved["totals"] == {"design_sheets": 4, "work_sets": 3, "steps": 10}
 
     row = db_docs.get_by_id(doc_id)
@@ -2268,7 +2308,7 @@ def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
 
     stale_body = json.loads(json.dumps(saved["body"]))
     stale_body["quantities"]["D"]["count"] = 5
-    stale_body["steps"] = wp.expand_steps(
+    stale_body["steps"] = _legacy_client_steps(
         stale_body["counted_types"], stale_body["quantities"],
     )
     stale = client.put(
@@ -2288,7 +2328,7 @@ def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
     before_file = (storage_root / before_failure["file_path"]).read_text(encoding="utf-8")
     failed_body = json.loads(json.dumps(saved["body"]))
     failed_body["quantities"]["D"]["count"] = 5
-    failed_body["steps"] = wp.expand_steps(
+    failed_body["steps"] = _legacy_client_steps(
         failed_body["counted_types"], failed_body["quantities"],
     )
     with patch(
@@ -2351,7 +2391,7 @@ def test_r0_snapshot_survives_first_save_without_duplicate_or_overwrite(seed, st
 
     changed = _plan()
     changed["quantities"]["D"]["count"] = 3
-    changed["steps"] = wp.expand_steps(changed["counted_types"], changed["quantities"])
+    changed["steps"] = _legacy_client_steps(changed["counted_types"], changed["quantities"])
     saved = _client().put(
         f"/api/v1/documents/{doc_id}/work-plan",
         json={"base_revision_no": 0, "body": changed},

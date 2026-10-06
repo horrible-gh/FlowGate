@@ -83,7 +83,10 @@ def test_a_finished_row_is_skipped_and_the_skip_is_reported():
     pending row was never touched. The contract now: a slot is a row that is still pending
     (or one this plan poured itself), and rows left out are reported, not dropped in silence.
     """
-    items = [item(4, "T", "done"), item(9, "T")]
+    # 0649 T#1 (NR0003 §3.6): a finished row is one holding a result document — the single
+    # "started" predicate. ``status`` alone (which only a hand-built dict can set without
+    # result_doc_id) no longer makes a row started.
+    items = [item(4, "T", "done", result="flowgate.default.0395.0004-T"), item(9, "T")]
     rows = svc.build_step_map([step("T#1"), step("T#2")], items)
     assert [(x["item_seq"], x["status"]) for x in rows] == [(9, "pending"), (None, "unmatched")]
     assert svc._slot_pool(items, None)[1] == [4]
@@ -333,6 +336,11 @@ def test_all_warning_codes_fire_and_have_distinct_three_locale_copy():
             unmatched_keys=["T#2"],
             skipped_done_item_seqs=[7],
             locale=locale,
+            # 0649 T#1 (NR0003 O0): the unresolved / retired legacy rows of this plan.
+            card_classification={
+                "unresolved_started": [{"item_id": 11, "item_seq": 11}],
+                "retired_started": [{"item_id": 12, "item_seq": 12}],
+            },
         )
         assert {row["code"] for row in warnings} == set(svc.WARNING_CODES)
         messages[locale] = {row["code"]: row["message"] for row in warnings}
