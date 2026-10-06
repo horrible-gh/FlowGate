@@ -336,10 +336,6 @@ def build_conversation_mention(
     lines = [
         "## Conversation",
         "---",
-        "You are a participant in an ongoing conversation. Read the latest messages and",
-        "reply naturally and concisely. This is a chat — no document headers, no Q /",
-        "clarification registration, no review. Just talk.",
-        "",
         f"Conversation document: {doc_id}",
         "",
         "Read the conversation context selected for this invocation:",

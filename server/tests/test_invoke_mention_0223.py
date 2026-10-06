@@ -84,6 +84,19 @@ class TestConversationMention:
         assert "Reading does not consume this token." in text
         assert text.index("Submit: POST") < text.index("## Document search and lookup rules")
 
+    def test_legacy_chat_role_text_is_absent_and_api_guidance_remains(self):
+        text = self._build()
+        assert "You are a participant in an ongoing conversation" not in text
+        assert "This is a chat" not in text
+        assert "no document headers" not in text
+        assert "Just talk" not in text
+        assert "Read the conversation context selected for this invocation" in text
+        assert "Submit: POST http://h:1/api/v1/conversation/p.default.0001.0008-CH/turn" in text
+        assert "based_on_seq records what you had actually read" in text
+        assert '"dry_run": true' in text
+        assert "body_sha256" in text
+        assert "body_chars" in text
+
     def test_old_full_body_contract_is_absent(self):
         text = self._build()
         assert "/document?doc_id=" not in text
