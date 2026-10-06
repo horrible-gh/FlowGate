@@ -115,6 +115,24 @@ def count_failed_or_cancelled_by_key_prefix(project_id: str, kind: str, key_pref
     return int((row or {}).get("n") or 0)
 
 
+def count_fap_retry_by_key_prefix(project_id: str, key_prefix: str) -> int:
+    """FAP attempts eligible for a new key: failed, cancelled, or conflict hand-off.
+
+    A successfully published job stays on its original key so a repeated approval
+    returns that job instead of publishing twice.
+    """
+    escaped = key_prefix.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+    row = get_store()._fetch_one(
+        "SELECT COUNT(*) AS n FROM operation_job "
+        "WHERE project_id = ? AND kind = 'final_approval_publish' "
+        "AND (status IN ('failed','cancelled') "
+        "OR (status = 'succeeded' AND result = 'handed_off_to_conflict_review')) "
+        "AND request_key LIKE ? ESCAPE '!'",
+        [project_id, escaped + "%"],
+    )
+    return int((row or {}).get("n") or 0)
+
+
 def count_terminal_by_key_prefix(project_id: str, kind: str, key_prefix: str) -> int:
     """Jobs of one request-key prefix that already ended, whatever way (succeeded included).
 
