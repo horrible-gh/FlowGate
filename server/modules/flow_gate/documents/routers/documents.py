@@ -29,7 +29,7 @@ from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.db import conversation_turns as conv_turn_store
 from modules.flow_gate.db import mention_copies as db_mention_copies
 from modules.flow_gate.documents import attachments
-from modules.flow_gate.documents import document_service, document_types, template_service
+from modules.flow_gate.documents import document_service, document_types, template_service, url_import_service
 from modules.flow_gate.documents.type_code import doc_code_seq_text
 from modules.flow_gate.documents.constants import (
     AUTO_COMPLETE_TYPES,
@@ -362,6 +362,11 @@ class DocumentUpdate(BaseModel):
 
 class DocumentContentUpdate(BaseModel):
     content: str
+
+
+class DocumentUrlImportRequest(BaseModel):
+    doc_id: str
+    url: str
 
 
 class RootTypeConvert(BaseModel):
@@ -2731,6 +2736,35 @@ def get_mention_copy(
         "mention_kind": row["mention_kind"],
         "copied_at": row["copied_at"],
     }
+
+
+@router.post("/import-url")
+@require_permission("perm_document_update")
+def import_document_url(
+    body: DocumentUrlImportRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    doc = document_service.get_document(body.doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
+    _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
+    _reject_if_revert_pending(doc)
+    final_approved = document_service.is_final_approved(doc)
+    if not document_service.is_document_editable(doc, final_approved=final_approved):
+        if final_approved:
+            detail = "Modification not allowed after final approval."
+        else:
+            detail = f"Modification not allowed for status: {doc.get('status')}"
+        raise HTTPException(status_code=422, detail=detail)
+    try:
+        data = url_import_service.fetch_text(body.url)
+    except url_import_service.UrlImportError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    return {"data": data}
 
 
 @router.patch("/content")

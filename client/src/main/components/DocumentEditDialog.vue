@@ -35,6 +35,14 @@
             class="btn btn-outline btn-sm"
             type="button"
             :disabled="saving"
+            @click="urlMode = !urlMode"
+          >
+            {{ t('main.document_preview.url_import') }}
+          </button>
+          <button
+            class="btn btn-outline btn-sm"
+            type="button"
+            :disabled="saving"
             :title="headerVisible ? t('main.main_panel.header_hide') : t('main.main_panel.header_show')"
             @click="emit('toggle-header')"
           >
@@ -46,6 +54,29 @@
     </template>
 
     <template #default>
+      <div v-if="urlMode" class="document-url-import">
+        <div class="document-url-import__row">
+          <input
+            v-model="urlInput"
+            class="document-url-import__input"
+            type="url"
+            :placeholder="t('main.document_preview.url_import_placeholder')"
+            :disabled="urlLoading || saving"
+            @keydown.enter.prevent="fetchUrlPreview"
+          />
+          <button class="btn btn-outline btn-sm" type="button" :disabled="urlLoading || saving || !urlInput.trim()" @click="fetchUrlPreview">
+            {{ urlLoading ? t('main.document_preview.url_import_loading') : t('main.document_preview.url_import_fetch') }}
+          </button>
+          <button class="btn btn-primary btn-sm" type="button" :disabled="urlLoading || saving || !urlPreview" @click="applyUrlPreview">
+            {{ t('main.document_preview.url_import_apply') }}
+          </button>
+        </div>
+        <div v-if="urlError" class="document-url-import__error" role="alert">{{ urlError }}</div>
+        <div v-if="urlPreview" class="document-url-import__preview-wrap">
+          <div class="document-url-import__preview-label">{{ t('main.document_preview.url_import_preview') }}</div>
+          <textarea class="document-url-import__preview" :value="urlPreview" readonly></textarea>
+        </div>
+      </div>
       <div class="document-editor">
         <div v-if="loading" class="document-editor__state">
           {{ t('common.loading') }}
@@ -86,10 +117,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AppIcon from '@shared/AppIcon.vue'
+import { postRequest } from '@shared/api'
 
 import LineNumberedTextarea from './common/LineNumberedTextarea.vue'
 import DialogFooter from './dialogs/DialogFooter.vue'
@@ -123,6 +155,67 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const urlMode = ref(false)
+const urlInput = ref('')
+const urlLoading = ref(false)
+const urlError = ref('')
+const urlPreview = ref('')
+
+function stripImportedFrontmatter(content: string): string {
+  const normalized = content.replace(/\r\n/g, '\n')
+  if (!normalized.startsWith('---\n')) return normalized
+  const end = normalized.indexOf('\n---\n', 4)
+  if (end < 0) return normalized
+  return normalized.slice(end + 5)
+}
+
+function replaceBodyKeepingFrontmatter(fullContent: string, body: string): string {
+  const normalized = fullContent.replace(/\r\n/g, '\n')
+  if (!normalized.startsWith('---\n')) return body
+  const end = normalized.indexOf('\n---\n', 4)
+  if (end < 0) return body
+  return normalized.slice(0, end + 5) + body
+}
+
+async function fetchUrlPreview() {
+  if (urlLoading.value || !props.tab || !urlInput.value.trim()) return
+  urlLoading.value = true
+  urlError.value = ''
+  urlPreview.value = ''
+  try {
+    const res = await postRequest<any>('/api/v1/documents/import-url', {
+      doc_id: props.tab.id,
+      url: urlInput.value.trim(),
+    })
+    const data = (res.data as any)?.data ?? res.data
+    urlPreview.value = stripImportedFrontmatter(String(data?.content ?? ''))
+  } catch (error: any) {
+    const detail = error?.response?.data?.detail
+    urlError.value = typeof detail === 'string'
+      ? detail
+      : String(detail?.message ?? t('main.document_preview.url_import_failed'))
+  } finally {
+    urlLoading.value = false
+  }
+}
+
+function applyUrlPreview() {
+  if (!urlPreview.value) return
+  emit('update:body', urlPreview.value)
+  emit('update:fullContent', replaceBodyKeepingFrontmatter(props.fullContent, urlPreview.value))
+  urlMode.value = false
+}
+
+watch(
+  () => [props.visible, props.tab?.id] as const,
+  () => {
+    urlMode.value = false
+    urlInput.value = ''
+    urlLoading.value = false
+    urlError.value = ''
+    urlPreview.value = ''
+  },
+)
 
 function onBodyInput(value: string) {
   emit('update:body', value)
@@ -187,6 +280,41 @@ defineExpose({ isDirty, requestClose })
 </script>
 
 <style scoped>
+.document-url-import {
+  flex: 0 0 auto;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sub, #f8fafc);
+}
+.document-url-import__row { display: flex; gap: 8px; align-items: center; }
+.document-url-import__input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: var(--bg-card, #fff);
+  color: var(--text, #1e293b);
+}
+.document-url-import__input:focus { outline: none; border-color: var(--primary, #2563eb); }
+.document-url-import__error { margin-top: 8px; color: var(--danger); font-size: .8125rem; }
+.document-url-import__preview-wrap { margin-top: 10px; }
+.document-url-import__preview-label { margin-bottom: 5px; color: var(--text-m); font-size: .75rem; font-weight: 600; }
+.document-url-import__preview {
+  width: 100%;
+  height: 180px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .8125rem;
+  line-height: 1.6;
+}
+
 .document-editor {
   flex: 1;
   padding: 0;
