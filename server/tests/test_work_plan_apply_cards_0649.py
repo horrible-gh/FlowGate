@@ -22,6 +22,7 @@ from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.services import work_plan_apply_service as wpa
 from modules.flow_gate.services import work_plan_card_identity as cards
 from modules.flow_gate.services import work_plan_service as wp
+from modules.flow_gate.services import workflow_decision_service as wds
 from tests.test_work_plan_card_identity_0649 import _current, _legacy
 from tests.test_workflow_protected_rows_0649 import (
     _GROUP, _ROOT, _SEED_SQL, _WP, _SqliteStore, _items, _seed_rows, _snapshot,
@@ -31,10 +32,14 @@ PROVIDERS = [{"id": "p1", "name": "P1", "enabled": True}]
 
 
 @pytest.fixture
-def store(migrated_sqlite_db):
+def store(migrated_sqlite_db, monkeypatch):
     real = _SqliteStore(migrated_sqlite_db("apply_cards_0649.db", seed_sql=_SEED_SQL))
     previous = db_connection.STORE
     db_connection.STORE = real
+    # 0649 T#2: a change-apply writes through edit_workflow_pending, which re-checks the
+    # plan's revision against the documents table and archives AC documents.
+    real._execute("UPDATE documents SET revision_no = 2 WHERE doc_id = ?", [_WP])
+    monkeypatch.setattr(wds.db_documents, "list_documents", lambda **kwargs: [])
     try:
         yield real
     finally:
@@ -135,7 +140,32 @@ def test_apply_refuses_unacknowledged_unresolved_rows_and_writes_nothing(
     assert not (tmp_path / "0004-WP_applications.jsonl").exists()
 
 
-@pytest.mark.parametrize("change", [False, True])
+def test_acknowledged_keep_apply_is_refused_by_the_orphan_it_would_keep(
+    unresolved_history, tmp_path,
+):
+    """0649 T#2 (NR0003 O4): after the acknowledgement the unresolved pending T row serves
+    no card (an orphan), so keeping the workflow would keep it — keep is refused, and the
+    refusal comes before anything (the marker included) is written. The apply refuses with
+    the preview's own keep answer: no plan card has a row to keep, which outranks the
+    orphans (still listed by the preview)."""
+    seq_id, plan = unresolved_history
+    before = [dict(r) for r in _items(seq_id)]
+    preview = wpa.preview(doc=_doc(2), plan=plan, providers=PROVIDERS,
+                          instruction_mode="ai_direct",
+                          acknowledged_codes=["legacy_card_unresolved"])
+    assert preview["apply_blockers"]["keep_workflow"] == "unmatched_plan_steps"
+    assert [row["item_id"] for row in preview["comparison"]["removed"]["items"]] == [
+        before[2]["id"], before[3]["id"],
+    ]
+    assert "orphan_plan_rows" in [w["code"] for w in preview["warnings"]]
+    with pytest.raises(wpa.ApplyConflict) as raised:
+        _apply(plan, 2, tmp_path, change=False, ack=["legacy_card_unresolved"])
+    assert raised.value.code == preview["apply_blockers"]["keep_workflow"]
+    assert [dict(r) for r in _items(seq_id)] == before
+    assert not (tmp_path / "0004-WP_applications.jsonl").exists()
+
+
+@pytest.mark.parametrize("change", [True])
 def test_acknowledged_apply_records_the_marker_once_in_place(unresolved_history, tmp_path, change):
     seq_id, plan = unresolved_history
     before = _snapshot(seq_id)
@@ -152,6 +182,12 @@ def test_acknowledged_apply_records_the_marker_once_in_place(unresolved_history,
     assert journal["card_backfill"][:2] == [
         [rows[0]["id"], f"retired:unresolved:{rows[0]['id']}"],
         [rows[1]["id"], f"retired:unresolved:{rows[1]['id']}"],
+    ]
+
+    # 0649 T#2 (NR0003 O3): the card the unresolved rows might have been is poured again
+    # behind them, and the unresolved pending T#2 row is replaced by the card's own row.
+    assert [(r["type"], r["source_wp_card_id"]) for r in rows[2:]] == [
+        ("T", "T#1"), ("TR", "T#1"), ("T", "T#2"), ("TR", "T#2"),
     ]
 
     # Recorded once: the next apply is not asked again.
@@ -190,14 +226,17 @@ def test_backfill_and_snapshot_share_one_transaction(unresolved_history, tmp_pat
         monkeypatch.setattr(db_wfseq, name, wrapper)
 
     for name in ("update_sequence_item_card_id", "update_sequence_item_plan_snapshot",
-                 "update_sequence_item_echo_settings"):
+                 "update_sequence_item_echo_settings", "insert_sequence_item",
+                 "delete_unprotected_pending_items"):
         tracked(name)
     monkeypatch.setattr(wpa, "get_store", lambda: _Tracking())
 
-    _apply(plan, 2, tmp_path, change=False, ack=["legacy_card_unresolved"])
+    # 0649 T#2: keep is refused here (orphan_plan_rows), so the reflection that writes is the
+    # change-apply — its card-id marker and its row rewrite share the one outer frame.
+    _apply(plan, 2, tmp_path, change=True, ack=["legacy_card_unresolved"])
     names = {name for name, _frame in frames}
     assert "update_sequence_item_card_id" in names
-    assert "update_sequence_item_plan_snapshot" in names
+    assert {"insert_sequence_item", "delete_unprotected_pending_items"} <= names
     assert all(frame is not None for _name, frame in frames)
     assert len({id(frame) for _name, frame in frames}) == 1
 
@@ -207,6 +246,9 @@ def test_backfill_and_snapshot_share_one_transaction(unresolved_history, tmp_pat
 @pytest.mark.parametrize("change", [False, True])
 def test_apply_snapshot_keeps_protected_report_identity(store, monkeypatch, tmp_path, change):
     revisions = {1: _legacy({"T": 2}), 2: _legacy({"T": 2})}
+    plan_file = tmp_path / "current.json"
+    plan_file.write_text(json.dumps(revisions[2]), encoding="utf-8")
+    monkeypatch.setattr(wp, "plan_path_for_doc", lambda doc: plan_file)
     monkeypatch.setattr(cards, "stored_revision_loader", lambda doc: revisions.get)
     monkeypatch.setattr(cards, "read_result_provenance", lambda doc_id: None)
     seq_id = _seed_rows([

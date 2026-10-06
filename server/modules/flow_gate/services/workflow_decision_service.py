@@ -2056,25 +2056,36 @@ def _verify_expected_plan(expected_plan: Optional[dict]) -> Optional[dict]:
     return plan_doc
 
 
-def _classify_plan_rows(plan_doc: dict, existing: list[dict]) -> Optional[dict]:
-    """O0 classification of one plan's rows, or None when the plan body cannot be read.
+def _load_plan_body(plan_doc: dict) -> Optional[dict]:
+    """The plan body a reflecting save pours, or None when it cannot be read.
 
     An unreadable plan is not this function's to refuse: _verify_expected_plan already
     accepted the revision, and the reflecting paths that read the body report it themselves.
     """
-    from modules.flow_gate.services import work_plan_card_identity as _cards
     from modules.flow_gate.services import work_plan_service as _wp
+
+    try:
+        return _wp.load_body(
+            _wp.plan_path_for_doc(plan_doc),
+            project_id=plan_doc.get("project_id"),
+            doc_id=str(plan_doc.get("doc_id") or ""),
+        )
+    except _wp.WorkPlanUnreadable:
+        return None
+
+
+def _classify_plan_rows(
+    plan_doc: dict, existing: list[dict], plan: Optional[dict] = None,
+) -> Optional[dict]:
+    """O0 classification of one plan's rows, or None when it never poured / is unreadable."""
+    from modules.flow_gate.services import work_plan_card_identity as _cards
 
     wp_doc_id = str(plan_doc.get("doc_id") or "")
     if not any(str(row.get("source_doc_id") or "") == wp_doc_id for row in existing or []):
         return None
-    try:
-        plan = _wp.load_body(
-            _wp.plan_path_for_doc(plan_doc),
-            project_id=plan_doc.get("project_id"),
-            doc_id=wp_doc_id,
-        )
-    except _wp.WorkPlanUnreadable:
+    if plan is None:
+        plan = _load_plan_body(plan_doc)
+    if plan is None:
         return None
     return _cards.classify_rows(wp_doc=plan_doc, plan=plan, items=existing)
 
@@ -2360,6 +2371,7 @@ def edit_workflow_pending(
     applied_by: Optional[str] = None,
     locale: str = "ko",
     acknowledged_codes: Optional[list] = None,
+    record_application: bool = True,
 ) -> dict:
     """Replace PENDING items with new_items. Preserves done/in_progress items.
 
@@ -2370,6 +2382,14 @@ def edit_workflow_pending(
     the last protected row. On the plan-reflecting path (``expected_plan``) the legacy rows
     of that plan get their ``source_wp_card_id`` backfilled in the same transaction (O0);
     an unresolved started row needs ``legacy_card_unresolved`` in ``acknowledged_codes``.
+
+    0649 T#2 (NR0003 O2/O5): on that same path the plan's started cards must still lead
+    the plan in the order they ran (``order_conflicts_started`` / ``started_card_removed`` /
+    ``card_identity_mismatch``), an ``append`` is refused while this plan's earlier rows
+    are still pending (``plan_rows_pending``), and the rows written must follow the card
+    order -- checked inside the write transaction, which rolls back on
+    ``plan_order_violation``. ``record_application=False`` leaves the application journal
+    to a caller that keeps its own (``/work-plan/apply``).
 
     Implementation decision (T485):
     - L002 §out-of-scope: "Post-sequence edit algorithm — to be defined in a separate R later."
@@ -2436,6 +2456,58 @@ def edit_workflow_pending(
             assert_sequence_item_providers([_echo])
     echo_updates = _echo_setting_updates(echoes)
 
+    # 0649 T#1 (NR0003 O0): on a plan-reflecting write, classify this plan's legacy rows now
+    # (read-only) so an unresolved started row is refused before anything is written.
+    plan_body = _load_plan_body(plan_doc) if plan_doc is not None else None
+    wp_doc_id = str((plan_doc or {}).get("doc_id") or "")
+    if plan_doc is not None and plan_body is None:
+        # 0649 T#2 (NR0003 O5): a reflecting save is checked against the plan's card order;
+        # a plan nobody can read cannot be checked, so it is not poured blind.
+        raise ValueError(f"plan_unreadable:{wp_doc_id}")
+    card_classification = None
+    if plan_doc is not None and not create_sequence:
+        card_classification = _classify_plan_rows(plan_doc, existing, plan_body)
+        if card_classification and card_classification["unresolved_started"]:
+            from modules.flow_gate.services import work_plan_card_identity as _cards
+
+            if not _cards.acknowledged(acknowledged_codes):
+                raise _cards.LegacyCardUnresolved(
+                    wp_doc_id, card_classification["unresolved_started"],
+                )
+
+    # 0649 T#2 (NR0003 O2/O5): the started cards (S) by identity, the refusals that come
+    # before any write, and a card id for pour rows a pre-card client sent without one --
+    # given before the metadata restore so a type+label guess can never hand such a row
+    # the card of some older row.
+    started_cards: list = []
+    history_ids: set = set()
+    if plan_body is not None:
+        from modules.flow_gate.services import work_plan_card_order as _order
+
+        started_cards = _order.started_card_ids(card_classification)
+        history_ids = _order.history_row_ids(card_classification)
+        blocked = _order.check_started_prefix(plan_body, card_classification, existing)
+        if blocked:
+            raise _order.PlanOrderBlocked(blocked["code"], wp_doc_id, blocked)
+        if str((expected_plan or {}).get("mode") or "") == "append":
+            leftover = _order.plan_pending_rows(existing, wp_doc_id)
+            if leftover:
+                raise _order.PlanOrderBlocked("plan_rows_pending", wp_doc_id, {
+                    "rows": [
+                        {"item_id": row.get("id"), "item_seq": row.get("item_seq"),
+                         "type": str(row.get("type") or "").upper()}
+                        for row in leftover
+                    ],
+                })
+        from modules.flow_gate.services import work_plan_sequence_service as _seq
+
+        _order.infer_missing_card_ids(
+            new_items, plan_body, wp_doc_id, int(plan_doc.get("revision_no") or 0), started_cards,
+            # The same provider view the pour candidates were built with, so a cardless row
+            # is matched to its card by the settings that candidate row carried.
+            provider_view=_seq.provider_view_of(plan_doc.get("project_id")),
+        )
+
     # 0444 T0007 (NR0003 §4-6): give back the providers this payload never mentioned, before
     # anything else reads the items. The position is load-bearing: ahead of
     # assert_sequence_item_providers() so a restored value is validated exactly like a sent
@@ -2454,19 +2526,6 @@ def edit_workflow_pending(
         key=lambda it: (it.get("sort_order") or 0, it.get("id") or 0),
     )
     locked_count = len(locked)
-
-    # 0649 T#1 (NR0003 O0): on a plan-reflecting write, classify this plan's legacy rows now
-    # (read-only) so an unresolved started row is refused before anything is written.
-    card_classification = None
-    if plan_doc is not None and not create_sequence:
-        card_classification = _classify_plan_rows(plan_doc, existing)
-        if card_classification and card_classification["unresolved_started"]:
-            from modules.flow_gate.services import work_plan_card_identity as _cards
-
-            if not _cards.acknowledged(acknowledged_codes):
-                raise _cards.LegacyCardUnresolved(
-                    str(plan_doc.get("doc_id") or ""), card_classification["unresolved_started"],
-                )
 
     # 0119 B0001 (NR0003 §6-A): refuse an edit that would empty a decided workflow.
     # When nothing is locked (no done/in_progress step — i.e. the workflow was just
@@ -2533,6 +2592,10 @@ def edit_workflow_pending(
     ] == [
         _definition(it) for it in new_items
     ]:
+        if plan_body is not None:
+            # Nothing would be written -- but a reflecting save must not report success on
+            # a sequence that does not follow the plan either.
+            _order.assert_plan_order(existing, plan_body, wp_doc_id, started_cards, history_ids)
         return {
             "status": "updated",
             "doc_id": doc_id,
@@ -2606,10 +2669,16 @@ def edit_workflow_pending(
                 source_wp_card_id=item.get("source_wp_card_id"),
             )
 
+        all_items = db_wfseq.get_sequence_items(seq["id"])
+        if plan_body is not None:
+            # 0649 T#2 (NR0003 O5): the last line of defence for every reflecting path --
+            # the candidate checks can be bypassed by a direct API call, this cannot.
+            # Raising here rolls the whole save back.
+            _order.assert_plan_order(all_items, plan_body, wp_doc_id, started_cards, history_ids)
+
         # The definition replacement, root reopen and approval retirement are one atomic
         # state change. Approved AC rows are archived (historical), while premature
         # unapproved AC rows remain ephemeral and are deleted.
-        all_items = db_wfseq.get_sequence_items(seq["id"])
         db_documents.update(
             doc_id,
             {"workflow_steps": _json.dumps([it["type"] for it in all_items])},
@@ -2651,9 +2720,12 @@ def edit_workflow_pending(
     if create_sequence:
         result["sequence_created"] = True
         _start_created_sequence(doc_id)
+    if plan_doc is not None and started_cards:
+        result["started_card_ids"] = list(started_cards)
     if plan_doc is not None:
         result["wp_doc_id"] = plan_doc.get("doc_id")
         result["wp_revision_no"] = int(plan_doc.get("revision_no") or 0)
+    if plan_doc is not None and record_application:
         result["application_recorded"] = _record_plan_application(
             plan_doc=plan_doc,
             owner_doc_id=doc_id,

@@ -78,6 +78,21 @@ def is_retired_value(value: Any) -> bool:
     return isinstance(value, str) and value.startswith(RETIRED_PREFIX)
 
 
+def retired_marker_key(value: Any, revision_no: int) -> Optional[str]:
+    """The key a ``retired:r{revision}:{key}`` marker names, when it is that revision's.
+
+    A retired row is a legacy row whose card was proven to be ``key`` of ``revision`` (a
+    legacy snapshot names a card by its key). None for an unresolved marker or a marker of
+    another revision.
+    """
+    if not is_retired_value(value):
+        return None
+    head, _, key = value[len(RETIRED_PREFIX):].partition(":")
+    if not key or head != f"r{int(revision_no)}":
+        return None
+    return key
+
+
 def _int(value: Any) -> Optional[int]:
     try:
         return int(value)
@@ -193,6 +208,41 @@ def stored_revision_loader(wp_doc: dict) -> Callable[[int], Optional[dict]]:
         return body
 
     return load
+
+
+def step_key_for_card(
+    wp_doc: dict,
+    revision_no: int,
+    card_id: str,
+    type_code: str,
+    *,
+    revision_loader: Optional[Callable[[int], Optional[dict]]] = None,
+) -> Optional[str]:
+    """The key card ``card_id`` had in revision ``revision_no`` — NR0003 O6 (G5).
+
+    The materializer used to rebuild a row's step key by counting same-type rows of the same
+    revision, which is wrong as soon as an earlier revision's row of that type ran before it
+    or the cards were reordered. A row that knows its card reads the key from the snapshot
+    of the revision it was poured from instead. A legacy snapshot (no stored ids) names a
+    card by its key. None when the snapshot cannot be read or has no such card of that type
+    — the caller then refuses: counting rows is only for rows without a card id.
+    """
+    if not card_id or is_retired_value(card_id):
+        return None
+    load = revision_loader or stored_revision_loader(wp_doc)
+    body = load(int(revision_no))
+    if not isinstance(body, dict):
+        return None
+    stores_ids = _stores_card_ids(body)
+    for step in body.get("steps") or []:
+        if not isinstance(step, dict) or step.get("pair_role") == "result":
+            continue
+        step_card = step.get("card_id") if stores_ids else step.get("key")
+        if step_card == card_id:
+            if str(step.get("type") or "").upper() != str(type_code or "").upper():
+                return None
+            return str(step.get("key") or "") or None
+    return None
 
 
 def _quantity(body: dict, code: str) -> int:

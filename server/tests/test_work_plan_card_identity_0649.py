@@ -319,9 +319,13 @@ def test_plan_reflecting_edit_records_the_acknowledged_unresolved_rows(
             {"type": "T", "source": _WP, "rev": 0, "result": f"{_GROUP}.0005-T"},
             {"type": "TR", "source": _WP, "rev": 0},
         ])
+        # 0649 T#2 (NR0003 O5): a reflecting save pours every card that has not started —
+        # the post-write check refuses a payload that leaves the plan's T#2 out.
         payload = [
             {"type": "T", "label": "T", "source_doc_id": _WP, "source_revision_no": 2,
              "source_wp_card_id": "T#1"},
+            {"type": "T", "label": "T", "source_doc_id": _WP, "source_revision_no": 2,
+             "source_wp_card_id": "T#2"},
         ]
         result = wds.edit_workflow_pending(
             _ROOT, payload, expected_plan={"wp_doc_id": _WP, "wp_revision_no": 2},
@@ -332,7 +336,7 @@ def test_plan_reflecting_edit_records_the_acknowledged_unresolved_rows(
             f"retired:unresolved:{rows[0]['id']}", f"retired:unresolved:{rows[1]['id']}",
         ]
         # The card the unresolved rows might have been is poured again (after them).
-        assert [r["type"] for r in rows] == ["T", "TR", "T", "TR"]
+        assert [r["type"] for r in rows] == ["T", "TR", "T", "TR", "T", "TR"]
         assert result["protected_count"] == 2
     finally:
         db_connection.STORE = previous_store

@@ -37,15 +37,28 @@ WARNING_CODES = (
     # 0649 T#1 (NR0003 O0): started legacy rows whose card cannot be proven (apply is
     # refused until acknowledged), and started rows of a deleted card (shown only).
     "legacy_card_unresolved", "retired_plan_rows",
+    # 0649 T#2 (NR0003 O2-O4): rows of this plan that serve no card any more, started cards
+    # the plan no longer leads with (or removed / retyped), and foreign pending rows inside
+    # this plan's block.
+    "orphan_plan_rows", "order_conflicts_started", "started_card_removed",
+    "card_identity_mismatch", "foreign_rows_interleaved",
 )
+# 0649 T#2: these refuse the apply in the mode(s) the preview names in apply_blockers.
+BLOCKER_CODES = frozenset({
+    "order_conflicts_started", "started_card_removed", "card_identity_mismatch",
+    "foreign_rows_interleaved",
+})
 WARNING_SEVERITY = {
-    code: ("warning" if code in {
+    code: ("blocker" if code in BLOCKER_CODES else "warning" if code in {
         "type_not_placeable", "provider_unset", "provider_not_registered",
         "nothing_to_fill", "locked_step_has_value", "unmatched_plan_steps",
         "legacy_card_unresolved",
         # 0444 NR0003 §4-1: not info. The person picked a cell and the values land on a
         # different one, so this has to be as visible as the other placement warnings.
         "done_rows_skipped",
+        # 0649 T#2 (NR0003 O3/O4): keeping the workflow would fix an order other than the
+        # plan's, so these are no longer information.
+        "order_differs", "orphan_plan_rows",
     } else "info")
     for code in WARNING_CODES
 }
@@ -57,7 +70,7 @@ _COPY = {
         "steps_already_done": "이미 시작했거나 끝난 단계 {count}개는 건드리지 않습니다.",
         "done_rows_skipped": "이미 시작했거나 끝난 단계 {count}개는 순번 계산에서 건너뛰었습니다.",
         "type_not_placeable": "워크플로에 놓을 수 없는 계획 단계가 {count}개 있습니다.",
-        "order_differs": "계획과 워크플로의 단계 순서가 다릅니다. 워크플로 순서를 따릅니다.",
+        "order_differs": "계획과 워크플로의 단계 순서가 다릅니다. 워크플로를 바꿔 적용하면 계획 순서대로 다시 정렬됩니다.",
         "provider_unset": "공급자를 정하지 않은 단계 {count}개는 기본 공급자를 따릅니다.",
         "provider_not_registered": "등록되어 있지 않거나 꺼진 공급자의 단계가 {count}개 있습니다.",
         "provider_renamed": "계획 작성 뒤 공급자 이름이 바뀐 단계가 {count}개 있습니다.",
@@ -69,6 +82,12 @@ _COPY = {
         "unmatched_plan_steps": "워크플로를 그대로 두어 이어질 자리가 없는 단계가 {count}개 있습니다.",
         "legacy_card_unresolved": "어느 카드의 실행인지 확인할 수 없는 시작된 단계가 {count}개 있습니다. 확인하면 이전 실행 이력으로 분리되고, 해당 카드는 다시 부어질 수 있습니다.",
         "retired_plan_rows": "삭제된 이전 카드의 실행 이력 {count}개는 제자리에 그대로 둡니다.",
+        "orphan_plan_rows": "계획에 없는 카드의 대기 단계 {count}개가 있습니다. 워크플로를 바꿔 적용하면 지워집니다.",
+        "order_conflicts_started": "이미 시작한 카드 {count}개가 계획의 맨 앞에 시작한 순서대로 있어야 합니다.",
+        "started_card_removed": "이미 시작한 카드 {count}개가 계획에서 빠졌습니다.",
+        "card_identity_mismatch": "이미 시작한 카드 {count}개의 유형이 실행된 단계와 다릅니다.",
+        "foreign_rows_interleaved": "이 계획의 단계 사이에 다른 단계 {count}개가 끼어 있습니다. 붓기 편집창에서 정리하세요.",
+        "plan_order_violation": "저장 결과가 계획의 카드 순서와 달라 되돌렸습니다.",
     },
     "en": {
         "workflow_not_decided": "This group has no decided workflow yet.",
@@ -77,7 +96,7 @@ _COPY = {
         "steps_already_done": "{count} started or completed steps will not be changed.",
         "done_rows_skipped": "{count} started or completed steps were left out of the position count.",
         "type_not_placeable": "{count} plan steps cannot be placed in this workflow.",
-        "order_differs": "Plan and workflow order differ; workflow order wins.",
+        "order_differs": "Plan and workflow order differ; applying with a workflow change reorders the steps to the plan.",
         "provider_unset": "{count} steps have no provider and will use the default.",
         "provider_not_registered": "{count} steps name an unavailable provider.",
         "provider_renamed": "{count} provider names changed since the plan was written.",
@@ -89,6 +108,12 @@ _COPY = {
         "unmatched_plan_steps": "{count} plan steps have no slot because the workflow is unchanged.",
         "legacy_card_unresolved": "{count} started steps cannot be traced to a card. If you confirm, they are kept as earlier run history and their card may be poured again.",
         "retired_plan_rows": "{count} run history rows of deleted cards stay where they are.",
+        "orphan_plan_rows": "{count} pending steps belong to no card of the plan; applying with a workflow change deletes them.",
+        "order_conflicts_started": "{count} started cards must lead the plan in the order they started.",
+        "started_card_removed": "{count} started cards were removed from the plan.",
+        "card_identity_mismatch": "{count} started cards no longer have the type of the step that ran.",
+        "foreign_rows_interleaved": "{count} other steps sit between this plan's steps; sort them out in the pour dialog.",
+        "plan_order_violation": "The saved rows did not follow the plan's card order, so the save was rolled back.",
     },
     "ja": {
         "workflow_not_decided": "このグループのワークフローはまだ決定されていません。",
@@ -97,7 +122,7 @@ _COPY = {
         "steps_already_done": "開始済みまたは完了済みの{count}段階は変更しません。",
         "done_rows_skipped": "開始済みまたは完了済みの{count}段階は順番の計算から除外しました。",
         "type_not_placeable": "ワークフローに配置できない計画段階が{count}件あります。",
-        "order_differs": "計画とワークフローの順序が異なるため、ワークフローを優先します。",
+        "order_differs": "計画とワークフローの順序が異なります。ワークフローを変更して適用すると計画の順序に並べ直します。",
         "provider_unset": "プロバイダー未指定の{count}段階はデフォルトを使用します。",
         "provider_not_registered": "利用できないプロバイダーの段階が{count}件あります。",
         "provider_renamed": "計画作成後にプロバイダー名が変わった段階が{count}件あります。",
@@ -109,6 +134,12 @@ _COPY = {
         "unmatched_plan_steps": "ワークフローを変更しないため、対応先のない段階が{count}件あります。",
         "legacy_card_unresolved": "どのカードの実行か確認できない開始済み段階が{count}件あります。確認すると以前の実行履歴として分離され、該当カードは再度投入される場合があります。",
         "retired_plan_rows": "削除された以前のカードの実行履歴{count}件はその位置のまま残します。",
+        "orphan_plan_rows": "計画にないカードの待機段階が{count}件あります。ワークフローを変更して適用すると削除されます。",
+        "order_conflicts_started": "開始済みのカード{count}件は計画の先頭に開始した順で置く必要があります。",
+        "started_card_removed": "開始済みのカード{count}件が計画から外れました。",
+        "card_identity_mismatch": "開始済みのカード{count}件の種類が実行された段階と異なります。",
+        "foreign_rows_interleaved": "この計画の段階の間に他の段階が{count}件あります。投入編集画面で整理してください。",
+        "plan_order_violation": "保存結果が計画のカード順序と異なるため元に戻しました。",
     },
 }
 
@@ -465,7 +496,9 @@ def build_warnings(*, plan_steps: list[dict], step_map: list[dict], provider_reg
                    order_differs_keys: list[str], wp_review_status: Optional[str],
                    unmatched_keys: list[str], skipped_done_item_seqs: list[int] = (),
                    locale: str = "ko", card_classification: Optional[dict] = None,
-                   legacy_acknowledged: bool = False) -> list[dict]:
+                   legacy_acknowledged: bool = False, order_blocker: Optional[dict] = None,
+                   orphan_rows: Optional[list] = None,
+                   interleaved_rows: Optional[list] = None) -> list[dict]:
     registry, result = _registry(provider_registry), []
     if not sequence_decided:
         result.append(_warning("workflow_not_decided", locale))
@@ -544,7 +577,34 @@ def build_warnings(*, plan_steps: list[dict], step_map: list[dict], provider_reg
             item_seqs=[row.get("item_seq") for row in retired],
             detail={"rows": retired},
         ))
+    # 0649 T#2 (NR0003 O2-O4).
+    if orphan_rows:
+        result.append(_warning(
+            "orphan_plan_rows", locale,
+            item_seqs=[row.get("item_seq") for row in orphan_rows],
+            detail={"rows": [_row_view(row) for row in orphan_rows]},
+        ))
+    if order_blocker:
+        cards = order_blocker.get("cards") or []
+        result.append(_warning(
+            order_blocker["code"], locale, keys=[card.get("key") or card.get("card_id") for card in cards],
+            detail={key: value for key, value in order_blocker.items() if key != "code"},
+        ))
+    if interleaved_rows:
+        result.append(_warning(
+            "foreign_rows_interleaved", locale,
+            item_seqs=[row.get("item_seq") for row in interleaved_rows],
+            detail={"rows": [_row_view(row) for row in interleaved_rows]},
+        ))
     return result
+
+
+def _row_view(row: dict) -> dict:
+    return {
+        "item_id": row.get("id"), "item_seq": row.get("item_seq"),
+        "type": str(row.get("type") or "").upper(), "label": row.get("label") or "",
+        "source_wp_card_id": row.get("source_wp_card_id"),
+    }
 
 
 def _label(code: str, locale: str) -> str:
@@ -678,6 +738,276 @@ def _preview_apply_blocker(*, sequence_decided: bool, target_seq: Optional[int],
     return None
 
 
+# ── 0649 T#2 (NR0003 O2-O4) — card mode ─────────────────────────────────────
+# Once this plan has rows in the sequence, a plan step is matched to the row that serves
+# its card (``source_wp_card_id``, classified by work_plan_card_identity for legacy rows),
+# never to "the N-th row of type X". Keep projects onto those rows and refuses an order
+# other than the plan's; change rewrites the plan's unprotected rows in card order through
+# edit_workflow_pending. A plan that never poured keeps the positional rules above.
+
+def _card_mode(doc: dict, items: list[dict]) -> bool:
+    wp_doc_id = str(doc.get("doc_id") or "")
+    return any(
+        str(item.get("source_doc_id") or "") == wp_doc_id and item.get("id") is not None
+        for item in items or []
+    )
+
+
+def _map_entry(step: dict, row: Optional[dict], *, card_id: Optional[str]) -> dict:
+    code = str(step.get("type") or "").upper()
+    return {
+        "key": step.get("key"), "card_id": card_id, "type": code,
+        "ordinal": _int(step.get("ordinal")),
+        "matched": row is not None,
+        "item_seq": _int(row.get("item_seq")) if row else None,
+        "status": _progress(row) if row else "unmatched",
+        **({"label": row.get("label") or ""} if row else {}),
+    }
+
+
+def build_card_step_map(plan_steps: Iterable[dict], rows_by_card: dict[str, dict]) -> list[dict]:
+    """Plan step -> the row serving its card: ``rows_by_card[card] = {"row", "report"}``."""
+    result = []
+    for step in plan_steps or []:
+        card_id = step.get("card_id")
+        placed = rows_by_card.get(card_id) or {}
+        row = placed.get("report") if step.get("pair_role") == "result" else placed.get("row")
+        result.append(_map_entry(step, row, card_id=card_id))
+    return result
+
+
+def _current_rows_by_card(items: list[dict], layout: dict, classification: Optional[dict]) -> dict:
+    from modules.flow_gate.services import work_plan_card_order as _order
+
+    placed = dict(_order.started_card_rows(items, classification))
+    for card_id, picked in (layout.get("cards") or {}).items():
+        placed[card_id] = {"row": picked.get("row"), "report": picked.get("report")}
+    return placed
+
+
+def _rewrite_rows(doc: dict, current: list[dict], layout: dict, locale: str,
+                  current_revision: int) -> list[dict]:
+    """The rows a change-apply writes after the protected rows, with their future item_seq.
+
+    edit_workflow_pending numbers a payload ``max(item_seq) + 1 + index`` and places it after
+    the last protected row, so the numbers are known before the write: the projection runs
+    on these virtual rows and the payload carries its result.
+    """
+    protected = protected_row_ids(current)
+    next_seq = max((_int(x.get("item_seq")) for x in current), default=0)
+    sort_base = max(
+        (_int(x.get("sort_order")) for x in current if x.get("id") in protected), default=-1,
+    ) + 1
+    rows: list[dict] = []
+
+    def add(row: dict) -> None:
+        nonlocal next_seq
+        next_seq += 1
+        row.update({"item_seq": next_seq, "sort_order": sort_base + len(rows),
+                    "status": "pending", "result_doc_id": None})
+        rows.append(row)
+
+    for entry in layout.get("entries") or []:
+        if entry["kind"] == "foreign":
+            stored = entry["row"]
+            add({**{k: v for k, v in stored.items() if k not in ("item_seq", "sort_order")},
+                 "kind": "foreign", "from_item_seq": _int(stored.get("item_seq"))})
+            continue
+        card = entry["card"]
+        existing, report = entry.get("row"), entry.get("report")
+        code = card["type"]
+        add({
+            "kind": "card", "role": "instruction", "card_id": card["card_id"],
+            "plan_key": card["key"], "type": code,
+            "label": (existing or {}).get("label") or _label(code, locale),
+            "id": (existing or {}).get("id"), "from_item_seq": _int((existing or {}).get("item_seq")) if existing else None,
+            "source_doc_id": doc.get("doc_id"), "source_revision_no": current_revision,
+            "source_wp_card_id": card["card_id"],
+        })
+        report_code = AUTO_REPORT_MAP.get(code)
+        if report_code:
+            result_step = card.get("result_step") or {}
+            add({
+                "kind": "card", "role": "result", "card_id": card["card_id"],
+                "plan_key": result_step.get("key") or f"{report_code}#{_int(card['step'].get('ordinal'))}",
+                "type": report_code,
+                "label": (report or {}).get("label") or _label(report_code, locale),
+                "id": (report or {}).get("id"), "from_item_seq": _int((report or {}).get("item_seq")) if report else None,
+                "source_doc_id": doc.get("doc_id"), "source_revision_no": current_revision,
+                "source_wp_card_id": card["card_id"],
+            })
+    return rows
+
+
+def _change_rows_by_card(current: list[dict], rewrite: list[dict],
+                         layout: dict, classification: Optional[dict]) -> dict:
+    from modules.flow_gate.services import work_plan_card_order as _order
+
+    placed = dict(_order.started_card_rows(current, classification))
+    for row in rewrite:
+        if row.get("kind") != "card":
+            continue
+        slot = placed.setdefault(row["card_id"], {"row": None, "report": None})
+        slot["row" if row["role"] == "instruction" else "report"] = row
+    return placed
+
+
+def _card_plan_state(doc: dict, plan: dict, current: list[dict], classification: Optional[dict],
+                     locale: str, current_revision: int) -> dict:
+    """Everything keep and change need to decide and to show, computed once."""
+    from modules.flow_gate.services import work_plan_card_order as _order
+
+    wp_doc_id = str(doc.get("doc_id") or "")
+    layout = _order.reorder_layout(plan, current, wp_doc_id, classification)
+    order_blocker = _order.check_started_prefix(plan, classification, current)
+    rewrite = _rewrite_rows(doc, current, layout, locale, current_revision)
+    protected = protected_row_ids(current)
+    projected = [dict(x) for x in current if x.get("id") in protected] + [
+        {**row, "id": None} for row in rewrite
+    ]
+    added = [
+        {
+            "item_seq": row["item_seq"], "type": row["type"], "label": row["label"],
+            "status": "pending", "sort_order": row["sort_order"], "result_doc_id": None,
+            "plan_key": row["plan_key"], "position": row["item_seq"],
+            "source_wp_card_id": row["card_id"],
+        }
+        for row in rewrite if row.get("kind") == "card" and row.get("id") is None
+    ]
+    moved = [
+        row for row in rewrite
+        if row.get("kind") == "card" and row.get("role") == "instruction" and row.get("id") is not None
+    ]
+    before_rank = {
+        row["id"]: rank for rank, row in enumerate(
+            sorted(moved, key=lambda r: _int(r.get("from_item_seq")))
+        )
+    }
+    reordered = [
+        {"card_id": row["card_id"], "plan_key": row["plan_key"],
+         "position_before": row.get("from_item_seq"), "position_after": row["item_seq"]}
+        for rank, row in enumerate(moved) if before_rank.get(row["id"]) != rank
+    ]
+    return {
+        "layout": layout, "order_blocker": order_blocker, "rewrite": rewrite,
+        "projected": projected, "added": added, "reordered": reordered,
+        "removed": layout.get("removed") or [],
+        "structural": bool(added or reordered or layout.get("removed")),
+        "keep_rows": _current_rows_by_card(current, layout, classification),
+        "change_rows": _change_rows_by_card(current, rewrite, layout, classification),
+    }
+
+
+def _card_blockers(state: dict, legacy_blocker: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """(keep, change) refusals that come from the card order itself (O2-O4)."""
+    order_code = (state.get("order_blocker") or {}).get("code")
+    layout = state["layout"]
+    keep = (
+        legacy_blocker or order_code
+        or ("order_differs" if layout.get("order_differs") else None)
+        or ("orphan_plan_rows" if layout.get("removed") else None)
+    )
+    change = (
+        legacy_blocker or order_code
+        or ("foreign_rows_interleaved" if layout.get("interleaved") else None)
+    )
+    return keep, change
+
+
+def _started_prefix_blocker(state: dict) -> Optional[str]:
+    return (state.get("order_blocker") or {}).get("code")
+
+
+def _card_apply_blockers(state: dict, steps: list[dict], current: list[dict], mode: str,
+                         providers: Any, legacy_blocker: Optional[str]) -> dict:
+    """(keep, change) refusals of a card-mode apply, with the maps they were judged on.
+
+    The preview shows and the apply enforces this one answer, so an apply never succeeds
+    where its preview said it could not (no target, nothing to fill, plan steps left
+    without a row, or the card-order refusals).
+    """
+    keep_map = build_card_step_map(steps, state["keep_rows"])
+    keep_projection = project(steps, keep_map, current, mode, providers, work_plan_backed=True)
+    keep_target = suggest_target_seq(steps, keep_map, keep_projection["folded"], providers)
+    change_map = build_card_step_map(steps, state["change_rows"])
+    projection = project(steps, change_map, state["projected"], mode, providers, work_plan_backed=True)
+    target_seq = suggest_target_seq(steps, change_map, projection["folded"], providers)
+    # The acknowledgement comes first: until it is given the unresolved rows are what every
+    # other answer below would be about.
+    # A started card the plan moved or removed outranks everything after it too: no fill
+    # value or row count changes that answer.
+    card_keep, card_change = _card_blockers(state, None)
+    keep = legacy_blocker or _started_prefix_blocker(state) or _preview_apply_blocker(
+        sequence_decided=True, target_seq=keep_target, projection=keep_projection,
+        has_unmatched_steps=bool(state["added"]),
+    ) or card_keep
+    base_change = _preview_apply_blocker(
+        sequence_decided=True, target_seq=target_seq, projection=projection,
+        has_unmatched_steps=False,
+    )
+    # Reordering, adding or removing rows is itself what a change-apply is for, so "nothing
+    # to fill" does not stop it then.
+    if base_change in {"nothing_to_fill", "no_target"} and state["structural"]:
+        base_change = None
+    change = legacy_blocker or _started_prefix_blocker(state) or base_change or card_change
+    return {
+        "keep": keep, "change": change, "keep_map": keep_map, "change_map": change_map,
+        "projection": projection, "target_seq": target_seq,
+    }
+
+
+def _card_comparison(current: list[dict], state: dict) -> dict:
+    return {
+        "kept": {"count": len(current), "done_count": sum(_progress(x) != "pending" for x in current)},
+        "added": {"count": len(state["added"]), "items": [{
+            "position": x.get("position"), "type": x.get("type"),
+            "label": x.get("label"), "plan_key": x.get("plan_key"),
+            "card_id": x.get("source_wp_card_id"),
+        } for x in state["added"]]},
+        "not_deleted": {"count": 0, "items": []},
+        "reordered": {"count": len(state["reordered"]), "items": state["reordered"]},
+        "removed": {"count": len(state["removed"]), "items": [_row_view(r) for r in state["removed"]]},
+    }
+
+
+def _payload_item(row: dict, projection: dict, provider_registry: dict) -> dict:
+    """One edit_workflow_pending item for a rewritten row (O3)."""
+    if row.get("kind") == "foreign":
+        item = {
+            key: row.get(key) for key in (
+                "type", "label", "note", "source_doc_id", "source_revision_no",
+                "provider_id", "provider_display_name", "review_count",
+                "reviewer_provider_id", "reviewer_provider_display_name",
+                "pre_instruction_text", "source_wp_card_id",
+            )
+        }
+        item["item_id"] = row.get("id")
+        item["review_count"] = _int(item.get("review_count"))
+        return item
+    key = str(row["item_seq"])
+    provider_id = projection["provider_overrides"].get(key)
+    provider = provider_registry.get(str(provider_id)) if provider_id else None
+    item = {
+        "type": row["type"], "label": row["label"],
+        "note": projection["note_overrides"].get(key, ""),
+        "source_doc_id": row["source_doc_id"], "source_revision_no": row["source_revision_no"],
+        "provider_id": provider_id,
+        "provider_display_name": (
+            str(provider.get("display_name") or provider.get("name") or provider_id)
+            if provider is not None else None
+        ),
+        "review_count": projection["review_count_overrides"].get(key, 0),
+        "reviewer_provider_id": projection["reviewer_overrides"].get(key),
+        "reviewer_provider_display_name": projection["reviewer_display_names"].get(key),
+        "pre_instruction_text": projection["pre_instruction_texts"].get(key),
+        "pre_instruction_attachment": projection["pre_instruction_attachments"].get(key),
+        "source_wp_card_id": row["card_id"],
+    }
+    if row.get("id") is not None:
+        item["item_id"] = row["id"]
+    return item
+
+
 def preview(*, doc: dict, plan: dict, providers: Any,
             instruction_mode: str, locale: str = "ko",
             acknowledged_codes: Optional[Iterable[str]] = None) -> dict:
@@ -690,6 +1020,12 @@ def preview(*, doc: dict, plan: dict, providers: Any,
     legacy_acknowledged = _legacy_acknowledged(acknowledged_codes)
     # 0649 T#1 (NR0003 O0): both apply modes wait for the person's confirmation.
     legacy_blocker = "legacy_card_unresolved" if unresolved and not legacy_acknowledged else None
+    if sequence is not None and _card_mode(doc, current):
+        return _card_preview(
+            doc=doc, plan=plan, providers=providers, mode=mode, locale=locale,
+            sequence=sequence, current=current, card_classification=card_classification,
+            legacy_blocker=legacy_blocker, legacy_acknowledged=legacy_acknowledged,
+        )
     added, unplaceable = _missing_items(steps, current, locale, doc.get("doc_id"))
     current_mapping = build_step_map(steps, current, doc.get("doc_id"))
     current_projection = project(steps, current_mapping, current, mode, providers, work_plan_backed=True)
@@ -761,6 +1097,324 @@ def preview(*, doc: dict, plan: dict, providers: Any,
     }
 
 
+def _card_preview(*, doc: dict, plan: dict, providers: Any, mode: str, locale: str,
+                  sequence: dict, current: list[dict], card_classification: Optional[dict],
+                  legacy_blocker: Optional[str], legacy_acknowledged: bool) -> dict:
+    """preview() once this plan has rows in the sequence (0649 T#2, NR0003 O2-O4)."""
+    steps = list(plan.get("steps") or [])
+    revision = _int(doc.get("revision_no"))
+    state = _card_plan_state(doc, plan, current, card_classification, locale, revision)
+    unplaceable = [
+        str(step.get("key") or "") for step in steps
+        if str(step.get("type") or "").upper() not in WORK_PLAN_STEP_TYPES
+    ]
+    checked = _card_apply_blockers(state, steps, current, mode, providers, legacy_blocker)
+    keep_map, change_map = checked["keep_map"], checked["change_map"]
+    projection, target_seq = checked["projection"], checked["target_seq"]
+    keep_blocker, change_blocker = checked["keep"], checked["change"]
+    after = {
+        row.get("plan_key"): row["item_seq"]
+        for row in state["rewrite"] if row.get("kind") == "card"
+    }
+    preview_map = []
+    for row in keep_map:
+        view = {**row, "position_after_apply": row.get("item_seq")}
+        if row.get("status") in (None, "pending", "unmatched") and row.get("key") in after:
+            view["position_after_apply"] = after[row["key"]]
+        if not row.get("matched") and row.get("key") in after:
+            view["status"] = "to_be_added"
+        preview_map.append(view)
+    warnings = build_warnings(
+        plan_steps=steps, step_map=keep_map, provider_registry=providers,
+        projection=projection, sequence_decided=True, added=state["added"],
+        extra_item_seqs=[], unplaceable_keys=unplaceable,
+        order_differs_keys=state["layout"].get("order_differs_keys") or [],
+        wp_review_status=doc.get("doc_review_status"), unmatched_keys=[],
+        locale=locale, card_classification=card_classification,
+        legacy_acknowledged=legacy_acknowledged, order_blocker=state["order_blocker"],
+        orphan_rows=state["removed"], interleaved_rows=state["layout"].get("interleaved"),
+    )
+    target = next((x for x in state["projected"] if x.get("item_seq") == target_seq), None)
+    unresolved = (card_classification or {}).get("unresolved_started") or []
+    return {
+        "ok": True, "wp_doc_id": doc.get("doc_id"),
+        "wp_revision_no": revision,
+        "wp_review_status": doc.get("doc_review_status"), "instruction_mode": mode,
+        "workflow": {
+            "owner_doc_id": doc.get("target_id") or doc.get("triggered_by"),
+            "sequence_id": sequence.get("id"),
+            "decided": True, "workflow_tag": build_workflow_tag(sequence, current),
+            "current_items": current,
+        },
+        "comparison": _card_comparison(current, state), "step_map": preview_map,
+        "fill_preview": {
+            "target_seq": target_seq,
+            "target_key": next((x.get("key") for x in change_map if x.get("item_seq") == target_seq), None),
+            "target_label": (target or {}).get("label"), **projection,
+            "default_note": str((plan.get("defaults") or {}).get("note") or "").strip(),
+        },
+        "warnings": warnings,
+        "can_apply": change_blocker is None,
+        "can_apply_without_workflow": keep_blocker is None,
+        "can_apply_with_workflow": change_blocker is None,
+        "can_change_workflow": True,
+        "apply_blockers": {"keep_workflow": keep_blocker, "change_workflow": change_blocker},
+        "acknowledgement_required": ["legacy_card_unresolved"] if unresolved else [],
+        "started_card_ids": list((card_classification or {}).get("started_card_ids") or []),
+    }
+
+
+def _apply_conflict_from(exc: Exception, doc: dict) -> Optional[ApplyConflict]:
+    """The 409 a change-apply answers when the shared sequence save refuses."""
+    from modules.flow_gate.services import work_plan_card_identity as _cards
+    from modules.flow_gate.services import work_plan_card_order as _order
+    from modules.flow_gate.services.workflow_decision_service import SequenceChanged
+
+    if isinstance(exc, SequenceChanged):
+        return ApplyConflict("workflow_changed", {
+            "code": "workflow_changed", "sent_workflow_tag": exc.expected,
+            "current_workflow_tag": exc.current,
+        })
+    if isinstance(exc, _order.PlanOrderBlocked):
+        return ApplyConflict(exc.code, {**exc.detail, "code": exc.code, "wp_doc_id": doc.get("doc_id")})
+    if isinstance(exc, _order.PlanOrderViolation):
+        return ApplyConflict("plan_order_violation", {
+            "code": "plan_order_violation", "wp_doc_id": doc.get("doc_id"), "detail": exc.detail,
+        })
+    if isinstance(exc, _cards.LegacyCardUnresolved):
+        return ApplyConflict("legacy_card_unresolved", {
+            "code": "legacy_card_unresolved", "wp_doc_id": doc.get("doc_id"),
+            "rows": exc.rows, "acknowledge_code": "legacy_card_unresolved",
+        })
+    return None
+
+
+def _card_apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers: Any,
+                mode: str, change_workflow: bool, applied_by: str, locale: str,
+                acknowledged_codes: Optional[Iterable[str]], sequence: dict, current: list[dict],
+                before_tag: str, current_revision: int, card_classification: Optional[dict],
+                legacy_acknowledged: bool) -> dict:
+    """apply() once this plan has rows in the sequence (0649 T#2, NR0003 O2-O4).
+
+    keep: refused while the plan's rows are out of card order or a row serves no card (O4);
+    otherwise the projection lands on the rows that serve each card, which also record it.
+    change: the plan's unprotected rows are rewritten in card order — cards that have a row
+    reuse it, new cards get one at their plan position, orphans go — through the shared
+    sequence save (protected rows stay, workflow tag CAS, post-write card-order check,
+    AC archive, wf_done reopen). A started card the plan moved or removed refuses both.
+    """
+    from modules.flow_gate.services import work_plan_card_identity as _cards
+    from modules.flow_gate.services import work_plan_card_order as _order
+
+    owner_id = owner_doc.get("doc_id")
+    steps = list(plan.get("steps") or [])
+    state = _card_plan_state(doc, plan, current, card_classification, locale, current_revision)
+    # The same refusals the preview shows (the unresolved legacy rows were refused or
+    # acknowledged by the caller).
+    checked = _card_apply_blockers(state, steps, current, mode, providers, None)
+    blocker = checked["change"] if change_workflow else checked["keep"]
+    if blocker:
+        order_blocker = state.get("order_blocker") or {}
+        detail: dict = {"code": blocker, "wp_doc_id": doc.get("doc_id")}
+        if blocker == order_blocker.get("code"):
+            detail.update({k: v for k, v in order_blocker.items() if k != "code"})
+        elif blocker == "order_differs":
+            detail["keys"] = state["layout"].get("order_differs_keys") or []
+        elif blocker == "orphan_plan_rows":
+            detail["rows"] = [_row_view(row) for row in state["removed"]]
+        elif blocker == "foreign_rows_interleaved":
+            detail["rows"] = [_row_view(row) for row in state["layout"].get("interleaved") or []]
+        elif blocker == "unmatched_plan_steps":
+            detail["keys"] = [str(row.get("key")) for row in checked["keep_map"] if not row.get("matched")]
+        raise ApplyConflict(blocker, detail)
+
+    provider_registry = _registry(providers)
+    backfilled: list = []
+    added: list[dict] = []
+    if change_workflow:
+        mapping = build_card_step_map(steps, state["change_rows"])
+        projection = project(steps, mapping, state["projected"], mode, providers, work_plan_backed=True)
+        payload = [_payload_item(row, projection, provider_registry) for row in state["rewrite"]]
+        # A protected report row (right after a started instruction) is not rewritten; it
+        # takes the projected settings in place, as the echo of its own row id.
+        protected = protected_row_ids(current)
+        for row in current:
+            key = str(_int(row.get("item_seq")))
+            if row.get("id") not in protected or is_started_row(row):
+                continue
+            if _int(row.get("item_seq")) not in set(projection["execution_item_seqs"]):
+                continue
+            provider_id = projection["provider_overrides"].get(key)
+            provider = provider_registry.get(str(provider_id)) if provider_id else None
+            payload.append({
+                "item_id": row["id"], "type": row.get("type"), "label": row.get("label") or "",
+                "note": projection["note_overrides"].get(key, ""),
+                "provider_id": provider_id,
+                "provider_display_name": (
+                    str(provider.get("display_name") or provider.get("name") or provider_id)
+                    if provider is not None else None
+                ),
+                "review_count": projection["review_count_overrides"].get(key, 0),
+                "reviewer_provider_id": projection["reviewer_overrides"].get(key),
+                "reviewer_provider_display_name": projection["reviewer_display_names"].get(key),
+            })
+        from modules.flow_gate.services.workflow_decision_service import edit_workflow_pending
+
+        try:
+            with get_store().transaction():
+                if card_classification is not None:
+                    backfilled = _cards.record_backfill(
+                        sequence["id"], card_classification,
+                        wp_doc_id=str(doc.get("doc_id") or ""),
+                        acknowledged_codes=acknowledged_codes,
+                    )
+                edit_workflow_pending(
+                    owner_id, payload,
+                    expected_workflow_tag=before_tag,
+                    expected_plan={
+                        "wp_doc_id": doc.get("doc_id"), "wp_revision_no": current_revision,
+                        "mode": "apply_change",
+                    },
+                    applied_by=applied_by, locale=locale,
+                    acknowledged_codes=acknowledged_codes,
+                    record_application=False,
+                )
+        except Exception as exc:  # noqa: BLE001 — translated or re-raised as is
+            conflict = _apply_conflict_from(exc, doc)
+            if conflict is None:
+                raise
+            raise conflict from exc
+        added = state["added"]
+        sequence, current = _sequence(owner_id)
+        # The run-to-end target of a live continuous run follows the new item_seq values.
+        try:
+            from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+
+            _ai_invoke.rebase_active_to_end(owner_doc.get("group_id"), owner_id)
+        except Exception:  # noqa: BLE001 — best effort, like the approval expansion
+            pass
+        classification_after = _classify_cards(doc, plan, current)
+        layout_after = _order.reorder_layout(plan, current, str(doc.get("doc_id") or ""), classification_after)
+        mapping = build_card_step_map(steps, _current_rows_by_card(current, layout_after, classification_after))
+        projection = project(steps, mapping, current, mode, providers, work_plan_backed=True)
+    else:
+        mapping = build_card_step_map(steps, state["keep_rows"])
+        projection = project(steps, mapping, current, mode, providers, work_plan_backed=True)
+        card_of_seq = {
+            _int(row.get("item_seq")): row.get("card_id") for row in mapping if row.get("matched")
+        }
+        snapshot_seqs = (
+            set(projection["execution_item_seqs"])
+            | {int(value) for value in projection["provider_overrides"]}
+            | {int(value) for value in projection["note_overrides"]}
+        )
+        protected_ids = protected_row_ids(current)
+        with get_store().transaction():
+            if card_classification is not None:
+                backfilled = _cards.record_backfill(
+                    sequence["id"], card_classification,
+                    wp_doc_id=str(doc.get("doc_id") or ""),
+                    acknowledged_codes=acknowledged_codes,
+                )
+            for item in current:
+                item_seq = _int(item.get("item_seq"))
+                if item_seq not in snapshot_seqs or _progress(item) != "pending":
+                    continue
+                key = str(item_seq)
+                provider_id = projection["provider_overrides"].get(key)
+                provider = provider_registry.get(str(provider_id)) if provider_id else None
+                provider_display_name = (
+                    str(provider.get("display_name") or provider.get("name") or provider_id)
+                    if provider is not None else None
+                )
+                if item.get("id") in protected_ids:
+                    db_wfseq.update_sequence_item_echo_settings(
+                        item["id"], sequence["id"],
+                        note=projection["note_overrides"].get(key, ""),
+                        provider_id=provider_id,
+                        provider_display_name=provider_display_name,
+                        review_count=projection["review_count_overrides"].get(key, 0),
+                        reviewer_provider_id=projection["reviewer_overrides"].get(key),
+                        reviewer_provider_display_name=projection["reviewer_display_names"].get(key),
+                    )
+                    continue
+                db_wfseq.update_sequence_item_plan_snapshot(
+                    item["id"],
+                    note=projection["note_overrides"].get(key, ""),
+                    source_doc_id=doc.get("doc_id"),
+                    source_revision_no=current_revision,
+                    provider_id=provider_id,
+                    provider_display_name=provider_display_name,
+                    review_count=projection["review_count_overrides"].get(key, 0),
+                    reviewer_provider_id=projection["reviewer_overrides"].get(key),
+                    reviewer_provider_display_name=projection["reviewer_display_names"].get(key),
+                    pre_instruction_text=projection["pre_instruction_texts"].get(key),
+                    pre_instruction_attachment=projection["pre_instruction_attachments"].get(key),
+                    source_wp_card_id=card_of_seq.get(item_seq),
+                )
+        sequence, current = _sequence(owner_id)
+
+    target_seq = suggest_target_seq(steps, mapping, projection["folded"], providers)
+    unmatched = [str(x.get("key")) for x in mapping if not x.get("matched")] if not change_workflow else []
+    unplaceable = [
+        str(step.get("key") or "") for step in steps
+        if str(step.get("type") or "").upper() not in WORK_PLAN_STEP_TYPES
+    ]
+    warnings = build_warnings(
+        plan_steps=steps, step_map=mapping, provider_registry=providers,
+        projection=projection, sequence_decided=True, added=added,
+        extra_item_seqs=[], unplaceable_keys=unplaceable,
+        order_differs_keys=[], wp_review_status=doc.get("doc_review_status"),
+        unmatched_keys=unmatched, locale=locale, card_classification=card_classification,
+        legacy_acknowledged=legacy_acknowledged,
+    )
+    after_tag = build_workflow_tag(sequence, current)
+    target = next((x for x in current if _int(x.get("item_seq")) == target_seq), {})
+    applied_at = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    workflow_changed = after_tag != before_tag and change_workflow
+    fill = {
+        "source_doc_id": doc.get("doc_id"), "source_revision_no": current_revision,
+        "instruction_mode": mode, "target_seq": target_seq,
+        "target_type": target.get("type"), "target_label": target.get("label"),
+        "provider_overrides": projection["provider_overrides"],
+        "note_overrides": projection["note_overrides"],
+        "review_count_overrides": projection["review_count_overrides"],
+        "reviewer_overrides": projection["reviewer_overrides"],
+        "reviewer_display_names": projection["reviewer_display_names"],
+        "pre_instruction_texts": projection["pre_instruction_texts"],
+        "pre_instruction_attachments": projection["pre_instruction_attachments"],
+        "execution_item_seqs": projection["execution_item_seqs"],
+        "default_note": str((plan.get("defaults") or {}).get("note") or "").strip(),
+        "filled_item_seqs": projection["filled_item_seqs"],
+        "folded": projection["folded"], "unfilled": projection["unfilled"],
+    }
+    history = {
+        "applied_at": applied_at, "applied_by": applied_by,
+        "wp_revision_no": current_revision, "instruction_mode": mode,
+        "workflow_changed": workflow_changed, "workflow_tag_before": before_tag,
+        "workflow_tag_after": after_tag,
+        "added_item_seqs": [_int(x.get("item_seq")) for x in added],
+        "filled_item_seqs": projection["filled_item_seqs"], "target_seq": target_seq,
+        "warning_codes": [x["code"] for x in warnings],
+    }
+    if change_workflow:
+        history["reordered"] = state["reordered"]
+        history["removed_item_seqs"] = [_int(row.get("item_seq")) for row in state["removed"]]
+    if backfilled:
+        history["card_backfill"] = [[item_id, value] for item_id, value in backfilled]
+    append_application(plan_path, str(doc.get("doc_id")), history)
+    return {
+        "ok": True, "applied_at": applied_at, "applied_by": applied_by,
+        "wp_doc_id": doc.get("doc_id"), "wp_revision_no": current_revision,
+        "workflow_changed": workflow_changed,
+        "workflow": {"owner_doc_id": owner_id, "sequence_id": sequence.get("id") if sequence else None},
+        "workflow_tag": after_tag, "added_items": added, "step_map": mapping,
+        "fill": fill, "warnings": warnings,
+        "reordered": state["reordered"] if change_workflow else [],
+        "removed_items": [_row_view(row) for row in state["removed"]] if change_workflow else [],
+    }
+
+
 def _applications_path(plan_path: Path, doc_id: str) -> Path:
     return Path(plan_path).with_name(f"{str(doc_id).rsplit('.', 1)[-1]}_applications.jsonl")
 
@@ -828,6 +1482,14 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
             "rows": unresolved, "acknowledge_code": "legacy_card_unresolved",
         })
     steps = list(plan.get("steps") or [])
+    if sequence is not None and _card_mode(doc, current):
+        return _card_apply(
+            doc=doc, owner_doc=owner_doc, plan=plan, plan_path=plan_path, providers=providers,
+            mode=mode, change_workflow=change_workflow, applied_by=applied_by, locale=locale,
+            acknowledged_codes=acknowledged_codes, sequence=sequence, current=current,
+            before_tag=before_tag, current_revision=current_revision,
+            card_classification=card_classification, legacy_acknowledged=legacy_acknowledged,
+        )
     proposed, unplaceable = _missing_items(steps, current, locale, doc.get("doc_id"))
     if change_workflow:
         for item in proposed:
@@ -837,6 +1499,12 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
     mapping = build_step_map(steps, projected_items, doc.get("doc_id"))
     projection = project(steps, mapping, projected_items, mode, providers, work_plan_backed=True)
     provider_registry = _registry(providers)
+    # 0649 T#2 (NR0003 O0): the card each mapped row now serves — recorded with the snapshot
+    # (a set's result step carries its instruction's card id).
+    card_of_seq = {
+        _int(row.get("item_seq")): step.get("card_id")
+        for step, row in zip(steps, mapping) if row.get("matched")
+    }
     added = []
     backfilled: list = []
     # One transaction for the whole reflection: the card-id backfill (and the acknowledged
@@ -938,6 +1606,7 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
                         reviewer_provider_display_name=projection["reviewer_display_names"].get(key),
                         pre_instruction_text=projection["pre_instruction_texts"].get(key),
                         pre_instruction_attachment=projection["pre_instruction_attachments"].get(key),
+                        source_wp_card_id=card_of_seq.get(item_seq),
                     )
             sequence, current = _sequence(owner_id)
     target_seq = suggest_target_seq(steps, mapping, projection["folded"], providers)

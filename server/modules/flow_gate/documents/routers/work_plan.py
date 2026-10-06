@@ -1391,8 +1391,16 @@ def _apply_sync(
                 for lang in ("ko", "en", "ja")
             },
         }
+        # 0649 T#2 (NR0003 O2-O5): the card-order refusals speak with the preview's own copy.
+        if exc.code not in copy and exc.code in wpa._COPY["ko"]:
+            count = len(
+                exc.payload.get("rows") or exc.payload.get("cards") or exc.payload.get("keys") or []
+            ) or 1
+            copy[exc.code] = {
+                lang: wpa._COPY[lang][exc.code].format(count=count) for lang in ("ko", "en", "ja")
+            }
         payload = dict(exc.payload)
-        payload["message"] = copy[exc.code].get(locale, copy[exc.code]["ko"])
+        payload["message"] = (copy.get(exc.code) or {}).get(locale) or (copy.get(exc.code) or {}).get("ko") or exc.code
         return JSONResponse(status_code=409, content=payload)
 
 

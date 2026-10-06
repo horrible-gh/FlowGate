@@ -209,7 +209,11 @@ FILE_LINE_CAPS: dict[str, int] = {
     # 15 -> 16: 0444 T0005 added the ko copy for the done_rows_skipped warning. _COPY is the
     # user-facing warning text, and the T doc requires all three locales, so the ko line is
     # product copy rather than a comment the census exists to catch.
-    "modules/flow_gate/services/work_plan_apply_service.py": 16,
+    # 16 -> 24: flowgate.default.0649 T#1 (legacy_card_unresolved, retired_plan_rows) and
+    # T#2 (orphan_plan_rows, order_conflicts_started, started_card_removed,
+    # card_identity_mismatch, foreign_rows_interleaved, plan_order_violation) added their ko
+    # _COPY lines — the same user-facing warning dictionary as above, ko/en/ja required.
+    "modules/flow_gate/services/work_plan_apply_service.py": 24,
     "modules/flow_gate/services/work_plan_service.py": 52,
     "modules/flow_gate/services/workflow_decision_service.py": 3,
     "modules/flow_gate/template_provision.py": 23,

@@ -30,6 +30,7 @@ from modules.flow_gate.services.auth_outbound import verify_bearer
 _log = route_logging.get_logger(__name__)
 from modules.flow_gate.services.work_plan_sequence_service import NoteTooLong
 from modules.flow_gate.services.work_plan_card_identity import LegacyCardUnresolved
+from modules.flow_gate.services.work_plan_card_order import PlanOrderBlocked, PlanOrderViolation
 from modules.flow_gate.services.workflow_decision_service import (
     SequenceChanged,
     decide_workflow,
@@ -1004,6 +1005,24 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
                 "acknowledge_code": "legacy_card_unresolved",
             },
         )
+    except PlanOrderBlocked as exc:
+        # 0649 T#2 (NR0003 O2/O5): order_conflicts_started / started_card_removed /
+        # card_identity_mismatch / plan_rows_pending. Refused before anything was written.
+        return JSONResponse(
+            status_code=409,
+            content={**exc.detail, "error": exc.code, "wp_doc_id": exc.wp_doc_id},
+        )
+    except PlanOrderViolation as exc:
+        # 0649 T#2 (NR0003 O5): the rows this save would write do not follow the plan's
+        # card order. The write was rolled back.
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "plan_order_violation",
+                "wp_doc_id": exc.wp_doc_id,
+                "detail": exc.detail,
+            },
+        )
     except PlanRevisionChanged as exc:
         # 0403 NR0004 F2: the workflow is unchanged but the plan moved. Rather than inserting the
         # open dialog's stale rows, answer by asking the user to reopen and pour the latest plan.
@@ -1067,6 +1086,11 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             return JSONResponse(
                 status_code=404,
                 content={"error": "plan_not_found", "wp_doc_id": msg.split(":", 1)[1]},
+            )
+        if msg.startswith("plan_unreadable:"):
+            return JSONResponse(
+                status_code=409,
+                content={"error": "plan_unreadable", "wp_doc_id": msg.split(":", 1)[1]},
             )
         if msg.startswith("invalid_expected_plan:"):
             return JSONResponse(

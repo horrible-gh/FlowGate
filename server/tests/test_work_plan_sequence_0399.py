@@ -202,7 +202,10 @@ def test_append_notifications_match_the_protocol(wired):
     out = wpseq.build_candidates(doc=WP_DOC, plan=PLAN, mode="append")
 
     # 0408 M0019 재반려 2: nothing is dropped any more — TR#1's note reached TR#1's row.
-    assert codes(out) == ["type_overlap", "note_missing"]
+    # 0649 T#2 (NR0003 O5): this plan has no pending rows of its own, so append is allowed
+    # and says that the rows already there run first.
+    assert codes(out) == ["type_overlap", "note_missing", "foreign_rows_before"]
+    assert out["blockers"] == []
     # A P row survived from before and a P#1 row came in — that is the overlap. TR is an
     # automatic row and never counts (L0011 §2.9).
     assert notification(out, "type_overlap")["types"] == ["P"]

@@ -75,6 +75,14 @@ _NOTIFICATION_ORDER = (
     # 0649 T#1 (NR0003 O0): legacy rows whose card is settled by the continuity check.
     "legacy_card_unresolved",
     "retired_plan_rows",
+    # 0649 T#2 (NR0003 O2/O5): started cards must lead the plan; an append may not keep
+    # this plan's earlier pending rows; started cards are not poured again.
+    "order_conflicts_started",
+    "started_card_removed",
+    "card_identity_mismatch",
+    "plan_rows_pending",
+    "steps_already_done",
+    "foreign_rows_before",
 )
 _SEVERITY = {
     "type_not_placeable": "warning",
@@ -88,7 +96,20 @@ _SEVERITY = {
     # Blocks the save until acknowledged (acknowledged_codes) — never silently resolved.
     "legacy_card_unresolved": "blocker",
     "retired_plan_rows": "info",
+    # 0649 T#2: the first four block the save outright (the server answers 409 too).
+    "order_conflicts_started": "blocker",
+    "started_card_removed": "blocker",
+    "card_identity_mismatch": "blocker",
+    "plan_rows_pending": "blocker",
+    "steps_already_done": "info",
+    "foreign_rows_before": "info",
 }
+
+# 0649 T#2 (NR0003 O2/O5): blockers no acknowledgement can lift.
+BLOCKING_CODES = frozenset({
+    "order_conflicts_started", "started_card_removed", "card_identity_mismatch",
+    "plan_rows_pending",
+})
 
 
 class InvalidMode(ValueError):
@@ -720,8 +741,15 @@ def build_notifications(
     dropped: list[dict],
     truncated_count: int,
     card_classification: Optional[dict] = None,
+    order_blocker: Optional[dict] = None,
+    plan_rows_pending: Optional[list] = None,
+    already_done: Optional[list] = None,
+    foreign_before: int = 0,
 ) -> list[dict]:
-    """Everything the person should know before saving. None of it blocks the save.
+    """Everything the person should know before saving.
+
+    0649 T#2: the codes in :data:`BLOCKING_CODES` (and ``legacy_card_unresolved`` until it
+    is acknowledged) block the save; everything else is information.
 
     ``note_missing`` is recomputed here every time rather than carried along, because the
     person may have filled a note in since the last time it was asked (L0011 §2.10).
@@ -794,6 +822,25 @@ def build_notifications(
     if retired:
         found["retired_plan_rows"] = _envelope("retired_plan_rows", len(retired), items=retired)
 
+    # 0649 T#2 (NR0003 O2): the started cards (current key and id) that the plan breaks.
+    if order_blocker:
+        cards = order_blocker.get("cards") or []
+        found[order_blocker["code"]] = _envelope(
+            order_blocker["code"], len(cards), cards=cards,
+            **({"plan_head": order_blocker["plan_head"]} if "plan_head" in order_blocker else {}),
+        )
+    if plan_rows_pending:
+        found["plan_rows_pending"] = _envelope(
+            "plan_rows_pending", len(plan_rows_pending), items=plan_rows_pending,
+            suggested_mode="replace_after",
+        )
+    if already_done:
+        found["steps_already_done"] = _envelope(
+            "steps_already_done", len(already_done), items=already_done,
+        )
+    if foreign_before:
+        found["foreign_rows_before"] = _envelope("foreign_rows_before", foreign_before)
+
     return [found[code] for code in _NOTIFICATION_ORDER if code in found]
 
 
@@ -859,6 +906,19 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
         plan, wp_doc_id, wp_revision_no, locale, start_uid=next_uid,
         provider_view=provider_view,
     )
+    # 0649 T#2 (NR0003 O2/O5): the cards that already started (S, by card id) are not
+    # poured again — their rows are protected and stay where they ran. Whether the plan
+    # still starts with them, in that order, is checked here as well as on save.
+    from modules.flow_gate.services import work_plan_card_order as _order
+
+    card_classification = _classify_for_candidates(doc, plan, items)
+    started = set(_order.started_card_ids(card_classification))
+    already_done = [
+        {"card_id": row.get("source_wp_card_id"), "plan_key": row.get("plan_key")}
+        for row in plan_rows if row.get("source_wp_card_id") in started
+    ]
+    plan_rows = [row for row in plan_rows if row.get("source_wp_card_id") not in started]
+    order_blocker = _order.check_started_prefix(plan, card_classification, items)
     plan_step_count = len(plan_rows)
     pour_rows, next_uid = attach_auto_rows(plan_rows, locale, next_uid)
 
@@ -877,13 +937,25 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
     wp_item = db_wfseq.get_item_by_result_doc_id(wp_doc_id)
     wp_item_seq = _int(wp_item.get("item_seq")) if wp_item else None
 
+    plan_rows_pending: list[dict] = []
+    foreign_before = 0
     if mode == "append":
         next_rows, deleted_rows = pour_append(pending_before, pour_rows)
+        # 0649 T#2 (NR0003 O5, G7): rows of this plan still pending would run before the
+        # new card order and pour the same cards twice — append is refused until they are
+        # replaced (replace_after) or rewritten (apply with workflow change).
+        plan_rows_pending = [
+            {"item_id": row.get("id"), "item_seq": row.get("item_seq"),
+             "type": str(row.get("type") or "").upper(),
+             "source_wp_card_id": row.get("source_wp_card_id")}
+            for row in _order.plan_pending_rows(items, wp_doc_id)
+        ]
+        if not plan_rows_pending:
+            foreign_before = len(pending_before)
     else:
         next_rows, deleted_rows = pour_replace_after(pending_before, pour_rows, wp_item_seq)
 
     all_rows = locked_rows + next_rows
-    card_classification = _classify_for_candidates(doc, plan, items)
     before_uids = {row["uid"] for row in pending_before}
     poured_uids = {row["uid"] for row in pour_rows if not row.get("is_auto")}
     poured_type_of = {row["uid"]: row["type"] for row in pour_rows if not row.get("is_auto")}
@@ -908,6 +980,10 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
             dropped=dropped,
             truncated_count=truncated_count,
             card_classification=card_classification,
+            order_blocker=order_blocker,
+            plan_rows_pending=plan_rows_pending,
+            already_done=already_done,
+            foreign_before=foreign_before,
         ),
         "workflow_tag": build_workflow_tag(sequence, items),
         # 0649 T#1 (NR0003 O0): codes the save must carry in acknowledged_codes.
@@ -915,6 +991,15 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
             ["legacy_card_unresolved"]
             if card_classification and card_classification["unresolved_started"] else []
         ),
+        # 0649 T#2 (NR0003 O2/O5): codes that refuse the save whatever is acknowledged.
+        "blockers": [
+            code for code in _NOTIFICATION_ORDER
+            if code in BLOCKING_CODES and (
+                (order_blocker and order_blocker["code"] == code)
+                or (code == "plan_rows_pending" and plan_rows_pending)
+            )
+        ],
+        "started_card_ids": _order.started_card_ids(card_classification),
     }
 
 
@@ -959,6 +1044,14 @@ def expand_final_work_plan(*, doc: dict, plan: dict, locale: str = "ko") -> dict
     # With no tail the two modes produce the same rows. Reuse this exact snapshot so a
     # second read cannot race a newly-added tail; the workflow tag remains the save CAS.
     candidate = replace_candidate
+    # 0649 T#2 (NR0003 O2): a plan that moved or removed a started card is not saved by
+    # approval either — the pour dialog shows why.
+    if candidate.get("blockers"):
+        return {
+            "status": "needs_selection",
+            "reason": candidate["blockers"][0],
+            "revision_no": revision_no,
+        }
     if not candidate.get("plan_step_count"):
         return {"status": "skipped", "reason": "no_placeable_steps", "revision_no": revision_no}
     # 0649 T#1 (NR0003 O0): approval cannot ask a person to acknowledge unresolved legacy
@@ -967,6 +1060,18 @@ def expand_final_work_plan(*, doc: dict, plan: dict, locale: str = "ko") -> dict
         return {
             "status": "needs_selection",
             "reason": "legacy_card_unresolved",
+            "revision_no": revision_no,
+        }
+    # 0649 T#2 (NR0003 §3.6 check 2): approval runs inside a continuous chain whose current
+    # hop is normally the WP row just approved (it has its document). If the group's live run
+    # is instead working on a row that has no result document yet, rewriting the pending
+    # rows would pull that row out from under it — leave the choice to the pour dialog.
+    busy_seq = _active_run_pending_hop(doc.get("group_id"), existing)
+    if busy_seq is not None:
+        return {
+            "status": "needs_selection",
+            "reason": "ai_run_on_pending_row",
+            "item_seq": busy_seq,
             "revision_no": revision_no,
         }
     # 0649 T#1 (NR0003 O1): protected rows (started rows and the pending report right after a
@@ -982,5 +1087,24 @@ def expand_final_work_plan(*, doc: dict, plan: dict, locale: str = "ko") -> dict
         )
     } for row in candidate["rows"] if not row.get("protected")]
     from modules.flow_gate.services.workflow_decision_service import edit_workflow_pending
-    result = edit_workflow_pending(owner_doc_id, pending_rows, expected_workflow_tag=candidate["workflow_tag"], expected_plan={"wp_doc_id": wp_doc_id, "wp_revision_no": revision_no}, applied_by="wp_final_auto_expand", locale=locale)
+    result = edit_workflow_pending(owner_doc_id, pending_rows, expected_workflow_tag=candidate["workflow_tag"], expected_plan={"wp_doc_id": wp_doc_id, "wp_revision_no": revision_no, "mode": "replace_after"}, applied_by="wp_final_auto_expand", locale=locale)
     return {"status": "expanded", "revision_no": revision_no, "result": result}
+
+
+def _active_run_pending_hop(group_id: Optional[str], items: list[dict]) -> Optional[int]:
+    """item_seq of the row the group's live AI run works on, if that row has no document yet."""
+    if not group_id:
+        return None
+    try:
+        from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+
+        run = _ai_invoke._active_run_for_group(group_id)
+    except Exception:  # noqa: BLE001 — no run registry, no run
+        return None
+    if not run:
+        return None
+    hop = _int(run.get("hop_item_seq"))
+    if hop is None:
+        return None
+    row = next((item for item in items if _int(item.get("item_seq")) == hop), None)
+    return hop if row is not None and not is_started_row(row) else None
