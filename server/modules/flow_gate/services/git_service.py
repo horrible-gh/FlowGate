@@ -1676,6 +1676,7 @@ from .git.rerere_checkpoint import hold as hold_merge
 
 from .git.conflict import (
     TR_CONFLICT_REVIEW_OPEN,
+    TR_CONFLICT_REVIEW_RESOLVED,
     _chunk_added_lines,
     _classify_conflict_chunks,
     _conflict_side_dropped,
@@ -1694,6 +1695,8 @@ from .git.conflict import (
     resolve_conflict_src_root,
     resolve_conflicts,
     separate_eol_conflicts,
+    tr_conflict_review,
+    tr_conflict_review_file_diff,
     tr_conflict_session,
 )
 
@@ -2657,9 +2660,36 @@ def record_auto_authority(group_id: str, merge_id: int, requested_auto: bool) ->
     db_git.set_session_context(merge_id, context)
 
 
+def _touch_review_activity(merge_id: int) -> None:
+    """0668 T0004: opening a pending review is activity for the sweep TTL — best-effort,
+    a timestamp write must never fail the screen that reads the review."""
+    try:
+        db_git.touch_session(merge_id)
+    except Exception:
+        _log.warning("review touch failed for merge %s", merge_id, exc_info=True)
+
+
+def _is_tr_conflict_merge(group_id: Optional[str], merge_id: int, project_id: Optional[str]) -> bool:
+    """A group-addressed review call naming an open TR revert/reapply conflict session."""
+    if project_id is not None or group_id is None:
+        return False
+    session = db_git.get_session(merge_id)
+    return (
+        session is not None
+        and session.get("group_id") == group_id
+        and db_git.session_kind(session) in db_git.TR_SESSION_KINDS
+    )
+
+
 def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
     """Approval-screen payload (L0007 §2.11 GET .../review) assembled ENTIRELY from
-    the frozen candidate — never a fresh worktree read (D0006 §3.3/§3.4)."""
+    the frozen candidate — never a fresh worktree read (D0006 §3.3/§3.4).
+
+    0668 T0004: a TR conflict session is reviewed on the same screen; its payload comes
+    from ``tr_conflict_review`` in the same shape. Opening a review is activity, so it
+    resets the sweep TTL (``touch_session``) like reading the conflict list does."""
+    if _is_tr_conflict_merge(group_id, merge_id, project_id):
+        return tr_conflict_review(group_id, merge_id)
     _session, _context, project_id, base_root, base_branch = _merge_review_session(
         group_id, merge_id, **_owner_kw(project_id),
     )
@@ -2670,6 +2700,8 @@ def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Opti
     if not review_state:
         raise GitServiceError(409, "review_not_ready", "this merge has not reached review yet")
     pending = review_state in REVIEW_PENDING_STATES
+    if pending:
+        _touch_review_activity(merge_id)
     return {
         "ok": True,
         "result": {
@@ -2762,6 +2794,8 @@ def read_merge_review_file_diff(
     old/new payload shape ``read_group_file_diff`` already returns so the client's
     existing file-diff viewer needs no new prop shape."""
     _validate_blob_path(path)
+    if _is_tr_conflict_merge(group_id, merge_id, project_id):
+        return tr_conflict_review_file_diff(group_id, merge_id, path)
     normalized = path.replace("\\", "/")
     _session, context, _project_id, base_root, _base_branch = _merge_review_session(
         group_id, merge_id, **_owner_kw(project_id),

@@ -1401,7 +1401,9 @@ def conflict_session(group_id: str) -> Optional[dict[str, Any]]:
     return git_service.tr_conflict_session(group_id)
 
 
-def commit_conflict_resolution(group_id: str, merge_id: int) -> dict[str, Any]:
+def commit_conflict_resolution(
+    group_id: str, merge_id: int, *, review_fingerprint: Optional[str] = None,
+) -> dict[str, Any]:
     """Finish a resolved TR conflict: make the commit, then write the ledger row.
 
     The two halves are split across the module boundary because that is where they belong
@@ -1415,8 +1417,14 @@ def commit_conflict_resolution(group_id: str, merge_id: int) -> dict[str, Any]:
     Raises through :class:`GitServiceError` for the caller to translate: unlike the cancel
     and reapply loops this is a person pressing a button and waiting for an answer, not a
     best-effort step hanging off a document transition that must stand regardless.
+
+    0668 T0004: ``review_fingerprint`` is what the common review screen's [승인] showed;
+    git_service refuses (``stale_review``) a commit of any other tree. ``None`` is the
+    legacy ``tr-commit`` press, unchanged.
     """
-    outcome = git_service.commit_tr_conflict(group_id, merge_id)
+    outcome = git_service.commit_tr_conflict(
+        group_id, merge_id, review_fingerprint=review_fingerprint,
+    )
     result = dict(outcome.get("result") or {})
     kind, commit = result.get("kind"), result.get("commit")
     row_id = result.get("ledger_row_id")

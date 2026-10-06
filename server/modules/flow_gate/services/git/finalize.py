@@ -576,6 +576,7 @@ def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
     # forcing a second round-trip to GET .../review just to render a badge.
     review_state = None
     reconciliation_kind = None
+    conflict_kind = None
     if display_status == "conflict" and state.get("merge_id") is not None:
         try:
             merge_session = _gs.db_git.get_session(int(state["merge_id"]))
@@ -585,6 +586,12 @@ def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
             merge_context = _gs.db_git.session_context(merge_session)
             review_state = merge_context.get("review_state")
             reconciliation_kind = merge_context.get("reconciliation_kind")
+        elif merge_session is not None and _gs.db_git.session_kind(merge_session) in _gs.db_git.TR_SESSION_KINDS:
+            # 0668 T0004: a resolved TR conflict waits on the same review screen, so it
+            # is published in the same vocabulary (its own context keeps 'resolved').
+            conflict_kind = _gs.db_git.session_kind(merge_session)
+            if _gs.db_git.session_context(merge_session).get("review_state") == _gs.TR_CONFLICT_REVIEW_RESOLVED:
+                review_state = _gs.REVIEW_STATE_PENDING
     # 0594 T0012: the ledger's merge_id now also points at a COMPLETED attempt (a
     # merged group keeps its attempt so the real target survives a restart). The
     # response keeps its old meaning — a merge_id is only published while it names
@@ -630,6 +637,8 @@ def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "merge_commit": (clean_retry or {}).get("merge_commit") or state.get("merge_commit"),
         "review_state": review_state,
         "reconciliation_kind": reconciliation_kind,
+        # 0668 T0004 (additive): tr_revert / tr_reapply when the conflict is a TR one.
+        "conflict_kind": conflict_kind,
         # 0555 T0008 §10 / D0005 §3.11: the coupling marker. True means this
         # group's Git is finishing a final approval that is still waiting, so no
         # surface may offer a NEW finalize — only "go resolve the conflict". The

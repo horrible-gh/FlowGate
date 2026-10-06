@@ -6,6 +6,8 @@
   <!-- Manual-copy fallback for failed clipboard writes (B0001 / group 0221): mounted once at
        the app root because copy failures surface from many components. -->
   <ClipboardFallbackModal />
+  <!-- 0668 T0004: the conflict review screen, reachable from anywhere (miniplayer). -->
+  <GitConflictReviewHost />
 </template>
 
 <script setup lang="ts">
@@ -16,6 +18,7 @@ import { ToastContainer } from './components/common'
 import AlertDialog from './components/dialogs/AlertDialog.vue'
 import ConfirmDialog from './components/dialogs/ConfirmDialog.vue'
 import ClipboardFallbackModal from './components/ClipboardFallbackModal.vue'
+import GitConflictReviewHost from './components/GitConflictReviewHost.vue'
 import { useDocTypeStore } from './stores/docTypeStore'
 import { useProjectStore } from './stores/project'
 import { useAiInvokeRunsStore } from './stores/aiInvokeRuns'

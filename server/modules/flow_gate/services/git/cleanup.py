@@ -10,6 +10,7 @@ from typing import Optional
 
 from modules.flow_gate.db import terminal_cleanup_snapshots as db_terminal_cleanup
 
+from . import approval_intent
 from . import lock_manager as locks
 from . import merge_target
 from .branch_merge_publish import session_lock, session_unlock
@@ -19,6 +20,10 @@ from .worktree import _abort_disposed_merge_session, _slot_lock, _slot_unlock
 _log = logging.getLogger(__name__)
 
 MERGE_SESSION_TTL_HOURS = 24   # L0004 §1 — quiet-for-this-long conflict → auto-abort
+# 0668 T0004 — a session waiting for its human review that holds the base checkout is
+# kept while it is being looked at (opening the review touches it) but never longer than
+# this from its creation: every other group's base work is blocked by it meanwhile.
+REVIEW_PENDING_MAX_HOURS = 72
 
 SWEEP_INTERVAL_MIN = 30        # L0004 §1 — auto-recovery sweep period
 
@@ -151,8 +156,8 @@ def cleanup_terminal_slots(project_id: str) -> dict:
             "terminal_cleanup": snapshot}
 
 
-def _ttl_expired(last: Optional[str]) -> bool:
-    """Whether an activity timestamp is older than MERGE_SESSION_TTL_HOURS."""
+def _ttl_expired(last: Optional[str], hours: float = MERGE_SESSION_TTL_HOURS) -> bool:
+    """Whether an activity timestamp is older than ``hours`` (MERGE_SESSION_TTL_HOURS)."""
     if not last:
         return False   # unknown activity → never auto-abort on this basis
     try:
@@ -161,9 +166,42 @@ def _ttl_expired(last: Optional[str]) -> bool:
         dt = datetime.fromisoformat(last)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc) - dt >= timedelta(hours=MERGE_SESSION_TTL_HOURS)
+        return datetime.now(timezone.utc) - dt >= timedelta(hours=hours)
     except Exception:
         return False
+
+
+def _review_pending_ttl_expired(session: dict) -> bool:
+    """0668 T0004 — the TTL of a session that is resolved and waiting for its review.
+
+    Resolve → leave → come back and review is the normal flow now, so a review wait is
+    not abandonment by itself. A session that does not hold the base checkout (a
+    managed non-base target workspace) blocks nobody and simply waits. One that holds
+    it keeps the ordinary activity TTL — opening the review screen counts as activity —
+    under a hard cap from creation, so ``guard_base_free`` never blocks other groups
+    without bound. [보류] (hold) stays the explicit way to park longer.
+    """
+    if not merge_target.holds_base_checkout(session):
+        return False
+    if _ttl_expired(session.get("touched_at") or session.get("created_at")):
+        return True
+    return _ttl_expired(session.get("created_at"), REVIEW_PENDING_MAX_HOURS)
+
+
+def _discard_abandoned_attempt(merge_id: int, reason: str) -> None:
+    """0668 T0004 — what an [abort] already does, done for a sweep close too: the parked
+    final-approval intent and any rerere checkpoint die with the attempt, so a later
+    re-approval starts over cleanly instead of failing ``final_approval_retry_mismatch``.
+    Best-effort: the session is already closed and a cleanup failure must not reopen it."""
+    from modules.flow_gate.services import git_service as _gs
+    try:
+        _gs.db_git.invalidate_resolution_checkpoint_for_merge(merge_id)
+    except Exception:
+        _log.warning("sweep: checkpoint invalidation failed for merge %s", merge_id, exc_info=True)
+    try:
+        approval_intent.discard_intent(merge_id, reason=reason)
+    except Exception:
+        _log.warning("sweep: intent discard failed for merge %s", merge_id, exc_info=True)
 
 
 def _emit_auto_aborted(project_id: str, group_id: str, merge_id: int, reason: str) -> None:
@@ -189,6 +227,7 @@ def _close_orphan(session: dict, project_id: str) -> None:
         session, merge_target.ATTEMPT_INTERRUPTED, error={"code": "orphan_recovered"},
     ):
         return
+    _discard_abandoned_attempt(merge_id, "orphan_recovered")
     _gs._set_status(group_id, "waiting")
     _emit_auto_aborted(project_id, group_id, merge_id, "orphan_recovered")
 
@@ -232,6 +271,7 @@ def _auto_abort_session(
         merge_target.close_session_attempt(
             session, merge_target.ATTEMPT_ABORTED, error={"code": reason},
         )
+        _discard_abandoned_attempt(merge_id, reason)
         _gs._set_status(group_id, "waiting")
         _emit_auto_aborted(project_id, group_id, merge_id, reason)
     finally:
@@ -261,7 +301,11 @@ def _sweep_tr_session(session: dict, project_id: str) -> None:
         _gs._set_status(group_id, context.get("prev_status") or "waiting")
         _emit_auto_aborted(project_id, group_id, merge_id, "orphan_recovered")
         return
-    if not _ttl_expired(session.get("touched_at") or session.get("created_at")):
+    if context.get("review_state") == _gs.TR_CONFLICT_REVIEW_RESOLVED:
+        # 0668 T0004: resolved and waiting for the common review screen.
+        if not _review_pending_ttl_expired(session):
+            return
+    elif not _ttl_expired(session.get("touched_at") or session.get("created_at")):
         return
     try:
         _gs.abort_tr_conflict(group_id, merge_id)
@@ -386,6 +430,11 @@ def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
                 continue
             if not _gs._merge_in_progress(base_root):
                 _gs._close_orphan(session, project_id)
+                continue
+            if review_state in _gs.REVIEW_PENDING_STATES:
+                # 0668 T0004: a resolved session waiting for its review has its own TTL.
+                if _review_pending_ttl_expired(session):
+                    _auto_abort_session(session, project_id, base_root, "ttl_expired")
                 continue
             last = session.get("touched_at") or session.get("created_at")
             if not _ttl_expired(last):

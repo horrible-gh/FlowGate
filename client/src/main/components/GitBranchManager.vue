@@ -168,6 +168,22 @@
           <li v-for="file in mergeResult.files" :key="file">{{ file }}</li>
         </ul>
         <div class="branch-form-actions branch-result-actions">
+          <!-- 0668 T0004 (R1) — the AI call starts on this card; the resolver behind
+               [충돌 해결 열기] is for direct resolution and detail, not a gate. -->
+          <GitConflictCardActions
+            v-if="aiProviderStore && mergeResult.aiStatus !== 'review'"
+            :providers="aiProviderStore.providers"
+            :selected-provider="aiProviderStore.selectedProviderId"
+            :provider-loading="aiProviderStore.loading"
+            :provider-errored="!!aiProviderStore.error"
+            :busy="busy || conflictAiStarting"
+            :starting="conflictAiStarting"
+            :running-notice="mergeResult.aiStatus === 'running' || mergeResult.aiStatus === 'starting'
+              ? t(`main.git_branch_manager.merge_conflict_ai.${mergeResult.aiStatus}`) : null"
+            hide-direct
+            @ai-resolve="startConflictAi(mergeResult.mergeId as number)"
+            @update:provider="aiProviderStore.selectProvider"
+          />
           <button
             type="button"
             class="btn btn-sm btn-primary"
@@ -293,6 +309,8 @@ import AppIcon from '@shared/AppIcon.vue'
 import { confirm } from '../composables/useDialogStack'
 import { useToast } from './common/useToast'
 import GitBranchMergeConflictHost from './GitBranchMergeConflictHost.vue'
+import GitConflictCardActions from './GitConflictCardActions.vue'
+import { useAiProviderStore } from '../stores/aiProvider'
 
 interface BranchRow {
   name: string
@@ -335,6 +353,40 @@ const catalog = ref<{ base_branch: string | null; default_merge_target: string |
 })
 const busy = ref(false)
 const error = ref('')
+// 0668 T0004 — [AI로 해결] on the conflict card: the same project-scoped `/ai-resolve` the
+// resolver dialog calls, with the card's provider choice; no resolver in front of it.
+// This component stays mountable without Pinia (its own specs mount it bare); the card's AI
+// start is drawn only where the provider store exists, which every real mount has.
+const aiProviderStore = (() => {
+  try {
+    return useAiProviderStore()
+  } catch {
+    return null
+  }
+})()
+const conflictAiStarting = ref(false)
+async function startConflictAi(mergeId: number) {
+  if (!aiProviderStore || conflictAiStarting.value || busy.value) return
+  conflictAiStarting.value = true
+  try {
+    await aiProviderStore.ensureLoaded(props.projectId)
+    const provider = aiProviderStore.selectedProviderId || null
+    const { data } = await postRequest<{ ok: boolean; result?: any }>(
+      `/api/v1/projects/${props.projectId}/git/merge/${mergeId}/ai-resolve`,
+      { message: null, provider_id: provider, provider_pinned: !!provider },
+    )
+    if (data?.result?.status === 'start_failed') {
+      showToast(t('main.git_branch_manager.merge_conflict_ai.start_failed'), 'danger')
+    } else {
+      showToast(t('main.git_finalize.conflict_ai_started'), 'success')
+      if (mergeResult.value?.mergeId === mergeId) mergeResult.value = { ...mergeResult.value, aiStatus: 'running' }
+    }
+  } catch (e: any) {
+    showToast(e?.response?.data?.error?.message || t('main.git_branch_manager.op_failed'), 'danger')
+  } finally {
+    conflictAiStarting.value = false
+  }
+}
 const newName = ref('')
 const createSource = ref('')
 const mergeSource = ref('')

@@ -275,6 +275,20 @@
               <AppIcon name="x" />
               {{ t('main.ai_miniplayer.btn_remove') }}
             </button>
+            <!-- 0668 T0004 (R2) — a conflict AI run's way back: the operator left while the
+                 server resolved it, and this card is where they come back to review. The
+                 host asks the server what is waiting, so a run that ended without reaching
+                 review just says so. -->
+            <button
+              v-if="isConflictReviewCandidate(entry)"
+              type="button"
+              class="btn btn-primary btn-sm"
+              data-test="ai-miniplayer-open-review"
+              @click="openConflictReview(entry)"
+            >
+              <AppIcon name="eye" />
+              {{ t('main.ai_miniplayer.btn_open_review') }}
+            </button>
             <button type="button" class="btn btn-ghost btn-sm" @click="openDoc(entry)">
               <AppIcon name="arrow-square-out" />
               {{ t('main.ai_miniplayer.btn_open_doc') }}
@@ -296,6 +310,7 @@ import { useExplorerStore } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
 import { useToast } from './common/useToast'
 import { confirm } from '../composables/useDialogStack'
+import { requestConflictReview } from '../composables/useConflictSession'
 import {
   compareRunEntries,
   isDurableFinishedCard,
@@ -648,6 +663,19 @@ async function doReleaseLease(entry: AiInvokeRunEntry): Promise<void> {
   } finally {
     busy.delete(key)
   }
+}
+
+// A group conflict run (not a project-keyed branch-merge run, whose review lives in the
+// Branch Manager) that has finished — the only state in which a review can be waiting.
+function isConflictReviewCandidate(entry: AiInvokeRunEntry): boolean {
+  return entry.actionScope === 'resolve_conflict'
+    && entry.phase === 'finished'
+    && !entry.groupId.endsWith('.none.0000')
+}
+
+function openConflictReview(entry: AiInvokeRunEntry): void {
+  open.value = false
+  requestConflictReview(entry.groupId)
 }
 
 async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
