@@ -14,10 +14,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from modules.flow_gate.db import source_bundles as db
-from modules.flow_gate.services import process_runner
+from modules.flow_gate.services import process_runner, source_common
 from modules.flow_gate.services import source_bundle_materializer as materializer
 from modules.flow_gate.services import source_bundle_service as bundles
-from modules.flow_gate.services.snapshot_materialization_service import locator_roots, redact_locators, redact_error_text
+from modules.flow_gate.services.source_common import locator_roots, redact_locators, redact_error_text
 
 TASK_KINDS = frozenset({"build", "test", "lint", "typecheck", "dependency_analysis", "static_analysis", "temporary_experiment"})
 READ_OPS = frozenset({"status", "read", "search", "glob", "stat"})
@@ -390,55 +390,8 @@ def execute(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dic
 
 
 def guard_promotion(run: dict, tool_name: str, tool_input: dict) -> None:
-    if tool_name not in {"write_source_file", "patch_source_file", "remove_source_file"}:
-        return
-    raw = str(tool_input.get("path") or "").replace("\\", "/")
-    if re.search(r"(?:^|/)(?:source-bundles|scratch)/(?:sb_[0-9a-f]{32}|[0-9a-f]{64})(?:/|$)", raw):
-        raise BundleAccessError(403, "bundle_promotion_blocked", "Bundle and AI Scratch cannot be promoted to worktree")
-
-
-def provenance_for_run(run_id: str) -> list[dict]:
-    result = []
-    seen = set()
-    for usage in db.list_usage_for_run(run_id):
-        bundle_id = usage["bundle_id"]
-        if bundle_id in seen:
-            continue
-        seen.add(bundle_id)
-        row = db.get(bundle_id)
-        if row is None:
-            continue
-        result.append({"bundle_id": bundle_id, "source_revision": row["source_revision"],
-                       "content_fingerprint": row["content_fingerprint"],
-                       "bundle_sha256": row["bundle_sha256"], "status": row["status"],
-                       "created_at": row["created_at"],
-                       "current_worktree_at_completion": _fresh(row) if row["status"] == "created" else False})
-    return result
-
-
-def inject_tr_provenance(body: str, run_id: str) -> tuple[str, list[dict]]:
-    rows = provenance_for_run(run_id) if run_id else []
-    if not rows:
-        return body, []
-    heading = "## Source Bundle Provenance"
-    start = body.find(heading)
-    if start >= 0:
-        next_heading = re.search(r"(?m)^## (?!#).+$", body[start + len(heading):])
-        end = start + len(heading) + next_heading.start() if next_heading else len(body)
-        body = body[:start].rstrip() + "\n\n" + body[end:].lstrip()
-    lines = [heading, ""]
-    for row in rows:
-        lines.extend([f"- Bundle id: {row['bundle_id']}",
-                      f"  - Source revision: {row['source_revision']}",
-                      f"  - Content fingerprint: {row['content_fingerprint']}",
-                      f"  - Bundle SHA-256: {row['bundle_sha256']}",
-                      f"  - Created at: {row['created_at']}",
-                      f"  - Status at completion: {row['status']}",
-                      "  - Current worktree at completion: " + ("Yes" if row["current_worktree_at_completion"] else "No")])
-    section = "\n".join(lines) + "\n\n"
-    changed = re.search(r"(?m)^## (?:변경 파일|Changed Files)\s*$", body)
-    return (body[:changed.start()].rstrip() + "\n\n" + section + body[changed.start():], rows) if changed else (body.rstrip() + "\n\n" + section, rows)
-
-
-def attach_tr(run_id: str, document_id: str) -> int:
-    return db.attach_document(run_id, document_id)
+    try:
+        source_common.guard_artifact_promotion(tool_name, tool_input)
+    except source_common.PromotionBlocked as exc:
+        if exc.code == "bundle_promotion_blocked":
+            raise BundleAccessError(exc.status, exc.code, exc.message) from exc

@@ -43,6 +43,7 @@ from modules.flow_gate import template_provision
 from modules.flow_gate.db.document_type_labels import get_type_name
 from modules.flow_gate.documents.constants import STEP_NOTE_MAX_CHARS
 from modules.flow_gate.settings import source_mode_service
+from modules.flow_gate.services import source_bundle_exposure
 from modules.flow_gate.services import test_command_service
 from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import tr_scope_service
@@ -2266,14 +2267,22 @@ def build_mention(
             base, raw_token, scope_type, action_scope=action_scope, locale=locale
         )
         if source_crud_section and str(scope_type or "").upper() == "TR":
+            # 0672 T0004: TR verifies on the live worktree through Self-check; the Bundle
+            # sentence this section used to end with contradicted that contract.
             snapshot_policy_section = _section(
-                "TR test responsibility and Source Bundle",
+                "TR test responsibility and Self-check",
                 "Write test code, fixtures and mocks and run available self-checks. "
                 "Formal test PASS and its gate belong to the approved TS/TSR stage. "
                 "No approval-based Snapshot is required for TR completion or formal testing. "
-                "Use the automatically prepared Source Bundle and disposable Scratch for execution."
+                "Self-checks run against the live group worktree through the TR Self-check contract "
+                "(run_self_check / read_self_check); Source Bundle and disposable Scratch are not a "
+                "TR execution path."
             )
-        elif source_crud_section:
+        elif source_crud_section and source_bundle_exposure.exposed(
+            # 0672 T0004: the Bundle policy is printed only inside the TS/TSR preserved set.
+            # An edit's doc_ref is the document itself; a new hand-off's is the spine.
+            source_bundle_exposure.exposure(action_scope, parent_type, head_type)
+        ):
             snapshot_policy_section = _section(
                 "Source Bundle policy",
                 "Source Bundle is prepared automatically when source access or execution needs it; "

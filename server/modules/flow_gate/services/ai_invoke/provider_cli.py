@@ -18,7 +18,7 @@ from typing import Optional
 
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db.connection import now_iso
-from modules.flow_gate.services import process_runner
+from modules.flow_gate.services import process_runner, source_bundle_exposure
 from modules.flow_gate.settings import ai_settings_service
 
 # Not a transport of `worker.py` itself (NR0003 §28: transport must not import the
@@ -357,6 +357,23 @@ def _resolve_cli_launch(provider: dict, run: dict, command: str) -> tuple[Option
     }, "valid"
 
 
+# 0672 T0004: appended only for a TS/TSR step inside the Source Bundle preserved set; every
+# other CLI worker (N/NR/T/TR/review/chat/...) works on live source tools alone.
+_BUNDLE_CLI_BOUNDARY = (
+    "\n\n## Source Bundle CLI boundary\n"
+    "Use FLOWGATE_BUNDLE_API with Authorization: Bearer $FLOWGATE_TOKEN for "
+    "ensure, status, access (read/search/glob/stat), and allowed run calls. "
+    "No human approval is required. Never consume an internal Bundle or Scratch path directly.\n"
+)
+
+
+def _bundle_cli_exposed(run: dict) -> bool:
+    """The same judgment the Bundle CLI routes enforce, so the prompt never offers a 403."""
+    return source_bundle_exposure.exposed(
+        source_bundle_exposure.for_doc_ref(run.get("action_scope"), run.get("doc_ref"))
+    )
+
+
 def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
     """stdin-injected CLI run (claude/copilot/codex; args are forbidden — cp932
     truncation). Returns (classification, failure_detail)."""
@@ -384,13 +401,9 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     # base (configured setting -> same-host loopback -> operator base).
     operator_api_base = run.get("api_base_url") or ""
     prompt, agent_api_base = _canonicalize_cli_prompt(prompt, operator_api_base)
-    bundle_api_base = (agent_api_base or operator_api_base).rstrip("/") + "/source-bundles/cli"
-    prompt = prompt.rstrip() + (
-        "\n\n## Source Bundle CLI boundary\n"
-        "Use FLOWGATE_BUNDLE_API with Authorization: Bearer $FLOWGATE_TOKEN for "
-        "ensure, status, access (read/search/glob/stat), and allowed run calls. "
-        "No human approval is required. Never consume an internal Bundle or Scratch path directly.\n"
-    )
+    bundle_cli = _bundle_cli_exposed(run)
+    if bundle_cli:
+        prompt = prompt.rstrip() + _BUNDLE_CLI_BOUNDARY
     # CLI providers authenticate themselves; a configured api_key is deliberately
     # NOT exported (leak prevention, L0006 §2.3).
     env = {
@@ -409,8 +422,9 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         "PIP_CACHE_DIR": str(scratch / "cache" / "pip"),
         "NPM_CONFIG_CACHE": str(scratch / "cache" / "npm"),
         "FLOWGATE_API_BASE": agent_api_base or operator_api_base,
-        "FLOWGATE_BUNDLE_API": bundle_api_base,
     }
+    if bundle_cli:
+        env["FLOWGATE_BUNDLE_API"] = (agent_api_base or operator_api_base).rstrip("/") + "/source-bundles/cli"
     decision, reason = _resolve_cli_launch(provider, run, cmd)
     if decision is None:
         blocked = _blocked_cli_launch(run, provider, reason)

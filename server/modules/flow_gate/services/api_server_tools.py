@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_access_service, snapshot_request_service, source_bundle_access_service, test_command_service, token_service, tool_registry, tr_self_check_service
+from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_access_service, snapshot_request_service, source_bundle_access_service, source_bundle_exposure, source_common, test_command_service, token_service, tool_registry, tr_self_check_service
 from modules.flow_gate.utils.help_url import help_url
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
@@ -237,20 +237,21 @@ def definitions_for_run(run: dict) -> list[dict]:
     # the authorized root, so advertisement must not reject a valid non-Git project fallback.
     kind, _reason = tool_registry.kind_for_step(scope, step_type)
     allowed_ops = set(tool_registry.tool_names(kind, scope))
-    if kind in ("read", "read_write"):
+    # 0672 T0004: Bundle tools follow the one exposure judgment (TS/TSR preserved set only),
+    # never the kind. Every other step works on live source tools alone.
+    bundle = source_bundle_exposure.for_doc_ref(scope, run.get("doc_ref"), doc_ref_type=step_type)
+    if source_bundle_exposure.exposed(bundle):
         names += ["access_source_bundle"]
     tr_edit = scope == "edit" and step_type == "TR" and bool(run.get("doc_ref"))
     tr_review = scope == "review" and step_type == "TR" and bool(run.get("doc_ref"))
-    if tr_edit or tr_review:
-        # 0652/0656: TR edit uses Self-check as its execution path; TR review validates the live
-        # worktree plus read-only Self-check evidence. Neither context depends on Source Bundle.
-        names = [n for n in names if n != "access_source_bundle"]
     names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
     if tr_edit:
+        # 0652/0656: TR edit uses Self-check as its execution path; TR review validates the live
+        # worktree plus read-only Self-check evidence. Neither context depends on Source Bundle.
         names += list(SELF_CHECK_NAMES)
     elif tr_review:
         names += ["read_self_check"]
-    elif kind == "read_write":
+    elif bundle == source_bundle_exposure.RUN:
         names += ["run_source_bundle", "run_test"]
     result = []
     for name in names:
@@ -447,8 +448,17 @@ def _guard_legacy_execution(run: dict, name: str) -> None:
                         f"{name} is disabled for TR edit runs (legacy_test_execution_disabled_for_tr); use run_self_check")
 
 
+def _guard_bundle_exposure(run: dict, name: str, need: str) -> None:
+    """0672 T0004: Bundle entry points answer only inside the TS/TSR preserved set."""
+    level = source_bundle_exposure.for_doc_ref(run.get("action_scope"), run.get("doc_ref"))
+    if level == source_bundle_exposure.NONE or (need == source_bundle_exposure.RUN and level != need):
+        raise ToolError(403, "source_bundle_not_available",
+                        f"{name} is available only to TS/TSR steps; use the live source tools")
+
+
 def access_source_bundle(run: dict, tool_input: dict) -> tuple[int, dict]:
     _guard_legacy_execution(run, "access_source_bundle")
+    _guard_bundle_exposure(run, "access_source_bundle", source_bundle_exposure.ACCESS)
     try:
         return source_bundle_access_service.access(run, tool_input)
     except source_bundle_access_service.BundleAccessError as exc:
@@ -457,6 +467,7 @@ def access_source_bundle(run: dict, tool_input: dict) -> tuple[int, dict]:
 
 def run_source_bundle(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dict]:
     _guard_legacy_execution(run, "run_source_bundle")
+    _guard_bundle_exposure(run, "run_source_bundle", source_bundle_exposure.RUN)
     try:
         return source_bundle_access_service.execute(run, tool_input, remaining_sec)
     except source_bundle_access_service.BundleAccessError as exc:
@@ -464,12 +475,11 @@ def run_source_bundle(run: dict, tool_input: dict, remaining_sec: float) -> tupl
 
 
 def source_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:
+    # 0672 T0004 stage 3: a path-only guard from the shared source module; live source calls
+    # no longer reach into the Bundle or Snapshot services.
     try:
-        source_bundle_access_service.guard_promotion(run, name, tool_input)
-        snapshot_access_service.guard_promotion(run, name, tool_input)
-    except snapshot_access_service.SnapshotAccessError as exc:
-        return exc.status, exc.payload(name)
-    except source_bundle_access_service.BundleAccessError as exc:
+        source_common.guard_artifact_promotion(name, tool_input)
+    except source_common.PromotionBlocked as exc:
         return exc.status, exc.payload(name)
     # remote_tool_service is the sole live-token/root authority.  In particular, it
     # preserves worktree fail-closed mutation gates while allowing approved base-root
@@ -497,6 +507,7 @@ def test_root(run: dict) -> Path:
 
 def run_test(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dict]:
     _guard_legacy_execution(run, "run_test")
+    _guard_bundle_exposure(run, "run_test", source_bundle_exposure.RUN)
     normalized = test_command_service.normalize_command(tool_input["command"])
     host_os = test_command_service.current_os()
     allowed = [row for row in test_command_service.list_for_view(run["project_id"])

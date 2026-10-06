@@ -28,6 +28,7 @@ from modules.flow_gate.documents.constants import WORK_PLAN_TYPE
 from modules.flow_gate.services import (
     engine_recipe_service,
     remote_tool_service,
+    source_bundle_exposure,
     step_verification_service,
     test_command_service,
     tool_registry,
@@ -530,6 +531,8 @@ def resolve_context(token_rec: dict, locale: str, base_url: str) -> dict:
         "scratch_dir": token_rec.get("scratch_dir"),
         # An unmanned chain token carries the target sequence it is walking toward.
         "continuous": bool(token_rec.get("continuation_target_seq")),
+        # 0672 T0004: the one Source Bundle exposure judgment (TS/TSR preserved set only).
+        "bundle_exposure": source_bundle_exposure.for_token(token_rec),
         "token_rec": token_rec,
     }
 
@@ -583,6 +586,10 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
             return Decision(False, "source_mode_local")
         if ctx.get("tool_kind") == "none":
             return Decision(False, "token_scope_none")
+        # 0672 T0004: Bundle help follows the one exposure judgment (TS/TSR preserved set only).
+        if (name != "source_tools"
+                and not source_bundle_exposure.exposed(ctx.get("bundle_exposure", source_bundle_exposure.NONE))):
+            return Decision(False, "source_bundle_ts_tsr_only")
         return VISIBLE
 
     authoring = ctx.get("action_scope") in AUTHORING_SCOPES
@@ -764,8 +771,8 @@ def _content_notices(ctx: dict) -> dict:
             "en": "TR may create test code, fixtures, and mocks and run available self-checks. Formal PASS and the test gate belong to TS/TSR; do not request an approval-based Snapshot for formal testing.",
             "ja": "TRではテストコード・fixture・mockを作成し、利用可能な環境でself-checkできます。正式なPASSとgateはTS/TSRが担当し、正式試験のために承認型Snapshotを要求しません。",
         }.get(ctx["locale"], ""))
-    tr_review = ctx.get("action_scope") == "review" and str(ctx.get("doc_type") or "").upper() == "TR"
-    if ctx.get("source_mode") == "remote" and ctx.get("tool_kind") != "none" and not tr_review:
+    bundle = source_bundle_exposure.exposed(ctx.get("bundle_exposure", source_bundle_exposure.NONE))
+    if ctx.get("source_mode") == "remote" and ctx.get("tool_kind") != "none" and bundle:
         lines.append(_copy(NOTICE_LINES, ctx["locale"], "source_snapshot_policy"))
     return {"lines": lines}
 
@@ -1356,7 +1363,6 @@ _SELF_CHECK_COPY: dict[str, dict] = {
         "no_fallback": [
             "Source Bundle, AI Scratch, run_test 는 TR edit 의 Self-check 대체 수단이 아니다. TR edit 실행에서 access_source_bundle/run_source_bundle 은 self_check_required(409)로 거절된다.",
             "Self-check 를 쓸 수 없으면 반환된 reason/error_code 를 TR 에 보고하고, 다른 실행 수단을 찾거나 시도하지 않는다.",
-            "Self-check 실행은 Source Bundle ensure 를 선행조건으로 하지 않는다. Bundle 오류가 나도 그것 때문에 Self-check 검증을 포기하지 않는다.",
             "실행할 명령은 TR 에 적힌 검증 명령 → T 에 적힌 검증 명령 → 변경에서 분명한 최소 검사 순으로 정한다. 정할 수 없으면 test_command_missing 으로 멈춘다.",
         ],
         "field_desc": {
@@ -1377,7 +1383,6 @@ _SELF_CHECK_COPY: dict[str, dict] = {
         "no_fallback": [
             "Source Bundle, AI Scratch and run_test are not Self-check fallbacks for TR edit. In a TR edit run access_source_bundle/run_source_bundle are refused with self_check_required (409).",
             "If Self-check is unavailable, report the returned reason/error_code in the TR and do not look for or try another execution backend.",
-            "A Self-check run does not require a Source Bundle ensure first. A Bundle error is not a reason to give up Self-check verification.",
             "Pick the command from the verification command named in the TR, else in the T, else the minimal check obvious from your change. If none can be determined, stop with test_command_missing.",
         ],
         "field_desc": {
@@ -1398,7 +1403,6 @@ _SELF_CHECK_COPY: dict[str, dict] = {
         "no_fallback": [
             "Source Bundle、AI Scratch、run_test は TR edit の Self-check 代替手段ではありません。TR edit の実行では access_source_bundle/run_source_bundle は self_check_required(409)で拒否されます。",
             "Self-check が使えない場合は、返された reason/error_code を TR に報告し、他の実行手段を探したり試したりしないでください。",
-            "Self-check の実行は Source Bundle の ensure を前提としません。Bundle エラーを理由に Self-check 検証を諦めないでください。",
             "実行コマンドは、TRに記載の検証コマンド → Tに記載の検証コマンド → 変更から明らかな最小の検査、の順で決めます。決められない場合は test_command_missing で停止します。",
         ],
         "field_desc": {
