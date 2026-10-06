@@ -1268,6 +1268,14 @@ export default {
       quantity_removal_warning_title: '数量を減らすと、値が入っているステップ{n}件が削除されます。続けますか?',
       quantity_removal_warning_confirm: '続けて減らす',
       quantity_removal_warning_cancel: 'キャンセル',
+      // 0649 T#3 (NR0003 §5.3 / O7) — カード単位の移動と開始済みカードのロック。
+      card_drag_hint: 'ドラッグしてカード(段階、または指示+レポートのセット)の順序を変えます',
+      card_move_up: 'カードを上へ',
+      card_move_down: 'カードを下へ',
+      card_drop_end: 'ここに置くと末尾へ移動します',
+      card_started_locked: 'ワークフローで既に実行を開始したカードのため、移動・削除できません。',
+      card_move_before_started: '実行を開始したカードより前には置けません。',
+      quantity_decrease_blocked_started: '{type} の残りのカードはすべて実行を開始しているため、これ以上減らせません。',
       // T0007 §1.2 — サーバーが送る code+params から現在の UI locale で毎回再描画する。
       // 文言は work_plan_service._ERROR_COPY と対にする(プレースホルダ構文は同じ)。
       errors: {
@@ -1318,6 +1326,14 @@ export default {
         pre_instruction_attachment_original_name_mismatch: '添付の元ファイル名が registry と異なります。',
         pre_instruction_attachment_digest_mismatch: '添付の内容ダイジェストが一致しません。',
         pre_instruction_attachment_outside_storage: '添付パスが保存領域の境界外です。',
+        pair_not_adjacent: 'セットの指示段階の直後にはその結果段階が来なければならず、結果段階を単独で置くことはできません。',
+        ordinal_order_invalid: '同じタイプ内では回次が出現順に 1 から続かなければなりません。',
+        card_id_invalid: "card_id は {max} 文字以内の英数字・_#.:- の文字列で、'retired:' で始めることはできません。",
+        card_id_duplicate: '異なるカードが同じ card_id({value})を持つことはできません。',
+        card_id_pair_mismatch: 'セットの指示段階と結果段階は同じ card_id を持たなければなりません。',
+        card_id_missing: '既存カードの card_id がありません。カードを移動・再採番しても card_id はそのまま送ってください。',
+        card_id_unknown: '直前の本文にない card_id({value})です。新しいカードは card_id なしで送るとサーバーが付与します。',
+        card_id_type_changed: 'card_id({value})のカードタイプは変更できません。',
       },
       // T0007 rev1 §1 — `empty_selection` の `what_key` param を現在の UI locale に写す表。
       // キーは work_plan_service._EMPTY_SELECTION_WHAT と対にする。
@@ -2424,6 +2440,8 @@ export default {
       preset_revert_confirm: '入力値だけを戻します。追加済みのワークフロー段階は戻りません。続行しますか？',
       preset_mode_refreshed: '実行方式に合わせて再入力しました。手動編集した{n}セルは保持しました。',
       preset_mode_failed: 'この実行方式の割り当てを再計算できませんでした。',
+      // 0649 T#3 (NR0003 O2/O4)
+      preset_card_order_blocked: '作業計画のカード順序が現在のワークフローと異なるため、この入力では開始できません。[作業計画を適用] でワークフローを計画順に合わせてから開き直してください。',
       sequence_source: '作業計画 {doc} の値で入力しました。',
       note_unset: 'メンションのない段階 {n}件',
     },
@@ -2669,6 +2687,10 @@ export default {
       loading: 'シーケンス読み込み中...',
       error_load: 'シーケンスの読み込みに失敗しました',
       provider_readonly_rule: 'ステップ別プロバイダーは読み取り専用です。作業計画で変更してから再投入してください。',
+      // 0649 T#3 (NR0003 O1) — サーバーが固定した行(開始済み行・その直後の待機レポート)。
+      protected_badge: '固定',
+      protected_interleaved_note: '固定行より前にある編集行 {n} 件は、保存すると最後の固定行の後ろに移動します。固定行の位置は変わりません。',
+      protected_slot_blocked: '固定行の位置が変わるため実行できません。指示と自動レポートのまとまりは、固定行の前の空きに全部入る場合にだけ移動できます。',
       provider_unavailable: '{name} · 現在利用不可',
       meta_contract_missing: 'サーバー応答にメモ・出典情報がありません。このまま保存すると既存の値が消去されます。シーケンスを再読み込みしてください。',
       reload: '再読み込み',
@@ -3021,8 +3043,6 @@ export default {
       section_status: '文書ステータス',
       section_workflow: 'ワークフロー進行',
       wp_assignments: 'プロバイダー割り当て (段階基準)', wp_assignment_steps: '{n}段階', wp_unassigned_steps: '未指定{n}段階',
-      wp_review_summary_title: '検収設定の要約', wp_review_summary_text: '{total}段階中{n}段階 · {list}', wp_review_summary_none: '設定された段階なし',
-      wp_instruction_summary_title: '事前指示の作成状況', wp_instruction_summary_text: '対象{total}段階中{n}段階 · {list}', wp_instruction_summary_none: '作成された段階なし',
       section_qa: '質疑応答',
       // 0311 T0004 rev1: 質疑は独立セクション(§1)、差し戻しはAIレビューと統合(§2)。
       section_review_reject: 'AIレビュー・差し戻し',
@@ -3241,6 +3261,34 @@ export default {
       notify_provider_not_registered: '未登録または無効なプロバイダーを指定した段階が {n} 件あったため、その欄を空にしました。計画の共通プロバイダーがあればそれで補います。',
       error_sequence_changed: '別の場所でシーケンスが変わりました。画面を閉じて開き直してください。',
       error_wp_changed: 'この画面を開いた後に作業計画が変わりました。閉じて開き直し、最新の計画を流し込んでください。',
+      // 0649 T#3 (NR0003 §5.3 / 警告・遮断表) — カード順序の反映経路の通知・遮断・確認。
+      notify_legacy_card_unresolved: 'どのカードの実行か証明できない以前の実行行が {n} 件あります。確認すると、これらの行はどのカードにも属さない以前の実行履歴として残り、該当カードは再度流し込まれることがあります。',
+      notify_retired_plan_rows: '削除された以前のカードの実行履歴 {n} 行はその位置のまま残します。',
+      notify_order_conflicts_started: '既に実行を開始したカード({cards})が計画の先頭にないため保存できません。作業計画で開始済みカードを先頭に戻してください。',
+      notify_started_card_removed: '既に実行を開始したカード({cards})が計画から消えたため保存できません。作業計画にそのカードを戻してください。',
+      notify_card_identity_mismatch: '開始済みの行と計画カード({cards})のタイプが一致しないため保存できません。',
+      notify_plan_rows_pending: 'この計画の以前の行が {n} 件残っているため、後ろに追加できません。[以降の段階を置換] で開き直してください。',
+      notify_steps_already_done: '既に実行を開始したカード {n} 件は再度流し込みませんでした。',
+      notify_foreign_rows_before: 'この計画の前に他の待機行が {n} 件あり、それらが先に実行されます。',
+      legacy_ack_label: '確認しました — 上の行を以前の実行履歴として扱い保存します。',
+      legacy_row: '{position} 行目 · {type} · {result} · r{rev} · 候補 {keys}',
+      blocked_save: '遮断項目があるため保存できません。',
+      menu_blocked_plan_rows_pending: 'この計画の以前の行が残っているため追加できません — [以降の段階を置換] を使ってください。',
+      menu_blocked_order_conflicts_started: '開始済みカードが計画の先頭にないため保存できません。',
+      menu_blocked_started_card_removed: '開始済みカードが計画から消えたため保存できません。',
+      menu_blocked_card_identity_mismatch: '開始済みの行と計画カードのタイプが一致しないため保存できません。',
+      menu_needs_ack: '確認が必要な以前の実行行があります。',
+      error_legacy_card_unresolved: 'どのカードの実行か証明できない以前の実行行があります。一覧を確認してチェックし、もう一度保存してください。',
+      error_order_conflicts_started: '既に実行を開始したカード({cards})が計画の先頭にないため保存しませんでした。',
+      error_started_card_removed: '既に実行を開始したカード({cards})が計画から消えたため保存しませんでした。',
+      error_card_identity_mismatch: '開始済みの行と計画カードのタイプが一致しないため保存しませんでした。',
+      error_plan_rows_pending: 'この計画の以前の行が残っているため追加しませんでした。[以降の段階を置換] で開き直してください。',
+      error_plan_order_violation: '保存結果が作業計画のカード順序と異なるため元に戻しました({reason})。行を移動・削除せずにもう一度流し込んでください。',
+      error_protected_row_echo_ambiguous: '固定行を区別できないため保存しませんでした。再読み込みしてから保存してください。',
+      error_sequence_item_stale: '画面の行がサーバーにもうありません。再読み込みしてから保存してください。',
+      error_protected_row_modified: '実行を開始した固定行は変更できません。再読み込みしてから保存してください。',
+      reload_needed: 'シーケンスを再読み込みしてから保存してください。',
+      reload: '再読み込み',
     },
     // 0325 TR0007 rev1 — 最終承認サイドバーの[変更内容を開く]が開く変更閲覧画面。
     group_changes: {

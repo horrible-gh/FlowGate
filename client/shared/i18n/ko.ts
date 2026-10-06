@@ -1269,6 +1269,14 @@ export default {
       quantity_removal_warning_title: '수량을 줄이면 값이 입력된 단계 {n}개가 사라집니다. 계속하시겠습니까?',
       quantity_removal_warning_confirm: '계속하고 줄이기',
       quantity_removal_warning_cancel: '취소',
+      // 0649 T#3 (NR0003 §5.3 / O7) — 카드 단위 이동과 시작된 카드 잠금.
+      card_drag_hint: '끌어서 카드(단계 또는 지시+레포트 세트)의 순서를 바꿉니다',
+      card_move_up: '카드를 위로',
+      card_move_down: '카드를 아래로',
+      card_drop_end: '여기에 놓으면 맨 끝으로 옮깁니다',
+      card_started_locked: '워크플로에서 이미 실행을 시작한 카드라 옮기거나 지울 수 없습니다.',
+      card_move_before_started: '실행을 시작한 카드보다 앞에는 둘 수 없습니다.',
+      quantity_decrease_blocked_started: '{type}의 남은 카드는 모두 실행을 시작해서 더 줄일 수 없습니다.',
       // T0007 §1.2 — 서버가 보내는 code+params를 현재 UI locale로 매 렌더마다 다시 그린다.
       // 문구는 work_plan_service._ERROR_COPY와 짝을 맞춘다(자리표시자 문법이 같다).
       errors: {
@@ -1319,6 +1327,14 @@ export default {
         pre_instruction_attachment_original_name_mismatch: '첨부 원래 파일명이 registry와 다릅니다.',
         pre_instruction_attachment_digest_mismatch: '첨부 내용 지문이 다릅니다.',
         pre_instruction_attachment_outside_storage: '첨부 경로가 저장소 경계를 벗어납니다.',
+        pair_not_adjacent: '세트의 지시 단계 바로 다음에는 그 결과 단계가 와야 하며, 결과 단계는 단독으로 둘 수 없습니다.',
+        ordinal_order_invalid: '같은 타입 안에서는 회차가 등장 순서대로 1부터 이어져야 합니다.',
+        card_id_invalid: "card_id 는 {max}자 이내의 영문·숫자·_#.:- 문자열이어야 하며 'retired:' 로 시작할 수 없습니다.",
+        card_id_duplicate: '서로 다른 카드가 같은 card_id({value})를 가질 수 없습니다.',
+        card_id_pair_mismatch: '세트의 지시 단계와 결과 단계는 같은 card_id 를 가져야 합니다.',
+        card_id_missing: '기존 카드의 card_id 가 빠졌습니다. 카드를 옮기거나 다시 번호를 매겨도 card_id 는 그대로 보내야 합니다.',
+        card_id_unknown: '직전 본문에 없는 card_id({value})입니다. 새 카드는 card_id 없이 보내면 서버가 부여합니다.',
+        card_id_type_changed: 'card_id({value})의 카드 타입을 바꿀 수 없습니다.',
       },
       // T0007 rev1 §1 — `empty_selection`의 `what_key` param을 현재 UI locale로 옮기는 표.
       // work_plan_service._EMPTY_SELECTION_WHAT과 키를 맞춘다.
@@ -2427,6 +2443,8 @@ export default {
       preset_revert_confirm: '채운 값만 되돌립니다. 워크플로에 더해진 단계는 되돌아가지 않습니다. 계속할까요?',
       preset_mode_refreshed: '실행 방식이 바뀌어 배정을 다시 채웠습니다. 직접 고친 {n}칸은 그대로 두었습니다.',
       preset_mode_failed: '실행 방식에 맞는 배정을 다시 계산하지 못했습니다.',
+      // 0649 T#3 (NR0003 O2/O4)
+      preset_card_order_blocked: '작업계획의 카드 순서가 지금 워크플로와 달라 이 채우기로는 시작할 수 없습니다. [작업계획 적용]으로 워크플로를 계획 순서에 맞춘 뒤 다시 여세요.',
       sequence_source: '{doc} 작업계획에서 채웠습니다.',
       note_unset: '멘트 없는 단계 {n}개',
     },
@@ -2672,6 +2690,10 @@ export default {
       loading: '시퀀스 불러오는 중...',
       error_load: '시퀀스 불러오기 실패',
       provider_readonly_rule: '단계별 공급자는 읽기 전용입니다. 작업계획에서 바꾼 뒤 다시 부어 넣으세요.',
+      // 0649 T#3 (NR0003 O1) — 서버가 고정한 행(시작된 행 · 그 직후 대기 레포트).
+      protected_badge: '고정',
+      protected_interleaved_note: '고정 행보다 앞에 있는 편집 행 {n}개는 저장하면 마지막 고정 행 뒤로 옮겨집니다. 고정 행의 자리는 바뀌지 않습니다.',
+      protected_slot_blocked: '고정 행의 자리가 바뀌게 되어 할 수 없습니다. 지시와 자동 레포트 묶음은 고정 행 앞 빈자리에 다 들어갈 때만 옮길 수 있습니다.',
       provider_unavailable: '{name} · 지금 쓸 수 없음',
       meta_contract_missing: '서버 응답에 멘트·출처 정보가 없어 지금 저장하면 기존 값이 지워집니다. 시퀀스를 다시 불러오세요.',
       reload: '다시 불러오기',
@@ -3024,8 +3046,6 @@ export default {
       section_status: '문서 상태',
       section_workflow: '워크플로 진행',
       wp_assignments: '프로바이더 배정 (단계 기준)', wp_assignment_steps: '{n}단계', wp_unassigned_steps: '미지정 {n}단계',
-      wp_review_summary_title: '검수 설정 요약', wp_review_summary_text: '{total}단계 중 {n}단계 · {list}', wp_review_summary_none: '설정된 단계 없음',
-      wp_instruction_summary_title: '사전지시 작성 현황', wp_instruction_summary_text: '지시 대상 {total}단계 중 {n}단계 · {list}', wp_instruction_summary_none: '작성된 단계 없음',
       section_qa: '질의 응답',
       // 0311 T0004 rev1: 질의는 독립 섹션(§1), 반려는 AI 검수와 합친 섹션(§2).
       section_review_reject: 'AI 검수·반려',
@@ -3244,6 +3264,34 @@ export default {
       notify_provider_not_registered: '등록되어 있지 않거나 꺼져 있는 공급자를 지정한 단계가 {n}개 있어 그 자리의 공급자를 비웠습니다. 계획의 공통 공급자가 있으면 그것으로 채웁니다.',
       error_sequence_changed: '다른 곳에서 시퀀스가 바뀌었습니다. 창을 닫고 다시 열어 주세요.',
       error_wp_changed: '이 창을 연 뒤 작업계획이 바뀌었습니다. 창을 닫고 다시 열어 최신 계획을 부어 주세요.',
+      // 0649 T#3 (NR0003 §5.3 / 경고·차단 표) — 카드 순서 반영 경로의 알림·차단·확인.
+      notify_legacy_card_unresolved: '어느 카드의 실행인지 증명할 수 없는 이전 실행 행이 {n}개 있습니다. 확인하면 이 행들은 어느 카드에도 속하지 않는 이전 실행 이력으로 남고, 해당 카드는 다시 부어질 수 있습니다.',
+      notify_retired_plan_rows: '삭제된 이전 카드의 실행 이력 {n}행은 그 자리에 그대로 둡니다.',
+      notify_order_conflicts_started: '이미 실행을 시작한 카드({cards})가 계획의 맨 앞 순서에 있지 않아 저장할 수 없습니다. 작업계획에서 시작된 카드를 맨 앞으로 되돌리세요.',
+      notify_started_card_removed: '이미 실행을 시작한 카드({cards})가 계획에서 사라져 저장할 수 없습니다. 작업계획에 그 카드를 되살리세요.',
+      notify_card_identity_mismatch: '시작된 행과 계획 카드({cards})의 타입이 맞지 않아 저장할 수 없습니다.',
+      notify_plan_rows_pending: '이 계획의 이전 행 {n}개가 아직 남아 있어 뒤에 이어 붙일 수 없습니다. [이후 단계 교체]로 다시 여세요.',
+      notify_steps_already_done: '이미 실행을 시작한 카드 {n}개는 다시 붓지 않았습니다.',
+      notify_foreign_rows_before: '이 계획 앞에 다른 대기 행 {n}개가 있어 그 행들이 먼저 실행됩니다.',
+      legacy_ack_label: '확인했습니다 — 위 행들을 이전 실행 이력으로 처리하고 저장합니다.',
+      legacy_row: '{position}번째 행 · {type} · {result} · r{rev} · 후보 {keys}',
+      blocked_save: '차단 항목이 있어 저장할 수 없습니다.',
+      menu_blocked_plan_rows_pending: '이 계획의 이전 행이 남아 있어 이어 붙일 수 없습니다 — [이후 단계 교체]를 쓰세요.',
+      menu_blocked_order_conflicts_started: '실행을 시작한 카드가 계획 맨 앞에 있지 않아 저장할 수 없습니다.',
+      menu_blocked_started_card_removed: '실행을 시작한 카드가 계획에서 사라져 저장할 수 없습니다.',
+      menu_blocked_card_identity_mismatch: '시작된 행과 계획 카드의 타입이 맞지 않아 저장할 수 없습니다.',
+      menu_needs_ack: '확인이 필요한 이전 실행 행이 있습니다.',
+      error_legacy_card_unresolved: '어느 카드의 실행인지 증명할 수 없는 이전 실행 행이 있습니다. 목록을 확인하고 체크한 뒤 다시 저장하세요.',
+      error_order_conflicts_started: '이미 실행을 시작한 카드({cards})가 계획의 맨 앞 순서에 있지 않아 저장하지 않았습니다.',
+      error_started_card_removed: '이미 실행을 시작한 카드({cards})가 계획에서 사라져 저장하지 않았습니다.',
+      error_card_identity_mismatch: '시작된 행과 계획 카드의 타입이 맞지 않아 저장하지 않았습니다.',
+      error_plan_rows_pending: '이 계획의 이전 행이 남아 있어 이어 붙이지 않았습니다. [이후 단계 교체]로 다시 여세요.',
+      error_plan_order_violation: '저장 결과가 작업계획의 카드 순서와 달라 되돌렸습니다({reason}). 줄을 옮기거나 지우지 말고 다시 부어 주세요.',
+      error_protected_row_echo_ambiguous: '고정된 행을 구별할 수 없어 저장하지 않았습니다. 다시 불러온 뒤 저장하세요.',
+      error_sequence_item_stale: '화면의 행이 서버에 더 이상 없습니다. 다시 불러온 뒤 저장하세요.',
+      error_protected_row_modified: '실행을 시작한 고정 행은 바꿀 수 없습니다. 다시 불러온 뒤 저장하세요.',
+      reload_needed: '시퀀스를 다시 불러와야 저장할 수 있습니다.',
+      reload: '다시 불러오기',
     },
     // 0325 TR0007 rev1 — 최종 승인 사이드바의 [변경사항 열기] 가 여는 변경사항 열람 화면.
     group_changes: {

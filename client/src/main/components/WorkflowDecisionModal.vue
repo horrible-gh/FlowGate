@@ -64,10 +64,48 @@
         <div
           v-for="note in pourNotifications"
           :key="note.code"
-          class="wdm-banner wdm-banner--warn"
+          class="wdm-banner"
+          :class="note.severity === 'blocker' ? 'wdm-banner--block' : 'wdm-banner--warn'"
+          :data-test="`pour-note-${note.code}`"
         >
-          <AppIcon name="warning" />
+          <AppIcon :name="note.severity === 'blocker' ? 'prohibit' : 'warning'" />
           <span>{{ notificationText(note) }}</span>
+        </div>
+        <!-- 0649 T#3 (NR0003 O0): started rows whose card cannot be proven. Saving stays off
+             until the person reads the list and confirms; the confirmation rides the save as
+             acknowledged_codes. -->
+        <div v-if="legacyRows.length" class="wdm-banner wdm-banner--block wdm-legacy" data-test="legacy-card-unresolved">
+          <AppIcon name="question" />
+          <div class="wdm-legacy-body">
+            <span>{{ t('main.work_plan_pour.notify_legacy_card_unresolved', { n: legacyRows.length }) }}</span>
+            <ul class="wdm-legacy-rows">
+              <li v-for="row in legacyRows" :key="String(row.item_id)">
+                {{ t('main.work_plan_pour.legacy_row', {
+                  position: row.position ?? '?',
+                  type: row.type ?? '?',
+                  result: row.result_doc_id ? shortCodeOf(String(row.result_doc_id)) : '—',
+                  rev: row.r_b ?? '?',
+                  keys: (row.candidate_keys ?? []).join(' · ') || '—',
+                }) }}
+              </li>
+            </ul>
+            <label class="wdm-legacy-ack">
+              <input v-model="legacyAcknowledged" type="checkbox" data-test="legacy-ack" />
+              {{ t('main.work_plan_pour.legacy_ack_label') }}
+            </label>
+          </div>
+        </div>
+        <div v-if="saveBlockedCode" class="wdm-banner wdm-banner--block" data-test="save-blocked">
+          <AppIcon name="prohibit" />
+          <span>{{ saveBlockedText }}</span>
+        </div>
+        <div v-if="reloadNeeded" class="wdm-banner wdm-banner--block" data-test="reload-needed">
+          <AppIcon name="arrows-clockwise" />
+          <span>{{ t(`main.work_plan_pour.error_${reloadNeeded}`) }}</span>
+          <span class="wdm-banner-spacer"></span>
+          <button type="button" class="wdm-undo" data-test="reload-sequence" @click="reloadAfterConflict">
+            {{ t('main.work_plan_pour.reload') }}
+          </button>
         </div>
 
         <!-- ── Body ── -->
@@ -221,12 +259,35 @@
                 @dragover.prevent="handleEditorDragOver"
                 @drop.prevent="handleEditorDrop"
               >
-                <div v-if="sequence.length === 0" class="wdm-empty-state">
-                  <AppIcon name="arrow-left" />
-                  <span>{{ t('main.workflow_decision_modal.seq_empty') }}</span>
-                </div>
+                <!-- 0649 T#3 (NR0003 O1): a pending row the server protects — the report right
+                     after a started instruction — is drawn fixed at its stored position, also
+                     when it sits between editable rows (protected rows need not be a sort_order
+                     prefix). It cannot be dragged, moved or deleted. -->
                 <div
-                  v-for="(item, idx) in sequence"
+                  v-if="mode === 'edit' && rowsAheadOfFixed > 0"
+                  class="wdm-fixed-order-note"
+                  data-test="protected-interleaved-note"
+                >
+                  <AppIcon name="info" />
+                  {{ t('main.workflow_edit_modal.protected_interleaved_note', { n: rowsAheadOfFixed }) }}
+                </div>
+                <template v-for="row in editorRows" :key="row.key">
+                <div
+                  v-if="row.fixed"
+                  class="wdm-seq-item is-protected"
+                  data-test="protected-row"
+                >
+                  <AppIcon name="lock" class="wdm-drag-handle" />
+                  <span class="wdm-seq-num">{{ row.no }}</span>
+                  <span class="doc-tag" :class="`c-${row.fixed.type}`">{{ row.fixed.type }}</span>
+                  <span class="wdm-seq-main">
+                    <span class="wdm-seq-label">{{ docTypeStore.getLabel(row.fixed.type) }}</span>
+                  </span>
+                  <span class="wdm-protected-badge">{{ t('main.workflow_edit_modal.protected_badge') }}</span>
+                </div>
+                <template v-else>
+                <div
+                  v-for="item in (row.item ? [row.item] : [])"
                   :key="item.id"
                   class="wdm-seq-item"
                   :class="{
@@ -244,7 +305,7 @@
                 >
                   <AppIcon name="dots-six-vertical" class="wdm-drag-handle" v-if="!item.isAuto" />
                   <span v-else class="wdm-drag-spacer"></span>
-                  <span class="wdm-seq-num">{{ (mode === 'edit' ? lockedItems.length : 0) + idx + 1 }}</span>
+                  <span class="wdm-seq-num">{{ row.no }}</span>
                   <span class="doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
                   <!-- 0399 T0016 / D0010 §3.4 — the type can be swapped without deleting the
                        row. Only manual rows may change type; auto followers are derived. -->
@@ -253,7 +314,7 @@
                     class="wdm-type-select"
                     :aria-label="t('main.work_plan_pour.change_type_label')"
                     :value="item.type"
-                    @change="changeRowType(item, ($event.target as HTMLSelectElement).value)"
+                    @change="onRowTypeChange(item, $event)"
                   >
                     <option v-for="opt in SELECTABLE_TYPES" :key="opt" :value="opt">{{ opt }}</option>
                   </select>
@@ -333,6 +394,12 @@
                     </template>
                   </div>
                 </div>
+                </template>
+                </template>
+                <div v-if="sequence.length === 0" class="wdm-empty-state">
+                  <AppIcon name="arrow-left" />
+                  <span>{{ t('main.workflow_decision_modal.seq_empty') }}</span>
+                </div>
                 <!-- Drop zone: append to end -->
                 <div
                   v-if="draggedId !== null || draggedType !== null"
@@ -355,23 +422,15 @@
                   <span v-if="(mode !== 'edit' && sequence.length === 0) || (mode === 'edit' && lockedItems.length === 0 && sequence.length === 0)" class="wdm-preview-empty">
                     {{ mode === 'edit' ? t('main.workflow_edit_modal.preview_empty') : t('main.workflow_decision_modal.preview_empty') }}
                   </span>
-                  <!-- locked items (edit mode) -->
-                  <template v-if="mode === 'edit'">
-                    <template v-for="(item, idx) in lockedItems" :key="`l-${item.id}`">
-                      <span class="wdm-prev-step wem-prev-locked">
-                        <span class="doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
-                      </span>
-                      <span v-if="idx < lockedItems.length - 1 || sequence.length > 0" class="wdm-prev-arrow">
-                        <AppIcon name="caret-right" />
-                      </span>
-                    </template>
-                  </template>
-                  <!-- pending items -->
-                  <template v-for="(item, idx) in sequence" :key="item.id">
-                    <span class="wdm-prev-step" :class="{ 'is-auto': item.isAuto }">
-                      <span class="doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
+                  <!-- locked (edit mode) and pending items, in their actual order (NR0003 O1) -->
+                  <template v-for="(row, idx) in previewRows" :key="row.key">
+                    <span v-if="row.fixed" class="wdm-prev-step wem-prev-locked">
+                      <span class="doc-tag" :class="`c-${row.fixed.type}`">{{ row.fixed.type }}</span>
                     </span>
-                    <span v-if="idx < sequence.length - 1" class="wdm-prev-arrow">
+                    <span v-else class="wdm-prev-step" :class="{ 'is-auto': row.item?.isAuto }">
+                      <span class="doc-tag" :class="`c-${row.item?.type}`">{{ row.item?.type }}</span>
+                    </span>
+                    <span v-if="idx < previewRows.length - 1" class="wdm-prev-arrow">
                       <AppIcon name="caret-right" />
                     </span>
                   </template>
@@ -476,6 +535,10 @@ export interface SequenceItem {
   // 0399 T0016 / D0010 §3.4: "줄의 문서 종류를 다른 것으로 바꾸면 그 멘트는 더 이상 그
   // 단계 이야기가 아니므로 비운다." — set the moment changeRowType() runs, never reset.
   typeChanged: boolean
+  // 0649 T#3 (NR0003 O0/O1): the stored row this entry came from (sent back as item_id; a new
+  // row has none) and the work-plan card it serves (sent back as source_wp_card_id).
+  serverId?: number | null
+  sourceWpCardId?: string | null
 }
 
 /** One row of P0013 ①'s response. */
@@ -499,6 +562,10 @@ export interface PourRow {
   reviewer_provider_display_name?: string | null
   pre_instruction_text?: string | null
   pre_instruction_attachment?: Record<string, unknown> | null
+  // 0649 T#1/T#3 (NR0003 O0/O1)
+  source_wp_card_id?: string | null
+  item_id?: number | null
+  protected?: boolean
 }
 
 export interface PourNotification {
@@ -508,6 +575,10 @@ export interface PourNotification {
   types?: string[]
   row_indexes?: number[]
   items?: Array<Record<string, unknown>>
+  // 0649 T#2/T#3: started cards a plan breaks, and the code that lifts a confirmable blocker
+  cards?: Array<{ card_id?: string; key?: string | null; type?: string | null }>
+  acknowledge_code?: string
+  suggested_mode?: string
 }
 
 /** What [Apply Work Plan] hands this dialog: a starting state, not a saved change. */
@@ -526,6 +597,8 @@ export interface PourPayload {
   rowCountChange: { before: number; after: number; deleted: number; added: number }
   notifications: PourNotification[]
   workflowTag: string
+  // 0649 T#2/T#3: codes no confirmation can lift (order_conflicts_started, plan_rows_pending …)
+  blockers?: string[]
 }
 
 export interface WfdConfirmPayload {
@@ -663,6 +736,14 @@ interface ServerItem {
   reviewer_provider_display_name?: string | null
   pre_instruction_text?: string | null
   pre_instruction_attachment?: Record<string, unknown> | null
+  // 0649 T#1 (NR0003 O1): the row id to send back, and whether the server fixes the row
+  // (a protected report row is still status 'pending').
+  item_id?: number | null
+  protected?: boolean
+  // 0649 T#3 (NR0003 O1): client-only — the row's index in the stored order, so a fixed row is
+  // drawn where it actually is (protected rows need not be a sort_order prefix).
+  slot?: number
+  source_wp_card_id?: string | null
 }
 
 const loading = ref(false)
@@ -679,8 +760,70 @@ const pourSession = ref<PourPayload | null>(null)
 // note_missing is recomputed live below, so the server's snapshot of it would only ever
 // disagree with what the rows on screen say once somebody starts typing.
 const pourNotifications = computed(() =>
-  (pourSession.value?.notifications ?? []).filter(n => n.code !== 'note_missing'),
+  (pourSession.value?.notifications ?? []).filter(
+    n => n.code !== 'note_missing' && n.code !== 'legacy_card_unresolved',
+  ),
 )
+
+// ── 0649 T#3 (NR0003 O0-O5): blockers, confirmation and conflict recovery ──────────
+const CARD_ORDER_BLOCKERS = new Set([
+  'order_conflicts_started', 'started_card_removed', 'card_identity_mismatch', 'plan_rows_pending',
+])
+// Blockers the candidates carried: no confirmation lifts them, the save stays off.
+const pourBlockers = computed(() => {
+  const session = pourSession.value
+  if (!session) return [] as string[]
+  const codes = new Set<string>(session.blockers ?? [])
+  for (const note of session.notifications ?? []) {
+    if (note.severity === 'blocker' && CARD_ORDER_BLOCKERS.has(note.code)) codes.add(note.code)
+  }
+  return Array.from(codes)
+})
+interface LegacyRow {
+  item_id?: number | null
+  position?: number | null
+  type?: string | null
+  result_doc_id?: string | null
+  r_b?: number | null
+  candidate_keys?: string[]
+}
+// Rows the server could not tie to a card — from the candidates, or from a 409 on save.
+const legacyRowsFromSave = ref<LegacyRow[]>([])
+const legacyRows = computed<LegacyRow[]>(() => {
+  if (legacyRowsFromSave.value.length) return legacyRowsFromSave.value
+  const note = pourSession.value?.notifications?.find(n => n.code === 'legacy_card_unresolved')
+  return (note?.items ?? []) as LegacyRow[]
+})
+const legacyAcknowledged = ref(false)
+// A 409 the person cannot fix in this dialog (the plan itself must change).
+const saveBlockedCode = ref<string | null>(null)
+const saveBlockedParams = ref<Record<string, unknown>>({})
+const saveBlockedText = computed(() =>
+  saveBlockedCode.value ? t(`main.work_plan_pour.error_${saveBlockedCode.value}`, saveBlockedParams.value) : '',
+)
+// A 409 that means "this screen is stale": only a reload can recover.
+const reloadNeeded = ref<string | null>(null)
+
+function resetConflictState() {
+  legacyRowsFromSave.value = []
+  legacyAcknowledged.value = false
+  saveBlockedCode.value = null
+  saveBlockedParams.value = {}
+  reloadNeeded.value = null
+}
+
+const saveBlocked = computed(() =>
+  pourBlockers.value.length > 0
+  || saveBlockedCode.value !== null
+  || reloadNeeded.value !== null
+  || (legacyRows.value.length > 0 && !legacyAcknowledged.value),
+)
+
+function cardsText(cards: PourNotification['cards'] | unknown): string {
+  return (Array.isArray(cards) ? cards : [])
+    .map((card: any) => card?.key ?? card?.card_id ?? '?')
+    .join(' · ')
+}
 
 // Mockup fgh29xnk v3 · screen 3 — to render "그 뒤 직접 2줄 지움 · 1줄 타입 바꿈 · 1줄 추가"
 // we need to remember what things looked like right after the pour. The row's id is
@@ -749,6 +892,87 @@ const missingNoteText = computed(() =>
 
 const manualItems = computed(() => sequence.value.filter(s => !s.isAuto))
 
+// 0649 T#3: a protected row that has not started yet (the report right after a started
+// instruction). It used to sit in the editable list; it is fixed now and drawn as such.
+const protectedPendingItems = computed(() =>
+  lockedItems.value.filter(item => item.status === 'pending'),
+)
+
+function isProtectedServerItem(item: ServerItem): boolean {
+  // Servers before 0649 send no `protected`; then a row is fixed exactly when it is not pending.
+  return typeof item.protected === 'boolean' ? item.protected : item.status !== 'pending'
+}
+
+type OrderedRow =
+  | { key: string; no: number; fixed: ServerItem; item: null }
+  | { key: string; no: number; fixed: null; item: SequenceItem }
+
+// 0649 T#3 (NR0003 O1): fixed rows stay at their stored position — also between editable rows,
+// since protected rows need not be a sort_order prefix — and the editable rows flow around
+// them. An instruction and its auto reports are one block that a fixed row never splits; a
+// fixed row is never drawn later than its slot, only earlier when the rows left ahead of it
+// cannot fill the gap (a deletion). Edits that would draw it away are refused (commitSequence).
+function layoutRows(seq: SequenceItem[], fixedItems: ServerItem[]): OrderedRow[] {
+  const fixed = [...fixedItems].sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0))
+  const rows: OrderedRow[] = []
+  const pushFixed = (row: ServerItem) => {
+    rows.push({ key: `p-${row.item_id ?? row.id}`, no: rows.length + 1, fixed: row, item: null })
+  }
+  let f = 0
+  let e = 0
+  while (e < seq.length) {
+    const end = seq[e].isAuto ? e : findBlockEndInArr(seq, e)
+    // a slot at or inside the next block's span goes first
+    while (f < fixed.length && (fixed[f].slot ?? 0) < rows.length + (end - e + 1)) pushFixed(fixed[f++])
+    for (; e <= end; e++) rows.push({ key: `e-${seq[e].id}`, no: rows.length + 1, fixed: null, item: seq[e] })
+  }
+  while (f < fixed.length) pushFixed(fixed[f++])
+  return rows
+}
+
+const orderedRows = computed((): OrderedRow[] => layoutRows(sequence.value, lockedItems.value))
+
+/** How far each fixed row would be drawn from its stored slot, in slot order. */
+function fixedSlotDrift(seq: SequenceItem[]): number[] {
+  const drift: number[] = []
+  layoutRows(seq, lockedItems.value).forEach((row, index) => {
+    if (row.fixed) drift.push(Math.abs(index - (row.fixed.slot ?? index)))
+  })
+  return drift
+}
+
+/** Apply a reorder / insert / type change unless it would draw a fixed row further from its
+ *  stored slot — e.g. an instruction+report block that cannot fit in the gap before a fixed
+ *  row. The server keeps the fixed rows' sort_order, so the screen must not suggest otherwise. */
+function commitSequence(next: SequenceItem[]): boolean {
+  const before = fixedSlotDrift(sequence.value)
+  if (fixedSlotDrift(next).some((d, i) => d > (before[i] ?? 0))) {
+    showToast(t('main.workflow_edit_modal.protected_slot_blocked'), 'warning')
+    return false
+  }
+  sequence.value = next
+  return true
+}
+
+/** The editor list: started rows stay out of it (they show in the preview), a protected pending
+ *  report is drawn fixed in its place. */
+const editorRows = computed(() =>
+  orderedRows.value.filter(row => !row.fixed || row.fixed.status === 'pending'),
+)
+
+const previewRows = computed(() =>
+  props.mode === 'edit' ? orderedRows.value : orderedRows.value.filter(row => row.item),
+)
+
+/** Editable rows drawn ahead of a fixed row. The server re-inserts every editable row after the
+ *  last protected one (O1 `max(sort_order) + 1`), so a save puts these behind it — say so. */
+const rowsAheadOfFixed = computed(() => {
+  const rows = orderedRows.value
+  let last = -1
+  rows.forEach((row, index) => { if (row.fixed) last = index })
+  return rows.slice(0, Math.max(last, 0)).filter(row => row.item).length
+})
+
 const allDone = computed(() =>
   props.mode === 'edit' && lockedItems.value.length > 0 && sequence.value.length === 0 && !loading.value && !loadError.value
 )
@@ -779,16 +1003,6 @@ function manualIndexOf(item: SequenceItem): number {
 function parentTypeOf(item: SequenceItem): string {
   if (!item.autoOfId) return ''
   return sequence.value.find(s => s.id === item.autoOfId)?.type ?? ''
-}
-
-function findBlockEnd(startIdx: number): number {
-  const seq = sequence.value
-  const manualId = seq[startIdx].id
-  let end = startIdx
-  while (end + 1 < seq.length && seq[end + 1].isAuto && seq[end + 1].autoOfId === manualId) {
-    end++
-  }
-  return end
 }
 
 // 0399 L0011 §2.7: a row a person adds here starts with an empty note and no plan behind
@@ -835,8 +1049,13 @@ const SELECTABLE_TYPES = CATEGORIES.flatMap(cat => cat.items.map(i => i.type))
 // 0399 T0016 / D0010 §3.4: changing a row's type empties its note (it is no longer that
 // step's message) and, if the row followed an instruction type, rebuilds its auto-linked
 // followers (TR/TSR) for the new type — removing stale ones, adding missing ones.
-function changeRowType(item: SequenceItem, newType: string) {
-  if (newType === item.type || item.isAuto) return
+function changeRowType(item: SequenceItem, newType: string): boolean {
+  if (newType === item.type || item.isAuto) return true
+  const seq = sequence.value.filter(s => !(s.isAuto && s.autoOfId === item.id))
+  const idx = seq.findIndex(s => s.id === item.id)
+  if (idx >= 0) seq.splice(idx + 1, 0, ...buildAutoEntries(item.id, newType, item))
+  // 0649 T#3: a new auto report can make the block too long for the gap before a fixed row.
+  if (!commitSequence(seq)) return false
   item.type = newType
   item.label = docTypeStore.getLabel(newType)
   item.note = ''
@@ -847,10 +1066,13 @@ function changeRowType(item: SequenceItem, newType: string) {
   item.preInstructionText = null
   item.preInstructionAttachment = null
   item.typeChanged = true
-  const seq = sequence.value.filter(s => !(s.isAuto && s.autoOfId === item.id))
-  const idx = seq.findIndex(s => s.id === item.id)
-  if (idx >= 0) seq.splice(idx + 1, 0, ...buildAutoEntries(item.id, newType, item))
-  sequence.value = seq
+  return true
+}
+
+function onRowTypeChange(item: SequenceItem, event: Event) {
+  const select = event.target as HTMLSelectElement
+  // a refused change leaves the row as it was — put the select back too
+  if (!changeRowType(item, select.value)) select.value = item.type
 }
 
 // ── Sequence operations ────────────────────────────────────────────────────────
@@ -867,33 +1089,37 @@ function applyPreset(key: string) {
 }
 
 function addToSeq(type: string) {
-  sequence.value = [...sequence.value, ...buildEntries(type)]
+  commitSequence([...sequence.value, ...buildEntries(type)])
 }
 
+// A deletion is never refused: it can only draw a fixed row earlier (fewer rows ahead of it),
+// which is also where the save puts it — editable rows go after the last protected row (O1).
 function removeFromSeq(id: number) {
   sequence.value = sequence.value.filter(s => s.id !== id && s.autoOfId !== id)
 }
 
 function moveUp(id: number) {
-  const seq = sequence.value
+  const seq = [...sequence.value]
   const idx = seq.findIndex(s => s.id === id)
   if (idx <= 0) return
-  const blockEnd = findBlockEnd(idx)
+  const blockEnd = findBlockEndInArr(seq, idx)
   const block = seq.splice(idx, blockEnd - idx + 1)
   let prevStart = idx - 1
   while (prevStart > 0 && seq[prevStart].isAuto) prevStart--
   seq.splice(prevStart, 0, ...block)
+  commitSequence(seq)
 }
 
 function moveDown(id: number) {
-  const seq = sequence.value
+  const seq = [...sequence.value]
   const idx = seq.findIndex(s => s.id === id)
   if (idx < 0) return
-  const blockEnd = findBlockEnd(idx)
+  const blockEnd = findBlockEndInArr(seq, idx)
   if (blockEnd >= seq.length - 1) return
   const block = seq.splice(idx, blockEnd - idx + 1)
-  const nextBlockEnd = findBlockEnd(idx)
+  const nextBlockEnd = findBlockEndInArr(seq, idx)
   seq.splice(nextBlockEnd + 1, 0, ...block)
+  commitSequence(seq)
 }
 
 function clearSeq() {
@@ -1017,7 +1243,7 @@ function moveBlock(fromId: number, toId: number) {
   const block = seq.splice(fromIdx, fromEnd - fromIdx + 1)
   const toIdx = seq.findIndex(s => s.id === toId)
   seq.splice(toIdx >= 0 ? toIdx : seq.length, 0, ...block)
-  sequence.value = seq
+  commitSequence(seq)
 }
 
 function moveBlockToEnd(fromId: number) {
@@ -1027,23 +1253,23 @@ function moveBlockToEnd(fromId: number) {
   const fromEnd = findBlockEndInArr(seq, fromIdx)
   const block = seq.splice(fromIdx, fromEnd - fromIdx + 1)
   seq.push(...block)
-  sequence.value = seq
+  commitSequence(seq)
 }
 
 function insertTypeAt(type: string, targetId: number) {
   const entries = buildEntries(type)
   if (targetId === -1) {
-    sequence.value = [...sequence.value, ...entries]
+    commitSequence([...sequence.value, ...entries])
     return
   }
   const seq = [...sequence.value]
   const targetIdx = seq.findIndex(s => s.id === targetId)
   if (targetIdx < 0) {
-    sequence.value = [...seq, ...entries]
+    commitSequence([...seq, ...entries])
     return
   }
   seq.splice(targetIdx, 0, ...entries)
-  sequence.value = seq
+  commitSequence(seq)
 }
 
 // ── Dialog actions ─────────────────────────────────────────────────────────────
@@ -1109,7 +1335,7 @@ const footerActions = computed<DialogAction[]>(() => {
       id: 'save',
       label: t('main.workflow_edit_modal.save'),
       role: 'primary',
-      disabled: saving.value || wouldEmptyDecided.value || metaContractMissing.value,
+      disabled: saving.value || wouldEmptyDecided.value || metaContractMissing.value || saveBlocked.value,
       onSelect: save,
     },
   ]
@@ -1143,6 +1369,9 @@ function dbItemsToSequence(items: ServerItem[]): SequenceItem[] {
       preInstructionText: it.pre_instruction_text ?? null,
       preInstructionAttachment: it.pre_instruction_attachment ?? null,
       typeChanged: false,
+      // 0649 T#3 (NR0003 O1): the stored row id goes back as item_id on save.
+      serverId: it.item_id ?? it.id ?? null,
+      sourceWpCardId: it.source_wp_card_id ?? null,
     }
     if (AUTO_TYPES.has(it.type)) {
       // 0408 M0019 re-rejection 2·3: the report row keeps the note stored ON it. Blanking it here
@@ -1173,6 +1402,7 @@ async function loadSequence() {
   lockedItems.value = []
   sequence.value = []
   idCounter.value = 0
+  resetConflictState()
   try {
     const res = await getRequest<any>('/api/v1/workflow/sequence', { doc_id: props.docId })
     const data = (res.data as any)
@@ -1183,8 +1413,12 @@ async function loadSequence() {
     // to `[]` here would silence the guard below and let a save wipe the whole pending block.
     const legacyShape = !Array.isArray(data?.items)
     const items: ServerItem[] = data?.items ?? data?.sequence ?? []
-    lockedItems.value = items.filter(it => it.status !== 'pending')
-    const pendingItems = items.filter(it => it.status === 'pending')
+    // 0649 T#3 (NR0003 O1): fixed rows follow the server's `protected`, not the status — a
+    // protected report row is still pending but may not be moved, deleted or re-inserted.
+    lockedItems.value = items
+      .map((it, index) => ({ ...it, slot: index }))
+      .filter(isProtectedServerItem)
+    const pendingItems = items.filter(it => !isProtectedServerItem(it))
     metaContractMissing.value = legacyShape || pendingItems.some(row =>
       ![
         'note', 'source_doc_id', 'source_revision_no', 'provider_id', 'provider_display_name',
@@ -1212,14 +1446,19 @@ function applyPour(payload: PourPayload) {
   loadError.value = false
   metaContractMissing.value = false
   idCounter.value = 0
+  resetConflictState()
   lockedItems.value = payload.rows
     .filter(row => row.locked)
     .map((row, index) => ({
       id: -(index + 1),
+      item_id: row.item_id ?? null,
+      protected: true,
+      source_wp_card_id: row.source_wp_card_id ?? null,
       type: row.type,
       label: row.label,
       status: row.status,
       sort_order: index,
+      slot: payload.rows.indexOf(row),
       note: row.note,
       source_doc_id: row.source_doc_id,
       source_revision_no: row.source_revision_no,
@@ -1255,6 +1494,8 @@ function applyPour(payload: PourPayload) {
       preInstructionText: row.pre_instruction_text ?? null,
       preInstructionAttachment: row.pre_instruction_attachment ?? null,
       typeChanged: false,
+      serverId: row.item_id ?? null,
+      sourceWpCardId: row.source_wp_card_id ?? null,
     }))
   // The report rows arrive from the server already paired; relink each to the row above it
   // so moving/deleting an instruction keeps carrying its report, exactly as a hand-built
@@ -1278,6 +1519,13 @@ async function revertPour() {
   await loadSequence()
 }
 
+// 0649 T#3: after protected_row_echo_ambiguous / sequence_item_stale / protected_row_modified
+// the rows on screen no longer match the stored ones. A pour goes back to the stored sequence
+// (re-pour from the plan), an ordinary edit simply re-reads it.
+async function reloadAfterConflict() {
+  await revertPour()
+}
+
 function shortCodeOf(docId: string): string {
   const tail = docId.split('.').pop() ?? docId
   const [seq, code] = tail.split('-')
@@ -1289,29 +1537,54 @@ function notificationText(note: PourNotification): string {
   return t(key, {
     n: note.count,
     types: (note.types ?? []).join(' · '),
+    cards: cardsText(note.cards),
   })
 }
 
+/** The PATCH items. 0649 T#3 (NR0003 O1): every stored row goes back with its item_id — a
+ *  protected pending report row as an unchanged echo (identity only), an editable row with
+ *  its values and card id. A new row carries no item_id. */
+function payloadItems(): Array<Record<string, unknown>> {
+  const echoes = protectedPendingItems.value
+    .filter(item => item.item_id != null)
+    .map(item => ({ type: item.type, label: item.label, item_id: item.item_id }))
+  const rows = sequence.value.map(it => {
+    const row: Record<string, unknown> = {
+      type: it.type,
+      label: it.label,
+      note: it.note,
+      source_doc_id: it.sourceDocId,
+      source_revision_no: it.sourceRevisionNo,
+      provider_id: it.providerId,
+      provider_display_name: it.providerDisplayName,
+      review_count: it.reviewCount ?? 0,
+      reviewer_provider_id: it.reviewerProviderId ?? null,
+      reviewer_provider_display_name: it.reviewerProviderDisplayName ?? null,
+      pre_instruction_text: it.preInstructionText ?? null,
+      pre_instruction_attachment: it.preInstructionAttachment ?? null,
+    }
+    if (it.serverId != null) row.item_id = it.serverId
+    // A retyped row no longer serves its card; say so instead of carrying a wrong-typed card.
+    if (it.typeChanged) row.source_wp_card_id = null
+    else if (it.sourceWpCardId) row.source_wp_card_id = it.sourceWpCardId
+    return row
+  })
+  return [...echoes, ...rows]
+}
+
+const STALE_SCREEN_CODES = new Set(['protected_row_echo_ambiguous', 'sequence_item_stale', 'protected_row_modified'])
+
 async function save() {
-  if (saving.value || wouldEmptyDecided.value || metaContractMissing.value) return
+  if (saving.value || wouldEmptyDecided.value || metaContractMissing.value || saveBlocked.value) return
   saving.value = true
   try {
     await patchRequest('/api/v1/workflow/sequence', {
       doc_id: props.docId,
-      items: sequence.value.map(it => ({
-        type: it.type,
-        label: it.label,
-        note: it.note,
-        source_doc_id: it.sourceDocId,
-        source_revision_no: it.sourceRevisionNo,
-        provider_id: it.providerId,
-        provider_display_name: it.providerDisplayName,
-        review_count: it.reviewCount ?? 0,
-        reviewer_provider_id: it.reviewerProviderId ?? null,
-        reviewer_provider_display_name: it.reviewerProviderDisplayName ?? null,
-        pre_instruction_text: it.preInstructionText ?? null,
-        pre_instruction_attachment: it.preInstructionAttachment ?? null,
-      })),
+      items: payloadItems(),
+      // 0649 T#3 (NR0003 O0): sent only after the person confirmed the unresolved rows.
+      acknowledged_codes: legacyRows.value.length && legacyAcknowledged.value
+        ? ['legacy_card_unresolved']
+        : undefined,
       // P0013 ②: sent only when a plan was poured. On an ordinary save there is no earlier
       // snapshot to be stale against, and demanding one would break every other caller.
       expected_workflow_tag: pourSession.value?.workflowTag,
@@ -1334,7 +1607,24 @@ async function save() {
     emit('saved')
     emit('update:visible', false)
   } catch (e: any) {
-    if (e?.response?.data?.error === 'sequence_changed') {
+    const data = e?.response?.data ?? {}
+    const code = typeof data.error === 'string' ? data.error : ''
+    if (code === 'legacy_card_unresolved') {
+      // Confirm first: show the rows, keep the save off until ticked, then save again.
+      legacyRowsFromSave.value = Array.isArray(data.rows) ? data.rows : []
+      legacyAcknowledged.value = false
+      showToast(t('main.work_plan_pour.error_legacy_card_unresolved'), 'error')
+    } else if (STALE_SCREEN_CODES.has(code)) {
+      reloadNeeded.value = code
+      showToast(t(`main.work_plan_pour.error_${code}`), 'error')
+    } else if (CARD_ORDER_BLOCKERS.has(code) || code === 'plan_order_violation') {
+      saveBlockedCode.value = code
+      saveBlockedParams.value = {
+        cards: cardsText(data.cards),
+        reason: data.detail?.reason ?? '',
+      }
+      showToast(t(`main.work_plan_pour.error_${code}`, saveBlockedParams.value), 'error')
+    } else if (e?.response?.data?.error === 'sequence_changed') {
       showToast(t('main.work_plan_pour.error_sequence_changed'), 'error')
     } else if (e?.response?.data?.error === 'wp_changed') {
       // 0403 NR0004 F2: the workflow stayed the same but the plan changed. The rows currently
@@ -1442,6 +1732,7 @@ watch(
       sequence.value = []
       lockedItems.value = []
       idCounter.value = 0
+      resetConflictState()
     }
   },
   // A dialog mounted with visible already true never sees a transition, so without this it
@@ -2043,6 +2334,16 @@ watch(
   color: #16a34a;
   font-weight: 500;
 }
+
+/* ── 0649 T#3: blockers, confirmation and fixed (protected) rows ── */
+.wdm-banner--block { background: color-mix(in srgb, var(--danger, #dc2626) 8%, var(--surface, #fff)); border-color: var(--danger, #dc2626); color: var(--danger, #b91c1c); }
+.wdm-legacy { align-items: flex-start; }
+.wdm-legacy-body { display: flex; flex-direction: column; gap: 4px; }
+.wdm-legacy-rows { margin: 0; padding-left: 18px; font-size: .72rem; }
+.wdm-legacy-ack { display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
+.wdm-seq-item.is-protected { opacity: .7; cursor: default; background: var(--surface-h, #f8fafc); }
+.wdm-fixed-order-note { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; padding: 4px 8px; font-size: .7rem; border-radius: var(--r); background: var(--surface, #fff); color: var(--text-m, #64748b); border: 1px dashed var(--border-d, #cbd5e1); }
+.wdm-protected-badge { margin-left: auto; font-size: .62rem; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border-d, #cbd5e1); color: var(--text-m, #64748b); }
 
 /* ── Edit mode: Preview locked items ── */
 .wem-prev-locked { opacity: .65; }

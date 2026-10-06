@@ -483,6 +483,8 @@ describe('계획 줄로 채워진 시퀀스 수정 창', () => {
       // 0554 T#3 (880712d): every saved row now always carries these five keys too.
       review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null,
       pre_instruction_text: null, pre_instruction_attachment: null,
+      // 0649 T#3: a retyped row no longer serves its plan card, and says so explicitly.
+      source_wp_card_id: null,
     })
   })
 
@@ -603,6 +605,8 @@ describe('계획 줄로 채워진 시퀀스 수정 창', () => {
       provider_id: null, provider_display_name: null,
       review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null,
       pre_instruction_text: null, pre_instruction_attachment: null,
+      // 0649 T#3 (NR0003 O1): a stored row goes back with its row id.
+      item_id: 1,
     }])
   })
 

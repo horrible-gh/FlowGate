@@ -93,6 +93,7 @@ def wired(monkeypatch, tmp_path):
             "sort_order": k["sort_order"], "note": k["note"],
             "source_doc_id": k.get("source_doc_id"),
             "source_revision_no": k.get("source_revision_no"),
+            "source_wp_card_id": k.get("source_wp_card_id"),
             "doc_class": k["doc_class"],
         } for k in inserted]
         return locked + made
@@ -128,6 +129,22 @@ def wired(monkeypatch, tmp_path):
             "plan_path": plan_path}
 
 
+def _write_plan(wired: dict, counts: dict) -> None:
+    """0649 T#2 (NR0003 O5): a pouring save is checked against the plan's card order, so
+    the plan file holds a real (legacy, fixed-order) body with these quantities."""
+    from modules.flow_gate.services import work_plan_service as wp
+
+    quantities = {c: {"unit": wp.WORK_PLAN_TYPE_UNITS[c], "count": n} for c, n in counts.items()}
+    steps = wp.expand_steps(list(counts), quantities)
+    for row in steps:
+        row.pop("card_id")
+    wired["plan_path"].write_text(json.dumps({
+        "wp_version": 2, "binding": "advisory", "counted_types": list(counts),
+        "quantities": quantities, "provider_candidates": [],
+        "defaults": {"provider_id": None, "note": ""}, "steps": steps,
+    }), encoding="utf-8")
+
+
 def test_f2_a_plan_that_moved_since_the_dialog_opened_stops_the_save(wired):
     """NR0004 F2 재현 조건: 워크플로 지문은 그대로인데 계획만 리비전이 올랐다."""
     with pytest.raises(wds.PlanRevisionChanged) as exc:
@@ -144,6 +161,7 @@ def test_f2_a_plan_that_moved_since_the_dialog_opened_stops_the_save(wired):
 
 
 def test_f2_the_same_plan_revision_lets_the_save_through(wired):
+    _write_plan(wired, {"P": 1})
     wds.edit_workflow_pending(
         OWNER_DOC_ID,
         [{"type": "P", "label": "프로토콜설계", "note": "계획에서 온 줄",
@@ -165,6 +183,7 @@ def test_f2_an_ordinary_edit_carrying_an_old_source_is_not_judged_by_it(wired):
 
 
 def test_f3_a_poured_save_is_written_into_the_plans_application_journal(wired):
+    _write_plan(wired, {"T": 1})
     result = wds.edit_workflow_pending(
         OWNER_DOC_ID,
         [{"type": "T", "label": "작업지시", "note": "테스트 포함",
@@ -213,6 +232,7 @@ def wired_without_sequence(wired, monkeypatch):
             "sort_order": k["sort_order"], "note": k["note"],
             "source_doc_id": k.get("source_doc_id"),
             "source_revision_no": k.get("source_revision_no"),
+            "source_wp_card_id": k.get("source_wp_card_id"),
             "doc_class": k["doc_class"],
         } for k in wired["inserted"]]
 
@@ -233,6 +253,7 @@ def test_f4_an_undecided_workflow_still_refuses_an_ordinary_edit(wired_without_s
 def test_f4_pouring_a_plan_builds_the_first_sequence(wired_without_sequence):
     """NR0004 F4: 후보 생성기는 시퀀스가 없어도 계획 행을 만들어 주는데, 저장하는 쪽이
     곧바로 거절해서 "계획을 세워 두고 그걸로 워크플로를 만든다"가 막혀 있었다."""
+    _write_plan(wired_without_sequence, {"N": 1})
     result = wds.edit_workflow_pending(
         OWNER_DOC_ID,
         [{"type": "N", "label": "조사지시", "note": "먼저 조사",

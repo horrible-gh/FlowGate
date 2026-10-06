@@ -14,6 +14,7 @@ from typing import Optional
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import workflow_sequences as db_wfseq
+from modules.flow_gate.db.workflow_sequences import is_started_row, protected_row_ids
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.db.document_type_labels import get_type_name
 from modules.flow_gate.documents.constants import (
@@ -80,6 +81,47 @@ class PlanRevisionChanged(Exception):
         self.wp_doc_id = wp_doc_id
         self.expected = expected
         self.current = current
+
+class ProtectedRowModified(Exception):
+    """An echo of a protected row tried to change what makes it that row (NR0003 O1).
+
+    ``type``/``source_doc_id``/``source_revision_no``/``source_wp_card_id`` of a started row
+    or of a protected report row are fixed; a payload that sends a different value is
+    refused instead of silently re-typing history.
+    """
+
+    def __init__(self, doc_id: str, item_id: int, fields: list[str]):
+        super().__init__(f"protected_row_modified:{doc_id}:{item_id}")
+        self.doc_id = doc_id
+        self.item_id = item_id
+        self.fields = fields
+
+
+class ProtectedRowEchoAmbiguous(Exception):
+    """A report item without ``item_id`` and without its instruction, while a protected
+    report row of the same type exists (NR0003 O1 fail-closed rule).
+
+    It may be the protected row sent back by an old caller, or a genuinely new row; either
+    guess loses something (a duplicate report or a dropped one), so nothing is guessed.
+    """
+
+    def __init__(self, doc_id: str, item_index: int, type_code: str, protected_item_ids: list[int]):
+        super().__init__(f"protected_row_echo_ambiguous:{doc_id}:{item_index}")
+        self.doc_id = doc_id
+        self.item_index = item_index
+        self.type_code = type_code
+        self.protected_item_ids = protected_item_ids
+
+
+class SequenceItemStale(Exception):
+    """An item names an ``item_id`` the sequence no longer has (NR0003 O1)."""
+
+    def __init__(self, doc_id: str, item_index: int, item_id):
+        super().__init__(f"sequence_item_stale:{doc_id}:{item_id}")
+        self.doc_id = doc_id
+        self.item_index = item_index
+        self.item_id = item_id
+
 
 _log = logging.getLogger(__name__)
 
@@ -654,15 +696,28 @@ def expand_steps_with_reports(sequence: list[dict], locale: str = "ko") -> list[
     worker submits) gets the report steps inserted. Inserted items are labeled from the
     document type table, and the whole list is renumbered so ``id`` stays contiguous.
     """
+    # Work on copies: an attached report is filled in below before its own pass appends it.
+    items = [dict(item) for item in sequence]
     expanded: list[dict] = []
-    for idx, item in enumerate(sequence):
-        expanded.append(dict(item))
+    for idx, item in enumerate(items):
+        expanded.append(item)
         report_type = AUTO_REPORT_MAP.get((item.get("type") or "").upper())
         if not report_type:
             continue
-        nxt = sequence[idx + 1] if idx + 1 < len(sequence) else None
+        nxt = items[idx + 1] if idx + 1 < len(items) else None
         if nxt is not None and (nxt.get("type") or "").upper() == report_type:
-            continue  # report already attached (e.g. client modal) — don't duplicate
+            # Report already attached (e.g. client modal) — don't duplicate. 0649 T#1 (O0):
+            # an automatic report row belongs to its instruction's card, so a new one (no
+            # ``item_id``) always takes that card id — whether the payload left it out or
+            # named a different one. The report is ``nxt`` — ``expanded[-1]`` is still the
+            # instruction here; the report is appended on the next pass. A report naming its
+            # row (``item_id``) is an existing row and keeps what that row says.
+            if (
+                nxt.get("item_id") is None
+                and nxt.get("source_wp_card_id") != item.get("source_wp_card_id")
+            ):
+                nxt["source_wp_card_id"] = item.get("source_wp_card_id")
+            continue
         expanded.append({
             "type": report_type,
             "label": get_type_name(report_type, locale),
@@ -703,6 +758,8 @@ def expand_steps_with_reports(sequence: list[dict], locale: str = "ko") -> list[
             # Never fold pre-instruction onto a result row.
             "pre_instruction_text": None,
             "pre_instruction_attachment": None,
+            # 0649 T#1 (NR0003 O0): the report row belongs to the same card.
+            "source_wp_card_id": item.get("source_wp_card_id"),
         })
     for new_id, item in enumerate(expanded, start=1):
         item["id"] = new_id
@@ -1546,12 +1603,18 @@ def request_sequence_edit(
     )
 
     items = db_wfseq.get_sequence_items(seq["id"])
+    # 0649 T#1 (NR0003 O1): the worker gets each row's id and whether it is protected, so a
+    # row it sends back can be recognised by id — never by position or type.
+    protected_ids = protected_row_ids(items)
     sequence_items = [
         {
+            "item_id": it.get("id"),
+            "protected": it.get("id") in protected_ids,
             "item_seq": it.get("item_seq"),
             "type": it["type"],
             "label": _safe_label(it["label"], it["type"], locale),
             "status": it["status"],
+            "source_wp_card_id": it.get("source_wp_card_id"),
             "note": _normalized_sequence_note(it.get("note")),
             "source_doc_id": it.get("source_doc_id"),
             "source_revision_no": it.get("source_revision_no"),
@@ -1823,10 +1886,17 @@ def get_workflow_sequence(doc_id: str) -> dict:
 
     items = db_wfseq.get_sequence_items(seq["id"])
     provider_view = provider_view_of(doc.get("project_id"))
+    # 0649 T#1 (NR0003 O1): an edit screen fixes rows by ``protected`` (not by status — a
+    # protected report row is still pending) and sends every stored row back with its
+    # ``item_id``.
+    protected_ids = protected_row_ids(items)
     public_items = []
     for it in items:
         public_items.append({
             "id": it["id"],
+            "item_id": it["id"],
+            "protected": it["id"] in protected_ids,
+            "source_wp_card_id": it.get("source_wp_card_id"),
             "item_seq": it["item_seq"],
             "type": it["type"],
             # NR0003 §7-3: rows already corrupted before this fix shipped still live in
@@ -1986,6 +2056,40 @@ def _verify_expected_plan(expected_plan: Optional[dict]) -> Optional[dict]:
     return plan_doc
 
 
+def _load_plan_body(plan_doc: dict) -> Optional[dict]:
+    """The plan body a reflecting save pours, or None when it cannot be read.
+
+    An unreadable plan is not this function's to refuse: _verify_expected_plan already
+    accepted the revision, and the reflecting paths that read the body report it themselves.
+    """
+    from modules.flow_gate.services import work_plan_service as _wp
+
+    try:
+        return _wp.load_body(
+            _wp.plan_path_for_doc(plan_doc),
+            project_id=plan_doc.get("project_id"),
+            doc_id=str(plan_doc.get("doc_id") or ""),
+        )
+    except _wp.WorkPlanUnreadable:
+        return None
+
+
+def _classify_plan_rows(
+    plan_doc: dict, existing: list[dict], plan: Optional[dict] = None,
+) -> Optional[dict]:
+    """O0 classification of one plan's rows, or None when it never poured / is unreadable."""
+    from modules.flow_gate.services import work_plan_card_identity as _cards
+
+    wp_doc_id = str(plan_doc.get("doc_id") or "")
+    if not any(str(row.get("source_doc_id") or "") == wp_doc_id for row in existing or []):
+        return None
+    if plan is None:
+        plan = _load_plan_body(plan_doc)
+    if plan is None:
+        return None
+    return _cards.classify_rows(wp_doc=plan_doc, plan=plan, items=existing)
+
+
 def _record_plan_application(
     *,
     plan_doc: dict,
@@ -2073,22 +2177,37 @@ _EXECUTION_METADATA_FIELDS = (
 )
 
 
-def _restore_omitted_execution_metadata(new_items: list[dict], existing: list[dict]) -> None:
+def _restore_omitted_execution_metadata(
+    new_items: list[dict],
+    existing: list[dict],
+    protected_ids: Optional[set] = None,
+) -> None:
     """Preserve stored execution metadata for true partial sequence edits.
 
     An explicitly supplied null/0 still clears or disables a field.  Only an absent key is
-    restored, and only when type+label identifies one unique pending row, so reorder survives
-    while a retyped/ambiguous row never inherits another step's policy.
+    restored. 0649 T#1 (NR0003 O1): an item that names its row (``item_id``) is restored
+    from exactly that row. Only an item without one falls back to the old heuristic — type
+    +label identifying one unique, unprotected pending row — so reorder survives while a
+    retyped/ambiguous row never inherits another step's policy.
     """
+    protected_ids = protected_ids or set()
+    by_id = {row.get("id"): row for row in existing or [] if row.get("id") is not None}
     candidates: dict[tuple, Optional[dict]] = {}
     for row in existing or []:
-        if row.get("result_doc_id") is not None:
+        if is_started_row(row) or row.get("id") in protected_ids:
             continue
         key = ((row.get("type") or "").upper(), row.get("label") or "")
         candidates[key] = None if key in candidates else row
 
     for item in new_items or []:
-        stored = candidates.get(((item.get("type") or "").upper(), item.get("label") or ""))
+        if item.get("item_id") is not None:
+            stored = by_id.get(item.get("item_id"))
+            if stored is not None and (stored.get("type") or "").upper() != (
+                item.get("type") or ""
+            ).upper():
+                stored = None  # a retyped row inherits nothing from what it was
+        else:
+            stored = candidates.get(((item.get("type") or "").upper(), item.get("label") or ""))
         if stored is None:
             _log.debug(
                 "sequence edit omitted metadata and no unique pending row matched %s/%s",
@@ -2107,6 +2226,140 @@ def _restore_omitted_execution_metadata(new_items: list[dict], existing: list[di
                 )
             else:
                 item[field] = stored.get(field)
+        # 0649 T#1 (NR0003 O0): a PATCH that leaves the card id out must not erase it.
+        if "source_wp_card_id" not in item and stored.get("source_wp_card_id") is not None:
+            item["source_wp_card_id"] = stored.get("source_wp_card_id")
+
+
+# 0649 T#1 (NR0003 O1): what an echo of a protected row may not change, and what a protected
+# (not yet started) report row may still change in place.
+_PROTECTED_IDENTITY_FIELDS = ("type", "source_doc_id", "source_revision_no", "source_wp_card_id")
+_PROTECTED_ECHO_SETTING_FIELDS = (
+    "note", "provider_id", "provider_display_name",
+    "review_count", "reviewer_provider_id", "reviewer_provider_display_name",
+)
+
+
+def _identity_value(field: str, value):
+    if field == "type":
+        return str(value or "").upper()
+    if field == "source_revision_no":
+        try:
+            return None if value is None else int(value)
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
+def split_protected_echoes(
+    doc_id: str,
+    new_items: list[dict],
+    existing: list[dict],
+    protected_ids: set,
+) -> tuple[list[dict], list[tuple[dict, dict]]]:
+    """Split a PATCH payload into (rows to write, echoes of protected rows) — by row id only.
+
+    NR0003 O1 / §3.9 (G10): an item is an echo iff its ``item_id`` names a protected row.
+    Position and type are never used to guess: with two protected report rows, items for
+    both are recognised wherever they sit, and a payload that leaves them out entirely ends
+    in the same state (protected rows stay regardless). An ``item_id`` the sequence does not
+    have is a stale screen (``SequenceItemStale``). Returns the echoes as ``(row, item)``.
+    """
+    by_id = {row.get("id"): row for row in existing or [] if row.get("id") is not None}
+    rows: list[dict] = []
+    echoes: list[tuple[dict, dict]] = []
+    seen_ids: set = set()
+    for index, item in enumerate(new_items or []):
+        item_id = item.get("item_id")
+        if item_id is None:
+            rows.append(item)
+            continue
+        if item_id in seen_ids:
+            raise ValueError(f"invalid_sequence_item:{index}:duplicate item_id {item_id}")
+        seen_ids.add(item_id)
+        stored = by_id.get(item_id)
+        if stored is None:
+            raise SequenceItemStale(doc_id, index, item_id)
+        if item_id not in protected_ids:
+            rows.append(item)
+            continue
+        changed = [
+            field for field in _PROTECTED_IDENTITY_FIELDS
+            if field in item
+            and _identity_value(field, item.get(field)) != _identity_value(field, stored.get(field))
+        ]
+        if changed:
+            raise ProtectedRowModified(doc_id, item_id, changed)
+        echoes.append((stored, item))
+    return rows, echoes
+
+
+def assert_no_ambiguous_report_items(
+    doc_id: str,
+    rows: list[dict],
+    existing: list[dict],
+    protected_ids: set,
+) -> None:
+    """Fail closed on a lone report item while a protected report row of its type exists.
+
+    NR0003 O1: an item without ``item_id`` is always a new row — but a report item with no
+    instruction right before it is something no current screen produces (reports are born
+    with their instruction), so an old caller echoing a protected report row looks exactly
+    like it. With a protected pending report of the same type in the sequence that is
+    refused (``protected_row_echo_ambiguous``); without one it is stored as before.
+    """
+    protected_reports: dict[str, list[int]] = {}
+    for row in existing or []:
+        if row.get("id") in protected_ids and not is_started_row(row):
+            protected_reports.setdefault(str(row.get("type") or "").upper(), []).append(row["id"])
+    if not protected_reports:
+        return
+    report_types = set(AUTO_REPORT_MAP.values())
+    previous: Optional[dict] = None
+    for index, item in enumerate(rows):
+        code = str(item.get("type") or "").upper()
+        if (
+            code in report_types
+            and item.get("item_id") is None
+            and code in protected_reports
+            and (
+                previous is None
+                or AUTO_REPORT_MAP.get(str(previous.get("type") or "").upper()) != code
+            )
+        ):
+            raise ProtectedRowEchoAmbiguous(doc_id, index, code, protected_reports[code])
+        previous = item
+
+
+def _echo_setting_updates(echoes: list[tuple[dict, dict]]) -> list[tuple[dict, dict]]:
+    """Echoes of not-yet-started protected report rows whose settings really changed.
+
+    A started row's echo is ignored whatever it says — it is history. A protected pending
+    report row keeps its id/item_seq/sort_order and takes the changed settings in place.
+    """
+    updates: list[tuple[dict, dict]] = []
+    for stored, item in echoes:
+        if is_started_row(stored):
+            continue
+        merged = {}
+        for field in _PROTECTED_ECHO_SETTING_FIELDS:
+            if field in item:
+                merged[field] = item.get(field)
+            else:
+                merged[field] = stored.get(field)
+        merged["note"] = _normalized_sequence_note(merged.get("note"), strict=True)
+        merged["review_count"] = int(merged.get("review_count") or 0)
+        current = {
+            field: (
+                _normalized_sequence_note(stored.get(field))
+                if field == "note" else
+                int(stored.get(field) or 0) if field == "review_count" else stored.get(field)
+            )
+            for field in _PROTECTED_ECHO_SETTING_FIELDS
+        }
+        if merged != current:
+            updates.append((stored, merged))
+    return updates
 
 
 def edit_workflow_pending(
@@ -2117,8 +2370,26 @@ def edit_workflow_pending(
     expected_plan: Optional[dict] = None,
     applied_by: Optional[str] = None,
     locale: str = "ko",
+    acknowledged_codes: Optional[list] = None,
+    record_application: bool = True,
 ) -> dict:
     """Replace PENDING items with new_items. Preserves done/in_progress items.
+
+    0649 T#1 (NR0003 O1): "preserved" now means the *protected* rows — every started row
+    plus the pending report row right after a started instruction. They are never deleted,
+    re-inserted or renumbered; an item naming one by ``item_id`` is an echo (identity must
+    match, a pending report's settings are updated in place), and new rows are placed after
+    the last protected row. On the plan-reflecting path (``expected_plan``) the legacy rows
+    of that plan get their ``source_wp_card_id`` backfilled in the same transaction (O0);
+    an unresolved started row needs ``legacy_card_unresolved`` in ``acknowledged_codes``.
+
+    0649 T#2 (NR0003 O2/O5): on that same path the plan's started cards must still lead
+    the plan in the order they ran (``order_conflicts_started`` / ``started_card_removed`` /
+    ``card_identity_mismatch``), an ``append`` is refused while this plan's earlier rows
+    are still pending (``plan_rows_pending``), and the rows written must follow the card
+    order -- checked inside the write transaction, which rolls back on
+    ``plan_order_violation``. ``record_application=False`` leaves the application journal
+    to a caller that keeps its own (``/work-plan/apply``).
 
     Implementation decision (T485):
     - L002 §out-of-scope: "Post-sequence edit algorithm — to be defined in a separate R later."
@@ -2172,12 +2443,77 @@ def edit_workflow_pending(
         if not new_items:
             raise ValueError(f"invalid_sequence_empty:{doc_id}")
 
+    # 0649 T#1 (NR0003 O1): the protected rows, and the payload split by row id. Echoes of
+    # protected rows leave the payload here — before metadata restore, before the report
+    # expansion — so nothing downstream can mistake one for a new row.
+    protected_ids = protected_row_ids(existing)
+    new_items, echoes = split_protected_echoes(doc_id, new_items, existing, protected_ids)
+    assert_no_ambiguous_report_items(doc_id, new_items, existing, protected_ids)
+    for _stored, _echo in echoes:
+        # Same rule as an ordinary row: omitting both provider keys keeps the stored provider,
+        # so only an echo that names one is normalised (which fills in the other).
+        if "provider_id" in _echo or "provider_display_name" in _echo:
+            assert_sequence_item_providers([_echo])
+    echo_updates = _echo_setting_updates(echoes)
+
+    # 0649 T#1 (NR0003 O0): on a plan-reflecting write, classify this plan's legacy rows now
+    # (read-only) so an unresolved started row is refused before anything is written.
+    plan_body = _load_plan_body(plan_doc) if plan_doc is not None else None
+    wp_doc_id = str((plan_doc or {}).get("doc_id") or "")
+    if plan_doc is not None and plan_body is None:
+        # 0649 T#2 (NR0003 O5): a reflecting save is checked against the plan's card order;
+        # a plan nobody can read cannot be checked, so it is not poured blind.
+        raise ValueError(f"plan_unreadable:{wp_doc_id}")
+    card_classification = None
+    if plan_doc is not None and not create_sequence:
+        card_classification = _classify_plan_rows(plan_doc, existing, plan_body)
+        if card_classification and card_classification["unresolved_started"]:
+            from modules.flow_gate.services import work_plan_card_identity as _cards
+
+            if not _cards.acknowledged(acknowledged_codes):
+                raise _cards.LegacyCardUnresolved(
+                    wp_doc_id, card_classification["unresolved_started"],
+                )
+
+    # 0649 T#2 (NR0003 O2/O5): the started cards (S) by identity, the refusals that come
+    # before any write, and a card id for pour rows a pre-card client sent without one --
+    # given before the metadata restore so a type+label guess can never hand such a row
+    # the card of some older row.
+    started_cards: list = []
+    history_ids: set = set()
+    if plan_body is not None:
+        from modules.flow_gate.services import work_plan_card_order as _order
+
+        started_cards = _order.started_card_ids(card_classification)
+        history_ids = _order.history_row_ids(card_classification)
+        blocked = _order.check_started_prefix(plan_body, card_classification, existing)
+        if blocked:
+            raise _order.PlanOrderBlocked(blocked["code"], wp_doc_id, blocked)
+        if str((expected_plan or {}).get("mode") or "") == "append":
+            leftover = _order.plan_pending_rows(existing, wp_doc_id)
+            if leftover:
+                raise _order.PlanOrderBlocked("plan_rows_pending", wp_doc_id, {
+                    "rows": [
+                        {"item_id": row.get("id"), "item_seq": row.get("item_seq"),
+                         "type": str(row.get("type") or "").upper()}
+                        for row in leftover
+                    ],
+                })
+        from modules.flow_gate.services import work_plan_sequence_service as _seq
+
+        _order.infer_missing_card_ids(
+            new_items, plan_body, wp_doc_id, int(plan_doc.get("revision_no") or 0), started_cards,
+            # The same provider view the pour candidates were built with, so a cardless row
+            # is matched to its card by the settings that candidate row carried.
+            provider_view=_seq.provider_view_of(plan_doc.get("project_id")),
+        )
+
     # 0444 T0007 (NR0003 §4-6): give back the providers this payload never mentioned, before
     # anything else reads the items. The position is load-bearing: ahead of
     # assert_sequence_item_providers() so a restored value is validated exactly like a sent
     # one, and ahead of expand_steps_with_reports() so it also rides onto the automatic
     # TR/NR row the server attaches.
-    _restore_omitted_execution_metadata(new_items, existing)
+    _restore_omitted_execution_metadata(new_items, existing, protected_ids)
 
     assert_sequence_item_sources(new_items)
     # 0406 T0022 item 6: overflow is rejected here. The old save path silently cut everything
@@ -2185,7 +2521,10 @@ def edit_workflow_pending(
     assert_sequence_notes_fit(new_items)
     assert_sequence_item_providers(new_items)
 
-    locked = [it for it in existing if it.get("result_doc_id") is not None]
+    locked = sorted(
+        (it for it in existing if it.get("id") in protected_ids),
+        key=lambda it: (it.get("sort_order") or 0, it.get("id") or 0),
+    )
     locked_count = len(locked)
 
     # 0119 B0001 (NR0003 §6-A): refuse an edit that would empty a decided workflow.
@@ -2217,12 +2556,16 @@ def edit_workflow_pending(
     # A row rewrite changes item ids/item_seq and therefore the workflow tag even when the
     # definition did not change. Compare definition fields before writing so an identical
     # save remains a true no-op and cannot retire a valid final approval.
-    pending_before = [it for it in existing if it.get("result_doc_id") is None]
+    pending_before = [
+        it for it in existing
+        if not is_started_row(it) and it.get("id") not in protected_ids
+    ]
     _definition_fields = (
         "type", "label", "note", "source_doc_id", "source_revision_no",
         "provider_id", "provider_display_name",
         "review_count", "reviewer_provider_id", "reviewer_provider_display_name",
         "pre_instruction_text", "pre_instruction_attachment",
+        "source_wp_card_id",
     )
 
     def _definition(row: dict) -> tuple:
@@ -2240,9 +2583,19 @@ def edit_workflow_pending(
                 values.append(row.get(key))
         return tuple(values)
 
-    if not create_sequence and [_definition(it) for it in pending_before] == [
+    pending_backfill = bool(
+        card_classification
+        and (card_classification["writes"] or card_classification["unresolved_started"])
+    )
+    if not create_sequence and not echo_updates and not pending_backfill and [
+        _definition(it) for it in pending_before
+    ] == [
         _definition(it) for it in new_items
     ]:
+        if plan_body is not None:
+            # Nothing would be written -- but a reflecting save must not report success on
+            # a sequence that does not follow the plan either.
+            _order.assert_plan_order(existing, plan_body, wp_doc_id, started_cards, history_ids)
         return {
             "status": "updated",
             "doc_id": doc_id,
@@ -2269,7 +2622,32 @@ def edit_workflow_pending(
             # rejection, say) cannot leave an empty sequence, it is created here, after every check, in the same transaction.
             db_wfseq.insert_sequence(doc_id)
             seq = db_wfseq.get_sequence_by_doc_id(doc_id)
-        db_wfseq.delete_pending_items(seq["id"])
+        if card_classification is not None:
+            from modules.flow_gate.services import work_plan_card_identity as _cards
+
+            _cards.record_backfill(
+                seq["id"],
+                card_classification,
+                wp_doc_id=str(plan_doc.get("doc_id") or ""),
+                acknowledged_codes=acknowledged_codes,
+            )
+        # 0649 T#1 (NR0003 O1): protected rows stay where they are — only unprotected
+        # pending rows are deleted, and a protected report row's changed settings are
+        # written in place. New rows start after the last protected row, so they cannot
+        # collide with one even when the protected rows are not a sort_order prefix.
+        db_wfseq.delete_unprotected_pending_items(
+            seq["id"],
+            # Started rows are never pending, so only the protected pending rows (reports
+            # after a started instruction) need naming; none means "every pending row".
+            [it["id"] for it in locked if not is_started_row(it)],
+        )
+        for _stored, _settings in echo_updates:
+            db_wfseq.update_sequence_item_echo_settings(
+                _stored["id"], seq["id"], **_settings,
+            )
+        sort_base = (
+            max(int(it.get("sort_order") or 0) for it in locked) + 1 if locked else 0
+        )
         for idx, item in enumerate(new_items):
             db_wfseq.insert_sequence_item(
                 sequence_id=seq["id"],
@@ -2277,7 +2655,7 @@ def edit_workflow_pending(
                 type_=item["type"],
                 label=item["label"] or "",  # NR0003 §7-2 / 0391 T0005 §5-5 (edit path)
                 doc_class=doc_class,
-                sort_order=locked_count + idx,
+                sort_order=sort_base + idx,
                 note=_normalized_sequence_note(item.get("note"), strict=True),
                 source_doc_id=item.get("source_doc_id"),
                 source_revision_no=item.get("source_revision_no"),
@@ -2288,12 +2666,19 @@ def edit_workflow_pending(
                 reviewer_provider_display_name=item.get("reviewer_provider_display_name"),
                 pre_instruction_text=item.get("pre_instruction_text"),
                 pre_instruction_attachment=item.get("pre_instruction_attachment"),
+                source_wp_card_id=item.get("source_wp_card_id"),
             )
+
+        all_items = db_wfseq.get_sequence_items(seq["id"])
+        if plan_body is not None:
+            # 0649 T#2 (NR0003 O5): the last line of defence for every reflecting path --
+            # the candidate checks can be bypassed by a direct API call, this cannot.
+            # Raising here rolls the whole save back.
+            _order.assert_plan_order(all_items, plan_body, wp_doc_id, started_cards, history_ids)
 
         # The definition replacement, root reopen and approval retirement are one atomic
         # state change. Approved AC rows are archived (historical), while premature
         # unapproved AC rows remain ephemeral and are deleted.
-        all_items = db_wfseq.get_sequence_items(seq["id"])
         db_documents.update(
             doc_id,
             {"workflow_steps": _json.dumps([it["type"] for it in all_items])},
@@ -2326,13 +2711,21 @@ def edit_workflow_pending(
         "status": "updated",
         "doc_id": doc_id,
         "pending_count": len(new_items),
+        "protected_count": locked_count,
     }
+    if echo_updates:
+        result["protected_rows_updated"] = [stored["id"] for stored, _ in echo_updates]
+    if card_classification is not None and card_classification["retired_started"]:
+        result["retired_plan_rows"] = card_classification["retired_started"]
     if create_sequence:
         result["sequence_created"] = True
         _start_created_sequence(doc_id)
+    if plan_doc is not None and started_cards:
+        result["started_card_ids"] = list(started_cards)
     if plan_doc is not None:
         result["wp_doc_id"] = plan_doc.get("doc_id")
         result["wp_revision_no"] = int(plan_doc.get("revision_no") or 0)
+    if plan_doc is not None and record_application:
         result["application_recorded"] = _record_plan_application(
             plan_doc=plan_doc,
             owner_doc_id=doc_id,

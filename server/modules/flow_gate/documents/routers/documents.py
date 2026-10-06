@@ -1524,6 +1524,9 @@ def _work_plan_step_note_body(title: str, note: str) -> str:
 def _work_plan_instruction_descriptor(sequence_id: int, head: dict) -> Optional[dict]:
     """Return the durable WP instruction snapshot for ``head``, or ``None`` for legacy N/T.
 
+    Raises ``NextApprovedError(409)`` when ``head`` records a card whose key cannot be
+    resolved (NR0003 O6): no descriptor is better than one naming another card.
+
     The sequence already stores the WorkPlan document/revision identity independently from
     execution metadata.  The step key is reconstructed from that revision's same-type slot
     order; WorkPlan keys are canonical ``<type>#<ordinal>`` values.  No live WorkPlan body is
@@ -1542,6 +1545,39 @@ def _work_plan_instruction_descriptor(sequence_id: int, head: dict) -> Optional[
     source_doc = document_service.get_document(source_doc_id)
     if source_doc is None or str(source_doc.get("type_code") or "").upper() != WORK_PLAN_TYPE:
         return None
+
+    # 0649 T#2 (NR0003 O6, G5): a row that records its card takes the key that card had in
+    # the revision the row was poured from. Counting same-type rows of one revision (below)
+    # is only for rows poured before card ids existed (card id NULL): for a row with a card
+    # it could name another card's key, so a key that cannot be read from the snapshot (or
+    # from a retired row's own marker) refuses the materialization instead.
+    card_id = head.get("source_wp_card_id")
+    if card_id:
+        from modules.flow_gate.services import work_plan_card_identity as _cards
+
+        if _cards.is_retired_value(card_id):
+            card_key = _cards.retired_marker_key(card_id, source_revision_no)
+        else:
+            try:
+                card_key = _cards.step_key_for_card(source_doc, source_revision_no, card_id, type_code)
+            except Exception:  # noqa: BLE001 — an unreadable snapshot is a missing key
+                _log.warning(
+                    "work plan card key lookup failed: wp=%s rev=%s card=%s",
+                    source_doc_id, source_revision_no, card_id, exc_info=True,
+                )
+                card_key = None
+        if not card_key or not card_key.startswith(type_code + "#"):
+            raise NextApprovedError(
+                409,
+                f"WorkPlan step key for card {card_id} cannot be resolved "
+                f"in {source_doc_id} revision {source_revision_no}.",
+            )
+        return {
+            "source_wp_doc_id": source_doc_id,
+            "source_wp_revision_no": source_revision_no,
+            "source_wp_step_key": card_key,
+            "idempotency_key": f"{source_doc_id}:{source_revision_no}:{card_key}",
+        }
 
     same_type = []
     for item in _db_wfseq.get_sequence_items(sequence_id) or []:

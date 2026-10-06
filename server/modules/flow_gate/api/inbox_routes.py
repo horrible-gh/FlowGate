@@ -4520,8 +4520,12 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 help_url=work_plan_service.HELP_TEMPLATE_PATH,
             )
         try:
+            # 0649 T#1 (NR0003 §5.1): a new body has nothing to compare against, so sent card
+            # ids are kept and only missing ones are assigned by the server.
             wp_plan = work_plan_service.validate(
-                wp_parsed,
+                work_plan_service.assign_card_ids(
+                    wp_parsed, None, project_id=project, action="create",
+                ),
                 project_id=project,
                 action="create",
                 allow_pre_instruction_attachments=False,
@@ -5589,8 +5593,15 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 help_url=work_plan_service.HELP_TEMPLATE_PATH,
             )
         try:
+            # 0649 T#1 (NR0003 §5.1): same card-id save checks as the human PUT — the AI
+            # path may not invent ids or drop an existing card's id either.
             wp_plan = work_plan_service.validate(
-                wp_parsed,
+                work_plan_service.assign_card_ids(
+                    wp_parsed,
+                    work_plan_service.load_previous_body(existing_doc),
+                    project_id=project,
+                    action="save",
+                ),
                 project_id=project,
                 doc_id=existing_doc.get("doc_id"),
                 action="save",

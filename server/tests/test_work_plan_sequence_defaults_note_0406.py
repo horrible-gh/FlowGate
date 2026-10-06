@@ -179,4 +179,7 @@ def test_candidates_publish_note_source_keep_the_row_contract_and_clear_note_mis
         "review_count", "reviewer_provider_id", "reviewer_provider_display_name",
         "pre_instruction_text", "pre_instruction_attachment",
         "source_freshness", "source_current_revision_no",
+        # 0649 T#1 (NR0003 O0/O1): the card the row serves, its stored id, and whether the
+        # save must keep it in place.
+        "source_wp_card_id", "item_id", "protected",
     }
