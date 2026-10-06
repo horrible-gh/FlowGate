@@ -98,6 +98,49 @@ export interface ProjectGitSlot {
   writable: boolean
 }
 
+/**
+ * S1 planned finalize of a held (waiting) group (flowgate.v02.0033-D §4.6). Present only when
+ * the server sends the S1 fields; `action` / `targetBranch` may still be null (no plan).
+ */
+export interface ProjectGitPendingPlan {
+  action: string | null
+  targetBranch: string | null
+}
+
+/** One git/status `pending` row (flowgate.v02.0033-D §4.3). */
+export interface ProjectGitPendingRow {
+  groupId: string
+  status: string
+  mergeId: number | null
+  // The group's final approval (AC) document.
+  acDocId: string | null
+  reviewState: string | null
+  // A conflict tied to a final approval in progress; a new finalize is refused meanwhile.
+  finalApprovalBound: boolean
+  // null = the server does not send the S1 fields at all (stage 1), which is not the same
+  // as an S1 row without a plan. `default_action` is the project default, never read here.
+  plan: ProjectGitPendingPlan | null
+}
+
+/** Tracked changes of the Base checkout. `files` is the full path list (no status letter). */
+export interface ProjectGitBaseDirty {
+  files: string[]
+  // A merge is stopped on the Base checkout: these changes are that merge, not stray edits.
+  mergeInProgress: boolean
+  // A Base cleanup AI run owns the checkout right now.
+  aiRun: boolean
+}
+
+/** Untracked (new) files of the Base checkout. */
+export interface ProjectGitBaseUntracked {
+  // Capped by the server; only a part of them when `truncated`.
+  files: string[]
+  truncated: boolean
+  // S2 total of new files. null = the server does not send it (stage 1). The stage-1
+  // `count` is the capped list length and is deliberately not carried.
+  total: number | null
+}
+
 export interface ProjectGitStatus {
   enabled: boolean
   // The project's configured Base branch exactly as the server reports it, or null when it
@@ -105,6 +148,10 @@ export interface ProjectGitStatus {
   // (base_branch_configured is not true). Never defaulted on the client (0024-D §12).
   baseBranch: string | null
   slots: ProjectGitSlot[]
+  // flowgate.v02.0033: what the Designer Git part reads. Additive only.
+  pending: ProjectGitPendingRow[]
+  baseDirty: ProjectGitBaseDirty
+  baseUntracked: ProjectGitBaseUntracked
 }
 
 export interface FlowChangeEntry {
@@ -145,4 +192,31 @@ export interface FlowFileDiff {
 /** Whether an AI run currently owns the Flow's group. */
 export interface FlowAiActivity {
   active: boolean
+  // flowgate.v02.0033: which run, its server status and action scope (null when idle).
+  runId: string | null
+  status: string | null
+  actionScope: string | null
+}
+
+/**
+ * Old/new content of one Base checkout file (HEAD blob vs working tree,
+ * GET /projects/{pid}/git/diff). Same sides as FlowFileDiff (flowgate.v02.0033).
+ */
+export interface BaseFileDiff {
+  branch: string | null
+  commit: string | null
+  path: string
+  status: 'M' | 'A' | 'D'
+  old: FlowDiffSide
+  new: FlowDiffSide
+}
+
+/** Old/new content of one file of a frozen merge review candidate (review-diff). */
+export interface MergeReviewFileDiff {
+  groupId: string
+  mergeId: number
+  path: string
+  status: 'M' | 'A' | 'D'
+  old: FlowDiffSide
+  new: FlowDiffSide
 }

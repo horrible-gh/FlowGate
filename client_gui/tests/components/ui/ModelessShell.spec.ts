@@ -152,6 +152,35 @@ describe('components/ui/ModelessShell (T0006)', () => {
     wrapper.unmount()
   })
 
+  // flowgate.v02.0033 C1: an optional controlled `minimized` (v-model:minimized).
+  it('follows a controlled minimized prop and reports every toggle', async () => {
+    const wrapper = mountPanel({ minimized: true })
+    const panel = document.querySelector('.ui-modeless-panel') as HTMLElement
+    const minimizeBtn = document.querySelectorAll('.ui-modeless-titlebar-actions button')[0] as HTMLElement
+    expect(panel.classList.contains('is-minimized')).toBe(true)
+
+    minimizeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('update:minimized')).toEqual([[false]])
+    // Controlled: the caller has not applied the change yet, so the shell stays minimized.
+    expect(panel.classList.contains('is-minimized')).toBe(true)
+
+    await wrapper.setProps({ minimized: false })
+    expect(panel.classList.contains('is-minimized')).toBe(false)
+    await wrapper.setProps({ minimized: true })
+    expect(panel.classList.contains('is-minimized')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('still reports toggles while uncontrolled', async () => {
+    const wrapper = mountPanel()
+    const minimizeBtn = document.querySelectorAll('.ui-modeless-titlebar-actions button')[0] as HTMLElement
+    minimizeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('update:minimized')).toEqual([[true]])
+    wrapper.unmount()
+  })
+
   it('emits close when the close control is used', async () => {
     const wrapper = mountPanel()
     const closeBtn = document.querySelectorAll('.ui-modeless-titlebar-actions button')[1] as HTMLElement

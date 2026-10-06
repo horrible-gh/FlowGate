@@ -4,7 +4,7 @@
       v-if="open"
       ref="panelRef"
       class="ui-modeless-panel"
-      :class="{ 'is-minimized': minimized }"
+      :class="{ 'is-minimized': isMinimized }"
       :style="panelStyle"
       tabindex="-1"
       @mousedown="bringToFront"
@@ -16,24 +16,24 @@
         </span>
         <span class="ui-modeless-titlebar-actions">
           <IconButton
-            :label="minimized ? 'Restore' : 'Minimize'"
+            :label="isMinimized ? 'Restore' : 'Minimize'"
             variant="ghost"
             size="sm"
             @mousedown.stop
-            @click="minimized = !minimized"
+            @click="setMinimized(!isMinimized)"
           >
-            <span aria-hidden="true">{{ minimized ? '□' : '−' }}</span>
+            <span aria-hidden="true">{{ isMinimized ? '□' : '−' }}</span>
           </IconButton>
           <IconButton label="Close" variant="ghost" size="sm" @mousedown.stop @click="emit('close')">
             <span aria-hidden="true">{{ '×' }}</span>
           </IconButton>
         </span>
       </div>
-      <div v-show="!minimized" class="ui-modeless-body">
+      <div v-show="!isMinimized" class="ui-modeless-body">
         <slot />
       </div>
       <div
-        v-if="resizable && !minimized"
+        v-if="resizable && !isMinimized"
         class="ui-modeless-resize-handle"
         @mousedown.stop="onResizeMouseDown"
       />
@@ -64,6 +64,10 @@ const props = withDefaults(
     draggable?: boolean
     resizable?: boolean
     closeOnEscape?: boolean
+    // Optional `v-model:minimized` (flowgate.v02.0033 C1): a caller that owns the minimized
+    // state (e.g. a window list shown elsewhere) passes it in and hears every toggle. Left
+    // unset, the shell keeps minimized state to itself exactly as before.
+    minimized?: boolean
   }>(),
   {
     title: '',
@@ -76,18 +80,35 @@ const props = withDefaults(
     draggable: true,
     resizable: true,
     closeOnEscape: true,
+    minimized: undefined,
   },
 )
 
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; 'update:minimized': [value: boolean] }>()
 
 const panelRef = ref<HTMLElement | null>(null)
 const x = ref(props.initialX)
 const y = ref(props.initialY)
 const width = ref(props.initialWidth)
 const height = ref(props.initialHeight)
-const minimized = ref(false)
+const localMinimized = ref(props.minimized ?? false)
 const zIndex = ref(0)
+
+// A controlled `minimized` wins; the local ref only follows it so an uncontrolled shell
+// behaves exactly as it always did.
+const isMinimized = computed(() => (props.minimized === undefined ? localMinimized.value : props.minimized))
+
+watch(
+  () => props.minimized,
+  (value) => {
+    if (value !== undefined) localMinimized.value = value
+  },
+)
+
+function setMinimized(value: boolean): void {
+  localMinimized.value = value
+  emit('update:minimized', value)
+}
 
 // Keeps at least this many px of the titlebar reachable so a panel dragged toward an
 // edge can never fully leave the viewport (T0006 §6 "viewport 밖으로 완전히 사라지지
@@ -109,7 +130,7 @@ const panelStyle = computed(() => ({
   left: `${x.value}px`,
   top: `${y.value}px`,
   width: `${width.value}px`,
-  height: minimized.value ? 'auto' : `${height.value}px`,
+  height: isMinimized.value ? 'auto' : `${height.value}px`,
   zIndex: zIndex.value,
 }))
 

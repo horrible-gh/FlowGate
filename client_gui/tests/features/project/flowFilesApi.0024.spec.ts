@@ -7,10 +7,12 @@ const extractApiErrorMessage = vi.hoisted(() => vi.fn((_error: unknown, fallback
 vi.mock('@shared/api', () => ({ getRequest, postRequest: vi.fn(), extractApiErrorMessage }))
 
 import {
+  fetchBaseFileDiff,
   fetchFlowAiActivity,
   fetchFlowChangeSet,
   fetchFlowFileDiff,
   fetchFlowFileTree,
+  fetchMergeReviewFileDiff,
   fetchProjectGitStatus,
 } from '@/features/project/api'
 
@@ -44,7 +46,88 @@ describe('fetchProjectGitStatus', () => {
         { groupId: 'p.m.0001', branch: 'flow-1', status: 'active', writable: true },
         { groupId: 'p.m.0002', branch: null, status: 'active', writable: false },
       ],
+      // flowgate.v02.0033 additive fields: empty when the server sends none.
+      pending: [],
+      baseDirty: { files: [], mergeInProgress: false, aiRun: false },
+      baseUntracked: { files: [], truncated: false, total: null },
     })
+  })
+
+  // flowgate.v02.0033 — what the Designer Git part reads from the same status answer.
+  it('normalizes pending rows, Base dirty and untracked without the project default action', async () => {
+    getRequest.mockResolvedValue({
+      data: {
+        ok: true,
+        status: {
+          enabled: true,
+          base_branch: 'v0.2',
+          base_branch_configured: true,
+          slots: [],
+          pending: [
+            {
+              group_id: 'p.m.0001',
+              status: 'conflict',
+              default_action: 'merge',
+              merge_id: 7,
+              ac_doc_id: 'p.m.0001.0009-AC',
+              review_state: 'resolved_pending_review',
+              reconciliation_kind: null,
+              final_approval_bound: true,
+            },
+            { group_id: 'p.m.0002', status: 'waiting', default_action: 'merge', merge_id: null, ac_doc_id: null },
+          ],
+          base_dirty: { dirty: true, files: ['a\\b.ts'], merge_in_progress: { merge_id: 7 }, ai_run: null },
+          base_untracked: { count: 200, files: ['n.md'], truncated: true },
+        },
+      },
+    })
+    const status = await fetchProjectGitStatus('p')
+    expect(status?.pending).toEqual([
+      {
+        groupId: 'p.m.0001',
+        status: 'conflict',
+        mergeId: 7,
+        acDocId: 'p.m.0001.0009-AC',
+        reviewState: 'resolved_pending_review',
+        finalApprovalBound: true,
+        plan: null,
+      },
+      { groupId: 'p.m.0002', status: 'waiting', mergeId: null, acDocId: null, reviewState: null, finalApprovalBound: false, plan: null },
+    ])
+    expect(JSON.stringify(status)).not.toContain('default')
+    expect(status?.baseDirty).toEqual({ files: ['a/b.ts'], mergeInProgress: true, aiRun: false })
+    // `count` is the capped list length and is not carried; no S2 total = null (stage 1).
+    expect(status?.baseUntracked).toEqual({ files: ['n.md'], truncated: true, total: null })
+  })
+
+  it('tells an S1 row without a plan apart from a server without S1, and reads the S2 total', async () => {
+    getRequest.mockResolvedValue({
+      data: {
+        status: {
+          enabled: true,
+          slots: [],
+          pending: [
+            { group_id: 'a', status: 'waiting', planned_action: null, planned_target_branch: null },
+            { group_id: 'b', status: 'waiting', planned_action: 'merge', planned_target_branch: ' main ' },
+          ],
+          base_untracked: { files: [], truncated: true, total: 250 },
+        },
+      },
+    })
+    const status = await fetchProjectGitStatus('p')
+    expect(status?.pending.map((row) => row.plan)).toEqual([
+      { action: null, targetBranch: null },
+      { action: 'merge', targetBranch: 'main' },
+    ])
+    expect(status?.baseUntracked.total).toBe(250)
+  })
+
+  it('keeps the transport error as cause so a 403 can be told apart', async () => {
+    const transport = Object.assign(new Error('x'), { response: { status: 403 } })
+    getRequest.mockRejectedValueOnce(transport)
+    const error = await fetchProjectGitStatus('p').catch((e) => e)
+    expect(error.message).toBe('Failed to load the project Git status.')
+    expect(error.cause).toBe(transport)
   })
 
   it.each([null, undefined, '', '  '])('reports an unconfigured Base (%j) as null, never a default branch', async (base) => {
@@ -160,17 +243,59 @@ describe('fetchFlowFileDiff', () => {
 
 describe('fetchFlowAiActivity', () => {
   it('is active only for a live run', async () => {
-    getRequest.mockResolvedValueOnce({ data: { ok: true, active: true, status: 'running' } })
-    await expect(fetchFlowAiActivity('g')).resolves.toEqual({ active: true })
+    const idle = { active: false, runId: null, status: null, actionScope: null }
+    getRequest.mockResolvedValueOnce({ data: { ok: true, active: true, status: 'running', run_id: 'r1', action_scope: 'resolve_conflict' } })
+    await expect(fetchFlowAiActivity('g')).resolves.toEqual({ active: true, runId: 'r1', status: 'running', actionScope: 'resolve_conflict' })
     expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/active', { group_id: 'g' })
-    getRequest.mockResolvedValueOnce({ data: { ok: true, active: true, status: 'finished' } })
-    await expect(fetchFlowAiActivity('g')).resolves.toEqual({ active: false })
+    getRequest.mockResolvedValueOnce({ data: { ok: true, active: true, status: 'finished', run_id: 'r1' } })
+    await expect(fetchFlowAiActivity('g')).resolves.toEqual(idle)
     getRequest.mockResolvedValueOnce({ data: { ok: true, active: false } })
-    await expect(fetchFlowAiActivity('g')).resolves.toEqual({ active: false })
+    await expect(fetchFlowAiActivity('g')).resolves.toEqual(idle)
   })
 
   it('normalizes errors', async () => {
     getRequest.mockRejectedValue(new Error('down'))
     await expect(fetchFlowAiActivity('g')).rejects.toThrow('Failed to load the Flow AI activity.')
+  })
+})
+
+// flowgate.v02.0033 — the Designer Git part's file reads.
+describe('fetchBaseFileDiff / fetchMergeReviewFileDiff', () => {
+  const side = { exists: true, binary: false, truncated: false, size: 3, content: 'abc' }
+
+  it('reads one Base checkout file with the server status letter', async () => {
+    getRequest.mockResolvedValue({
+      data: { ok: true, data: { group_id: null, branch: 'v0.2', base_branch: 'v0.2', commit: 'c1', path: 'src\\a.ts', status: 'A', old: { ...side, exists: false }, new: side } },
+    })
+    await expect(fetchBaseFileDiff('p', 'src/a.ts')).resolves.toEqual({
+      branch: 'v0.2',
+      commit: 'c1',
+      path: 'src/a.ts',
+      status: 'A',
+      old: { ...side, exists: false },
+      new: side,
+    })
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/projects/p/git/diff', { path: 'src/a.ts' })
+  })
+
+  it('reads one file of the frozen review candidate', async () => {
+    getRequest.mockResolvedValue({ data: { ok: true, data: { group_id: 'p.m.0001', merge_id: 7, path: 'a.ts', status: 'M', old: side, new: side } } })
+    await expect(fetchMergeReviewFileDiff('p.m.0001', 7, 'a.ts')).resolves.toEqual({
+      groupId: 'p.m.0001',
+      mergeId: 7,
+      path: 'a.ts',
+      status: 'M',
+      old: side,
+      new: side,
+    })
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/groups/p.m.0001/git/merge/7/review-diff', { path: 'a.ts' })
+  })
+
+  it('normalizes errors and keeps the cause (a hidden path is a 404)', async () => {
+    const transport = Object.assign(new Error('x'), { response: { status: 404 } })
+    getRequest.mockRejectedValue(transport)
+    const error = await fetchBaseFileDiff('p', '.env').catch((e) => e)
+    expect(error.message).toBe('Failed to load the file diff.')
+    expect(error.cause).toBe(transport)
   })
 })

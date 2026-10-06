@@ -1,0 +1,338 @@
+/* flowgate.v02.0033 — Designer Git part styles. One feature stylesheet (as features/settings
+   does) rather than scoped blocks: cards, rows and the two windows share these classes and the
+   windows are teleported to <body> by ModelessShell, so every class is gx- prefixed instead. */
+.gx-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  min-width: 0;
+  font-family: var(--fg2-font);
+  color: var(--fg2-text);
+}
+
+.gx-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gx-header-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--fg2-control-radius-sm);
+  background: var(--fg2-control-surface);
+  color: var(--fg2-muted);
+}
+
+.gx-header-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.gx-header-branch {
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gx-header-base {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--fg2-muted);
+}
+
+.gx-header-line {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg2-muted);
+}
+
+.gx-header-line.is-error {
+  color: var(--fg2-status-danger-fg);
+}
+
+.gx-exceptions {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.gx-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 9px;
+  background: var(--fg2-panel);
+}
+
+.gx-card.danger {
+  border-color: var(--fg2-status-danger-border);
+  background: var(--fg2-status-danger-bg);
+}
+
+.gx-card.hold {
+  border-color: var(--fg2-status-info-border);
+  background: var(--fg2-status-info-bg);
+}
+
+.gx-card.warn {
+  border-color: var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
+}
+
+.gx-card.ai {
+  border-color: var(--fg2-status-success-border);
+  background: var(--fg2-status-success-bg);
+}
+
+.gx-title {
+  font-size: 12.5px;
+  font-weight: 800;
+}
+
+.gx-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.gx-title-row .gx-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.gx-kicker {
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--fg2-muted);
+}
+
+.gx-desc,
+.gx-reason,
+.gx-notice {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--fg2-muted);
+}
+
+.gx-notice {
+  color: var(--fg2-status-danger-fg);
+}
+
+.gx-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gx-btn {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: var(--fg2-control-radius-sm);
+  background: var(--fg2-control-surface);
+  color: var(--fg2-control-fg);
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.gx-btn:hover:not(:disabled) {
+  border-color: var(--fg2-control-hover-border);
+}
+
+.gx-btn.primary {
+  border-color: var(--fg2-blue);
+  background: var(--fg2-blue);
+  color: #fff;
+}
+
+.gx-btn.ai {
+  border-color: var(--fg2-status-success-border);
+  color: var(--fg2-status-success-fg);
+}
+
+.gx-btn.danger {
+  border-color: var(--fg2-status-danger-border);
+  color: var(--fg2-status-danger-fg);
+}
+
+.gx-btn.ghost {
+  background: transparent;
+}
+
+.gx-btn.sm {
+  align-self: flex-start;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
+.gx-btn:disabled {
+  opacity: var(--fg2-control-disabled-opacity);
+  cursor: default;
+}
+
+.gx-error-icon {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--fg2-status-danger-border);
+  border-radius: var(--fg2-control-radius-sm);
+  background: transparent;
+  color: var(--fg2-status-danger-fg);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.gx-files {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--fg2-line);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--fg2-bg);
+}
+
+.gx-file,
+.gx-files-more {
+  height: 28px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  border: 0;
+  border-bottom: 1px solid var(--fg2-line);
+  background: transparent;
+  color: var(--fg2-text);
+  font-size: 10.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gx-file:last-child,
+.gx-files-more:last-child {
+  border-bottom: 0;
+}
+
+.gx-file:hover,
+.gx-files-more:hover:not(.is-static) {
+  background: var(--fg2-control-surface);
+}
+
+.gx-files-more {
+  color: var(--fg2-muted);
+}
+
+.gx-files-more.is-static {
+  cursor: default;
+}
+
+.gx-file-st {
+  width: 14px;
+  flex: none;
+  text-align: center;
+  font-weight: 800;
+}
+
+.gx-file-st.st-m {
+  color: var(--fg2-yellow);
+}
+
+.gx-file-st.st-a {
+  color: var(--fg2-status-success-fg);
+}
+
+.gx-file-st.st-d,
+.gx-file-st.st-c {
+  color: var(--fg2-status-danger-fg);
+}
+
+.gx-file-st.st-u,
+.gx-file-st.st-unknown {
+  color: var(--fg2-muted);
+}
+
+.gx-file-nm {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.gx-file-go {
+  margin-left: auto;
+  color: var(--fg2-muted);
+}
+
+.gx-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: var(--fg2-control-radius-sm);
+  background: var(--fg2-bg);
+  color: var(--fg2-text);
+  font-size: 11px;
+}
+
+.gx-textarea {
+  height: auto;
+  padding: 6px 9px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.gx-reject {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gx-reject-label {
+  font-size: 10.5px;
+  color: var(--fg2-muted);
+}
+
+.gx-window {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gx-window-hero .gx-desc {
+  margin-top: 4px;
+}
+
+.gx-tech {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.gx-tech dt {
+  color: var(--fg2-muted);
+}
+
+.gx-tech dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
