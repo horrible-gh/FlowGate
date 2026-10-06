@@ -442,6 +442,7 @@
             :provider-loading="aiProviderStore.loading"
             :provider-errored="!!aiProviderStore.error"
             :ai-run-notice="conflictAiRunNotice(p.group_id)"
+            :ai-run-failure="conflictAiFailureText(p.group_id)"
             :ai-run-pending="conflictAiStarting === p.group_id"
             @close="collapseResolve"
             @abort="abortInline(p)"
@@ -569,6 +570,7 @@
             :provider-loading="aiProviderStore.loading"
             :provider-errored="!!aiProviderStore.error"
             :ai-run-notice="conflictAiRunNotice(s.group_id)"
+            :ai-run-failure="conflictAiFailureText(s.group_id)"
             :ai-run-pending="conflictAiStarting === s.group_id"
             @close="collapseResolve"
             @abort="abortTrConflict(s)"
@@ -712,6 +714,7 @@ import { confirm } from '../composables/useDialogStack'
 import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { useConflictAiRunFailures } from '../composables/useConflictAiRunFailures'
 import AppIcon from '@shared/AppIcon.vue'
 // 0182 NR0003 §6: chunk-based conflict resolution shared with GitFinalizePanel
 // (parser state machine + reassembly + residual-marker guard). 0212 T0009: the
@@ -736,7 +739,6 @@ import {
   reviewBadgeKeyOf as reviewBadgeKeyOfState,
   runningConflictRun,
   useConflictAiStarter,
-  watchConflictRunsEnded,
 } from '../composables/useConflictSession'
 
 const props = defineProps<{ projectId: string }>()
@@ -1044,6 +1046,7 @@ async function abortTrConflict(slot: Slot) {
     await postRequest(
       `/api/v1/groups/${slot.group_id}/git/merge/${cs.merge_id}/abort`, {},
     )
+    conflictAiFailures.clear(slot.group_id)
     showToast(t('main.git_status.tr_commits.conflict_aborted_toast'), 'warning')
     collapseResolve()
   } catch (e: any) {
@@ -1806,6 +1809,7 @@ async function submitResolveInline(p: ConflictTarget | null, auto: boolean) {
   if (!p || p.merge_id == null || busy.value || (!inlineResolved.value && !conflictFiles.value.some(isFileResolved))) return
   busy.value = true
   conflictError.value = ''
+  conflictAiFailures.clear(p.group_id)
   try {
     const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
       `/api/v1/groups/${p.group_id}/git/merge/${p.merge_id}/resolve`,
@@ -1909,6 +1913,7 @@ const conflictAiStarting = conflictAiStarter.starting
 async function invokeConflictAi(p: ConflictTarget | null, message?: string, auto?: boolean) {
   if (!p || p.merge_id == null || busy.value) return
   busy.value = true
+  conflictAiFailures.clear(p.group_id)
   try {
     // RC1: the run honours the card/dialog provider selection (the store's), never a
     // silent server-default fallback; 0481 rev5: the start response is adopted at once.
@@ -1943,6 +1948,10 @@ function conflictAiRunNotice(groupId: string): string | null {
 // "검토 대기 상태가 화면 생존 여부에 의존하지 않도록"). Reached review → the review screen
 // (merge and TR alike; a TR used to fall through to openResolve and re-open an EMPTY
 // resolver here). Still conflicted → refresh the resolver if it is the one on screen.
+//
+// 0674 T0004 §2-1 (D1): the end is also JUDGED (useConflictAiRunFailures, shared with
+// GitFinalizePanel). A run that did not land `complete` is recorded after the refresh
+// below, and the card and the reopened resolver say it failed, why, and what is left to do.
 function conflictGroupIds(): string[] {
   const ids = new Set<string>()
   for (const p of status.value?.pending ?? []) if (p.status === 'conflict') ids.add(p.group_id)
@@ -1951,7 +1960,8 @@ function conflictGroupIds(): string[] {
   return [...ids]
 }
 
-watchConflictRunsEnded(conflictGroupIds, async (groupId) => {
+const conflictAiFailures = useConflictAiRunFailures(async (groupId) => {
+  if (!conflictGroupIds().includes(groupId)) return
   await fetchStatus()
   const pending = status.value?.pending.find((p) => p.group_id === groupId)
   const slot = status.value?.slots.find((s) => s.group_id === groupId)
@@ -1965,6 +1975,15 @@ watchConflictRunsEnded(conflictGroupIds, async (groupId) => {
   }
   if (expanded.value === groupId) await openResolve(groupId)
 })
+
+function conflictAiFailureText(groupId: string): string {
+  if (conflictAiRunNotice(groupId)) return ''
+  const pending = status.value?.pending.find((p) => p.group_id === groupId)
+  if (pending && isReviewPending(pending)) return ''
+  const slot = status.value?.slots.find((s) => s.group_id === groupId)
+  if (slot && trConflictReviewReady(slot)) return ''
+  return conflictAiFailures.failureText(groupId)
+}
 
 watch(
   // 0563 T0007: a finished/lost run leaves runsByGroup the moment it lands (it moves
@@ -2061,6 +2080,7 @@ async function abortInline(p: Pending) {
   busy.value = true
   try {
     await postRequest(`/api/v1/groups/${p.group_id}/git/merge/${p.merge_id}/abort`, {})
+    conflictAiFailures.clear(p.group_id)
     showToast(t('main.git_finalize.aborted_toast'), 'success')
     collapseResolve()
   } catch (e: any) {

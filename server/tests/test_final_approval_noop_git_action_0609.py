@@ -23,6 +23,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from group_lock_stub import group_store  # noqa: F401
 from modules.flow_gate.workflow import pipeline_service as ps
 from modules.flow_gate.workflow.routers import workflow
 
@@ -211,83 +212,41 @@ _DISCARD_DOC = {
     "target_id": "flowgate.default.0609.0001-B",
     "type_code": "AC",
     "doc_review_status": "pending_review",
+    "revision_no": 1,
 }
 _DISCARD_USER = {"user_id": "reviewer", "is_admin": True}
 
 
-def _install_discard_orchestration_fakes(monkeypatch, outcome, commit, events, captured):
-    monkeypatch.setattr(
-        workflow.git_service, "approval_intent",
-        SimpleNamespace(
-            find_clean_retry=lambda group_id: (None, None),
-            find_intent_session=lambda group_id: (None, None),
-            consume_intent=lambda merge_id, intent_id: True,
-        ),
-    )
-    monkeypatch.setattr(workflow, "_guard_group_not_disposed", lambda *a: None)
-    monkeypatch.setattr(workflow, "_guard_group_not_ai_running", lambda *a: None)
-    monkeypatch.setattr(workflow.db_docs, "get_by_id", lambda doc_id: dict(_DISCARD_DOC))
-    monkeypatch.setattr(
-        workflow, "precheck_document_review_transition",
-        lambda **kw: events.append("precheck") or {"document": dict(_DISCARD_DOC)},
-    )
-
-    def _precheck_git_action(doc, git_action):
-        captured["precheck_git_action"] = git_action
-        return _DISCARD_DOC["group_id"]
-
-    monkeypatch.setattr(workflow.git_service, "precheck_approve_git_action", _precheck_git_action)
-    monkeypatch.setattr(workflow.git_service, "_project_of_group", lambda group_id: "flowgate")
-    monkeypatch.setattr(workflow.git_service, "_acquire_lock", lambda *a, **kw: events.append("lock") or True)
-    monkeypatch.setattr(workflow.git_service.db_git, "release_lock", lambda *a: events.append("release"))
-
-    def _run_approve_git_action(group_id, git_action, *, approval_context=None):
-        captured["run_git_action"] = git_action
-        events.append("git")
-        return outcome
-
-    monkeypatch.setattr(workflow.git_service, "run_approve_git_action", _run_approve_git_action)
-    monkeypatch.setattr(workflow, "commit_final_approval", lambda **kw: events.append("approval") or commit())
-
-    def _complete_approve_git_action(group_id, git_action, outcome_arg, *, approved):
-        captured["complete_git_action"] = git_action
-        captured["complete_approved"] = approved
-        events.append("complete")
-
-    monkeypatch.setattr(workflow.git_service, "complete_approve_git_action", _complete_approve_git_action)
-    monkeypatch.setattr(workflow.git_service, "realize_wf_done_transition", lambda *a: events.append("realize"))
-
-
-def test_case_e_discard_required_git_action_discard_finalizes_normally(monkeypatch):
+def test_case_e_discard_required_git_action_discard_finalizes_normally(group_store, monkeypatch):
     """Case E: git-active + real discard required + git_action=discard -> normal
-    finalize succeeds exactly as before this revision (T0004 §3/§4)."""
-    events: list[str] = []
-    captured: dict = {}
-    outcome = {
+    finalize succeeds exactly as before this revision (T0004 §3/§4).
+
+    0669 units 6a/6b: the approval is a final_approval_publish job on the real job layer
+    (approval_job_fakes); the Git body answers "discarded" and is only scripted."""
+    import approval_job_fakes as fakes
+
+    fx = fakes.install(monkeypatch, group_store, project_id="flowgate",
+                       group_id=_DISCARD_DOC["group_id"], doc=_DISCARD_DOC)
+    fx.script["outcome"] = {
         "ok": True, "terminal": True,
         "result": {"status": "discarded", "reason": "already_applied"},
     }
-    committed = {
-        "document": {**_DISCARD_DOC, "doc_review_status": "approved"},
-        "root": {"doc_review_status": "wf_done"},
-    }
-    _install_discard_orchestration_fakes(monkeypatch, outcome, lambda: committed, events, captured)
+    seen = {}
+    monkeypatch.setattr(workflow.git_service, "precheck_approve_git_action",
+                        lambda doc, action: seen.update(precheck=action) or _DISCARD_DOC["group_id"])
 
-    response = asyncio.run(workflow.document_review_transition_rpc(
-        "approve",
-        workflow.DocumentBodyRequest(doc_id=_DISCARD_DOC["doc_id"], git_action="discard"),
-        _DISCARD_USER, None,
-    ))
+    # "discard" is not a ride-along action (APPROVAL_FINALIZE_ACTIONS): the real precheck and
+    # ``approval_publish.start`` refuse it with 422. A group with nothing left to merge is
+    # discarded by the finalize body itself when the approver chose "merge".
+    status, body = fakes.approve(_DISCARD_DOC["doc_id"], _DISCARD_USER, git_action="merge")
 
-    body = json.loads(response.body.decode("utf-8"))
-    assert response.status_code == 200
+    assert status == 200, body
     assert body["approval"]["approved"] is True
     assert body["git"]["result"]["status"] == "discarded"
-    # The literal "discard" choice must reach Git and the terminal notifier
-    # unchanged -- the no-work carve-out must not coerce it into "merge" or
-    # swallow it silently.
-    assert captured["precheck_git_action"] == "discard"
-    assert captured["run_git_action"] == "discard"
-    assert captured["complete_git_action"] == "discard"
-    assert captured["complete_approved"] is True
-    assert events == ["precheck", "lock", "git", "approval", "release", "complete", "realize"]
+    # The approver's choice must reach Git and the terminal notifier unchanged -- the
+    # no-work carve-out must not swallow the discard outcome silently.
+    assert seen["precheck"] == "merge"
+    assert fx.git_actions == ["merge"]
+    assert fx.completed == [("merge", True)]
+    assert fx.events == ["precheck", "freeze", "git", "approval", "complete", "realize"]
+    assert fakes.job_of(_DISCARD_DOC["group_id"])["status"] == "succeeded"

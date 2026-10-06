@@ -10,7 +10,6 @@ import re
 import shutil
 import stat
 import sys
-import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -115,17 +114,26 @@ def ensure_worktree(
             _record_attempt(project_id, "blocked", "branch_merge_claim_active", trigger, "none")
             return "failed"
 
-        holder = f"op:{uuid.uuid4()}"
-        if not _gs._acquire_lock(project_id, holder):
-            _record_attempt(project_id, "failed", "git_busy", trigger, "none")
-            _gs._fail_worktree(project_id, group_id, branch, "git_busy")  # E11
+        # 0669 unit 7b: the plain path is a worktree_provision job (G/R/M) run once in
+        # this request; unit 7d adds a terminal reopen's start_point. A project whose
+        # base checkout is not established yet keeps the old mutex path below.
+        routed = _provision_by_job(cfg, project_id, project_name, group_id, branch, trigger,
+                                   start_point)
+        if routed is not None:
+            return routed
+
+        # 0669 unit 9b: no base checkout yet. Provision it first (B/R, ``provision_base``),
+        # then take the same job path; the old mutex path is no longer reached from here.
+        provision = _gs.provision_base(project_id, trigger)
+        if provision["status"] == "failed":
+            _gs._fail_worktree(project_id, group_id, branch, provision["reason"] or "git_error")
             return "failed"
-        try:
-            return _ensure_worktree_locked(
-                cfg, project_id, project_name, group_id, branch, trigger, start_point,
-            )
-        finally:
-            _gs.db_git.release_lock(project_id, holder)
+        routed = _provision_by_job(cfg, project_id, project_name, group_id, branch, trigger,
+                                   start_point)
+        if routed is not None:
+            return routed
+        _gs._fail_worktree(project_id, group_id, branch, "base_checkout_missing")
+        return "failed"
     except Exception as exc:  # noqa: BLE001 — the hook must never break its caller
         _log.warning("ensure_worktree failed for %s", group_id, exc_info=True)
         try:
@@ -133,6 +141,44 @@ def ensure_worktree(
         except Exception:
             pass
         return "failed"
+
+
+def _provision_by_job(
+    cfg: dict, project_id: str, project_name: str, group_id: str, branch: str, trigger: str,
+    start_point: Optional[str] = None,
+) -> Optional[str]:
+    """None = not the job path (base checkout missing): the caller goes the old way."""
+    from modules.flow_gate.services import git_service as _gs
+    from .base_slot import _judge_base_slot
+    from . import worktree_provision
+    project_base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    base_root = _gs.src_root(project_name, project_base_branch)
+    if _judge_base_slot(base_root, project_base_branch) != "checkout":
+        return None
+    # Idempotence, lock-free (read only): ledger registered and the slot intact. A
+    # start_point must be checked against the slot under G, so it always goes to the job.
+    state = _gs.db_git.get_state(group_id)
+    wt_path = _gs.src_root(project_name, branch)
+    if (
+        not start_point
+        and state is not None
+        and state.get("worktree_registered")
+        and state.get("branch") == branch
+        and wt_path.is_dir()
+        and _gs._worktree_link_ok(wt_path)
+    ):
+        work_base_ref = (
+            _gs.resolve_group_work_base_ref(project_id, group_id, config=cfg)
+            or project_base_branch
+        )
+        _gs.db_git.clear_provision_failure(group_id)
+        _gs._emit_worktree_ready(
+            project_id, group_id, branch, work_base_ref, wt_path,
+            created=False, base_root=base_root,
+        )
+        return "ok"
+    return worktree_provision.provision(cfg, project_id, project_name, group_id, branch, trigger,
+                                        start_point)
 
 
 def _ensure_worktree_locked(
@@ -507,8 +553,10 @@ def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str
         if not project_name:
             return {"performed": False, "reason": "project_name_missing", "sha": None}
 
-        holder = f"initial_sync:{uuid.uuid4()}"
-        if not _gs._acquire_lock(project_id, holder):
+        # 0669 unit 9b: the Group's G instead of the project mutex — reset --hard and
+        # clean -fd touch only this Group's worktree. A frozen Group is not reset.
+        lock_ctx, held, _refused = _slot_lock(project_id, group_id, holder_kind="initial_sync")
+        if held is None:
             return {"performed": False, "reason": "git_busy", "sha": None}
         try:
             # Marker recheck INSIDE the lock -- the second half of the race guard a
@@ -609,10 +657,45 @@ def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str
             })
             return {"performed": True, "reason": "ok", "sha": base_sha}
         finally:
-            _gs.db_git.release_lock(project_id, holder)
+            _slot_unlock(lock_ctx, held)
     except Exception:
         _log.warning("ensure_initial_group_source_sync failed for %s", group_id, exc_info=True)
         return {"performed": False, "reason": "error", "sha": None}
+
+
+def _slot_lock(project_id: str, group_id: str, *, holder_kind: str = "worktree_cleanup",
+               publish: bool = False, mode: str = "interactive", guard: bool = True,
+               fresh: bool = False) -> tuple:
+    """0669 unit 9b: the Group's G (and R when the step may touch origin), in L 2.4 order,
+    instead of the project mutex, for the inline slot paths (dispose / backlog cleanup,
+    no-work discard, initial source sync, work-base confirm, approval retry).
+
+    ``guard``: pass the Group freeze guard (L 2.10) after G is won. ``fresh``: a context
+    of its own even when one is bound — for best-effort callers that may run inside
+    another hold. Returns (ctx, held keys, None), or (ctx, None, refusal details) with
+    nothing held. Never queues."""
+    from . import lock_manager as locks
+    ctx = (None if fresh else locks.current_context()) or locks.new_context("req")
+    wanted = [("G", group_id, holder_kind)]
+    if publish:
+        wanted.append(("R", None, "publish"))
+    held: list = []
+    for domain, gid, kind in wanted:
+        o = locks.acquire(domain, project_id, group_id=gid, holder_kind=kind, mode=mode, ctx=ctx)
+        if o.ok and domain == "G" and guard and not o.reentrant:
+            o = locks._guard_group_admission(ctx, o.lock_key, project_id, group_id, o)
+        if not o.ok:
+            _slot_unlock(ctx, held)
+            return ctx, None, locks.outcome_details(o)
+        held.append(o.lock_key)
+    return ctx, held, None
+
+
+def _slot_unlock(ctx, held: Optional[list]) -> None:
+    from . import lock_manager as locks
+    for key in reversed(held or []):
+        if ctx.find_held(key) is not None:
+            locks.release(ctx, key)
 
 
 def _is_group_disposed(group_id: str) -> bool:
@@ -651,7 +734,6 @@ def _abort_disposed_merge_session(project_id: str, group_id: str, base_root: Pat
         merge_id = session.get("merge_id")
         if merge_id is not None:
             _gs.db_git.close_session(int(merge_id), "aborted")
-            _gs.db_git.release_lock(project_id, f"merge:{merge_id}")
         if target is not None:
             release_workspace(target)
     except Exception:
@@ -701,6 +783,10 @@ def _cleanup_group_slot(
             if _gs.get_branch_merge_group_claim(group_id) is not None:
                 return False
         except Exception:
+            return False
+        # 0669 unit 7a: a worktree_cleanup job in flight owns this slot.
+        from .worktree_cleanup import owns_slot
+        if owns_slot(group_id):
             return False
         status = (state.get("status") or "none")
         # 0192 T0005 §3: a DISPOSED group's slot is a cleanup target regardless of

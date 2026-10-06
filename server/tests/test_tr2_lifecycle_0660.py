@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import pytest
 
+from group_lock_stub import hold_group_lock
+
 from test_tr2_connected_e2e_0565 import (  # noqa: F401 — fixtures are used by name
     MODULE, PROJECT, USER, api, approve, auto_approved_t2, edit_spec, env, git, make_group,
     repo, store, submit_tr2, tr2_body, view,
@@ -145,29 +147,40 @@ def test_t2_unprovisioned_worktree_is_ensured_synchronously_on_create(env, monke
 
 
 def test_t2_lock_held_through_ensure_is_retryable_leaves_nothing_then_succeeds(env, monkeypatch):
-    """The real ensure_worktree loses the real project lock: 503 retryable + git_busy."""
+    """The real ensure_worktree finds the Group's G taken: 503 retryable + git_busy."""
     from modules.flow_gate.db import git_integration as db_git
     from modules.flow_gate.services import git_service
+    from modules.flow_gate.services.git import lock_manager as lm
     group = make_group("0603")
     client = full_api()
     t2 = auto_approved_t2(group)
     _unprovision(group)
     docs_before = group_doc_ids(group)
     monkeypatch.setattr(git_service, "git_available", lambda: True)
-    monkeypatch.setattr("modules.flow_gate.services.git.lock.LOCK_WAIT_SEC", 0)
-    holder = "op:other-0660"
-    assert db_git.try_acquire_lock(PROJECT, holder)
+    monkeypatch.setattr(lm, "wait_budget", lambda _domain, _mode: 0.0)
+    # The group has no base checkout here, so ensure goes base-first (B); a Group slot
+    # that already has its base would meet the Group's G. Hold both.
+    ctx = lm.new_context()
+    held = []
     try:
-        for _attempt in range(2):  # same UI action twice: same answer, still nothing left
-            resp = next_empty(client, group, t2)
-            assert resp.status_code == 503, resp.text
-            body = assert_public(resp)
-            assert body["code"] == "tr2_git_unavailable"
-            assert body["retryable"] is True
-            assert body["details"]["reason"] == "git_busy"
-            assert_nothing_left(group, docs_before)
+        for domain, gid, kind in (("G", group["group_id"], "source_mutation"),
+                                  ("B", None, "base_mutation")):
+            out = lm.acquire(domain, PROJECT, group_id=gid, holder_kind=kind,
+                             mode=lm.NO_WAIT, ctx=ctx)
+            assert out.ok, out
+            held.append(out.lock_key)
+        if True:
+            for _attempt in range(2):  # same UI action twice: same answer, still nothing left
+                resp = next_empty(client, group, t2)
+                assert resp.status_code == 503, resp.text
+                body = assert_public(resp)
+                assert body["code"] == "tr2_git_unavailable"
+                assert body["retryable"] is True
+                assert body["details"]["reason"] == "git_busy"
+                assert_nothing_left(group, docs_before)
     finally:
-        db_git.release_lock(PROJECT, holder)
+        for key in reversed(held):
+            lm.release(ctx, key)
 
     def provisioned(project_id, module, group_id, trigger="remote_access", start_point=None):
         db_git.register_worktree(group_id, project_id, "work")
@@ -293,7 +306,6 @@ def _reopen(doc_id: str) -> dict:
 
 
 def test_t6_blocked_cancel_keeps_tr2_revert_pending_until_the_retry_succeeds(env, monkeypatch):
-    from modules.flow_gate.db import git_integration as db_git
     from modules.flow_gate.db import tr_commit_ledger as db_ledger
     from modules.flow_gate.services import git_service
     group = make_group("0608")
@@ -306,12 +318,8 @@ def test_t6_blocked_cancel_keeps_tr2_revert_pending_until_the_retry_succeeds(env
     monkeypatch.setattr(git_service, "CANCEL_LOCK_WAIT_SEC", 0)
     monkeypatch.setattr("modules.flow_gate.services.git.lock.LOCK_WAIT_SEC", 0)
 
-    holder = "op:lock-fixture-0660"
-    assert db_git.try_acquire_lock(PROJECT, holder)
-    try:
+    with hold_group_lock(PROJECT, group["group_id"]):
         result = _reopen(doc_id)
-    finally:
-        db_git.release_lock(PROJECT, holder)
 
     # The rewind stands (D0005 K8) but the TR2 is not reopened for editing.
     assert result["tr_commit_cancel"]["blocked_reason"] == "git_busy"
@@ -456,16 +464,11 @@ def test_rc1_public_details_drop_every_undocumented_key():
 # ── RC3 the pending state holds the whole group, not only the TR2 ─────────────────
 
 def _blocked_reopen(group: dict, tr2_id: str, monkeypatch) -> dict:
-    from modules.flow_gate.db import git_integration as db_git
     from modules.flow_gate.services import git_service
     monkeypatch.setattr(git_service, "CANCEL_LOCK_WAIT_SEC", 0)
     monkeypatch.setattr("modules.flow_gate.services.git.lock.LOCK_WAIT_SEC", 0)
-    holder = f"op:lock-fixture-{group['code']}"
-    assert db_git.try_acquire_lock(PROJECT, holder)
-    try:
+    with hold_group_lock(PROJECT, group["group_id"]):
         result = _reopen(tr2_id)
-    finally:
-        db_git.release_lock(PROJECT, holder)
     assert result["tr_commit_cancel"]["blocked_reason"] == "git_busy"
     assert result["revert_pending"] == [tr2_id]
     return result

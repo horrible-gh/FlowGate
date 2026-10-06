@@ -30,6 +30,14 @@ from modules.flow_gate.services.git.credentials import GitServiceError
 _SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 
 
+from group_lock_stub import group_store  # noqa: F401
+import pytest as _pytest_locks
+
+# Group/base/remote work takes domain locks from the real lock manager (0669): these tests
+# run on the real SQLite lock/job store instead of stubbing the removed project mutex.
+pytestmark = _pytest_locks.mark.usefixtures("group_store")
+
+
 class _MockTxn:
     def __init__(self, conn):
         self._conn = conn
@@ -126,8 +134,6 @@ def repo(tmp_path, monkeypatch, attempt_db):
     monkeypatch.setattr(branch_service, "_branch_context", lambda project_id: ({"enabled": 1}, root, "main"))
     monkeypatch.setattr(git_service, "_base_root_of", lambda project_id: root)
     monkeypatch.setattr(git_service, "_load_secret_for", lambda cfg: "")
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda project_id, holder: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda project_id, holder: None)
     monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda project_id: list(states))
     monkeypatch.setattr(git_service.db_git, "list_open_sessions", lambda: [])
     # 0613 T0013: the delete guard also asks which live groups pin a branch as their

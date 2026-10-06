@@ -20,6 +20,7 @@ import uuid
 
 import pytest
 
+from group_lock_stub import held_locks
 from test_git_integration_0115 import (  # noqa: F401 — fixtures are used by name
     _git,
     needs_git,
@@ -153,6 +154,26 @@ def _final_approve(doc_id: str, git_action: str | None = "merge") -> tuple[int, 
     return response.status_code, json.loads(response.body.decode("utf-8"))
 
 
+def job_of(group_id: str) -> dict:
+    from approval_job_fakes import job_of as _job_of
+
+    return _job_of(group_id)
+
+
+def _abandon_job(group_id: str) -> None:
+    """End the Group approval job without running it and open the Group again."""
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.services.git import approval_freeze
+
+    job = job_of(group_id)
+    with get_store().transaction():
+        get_store()._execute(
+            "UPDATE operation_job SET status = 'failed', last_error_code = 'test_abandoned', "
+            "lease_owner = NULL, lease_token = NULL, lease_until = NULL WHERE job_id = ?",
+            [job["job_id"]])
+        approval_freeze.clear_freeze_claim(group_id, job["job_id"])
+
+
 def _review_status(doc_id: str) -> str:
     from modules.flow_gate.db import documents as db_docs
 
@@ -203,7 +224,7 @@ class TestFinalApprovalConflictIntent0555:
             # the session (and with it the intent) is written? §3.5 says the whole
             # create happens inside the orchestrator's lock, which is what makes a
             # concurrent second session structurally impossible.
-            seen["lock_at_create"] = db_git.get_lock(PROJECT)
+            seen["lock_at_create"] = sorted((r["domain"], r["holder_kind"]) for r in held_locks(PROJECT))
             return original_create(*args, **kwargs)
 
         db_git.create_session = _watched_create
@@ -229,11 +250,12 @@ class TestFinalApprovalConflictIntent0555:
 
         merge_id = flow["payload"]["git"]["result"]["merge_id"]
         assert db_git.get_state(self.GROUP)["status"] == "conflict"
-        # the session was written while the orchestrator still owned the mutex …
-        assert (flow["seen"]["lock_at_create"] or {}).get("holder", "").startswith("approval:")
+        # the session was written while the approval job still owned its domain locks
+        # (0669: B for the base target and R -- the project mutex is gone) ...
+        assert flow["seen"]["lock_at_create"] == [("B", "publish"), ("R", "publish")]
         # … and it was released by the time the request answered (§3.5: the human
         # wait is NOT held under the project lock).
-        assert db_git.get_lock(PROJECT) is None
+        assert held_locks(PROJECT) == []
 
         intent = _intent(merge_id)
         assert intent is not None
@@ -329,7 +351,7 @@ class TestFinalApprovalConflictIntent0555:
         original_commit = pipeline_service.commit_final_approval
 
         def _watched_commit(**kwargs):
-            observed["lock_at_commit"] = db_git.get_lock(PROJECT)
+            observed["lock_at_commit"] = sorted((r["domain"], r["holder_kind"]) for r in held_locks(PROJECT))
             observed["calls"] = observed.get("calls", 0) + 1
             return original_commit(**kwargs)
 
@@ -356,11 +378,11 @@ class TestFinalApprovalConflictIntent0555:
         assert approved["result"]["approval"]["approved"] is True
         assert approved["result"]["approval"]["stage"] == "complete"
 
-        # the approval ran inside the merge review's own project Git lock …
-        assert (observed["lock_at_commit"] or {}).get("holder", "").startswith("review:")
+        # the approval ran inside the merge review own domain locks (B of the target + R) ...
+        assert observed["lock_at_commit"] == [("B", "review_action"), ("R", "publish")]
         assert observed["calls"] == 1
         # … and the lock is gone once the call returns
-        assert db_git.get_lock(PROJECT) is None
+        assert held_locks(PROJECT) == []
 
         assert _origin_head(flow["origin"]) != before
         assert db_git.get_state(self.GROUP)["status"] == "merged"
@@ -535,7 +557,7 @@ class TestFinalApprovalConflictIntent0555:
         assert _review_status(ac_id) == "pending_review"
         assert _review_status(root_id) == "wf_in_progress"
         assert _intent(merge_id)["approval_intent_id"] == intent_id
-        assert db_git.get_lock(PROJECT) is None
+        assert held_locks(PROJECT) == []
 
         # §9 recovery: approve again. No git re-run, no new merge commit — the
         # surviving intent is what the transaction consumes this time.
@@ -617,7 +639,7 @@ class TestFinalApprovalConflictIntent0555:
         assert _review_status(ac_id) == "approved"
         assert _review_status(root_id) == "wf_done"
         assert _intent(merge_id) is None
-        assert db_git.get_lock(PROJECT) is None
+        assert held_locks(PROJECT) == []
 
     # ── reconciling success branch (T0008 §5/§7/§9) ────────────────────────────
     def test_reconcile_completes_the_deferred_approval_when_the_push_actually_landed(
@@ -793,16 +815,19 @@ class TestFinalApprovalConflictIntent0555:
             return original_execute(sql, params)
 
         monkeypatch.setattr(store, "_execute", _fail_on_file_rows)
-        with pytest.raises(RuntimeError):
-            _final_approve(ac_id)
+        status, payload = _final_approve(ac_id)
         monkeypatch.undo()
+        # 0669: the approval job records an unknown result (its lease is left to lapse and
+        # the Sweeper reconciles it) instead of letting the exception escape the request
+        assert status == 500, payload
+        assert payload["error"]["code"] == "approval_job_error"
 
         # No half-built conflict: the session row went down with the file rows, so
         # there is no session for an intent to be missing from.
         assert db_git.get_open_session_by_group(self.GROUP) is None
         assert approval_intent.find_intent_session(self.GROUP) == (None, None)
         assert _review_status(ac_id) == "pending_review"
-        assert db_git.get_lock(PROJECT) is None
+        assert held_locks(PROJECT) == []
 
 
 @needs_git
@@ -860,11 +885,16 @@ class TestFinalApprovalCleanA11Retry0555:
         status, payload = _final_approve(ac_id)
         monkeypatch.undo()
 
-        assert status == 500, payload
-        assert payload["error"]["code"] == "approval_commit_failed"
+        # 0669 unit 6b: Git is terminal, only the DB step failed -> the approval job stays queued
+        # (retry_wait / db_finalize) and keeps retrying that one step; the request answers queued.
+        assert status == 200, payload
+        assert payload["approval"]["stage"] == "queued" and payload["approval"]["deferred"] is True
+        assert payload["block_reason"]["code"] == "approval_commit_failed"
         assert payload["git"]["terminal"] is True
         assert payload["git"]["result"]["status"] == "merged"
-        assert payload["approval"]["stage"] == "approval_commit"
+        job = job_of(self.GROUP)
+        assert job["status"] == "retry_wait" and job["phase"] == "db_finalize"
+        approval_intent_id = json.loads(job["payload"])["approval_intent_id"]
         terminal_head = _origin_head(origin_repo)
         commits_after_terminal = int(_git(
             ["rev-list", "--count", "main"], cwd=origin_repo["bare"],
@@ -878,12 +908,12 @@ class TestFinalApprovalCleanA11Retry0555:
         assert retry["approval_completed"] is False
         assert retry["intent"]["group_id"] == self.GROUP
         assert retry["intent"]["ac_doc_id"] == ac_id
-        assert retry["intent"]["approval_intent_id"] == payload["approval"]["approval_intent_id"]
+        assert retry["intent"]["approval_intent_id"] == approval_intent_id
         assert retry["intent"]["git_action"] == "merge"
         assert db_git.get_open_session_by_group(self.GROUP) is None
         assert _review_status(ac_id) == "pending_review"
         assert _review_status(root_id) == "wf_in_progress"
-        assert db_git.get_lock(PROJECT) is None
+        assert held_locks(PROJECT) == []
 
         # Both terminal refresh signals are emitted after the failed transaction
         # has rolled back, so subscribers see Git terminal + approval pending.
@@ -903,6 +933,11 @@ class TestFinalApprovalCleanA11Retry0555:
         assert fresh_state["choices"] == []
         project_status = svc.project_git_status(PROJECT)["status"]
         assert self.GROUP not in {row["group_id"] for row in project_status["pending"]}
+
+        # The approval-only retry route (no git_action) answers with the live job while one is
+        # queued; the cases below are the route own rules, so take the job out of the way
+        # (a job lost or abandoned by an operator) and keep its freeze claim cleared.
+        _abandon_job(self.GROUP)
 
         # Another real AC in the same group cannot borrow this retry capability.
         other_ac_id = f"{self.GROUP}.0003-AC"
@@ -974,6 +1009,9 @@ class TestFinalApprovalCleanA11Retry0555:
         assert _origin_head(origin_repo) == terminal_head
         assert approval_intent.find_clean_retry(self.GROUP)[1] is None
 
+    @pytest.mark.skip(reason="stash is not a final-approval action any more: APPROVAL_FINALIZE_ACTIONS "
+                             "is merge/merge_only/push/commit_push and precheck_approve_git_action answers 422 "
+                             "(same in the pre-0669 tree), so there is no stashed terminal to retry")
     def test_stash_terminal_failure_refresh_and_approval_only_retry(
         self, origin_repo, monkeypatch,
     ):

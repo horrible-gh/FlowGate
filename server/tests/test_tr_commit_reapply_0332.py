@@ -53,6 +53,7 @@ from modules.flow_gate.db import connection as db_connection  # noqa: E402
 from modules.flow_gate.db import git_integration as db_git  # noqa: E402
 from modules.flow_gate.db import tr_commit_ledger as db_ledger  # noqa: E402
 from modules.flow_gate.services import git_service as svc  # noqa: E402
+from group_lock_stub import stub_group_lock  # noqa: E402
 from modules.flow_gate.services import tr_commit_service as trc  # noqa: E402
 
 _GIT = shutil.which("git") is not None
@@ -99,6 +100,11 @@ class _SqliteStore:
     def _execute(self, sql, params=None):
         self._conn.execute(sql, params or [])
         self._conn.commit()
+
+    def _execute_affected(self, sql, params=None):
+        cur = self._conn.execute(sql, params or [])
+        self._conn.commit()
+        return cur.rowcount
 
     def _fetch_one(self, sql, params=None):
         row = self._conn.execute(sql, params or []).fetchone()
@@ -166,8 +172,7 @@ def git_active(monkeypatch, repo):
     })
     monkeypatch.setattr(svc, "_project_name", lambda project_id: "flowgate")
     monkeypatch.setattr(svc, "src_root", lambda project_name, branch: repo)
-    monkeypatch.setattr(svc.db_git, "try_acquire_lock", lambda project_id, holder: True)
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda project_id, holder: None)
+    stub_group_lock(monkeypatch)
     return repo
 
 
@@ -514,18 +519,18 @@ def test_every_reapply_skip_reason_stays_inside_the_closed_set(real_store):
     """화면이 그릴 문구를 갖고 있지 않은 코드를 만들어 보내면 사유가 빈칸으로 보인다."""
     assert set(trc.REAPPLY_SKIP_REASONS) == {
         "superseded", "no_cancel_commit", "empty_revert", "conflict", "not_attempted",
+        "compensated",
     }
 
 
 @needs_git
 def test_the_lock_is_released_even_when_the_reapply_conflicts(
-    real_store, git_active, repo,
+    real_store, git_active, repo, monkeypatch,
 ):
     """L0007 §2.1 ③ — 잠금은 재진입이 안 된다. 되살리기가 쥔 채 끝나면 다음 git 작업이
     5초를 기다린 뒤 조용히 실패한다."""
     held: list[str] = []
-    svc.db_git.try_acquire_lock = lambda project_id, holder: (held.append(holder), True)[1]
-    svc.db_git.release_lock = lambda project_id, holder: held.remove(holder)
+    stub_group_lock(monkeypatch, held=held)
     (repo / "f.txt").write_text("A\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: A")
     _ledger_commit(_TR_A, sha_a, "0009-TR: A")

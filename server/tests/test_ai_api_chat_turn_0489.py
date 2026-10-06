@@ -58,7 +58,8 @@ def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kin
 
     assert svc._api_execute({"id": "provider", "kind": kind, "api_base_url": "https://api.example", "api_model": "test"}, "prompt", _run()) == ("started_ok", None)
     assert [spec["name"] for spec in seen["tool_name"]] == [
-        "read_chat_history", "read_help", "send_chat_reply",
+        # 0670 T0004: command execution is a chat capability next to the reads.
+        "read_chat_history", "read_help", "run_command", "send_chat_reply",
     ]
     assert next(spec for spec in seen["tool_name"] if spec["name"] == "send_chat_reply")["completion"] is True
     assert seen["force_tool"] is True

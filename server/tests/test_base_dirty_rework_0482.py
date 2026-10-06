@@ -1,7 +1,14 @@
 import json
 
+import pytest
+
+from group_lock_stub import group_store, held_locks, hold_lock, spy_acquire  # noqa: F401
 from modules.flow_gate.db import project_ai_leases
 from modules.flow_gate.services import remote_tool_service, tool_registry
+
+# Base-checkout work takes B in the real lock manager (0669), so every test here runs on
+# the real SQLite lock store instead of stubbing a project mutex.
+pytestmark = pytest.mark.usefixtures("group_store")
 
 
 def test_project_ai_lease_is_project_scoped_and_released(monkeypatch):
@@ -29,24 +36,29 @@ def test_resolve_base_dirty_permission_and_catalog_converge():
 
 
 def _stub_resolve_lock(monkeypatch, git_service, acquire_calls=None, release_calls=None):
-    """Stub the project git lock so unit tests stay hermetic (no real DB row).
+    """Watch the real B acquisition (0669 domain lock; the lock rows are real).
 
-    Records calls when the caller passes a list, so tests can assert the lock
-    is acquired exactly once for the whole batch (0482 T0011 automated review:
-    baseline capture, discard, and commit must share one held lock)."""
-    from modules.flow_gate.db import git_integration as db_git
+    Fills ``acquire_calls`` with (project_id, lock_key) per acquisition, so tests can assert
+    the lock is acquired exactly once for the whole batch (0482 T0011 automated review:
+    baseline capture, discard, and commit must share one held lock). ``release_calls`` is
+    filled with the lock keys that were released."""
+    from modules.flow_gate.services.git import lock_manager as lm
 
-    def _acquire(project_id, holder, **_kw):
-        if acquire_calls is not None:
-            acquire_calls.append((project_id, holder))
-        return True
+    real_acquire, real_release = lm.acquire, lm.release
 
-    def _release(project_id, holder):
+    def _acquire(domain, project_id, **kw):
+        outcome = real_acquire(domain, project_id, **kw)
+        if acquire_calls is not None and outcome.ok:
+            acquire_calls.append((project_id, outcome.lock_key))
+        return outcome
+
+    def _release(ctx_or_key, key=None):
+        real_release(ctx_or_key, key)
         if release_calls is not None:
-            release_calls.append((project_id, holder))
+            release_calls.append(key or ctx_or_key)
 
-    monkeypatch.setattr(git_service, "_acquire_lock", _acquire)
-    monkeypatch.setattr(db_git, "release_lock", _release)
+    monkeypatch.setattr(lm, "acquire", _acquire)
+    monkeypatch.setattr(lm, "release", _release)
 
 
 def test_resolve_base_dirty_prevalidates_and_returns_partial(monkeypatch):
@@ -163,15 +175,21 @@ def test_resolve_base_dirty_outer_lock_busy_is_409(monkeypatch):
     # holds it) — must surface as 409 git_busy before touching anything.
     monkeypatch.setattr(remote_tool_service, "_worker_token_for_grant", lambda _g: {"action_scope": "resolve_base_dirty"})
     from modules.flow_gate.services import git_service
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda *_a, **_kw: False)
-    try:
-        remote_tool_service._exec_resolve_base_dirty(
-            {"decisions": [{"path": "a.py", "action": "discard"}], "complete": True}, {"project": "p1"})
-    except remote_tool_service._OpError as exc:
-        assert exc.status == 409
-        assert exc.details == {"reason": "git_busy"}
-    else:
-        raise AssertionError("expected git_busy")
+    reverted = []
+    monkeypatch.setattr(git_service, "base_revert", lambda _p, files, **_kw: reverted.extend(files) or {})
+    with hold_lock("B", "p1", holder_kind="base_mutation"):
+        try:
+            remote_tool_service._exec_resolve_base_dirty(
+                {"decisions": [{"path": "a.py", "action": "discard"}], "complete": True}, {"project": "p1"})
+        except remote_tool_service._OpError as exc:
+            assert exc.status == 409
+            assert exc.details["reason"] == "git_busy"
+            assert exc.details["reason_code"] == "lock_busy"
+            assert exc.details["blocker"]["holder_kind"] == "base_mutation"
+        else:
+            raise AssertionError("expected git_busy")
+    assert reverted == []   # nothing was touched while B was held elsewhere
+    assert held_locks("p1") == []
 
 
 def test_resolve_base_dirty_holds_one_lock_across_discard_and_commit(monkeypatch):
@@ -204,7 +222,8 @@ def test_resolve_base_dirty_holds_one_lock_across_discard_and_commit(monkeypatch
     holder = acquire_calls[0][1]
     assert revert_holders == [holder]
     assert commit_holders == [holder]
-    assert release_calls == [("p1", holder)]
+    assert release_calls == [holder]
+    assert held_locks("p1") == []    # and the real row is gone afterwards
 
 
 def test_base_commit_with_holder_reuses_the_callers_lock(monkeypatch, tmp_path):
@@ -215,8 +234,7 @@ def test_base_commit_with_holder_reuses_the_callers_lock(monkeypatch, tmp_path):
     monkeypatch.setattr(git_service, "_require_base_checkout", lambda _p: ({}, tmp_path))
     monkeypatch.setattr(git_service, "guard_base_free", lambda _p: None)
     monkeypatch.setattr(git_service, "git_available", lambda: True)
-    acquire_calls = []
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda *_a, **_kw: acquire_calls.append(1) or True)
+    acquire_calls = spy_acquire(monkeypatch)
     monkeypatch.setattr(git_service, "_base_commit_locked", lambda *_a, **_kw: {"result": {"commit": "x"}})
     result = git_service.base_commit("p1", "msg", ["a.py"], _holder="held-1")
     assert result == {"result": {"commit": "x"}}
@@ -229,8 +247,7 @@ def test_base_revert_with_holder_reuses_the_callers_lock(monkeypatch, tmp_path):
     monkeypatch.setattr(git_service, "_require_base_checkout", lambda _p: ({}, tmp_path))
     monkeypatch.setattr(git_service, "guard_base_free", lambda _p: None)
     monkeypatch.setattr(git_service, "git_available", lambda: True)
-    acquire_calls = []
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda *_a, **_kw: acquire_calls.append(1) or True)
+    acquire_calls = spy_acquire(monkeypatch)
     monkeypatch.setattr(git_service, "_base_revert_locked", lambda *_a, **_kw: {"result": {"results": []}})
     result = git_service.base_revert("p1", ["a.py"], _holder="held-1")
     assert result == {"result": {"results": []}}

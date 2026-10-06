@@ -56,6 +56,7 @@ from modules.flow_gate.services import git_service as svc  # noqa: E402
 from modules.flow_gate.services import tr_commit_service as trc  # noqa: E402
 from modules.flow_gate.services.git import cleanup  # noqa: E402
 from modules.flow_gate.services.git_service import GitServiceError  # noqa: E402
+from group_lock_stub import stub_group_lock  # noqa: E402
 
 _GIT = shutil.which("git") is not None
 needs_git = pytest.mark.skipif(not _GIT, reason="git binary unavailable")
@@ -158,8 +159,7 @@ def git_active(monkeypatch, repo):
     })
     monkeypatch.setattr(svc, "_project_name", lambda project_id: "flowgate")
     monkeypatch.setattr(svc, "src_root", lambda project_name, branch: repo)
-    monkeypatch.setattr(svc.db_git, "try_acquire_lock", lambda project_id, holder: True)
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda project_id, holder: None)
+    stub_group_lock(monkeypatch)
     return repo
 
 
@@ -428,7 +428,6 @@ def test_an_orphan_close_discards_the_attempt(monkeypatch):
     seen: list[tuple] = []
     monkeypatch.setattr(cleanup.merge_target, "close_session_attempt", lambda *a, **k: True)
     monkeypatch.setattr(svc, "_set_status", lambda *a, **k: None)
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda *a, **k: None)
     monkeypatch.setattr(cleanup, "_emit_auto_aborted", lambda *a, **k: None)
     monkeypatch.setattr(
         cleanup, "_discard_abandoned_attempt", lambda merge_id, reason: seen.append((merge_id, reason)),

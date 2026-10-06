@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Literal, Optional
@@ -12,6 +13,24 @@ from .credentials import GitServiceError
 
 def _one_line(value: str) -> str:
     return " ".join((value or "").splitlines()).strip()
+
+
+@contextmanager
+def _meta_lock(project_id: str):
+    """0669 unit 8a: a local branch create/delete is a ref change in the shared gitdir —
+    M (leaf, short), not the project mutex (D §7 "branch create/delete": local only, no
+    queue). A refusal is the old git_busy 409 with the lock manager's reason and blocker."""
+    from . import lock_manager as locks
+    ctx = locks.current_context() or locks.new_context("req")
+    o = locks.acquire("M", project_id, ctx=ctx, holder_kind="branch_meta")
+    if not o.ok:
+        raise GitServiceError(409, "git_busy", "another Git operation is in progress",
+                              details=locks.outcome_details(o))
+    try:
+        yield
+    finally:
+        if ctx.find_held(o.lock_key) is not None:
+            locks.release(ctx, o.lock_key)
 
 
 def _branch_context(project_id: str) -> tuple[dict, Path, str]:
@@ -486,9 +505,8 @@ def merge_branches(
     collision refusal is the named, non-destructive 409 — never an abort failure.
     """
     from modules.flow_gate.services import git_service as _gs
-    from . import branch_merge, merge_target
 
-    cfg, base_root, base_branch = _branch_context(project_id)
+    _, base_root, base_branch = _branch_context(project_id)
     source_ep = MergeEndpointIdentity(
         kind=source_kind or "branch", branch=source_branch, group_id=source_group_id
     )
@@ -499,20 +517,46 @@ def merge_branches(
     target_resolved = resolve_target(project_id, base_root, base_branch, target_ep, source_resolved)
 
     is_base_target = (target_resolved.kind == "branch" and target_branch == base_branch)
-    apply_to_base_checkout = is_base_target and not push
-    if apply_to_base_checkout:
+    if is_base_target and not push:
         _gs.guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
 
-    holder = f"op:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
-        raise GitServiceError(409, "git_busy", "another Git operation is in progress")
+    # 0669 unit 8a: no project mutex any more — a branch_merge_publish job runs the merge
+    # below (run_merge) under its own G/W/B + R, once right here and otherwise later.
+    from . import branch_merge_publish
+    return branch_merge_publish.request(
+        project_id, source_ep, target_ep, push=push, source_head=source_resolved.head_sha,
+        target_root=target_resolved.root, base_branch=base_branch,
+        requested_by=requested_by, provider_id=provider_id,
+    )
+
+
+def run_merge(
+    project_id: str, source_ep: MergeEndpointIdentity, target_ep: MergeEndpointIdentity,
+    push: bool, *, holder: str, requested_by: Optional[str] = None,
+    provider_id: Optional[str] = None, on_phase=None,
+) -> dict:
+    """The merge itself (the old merge_branches body after its lock), for the
+    branch_merge_publish job (0669 unit 8a). The caller holds the target's G/W/B and R;
+    ``holder`` (``job:{id}``) is the attempt's lock holder, and ``on_phase(phase,
+    **evidence)`` records the job phase before the next Git step."""
+    from modules.flow_gate.services import git_service as _gs
+    from . import branch_merge, merge_target
+
+    def phase(name: str, **evidence) -> None:
+        if on_phase is not None:
+            on_phase(name, **evidence)
+
+    cfg, base_root, base_branch = _branch_context(project_id)
+    source_branch, target_branch = source_ep.branch, target_ep.branch
+    source_resolved = resolve_source(project_id, base_root, base_branch, source_ep)
+    target_resolved = resolve_target(project_id, base_root, base_branch, target_ep, source_resolved)
+    is_base_target = (target_resolved.kind == "branch" and target_branch == base_branch)
+    apply_to_base_checkout = is_base_target and not push
     owner = f"branch-merge:{uuid.uuid4()}"
     attempt_open = False
     prepared = False
     keep_workspace = False
     try:
-        source_resolved = resolve_source(project_id, base_root, base_branch, source_ep)
-        target_resolved = resolve_target(project_id, base_root, base_branch, target_ep, source_resolved)
         if target_resolved.kind == "worktree":
             ctx = merge_target.MergeTargetContext(
                 project_id=project_id, base_branch=base_branch, target_branch=target_branch,
@@ -576,6 +620,7 @@ def merge_branches(
         if ctx.managed_workspace:
             merge_target.prepare_workspace(ctx, detached=is_base_target)
             prepared = True
+        phase("workspace_registered", merge_id=ctx.merge_id)
         merge_root = ctx.root
         username = cfg.get("username")
         secret = _gs._load_secret_for(cfg) or ""
@@ -652,6 +697,7 @@ def merge_branches(
             )
             keep_workspace = True
             return branch_merge.conflict_response(ctx, files)
+        phase("merged", merge_commit=_gs._rev_parse(merge_root, "HEAD"))
         if push:
             push_proc = _gs._run_git(
                 ["push", "origin", f"HEAD:{target_branch}"], cwd=merge_root,
@@ -663,6 +709,7 @@ def merge_branches(
                     500, "branch_merge_push_failed", "Git push was rejected",
                     diagnostic=_one_line(push_proc.stderr),
                 )
+            phase("pushed", remote_head=_gs._rev_parse(merge_root, "HEAD"))
         target_after = _gs._rev_parse(merge_root, "HEAD")
         if apply_to_base_checkout:
             # The local base ref and the shared checkout's tree advance together, exactly
@@ -713,7 +760,6 @@ def merge_branches(
     finally:
         if prepared and not keep_workspace:
             merge_target.release_workspace(ctx)
-        _gs.db_git.release_lock(project_id, holder)
 
 
 def create_branch(project_id: str, name: str, source_branch: str) -> dict:
@@ -723,10 +769,7 @@ def create_branch(project_id: str, name: str, source_branch: str) -> dict:
     validate_new_branch_name(project_id, base_root, base_branch, name)
     _validate_create_source(project_id, base_root, source_branch)
 
-    holder = f"op:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
-        raise GitServiceError(409, "git_busy", "another Git operation is in progress")
-    try:
+    with _meta_lock(project_id):
         # Fail closed after lock acquisition: both the destination ref and the
         # source's registered-slot ownership can have changed while we waited.
         validate_new_branch_name(project_id, base_root, base_branch, name)
@@ -744,8 +787,6 @@ def create_branch(project_id: str, name: str, source_branch: str) -> dict:
             "source_branch": source_branch,
             "published": False,
         }
-    finally:
-        _gs.db_git.release_lock(project_id, holder)
 
 
 def _delete_guard(project_id: str, name: str) -> tuple[Optional[str], dict]:
@@ -851,10 +892,7 @@ def delete_branch(project_id: str, name: str) -> dict:
     if reason:
         _raise_delete_guard(reason, details)
 
-    holder = f"op:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
-        raise GitServiceError(409, "git_busy", "another Git operation is in progress")
-    try:
+    with _meta_lock(project_id):
         reason, details = _delete_guard(project_id, name)
         if reason:
             _raise_delete_guard(reason, details)
@@ -881,8 +919,6 @@ def delete_branch(project_id: str, name: str) -> dict:
             "deleted": True,
             "remote_counterpart_remains": had_remote,
         }
-    finally:
-        _gs.db_git.release_lock(project_id, holder)
 
 
 def _ahead_behind(base_root: Path, base_branch: str, name: str) -> tuple[Optional[int], Optional[int]]:

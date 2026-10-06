@@ -98,6 +98,21 @@ class _MemorySourceAccessStore:
         self.row = {"user_id": user_id, "source_access_mode": mode, "updated_at": updated_at}
 
 
+class _MemoryCommandPolicyStore:
+    """0670 T0004: the third, independent storage (db.user_chat_command_policy)."""
+
+    def __init__(self, row=None):
+        self.row = row
+        self.writes: list[dict] = []
+
+    def get(self, user_id):
+        return self.row
+
+    def upsert(self, user_id, policy, updated_at):
+        self.writes.append({"command_policy": policy})
+        self.row = {"user_id": user_id, "command_policy": policy, "updated_at": updated_at}
+
+
 class _FakeTransactionStore:
     """Just enough of FlowGateStore for save_chat_settings' ``with get_store().transaction():``
     (T0009 §3.3) -- a real connection is not needed to prove the split-write logic itself."""
@@ -112,6 +127,7 @@ def memory_store(monkeypatch):
     mem = _MemoryStore()
     monkeypatch.setattr(css, "chat_settings_store", mem)
     monkeypatch.setattr(css, "source_access_store", _MemorySourceAccessStore())
+    monkeypatch.setattr(css, "command_policy_store", _MemoryCommandPolicyStore())
     monkeypatch.setattr(css, "get_store", lambda: _FakeTransactionStore())
     return mem
 
@@ -292,6 +308,8 @@ class TestResolveSettings:
             # 0515 T0009 §3.2: merged in from the separate source-access storage,
             # defaulting to read_only regardless of this (never-saved) legacy row.
             "source_access_mode": "read_only",
+            # 0670 T0004: likewise from its own storage, default user_approval.
+            "command_policy": "user_approval",
         }
 
     def test_unknown_user_is_treated_like_someone_who_never_saved(self, memory_store):
@@ -299,6 +317,7 @@ class TestResolveSettings:
         assert is_default is True
         expected = css.defaults()
         expected["source_access_mode"] = css.SOURCE_ACCESS_DEFAULT
+        expected["command_policy"] = css.COMMAND_POLICY_DEFAULT
         assert settings == expected
 
     def test_a_saved_row_comes_back_as_saved(self, memory_store):
@@ -361,6 +380,8 @@ class TestResolveSettings:
             "context_turns_max": css.CONTEXT_TURNS_MAX,
             # 0515 T0009 §3.2/D0006 §2.2.
             "source_access_mode": ["read_only", "edit", "edit_once"],
+            # 0670 T0004.
+            "command_policy": ["always_approve", "user_approval", "reject"],
         }
         assert "updated_at" not in body["defaults"]
         # 0515 T0009 §3.2: the defaults envelope carries the source-access default too.

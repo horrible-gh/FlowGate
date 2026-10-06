@@ -1,4 +1,4 @@
-"""TR2 LIVE precheck and project source-lock admission.
+"""TR2 LIVE precheck and Group source-lock admission.
 
 The approval caller keeps ``source_lock`` held through backup, apply, validation,
 commit and any rollback.  The diagnostic path only reads and never records an
@@ -18,6 +18,7 @@ from modules.flow_gate.documents import tr2_service as tr2
 from modules.flow_gate.documents import tr2_command_admission as admission
 from modules.flow_gate.documents.tr2_apply_adapter import adapter
 from modules.flow_gate.services import git_service, path_exclusion_rules
+from modules.flow_gate.services.git import lock_manager
 from modules.flow_gate.workflow.transition_rules import get_doc_review_rule
 
 
@@ -27,6 +28,8 @@ class LockedSource:
     group_id: str
     root: Path
     holder: str
+    # The Group's G hold (0666 D 3.10): (ExecutionContext, lock_key).
+    lock: tuple | None = None
 
 
 def _approval_root(project_id: str, group_id: str) -> Path:
@@ -42,19 +45,31 @@ def _approval_root(project_id: str, group_id: str) -> Path:
     return root
 
 
+def _acquire_group(project_id: str, group_id: str):
+    """This Group's G, long (heartbeated) because validation commands may run for up to
+    an hour. Other Groups' approvals and writes no longer wait on it (0666 D 3.10)."""
+    outcome, ctx = lock_manager.acquire_group(project_id, group_id, holder_kind="tr2_apply")
+    if not outcome.ok:
+        raise tr2.Tr2ValidationError("tr2_source_locked", "source_lock",
+                                     lock_manager.outcome_details(outcome))
+    return ctx, outcome.lock_key
+
+
+def _release_group(handle) -> None:
+    ctx, key = handle
+    lock_manager.release(ctx, key)
+
+
 @contextmanager
 def source_lock(project_id: str, group_id: str, *, request_key: str | None = None):
-    """Existing DB-backed project Git mutex; no in-process-only substitute."""
-    # A fresh holder matters: the existing DB lock verifies ownership by holder
-    # after a duplicate INSERT. Reusing request_key here would let a concurrent
-    # duplicate mistake the first request's row for its own lock acquisition.
+    """DB-backed Group lock (G); no in-process-only substitute."""
+    # The holder string is a label only now: G ownership is the context + epoch.
     holder = f"tr2:{group_id}:{uuid.uuid4().hex}"
-    if not git_service._acquire_lock(project_id, holder):
-        raise tr2.Tr2ValidationError("tr2_source_locked", "source_lock")
+    lock = _acquire_group(project_id, group_id)
     try:
-        yield LockedSource(project_id, group_id, _approval_root(project_id, group_id), holder)
+        yield LockedSource(project_id, group_id, _approval_root(project_id, group_id), holder, lock)
     finally:
-        db_git.release_lock(project_id, holder)
+        _release_group(lock)
 
 
 def _clean(root: Path) -> None:
@@ -65,9 +80,15 @@ def _clean(root: Path) -> None:
         raise tr2.Tr2ValidationError("tr2_worktree_dirty", "worktree_status")
 
 
+def _lock_still_held(locked: LockedSource) -> bool:
+    if locked.lock is None:
+        return False
+    ctx, key = locked.lock
+    return lock_manager.still_held(ctx, key)
+
+
 def assert_source_lock(locked: LockedSource) -> None:
-    owner = db_git.get_lock(locked.project_id)
-    if not owner or owner.get("holder") != locked.holder:
+    if not _lock_still_held(locked):
         raise tr2.Tr2ValidationError("tr2_source_locked", "source_lock")
     if _approval_root(locked.project_id, locked.group_id) != locked.root:
         raise tr2.Tr2ValidationError("tr2_git_unavailable", "source_root")

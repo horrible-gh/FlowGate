@@ -863,15 +863,15 @@ def _execute(op: str, body: dict, root: Path, grant: Optional[dict] = None) -> t
 def _exec_resolve_base_dirty(body: dict, grant: dict) -> tuple[dict, Optional[int]]:
     """Validate the complete decision batch before applying any base-checkout change.
 
-    Holds the project git lock for the whole call (baseline capture through
-    discard/commit) via `_holder`, instead of the previous three independently
-    locked calls (project_git_status has none, base_revert/base_commit each took
-    and released their own) that left a race window where a concurrent git
-    operation could change the dirty set between baseline and application, or
-    between discard and commit."""
-    import uuid
-    from modules.flow_gate.db import git_integration as db_git
+    Holds the base checkout's B for the whole call (baseline capture through
+    discard/commit) and hands it to base_revert/base_commit via `_holder`, instead of
+    the previous three independently locked calls (project_git_status has none,
+    base_revert/base_commit each took and released their own) that left a race window
+    where a concurrent git operation could change the dirty set between baseline and
+    application, or between discard and commit. 0669 unit 9a (D §7 "base dirty 정리"):
+    B replaced the project mutex; a refusal is the old 409 git_busy, nothing is queued."""
     from modules.flow_gate.services import git_service
+    from modules.flow_gate.services.git import lock_manager as locks
     project_id = str(grant.get("project") or "")
     token = _worker_token_for_grant(grant) or {}
     if token.get("action_scope") != "resolve_base_dirty" or not project_id:
@@ -884,9 +884,11 @@ def _exec_resolve_base_dirty(body: dict, grant: dict) -> tuple[dict, Optional[in
     if commit_paths and body["complete"] and not message:
         raise _OpError(422, details={"reason": "commit_message_required"})
 
-    holder = f"resolve_base_dirty:{uuid.uuid4()}"
-    if not git_service._acquire_lock(project_id, holder):
-        raise _OpError(409, details={"reason": "git_busy"})
+    lock_ctx = locks.current_context() or locks.new_context("req")
+    lock = locks.acquire("B", project_id, holder_kind="base_mutation", ctx=lock_ctx)
+    if not lock.ok:
+        raise _OpError(409, details={"reason": "git_busy", **locks.outcome_details(lock)})
+    holder = lock.lock_key
     try:
         baseline = list((((git_service.project_git_status(project_id).get("status") or {})
                          .get("base_dirty") or {}).get("files") or []))
@@ -912,7 +914,8 @@ def _exec_resolve_base_dirty(body: dict, grant: dict) -> tuple[dict, Optional[in
             raise _OpError(409, details={"reason": "git_busy"}) from exc
         raise
     finally:
-        db_git.release_lock(project_id, holder)
+        if lock_ctx.find_held(holder) is not None:
+            locks.release(lock_ctx, holder)
 
 
 def _default_target_ref(grant: dict, root: Path) -> str:
@@ -2069,8 +2072,8 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
                         recursive_paths=[body["path"]] if recursive else [],
                         allow_missing_leaf=True,
                     ) as mutation:
-                        # Re-run the legacy mutation resolver while holding the project
-                        # mutex and require it to identify the same live worktree.
+                        # Re-run the legacy mutation resolver while holding the Group
+                        # lock and require it to identify the same live worktree.
                         locked_root = _resolve_root_for_mutation(grant, op)
                         if Path(locked_root).resolve() != mutation.root:
                             raise _OpError(
@@ -2130,3 +2133,25 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
         _emit_explorer_refresh(grant, op)
     continuation = _continuation(grant, locale) if op in _MUTATING_OPS else None
     return 200, _envelope(True, op, extra=extra, continuation=continuation)
+
+def _emit_explorer_refresh(grant: dict, op: str) -> None:
+    """Best-effort file_explorer_refresh broadcast after a worker source mutation
+    (0192 T0005 2-d). Scoped to the worker's project (and group when known) so
+    the operator's explorer re-fetches the tree / change list / dirty markers."""
+    try:
+        from modules.flow_gate.api.v1.events.publisher import (
+            FlowEvent,
+            broadcast_event_threadsafe,
+        )
+        from modules.flow_gate.api.v1.events.event_types import EventType
+
+        broadcast_event_threadsafe(FlowEvent(
+            event_type=EventType.FILE_EXPLORER_REFRESH,
+            payload={"operation": op, "source": "remote_worker"},
+            audience="*",
+            project=grant.get("project"),
+            group_id=grant.get("group_id"),
+            doc_id=None,
+        ))
+    except Exception:
+        pass

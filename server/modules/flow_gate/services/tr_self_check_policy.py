@@ -132,16 +132,21 @@ def controlled_path(worktree: Path, host_path: str | None = None) -> tuple[str, 
     return os.pathsep.join(map(str, safe)), safe
 
 
-def resolve_command(program: str, args: list[str], worktree: Path, path_value: str) -> ResolvedCommand:
+def resolve_command(program: str, args: list[str], worktree: Path, path_value: str,
+                    denied: frozenset = DENIED, deny_git_helpers: bool = True) -> ResolvedCommand:
+    # 0670 T0004: ``denied``/``deny_git_helpers`` let the chat command policy reuse this
+    # exact resolution (argv checks, PATH control, launcher adapter) with its own deny
+    # list. The defaults are the Self-check policy, unchanged.
     name = canonical_name(program)
-    if name in DENIED or name.startswith("git-"):
+    if name in denied or (deny_git_helpers and name.startswith("git-")):
         raise PolicyError("selfcheck_program_denied")
     validate_args(program, args)
     resolved = shutil.which(program, path=path_value)
     if not resolved:
         raise PolicyError("selfcheck_executable_not_found")
     real = Path(resolved).resolve(strict=True)
-    if canonical_name(real.name) in DENIED or canonical_name(real.name).startswith("git-"):
+    real_name = canonical_name(real.name)
+    if real_name in denied or (deny_git_helpers and real_name.startswith("git-")):
         raise PolicyError("selfcheck_program_denied")
     if not real.is_file():
         raise PolicyError("selfcheck_executable_not_found")

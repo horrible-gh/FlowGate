@@ -44,6 +44,9 @@ _SERVER_DIR = Path(__file__).resolve().parents[1]
 _SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 sys.path.insert(0, str(_SERVER_DIR))
 
+from group_lock_stub import hold_lock, held_locks  # noqa: E402
+from modules.flow_gate.services.git import lock_manager as lm  # noqa: E402
+
 _GIT = shutil.which("git") is not None
 
 
@@ -90,6 +93,18 @@ def _git_can_clone_local_file_url() -> bool:
     finally:
         shutil.rmtree(probe, ignore_errors=True)
 
+
+def _node_syntax_checker_available() -> bool:
+    """The real-parser review check (``git-review-syntax-check.mjs``) runs against this
+    server's own ``client/node_modules``; a source checkout without them cannot run it."""
+    from modules.flow_gate.services import git_service as _svc
+    return (Path(_svc._FLOWGATE_CLIENT_DIR) / "node_modules" / "typescript").is_dir()         and shutil.which("node") is not None
+
+
+needs_node_syntax = pytest.mark.skipif(
+    not _node_syntax_checker_available(),
+    reason="client/node_modules (typescript, vue compiler) or node unavailable in this checkout",
+)
 
 _FILE_CLONE = _git_can_clone_local_file_url()
 needs_git = pytest.mark.skipif(
@@ -569,20 +584,41 @@ class TestEffectiveSrcRoot:
         assert with_group == root
 
 
-# ── project lock (L0006 §2.8) ────────────────────────────────────────────────
+# ── domain locks (L0006 §2.8, replaced by resource_lock in flowgate.default.0669) ──────
 
 class TestLock:
-    def test_acquire_busy_release_transfer(self, seed):
-        from modules.flow_gate.db import git_integration as db_git
+    def test_acquire_busy_release_reenter(self, seed):
+        from modules.flow_gate.services.git import lock_manager as lm
 
-        assert db_git.try_acquire_lock("gitprj", "op:a") is True
-        assert db_git.try_acquire_lock("gitprj", "op:b") is False
-        db_git.release_lock("gitprj", "op:b")  # non-holder release is a no-op
-        assert db_git.get_lock("gitprj")["holder"] == "op:a"
-        db_git.transfer_lock("gitprj", "op:a", "merge:7")
-        assert db_git.get_lock("gitprj")["holder"] == "merge:7"
-        db_git.release_lock("gitprj", "merge:7")
-        assert db_git.get_lock("gitprj") is None
+        ctx_a, ctx_b = lm.new_context(), lm.new_context()
+        first = lm.acquire("B", "gitprj", holder_kind="base_mutation", ctx=ctx_a, mode=lm.NO_WAIT)
+        assert first.ok
+        busy = lm.acquire("B", "gitprj", holder_kind="publish", ctx=ctx_b, mode=lm.NO_WAIT)
+        assert busy.kind == lm.BUSY and busy.blocker["holder_kind"] == "base_mutation"
+        with pytest.raises(lm.LockProgramError):
+            lm.release(ctx_b, first.lock_key)         # a non-holder cannot release
+        assert [r["holder_kind"] for r in held_locks("gitprj")] == ["base_mutation"]
+        again = lm.acquire("B", "gitprj", holder_kind="base_mutation", ctx=ctx_a, mode=lm.NO_WAIT)
+        assert again.ok and again.reentrant
+        lm.release(ctx_a, first.lock_key)
+        assert held_locks("gitprj") != []              # still held once (re-entrant count)
+        lm.release(ctx_a, first.lock_key)
+        assert held_locks("gitprj") == []
+
+    def test_different_groups_hold_g_at_once_and_same_group_is_busy(self, seed):
+        from modules.flow_gate.services.git import lock_manager as lm
+
+        ctx_a, ctx_b, ctx_c = lm.new_context(), lm.new_context(), lm.new_context()
+        ga = lm.acquire("G", "gitprj", group_id="gitprj.default.g1", holder_kind="source_mutation",
+                        ctx=ctx_a, mode=lm.NO_WAIT)
+        gb = lm.acquire("G", "gitprj", group_id="gitprj.default.g2", holder_kind="source_mutation",
+                        ctx=ctx_b, mode=lm.NO_WAIT)
+        same = lm.acquire("G", "gitprj", group_id="gitprj.default.g1", holder_kind="tr_commit",
+                          ctx=ctx_c, mode=lm.NO_WAIT)
+        assert ga.ok and gb.ok and same.kind == lm.BUSY
+        lm.release(ctx_a, ga.lock_key)
+        lm.release(ctx_b, gb.lock_key)
+        assert held_locks("gitprj") == []
 
 
 # ── finalize guards (L0006 §4.2) ─────────────────────────────────────────────
@@ -760,8 +796,13 @@ class TestFinalizeActionContract0331:
         assert state["action_axes"] is None
         assert state["choices"] == []
 
-    def test_finalize_validator_accepts_the_new_actions(self, git_active_group):
+    def test_finalize_validator_accepts_the_new_actions(self, git_active_group, monkeypatch):
         from modules.flow_gate.services import git_service as svc
+
+        # The base checkout does not exist here either; the origin sync that runs before the
+        # worktree check cannot start git in a missing directory (Windows raises
+        # NotADirectoryError for it), and it is not what this test is about.
+        monkeypatch.setattr(svc, "ensure_origin_matches_config", lambda *_a, **_k: None)
 
         # An unknown action stops at the 422 gate; the two new ones pass it and
         # only fail later on this group's missing worktree dir (409). That gap is
@@ -2388,7 +2429,7 @@ class TestGitEndToEnd:
         assert out["result"]["conflict_files"] == ["shared.py"]
         # 0205: conflict sessions no longer hold the project mutex; the base is
         # protected by the open-session guard instead.
-        assert db_git.get_lock("gitprj") is None
+        assert held_locks("gitprj") == []
         assert svc.open_merge_session_of_project("gitprj")["merge_id"] == merge_id
         group2 = "gitprj.default.0103"
         assert svc.ensure_worktree("gitprj", "default", group2) == "ok"
@@ -2455,7 +2496,7 @@ class TestGitEndToEnd:
         assert top_subject.startswith("Merge branch ")
         absorb_subject = _git(["log", "-1", "--format=%s", "main^2"], cwd=origin_repo["bare"]).strip()
         assert top_subject != absorb_subject  # a normal work+merge pair, not a duplicate
-        assert db_git.get_lock("gitprj") is None
+        assert held_locks("gitprj") == []
         session = db_git.get_session(merge_id)
         assert session["status"] == "done"
 
@@ -3222,7 +3263,7 @@ class TestGitEndToEnd:
 
         out = svc.abort_merge(group, merge_id)
         assert out["result"]["status"] == "waiting"
-        assert db_git.get_lock("gitprj") is None
+        assert held_locks("gitprj") == []
         assert db_git.get_session(merge_id)["status"] == "aborted"
         # after abort the group can re-choose (wait keeps it re-selectable)
         state = svc.get_finalize_state(group)["state"]
@@ -3757,6 +3798,7 @@ class TestGitEndToEnd:
             for e in plan_errors
         ), plan_errors
 
+    @needs_node_syntax
     def test_review_gate_real_typescript_parser_blocks_approval(self, origin_repo):
         # 0481 TR0009 rev1 (AI review finding 2): L0007 §2.7 requires the project
         # TypeScript compiler's no-emit syntactic check for `*.ts`, not a
@@ -3818,6 +3860,7 @@ class TestGitEndToEnd:
         assert approved["result"]["status"] == "merged"
         assert db_git.get_session(merge_id)["status"] == "done"
 
+    @needs_node_syntax
     def test_review_gate_vue_validates_both_script_and_script_setup_blocks(self, origin_repo):
         # 0481 TR0009 rev2 (AI review finding 2): a valid SFC may carry BOTH a
         # `<script setup>` and an ordinary `<script>` block — Vue's own compiler
@@ -5155,7 +5198,7 @@ class TestGitEndToEnd:
         # the conflict from that pre-lock context — so an approval that committed
         # while the rejection was waiting for the lock was both undone in the
         # checkout and overwritten in the session. The rejection must now lose
-        # the race cleanly. The racer fires from inside `_acquire_lock`, i.e.
+        # the race cleanly. The racer fires from inside the lock acquisition (`lock_manager.acquire`), i.e.
         # exactly in the window between the pre-check and the lock being held.
         import uuid
 
@@ -5184,21 +5227,19 @@ class TestGitEndToEnd:
         fingerprint = out["result"]["review_fingerprint"]
 
         raced: list = []
-        real_acquire_lock = svc._acquire_lock
+        real_acquire = lm.acquire
 
-        def racing_acquire_lock(project_id, holder, wait_sec=None):
+        def racing_acquire(domain, project_id, **kw):
             if not raced:
-                raced.append(holder)
+                raced.append(domain)
                 approved = svc.approve_merge_review(
                     group, merge_id, attempt_id=str(uuid.uuid4()),
                     review_fingerprint=fingerprint, authority="human",
                 )
                 assert approved["result"]["status"] == "merged"
-            if wait_sec is None:
-                return real_acquire_lock(project_id, holder)
-            return real_acquire_lock(project_id, holder, wait_sec=wait_sec)
+            return real_acquire(domain, project_id, **kw)
 
-        monkeypatch.setattr(svc, "_acquire_lock", racing_acquire_lock)
+        monkeypatch.setattr(lm, "acquire", racing_acquire)
 
         with pytest.raises(svc.GitServiceError) as exc:
             svc.reject_merge_review(
@@ -5317,19 +5358,17 @@ class TestGitEndToEnd:
         # the racer: the worker's SECOND submission lands after materialization has
         # already read the run detail, but before it takes the lock and claims the run.
         raced: list = []
-        real_acquire_lock = svc._acquire_lock
+        real_acquire = lm.acquire
 
-        def racing_acquire_lock(project_id, holder, wait_sec=None):
+        def racing_acquire(domain, project_id, **kw):
             if not raced:
-                raced.append(holder)
+                raced.append(domain)
                 assert svc.submit_review_write_plan(
                     group, merge_id, plan=plan_second, ai_run_id="aiv_resubmit_race",
                 )["result"]["status"] == "accepted"
-            if wait_sec is None:
-                return real_acquire_lock(project_id, holder)
-            return real_acquire_lock(project_id, holder, wait_sec=wait_sec)
+            return real_acquire(domain, project_id, **kw)
 
-        monkeypatch.setattr(svc, "_acquire_lock", racing_acquire_lock)
+        monkeypatch.setattr(lm, "acquire", racing_acquire)
 
         review = svc.get_merge_review(group, merge_id)["result"]
         assert raced, "the racing submission never fired"
@@ -5882,13 +5921,11 @@ class TestBaseCommitRevert0177:
         from modules.flow_gate.db import git_integration as db_git
         from modules.flow_gate.services import git_service as svc
 
-        assert db_git.try_acquire_lock("baseprj", "op:elsewhere") is True
-        try:
+        with hold_lock("B", "baseprj", holder_kind="base_mutation"):
             with pytest.raises(svc.GitServiceError) as exc:
                 svc.base_commit("baseprj", None)
             assert exc.value.status == 409 and exc.value.code == "git_busy"
-        finally:
-            db_git.release_lock("baseprj", "op:elsewhere")
+        assert held_locks("baseprj") == []
 
     def test_e3_409_then_commit_then_merge(self, base_origin):
         """The confirmed flow (§2.6-c): merge → 409 base_dirty(files) →
@@ -6035,17 +6072,16 @@ class TestResolveBaseDirtyRealRepo0482:
             remote_tool_service, "_worker_token_for_grant",
             lambda _grant: {"action_scope": "resolve_base_dirty"},
         )
-        assert db_git.try_acquire_lock("rbdprj", "op:elsewhere") is True
-        try:
+        with hold_lock("B", "rbdprj", holder_kind="base_mutation"):
             with pytest.raises(remote_tool_service._OpError) as exc:
                 remote_tool_service._exec_resolve_base_dirty(
                     {"decisions": [{"path": "a.txt", "action": "discard"}], "complete": True},
                     {"project": "rbdprj"},
                 )
             assert exc.value.status == 409
-            assert exc.value.details == {"reason": "git_busy"}
-        finally:
-            db_git.release_lock("rbdprj", "op:elsewhere")
+            assert exc.value.details["reason"] == "git_busy"
+            assert exc.value.details["reason_code"] == "lock_busy"
+        assert held_locks("rbdprj") == []
         # nothing was applied while the project lock was held elsewhere
         assert svc.project_git_status("rbdprj")["status"]["base_dirty"]["files"] == ["a.txt"]
 

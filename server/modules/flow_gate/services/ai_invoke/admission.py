@@ -762,6 +762,25 @@ def _write_lease_admission_rejected(
         )
 
 
+def _refuse_frozen_group(group_id: str) -> None:
+    """0669 unit 6b (0666 D 3.7, L 2.10 ai_run_start): a Group frozen for a final
+    approval (freeze claim from F1 until the approval commits or is released) starts
+    no AI run. Judged on the durable claim; a claim that cannot be read refuses too."""
+    from modules.flow_gate.db import operation_job as db_jobs
+    from modules.flow_gate.db import request_cache as _request_cache
+    try:
+        _request_cache.invalidate()
+        claim = db_jobs.get_group_freeze_claim(group_id)
+    except Exception:
+        raise _http_error(503, "store_error", "The group's approval state could not be read.",
+                          reason_code="freeze_claim_unreadable", retryable=True)
+    if claim is not None:
+        raise _http_error(409, "group_frozen_for_approval",
+                          "This group is frozen for a final approval in progress.",
+                          job_id=claim.get("job_id"), state=claim.get("state"),
+                          retryable=False)
+
+
 def start_run(
     *,
     project_id: str,
@@ -1060,6 +1079,8 @@ def start_run(
     # release, handoff, update_token) already no-ops on a missing row.
     # (Deliberately ASCII: the 0430 census caps this file's Korean lines and it is full.)
     project_scoped = _is_project_scoped_run(action_scope, merge_id)
+    if not project_scoped:
+        _refuse_frozen_group(group_id)
     # Durable lease admission is authoritative. Memory remains only a UI/live-process signal.
     active = None if project_scoped else db_group_ai_leases.get_active(group_id)
     handoff_allowed = bool(
@@ -1567,6 +1588,10 @@ def start_run(
         "finished_at": None,
         "dirty_baseline": _svc()._git_status_paths(source_root),
         "source_root": str(source_root) if source_root else None,
+        # 0670 T0004 (NR0003 §11.3): a chat run's start content as an isolated-index Git
+        # tree. finalize diffs it against the end tree, so the run's change summary is
+        # measured by FlowGate -- never reported by the model. None for every other scope.
+        "source_start_tree": _chat_start_tree(action_scope, source_root),
         "api_base_url": api_base_url,
         # 0505 T0006 (DB0005 2/3.3): operator_api_base is a one-time sanitized snapshot
         # of this same value, taken here at run start. transport_api_base starts empty
@@ -2514,4 +2539,17 @@ def _resolve_continuation_hop_note(
         return str(note).strip()
     except Exception:  # noqa: BLE001 — a resolution failure must not stall the hop
         logger.warning("continuation hop note resolution failed for %s", doc_ref, exc_info=True)
+        return None
+
+
+def _chat_start_tree(action_scope: Optional[str], source_root) -> Optional[str]:
+    """0670 T0004: start-tree snapshot for chat runs only; never raises."""
+    if action_scope != "chat":
+        return None
+    try:
+        from modules.flow_gate.services import chat_run_changes_service
+
+        return chat_run_changes_service.start_snapshot(action_scope, source_root)
+    except Exception:
+        logger.warning("chat run start-tree snapshot failed", exc_info=True)
         return None

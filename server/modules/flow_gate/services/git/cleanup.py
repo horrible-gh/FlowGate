@@ -5,17 +5,17 @@ Extracted from git_service.py (flowgate.default.0550 T0013, D0006 §3.2/부록 A
 from __future__ import annotations
 
 import logging
-import time
-import uuid
 from pathlib import Path
 from typing import Optional
 
 from modules.flow_gate.db import terminal_cleanup_snapshots as db_terminal_cleanup
 
 from . import approval_intent
+from . import lock_manager as locks
 from . import merge_target
+from .branch_merge_publish import session_lock, session_unlock
 from .credentials import GitServiceError
-from .worktree import _abort_disposed_merge_session
+from .worktree import _abort_disposed_merge_session, _slot_lock, _slot_unlock
 
 _log = logging.getLogger(__name__)
 
@@ -53,19 +53,44 @@ def cleanup_disposed_group(project_id: str, group_id: str) -> dict:
             return {"ok": False, "cleaned": False, "reason": "branch_merge_claim_query_failed"}
         if not _gs.git_available():
             return {"ok": True, "cleaned": False, "reason": "git_unavailable"}
-        # A conflict/merging slot holds the project lock as merge:{id}; abort +
-        # release it BEFORE acquiring our own lock (else _acquire_lock times out).
+        # A conflict/merging slot still has an open session: abort it first, under the
+        # session's workspace domain (0669 unit 9b; before, it ran with no lock at all).
         project_name = _gs._project_name(project_id)
         if project_name and (state.get("status") or "none") in ("conflict", "merging"):
             base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-            _abort_disposed_merge_session(project_id, group_id, _gs.src_root(project_name, base_branch))
-        holder = f"dispose:{uuid.uuid4()}"
-        if not _gs._acquire_lock(project_id, holder):
-            return {"ok": False, "cleaned": False, "reason": "git_busy"}
+            session = _gs.db_git.get_open_session_by_group(group_id)
+            if session is not None:
+                try:
+                    s_ctx, s_held = session_lock(session, project_id, holder_kind="dispose")
+                except GitServiceError as exc:
+                    return {"ok": False, "cleaned": False, "reason": "git_busy",
+                            "lock": exc.details}
+                try:
+                    _abort_disposed_merge_session(
+                        project_id, group_id, _gs.src_root(project_name, base_branch))
+                finally:
+                    session_unlock(s_ctx, s_held)
+        # 0669 unit 7b: a worktree_cleanup job (reason disposed), tried once here. A
+        # queued job is finished by the Runner; only "no job" falls back to the mutex.
+        from .worktree_cleanup import clean_disposed
+        job = clean_disposed(project_id, group_id)
+        if job is not None:
+            status = job.get("status")
+            if status == "succeeded":
+                return {"ok": True, "cleaned": True}
+            if status in ("failed", "cancelled", "recovery_required"):
+                return {"ok": False, "cleaned": False,
+                        "reason": job.get("last_error_code") or status, "job_id": job["job_id"]}
+            return {"ok": True, "cleaned": False, "reason": "queued", "job_id": job["job_id"]}
+        # 0669 unit 9b: no job — the Group's G (+R: a merged slot's origin leftover is
+        # retro-deleted) instead of the project mutex.
+        lock_ctx, held, refused = _slot_lock(project_id, group_id, publish=True)
+        if held is None:
+            return {"ok": False, "cleaned": False, "reason": "git_busy", "lock": refused}
         try:
             cleaned = _gs._cleanup_group_slot(project_id, group_id)
         finally:
-            _gs.db_git.release_lock(project_id, holder)
+            _slot_unlock(lock_ctx, held)
         # The slot just left the ledger; nudge clients to re-fetch the group
         # dropdown (the explorer subscribes to git_pending_changed → reload slots).
         if cleaned:
@@ -90,21 +115,22 @@ def cleanup_terminal_slots(project_id: str) -> dict:
             500, "git_unavailable",
             "git binary not found on server (install git in the runtime image)",
         )
-    holder = f"op:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
-        raise GitServiceError(
-            409, "git_busy",
-            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
-        )
+    # 0669 unit 9b: each slot under its own Group's G (+R), no wait, instead of one
+    # project mutex for the whole sweep. A busy Group stays pending (``git_busy``).
     cleaned: list[str] = []
     failed: list[str] = []
     pending: list[dict] = []
-    try:
-        for row in _gs.db_git.list_states_of_project(project_id):
-            gid = row["group_id"]
-            terminal = (row.get("status") or "none") in _gs.CLEANUP_STATUSES
-            if not terminal and not _gs._is_group_disposed(gid):
-                continue
+    for row in _gs.db_git.list_states_of_project(project_id):
+        gid = row["group_id"]
+        terminal = (row.get("status") or "none") in _gs.CLEANUP_STATUSES
+        if not terminal and not _gs._is_group_disposed(gid):
+            continue
+        lock_ctx, held, refused = _slot_lock(project_id, gid, publish=True, mode=locks.NO_WAIT)
+        if held is None:
+            pending.append({"group_id": gid, "reason": "git_busy",
+                            "reason_code": refused.get("reason_code")})
+            continue
+        try:
             # An open TR revert/reapply conflict owns files in this worktree. Cleanup
             # must not destroy the session; it remains a separately actionable row.
             if _gs.tr_conflict_session(gid) is not None:
@@ -122,8 +148,8 @@ def cleanup_terminal_slots(project_id: str) -> dict:
             else:
                 failed.append(gid)
                 pending.append({"group_id": gid, "reason": "teardown_failed"})
-    finally:
-        _gs.db_git.release_lock(project_id, holder)
+        finally:
+            _slot_unlock(lock_ctx, held)
     status = "ok" if not failed else ("partial" if cleaned else "failed")
     snapshot = db_terminal_cleanup.put(project_id, status, len(cleaned), pending)
     return {"ok": True, "result": {"cleaned": cleaned, "failed": failed},
@@ -203,7 +229,6 @@ def _close_orphan(session: dict, project_id: str) -> None:
         return
     _discard_abandoned_attempt(merge_id, "orphan_recovered")
     _gs._set_status(group_id, "waiting")
-    _gs.db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
     _emit_auto_aborted(project_id, group_id, merge_id, "orphan_recovered")
 
 
@@ -213,15 +238,17 @@ def _auto_abort_session(
     """Reclaim an abandoned conflict session: git merge --abort (work branch
     preserved), close it, return the group to 'waiting' (0205 L §2.5).
 
-    Takes a short sweep lock; if the project is busy it simply retries next cycle.
+    Takes the session's workspace domain, no wait (0669 unit 9b); if it is busy the
+    sweep simply retries next cycle.
     If merge --abort fails (e.g. it collides with unrelated local base changes)
     the session is LEFT intact — a forced reset is never issued, protecting a base
     checkout that has other groups' work mixed in (the exact 0203 accident)."""
     from modules.flow_gate.services import git_service as _gs
     merge_id = int(session["merge_id"])
     group_id = session["group_id"]
-    holder = f"sweep:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
+    try:
+        lock_ctx, held = session_lock(session, project_id, holder_kind="sweep", mode=locks.NO_WAIT)
+    except GitServiceError:
         return   # another git op in progress — try again next cycle
     try:
         # 0594 T0012: base_root is the attempt's pinned target root (the managed
@@ -246,10 +273,9 @@ def _auto_abort_session(
         )
         _discard_abandoned_attempt(merge_id, reason)
         _gs._set_status(group_id, "waiting")
-        _gs.db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
         _emit_auto_aborted(project_id, group_id, merge_id, reason)
     finally:
-        _gs.db_git.release_lock(project_id, holder)
+        session_unlock(lock_ctx, held)
 
 
 def _sweep_tr_session(session: dict, project_id: str) -> None:
@@ -422,10 +448,13 @@ def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
 
 
 def _recover_interrupted(session: dict, project_id: str, reason: str) -> None:
-    """Close an interrupted finalize attempt under a short sweep lock (T0012 §6.3)."""
+    """Close an interrupted finalize attempt (T0012 §6.3) under the attempt's workspace
+    domain and R (the verdict may ask the remote), no wait (0669 unit 9b)."""
     from modules.flow_gate.services import git_service as _gs
-    holder = f"sweep:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
+    try:
+        lock_ctx, held = session_lock(session, project_id, holder_kind="sweep", publish=True,
+                                      mode=locks.NO_WAIT)
+    except GitServiceError:
         return   # another git op in progress — try again next cycle
     try:
         fresh = _gs.db_git.get_session(int(session["merge_id"]))
@@ -437,15 +466,18 @@ def _recover_interrupted(session: dict, project_id: str, reason: str) -> None:
         if outcome == merge_target.ATTEMPT_INTERRUPTED:
             _emit_auto_aborted(project_id, fresh["group_id"], int(fresh["merge_id"]), reason)
     finally:
-        _gs.db_git.release_lock(project_id, holder)
+        session_unlock(lock_ctx, held)
 
 
 def _finish_completed_review(session: dict, project_id: str) -> None:
-    """Finish a completed review whose row was left open, under a short sweep lock
-    (a live approve holds the project lock until it has closed the row itself)."""
+    """Finish a completed review whose row was left open, under the session's workspace
+    domain and R, no wait — the same locks a live approve holds until it has closed the
+    row itself (0669 unit 9b)."""
     from modules.flow_gate.services import git_service as _gs
-    holder = f"sweep:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
+    try:
+        lock_ctx, held = session_lock(session, project_id, holder_kind="sweep", publish=True,
+                                      mode=locks.NO_WAIT)
+    except GitServiceError:
         return   # another git op in progress — try again next cycle
     try:
         fresh = _gs.db_git.get_session(int(session["merge_id"]))
@@ -453,11 +485,17 @@ def _finish_completed_review(session: dict, project_id: str) -> None:
             return
         merge_target.finish_completed_review(fresh)
     finally:
-        _gs.db_git.release_lock(project_id, holder)
+        session_unlock(lock_ctx, held)
 
 
 def _start_sweep_daemon() -> None:
-    """Launch the periodic sweep loop once (0205 L §2.6). Idempotent."""
+    """Launch the periodic sweep loop once (0205 L §2.6). Idempotent.
+
+    0669 unit 5b (0666 L 2.17.2, 2.26 steps 10~11): the loop is the unified sweep tick
+    (``job_sweeper.run_forever``) — job workers, instance liveness, stale locks, expired
+    job leases, job claims, recovery retry every SWEEP_TICK_SEC — and it still runs
+    merge_session_sweep every SWEEP_INTERVAL_MIN (as ceil(1800 / tick) ticks).
+    """
     from modules.flow_gate.services import git_service as _gs
     if _gs._sweep_daemon_started:
         return
@@ -465,13 +503,8 @@ def _start_sweep_daemon() -> None:
     import threading
 
     def _loop() -> None:
-        from modules.flow_gate.services import git_service as _gs
-        while True:
-            time.sleep(SWEEP_INTERVAL_MIN * 60)
-            try:
-                _gs.merge_session_sweep()
-            except Exception:
-                _log.warning("periodic merge session sweep failed", exc_info=True)
+        from . import job_sweeper
+        job_sweeper.run_forever()
 
     threading.Thread(target=_loop, name="git-merge-sweep", daemon=True).start()
 
@@ -497,17 +530,13 @@ def _open_sessions_after(sessions: list[dict], touched: set[int]) -> list[dict]:
     return result
 
 
-def startup_recovery(protected_project_ids: set[str] | None = None) -> None:
-    """Heal conflict sessions, drop every stale lock, then sweep + start the
-    daemon at boot (0205 L §2.6).
+def startup_recovery() -> None:
+    """Heal conflict sessions, then sweep + start the daemon at boot (0205 L §2.6).
 
-    A live MERGE_HEAD session is left in 'conflict' (state re-affirmed) but its
-    lock is NOT re-acquired — the base is protected by the state gate, not a mutex
-    (0205 §2.1). Sessions with no MERGE_HEAD are auto-aborted (orphan recovery).
-    Any surviving lock is stale by definition (nothing legitimately outlives a
-    restart) — every project lock row is force-released regardless of holder.
-    Finally a sweep reclaims TTL-expired sessions and the daemon repeats it
-    periodically."""
+    A live MERGE_HEAD session is left in 'conflict' (state re-affirmed) but no lock
+    is re-acquired — the base is protected by the state gate, not a mutex (0205
+    §2.1). Sessions with no MERGE_HEAD are auto-aborted (orphan recovery). Finally
+    a sweep reclaims TTL-expired sessions and the daemon repeats it periodically."""
     from modules.flow_gate.services import git_service as _gs
     try:
         sessions = _gs.db_git.list_open_sessions()
@@ -555,7 +584,12 @@ def startup_recovery(protected_project_ids: set[str] | None = None) -> None:
                 # never reached a conflict was interrupted by the restart itself.
                 # (The pre-restart lock row is still present until the force-release
                 # below, so the live-runner test is skipped here: at boot nothing runs.)
-                if merge_target.attempt_phase(session, at_boot=True) != merge_target.PHASE_CONFLICT:
+                boot_phase = merge_target.attempt_phase(session, at_boot=True)
+                if boot_phase == merge_target.PHASE_IN_PROGRESS:
+                    # 0669 unit 6b: only a final approval job's attempt reads as in
+                    # progress at boot; that job settles it itself when it resumes.
+                    continue
+                if boot_phase != merge_target.PHASE_CONFLICT:
                     # A merge that already landed is reconciled to completed; one that
                     # did not is closed as interrupted; an unprovable one stays open.
                     outcome = merge_target.recover_interrupted_attempt(session, "interrupted_by_restart")
@@ -580,20 +614,16 @@ def startup_recovery(protected_project_ids: set[str] | None = None) -> None:
                     base_root and base_root.exists() and _gs._merge_in_progress(base_root)
                 )
                 if merge_head_exists:
-                    # Re-affirm the status; do NOT reclaim a merge:{id} lock (§2.6).
+                    # Re-affirm the status only (§2.6).
                     _gs._set_status(group_id, "conflict", merge_id=merge_id)
                 else:
                     _gs._close_orphan(session, project_id)
                     touched.add(int(merge_id))
             except Exception:
                 _log.warning("git session recovery failed for merge %s", merge_id, exc_info=True)
-        # One-time lock cleanup: no lock legitimately survives a restart, so
-        # every row is force-released regardless of holder string (no prefix
-        # whitelist here, or a new holder prefix silently becomes another leak).
-        protected = protected_project_ids or set()
-        for lock in _gs.db_git.list_locks():
-            if lock["project_id"] not in protected:
-                _gs.db_git.force_release_lock(lock["project_id"])
+        # 0669 unit 9c: no project lock rows are written any more, so there is nothing
+        # to force-release here. Domain locks left by a dead instance are reclaimed by
+        # the lock manager's stale judgement (L 2.9) and the job sweeper.
         # The original snapshot is only a candidate-id list here; reconcile_push_session
         # re-reads each row and re-checks its guard before changing it.
         _gs.reconcile_due_merge_review_sessions("server_startup", sessions=sessions)

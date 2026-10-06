@@ -29,6 +29,13 @@ storage inside one transaction when both arrive together (L0007 §2.2.2). The
 ``db.user_chat_source_access`` and ``token_service``; this module only owns the
 stale/corrupted-marker recovery sweep (:func:`recover_stale_claim`, L0007 §2.4.4)
 and the settings-read/PATCH contract around it.
+
+0670 T0004 adds a third independent per-user setting -- ``command_policy`` (chat
+command execution: always_approve / user_approval / reject, default user_approval) --
+in its own ``user_chat_command_policy`` storage for the same reason as the source mode:
+saving it alone must never create (or change) the ``user_chat_settings`` row that
+``is_default`` reads. The three existing fields keep their values, domains and
+precedence untouched.
 """
 from __future__ import annotations
 
@@ -36,6 +43,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from modules.flow_gate.db import user_chat_command_policy as command_policy_store
 from modules.flow_gate.db import user_chat_settings as chat_settings_store
 from modules.flow_gate.db import user_chat_source_access as source_access_store
 from modules.flow_gate.db.connection import get_store, now_iso
@@ -65,6 +73,10 @@ CONTEXT_MODE_DEFAULT = "recent"
 SOURCE_ACCESS_DOMAIN = ("read_only", "edit", "edit_once")
 SOURCE_ACCESS_DEFAULT = "read_only"
 
+# -- 0670 T0004: chat command execution policy -- its own storage too ----------
+COMMAND_POLICY_DOMAIN = ("always_approve", "user_approval", "reject")
+COMMAND_POLICY_DEFAULT = "user_approval"
+
 # 0515 T0009 §5: a claim marker older than this is eligible for stale recovery.
 ONE_SHOT_CLAIM_STALE_SEC = 600
 
@@ -76,7 +88,7 @@ _LEGACY_SETTING_FIELDS = ("send_action", "context_mode", "context_turns")
 # Validation order is fixed so that a request with several bad fields always reports
 # the same one (L0010 §2-2). source_access_mode is appended last (T0009 §3.3) -- the
 # three legacy fields keep their original relative order and error precedence.
-PATCH_FIELDS = (*_LEGACY_SETTING_FIELDS, "source_access_mode")
+PATCH_FIELDS = (*_LEGACY_SETTING_FIELDS, "source_access_mode", "command_policy")
 
 
 class ChatSettingsError(ValueError):
@@ -114,7 +126,23 @@ def domain() -> dict:
         "context_turns_min": CONTEXT_TURNS_MIN,
         "context_turns_max": CONTEXT_TURNS_MAX,
         "source_access_mode": list(SOURCE_ACCESS_DOMAIN),
+        "command_policy": list(COMMAND_POLICY_DOMAIN),
     }
+
+
+def resolve_command_policy(user_id: Optional[str]) -> str:
+    """0670 T0004: the stored command policy, repaired to the default on the way out.
+
+    Never raises -- like every other setting, a broken row must not stop a chat.
+    """
+    if not user_id:
+        return COMMAND_POLICY_DEFAULT
+    try:
+        row = command_policy_store.get(user_id)
+    except Exception:
+        _log.warning("chat command policy unavailable; using default (user_id=%s)", user_id)
+        return COMMAND_POLICY_DEFAULT
+    return _normalize_enum((row or {}).get("command_policy"), COMMAND_POLICY_DOMAIN, COMMAND_POLICY_DEFAULT)
 
 
 def _normalize_enum(value: Any, allowed: tuple[str, ...], fallback: str) -> str:
@@ -159,18 +187,21 @@ def resolve_chat_settings(user_id: Optional[str]) -> tuple[dict, bool]:
     source_access_mode = (
         source_access_store.resolve_source_access_mode(user_id) if user_id else SOURCE_ACCESS_DEFAULT
     )
+    command_policy = resolve_command_policy(user_id)
 
     if not user_id:
         # Nobody to look up. Same treatment as somebody who has never saved, rather
         # than a second set of defaults living somewhere else (L0010 §5).
         settings = defaults()
         settings["source_access_mode"] = source_access_mode
+        settings["command_policy"] = command_policy
         return settings, True
 
     row = chat_settings_store.get(user_id)
     if row is None:
         settings = defaults()
         settings["source_access_mode"] = source_access_mode
+        settings["command_policy"] = command_policy
         return settings, True
 
     return {
@@ -183,6 +214,7 @@ def resolve_chat_settings(user_id: Optional[str]) -> tuple[dict, bool]:
         "context_turns": _normalize_turns(row.get("context_turns")),
         "updated_at": row.get("updated_at"),
         "source_access_mode": source_access_mode,
+        "command_policy": command_policy,
     }, False
 
 
@@ -201,6 +233,7 @@ def resolve_chat_settings_safe(user_id: Optional[str]) -> dict:
         _log.warning("chat settings unavailable; falling back to defaults (user_id=%s)", user_id)
         fallback = defaults()
         fallback["source_access_mode"] = SOURCE_ACCESS_DEFAULT
+        fallback["command_policy"] = COMMAND_POLICY_DEFAULT
         return fallback
 
 
@@ -246,6 +279,11 @@ def validate_patch(patch: dict) -> None:
                 field,
                 "source_access_mode must be one of " + ", ".join(SOURCE_ACCESS_DOMAIN) + ".",
             )
+        if field == "command_policy" and value not in COMMAND_POLICY_DOMAIN:
+            raise ChatSettingsError(
+                field,
+                "command_policy must be one of " + ", ".join(COMMAND_POLICY_DOMAIN) + ".",
+            )
 
 
 def save_chat_settings(user_id: Optional[str], patch: dict) -> dict:
@@ -272,7 +310,8 @@ def save_chat_settings(user_id: Optional[str], patch: dict) -> dict:
         # fields itself to split a mixed patch (T0009 §3.3).
         legacy_patch = {key: patch[key] for key in _LEGACY_SETTING_FIELDS if key in patch}
         source_mode = patch.get("source_access_mode")
-        if legacy_patch or source_mode is not None:
+        command_policy = patch.get("command_policy")
+        if legacy_patch or source_mode is not None or command_policy is not None:
             now = now_iso()
             with get_store().transaction():
                 if legacy_patch:
@@ -284,6 +323,10 @@ def save_chat_settings(user_id: Optional[str], patch: dict) -> dict:
                     )
                 if source_mode is not None:
                     source_access_store.upsert(user_id, source_mode, now)
+                if command_policy is not None:
+                    # 0670 T0004: own storage; a command-only PATCH leaves the legacy
+                    # row (and therefore is_default) exactly as it was.
+                    command_policy_store.upsert(user_id, command_policy, now)
     return settings_response(user_id)
 
 
@@ -300,6 +343,7 @@ def settings_response(user_id: Optional[str]) -> dict:
     stored_defaults = defaults()
     stored_defaults.pop("updated_at", None)
     stored_defaults["source_access_mode"] = SOURCE_ACCESS_DEFAULT
+    stored_defaults["command_policy"] = COMMAND_POLICY_DEFAULT
     return {
         "ok": True,
         "settings": settings,

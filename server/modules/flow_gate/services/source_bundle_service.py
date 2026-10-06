@@ -141,17 +141,24 @@ def _ensure_under_lock(project_id: str, group_id: str):
 
 
 def ensure(project_id: str, group_id: str):
-    """Coordinate live worktree capture with Self-check and other source operations."""
-    import uuid
-    from modules.flow_gate.services import git_service
+    """Coordinate live worktree capture with Self-check and other source operations.
 
-    holder = f"bundle:{uuid.uuid4().hex}"
-    if not git_service._acquire_lock(project_id, holder, wait_sec=5):
-        raise materializer.SourceBundleError("source_busy", "project source is busy")
+    Holds only this Group's G (0666 D 3.9): writes of the same Group wait, other Groups
+    do not. A reuse hit returns, and releases, as soon as the fingerprint matches.
+    """
+    from modules.flow_gate.services.git import lock_manager
+
+    if not group_id:
+        raise materializer.SourceBundleError("group_worktree_unavailable", "Source Bundle needs a group")
+    outcome, ctx = lock_manager.acquire_group(project_id, group_id, holder_kind="bundle",
+                                              mode="bundle_start")
+    if not outcome.ok:
+        reason = lock_manager.outcome_details(outcome)["reason_code"]
+        raise materializer.SourceBundleError("source_busy", f"group source is busy ({reason})")
     try:
         return _ensure_under_lock(project_id, group_id)
     finally:
-        git_service.db_git.release_lock(project_id, holder)
+        lock_manager.release(ctx, outcome.lock_key)
 
 
 def bundle_source_path(bundle_id: str) -> Path:

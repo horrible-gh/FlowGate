@@ -12,6 +12,19 @@ from modules.flow_gate.db import group_ai_leases
 GROUP = "demo.default.0001"
 
 
+from group_lock_stub import group_store, spy_acquire, stub_work_base_floor  # noqa: F401
+import pytest as _pytest_locks
+
+# Group/base/remote work takes domain locks from the real lock manager (0669): these tests
+# run on the real SQLite lock/job store instead of stubbing the removed project mutex.
+pytestmark = _pytest_locks.mark.usefixtures("group_store")
+
+
+@_pytest_locks.fixture(autouse=True)
+def _verified_work_base_floor(monkeypatch):
+    stub_work_base_floor(monkeypatch)
+
+
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=repo, check=True, capture_output=True, text=True,
@@ -50,8 +63,6 @@ def setup_update(monkeypatch, base: Path, group: Path, *, work_base: str = "v0.2
     monkeypatch.setattr(git_service, "resolve_group_work_base_ref", lambda *_a, **_k: work_base)
     monkeypatch.setattr(git_service.db_git, "get_open_session_by_group", lambda _gid: None)
     monkeypatch.setattr(git_service, "guard_base_free", lambda _pid: None)
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda _pid, _holder: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda _pid, _holder: None)
     monkeypatch.setattr(finalize, "_guard_group_update_ai_idle", lambda _gid: None)
     monkeypatch.setattr(ai_invoke_service, "has_active_run", lambda _gid: False)
 
@@ -113,8 +124,7 @@ def test_active_ai_rejects_before_absorb_or_merge(
     monkeypatch.setattr(ai_invoke_service, "has_active_run", lambda _gid: active_run)
     monkeypatch.setattr(group_ai_leases, "get_active",
                         lambda _gid: {"run_id": "run"} if active_lease else None)
-    monkeypatch.setattr(git_service, "_acquire_lock",
-                        lambda *_a: pytest.fail("Git update began while AI was active"))
+    acquired = spy_acquire(monkeypatch)
     (group / "worker.txt").write_text("in progress\n", encoding="utf-8")
     absorbed = []
     monkeypatch.setattr(finalize, "_absorb_worker_edits", lambda *_a, **_k: absorbed.append(True))
@@ -123,6 +133,7 @@ def test_active_ai_rejects_before_absorb_or_merge(
     assert exc.value.status == 409
     assert exc.value.code == code
     assert absorbed == []
+    assert acquired == [], "Git update took a lock while AI was active"
     assert (group / "worker.txt").read_text(encoding="utf-8") == "in progress\n"
     assert git(group, "status", "--porcelain")
 
@@ -189,7 +200,9 @@ def test_nondefault_conflict_uses_group_update_session(tmp_path, monkeypatch):
     monkeypatch.setattr(git_service.db_git, "create_session", create_session)
     monkeypatch.setattr(git_service, "apply_eol_separation", lambda *_a: None)
     result = git_service.update_from_base(GROUP)["result"]
-    assert result == {"status": "conflict", "merge_id": 42, "conflict_files": ["v1.txt"]}
+    assert {k: result[k] for k in ("status", "merge_id", "conflict_files")} == {
+        "status": "conflict", "merge_id": 42, "conflict_files": ["v1.txt"]}
+    assert result["source_ref"] == "v0.2" and result["source_sha"]   # 0665 T0004 pinned source
     assert captured["kind"] == git_service.db_git.SESSION_KIND_GROUP_UPDATE
     assert captured["gid"] == GROUP
     assert git(group, "diff", "--name-only", "--diff-filter=U") == "v1.txt"

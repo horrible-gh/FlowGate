@@ -194,6 +194,39 @@ def _chat_lookup_sections(
     return sections
 
 
+def _command_section(*, base: str, raw_token: str) -> str:
+    """0670 T0004: how a CLI chat worker runs tests/builds/git through FlowGate.
+
+    Only an in-app AI invocation has a live run for a command to belong to, so the
+    copy-mention path (no run) never shows this. API providers get the same contract
+    as the in-process ``run_command`` tool.
+    """
+    lines = [
+        "## Command execution",
+        "---",
+        "Run tests, builds, linters and git commands for this conversation through FlowGate so",
+        "they execute in this group's worktree under the user's command policy (run at once,",
+        "wait for the user's approval, or refuse). API tool-calling runs use the `run_command`",
+        "tool instead of this endpoint.",
+        "",
+        f"POST {base}/chat-commands",
+        f"Authorization: Bearer {raw_token}",
+        "",
+        '{"program": "pytest", "args": ["-q", "server/tests/test_x.py"], "cwd": ".",',
+        ' "timeout_seconds": 300, "wait_seconds": 60}',
+        "",
+        "program is the executable name only and args are separate strings: no shell, no",
+        "pipes/redirection/&&, no inline `python -c` / `node -e`. cwd is relative to the worktree.",
+        "When the response has terminal=false (waiting for approval, or still running), keep",
+        f"calling GET {base}/chat-commands/<request_id>?wait=60 with the same Authorization until",
+        "terminal=true. result carries status, exit_code, stdout, stderr, timed_out, rejected and",
+        "rejected_by. A rejected command was not run: do not resend it unchanged; continue with",
+        "what you have and say so in your reply. Running commands does not consume this token,",
+        "so finish the commands you need before you submit your turn.",
+    ]
+    return "\n".join(lines)
+
+
 def _start_paragraph(folded: int) -> list[str]:
     """Explain the invocation-local meaning of ``after_seq``."""
     del folded
@@ -260,6 +293,9 @@ def build_conversation_mention(
     # token they just issued/inspected. Threaded to _chat_lookup_sections so the CRUD
     # section this mention advertises matches the real grant, not a generic chat guess.
     source_access: Optional[str] = None,
+    # 0670 T0004: True only from the in-app AI invoke path, whose token is bound to a
+    # live run that a command request can belong to.
+    command_execution: bool = False,
 ) -> str:
     """Build the single-turn chat mention used by copy and in-app invoke paths.
 
@@ -363,6 +399,8 @@ def build_conversation_mention(
         source_access=source_access,
     ):
         lines += ["", section]
+    if command_execution:
+        lines += ["", _command_section(base=api_base, raw_token=raw_token)]
     return "\n".join(lines)
 
 def _single_line(value: Optional[str]) -> str:

@@ -34,7 +34,13 @@ os.environ.setdefault(
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVER_DIR))
 
+import pytest  # noqa: E402
+
+from group_lock_stub import group_store  # noqa: E402,F401
 from modules.flow_gate.services import git_service as svc  # noqa: E402
+
+# manual_fetch takes R then B from the real lock manager (0669) on a real SQLite store.
+pytestmark = pytest.mark.usefixtures("group_store")
 
 
 class _Proc:
@@ -62,9 +68,7 @@ def _install(monkeypatch, *, dirty, origin_ref, ff_ok, ahead_behind):
     monkeypatch.setattr(svc, "src_root", lambda name, branch: Path("/base"))
     monkeypatch.setattr(svc, "_judge_base_slot", lambda root, branch: "checkout")
     monkeypatch.setattr(svc, "git_available", lambda: True)
-    monkeypatch.setattr(svc, "_acquire_lock", lambda pid, holder: True)
     monkeypatch.setattr(svc, "_load_secret_for", lambda cfg: "")
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda pid, holder: None)
     monkeypatch.setattr(svc, "_ref_exists", lambda repo, ref: origin_ref)
     monkeypatch.setattr(
         svc, "_dirty", lambda repo, include_untracked=True: dirty

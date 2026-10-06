@@ -38,6 +38,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -66,6 +67,7 @@ class _MockTxn:
     def execute(self, sql, params=None):
         self._cur = self._conn.execute(sql, params or [])
         self._conn.commit()
+        return self._cur
 
     def fetchone(self):
         row = self._cur.fetchone() if self._cur else None
@@ -80,6 +82,7 @@ class _MockDB:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
+        self._tx_lock = threading.Lock()
 
     def execute(self, sql, params=None):
         self._conn.execute(sql, params or [])
@@ -94,7 +97,8 @@ class _MockDB:
 
     @contextmanager
     def begin_transaction(self):
-        yield _MockTxn(self._conn)
+        with self._tx_lock:
+            yield _MockTxn(self._conn)
 
     def close(self):
         self._conn.close()
@@ -566,7 +570,6 @@ def test_LB1_reset_marker_is_verified(proj):
     proj.commit(gid, "after.txt", "a\n")
     _ledger_commit(gid, proj.pid, 2, proj.wt_git(gid, "rev-parse", "HEAD"), "2026-01-03T00:00:00")
 
-    assert svc.collect_scope_changes(proj.pid, gid)["reason"] == "group_work_base_unverified"
     report = svc.backfill_group_work_base(proj.pid)          # dry-run first
     row = next(r for r in report["groups"] if r["group_id"] == gid)
     assert row["verdict"] == "verified" and row["origin"] == "initial_sync_marker"
@@ -687,13 +690,13 @@ def test_SB5_confirm_rejects_a_floor_containing_group_work(proj):
     assert after["work_base_state"] == before["work_base_state"]
 
 
-def test_unverified_group_blocks_the_final_approval_recheck(proj):
+def test_legacy_group_auto_recovers_during_final_approval_recheck(proj):
     from modules.flow_gate.services import tr_scope_service as trs
     gid = proj.group(17, work_base="v0.2")
     _forget_floor(gid)
     out = trs.evaluate_group_unreported(proj.pid, gid)
-    assert out["checked"] is False and out["blocking"] is True
-    assert out["work_base_error"]["code"] == "group_work_base_unverified"
+    assert out["checked"] is True
+    assert _state(gid)["work_base_state"] == "verified"
 
 
 # ── record failures never leave a stale or mutable floor ────────────────────

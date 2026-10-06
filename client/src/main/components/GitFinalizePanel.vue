@@ -180,6 +180,10 @@
           {{ t('main.git_finalize.conflict_msg', { n: conflictFiles.length }) }}
         </p>
         <p v-if="conflictError" class="git-fin-conflict-msg">{{ conflictError }}</p>
+        <!-- 0674 T0004 §2-1 (D1): a conflict AI run that ended without resolving says so. -->
+        <p v-if="conflictAiFailureText" class="git-fin-conflict-msg" data-test="conflict-ai-failed">
+          <AppIcon name="warning" /> {{ conflictAiFailureText }}
+        </p>
         <div class="git-conflict-summary">
           <span>
             <AppIcon name="file-code" />
@@ -272,6 +276,7 @@
     :provider-loading="aiProviderStore.loading"
     :provider-errored="!!aiProviderStore.error"
     :ai-run-notice="conflictAiRunNotice"
+    :ai-run-failure="conflictAiFailureText"
     :ai-run-pending="conflictAiStarting"
     @close="closeConflictDialog"
     @abort="abortMerge"
@@ -300,6 +305,7 @@ import { resolveGitError } from '@shared/gitErrors'
 import { useProjectStore } from '../stores/project'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { useConflictAiRunFailures } from '../composables/useConflictAiRunFailures'
 import { useToast } from './common/useToast'
 // 0182 NR0003 §6: the chunk parser/assembler state machine lives in a shared
 // composable; 0212 T0009 moved the resolver dialog itself into
@@ -322,7 +328,6 @@ import {
   reviewBadgeKeyOf,
   runningConflictRun,
   useConflictAiStarter,
-  watchConflictRunsEnded,
 } from '../composables/useConflictSession'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
 import GitUntrackedConflictDialog from './GitUntrackedConflictDialog.vue'
@@ -597,6 +602,7 @@ async function invokeConflictAi(message: string, auto: boolean) {
   const mergeId = state.value?.merge_id
   if (!props.groupId || mergeId == null || busy.value) return
   busy.value = true
+  conflictAiFailures.clear(props.groupId)
   try {
     // RC1 + 0481 rev5: provider = the card/dialog selection; the start response is adopted
     // at once so the run shows before the worker's SSE frame (useConflictAiStarter).
@@ -746,6 +752,7 @@ async function submitResolve(auto: boolean) {
   if (!props.groupId || mergeId == null || (!allConflictsResolved.value && !conflictFiles.value.some(isFileResolved))) return
   busy.value = true
   conflictError.value = ''
+  conflictAiFailures.clear(props.groupId)
   // 0481 T0010 rev2 — the refresh in `finally` calls fetchState() → fetchConflicts(),
   // whose first act is `conflictError.value = ''`. Every failure message this function
   // wrote was therefore erased milliseconds after it appeared, and a rejected submit
@@ -833,6 +840,7 @@ async function abortMerge() {
   busy.value = true
   try {
     await postRequest(`/api/v1/groups/${props.groupId}/git/merge/${mergeId}/abort`, {})
+    conflictAiFailures.clear(props.groupId)
     conflictDialogOpen.value = false
     showToast(t('main.git_finalize.aborted_toast'), 'success')
   } catch (e: any) {
@@ -911,7 +919,14 @@ const conflictAiRunNotice = computed(() => {
 // 0668 T0004: follow the SERVER state, not whether the resolver happened to be open —
 // a run started from the card (or a resolver closed meanwhile) reaching review opens
 // the review screen too; a run that left conflicts refreshes an open resolver.
-watchConflictRunsEnded(() => [props.groupId], async () => {
+//
+// 0674 T0004 §2-1 (D1): and the END of the run is judged, not only re-read. A run
+// that did not land `complete` is recorded after this refresh, and while the
+// conflict is still open (not handed to the review gate) both this panel and the
+// resolver say so, with the server's reason and the three ways on (another
+// provider/model, resolve by hand, abort).
+const conflictAiFailures = useConflictAiRunFailures(async (groupId) => {
+  if (groupId !== props.groupId) return
   const resolverWasOpen = conflictDialogOpen.value
   await fetchState()
   const mergeId = state.value?.merge_id
@@ -922,6 +937,10 @@ watchConflictRunsEnded(() => [props.groupId], async () => {
     return
   }
   if (resolverWasOpen) await fetchConflicts(mergeId)
+})
+const conflictAiFailureText = computed(() => {
+  if (state.value?.status !== 'conflict' || reviewPending.value || conflictAiRun.value) return ''
+  return conflictAiFailures.failureText(props.groupId)
 })
 
 defineExpose({ fetchState })

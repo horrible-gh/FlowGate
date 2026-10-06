@@ -79,8 +79,6 @@ def build_app(repo_root: Path) -> FastAPI:
     branch_service._branch_context = lambda project_id: ({"enabled": 1}, root, "main")
     git_service._base_root_of = lambda project_id: root
     git_service._load_secret_for = lambda cfg: ""
-    git_service._acquire_lock = lambda project_id, holder: True
-    git_service.db_git.release_lock = lambda project_id, holder: None
     git_service.db_git.list_states_of_project = lambda project_id: []
     git_service.db_git.list_open_sessions = lambda: []
     from modules.flow_gate.db import groups as db_groups

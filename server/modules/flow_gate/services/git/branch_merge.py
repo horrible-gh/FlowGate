@@ -28,7 +28,6 @@ publish (local target ref and the ``push`` choice frozen when the attempt starte
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Optional
@@ -201,7 +200,7 @@ def record_event(session_or_id, event_type: str, **fields) -> None:
         _log.warning("branch merge event %s could not be recorded", event_type, exc_info=True)
 
 
-# ── Attempt lifecycle (called by branches.merge_branches under the project lock) ─
+# ── Attempt lifecycle (called by branches.run_merge inside the branch_merge_publish job) ─
 
 def open_attempt(
     ctx: merge_target.MergeTargetContext, *, source_branch: str, push: bool,
@@ -939,9 +938,10 @@ def abort(project_id: str, merge_id: int) -> dict:
         )
     target = merge_target.resolve_session_target(session)
     merge_target.raise_if_not_workspace_owner(target)
-    holder = f"branch-merge-abort:{merge_id}:{uuid.uuid4()}"
-    if not gs._acquire_lock(project_id, holder, wait_sec=gs.LOCK_WAIT_SEC):
-        raise GitServiceError(409, "git_busy", "another Git operation is in progress")
+    # 0669 unit 8a: the attempt's target domain (G / W / B), not the project mutex.
+    from . import branch_merge_publish
+    from . import lock_manager as locks
+    lock_ctx, lock_key = branch_merge_publish.attempt_lock(target)
     try:
         if target.root is not None and target.root.exists() and gs._merge_in_progress(target.root):
             proc = gs._run_git(["merge", "--abort"], cwd=target.root)
@@ -953,7 +953,8 @@ def abort(project_id: str, merge_id: int) -> dict:
         merge_target.close_attempt(merge_id, merge_target.ATTEMPT_ABORTED, error={"code": "user_abort"})
         cleaned = merge_target.release_workspace(target) if target.managed_workspace else False
     finally:
-        gs.db_git.release_lock(project_id, holder)
+        if lock_ctx.find_held(lock_key) is not None:
+            locks.release(lock_ctx, lock_key)
     _stop_resolver(merge_id, context)
     record_event(merge_id, EV_ABORTED)
     return {"ok": True, "result": {

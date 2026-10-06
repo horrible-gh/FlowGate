@@ -355,11 +355,23 @@
           <button
             class="btn btn-success btn-sm"
             :disabled="!canApprove || isActionBarBusy"
-            :title="gitSettling ? t('main.review_action_bar.git_settle_in_progress') : testGateBlocked ? t('main.review_action_bar.test_gate_blocked') : undefined"
+            :title="approvalJobNotice || (gitSettling ? t('main.review_action_bar.git_settle_in_progress') : testGateBlocked ? t('main.review_action_bar.test_gate_blocked') : undefined)"
             @click="onApproveClick"
           >
             <AppIcon name="check" /> {{ t('main.review_action_bar.btn_approve') }}
           </button>
+          <!-- 0674 T0004 §2-3 (C1): a final approval whose Git post-step is queued or needs
+               recovery is not a finished approval and not a failed one either. -->
+          <span
+            v-if="approvalJobNotice"
+            class="ab-gate-hint ab-approval-job"
+            :class="{ 'ab-approval-job--recovery': approvalJob?.stage === 'recovery_required' }"
+            data-testid="ab-approval-job"
+            :title="approvalJobNotice"
+          >
+            <AppIcon :name="approvalJob?.stage === 'recovery_required' ? 'warning' : 'hourglass-medium'" />
+            {{ approvalJobNotice }}
+          </span>
           <span v-if="testGateBlocked" class="ab-gate-hint" data-testid="ab-test-gate-hint">
             <AppIcon name="prohibit" /> {{ t('main.review_action_bar.test_gate_blocked') }}
           </span>
@@ -696,6 +708,25 @@ interface GitFinState {
   // the server. `null`/missing means the server could not confirm either way
   // (lock probe failure) — treat that the same as `true`, never as `false`.
   approval_in_flight?: boolean | null
+  // 0674 T0004 §2-4: this group's live final approval job (null = none waiting/running).
+  approval_job?: ApprovalJobView | null
+}
+// 0674 T0004 §2-3/§2-4: the server's job view (approval_publish.job_view) — from the
+// approve response's `job`/`approval.blocker`, or the finalize state's `approval_job`.
+interface ApprovalJobBlocker {
+  domain?: string | null
+  lock_key?: string | null
+  holder?: string | null
+  holder_kind?: string | null
+  since?: string | null
+}
+interface ApprovalJobView {
+  job_id?: string | null
+  status?: string | null
+  stage?: string | null
+  doc_id?: string | null
+  last_error_code?: string | null
+  blocker?: ApprovalJobBlocker | null
 }
 const gitFin = ref<GitFinState | null>(null)
 const gitNormalChoice = ref<string>('')
@@ -788,6 +819,7 @@ async function fetchGitFin() {
     return
   }
   gitFin.value = state
+  adoptApprovalJob(state)
   const defaultAction = state.default_action || 'wait'
   if (state.action_axes) {
     const { scope } = positionOfAction(state.action_axes, defaultAction)
@@ -1136,6 +1168,7 @@ const canApprove = computed(
   () =>
     !approving.value &&
     approvedDocId.value !== props.docId &&
+    !approvalJob.value &&
     !props.testGateBlocked &&
     ['pending_review', 'revised'].includes(normalizedStatus.value),
 )
@@ -1234,6 +1267,98 @@ function requestGitStatusRefresh() {
     },
   }))
 }
+
+// flowgate.default.0674 T0004 §2-3 (C1): since 0669 a final approval the request could not
+// finish answers 200 with `approval.stage = "queued" | "recovery_required"` and a `job` —
+// the Git post-step waits on a lock (freeze_wait/blocked), a retry (retry_wait) or a
+// recovery verdict, and the Job Runner finishes it later. The bar used to read neither, so
+// the approval looked like it had simply not happened and the button was live again. Now
+// the job is shown, the button stays locked while it is not terminal, and the bar follows
+// it (the finalize state's `approval_job`, re-read on `git_approval_job_changed` /
+// `git_finalize_done` and by a slow poll) until it is gone.
+const approvalJob = ref<ApprovalJobView | null>(null)
+const APPROVAL_JOB_POLL_MS = 5_000
+let approvalJobTracking = false
+
+const approvalJobNotice = computed(() => {
+  const job = approvalJob.value
+  if (!job) return ''
+  const jobId = job.job_id || '-'
+  if (job.stage === 'recovery_required' || job.status === 'recovery_required') {
+    return t('main.review_action_bar.approval_job_recovery', { job: jobId })
+  }
+  const stageKey = `main.review_action_bar.approval_job_stage.${job.stage || job.status || 'pending'}`
+  const stage = te(stageKey) ? t(stageKey) : String(job.stage || job.status || '')
+  const head = t('main.review_action_bar.approval_job_queued', { stage, job: jobId })
+  const blocker = job.blocker
+  if (!blocker?.domain) return head
+  return `${head} ${t('main.review_action_bar.approval_job_blocker', {
+    domain: blocker.domain,
+    holder: blocker.holder_kind || blocker.holder || '-',
+  })}`
+})
+
+// The finalize state's job for THIS document; a server without the field has none.
+function approvalJobOfState(state: GitFinState): ApprovalJobView | null {
+  const job = state.approval_job ?? null
+  if (!job || (job.doc_id && job.doc_id !== props.docId)) return null
+  return job
+}
+
+function setApprovalJob(next: ApprovalJobView | null) {
+  const previous = approvalJob.value
+  approvalJob.value = next
+  if (next && !previous) void trackApprovalJob(approveGeneration)
+  if (previous && !next) void onApprovalJobSettled(approveGeneration)
+}
+
+function adoptApprovalJob(state: GitFinState) {
+  // `approval_in_flight` null/missing means "could not tell": keep what the bar has.
+  if (state.approval_in_flight === false) {
+    setApprovalJob(null)
+  } else if (state.approval_in_flight === true && state.approval_job !== undefined) {
+    setApprovalJob(approvalJobOfState(state))
+  }
+}
+
+async function refreshApprovalJob() {
+  if (!isAcDoc.value) return
+  const state = await fetchGitFinLive()
+  if (state) adoptApprovalJob(state)
+}
+
+async function trackApprovalJob(generation: number) {
+  if (approvalJobTracking) return
+  approvalJobTracking = true
+  try {
+    while (generation === approveGeneration && approvalJob.value) {
+      await new Promise((resolve) => setTimeout(resolve, APPROVAL_JOB_POLL_MS))
+      if (generation !== approveGeneration || !approvalJob.value) return
+      await refreshApprovalJob()
+    }
+  } finally {
+    approvalJobTracking = false
+  }
+}
+
+async function onApprovalJobSettled(generation: number) {
+  const serverStatus = await fetchServerReviewStatus()
+  if (generation !== approveGeneration) return
+  if (serverStatus === 'approved') {
+    approvedDocId.value = props.docId
+    showToast(t('main.review_action_bar.approval_job_done'), 'success')
+    emit('approve', 'approved')
+  }
+  requestGitStatusRefresh()
+}
+
+function onApprovalJobEvent(e: Event) {
+  if (matchesGitGroup(e)) void refreshApprovalJob()
+}
+
+watch(() => props.docId, () => {
+  approvalJob.value = null
+})
 
 async function postApproveWithGitRetry(body: Record<string, unknown>) {
   const url = `/api/v1/documents/review_transitions/approve`
@@ -1389,6 +1514,20 @@ async function doApprove() {
     const updated = payload?.document ?? payload?.data ?? payload
     const approved = approval?.approved === true
       || (approval == null && updated?.doc_review_status === 'approved')
+    if (!approved && (approval?.stage === 'queued' || approval?.stage === 'recovery_required')) {
+      // 0674 T0004 §2-3: not approved yet, not failed either — the job finishes it.
+      const job = (payload?.job ?? {}) as ApprovalJobView
+      const recovery = approval.stage === 'recovery_required'
+      setApprovalJob({
+        ...job,
+        job_id: job.job_id ?? approval.job_id ?? null,
+        stage: recovery ? 'recovery_required' : (job.stage ?? job.status ?? 'pending'),
+        blocker: approval.blocker ?? job.blocker ?? null,
+        doc_id: props.docId,
+      })
+      showToast(approvalJobNotice.value, recovery ? 'warning' : 'info')
+      return
+    }
     if (!approved) {
       // Keep the button available for the same AC. The Git refresh/open event
       // above moves conflict sessions to their recovery surface and terminal
@@ -1604,6 +1743,8 @@ onMounted(() => {
   window.addEventListener('fg:git_pending_changed', onGitStatusChanged)
   window.addEventListener('fg:git_status_refresh', onGitStatusChanged)
   window.addEventListener('fg:git_status_open', onGitStatusChanged)
+  window.addEventListener('fg:git_approval_job_changed', onApprovalJobEvent)
+  window.addEventListener('fg:git_finalize_done', onApprovalJobEvent)
 })
 
 onBeforeUnmount(() => {
@@ -1613,6 +1754,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('fg:git_pending_changed', onGitStatusChanged)
   window.removeEventListener('fg:git_status_refresh', onGitStatusChanged)
   window.removeEventListener('fg:git_status_open', onGitStatusChanged)
+  window.removeEventListener('fg:git_approval_job_changed', onApprovalJobEvent)
+  window.removeEventListener('fg:git_finalize_done', onApprovalJobEvent)
 })
 </script>
 
@@ -2038,6 +2181,8 @@ onBeforeUnmount(() => {
 }
 /* 0549 T0008: why [approve] is disabled on a TSR that did not pass the test gate. */
 .ab-gate-hint { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--danger); white-space: nowrap; }
+.ab-approval-job { color: #b45309; white-space: normal; max-width: 420px; }
+.ab-approval-job--recovery { color: var(--danger); }
 </style>
 
 

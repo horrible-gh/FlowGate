@@ -360,12 +360,20 @@ def attempt_phase(session: dict, *, at_boot: bool = False) -> str:
     """Tell an in-flight attempt from a stopped one from a real conflict session.
 
     open + conflict files (or a review state)       → conflict
-    open + no files + its project-lock holder alive → in_progress
-    open + no files + lock gone                     → interrupted
+    open + no files + its job not terminal          → in_progress
+    open + no files + job terminal / gone / no job  → interrupted
 
     A legacy row (no target record) was only ever written on a conflict, so it
-    keeps meaning exactly that. ``at_boot``: no runner survives a restart, so a
-    pre-restart lock row (released later in startup) never proves liveness."""
+    keeps meaning exactly that.
+
+    0669 unit 6b: a final approval's attempt names ``job:{job_id}``. That job owns
+    the attempt's recovery for as long as it is not terminal — it settles the attempt
+    itself, under its own W/B and R, when it resumes (``approval_publish``) — so it
+    reads as in progress, at boot too. Only a terminal (or vanished) job hands the
+    attempt to the sweep/startup recovery. Unit 9c: every attempt runner is a job now
+    (approval, manual finalize, branch merge); an attempt naming any other holder was
+    left by the old project mutex, which no longer exists, so nothing can be running
+    it. ``at_boot`` no longer changes the answer and is kept for the callers."""
     from modules.flow_gate.services import git_service as _gs
     rec = target_record(session)
     if rec is None:
@@ -375,16 +383,28 @@ def attempt_phase(session: dict, *, at_boot: bool = False) -> str:
         return PHASE_CONFLICT
     if _gs.db_git.session_files(int(session["merge_id"])):
         return PHASE_CONFLICT
-    if at_boot:
-        return PHASE_INTERRUPTED
-    try:
-        project_id = _gs._session_project(session)
-        lock = _gs.db_git.get_lock(project_id)
-    except Exception:
-        lock = None
-    if lock and rec.get("lock_holder") and lock.get("holder") == rec.get("lock_holder"):
+    if _job_owns_attempt(rec.get("lock_holder")):
         return PHASE_IN_PROGRESS
     return PHASE_INTERRUPTED
+
+
+JOB_HOLDER_PREFIX = "job:"
+
+
+def _job_owns_attempt(lock_holder: Optional[str]) -> Optional[bool]:
+    """None: not a job holder. True: the job is not terminal (or cannot be read — never
+    take an attempt away from a job on a failed read). False: terminal or gone."""
+    if not lock_holder or not str(lock_holder).startswith(JOB_HOLDER_PREFIX):
+        return None
+    from modules.flow_gate.db import operation_job as db_jobs
+    from modules.flow_gate.db import request_cache as _request_cache
+    try:
+        _request_cache.invalidate()
+        job = db_jobs.get_job(str(lock_holder)[len(JOB_HOLDER_PREFIX):])
+    except Exception:
+        _log.warning("attempt job probe failed for %s", lock_holder, exc_info=True)
+        return True
+    return bool(job) and job.get("status") not in db_jobs.TERMINAL_STATUSES
 
 
 def holds_base_checkout(session: dict) -> bool:

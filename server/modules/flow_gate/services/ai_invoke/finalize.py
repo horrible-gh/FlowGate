@@ -13,6 +13,7 @@ constants (`SOURCE_DIRTY_FILES_LIMIT`, the stop-code sets in `runtime`).
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from datetime import datetime, timezone
@@ -315,6 +316,7 @@ def _finalize_run(run: dict) -> None:
         ("stop", lambda: _finalize_stop(run, respawn_pending)),
         ("scratch", lambda: _finalize_scratch(run)),
         ("source", lambda: _finalize_source(run)),
+        ("chat_commands", lambda: _finalize_chat_run(run)),
         ("diagnostics", lambda: _finalize_diagnostics(run)),
         ("stop_row", lambda: _apply_stop_row(run, respawn_pending)),
         ("review_checkpoint", lambda: _finalize_review_checkpoint(run)),
@@ -416,6 +418,23 @@ def _finalize_source(run: dict) -> None:
         spilled = sorted(now_paths - baseline)
         run["source_dirty"] = bool(spilled)
         run["source_dirty_files"] = spilled[:SOURCE_DIRTY_FILES_LIMIT]
+
+
+def _finalize_chat_run(run: dict) -> None:
+    """0670 T0004: close the run's open command requests, then measure its changes.
+
+    Commands first: nothing of a finished run may stay pending or running, and the end
+    snapshot must not race a test still writing files. Both halves are chat-only.
+    """
+    if run.get("action_scope") != "chat" or run.get("post_process_recovered"):
+        return
+    from modules.flow_gate.services import chat_command_service, chat_run_changes_service
+
+    try:
+        chat_command_service.cancel_for_run(run["run_id"])
+    except Exception:
+        logger.warning("chat command cleanup failed for %s", run.get("run_id"), exc_info=True)
+    chat_run_changes_service.finalize_run(run)
 
 
 def _finalize_diagnostics(run: dict) -> None:
@@ -582,7 +601,63 @@ def _resolve_stop_code(run: dict, respawn_pending: bool) -> Optional[str]:
         # The shape of this incident: the hop ran, the hop finished, the hop made nothing —
         # and until now the system had no name for that, so it treated it as an ordinary end.
         return "no_output_exhausted"
+    if provider_failure_of(run) is not None:
+        # 0674 T0004 §2-2: the provider/CLI itself said it failed (non-zero exit, a
+        # `turn.failed`/`error` event) and the run did not complete. Every code above keeps
+        # its precedence; only what used to end with no code at all is named here.
+        return PROVIDER_FAILED_STOP_CODE
     return None
+
+
+# ── 0674 T0004 §2-2: provider/CLI failure, classified on the server ─────────────
+# 0668: a resolve_conflict run ended `finished/exited/outcome=none` with stop_code and
+# stop_reason NULL while its stdout tail carried `"Selected model is at capacity"`
+# (`turn.failed`) and the CLI exited 1, so no screen could say why. The provider's own
+# words are read HERE, once, into the canonical stop_code/stop_reason pair; the UI never
+# parses provider output.
+PROVIDER_FAILED_STOP_CODE = "provider_failed"
+_PROVIDER_ERROR_EVENT_TYPES = frozenset(("turn.failed", "error"))
+_PROVIDER_FAILURE_MESSAGE_MAX = 300
+
+
+def _provider_error_message(text: Optional[str]) -> Optional[str]:
+    """The last error an NDJSON provider stream reported (codex `--json`: a `turn.failed`
+    event's `error.message`, or an `error` event's `message`). None when there is none."""
+    message: Optional[str] = None
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or event.get("type") not in _PROVIDER_ERROR_EVENT_TYPES:
+            continue
+        error = event.get("error")
+        candidate = error.get("message") if isinstance(error, dict) else error
+        if not isinstance(candidate, str) or not candidate.strip():
+            candidate = event.get("message")
+        if isinstance(candidate, str) and candidate.strip():
+            message = " ".join(candidate.split())
+    return message
+
+
+def provider_failure_of(run: dict) -> Optional[dict]:
+    """``{"exit_code", "message"}`` when a run that did not complete ended on a provider
+    failure the provider itself reported; None for completed, cancelled, timed-out or
+    paused runs (their own codes already say why) and for a clean exit."""
+    if run.get("outcome") == "complete" or run.get("end_reason") != "exited":
+        return None
+    exit_code = run.get("exit_code")
+    message = (_provider_error_message(run.get("stdout_tail"))
+               or _provider_error_message(run.get("stderr_tail")))
+    failed_exit = isinstance(exit_code, int) and not isinstance(exit_code, bool) and exit_code != 0
+    if message is None and not failed_exit:
+        return None
+    if message is not None and len(message) > _PROVIDER_FAILURE_MESSAGE_MAX:
+        message = message[:_PROVIDER_FAILURE_MESSAGE_MAX - 3] + "..."
+    return {"exit_code": exit_code, "message": message}
 
 
 def is_resumable(stop_code: Optional[str]) -> bool:
@@ -699,6 +774,17 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
     if stop_code == REVIEW_REJECT_FAILED_STOP_CODE:
         return (f"The automatic rejection failed: "
                 f"{run.get('review_reject_detail') or 'unknown error'}")
+    if stop_code == PROVIDER_FAILED_STOP_CODE:
+        failure = provider_failure_of(run) or {}
+        provider_name = ((run.get("provider") or {}).get("name") or run.get("provider_id")
+                         or "The AI provider")
+        exit_code = failure.get("exit_code")
+        exit_text = f" (exit code {exit_code})" if exit_code is not None else ""
+        if failure.get("message"):
+            return (f'"{provider_name}" failed{exit_text}: {failure["message"]} '
+                    "The run ended without completing its work.")
+        return (f'"{provider_name}" exited{exit_text} before completing its work. '
+                "The run ended without completing its work.")
     if stop_code == "group_lease_denied":
         # 0393 T0005 §2-6: the sentence a human reads on the card instead of a bare code.
         denied_op = run.get("lease_denied_operation") or "a group change"

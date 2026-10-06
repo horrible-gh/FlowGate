@@ -91,7 +91,6 @@ from .git.commit import (
     _cancel_prelock_gate,
     _ledger_group_by_merge_sha,
     _merge_commit_subject,
-    _release_cancel_lock,
     _revert_one,
     _stage_worker_edits,
     _translate_guard,
@@ -307,7 +306,6 @@ def _set_status(
 
 from .git.lock import (
     LOCK_WAIT_SEC,
-    _acquire_lock,
     base_merge_in_progress,
     guard_base_free,
     guard_group_branch_merge_free,
@@ -779,6 +777,7 @@ from .git.finalize import (
     manual_push,
     precheck_approve_git_action,
     precheck_approve_git_target,
+    finish_terminal_reopen,
     raise_if_git_session_blocks_reopen,
     realize_wf_done_transition,
     reopen_group_git,
@@ -3082,9 +3081,10 @@ def approve_merge_review(
     if is_branch_merge and authority != "human":
         raise GitServiceError(403, "human_authority_required", "a branch merge is approved by a person")
     project_id = _session_project(session)
-    holder = f"review:{merge_id}:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
-        raise GitServiceError(409, "git_busy", f"another git operation is in progress for '{project_id}'")
+    # 0669 unit 8b: the session target's G/W/B plus R (it commits and pushes) instead of
+    # the project mutex.
+    from .git import branch_merge_publish as _bmp
+    lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action", publish=True)
     try:
         session = db_git.get_session(merge_id)
         context = db_git.session_context(session)
@@ -3256,7 +3256,7 @@ def approve_merge_review(
                 "reconciliation_kind": "push_remote_unknown",
             }}
     finally:
-        db_git.release_lock(project_id, holder)
+        _bmp.session_unlock(lock_ctx, lock_held)
 
 
 def reject_merge_review(
@@ -3287,9 +3287,10 @@ def reject_merge_review(
     if not base_head or not merge_head:
         raise GitServiceError(409, "restoration_verification_failed", "no resolver baseline recorded for this session")
 
-    holder = f"review:{merge_id}:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
-        raise GitServiceError(409, "git_busy", f"another git operation is in progress for '{project_id}'")
+    # 0669 unit 8b: the session target's G/W/B (the conflict is restored in its
+    # workspace) instead of the project mutex.
+    from .git import branch_merge_publish as _bmp
+    lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action")
     try:
         # 0009-TR rev5 (AI review finding): the checks above ran WITHOUT the lock,
         # so an approval (or another rejection) may have moved this session in the
@@ -3384,7 +3385,7 @@ def reject_merge_review(
         # the session opened with; take them out again exactly as finalize did.
         apply_eol_separation(merge_id, base_root)
     finally:
-        db_git.release_lock(project_id, holder)
+        _bmp.session_unlock(lock_ctx, lock_held)
 
     run_id = start_run(reason)
     if is_branch_merge:
@@ -3503,8 +3504,13 @@ def _materialize_pending_conversation_run(
     if detail is not None and (detail.get("status") or "").lower() not in ("finished", "done", "completed", "failed", "error"):
         return  # still running
 
-    holder = f"review:{merge_id}:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=0):
+    # 0669 unit 8b: the session target's G/W/B, one attempt and no wait (see above),
+    # instead of the project mutex.
+    from .git import branch_merge_publish as _bmp
+    try:
+        lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action",
+                                           mode=_bmp.locks.NO_WAIT)
+    except GitServiceError:
         return
     try:
         context = db_git.session_context(db_git.get_session(merge_id))
@@ -3715,7 +3721,7 @@ def _materialize_pending_conversation_run(
         context["conversation"] = conversation[-MAX_CHAT_TURNS:]
         db_git.set_session_context(merge_id, context)
     finally:
-        db_git.release_lock(project_id, holder)
+        _bmp.session_unlock(lock_ctx, lock_held)
 
 
 def send_review_message(
@@ -3768,9 +3774,9 @@ def send_review_message(
     # started is simply left unrecorded, and that run's own write-plan
     # submission is refused by `submit_review_write_plan`'s pending-run check.
     run_id = start_run()
-    holder = f"review:{merge_id}:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
-        raise GitServiceError(409, "git_busy", f"another git operation is in progress for '{project_id}'")
+    # 0669 unit 8b: the session target's G/W/B instead of the project mutex.
+    from .git import branch_merge_publish as _bmp
+    lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action")
     try:
         context = db_git.session_context(db_git.get_session(merge_id))
         if context.get("review_state") not in REVIEW_PENDING_STATES:
@@ -3799,7 +3805,7 @@ def send_review_message(
         context["pending_conversation_run_id"] = run_id
         db_git.set_session_context(merge_id, context)
     finally:
-        db_git.release_lock(project_id, holder)
+        _bmp.session_unlock(lock_ctx, lock_held)
     return {"ok": True, "result": {
         "status": "accepted", "review_state": context.get("review_state"),
         "run_id": run_id, "review_fingerprint": context.get("review_fingerprint"),
@@ -3825,8 +3831,13 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
     if trigger != "server_startup" and not _iso_is_due(context.get("reconcile_next_at")):
         return None
     project_id = _session_project(session)
-    holder = f"reconcile:{merge_id}:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
+    # 0669 unit 8b: the session target's G/W/B plus R (it asks the remote and may reset
+    # the target) instead of the project mutex.
+    from .git import branch_merge_publish as _bmp
+    try:
+        lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action",
+                                           publish=True)
+    except GitServiceError:
         return None
     try:
         session = db_git.get_session(merge_id)
@@ -3896,7 +3907,7 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
             return {"ok": True, "result": {"status": "manual_reconciliation_needed"}}
         return {"ok": True, "result": {"status": "retry_scheduled"}}
     finally:
-        db_git.release_lock(project_id, holder)
+        _bmp.session_unlock(lock_ctx, lock_held)
 
 
 def reconcile_due_merge_review_sessions(

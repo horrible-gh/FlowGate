@@ -486,7 +486,8 @@ def test_12_recovery_incomplete_keeps_active_key(mock_db):
     assert rec_incomplete["status"] == "running"
     assert rec_incomplete["active_key"] is not None
     assert selfcheck_db.get_active("p_0650", "g_0650_1") is not None
-    assert selfcheck_db.has_recovery_incomplete("p_0650") is True
+    assert selfcheck_db.has_group_recovery_incomplete("p_0650", "g_0650_1") is True
+    assert selfcheck_db.has_group_recovery_incomplete("p_0650", "g_0650_other") is False
 
     # Explicitly claim incomplete recovery before terminal transition.
     assert selfcheck_db.finish_recovered_interrupted(r["self_check_run_id"]) is None
@@ -538,9 +539,10 @@ def test_14_orphan_active_query(mock_db):
 
 
 def test_15_recovery_incomplete_project_query(mock_db):
-    """15. list_recovery_incomplete_project_ids and has_recovery_incomplete identify protected projects."""
+    """15. list_recovery_incomplete_project_ids and has_group_recovery_incomplete (0669: per
+    Group, no longer per project) identify the Group whose recovery is incomplete."""
     mock_db._execute("DELETE FROM tr_self_check_runs WHERE project_id = 'p_0650'")
-    assert selfcheck_db.has_recovery_incomplete("p_0650") is False
+    assert selfcheck_db.has_group_recovery_incomplete("p_0650", "g_0650_1") is False
     assert "p_0650" not in selfcheck_db.list_recovery_incomplete_project_ids()
 
     r = selfcheck_db.create_pending(
@@ -552,7 +554,9 @@ def test_15_recovery_incomplete_project_query(mock_db):
     selfcheck_db.mark_recovering(r["self_check_run_id"])
     selfcheck_db.mark_recovery_incomplete(r["self_check_run_id"], "test incomplete")
 
-    assert selfcheck_db.has_recovery_incomplete("p_0650") is True
+    assert selfcheck_db.has_group_recovery_incomplete("p_0650", "g_0650_1") is True
+    # another Group of the same project is not held back by it
+    assert selfcheck_db.has_group_recovery_incomplete("p_0650", "g_0650_2") is False
     assert "p_0650" in selfcheck_db.list_recovery_incomplete_project_ids()
     mock_db._execute("DELETE FROM tr_self_check_runs WHERE project_id = 'p_0650'")
 
@@ -735,8 +739,9 @@ def test_21_settings_boolean_validation(mock_db):
         })
 
 
-def test_23_new_and_existing_project_default_false(mock_db):
-    """23. Newly created project and existing project default to tr_self_check_enabled=False."""
+def test_23_new_and_existing_project_default_on(mock_db):
+    """23. Newly created projects default to tr_self_check_enabled=True (migration 128
+    flipped the default; this expectation predates it and is unrelated to 0669)."""
     now = datetime.now(timezone.utc).isoformat()
     projects_db.create({
         "project_id": "p_brand_new",
@@ -745,7 +750,7 @@ def test_23_new_and_existing_project_default_false(mock_db):
     })
     settings = settings_svc.get_project_settings("p_brand_new")
     assert settings is not None
-    assert settings["tr_self_check_enabled"] is False
+    assert settings["tr_self_check_enabled"] is True
 
     from fastapi import FastAPI
     app = FastAPI()
@@ -755,12 +760,12 @@ def test_23_new_and_existing_project_default_false(mock_db):
 
     res = client.get("/api/v1/projects/p_brand_new/settings")
     assert res.status_code == 200
-    assert res.json()["tr_self_check_enabled"] is False
+    assert res.json()["tr_self_check_enabled"] is True
 
     # PATCH via HTTP endpoint
-    patch_res = client.patch("/api/v1/projects/p_brand_new/settings", json={"tr_self_check_enabled": True})
+    patch_res = client.patch("/api/v1/projects/p_brand_new/settings", json={"tr_self_check_enabled": False})
     assert patch_res.status_code == 200
-    assert patch_res.json()["tr_self_check_enabled"] is True
+    assert patch_res.json()["tr_self_check_enabled"] is False
 
     # PATCH invalid type via HTTP endpoint
     bad_res = client.patch("/api/v1/projects/p_brand_new/settings", json={"tr_self_check_enabled": "invalid"})
