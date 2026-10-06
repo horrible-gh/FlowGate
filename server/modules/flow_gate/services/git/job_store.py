@@ -172,9 +172,9 @@ def derive_request_key(kind: str, project_id: str, req: dict) -> str:
         return f"{kind}:{client_key}"
     if kind == "final_approval_publish":
         doc_id, rev = _require(kind, req, "doc_id", "doc_revision_no")
-        # Two simultaneous clicks count the same seq -> same key -> idempotent; a
-        # re-approval after failure/cancel counts one more -> a new key.
-        seq = db.count_failed_or_cancelled_by_key_prefix(project_id, kind, f"fap:{doc_id}:r")
+        # Concurrent clicks share a key. Failed, cancelled, and conflict hand-off
+        # attempts advance it; a completed publish remains idempotent.
+        seq = db.count_fap_retry_by_key_prefix(project_id, f"fap:{doc_id}:r")
         return f"fap:{doc_id}:r{rev}:{seq}"
     if kind == "worktree_provision":
         return "wtp:" + ":".join(_require(kind, req, "group_id", "group_generation"))
