@@ -1,6 +1,8 @@
 export interface WorkPlanWarning {
   code: string
-  severity: 'info' | 'warning'
+  // 0649 T#2/T#3: card-order refusals arrive as 'blocker'
+  // 0649 T#2/T#3: card-order refusals arrive as 'blocker'
+  severity: 'info' | 'warning' | 'blocker' | 'blocker'
   count: number
   keys: string[]
   item_seqs: number[]

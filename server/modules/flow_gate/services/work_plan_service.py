@@ -1967,7 +1967,11 @@ def assign_card_ids(
       deleted card's id and so get linked to that card's sequence rows;
     * a step without ``card_id`` is a new card only if its key is new; the server gives it a
       fresh id. A step whose key existed but which lost its id is refused
-      (``card_id_missing``) — after renumbering, the old key may belong to another card;
+      (``card_id_missing``) — after renumbering, the old key may belong to another card.
+      0649 T#3: the one exception is a key reused by renumbering while every previous card
+      of that card type is still sent with its id — then no previous card can be the one
+      that lost its id, so the step is a new card (the editor moved a new card ahead of an
+      existing one of the same type);
     * a body with no card_id at all whose steps are in the fixed expand_steps() order (an
       old import or an old AI answer) inherits the ids of the same keys.
 
@@ -1990,6 +1994,7 @@ def assign_card_ids(
 
     prev_card_types: dict[str, Optional[str]] = {}
     prev_card_by_key: dict[str, str] = {}
+    prev_ids_by_type: dict[Optional[str], set] = {}
     prev_keys: set = set()
     for step in prev_steps or []:
         prev_keys.add(step.get("key"))
@@ -1998,6 +2003,7 @@ def assign_card_ids(
             continue
         prev_card_types[card_id] = card_type_of_step(step)
         prev_card_by_key[step.get("key")] = card_id
+        prev_ids_by_type.setdefault(card_type_of_step(step), set()).add(card_id)
 
     out = [dict(step) for step in steps]
     taken = set(prev_card_types) | {
@@ -2042,11 +2048,20 @@ def assign_card_ids(
                     value=card_id,
                 ))
 
+    sent_ids = {step["card_id"] for step in out if isinstance(step.get("card_id"), str)}
+
+    def _lost_previous_id(step: dict) -> bool:
+        # A reused key is a lost id unless every previous card of this card type is accounted
+        # for by id in the sent body (0649 T#3 — a new card renumbered onto an old key).
+        if step.get("key") not in prev_keys:
+            return False
+        return not prev_ids_by_type.get(card_type_of_step(step), set()) <= sent_ids
+
     # Instruction/single steps first, so a new result step can take its own instruction's id.
     for index, step in enumerate(out):
         if step.get("card_id") is not None or step.get("pair_role") == "result":
             continue
-        if step.get("key") in prev_keys:
+        if _lost_previous_id(step):
             errors.append(_error("card_id_missing", f"steps[{index}].card_id", step.get("key")))
             continue
         step["card_id"] = new_card_id(taken)
@@ -2055,7 +2070,7 @@ def assign_card_ids(
     for index, step in enumerate(out):
         if step.get("card_id") is not None or step.get("pair_role") != "result":
             continue
-        if step.get("key") in prev_keys:
+        if _lost_previous_id(step):
             errors.append(_error("card_id_missing", f"steps[{index}].card_id", step.get("key")))
             continue
         partner = by_key.get(step.get("pair_key"))

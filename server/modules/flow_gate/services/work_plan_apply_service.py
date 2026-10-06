@@ -703,6 +703,21 @@ def _classify_cards(doc: dict, plan: dict, items: list[dict]) -> Optional[dict]:
     return work_plan_card_identity.classify_rows(wp_doc=doc, plan=plan, items=items)
 
 
+def started_card_ids(doc: dict, plan: dict) -> list[str]:
+    """The cards of this plan that already started (S, O0 identity), read-only.
+
+    0649 T#3 (NR0003 O7): the editor locks these cards (no move, no removal) and keeps every
+    other card behind them. Empty when the plan never poured. The reflecting paths (O2,
+    post-write check) stay the final guard, so a failed read here only loses the hint.
+    """
+    owner = doc.get("target_id") or doc.get("triggered_by")
+    if not owner:
+        return []
+    _sequence_row, current = _sequence(owner)
+    classification = _classify_cards(doc, plan, current)
+    return list((classification or {}).get("started_card_ids") or [])
+
+
 def _legacy_acknowledged(acknowledged_codes: Optional[Iterable[str]]) -> bool:
     from modules.flow_gate.services import work_plan_card_identity
 

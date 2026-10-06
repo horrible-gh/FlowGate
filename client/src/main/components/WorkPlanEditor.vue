@@ -230,139 +230,208 @@
             <span>{{ t('main.work_plan.col_review') }}</span><span>{{ t('main.work_plan.col_note') }}</span>
             <span class="wp-col-instr-head">{{ t('main.work_plan.col_instruction') }}</span>
           </div>
-          <div class="wp-step-list">
+          <div class="wp-step-list" :class="{ 'is-card-dragging': draggedCardId !== null }">
             <div v-if="plan.steps.length === 0" class="step-empty">{{ t('main.work_plan.empty_all_zero') }}</div>
-            <template v-for="(step, idx) in plan.steps" v-else :key="step.key">
-              <div class="wp-step-row" :class="{ 'is-first': isFirstOfType(step, idx), 'is-locked': step.locked, 'wp-row-error': stepErrors[step.key] }">
-                <span v-if="step.locked" class="wp-step-no">{{ t('main.work_plan.step_no', { n: idx + 1 }) }}</span>
-                <button
-                  v-else
-                  type="button"
-                  class="wp-step-no wp-step-no-btn"
-                  :title="t('main.work_plan.drawer_open_hint')"
-                  data-test="step-name-toggle"
-                  @click="toggleDrawer(step)"
+            <!-- flowgate.default.0649 T#3 (NR0003 §5.3 / O7) — the list is drawn by CARD: a single
+                 step, or a set's instruction + result pair. Cards move as a whole (drag the grip,
+                 or the ▲▼ buttons), and keys/ordinals are renumbered by order afterwards; card_id
+                 and every value (provider, note, review, pre-instruction) travel with the card.
+                 A card that already started in the workflow is pinned: no grip, no ▲▼, and no
+                 other card can be put in front of it. -->
+            <div
+              v-for="(card, cardIdx) in cards"
+              v-else
+              :key="card.id"
+              class="wp-card"
+              :class="{
+                'is-started': card.started,
+                'is-dragging': draggedCardId === card.id,
+                'drag-over': draggedCardId !== null && dragOverCardId === card.id && draggedCardId !== card.id,
+              }"
+              data-test="wp-card"
+              :data-card-type="card.type"
+              @dragover.prevent="onCardDragOver(card)"
+              @drop.prevent="onCardDrop(cardIdx)"
+            >
+              <div class="wp-card-grip">
+                <span
+                  class="wp-card-handle"
+                  :class="{ 'is-disabled': !canMoveCard(card) }"
+                  :draggable="canMoveCard(card)"
+                  :title="card.started ? t('main.work_plan.card_started_locked') : t('main.work_plan.card_drag_hint')"
+                  :data-test="card.started ? 'card-started-lock' : 'card-drag-handle'"
+                  @dragstart="onCardDragStart($event, card)"
+                  @dragend="onCardDragEnd"
                 >
-                  {{ t('main.work_plan.step_no', { n: idx + 1 }) }}
-                  <AppIcon name="caret-right" class="wp-step-caret" :class="{ open: openDrawerKey === step.key }" />
-                </button>
-                <span class="doc-tag" :class="`c-${step.type}`">{{ step.type }}</span>
-                <span class="wp-step-label">{{ stepDocName(step) }} <small>{{ stepDocQuantity(step) }}</small></span>
-                <select v-if="step.locked" class="prov-select" disabled><option>{{ t('main.work_plan.locked_note') }}</option></select>
-                <AiProviderSelect v-else :providers="providerOptionsWithUnassigned" :model-value="step.provider_id ?? ''" :disabled="isLocked" hide-label hide-icon compact @update:model-value="(v) => setStepProvider(step.key, v || null)" />
-                <button
-                  type="button"
-                  class="wp-review-pill"
-                  :class="{ 'has-review': !step.locked && (step.review_count ?? 0) !== 0, 'is-locked': step.locked }"
-                  :disabled="step.locked"
-                  :title="t('main.work_plan.drawer_open_hint')"
-                  data-test="review-pill-toggle"
-                  @click="toggleDrawer(step)"
-                >
-                  <span class="wp-review-pill-text">{{ step.locked ? '—' : reviewSummaryText(step) }}</span>
-                </button>
-                <span class="wp-note-field">
-                  <input class="wp-step-msg" :class="{ 'is-ai': step.origin === 'ai_suggested', 'is-over-limit': (step.note ?? '').length > noteMaxChars }" type="text" :placeholder="t('main.work_plan.note_placeholder')" :value="step.locked ? '' : (step.note ?? '')" :disabled="step.locked || isLocked" @input="(e) => setStepNote(step.key, (e.target as HTMLInputElement).value)" />
-                  <small v-if="!step.locked" class="wp-note-count" :class="{ 'is-over-limit': (step.note ?? '').length > noteMaxChars }">
-                    {{ (step.note ?? '').length > noteMaxChars
-                      ? t('main.work_plan.note_char_over', { current: (step.note ?? '').length, max: noteMaxChars })
-                      : t('main.work_plan.note_char_count', { current: (step.note ?? '').length, max: noteMaxChars }) }}
-                  </small>
+                  <AppIcon :name="card.started ? 'lock' : 'dots-six-vertical'" />
                 </span>
                 <button
                   type="button"
-                  class="wp-instr-icon"
-                  :class="{ 'has-value': !step.locked && instrEligible(step) && stepHasInstructionValue(step), 'is-locked': step.locked || !instrEligible(step) }"
-                  :disabled="step.locked"
-                  :title="step.locked ? t('main.work_plan.instr_not_eligible', { reason: t('main.work_plan.instr_excluded_server_assembled') }) : (instrEligible(step) ? t('main.work_plan.drawer_open_hint') : t('main.work_plan.instr_not_eligible', { reason: t('main.work_plan.instr_excluded_report') }))"
-                  data-test="instr-icon-toggle"
-                  @click="toggleDrawer(step)"
+                  class="wp-card-move"
+                  :disabled="!canMoveCardBy(cardIdx, -1)"
+                  :title="t('main.work_plan.card_move_up')"
+                  :aria-label="t('main.work_plan.card_move_up')"
+                  data-test="card-move-up"
+                  @click="moveCardBy(cardIdx, -1)"
                 >
-                  <AppIcon name="pencil-simple" />
+                  <AppIcon name="caret-up" />
                 </button>
-                <div v-if="stepErrors[step.key]?.length" class="wp-step-errors" role="alert">
-                  <span v-for="(msg, i) in stepErrors[step.key]" :key="i" class="wp-step-error-msg">{{ msg }}</span>
-                </div>
+                <button
+                  type="button"
+                  class="wp-card-move"
+                  :disabled="!canMoveCardBy(cardIdx, 1)"
+                  :title="t('main.work_plan.card_move_down')"
+                  :aria-label="t('main.work_plan.card_move_down')"
+                  data-test="card-move-down"
+                  @click="moveCardBy(cardIdx, 1)"
+                >
+                  <AppIcon name="caret-down" />
+                </button>
               </div>
-              <div v-if="!step.locked && openDrawerKey === step.key" class="wp-step-drawer" data-test="step-drawer">
-                <div class="wp-drawer-block">
-                  <div class="wp-drawer-block-hd">
-                    <AppIcon name="magnifying-glass" />
-                    <span class="wp-drawer-block-title">{{ t('main.work_plan.drawer_review_title', { n: idx + 1 }) }}</span>
-                  </div>
-                  <div class="wp-drawer-review-row">
-                    <select
-                      class="wp-drawer-select wp-drawer-review-count"
-                      :class="{ 'is-active': (step.review_count ?? 0) !== 0 }"
-                      :disabled="isLocked"
-                      :value="step.review_count"
-                      data-test="drawer-review-count"
-                      @change="(e) => setStepReviewCount(step.key, Number((e.target as HTMLSelectElement).value))"
+              <div class="wp-card-rows">
+                <template v-for="step in card.steps" :key="rowKeyOf(card, step)">
+                  <div class="wp-step-row" :class="{ 'is-card-result': step.pair_role === 'result', 'is-locked': step.locked, 'wp-row-error': stepErrors[rowKeyOf(card, step)] }">
+                    <span v-if="step.locked" class="wp-step-no">{{ t('main.work_plan.step_no', { n: rowNo(step) }) }}</span>
+                    <button
+                      v-else
+                      type="button"
+                      class="wp-step-no wp-step-no-btn"
+                      :title="t('main.work_plan.drawer_open_hint')"
+                      data-test="step-name-toggle"
+                      @click="toggleDrawer(rowKeyOf(card, step), step)"
                     >
-                      <option v-for="choice in reviewCountChoices" :key="choice" :value="choice">{{ reviewCountLabel(choice) }}</option>
-                    </select>
-                    <AiProviderSelect
-                      :providers="reviewerOptionsWithDefault"
-                      :model-value="step.reviewer_provider_id ?? ''"
-                      :disabled="isLocked || (step.review_count ?? 0) === 0"
-                      hide-label hide-icon compact
-                      @update:model-value="(v) => setStepReviewer(step.key, v || null)"
-                    />
-                  </div>
-                </div>
-                <div class="wp-drawer-divider"></div>
-                <div v-if="instrEligible(step)" class="wp-drawer-block">
-                  <div class="wp-drawer-block-hd">
-                    <AppIcon name="file-text" />
-                    <span class="wp-drawer-block-title">{{ t('main.work_plan.drawer_instruction_title', { n: idx + 1 }) }}</span>
-                  </div>
-                  <div class="wp-drawer-instr-block">
-                    <span class="wp-drawer-mode-label"><AppIcon name="pencil-simple" /> {{ t('main.work_plan.instr_manual_label') }}</span>
-                    <div class="wp-drawer-textarea-wrap">
-                      <textarea
-                        class="wp-drawer-textarea"
-                        :value="step.pre_instruction_text ?? ''"
-                        :disabled="isLocked"
-                        :placeholder="t('main.work_plan.instr_placeholder')"
-                        data-test="drawer-instr-text"
-                        @input="(e) => setStepInstruction(step.key, (e.target as HTMLTextAreaElement).value)"
-                      ></textarea>
-                      <span class="wp-drawer-count" :class="{ 'is-over-limit': (step.pre_instruction_text ?? '').length > preInstructionMaxChars }">
-                        {{ t('main.work_plan.instr_char_count', { current: (step.pre_instruction_text ?? '').length, max: preInstructionMaxChars }) }}
-                      </span>
-                    </div>
-                  </div>
-                  <div class="wp-drawer-instr-block wp-drawer-file-row">
-                    <span class="wp-drawer-mode-label"><AppIcon name="paperclip" /> {{ t('main.work_plan.instr_attach_label') }}</span>
-                    <label class="btn btn-outline btn-sm wp-drawer-file-btn" :class="{ 'is-disabled': isLocked || instrUploadingKey === step.key }">
-                      <AppIcon name="upload-simple" /> {{ instrUploadingKey === step.key ? t('main.work_plan.instr_attach_uploading') : t('main.work_plan.instr_attach_choose') }}
-                      <input type="file" class="wp-drawer-file-input" hidden :disabled="isLocked || instrUploadingKey === step.key" data-test="drawer-instr-file-input" @change="(e) => onInstrFileSelected(step, e)" />
-                    </label>
-                    <span class="wp-drawer-file-name" :class="{ 'has-file': !!step.pre_instruction_attachment }" data-test="drawer-instr-file-name">
-                      {{ step.pre_instruction_attachment ? step.pre_instruction_attachment.original_filename : t('main.work_plan.instr_attach_none') }}
+                      {{ t('main.work_plan.step_no', { n: rowNo(step) }) }}
+                      <AppIcon name="caret-right" class="wp-step-caret" :class="{ open: openDrawerRow === rowKeyOf(card, step) }" />
+                    </button>
+                    <span class="doc-tag" :class="`c-${step.type}`">{{ step.type }}</span>
+                    <span class="wp-step-label">{{ stepDocName(step) }} <small>{{ stepDocQuantity(step) }}</small></span>
+                    <select v-if="step.locked" class="prov-select" disabled><option>{{ t('main.work_plan.locked_note') }}</option></select>
+                    <AiProviderSelect v-else :providers="providerOptionsWithUnassigned" :model-value="step.provider_id ?? ''" :disabled="isLocked" hide-label hide-icon compact @update:model-value="(v) => setStepProvider(step.key, v || null)" />
+                    <button
+                      type="button"
+                      class="wp-review-pill"
+                      :class="{ 'has-review': !step.locked && (step.review_count ?? 0) !== 0, 'is-locked': step.locked }"
+                      :disabled="step.locked"
+                      :title="t('main.work_plan.drawer_open_hint')"
+                      data-test="review-pill-toggle"
+                      @click="toggleDrawer(rowKeyOf(card, step), step)"
+                    >
+                      <span class="wp-review-pill-text">{{ step.locked ? '—' : reviewSummaryText(step) }}</span>
+                    </button>
+                    <span class="wp-note-field">
+                      <input class="wp-step-msg" :class="{ 'is-ai': step.origin === 'ai_suggested', 'is-over-limit': (step.note ?? '').length > noteMaxChars }" type="text" :placeholder="t('main.work_plan.note_placeholder')" :value="step.locked ? '' : (step.note ?? '')" :disabled="step.locked || isLocked" @input="(e) => setStepNote(step.key, (e.target as HTMLInputElement).value)" />
+                      <small v-if="!step.locked" class="wp-note-count" :class="{ 'is-over-limit': (step.note ?? '').length > noteMaxChars }">
+                        {{ (step.note ?? '').length > noteMaxChars
+                          ? t('main.work_plan.note_char_over', { current: (step.note ?? '').length, max: noteMaxChars })
+                          : t('main.work_plan.note_char_count', { current: (step.note ?? '').length, max: noteMaxChars }) }}
+                      </small>
                     </span>
                     <button
-                      v-if="step.pre_instruction_attachment"
-                      type="button" class="wp-drawer-file-remove" :disabled="isLocked"
-                      :title="t('main.work_plan.instr_attach_remove')"
-                      data-test="drawer-instr-file-remove"
-                      @click="removeStepInstructionAttachment(step.key)"
+                      type="button"
+                      class="wp-instr-icon"
+                      :class="{ 'has-value': !step.locked && instrEligible(step) && stepHasInstructionValue(step), 'is-locked': step.locked || !instrEligible(step) }"
+                      :disabled="step.locked"
+                      :title="step.locked ? t('main.work_plan.instr_not_eligible', { reason: t('main.work_plan.instr_excluded_server_assembled') }) : (instrEligible(step) ? t('main.work_plan.drawer_open_hint') : t('main.work_plan.instr_not_eligible', { reason: t('main.work_plan.instr_excluded_report') }))"
+                      data-test="instr-icon-toggle"
+                      @click="toggleDrawer(rowKeyOf(card, step), step)"
                     >
-                      <AppIcon name="x" />
+                      <AppIcon name="pencil-simple" />
                     </button>
+                    <div v-if="stepErrors[rowKeyOf(card, step)]?.length" class="wp-step-errors" role="alert">
+                      <span v-for="(msg, i) in stepErrors[rowKeyOf(card, step)]" :key="i" class="wp-step-error-msg">{{ msg }}</span>
+                    </div>
                   </div>
-                </div>
-                <p v-else class="wp-drawer-excluded">
-                  <AppIcon name="info" /> {{ t('main.work_plan.instr_not_eligible', { reason: t('main.work_plan.instr_excluded_report') }) }}
-                </p>
-                <div class="wp-drawer-actions">
-                  <button type="button" class="btn btn-outline btn-sm" data-test="drawer-close" @click="closeDrawer">{{ t('main.work_plan.drawer_close') }}</button>
-                  <button type="button" class="btn btn-primary btn-sm" :disabled="saving || isLocked || hasPendingCapabilityWarning" data-test="drawer-save" @click="saveFromDrawer(step.key, idx)">
-                    {{ saving ? t('main.work_plan.saving') : t('main.work_plan.drawer_save') }}
-                  </button>
-                </div>
+                  <div v-if="!step.locked && openDrawerRow === rowKeyOf(card, step)" class="wp-step-drawer" data-test="step-drawer">
+                    <div class="wp-drawer-block">
+                      <div class="wp-drawer-block-hd">
+                        <AppIcon name="magnifying-glass" />
+                        <span class="wp-drawer-block-title">{{ t('main.work_plan.drawer_review_title', { n: rowNo(step) }) }}</span>
+                      </div>
+                      <div class="wp-drawer-review-row">
+                        <select
+                          class="wp-drawer-select wp-drawer-review-count"
+                          :class="{ 'is-active': (step.review_count ?? 0) !== 0 }"
+                          :disabled="isLocked"
+                          :value="step.review_count"
+                          data-test="drawer-review-count"
+                          @change="(e) => setStepReviewCount(step.key, Number((e.target as HTMLSelectElement).value))"
+                        >
+                          <option v-for="choice in reviewCountChoices" :key="choice" :value="choice">{{ reviewCountLabel(choice) }}</option>
+                        </select>
+                        <AiProviderSelect
+                          :providers="reviewerOptionsWithDefault"
+                          :model-value="step.reviewer_provider_id ?? ''"
+                          :disabled="isLocked || (step.review_count ?? 0) === 0"
+                          hide-label hide-icon compact
+                          @update:model-value="(v) => setStepReviewer(step.key, v || null)"
+                        />
+                      </div>
+                    </div>
+                    <div class="wp-drawer-divider"></div>
+                    <div v-if="instrEligible(step)" class="wp-drawer-block">
+                      <div class="wp-drawer-block-hd">
+                        <AppIcon name="file-text" />
+                        <span class="wp-drawer-block-title">{{ t('main.work_plan.drawer_instruction_title', { n: rowNo(step) }) }}</span>
+                      </div>
+                      <div class="wp-drawer-instr-block">
+                        <span class="wp-drawer-mode-label"><AppIcon name="pencil-simple" /> {{ t('main.work_plan.instr_manual_label') }}</span>
+                        <div class="wp-drawer-textarea-wrap">
+                          <textarea
+                            class="wp-drawer-textarea"
+                            :value="step.pre_instruction_text ?? ''"
+                            :disabled="isLocked"
+                            :placeholder="t('main.work_plan.instr_placeholder')"
+                            data-test="drawer-instr-text"
+                            @input="(e) => setStepInstruction(step.key, (e.target as HTMLTextAreaElement).value)"
+                          ></textarea>
+                          <span class="wp-drawer-count" :class="{ 'is-over-limit': (step.pre_instruction_text ?? '').length > preInstructionMaxChars }">
+                            {{ t('main.work_plan.instr_char_count', { current: (step.pre_instruction_text ?? '').length, max: preInstructionMaxChars }) }}
+                          </span>
+                        </div>
+                      </div>
+                      <div class="wp-drawer-instr-block wp-drawer-file-row">
+                        <span class="wp-drawer-mode-label"><AppIcon name="paperclip" /> {{ t('main.work_plan.instr_attach_label') }}</span>
+                        <label class="btn btn-outline btn-sm wp-drawer-file-btn" :class="{ 'is-disabled': isLocked || instrUploadingKey === rowKeyOf(card, step) }">
+                          <AppIcon name="upload-simple" /> {{ instrUploadingKey === rowKeyOf(card, step) ? t('main.work_plan.instr_attach_uploading') : t('main.work_plan.instr_attach_choose') }}
+                          <input type="file" class="wp-drawer-file-input" hidden :disabled="isLocked || instrUploadingKey === rowKeyOf(card, step)" data-test="drawer-instr-file-input" @change="(e) => onInstrFileSelected(step, rowKeyOf(card, step), e)" />
+                        </label>
+                        <span class="wp-drawer-file-name" :class="{ 'has-file': !!step.pre_instruction_attachment }" data-test="drawer-instr-file-name">
+                          {{ step.pre_instruction_attachment ? step.pre_instruction_attachment.original_filename : t('main.work_plan.instr_attach_none') }}
+                        </span>
+                        <button
+                          v-if="step.pre_instruction_attachment"
+                          type="button" class="wp-drawer-file-remove" :disabled="isLocked"
+                          :title="t('main.work_plan.instr_attach_remove')"
+                          data-test="drawer-instr-file-remove"
+                          @click="removeStepInstructionAttachment(step.key)"
+                        >
+                          <AppIcon name="x" />
+                        </button>
+                      </div>
+                    </div>
+                    <p v-else class="wp-drawer-excluded">
+                      <AppIcon name="info" /> {{ t('main.work_plan.instr_not_eligible', { reason: t('main.work_plan.instr_excluded_report') }) }}
+                    </p>
+                    <div class="wp-drawer-actions">
+                      <button type="button" class="btn btn-outline btn-sm" data-test="drawer-close" @click="closeDrawer">{{ t('main.work_plan.drawer_close') }}</button>
+                      <button type="button" class="btn btn-primary btn-sm" :disabled="saving || isLocked || hasPendingCapabilityWarning" data-test="drawer-save" @click="saveFromDrawer(rowKeyOf(card, step), step)">
+                        {{ saving ? t('main.work_plan.saving') : t('main.work_plan.drawer_save') }}
+                      </button>
+                    </div>
+                  </div>
+                </template>
               </div>
-            </template>
+            </div>
+            <div
+              v-if="draggedCardId !== null"
+              class="wp-card-drop-end"
+              :class="{ 'drag-over': dragOverCardId === CARD_DROP_END }"
+              data-test="card-drop-end"
+              @dragover.prevent="dragOverCardId = CARD_DROP_END"
+              @drop.prevent="onCardDrop(cards.length)"
+            >
+              {{ t('main.work_plan.card_drop_end') }}
+            </div>
           </div>
 
         </section>
@@ -442,7 +511,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postFormRequest, postRequest, putRequest } from '@shared/api'
 import { renderWpFieldError, type WpFieldError } from '@shared/workPlanErrors'
@@ -482,6 +551,9 @@ interface WPPreInstructionAttachment {
 }
 interface WPStep {
   key: string
+  // flowgate.default.0649 T#1/T#3 (NR0003 §5.1) — the card's identity. It never changes when a
+  // card moves or is renumbered; a card added here has none until the server assigns one.
+  card_id?: string | null
   type: string
   ordinal: number
   pair_key: string | null
@@ -521,7 +593,9 @@ const preInstructionMaxChars = ref(20000)
 const preInstructionAttachmentMaxBytes = ref(0)
 // D0007 §6.1-§6.2 — the three entry points (step name / review pill / instruction icon) open
 // the SAME drawer for that step; opening one closes any other step's drawer.
-const openDrawerKey = ref<string | null>(null)
+// 0649 T#3 (NR0003 §5.3): keyed by the ROW identity (card + role), never by step.key — a key is
+// renumbered whenever a card moves, and a key-keyed drawer would jump to another card.
+const openDrawerRow = ref<string | null>(null)
 const instrUploadingKey = ref<string | null>(null)
 
 const props = defineProps<{
@@ -588,6 +662,8 @@ const confirmingCapability = ref(false)
 // displayed strings below are computed from it so a locale switch re-renders them without a
 // new request, instead of freezing whatever `msg` text the save-time locale produced.
 const topLevelErrorRecords = ref<WpFieldError[]>([])
+// Keyed by row identity (rowKeyOf), not by the step key the server named: a card moved after a
+// failed save keeps its own errors (0649 T#3, NR0003 §10-4).
 const stepErrorRecords = ref<Record<string, WpFieldError[]>>({})
 const topLevelErrors = computed(() => topLevelErrorRecords.value.map((err) => renderWpFieldError(err, t)))
 const stepErrors = computed(() => {
@@ -625,8 +701,17 @@ const restoreError = ref<string | null>(null)
 
 
 // D0007 §3.2 decision 4: a value-bearing step that a lower quantity would drop stays
-// recoverable by its logical key until the plan is actually saved.
-const restoreBuffer = new Map<string, WPStep>()
+// recoverable until the plan is actually saved.
+// 0649 T#3 (NR0003 §5.3): what a quantity decrease removes is a whole CARD (its steps, its
+// card_id and its values), stacked per card type. Raising the quantity again in the same edit
+// session brings the most recently removed card back with its original card_id — it is a card
+// of the last saved body, so it is the same card. Cleared on save/reload: a card deleted by a
+// save is gone, and re-adding it later makes a new card (§3.8).
+const restoreBuffer = new Map<string, Array<{ steps: WPStep[]; index: number }>>()
+
+// 0649 T#3 (NR0003 O7): cards that already started in the workflow, from the read view's
+// step_execution_status. They are pinned in place and cannot be removed by a quantity decrease.
+const startedCardIds = ref<Set<string>>(new Set())
 
 // 0424 B0001 / TR0005 rev2 — "AI실행중에 버튼들이 안눌리게 하던가 없애야지 토스트 띄우면
 // 다인가?". This group's own [Load AI Suggestion] starts a run against this very WP document
@@ -764,25 +849,6 @@ function makeStep(type: string, ordinal: number, pairKey: string | null, pairRol
   }
 }
 
-function expandSteps(countedTypes: string[], quantities: Record<string, WPQuantity>): WPStep[] {
-  const steps: WPStep[] = []
-  for (const code of typeOrder(countedTypes)) {
-    const q = quantities[code]
-    if (!q || q.count <= 0) continue
-    if (q.unit === 'sheet') {
-      for (let o = 1; o <= q.count; o++) steps.push(makeStep(code, o, null, 'single'))
-    } else {
-      const pair = pairOf(code)
-      if (!pair) continue
-      for (let o = 1; o <= q.count; o++) {
-        steps.push(makeStep(code, o, makeKey(pair, o), 'instruction'))
-        steps.push(makeStep(pair, o, makeKey(code, o), 'result'))
-      }
-    }
-  }
-  return steps
-}
-
 function hasValue(step: WPStep): boolean {
   if (step.locked) return false
   if (step.provider_id) return true
@@ -796,40 +862,114 @@ function hasValue(step: WPStep): boolean {
   return false
 }
 
-function reexpand(
-  prevSteps: WPStep[],
-  countedTypes: string[],
-  quantities: Record<string, WPQuantity>,
-): { result: WPStep[]; removalCandidates: WPStep[] } {
-  const fresh = expandSteps(countedTypes, quantities)
-  const prevByKey = new Map(prevSteps.map((s) => [s.key, s]))
-  const result: WPStep[] = []
-  for (const s of fresh) {
-    const prior = prevByKey.get(s.key) ?? restoreBuffer.get(s.key)
-    if (prior && !s.locked) {
-      s.provider_id = prior.provider_id
-      s.provider_display_name = prior.provider_display_name
-      s.note = prior.note
-      s.origin = prior.origin
-      // D0007 §3.6 / §5.5 — a quantity round-trip (down then back up) must not lose the new
-      // execution-setting fields any more than it loses provider/note.
-      s.review_count = prior.review_count ?? 0
-      s.reviewer_provider_id = prior.reviewer_provider_id ?? null
-      s.reviewer_provider_display_name = prior.reviewer_provider_display_name ?? null
-      s.pre_instruction_text = prior.pre_instruction_text ?? null
-      s.pre_instruction_attachment = prior.pre_instruction_attachment ?? null
-    }
-    result.push(s)
+// ── Cards (flowgate.default.0649 T#3 / NR0003 §5.3) ─────────────────────────
+// A card is one single step, or a set's instruction immediately followed by its result. The
+// steps array order IS the plan order; the editor never re-expands it into the fixed per-type
+// blocks again. Keys and ordinals are derived from that order (renumberSteps).
+
+interface WPCard {
+  /** card_id, or a client-only temporary id for a card the server has not named yet. */
+  id: string
+  type: string
+  steps: WPStep[]
+  started: boolean
+}
+
+// A card added here has no card_id until the save response names it. Its temporary identity
+// lives beside the step (never in the saved body) so drawer/error state can follow it.
+const tempCardIds = new WeakMap<object, string>()
+let tempCardSeq = 0
+function cardIdentityOf(step: WPStep): string {
+  if (step.card_id) return step.card_id
+  const raw = toRaw(step)
+  let id = tempCardIds.get(raw)
+  if (!id) {
+    tempCardSeq += 1
+    id = `tmp:${tempCardSeq}`
+    tempCardIds.set(raw, id)
   }
-  const freshKeys = new Set(fresh.map((s) => s.key))
-  const removalCandidates: WPStep[] = []
-  for (const p of prevSteps) {
-    if (!freshKeys.has(p.key)) {
-      restoreBuffer.set(p.key, p)
-      if (hasValue(p)) removalCandidates.push(p)
+  return id
+}
+
+function groupCards(steps: WPStep[]): WPStep[][] {
+  const out: WPStep[][] = []
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i]
+    const next = steps[i + 1]
+    if (step.pair_role === 'instruction' && next && next.pair_role === 'result') {
+      out.push([step, next])
+      i += 1
+    } else {
+      out.push([step])
     }
   }
-  return { result, removalCandidates }
+  return out
+}
+
+const cards = computed<WPCard[]>(() => groupCards(plan.value?.steps ?? []).map((steps) => ({
+  id: cardIdentityOf(steps[0]),
+  type: steps[0].type,
+  steps,
+  started: !!steps[0].card_id && startedCardIds.value.has(steps[0].card_id),
+})))
+
+function rowKeyOf(card: WPCard, step: WPStep): string {
+  return `${card.id}|${step.pair_role === 'result' ? 'result' : 'main'}`
+}
+
+/** The row identity of a step in the current plan (drawer / error bookkeeping). */
+function rowKeyOfStep(step: WPStep): string | null {
+  for (const card of cards.value) {
+    if (card.steps.some((s) => toRaw(s) === toRaw(step))) return rowKeyOf(card, step)
+  }
+  return null
+}
+
+function rowNo(step: WPStep): number {
+  const steps = plan.value?.steps ?? []
+  return steps.findIndex((s) => toRaw(s) === toRaw(step)) + 1
+}
+
+/** Ordinals restart per type and follow the array order; pair keys follow (NR0003 §5.1 b). */
+function renumberSteps(steps: WPStep[]): WPStep[] {
+  const seen = new Map<string, number>()
+  for (const card of groupCards(steps)) {
+    const head = card[0]
+    const n = (seen.get(head.type) ?? 0) + 1
+    seen.set(head.type, n)
+    head.ordinal = n
+    head.key = makeKey(head.type, n)
+    if (card.length === 2) {
+      const result = card[1]
+      result.ordinal = n
+      result.key = makeKey(result.type, n)
+      head.pair_key = result.key
+      result.pair_key = head.key
+    }
+  }
+  return steps
+}
+
+/** A card added by a quantity increase: no card_id — the server assigns one on save. */
+function newCardSteps(code: string): WPStep[] | null {
+  const unit = plan.value?.quantities[code]?.unit ?? 'sheet'
+  if (unit === 'sheet') return [makeStep(code, 0, null, 'single')]
+  const pair = pairOf(code)
+  if (!pair) return null
+  return [makeStep(code, 0, null, 'instruction'), makeStep(pair, 0, null, 'result')]
+}
+
+function isCardStarted(card: WPStep[]): boolean {
+  const id = card[0].card_id
+  return !!id && startedCardIds.value.has(id)
+}
+
+/** Index of the last started card; nothing may be placed at or before it (O7, G6). */
+function lastStartedIndex(cardList: WPStep[][]): number {
+  for (let i = cardList.length - 1; i >= 0; i--) {
+    if (isCardStarted(cardList[i])) return i
+  }
+  return -1
 }
 
 // ── Fetch / recovery ──────────────────────────────────────────────────────
@@ -858,6 +998,12 @@ function applyReadView(data: any) {
   providerStatuses.value = data.provider_status ?? []
   assignmentSummary.value = data.assignment_summary ?? []
   unassignedStepCount.value = data.unassigned_step_count ?? 0
+  // 0649 T#3 (NR0003 O7): the server says which cards already started (by card identity).
+  startedCardIds.value = new Set(
+    (Array.isArray(data.step_execution_status) ? data.step_execution_status : [])
+      .filter((entry: any) => entry?.started === true && typeof entry?.card_id === 'string')
+      .map((entry: any) => entry.card_id as string),
+  )
   revisionNo.value = data.revision_no
   noteMaxChars.value = Number(data.limits?.note_max_chars) || 1000
   preInstructionMaxChars.value = Number(data.limits?.pre_instruction_text_max_chars) || 20000
@@ -889,7 +1035,7 @@ async function fetchPlan(): Promise<boolean> {
   topLevelErrorRecords.value = []
   stepErrorRecords.value = {}
   restoreBuffer.clear()
-  openDrawerKey.value = null
+  openDrawerRow.value = null
   serverRegisteredProviders.value = []
   serverRegisteredProvidersKnown.value = false
   try {
@@ -994,12 +1140,28 @@ function updateDerivedSummary() {
   }))
 }
 
+// 0649 T#3 (NR0003 §5.3, F5): a quantity change edits the cards of that one type in place and
+// never re-expands the plan, so a person's card order survives the stepper and the AI
+// suggestion (fetchSuggestion → setQuantity) alike. Growing appends new cards at the end of
+// the current order (a card removed earlier in this session comes back first, with its id and
+// values); shrinking removes the last cards of the type — never a started card (O7).
 async function setQuantity(code: string, next: number) {
   if (!plan.value || isLocked.value) return
   const clamped = Math.max(COUNT_MIN, Math.min(COUNT_MAX, next))
   const unit = plan.value.quantities[code]?.unit ?? 'sheet'
   const quantities = { ...plan.value.quantities, [code]: { unit, count: clamped } }
-  const { result, removalCandidates } = reexpand(plan.value.steps, plan.value.counted_types, quantities)
+  const ofType = groupCards([...plan.value.steps]).filter((card) => card[0].type === code)
+  const removed: WPStep[][] = []
+  if (clamped < ofType.length) {
+    const removable = ofType.filter((card) => !isCardStarted(card))
+    const need = ofType.length - clamped
+    if (removable.length < need) {
+      showToast(t('main.work_plan.quantity_decrease_blocked_started', { type: code }), 'warning')
+      return
+    }
+    removed.push(...removable.slice(removable.length - need))
+  }
+  const removalCandidates = removed.flat().filter(hasValue)
   // D0007 §5.5 — a quantity decrease that would drop a step still carrying provider/note/
   // review/pre-instruction values needs an explicit confirmation, not a silent removal.
   if (removalCandidates.length > 0) {
@@ -1012,10 +1174,120 @@ async function setQuantity(code: string, next: number) {
     if (!ok) return
   }
   if (!plan.value || isLocked.value) return
+  let nextCards = groupCards([...plan.value.steps])
+  if (removed.length) {
+    const stack = restoreBuffer.get(code) ?? []
+    // Removed last-first, so popping the stack brings them back in their original order and
+    // at their original positions.
+    for (const card of [...removed].reverse()) {
+      const index = nextCards.findIndex((c) => toRaw(c[0]) === toRaw(card[0]))
+      stack.push({ steps: card, index })
+      nextCards.splice(index, 1)
+    }
+    restoreBuffer.set(code, stack)
+  }
+  const currentCount = nextCards.filter((card) => card[0].type === code).length
+  for (let n = currentCount; n < clamped; n++) {
+    const restored = restoreBuffer.get(code)?.pop()
+    if (restored) {
+      // never in front of a started card (O7)
+      const at = Math.max(lastStartedIndex(nextCards) + 1, Math.min(restored.index, nextCards.length))
+      nextCards.splice(at, 0, restored.steps)
+      continue
+    }
+    const card = newCardSteps(code)
+    if (!card) break
+    // NR0003 §5.3: a new card is appended at the end of the current order, so it never lands
+    // in front of an existing card — a started one included (O7).
+    nextCards.push(card)
+  }
   plan.value.quantities = quantities
-  plan.value.steps = result
+  plan.value.steps = renumberSteps(nextCards.flat())
   markDirty()
   updateDerivedSummary()
+}
+
+// ── Card moves (0649 T#3, NR0003 §5.3 / O7) ─────────────────────────────────
+
+const CARD_DROP_END = '__end__'
+const draggedCardId = ref<string | null>(null)
+const dragOverCardId = ref<string | null>(null)
+
+function canMoveCard(card: WPCard): boolean {
+  return !isLocked.value && !hasPendingCapabilityWarning.value && !card.started
+}
+
+/** Move the card at `from` so it lands at index `to` of the card list without it. */
+function moveCard(from: number, to: number): boolean {
+  if (!plan.value || isLocked.value || hasPendingCapabilityWarning.value) return false
+  const cardList = groupCards([...plan.value.steps])
+  const moving = cardList[from]
+  if (!moving || isCardStarted(moving)) return false
+  const rest = cardList.filter((_, i) => i !== from)
+  const target = Math.max(0, Math.min(rest.length, to))
+  // O7 / G6: a card that has not started can never be placed in front of a started card.
+  if (target <= lastStartedIndex(rest)) {
+    showToast(t('main.work_plan.card_move_before_started'), 'warning')
+    return false
+  }
+  if (target === from) return false
+  rest.splice(target, 0, moving)
+  plan.value.steps = renumberSteps(rest.flat())
+  markDirty()
+  updateDerivedSummary()
+  return true
+}
+
+function canMoveCardBy(index: number, delta: number): boolean {
+  const list = cards.value
+  const card = list[index]
+  if (!card || !canMoveCard(card)) return false
+  const to = index + delta
+  if (to < 0 || to >= list.length) return false
+  const rest = list.filter((_, i) => i !== index)
+  for (let i = rest.length - 1; i >= 0; i--) {
+    if (rest[i].started) return to > i
+  }
+  return true
+}
+
+function moveCardBy(index: number, delta: number) {
+  if (!canMoveCardBy(index, delta)) return
+  moveCard(index, index + delta)
+}
+
+function onCardDragStart(event: DragEvent, card: WPCard) {
+  if (!canMoveCard(card)) {
+    event.preventDefault()
+    return
+  }
+  draggedCardId.value = card.id
+  dragOverCardId.value = null
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', card.id)
+  }
+}
+
+function onCardDragOver(card: WPCard) {
+  if (draggedCardId.value === null) return
+  dragOverCardId.value = card.id
+}
+
+/** Drop = put the dragged card in front of the card at `targetIndex` (cards.length = the end). */
+function onCardDrop(targetIndex: number) {
+  const draggedId = draggedCardId.value
+  draggedCardId.value = null
+  dragOverCardId.value = null
+  if (draggedId === null) return
+  const from = cards.value.findIndex((card) => card.id === draggedId)
+  if (from < 0) return
+  moveCard(from, targetIndex > from ? targetIndex - 1 : targetIndex)
+}
+
+function onCardDragEnd() {
+  draggedCardId.value = null
+  dragOverCardId.value = null
 }
 
 function setDefaultProvider(providerId: string | null) {
@@ -1170,13 +1442,13 @@ function stepHasInstructionValue(step: WPStep): boolean {
   return (step.pre_instruction_text ?? '').trim() !== '' || !!step.pre_instruction_attachment
 }
 
-function toggleDrawer(step: WPStep) {
+function toggleDrawer(rowKey: string, step: WPStep) {
   if (step.locked) return
-  openDrawerKey.value = openDrawerKey.value === step.key ? null : step.key
+  openDrawerRow.value = openDrawerRow.value === rowKey ? null : rowKey
 }
 
 function closeDrawer() {
-  openDrawerKey.value = null
+  openDrawerRow.value = null
 }
 
 function setStepReviewCount(key: string, count: number) {
@@ -1223,15 +1495,17 @@ function removeStepInstructionAttachment(key: string) {
 // the step only ever holds a reference. One file per step: a replace re-uses the same field, it
 // never adds a second reference, and the previous reserved file becomes cleanup-eligible only
 // after the next successful save (T#1 lifecycle), never here.
-async function onInstrFileSelected(step: WPStep, event: Event) {
+async function onInstrFileSelected(step: WPStep, rowKey: string, event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0] ?? null
   input.value = ''
   if (!file || isLocked.value || step.locked || !instrEligible(step)) return
-  instrUploadingKey.value = step.key
+  instrUploadingKey.value = rowKey
   try {
     const form = new FormData()
     form.append('file', file)
+    // The step's key at upload time; it only names the reserved file (the reference check is
+    // doc/filename/sha), so a later renumber does not invalidate the attachment.
     form.append('step_key', step.key)
     const res = await postFormRequest<any>(
       `/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan/pre-instruction-attachments`,
@@ -1248,19 +1522,21 @@ async function onInstrFileSelected(step: WPStep, event: Event) {
   }
 }
 
-async function saveFromDrawer(stepKey: string, stepIndex: number) {
+async function saveFromDrawer(rowKey: string, step: WPStep) {
+  const stepNo = rowNo(step)
   const result = await ensureSaved()
   if (result === 'saved' || result === 'clean') {
-    if (openDrawerKey.value === stepKey) openDrawerKey.value = null
-    showToast(t('main.work_plan.drawer_save_success', { n: stepIndex + 1 }), 'success')
+    // A saved new card trades its temporary id for the server's; persistPlanBody carried the
+    // open drawer over by position, so the row now at the same position counts as this one.
+    const after = plan.value?.steps[stepNo - 1]
+    const nowKey = after ? rowKeyOfStep(after) : null
+    if (openDrawerRow.value === rowKey || (nowKey !== null && openDrawerRow.value === nowKey)) {
+      openDrawerRow.value = null
+    }
+    showToast(t('main.work_plan.drawer_save_success', { n: stepNo }), 'success')
   }
   // 'failed' / 'capability_warning': the drawer and its inputs stay exactly as-is (D0007 §6.2)
   // — the existing save-failure / capability-warning banners already show what went wrong.
-}
-
-function isFirstOfType(step: WPStep, idx: number): boolean {
-  if (idx === 0) return true
-  return plan.value?.steps[idx - 1]?.type !== step.type
 }
 
 /**
@@ -1478,6 +1754,11 @@ async function persistPlanBody(body: WPBody, capabilityWarningAcks: string[] = [
   conflict.value = null
   topLevelErrorRecords.value = []
   stepErrorRecords.value = {}
+  // 0649 T#3: the server answers with the same steps in the same order, but a new card's
+  // temporary id becomes a real card_id — carry the open drawer over by row position.
+  const openIndex = openDrawerRow.value !== null && plan.value
+    ? plan.value.steps.findIndex((step) => rowKeyOfStep(step) === openDrawerRow.value)
+    : -1
   try {
     const payload: { base_revision_no: number; body: WPBody; capability_warning_acks?: string[] } = {
       base_revision_no: revisionNo.value,
@@ -1498,6 +1779,10 @@ async function persistPlanBody(body: WPBody, capabilityWarningAcks: string[] = [
       }))
     }
     restoreBuffer.clear()
+    if (openIndex >= 0) {
+      const reopened = plan.value?.steps[openIndex]
+      openDrawerRow.value = reopened ? rowKeyOfStep(reopened) : null
+    }
     dirty.value = false
     return { status: 'saved' }
   } catch (e: any) {
@@ -1507,17 +1792,22 @@ async function persistPlanBody(body: WPBody, capabilityWarningAcks: string[] = [
       return { status: 'capability_warning', findings: Array.isArray(data.findings) ? data.findings : [] }
     }
     if (status === 422 && Array.isArray(data?.errors)) {
-      const byKey: Record<string, WpFieldError[]> = {}
+      const byRow: Record<string, WpFieldError[]> = {}
       const top: WpFieldError[] = []
       for (const err of data.errors as WpFieldError[]) {
-        if (err.key) {
-          byKey[err.key] = byKey[err.key] ?? []
-          byKey[err.key].push(err)
+        // The server names the step by the key it had in the body just sent; pin the error to
+        // that row's identity so a later card move does not hand it to another card.
+        const step = err.key ? plan.value?.steps.find((s) => s.key === err.key) : undefined
+        const rowKey = step ? rowKeyOfStep(step) : null
+        if (rowKey) {
+          byRow[rowKey] = byRow[rowKey] ?? []
+          byRow[rowKey].push(err)
         } else {
+          // no key, or a key this screen does not hold (an uploaded file's step): top banner
           top.push(err)
         }
       }
-      stepErrorRecords.value = byKey
+      stepErrorRecords.value = byRow
       // No top-level field error: fall back to the headline `message` (unknown code renders
       // as its own msg, i.e. this fixed text) rather than leaving the banner empty.
       topLevelErrorRecords.value = top.length ? top : [{ loc: '', key: null, code: '', params: {}, msg: data.message }]
@@ -1811,7 +2101,7 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-note-count.is-over-limit { color:var(--danger); font-weight:700; }
 .wp-defaults-note.is-over-limit,.wp-step-msg.is-over-limit { border-color:var(--danger); background:color-mix(in srgb,var(--danger) 6%,var(--surface)); }
 .wp-step-head,.wp-step-row { display:grid; gap:6px; grid-template-columns:52px 40px minmax(96px,.9fr) 150px 176px minmax(140px,1.1fr) 30px; align-items:center; }
-.wp-step-head { padding:7px 10px 6px; margin-top:10px; border-bottom:1px solid var(--border-d); color:var(--text-m); font-size:.62rem; font-weight:700; letter-spacing:.07em; text-transform:uppercase; }
+.wp-step-head { padding:7px 10px 6px 36px; margin-top:10px; border-bottom:1px solid var(--border-d); color:var(--text-m); font-size:.62rem; font-weight:700; letter-spacing:.07em; text-transform:uppercase; }
 .wp-step-list {
   display: flex; flex-direction: column; gap: 4px;
   max-height: calc(342px + 1px); /* border-box keeps clientHeight at the mockup's 342px */
@@ -1820,7 +2110,21 @@ watch(() => props.docId, () => { void fetchPlan() })
   overflow-y: auto;
 }
 .wp-step-row { padding:3px 8px; border:1px solid var(--border); border-radius:var(--r-sm); background:var(--surface); flex-shrink:0; }
-.wp-step-row.is-first { border-left:3px solid #c7d2fe; }
+/* 0649 T#3 (NR0003 §5.3) — the card replaces the old "first row of a type" stripe: one frame per
+   single step or instruction+result set, a grip column on the left to move it as a whole. */
+.wp-card { display:flex; align-items:stretch; gap:4px; padding:3px 3px 3px 0; border:1px solid transparent; border-left:3px solid #c7d2fe; border-radius:var(--r-sm); flex-shrink:0; }
+.wp-card.is-started { border-left-color:var(--text-m); background:color-mix(in srgb,var(--text-m) 5%,transparent); }
+.wp-card.is-dragging { opacity:.5; }
+.wp-card.drag-over { border-top:2px solid var(--primary); }
+.wp-card-grip { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px; width:22px; flex-shrink:0; }
+.wp-card-handle { display:flex; align-items:center; justify-content:center; width:20px; height:18px; color:var(--text-m); cursor:grab; font-size:.8rem; }
+.wp-card-handle.is-disabled { cursor:not-allowed; opacity:.55; }
+.wp-card-move { width:20px; height:14px; padding:0; border:0; background:none; color:var(--text-m); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:.7rem; }
+.wp-card-move:hover:not(:disabled) { color:var(--primary); }
+.wp-card-move:disabled { opacity:.3; cursor:not-allowed; }
+.wp-card-rows { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
+.wp-card-drop-end { padding:6px; border:1px dashed var(--border-d); border-radius:var(--r-sm); color:var(--text-m); font-size:.68rem; text-align:center; flex-shrink:0; }
+.wp-card-drop-end.drag-over { border-color:var(--primary); color:var(--primary); }
 .wp-step-row.is-locked { background:#fbfcfe; }
 .wp-step-no { color:var(--text-m); font-size:.66rem; font-weight:700; }
 .wp-step-row .doc-tag { min-width:34px; text-align:center; font-size:.6rem; padding:1px 5px; }

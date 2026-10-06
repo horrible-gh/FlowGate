@@ -1268,6 +1268,14 @@ export default {
       quantity_removal_warning_title: 'Lowering this quantity will remove {n} step(s) that already have a value. Continue?',
       quantity_removal_warning_confirm: 'Continue and lower',
       quantity_removal_warning_cancel: 'Cancel',
+      // 0649 T#3 (NR0003 §5.3 / O7) — card moves and started-card lock.
+      card_drag_hint: 'Drag to reorder this card (a step, or an instruction + report set)',
+      card_move_up: 'Move card up',
+      card_move_down: 'Move card down',
+      card_drop_end: 'Drop here to move it to the end',
+      card_started_locked: 'This card already started in the workflow, so it cannot be moved or removed.',
+      card_move_before_started: 'A card cannot be placed in front of a card that already started.',
+      quantity_decrease_blocked_started: 'Every remaining {type} card already started, so the count cannot go lower.',
       // T0007 §1.2 — rendered from the server's code+params on every render of the current
       // UI locale. Wording is paired with work_plan_service._ERROR_COPY (same placeholder syntax).
       errors: {
@@ -1318,6 +1326,14 @@ export default {
         pre_instruction_attachment_original_name_mismatch: 'The attachment original filename differs from the registry.',
         pre_instruction_attachment_digest_mismatch: 'The attachment content digest does not match.',
         pre_instruction_attachment_outside_storage: 'The attachment path is outside the storage boundary.',
+        pair_not_adjacent: "A set's instruction step must be immediately followed by its result step, and a result step cannot stand alone.",
+        ordinal_order_invalid: 'Within one type, ordinals must appear in order starting from 1.',
+        card_id_invalid: "card_id must be at most {max} characters of letters, digits and _#.:-, and cannot start with 'retired:'.",
+        card_id_duplicate: 'Two different cards cannot share card_id {value}.',
+        card_id_pair_mismatch: "A set's instruction and result steps must carry the same card_id.",
+        card_id_missing: "An existing card is missing its card_id. Keep sending a card's card_id unchanged even after moving or renumbering it.",
+        card_id_unknown: 'card_id {value} is not in the previous body. Send a new card without card_id and the server assigns one.',
+        card_id_type_changed: 'The card type of card_id {value} cannot change.',
       },
       // T0007 rev1 §1 — maps `empty_selection`'s `what_key` param to the current UI locale.
       // Keys are paired with work_plan_service._EMPTY_SELECTION_WHAT.
@@ -2428,6 +2444,8 @@ export default {
       preset_revert_confirm: 'Only filled values are reverted. Workflow steps already added remain. Continue?',
       preset_mode_refreshed: 'Assignments were recalculated for the new mode; {n} manually edited cells were preserved.',
       preset_mode_failed: 'Could not recalculate assignments for this mode.',
+      // 0649 T#3 (NR0003 O2/O4)
+      preset_card_order_blocked: 'The work plan card order differs from the current workflow, so this fill cannot start. Use [Apply Work Plan] to bring the workflow into plan order, then reopen.',
       sequence_source: 'Filled from work plan {doc}.',
       note_unset: '{n} steps with no mention',
     },
@@ -2667,6 +2685,10 @@ export default {
       loading: 'Loading sequence...',
       error_load: 'Failed to load sequence',
       provider_readonly_rule: 'Per-step providers are read-only here. Change them in the work plan and pour it again.',
+      // 0649 T#3 (NR0003 O1) — a row the server fixes (started, or the pending report right after one).
+      protected_badge: 'Fixed',
+      protected_interleaved_note: 'Saving moves the {n} editable row(s) above a fixed row behind the last fixed row. Fixed rows keep their place.',
+      protected_slot_blocked: 'Not possible: a fixed row would change its place. An instruction and its auto report move only where the whole block fits before a fixed row.',
       provider_unavailable: '{name} · unavailable now',
       meta_contract_missing: 'The server response is missing note or source metadata. Saving now would erase existing values. Reload the sequence.',
       reload: 'Reload',
@@ -3019,8 +3041,6 @@ export default {
       section_status: 'Document Status',
       section_workflow: 'Workflow Progress',
       wp_assignments: 'Provider assignment (by step)', wp_assignment_steps: '{n} step(s)', wp_unassigned_steps: '{n} unassigned step(s)',
-      wp_review_summary_title: 'Review settings summary', wp_review_summary_text: '{n} of {total} step(s) · {list}', wp_review_summary_none: 'No steps set',
-      wp_instruction_summary_title: 'Pre-instruction status', wp_instruction_summary_text: '{n} of {total} eligible step(s) · {list}', wp_instruction_summary_none: 'No steps written',
       section_qa: 'Q&A',
       // 0311 T0004 rev1: Q&A stands alone (§1); rejection merges with AI review (§2).
       section_review_reject: 'AI Review / Rejection',
@@ -3241,6 +3261,34 @@ export default {
       notify_provider_not_registered: '{n} steps named a provider that is not registered or is switched off, so that cell was cleared. The plan\'s common provider fills it if there is one.',
       error_sequence_changed: 'The sequence changed elsewhere. Close this dialog and open it again.',
       error_wp_changed: 'The work plan changed after this dialog was opened. Close it and pour the latest plan again.',
+      // 0649 T#3 (NR0003 §5.3 / warning-blocker table) — notices, blockers and confirmation on the plan-reflecting paths.
+      notify_legacy_card_unresolved: '{n} earlier run rows cannot be proven to belong to a card. Confirming keeps them as earlier run history that belongs to no card, and that card may be poured again.',
+      notify_retired_plan_rows: '{n} run rows of a deleted earlier card stay where they are.',
+      notify_order_conflicts_started: 'Cards that already started ({cards}) are not at the front of the plan, so this cannot be saved. Move the started cards back to the front of the work plan.',
+      notify_started_card_removed: 'Cards that already started ({cards}) are gone from the plan, so this cannot be saved. Bring the card back in the work plan.',
+      notify_card_identity_mismatch: 'A started row and its plan card ({cards}) differ in type, so this cannot be saved.',
+      notify_plan_rows_pending: '{n} earlier rows of this plan are still pending, so it cannot be appended. Reopen with [Replace After].',
+      notify_steps_already_done: '{n} cards that already started were not poured again.',
+      notify_foreign_rows_before: '{n} other pending rows sit before this plan and run first.',
+      legacy_ack_label: 'Confirmed — treat the rows above as earlier run history and save.',
+      legacy_row: 'row {position} · {type} · {result} · r{rev} · candidates {keys}',
+      blocked_save: 'There is a blocker, so this cannot be saved.',
+      menu_blocked_plan_rows_pending: 'Earlier rows of this plan are still pending — use [Replace After] instead.',
+      menu_blocked_order_conflicts_started: 'Started cards are not at the front of the plan, so this cannot be saved.',
+      menu_blocked_started_card_removed: 'A started card is gone from the plan, so this cannot be saved.',
+      menu_blocked_card_identity_mismatch: 'A started row and its plan card differ in type, so this cannot be saved.',
+      menu_needs_ack: 'Some earlier run rows need your confirmation.',
+      error_legacy_card_unresolved: 'Some earlier run rows cannot be proven to belong to a card. Review the list, tick the confirmation and save again.',
+      error_order_conflicts_started: 'Not saved: cards that already started ({cards}) are not at the front of the plan.',
+      error_started_card_removed: 'Not saved: cards that already started ({cards}) are gone from the plan.',
+      error_card_identity_mismatch: 'Not saved: a started row and its plan card differ in type.',
+      error_plan_rows_pending: 'Not appended: earlier rows of this plan are still pending. Reopen with [Replace After].',
+      error_plan_order_violation: 'The result did not follow the work plan card order and was rolled back ({reason}). Pour again without moving or deleting rows.',
+      error_protected_row_echo_ambiguous: 'Not saved: a fixed row could not be told apart. Reload and save again.',
+      error_sequence_item_stale: 'Not saved: a row on screen no longer exists on the server. Reload and save again.',
+      error_protected_row_modified: 'A fixed row that already started cannot change. Reload and save again.',
+      reload_needed: 'Reload the sequence before saving.',
+      reload: 'Reload',
     },
     // 0325 TR0007 rev1 — the changes viewer opened by [Open changes] in the AC sidebar.
     group_changes: {

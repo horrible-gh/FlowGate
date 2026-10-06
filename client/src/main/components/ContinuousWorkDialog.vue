@@ -53,6 +53,12 @@
           <button type="button" class="btn btn-outline btn-sm" @click="revertSequenceNotes">{{ t('main.continuous_work.preset_revert') }}</button>
         </div>
         <div v-if="presetRefreshMessage" class="cwd-preset-refresh">{{ presetRefreshMessage }}</div>
+        <!-- 0649 T#3 (NR0003 O2/O4): a preset fills the existing rows (keep-workflow). When the
+             plan's card order no longer matches them, starting would run another order than the
+             plan — the start stays off and the server's reason is shown. -->
+        <div v-if="presetActive && presetCardBlocker" class="cwd-preset-refresh is-blocked" data-test="preset-card-blocker">
+          {{ presetCardBlocker }}
+        </div>
 
         <!-- ── Body: left = step list, right = settings tabs (0317 T0010 rev4) ── -->
         <div class="cwd-body">
@@ -536,6 +542,21 @@ const reviewCountOverrides = ref<Record<number, number>>({})
 // `defaultReviewerId`, 즉 프로젝트 유효 프로바이더 체인의 첫 항목이다.
 const reviewerOverrides = ref<Record<number, string>>({})
 const presetActive = ref(false)
+// 0649 T#3: keep-workflow codes that make a preset fill run an order other than the plan's.
+const PRESET_CARD_ORDER_BLOCKERS = new Set([
+  'order_differs', 'orphan_plan_rows', 'order_conflicts_started', 'started_card_removed',
+  'card_identity_mismatch', 'foreign_rows_interleaved', 'legacy_card_unresolved',
+])
+const presetCardBlocker = ref<string | null>(null)
+
+function cardBlockerMessage(
+  code: string | null | undefined,
+  warnings: Array<{ code: string; message?: string }> | undefined,
+): string | null {
+  if (!code || !PRESET_CARD_ORDER_BLOCKERS.has(code)) return null
+  return warnings?.find(warning => warning.code === code)?.message
+    || t('main.continuous_work.preset_card_order_blocked')
+}
 const presetTargetSeq = ref<number | null>(null)
 const editedSeqs = ref(new Set<number>())
 const prefilledMessageSeqs = ref(new Set<number>())
@@ -823,7 +844,9 @@ function onPickerChange(state: WorkflowStepPickerState) {
   picker.value = state
 }
 
-const canProceed = computed(() => picker.value.selection != null)
+const canProceed = computed(() =>
+  picker.value.selection != null && !(presetActive.value && presetCardBlocker.value),
+)
 
 const summaryText = computed(() => {
   if (picker.value.allDone) return t('main.continuous_work.all_done_summary')
@@ -979,6 +1002,11 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
   restartMaxAttempts.value = RESTART_COUNT_DEFAULT
   activeTab.value = 'basic'
   presetRefreshMessage.value = ''
+  // a preset handed over with a card-order blocker already in its warnings starts blocked
+  const blocking = value?.warnings?.find(
+    warning => warning.severity === 'blocker' && PRESET_CARD_ORDER_BLOCKERS.has(warning.code),
+  )
+  presetCardBlocker.value = blocking ? cardBlockerMessage(blocking.code, value?.warnings) : null
   editedSeqs.value = new Set()
   prefilledMessageSeqs.value = new Set()
   touchedNoteSeqs.value = new Set()
@@ -1022,6 +1050,7 @@ async function refreshPresetForMode() {
       { instruction_mode: instructionMode.value },
     )
     const fill = res.data.fill_preview ?? {}
+    presetCardBlocker.value = cardBlockerMessage(res.data.apply_blockers?.keep_workflow, res.data.warnings)
     const incomingProviders: Record<number, string> = Object.fromEntries(
       Object.entries(fill.provider_overrides ?? {}).map(([key, value]) => [Number(key), String(value)]),
     )
@@ -1113,6 +1142,7 @@ watch(presetActive, (active) => {
 .cwd-preset-banner div { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 .cwd-preset-banner span { color:var(--text-m); }
 .cwd-preset-refresh { background:var(--surface-h); justify-content:flex-start; }
+.cwd-preset-refresh.is-blocked { color: var(--danger, #b91c1c); font-weight: 600; }
 .cwd-filled-badge { flex:0 0 auto; font-size:.61rem; color:#0f766e; background:#ccfbf1; border-radius:99px; padding:2px 5px; }
 .cwd-stored-provider--unavailable { color:#b45309; background:#fff7ed; }
 /* 0399 T0018: notice for steps with no mention — informational, never blocks (D0010 §3.5). */

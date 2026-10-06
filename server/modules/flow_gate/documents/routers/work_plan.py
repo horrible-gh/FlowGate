@@ -327,8 +327,23 @@ def _emit(doc: dict, operation: str, payload: dict, actor: str) -> None:
         logger.warning(f"[work-plan] SSE publish failed (ignored): {exc}")
 
 
+def _started_card_ids(doc: dict, body: dict) -> set:
+    """0649 T#3 (NR0003 O7): cards the editor must keep in place — best effort.
+
+    A read failure only drops the editor's early lock; apply/pour/PATCH still refuse a plan
+    that moves or removes a started card (O2 and the post-write check).
+    """
+    try:
+        return set(wpa.started_card_ids(doc, body))
+    except Exception as exc:  # noqa: BLE001
+        import LogAssist.log as logger
+        logger.warning(f"[work-plan] started card lookup failed (ignored): {exc}")
+        return set()
+
+
 def _read_view(doc: dict, body: dict) -> dict:
     providers = _providers(doc.get("project_id") or "")
+    started_cards = _started_card_ids(doc, body)
     meta = {}
     try:
         meta = _json.loads(doc.get("meta") or "{}") or {}
@@ -385,6 +400,10 @@ def _read_view(doc: dict, body: dict) -> dict:
         "step_execution_status": [
             {
                 "step_key": step.get("key"),
+                # 0649 T#3 (NR0003 O7): which card the row belongs to and whether that card
+                # already started in the workflow (it cannot be moved or removed).
+                "card_id": step.get("card_id"),
+                "started": step.get("card_id") in started_cards,
                 "reviewer_provider": {
                     "provider_id": step.get("reviewer_provider_id"),
                     "enabled": (
