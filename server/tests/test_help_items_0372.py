@@ -111,8 +111,27 @@ def test_tr_review_hides_bundle_snapshot_help_and_notice(monkeypatch):
     assert client.get("/api/v1/help/items/source_snapshots").status_code == 403
 
 
-def test_non_tr_review_keeps_bundle_snapshot_help_and_notice(monkeypatch):
-    client = _client(monkeypatch, _token("review"), step_type="D")
+# 0672 T0004: Source Bundle help and its notice belong to the TS/TSR preserved set only.
+@pytest.mark.parametrize("scope, step_type", [("review", "D"), ("review", "T"), ("new", "N"), ("new", "T"), ("edit", "TR")])
+def test_general_steps_hide_bundle_snapshot_help_and_notice(monkeypatch, scope, step_type):
+    client = _client(monkeypatch, _token(scope), step_type=step_type)
+    body = client.get("/api/v1/help").json()
+    names = _names(body)
+    hidden = _hidden(body)
+    assert "source_tools" in names
+    assert "source_bundles" not in names
+    assert "source_snapshots" not in names
+    assert hidden["source_bundles"] == "source_bundle_ts_tsr_only"
+    assert hidden["source_snapshots"] == "source_bundle_ts_tsr_only"
+    assert client.get("/api/v1/help/items/source_bundles").status_code == 403
+    assert client.get("/api/v1/help/items/source_snapshots").status_code == 403
+    notices = client.get("/api/v1/help/items/notices").json()["content"]["lines"]
+    assert help_catalog.NOTICE_LINES["ko"]["source_snapshot_policy"] not in notices
+
+
+@pytest.mark.parametrize("scope, step_type", [("new", "TS"), ("edit", "TS"), ("review", "TS"), ("edit", "TSR"), ("review", "TSR")])
+def test_ts_tsr_steps_keep_bundle_snapshot_help_and_notice(monkeypatch, scope, step_type):
+    client = _client(monkeypatch, _token(scope), step_type=step_type)
     body = client.get("/api/v1/help").json()
     names = _names(body)
     assert "source_bundles" in names
@@ -132,11 +151,14 @@ def test_index_for_a_design_token_lists_the_template_and_hides_the_task_items(mo
     assert body["ok"] is True
     assert body["form"] == "index"
     assert body["version"] == help_catalog.VERSION
+    # 0672 T0004: Source Bundle help is a TS/TSR-only item now.
     assert _names(body) == [
         "notices", "group_documents", "document_access", "document_attachments", "doc_type",
-        "question", "submit", "source_tools", "source_bundles", "source_snapshots", "design_template",
+        "question", "submit", "source_tools", "design_template",
     ]
     assert _hidden(body) == {
+        "source_bundles": "source_bundle_ts_tsr_only",
+        "source_snapshots": "source_bundle_ts_tsr_only",
         "authoring_guide": "no_guide_for_type",
         "test_commands": "not_ts_type",
         "tr_self_check": "not_tr_edit",
@@ -181,6 +203,8 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     assert "step_verification_format" in _names(body)
     assert "authoring_guide" in _names(body)
     assert _hidden(body) == {
+        "source_bundles": "source_bundle_ts_tsr_only",
+        "source_snapshots": "source_bundle_ts_tsr_only",
         "design_template": "not_design_type",
         "test_commands": "not_ts_type",
         "tr_self_check": "not_tr_edit",
@@ -341,7 +365,7 @@ def test_notices_lines_follow_the_step_not_the_locale_file(monkeypatch):
     assert lines[0].startswith("이 작업은 무인(UNMANNED)")
     assert any("배정된 그룹 작업 공간" in line for line in lines)
 
-    attended = _client(monkeypatch, _token(), step_type="P") \
+    attended = _client(monkeypatch, _token(), step_type="TS") \
         .get("/api/v1/help/items/notices").json()
     attended_lines = attended["content"]["lines"]
     assert attended_lines[0] == help_catalog.NOTICE_LINES["ko"]["interactive_query_without_choice"]
@@ -354,7 +378,8 @@ def test_snapshot_notice_is_localized_and_hidden_without_source_tools(monkeypatc
     }
 
     for locale in ("ko", "en", "ja"):
-        remote_lines = _client(monkeypatch, _token(), step_type="P") \
+        # 0672 T0004: the Bundle notice is a TS/TSR-only line now.
+        remote_lines = _client(monkeypatch, _token(), step_type="TS") \
             .get(f"/api/v1/help/items/notices?locale={locale}").json()["content"]["lines"]
         assert help_catalog.NOTICE_LINES[locale]["source_snapshot_policy"] in remote_lines
 
@@ -617,7 +642,7 @@ def test_identifiers_never_translate(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
     body = client.get("/api/v1/help?locale=ja").json()
     assert _names(body)[:2] == ["notices", "group_documents"]
-    assert set(_hidden(body)) == {"design_template", "test_commands", "tr_self_check"}
+    assert set(_hidden(body)) == {"source_bundles", "source_snapshots", "design_template", "test_commands", "tr_self_check"}
 
 
 @pytest.mark.parametrize("locale", ["ko", "ja", "en"])

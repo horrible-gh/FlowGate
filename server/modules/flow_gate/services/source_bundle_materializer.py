@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.services import git_service
 from modules.flow_gate.storage import paths as storage_paths
-from modules.flow_gate.services.snapshot_materialization_service import (
+from modules.flow_gate.services.source_common import (
     EXCLUDED_DIR_NAMES, EXCLUDED_DIR_PREFIXES, EXCLUDED_FILE_NAMES,
 )
 

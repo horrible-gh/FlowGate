@@ -74,6 +74,8 @@ def test_run_test_keeps_registry_gate_and_uses_bundle_executor(monkeypatch):
     monkeypatch.setattr(tools.test_command_service, "list_for_view",
                         lambda _project: [{"command": "pytest -q", "verified_os": tools.test_command_service.current_os()}])
     observed = []
+    # 0672 T0004: run_test answers only inside the TS/TSR preserved set (a TS edit run here).
+    monkeypatch.setattr(tools.source_bundle_exposure, "for_doc_ref", lambda *_a, **_k: "run")
     monkeypatch.setattr(tools, "run_source_bundle",
                         lambda run, data, remain: (observed.append(data) or 200,
                                                    {"exit_code": 0, "duration_ms": 1,
@@ -142,6 +144,8 @@ def test_cli_transport_calls_bundle_core(monkeypatch):
 
     run = {"project_id": "project", "group_id": "group", "run_id": "run-1"}
     monkeypatch.setattr(routes, "_cli_context", lambda _request: ("token", {}, run))
+    # 0672 T0004: the routes answer only inside the TS/TSR preserved set (a TS edit run here).
+    monkeypatch.setattr(routes.exposure, "for_doc_ref", lambda *_a, **_k: routes.exposure.RUN)
     calls = []
     monkeypatch.setattr(routes.core, "access",
                         lambda _run, data: (calls.append(data) or 200, {"ok": True}))

@@ -21,7 +21,13 @@ from modules.flow_gate.db import workflow_events
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services import git_service, token_service
 from modules.flow_gate.services.snapshot_request_service import SnapshotRequestError
-from modules.flow_gate.storage import paths as storage_paths
+# 0672 T0004 stage 3: the capture exclusion policy and worker-facing locator redaction moved to
+# source_common (shared with Source Bundle); re-exported here for the legacy Snapshot code and tests.
+from modules.flow_gate.services.source_common import (  # noqa: F401
+    EXCLUDED_DIR_NAMES, EXCLUDED_DIR_PREFIXES, EXCLUDED_FILE_NAMES,
+    PATH_REDACTION, SCRATCH_REDACTION, SERVER_REDACTION, STORAGE_REDACTION, WORKTREE_REDACTION,
+    _ABSOLUTE_PATH_RE, _SERVER_ROOT, locator_roots, redact_error_text, redact_locators,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,39 +57,11 @@ ORPHAN_GRACE_SECONDS = max(
     60, int(os.getenv("FLOWGATE_SNAPSHOT_ORPHAN_GRACE_SECONDS", "3600"))
 )
 
-# Snapshot-copy policy is deliberately narrower than the TR change-list debris policy:
-# dot-prefixed source such as .github remains source, while known VCS/tool/build trees do not.
-EXCLUDED_DIR_NAMES = frozenset({
-    ".git", ".hg", ".svn",
-    "node_modules", ".venv", "venv", "env", "site-packages",
-    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox",
-    ".cache", ".parcel-cache", ".turbo",
-    "build", "dist", "htmlcov", "coverage", "coverage_html_report",
-    "tmp", "temp", SNAPSHOT_NAMESPACE,
-})
-EXCLUDED_FILE_NAMES = frozenset({".coverage"})
-EXCLUDED_DIR_PREFIXES = (".test-tmp", "pytest-cache-files-")
 INTERNAL_GARBAGE_NAMES = frozenset({
     "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
     ".tox", ".nox", ".cache", ".parcel-cache", ".turbo",
     "build", "dist", "htmlcov", "coverage", "coverage_html_report", "tmp", "temp",
 })
-
-# Worker-facing text (API tool results, CLI HTTP bodies, and the durable failure_reason /
-# cleanup_last_error columns they re-surface) must never carry a server-internal absolute
-# path. Known locator roots are replaced by a marker that keeps the relative suffix for
-# diagnosis; error text is additionally scrubbed of any remaining absolute path.
-SCRATCH_REDACTION = "<flowgate-snapshot-scratch>"
-WORKTREE_REDACTION = "<flowgate-worktree>"
-STORAGE_REDACTION = "<flowgate-storage>"
-SERVER_REDACTION = "<flowgate-server>"
-PATH_REDACTION = "<redacted-path>"
-_SERVER_ROOT = Path(__file__).resolve().parents[3]
-_ABSOLUTE_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s'\"<>|]*"          # C:\x, C:/x, and repr C:\\x
-    r"|(?<![^\s'\"(\[=,])(?:\\){2,4}[^\\/\s'\"<>|]+[\\/]+[^\s'\"<>|]*"  # UNC and \\?\ forms, at a token start
-    r"|(?<![\w.~:/\\>-])/[^\s'\"<>/\\]+/[^\s'\"<>]*"      # /abs/path (two or more segments)
-)
 
 _ID_RE = re.compile(r"\Asnap_[A-Za-z0-9_-]+\Z")
 _operations_guard = threading.Lock()
@@ -103,78 +81,6 @@ def _parse_time(value: object) -> datetime | None:
         return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
     except (TypeError, ValueError):
         return None
-
-
-def locator_roots(row: dict | None) -> tuple[tuple[str, str], ...]:
-    """(absolute root, marker) pairs whose prefixes must never reach an AI worker.
-
-    Covers the token scratch root (snapshot final/source/.flowgate-tmp all nest under it),
-    the live group worktree the snapshot copies from, the storage root that holds every
-    scratch and worktree, and the server install root. Raw and resolved spellings are both
-    kept (8.3 short names, junctioned roots). Best-effort: a lookup that fails only drops
-    that root, and the error-text path still falls back to the generic absolute-path scrub.
-    """
-    roots: list[tuple[str, str]] = []
-
-    def add(value: object, marker: str) -> None:
-        if not value:
-            return
-        path = Path(str(value))
-        candidates = [path]
-        try:
-            candidates.append(path.resolve())
-        except (OSError, RuntimeError):
-            pass
-        for candidate in candidates:
-            # Never redact a bare drive or a top-level directory such as /data.
-            if candidate.is_absolute() and len(candidate.parts) >= 3:
-                roots.append((str(candidate), marker))
-
-    row = row or {}
-    project_id = str(row.get("project_id") or "")
-    token_id = str(row.get("token_id") or "")
-    group_id = str(row.get("group_id") or "")
-    if project_id and token_id:
-        try:
-            add(token_service.scratch_dir_path(project_id, token_id), SCRATCH_REDACTION)
-        except Exception:
-            pass
-    if project_id and group_id:
-        try:
-            worktree, _reason = git_service.effective_src_root_ex(project_id, group_id)
-            add(worktree, WORKTREE_REDACTION)
-        except Exception:
-            pass
-    try:
-        add(storage_paths.get_storage_root(project_id or None), STORAGE_REDACTION)
-    except Exception:
-        pass
-    add(_SERVER_ROOT, SERVER_REDACTION)
-    return tuple(dict.fromkeys(roots))
-
-
-def redact_locators(text: str, roots: Iterable[tuple[str, str]]) -> str:
-    """Replace every spelling of each root prefix: native, '/', '\\', and the doubled
-    backslashes an OSError/repr() rendering produces. Longest root wins, so the scratch
-    marker survives even though the scratch lives under the storage root."""
-    pairs: dict[str, str] = {}
-    for root, marker in roots:
-        base = str(root or "")
-        if not base:
-            continue
-        windows = base.replace("/", "\\")
-        for needle in (base, base.replace("\\", "/"), windows, windows.replace("\\", "\\\\")):
-            pairs.setdefault(needle, marker)
-    flags = re.IGNORECASE if os.name == "nt" else 0
-    for needle in sorted(pairs, key=len, reverse=True):
-        marker = pairs[needle]
-        text = re.sub(re.escape(needle) + r"(?![\w-])", lambda _m, marker=marker: marker, text, flags=flags)
-    return text
-
-
-def redact_error_text(text: str, roots: Iterable[tuple[str, str]]) -> str:
-    """Error/diagnostic text: known roots get markers, any other absolute path is removed."""
-    return _ABSOLUTE_PATH_RE.sub(PATH_REDACTION, redact_locators(str(text), roots))
 
 
 def public_failure_reason(exc: BaseException, row: dict | None) -> str:

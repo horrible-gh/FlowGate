@@ -24,10 +24,11 @@ def _run(tmp_path):
 READ_SOURCE_NAMES = tuple(name for name, op in tools.SOURCE_OPS.items() if op in tools.tool_registry.READ_TOOLS)
 
 
+# 0672 T0004: Source Bundle left the general path -- a T step gets live source tools only.
 @pytest.mark.parametrize("scope, expected", [
-    ("new", list(tools.BASE_NAMES) + ["access_source_bundle"] + list(READ_SOURCE_NAMES)),
-    ("edit", list(tools.BASE_NAMES) + ["access_source_bundle"] + list(READ_SOURCE_NAMES)),
-    ("review", list(tools.BASE_NAMES) + ["access_source_bundle"] + list(READ_SOURCE_NAMES)),
+    ("new", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)),
+    ("edit", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)),
+    ("review", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)),
     ("test_run", list(tools.BASE_NAMES)),
 ])
 def test_registry_selects_scope_schema_and_tier(monkeypatch, tmp_path, scope, expected):
@@ -58,13 +59,25 @@ def test_tr_review_uses_live_reads_and_selfcheck_evidence_without_bundle(monkeyp
 @pytest.mark.parametrize("step_type", ["N", "NR", "CH", "P", "T"])
 def test_non_mutating_types_get_read_tier(monkeypatch, tmp_path, step_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
-    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + ["access_source_bundle"] + list(READ_SOURCE_NAMES)
+    monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: (step_type, False))
+    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)
 
 
-@pytest.mark.parametrize("step_type", ["TR", "TSR", "TS"])
-def test_mutating_types_get_read_write_and_test_tier(monkeypatch, tmp_path, step_type):
-    monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
-    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + ["access_source_bundle"] + list(tools.SOURCE_OPS) + ["run_source_bundle", "run_test"]
+# 0672 T0004 (NR0003 §2.1/§7): a `new` token's doc_ref is the spine, so the Bundle tools are
+# judged from (scope, doc_ref type, head type). The kind -- and so the live source tools --
+# still follows doc_ref exactly as before; only the Bundle tools moved to the TS/TSR set.
+@pytest.mark.parametrize("doc_type, head_type, bundle_tools", [
+    ("TR", "TR", []),
+    ("TSR", "TSR", []),
+    ("TS", "TS", ["access_source_bundle", "run_source_bundle", "run_test"]),
+    ("TR", "TS", ["access_source_bundle", "run_source_bundle", "run_test"]),
+])
+def test_mutating_types_get_read_write_and_test_tier(monkeypatch, tmp_path, doc_type, head_type, bundle_tools):
+    monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": doc_type})
+    monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: (head_type, False))
+    access = bundle_tools[:1]
+    run = bundle_tools[1:]
+    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + access + list(tools.SOURCE_OPS) + run
 
 
 @pytest.mark.parametrize("step_type", ["N", "NR", "T", "TR", "TSR", "TS"])
@@ -127,6 +140,8 @@ def test_run_test_is_sync_allowlisted_and_cwd_bound(monkeypatch, tmp_path):
     monkeypatch.setattr(bundle_access, "_roots", lambda *_args: ())
     monkeypatch.setattr(bundle_access, "_usage", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(bundle_access.subprocess, "Popen", popen)
+    # 0672 T0004: run_test answers only inside the TS/TSR preserved set (a TS edit run here).
+    monkeypatch.setattr(tools.source_bundle_exposure, "for_doc_ref", lambda *_a, **_k: "run")
 
     status, result = tools.run_test(_run(tmp_path), {"command": " pytest   -q "}, 9)
     assert status == 200 and result["exit_code"] == 7
@@ -250,8 +265,10 @@ def test_dispatcher_returns_a_result_for_every_call_id(monkeypatch, tmp_path, ca
 
 def test_full_remote_source_toolset_is_exposed_without_worktree(monkeypatch, tmp_path):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": "TR"})
+    monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: ("TR", False))
     names = [item["name"] for item in tools.definitions_for_run(_run(tmp_path))]
-    assert names == list(tools.BASE_NAMES) + ["access_source_bundle"] + list(tools.SOURCE_OPS) + ["run_source_bundle", "run_test"]
+    # 0672 T0004: TR(new) keeps the full live toolset and no longer receives Bundle tools.
+    assert names == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS)
     assert {"read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "patch", "write", "remove"} == set(tools.SOURCE_OPS.values())
     for name in tools.SOURCE_OPS:
         assert tools.SCHEMAS[name]["additionalProperties"] is False
@@ -395,6 +412,9 @@ def test_git_integration_lookup_failure_fails_closed(monkeypatch, tmp_path):
 @pytest.mark.parametrize("step_type", ["TR", "TSR", "TS"])
 def test_non_git_mutating_types_complete_read_mutation_test_and_register(monkeypatch, tmp_path, step_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
+    # 0672 T0004: run_test is advertised only inside the TS/TSR preserved set, so this
+    # read/mutation/test/register round trip runs as a TS(new) step over that doc_ref.
+    monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: ("TS", False))
     seen = []
     monkeypatch.setattr(tools.remote_tool_service, "handle", lambda op, _token, _body: seen.append(op) or (200, {"ok": True, "op": op}))
     monkeypatch.setattr(tools, "run_test", lambda _run, _input, _remaining: seen.append("run_test") or (200, {"ok": True}))
