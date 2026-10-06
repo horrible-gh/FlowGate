@@ -21,3 +21,5 @@ export type {
 // flowgate.v02.0026 — the Designer Center (center/: Flow Tabs + read-only Canvas) is assembled
 // inside the Shell only and has no consumer outside it, so it adds no export here.
 export { default as DesignerShell } from './shell/DesignerShell.vue'
+// flowgate.v02.0030 — the Palette part (palette/PalettePanel.vue) is mounted by the right Tool
+// Panel Container inside features/designer only, so it adds no export here either.

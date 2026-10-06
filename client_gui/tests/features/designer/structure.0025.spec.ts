@@ -77,10 +77,11 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
     expect(router).not.toMatch(/features\/designer\/shell/)
   })
 
-  it.each(['ko', 'en', 'ja'])('i18n %s has exactly one top-level designer key holding all four blocks', async (locale) => {
+  it.each(['ko', 'en', 'ja'])('i18n %s has exactly one top-level designer key holding all its blocks', async (locale) => {
     const file = join(SRC, `app/i18n/${locale}.ts`)
     expect(read(file).match(/^ {2}designer:\s*\{/gm)).toHaveLength(1)
     const messages = (await import(`@/app/i18n/${locale}.ts`)).default as Record<string, Record<string, unknown>>
-    expect(Object.keys(messages.designer).sort()).toEqual(['center', 'file_explorer', 'project_explorer', 'shell'])
+    // flowgate.v02.0030 added the Palette block.
+    expect(Object.keys(messages.designer).sort()).toEqual(['center', 'file_explorer', 'palette', 'project_explorer', 'shell'])
   })
 })
