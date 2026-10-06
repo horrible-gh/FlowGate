@@ -166,6 +166,7 @@
             :conversation-full-view-on="convFullViewOn"
             @close="tabsStore.closeTab(tab.id)"
             @edit-direct="onEditDirect(tab)"
+            @edit-url-import="onEditUrlImport(tab)"
             @edit-mention="onEditMentCopy(tab)"
             @invoke-command="onEditInvokeCommand(tab)"
             @invoke-ai="onEditInvokeAi(tab)"
@@ -709,6 +710,7 @@
 
     <DocumentEditDialog
       :visible="editVisible"
+      :initial-url-mode="editUrlImportMode"
       :tab="editTab"
       :body="editBody"
       :full-content="editFullContent"
@@ -1893,8 +1895,17 @@ if (typeof window !== 'undefined') {
   })
 }
 
+const editUrlImportMode = ref(false)
+
 function onEditDirect(tab: Tab) {
   closeEditDropdown()
+  editUrlImportMode.value = false
+  openEditModal(tab)
+}
+
+function onEditUrlImport(tab: Tab) {
+  closeEditDropdown()
+  editUrlImportMode.value = true
   openEditModal(tab)
 }
 
