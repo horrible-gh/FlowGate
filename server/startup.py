@@ -109,6 +109,26 @@ def recover_ai_evaluations():
         except Exception as exc:
             logger.warning(f"[startup] {label} recovery failed: {exc}")
 
+def start_conversation_integration():
+    """flowgate.v02.0032 T#1 (D0006 §2.3, §3.7, §4.3): composition root of the Conversation
+    contract. Connects its chat run hook handlers to the AI invoke / conversation turn
+    ports, then closes command requests a previous process left open (cancelled with
+    chat_command_server_restarted, never resumed) and repairs activity anchors."""
+    try:
+        from flowgate.conversation import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] conversation integration registration failed: {exc}")
+        return
+    try:
+        report = integration.recover_on_startup()
+        if report["commands_closed"] or report["anchors_moved"]:
+            logger.info(f"[startup] conversation recovery: {report}")
+    except Exception as exc:
+        logger.warning(f"[startup] conversation recovery failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
@@ -116,6 +136,7 @@ def run_all():
     preload_singletons()
     recover_ai_invoke_leases()
     recover_git_sessions()
+    start_conversation_integration()
     encrypt_ai_provider_keys()
     recover_ai_evaluations()
     start_snapshot_cleanup()

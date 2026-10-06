@@ -23,6 +23,7 @@ from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import questions as db_questions
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
+from modules.flow_gate.services import chat_run_hooks
 from modules.flow_gate.services import process_runner
 from modules.flow_gate.settings import ai_settings_service
 
@@ -68,7 +69,16 @@ def cancel_run(run_id: str) -> dict:
     if run["status"] == "finished":
         # Cancel raced the natural finish — idempotent OK, no kill (L0006 §5).
         return {"ok": True, "run_id": run_id, "status": "finished"}
-    run["status"] = "cancelling"
+
+    def announce() -> None:
+        run["status"] = "cancelling"
+
+    # flowgate.v02.0032 T#1 (D0006 §2.3, §3.7): a chat run closes its command requests
+    # first; the port's handler announces the cancel under its command launch gate, so no
+    # command process can start once the run is cancelling. No-op for other scopes.
+    chat_run_hooks.chat_run_cancel(run, announce)
+    if run["status"] != "cancelling":
+        announce()
     run["cancel_event"].set()
     proc = run.get("proc")
     if proc is not None:

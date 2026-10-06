@@ -66,6 +66,24 @@ DataTransfer `application/x-flowgate-palette-item`) 의도만 내보내고 Canva
 없음), 바인딩하지 않으면 세션 동안 부품이 보관합니다. `팔레트 / 대화 / Git` 탭과 Tool Panel
 Container는 후속 그룹이 조립하므로 Shell에는 아직 연결하지 않았고 공개 경계에도 내보내지 않습니다.
 
+`conversation/`은 flowgate.v02.0031에서 추가된 Designer 우측 도구 영역용 Conversation 독립
+부품입니다(시안 03 우측 대화 영역). `ConversationPanel`(`:project-id` + 활성 Flow의
+`:group-id`, `@open-change`)이 공개 경계이며, 상단(채팅 목록 / 수정 가능한 제목 / 새 채팅) ·
+하나의 시간순 타임라인(사용자/AI 메시지, 명령 실행 요청, 작업 변경, 상태 이벤트) · 참여자 ·
+하단 입력(대화 설정, AI 소스 모드 읽기/편집/1회 편집, 멘션 복사, AI 호출, AI 선택, 전송/중지)을
+담습니다. 상태는 패널 수명의 `conversationSession.ts` 세션이 단일 소유하고(Pinia 아님), 서버
+호출은 `conversationSource.ts` 경계 뒤의 `api.ts`가 v0.1 ConversationView/MainPanel이 이미 쓰는
+계약(CH 문서 목록·제목 PATCH, conversation turns/turn/read, ai-invoke, me/chat-settings,
+token/issue)과 flowgate.v02.0032의 Conversation production 계약을 사용합니다. 0032에서 기본 HTTP
+source를 이 계약에 연결했습니다: [새 채팅]은 workflow head와 무관한 standalone CH를
+`POST /api/v1/conversations`로 만들고(next-empty 미사용), 명령 실행 요청·run 단위 작업 변경은
+`GET /api/v1/chat-activity/{doc_id}`로 읽어 서버 anchor 위치에 놓으며, 승인/거절은
+`POST /api/v1/chat-commands/{request_id}/decision`으로 보냅니다. 실시간 구독 계층은 아직 없어
+AI 호출 polling tick(2.5초)마다, 호출이 끝난 직후, 결정 직후에 activity를 다시 읽습니다
+(`subscribeActivities` 미구현). 작업 변경 카드의 파일을 누르면 서버가 저장한 run 시작/종료 내용의
+diff를 카드 아래에 엽니다. 탭 전환·Tool Panel Container·Palette·Git·Designer 조립은 이 부품에
+포함하지 않습니다.
+
 `settings/`는 flowgate.v02.0020에서 추가된 Environment Settings(환경 설정) Feature입니다
 (시안 11~14: 워크스페이스 목록/상세, 시스템 › 사용자 / 보안 — `features/settings/index.ts`가
 라우팅되는 화면만 내보냅니다).

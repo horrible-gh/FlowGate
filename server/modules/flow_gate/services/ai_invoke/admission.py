@@ -37,6 +37,7 @@ from modules.flow_gate.services import token_service
 from modules.flow_gate.services import work_plan_attachment_service
 from modules.flow_gate.settings import ai_execution_policy_service
 from modules.flow_gate.settings import ai_settings_service
+from modules.flow_gate.services import chat_run_hooks
 from modules.flow_gate.storage import paths as storage_paths
 
 # Neither `chain` nor `worker` is imported as a sibling module here (both are also
@@ -1785,6 +1786,11 @@ def start_run(
         "inbox_stop_code": None,
         "failure_signal_sent": False,
     }
+    # flowgate.v02.0032 T#1 (D0006 §2.3, §3.8.1): the chat run start port -- command
+    # capability, the conversation head the run starts from and the start-tree snapshot.
+    # Chat-only and never refuses the run: a missing worktree or a failed snapshot only
+    # drops the run change summary. No-op when nothing is registered.
+    chat_run_hooks.chat_run_start(run)
     # 0515 T0009 §10: every run gets a handoff gate. The worker thread must not run its
     # real body (in particular the ai_invoke_started broadcast, T0009 §11) until this
     # opens -- see worker._worker()'s own gate wait at its very top.

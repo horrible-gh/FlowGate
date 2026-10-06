@@ -22,6 +22,7 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
+from modules.flow_gate.services import chat_run_hooks
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.storage import paths as storage_paths
@@ -316,6 +317,9 @@ def _finalize_run(run: dict) -> None:
         ("stop", lambda: _finalize_stop(run, respawn_pending)),
         ("scratch", lambda: _finalize_scratch(run)),
         ("source", lambda: _finalize_source(run)),
+        # flowgate.v02.0032 T#1 (D0006 §2.3, §3.8.2): chat runs close their open command
+        # requests, then record the run change. Chat-only; no-op when nothing is registered.
+        ("chat_run", lambda: chat_run_hooks.chat_run_finalize(run)),
         ("diagnostics", lambda: _finalize_diagnostics(run)),
         ("stop_row", lambda: _apply_stop_row(run, respawn_pending)),
         ("review_checkpoint", lambda: _finalize_review_checkpoint(run)),
