@@ -645,6 +645,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 # far back the worker is told to start reading.
                 user_id=user_id,
                 source_access=_chat_token_rec.get("source_access"),
+                # flowgate.v02.0032 T#1: this token belongs to a live run, so the CLI
+                # provider is told how to request commands for it (chat run hook port).
+                command_execution=True,
             )
         if body.action_scope == "rework":
             base = _standard_mention(raw_token, scratch_dir)

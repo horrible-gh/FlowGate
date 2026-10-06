@@ -604,6 +604,12 @@ def append_turn(
             # through here, so a screen sees a worker's reply and a human's message
             # by the same route.  A replay never reaches this line — re-broadcasting
             # an already-delivered turn is itself the side effect idempotency forbids.
+            # flowgate.v02.0032 T#1 (D0006 §2.3, §3.9.1): an AI reply of a chat run moves
+            # that run's activity anchors BEFORE the turn is broadcast, so a screen that
+            # re-reads activity on this turn already gets the reply anchor. The port never
+            # fails the append (and is a no-op when nothing is registered).
+            from modules.flow_gate.services import chat_run_hooks
+            chat_run_hooks.conversation_reply_appended(doc_id, row)
             from modules.flow_gate.services import conversation_events
             conversation_events.broadcast_turn_appended(doc, result)
             if after_commit is not None:

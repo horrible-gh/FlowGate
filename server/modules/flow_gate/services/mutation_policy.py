@@ -294,9 +294,36 @@ def is_policy_control_path(path: str) -> bool:
     )
 
 
+# flowgate.v02.0032 T#1 (D0006 §3.10.3): the two human routes the group AI-run lease must
+# never block. [new chat] creates a standalone CH (no worktree, no sequence; the number
+# is protected by the numbering CAS/retry), and a command decision is how the user
+# answers the very run that holds the lease while it waits. Matched with or without the
+# /flowgate context prefix. The CLI `POST /chat-commands` is NOT exempt: its worker token
+# passes the lease check as the lease owner.
+_CONVERSATION_CREATE_PATH = re.compile(r"^(?:/flowgate)?/api/v1/conversations/?$")
+_CHAT_COMMAND_DECISION_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-commands/[^/]+/decision/?$")
+_CHAT_COMMAND_WORKER_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-commands(?:/[^/]+)?/?$")
+
+
+def is_group_lease_exempt_path(path: str, method: str = "POST") -> bool:
+    """Explicit lease exemptions (D0006 §3.10.3), next to -- not inside --
+    ``is_policy_control_path``, whose ai-invoke meaning stays unchanged. The handlers
+    still check permission and group state themselves."""
+    if str(method or "").upper() != "POST":
+        return False
+    return bool(_CONVERSATION_CREATE_PATH.search(path) or _CHAT_COMMAND_DECISION_PATH.search(path))
+
+
 def classify_mutation_route(path: str, methods: set[str]) -> tuple[MutationResource, str]:
     if not (methods & MUTATION_METHODS):
         return "system", "read_only"
+    # flowgate.v02.0032 T#1 (D0006 §3.10.3): explicit reasons for the Conversation routes.
+    if _CONVERSATION_CREATE_PATH.search(path):
+        return "group", "conversation_create_lease_exempt"
+    if _CHAT_COMMAND_DECISION_PATH.search(path):
+        return "personal", "chat_command_decision"
+    if _CHAT_COMMAND_WORKER_PATH.search(path):
+        return "system", "chat_command_worker"
     if any(p.search(path) for p in _PERSONAL_PATHS):
         return "personal", "per_user_state"
     if any(p.search(path) for p in _SYSTEM_PATHS):
@@ -351,7 +378,12 @@ def annotate_mutation_routes(app: FastAPI) -> None:
 
 class GroupMutationPolicyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        if request.method.upper() not in MUTATION_METHODS or is_policy_control_path(request.url.path):
+        if (
+            request.method.upper() not in MUTATION_METHODS
+            or is_policy_control_path(request.url.path)
+            # flowgate.v02.0032 T#1 (D0006 §3.10.3): [new chat] and command decisions.
+            or is_group_lease_exempt_path(request.url.path, request.method)
+        ):
             return await call_next(request)
         # 0394 T0016 item 4: the two steps below read the DB synchronously (token lookup, lease
         # lookup) and write to it (heartbeat). dispatch is an async function **every** mutating

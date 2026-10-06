@@ -27,6 +27,9 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 _MODULE_ROOT = _SERVER_DIR / "modules" / "flow_gate"
+# flowgate.v02.0032 T#1 (D0006 §2.4 rule 4): the server-wide error-sink scans cover the
+# v0.2 application package too.
+_FLOWGATE_ROOT = _SERVER_DIR / "flowgate"
 sys.path.insert(0, str(_SERVER_DIR))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _korean_allowlist  # noqa: E402 — needs the sys.path insert above
@@ -588,7 +591,7 @@ def test_static_error_sinks_reject_unbranched_korean_across_all_modules():
     HTTPException/JSONResponse call in the same file), which this AST-only, single-file
     scan structurally cannot see either. Recorded honestly in the TR rather than assumed."""
     offenders = []
-    for path in sorted(_MODULE_ROOT.rglob("*.py")):
+    for path in sorted([*_MODULE_ROOT.rglob("*.py"), *_FLOWGATE_ROOT.rglob("*.py")]):
         source = path.read_text(encoding="utf-8-sig")
         tree = ast.parse(source, filename=str(path))
         helpers = _local_error_helpers(tree)
@@ -763,7 +766,8 @@ def test_error_payloads_reaching_a_raise_have_no_unbranched_korean():
     does not have to be written at the sink to reach the user — a module constant or a
     one-line builder handed to `raise` gets there just as well, and that is the shape all
     of NR0008 §3.1's D coordinates had."""
-    offenders = _scan_error_payloads(_MODULE_ROOT, _SERVER_DIR)
+    offenders = _scan_error_payloads(_MODULE_ROOT, _SERVER_DIR) + _scan_error_payloads(
+        _FLOWGATE_ROOT, _SERVER_DIR)
     assert not offenders, (
         "Korean error payload(s) reaching a raise/error sink through a constant or "
         "builder (server/modules/** wide scan, T0009 작업 3):\n" + "\n".join(offenders[:50])

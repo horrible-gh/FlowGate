@@ -48,6 +48,8 @@ from modules.flow_gate.api.v1.engine_recipe_routes import router as _engine_reci
 from modules.flow_gate.api.v1.git_routes import router as _git_router
 from modules.flow_gate.api.v1.conversation_routes import router as _conversation_worker_router
 from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settings_router
+# flowgate.v02.0032 T#1 (D0006 §2.1, §5.1): the v0.2 Conversation contract (server/flowgate/).
+from flowgate.conversation.routes import router as _conversation_router
 from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_router
 from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
 from modules.flow_gate.api.v1.source_bundle_routes import router as _source_bundle_router, overview_router as _source_bundle_overview_router
@@ -213,6 +215,7 @@ app.include_router(_engine_recipe_router, prefix=f"{CONTEXT}", tags=["EngineReci
 app.include_router(_git_router, prefix=f"{CONTEXT}", tags=["Git"])
 app.include_router(_conversation_worker_router, prefix=f"{CONTEXT}", tags=["Conversation"])
 app.include_router(_chat_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatSettings"])
+app.include_router(_conversation_router, prefix=f"{CONTEXT}/api/v1", tags=["Conversation"])
 app.include_router(_ui_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["UiSettings"])
 app.include_router(_snapshot_router, prefix=f"{CONTEXT}", tags=["Snapshots"])
 app.include_router(_source_bundle_router, prefix=f"{CONTEXT}", tags=["SourceBundles"])

@@ -41,7 +41,8 @@ _HANGUL = re.compile(r"[ㄱ-ㆎ가-힣]")
 # T0009 work item 7-1: scan roots as a module constant so a follow-up T can widen coverage
 # with a one-line addition (e.g. append "tests" once NR0008 T-2 lands). This T's own
 # scan covers only these two (the §1.3 scope).
-SCANNED_ROOTS = ["modules", "templates"]
+# flowgate.v02.0032 T#1 (D0006 §2.4 rule 2): the v0.2 application package joins the scan.
+SCANNED_ROOTS = ["modules", "templates", "flowgate"]
 
 # T0009 work item 7-6: per-file line caps, re-measured 2026-08-18 after TR0010 rev2's
 # (inbox_routes.py comment translation) finished — this is the real post-cleanup
@@ -228,7 +229,7 @@ def _scanned_files() -> list[Path]:
         root = _SERVER_DIR / root_name
         if not root.exists():
             continue
-        pattern = "*.py" if root_name == "modules" else "*"
+        pattern = "*.py" if root_name in ("modules", "flowgate") else "*"
         files.extend(sorted(p for p in root.rglob(pattern) if p.is_file()))
     return files
 

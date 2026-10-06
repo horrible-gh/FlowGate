@@ -275,6 +275,10 @@ def build_conversation_mention(
     # token they just issued/inspected. Threaded to _chat_lookup_sections so the CRUD
     # section this mention advertises matches the real grant, not a generic chat guess.
     source_access: Optional[str] = None,
+    # flowgate.v02.0032 T#1 (D0006 §3.4): True only from the in-app AI invoke path, whose
+    # token is bound to a live run that a chat tool (command request) can belong to. The
+    # sections come from the chat run hook port; the copy path (no run) never shows them.
+    command_execution: bool = False,
 ) -> str:
     """Build the single-turn chat mention used by copy and in-app invoke paths.
 
@@ -389,6 +393,11 @@ def build_conversation_mention(
         source_access=source_access,
     ):
         lines += ["", section]
+    if command_execution:
+        from modules.flow_gate.services import chat_run_hooks
+
+        for section in chat_run_hooks.chat_mention_sections(api_base, raw_token):
+            lines += ["", section]
     return "\n".join(lines)
 
 def _single_line(value: Optional[str]) -> str:

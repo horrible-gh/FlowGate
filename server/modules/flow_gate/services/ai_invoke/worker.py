@@ -29,6 +29,7 @@ from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import questions as db_questions
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.services import api_server_tools
+from modules.flow_gate.services import chat_run_hooks
 from modules.flow_gate.services import q_service
 from modules.flow_gate.services import register_binding
 from modules.flow_gate.services import token_service
@@ -1211,6 +1212,30 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     conflict_pending = run.get("action_scope") == "resolve_conflict"
     is_chat = run.get("action_scope") == "chat"
     is_sequence_edit = run.get("action_scope") == "workflow_sequence_edit"
+    # flowgate.v02.0032 T#1 (D0006 §2.3/§3.3): tools a chat run may call besides its reply
+    # tool come through the chat run hook port. With none registered the chat run keeps the
+    # single direct send_chat_reply tool exactly as before.
+    chat_tools = chat_run_hooks.chat_tools(run) if is_chat else []
+    chat_tool_handlers = {tool["name"]: tool["handler"] for tool in chat_tools}
+    chat_tool_specs: Optional[list[dict]] = None
+    if chat_tools:
+        chat_tool_specs = [
+            {"name": tool["name"], "description": tool["description"], "schema": tool["schema"]}
+            for tool in chat_tools
+        ] + [{
+            "name": _CHAT_TOOL_NAME, "description": _CHAT_TOOL_DESC,
+            "schema": _CHAT_TOOL_SCHEMA, "completion": True,
+        }]
+
+    def loop_remaining() -> float:
+        # A chat tool (run_command) may wait for the user and run a command for longer
+        # than the hop's nominal budget; it records that as run progress (D0006 §3.6), so a
+        # chat run with chat tools reads the progress-aware budget, capped by the hard
+        # ceiling. Every other run keeps the ORIGINAL `_remaining_sec` reading.
+        if chat_tool_handlers:
+            return _retry_remaining_sec(run)
+        return _svc()._remaining_sec(run)
+
     last_text: Optional[str] = None
     first_prompt = provider_api._api_help_prompt(prompt)
     conflict_specs: Optional[list[dict]] = None
@@ -1254,12 +1279,14 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             return "api_error", "conversation_context_unavailable"
         run["last_tool_error"] = None
         run["_chat_based_on_seq"] = int(chat_context.get("head_seq") or 0)
+        chat_hints = [str(tool["prompt_hint"]) for tool in chat_tools if tool.get("prompt_hint")]
         conversation.append({
             "role": "user",
             "content": (
                 "The server fetched the conversation for you. Use this as the conversation "
                 "you are replying to; do not claim that you still need to fetch it:\n"
                 + json.dumps(chat_context, ensure_ascii=False)
+                + ("\n\n" + "\n".join(chat_hints) if chat_hints else "")
             ),
         })
     turn = 0
@@ -1277,7 +1304,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         # subprocess to watch and no watchdog attached, so `_stall_remaining_sec` would
         # return this very number anyway; naming `_remaining_sec` here keeps the API
         # call ceiling and its cancel/timeout behaviour bit-for-bit unchanged.
-        remaining = _svc()._remaining_sec(run)
+        remaining = loop_remaining()
         if remaining <= 0:
             run["timed_out"] = True
             break
@@ -1286,6 +1313,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             tool_name, tool_desc, tool_schema = _DECIDE_TOOL_NAME, _DECIDE_TOOL_DESC, _DECIDE_TOOL_SCHEMA
         elif conflict_pending:
             tool_specs = conflict_specs
+            tool_name, tool_desc, tool_schema = tool_specs, "", {}
+        elif is_chat and chat_tool_specs is not None:
+            tool_specs = chat_tool_specs
             tool_name, tool_desc, tool_schema = tool_specs, "", {}
         elif is_chat:
             tool_name, tool_desc, tool_schema = _CHAT_TOOL_NAME, _CHAT_TOOL_DESC, _CHAT_TOOL_SCHEMA
@@ -1313,7 +1343,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         # 200 on any non-raising return, so that is what a success is recorded as.
         startup_attempt = 0
         while True:
-            attempt_remaining = _svc()._remaining_sec(run)
+            attempt_remaining = loop_remaining()
             if attempt_remaining <= 0:
                 run["timed_out"] = True
                 break
@@ -1524,6 +1554,11 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
 
                         _status, resp = api_server_tools.read_help(run, current_token, call["input"])
 
+                    elif call["name"] in chat_tool_handlers:
+                        # flowgate.v02.0032 T#1: blocks this same loop while a command waits
+                        # for the user's decision and runs; the result returns to this
+                        # conversation and the model continues from it.
+                        _status, resp = chat_tool_handlers[call["name"]](run, call["input"])
                     else:
 
                         _status, resp = _api_create_question(run, current_token, call["input"])
@@ -1552,6 +1587,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 if (
                     call["name"] not in api_server_tools.SOURCE_OPS
                     and call["name"] not in ("run_test", "read_help", *api_server_tools.SNAPSHOT_NAMES, *api_server_tools.BUNDLE_NAMES)
+                    and call["name"] not in chat_tool_handlers
                 ):
                     run["last_tool_name"] = "api_bound_request"
                     run["last_tool_status"] = _status

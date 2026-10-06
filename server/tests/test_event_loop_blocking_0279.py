@@ -279,6 +279,8 @@ def find_blocking_calls(source: str, filename: str = "<src>") -> list[str]:
 
 
 _MODULE_ROOT = _SERVER_DIR / "modules" / "flow_gate"
+# flowgate.v02.0032 T#1 (D0006 §2.4 rule 4): new route/middleware code lives in server/flowgate.
+_FLOWGATE_ROOT = _SERVER_DIR / "flowgate"
 
 
 def _router_sources() -> list[Path]:
@@ -293,6 +295,12 @@ def _router_sources() -> list[Path]:
         if "__pycache__" in path.parts:
             continue
         if "BaseHTTPMiddleware" in path.read_text(encoding="utf-8-sig"):
+            files.add(path)
+    for path in _FLOWGATE_ROOT.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8-sig")
+        if "APIRouter" in text or "BaseHTTPMiddleware" in text:
             files.add(path)
     return sorted(files)
 
