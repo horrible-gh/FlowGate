@@ -2321,6 +2321,15 @@ export default {
       mark_revised_confirm_message: 'Move this document back to pending review. Continue?',
       error_approve_failed_log: '[ReviewActionBar] Approval failed',
       toast_approve_failed: 'Approval failed: {detail}',
+      // 0683 T0004 §3 — name the attempt holding the target workspace by its real owner type.
+      target_busy_branch_merge: 'Target branch {target} is held by branch merge #{merge_id} ({source} → {target}) — state: {state}, started: {started_at}',
+      target_busy_group: 'Target branch {target} is held by the finalize #{merge_id} of group {group} ({source} → {target}) — state: {state}, started: {started_at}',
+      target_busy_unknown: 'Target branch {target} is held by merge attempt #{merge_id} — state: {state}, started: {started_at}',
+      target_owner_mismatch: 'The workspace owner of target branch {target} does not match an open attempt, so the approval was stopped for safety (merge #{merge_id}, reason: {reason}).',
+      target_busy_hint_branch_merge: 'Approve the review of that merge or abort the merge, then approve again. Rejecting it does not release the target.',
+      target_busy_hint_group: 'Finish or abort the conflict/review of that group, then approve again.',
+      target_busy_open_review: 'Open the blocking merge',
+      target_busy_state_unknown: 'unknown',
       // 0607 T0004 §3.6 — shown while the server's Git result is being confirmed after a lost approve response.
       git_settle_in_progress: 'The server is still running Git for this approval. Approve stays locked until the result is confirmed.',
       git_settle_deferred: 'The Git merge stopped on a conflict. Continue from the conflict resolution screen.',
@@ -3780,6 +3789,11 @@ export default {
       merge_conflict_title: 'Conflict — waiting to be resolved',
       merge_conflict_summary: '{n} file(s) conflict. The merge was not cancelled, and neither the target branch nor the remote changes until you approve.',
       merge_conflict_open: 'Open conflict resolution',
+      // 0683 T0004 §1 — a review wait is not a finished merge; hand over to the review.
+      merge_review_open: 'Open review',
+      merge_review_ready_toast: 'Every conflict is resolved. Opening the review — the merge is done only after you approve it.',
+      review_abort_confirm_title: 'Abort this merge?',
+      review_abort_confirm_message: 'This aborts the merge {source} → {target}. The resolution is discarded, the target branch stays as it is, and the target workspace is released.',
       merge_conflict_ai: {
         not_started: 'The AI resolver has not started yet.',
         starting: 'Starting the AI resolver.',
@@ -3822,6 +3836,8 @@ export default {
     // resolved general-merge conflict.
     git_review: {
       title: 'Pending approval',
+      // 0683 T0004 §2 — an ordinary branch merge can be aborted from its review as well.
+      abort: 'Abort merge',
       open_review: 'Open approval screen',
       no_review_pending: 'No conflict is waiting for review.',
       file_count: '{n} changed file(s)',

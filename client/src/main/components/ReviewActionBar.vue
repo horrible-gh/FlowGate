@@ -372,6 +372,27 @@
             <AppIcon :name="approvalJob?.stage === 'recovery_required' ? 'warning' : 'hourglass-medium'" />
             {{ approvalJobNotice }}
           </span>
+          <!-- 0683 T0004 §3: a target workspace held by another attempt is named — owner type,
+               merge id, source → target, state, start — and a branch merge holding it can be
+               opened right here (its review/resolver) instead of a bare "another finalize". -->
+          <span
+            v-if="targetBlocker"
+            class="ab-gate-hint ab-target-blocker"
+            data-testid="ab-target-blocker"
+            role="alert"
+            :title="targetBlockerText"
+          >
+            <AppIcon name="warning" />
+            <span data-testid="ab-target-blocker-text">{{ targetBlockerText }}</span>
+            <span class="ab-target-blocker-hint">{{ targetBlockerHint }}</span>
+            <button
+              v-if="targetBlockerOpenable"
+              type="button"
+              class="btn btn-secondary btn-sm"
+              data-testid="ab-target-blocker-open"
+              @click="openBlockerReview"
+            >{{ t('main.review_action_bar.target_busy_open_review') }}</button>
+          </span>
           <span v-if="testGateBlocked" class="ab-gate-hint" data-testid="ab-test-gate-hint">
             <AppIcon name="prohibit" /> {{ t('main.review_action_bar.test_gate_blocked') }}
           </span>
@@ -530,6 +551,16 @@
       </div>
     </ConfirmModal>
 
+    <!-- 0683 T0004 §3: the blocking branch merge's own resolver/review dialogs, on its
+         project-scoped routes (the same host the Branch Manager uses). -->
+    <GitBranchMergeConflictHost
+      v-if="blockerReviewMergeId != null && blockerReviewProjectId"
+      :project-id="blockerReviewProjectId"
+      :merge-id="blockerReviewMergeId"
+      @close="blockerReviewMergeId = null"
+      @changed="onBlockerChanged"
+    />
+
     <!-- Revision complete confirm dialog -->
     <ConfirmModal
       v-model:visible="showMarkRevisedConfirm"
@@ -556,6 +587,12 @@ import {
 } from '../composables/finalizeAxis'
 import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { describeTr2Error } from './documents/tr2State'
+import GitBranchMergeConflictHost from './GitBranchMergeConflictHost.vue'
+import {
+  isOpenableBranchMergeBlocker,
+  mergeTargetBlockerOf,
+  type MergeTargetBlocker,
+} from '@shared/mergeTargetBlocker'
 
 type ActionBarMode = 'workflow' | 'next' | 'review' | 'q' | 'info' | 'sequence-complete' | 'rejected' | 'workflow-recover'
 
@@ -1358,7 +1395,72 @@ function onApprovalJobEvent(e: Event) {
 
 watch(() => props.docId, () => {
   approvalJob.value = null
+  targetBlocker.value = null
+  blockerReviewMergeId.value = null
 })
+
+// ── 0683 T0004 §3 — who holds the merge target ──────────────────────────────
+const targetBlocker = ref<MergeTargetBlocker | null>(null)
+const blockerReviewMergeId = ref<number | null>(null)
+const blockerReviewProjectId = computed(() => targetBlocker.value?.projectId || props.projectId || '')
+const targetBlockerOpenable = computed(() => isOpenableBranchMergeBlocker(targetBlocker.value))
+
+function blockerStateLabel(blocker: MergeTargetBlocker): string {
+  const state = blocker.state
+  if (!state) return t('main.review_action_bar.target_busy_state_unknown')
+  const key = `main.git_branch_manager.attempt_state.${state}`
+  return te(key) ? t(key) : state
+}
+
+function blockerTime(value: string | null): string {
+  return value ? value.replace('T', ' ').slice(0, 16) : '-'
+}
+
+const targetBlockerText = computed(() => {
+  const b = targetBlocker.value
+  if (!b) return ''
+  const params = {
+    target: b.targetBranch || '-',
+    merge_id: b.mergeId ?? '-',
+    source: b.sourceBranch || '-',
+    group: b.groupId || '-',
+    state: blockerStateLabel(b),
+    started_at: blockerTime(b.startedAt),
+    reason: b.reason || '-',
+  }
+  if (b.code === 'merge_target_owner_mismatch') return t('main.review_action_bar.target_owner_mismatch', params)
+  if (b.ownerType === 'branch_merge') return t('main.review_action_bar.target_busy_branch_merge', params)
+  if (b.ownerType === 'group') return t('main.review_action_bar.target_busy_group', params)
+  return t('main.review_action_bar.target_busy_unknown', params)
+})
+
+const targetBlockerHint = computed(() => {
+  const b = targetBlocker.value
+  if (!b || b.code !== 'merge_target_busy') return ''
+  return b.ownerType === 'branch_merge'
+    ? t('main.review_action_bar.target_busy_hint_branch_merge')
+    : t('main.review_action_bar.target_busy_hint_group')
+})
+
+/** Remember a blocker named by an approve failure; returns its one-line description. */
+function noteTargetBlocker(input: unknown): string | null {
+  const blocker = mergeTargetBlockerOf(input)
+  if (!blocker) return null
+  targetBlocker.value = blocker
+  return targetBlockerText.value
+}
+
+function openBlockerReview() {
+  const b = targetBlocker.value
+  if (!isOpenableBranchMergeBlocker(b)) return
+  blockerReviewMergeId.value = b!.mergeId
+}
+
+function onBlockerChanged() {
+  // The blocker moved (approved / aborted / rejected): its old description is no longer true;
+  // the next [승인] re-asks the server.
+  targetBlocker.value = null
+}
 
 async function postApproveWithGitRetry(body: Record<string, unknown>) {
   const url = `/api/v1/documents/review_transitions/approve`
@@ -1391,6 +1493,7 @@ async function doApprove() {
   approving.value = true
   const generation = ++approveGeneration
   let sentGitAction = false
+  targetBlocker.value = null
   try {
     if (props.beforeApprove && !(await props.beforeApprove())) return
     // §3.1: the git finalize choice rides on the approve request only when the
@@ -1444,6 +1547,8 @@ async function doApprove() {
           t('main.git_status.base_untracked_conflict_toast', { files: blocked.join(', ') }),
           'warning',
         )
+      } else if (noteTargetBlocker(git)) {
+        showToast(targetBlockerText.value, 'warning')
       } else {
         showToast(git.error?.message || t('main.git_finalize.failed'), 'warning')
       }
@@ -1516,6 +1621,7 @@ async function doApprove() {
       || (approval == null && updated?.doc_review_status === 'approved')
     if (!approved && (approval?.stage === 'queued' || approval?.stage === 'recovery_required')) {
       // 0674 T0004 §2-3: not approved yet, not failed either — the job finishes it.
+      if (payload?.block_reason) noteTargetBlocker({ error: payload.block_reason })
       const job = (payload?.job ?? {}) as ApprovalJobView
       const recovery = approval.stage === 'recovery_required'
       setApprovalJob({
@@ -1542,9 +1648,17 @@ async function doApprove() {
   } catch (e: any) {
     // TR2 returns a specific refusal code; present its meaning in the approval bar.
     const code = e?.response?.data?.code
-    const detail = typeof code === 'string' && code.startsWith('tr2_')
+    // 0683 T0004 §3: a held merge target names its holder instead of the server's one line.
+    const blockerText = noteTargetBlocker(e)
+    if (blockerText && e?.response?.data?.approval?.stage === 'precheck') {
+      // Refused before anything was approved or queued — there is no Git outcome to settle.
+      console.error(t('main.review_action_bar.error_approve_failed_log'), blockerText)
+      showToast(t('main.review_action_bar.toast_approve_failed', { detail: blockerText }), 'danger')
+      return
+    }
+    const detail = blockerText ?? (typeof code === 'string' && code.startsWith('tr2_')
       ? describeTr2Error(e, t, te).text
-      : (e?.response?.data?.detail ?? e?.response?.data?.error?.message ?? e)
+      : (e?.response?.data?.detail ?? e?.response?.data?.error?.message ?? e))
     if (props.docType === 'TR2' && code === 'tr2_spec_changed') {
       emit('tr2-stale')
     }
@@ -2183,6 +2297,8 @@ onBeforeUnmount(() => {
 .ab-gate-hint { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--danger); white-space: nowrap; }
 .ab-approval-job { color: #b45309; white-space: normal; max-width: 420px; }
 .ab-approval-job--recovery { color: var(--danger); }
+.ab-target-blocker { color: var(--danger); white-space: normal; max-width: 560px; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.ab-target-blocker-hint { color: var(--text-secondary, inherit); }
 </style>
 
 

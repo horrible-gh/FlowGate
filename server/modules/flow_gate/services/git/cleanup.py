@@ -175,13 +175,22 @@ def _review_pending_ttl_expired(session: dict) -> bool:
     """0668 T0004 — the TTL of a session that is resolved and waiting for its review.
 
     Resolve → leave → come back and review is the normal flow now, so a review wait is
-    not abandonment by itself. A session that does not hold the base checkout (a
-    managed non-base target workspace) blocks nobody and simply waits. One that holds
-    it keeps the ordinary activity TTL — opening the review screen counts as activity —
-    under a hard cap from creation, so ``guard_base_free`` never blocks other groups
-    without bound. [보류] (hold) stays the explicit way to park longer.
+    not abandonment by itself. One that holds the base checkout keeps the ordinary
+    activity TTL — opening the review screen counts as activity — under a hard cap from
+    creation, so ``guard_base_free`` never blocks other groups without bound. [보류]
+    (hold) stays the explicit way to park longer.
+
+    0683 T0004 §5: a session on a managed non-base target workspace is not harmless to
+    others — it owns that target's workspace, and every other finalize or branch merge
+    into the same target is refused ``merge_target_busy`` until it is approved or
+    aborted. It still gets no time-based expiry here: a person's pending review is
+    never deleted because it is old. Instead the refusal names it (merge id, owner,
+    source, state, route — ``merge_target._blocker_details``) so the person who is
+    blocked can find it and finish or abort it, and an attempt that is really dead
+    (``PHASE_INTERRUPTED``) is reclaimed at plan time (``recover_interrupted_claim``).
     """
     if not merge_target.holds_base_checkout(session):
+        # Not base-gate held; it may well block its own target — see above.
         return False
     if _ttl_expired(session.get("touched_at") or session.get("created_at")):
         return True
@@ -465,6 +474,44 @@ def _recover_interrupted(session: dict, project_id: str, reason: str) -> None:
         outcome = merge_target.recover_interrupted_attempt(fresh, reason)
         if outcome == merge_target.ATTEMPT_INTERRUPTED:
             _emit_auto_aborted(project_id, fresh["group_id"], int(fresh["merge_id"]), reason)
+    finally:
+        session_unlock(lock_ctx, held)
+
+
+def recover_interrupted_claim(session: dict, project_id: str) -> bool:
+    """0683 T0004 §4 — the sweep's interrupted-attempt recovery, run on demand when a new
+    attempt is planned onto a target this open attempt still claims.
+
+    Same lock (the attempt's workspace domain + R, no wait) and the same re-read under it
+    as :func:`_recover_interrupted`; a group finalize or a branch merge alike. True only
+    when the claim was really settled (closed as interrupted, or reconciled to the merge
+    that had already landed) — anything else leaves the row, the marker and the tree
+    alone and the caller keeps its ``merge_target_busy`` refusal."""
+    from modules.flow_gate.services import git_service as _gs
+    merge_id = int(session["merge_id"])
+    try:
+        lock_ctx, held = session_lock(session, project_id, holder_kind="sweep", publish=True,
+                                      mode=locks.NO_WAIT)
+    except GitServiceError:
+        return False   # somebody is working on it right now — it is not dead
+    try:
+        fresh = _gs.db_git.get_session(merge_id)
+        if fresh is None:
+            return False
+        if fresh.get("status") != "open":
+            return True    # settled meanwhile (another sweep/plan pass)
+        if merge_target.attempt_phase(fresh) != merge_target.PHASE_INTERRUPTED:
+            return False
+        outcome = merge_target.recover_interrupted_attempt(fresh, "interrupted_at_plan")
+        if outcome is None:
+            return False
+        if _gs.db_git.is_branch_merge_session(fresh):
+            from . import branch_merge
+            if outcome == merge_target.ATTEMPT_INTERRUPTED:
+                branch_merge.record_event(merge_id, branch_merge.EV_FAILED, error="interrupted_at_plan")
+        elif outcome == merge_target.ATTEMPT_INTERRUPTED:
+            _emit_auto_aborted(project_id, fresh["group_id"], merge_id, "interrupted_at_plan")
+        return True
     finally:
         session_unlock(lock_ctx, held)
 

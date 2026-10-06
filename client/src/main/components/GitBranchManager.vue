@@ -189,7 +189,9 @@
             class="btn btn-sm btn-primary"
             data-test="merge-conflict-open"
             @click="openMergeId = mergeResult?.mergeId ?? null"
-          >{{ t('main.git_branch_manager.merge_conflict_open') }}</button>
+          >{{ mergeResult.aiStatus === 'review'
+            ? t('main.git_branch_manager.merge_review_open')
+            : t('main.git_branch_manager.merge_conflict_open') }}</button>
         </div>
       </div>
       <div
@@ -238,12 +240,17 @@
             {{ t('main.git_branch_manager.open_merge_files', { resolved: attempt.resolved_count, total: attempt.file_count }) }}
           </span>
           <span class="branch-spacer"></span>
+          <!-- 0683 T0004 §1 — a review wait is not a finished merge: the row says where it
+               goes on (the review), and the same host opens it in review mode. -->
           <button
             type="button"
-            class="btn btn-sm btn-secondary"
+            class="btn btn-sm"
+            :class="isReviewState(attempt.state) ? 'btn-primary' : 'btn-secondary'"
             data-test="open-merge-resolve"
             @click="openMergeId = attempt.merge_id"
-          >{{ t('main.git_branch_manager.merge_conflict_open') }}</button>
+          >{{ isReviewState(attempt.state)
+            ? t('main.git_branch_manager.merge_review_open')
+            : t('main.git_branch_manager.merge_conflict_open') }}</button>
         </div>
       </div>
     </form>
@@ -302,7 +309,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { deleteRequest, getRequest, postRequest, putRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
@@ -379,7 +386,10 @@ async function startConflictAi(mergeId: number) {
       showToast(t('main.git_branch_manager.merge_conflict_ai.start_failed'), 'danger')
     } else {
       showToast(t('main.git_finalize.conflict_ai_started'), 'success')
-      if (mergeResult.value?.mergeId === mergeId) mergeResult.value = { ...mergeResult.value, aiStatus: 'running' }
+      if (mergeResult.value?.mergeId === mergeId) {
+        mergeResult.value = { ...mergeResult.value, aiStatus: 'running' }
+        watchConflictAttempt()
+      }
     }
   } catch (e: any) {
     showToast(e?.response?.data?.error?.message || t('main.git_branch_manager.op_failed'), 'danger')
@@ -662,6 +672,10 @@ async function confirmMerge() {
           files: Array.isArray(data.conflict_files) ? data.conflict_files : [],
           aiStatus: data.status === 'resolved_pending_review' ? 'review' : (data.ai?.status || undefined),
         }
+        // 0683 T0004 §1 — already resolved: straight to the review; otherwise follow the
+        // attempt until it gets there.
+        if (data.status === 'resolved_pending_review') handOffToReview(Number(data.merge_id))
+        else watchConflictAttempt()
       } else {
         mergeResult.value = { source: sourceLabel, target: targetLabel, pushed: !!data?.pushed }
       }
@@ -691,12 +705,93 @@ async function confirmMerge() {
 // (load() never rejects; it records the failure in `error` instead), so a
 // transient read failure never blanks a list that was already showing.
 function loadQuietly() { void load() }
-function onConflictHostClosed() {
+
+// 0683 T0004 §1 — conflict → AI resolve → `resolved_pending_review` must reach a person.
+// While the conflict card of the merge just started is up (and its dialogs are not), the
+// attempt is re-read from the server; the moment it reaches review the review dialog opens
+// on it. `resolved_pending_review` is NOT a merged result — only the review's approve is.
+const REVIEW_ATTEMPT_STATES = new Set(['resolved_pending_review', 're_review', 'applying', 'reconciling'])
+const CLOSED_ATTEMPT_STATES = new Set(['completed', 'aborted', 'failed', 'interrupted'])
+const ATTEMPT_WATCH_MS = 3000
+let attemptWatchTimer: ReturnType<typeof setTimeout> | null = null
+let unmounted = false
+// One automatic hand-off per attempt: a person who closes the review is not pulled back in.
+const autoOpenedMergeIds = new Set<number>()
+function isReviewState(state?: string | null): boolean {
+  return !!state && REVIEW_ATTEMPT_STATES.has(state)
+}
+function stopAttemptWatch() {
+  if (attemptWatchTimer) clearTimeout(attemptWatchTimer)
+  attemptWatchTimer = null
+}
+function handOffToReview(mergeId: number) {
+  stopAttemptWatch()
+  if (mergeResult.value?.mergeId === mergeId) mergeResult.value = { ...mergeResult.value, aiStatus: 'review' }
+  if (autoOpenedMergeIds.has(mergeId) || openMergeId.value != null) return
+  autoOpenedMergeIds.add(mergeId)
+  showToast(t('main.git_branch_manager.merge_review_ready_toast'), 'success')
+  openMergeId.value = mergeId
+}
+async function readConflictAttempt(mergeId: number): Promise<{ state?: string; ai?: { status?: string }; pushed?: boolean } | null> {
+  const { data } = await getRequest<{ ok: boolean; result?: any }>(
+    `/api/v1/projects/${props.projectId}/git/merge/${mergeId}`,
+  )
+  return data?.result || null
+}
+/** Settle the conflict card from the attempt's server state; true while it is still live. */
+function settleConflictCard(mergeId: number, attempt: { state?: string; ai?: { status?: string }; pushed?: boolean } | null): boolean {
+  const card = mergeResult.value
+  if (!card || card.mergeId !== mergeId || !attempt?.state) return !!card && card.mergeId === mergeId
+  if (isReviewState(attempt.state)) {
+    handOffToReview(mergeId)
+    return false
+  }
+  if (CLOSED_ATTEMPT_STATES.has(attempt.state)) {
+    // Approved (completed) or given up: the card no longer stands for a live conflict.
+    mergeResult.value = attempt.state === 'completed'
+      ? { source: card.source, target: card.target, pushed: !!attempt.pushed }
+      : null
+    loadQuietly()
+    return false
+  }
+  if (attempt.ai?.status && attempt.ai.status !== card.aiStatus) {
+    mergeResult.value = { ...card, aiStatus: attempt.ai.status }
+  }
+  return true
+}
+function watchConflictAttempt() {
+  stopAttemptWatch()
+  const mergeId = mergeResult.value?.mergeId
+  if (unmounted || mergeId == null || openMergeId.value != null) return
+  attemptWatchTimer = setTimeout(async () => {
+    attemptWatchTimer = null
+    if (unmounted || mergeResult.value?.mergeId !== mergeId || openMergeId.value != null) return
+    let live = true
+    try {
+      live = settleConflictCard(mergeId, await readConflictAttempt(mergeId))
+    } catch {
+      // a transient read failure keeps the card; the next tick retries
+    }
+    if (live) watchConflictAttempt()
+  }, ATTEMPT_WATCH_MS)
+}
+async function onConflictHostClosed() {
+  const closed = openMergeId.value
   openMergeId.value = null
   loadQuietly()
+  if (closed == null || mergeResult.value?.mergeId !== closed) return
+  try {
+    if (settleConflictCard(closed, await readConflictAttempt(closed))) watchConflictAttempt()
+  } catch {
+    watchConflictAttempt()
+  }
 }
 watch(() => props.projectId, loadQuietly)
 onMounted(loadQuietly)
+onBeforeUnmount(() => {
+  unmounted = true
+  stopAttemptWatch()
+})
 // Picking (via the <select> itself) the branch already on the other side
 // swaps them instead of leaving the pick blocked — this, plus both selects
 // always listing every ordinary branch (sourceCandidates/targetCandidates

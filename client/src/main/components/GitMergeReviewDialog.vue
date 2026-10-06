@@ -312,6 +312,9 @@
                it for real: the child is `stack.top()`, so this whole surface renders `inert`
                and neither button can be reached while the reject prompt is up. -->
           <DialogFooter :actions="actions">
+            <template #action-abort>
+              <AppIcon name="prohibit" /> {{ t('main.git_review.abort') }}
+            </template>
             <template #action-reject>
               <AppIcon name="prohibit" /> {{ t('main.git_review.reject') }}
             </template>
@@ -380,9 +383,14 @@ const props = defineProps<{
   selectedProvider?: string
   providerLoading?: boolean
   providerErrored?: boolean
+  // 0683 T0004 §2 — an ordinary branch merge can be given up from its review too (the
+  // host owns the POST …/abort). Off by default: a group finalize / TR review keeps its
+  // approve/reject-only footer and its own abort routes elsewhere.
+  abortable?: boolean
+  abortBusy?: boolean
 }>()
 
-const emit = defineEmits<{ close: []; resolved: []; 'update:provider': [value: string] }>()
+const emit = defineEmits<{ close: []; resolved: []; abort: []; 'update:provider': [value: string] }>()
 
 const reviewApiBase = computed(
   () => props.mergeApiBase || `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}`,
@@ -764,7 +772,20 @@ function onHeaderClose() {
  * `disabled` conditions are the originals MINUS `rejectPromptOpen`, which the nested dialog
  * contract now enforces for the whole surface instead.
  */
+const canAbort = computed(() => {
+  const state = review.value?.review_state
+  // `applying`/`reconciling` may already have a commit — only reconciliation settles those.
+  return !!props.abortable && state !== 'applying' && state !== 'reconciling'
+})
+
 const actions = computed<DialogAction[]>(() => [
+  ...(props.abortable ? [{
+    id: 'abort',
+    label: t('main.git_review.abort'),
+    role: 'stop' as const,
+    disabled: busy.value || !!props.abortBusy || !canAbort.value,
+    onSelect: () => emit('abort'),
+  }] : []),
   {
     id: 'reject',
     label: t('main.git_review.reject'),
