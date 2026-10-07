@@ -8,10 +8,14 @@ approval manifest, the asset API and the locator: ``tests/**``, ``test/**``,
 ``runner_unsupported`` (no JS/TS runner in this set), fixtures by extension. Git tracking
 is not asked any more: an untracked test file a TR created is captured, run and edited
 like a tracked one. Path safety and manifest-only edits stay.
+
+0684 T#2: the run's copy (not a Bundle capture) applies the manifest rule, and the asset
+API's authority is the approved specification (no stored Basis, no successor on edit).
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -86,12 +90,21 @@ def _layout_cases():
 
 
 def _asset_edit_env(env, monkeypatch):
-    monkeypatch.setattr(assets, "_load", lambda ts_id: (
-        env.doc(ts_id), {"cases": env.cases}, basis.current(env.doc(ts_id))))
+    monkeypatch.setattr(assets, "_load", lambda ts_id: (env.doc(ts_id), {"cases": env.cases}))
     monkeypatch.setattr(assets.test_run_service, "_active_tsr_for_ts", lambda d: None)
     monkeypatch.setattr(assets.db_test_runs, "get_pending_failure_origin", lambda ts_id: None)
-    monkeypatch.setattr(assets.db_test_runs, "latest_spec_result", lambda *a: None)
+    monkeypatch.setattr(assets.db_test_runs, "latest_spec_run", lambda *a: None)
     monkeypatch.setattr(assets.db_test_runs, "get_running_by_doc", lambda ts_id: None)
+
+
+def _measure(env, doc, run_id="run-1"):
+    """The run's Basis (0684 T#2): copy + fingerprint in the preparing phase."""
+    return env.run_basis(env.doc(doc["doc_id"]), run_id)[0]
+
+
+def _copied(run_root):
+    return {path.relative_to(run_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in run_root.rglob("*") if path.is_file()}
 
 
 def _hash(root, relative):
@@ -171,7 +184,6 @@ def test_locator_binds_py_under_every_root_and_marks_js_ts_runner_unsupported():
 def test_admit_never_selects_runner_unsupported_cases(env, monkeypatch):
     env.cases = _layout_cases()
     doc = env.ts()
-    env.approve(doc)
     monkeypatch.setattr(runner, "load_spec_ts",
                         lambda doc_id: (env.doc(doc_id), {"cases": env.cases}))
     monkeypatch.setattr(runner, "_require_ts_admissible", lambda d, doc_id: None)
@@ -183,7 +195,6 @@ def test_admit_never_selects_runner_unsupported_cases(env, monkeypatch):
     assert refused.value.detail["capability"] == "runner_unsupported"
     # A suite run picks only the pytest bindings; with JS/TS only there is nothing to run.
     env.cases = [case for case in _layout_cases() if case["case_id"] == "TC-003"]
-    env.approve(doc)
     with pytest.raises(HTTPException) as nothing:
         execution.admit(doc["doc_id"], case_id=None, runner_id="u", locale="en")
     assert nothing.value.status_code == 422
@@ -193,7 +204,6 @@ def test_admit_never_selects_runner_unsupported_cases(env, monkeypatch):
 def test_suite_selection_keeps_pytest_cases_only(env, monkeypatch):
     env.cases = _layout_cases()
     doc = env.ts()
-    env.approve(doc)
     monkeypatch.setattr(runner, "load_spec_ts",
                         lambda doc_id: (env.doc(doc_id), {"cases": env.cases}))
     monkeypatch.setattr(runner, "_require_ts_admissible", lambda d, doc_id: None)
@@ -217,8 +227,8 @@ def test_untracked_and_tracked_layout_assets_enter_the_manifest(env):
     assert _status(root, SERVER_TEST) == "" and _status(root, CLIENT_TSX) == ""
     env.cases = _layout_cases()
     doc = env.ts()
-    stored = env.approve(doc)  # no git ls-files refusal (source_identity_unavailable)
-    captured = env.bundle_files(stored["binding"]["bundle_id"])
+    stored, run_root, _ = env.run_basis(doc)  # no git ls-files refusal
+    captured = _copied(run_root)
     manifest = {entry["path"]: entry for entry in stored["manifest"]}
     assert set(manifest) == {SERVER_TEST, SERVER_TEST_NEW, CLIENT_SPEC, CLIENT_TSX, CLIENT_JS,
                              CLIENT_FIXTURE, COLOCATED, "tests/fixture.json"}
@@ -236,15 +246,15 @@ def test_untracked_and_tracked_layout_assets_enter_the_manifest(env):
     }
     assert stored["test_assets"]["policy_version"] == "test-asset-v2"
     assert basis.verdict(env.doc(doc["doc_id"]), stored)["state"] == basis.VALID
-    # Approval precheck (dry run) applies the same rule without a Bundle.
-    assert basis.preflight(env.doc(doc["doc_id"]), env.cases)["basis_id"] == stored["basis_id"]
+    # The live measurement applies the same manifest rule and agrees with the copy.
+    assert basis.resolve(env.doc(doc["doc_id"]), env.cases)["basis_id"] == stored["basis_id"]
 
 
 def test_untracked_asset_change_add_delete_make_the_basis_stale(env):
     root = env.roots["g1"]
     env.cases = _layout_cases()
     doc = env.ts()
-    stored = env.approve(doc)
+    stored = _measure(env, doc)
     _write(root, CLIENT_SPEC, "changed\n")
     judged = basis.verdict(env.doc(doc["doc_id"]), stored)
     assert judged["reasons"] == [basis.REASON_SOURCE, basis.REASON_MANIFEST]
@@ -262,7 +272,7 @@ def test_committing_an_untracked_asset_keeps_the_basis_valid(env):
     root = env.roots["g1"]
     env.cases = _layout_cases()
     doc = env.ts()
-    stored = env.approve(doc)
+    stored = _measure(env, doc)
     git(root, "add", SERVER_TEST_NEW, CLIENT_SPEC)
     git(root, "commit", "-m", "commit TR test files")
     assert basis.verdict(env.doc(doc["doc_id"]), stored)["state"] == basis.VALID
@@ -293,9 +303,8 @@ def test_approval_refuses_assets_outside_the_policy(env, bad, code):
         _write(root, relative, "x\n")  # present on disk; the policy still refuses them
     env.cases = [{**CASES[0], "test_assets": bad}]
     with pytest.raises(ValueError, match="^" + code):
-        basis.capture(env.ts(), env.cases)
-    with pytest.raises(ValueError, match="^" + code):
-        basis.preflight(env.ts(), env.cases)
+        env.run_basis(env.ts())
+    assert not (env.tmp_path / "runs" / "run-1").exists()
 
 
 def test_backslash_asset_path_is_judged_as_written_everywhere(env):
@@ -310,9 +319,7 @@ def test_backslash_asset_path_is_judged_as_written_everywhere(env):
     doc = env.ts()
     message = "^" + re.escape("product_source_or_invalid_test_asset: " + raw) + "$"
     with pytest.raises(ValueError, match=message):
-        basis.capture(doc, cases)
-    with pytest.raises(ValueError, match=message):
-        basis.preflight(doc, cases)
+        env.run_basis(doc)
     live = basis.resolve(env.doc(doc["doc_id"]), cases)
     entry = next(item for item in live["manifest"] if item["path"] == raw)
     assert entry == {"path": raw, "content_hash": None, "role": "fixture", "kind": None}
@@ -323,10 +330,10 @@ def test_backslash_asset_path_is_judged_as_written_everywhere(env):
 def test_approval_refuses_a_case_mismatched_asset_path(env):
     env.cases = [{**CASES[0], "test_assets": "client/tests/main/documentEditDialog.urlImport.0647.spec.ts"}]
     with pytest.raises(ValueError, match="^(test_asset_path_case_mismatch|automation_asset_missing)"):
-        basis.capture(env.ts(), env.cases)
+        env.run_basis(env.ts())
     if os.path.normcase("A") == "a":  # case-insensitive filesystem: the spelling is named
         with pytest.raises(ValueError, match="^test_asset_path_case_mismatch"):
-            basis.capture(env.ts(), env.cases)
+            env.run_basis(env.ts(), "run-2")
 
 
 def test_symlinked_asset_directory_refuses_the_capture(env):
@@ -340,7 +347,7 @@ def test_symlinked_asset_directory_refuses_the_capture(env):
         pytest.skip(f"symlinks unavailable: {exc}")
     env.cases = [{**CASES[0], "test_assets": "client/tests/linked/leak.spec.ts"}]
     with pytest.raises(ValueError, match="^basis_capture_failed:unsafe_path"):
-        basis.capture(env.ts(), env.cases)
+        env.run_basis(env.ts())
 
 
 # ── execution: server/tests/** on the existing pytest runner ─────────────────
@@ -348,10 +355,8 @@ def test_symlinked_asset_directory_refuses_the_capture(env):
 def test_server_tests_pytest_case_runs_on_the_existing_runner(env):
     env.cases = _layout_cases()
     doc = env.ts()
-    env.approve(doc)
-    run_root, scratch = execution.ExecutionRootResolver.prepare(
-        env.doc(doc["doc_id"]), {"run_id": "run-srv"}, basis.current(env.doc(doc["doc_id"])))
-    # Untracked TR test files are in the execution source (Bundle copy, not git archive).
+    _, run_root, scratch = env.run_basis(doc, "run-srv")
+    # Untracked TR test files are in the execution source (the run's copy, not git archive).
     assert (run_root / SERVER_TEST_NEW).read_text() == LAYOUT[SERVER_TEST_NEW]
     assert (run_root / CLIENT_SPEC).is_file()
     for case_id, expected in (("TC-001", ["test_srv"]), ("TC-002", ["test_import"])):
@@ -376,30 +381,25 @@ def test_server_tests_pytest_case_runs_on_the_existing_runner(env):
     (CLIENT_FIXTURE, '{"title":"edited"}\n'),                   # fixture
     (COLOCATED, "export const t = 2\n"),                        # src/**/__tests__/**
 ])
-def test_layout_asset_read_and_cas_edit_creates_a_successor(env, monkeypatch, path, new):
+def test_layout_asset_read_and_cas_edit_stales_the_results(env, monkeypatch, path, new):
     root = env.roots["g1"]
     env.cases = _layout_cases()
     doc = env.ts()
-    stored = env.approve(doc)
+    stored = _measure(env, doc)
     _asset_edit_env(env, monkeypatch)
     old_hash = _hash(root, path)
     read = assets.content(doc["doc_id"], path)
     assert read["content"] == LAYOUT[path] and read["content_hash"] == old_hash
     response = assets.update(doc["doc_id"], path, expected_hash=old_hash, content=new,
                              actor_id="u")
-    successor = basis.current(env.doc(doc["doc_id"]))
     assert (root / path).read_text(encoding="utf-8") == new
-    assert response["basis_id"] == successor["basis_id"] != stored["basis_id"]
-    assert {e["path"]: e["content_hash"] for e in successor["manifest"]}[path] == response["content_hash"]
-    assert env.db.pin_get(doc["doc_id"])["bundle_id"] == successor["binding"]["bundle_id"]
-    assert [e[1] for e in env.store.events] == [
-        "test_spec_asset_updated", "test_spec_basis_superseded",
-        "test_spec_basis_created", "test_spec_results_invalidated"]
-    # Results recorded under the old Basis no longer count; the successor is valid.
-    assert basis.verdict(env.doc(doc["doc_id"]), successor, execution_basis=stored)[
-        "reasons"] == [basis.REASON_BASIS_REPLACED]
+    assert response["content_hash"] == _hash(root, path) and response["results_stale"] is True
+    assert [e[1] for e in env.store.events] == ["test_spec_asset_updated"]
+    # Results made on the old bytes no longer count; the next run measures the new ones.
     assert basis.verdict(env.doc(doc["doc_id"]), stored)["state"] == basis.STALE
-    assert basis.verdict(env.doc(doc["doc_id"]), successor)["state"] == basis.VALID
+    rerun = _measure(env, doc, "run-2")
+    assert {e["path"]: e["content_hash"] for e in rerun["manifest"]}[path] == response["content_hash"]
+    assert basis.verdict(env.doc(doc["doc_id"]), rerun)["state"] == basis.VALID
     # The runner-unsupported asset stays unsupported after the edit.
     if path == CLIENT_SPEC:
         assert basis.locator(env.cases[2])["capability"] == "runner_unsupported"
@@ -409,7 +409,6 @@ def test_edit_outside_the_manifest_is_refused_even_inside_test_roots(env, monkey
     root = env.roots["g1"]
     env.cases = _layout_cases()
     doc = env.ts()
-    stored = env.approve(doc)
     _asset_edit_env(env, monkeypatch)
     _write(root, "client/tests/main/other.spec.ts", "other\n")
     for path in ("client/tests/main/other.spec.ts", "server/tests/test_other.py",
@@ -423,20 +422,17 @@ def test_edit_outside_the_manifest_is_refused_even_inside_test_roots(env, monkey
         with pytest.raises(HTTPException):
             assets.content(doc["doc_id"], path)
         assert ((root / path).read_bytes() if (root / path).is_file() else None) == before
-    assert basis.current(env.doc(doc["doc_id"])) == stored
     assert env.store.events == []
 
 
-def test_malformed_stored_manifest_entry_is_not_editable(env, monkeypatch):
-    # Membership grants authority, but the policy is checked again: a product path that
-    # somehow sits in stored metadata (older implementation, hand edit) is still refused.
-    env.cases = _layout_cases()
+def test_product_path_named_by_the_specification_is_not_editable(env, monkeypatch):
+    # Membership in the specification grants authority, but the policy is checked again:
+    # a product path a Case names as an asset (or a stale stored Basis lists) is refused.
+    env.cases = _layout_cases() + [{"case_id": "TC-005", "title": "product", "execution_mode":
+                                    "manual", "automation_ref": "", "test_assets": "server/app.py"}]
     doc = env.ts()
-    stored = env.approve(doc)
-    tampered = {**stored, "manifest": stored["manifest"] + [
-        {"path": "server/app.py", "content_hash": "0" * 64, "role": "fixture"}]}
-    env.store.docs[doc["doc_id"]]["meta"] = basis.metadata_with_basis(
-        env.store.docs[doc["doc_id"]], tampered)
+    env.store.docs[doc["doc_id"]]["meta"] = json.dumps({"superseded_test_basis": {
+        "manifest": [{"path": "server/app.py", "content_hash": "0" * 64, "role": "fixture"}]}})
     _asset_edit_env(env, monkeypatch)
     with pytest.raises(HTTPException) as refused:
         assets.update(doc["doc_id"], "server/app.py", expected_hash="0" * 64,
@@ -449,7 +445,6 @@ def test_symlinked_parent_directory_blocks_asset_read_and_edit(env, monkeypatch)
     root = env.roots["g1"]
     env.cases = _layout_cases()
     doc = env.ts()
-    stored = env.approve(doc)
     _asset_edit_env(env, monkeypatch)
     # Swap client/tests/helpers for a link to a product directory after approval.
     product = root / "server"
@@ -463,7 +458,7 @@ def test_symlinked_parent_directory_blocks_asset_read_and_edit(env, monkeypatch)
         pytest.skip(f"symlinks unavailable: {exc}")
     before = (product / "browser.0682.js").read_bytes()
     with pytest.raises(HTTPException) as refused:
-        assets.update(doc["doc_id"], CLIENT_JS, expected_hash=stored["manifest"][0]["content_hash"],
+        assets.update(doc["doc_id"], CLIENT_JS, expected_hash=_hash(root, "server/browser.0682.js"),
                       content="leak\n", actor_id="u")
     assert refused.value.status_code == 409
     assert refused.value.detail["error"] == "test_asset_unsafe_path"
@@ -498,7 +493,7 @@ def test_safe_asset_file_names_each_refusal(env):
 def test_basis_from_the_t1_policy_is_stale_with_the_asset_policy_reason(env):
     # A Basis T#1 stored: policy "test-asset-v1" and manifest entries without "kind".
     doc = env.ts()
-    captured = env.approve(doc)
+    captured = _measure(env, doc)
     manifest = [{k: v for k, v in entry.items() if k != "kind"} for entry in captured["manifest"]]
     identity = {key: captured[key] for key in ("basis_version", "ts_document_id",
                                                "ts_revision_no", "source", "execution_profile")}
@@ -507,15 +502,11 @@ def test_basis_from_the_t1_policy_is_stale_with_the_asset_policy_reason(env):
                                "asset_count": len(manifest)}
     old = {"basis_id": basis.canonical_hash(identity), **identity,
            "binding": captured["binding"], "manifest": manifest}
-    env.store.docs[doc["doc_id"]]["meta"] = basis.metadata_with_basis(
-        env.store.docs[doc["doc_id"]], old)
     judged = basis.verdict(env.doc(doc["doc_id"]), old)
     assert judged["state"] == basis.STALE
     assert judged["reasons"] == [basis.REASON_MANIFEST, basis.REASON_ASSET_POLICY]
-    with pytest.raises(ValueError, match="basis_stale_before_execution"):
-        execution.ExecutionRootResolver.prepare(env.doc(doc["doc_id"]), {"run_id": "r"}, old)
-    # Recovery is reopen + approval: a fresh capture under the T#2 policy is valid again.
-    fresh = env.approve(doc)
+    # Recovery is [run again]: the next run measures under the current policy.
+    fresh = _measure(env, doc, "run-2")
     assert basis.verdict(env.doc(doc["doc_id"]), fresh)["state"] == basis.VALID
 
 
@@ -573,17 +564,15 @@ def test_layout_approval_and_run_with_executable_extensions_in_the_worktree(exe_
     root = env.roots["g1"]
     env.cases = _layout_cases()
     doc = env.ts()
-    stored = env.approve(doc)  # used to fail on Windows: basis_capture_failed:source_changed
-    captured = env.bundle_files(stored["binding"]["bundle_id"])
+    stored, run_root, scratch = env.run_basis(doc, "run-exe")  # used to fail on Windows
+    captured = _copied(run_root)
     for relative in EXECUTABLES:
         assert captured[relative] == _hash(root, relative)
     manifest = {entry["path"]: entry for entry in stored["manifest"]}
     assert manifest[SERVER_TEST_NEW]["kind"] == basis.KIND_RUNNABLE
     assert manifest[CLIENT_SPEC]["kind"] == basis.KIND_UNSUPPORTED
     assert basis.verdict(env.doc(doc["doc_id"]), stored)["state"] == basis.VALID
-    assert basis.preflight(env.doc(doc["doc_id"]), env.cases)["basis_id"] == stored["basis_id"]
-    run_root, scratch = execution.ExecutionRootResolver.prepare(
-        env.doc(doc["doc_id"]), {"run_id": "run-exe"}, basis.current(env.doc(doc["doc_id"])))
+    assert basis.resolve(env.doc(doc["doc_id"]), env.cases)["basis_id"] == stored["basis_id"]
     assert (run_root / "client" / "run.bat").read_bytes() == EXECUTABLES["client/run.bat"]
     case = next(case for case in env.cases if case["case_id"] == "TC-002")
     loc = execution.AutomationRefResolver.resolve(case)

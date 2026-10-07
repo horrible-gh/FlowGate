@@ -339,6 +339,13 @@ def env(monkeypatch, tmp_path, migrated_sqlite_db):
         "doc_review_status": "approved", "revision_no": 2, "seq": 10, "file_path": "ts.md",
     }
     e.contents[TS_ID] = SPEC
+    # 0684 T#2: this suite has no Group worktree, so results are recorded without a Basis
+    # (the compat rule). Suites that judge a Basis stub ``test_basis_service.resolve``.
+    from modules.flow_gate.services import source_fingerprint
+
+    def no_worktree(project_id, group_id):
+        raise source_fingerprint.SourceFingerprintError("group_worktree_unavailable", "no worktree")
+    monkeypatch.setattr(source_fingerprint, "resolve_worktree", no_worktree)
 
     monkeypatch.setattr(svc.db_docs, "get_by_id", lambda doc_id: e.docs.get(doc_id))
     monkeypatch.setattr(svc.process_service, "is_group_disposed", lambda _g: False)
@@ -1019,16 +1026,16 @@ def test_work_plan_keeps_ts_tsr_two_document_set_without_tsc():
 # ── 0632 T#1: basis and contract-2 execution ──────────────────────────────────
 
 def _basis_for_test(tag="a"):
-    # 0682 T#1: Basis v2 shape (source_bundle identity + binding); v1 is stale by contract.
-    return {"basis_id": tag * 64, "basis_version": 2, "ts_document_id": TS_ID,
+    # 0684 T#2: Basis v3 shape (a run's copy fingerprint + binding); v1/v2 are outdated.
+    return {"basis_id": tag * 64, "basis_version": 3, "ts_document_id": TS_ID,
             "ts_revision_no": 2,
-            "source": {"kind": "source_bundle", "exclusion_policy_version": "source-bundle-v1",
+            "source": {"kind": "run_source", "exclusion_policy_version": "source-fingerprint-v1",
                        "content_fingerprint": tag * 64},
-            "test_assets": {"policy_version": "test-asset-v1", "manifest_hash": tag * 64,
+            "test_assets": {"policy_version": "test-asset-v2", "manifest_hash": tag * 64,
                             "asset_count": 1},
-            "execution_profile": {"runner_generation": 1}, "manifest": [],
-            "binding": {"bundle_id": None, "bundle_sha256": tag * 64,
-                        "git_revision": tag * 40, "source_dirty": True}}
+            "execution_profile": {"runner_generation": 2}, "manifest": [],
+            "binding": {"git_revision": tag * 40, "source_dirty": True,
+                        "measured_at": "2026-10-08T00:00:00+00:00"}}
 
 
 def test_0632_locator_is_a_restricted_pytest_locator():
@@ -1049,15 +1056,13 @@ def test_0632_exact_basis_carry(env, monkeypatch):
     # 0684 T#1: there is no initialization run any more; carry-over is per exact Basis.
     from modules.flow_gate.services import test_basis_service as basis
     current = _basis_for_test()
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
     monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: current)
     assert not hasattr(basis, "initialize")
     _submit(env, [{"case_id": "TC-001", "status": "PASS"}])
     second, _ = _submit(env, [{"case_id": "TC-002", "status": "PASS"}])
     assert second["run"]["overall"] == "PASS"
     assert env.docs[TSR_ID]["revision_no"] >= 1
-    next_basis = _basis_for_test("b")
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], next_basis)
+    next_basis = _basis_for_test("b")  # the live source changed: manual results measure it
     monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: next_basis)
     third, _ = _submit(env, [{"case_id": "TC-002", "status": "PASS"}])
     rows = {c["case_no"]: c for c in env.db_test_runs.list_cases(third["run"]["run_id"])}
@@ -1074,7 +1079,6 @@ def test_0632_case_and_full_admission_preserve_modes_and_concurrency(env, monkey
         "- check_points: 권한 검사 / 응답 코드\n- automation_ref: tests/test_x.py::test_tc_1\n",
     )
     current = _basis_for_test()
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
     monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: current)
     monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
     with pytest.raises(HTTPException) as exc:
@@ -1095,7 +1099,6 @@ def test_0632_suite_only_and_unbound_admission(env, monkeypatch):
     from modules.flow_gate.services import test_basis_service as basis
     from modules.flow_gate.services import spec_execution_service as execution
     current = _basis_for_test()
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
     monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: current)
     monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
     env.contents[TS_ID] = SPEC.replace(
@@ -1113,16 +1116,13 @@ def test_0632_existing_worker_executes_a_selected_case(env, monkeypatch, tmp_pat
     from modules.flow_gate.services import test_basis_service as basis
     from modules.flow_gate.services import spec_execution_service as execution
     current = _basis_for_test()
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
     env.contents[TS_ID] = SPEC.replace(
         "- check_points: 권한 검사 / 응답 코드\n",
         "- check_points: 권한 검사 / 응답 코드\n- automation_ref: tests/test_x.py::test_tc_1\n",
     )
     monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: current)
     monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
-    _measured(env, monkeypatch)
-    monkeypatch.setattr(execution.ExecutionRootResolver, "prepare",
-                        lambda doc, run, basis: (tmp_path, tmp_path / "scratch"))
+    _measured(env, monkeypatch, current, tmp_path)
     monkeypatch.setattr(execution.ExistingRunnerAdapter, "run_pytest",
                         lambda nodeid, root, scratch, active: (
                             "pass", "<testsuite><testcase name='test_tc_1'/></testsuite>", 0, ""))
@@ -1136,33 +1136,41 @@ def test_0632_existing_worker_executes_a_selected_case(env, monkeypatch, tmp_pat
     assert rows["TC-002"]["case_status"] == "NOT_RUN"
 
 
-def test_0632_basis_change_during_worker_keeps_result_history_only(env, monkeypatch, tmp_path):
+def test_0684_source_change_during_the_run_records_a_stale_result(env, monkeypatch, tmp_path):
+    # D#1 §3-3 finalizing: the result is recorded under the Basis the run executed, even
+    # when the source moved meanwhile; it is marked not valid for the current source, the
+    # gate stays closed and nothing resumes.
     from modules.flow_gate.services import test_basis_service as basis
     from modules.flow_gate.services import spec_execution_service as execution
     first, second = _basis_for_test(), _basis_for_test("b")
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], first)
+    live = {"basis": first}
     env.contents[TS_ID] = SPEC.replace(
         "- check_points: 권한 검사 / 응답 코드\n",
         "- check_points: 권한 검사 / 응답 코드\n- automation_ref: tests/test_x.py::test_tc_1\n",
     )
-    monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: basis.current(doc))
+    monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: live["basis"])
     monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
-    _measured(env, monkeypatch)
-    monkeypatch.setattr(execution.ExecutionRootResolver, "prepare",
-                        lambda doc, run, basis: (tmp_path, tmp_path / "scratch"))
-    def change_basis(nodeid, root, scratch, active):
-        env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], second)
+    _measured(env, monkeypatch, first, tmp_path)
+
+    def change_source(nodeid, root, scratch, active):
+        live["basis"] = second
         return "pass", "<testsuite><testcase name='test_tc_1'/></testsuite>", 0, ""
-    monkeypatch.setattr(execution.ExistingRunnerAdapter, "run_pytest", change_basis)
+    monkeypatch.setattr(execution.ExistingRunnerAdapter, "run_pytest", change_source)
     admitted = execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
     env.svc.execute_run(env.db_test_runs.get_run(admitted["run_id"]))
-    assert env.db_test_runs.get_run(admitted["run_id"])["error"] == "basis_superseded"
+    assert env.db_test_runs.get_run(admitted["run_id"])["status"] == "passed"
+    recorded = env.db_test_runs.latest_spec_result(TS_ID, 2, first["basis_id"])
+    assert recorded is not None  # the true result for the source that ran is kept
+    rows = {row["case_no"]: row for row in env.db_test_runs.list_cases(recorded["run_id"])}
+    assert rows["TC-001"]["case_status"] == "PASS"
+    verdict = json.loads(recorded["result_meta"])["live_verdict"]
+    assert verdict["state"] == "stale" and "source_changed" in verdict["reasons"]
     assert env.db_test_runs.latest_spec_result(TS_ID, 2, second["basis_id"]) is None
-    history = env.db_test_runs.list_by_doc(TS_ID)
-    assert any(json.loads(row.get("result_meta") or "{}").get("stale") for row in history)
-    # 0684 T#1: the report the run opened says the run ended without a usable result.
-    assert env.docs[TSR_ID]["target_id"] == TS_ID
-    assert "basis_superseded" in (tmp_path / "0011-TSR_document.md").read_text(encoding="utf-8")
+    text = (tmp_path / "0011-TSR_document.md").read_text(encoding="utf-8")
+    assert "실행 후 소스가 바뀌어" in text and "source_fingerprint" in text
+    gate = env.svc.tsr_gate_state(env.docs[TSR_ID])
+    assert gate["passed"] is False and gate["stale"] is True and gate["basis_state"] == "stale"
+    assert env.dispatched == [] and env.resumes == []
 
 
 def test_0684_approval_rolls_back_if_the_run_cannot_be_admitted(monkeypatch):
@@ -1192,8 +1200,12 @@ def test_0684_approval_rolls_back_if_the_run_cannot_be_admitted(monkeypatch):
     )
     content = {"spec": automated}
     monkeypatch.setattr(runner, "_read_doc_content_or_empty", lambda _doc: content["spec"])
-    monkeypatch.setattr(basis, "capture", lambda *a, **k: pytest.fail("approval never captures"))
-    monkeypatch.setattr(basis, "probe", lambda *a, **k: pytest.fail("approval never measures"))
+    from modules.flow_gate.services import source_fingerprint
+    monkeypatch.setattr(source_fingerprint, "copy_measured",
+                        lambda *a, **k: pytest.fail("approval never copies"))
+    monkeypatch.setattr(source_fingerprint, "measure",
+                        lambda *a, **k: pytest.fail("approval never measures"))
+    monkeypatch.setattr(basis, "resolve", lambda *a, **k: pytest.fail("approval never measures"))
     monkeypatch.setattr(runner, "_active_tsr_for_ts", lambda _doc: None)
     monkeypatch.setattr(execution, "check_automation_assets", lambda _doc, _selected: None)
     monkeypatch.setattr(execution, "admission_blocker", lambda _doc_id: None)
@@ -1243,7 +1255,6 @@ def test_0684_approval_rolls_back_if_the_run_cannot_be_admitted(monkeypatch):
 def test_0632_source_identity_change_invalidates_current_gate(env, monkeypatch):
     from modules.flow_gate.services import test_basis_service as basis
     first, changed = _basis_for_test(), _basis_for_test("b")
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], first)
     monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: first)
     _submit(env, [{"case_id": "TC-001", "status": "PASS"},
                   {"case_id": "TC-002", "status": "PASS"}])
@@ -1251,10 +1262,13 @@ def test_0632_source_identity_change_invalidates_current_gate(env, monkeypatch):
     monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: changed)
     gate = env.svc.tsr_gate_state(env.docs[TSR_ID])
     assert gate["passed"] is False and gate["overall"] == "NOT_RUN" and gate["stale"]
-    with pytest.raises(HTTPException) as exc:
-        env.svc.record_spec_results(doc_id=TS_ID, runner_id="u", triggered_via="ui",
-                                    results=[{"case_id": "TC-001", "status": "PASS"}])
-    assert exc.value.detail["error"] == "basis_stale"
+    assert gate["basis_state"] == "stale" and "source_changed" in gate["basis_reasons"]
+    # 0684 T#2 (D#1 §3-5): a new manual result measures the changed source and is recorded
+    # under it; nothing carries over from the other Basis.
+    recorded = env.svc.record_spec_results(doc_id=TS_ID, runner_id="u", triggered_via="ui",
+                                           results=[{"case_id": "TC-001", "status": "PASS"}])
+    meta = json.loads(recorded["run"]["result_meta"])
+    assert meta["basis_id"] == changed["basis_id"] and recorded["run"]["overall"] == "NOT_RUN"
     assert any(row["overall"] == "PASS" for row in env.db_test_runs.list_by_doc(TS_ID))
 
 
@@ -1265,7 +1279,6 @@ def test_0632_chain_token_starts_spec_execution_without_results(env, monkeypatch
     from modules.flow_gate.services import ai_invoke_service
     from modules.flow_gate.services import test_basis_service as basis
     current = _basis_for_test()
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
     env.contents[TS_ID] = SPEC.replace(
         "- check_points: 권한 검사 / 응답 코드\n",
         "- check_points: 권한 검사 / 응답 코드\n- automation_ref: tests/test_x.py::test_tc_1\n",
@@ -1302,18 +1315,15 @@ def _automated_spec(env):
     )
 
 
-def _measured(env, monkeypatch, measured=None):
-    """The run's measurement (0684 T#1): store ``measured`` (default: the stored Basis)."""
+def _measured(env, monkeypatch, measured, root):
+    """The run's preparing phase (0684 T#2): its copy is ``root``, its Basis ``measured``."""
     from modules.flow_gate.services import spec_execution_service as execution
-    from modules.flow_gate.services import test_basis_service as basis
     calls = []
 
-    def measure(doc, run, cases):
-        result = measured or basis.current(env.docs[TS_ID])
-        env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], result)
+    def prepare(doc, run, cases):
         calls.append(run["run_id"])
-        return result
-    monkeypatch.setattr(execution.ExecutionRootResolver, "measure", measure)
+        return measured, root, root / "scratch"
+    monkeypatch.setattr(execution.ExecutionRootResolver, "prepare", prepare)
     return calls
 
 
@@ -1321,24 +1331,19 @@ def test_0682_product_change_is_the_same_stale_for_every_caller(env, monkeypatch
     from modules.flow_gate.services import test_basis_service as basis
     from modules.flow_gate.services import spec_execution_service as execution
     current = _basis_for_test()
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
     _automated_spec(env)
     live = {"basis": current}
     monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: live["basis"])
     monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
-    _measured(env, monkeypatch)  # the run measured before the product change
-    monkeypatch.setattr(execution.ExecutionRootResolver, "prepare",
-                        lambda doc, run, basis: (tmp_path, tmp_path / "scratch"))
+    _measured(env, monkeypatch, current, tmp_path)  # the run copies before the product change
     monkeypatch.setattr(execution.ExistingRunnerAdapter, "run_pytest",
                         lambda nodeid, root, scratch, active: (
                             "pass", "<testsuite><testcase name='test_tc_1'/></testsuite>", 0, ""))
     _submit(env, [{"case_id": "TC-001", "status": "PASS"}, {"case_id": "TC-002", "status": "PASS"}])
     assert env.svc.tsr_gate_state(env.docs[TSR_ID])["passed"] is True
-    pending = env.svc.record_spec_results(doc_id=TS_ID, runner_id="u", triggered_via="ui",
-                                          results=[{"case_id": "TC-002", "status": "PASS"}])
     admitted = execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
 
-    live["basis"] = _changed_source_basis()  # a product file changed after approval
+    live["basis"] = _changed_source_basis()  # a product file changed after the run copied
     reasons = [basis.REASON_SOURCE]
     with pytest.raises(HTTPException) as refused:
         execution.admit(TS_ID, case_id=None, runner_id="u", locale="ko")
@@ -1346,30 +1351,29 @@ def test_0682_product_change_is_the_same_stale_for_every_caller(env, monkeypatch
     assert refused.value.detail["error"] == "run_in_progress"
     with pytest.raises(HTTPException) as refused:
         env.svc.record_spec_results(doc_id=TS_ID, runner_id="u", triggered_via="ui",
-                                    results=[{"case_id": "TC-001", "status": "PASS"}])
-    assert refused.value.detail["error"] == "basis_stale"
-    assert refused.value.detail["reasons"] == reasons
-    finalized = env.svc.finalize_spec_results(pending["doc"], pending["run"])
-    assert finalized["stale"] is True and finalized["basis_reasons"] == reasons
+                                    results=[{"case_id": "TC-002", "status": "PASS"}])
+    assert refused.value.detail["error"] == "run_in_progress"
     env.svc.execute_run(env.db_test_runs.get_run(admitted["run_id"]))
-    assert env.db_test_runs.get_run(admitted["run_id"])["error"] == "basis_superseded"
-    superseded = [json.loads(row.get("result_meta") or "{}") for row in env.db_test_runs.list_by_doc(TS_ID)]
-    assert any(meta.get("run_kind") == "superseded_execution" and meta.get("basis_reasons") == reasons
-               for meta in superseded)
+    recorded = env.db_test_runs.latest_by_doc(TS_ID)
+    meta = json.loads(recorded["result_meta"])
+    assert meta["basis_id"] == current["basis_id"]  # recorded under what ran
+    assert meta["live_verdict"] == {"state": "stale", "reasons": reasons,
+                                    "live_basis_id": "f" * 64}
     gate = env.svc.tsr_gate_state(env.docs[TSR_ID])
     assert gate["passed"] is False and gate["overall"] == "NOT_RUN"
     assert gate["basis_state"] == "stale" and gate["basis_reasons"] == reasons
     view = env.svc.describe_test_document(env.docs[TS_ID])
     assert view["basis_valid"] is False
     assert view["basis_verdict"]["state"] == "stale" and view["basis_verdict"]["reasons"] == reasons
-    assert view["basis_source"]["kind"] == "source_bundle"
+    assert view["basis_source"]["kind"] == "run_source"
+    assert view["effective_run_id"] is None
+    assert view["stale_previous_result"]["run_id"] == recorded["run_id"]
 
 
 def test_0682_unmeasurable_source_is_unavailable_and_ends_runs_unverifiable(env, monkeypatch, tmp_path):
     from modules.flow_gate.services import test_basis_service as basis
     from modules.flow_gate.services import spec_execution_service as execution
     current = _basis_for_test()
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
     _automated_spec(env)
     live = {"error": None}
 
@@ -1379,18 +1383,24 @@ def test_0682_unmeasurable_source_is_unavailable_and_ends_runs_unverifiable(env,
         return current
     monkeypatch.setattr(basis, "resolve", resolve)
     monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
-    _measured(env, monkeypatch)
-    monkeypatch.setattr(execution.ExecutionRootResolver, "prepare",
-                        lambda doc, run, basis: (tmp_path, tmp_path / "scratch"))
+    _measured(env, monkeypatch, current, tmp_path)
 
     def measuring_fails(nodeid, root, scratch, active):
-        live["error"] = "source_changed"  # the worktree moved while being measured
+        live["error"] = "source_changed"  # the worktree moves while finalize measures it
         return "pass", "<testsuite><testcase name='test_tc_1'/></testsuite>", 0, ""
     monkeypatch.setattr(execution.ExistingRunnerAdapter, "run_pytest", measuring_fails)
     admitted = execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
     env.svc.execute_run(env.db_test_runs.get_run(admitted["run_id"]))
-    assert env.db_test_runs.get_run(admitted["run_id"])["error"] == "basis_unverifiable"
-    assert env.db_test_runs.latest_spec_result(TS_ID, 2, current["basis_id"]) is None
+    recorded = env.db_test_runs.latest_by_doc(TS_ID)
+    assert json.loads(recorded["result_meta"])["live_verdict"]["state"] == "unverifiable"
+    text = (tmp_path / "0011-TSR_document.md").read_text(encoding="utf-8")
+    assert "현재 소스를 측정할 수 없어" in text
+    gate = env.svc.tsr_gate_state(env.docs[TSR_ID])
+    assert gate["passed"] is False and gate["basis_state"] == "unverifiable"
+    with pytest.raises(HTTPException) as refused:
+        env.svc.record_spec_results(doc_id=TS_ID, runner_id="u", triggered_via="ui",
+                                    results=[{"case_id": "TC-002", "status": "PASS"}])
+    assert refused.value.detail["error"] == "basis_unavailable"
     # 0684 T#1: admission does not measure -- the next run measures (or refuses) itself.
     again = execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
     assert again["basis_id"] is None and again["selected_case_ids"] == ["TC-001"]
@@ -1401,7 +1411,6 @@ def test_0682_unmeasurable_source_is_unavailable_and_ends_runs_unverifiable(env,
 def test_0682_prepare_refusal_ends_the_run_without_execution(env, monkeypatch, tmp_path):
     # 0684 T#1: the run's own measurement refuses (the capture saw the source change);
     # nothing runs, it is not a FAIL, and the report the run opened says why.
-    from modules.flow_gate.services import test_basis_service as basis
     from modules.flow_gate.services import spec_execution_service as execution
     _automated_spec(env)
     monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
@@ -1411,7 +1420,7 @@ def test_0682_prepare_refusal_ends_the_run_without_execution(env, monkeypatch, t
 
     def refuse(doc, run, cases):
         raise ValueError("basis_capture_failed:source_changed")
-    monkeypatch.setattr(execution.ExecutionRootResolver, "measure", refuse)
+    monkeypatch.setattr(execution.ExecutionRootResolver, "prepare", refuse)
     monkeypatch.setattr(execution.ExistingRunnerAdapter, "run_pytest",
                         lambda *a: pytest.fail("an unmeasured source must not execute"))
     env.svc.execute_run(env.db_test_runs.get_run(admitted["run_id"]))
@@ -1420,7 +1429,7 @@ def test_0682_prepare_refusal_ends_the_run_without_execution(env, monkeypatch, t
     meta = json.loads(run["result_meta"])
     assert meta["prepare_refused"] == {"error": "basis_capture_failed", "reasons": "source_changed"}
     assert meta["phase"] == "finished" and run["tsr_doc_id"] == TSR_ID
-    assert basis.current(env.docs[TS_ID]) is None
+    assert meta["basis_id"] is None and "test_basis" not in json.loads(env.docs[TS_ID].get("meta") or "{}")
     text = report.read_text(encoding="utf-8")
     assert "준비 실패" in text and "basis_capture_failed: source_changed" in text
     assert "PENDING" not in text
@@ -1428,40 +1437,76 @@ def test_0682_prepare_refusal_ends_the_run_without_execution(env, monkeypatch, t
     assert env.svc.tsr_gate_state(env.docs[TSR_ID])["passed"] is False
 
 
-def test_0682_execution_source_mismatch_ends_the_run_without_execution(env, monkeypatch, tmp_path):
-    # The real execute path: the Basis is valid, but the opened Bundle's bytes are not its
-    # manifest's, so the run root copy refuses and the run ends execution_source_mismatch.
-    import hashlib
-    from modules.flow_gate.db import source_bundles as db_source_bundles
+def _git_worktree(root):
+    import subprocess
+    (root / "tests").mkdir(parents=True)
+    (root / "server").mkdir()
+    (root / "tests" / "test_x.py").write_text(
+        "from pathlib import Path\n\n\ndef test_tc_1():\n"
+        "    assert Path('server/app.py').read_text().strip() == 'VALUE = 1'\n")
+    (root / "server" / "app.py").write_text("VALUE = 1\n")
+    for args in (["init"], ["config", "user.email", "t@example.invalid"],
+                 ["config", "user.name", "T"], ["add", "."], ["commit", "-m", "init"]):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    (root / "server" / "untracked.py").write_text("U = 1\n")  # dirty, untracked work
+    return root
+
+
+def test_0684_t2_worker_copies_measures_and_executes_through_the_shared_layer(
+        env, monkeypatch, tmp_path):
+    # The real preparing phase (copy + fingerprint under the source lock), the real Case
+    # process (tr_self_check_executor) and the real finalize measurement, end to end.
+    from group_lock_stub import stub_group_lock
+    from modules.flow_gate.services import source_fingerprint
     from modules.flow_gate.services import test_basis_service as basis
     from modules.flow_gate.services import spec_execution_service as execution
-    current = _basis_for_test()
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
-    _automated_spec(env)
-    monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: current)
-    monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
-    _measured(env, monkeypatch)
+    worktree = _git_worktree(tmp_path / "wt")
+    monkeypatch.setattr(source_fingerprint, "resolve_worktree", lambda p, g: worktree.resolve())
+    monkeypatch.setattr(source_fingerprint, "_MEMO", {})
+    monkeypatch.setattr(basis, "source_root", lambda _doc: worktree)
     monkeypatch.setattr(env.svc, "_scratch_dir", lambda doc, run_id: tmp_path / "runs" / run_id)
-    source = tmp_path / "bundle" / "source"
-    (source / "server").mkdir(parents=True)
-    (source / "server" / "app.py").write_text("VALUE = 9\n")  # changed after the Bundle was made
-    manifest = {"files": [{"path": "server/app.py", "size": 10,
-                           "sha256": hashlib.sha256(b"VALUE = 1\n").hexdigest()}],
-                "dirs": ["server"]}
-    monkeypatch.setattr(basis, "open_bundle", lambda doc, b: {
-        "source": source, "manifest": manifest, "row": {"bundle_id": "sb_" + "0" * 32}})
-    monkeypatch.setattr(basis, "rebind", lambda *a, **kw: pytest.fail("a valid Bundle is not rebound"))
-    monkeypatch.setattr(db_source_bundles, "record_usage",
-                        lambda *a, **kw: pytest.fail("a refused run root is not a usage"))
-    monkeypatch.setattr(execution.ExistingRunnerAdapter, "run_pytest",
-                        lambda *a: pytest.fail("a mismatched run root must not execute"))
+    stub_group_lock(monkeypatch)
+    _automated_spec(env)
+    monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
     admitted = execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
     env.svc.execute_run(env.db_test_runs.get_run(admitted["run_id"]))
-    run = env.db_test_runs.get_run(admitted["run_id"])
-    assert run["status"] == "failed" and run["error"] == "execution_source_mismatch"
-    assert json.loads(run["result_meta"])["prepare_refused"]["error"] == "execution_source_mismatch"
-    assert not (tmp_path / "runs" / admitted["run_id"]).exists()
-    assert env.db_test_runs.latest_spec_result(TS_ID, 2, current["basis_id"]) is None
+    execution_run = env.db_test_runs.get_run(admitted["run_id"])
+    assert execution_run["status"] == "passed"
+    meta = json.loads(execution_run["result_meta"])
+    assert meta["test_basis"]["basis_version"] == 3
+    assert meta["test_basis"]["binding"]["source_dirty"] is True
+    assert meta["execution_root"]["kind"] == "disposable_copy"
+    assert not (tmp_path / "runs" / admitted["run_id"]).exists()  # the copy is removed
+    recorded = env.db_test_runs.latest_by_doc(TS_ID)
+    rows = {row["case_no"]: row for row in env.db_test_runs.list_cases(recorded["run_id"])}
+    assert rows["TC-001"]["case_status"] == "PASS"
+    recorded_meta = json.loads(recorded["result_meta"])
+    assert recorded_meta["basis_id"] == meta["basis_id"]
+    assert recorded_meta["live_verdict"]["state"] == "valid"
+    text = (tmp_path / "0011-TSR_document.md").read_text(encoding="utf-8")
+    assert meta["test_basis"]["source"]["content_fingerprint"][:12] in text
+    assert "현재 소스와 같음" in text
+    # Display path: the memo the run left answers without hashing.
+    view = env.svc.describe_test_document(env.docs[TS_ID])
+    assert view["basis_valid"] is True and view["effective_run_id"] == recorded["run_id"]
+    # A live change after the run: the display says "unchecked" (never measures), the
+    # decision path measures and says stale.
+    (worktree / "server" / "app.py").write_text("VALUE = 2\n")
+    hashed = []
+    real_hash = source_fingerprint._hash_file
+    monkeypatch.setattr(source_fingerprint, "_hash_file",
+                        lambda *a, **k: hashed.append(a[1]) or real_hash(*a, **k))
+    view = env.svc.describe_test_document(env.docs[TS_ID])
+    assert view["basis_valid"] is None and view["basis_verdict"]["state"] == "unchecked"
+    assert view["effective_run_id"] == recorded["run_id"]  # shown provisionally, not judged
+    shown = env.svc.tsr_gate_state(env.docs[TSR_ID], memo=True)  # the action bar's gate
+    assert shown["basis_state"] == "unchecked" and shown["provisional"] is True
+    assert shown["run_id"] == recorded["run_id"]
+    assert hashed == []
+    gate = env.svc.tsr_gate_state(env.docs[TSR_ID])
+    assert gate["passed"] is False and gate["basis_state"] == "stale" and hashed
+    view = env.svc.describe_test_document(env.docs[TS_ID])
+    assert view["basis_valid"] is False and view["basis_verdict"]["state"] == "stale"
 
 
 # ── 0684 T#1: approval queues the run, the run opens and fills the report ─────────
@@ -1481,8 +1526,11 @@ def _approve_ts(env, monkeypatch, tmp_path):
     (root / "tests").mkdir(parents=True, exist_ok=True)
     (root / "tests" / "test_x.py").write_text("def test_tc_1():\n    assert True\n")
     monkeypatch.setattr(basis, "source_root", lambda _doc: root)
-    monkeypatch.setattr(basis, "capture", lambda *a, **k: pytest.fail("approval must not capture"))
-    monkeypatch.setattr(basis, "probe", lambda *a, **k: pytest.fail("approval must not measure"))
+    from modules.flow_gate.services import source_fingerprint
+    monkeypatch.setattr(source_fingerprint, "copy_measured",
+                        lambda *a, **k: pytest.fail("approval must not copy"))
+    monkeypatch.setattr(source_fingerprint, "measure",
+                        lambda *a, **k: pytest.fail("approval must not measure"))
     monkeypatch.setattr(pipeline, "_require_document_body_for_approval", lambda *a: None)
     monkeypatch.setattr(pipeline, "_require_workflow_head_for_approval", lambda *a, **k: None)
     monkeypatch.setattr(pipeline, "log_state_changed", lambda **kw: None)
@@ -1500,9 +1548,7 @@ def _pass_worker(env, monkeypatch, tmp_path):
     from modules.flow_gate.services import test_basis_service as basis
     current = _basis_for_test()
     monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: current)
-    calls = _measured(env, monkeypatch, current)
-    monkeypatch.setattr(execution.ExecutionRootResolver, "prepare",
-                        lambda doc, run, b: (tmp_path, tmp_path / "scratch"))
+    calls = _measured(env, monkeypatch, current, tmp_path)
     monkeypatch.setattr(execution.ExistingRunnerAdapter, "run_pytest",
                         lambda nodeid, root, scratch, active: (
                             "pass", "<testsuite><testcase name='test_tc_1'/></testsuite>", 0, ""))
@@ -1513,8 +1559,7 @@ def test_0684_approval_queues_the_run_and_opens_a_running_report_without_measuri
         env, monkeypatch, tmp_path):
     _automated_spec(env)
     stale = _basis_for_test("c")
-    from modules.flow_gate.services import test_basis_service as basis
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], stale)
+    env.docs[TS_ID]["meta"] = json.dumps({"test_basis": stale})
     result, elapsed = _approve_ts(env, monkeypatch, tmp_path)
     assert result["doc_review_status"] == "approved"
     assert elapsed < 5.0  # nothing source-sized happens in the approval
@@ -1649,7 +1694,6 @@ def test_0684_ts_without_automated_cases_opens_its_report_on_the_first_result(
 def test_0684_legacy_initialization_run_is_no_result_and_no_attempt(env, monkeypatch):
     from modules.flow_gate.services import test_basis_service as basis
     current = _basis_for_test()
-    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
     monkeypatch.setattr(basis, "resolve", lambda doc, cases, **kw: current)
     rows = spec.map_results(spec.parse_spec(SPEC)["cases"], [])["cases"]
     legacy = env.db_test_runs.insert_spec_run(
@@ -1766,3 +1810,24 @@ def test_0684_partial_rerun_report_keeps_the_earlier_record_of_unselected_cases(
     assert "대기 (PENDING)" in _report_line(text, "TC-001")
     assert "PASS (이전 기록 유지)" in _report_line(text, "TC-002")
     assert "결과 없음" in _report_line(text, "TC-003")
+
+
+def test_0684_t2_restart_removes_the_run_copy_and_settles_the_report(env, monkeypatch, tmp_path):
+    # D#1 §3-3: a run copy a server restart left behind is removed at startup.
+    from modules.flow_gate.services import spec_execution_service as execution
+    _automated_spec(env)
+    monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
+    monkeypatch.setattr(env.svc, "_scratch_dir", lambda doc, run_id: tmp_path / "runs" / run_id)
+    admitted = execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
+    left = tmp_path / "runs" / admitted["run_id"] / "source" / "server"
+    left.mkdir(parents=True)
+    (left / "app.py").write_text("VALUE = 1\n")
+    started = []
+    monkeypatch.setattr(env.svc, "get_worker",
+                        lambda: type("W", (), {"start": lambda self: started.append(1)})())
+    env.svc.startup()
+    assert not (tmp_path / "runs" / admitted["run_id"]).exists()
+    run = env.db_test_runs.get_run(admitted["run_id"])
+    assert run["status"] == "failed" and run["error"] == "orphaned_by_restart"
+    assert "PENDING" not in (tmp_path / "0011-TSR_document.md").read_text(encoding="utf-8")
+    assert started == [1]

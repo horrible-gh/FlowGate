@@ -66,7 +66,7 @@ class _ActiveRun:
     lock held.
     """
 
-    __slots__ = ("run_id", "cancel_event", "lock", "proc", "service_procs")
+    __slots__ = ("run_id", "cancel_event", "lock", "proc", "service_procs", "control")
 
     def __init__(self, run_id: str) -> None:
         self.run_id = run_id
@@ -74,6 +74,9 @@ class _ActiveRun:
         self.lock = threading.Lock()
         self.proc: Optional[subprocess.Popen] = None
         self.service_procs: set = set()
+        # 0684 T#2: a spec run's Case process, owned by the shared execution layer
+        # (tr_self_check_executor.ProcessControl: Job Object / supervised group).
+        self.control = None
 
 
 _active_runs: dict[str, _ActiveRun] = {}
@@ -139,6 +142,24 @@ def _clear_current_proc(active: _ActiveRun, proc: subprocess.Popen) -> None:
     with active.lock:
         if active.proc is proc:
             active.proc = None
+
+
+def _set_current_control(active: _ActiveRun, control) -> None:
+    """``_set_current_proc`` for a process the shared execution layer owns."""
+    with active.lock:
+        if active.cancel_event.is_set():
+            should_cancel = True
+        else:
+            active.control = control
+            should_cancel = False
+    if should_cancel:
+        control.cancel()
+
+
+def _clear_current_control(active: _ActiveRun, control) -> None:
+    with active.lock:
+        if active.control is control:
+            active.control = None
 
 
 def _add_service_proc(active: _ActiveRun, proc: subprocess.Popen) -> None:
@@ -686,9 +707,12 @@ def request_cancel(run_id: str) -> dict:
         with entry.lock:
             proc = entry.proc
             service_procs = list(entry.service_procs)
+            control = entry.control
         for target in [proc, *service_procs]:
             if target is not None:
                 _kill_process_tree(target)
+        if control is not None:
+            control.cancel()
 
         if run.get("picked_at") is None:
             # No worker owns this row — there is no process to wait on, so finalize
@@ -1107,6 +1131,7 @@ def record_spec_results(
     execution_run_id: Optional[str] = None,
     execution_basis: Optional[dict] = None,
     execution_cases: Optional[list[dict]] = None,
+    execution_live: Optional[dict] = None,
 ) -> dict:
     """Validate and store one result submission for an approved specification TS.
 
@@ -1117,20 +1142,38 @@ def record_spec_results(
 
     Any ``overall`` a caller sends is ignored: the verdict is computed here from the
     required cases (D0006 §10) and the ignored claim is kept in result_meta for audit.
+
+    0684 T#2 (D#1 §3-5): every result is recorded under the Basis of the source it was
+    made on. A server run passes the Basis it executed (``execution_basis``) and the live
+    state it measured after executing (``execution_live``); a manual/external submission
+    measures the live source once, here, before the admission lock. A TS whose Group has
+    no worktree has nothing to measure and is recorded without a Basis.
     """
     doc, parsed = load_spec_ts(doc_id)
     _require_ts_admissible(doc, doc_id)
     from modules.flow_gate.services import test_basis_service
-    stored_basis = test_basis_service.current(doc)
-    basis = execution_basis or stored_basis
-    if stored_basis and execution_basis is None:
-        error = test_basis_service.verdict_error(
-            test_basis_service.verdict(doc, stored_basis, parsed["cases"]), _http_error,
-            doc_id=doc_id)
-        if error is not None:
-            raise error
     if execution_cases is not None:
         parsed = {**parsed, "cases": execution_cases}
+    judged = None
+    if execution_basis is not None:
+        basis = execution_basis
+        if execution_live is not None:
+            judged = test_basis_service.judge(basis, execution_live)
+    else:
+        live_state = test_basis_service.live_state(doc, parsed["cases"])
+        if live_state["live"] is None and not live_state["no_worktree"]:
+            raise _http_error(409, "basis_unavailable", doc_id=doc_id,
+                              basis_state=live_state["state"], reasons=live_state["reasons"])
+        basis = live_state["live"]
+        if basis is not None:
+            probe = basis.get("probe") or {}
+            basis = {key: value for key, value in basis.items() if key != "probe"}
+            basis["binding"] = {"git_revision": probe.get("source_revision"),
+                                "source_dirty": probe.get("source_dirty"),
+                                "measured_at": now_iso(), "submission": triggered_via,
+                                "project_id": doc.get("project_id"),
+                                "group_id": doc.get("group_id")}
+        judged = test_basis_service.judge(basis, live_state)
     if basis:
         # server authority outranks a caller's claim
         source_identity = test_basis_service.source_identity(basis)
@@ -1172,13 +1215,6 @@ def record_spec_results(
 
     revision_no = doc.get("revision_no") or 0
     with _admission_lock:
-        if execution_basis:
-            fresh_doc = db_docs.get_by_id(doc_id)
-            error = test_basis_service.verdict_error(test_basis_service.verdict(
-                fresh_doc, test_basis_service.current(fresh_doc or {}),
-                execution_basis=execution_basis), _http_error, doc_id=doc_id)
-            if error is not None:
-                raise error
         pending = db_test_runs.get_pending_failure_origin(doc_id)
         if pending is not None:
             raise _http_error(
@@ -1227,6 +1263,10 @@ def record_spec_results(
             "basis_id": (basis or {}).get("basis_id"),
             "test_basis": basis,
         }
+        if judged is not None:
+            # The live source as measured for this record; finalize uses it, not a re-measure.
+            meta["live_verdict"] = {"state": judged["state"], "reasons": judged["reasons"],
+                                    "live_basis_id": judged["live_basis_id"]}
         if submitted_overall not in (None, ""):
             meta["ignored_submitted_overall"] = str(submitted_overall)[:32]
         if chain_context:
@@ -1256,30 +1296,31 @@ def finalize_spec_results(doc: dict, run: dict, *, locale: str = "ko") -> dict:
     for every submission, PASS or not; only an overall PASS lets the TSR be approved and
     the workflow move on. FAIL goes to failure-origin review on an unmanned chain; BLOCKED
     and NOT_RUN are holds for a human.
+
+    0684 T#2 (D#1 §3-3 finalizing): the result stays recorded under the Basis it was made
+    on. Its live verdict (measured when it was recorded, else measured here, outside the
+    admission lock) decides the rest: valid applies the gate; stale (the source moved after
+    execution) or unverifiable still rewrites the report -- marked not valid for the current
+    source -- but opens no gate, resumes no chain and leaves a stop notice for a human.
     """
+    from modules.flow_gate.services import test_basis_service
     run_id = run["run_id"]
     tsr_doc_id: Optional[str] = None
     report_error: Optional[str] = None
+    meta = test_spec_service.load_result_meta(run.get("result_meta"))
+    judged = meta.get("live_verdict")
+    if judged is None:
+        run_basis = meta.get("test_basis") or (
+            {"basis_id": meta["basis_id"]} if meta.get("basis_id") else None)
+        measured = test_basis_service.verdict(db_docs.get_by_id(doc["doc_id"]), run_basis)
+        judged = {"state": measured["state"], "reasons": measured["reasons"],
+                  "live_basis_id": measured["live_basis_id"]}
+        meta["live_verdict"] = judged
+        db_test_runs.set_run_result_meta(run_id, json.dumps(meta, ensure_ascii=False))
+        run = {**run, "result_meta": json.dumps(meta, ensure_ascii=False)}
+    valid = judged["state"] == test_basis_service.VALID
     if not process_service.is_group_disposed(doc.get("group_id")):
         with _admission_lock:
-            from modules.flow_gate.services import test_basis_service
-            meta = test_spec_service.load_result_meta(run.get("result_meta"))
-            run_basis_id = meta.get("basis_id")
-            fresh_doc = db_docs.get_by_id(doc["doc_id"])
-            judged = None
-            if run_basis_id:
-                judged = test_basis_service.verdict(
-                    fresh_doc, test_basis_service.current(fresh_doc or {}),
-                    execution_basis=meta.get("test_basis") or {"basis_id": run_basis_id})
-            if judged is not None and judged["state"] != test_basis_service.VALID:
-                meta["stale"] = True
-                meta["basis_state"] = judged["state"]
-                meta["basis_reasons"] = judged["reasons"]
-                db_test_runs.set_run_result_meta(run_id, json.dumps(meta, ensure_ascii=False))
-                return {"tsr_doc_id": None, "overall": "NOT_RUN", "gate_passed": False,
-                        "stale": True, "basis_state": judged["state"],
-                        "basis_reasons": judged["reasons"],
-                        "failure_origin": None, "continuation": None}
             try:
                 tsr_doc_id = assemble_tsr(
                     doc, run, db_test_runs.list_cases(run_id), locale=locale, run_chain=False
@@ -1295,10 +1336,17 @@ def finalize_spec_results(doc: dict, run: dict, *, locale: str = "ko") -> dict:
     outcome: dict = {
         "tsr_doc_id": tsr_doc_id,
         "overall": overall,
-        "gate_passed": overall == "PASS" and report_error is None,
+        "gate_passed": overall == "PASS" and report_error is None and valid,
         "failure_origin": None,
         "continuation": None,
     }
+    if not valid:
+        # D#1 §3-3 / §3-9: not a verdict on the current source -- stop for a human, who
+        # runs again. No failure-origin review (nothing failed on the current source).
+        outcome.update({"stale": True, "basis_state": judged["state"],
+                        "basis_reasons": judged["reasons"]})
+        _maybe_notify_chain_failure(doc, {**finished, "error": "basis_" + judged["state"]})
+        return outcome
     if report_error is not None:
         outcome["error"] = report_error
         _maybe_notify_chain_failure(doc, finished)
@@ -1374,13 +1422,20 @@ def _handle_spec_failure(doc: dict, run: dict) -> dict:
     return {"routed": "failure_origin_review", "run_id": run["run_id"]}
 
 
-def tsr_gate_state(tsr_doc: Optional[dict]) -> dict:
+def tsr_gate_state(tsr_doc: Optional[dict], *, memo: bool = False) -> dict:
     """Is this TSR allowed through the test gate? (0549 T0008, D0006 §9-10)
 
     The gate is read from the server record — the newest result record of the TSR's TS —
     never from the TSR text. It applies only when that record is a specification result
     (contract 2); a legacy executable TSR is only ever assembled from an all-green run, so
     its approval semantics are unchanged.
+
+    0684 T#2 (D#1 §3-5): the valid result is the newest result of the current TS revision
+    whose Basis equals the Basis the live source has now. Decision callers (TSR approval,
+    chain auto-approval, chain attach) measure the live source once; display callers pass
+    ``memo=True`` and only reuse the last measurement -- with no fitting memo the state is
+    ``unchecked`` and the gate is shown closed, never measured on a screen request.
+    An approved TSR is the record the workflow moved on with and is not judged again.
     """
     ts_id = (tsr_doc or {}).get("target_id") or (tsr_doc or {}).get("triggered_by")
     if not ts_id:
@@ -1394,40 +1449,67 @@ def tsr_gate_state(tsr_doc: Optional[dict]) -> dict:
                 "run_id": active_execution["run_id"], "execution_active": True}
     from modules.flow_gate.services import test_basis_service
     ts_doc = db_docs.get_by_id(ts_id)
-    basis = test_basis_service.current(ts_doc or {})
-    latest = (db_test_runs.latest_spec_result(ts_id, ts_doc.get("revision_no") or 0, basis["basis_id"])
-              if basis and ts_doc else latest_any)
+    revision = (ts_doc or {}).get("revision_no") or 0
+    if (tsr_doc or {}).get("doc_review_status") == "approved":
+        # 0682 D#1 3.11: the recorded result stands for an already-approved report.
+        recorded = db_test_runs.latest_spec_run(ts_id, revision) or db_test_runs.latest_spec_run(ts_id)
+        recorded = recorded or latest_any
+        return {"applies": True,
+                "passed": recorded.get("overall") == "PASS" and recorded.get("status") == "passed",
+                "overall": recorded.get("overall"), "run_id": recorded.get("run_id"),
+                "basis_id": test_spec_service.load_result_meta(recorded.get("result_meta")).get("basis_id"),
+                "stale": False, "basis_state": test_basis_service.VALID, "basis_reasons": []}
+    state = test_basis_service.live_state(ts_doc, memo=memo) if ts_doc else {
+        "live": None, "state": test_basis_service.UNVERIFIABLE, "no_worktree": False,
+        "reasons": [test_basis_service.REASON_UNMEASURABLE + ":ts_missing"]}
+    live = state["live"]
+    live_id = (live or {}).get("basis_id")
+    unchecked = state["state"] == test_basis_service.UNCHECKED
+    if live is not None:
+        latest = db_test_runs.latest_spec_result(ts_id, revision, live_id)
+    elif state["no_worktree"]:
+        latest = db_test_runs.latest_spec_result(ts_id, revision, None)
+    elif unchecked:
+        # Display only: no memo fits, so the newest record is shown provisionally. The
+        # approval guard measures and decides; the screen must not lock [approve] on a
+        # judgement it never made.
+        latest = db_test_runs.latest_spec_run(ts_id, revision)
+    else:
+        latest = None
     if latest is None:
+        # No result made on the live source: the newest result of this revision (if any)
+        # is stale; with no live Basis it is unchecked/unverifiable.
+        newest = db_test_runs.latest_spec_run(ts_id, revision)
+        newest_basis = test_spec_service.load_result_meta((newest or {}).get("result_meta")).get(
+            "test_basis") if newest else None
+        judged = (test_basis_service.judge(newest_basis, state) if newest is not None else
+                  {"state": state["state"] or test_basis_service.STALE,
+                   "reasons": state["reasons"] or [test_basis_service.REASON_BASIS_MISSING]})
         return {"applies": True, "passed": False, "overall": "NOT_RUN",
-                "run_id": None, "basis_id": basis["basis_id"], "stale": True}
+                "run_id": None, "basis_id": live_id, "stale": True,
+                "stale_run_id": (newest or {}).get("run_id"),
+                "basis_state": judged["state"], "basis_reasons": judged["reasons"]}
     attempt_meta = test_spec_service.load_result_meta(latest_any.get("result_meta"))
     # D#1 §3-5: no execution failure (a prepare refusal included) newer than the result.
-    # 0684 T#1: a run refused before it could measure has no basis_id and still counts.
+    # Whatever source it ran on (or none: a run refused before it could measure has no
+    # basis_id): a failure on another source in between still blocks an A-B-A return.
     if (attempt_meta.get("run_kind") == "spec_execution"
-            and attempt_meta.get("basis_id") in (None, (basis or {}).get("basis_id"))
             and latest_any.get("status") == "failed"
             and latest_any.get("run_id") != latest.get("run_id")
             and str(latest_any.get("created_at") or "") >= str(latest.get("created_at") or "")):
         return {"applies": True, "passed": False, "overall": "BLOCKED",
-                "run_id": latest_any["run_id"], "basis_id": (basis or {}).get("basis_id"),
+                "run_id": latest_any["run_id"], "basis_id": live_id,
                 "execution_error": latest_any.get("error")}
-    judged = None
-    # 0682 D#1 3.11: an approved TSR is the record the workflow moved on with. A v1
-    # (HEAD-only) Basis can no longer be measured, but that must not overturn an approval
-    # made under it, so the recorded result stands for an already-approved report.
-    if basis and not ((tsr_doc or {}).get("doc_review_status") == "approved"
-                      and test_basis_service.outdated(basis)):
-        judged = test_basis_service.verdict(ts_doc, basis)
-    basis_valid = judged is None or judged["state"] == test_basis_service.VALID
     return {
         "applies": True,
-        "passed": basis_valid and latest.get("overall") == "PASS" and latest.get("status") == "passed",
-        "overall": latest.get("overall") if basis_valid else "NOT_RUN",
+        "passed": latest.get("overall") == "PASS" and latest.get("status") == "passed",
+        "overall": latest.get("overall"),
         "run_id": latest.get("run_id"),
-        "basis_id": (basis or {}).get("basis_id"),
-        "stale": not basis_valid,
-        "basis_state": (judged or {}).get("state", test_basis_service.VALID),
-        "basis_reasons": (judged or {}).get("reasons", []),
+        "basis_id": live_id,
+        "stale": False,
+        "basis_state": state["state"] if unchecked else test_basis_service.VALID,
+        "basis_reasons": state["reasons"] if unchecked else [],
+        **({"provisional": True} if unchecked else {}),
     }
 
 
@@ -1668,33 +1750,37 @@ def describe_test_document(doc: dict) -> dict:
                 case["case_id"]: test_basis_service.locator(case)["capability"]
                 for case in parsed["cases"]
             }
-            basis = test_basis_service.current(doc)
-            if basis:
-                out["test_basis"] = basis
-                effective_run = db_test_runs.latest_spec_result(
-                    doc["doc_id"], doc.get("revision_no") or 0, basis["basis_id"]
-                )
-                # Display path: the Live Probe may reuse hashes of unchanged files (memo).
-                judged = test_basis_service.verdict(doc, basis, parsed["cases"], memo=True)
-                basis_valid = judged["state"] == test_basis_service.VALID
-                if not basis_valid:
+            # 0684 T#2 (D#1 §3-6): a display path. The Basis shown is the one the newest
+            # result of this revision was made on; it is judged against the memo of the last
+            # measurement only -- this request never hashes the source. No fitting memo is
+            # "unchecked" (basis_valid null), not stale.
+            revision = doc.get("revision_no") or 0
+            reference = db_test_runs.latest_spec_run(doc["doc_id"], revision)
+            if reference is not None:
+                basis = test_spec_service.load_result_meta(reference.get("result_meta")).get(
+                    "test_basis")
+                state = test_basis_service.live_state(doc, parsed["cases"], memo=True)
+                judged = test_basis_service.judge(basis, state)
+                if state["live"] is not None:
+                    effective_run = db_test_runs.latest_spec_result(
+                        doc["doc_id"], revision, state["live"]["basis_id"])
+                elif state["no_worktree"]:
+                    effective_run = db_test_runs.latest_spec_result(doc["doc_id"], revision, None)
+                elif state["state"] == test_basis_service.UNCHECKED:
+                    effective_run = reference  # provisional: shown, not judged (basis_valid null)
+                else:
                     effective_run = None
-                out["basis_valid"] = basis_valid
+                out["test_basis"] = basis
+                out["basis_valid"] = (None if judged["state"] == test_basis_service.UNCHECKED
+                                      else judged["state"] == test_basis_service.VALID)
                 out["basis_verdict"] = {"state": judged["state"], "reasons": judged["reasons"],
-                                        "live_basis_id": judged["live_basis_id"]}
+                                        "live_basis_id": (state["live"] or {}).get("basis_id")}
                 out["basis_source"] = test_basis_service.source_summary(basis)
                 out["effective_run_id"] = (effective_run or {}).get("run_id")
-                previous = next((
-                    item for item in history
-                    if item.get("contract_version") == test_spec_service.CONTRACT_SPEC
-                    and test_spec_service.load_result_meta(item.get("result_meta")).get("basis_id")
-                    not in (None, basis["basis_id"])
-                    and test_spec_service.load_result_meta(item.get("result_meta")).get("run_kind")
-                    != "spec_execution"
-                ), None)
                 out["stale_previous_result"] = (
-                    shape_run(previous, include_cases=True) if previous else
-                    shape_run(latest, include_cases=True) if latest and not basis_valid else None
+                    shape_run(reference, include_cases=True)
+                    if effective_run is None or effective_run["run_id"] != reference["run_id"]
+                    else None
                 )
                 effective_rows = (
                     [test_spec_service.stored_case_to_row(row)
@@ -1720,7 +1806,7 @@ def describe_test_document(doc: dict) -> dict:
                "target_ts": doc.get("target_id")}
         if contract == test_spec_service.CONTRACT_SPEC and run is not None:
             out["report"] = shape_run(run, include_cases=True)
-            out["gate"] = tsr_gate_state(doc)
+            out["gate"] = tsr_gate_state(doc, memo=True)
             out["doc_review_status"] = doc.get("doc_review_status")
             target = db_docs.get_by_id(doc.get("target_id")) if doc.get("target_id") else None
             if target:
@@ -2774,16 +2860,50 @@ def assemble_tsr(
             title=title,
             locale=locale,
         )
-        if meta.get("test_basis"):
-            basis = meta["test_basis"]
-            content += ("\n## Test Basis\n\n"
-                        + "- basis_id: `" + str(basis.get("basis_id")) + "`\n"
-                        + "- source: `" + json.dumps(basis.get("source"), ensure_ascii=False, sort_keys=True) + "`\n"
-                        + "- test_assets.manifest_hash: `"
-                        + str((basis.get("test_assets") or {}).get("manifest_hash")) + "`\n")
+        if meta.get("test_basis") or meta.get("live_verdict"):
+            content += _tsr_basis_section(meta, locale)
     else:
         content = _tsr_content(doc, run, cases, title, locale)
     return _write_tsr(doc, content, title, run_chain=run_chain)
+
+
+_TSR_BASIS_VALIDITY = {
+    "ko": {"valid": "현재 소스와 같음", "stale": "실행 후 소스가 바뀌어 이 결과는 현재 소스에 유효하지 않음 — 다시 실행 필요",
+           "unverifiable": "현재 소스를 측정할 수 없어 유효 여부를 확인하지 못함 — 사람 판단 필요"},
+    "en": {"valid": "matches the current source",
+           "stale": "the source changed after execution; this result is not valid for the current source — run again",
+           "unverifiable": "the current source could not be measured; validity unknown — needs a human"},
+    "ja": {"valid": "現在のソースと一致",
+           "stale": "実行後にソースが変わったため、この結果は現在のソースに対して有効ではありません — 再実行が必要",
+           "unverifiable": "現在のソースを測定できず有効性を確認できません — 人の判断が必要"},
+}
+
+
+def _tsr_basis_section(meta: dict, locale: str) -> str:
+    """What the result was made on (D#1 §3-4): the execution Basis summary, no Bundle id."""
+    from modules.flow_gate.services import test_basis_service
+    basis = meta.get("test_basis") or {}
+    summary = test_basis_service.source_summary(basis)
+    lines = ["", "## Test Basis", ""]
+    if basis:
+        lines.append("- basis_id: `" + str(basis.get("basis_id")) + "`")
+        lines.append("- source_fingerprint: `" + str(summary.get("fingerprint_prefix")) + "`")
+        lines.append("- git_revision: `" + str(summary.get("git_revision")) + "`"
+                     + (" (dirty)" if summary.get("source_dirty") else ""))
+        if summary.get("measured_at"):
+            lines.append("- measured_at: " + str(summary["measured_at"]))
+        lines.append("- test_assets.manifest_hash: `"
+                     + str((basis.get("test_assets") or {}).get("manifest_hash")) + "`")
+        execution_run = meta.get("execution_run_id") or summary.get("run_id")
+        if execution_run:
+            lines.append("- execution_run: `" + str(execution_run) + "`")
+    judged = meta.get("live_verdict") or {}
+    if judged.get("state"):
+        texts = _TSR_BASIS_VALIDITY.get(locale) or _TSR_BASIS_VALIDITY["ko"]
+        text = texts.get(judged["state"], judged["state"])
+        reasons = judged.get("reasons") or []
+        lines.append("- current_source: " + text + (" (" + ", ".join(reasons) + ")" if reasons else ""))
+    return "\n".join(lines) + "\n"
 
 
 def _tsr_title(doc: dict, locale: str = "ko") -> str:
@@ -3733,6 +3853,8 @@ def startup() -> None:
             doc = db_docs.get_by_id(row["doc_id"])
             if run is not None and doc is not None:
                 _settle_execution_tsr(doc, run)
+                # 0684 T#2 (D#1 §3-3): the disposable run copy a restart left behind.
+                shutil.rmtree(_scratch_dir(doc, run["run_id"]), ignore_errors=True)
         _resume_failure_origin_after_restart()
     except Exception:
         logger.warning("failed to recover test runs", exc_info=True)

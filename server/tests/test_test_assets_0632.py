@@ -1,13 +1,15 @@
-"""T#2 manifest, Source Bundle identity, CAS and approved TSR regressions.
+"""T#2 manifest, run-copy identity, CAS and approved TSR regressions.
 
 flowgate.default.0682 T#1 replaced the compat identity (HEAD + dirty refusal + manifest
-overlay on ``git archive HEAD``) with a Basis captured into a Source Bundle; these cases
-keep the 0632 contract (manifest membership authorizes edits, CAS, approved TSR
-immutability, product_defect lock-out) on top of it.
+overlay on ``git archive HEAD``) with a Basis captured into a Source Bundle; 0684 T#2
+replaced that with the run's own copy-and-fingerprint (no Bundle, no Basis on the TS).
+These cases keep the 0632 contract (specification membership authorizes edits, CAS,
+approved TSR immutability, product_defect lock-out) on top of it.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 
 import pytest
 from fastapi import HTTPException
@@ -32,32 +34,32 @@ def repo(env):
 
 def _approved(env, monkeypatch, paired=None, latest=None):
     doc = env.ts()
-    stored = env.approve(doc)
-    monkeypatch.setattr(assets, "_load", lambda ts_id: (
-        env.doc(ts_id), {"cases": env.cases}, basis.current(env.doc(ts_id))))
+    stored = env.run_basis(doc)[0]  # the Basis a run measured (0684 T#2)
+    monkeypatch.setattr(assets, "_load", lambda ts_id: (env.doc(ts_id), {"cases": env.cases}))
     monkeypatch.setattr(assets.test_run_service, "_active_tsr_for_ts", lambda doc: paired)
     monkeypatch.setattr(assets.db_test_runs, "get_pending_failure_origin", lambda ts_id: None)
-    monkeypatch.setattr(assets.db_test_runs, "latest_spec_result", lambda *args: latest)
+    monkeypatch.setattr(assets.db_test_runs, "latest_spec_run", lambda *args: latest)
     monkeypatch.setattr(assets.db_test_runs, "get_running_by_doc", lambda ts_id: None)
     return doc, stored
 
 
 def test_manifest_roles_and_product_dirty_no_longer_refuse(env, repo):
     (repo / "server" / "app.py").write_text("VALUE = 2\n")
-    first = basis.capture(env.ts(), CASES)
+    first = env.run_basis(env.ts(), "run-1")[0]
     assert [(a["path"], a["role"]) for a in first["manifest"]] == [
         ("tests/fixture.json", "fixture"), ("tests/test_a.py", "test")]
     assert first["binding"]["source_dirty"] is True
     (repo / "tests" / "fixture.json").write_text('{"v":2}\n')
-    second = basis.capture(env.ts(), CASES)
+    second = env.run_basis(env.ts(), "run-2")[0]
     assert first["basis_id"] != second["basis_id"]
     assert first["test_assets"]["manifest_hash"] != second["test_assets"]["manifest_hash"]
 
 
 def test_product_path_cannot_enter_manifest(env):
     cases = [{**CASES[0], "test_assets": "server/app.py"}]
+    env.cases = cases
     with pytest.raises(ValueError, match="product_source_or_invalid_test_asset"):
-        basis.capture(env.ts(), cases)
+        env.run_basis(env.ts())
 
 
 def test_asset_read_and_cas_rejection_preserve_bytes_and_basis(env, repo, monkeypatch):
@@ -66,6 +68,14 @@ def test_asset_read_and_cas_rejection_preserve_bytes_and_basis(env, repo, monkey
     before = (repo / path).read_bytes()
     assert assets.content(doc["doc_id"], path)["content_hash"] == hashlib.sha256(before).hexdigest()
     listed = assets.manifest(doc["doc_id"])
+    assert [(a["path"], a["role"]) for a in listed["assets"]] == [
+        ("tests/fixture.json", "fixture"), ("tests/test_a.py", "test")]
+    assert listed["assets"][0]["content_hash"] == hashlib.sha256(before).hexdigest()
+    assert listed["basis_id"] is None and listed["basis_valid"] is None  # no result yet
+    record = {"run_id": "r1", "result_meta": json.dumps({"test_basis": stored})}
+    monkeypatch.setattr(assets.db_test_runs, "latest_spec_run", lambda *args: record)
+    listed = assets.manifest(doc["doc_id"])  # display path: the run's memo, no hashing
+    assert listed["basis_id"] == stored["basis_id"]
     assert listed["basis_valid"] is True and listed["basis_verdict"]["state"] == "valid"
     with pytest.raises(HTTPException) as bad_hash:
         assets.update(doc["doc_id"], path, expected_hash="0" * 64,
@@ -110,10 +120,10 @@ def test_approved_tsr_put_is_immutable(env, repo, monkeypatch):
     assert blocked.value.status_code == 409
     assert (repo / "tests" / "fixture.json").read_bytes() == before
     assert paired["revision_no"] == 7
-    assert basis.current(env.doc(doc["doc_id"])) == stored
+    assert basis.verdict(env.doc(doc["doc_id"]), stored)["state"] == basis.VALID
 
 
-def test_reopened_tsr_edit_creates_successor_and_invalidation(env, repo, monkeypatch):
+def test_reopened_tsr_edit_stales_the_results_without_a_successor(env, repo, monkeypatch):
     paired = {"doc_id": "flowgate.default.0632.0011-TSR",
               "doc_review_status": "pending_review", "revision_no": 7}
     doc, stored = _approved(env, monkeypatch, paired=paired)
@@ -121,13 +131,13 @@ def test_reopened_tsr_edit_creates_successor_and_invalidation(env, repo, monkeyp
     response = assets.update(doc["doc_id"], "tests/fixture.json",
                              expected_hash=hashlib.sha256(old).hexdigest(),
                              content='{"v":2}\n', actor_id="u")
-    assert response["basis_id"] != stored["basis_id"]
-    assert response["tsr_doc_id"] == paired["doc_id"]
-    # 0684 T#1: the edit starts no run and writes no zero-result initialization run.
-    assert "initialization_run_id" not in response
+    assert response["tsr_doc_id"] == paired["doc_id"] and response["results_stale"] is True
+    # 0684 T#1/T#2: the edit starts no run, writes no initialization run, no successor Basis.
+    assert "initialization_run_id" not in response and "basis_id" not in response
     events = [event for _doc, event, _note in env.store.events]
-    assert "test_spec_results_invalidated" in events
-    assert "test_spec_asset_updated" in events
+    assert events == ["test_spec_asset_updated"]
+    judged = basis.verdict(env.doc(doc["doc_id"]), stored)
+    assert judged["state"] == basis.STALE and basis.REASON_MANIFEST in judged["reasons"]
 
 
 def test_product_defect_cannot_use_test_asset_editor(env, repo, monkeypatch):
@@ -150,20 +160,21 @@ def test_tr_completion_has_no_formal_test_gate():
     assert "TS/TSR" in guide
 
 
-def test_execution_copy_is_the_captured_bundle_not_head_plus_overlay(env, repo, monkeypatch):
-    from modules.flow_gate.services import spec_execution_service as execution
+def test_execution_copy_is_the_live_worktree_copy_not_head_plus_overlay(env, repo, monkeypatch):
     (repo / "tests" / "fixture.json").write_text('{"v":2}\n')
     (repo / "server" / "untracked.py").write_text("U = 1\n")  # git archive HEAD would miss it
-    doc, stored = _approved(env, monkeypatch)
-    copied, scratch = execution.ExecutionRootResolver.prepare(
-        env.doc(doc["doc_id"]), {"run_id": "run-1"}, stored)
+    doc = env.ts()
+    first, copied, scratch = env.run_basis(doc, "run-1")
     assert copied == scratch / "source"
     assert (copied / "tests" / "fixture.json").read_text() == '{"v":2}\n'
     assert (copied / "server" / "app.py").read_text() == "VALUE = 1\n"
     assert (copied / "server" / "untracked.py").read_text() == "U = 1\n"
+    # 0684 T#2: a later change is not a refusal -- the next run copies and measures it.
     (repo / "server" / "app.py").write_text("VALUE = 2\n")
-    with pytest.raises(ValueError, match="basis_stale_before_execution: source_changed"):
-        execution.ExecutionRootResolver.prepare(env.doc(doc["doc_id"]), {"run_id": "run-2"}, stored)
+    second, copied_again, _ = env.run_basis(env.doc(doc["doc_id"]), "run-2")
+    assert (copied_again / "server" / "app.py").read_text() == "VALUE = 2\n"
+    assert (copied / "server" / "app.py").read_text() == "VALUE = 1\n"
+    assert second["basis_id"] != first["basis_id"]
 
 
 def test_asset_http_routes_bind_manifest_content_and_cas(monkeypatch):

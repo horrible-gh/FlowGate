@@ -11,12 +11,14 @@ from types import SimpleNamespace
 import pytest
 
 from modules.flow_gate.services import source_bundle_materializer as m
+# 0684 T#2: the scan/hash rules (and their limits) live in the neutral fingerprint module.
+from modules.flow_gate.services import source_fingerprint as fp
 
 
 def _worktree(tmp_path, monkeypatch):
     root = tmp_path / "worktree"
     root.mkdir()
-    monkeypatch.setattr(m, "_identity", lambda _root, _deadline: ("a" * 40, True))
+    monkeypatch.setattr(fp, "_identity", lambda _root, _deadline: ("a" * 40, True))
     return root
 
 
@@ -105,7 +107,7 @@ def test_hard_limits_and_ceiling(tmp_path, monkeypatch):
     root = _worktree(tmp_path, monkeypatch)
     (root / "one").write_text("1")
     (root / "two").write_text("2")
-    monkeypatch.setattr(m, "MAX_FILES", 1)
+    monkeypatch.setattr(fp, "MAX_FILES", 1)
     with pytest.raises(m.SourceBundleError) as error:
         m.inspect_source(root, time.monotonic() + 10)
     assert error.value.code == "resource_limit"

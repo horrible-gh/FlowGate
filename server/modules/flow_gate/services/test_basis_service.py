@@ -1,18 +1,25 @@
 """Canonical Test Basis for approved contract-2 specifications.
 
-Basis v2 (0682 D#1): the identity is the whole-source content fingerprint of the Source
-Bundle captured at approval, so uncommitted and untracked Group work is part of it. The
-binding (bundle id/sha, git revision, dirty flag) is stored beside it but kept out of
-basis_id. Every caller judges a Basis with ``verdict`` against a Live Probe that measures
-the worktree with the Bundle's own scan, exclusion and hash rules.
+Basis v3 (0684 T#2, D#1 §3-3, §3-5): the Basis is what a run executed. A spec run copies
+the Group worktree into its disposable root and fingerprints the bytes it copied
+(``measure_run``); uncommitted and untracked Group work is part of it, and so are the
+POSIX execute bits the copy keeps (a helper the Case runs). The Basis is kept
+on the run and on the result record it produced -- not on the TS. A result is valid while
+its Basis equals the Basis the live source has now (``resolve``), so a source, asset or
+TS revision change makes earlier results stale without any invalidation step.
 
-0684 T#1 (D#1 §3-1, §7): approval no longer captures. A spec run captures in its preparing
-phase and stores the Basis it executed on the TS; approval sets the previous one aside.
+The scan, exclusion and hash rules are the source fingerprint module's. Decision paths
+(run finalize, manual result submission, TSR gate) measure; display paths only reuse a
+memo of the last measurement and say "unchecked" when it no longer fits (D#1 §3-6).
 
-Test Asset Policy (0682 D#1 §3.8, T#2): ``asset_kind`` is the one rule approval (manifest),
-the asset API and the locator share. Git tracking is not part of it: an asset must be in
-the captured Bundle (approval) or the Live Probe scan (judgement) with the same hash, and
-pass the path safety checks, so untracked test files a TR created are assets too.
+The binding (git revision, dirty flag, measured time, run) is display information kept
+beside the identity, never part of basis_id. v1/v2 Basis values (a HEAD tree or a Source
+Bundle) are outdated: never valid again, never re-measured (D#1 §7).
+
+Test Asset Policy (0682 D#1 §3.8): ``asset_kind`` is the one rule the run's manifest, the
+asset API and the locator share. Git tracking is not part of it: an asset must be in the
+measured source with a hash and pass the path safety checks, so untracked test files a TR
+created are assets too.
 """
 from __future__ import annotations
 
@@ -20,23 +27,23 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import stat
-import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
+from modules.flow_gate.services import source_fingerprint
 from modules.flow_gate.storage import paths as storage_paths
 
 _LOCATOR = re.compile(r"^([A-Za-z0-9_./-]+)(?:::(\w+(?:::\w+)*))?$")
 
-BASIS_VERSION = 2
-SOURCE_KIND = "source_bundle"
+BASIS_VERSION = 3
+SOURCE_KIND = "run_source"
 ASSET_POLICY_VERSION = "test-asset-v2"
-RUNNER_GENERATION = 1
+# 2: spec runs execute through the shared process layer (tr_self_check_executor).
+RUNNER_GENERATION = 2
 
-VALID, STALE, UNVERIFIABLE = "valid", "stale", "unverifiable"
+# "unchecked" is a display-only state: no memo fits the live source, nothing was measured.
+VALID, STALE, UNVERIFIABLE, UNCHECKED = "valid", "stale", "unverifiable", "unchecked"
 # Stale reasons, in the order they are reported.
 REASON_BASIS_MISSING = "basis_missing"
 REASON_BASIS_REPLACED = "basis_replaced"
@@ -48,8 +55,12 @@ REASON_BUNDLE_POLICY = "bundle_policy_changed"
 REASON_ASSET_POLICY = "asset_policy_changed"
 REASON_PROFILE = "execution_profile_changed"
 REASON_IDENTITY = "identity_changed"
-# Unverifiable reasons are "source_unmeasurable:<Source Bundle failure code>".
+# Unverifiable reasons are "source_unmeasurable:<source fingerprint failure code>".
 REASON_UNMEASURABLE = "source_unmeasurable"
+REASON_NOT_MEASURED = "source_not_measured"
+# A TS whose Group has no worktree has no source to measure (D#1 §3-5 compat): its results
+# are recorded without a Basis and judged by the record alone.
+NO_WORKTREE = "group_worktree_unavailable"
 
 # ── Test Asset Policy (D#1 §3.8) ──────────────────────────────────────────────
 # Roots match case-sensitively. Co-located roots only hold assets under a __tests__ directory.
@@ -66,10 +77,6 @@ ASSET_SUFFIXES = {
                      ".html", ".patch", ".snap"), KIND_FIXTURE),
 }
 
-_MEMO: dict[str, tuple[str, dict]] = {}
-_MEMO_GUARD = threading.Lock()
-_MEMO_LIMIT = 64
-
 
 class BasisUnverifiable(ValueError):
     """The live source could not be measured; distinct from a stale Basis."""
@@ -77,6 +84,10 @@ class BasisUnverifiable(ValueError):
     def __init__(self, code: str):
         self.code = code
         super().__init__(f"{REASON_UNMEASURABLE}:{code}")
+
+
+class SourceNotMeasured(LookupError):
+    """Display path: no memo fits the live source (``resolve(memo=True)`` never hashes)."""
 
 
 def canonical_hash(value: dict | list) -> str:
@@ -89,9 +100,9 @@ def asset_kind(path) -> str | None:
     Lexical only (no disk access), so approval, the asset API and the locator agree on
     it. Refused: absolute, drive, backslash, colon, control characters, empty/``.``/``..``
     segments, paths outside the test roots (product source), a co-located file outside
-    ``__tests__``, a suffix with no kind, and anything the Source Bundle exclusion policy
-    leaves out (an excluded directory on the way or a secret file name): an asset the
-    capture never holds can be neither run nor judged.
+    ``__tests__``, a suffix with no kind, and anything the source exclusion policy leaves
+    out (an excluded directory on the way or a secret file name): an asset the run's copy
+    never holds can be neither run nor judged.
     """
     if not isinstance(path, str) or not path or path.startswith("/") or "\\" in path or ":" in path:
         return None
@@ -99,7 +110,7 @@ def asset_kind(path) -> str | None:
     if any(part in ("", ".", "..") or any(ord(c) < 32 or ord(c) == 127 for c in part)
            for part in parts):
         return None
-    if bundle_excluded(path):
+    if source_fingerprint.excluded(path):
         return None
     head = tuple(parts)
     inside = any(len(parts) > len(root) and head[:len(root)] == root for root in ASSET_ROOTS)
@@ -109,14 +120,6 @@ def asset_kind(path) -> str | None:
     if not inside:
         return None
     return ASSET_SUFFIXES.get(PurePosixPath(parts[-1]).suffix)
-
-
-def bundle_excluded(path: str) -> bool:
-    """Whether the Source Bundle exclusion policy leaves ``path`` out of every capture."""
-    from modules.flow_gate.services import source_bundle_materializer as materializer
-    parts = path.split("/")
-    return (any(materializer._excluded("/".join(parts[:end]), True) for end in range(1, len(parts)))
-            or materializer._excluded(path, False))
 
 
 def _test_only_path(path: str) -> bool:
@@ -132,7 +135,6 @@ def safe_asset_file(root: Path, path: str) -> Path:
     spelling), directories on the way and a regular file at the end, and the resolved
     target must still be ``root / path``. ``ValueError`` carries the refusal code.
     """
-    from modules.flow_gate.services import source_bundle_materializer as materializer
     if asset_kind(path) is None:
         raise ValueError("test_asset_not_allowlisted")
     base = Path(root)
@@ -152,7 +154,7 @@ def safe_asset_file(root: Path, path: str) -> Path:
             st = current.lstat()
         except OSError as exc:
             raise ValueError("test_asset_missing") from exc
-        if materializer._linked(st):
+        if source_fingerprint._linked(st):
             raise ValueError("test_asset_unsafe_path")
         last = index == len(parts) - 1
         if not (stat.S_ISREG(st.st_mode) if last else stat.S_ISDIR(st.st_mode)):
@@ -209,21 +211,22 @@ def _roles(cases: list[dict]) -> dict[str, str]:
 
 
 def _manifest(roles: dict[str, str], hashes: dict[str, str], *, root: Path | None = None) -> list[dict]:
-    """One manifest rule for capture and probe; hashes always come from the scan.
+    """One manifest rule for the run's copy and the live measure; hashes come from the scan.
 
-    With ``root`` (capture) every asset must pass the Test Asset Policy and be in the
-    captured Bundle; Git tracking is not asked, so an untracked test file a TR created is
-    an asset like a tracked one. Bundle membership stands for existence, hash and safety
-    (the capture refuses links and specials and hashes what it holds). Without ``root``
-    (Live Probe) a gap is kept as a null hash, so it shows up as a manifest change.
+    With ``root`` (a run's copy; root is the live worktree it was copied from) every asset
+    must pass the Test Asset Policy and be in the copy; Git tracking is not asked, so an
+    untracked test file a TR created is an asset like a tracked one. Membership in the
+    measured source stands for existence, hash and safety (the scan refuses links and
+    specials and hashes what it holds). Without ``root`` (live measure) a gap is kept as a
+    null hash, so it shows up as a manifest change.
     """
     manifest = []
     for path, role in sorted(roles.items()):
         kind = asset_kind(path)
         if root is not None:
             if kind is None:
-                # Excluded by the Bundle policy: refused explicitly, never captured or run.
-                excluded = isinstance(path, str) and path and bundle_excluded(path)
+                # Excluded by the source policy: refused explicitly, never copied or run.
+                excluded = isinstance(path, str) and path and source_fingerprint.excluded(path)
                 raise ValueError(("test_asset_not_captured: " if excluded else
                                   "product_source_or_invalid_test_asset: ") + path)
             if path not in hashes:
@@ -252,102 +255,62 @@ def _identity(doc: dict, *, policy: str, fingerprint: str, manifest: list[dict])
 
 
 def _group_of(doc: dict) -> tuple[str, str]:
-    from modules.flow_gate.services import source_bundle_materializer as materializer
     project_id, group_id = doc.get("project_id"), doc.get("group_id")
     if not project_id or not group_id:
-        raise materializer.SourceBundleError("group_worktree_unavailable", "TS has no group worktree")
+        raise source_fingerprint.SourceFingerprintError(NO_WORKTREE, "TS has no group worktree")
     return project_id, group_id
 
 
-def capture(doc: dict, cases: list[dict], *, locked: bool = False) -> dict:
-    """Basis Capture: snapshot the Group worktree into a Source Bundle and build the Basis.
+def worktree(doc: dict) -> Path:
+    """The TS's exact Group worktree (raises SourceFingerprintError)."""
+    return source_fingerprint.resolve_worktree(*_group_of(doc))
 
-    ``locked`` means the caller already holds this Group's G (asset edit). A Bundle failure
-    is raised as ``basis_capture_failed:<code>``; nothing is written to the DB here.
+
+def measure_run(doc: dict, cases: list[dict], target: Path, *, run_id: str | None = None) -> dict:
+    """Run Basis (D#1 §3-3 preparing): copy the worktree to ``target`` and fingerprint it.
+
+    The caller holds the Group's source lock around this call. A measurement failure is
+    ``basis_capture_failed:<code>``; an asset the copy does not hold is refused with the
+    manifest rule's code. Nothing is written to the DB or the TS here.
     """
-    from modules.flow_gate.services import source_bundle_materializer as materializer
-    from modules.flow_gate.services import source_bundle_service as bundles
     try:
-        project_id, group_id = _group_of(doc)
-        ensure = bundles.ensure_locked if locked else bundles.ensure
-        bundle = ensure(project_id, group_id)
-        opened = bundles.open_verified(bundle["bundle_id"])
-        root = materializer.resolve_worktree(project_id, group_id)
-    except materializer.SourceBundleError as exc:
+        root = worktree(doc)
+        measured = source_fingerprint.copy_measured(root, target)
+    except source_fingerprint.SourceFingerprintError as exc:
         raise ValueError("basis_capture_failed:" + exc.code) from exc
-    if opened["row"]["group_id"] != group_id or opened["row"]["project_id"] != project_id:
-        raise ValueError("basis_capture_failed:bundle_group_mismatch")
-    hashes = {entry["path"]: entry["sha256"] for entry in opened["manifest"]["files"]}
-    manifest = _manifest(_roles(cases), hashes, root=root)
-    identity = _identity(doc, policy=bundle["exclusion_policy_version"],
-                         fingerprint=bundle["content_fingerprint"], manifest=manifest)
-    binding = {"bundle_id": bundle["bundle_id"], "bundle_sha256": bundle["bundle_sha256"],
-               "git_revision": bundle["source_revision"], "source_dirty": bool(bundle["source_dirty"]),
-               "captured_at": datetime.now(timezone.utc).isoformat(),
-               "project_id": project_id, "group_id": group_id}
+    manifest = _manifest(_roles(cases), measured["hashes"], root=root)
+    identity = _identity(doc, policy=measured["exclusion_policy_version"],
+                         fingerprint=measured["content_fingerprint"], manifest=manifest)
+    project_id, group_id = _group_of(doc)
+    binding = {"git_revision": measured["source_revision"],
+               "source_dirty": bool(measured["source_dirty"]),
+               "measured_at": datetime.now(timezone.utc).isoformat(),
+               "project_id": project_id, "group_id": group_id, "run_id": run_id,
+               "metrics": measured.get("metrics")}
     return {"basis_id": canonical_hash(identity), **identity, "binding": binding,
             "manifest": manifest}
 
 
-def preflight(doc: dict, cases: list[dict]) -> dict:
-    """Approval precheck (dry run): the capture's manifest rule on a Live Probe, no Bundle."""
-    from modules.flow_gate.services import source_bundle_materializer as materializer
-    try:
-        live = probe(doc)
-        root = materializer.resolve_worktree(*_group_of(doc))
-    except BasisUnverifiable as exc:
-        raise ValueError("basis_capture_failed:" + exc.code) from exc
-    except materializer.SourceBundleError as exc:
-        raise ValueError("basis_capture_failed:" + exc.code) from exc
-    manifest = _manifest(_roles(cases), live["hashes"], root=root)
-    identity = _identity(doc, policy=live["exclusion_policy_version"],
-                         fingerprint=live["content_fingerprint"], manifest=manifest)
-    return {"basis_id": canonical_hash(identity), **identity, "manifest": manifest}
-
-
-def probe(doc: dict, *, memo: bool = False) -> dict:
-    """Live Probe: measure the worktree like a capture would, without copying or locking.
-
-    inspect_source re-checks HEAD/status and the file list around hashing, so a change
-    during measurement is ``source_changed`` (unverifiable), never a wrong fingerprint.
-    ``memo`` is for display paths only: hashes are reused while every scanned path, size
-    and mtime is unchanged.
-    """
-    from modules.flow_gate.services import source_bundle_materializer as materializer
-    try:
-        root = materializer.resolve_worktree(*_group_of(doc))
-        deadline = time.monotonic() + materializer.BUILD_SECONDS
-        key = str(root)
-        if memo:
-            files, dirs = materializer._scan(root, deadline)
-            with _MEMO_GUARD:
-                hit = _MEMO.get(key)
-            if hit and hit[0] == _scan_signature(files, dirs):
-                return hit[1]
-        inspected = materializer.inspect_source(root, deadline)
-    except materializer.SourceBundleError as exc:
-        raise BasisUnverifiable(exc.code) from exc
-    result = {"exclusion_policy_version": materializer.POLICY_VERSION,
-              "content_fingerprint": inspected["content_fingerprint"],
-              "hashes": {entry["path"]: entry["sha256"] for entry in inspected["entries"]},
-              "source_revision": inspected["source_revision"],
-              "source_dirty": inspected["source_dirty"]}
-    signature = _scan_signature(inspected["files"], inspected["dirs"])
-    with _MEMO_GUARD:
-        if key not in _MEMO and len(_MEMO) >= _MEMO_LIMIT:
-            _MEMO.pop(next(iter(_MEMO)))
-        _MEMO[key] = (signature, result)
-    return result
-
-
-def _scan_signature(files, dirs) -> str:
-    return canonical_hash([[name, st.st_size, st.st_mtime_ns] for name, st in files] +
-                          [["D", name] for name, _st in dirs])
-
-
 def resolve(doc: dict, cases: list[dict], *, memo: bool = False) -> dict:
-    """The identity the live source would have now (no binding). Raises BasisUnverifiable."""
-    live = probe(doc, memo=memo)
+    """The identity the live source has now (no binding).
+
+    Decision paths measure (``memo=False``) and raise BasisUnverifiable when the source
+    cannot be measured. Display paths (``memo=True``) never hash: the last measurement is
+    reused while the scan is unchanged, otherwise SourceNotMeasured.
+    """
+    try:
+        root = worktree(doc)
+    except source_fingerprint.SourceFingerprintError as exc:
+        raise BasisUnverifiable(exc.code) from exc
+    if memo:
+        live = source_fingerprint.memo_lookup(root)
+        if live is None:
+            raise SourceNotMeasured(REASON_NOT_MEASURED)
+    else:
+        try:
+            live = source_fingerprint.measure(root)
+        except source_fingerprint.SourceFingerprintError as exc:
+            raise BasisUnverifiable(exc.code) from exc
     manifest = _manifest(_roles(cases), live["hashes"])
     identity = _identity(doc, policy=live["exclusion_policy_version"],
                          fingerprint=live["content_fingerprint"], manifest=manifest)
@@ -357,7 +320,7 @@ def resolve(doc: dict, cases: list[dict], *, memo: bool = False) -> dict:
 
 
 def outdated(basis: dict | None) -> bool:
-    """A v1 (compat_worktree, HEAD-only) Basis can no longer be judged valid."""
+    """A v1 (HEAD tree) or v2 (Source Bundle) Basis can no longer be judged valid."""
     return bool(basis) and (basis.get("basis_version") != BASIS_VERSION or
                             (basis.get("source") or {}).get("kind") != SOURCE_KIND)
 
@@ -393,32 +356,58 @@ def _stale_reasons(stored: dict, live: dict) -> list[str]:
     return reasons or [REASON_IDENTITY]
 
 
-def verdict(doc: dict | None, basis: dict | None, cases: list[dict] | None = None, *,
-            execution_basis: dict | None = None, memo: bool = False) -> dict:
-    """Basis Verdict: the one judgement every caller uses (valid / stale / unverifiable).
+def live_state(doc: dict | None, cases: list[dict] | None = None, *, memo: bool = False) -> dict:
+    """Measure (or, for display, recall) the live Basis once for several judgements.
 
-    ``basis`` is the Basis stored on the TS now. ``execution_basis`` is the Basis a run or
-    result was made under; when it is not the stored one the result is stale at once.
+    ``{"live": <Basis>|None, "state": None|UNCHECKED|UNVERIFIABLE, "reasons": [...],
+    "no_worktree": bool}``; ``state`` is None when ``live`` was obtained.
     """
-    if not basis:
-        return _judged(STALE, [REASON_BASIS_MISSING], execution_basis)
-    if execution_basis is not None and execution_basis.get("basis_id") != basis.get("basis_id"):
-        return _judged(STALE, [REASON_BASIS_REPLACED], basis)
-    if outdated(basis):
-        return _judged(STALE, [REASON_BASIS_OUTDATED], basis)
     if not doc:
-        return _judged(UNVERIFIABLE, [REASON_UNMEASURABLE + ":ts_missing"], basis)
+        return {"live": None, "state": UNVERIFIABLE, "no_worktree": False,
+                "reasons": [REASON_UNMEASURABLE + ":ts_missing"]}
     try:
         if cases is None:
             cases = _doc_cases(doc)
-        live = resolve(doc, cases, memo=True) if memo else resolve(doc, cases)
-    except (ValueError, TypeError) as exc:
-        reason = str(exc) if isinstance(exc, BasisUnverifiable) else (
-            REASON_UNMEASURABLE + ":" + (str(exc).split(":", 1)[0] or type(exc).__name__))
-        return _judged(UNVERIFIABLE, [reason], basis)
-    if live["basis_id"] == basis["basis_id"]:
+        return {"live": resolve(doc, cases, memo=memo), "state": None, "reasons": [],
+                "no_worktree": False}
+    except SourceNotMeasured:
+        return {"live": None, "state": UNCHECKED, "reasons": [REASON_NOT_MEASURED],
+                "no_worktree": False}
+    except BasisUnverifiable as exc:
+        return {"live": None, "state": UNVERIFIABLE, "reasons": [str(exc)],
+                "no_worktree": exc.code == NO_WORKTREE}
+    except Exception as exc:  # noqa: BLE001 -- a source that cannot be judged is unverifiable
+        reason = REASON_UNMEASURABLE + ":" + (
+            (str(exc).split(":", 1)[0] if isinstance(exc, (ValueError, TypeError)) else "")
+            or type(exc).__name__)
+        return {"live": None, "state": UNVERIFIABLE, "reasons": [reason], "no_worktree": False}
+
+
+def judge(basis: dict | None, state: dict) -> dict:
+    """Basis Verdict of one record's Basis against a ``live_state`` (valid/stale/...)."""
+    live = state["live"]
+    if basis and outdated(basis):
+        return _judged(STALE, [REASON_BASIS_OUTDATED], basis, live)
+    if live is None:
+        if basis is None and state["no_worktree"]:
+            # No Group worktree to measure: a record made without a Basis stands as recorded.
+            return _judged(VALID, [], None)
+        return _judged(state["state"], state["reasons"], basis)
+    if not basis:
+        return _judged(STALE, [REASON_BASIS_MISSING], None, live)
+    if live["basis_id"] == basis.get("basis_id"):
         return _judged(VALID, [], basis, live)
     return _judged(STALE, _stale_reasons(basis, live), basis, live)
+
+
+def verdict(doc: dict | None, basis: dict | None, cases: list[dict] | None = None, *,
+            memo: bool = False) -> dict:
+    """Basis Verdict: is ``basis`` (the Basis a run executed or a result was recorded
+    under) the Basis the live source has now? valid / stale / unverifiable, and on display
+    paths (``memo``) also unchecked. An outdated Basis is stale without measuring."""
+    if basis and outdated(basis):
+        return _judged(STALE, [REASON_BASIS_OUTDATED], basis)
+    return judge(basis, live_state(doc, cases, memo=memo))
 
 
 def verdict_error(judged: dict, http_error, **context):
@@ -439,6 +428,7 @@ def source_identity(basis: dict | None) -> dict:
         "kind": source.get("kind"), "basis_id": basis.get("basis_id"),
         "content_fingerprint": source.get("content_fingerprint"),
         "exclusion_policy_version": source.get("exclusion_policy_version"),
+        # v2 records only (Source Bundle binding); a v3 Basis has no Bundle.
         "bundle_id": binding.get("bundle_id") or source.get("bundle_id"),
         "bundle_sha256": binding.get("bundle_sha256"),
         "git_revision": binding.get("git_revision") or source.get("git_revision"),
@@ -448,156 +438,36 @@ def source_identity(basis: dict | None) -> dict:
 
 
 def source_summary(basis: dict | None) -> dict:
-    """Display fields for the TS detail Basis area."""
+    """Display fields of an execution Basis: what the run executed (D#1 §3-4, §5)."""
     basis = basis or {}
     source, binding = basis.get("source") or {}, basis.get("binding") or {}
     fingerprint = source.get("content_fingerprint") or ""
+    measured_at = binding.get("measured_at") or binding.get("captured_at")
     return {"kind": source.get("kind"), "fingerprint_prefix": fingerprint[:12] or None,
-            "captured_at": binding.get("captured_at"), "source_dirty": binding.get("source_dirty"),
-            "bundle_id": binding.get("bundle_id"), "git_revision": binding.get("git_revision")}
+            "measured_at": measured_at, "captured_at": measured_at,
+            "source_dirty": binding.get("source_dirty"),
+            "git_revision": binding.get("git_revision"), "run_id": binding.get("run_id"),
+            "bundle_id": binding.get("bundle_id")}
 
 
-# ── Bundle retention, execution source and rebind ─────────────────────────────
+def asset_manifest(doc: dict, cases: list[dict]) -> list[dict]:
+    """The TS's test assets with their current on-disk hashes (asset API, D#1 §3-7).
 
-def pin(doc: dict, basis: dict) -> None:
-    """Retention Pin for the TS's current Basis; replaces (releases) the previous one.
-
-    Call inside the transaction that stores the Basis so a rollback leaves no Pin.
+    Authority is the approved specification (automation_ref / test_assets), checked with
+    the Test Asset Policy; only those few files are read, never the whole source.
     """
-    binding = basis.get("binding") or {}
-    if not binding.get("bundle_id"):
-        return
-    from modules.flow_gate.db import source_bundles as db_source_bundles
-    db_source_bundles.pin_set(doc["doc_id"], binding["bundle_id"], basis["basis_id"],
-                              binding.get("project_id") or doc.get("project_id"),
-                              binding.get("group_id") or doc.get("group_id"))
-
-
-def open_bundle(doc: dict, basis: dict) -> dict:
-    """Open the Basis's Bundle with integrity, refusing any Group/policy/fingerprint drift."""
-    from modules.flow_gate.services import source_bundle_materializer as materializer
-    from modules.flow_gate.services import source_bundle_service as bundles
-    binding, source = basis.get("binding") or {}, basis.get("source") or {}
-    try:
-        opened = bundles.open_verified(binding.get("bundle_id") or "")
-    except materializer.SourceBundleError as exc:
-        raise ValueError("bundle_unavailable:" + exc.code) from exc
-    row = opened["row"]
-    if (row["project_id"] != doc.get("project_id") or row["group_id"] != doc.get("group_id")
-            or row["exclusion_policy_version"] != source.get("exclusion_policy_version")
-            or row["content_fingerprint"] != source.get("content_fingerprint")
-            or row["bundle_sha256"] != binding.get("bundle_sha256")):
-        raise ValueError("bundle_mismatch")
-    return opened
-
-
-def rebind(doc: dict, basis: dict, *, run_id: str | None = None) -> dict:
-    """Basis Rebind: a new Bundle for the same content; basis_id and results stay valid."""
-    from modules.flow_gate.db import documents as db_docs
-    from modules.flow_gate.db import events as db_events
-    from modules.flow_gate.db.connection import get_store
-    from modules.flow_gate.services import test_run_service
-    fresh = capture(doc, _doc_cases(doc))
-    if fresh["basis_id"] != basis["basis_id"]:
-        raise ValueError("basis_stale_before_execution")
-    rebound = {**basis, "binding": fresh["binding"]}
-    with test_run_service._admission_lock, get_store().transaction():
-        current_doc = db_docs.get_by_id(doc["doc_id"])
-        stored = current(current_doc or {})
-        if not stored or stored["basis_id"] != basis["basis_id"]:
-            raise ValueError("basis_stale_before_execution")
-        if not db_docs.update(doc["doc_id"], {"meta": metadata_with_basis(current_doc, rebound)}):
-            raise RuntimeError("test_basis_rebind_failed")
-        pin(current_doc, rebound)
-        db_events.insert_event(doc["doc_id"], "test_spec_basis_rebound", note=json.dumps({
-            "basis_id": basis["basis_id"], "run_id": run_id,
-            "old_bundle_id": (basis.get("binding") or {}).get("bundle_id"),
-            "bundle_id": rebound["binding"]["bundle_id"],
-        }, ensure_ascii=False))
-    return rebound
-
-
-def edited_only(basis: dict, successor: dict, path: str, old: bytes) -> bool:
-    """Whether a successor's Bundle is the Basis's exact source with only ``path`` edited.
-
-    The asset edit captures under G, but G does not stop an editor or tool writing to the
-    worktree: putting ``path``'s old bytes back into the successor's Bundle manifest must
-    give the approved fingerprint again, so a product change made meanwhile never enters
-    a successor (product changes need TS reopen and approval, D §3.5).
-    """
-    from modules.flow_gate.services import source_bundle_materializer as materializer
-    from modules.flow_gate.services import source_bundle_service as bundles
-    try:
-        manifest = bundles.open_verified(successor["binding"]["bundle_id"])["manifest"]
-    except materializer.SourceBundleError as exc:
-        raise ValueError("basis_capture_failed:" + exc.code) from exc
-    if ((successor.get("source") or {}).get("exclusion_policy_version") !=
-            (basis.get("source") or {}).get("exclusion_policy_version")
-            or not any(entry["path"] == path for entry in manifest["files"])):
-        return False
-    before = {"path": path, "size": len(old), "sha256": hashlib.sha256(old).hexdigest()}
-    restored = [before if entry["path"] == path else entry for entry in manifest["files"]]
-    return materializer._fingerprint(restored, [(name, None) for name in manifest["dirs"]]) == (
-        (basis.get("source") or {}).get("content_fingerprint"))
-
-
-def _copy_hashed(source: Path, target: Path) -> str:
-    """Copy one file and return the sha256 of the bytes actually written to ``target``."""
-    digest = hashlib.sha256()
-    # A plain new file, not copy2: the Bundle is read-only and the run root must be removable.
-    with source.open("rb") as reader, target.open("xb") as writer:
-        while chunk := reader.read(1024 * 1024):
-            digest.update(chunk)
-            writer.write(chunk)
-    return digest.hexdigest()
-
-
-def copy_bundle_source(source: Path, target: Path, manifest: dict) -> None:
-    """Copy a verified Bundle source into a disposable root, byte-checked against its manifest.
-
-    ``open_verified`` checks the manifest, not the files under it, so every copied file is
-    hashed as it is written and the file and directory sets must equal the manifest: a
-    Bundle file changed after opening (or during the copy) never reaches the run root.
-    Links and specials abort.
-    """
-    from modules.flow_gate.services import source_bundle_materializer as materializer
-    expected_files = {entry["path"]: entry["sha256"] for entry in manifest.get("files") or []}
-    expected_dirs = set(manifest.get("dirs") or [])
-    target.mkdir(parents=True, exist_ok=True)
-    copied, created = {}, set()
-    for current_dir, dirnames, filenames in os.walk(source):
-        base = Path(current_dir)
-        relative = base.relative_to(source)
-        for name in dirnames:
-            if materializer._linked((base / name).lstat()):
-                raise ValueError("unsafe_execution_source")
-            (target / relative / name).mkdir(exist_ok=True)
-            created.add((relative / name).as_posix())
-        for name in filenames:
-            st = (base / name).lstat()
-            if materializer._linked(st) or not stat.S_ISREG(st.st_mode):
-                raise ValueError("unsafe_execution_source")
-            copied[(relative / name).as_posix()] = _copy_hashed(base / name, target / relative / name)
-    if created != expected_dirs or copied != expected_files:
-        raise ValueError("execution_source_mismatch")
-
-
-def current(doc: dict) -> dict | None:
-    try:
-        meta = json.loads(doc.get("meta") or "{}")
-    except (TypeError, ValueError):
-        return None
-    basis = meta.get("test_basis")
-    return basis if isinstance(basis, dict) and basis.get("basis_id") else None
-
-
-def metadata_with_basis(doc: dict, basis: dict) -> str:
-    try:
-        meta = json.loads(doc.get("meta") or "{}")
-    except (TypeError, ValueError):
-        meta = {}
-    meta["test_basis"] = basis
-    return json.dumps(meta, ensure_ascii=False)
+    root = source_root(doc)
+    manifest = []
+    for path, role in sorted(_roles(cases).items()):
+        kind = asset_kind(path)
+        content_hash = None
+        if kind is not None:
+            try:
+                content_hash = hashlib.sha256(safe_asset_file(root, path).read_bytes()).hexdigest()
+            except (ValueError, OSError):
+                content_hash = None
+        manifest.append({"path": path, "content_hash": content_hash, "role": role, "kind": kind})
+    return manifest
 
 
 def metadata_without_basis(doc: dict) -> str:

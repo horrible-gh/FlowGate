@@ -3148,7 +3148,7 @@ def get_document(
             if type_code == "TS":
                 out["test_contract_version"] = _test_run_service.ts_contract_version(doc)
             else:
-                out["test_gate"] = _test_run_service.tsr_gate_state(doc)
+                out["test_gate"] = _test_run_service.tsr_gate_state(doc, memo=True)
     except Exception:  # noqa: BLE001 — display-only extras must not break document lookup
         pass
     # TR work-scope check result (0299 D0004 §6). It lives in meta, but is unfolded here so the

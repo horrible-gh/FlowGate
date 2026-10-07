@@ -2,17 +2,22 @@
 
 0684 T#1 (D#1 §3-1~§3-4): a run is admitted without asking whether a stored Basis still
 matches the source -- by TS approval (inside the approval transaction), by [run again] or
-by a single Case. The run measures what it executes: its preparing phase captures the
-Basis from the Group worktree (T#1 interim, D#1 §7: capture then run from that capture)
-and stores it on the TS, so approval never captures and never waits for the source.
+by a single Case.
+
+0684 T#2 (D#1 §3-3): the run measures what it executes. Its preparing phase copies the
+Group worktree into a disposable run root while fingerprinting the copied bytes (one read,
+under the Group's source lock), and that Basis is kept on the run -- no Source Bundle, no
+Basis on the TS. Cases execute in the copy through the shared process layer
+(tr_self_check_executor). Finalizing records the result under the executed Basis and
+measures the live source once to decide whether the result counts for it.
 """
 from __future__ import annotations
 
 import json
 import os
-import shlex
 import shutil
-import subprocess
+import sys
+import threading
 from pathlib import Path
 
 from modules.flow_gate.db import documents as db_docs
@@ -209,114 +214,127 @@ def admit(doc_id: str, *, case_id: str | None, runner_id: str, locale: str,
 
 class ExecutionRootResolver:
     @staticmethod
-    def measure(doc: dict, run: dict, cases: list[dict]) -> dict:
-        """Run Basis (0684 T#1 interim, D#1 §7): capture the worktree and store it on the TS.
+    def prepare(doc: dict, run: dict, cases: list[dict]) -> tuple[dict, Path, Path]:
+        """Run root and run Basis in one read (0684 T#2, D#1 §3-3 preparing).
 
-        The capture is the Source Bundle path T#2 replaces with a copy-and-hash run root;
-        either way it runs here, in the run's preparing phase, never in the approval. The
-        stored Basis is what the gate and the views judge until the next run measures again.
+        Under this Group's source lock (holder ``run_prepare``; writes of the same Group
+        wait, other Groups do not) the worktree is copied into the run's disposable root
+        while every copied byte is hashed. The fingerprint of those bytes is the run's
+        Basis: what runs is exactly what was measured, uncommitted and untracked work
+        included, and a live change after the copy never reaches the run. The lock covers
+        the copy only, never the execution. Nothing is stored on the TS; the caller keeps
+        the Basis on the run. Refusals are ``ValueError("<code>: <detail>")``.
         """
-        from modules.flow_gate.db import events as db_events
-        from modules.flow_gate.db.connection import get_store
+        from modules.flow_gate.services.git import lock_manager
         from modules.flow_gate.services import test_run_service as runner
-        doc_id = doc["doc_id"]
         revision = run.get("revision_no") or 0
-        current_doc = db_docs.get_by_id(doc_id) or doc
+        current_doc = db_docs.get_by_id(doc["doc_id"]) or doc
         if (current_doc.get("revision_no") or 0) != revision:
             raise ValueError("ts_changed_before_execution")
-        basis = test_basis_service.capture(current_doc, cases)
-        with runner._admission_lock, get_store().transaction():
-            fresh = db_docs.get_by_id(doc_id)
-            if not fresh or (fresh.get("revision_no") or 0) != revision:
-                raise ValueError("ts_changed_before_execution")
-            updated = db_docs.update(doc_id, {
-                "meta": test_basis_service.metadata_with_basis(fresh, basis)})
-            if not updated:
-                raise RuntimeError("test_basis_update_failed")
-            test_basis_service.pin(updated, basis)
-            db_events.insert_event(doc_id, "test_spec_basis_created", note=json.dumps({
-                "basis_id": basis["basis_id"], "ts_revision_no": revision,
-                "run_id": run["run_id"], "source": basis["source"],
-                "binding": basis.get("binding"),
-                "manifest_hash": basis["test_assets"]["manifest_hash"],
-            }, ensure_ascii=False))
-        return basis
-
-    @staticmethod
-    def prepare(doc: dict, run: dict, basis: dict) -> tuple[Path, Path]:
-        """Execution Root Builder (0682 D#1 3.9): a disposable copy of the Basis's Bundle.
-
-        Never the live worktree and never ``git archive HEAD``: what runs is exactly the
-        captured source the Basis was judged on, uncommitted and untracked work included.
-        """
-        from modules.flow_gate.db import source_bundles as db_source_bundles
-        from modules.flow_gate.services import test_run_service as runner
-        current_doc = db_docs.get_by_id(doc["doc_id"]) or doc
-        stored = test_basis_service.current(current_doc)
-        judged = test_basis_service.verdict(current_doc, stored, execution_basis=basis)
-        if judged["state"] != test_basis_service.VALID:
-            prefix = ("basis_stale_before_execution" if judged["state"] == test_basis_service.STALE
-                      else "basis_unverifiable_before_execution")
-            raise ValueError(prefix + ": " + ",".join(judged["reasons"]))
-        effective = stored
-        try:
-            opened = test_basis_service.open_bundle(current_doc, effective)
-        except ValueError:
-            # Bundle deleted, damaged or not this Group's: the live source still matches
-            # (verdict above), so capture again and move the binding; basis_id stays.
-            effective = test_basis_service.rebind(current_doc, effective, run_id=run["run_id"])
-            opened = test_basis_service.open_bundle(current_doc, effective)
-        captured = {entry["path"]: entry["sha256"] for entry in opened["manifest"]["files"]}
-        for asset in effective.get("manifest") or []:
-            if captured.get(asset["path"]) != asset["content_hash"]:
-                raise ValueError("test_asset_not_captured: " + asset["path"])
         scratch = runner._scratch_dir(doc, run["run_id"])
         root = scratch / "source"
+        if scratch.exists():
+            shutil.rmtree(scratch, ignore_errors=True)  # a retried pickup starts clean
         scratch.mkdir(parents=True, exist_ok=True)
         try:
-            test_basis_service.copy_bundle_source(opened["source"], root, opened["manifest"])
+            project_id, group_id = current_doc.get("project_id"), current_doc.get("group_id")
+            lock = None
+            if project_id and group_id:
+                outcome, ctx = lock_manager.acquire_group(project_id, group_id,
+                                                          holder_kind="run_prepare",
+                                                          mode="run_prepare")
+                if not outcome.ok:
+                    raise ValueError("basis_capture_failed:source_busy")
+                lock = (ctx, outcome.lock_key)
+            try:
+                basis = test_basis_service.measure_run(current_doc, cases, root,
+                                                       run_id=run["run_id"])
+            finally:
+                if lock is not None:
+                    lock_manager.release(*lock)
         except Exception:
             shutil.rmtree(scratch, ignore_errors=True)
             raise
-        db_source_bundles.record_usage(
-            opened["row"]["bundle_id"], "spec_execution", run_id=run["run_id"],
-            document_id=doc["doc_id"], detail={"basis_id": effective["basis_id"]},
-        )
-        return root, scratch
+        return basis, root, scratch
 
 
 # Prepare refusals end the run under their own error, pytest never started: the run could
-# not measure its source (capture refused, an automated test file missing or not an asset,
-# the TS changed while queued), a Basis that is no longer the live source, or a run root
-# that is not byte-for-byte the Basis's Bundle. None of them is a FAIL (D#1 §3-3 step 6).
-_PREPARE_REFUSALS = {"basis_stale_before_execution", "basis_unverifiable_before_execution",
-                     "execution_source_mismatch", "unsafe_execution_source",
-                     "test_asset_not_captured", "basis_capture_failed",
+# not copy and measure its source (source busy or changed mid-copy, a limit, an automated
+# test file missing or not an asset) or the TS changed while queued. None of them is a
+# FAIL (D#1 §3-3 step 6).
+_PREPARE_REFUSALS = {"test_asset_not_captured", "basis_capture_failed",
                      "automation_asset_missing", "product_source_or_invalid_test_asset",
                      "test_asset_path_case_mismatch", "ts_changed_before_execution",
                      "source_root_missing"}
 
 
+def _python(env: dict) -> str:
+    return shutil.which("python", path=env.get("PATH")) or sys.executable
+
+
 class ExistingRunnerAdapter:
     @staticmethod
     def run_pytest(nodeid: str, root: Path, scratch: Path, active) -> tuple[str, str, int | None, str]:
+        """One pytest node in the run root, through the shared execution layer (D#1 §3-3).
+
+        Process ownership, timeout, cancel and output tails are tr_self_check_executor's
+        (the layer TR Self-check and Chat use); the command, its environment and what the
+        result means stay the spec run's own.
+        """
         from modules.flow_gate.services import test_run_service as runner
+        from modules.flow_gate.services import tr_self_check_executor as executor
         junit_path = scratch / ("junit_" + str(abs(hash(nodeid))) + ".xml")
-        argv = ["python", "-m", "pytest", nodeid, "-q", "-p", "no:cacheprovider",
+        env = {**os.environ, **runner._execution_env(runner._allocate_port(), scratch)}
+        argv = [_python(env), "-m", "pytest", nodeid, "-q", "-p", "no:cacheprovider",
                 "--junitxml=" + str(junit_path)]
-        command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
-        result, exit_code, output, _ = runner._run_shell_command(
-            command, root, runner.CASE_TIMEOUT_SEC,
-            runner._execution_env(runner._allocate_port(), scratch), active,
-        )
+        timeout = runner.CASE_TIMEOUT_SEC
+        cancelled = active.cancel_event if active is not None else threading.Event()
+        try:
+            control, _ownership = executor.spawn(argv, root, env, timeout,
+                                                 getattr(active, "run_id", None) or "spec-run")
+        except executor.OwnershipError as exc:
+            return "error", "", None, "process owner unavailable: " + str(exc)
+        if active is not None:
+            runner._set_current_control(active, control)
+        try:
+            outcome = executor.wait(control, timeout, cancelled)
+        finally:
+            if active is not None:
+                runner._clear_current_control(active, control)
+            control.close()
+        output = (outcome.stdout_tail or "") + (outcome.stderr_tail or "")
+        if outcome.timed_out:
+            result = "timeout"
+        else:
+            result = "pass" if outcome.exit_code == 0 else "fail"
         xml = junit_path.read_text(encoding="utf-8") if junit_path.is_file() else ""
-        return result, xml, exit_code, output[-4000:]
+        return result, xml, outcome.exit_code, output[-4000:]
 
 
 def _enter_phase(doc: dict, run: dict, phase: str) -> None:
     from modules.flow_gate.services import test_run_service as runner
     merge_run_meta(run["run_id"], phase=phase)
     runner._emit_phase(doc, run, phase)
+
+
+def _record_basis(doc: dict, run: dict, basis: dict) -> dict:
+    """Keep the run's Basis on the run (D#1 §3-3 step 4) and leave an audit event."""
+    from modules.flow_gate.db import events as db_events
+    binding = basis.get("binding") or {}
+    execution_root = {"kind": "disposable_copy", "basis_id": basis["basis_id"],
+                      "source": basis.get("source"), "binding": binding,
+                      "source_identity": test_basis_service.source_identity(basis),
+                      "disposable": True}
+    merge_run_meta(run["run_id"], basis_id=basis["basis_id"], test_basis=basis,
+                   execution_root=execution_root)
+    db_events.insert_event(doc["doc_id"], "test_spec_basis_created", note=json.dumps({
+        "basis_id": basis["basis_id"], "ts_revision_no": basis.get("ts_revision_no"),
+        "run_id": run["run_id"], "source": basis["source"],
+        "git_revision": binding.get("git_revision"), "source_dirty": binding.get("source_dirty"),
+        "metrics": binding.get("metrics"),
+        "manifest_hash": basis["test_assets"]["manifest_hash"],
+    }, ensure_ascii=False))
+    return execution_root
 
 
 def execute(run: dict) -> None:
@@ -336,33 +354,21 @@ def execute(run: dict) -> None:
             return
         _enter_phase(doc, run, PHASE_PREPARING)
         try:
-            basis = ExecutionRootResolver.measure(doc, run, spec_cases)
-            merge_run_meta(run_id, basis_id=basis["basis_id"], test_basis=basis)
-            if runner._bail_if_cancelled(run_id, doc, active):
-                return
-            root, scratch = ExecutionRootResolver.prepare(doc, run, basis)
+            basis, root, scratch = ExecutionRootResolver.prepare(doc, run, spec_cases)
         except ValueError as exc:
             code, _, reasons = str(exc).partition(":")
             if code.strip() not in _PREPARE_REFUSALS:
                 raise
-            # Not run at all: the run could not measure its source, or the copied run root
-            # is not exactly the measured capture.
+            # Not run at all: the run could not copy and measure its source.
             merge_run_meta(run_id, phase=PHASE_FINISHED,
                            prepare_refused={"error": code.strip(), "reasons": reasons.strip()})
             db_test_runs.finish_run(run_id=run_id, status="failed", error=code.strip())
             runner._emit_finished(doc, db_test_runs.get_run(run_id) or run, None)
             return
-        # A rebind during prepare moved the binding; record the Bundle that really ran.
-        bound = test_basis_service.current(db_docs.get_by_id(doc["doc_id"]) or {})
-        executed = bound if bound and bound["basis_id"] == basis["basis_id"] else basis
-        executed_identity = test_basis_service.source_identity(executed)
-        execution_root = {"kind": (executed.get("source") or {}).get("kind"),
-                          "basis_id": executed["basis_id"],
-                          "source": executed.get("source"),
-                          "binding": executed.get("binding"),
-                          "source_identity": executed_identity,
-                          "disposable": True}
-        merge_run_meta(run_id, execution_root=execution_root)
+        _record_basis(doc, run, basis)
+        executed_identity = test_basis_service.source_identity(basis)
+        if runner._bail_if_cancelled(run_id, doc, active):
+            return
         _enter_phase(doc, run, PHASE_EXECUTING)
         results = []
         executed_nodes = set()
@@ -416,47 +422,21 @@ def execute(run: dict) -> None:
                     "result": item.get("status"), "exit_code": exit_code,
                 }, index, len(selected_ids))
         _enter_phase(doc, run, PHASE_FINALIZING)
+        # D#1 §3-3 finalizing step 3: measure the live source once, before any lock. The
+        # result is recorded under the executed Basis either way; this decides its gate.
+        live = None
+        if results and not active.cancel_event.is_set():
+            live = test_basis_service.live_state(db_docs.get_by_id(doc["doc_id"]), spec_cases)
         with runner._get_run_lock(run_id):
             if active.cancel_event.is_set():
                 merge_run_meta(run_id, phase=PHASE_FINISHED)
                 runner._finalize_cancelled(run_id, doc)
                 return
-            current = db_docs.get_by_id(doc["doc_id"])
-            judged = test_basis_service.verdict(
-                current, test_basis_service.current(current or {}), execution_basis=basis)
-            stale = judged["state"] != test_basis_service.VALID
-            # stale -> superseded evidence; unverifiable -> evidence, run ends basis_unverifiable.
-            stale_error = ("basis_superseded" if judged["state"] == test_basis_service.STALE
-                           else "basis_unverifiable")
             # A chain may have attached while this run executed: read its context now.
             live_meta = merge_run_meta(run_id, phase=PHASE_FINISHED)
             chain = live_meta.get("chain")
             finished_execution = False
-            if stale:
-                normalized = test_spec_service.normalize_results(
-                    results, submitted_by=run.get("runner_id") or "system", now=now_iso(),
-                    default_source_identity=executed_identity, default_origin="automated")
-                mapped = test_spec_service.map_results(spec_cases, normalized)
-                summary = test_spec_service.compute_overall(mapped["cases"])
-                db_test_runs.insert_spec_run(
-                    doc_id=doc["doc_id"], revision_no=run["revision_no"],
-                    triggered_via=run["triggered_via"], runner_id=run["runner_id"],
-                    rows=mapped["cases"], status="failed", overall=summary["overall"],
-                    result_meta=json.dumps({"run_kind": "superseded_execution", "basis_id": basis["basis_id"],
-                                            "test_basis": basis, "stale": True,
-                                            "basis_state": judged["state"],
-                                            "basis_reasons": judged["reasons"],
-                                            "execution_root": execution_root,
-                                            "counts": summary["counts"],
-                                            "required_counts": summary["required_counts"],
-                                            "optional_counts": summary["optional_counts"],
-                                            "unmapped": mapped["unmapped"],
-                                            "conflicts": mapped["conflicts"]}, ensure_ascii=False),
-                    case_passed=summary["counts"]["pass"], case_failed=summary["counts"]["fail"],
-                    error=stale_error, locale=run.get("locale"),
-                    case_meta=[test_spec_service.case_row_to_meta(row) for row in mapped["cases"]],
-                )
-            elif results:
+            if results:
                 with runner._admission_lock:
                     recorded = runner.record_spec_results(
                         doc_id=doc["doc_id"], runner_id=run["runner_id"],
@@ -464,18 +444,18 @@ def execute(run: dict) -> None:
                         triggered_via="token" if chain else run["triggered_via"],
                         results=results,
                         locale=run.get("locale") or "ko", execution_run_id=run_id,
-                        execution_basis=executed, execution_cases=spec_cases,
-                        chain_context=chain,
+                        execution_basis=basis, execution_cases=spec_cases,
+                        execution_live=live, chain_context=chain,
                     )
                     db_test_runs.finish_run(run_id=run_id, status="passed",
                                             case_passed=len(results), case_failed=0)
                     finished_execution = True
+                    # The live verdict travels in the record: finalize does not measure again.
                     runner.finalize_spec_results(recorded["doc"], recorded["run"],
                                                  locale=run.get("locale") or "ko")
             if not finished_execution:
-                db_test_runs.finish_run(run_id=run_id, status="failed" if stale else "passed",
-                                        case_passed=len(results) if not stale else 0,
-                                        case_failed=0, error=stale_error if stale else None)
+                db_test_runs.finish_run(run_id=run_id, status="passed", case_passed=0,
+                                        case_failed=0)
         runner._emit_finished(doc, db_test_runs.get_run(run_id) or run, None)
     except Exception as exc:
         runner.logger.warning("spec execution failed for %s: %s", run_id, exc, exc_info=True)

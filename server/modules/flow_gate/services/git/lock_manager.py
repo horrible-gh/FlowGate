@@ -78,6 +78,9 @@ _WAIT_PARAMS = {
     "freeze_interactive": ("FLOWGATE_FREEZE_INTERACTIVE_WAIT_SEC", 2, 0, 5),
     "selfcheck_start": ("FLOWGATE_SELFCHECK_START_WAIT_SEC", 5, 0, 15),
     "bundle_start": ("FLOWGATE_BUNDLE_WAIT_SEC", 5, 0, 15),
+    # 0684 T#2: a spec run's preparing copy waits for a source write of its Group in the
+    # background (no request is held), so it may wait longer than an interactive caller.
+    "run_prepare": ("FLOWGATE_RUN_PREPARE_WAIT_SEC", 30, 0, 120),
     "job": ("FLOWGATE_JOB_LOCK_WAIT_SEC", 0, 0, 2),
 }
 
@@ -100,7 +103,7 @@ def wait_budget(domain: str, mode: str) -> float:
 RANK = {"P": 1, "G": 2, "W": 3, "B": 4, "R": 5, "M": 6}
 
 # L 2.7: holder kinds whose G/P/R/W/B hold is long (heartbeated). Everything else is short.
-_LONG_G_KINDS = {"selfcheck", "bundle", "tr2_apply"}
+_LONG_G_KINDS = {"selfcheck", "bundle", "tr2_apply", "run_prepare"}
 
 
 # resource_lock.holder_kind has a CHECK (migration 132). A caller-side kind outside it keeps its
@@ -114,6 +117,8 @@ STORED_HOLDER_KINDS = frozenset((
 _STORED_AS = {
     "finalize": "publish", "approval_retry": "review_action", "dispose": "worktree_cleanup",
     "sweep": "sweeper", "work_base_confirm": "source_mutation", "initial_sync": "worktree_provision",
+    # 0684 T#2: the run's copy-and-measure hold reads the worktree like a Bundle capture did.
+    "run_prepare": "bundle",
 }
 
 

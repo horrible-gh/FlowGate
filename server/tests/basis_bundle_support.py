@@ -1,11 +1,12 @@
-"""Real Source Bundle harness for Test Basis suites (flowgate.default.0682 T#1).
+"""Real source harness for Test Basis suites (flowgate.default.0682 T#1, 0684 T#2).
 
-The Basis now captures the Group worktree into a Source Bundle and judges it with a Live
-Probe, so these suites run the production capture, materializer, integrity check, Pin
-SQL and execution copy over real git repositories. Only the edges are replaced: the
-Group -> worktree lookup (a dict of temp repositories), the Bundle storage root (a temp
-directory), the Group lock (``stub_group_lock``), and the documents/events tables (an
-in-memory dict that a failed transaction rolls back together with the SQLite rows).
+0684 T#2: a run copies the Group worktree into its disposable root and fingerprints the
+copied bytes (no Source Bundle). These suites run the production fingerprint, copy, manifest
+and verdict code over real git repositories. Only the edges are replaced: the Group ->
+worktree lookup (a dict of temp repositories), the run scratch root (a temp directory),
+the Group lock (``stub_group_lock``), and the documents/events tables (an in-memory dict
+that a failed transaction rolls back together with the SQLite rows). The Bundle tables are
+still created so a suite can show that nothing writes to them any more.
 """
 from __future__ import annotations
 
@@ -96,7 +97,7 @@ class BasisEnv:
         from modules.flow_gate.db import documents as db_docs
         from modules.flow_gate.db import events as db_events
         from modules.flow_gate.db import source_bundles as db_source_bundles
-        from modules.flow_gate.services import source_bundle_materializer as materializer
+        from modules.flow_gate.services import source_fingerprint
         from modules.flow_gate.services import test_asset_service
         from modules.flow_gate.services import test_basis_service as basis
         from modules.flow_gate.services import test_run_service as runner
@@ -113,12 +114,11 @@ class BasisEnv:
         def resolve_worktree(project_id, group_id):
             root = self.roots.get(group_id)
             if project_id != PROJECT or root is None or not root.is_dir():
-                raise materializer.SourceBundleError("group_worktree_unavailable", "no worktree")
+                raise source_fingerprint.SourceFingerprintError("group_worktree_unavailable",
+                                                                 "no worktree")
             return root.resolve()
 
-        monkeypatch.setattr(materializer, "resolve_worktree", resolve_worktree)
-        monkeypatch.setattr(materializer, "bundle_path",
-                            lambda project_id, bundle_id: tmp_path / "bundles" / bundle_id)
+        monkeypatch.setattr(source_fingerprint, "resolve_worktree", resolve_worktree)
         stub_group_lock(monkeypatch)
         monkeypatch.setattr(db_docs, "get_by_id",
                             lambda doc_id: copy.deepcopy(self.store.docs.get(doc_id)))
@@ -134,7 +134,8 @@ class BasisEnv:
                             self.store.events.append((doc_id, event, json.loads(note or "{}"))))
         monkeypatch.setattr(basis, "_doc_cases", lambda doc: self.cases)
         monkeypatch.setattr(runner, "_scratch_dir", lambda doc, run_id: tmp_path / "runs" / run_id)
-        basis._MEMO.clear()
+        source_fingerprint.forget()
+        monkeypatch.setattr(source_fingerprint, "_MEMO", {})
 
     def repo(self, group_id: str, value: str = "1") -> Path:
         self.roots[group_id] = make_repo(self.tmp_path / group_id, value)
@@ -147,32 +148,11 @@ class BasisEnv:
         self.store.docs[doc["doc_id"]] = doc
         return copy.deepcopy(doc)
 
-    def approve(self, doc: dict) -> dict:
-        """A run's measured Basis (0684 T#1: the run captures, not the approval): store and pin."""
-        from modules.flow_gate.services import test_basis_service as basis
-        captured = basis.capture(doc, self.cases)
-        with self.store.transaction():
-            updated = self.store.docs[doc["doc_id"]]
-            updated["meta"] = basis.metadata_with_basis(updated, captured)
-            basis.pin(updated, captured)
-        return captured
+    def run_basis(self, doc: dict, run_id: str = "run-1") -> tuple[dict, Path, Path]:
+        """A run's preparing phase (0684 T#2): copy + fingerprint -> (Basis, run root, scratch)."""
+        from modules.flow_gate.services import spec_execution_service as execution
+        return execution.ExecutionRootResolver.prepare(
+            doc, {"run_id": run_id, "revision_no": doc.get("revision_no") or 0}, self.cases)
 
     def doc(self, doc_id: str) -> dict:
         return copy.deepcopy(self.store.docs[doc_id])
-
-    def bundle_files(self, bundle_id: str) -> dict:
-        manifest = json.loads((self.tmp_path / "bundles" / bundle_id / "manifest.json").read_text())
-        return {entry["path"]: entry["sha256"] for entry in manifest["files"]}
-
-    def remove_bundle_dir(self, bundle_id: str) -> None:
-        import os
-        import shutil
-        import stat
-        root = self.tmp_path / "bundles" / bundle_id
-
-        def writable(func, path, _exc):
-            os.chmod(path, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
-            func(path)
-        for path in [root, *root.rglob("*")]:
-            os.chmod(path, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
-        shutil.rmtree(root, onerror=writable)
