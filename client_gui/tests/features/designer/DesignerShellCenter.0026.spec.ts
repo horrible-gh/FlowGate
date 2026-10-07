@@ -289,11 +289,13 @@ describe('Designer Shell x Center — Explorers follow the active tab', () => {
 })
 
 describe('Designer Shell x Center — Korean wording', () => {
-  it('names the Flow object 플로우 everywhere in the Korean Designer UI with tabs and Canvas open', async () => {
+  // flowgate.v02.0038: the top band follows its confirmed design wording (Project / Group /
+  // Flow / Node, 0001-R rev2) and carries the FlowGate brand, so this rule covers the Body.
+  it('names the Flow object 플로우 everywhere in the Korean Designer Body with tabs and Canvas open', async () => {
     const w = await mountShell()
     await activate(w, 'Designer v0.2', 'Canvas')
     await nextTick()
-    const shell = get(w, 'designer-shell')
+    const shell = get(w, 'designer-body')
     const labels = [...shell.element.querySelectorAll('[aria-label], [title]')].flatMap((el) => [
       el.getAttribute('aria-label') ?? '',
       el.getAttribute('title') ?? '',

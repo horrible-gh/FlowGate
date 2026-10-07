@@ -1,0 +1,260 @@
+<template>
+  <!-- flowgate.v02.0038 — Designer Toolbar (0001-R §4): undo / redo, 정렬 / 배치 ▾, the two run
+       buttons, fit / zoom out / zoom in, the zoom value and the layout density. No select / add
+       node / connect modes (0001-R §4.2) and no standing stop button: the run button that was
+       used turns into ■ 중지 in place and the other one is disabled until the run stops
+       (0001-R §4.1.1). 정렬 / 배치 ▾ is the same entry as the Edit menu's 정렬 / 배치… and emits
+       the same command. -->
+  <div class="designer-toolbar" role="toolbar" :aria-label="t('gui.designer.top.toolbar_label')" data-test="designer-toolbar">
+    <div class="designer-tool-group" data-test="designer-tool-group">
+      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.undo" @click="emit('command', 'edit.undo')">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5L3 9l4 4" /><path d="M3 9h9a5 5 0 0 1 0 10h-2" /></svg>
+        <span>{{ t('gui.designer.top.tools.undo') }}</span>
+      </button>
+      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.redo" @click="emit('command', 'edit.redo')">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13 5l4 4-4 4" /><path d="M17 9H8a5 5 0 0 0 0 10h2" /></svg>
+        <span>{{ t('gui.designer.top.tools.redo') }}</span>
+      </button>
+    </div>
+
+    <div class="designer-tool-group" data-test="designer-tool-group">
+      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.arrange" @click="emit('command', 'edit.arrange')">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14M3 8h9M3 12h14M3 16h9" /></svg>
+        <span>{{ t('gui.designer.top.tools.arrange') }}</span>
+      </button>
+    </div>
+
+    <div class="designer-tool-group" data-test="designer-tool-group">
+      <button
+        v-for="run in RUN_BUTTONS"
+        :key="run.mode"
+        type="button"
+        class="designer-tool"
+        :class="{ 'is-running': runMode === run.mode }"
+        :disabled="runMode !== null && runMode !== run.mode"
+        :aria-pressed="runMode === run.mode ? 'true' : 'false'"
+        data-test="designer-tool-run"
+        :data-run="run.mode"
+        @click="emit('command', runMode === run.mode ? 'run.stop' : run.command)"
+      >
+        <svg v-if="runMode === run.mode" class="is-stop" viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="1" /></svg>
+        <svg v-else-if="run.mode === 'next'" class="is-run" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4l9 6-9 6z" /></svg>
+        <svg v-else class="is-run" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 4l8 6-8 6zM10 4l8 6-8 6z" /></svg>
+        <span>{{ runMode === run.mode ? t('gui.designer.top.tools.stop') : t(`gui.designer.top.tools.${run.label}`) }}</span>
+      </button>
+    </div>
+
+    <div class="designer-tool-group" data-test="designer-tool-group">
+      <button type="button" class="designer-tool is-compact" data-test="designer-tool" data-command="view.fit" @click="emit('command', 'view.fit')">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4" /></svg>
+        <span>{{ t('gui.designer.top.tools.zoom_fit') }}</span>
+      </button>
+      <button type="button" class="designer-tool is-compact" data-test="designer-tool" data-command="view.zoom-out" @click="emit('command', 'view.zoom-out')">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="M7 10h6" /></svg>
+        <span>{{ t('gui.designer.top.tools.zoom_out') }}</span>
+      </button>
+      <button type="button" class="designer-tool is-compact" data-test="designer-tool" data-command="view.zoom-in" @click="emit('command', 'view.zoom-in')">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="M7 10h6M10 7v6" /></svg>
+        <span>{{ t('gui.designer.top.tools.zoom_in') }}</span>
+      </button>
+      <output class="designer-tool-zoom" :aria-label="t('gui.designer.top.tools.zoom_value')" data-test="designer-tool-zoom">{{ zoom }}%</output>
+      <div class="designer-tool-density" role="radiogroup" :aria-label="t('gui.designer.top.tools.density')" :title="t('gui.designer.top.tools.density')" data-test="designer-tool-density">
+        <button
+          v-for="(level, index) in DESIGNER_DENSITIES"
+          :key="level"
+          type="button"
+          role="radio"
+          :class="{ 'is-on': density === level }"
+          :aria-checked="density === level ? 'true' : 'false'"
+          :aria-label="t(`gui.designer.top.densities.${level}`)"
+          :title="t(`gui.designer.top.densities.${level}`)"
+          :data-density="level"
+          @click="emit('update:density', level)"
+        >
+          <span v-if="level === 'free'" class="designer-density-free" aria-hidden="true" />
+          <span v-else class="designer-density-dots" :style="{ gap: `${4 - index}px` }" aria-hidden="true"><i v-for="dot in 9" :key="dot" /></span>
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+import { DESIGNER_DENSITIES, type DesignerDensity, type DesignerRunMode, type DesignerTopCommand } from './designerTop'
+
+defineProps<{
+  runMode: DesignerRunMode
+  density: DesignerDensity
+  /** Zoom value shown next to the zoom buttons, in percent. */
+  zoom: number
+}>()
+
+const emit = defineEmits<{
+  command: [command: DesignerTopCommand]
+  'update:density': [density: DesignerDensity]
+}>()
+
+const { t } = useI18n()
+
+const RUN_BUTTONS = [
+  { mode: 'next', command: 'run.next', label: 'run_next' },
+  { mode: 'all', command: 'run.all', label: 'run_all' },
+] as const
+</script>
+
+<style scoped>
+.designer-toolbar {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  height: 100%;
+  min-width: 0;
+  padding: 7px 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--fg2-line);
+  background: #0d1b2e;
+}
+
+.designer-tool-group {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding-right: 10px;
+  border-right: 1px solid var(--fg2-line);
+}
+
+.designer-tool-group:last-child {
+  border-right: 0;
+}
+
+.designer-tool {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 56px;
+  height: 50px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #aebfd2;
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.designer-tool.is-compact {
+  min-width: 46px;
+}
+
+.designer-tool svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.designer-tool svg.is-run {
+  fill: #2bddad;
+  stroke: #2bddad;
+}
+
+.designer-tool svg.is-stop {
+  fill: currentColor;
+}
+
+.designer-tool:hover:not(:disabled),
+.designer-tool.is-running {
+  border-color: #244a79;
+  background: #173157;
+  color: #fff;
+}
+
+.designer-tool:disabled {
+  cursor: not-allowed;
+  opacity: var(--fg2-control-disabled-opacity-strong);
+}
+
+.designer-tool:focus-visible,
+.designer-tool-density button:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: 1px;
+}
+
+.designer-tool-zoom {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  margin: auto 2px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: 6px;
+  background: #102139;
+  color: var(--fg2-text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.designer-tool-density {
+  display: flex;
+  height: 36px;
+  margin: auto 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: 6px;
+}
+
+.designer-tool-density button {
+  display: grid;
+  place-items: center;
+  width: 39px;
+  border: 0;
+  border-right: 1px solid var(--fg2-line);
+  background: #0f2036;
+  color: #7e99b6;
+  cursor: pointer;
+}
+
+.designer-tool-density button:last-child {
+  border-right: 0;
+}
+
+.designer-tool-density button:hover,
+.designer-tool-density button.is-on {
+  background: #18437b;
+  color: #58a6ff;
+}
+
+.designer-density-dots {
+  display: grid;
+  grid-template-columns: repeat(3, 3px);
+}
+
+.designer-density-dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.designer-density-free {
+  display: block;
+  width: 15px;
+  height: 15px;
+  box-sizing: border-box;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+}
+</style>

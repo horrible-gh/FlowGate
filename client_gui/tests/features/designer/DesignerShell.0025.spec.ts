@@ -185,8 +185,14 @@ describe('DesignerShell — container hierarchy', () => {
     const label = (container: string) =>
       get(w, container).get('[data-test="designer-placeholder-label"]').text()
 
-    expect(label('designer-top')).toBe('TOP')
-    expect(get(w, 'designer-top').text()).toContain('Header / MenuBar / Toolbar')
+    // flowgate.v02.0038: the Top holds the real Header / Menu Bar / Toolbar, no placeholder.
+    const top = get(w, 'designer-top')
+    expect(top.find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
+    expect([...top.element.children].map((c) => c.getAttribute('data-test'))).toEqual([
+      'designer-header',
+      'designer-menubar',
+      'designer-toolbar',
+    ])
     // flowgate.v02.0026: the Workspace holds the Designer Center, no placeholder.
     const workspace = get(w, 'designer-workspace')
     expect(workspace.find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
@@ -425,11 +431,13 @@ describe('DesignerShell — UI refinements (T0006)', () => {
     expect(files.find('[data-path="src"]').exists()).toBe(true)
   })
 
-  it('names the Flow object 플로우 everywhere in the Korean Designer UI', async () => {
+  // flowgate.v02.0038: the top band follows its confirmed design wording (Project / Group /
+  // Flow / Node, 0001-R rev2) and carries the FlowGate brand, so this rule covers the Body.
+  it('names the Flow object 플로우 everywhere in the Korean Designer Body', async () => {
     const w = await mountShell()
     await activateCanvas(w)
     expect(activeTabName(w).text()).toBe('Canvas')
-    const text = get(w, 'designer-shell').text()
+    const text = get(w, 'designer-body').text()
     expect(text).not.toMatch(/Flow|흐름|플로(?!우)/)
   })
 })
@@ -443,7 +451,9 @@ describe('Korean Flow wording (T0006 §3)', () => {
 
   it('ko Designer / navigation strings use 플로우, never Flow / 플로 / 흐름', async () => {
     const ko = (await import('@/app/i18n/ko.ts')).default as Record<string, any>
-    const texts = [...strings(ko.designer), ko.nav.designer.sub, ko.dashboard.cards.designer.desc]
+    // flowgate.v02.0038: the top band block keeps the confirmed design wording (see above).
+    const body = Object.fromEntries(Object.entries(ko.designer).filter(([key]) => key !== 'top'))
+    const texts = [...strings(body), ko.nav.designer.sub, ko.dashboard.cards.designer.desc]
     for (const text of texts) expect(text).not.toMatch(/Flow|흐름|플로(?!우)/)
     expect(ko.nav.designer.sub).toBe('그룹 · 플로우 설계')
     expect(ko.designer.center.tabs_label).toBe('열린 플로우')

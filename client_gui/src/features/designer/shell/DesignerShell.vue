@@ -2,13 +2,22 @@
   <!-- flowgate.v02.0025 — Designer Shell (0003-D §2.1): the Designer route screen.
        DesignerShell > Top + Body, Body > Left + Center + Right, Center > Workspace + Bottom.
        The Left Dock (0023/0024 Explorers) and the Workspace (0026 Designer Center: Flow Tabs +
-       read-only Canvas) are real; Top is the final container with a placeholder inside.
+       read-only Canvas) are real; Top was the final container with a placeholder inside.
        flowgate.v02.0036: the Bottom Dock holds the real Inspector Frame (0035 v7) next to a
        Minimap placeholder. flowgate.v02.0037: the Right Dock is the Tool Panel holding the
        real Palette / Conversation / Git parts, fed the same Project and active Flow as the
-       left Dock. -->
+       left Dock. flowgate.v02.0038: the Top holds the real Header / Menu Bar / Toolbar. -->
   <div class="designer-shell" data-test="designer-shell">
-    <DesignerTop />
+    <DesignerTop
+      :run-mode="top.runMode"
+      :density="top.density"
+      :zoom="zoom"
+      :window-state="windowState"
+      @command="onTopCommand"
+      @toggle-panel="onTogglePanel"
+      @show-tab="onShowTab"
+      @update:density="top.density = $event"
+    />
     <DesignerBody :left-width="leftColumnWidth(layout)" :right-width="rightColumnWidth(layout)">
       <DesignerLeftDock
         :project-id="projectId"
@@ -47,10 +56,27 @@
 // File Explorer intents (select / open / open-diff / context) and Project Explorer plain
 // selection are intentionally not handled yet — their targets (Viewer, Modeless Window) do
 // not exist (0003-D DEFERRED).
+//
+// flowgate.v02.0038 — the top band's state (top/designerTop.ts: run button state, layout
+// density) is owned here next to the layout. Of the top commands the Shell handles those whose
+// target already exists: the Window menu shows / hides the left and right Docks and moves to
+// their tabs through the same layout fields the Docks use, and the run buttons switch to
+// ■ 중지 and back. Everything else — Project / Group / Flow commands, edit, run execution,
+// Canvas zoom, search, Inspector / Minimap display, help, notifications, AI, settings, user —
+// is left to later Feature groups (0001-R §8).
 import { computed, reactive, watch } from 'vue'
 import { useProjectStore } from '@/features/project'
 import { createDesignerCenterSession } from '../center/designerCenterSession'
 import type { ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
+import {
+  createDesignerTopState,
+  nextRunMode,
+  zoomPercent,
+  type DesignerTopCommand,
+  type DesignerWindowPanel,
+  type DesignerWindowState,
+  type DesignerWindowTab,
+} from '../top/designerTop'
 import DesignerBody from './DesignerBody.vue'
 import DesignerCenterColumn from './DesignerCenterColumn.vue'
 import DesignerLeftDock from './DesignerLeftDock.vue'
@@ -61,6 +87,8 @@ import { createDesignerLayout, leftColumnWidth, rightColumnWidth } from './desig
 const projectStore = useProjectStore()
 
 const layout = reactive(createDesignerLayout())
+
+const top = reactive(createDesignerTopState())
 
 const projectId = computed<string | null>(() => projectStore.currentProjectId)
 
@@ -77,6 +105,35 @@ function onActivateFlow(payload: ProjectExplorerFlowEvent) {
 
 // A Flow of the previous Project is never carried over: a new Project clears the Center.
 watch(projectId, (id) => center.setProject(id), { immediate: true })
+
+// The Toolbar shows the zoom the active Canvas last reported (100% before it reports one).
+const zoom = computed(() => zoomPercent(center.activeView.value?.viewport?.zoom))
+
+// Inspector and Minimap have no hide state yet, so the Window menu shows them as displayed.
+const windowState = computed<DesignerWindowState>(() => ({
+  panels: { left: !layout.leftCollapsed, right: !layout.rightCollapsed, inspector: true, minimap: true },
+  activeTabs: [layout.activeLeftMode, layout.activeRightTool],
+}))
+
+function onTopCommand(command: DesignerTopCommand) {
+  top.runMode = nextRunMode(top.runMode, command)
+}
+
+function onTogglePanel(panel: DesignerWindowPanel) {
+  if (panel === 'left') layout.leftCollapsed = !layout.leftCollapsed
+  else if (panel === 'right') layout.rightCollapsed = !layout.rightCollapsed
+}
+
+// A tab move opens its panel when hidden, then switches to that tab (0001-R §3.5).
+function onShowTab(tab: DesignerWindowTab) {
+  if (tab === 'project' || tab === 'file') {
+    layout.leftCollapsed = false
+    layout.activeLeftMode = tab
+  } else {
+    layout.rightCollapsed = false
+    layout.activeRightTool = tab
+  }
+}
 </script>
 
 <style scoped>
