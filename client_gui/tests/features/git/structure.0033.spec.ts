@@ -110,10 +110,15 @@ describe('features/git structure (flowgate.v02.0033)', () => {
     for (const file of FILES) expect(read(file), rel(file)).not.toMatch(/non_ff|push_failure_kind|'(auth|permission|protected)'|diagnostic:/)
   })
 
-  it('is not assembled into the Designer yet (the Tool Panel Container is a later group)', () => {
-    for (const file of filesUnder(join(SRC, 'features/designer'))) {
-      expect(read(file), relative(SRC, file)).not.toMatch(/features\/git/)
-    }
+  // flowgate.v02.0037 — the Designer right Tool Panel assembles the part through the public
+  // surface, and only there.
+  it('is assembled into the Designer only by the right Tool Panel, through the public surface', () => {
+    const users = filesUnder(join(SRC, 'features/designer'))
+      .filter((file) => /features\/git/.test(read(file)))
+      .map((file) => relative(SRC, file).replace(/\\/g, '/'))
+    expect(users).toEqual(['features/designer/shell/DesignerRightDock.vue'])
+    const dock = read(join(SRC, 'features/designer/shell/DesignerRightDock.vue'))
+    expect(importsOf(dock).filter((spec) => /features\/git/.test(spec))).toEqual(['@/features/git'])
   })
 
   it('has the same git message keys in every locale', () => {

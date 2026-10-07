@@ -270,8 +270,11 @@ export default {
       top_parts: 'Header / MenuBar / Toolbar',
       minimap_label: 'MINIMAP',
       minimap_parts: 'Minimap',
-      right_label: 'RIGHT',
-      right_parts: 'Palette / Git',
+      // flowgate.v02.0037 — right Tool Panel tabs.
+      tool_tabs_label: '도구 패널',
+      tool_palette: '팔레트',
+      tool_conversation: '대화',
+      tool_git: 'Git',
     },
     // flowgate.v02.0036 — bottom Inspector Frame (0035 v7: header + tabs + Content area).
     inspector: {

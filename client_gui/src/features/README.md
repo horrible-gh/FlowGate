@@ -80,6 +80,15 @@ slot(`tab-documents`/`tab-qna`/`tab-attachments`/`tab-settings`, 선택 Node 전
 탭은 placeholder 한 줄을 보입니다. Node별 실제 기능·액션·API·상태 머신 연동과 Node 종류별 `설정` 유무는 후속
 그룹 대상이며 공개 경계에도 내보내지 않습니다.
 
+flowgate.v02.0037에서 Shell의 Right Dock Placeholder를 우측 Tool Panel로 바꿨습니다. `DesignerRightDock`이
+`[팔레트] [대화] [Git]` 한 줄 헤더(Tabs primitive)와 본문을 가지고 0030 `PalettePanel`, 0031/0032
+`ConversationPanel`(`@/features/conversation`), 0033 `DesignerGitPanel`(`@/features/git`)을 그대로 부착합니다.
+선택 탭은 Layout 상태 `activeRightTool`(기본 `palette`)이고, 각 부품은 처음 보일 때 mount된 뒤 탭 전환·접기에서는
+숨기기만 해 세션을 유지합니다(Git은 숨김 중 `active=false`). Conversation/Git에는 Shell의 현재 Project와 활성
+FlowRef를 그대로 넘깁니다. 하단 Inspector는 0036에서 이미 Center 하단 Bottom Dock에 부착되어 있어 그대로
+둡니다. Palette select/drag, Conversation `open-change`, Git `open-diff`/`open-confirm-settings`/`windows-change`/
+`badge-change` 등 받을 화면이 아직 없는 의도 event, 우측 접기 UI, Resize는 후속 Feature 대상입니다.
+
 `conversation/`은 flowgate.v02.0031에서 추가된 Designer 우측 도구 영역용 Conversation 독립
 부품입니다(시안 03 우측 대화 영역). `ConversationPanel`(`:project-id` + 활성 Flow의
 `:group-id`, `@open-change`)이 공개 경계이며, 상단(채팅 목록 / 수정 가능한 제목 / 새 채팅) ·

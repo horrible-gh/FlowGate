@@ -198,8 +198,14 @@ describe('DesignerShell — container hierarchy', () => {
     expect(label('designer-bottom-dock')).toBe('MINIMAP')
     expect(get(w, 'designer-bottom-minimap').text()).toContain('Minimap')
     expect(get(w, 'designer-bottom-dock').get('[data-test="designer-inspector-empty"]').text()).toBe('캔버스에서 카드를 선택하세요')
-    expect(label('designer-right-dock')).toBe('RIGHT')
-    expect(get(w, 'designer-right-dock').text()).toContain('Palette / Git')
+    // flowgate.v02.0037: the Right Dock is the Tool Panel — [팔레트] [대화] [Git] over the real
+    // Palette part, no placeholder.
+    const right = get(w, 'designer-right-dock')
+    expect(right.find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
+    expect(right.findAll('[data-test="designer-right-tool-tabs"] [role="tab"]').map((tab) => tab.text())).toEqual(['팔레트', '대화', 'Git'])
+    expect(right.find('[data-test="designer-palette"]').exists()).toBe(true)
+    // Canvas area, Inspector and the right Tool Panel are on screen together.
+    expect(get(w, 'designer-bottom-dock').find('[data-test="designer-inspector"]').exists()).toBe(true)
     // The left Dock holds the real Explorer, not a placeholder.
     expect(get(w, 'designer-left-dock').find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
   })
