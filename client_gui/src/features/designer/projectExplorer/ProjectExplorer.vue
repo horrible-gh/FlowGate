@@ -184,6 +184,9 @@ const refreshError = ref<string | null>(null)
 const query = ref('')
 const isSearching = computed(() => query.value.trim().length > 0)
 
+// The user's own pick, never derived from the Project context (0039 0001-R §4): opening the
+// Designer on a Project shows its tree with nothing selected and no current mark; only a
+// click / key on a row sets this, and a Project change clears it again.
 const selection = ref<ExplorerSelection>(null)
 
 const rootNodeId = computed(() => (projectId.value ? projectNodeId(projectId.value) : null))
