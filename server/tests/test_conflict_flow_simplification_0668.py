@@ -338,9 +338,21 @@ def _session(created_h: float, touched_h: float) -> dict:
 
 
 def test_a_review_wait_that_holds_no_base_never_expires(monkeypatch):
+    """0683 T0004 §5: not because it "blocks nobody" — a non-base review wait DOES own its
+    target's workspace and blocks every same-target finalize/branch merge. It is still never
+    deleted for being old; the refusal names it instead (see the next test)."""
     monkeypatch.setattr(cleanup.merge_target, "holds_base_checkout", lambda s: False)
 
     assert cleanup._review_pending_ttl_expired(_session(500, 400)) is False
+
+
+def test_the_non_base_review_wait_premise_is_no_longer_blocks_nobody():
+    """0683 T0004 §5: the code no longer carries the wrong "blocks nobody" premise."""
+    import inspect
+
+    doc = inspect.getsource(cleanup._review_pending_ttl_expired)
+    assert "blocks nobody and simply waits" not in doc
+    assert "merge_target_busy" in doc
 
 
 def test_a_base_holding_review_wait_lives_while_it_is_looked_at(monkeypatch):

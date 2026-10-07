@@ -2318,6 +2318,15 @@ export default {
       mark_revised_confirm_message: '검수 대기 상태로 전환합니다. 진행하시겠습니까?',
       error_approve_failed_log: '[ReviewActionBar] 승인 처리 실패',
       toast_approve_failed: '승인 처리 실패: {detail}',
+      // 0683 T0004 §3 — 대상 브랜치 작업공간을 점유한 시도를 실제 소유자 종류로 밝힌다.
+      target_busy_branch_merge: '대상 브랜치 {target}을(를) 브랜치 병합 #{merge_id} ({source} → {target})이 점유 중입니다 — 상태: {state}, 시작: {started_at}',
+      target_busy_group: '대상 브랜치 {target}을(를) Group {group}의 finalize #{merge_id} ({source} → {target})가 점유 중입니다 — 상태: {state}, 시작: {started_at}',
+      target_busy_unknown: '대상 브랜치 {target}을(를) 병합 시도 #{merge_id}가 점유 중입니다 — 상태: {state}, 시작: {started_at}',
+      target_owner_mismatch: '대상 브랜치 {target}의 작업공간 소유자가 열린 시도와 맞지 않아 안전을 위해 승인을 멈췄습니다 (병합 #{merge_id}, 사유: {reason}).',
+      target_busy_hint_branch_merge: '그 병합의 검토를 승인하거나 병합을 중단하면 다시 승인할 수 있습니다. 반려는 점유를 풀지 않습니다.',
+      target_busy_hint_group: '그 Group의 충돌/검토를 끝내거나 중단하면 다시 승인할 수 있습니다.',
+      target_busy_open_review: '막고 있는 병합 열기',
+      target_busy_state_unknown: '알 수 없음',
       // 0607 T0004 §3.6 — Git 을 동반한 승인이 응답 없이 끊겼을 때 서버 상태를 확인하는 동안의 안내.
       git_settle_in_progress: '서버가 Git 작업을 아직 처리하고 있습니다. 결과가 확인될 때까지 승인 버튼을 잠급니다.',
       git_settle_deferred: 'Git 병합이 충돌로 보류되었습니다. 충돌 해결 화면에서 이어서 진행하세요.',
@@ -3784,6 +3793,11 @@ export default {
       merge_conflict_title: '충돌 — 해결 대기 중',
       merge_conflict_summary: '{n}개 파일에서 충돌이 났습니다. 병합은 취소되지 않았고, 승인 전까지 대상 브랜치와 원격은 바뀌지 않습니다.',
       merge_conflict_open: '충돌 해결 열기',
+      // 0683 T0004 §1 — 검토 대기는 병합 완료가 아니다. 검토 화면으로 이어 준다.
+      merge_review_open: '검토 열기',
+      merge_review_ready_toast: '모든 충돌이 해결되었습니다. 검토 화면을 엽니다 — 승인해야 병합이 끝납니다.',
+      review_abort_confirm_title: '이 병합을 중단할까요?',
+      review_abort_confirm_message: '{source} → {target} 병합을 중단합니다. 해결 결과는 버려지고 대상 브랜치는 그대로이며, 대상 작업공간 점유가 풀립니다.',
       merge_conflict_ai: {
         not_started: 'AI 해결은 아직 시작되지 않았습니다.',
         starting: 'AI 해결을 시작하는 중입니다.',
@@ -3825,6 +3839,8 @@ export default {
     // 0481 D0006 §6.3/§6.4 · L0007 §2.11 — 일반 병합 충돌의 사람 승인 관문 화면.
     git_review: {
       title: '승인 대기',
+      // 0683 T0004 §2 — 일반 브랜치 병합은 검토 단계에서도 병합 자체를 중단할 수 있다.
+      abort: '병합 중단',
       open_review: '승인 화면 열기',
       no_review_pending: '검토를 기다리는 충돌이 없습니다.',
       file_count: '변경 {n}개 파일',

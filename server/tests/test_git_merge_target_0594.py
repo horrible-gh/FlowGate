@@ -1436,3 +1436,53 @@ def test_held_checkpoint_is_consumed_after_base_advance_and_clean_finalize(proj)
     assert result["result"]["status"] == "merged"
     assert db_git.get_resolution_checkpoint(checkpoint["checkpoint_id"])["state"] == "consumed"
     assert db_git.active_resolution_checkpoint(proj.pid, gid) is None
+
+# ── flowgate.default.0683 T0004 — group finalize blocker / plan-time recovery ────
+
+@needs_git
+def test_0683_group_blocker_details_name_the_group_finalize(proj):
+    """(9) a group finalize blocker is named as one: owner type, source, state, route."""
+    from modules.flow_gate.services import git_service as svc
+
+    gid_a = proj.group(1)
+    gid_b = proj.group(2)
+    proj.local_branch("develop")
+    merge_a = _conflict_on(proj, gid_a, "develop")["merge_id"]
+    (proj.wt(gid_b) / "b.txt").write_text("b\n", encoding="utf-8")
+    proj.ready(gid_b)
+    with pytest.raises(svc.GitServiceError) as caught:
+        svc.finalize(gid_b, "merge", target_branch="develop")
+    exc = caught.value
+    assert exc.code == "merge_target_busy"
+    d = exc.details
+    assert d["merge_id"] == merge_a and d["blocking_group_id"] == gid_a
+    assert d["blocking_owner_type"] == "group"
+    assert d["blocking_state"] == "conflict" and d["attempt_state"] == "conflict"
+    assert d["route"] == f"/api/v1/groups/{gid_a}/git/merge/{merge_a}"
+    assert d["source_branch"] == svc.db_git.get_state(gid_a)["branch"]
+    assert gid_a in exc.message and "branch merge" not in exc.message
+
+
+@needs_git
+def test_0683_interrupted_group_attempt_is_reclaimed_by_the_next_finalize(proj):
+    """(11) B's finalize settles A's dead attempt at plan time — no sweep in between."""
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services import git_service as svc
+
+    gid_a = proj.group(1)
+    gid_b = proj.group(2)
+    proj.local_branch("develop")
+    proj.ready(gid_a)
+    attempt = _open_attempt(proj, gid_a, "develop", "op:crashed")
+    db_git.set_status(gid_a, "merging")
+    assert (proj.workspace("develop") / "owner.json").exists()
+
+    (proj.wt(gid_b) / "b.txt").write_text("b\n", encoding="utf-8")
+    proj.ready(gid_b)
+    out = svc.finalize(gid_b, "merge", target_branch="develop")
+    assert out["result"]["status"] == "merged", out
+    assert _session(attempt.merge_id)["status"] == "aborted"
+    assert _ctx(attempt.merge_id)["attempt_state"] == "interrupted"
+    assert db_git.get_state(gid_a)["status"] == "waiting"
+    assert "b.txt" in proj.origin_files("develop")
+    assert held_locks(proj.pid) == []

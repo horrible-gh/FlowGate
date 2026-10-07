@@ -705,8 +705,18 @@ def note_resolution_submitted(session: dict, resolver_run_id: Optional[str]) -> 
 
 
 def note_review_pending(session: dict) -> None:
+    """Every conflict is resolved and the candidate is frozen: the resolver's part is over.
+
+    0683 T0004 §6: a ``running``/``starting`` AI status is settled to ``finished`` in the
+    stored context right here, instead of staying ``running`` and being corrected at read
+    time by ``attempt_view`` — the persisted record now says what really happened."""
     gs = _gs()
-    context = gs.db_git.session_context(gs.db_git.get_session(int(session["merge_id"])))
+    merge_id = int(session["merge_id"])
+    context = gs.db_git.session_context(gs.db_git.get_session(merge_id))
+    ai = dict(context.get(AI_KEY) or {})
+    if ai.get("status") in (AI_RUNNING, AI_STARTING):
+        ai.update({"status": AI_FINISHED, "finished_at": now_iso()})
+        context = _update(merge_id, **{AI_KEY: ai})
     fields = {"resolver_run_id": context.get("resolver_run_id"),
               "provider": context.get("resolver_provider"),
               "resolver_type": resolver_type(context)}

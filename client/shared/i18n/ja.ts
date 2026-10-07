@@ -2308,6 +2308,15 @@ export default {
       mark_revised_confirm_message: 'レビュー待ち状態に戻します。続行しますか？',
       error_approve_failed_log: '[ReviewActionBar] 承認処理失敗',
       toast_approve_failed: '承認処理失敗: {detail}',
+      // 0683 T0004 §3 — 対象ワークスペースを占有している試行を実際の所有者種別で示す。
+      target_busy_branch_merge: '対象ブランチ {target} はブランチマージ #{merge_id} ({source} → {target}) が占有しています — 状態: {state}、開始: {started_at}',
+      target_busy_group: '対象ブランチ {target} は Group {group} の finalize #{merge_id} ({source} → {target}) が占有しています — 状態: {state}、開始: {started_at}',
+      target_busy_unknown: '対象ブランチ {target} はマージ試行 #{merge_id} が占有しています — 状態: {state}、開始: {started_at}',
+      target_owner_mismatch: '対象ブランチ {target} のワークスペース所有者が開いている試行と一致しないため、安全のため承認を止めました (マージ #{merge_id}、理由: {reason})。',
+      target_busy_hint_branch_merge: 'そのマージのレビューを承認するかマージを中止すると、再度承認できます。差し戻しでは占有は解除されません。',
+      target_busy_hint_group: 'その Group のコンフリクト/レビューを完了するか中止すると、再度承認できます。',
+      target_busy_open_review: '占有中のマージを開く',
+      target_busy_state_unknown: '不明',
       // 0607 T0004 §3.6 — 承認の応答が失われたあと、サーバーの Git 結果を確認している間の案内。
       git_settle_in_progress: 'サーバーがまだ Git 作業を処理しています。結果を確認できるまで承認ボタンをロックします。',
       git_settle_deferred: 'Git マージが競合で保留されました。競合解決画面から続けてください。',
@@ -3766,6 +3775,11 @@ export default {
       merge_conflict_title: 'コンフリクト — 解決待ち',
       merge_conflict_summary: '{n} 件のファイルでコンフリクトが発生しました。マージは取り消されておらず、承認するまで対象ブランチとリモートは変わりません。',
       merge_conflict_open: 'コンフリクト解決を開く',
+      // 0683 T0004 §1 — レビュー待ちはマージ完了ではない。レビュー画面へ引き継ぐ。
+      merge_review_open: 'レビューを開く',
+      merge_review_ready_toast: 'すべてのコンフリクトが解決されました。レビュー画面を開きます — 承認するまでマージは完了しません。',
+      review_abort_confirm_title: 'このマージを中止しますか？',
+      review_abort_confirm_message: '{source} → {target} のマージを中止します。解決結果は破棄され、対象ブランチはそのままで、対象ワークスペースの占有が解除されます。',
       merge_conflict_ai: {
         not_started: 'AI 解決はまだ開始されていません。',
         starting: 'AI 解決を開始しています。',
@@ -3807,6 +3821,8 @@ export default {
     // 0481 D0006 §6.3/§6.4 · L0007 §2.11 — 一般マージ競合の人による承認ゲート画面。
     git_review: {
       title: '承認待ち',
+      // 0683 T0004 §2 — 通常のブランチマージはレビュー段階でもマージ自体を中止できる。
+      abort: 'マージを中止',
       open_review: '承認画面を開く',
       no_review_pending: 'レビュー待ちの衝突はありません。',
       file_count: '変更 {n} ファイル',

@@ -1083,3 +1083,240 @@ def test_24b_reject_returns_to_resolver_with_a_new_run(proj):
     tree = p.workspace("develop") / "tree"
     assert "<<<<<<<" in (tree / "same.txt").read_text(encoding="utf-8")   # conflict restored
     assert "git_branch_merge_review_rejected" in [e["type"] for e in ctx["attempt_events"]]
+
+
+# ── flowgate.default.0683 T0004 — review handoff / target blocker / plan-time recovery ──
+#
+# The 0683 case (flowgate.v02.0033.0007-AC): branch merge #206 (main → v0.2) sat in
+# resolved_pending_review and every v0.2 approval was refused with a bare
+# "another finalize attempt owns this target branch's workspace".
+
+_OTHER_GROUP = "bmx.default.0001"
+
+
+def _plan_finalize(p: Proj, target: str):
+    """A new group finalize planned onto ``target`` (what an approval precheck runs)."""
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services.git import merge_target
+    return merge_target.plan_finalize_target(_OTHER_GROUP, p.pid, db_git.get_config(p.pid), target)
+
+
+def _busy(p: Proj, target: str = "develop"):
+    from modules.flow_gate.services.git.credentials import GitServiceError
+    with pytest.raises(GitServiceError) as caught:
+        _plan_finalize(p, target)
+    assert caught.value.code == "merge_target_busy"
+    return caught.value
+
+
+def _review_pending(p: Proj):
+    """conflict → AI resolver started → AI resolves every file → resolved_pending_review."""
+    from modules.flow_gate.services.git import branch_merge
+    out, before = p.conflict()
+    merge_id = out["merge_id"]
+    branch_merge.start_resolver(p.pid, merge_id, start_run=lambda prov, msgs: "run-0683")
+    assert _ctx(merge_id)["ai"]["status"] == "running"
+    assert _resolve_all(p, merge_id, run_id="run-0683")["status"] == "resolved_pending_review"
+    return merge_id, before
+
+
+def test_0683_review_pending_branch_merge_blocks_same_target_and_names_itself(proj):
+    """(8, 9, 12) a live review wait keeps the same-target serialization; the refusal says
+    WHICH merge holds the target, as a branch merge, with what the screen needs to open it."""
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.services.git.credentials import GitServiceError
+    p = proj
+    merge_id, _before = _review_pending(p)
+    exc = _busy(p)
+    d = exc.details
+    assert d["merge_id"] == merge_id and d["target_branch"] == "develop"
+    assert d["blocking_owner_type"] == "branch_merge" and d["blocking_group_id"] is None
+    assert d["source_branch"] == "feature" and d["started_at"]
+    assert d["blocking_state"] == "resolved_pending_review"
+    assert d["review_state"] == "resolved_pending_review" and d["attempt_state"] == "conflict"
+    assert d["project_id"] == p.pid
+    assert d["route"] == f"/api/v1/projects/{p.pid}/git/merge/{merge_id}"
+    # the wording follows the owner type — never "another finalize attempt" for a branch merge
+    assert "finalize" not in exc.message and f"branch merge #{merge_id}" in exc.message
+    # (12) the plan-time re-check never removes a person's pending review
+    assert _session(merge_id)["status"] == "open"
+    assert (p.workspace("develop") / "tree").is_dir()
+    # a second branch merge into the same target is refused the same way
+    p.branch("feature2")
+    p.commit_on("feature2", {"f2.txt": "x\n"})
+    with pytest.raises(GitServiceError) as caught:
+        svc.merge_branches(p.pid, "feature2", "develop", push=False)
+    assert caught.value.code == "merge_target_busy"
+    assert caught.value.details["blocking_state"] == "resolved_pending_review"
+
+
+def test_0683_conflict_wait_is_not_reclaimed_at_plan_time(proj):
+    """(12) an unresolved conflict waiting for a resolver is a live attempt, not a dead one."""
+    p = proj
+    out, _before = p.conflict()
+    exc = _busy(p)
+    assert exc.details["blocking_state"] == "conflict"
+    assert _session(out["merge_id"])["status"] == "open"
+
+
+def test_0683_review_pending_persists_the_finished_ai_status(proj):
+    """(16) entering review settles the stored AI status instead of leaving ``running``."""
+    p = proj
+    merge_id, _before = _review_pending(p)
+    ai = _ctx(merge_id)["ai"]
+    assert ai["status"] == "finished" and ai["run_id"] == "run-0683" and ai.get("finished_at")
+    assert _view(p, merge_id)["ai"]["status"] == "finished"
+
+
+def test_0683_approve_from_review_completes_and_releases_the_target(proj):
+    """(5) review approve → merge complete → session closed → workspace released."""
+    p = proj
+    merge_id, before = _review_pending(p)
+    result = _approve(p, merge_id)
+    assert result["status"] == "merged"
+    assert _session(merge_id)["status"] == "done"
+    assert p.sha("refs/heads/develop") != before
+    assert not p.workspace("develop").exists()
+    assert _plan_finalize(p, "develop").target_branch == "develop"
+
+
+def test_0683_abort_from_review_releases_the_target(proj):
+    """(6) the review stage can abort: merge --abort → aborted → release → resolver stopped."""
+    from modules.flow_gate.services import git_service as svc
+    p = proj
+    merge_id, before = _review_pending(p)
+    result = svc.abort_merge(None, merge_id, project_id=p.pid)["result"]
+    assert result["status"] == "aborted" and result["workspace_cleaned"] is True
+    assert _session(merge_id)["status"] == "aborted"
+    assert _ctx(merge_id)["attempt_state"] == "aborted"
+    assert p.sha("refs/heads/develop") == before
+    assert not p.workspace("develop").exists()
+    assert _plan_finalize(p, "develop").target_branch == "develop"
+
+
+def test_0683_reject_keeps_the_workspace_and_the_claim(proj):
+    """(7) reject is resolver rework, not a release: the target stays claimed."""
+    from modules.flow_gate.services import git_service as svc
+    p = proj
+    merge_id, _before = _review_pending(p)
+    result = svc.reject_merge_review(
+        None, merge_id, reason="again", provider_id="prov", provider_pinned=True,
+        start_run=lambda first_message: "run-0683b", project_id=p.pid,
+    )["result"]
+    assert result["status"] == "returned_to_resolver"
+    assert _session(merge_id)["status"] == "open"
+    assert (p.workspace("develop") / "tree").is_dir()
+    assert _busy(p).details["merge_id"] == merge_id
+
+
+def test_0683_other_targets_are_not_blocked(proj):
+    """(14) a claim on ``develop`` never blocks a plan onto ``release``."""
+    p = proj
+    _review_pending(p)
+    p.branch("release")
+    assert _plan_finalize(p, "release").target_branch == "release"
+
+
+def _crashed_branch_merge(p: Proj, monkeypatch) -> dict:
+    """A branch merge whose process died after the attempt + workspace were written and
+    before ``git merge`` ran: an open attempt with no conflict, its job still 'running'."""
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.services.git import merge_target
+    p.branch("develop")
+    p.branch("feature")
+    p.commit_on("feature", {"feature.txt": "feature\n"})
+    real_run_git = svc._run_git
+    workspace_tree = p.workspace("develop") / "tree"
+
+    def crashing_run_git(args, cwd=None, **kwargs):
+        if "--no-ff" in args and cwd is not None and Path(cwd) == workspace_tree:
+            raise _Crash()
+        return real_run_git(args, cwd=cwd, **kwargs)
+
+    real_release = merge_target.release_workspace
+    monkeypatch.setattr(svc, "_run_git", crashing_run_git)
+    # a dead process runs no ``finally``: the workspace and its marker stay behind
+    monkeypatch.setattr(merge_target, "release_workspace", lambda ctx: False)
+    with pytest.raises(_Crash):
+        svc.merge_branches(p.pid, "feature", "develop", push=False)
+    monkeypatch.setattr(svc, "_run_git", real_run_git)
+    monkeypatch.setattr(merge_target, "release_workspace", real_release)
+    session = db_git.list_branch_merge_sessions(p.pid)[0]
+    assert _ctx(session["merge_id"])["attempt_state"] == "in_progress"
+    assert (p.workspace("develop") / "owner.json").exists()
+    return session
+
+
+def _end_attempt_job(session: dict) -> None:
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.services.git import merge_target
+    job_id = merge_target.target_record(session)["lock_holder"][len(merge_target.JOB_HOLDER_PREFIX):]
+    with get_store().transaction():
+        get_store()._execute(
+            "UPDATE operation_job SET status = 'failed', lease_owner = NULL, lease_token = NULL, "
+            "lease_until = NULL WHERE job_id = ?", [job_id])
+
+
+def test_0683_live_in_progress_attempt_is_left_alone_at_plan_time(proj, monkeypatch):
+    """(8) a running attempt (its job is not terminal) still serializes the target."""
+    from modules.flow_gate.services.git import merge_target
+    p = proj
+    session = _crashed_branch_merge(p, monkeypatch)
+    assert merge_target.attempt_phase(session) == merge_target.PHASE_IN_PROGRESS
+    exc = _busy(p)
+    assert exc.details["merge_id"] == session["merge_id"]
+    assert exc.details["blocking_state"] == "starting"
+    assert _session(session["merge_id"])["status"] == "open"
+
+
+def test_0683_interrupted_attempt_is_reclaimed_at_plan_time(proj, monkeypatch):
+    """(11) runner gone, no conflict: the next plan settles it at once (no sweep wait)."""
+    from modules.flow_gate.services.git import merge_target
+    p = proj
+    session = _crashed_branch_merge(p, monkeypatch)
+    _end_attempt_job(session)
+    assert merge_target.attempt_phase(_session(session["merge_id"])) == merge_target.PHASE_INTERRUPTED
+    planned = _plan_finalize(p, "develop")
+    assert planned.target_branch == "develop"
+    assert _session(session["merge_id"])["status"] == "aborted"
+    assert _ctx(session["merge_id"])["attempt_state"] == "interrupted"
+    assert not p.workspace("develop").exists()
+    assert _view(p, session["merge_id"])["state"] == "interrupted"
+
+
+def test_0683_interrupted_attempt_with_a_foreign_marker_fails_closed(proj, monkeypatch):
+    """(13) ownership mismatch is never taken over, even for an interrupted attempt."""
+    import json as _json
+    from modules.flow_gate.services.git.credentials import GitServiceError
+    p = proj
+    session = _crashed_branch_merge(p, monkeypatch)
+    _end_attempt_job(session)
+    marker_path = p.workspace("develop") / "owner.json"
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+    marker_path.write_text(_json.dumps({
+        "merge_id": session["merge_id"], "owner": "someone-else", "project_id": p.pid,
+        "target_branch": "develop",
+    }), encoding="utf-8")
+    with pytest.raises(GitServiceError) as caught:
+        _plan_finalize(p, "develop")
+    assert caught.value.code == "merge_target_owner_mismatch"
+    assert _session(session["merge_id"])["status"] == "open"
+    assert marker_path.exists()
+
+
+def test_0683_busy_lock_on_the_claim_skips_plan_time_recovery(proj, monkeypatch):
+    """(13) recovery never waits for or steals a lock: a held domain keeps the refusal."""
+    from modules.flow_gate.services.git import cleanup
+    from modules.flow_gate.services.git.credentials import GitServiceError
+    p = proj
+    session = _crashed_branch_merge(p, monkeypatch)
+    _end_attempt_job(session)
+
+    def busy_lock(*_a, **_k):
+        raise GitServiceError(409, "git_busy", "busy")
+
+    monkeypatch.setattr(cleanup, "session_lock", busy_lock)
+    exc = _busy(p)
+    assert exc.details["merge_id"] == session["merge_id"]
+    assert _session(session["merge_id"])["status"] == "open"

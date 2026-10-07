@@ -622,6 +622,9 @@ async def document_review_transition_rpc(
             )
         except GitServiceError as exc:
             error = {"code": exc.code, "message": str(getattr(exc, "message", exc))}
+            if getattr(exc, "details", None):
+                # 0683 T0004 §3: a merge_target_busy refusal names its blocker here too.
+                error["details"] = exc.details
             pending["stage"] = "precheck"
             return exc.status, {"ok": False, "error": error, "git": {"ok": False, "error": error}, "approval": pending}
         return approval_publish.response_payload(outcome)

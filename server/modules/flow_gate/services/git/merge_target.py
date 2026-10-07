@@ -410,7 +410,10 @@ def _job_owns_attempt(lock_holder: Optional[str]) -> Optional[bool]:
 def holds_base_checkout(session: dict) -> bool:
     """Whether this open session owns the shared base checkout's merge state.
 
-    A non-base target never touches the base checkout. A base attempt that has not
+    A non-base target never touches the base checkout — but that does not make it
+    harmless: it owns its own target's managed workspace and blocks every other attempt
+    into that target (``inspect_workspace`` → ``merge_target_busy``, 0683 T0004 §5).
+    This predicate answers only the base-checkout question. A base attempt that has not
     produced a conflict is either running under the project lock (the lock already
     serializes it) or interrupted (startup/TTL recovery closes it) — neither is a
     conflict the base gate should report."""
@@ -486,6 +489,7 @@ def inspect_workspace(project_id: str, branch: str) -> tuple[str, dict]:
             # 0630 T0005: the claim is an ordinary branch merge, not a group's finalize.
             details["blocking_owner_type"] = _gs.db_git.OWNER_BRANCH_MERGE
             details["source_branch"] = rec.get("source_branch")
+        details.update(_blocker_details(project_id, session, rec, details))
         if (
             len(claims) == 1 and marker and not marker.get("_invalid")
             and str(marker.get("merge_id")) == str(session.get("merge_id"))
@@ -514,12 +518,79 @@ def inspect_workspace(project_id: str, branch: str) -> tuple[str, dict]:
     return "mismatch", {"reason": "owner_marker_mismatch", "merge_id": marker.get("merge_id")}
 
 
+def _blocker_details(project_id: str, session: dict, rec: dict, details: dict) -> dict:
+    """0683 T0004 §3 — what the refused caller needs to find the blocker: its owner type,
+    source, where it stands (state/review_state) and the route of its own screen.
+    Best-effort: a read failure here never changes the verdict it decorates."""
+    from modules.flow_gate.services import git_service as _gs
+    merge_id = session.get("merge_id")
+    group_id = session.get("group_id")
+    out: dict = {"project_id": project_id, "touched_at": session.get("touched_at")}
+    try:
+        context = _gs.db_git.session_context(session)
+        out["attempt_state"] = context.get(ATTEMPT_STATE_KEY)
+        out["review_state"] = context.get("review_state")
+        if details.get("blocking_owner_type") == _gs.db_git.OWNER_BRANCH_MERGE:
+            from . import branch_merge
+            out["blocking_state"] = branch_merge.ui_state(session)
+            out["route"] = f"/api/v1/projects/{project_id}/git/merge/{merge_id}"
+        else:
+            out["blocking_owner_type"] = _gs.db_git.OWNER_GROUP
+            out["source_branch"] = (_gs.db_git.get_state(group_id) or {}).get("branch") if group_id else None
+            out["blocking_state"] = context.get("review_state") or context.get(ATTEMPT_STATE_KEY)
+            out["route"] = f"/api/v1/groups/{group_id}/git/merge/{merge_id}" if group_id else None
+    except Exception:
+        _log.warning("merge target blocker details failed for merge %s", merge_id, exc_info=True)
+    return out
+
+
+def _busy_message(branch: str, details: dict) -> str:
+    """The owner type decides the wording — a branch merge is never called a finalize."""
+    from modules.flow_gate.services import git_service as _gs
+    merge_id = details.get("merge_id")
+    if details.get("blocking_owner_type") == _gs.db_git.OWNER_BRANCH_MERGE:
+        return (
+            f"branch merge #{merge_id} ({details.get('source_branch') or '?'} → {branch}) "
+            f"owns this target branch's workspace (state: {details.get('blocking_state') or '?'})"
+        )
+    return (
+        f"the finalize attempt #{merge_id} of group {details.get('blocking_group_id') or '?'} "
+        f"owns this target branch's workspace (state: {details.get('blocking_state') or '?'})"
+    )
+
+
+def _reclaim_interrupted_claim(project_id: str, merge_id) -> bool:
+    """0683 T0004 §4 — re-check a busy claim at plan time instead of waiting for the sweep.
+
+    Only an attempt whose runner is gone without ever reaching a conflict/review
+    (``PHASE_INTERRUPTED``) is settled here, through the same lock + recovery the sweep
+    uses (``cleanup.recover_interrupted_claim``). A live in-progress attempt, a
+    conflict/review wait, an unprovable landed merge and an owner mismatch all stay
+    exactly as they are, and the caller keeps refusing (fail closed)."""
+    from modules.flow_gate.services import git_service as _gs
+    try:
+        session = _gs.db_git.get_session(int(merge_id))
+    except Exception:
+        return False
+    if session is None or session.get("status") != "open":
+        return False
+    try:
+        if attempt_phase(session) != PHASE_INTERRUPTED:
+            return False
+        from . import cleanup
+        return cleanup.recover_interrupted_claim(session, project_id)
+    except Exception:
+        _log.warning("plan-time recovery of merge %s failed", merge_id, exc_info=True)
+        return False
+
+
 def raise_if_workspace_unavailable(project_id: str, branch: str) -> str:
     verdict, details = inspect_workspace(project_id, branch)
+    if verdict == "busy" and _reclaim_interrupted_claim(project_id, details.get("merge_id")):
+        verdict, details = inspect_workspace(project_id, branch)
     if verdict == "busy":
         raise _target_error(
-            409, "merge_target_busy",
-            "another finalize attempt owns this target branch's workspace", branch, **details,
+            409, "merge_target_busy", _busy_message(branch, details), branch, **details,
         )
     if verdict == "mismatch":
         raise _target_error(
