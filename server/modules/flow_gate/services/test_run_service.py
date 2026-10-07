@@ -856,6 +856,9 @@ def _build_spec_result_mention(
             "assembled and approved by the server and the chain resumes with a fresh worker "
             "if the target lies beyond the TSR; on FAIL/BLOCKED/NOT_RUN the chain stops for "
             "failure-origin review or a human. Do NOT write the TSR yourself.\n"
+            "The TS approval already queued a server run of the automated Cases: POST without "
+            "`results`/`junit_xml` to hand this chain to that run instead of running them "
+            "yourself.\n"
         )
     project = doc.get("project_id")
     return (
@@ -955,6 +958,14 @@ def shape_run(run: dict, *, include_cases: bool = False) -> dict:
         out["test_basis"] = meta.get("test_basis")
         out["run_kind"] = meta.get("run_kind")
         out["execution_root"] = meta.get("execution_root")
+        if meta.get("run_kind") == "spec_execution":
+            # 0684 T#1: queued/preparing/executing/finalizing/finished, how it was admitted
+            # (approval or request) and why it did not run when it was refused.
+            out["phase"] = meta.get("phase")
+            out["admission"] = meta.get("admission")
+            out["selected_case_ids"] = meta.get("selected_case_ids") or []
+            out["reported_case_ids"] = meta.get("reported_case_ids") or []
+            out["prepare_refused"] = meta.get("prepare_refused")
     if include_cases:
         items = [_shape_case_item(case) for case in db_test_runs.list_cases(run["run_id"])]
         out["setup"] = [item for item in items if item["kind"] in {"setup", "service", "wait"}]
@@ -1390,13 +1401,15 @@ def tsr_gate_state(tsr_doc: Optional[dict]) -> dict:
         return {"applies": True, "passed": False, "overall": "NOT_RUN",
                 "run_id": None, "basis_id": basis["basis_id"], "stale": True}
     attempt_meta = test_spec_service.load_result_meta(latest_any.get("result_meta"))
-    if (basis and attempt_meta.get("run_kind") == "spec_execution"
-            and attempt_meta.get("basis_id") == basis["basis_id"]
+    # D#1 §3-5: no execution failure (a prepare refusal included) newer than the result.
+    # 0684 T#1: a run refused before it could measure has no basis_id and still counts.
+    if (attempt_meta.get("run_kind") == "spec_execution"
+            and attempt_meta.get("basis_id") in (None, (basis or {}).get("basis_id"))
             and latest_any.get("status") == "failed"
             and latest_any.get("run_id") != latest.get("run_id")
             and str(latest_any.get("created_at") or "") >= str(latest.get("created_at") or "")):
         return {"applies": True, "passed": False, "overall": "BLOCKED",
-                "run_id": latest_any["run_id"], "basis_id": basis["basis_id"],
+                "run_id": latest_any["run_id"], "basis_id": (basis or {}).get("basis_id"),
                 "execution_error": latest_any.get("error")}
     judged = None
     # 0682 D#1 3.11: an approved TSR is the record the workflow moved on with. A v1
@@ -1577,6 +1590,20 @@ def continue_chain_after_test_gate(
         return {"action": "error"}
 
 
+def continue_attached_chain(doc: dict, tsr_doc_id: Optional[str], *,
+                            api_base_url: Optional[str] = None,
+                            locale: Optional[str] = None) -> dict:
+    """0684 T#1: a chain handed to a server run that had already passed the gate.
+
+    The run finished before any chain token existed, so its PASS could not approve the
+    report for the chain. Now that the token is consumed, do what the PASS would have
+    done: the chain approval of the TSR, then the ordinary continuation decision.
+    """
+    if tsr_doc_id:
+        _maybe_chain_auto_approve_tsr(doc, tsr_doc_id)
+    return continue_chain_after_test_gate(doc, None, api_base_url=api_base_url, locale=locale)
+
+
 def resume_test_gate_chain_for_hop(doc_id: Optional[str], *, api_base_url: Optional[str],
                                    locale: Optional[str]) -> dict:
     """Finalization-side entry: the hop that handed a TS to the test gate has ended."""
@@ -1622,17 +1649,28 @@ def describe_test_document(doc: dict) -> dict:
             out["run_history"] = [shape_run(item) for item in history
                                   if item.get("contract_version") == test_spec_service.CONTRACT_SPEC][:30]
             running = db_test_runs.get_running_by_doc(doc["doc_id"])
-            out["active_run"] = (shape_run(running) if running and
+            # 0684 T#1: with its Cases, so a Case the live run already reported shows its result.
+            out["active_run"] = (shape_run(running, include_cases=True) if running and
                                  running.get("contract_version") == test_spec_service.CONTRACT_SPEC
                                  else None)
+            # D#1 §3-4: PENDING is a display state -- the Cases the live run has not reported.
+            out["pending_case_ids"] = []
+            if out["active_run"] is not None:
+                reported = {test_spec_service.case_id_key(case_id) for case_id in
+                            out["active_run"].get("reported_case_ids") or []}
+                out["pending_case_ids"] = [
+                    case_id for case_id in out["active_run"].get("selected_case_ids") or []
+                    if test_spec_service.case_id_key(case_id) not in reported
+                ]
             from modules.flow_gate.services import test_basis_service
+            # 0684 T#1: what each Case can run is the locator's answer, Basis or not.
+            out["case_capabilities"] = {
+                case["case_id"]: test_basis_service.locator(case)["capability"]
+                for case in parsed["cases"]
+            }
             basis = test_basis_service.current(doc)
             if basis:
                 out["test_basis"] = basis
-                out["case_capabilities"] = {
-                    case["case_id"]: test_basis_service.locator(case)["capability"]
-                    for case in parsed["cases"]
-                }
                 effective_run = db_test_runs.latest_spec_result(
                     doc["doc_id"], doc.get("revision_no") or 0, basis["basis_id"]
                 )
@@ -1689,7 +1727,8 @@ def describe_test_document(doc: dict) -> dict:
                 ts_view = describe_test_document(target)
                 for key in ("test_basis", "basis_valid", "basis_verdict", "basis_source",
                             "effective_result",
-                            "stale_previous_result", "run_history", "active_run", "progress"):
+                            "stale_previous_result", "run_history", "active_run", "progress",
+                            "pending_case_ids"):
                     out[key] = ts_view.get(key)
                 from modules.flow_gate.services import test_basis_service
                 out["source_identity"] = (test_basis_service.source_identity(ts_view["test_basis"])
@@ -2708,15 +2747,10 @@ def assemble_tsr(
     if run.get("tsr_doc_id"):
         return str(run["tsr_doc_id"])
 
-    group_id = doc.get("group_id")
-    project_id = doc.get("project_id")
-    module = doc.get("module") or "none"
-    branch = doc.get("branch") or "main"
-    if not group_id or not project_id:
+    if not doc.get("group_id") or not doc.get("project_id"):
         raise RuntimeError("TS document has no group/project")
 
-    title_template = _TSR_TITLE_TEMPLATES.get(locale) or _TSR_TITLE_TEMPLATES["ko"]
-    title = title_template.format(name=doc.get("title") or doc["doc_id"])
+    title = _tsr_title(doc, locale)
     if run.get("contract_version") == test_spec_service.CONTRACT_SPEC:
         # 0549 T0008: a test report — every TS Case ID with its verdict, expected/actual,
         # evidence and source identity, whatever the overall verdict is.
@@ -2749,7 +2783,22 @@ def assemble_tsr(
                         + str((basis.get("test_assets") or {}).get("manifest_hash")) + "`\n")
     else:
         content = _tsr_content(doc, run, cases, title, locale)
+    return _write_tsr(doc, content, title, run_chain=run_chain)
 
+
+def _tsr_title(doc: dict, locale: str = "ko") -> str:
+    title_template = _TSR_TITLE_TEMPLATES.get(locale) or _TSR_TITLE_TEMPLATES["ko"]
+    return title_template.format(name=doc.get("title") or doc["doc_id"])
+
+
+def _write_tsr(doc: dict, content: str, title: str, *, run_chain: bool = True) -> str:
+    """Write ``content`` into the TS's single report slot: revise the active TSR or create it."""
+    group_id = doc.get("group_id")
+    project_id = doc.get("project_id")
+    module = doc.get("module") or "none"
+    branch = doc.get("branch") or "main"
+    if not group_id or not project_id:
+        raise RuntimeError("TS document has no group/project")
     active = _active_tsr_for_ts(doc)
     if active is not None:
         return _revise_active_tsr(doc, active, content, title, run_chain=run_chain)
@@ -2786,6 +2835,165 @@ def assemble_tsr(
     )
     _register_tsr_result(doc, tsr_doc_id, path, run_chain)
     return tsr_doc_id
+
+
+def _kept_verdicts(doc: dict, revision_no: int, selected_case_ids) -> dict:
+    """Verdicts an earlier record of this TS revision holds for Cases this run does not run."""
+    selected = {test_spec_service.case_id_key(case_id) for case_id in selected_case_ids or []}
+    latest = db_test_runs.latest_spec_run(doc["doc_id"], revision_no)
+    if latest is None or test_spec_service.load_result_meta(latest.get("result_meta")).get("stale"):
+        return {}
+    kept = {}
+    for stored in db_test_runs.list_cases(latest["run_id"]):
+        if stored.get("case_status") is None:
+            continue
+        row = test_spec_service.stored_case_to_row(stored)
+        key = test_spec_service.case_id_key(row["case_id"] or "")
+        if row.get("result_origin") != "missing" and key not in selected:
+            kept[key] = row["status"]
+    return kept
+
+
+def _pending_report(doc: dict, run: dict, cases: list[dict], *, state: str,
+                    reason: Optional[str] = None, locale: str = "ko") -> tuple[str, str]:
+    meta = test_spec_service.load_result_meta(run.get("result_meta"))
+    title = _tsr_title(doc, locale)
+    selected = meta.get("selected_case_ids") or []
+    reported = {
+        test_spec_service.case_id_key(stored["case_no"]): stored["case_status"]
+        for stored in db_test_runs.list_cases(run["run_id"])
+        if (stored.get("kind") or "case") == "case" and stored.get("case_status") is not None
+    }
+    if state == "queued" and reported:
+        state = "running"
+    content = test_spec_service.render_pending_report_markdown(
+        doc=doc, run=run, cases=cases, selected_case_ids=selected, title=title, state=state,
+        reason=reason, kept=_kept_verdicts(doc, run.get("revision_no") or 0, selected),
+        reported=reported, locale=locale,
+    )
+    return content, title
+
+
+def open_execution_tsr(doc: dict, cases: list[dict], run: dict, *, locale: str = "ko") -> str:
+    """Open (or reuse) the TS's report for a just-admitted spec run (0684 D#1 §3-4).
+
+    The report says "test queued/running" with every selected Case PENDING -- a display
+    state, no verdict -- and the run is linked to it so the report view follows the run.
+    Results replace this body when they are recorded (finalize_spec_results); a run that
+    ends without results settles it (_settle_execution_tsr). Inside the approval
+    transaction a failure must leave no report behind, so a revised file is restored and a
+    new one removed before the exception reaches the caller's rollback.
+    """
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+    existing = _active_tsr_for_ts(doc)
+    old_path = storage_paths.resolve_storage_path(
+        (existing or {}).get("file_path") or "", doc.get("project_id"),
+        branch=doc.get("branch") or "main",
+    ) if existing else None
+    old_body = old_path.read_bytes() if old_path and old_path.is_file() else None
+    ts_path = storage_paths.resolve_storage_path(
+        doc.get("file_path") or "", doc.get("project_id"), branch=doc.get("branch") or "main"
+    ) if doc.get("file_path") else None
+    report_files_before = set(ts_path.parent.glob("*-TSR_document.md")) if ts_path else set()
+    try:
+        content, title = _pending_report(doc, run, cases, state="queued", locale=locale)
+        tsr_doc_id = _write_tsr(doc, content, title, run_chain=False)
+        db_test_runs.set_run_tsr_doc(run["run_id"], tsr_doc_id)
+        paired = db_docs.get_by_id(tsr_doc_id)
+        if not paired or paired.get("target_id") != doc["doc_id"]:
+            raise RuntimeError("tsr_pair_missing")
+        slot = _tsr_slot_item(doc, db_wfseq)
+        if slot is not None and not db_wfseq.get_item_by_result_doc_id(tsr_doc_id):
+            raise RuntimeError("tsr_workflow_pair_missing")
+        from modules.flow_gate.services import spec_execution_service
+        spec_execution_service.merge_run_meta(run["run_id"], tsr_doc_id=tsr_doc_id)
+        return tsr_doc_id
+    except Exception:
+        if old_path and old_body is not None:
+            old_path.write_bytes(old_body)
+        if ts_path:
+            for path in set(ts_path.parent.glob("*-TSR_document.md")) - report_files_before:
+                path.unlink(missing_ok=True)
+        raise
+
+
+def record_execution_progress(doc: dict, run_id: str, items: list[dict]) -> None:
+    """Keep the Case results a live spec run just reported and refresh its report.
+
+    0684 D#1 §3-4: a finished Case shows its result in the report and in /test-document
+    while the remaining Cases still run. The result is kept on the run's own Case row --
+    the run's result record (finalize_spec_results) still decides the overall verdict --
+    and the report the run opened is rewritten with it unless it is no longer this run's.
+    """
+    stored = {test_spec_service.case_id_key(row["case_no"]): row
+              for row in db_test_runs.list_cases(run_id) if (row.get("kind") or "case") == "case"}
+    for item in items:
+        row = stored.get(test_spec_service.case_id_key(item.get("case_id") or ""))
+        if row is None:
+            continue
+        db_test_runs.set_execution_case_result(
+            case_row_id=row["id"], status=item.get("status") or "NOT_RUN",
+            actual=item.get("actual") or None,
+            case_meta=test_spec_service.case_row_to_meta(
+                {**item, "result_origin": item.get("result_origin") or "automated"}),
+        )
+    try:
+        run = db_test_runs.get_run(run_id) or {}
+        meta = test_spec_service.load_result_meta(run.get("result_meta"))
+        tsr_doc_id = run.get("tsr_doc_id") or meta.get("tsr_doc_id")
+        if not tsr_doc_id or run.get("status") != "running":
+            return
+        latest = db_test_runs.latest_by_tsr_doc(tsr_doc_id)
+        if latest is None or latest.get("run_id") != run_id:
+            return
+        tsr = db_docs.get_by_id(tsr_doc_id)
+        if tsr is None or tsr.get("doc_review_status") == "approved":
+            return
+        ts_doc = db_docs.get_by_id(doc["doc_id"]) or doc
+        content, title = _pending_report(ts_doc, run, meta.get("spec_cases") or [],
+                                         state="running", locale=run.get("locale") or "ko")
+        _write_tsr(ts_doc, content, title, run_chain=False)
+        _broadcast("group_view_refresh", ts_doc,
+                   {"group_id": ts_doc.get("group_id"), "reason": "test_case_recorded"})
+    except Exception:
+        logger.warning("refreshing the report of %s failed", run_id, exc_info=True)
+
+
+def _settle_execution_tsr(doc: dict, run: dict) -> None:
+    """Rewrite the report of a spec run that ended without recording results.
+
+    Prepare refusal, cancel, abort or a superseded run leave the report the run opened
+    saying "queued/running"; it now says why nothing was recorded. A run whose results
+    were recorded is not touched: the result record owns the report from then on.
+    """
+    try:
+        meta = test_spec_service.load_result_meta(run.get("result_meta"))
+        if (run.get("contract_version") != test_spec_service.CONTRACT_SPEC
+                or meta.get("run_kind") != "spec_execution"):
+            return
+        tsr_doc_id = run.get("tsr_doc_id") or meta.get("tsr_doc_id")
+        if not tsr_doc_id or run.get("status") in ("running", "cancelling"):
+            return
+        latest = db_test_runs.latest_by_tsr_doc(tsr_doc_id)
+        if latest is None or latest.get("run_id") != run.get("run_id"):
+            return
+        tsr = db_docs.get_by_id(tsr_doc_id)
+        if tsr is None or tsr.get("doc_review_status") == "approved":
+            return
+        refused = meta.get("prepare_refused") or {}
+        if refused:
+            state = "prepare_refused"
+            reason = ": ".join(part for part in (refused.get("error"), refused.get("reasons")) if part)
+        elif run.get("status") == "cancelled":
+            state, reason = "cancelled", None
+        else:
+            state, reason = "failed", run.get("error") or "no_results"
+        ts_doc = db_docs.get_by_id(doc["doc_id"]) or doc
+        content, title = _pending_report(ts_doc, run, meta.get("spec_cases") or [], state=state,
+                                         reason=reason, locale=run.get("locale") or "ko")
+        _write_tsr(ts_doc, content, title, run_chain=False)
+    except Exception:
+        logger.warning("settling the report of %s failed", run.get("run_id"), exc_info=True)
 
 
 def _active_tsr_for_ts(doc: dict) -> Optional[dict]:
@@ -3372,8 +3580,15 @@ def _emit_case_finished(doc: dict, run: dict, case: dict, idx: int, total: int) 
     )
 
 
+def _emit_phase(doc: dict, run: dict, phase: str) -> None:
+    """0684 T#1 (D#1 §3-3): queued → preparing → executing → finalizing, as it happens."""
+    _broadcast("test_run_phase", doc, {"doc_id": doc["doc_id"], "run_id": run["run_id"],
+                                       "phase": phase})
+
+
 def _emit_finished(doc: dict, run: dict, tsr_doc_id: Optional[str]) -> None:
     if run.get("contract_version") == test_spec_service.CONTRACT_SPEC:
+        _settle_execution_tsr(doc, db_test_runs.get_run(run["run_id"]) or run)
         from modules.flow_gate.db import events as db_events
         meta = test_spec_service.load_result_meta(run.get("result_meta"))
         kind = meta.get("run_kind")
@@ -3511,7 +3726,13 @@ def _resume_failure_origin_after_restart() -> None:
 
 def startup() -> None:
     try:
+        orphaned = db_test_runs.list_active_spec_runs()
         db_test_runs.mark_orphaned_running()
+        for row in orphaned:
+            run = db_test_runs.get_run(row["run_id"])
+            doc = db_docs.get_by_id(row["doc_id"])
+            if run is not None and doc is not None:
+                _settle_execution_tsr(doc, run)
         _resume_failure_origin_after_restart()
     except Exception:
         logger.warning("failed to recover test runs", exc_info=True)

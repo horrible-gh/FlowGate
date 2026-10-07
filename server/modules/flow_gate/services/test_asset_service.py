@@ -81,6 +81,10 @@ def _preconditions(ts_id: str, doc: dict, basis: dict) -> dict | None:
     if paired and paired.get("doc_review_status") == "approved":
         raise test_run_service._http_error(409, "tsr_already_approved",
                                           tsr_doc_id=paired["doc_id"])
+    # 0684 T#1 (D#1 §3-7): a queued or running run is measuring/executing this source.
+    running = db_test_runs.get_running_by_doc(ts_id)
+    if running:
+        raise test_run_service._http_error(409, "run_in_progress", run_id=running["run_id"])
     pending = db_test_runs.get_pending_failure_origin(ts_id)
     if pending:
         raise test_run_service._http_error(409, "failure_origin_pending",
@@ -191,10 +195,9 @@ def update(ts_id: str, path: str, *, expected_hash: str, content: str,
                 for event in ("test_spec_asset_updated", "test_spec_basis_superseded",
                               "test_spec_basis_created", "test_spec_results_invalidated"):
                     db_events.insert_event(ts_id, event, note=json.dumps(facts, ensure_ascii=False))
-                # Initialization is last: its own failure handler restores the TSR file,
-                # while this enclosing transaction restores DB rows and the asset bytes.
-                initialized = test_basis_service.initialize(updated, parsed, successor,
-                                                            locale=locale)
+                # 0684 T#1: no zero-result initialization run. Results under the old Basis
+                # are stale by identity; the report is rewritten by the next run ([run
+                # again]) -- an edit never starts one by itself (D#1 §3-7 step 4).
         except Exception:
             # A failed replacement left the old bytes; restore only bytes this edit wrote.
             if hashlib.sha256(target.read_bytes()).hexdigest() == new_hash:
@@ -203,5 +206,4 @@ def update(ts_id: str, path: str, *, expected_hash: str, content: str,
     finally:
         lock_manager.release(ctx, outcome.lock_key)
     return {"path": path, "content_hash": new_hash, "basis_id": successor["basis_id"],
-            "test_basis": successor, "initialization_run_id": initialized["run_id"],
-            "tsr_doc_id": initialized["tsr_doc_id"]}
+            "test_basis": successor, "tsr_doc_id": (paired or {}).get("doc_id")}

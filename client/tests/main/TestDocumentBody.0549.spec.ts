@@ -160,6 +160,25 @@ describe('TestSpecPanel — structured specification', () => {
     wrapper.unmount()
   })
 
+  it('offers a run without a stored Basis and holds it while a run is live (0684 T#1)', async () => {
+    getRequest.mockResolvedValue(specView({ case_capabilities: { 'TC-001': 'case_selectable', 'TC-002': 'manual' } }))
+    const wrapper = mountBody(TS_ID, 'TS')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="test-basis"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="test-spec-run-all"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="test-spec-run-case"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+    getRequest.mockResolvedValue(specView({
+      case_capabilities: { 'TC-001': 'case_selectable', 'TC-002': 'manual' },
+      active_run: { run_id: 'trun_9', status: 'running', phase: 'queued' },
+    }))
+    const live = mountBody(TS_ID, 'TS')
+    await flushPromises()
+    expect(live.find('[data-testid="test-basis-pending"]').text()).toContain('queued')
+    expect(live.find('[data-testid="test-spec-run-all"]').attributes('disabled')).toBeDefined()
+    live.unmount()
+  })
+
   it('replaces [enter results] with the reason once the test report is approved', async () => {
     getRequest.mockResolvedValue(specView({ tsr_doc_id: 'x.0011-TSR', tsr_review_status: 'approved' }))
     const wrapper = mountBody(TS_ID, 'TS')

@@ -38,6 +38,7 @@ def _approved(env, monkeypatch, paired=None, latest=None):
     monkeypatch.setattr(assets.test_run_service, "_active_tsr_for_ts", lambda doc: paired)
     monkeypatch.setattr(assets.db_test_runs, "get_pending_failure_origin", lambda ts_id: None)
     monkeypatch.setattr(assets.db_test_runs, "latest_spec_result", lambda *args: latest)
+    monkeypatch.setattr(assets.db_test_runs, "get_running_by_doc", lambda ts_id: None)
     return doc, stored
 
 
@@ -116,15 +117,14 @@ def test_reopened_tsr_edit_creates_successor_and_invalidation(env, repo, monkeyp
     paired = {"doc_id": "flowgate.default.0632.0011-TSR",
               "doc_review_status": "pending_review", "revision_no": 7}
     doc, stored = _approved(env, monkeypatch, paired=paired)
-    monkeypatch.setattr(assets.test_basis_service, "initialize",
-                        lambda updated, parsed, successor, locale="ko":
-                        {"run_id": "initial-B", "tsr_doc_id": paired["doc_id"]})
     old = (repo / "tests" / "fixture.json").read_bytes()
     response = assets.update(doc["doc_id"], "tests/fixture.json",
                              expected_hash=hashlib.sha256(old).hexdigest(),
                              content='{"v":2}\n', actor_id="u")
     assert response["basis_id"] != stored["basis_id"]
     assert response["tsr_doc_id"] == paired["doc_id"]
+    # 0684 T#1: the edit starts no run and writes no zero-result initialization run.
+    assert "initialization_run_id" not in response
     events = [event for _doc, event, _note in env.store.events]
     assert "test_spec_results_invalidated" in events
     assert "test_spec_asset_updated" in events

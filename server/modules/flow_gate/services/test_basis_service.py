@@ -6,6 +6,9 @@ binding (bundle id/sha, git revision, dirty flag) is stored beside it but kept o
 basis_id. Every caller judges a Basis with ``verdict`` against a Live Probe that measures
 the worktree with the Bundle's own scan, exclusion and hash rules.
 
+0684 T#1 (D#1 §3-1, §7): approval no longer captures. A spec run captures in its preparing
+phase and stores the Basis it executed on the TS; approval sets the previous one aside.
+
 Test Asset Policy (0682 D#1 §3.8, T#2): ``asset_kind`` is the one rule approval (manifest),
 the asset API and the locator share. Git tracking is not part of it: an asset must be in
 the captured Bundle (approval) or the Live Probe scan (judgement) with the same hash, and
@@ -597,63 +600,19 @@ def metadata_with_basis(doc: dict, basis: dict) -> str:
     return json.dumps(meta, ensure_ascii=False)
 
 
-def initialize(doc: dict, parsed: dict, basis: dict, *, locale: str = "ko") -> dict:
-    """Create the initialization run and paired report inside caller's DB transaction.
+def metadata_without_basis(doc: dict) -> str:
+    """0684 T#1: TS approval leaves no Basis -- the next run measures one.
 
-    The caller owns rollback. A report is a file too, so restore/remove it on failure.
+    A Basis an earlier approval or run stored moves to ``superseded_test_basis`` (kept
+    for audit, D#1 §7) and is never judged again.
     """
-    from modules.flow_gate.db import test_runs as db_test_runs
-    from modules.flow_gate.services import test_run_service, test_spec_service
-    from modules.flow_gate.db import documents as db_docs
-
-    existing = test_run_service._active_tsr_for_ts(doc)
-    old_path = storage_paths.resolve_storage_path(
-        (existing or {}).get("file_path") or "", doc.get("project_id"),
-        branch=doc.get("branch") or "main",
-    ) if existing else None
-    old_body = old_path.read_bytes() if old_path and old_path.is_file() else None
-    ts_path = storage_paths.resolve_storage_path(
-        doc.get("file_path") or "", doc.get("project_id"), branch=doc.get("branch") or "main"
-    )
-    report_files_before = set(ts_path.parent.glob("*-TSR_document.md")) if ts_path else set()
     try:
-        rows = test_spec_service.map_results(parsed["cases"], [])["cases"]
-        summary = test_spec_service.compute_overall(rows)
-        meta = {"run_kind": "initialization", "basis_id": basis["basis_id"],
-                "test_basis": basis, "counts": summary["counts"],
-                "required_counts": summary["required_counts"],
-                "optional_counts": summary["optional_counts"],
-                "gate_passed": False, "unmapped": [], "conflicts": []}
-        run = db_test_runs.insert_spec_run(
-            doc_id=doc["doc_id"], revision_no=doc.get("revision_no") or 0,
-            triggered_via="ui", runner_id="system", rows=rows, status="failed",
-            overall="NOT_RUN", result_meta=json.dumps(meta, ensure_ascii=False),
-            case_passed=0, case_failed=0, error="spec_required_not_run", locale=locale,
-            case_meta=[test_spec_service.case_row_to_meta(row) for row in rows],
-        )
-        report_id = test_run_service.assemble_tsr(
-            doc, run, db_test_runs.list_cases(run["run_id"]), locale=locale, run_chain=False
-        )
-        db_test_runs.set_run_tsr_doc(run["run_id"], report_id)
-        paired = db_docs.get_by_id(report_id)
-        if not paired or paired.get("target_id") != doc["doc_id"]:
-            raise RuntimeError("tsr_pair_missing")
-        from modules.flow_gate.db import workflow_sequences as db_wfseq
-        slot = test_run_service._tsr_slot_item(doc, db_wfseq)
-        if slot is not None and not db_wfseq.get_item_by_result_doc_id(report_id):
-            raise RuntimeError("tsr_workflow_pair_missing")
-        from modules.flow_gate.db import events as db_events
-        db_events.insert_event(doc["doc_id"], "test_spec_initialized", note=json.dumps({
-            "basis_id": basis["basis_id"], "run_id": run["run_id"],
-            "tsr_doc_id": report_id, "ts_revision_no": doc.get("revision_no"),
-            "source": basis["source"], "binding": basis.get("binding"),
-            "manifest_hash": basis["test_assets"]["manifest_hash"],
-        }, ensure_ascii=False))
-        return {"run_id": run["run_id"], "tsr_doc_id": report_id}
-    except Exception:
-        if old_path and old_body is not None:
-            old_path.write_bytes(old_body)
-        if ts_path:
-            for path in set(ts_path.parent.glob("*-TSR_document.md")) - report_files_before:
-                path.unlink(missing_ok=True)
-        raise
+        meta = json.loads(doc.get("meta") or "{}")
+    except (TypeError, ValueError):
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    previous = meta.pop("test_basis", None)
+    if previous:
+        meta["superseded_test_basis"] = previous
+    return json.dumps(meta, ensure_ascii=False)

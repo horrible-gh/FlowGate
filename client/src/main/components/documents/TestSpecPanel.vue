@@ -54,6 +54,12 @@
         <button type="button" class="btn btn-primary btn-sm" data-testid="test-spec-run-all"
           :disabled="!canRun" @click="runAutomated()">Run all automated Cases</button>
       </section>
+      <!-- 0684 T#1: approval stores no Basis (the run measures one); re-running never needs it. -->
+      <section v-else-if="view.doc_review_status === 'approved'" class="ts-basis" data-testid="test-basis-pending">
+        <div v-if="view.active_run">Execution: {{ view.active_run.phase || view.active_run.status }} ({{ view.active_run.run_id }})</div>
+        <button type="button" class="btn btn-primary btn-sm" data-testid="test-spec-run-all"
+          :disabled="!canRun" @click="runAutomated()">Run all automated Cases</button>
+      </section>
       <div v-if="actionError" class="ts-spec-errors" role="alert">{{ actionError }}</div>
       <section v-if="view.test_basis?.manifest?.length" class="ts-assets" data-testid="test-asset-manifest">
         <h4>Approved test assets</h4>
@@ -195,9 +201,11 @@ const cases = computed<TestSpecCase[]>(() => props.view.cases ?? [])
 const errors = computed(() => props.view.errors ?? [])
 const latest = computed(() => props.view.latest_result ?? null)
 const requiredCount = computed(() => cases.value.filter((c) => c.required).length)
+// 0684 T#1 (D#1 §3-2): a run is admitted without a stored or valid Basis -- it measures the
+// source itself, and a stale result is exactly when a re-run is needed.
 const canRun = computed(() => !props.readOnly && !reportLocked.value && !runBusy.value
   && !props.view.active_run && props.view.doc_review_status === 'approved'
-  && props.view.basis_valid !== false && !!props.view.test_basis && !errors.value.length)
+  && !errors.value.length)
 const effectiveFor = (id: string) => props.view.effective_result?.cases.find((row) => row.case_id === id)
 const staleFor = (id: string) => props.view.stale_previous_result?.cases?.find((row) => row.case_no === id)
 

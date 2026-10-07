@@ -91,7 +91,7 @@ def _asset_edit_env(env, monkeypatch):
     monkeypatch.setattr(assets.test_run_service, "_active_tsr_for_ts", lambda d: None)
     monkeypatch.setattr(assets.db_test_runs, "get_pending_failure_origin", lambda ts_id: None)
     monkeypatch.setattr(assets.db_test_runs, "latest_spec_result", lambda *a: None)
-    monkeypatch.setattr(basis, "initialize", lambda *a, **kw: {"run_id": "init", "tsr_doc_id": "tsr"})
+    monkeypatch.setattr(assets.db_test_runs, "get_running_by_doc", lambda ts_id: None)
 
 
 def _hash(root, relative):

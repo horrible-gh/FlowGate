@@ -148,7 +148,7 @@ class BasisEnv:
         return copy.deepcopy(doc)
 
     def approve(self, doc: dict) -> dict:
-        """The approval transaction's Basis part: capture, store and pin."""
+        """A run's measured Basis (0684 T#1: the run captures, not the approval): store and pin."""
         from modules.flow_gate.services import test_basis_service as basis
         captured = basis.capture(doc, self.cases)
         with self.store.transaction():
