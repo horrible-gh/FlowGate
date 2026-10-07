@@ -152,7 +152,7 @@ def attach_document(run_id, document_id):
         [document_id, run_id],
     )
 
-def list_created(*, group_id=None, expired_before=None):
+def list_created(*, group_id=None, expired_before=None, exclude_pinned=False):
     query = "SELECT * FROM source_bundles WHERE status='created'"
     args = []
     if group_id is not None:
@@ -161,7 +161,47 @@ def list_created(*, group_id=None, expired_before=None):
     if expired_before is not None:
         query += " AND expires_at<=?"
         args.append(expired_before)
+    if exclude_pinned:
+        query += " AND bundle_id NOT IN (SELECT bundle_id FROM source_bundle_pins)"
     return [_row(row) for row in get_store()._fetch_all(query, args)]
+
+
+# Retention Pin (0682 D#1 3.7): one row per TS, naming the Bundle its current Test Basis
+# executes from. A pinned Bundle is never removed by TTL or explicit cleanup; only Group
+# cleanup releases it. Replacing the row is how successor/re-approval release the old one.
+
+def pin_set(ts_document_id, bundle_id, basis_id, project_id, group_id):
+    store = get_store()
+    store._execute_affected("DELETE FROM source_bundle_pins WHERE ts_document_id=?", [ts_document_id])
+    store._execute(
+        "INSERT INTO source_bundle_pins "
+        "(ts_document_id,bundle_id,basis_id,project_id,group_id,pinned_at) VALUES (?,?,?,?,?,?)",
+        [ts_document_id, bundle_id, basis_id, project_id, group_id, now_iso()],
+    )
+
+
+def pin_get(ts_document_id):
+    return _row(get_store()._fetch_one(
+        "SELECT * FROM source_bundle_pins WHERE ts_document_id=?", [ts_document_id]
+    ))
+
+
+def is_pinned(bundle_id):
+    return get_store()._fetch_one(
+        "SELECT ts_document_id FROM source_bundle_pins WHERE bundle_id=?", [bundle_id]
+    ) is not None
+
+
+def pin_release(ts_document_id):
+    return get_store()._execute_affected(
+        "DELETE FROM source_bundle_pins WHERE ts_document_id=?", [ts_document_id]
+    )
+
+
+def pin_release_group(group_id):
+    return get_store()._execute_affected(
+        "DELETE FROM source_bundle_pins WHERE group_id=?", [group_id]
+    )
 
 
 def list_building():

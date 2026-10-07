@@ -161,8 +161,31 @@ def ensure(project_id: str, group_id: str):
         lock_manager.release(ctx, outcome.lock_key)
 
 
+def ensure_locked(project_id: str, group_id: str):
+    """``ensure`` for a caller that already holds this Group's G (test asset edit)."""
+    if not group_id:
+        raise materializer.SourceBundleError("group_worktree_unavailable", "Source Bundle needs a group")
+    return _ensure_under_lock(project_id, group_id)
+
+
 def bundle_source_path(bundle_id: str) -> Path:
     row = db.get(bundle_id)
     if row is None or row["status"] != "created" or not _integrity(row):
         raise materializer.SourceBundleError("bundle_unavailable", "Source Bundle is unavailable")
     return materializer.bundle_path(row["project_id"], bundle_id) / "source"
+
+
+def open_verified(bundle_id: str) -> dict:
+    """Integrity-checked Bundle row, parsed manifest and source path (server-internal)."""
+    row = db.get(bundle_id) if bundle_id else None
+    if row is None or row["status"] != "created" or not _integrity(row):
+        raise materializer.SourceBundleError("bundle_unavailable", "Source Bundle is unavailable")
+    root = materializer.bundle_path(row["project_id"], bundle_id)
+    try:
+        raw = (root / "manifest.json").read_bytes()
+        if hashlib.sha256(raw).hexdigest() != row["bundle_sha256"]:
+            raise ValueError("manifest changed")
+        manifest = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        raise materializer.SourceBundleError("bundle_unavailable", "Source Bundle is unavailable") from exc
+    return {"row": row, "manifest": manifest, "source": root / "source"}

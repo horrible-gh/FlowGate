@@ -56,8 +56,15 @@ def _linked(st) -> bool:
     )
 
 
+def _mode(st) -> int:
+    # Windows synthesizes the execute bits from the file extension (.bat/.cmd/.exe/.com)
+    # in Path.lstat()/os.fstat() but not in DirEntry.stat(), so the same untouched file
+    # would compare as changed. Content is pinned by the hash, so they are ignored.
+    return st.st_mode & ~0o111
+
+
 def _same(a, b) -> bool:
-    if (a.st_mode, a.st_size, a.st_mtime_ns) != (b.st_mode, b.st_size, b.st_mtime_ns):
+    if (_mode(a), a.st_size, a.st_mtime_ns) != (_mode(b), b.st_size, b.st_mtime_ns):
         return False
     a_identity = (int(getattr(a, "st_dev", 0)), int(getattr(a, "st_ino", 0)))
     b_identity = (int(getattr(b, "st_dev", 0)), int(getattr(b, "st_ino", 0)))

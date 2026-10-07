@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import os
 import shlex
 import shutil
 import subprocess
-import tarfile
 from pathlib import Path
 
 from modules.flow_gate.db import documents as db_docs
@@ -31,13 +29,10 @@ def admit(doc_id: str, *, case_id: str | None, runner_id: str, locale: str,
     basis = test_basis_service.current(doc)
     if not basis:
         raise runner._http_error(409, "basis_missing", doc_id=doc_id)
-    try:
-        live = test_basis_service.resolve(doc, parsed["cases"])
-    except ValueError as exc:
-        raise runner._http_error(409, "basis_unavailable", detail=str(exc)) from exc
-    if live["basis_id"] != basis["basis_id"]:
-        raise runner._http_error(409, "basis_stale", basis_id=basis["basis_id"],
-                                 live_basis_id=live["basis_id"])
+    error = test_basis_service.verdict_error(
+        test_basis_service.verdict(doc, basis, parsed["cases"]), runner._http_error, doc_id=doc_id)
+    if error is not None:
+        raise error
     all_cases = parsed["cases"]
     if case_id is not None:
         selected = [case for case in all_cases
@@ -82,49 +77,52 @@ def admit(doc_id: str, *, case_id: str | None, runner_id: str, locale: str,
 class ExecutionRootResolver:
     @staticmethod
     def prepare(doc: dict, run: dict, basis: dict) -> tuple[Path, Path]:
+        """Execution Root Builder (0682 D#1 3.9): a disposable copy of the Basis's Bundle.
+
+        Never the live worktree and never ``git archive HEAD``: what runs is exactly the
+        captured source the Basis was judged on, uncommitted and untracked work included.
+        """
+        from modules.flow_gate.db import source_bundles as db_source_bundles
         from modules.flow_gate.services import test_run_service as runner
-        source = test_basis_service.source_root(doc)
-        live = test_basis_service.resolve(doc, test_spec_service.parse_spec(
-            runner._read_doc_content_or_empty(doc))["cases"])
-        if live["basis_id"] != basis["basis_id"]:
-            raise ValueError("basis_stale_before_execution")
+        current_doc = db_docs.get_by_id(doc["doc_id"]) or doc
+        stored = test_basis_service.current(current_doc)
+        judged = test_basis_service.verdict(current_doc, stored, execution_basis=basis)
+        if judged["state"] != test_basis_service.VALID:
+            prefix = ("basis_stale_before_execution" if judged["state"] == test_basis_service.STALE
+                      else "basis_unverifiable_before_execution")
+            raise ValueError(prefix + ": " + ",".join(judged["reasons"]))
+        effective = stored
+        try:
+            opened = test_basis_service.open_bundle(current_doc, effective)
+        except ValueError:
+            # Bundle deleted, damaged or not this Group's: the live source still matches
+            # (verdict above), so capture again and move the binding; basis_id stays.
+            effective = test_basis_service.rebind(current_doc, effective, run_id=run["run_id"])
+            opened = test_basis_service.open_bundle(current_doc, effective)
+        captured = {entry["path"]: entry["sha256"] for entry in opened["manifest"]["files"]}
+        for asset in effective.get("manifest") or []:
+            if captured.get(asset["path"]) != asset["content_hash"]:
+                raise ValueError("test_asset_not_captured: " + asset["path"])
         scratch = runner._scratch_dir(doc, run["run_id"])
         root = scratch / "source"
         scratch.mkdir(parents=True, exist_ok=True)
-        root.mkdir(parents=True, exist_ok=True)
-        archive = scratch / "source.tar"
-        with archive.open("wb") as stream:
-            process = subprocess.run(
-                ["git", "-C", str(source), "archive", "--format=tar",
-                 basis["source"]["git_revision"]], stdout=stream, stderr=subprocess.PIPE,
-                timeout=120,
-            )
-        if process.returncode:
-            raise ValueError("execution_archive_failed: " + process.stderr.decode(errors="replace")[:300])
-        with tarfile.open(archive, "r") as packed:
-            for member in packed:
-                target = (root / member.name).resolve()
-                if not target.is_relative_to(root.resolve()) or member.issym() or member.islnk():
-                    raise ValueError("unsafe_execution_archive_member")
-                packed.extract(member, root)
-        archive.unlink(missing_ok=True)
-        # Overlay only the manifest assets after extracting immutable product source.
-        for asset in basis.get("manifest") or []:
-            path = asset["path"]
-            source_asset = (source / path).resolve()
-            target_asset = (root / path).resolve()
-            if not source_asset.is_relative_to(source.resolve()) or not target_asset.is_relative_to(root.resolve()):
-                raise ValueError("unsafe_test_asset_path")
-            body = source_asset.read_bytes()
-            if hashlib.sha256(body).hexdigest() != asset["content_hash"]:
-                raise ValueError("basis_changed_during_copy")
-            target_asset.parent.mkdir(parents=True, exist_ok=True)
-            target_asset.write_bytes(body)
-        after = test_basis_service.resolve(doc, test_spec_service.parse_spec(
-            runner._read_doc_content_or_empty(doc))["cases"])
-        if after["basis_id"] != basis["basis_id"]:
-            raise ValueError("basis_changed_during_copy")
+        try:
+            test_basis_service.copy_bundle_source(opened["source"], root, opened["manifest"])
+        except Exception:
+            shutil.rmtree(scratch, ignore_errors=True)
+            raise
+        db_source_bundles.record_usage(
+            opened["row"]["bundle_id"], "spec_execution", run_id=run["run_id"],
+            document_id=doc["doc_id"], detail={"basis_id": effective["basis_id"]},
+        )
         return root, scratch
+
+
+# Prepare refusals end the run under their own error, pytest never started: a Basis that is
+# no longer the live source, or a run root that is not byte-for-byte the Basis's Bundle.
+_PREPARE_REFUSALS = {"basis_stale_before_execution", "basis_unverifiable_before_execution",
+                     "execution_source_mismatch", "unsafe_execution_source",
+                     "test_asset_not_captured"}
 
 
 class ExistingRunnerAdapter:
@@ -159,9 +157,28 @@ def execute(run: dict) -> None:
     try:
         if runner._bail_if_cancelled(run_id, doc, active):
             return
-        root, scratch = ExecutionRootResolver.prepare(doc, run, basis)
-        meta["execution_root"] = {"kind": basis["source"]["kind"],
-                                  "source_identity": basis["source"],
+        try:
+            root, scratch = ExecutionRootResolver.prepare(doc, run, basis)
+        except ValueError as exc:
+            code, _, reasons = str(exc).partition(":")
+            if code not in _PREPARE_REFUSALS:
+                raise
+            # Not run at all: the Basis is no longer the source the run was admitted on,
+            # or the copied run root is not exactly the approved Bundle.
+            meta["prepare_refused"] = {"error": code, "reasons": reasons.strip()}
+            db_test_runs.set_run_result_meta(run_id, json.dumps(meta, ensure_ascii=False))
+            db_test_runs.finish_run(run_id=run_id, status="failed", error=code)
+            runner._emit_finished(doc, db_test_runs.get_run(run_id) or run, None)
+            return
+        # A rebind during prepare moved the binding; record the Bundle that really ran.
+        bound = test_basis_service.current(db_docs.get_by_id(doc["doc_id"]) or {})
+        executed = bound if bound and bound["basis_id"] == basis["basis_id"] else basis
+        executed_identity = test_basis_service.source_identity(executed)
+        meta["execution_root"] = {"kind": (executed.get("source") or {}).get("kind"),
+                                  "basis_id": executed["basis_id"],
+                                  "source": executed.get("source"),
+                                  "binding": executed.get("binding"),
+                                  "source_identity": executed_identity,
                                   "disposable": True}
         db_test_runs.set_run_result_meta(run_id, json.dumps(meta, ensure_ascii=False))
         results = []
@@ -180,7 +197,7 @@ def execute(run: dict) -> None:
             if xml:
                 parsed = test_spec_service.parse_junit_xml(
                     xml, submitted_by=run.get("runner_id") or "system", now=now_iso(),
-                    default_source_identity=basis["source"],
+                    default_source_identity=executed_identity,
                 )
                 if loc["capability"] == "case_selectable" and len(parsed) == 1:
                     parsed[0]["case_id"] = case["case_id"]
@@ -202,19 +219,17 @@ def execute(run: dict) -> None:
                 runner._finalize_cancelled(run_id, doc)
                 return
             current = db_docs.get_by_id(doc["doc_id"])
-            current_basis = test_basis_service.current(current or {})
-            try:
-                live = test_basis_service.resolve(current, test_spec_service.parse_spec(
-                    runner._read_doc_content_or_empty(current))["cases"])
-            except (ValueError, TypeError):
-                live = None
-            stale = not current_basis or current_basis["basis_id"] != basis["basis_id"] or (
-                not live or live["basis_id"] != basis["basis_id"])
+            judged = test_basis_service.verdict(
+                current, test_basis_service.current(current or {}), execution_basis=basis)
+            stale = judged["state"] != test_basis_service.VALID
+            # stale -> superseded evidence; unverifiable -> evidence, run ends basis_unverifiable.
+            stale_error = ("basis_superseded" if judged["state"] == test_basis_service.STALE
+                           else "basis_unverifiable")
             finished_execution = False
             if stale:
                 normalized = test_spec_service.normalize_results(
                     results, submitted_by=run.get("runner_id") or "system", now=now_iso(),
-                    default_source_identity=basis["source"], default_origin="automated")
+                    default_source_identity=executed_identity, default_origin="automated")
                 mapped = test_spec_service.map_results(spec_cases, normalized)
                 summary = test_spec_service.compute_overall(mapped["cases"])
                 db_test_runs.insert_spec_run(
@@ -223,13 +238,16 @@ def execute(run: dict) -> None:
                     rows=mapped["cases"], status="failed", overall=summary["overall"],
                     result_meta=json.dumps({"run_kind": "superseded_execution", "basis_id": basis["basis_id"],
                                             "test_basis": basis, "stale": True,
+                                            "basis_state": judged["state"],
+                                            "basis_reasons": judged["reasons"],
+                                            "execution_root": meta["execution_root"],
                                             "counts": summary["counts"],
                                             "required_counts": summary["required_counts"],
                                             "optional_counts": summary["optional_counts"],
                                             "unmapped": mapped["unmapped"],
                                             "conflicts": mapped["conflicts"]}, ensure_ascii=False),
                     case_passed=summary["counts"]["pass"], case_failed=summary["counts"]["fail"],
-                    error="basis_superseded", locale=run.get("locale"),
+                    error=stale_error, locale=run.get("locale"),
                     case_meta=[test_spec_service.case_row_to_meta(row) for row in mapped["cases"]],
                 )
             elif results:
@@ -238,7 +256,7 @@ def execute(run: dict) -> None:
                         doc_id=doc["doc_id"], runner_id=run["runner_id"],
                         triggered_via=run["triggered_via"], results=results,
                         locale=run.get("locale") or "ko", execution_run_id=run_id,
-                        execution_basis=basis, execution_cases=spec_cases,
+                        execution_basis=executed, execution_cases=spec_cases,
                         chain_context=meta.get("chain"),
                     )
                     db_test_runs.finish_run(run_id=run_id, status="passed",
@@ -249,7 +267,7 @@ def execute(run: dict) -> None:
             if not finished_execution:
                 db_test_runs.finish_run(run_id=run_id, status="failed" if stale else "passed",
                                         case_passed=len(results) if not stale else 0,
-                                        case_failed=0, error="basis_superseded" if stale else None)
+                                        case_failed=0, error=stale_error if stale else None)
         runner._emit_finished(doc, db_test_runs.get_run(run_id) or run, None)
     except Exception as exc:
         runner.logger.warning("spec execution failed for %s: %s", run_id, exc, exc_info=True)
