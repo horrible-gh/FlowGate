@@ -183,26 +183,20 @@ describe('ContinuousWorkDialog [검수] 탭 화면 (0414 T0012 작업 1)', () =>
     // 스위트는 기본 로케일(en)로 돌기 때문에 화면 텍스트만으로는 승인 문안을 못 지킨다.
     const block = (ko as any).main.continuous_work
     expect(block.tab_review).toBe('검수')
-    expect(block.review_intro).toBe('각 단계마다 검수 횟수와 검수자를 지정합니다.')
-    // 0414 M0020: 지정 횟수는 [검수+수정] 짝의 횟수다. 지적이 나온 라운드마다 수정이 따라
-    // 붙고, 마지막 수정까지 끝나면 다음 단계로 넘어간다 — 안내문도 그렇게 말해야 한다.
-    expect(block.review_legend).toBe(
-      '-1: 통과할 때까지 · 0: 안 함(기본값) · 1~3: 지정 횟수만큼 검수하고 지적마다 수정 · 통과하면 즉시 종료',
-    )
-    expect(block.review_legend).toContain('지적마다 수정')
+    expect(block.review_intro).toBeUndefined()
+    expect(block.review_legend).toBe('-1: 통과까지 · 0: 안 함 · 1~3: 최대 검수·수정 횟수')
     expect(block.review_count_aria).toBe('실행단계{n} 검수 횟수')
     expect(block.review_reviewer_aria).toBe('실행단계{n} 검수자')
   })
 
-  it('안내문과 단계별 행만 두고, 공용 [기본 횟수]·[기본 검수자] 카드는 없다', async () => {
+  it('짧은 숫자 범례와 단계별 행만 두고, 공용 카드는 없다', async () => {
     const wrapper = mountDialog()
     await flushPromises()
     await openReviewTab()
 
-    const intro = document.querySelector('.cwd-review-intro') as HTMLElement
-    expect(intro).not.toBeNull()
-    expect(intro.textContent).toContain(T('main.continuous_work.review_intro'))
-    expect(intro.textContent).toContain(T('main.continuous_work.review_legend'))
+    expect(document.querySelector('.cwd-review-intro')).toBeNull()
+    const legend = document.querySelector('.cwd-review-legend') as HTMLElement
+    expect(legend.textContent).toBe(T('main.continuous_work.review_legend'))
 
     // TR0005 반려 1 이 지운 공용 카드 — [프로바이더]/[전달멘트] 탭이 쓰는 헤더 행
     // (.cwd-provider-row)이 이 탭에는 하나도 없어야 한다. 대조군: 같은 셀렉터가
