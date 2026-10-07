@@ -8,7 +8,16 @@
        real Palette / Conversation / Git parts, fed the same Project and active Flow as the
        left Dock. -->
   <div class="designer-shell" data-test="designer-shell">
-    <DesignerTop />
+    <DesignerTop
+      :project-available="projectId !== null"
+      :flow-available="activeFlowRef !== null"
+      :has-selection="center.activeSelectedNode.value !== null"
+      :left-collapsed="layout.leftCollapsed"
+      :right-collapsed="layout.rightCollapsed"
+      :left-mode="layout.activeLeftMode"
+      :right-tool="layout.activeRightTool"
+      @command="onTopCommand"
+    />
     <DesignerBody :left-width="leftColumnWidth(layout)" :right-width="rightColumnWidth(layout)">
       <DesignerLeftDock
         :project-id="projectId"
@@ -71,6 +80,19 @@ const center = createDesignerCenterSession()
 const activeFlowRef = center.activeFlowRef
 
 // The session ignores an activation for another Project.
+function onTopCommand(id: string) {
+  if (id === 'window.left') layout.leftCollapsed = !layout.leftCollapsed
+  else if (id === 'window.right') layout.rightCollapsed = !layout.rightCollapsed
+  else if (id === 'window.project' || id === 'window.file') {
+    layout.leftCollapsed = false
+    layout.activeLeftMode = id === 'window.project' ? 'project' : 'file'
+  } else if (id === 'window.palette' || id === 'window.conversation' || id === 'window.git') {
+    layout.rightCollapsed = false
+    layout.activeRightTool = id.slice('window.'.length) as typeof layout.activeRightTool
+  }
+  // Other commands are UI intents for later Feature wiring.
+}
+
 function onActivateFlow(payload: ProjectExplorerFlowEvent) {
   center.openFlow(payload)
 }

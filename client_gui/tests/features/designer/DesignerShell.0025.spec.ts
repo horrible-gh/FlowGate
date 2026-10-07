@@ -185,8 +185,9 @@ describe('DesignerShell — container hierarchy', () => {
     const label = (container: string) =>
       get(w, container).get('[data-test="designer-placeholder-label"]').text()
 
-    expect(label('designer-top')).toBe('TOP')
-    expect(get(w, 'designer-top').text()).toContain('Header / MenuBar / Toolbar')
+    expect(get(w, 'designer-top').find('[data-test="designer-header"]').exists()).toBe(true)
+    expect(get(w, 'designer-top').find('[data-test="designer-menubar"]').exists()).toBe(true)
+    expect(get(w, 'designer-top').find('[data-test="designer-toolbar"]').exists()).toBe(true)
     // flowgate.v02.0026: the Workspace holds the Designer Center, no placeholder.
     const workspace = get(w, 'designer-workspace')
     expect(workspace.find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
@@ -429,7 +430,7 @@ describe('DesignerShell — UI refinements (T0006)', () => {
     const w = await mountShell()
     await activateCanvas(w)
     expect(activeTabName(w).text()).toBe('Canvas')
-    const text = get(w, 'designer-shell').text()
+    const text = get(w, 'designer-center').text()
     expect(text).not.toMatch(/Flow|흐름|플로(?!우)/)
   })
 })
