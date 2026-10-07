@@ -93,7 +93,7 @@ describe('ReviewActionBar approve convergence (0257 NR0003 §3)', () => {
       String(url).includes('review_transitions/approve'),
     )
     expect(approveCalls).toHaveLength(1)
-    expect(showToast).not.toHaveBeenCalledWith(expect.stringContaining('failed'), 'danger')
+    expect(showToast.mock.calls.filter((call) => call[1] === 'danger')).toEqual([])
   })
 
   it('does not reopen the confirm dialog for a document it already approved', async () => {
@@ -162,7 +162,7 @@ describe('ReviewActionBar approve convergence (0257 NR0003 §3)', () => {
     await flushPromises()
 
     expect(wrapper.emitted('approve')).toBeFalsy()
-    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('database is locked'), 'danger')
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('database is locked'), 'danger', 0)
   })
 
   it('still surfaces the failure when the document cannot be re-read', async () => {
@@ -177,6 +177,6 @@ describe('ReviewActionBar approve convergence (0257 NR0003 §3)', () => {
     await flushPromises()
 
     expect(wrapper.emitted('approve')).toBeFalsy()
-    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('boom'), 'danger')
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('boom'), 'danger', 0)
   })
 })

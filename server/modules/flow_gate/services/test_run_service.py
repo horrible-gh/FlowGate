@@ -1,6 +1,7 @@
 """Remote TS test execution service."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -523,6 +524,45 @@ def _http_error(status_code: int, code: str, **payload) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"error": code, **payload})
 
 
+RESULT_ENTRY_MODES = frozenset({"manual", "external"})
+
+
+def _automated_case_keys(cases: list[dict]) -> set[str]:
+    return {test_spec_service.case_id_key(case["case_id"]) for case in cases
+            if case.get("execution_mode") not in RESULT_ENTRY_MODES}
+
+
+def result_entry_case_ids(cases: list[dict]) -> list[str]:
+    """0684 T#3 (D#1 §3-8, CH S6): the Cases whose results are entered -- manual/external only.
+
+    Every automated Case gets its official result from a server run only. One no server
+    runner exists for yet (runner_unsupported, unbound) is not entered either: it stays
+    NOT_RUN until the runner is extended (S8), so its gate stays closed instead of taking a
+    PASS a person or a worker produced.
+    """
+    return [case["case_id"] for case in cases
+            if case.get("execution_mode") in RESULT_ENTRY_MODES]
+
+
+def refuse_server_run_results(cases: list[dict], normalized: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split a submission into the results it may record and the ones it may not.
+
+    A result for an automated Case -- runnable by the server or not -- is refused item by
+    item, with its reason; the rest of the submission still records (D#1 §3-8 "그 항목만 거절").
+    """
+    server_run = _automated_case_keys(cases)
+    kept: list[dict] = []
+    refused: list[dict] = []
+    for item in normalized:
+        case_id = item.get("case_id")
+        if case_id and test_spec_service.case_id_key(case_id) in server_run:
+            refused.append({"case_id": case_id, "status": item.get("status"),
+                            "reason": "automated_case_server_run_only"})
+        else:
+            kept.append(item)
+    return kept, refused
+
+
 def validate_and_create_run(
     *,
     doc_id: str,
@@ -861,13 +901,19 @@ def _build_spec_result_mention(
     continuous: bool = False,
     locale: Optional[str] = None,
 ) -> str:
-    """Hand-off for a specification TS (0549 T0008): the worker verifies, FlowGate judges.
+    """Hand-off for a specification TS: manual/external result entry only (0684 T#3).
 
-    FlowGate embeds no runner (D0006 §6), so this step's worker executes the approved cases
-    with the project's own tooling and submits one result per TS Case ID. The overall
-    verdict is computed on the server from the required cases; nothing the worker writes
-    about "overall" is read.
+    0549 T0008 had the worker run the automated Cases in its own environment and submit
+    them. Since 0632/0684 the server runs them (D#1 §3-8): their official result comes from
+    a server run only and the inbox refuses them. This token therefore carries only the
+    Cases whose results are entered -- manual and external ones. An automated Case no server
+    runner exists for is not entered either; it stays NOT_RUN. POSTing without results hands
+    the step to the server run instead.
     """
+    cases = test_spec_service.parse_spec(_read_doc_content_or_empty(doc))["cases"]
+    entry_ids = set(result_entry_case_ids(cases))
+    entry_cases = [case for case in cases if case["case_id"] in entry_ids]
+    server_cases = [case for case in cases if case["case_id"] not in entry_ids]
     continuous_block = ""
     chain_note = ""
     if continuous:
@@ -880,10 +926,15 @@ def _build_spec_result_mention(
             "assembled and approved by the server and the chain resumes with a fresh worker "
             "if the target lies beyond the TSR; on FAIL/BLOCKED/NOT_RUN the chain stops for "
             "failure-origin review or a human. Do NOT write the TSR yourself.\n"
-            "The TS approval already queued a server run of the automated Cases: POST without "
-            "`results`/`junit_xml` to hand this chain to that run instead of running them "
-            "yourself.\n"
         )
+
+    def _case_line(case: dict) -> str:
+        required = "required" if case.get("required") else "optional"
+        return (f"- {case['case_id']} ({case.get('execution_mode')}, {required}): "
+                f"{case.get('title') or ''}")
+
+    entry_block = "\n".join(_case_line(case) for case in entry_cases) or "- (none)"
+    server_block = "\n".join(_case_line(case) for case in server_cases) or "- (none)"
     project = doc.get("project_id")
     return (
         "## Document information\n"
@@ -894,18 +945,26 @@ def _build_spec_result_mention(
         "type: TS (test specification, test_contract_version: 2)\n"
         f"title: {doc.get('title') or ''}\n\n"
         f"{continuous_block}"
-        "## Test execution and result submission\n"
+        "## Manual/external result entry\n"
         "---\n"
-        "Read the approved TS. For every case, verify the EXPECTED result exactly as the TS "
-        "states it — it comes from the requirement, never from the current implementation.\n"
-        "- automated: run the project's own tests (pytest, vitest, go test, CI, ...) in your "
-        "environment; a JUnit XML report may be submitted as-is (link a testcase to a case "
-        "with a `flowgate.case_id` property or a `TC_<n>` token in its name).\n"
-        "- manual/external: submit PASS/FAIL only for what you actually verified; otherwise "
-        "BLOCKED (with the reason) or NOT_RUN.\n"
-        "Never report PASS for a case you did not verify, and never weaken an expected result "
-        "to match the actual one. Do not edit the TS in this step.\n"
+        "Read the approved TS. Verify ONLY the Cases listed under \"Cases you record\" and "
+        "submit one result per Case ID. The EXPECTED result comes from the requirement, never "
+        "from the current implementation.\n"
+        "- Submit PASS/FAIL only for what you actually verified; otherwise BLOCKED (with the "
+        "reason) or NOT_RUN.\n"
+        "- Never report PASS for a case you did not verify, and never weaken an expected "
+        "result to match the actual one. Do not edit the TS in this step.\n"
+        "- The automated Cases are NOT yours: their official result comes from the FlowGate "
+        "server run only. A submitted result for one of them is refused "
+        "(`refused_results`); the rest of the submission still records. An automated Case "
+        "the server has no runner for stays NOT_RUN -- do not submit it either.\n"
+        "- POST without `results`/`junit_xml` to hand this step to the server run of the "
+        "automated Cases instead (the TS approval already queued it).\n"
         f"{chain_note}\n"
+        "Cases you record:\n"
+        f"{entry_block}\n\n"
+        "Automated Cases -- server run only (do not submit):\n"
+        f"{server_block}\n\n"
         "## Reference document\n"
         "---\n"
         f"GET {api_base_url}/document/{doc['doc_id']}\n\n"
@@ -917,15 +976,13 @@ def _build_spec_result_mention(
         '  "action": "test_run",\n'
         f'  "project": "{project}",\n'
         f'  "doc_id": "{doc["doc_id"]}",\n'
-        '  "source_identity": {"git_revision": "<commit sha>", "runner": "<tool>", '
-        '"runner_version": "<version>"},\n'
         '  "results": [\n'
         '    {"case_id": "TC-001", "status": "PASS|FAIL|BLOCKED|NOT_RUN", '
         '"actual": "<observed result>",\n'
         '     "evidence": [{"kind": "log|text|structured|file|url|screenshot", '
         '"value": "<evidence>"}], "defect_ref": "<optional>"}\n'
         "  ],\n"
-        '  "junit_xml": "<optional: a JUnit XML report as a string>"\n'
+        '  "junit_xml": "<optional: a JUnit XML report for the Cases you record>"\n'
         "}\n"
     )
 
@@ -1207,6 +1264,20 @@ def record_spec_results(
     except test_spec_service.SpecResultError as exc:
         raise _http_error(422, exc.code, doc_id=doc_id, detail=exc.detail,
                           errors=exc.errors) from exc
+    refused: list[dict] = []
+    if execution_basis is None:
+        # 0684 T#3 (D#1 §3-8): the official result of a Case the server runs comes from a
+        # server run only -- never from a person's or a worker's own environment.
+        normalized, refused = refuse_server_run_results(parsed["cases"], normalized)
+        if refused and not normalized:
+            raise _http_error(
+                422, "automated_results_server_only", doc_id=doc_id,
+                detail=("Results for automated Cases are produced by the server run only. "
+                        "Start a run of the TS instead; submit results for manual/external "
+                        "Cases only."),
+                refused_results=refused,
+                entry_case_ids=result_entry_case_ids(parsed["cases"]),
+            )
     if not normalized:
         raise _http_error(
             422, "spec_results_required", doc_id=doc_id,
@@ -1262,6 +1333,10 @@ def record_spec_results(
             "previous_run_id": (previous_run or {}).get("run_id"),
             "basis_id": (basis or {}).get("basis_id"),
             "test_basis": basis,
+            # 0684 T#3: the server run this record came from (absent for an entry), and the
+            # results this submission was not allowed to record.
+            "execution_run_id": execution_run_id,
+            "refused_results": refused,
         }
         if judged is not None:
             # The live source as measured for this record; finalize uses it, not a re-measure.
@@ -1286,7 +1361,7 @@ def record_spec_results(
             locale=locale,
             case_meta=[test_spec_service.case_row_to_meta(row) for row in mapped["cases"]],
         )
-    return {"doc": doc, "run": run, "summary": summary, "mapped": mapped}
+    return {"doc": doc, "run": run, "summary": summary, "mapped": mapped, "refused": refused}
 
 
 def finalize_spec_results(doc: dict, run: dict, *, locale: str = "ko") -> dict:
@@ -1359,9 +1434,12 @@ def finalize_spec_results(doc: dict, run: dict, *, locale: str = "ko") -> dict:
     elif overall == "FAIL":
         outcome["failure_origin"] = _handle_spec_failure(doc, finished)
     else:
-        _maybe_notify_chain_failure(doc, finished)
         outcome["continuation"] = continue_chain_after_test_gate(doc, finished)
+        if (outcome["continuation"] or {}).get("action") != "resumed_for_result_entry":
+            # 0684 T#3: a chain resumed for manual/external entry did not stop.
+            _maybe_notify_chain_failure(doc, finished)
     return outcome
+
 
 
 def spec_result_response(run_id: str, outcome: dict) -> dict:
@@ -1370,6 +1448,12 @@ def spec_result_response(run_id: str, outcome: dict) -> dict:
     shaped = shape_run(run, include_cases=True)
     overall = shaped.get("overall")
     counts = (shaped.get("summary") or {}).get("counts") or {}
+    refused = test_spec_service.load_result_meta(run.get("result_meta")).get("refused_results") or []
+    refused_note = (
+        f" Refused {len(refused)} result(s) for automated Cases (server run only): "
+        + ", ".join(str(item.get("case_id")) for item in refused) + "."
+        if refused else ""
+    )
     return {
         "ok": True,
         "run_id": run_id,
@@ -1385,11 +1469,14 @@ def spec_result_response(run_id: str, outcome: dict) -> dict:
         "cases": shaped.get("cases"),
         "failure_origin": outcome.get("failure_origin"),
         "continuation_action": (outcome.get("continuation") or {}).get("action"),
+        "refused_results": refused,
         "message": (
             f"Recorded {counts.get('total', 0)} TS cases: PASS {counts.get('pass', 0)}, "
             f"FAIL {counts.get('fail', 0)}, BLOCKED {counts.get('blocked', 0)}, "
             f"NOT_RUN {counts.get('not_run', 0)}. Server-computed overall: {overall}."
+            f"{refused_note}"
         ),
+
     }
 
 
@@ -1596,6 +1683,13 @@ def continue_chain_after_test_gate(
         )
         if latest is not None and not latest_passed:
             if own_row is not None and own_row.get("stop_code") == pending_code:
+                if _awaits_result_entry(doc, latest):
+                    # 0684 T#3 (D#1 §3-9): the server run is done and only entered Cases
+                    # (manual/external) keep the gate shut. Resuming lands on the TSR head
+                    # again, whose hop is a manual/external-only result-entry token.
+                    return _resume_parked_chain(doc, run, own_row, api_base_url=api_base_url,
+                                                locale=locale, token_rec=token_rec,
+                                                action="resumed_for_result_entry")
                 db_paused.mark_stop_code(group_id, blocked_code,
                                          stop_run_id=own_row.get("stop_run_id"))
             return {"action": "gate_blocked", "overall": (latest or {}).get("overall"),
@@ -1649,27 +1743,142 @@ def continue_chain_after_test_gate(
             # finalization parks the row and calls back here (finalize._auto_resume_test_gate_chain).
             return {"action": "deferred", "tsr_doc_id": tsr_doc_id, "next_seq": next_seq}
 
-        from fastapi import HTTPException as _HTTPException
-
-        from modules.flow_gate.services import ai_invoke_service
-
-        try:
-            resumed = ai_invoke_service.resume_chain(
-                group_id=group_id,
-                user_id=own_row.get("paused_by"),
-                api_base_url=api_base_url or _chain_api_base(run, doc),
-                locale=locale or token_rec.get("continuation_locale") or "ko",
-            )
-        except _HTTPException as exc:
-            detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
-            logger.info("test-gate resume deferred for %s: %s", group_id, detail)
-            return {"action": "resume_deferred", "detail": detail}
-        return {"action": "resumed", "run_id": resumed.get("run_id"), "next_seq": next_seq,
-                "tsr_doc_id": tsr_doc_id}
+        resumed = _resume_parked_chain(doc, run, own_row, api_base_url=api_base_url,
+                                       locale=locale, token_rec=token_rec, action="resumed")
+        return {**resumed, "next_seq": next_seq, "tsr_doc_id": tsr_doc_id}
     except Exception:
         logger.warning("test-gate continuation failed for %s (ignored)",
                        (doc or {}).get("doc_id"), exc_info=True)
         return {"action": "error"}
+
+
+def _resume_parked_chain(doc: dict, run: Optional[dict], own_row: dict, *,
+                         api_base_url: Optional[str], locale: Optional[str],
+                         token_rec: dict, action: str) -> dict:
+    """The ordinary resume_chain of the row the test gate parked."""
+    from fastapi import HTTPException as _HTTPException
+
+    from modules.flow_gate.services import ai_invoke_service
+
+    group_id = doc.get("group_id")
+    try:
+        resumed = ai_invoke_service.resume_chain(
+            group_id=group_id,
+            user_id=own_row.get("paused_by"),
+            api_base_url=api_base_url or _chain_api_base(run, doc),
+            locale=locale or token_rec.get("continuation_locale") or "ko",
+        )
+    except _HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+        logger.info("test-gate resume deferred for %s: %s", group_id, detail)
+        return {"action": "resume_deferred", "detail": detail}
+    return {"action": action, "run_id": resumed.get("run_id")}
+
+
+def _awaits_result_entry(doc: dict, latest: dict) -> bool:
+    """A server run's record whose only open required Cases are entered ones (D#1 §3-9).
+
+    The record must come from the server run (an entry that left Cases NOT_RUN is a human's
+    answer, not a reason to ask again), it must be valid for the current source, and every
+    required Case that is not PASS must be a NOT_RUN Case the result-entry token records.
+    """
+    if latest.get("contract_version") != test_spec_service.CONTRACT_SPEC:
+        return False
+    if latest.get("overall") != "NOT_RUN":
+        return False
+    meta = test_spec_service.load_result_meta(latest.get("result_meta"))
+    if not meta.get("execution_run_id"):
+        return False
+    live = meta.get("live_verdict") or {}
+    if live and live.get("state") != "valid":
+        return False
+    cases = test_spec_service.parse_spec(_read_doc_content_or_empty(doc))["cases"]
+    entry = {test_spec_service.case_id_key(case_id) for case_id in result_entry_case_ids(cases)}
+    rows = [test_spec_service.stored_case_to_row(row)
+            for row in db_test_runs.list_cases(latest["run_id"])]
+    open_rows = [row for row in rows if row.get("required") and row.get("status") != "PASS"]
+    return bool(open_rows) and all(
+        row.get("status") == "NOT_RUN" and row.get("case_id")
+        and test_spec_service.case_id_key(row["case_id"]) in entry
+        for row in open_rows
+    )
+
+
+def hand_chain_to_server_run(
+    doc_ref: str,
+    *,
+    issued_to: str,
+    api_base_url: Optional[str],
+    locale: Optional[str],
+    continuation_target_seq: Optional[int],
+    continuation_review_mode: bool = False,
+    continuation_instruction_mode: Optional[str] = None,
+    continuation_auto_approve_item_seqs: Optional[list] = None,
+    ai_run_id: Optional[str] = None,
+) -> Optional[dict]:
+    """0684 T#3 (D#1 §3-9): a chain whose next head is a TSR waits on the server run.
+
+    The TS approval queued the run, so there is nothing for a worker to do while it runs:
+    no hop starts and no hand-off token goes to anyone. The chain is bound to the run here
+    instead -- its context goes into the run (the recorded result carries it) and a consumed
+    continuation token records the chain's identity for the gate's chain approval and
+    resume (``_continuation_token_for_doc``). The caller parks the chain on the test gate;
+    the run's finalization resumes it on PASS, routes FAIL to failure-origin review and
+    stops for a human otherwise.
+
+    Returns None when the head is not such a TSR or there is no server run to wait on
+    (none in progress and none that already passed): the ordinary hop starts then.
+    """
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+    from modules.flow_gate.services import spec_execution_service
+
+    seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+    head = db_wfseq.get_effective_head(seq["id"]) if seq is not None else None
+    if head is None or (head.get("type") or "").upper() != "TSR":
+        return None
+    if head.get("result_doc_review_status") == "approved":
+        return None
+    ts_doc_id = db_wfseq.get_predecessor_result_doc_id(seq["id"], head.get("id"))
+    ts_doc = db_docs.get_by_id(ts_doc_id) if ts_doc_id else None
+    if (ts_doc is None or (ts_doc.get("type_code") or "").upper() != "TS"
+            or ts_doc.get("doc_review_status") != "approved"
+            or ts_contract_version(ts_doc) != test_spec_service.CONTRACT_SPEC):
+        return None
+    chain_context = {"api_base_url": api_base_url, "locale": locale}
+    # The run records and finalizes its result under its run lock, reading the chain context
+    # there. Binding under the same lock means a result either ended before the chain was
+    # bound (attach_chain then sees an ended run) or meets the consumed token -- a FAIL the
+    # chain rode always reaches failure-origin review (D#1 §3-9), never a human by default.
+    running = db_test_runs.get_running_by_doc(ts_doc_id)
+    running_id = (running or {}).get("run_id")
+    with _get_run_lock(running_id) if running_id else contextlib.nullcontext():
+        attached = spec_execution_service.attach_chain(ts_doc, chain_context, run_id=running_id)
+        if attached is None:
+            return None
+        issue = token_service.issue(
+            project=ts_doc.get("project_id") or "",
+            group_id=ts_doc.get("group_id"),
+            action_scope="test_run",
+            doc_ref=ts_doc_id,
+            issued_to=issued_to,
+            continuation_target_seq=continuation_target_seq,
+            continuation_review_mode=bool(continuation_review_mode),
+            continuation_instruction_mode=continuation_instruction_mode,
+            continuation_locale=locale,
+            ai_run_id=ai_run_id,
+            continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+        )
+        token_service.consume(issue["token_id"], ts_doc.get("project_id") or "", ts_doc_id)
+    current = db_test_runs.get_run(attached["run_id"]) or {}
+    finished = bool(attached.get("finished")) or current.get("status") not in ("running", "cancelling")
+    tsr = _active_tsr_for_ts(ts_doc)
+    if finished and tsr is not None:
+        # The run ended before the chain's identity existed, so its PASS (if any) could not
+        # approve the report for the chain. Do it now; a gate that did not pass stays shut.
+        _maybe_chain_auto_approve_tsr(ts_doc, tsr["doc_id"])
+    return {"ts_doc_id": ts_doc_id, "run_id": attached["run_id"], "finished": finished,
+            "tsr_doc_id": (tsr or {}).get("doc_id"), "token_id": issue["token_id"]}
+
 
 
 def continue_attached_chain(doc: dict, tsr_doc_id: Optional[str], *,
@@ -1730,6 +1939,14 @@ def describe_test_document(doc: dict) -> dict:
             history = db_test_runs.list_by_doc(doc["doc_id"])
             out["run_history"] = [shape_run(item) for item in history
                                   if item.get("contract_version") == test_spec_service.CONTRACT_SPEC][:30]
+            # 0684 T#3 (D#1 §6-1): the newest server run's own outcome for the action bar's
+            # state -- a prepare refusal or a cancel leaves no result record behind.
+            out["last_execution"] = next(
+                (shaped for shaped in out["run_history"] if shaped.get("run_kind") == "spec_execution"),
+                None,
+            )
+            # 0684 T#3 (D#1 §3-8): the Cases [enter results] offers; the rest are run.
+            out["result_entry_case_ids"] = result_entry_case_ids(parsed["cases"])
             running = db_test_runs.get_running_by_doc(doc["doc_id"])
             # 0684 T#1: with its Cases, so a Case the live run already reported shows its result.
             out["active_run"] = (shape_run(running, include_cases=True) if running and
@@ -1814,8 +2031,10 @@ def describe_test_document(doc: dict) -> dict:
                 for key in ("test_basis", "basis_valid", "basis_verdict", "basis_source",
                             "effective_result",
                             "stale_previous_result", "run_history", "active_run", "progress",
-                            "pending_case_ids"):
+                            "pending_case_ids", "last_execution"):
                     out[key] = ts_view.get(key)
+                # 0684 T#3: the TSR body offers [run again] only while its TS may run.
+                out["ts_review_status"] = ts_view.get("doc_review_status")
                 from modules.flow_gate.services import test_basis_service
                 out["source_identity"] = (test_basis_service.source_identity(ts_view["test_basis"])
                                           if ts_view.get("test_basis") else None)

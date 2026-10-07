@@ -144,6 +144,12 @@ const isSpec = computed(
 const visible = computed(() => {
   if (!props.docLoaded || props.groupDisposed) return false
   if ((props.typeCode ?? '') !== 'TS') return false
+  if (isSpec.value) {
+    // 0684 T#3 (D#1 §3-8, §6-1): a specification TS's run state, [다시 실행] and [취소] live
+    // in the action bar. This strip keeps only the manual/external result delegation, for an
+    // approved TS with no run in flight.
+    return props.reviewStatus === 'approved' && !isRunning.value && !isServerCancelling.value
+  }
   if (status.value === 'failed') return false
   if (status.value === 'running' || status.value === 'cancelling' || status.value === 'cancelled') return true
   if (props.reviewStatus === 'approved') return true
@@ -151,9 +157,11 @@ const visible = computed(() => {
 })
 
 const label = computed(() => {
-  if (isCancellingUi.value) return t('main.test_run_strip.cancelling')
-  if (isRunning.value) return t('main.test_run_strip.running')
-  if (status.value === 'cancelled') return t('main.test_run_strip.cancelled')
+  if (!isSpec.value) {
+    if (isCancellingUi.value) return t('main.test_run_strip.cancelling')
+    if (isRunning.value) return t('main.test_run_strip.running')
+    if (status.value === 'cancelled') return t('main.test_run_strip.cancelled')
+  }
   if (isSpec.value) {
     return status.value === 'passed'
       ? t('main.test_run_strip.spec_passed')

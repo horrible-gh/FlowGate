@@ -16,6 +16,8 @@ let _nextId = 0
  *  request (0391 T0005 §7-6) — pass their own, longer duration instead: 3s is not
  *  enough to read ~150 characters of instructions. */
 const TOAST_DEFAULT_MS = 3000
+/** 0684 T#3 (D#1 §6-1): a refusal the user must read stays until they click it away. */
+export const TOAST_STICKY = 0
 
 export function useToast() {
   function dismissToast(id: number) {
@@ -25,7 +27,7 @@ export function useToast() {
   function showToast(message: string, type: ToastType = 'info', durationMs = TOAST_DEFAULT_MS) {
     const id = ++_nextId
     toasts.value.push({ id, message, type })
-    setTimeout(() => dismissToast(id), durationMs)
+    if (durationMs > 0) setTimeout(() => dismissToast(id), durationMs)
   }
 
   return { toasts, showToast, dismissToast }

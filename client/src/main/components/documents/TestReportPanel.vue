@@ -2,8 +2,34 @@
   <div class="tsr" data-testid="test-report-panel">
     <div v-if="!report" class="tsr-muted">{{ t('main.test_document.no_result') }}</div>
     <template v-else>
+      <!-- 0684 T#3 (D#1 §6-3): while a run is live, its phase and Case count lead the report;
+           Cases it has not reported yet read "pending", never a verdict. -->
+      <div v-if="runState.active" class="tsr-progress" data-testid="tsr-progress">
+        <AppIcon name="spinner" spin /> {{ runStateText }}
+      </div>
+      <div v-else-if="view.basis_valid === false" class="tsr-stale-band" role="alert" data-testid="tsr-stale-band">
+        <AppIcon name="warning" />
+        <span>
+          {{ t('main.test_document.stale_band') }}
+          <template v-if="view.basis_verdict?.reasons?.length"> {{ t('main.test_document.reasons', { reasons: view.basis_verdict.reasons.join(', ') }) }}</template>
+        </span>
+        <button
+          v-if="canRerun"
+          type="button"
+          class="btn btn-primary btn-sm"
+          data-testid="tsr-rerun"
+          :disabled="rerunning"
+          @click="onRerun"
+        >
+          <AppIcon :name="rerunning ? 'spinner' : 'arrow-clockwise'" :spin="rerunning" /> {{ t('main.test_document.rerun') }}
+        </button>
+      </div>
+      <div v-else-if="view.basis_verdict?.state === 'unchecked'" class="tsr-unchecked" data-testid="tsr-unchecked">
+        {{ t('main.test_document.unchecked_band') }}
+      </div>
+      <div v-if="rerunError" class="tsr-stale-band" role="alert" data-testid="tsr-rerun-error">{{ rerunError }}</div>
       <!-- Summary first: the reviewer's question is "did it pass, and what did not". -->
-      <div class="tsr-overall" :class="`tsr-overall--${overallKey}`" data-testid="tsr-overall">
+      <div v-if="!runState.active" class="tsr-overall" :class="`tsr-overall--${overallKey}`" data-testid="tsr-overall">
         <AppIcon :name="gatePassed ? 'seal-check' : 'prohibit'" />
         <div>
           <div class="tsr-overall-verdict">
@@ -15,15 +41,22 @@
         </div>
       </div>
       <section v-if="view.test_basis" class="tsr-basis" data-testid="tsr-basis">
-        <strong>Current Test Basis</strong> <code>{{ view.test_basis.basis_id }}</code>
-        <div>Source: {{ view.source_identity?.kind }} / {{ view.source_identity?.git_revision || view.source_identity?.bundle_id }}</div>
-        <div>Test assets: {{ view.test_asset_identity?.manifest_hash }}</div>
-        <div v-if="view.basis_valid === false">Current basis is stale<span v-if="view.basis_verdict?.reasons?.length"> ({{ view.basis_verdict.reasons.join(', ') }})</span></div>
-        <div v-if="view.active_run">Execution: {{ view.active_run.status }} ({{ view.active_run.run_id }})</div>
+        <strong>{{ t('main.test_document.basis.title') }}</strong>
+        <span class="tsr-basis-facts">
+          <span v-if="fingerprint">{{ t('main.test_document.basis.fingerprint', { value: fingerprint }) }}</span>
+          <span v-if="view.basis_source?.git_revision || view.source_identity?.git_revision">
+            {{ t('main.test_document.basis.git_revision', { value: short(view.basis_source?.git_revision || view.source_identity?.git_revision) }) }}
+          </span>
+          <span v-if="view.basis_source?.source_dirty != null">
+            {{ view.basis_source?.source_dirty ? t('main.test_document.basis.dirty') : t('main.test_document.basis.clean') }}
+          </span>
+          <span v-if="view.basis_source?.measured_at">{{ t('main.test_document.basis.measured_at', { value: view.basis_source.measured_at }) }}</span>
+          <span v-if="view.test_asset_identity">{{ t('main.test_document.basis.assets', { count: view.test_asset_identity.asset_count, hash: short(view.test_asset_identity.manifest_hash) }) }}</span>
+        </span>
       </section>
       <section v-if="view.stale_previous_result" class="tsr-stale" data-testid="tsr-stale">
-        <strong>STALE previous result</strong>
-        <div>Run {{ view.stale_previous_result.run_id }} · {{ view.stale_previous_result.overall }}</div>
+        <strong>{{ t('main.test_document.stale_previous_title') }}</strong>
+        <div>{{ t('main.test_document.stale_previous_run', { run: view.stale_previous_result.run_id, overall: verdictLabel(view.stale_previous_result.overall) }) }}</div>
         <div v-for="row in view.stale_previous_result.cases || []" :key="row.case_no || ''">
           {{ row.case_no }}: {{ row.case_status }}
         </div>
@@ -53,7 +86,7 @@
           <tr
             v-for="row in rows"
             :key="row.case_no ?? ''"
-            :class="{ 'tsr-row-bad': row.required && row.case_status !== 'PASS' }"
+            :class="{ 'tsr-row-bad': row.required && row.case_status !== 'PASS' && !isPending(row.case_no) }"
             data-testid="tsr-row"
             :data-case-id="row.case_no"
           >
@@ -66,7 +99,10 @@
               </div>
             </td>
             <td>
-              <span class="badge" :class="verdictBadge(row.case_status)" data-testid="tsr-row-verdict">
+              <span v-if="isPending(row.case_no)" class="badge badge-info" data-testid="tsr-row-pending">
+                <AppIcon name="spinner" spin /> {{ t('main.test_document.pending') }}
+              </span>
+              <span v-else class="badge" :class="verdictBadge(row.case_status)" data-testid="tsr-row-verdict">
                 {{ verdictLabel(row.case_status) }}
               </span>
               <div v-if="row.mapping_conflict" class="tsr-sub tsr-warn">{{ t('main.test_document.mapping_conflict') }}</div>
@@ -93,7 +129,7 @@
       </table>
 
       <section v-if="view.run_history?.length" class="tsr-extra" data-testid="tsr-run-history">
-        <h4>Run history</h4>
+        <h4>{{ t('main.test_document.run_history_title') }}</h4>
         <ul><li v-for="run in view.run_history" :key="run.run_id || ''">
           {{ run.run_id }} · {{ run.run_kind }} · {{ run.status }} · {{ run.overall }} · {{ run.basis_id }}
         </li></ul>
@@ -121,17 +157,51 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 
 import type { TestCounts, TestDocumentView, TestResultRecord } from '../../types/testRun'
 import { useTestVerdictLabels } from './testVerdict'
+import { specErrorKey, specRunState, startSpecRun } from './testSpecRun'
 
 const props = defineProps<{ view: TestDocumentView }>()
+const emit = defineEmits<{ changed: [] }>()
 
 const { t } = useI18n()
 const { verdictLabel, verdictBadge, modeLabel } = useTestVerdictLabels()
+
+// ── 0684 T#3 (D#1 §6-3): progress, PENDING Cases, a result the current source moved past ──
+const runState = computed(() => specRunState(props.view))
+const runStateText = computed(() => t(`main.test_document.run_state.${runState.value.key}`,
+  { done: runState.value.done, total: runState.value.total }))
+const pendingIds = computed(() => new Set(props.view.active_run ? props.view.pending_case_ids ?? [] : []))
+const isPending = (caseId: string | null | undefined) => !!caseId && pendingIds.value.has(caseId)
+const rerunning = ref(false)
+const rerunError = ref('')
+// The same admission as the action bar's [다시 실행]: an approved TS whose report is not approved.
+const canRerun = computed(() => !!props.view.target_ts && props.view.ts_review_status === 'approved'
+  && props.view.doc_review_status !== 'approved')
+
+function short(value: string | null | undefined): string {
+  return value ? String(value).slice(0, 12) : ''
+}
+const fingerprint = computed(() => props.view.basis_source?.fingerprint_prefix
+  || short(props.view.source_identity?.content_fingerprint))
+
+async function onRerun() {
+  if (!props.view.target_ts) return
+  rerunning.value = true
+  rerunError.value = ''
+  try {
+    await startSpecRun(props.view.target_ts)
+    emit('changed')
+  } catch (error) {
+    rerunError.value = t(`main.test_document.errors.${specErrorKey(error)}`)
+  } finally {
+    rerunning.value = false
+  }
+}
 
 const report = computed<TestResultRecord | null>(() => {
   const stored = props.view.report ?? null
@@ -199,5 +269,11 @@ const tiles = computed(() => [
 .tsr-extra ul { margin: 0 0 0 18px; padding: 0; }
 .tsr-muted { color: var(--text-m); font-size: .8rem; }
 .tsr-basis, .tsr-stale { border: 1px solid var(--border); border-radius: var(--r); padding: 10px; margin-bottom: 10px; font-size: .8rem; overflow-wrap: anywhere; }
+.tsr-basis-facts { display: inline-flex; flex-wrap: wrap; gap: 4px 14px; margin-left: 8px; color: var(--text-s); }
+.tsr-progress { display: flex; align-items: center; gap: 6px; border: 1px solid var(--primary); color: var(--primary); border-radius: var(--r); padding: 8px 12px; margin-bottom: 10px; font-size: .8rem; }
+.tsr-stale-band { display: flex; align-items: center; gap: 8px; border: 1px solid var(--warning); background: var(--warning-l); color: var(--warning); border-radius: var(--r); padding: 8px 12px; margin-bottom: 10px; font-size: .8rem; }
+.tsr-stale-band span { flex: 1; }
+.tsr-unchecked { color: var(--text-s); font-size: .78rem; margin-bottom: 10px; }
+
 .tsr-stale { border-color: var(--warning); }
 </style>

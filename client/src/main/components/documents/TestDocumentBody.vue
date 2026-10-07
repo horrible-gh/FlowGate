@@ -4,6 +4,29 @@
        it keeps the ordinary Markdown body, which is handed in as the default slot. The
        canonical body stays the document file either way — the "source" view below is that
        same file, so revision/review/audit/export are untouched. -->
+  <!-- 0684 T#3 (D#1 §6-3): until the view answers, the Case table's outline is shown — never
+       an empty body with only the attachments under it. -->
+  <div v-if="loading" class="card test-doc-card test-doc-skeleton" data-testid="test-doc-skeleton" aria-busy="true">
+    <div class="card-hd">
+      <span class="card-title test-doc-muted">{{ t('main.test_document.loading') }}</span>
+    </div>
+    <div class="card-bd pad">
+      <div v-for="n in 4" :key="n" class="test-doc-skeleton-row">
+        <span class="test-doc-skeleton-bar test-doc-skeleton-bar--id" />
+        <span class="test-doc-skeleton-bar test-doc-skeleton-bar--title" />
+        <span class="test-doc-skeleton-bar test-doc-skeleton-bar--badge" />
+      </div>
+    </div>
+  </div>
+  <!-- A failed read is said out loud, with a retry. The Markdown body stays below it: the
+       canonical file is always readable there. -->
+  <div v-if="!loading && loadFailed" class="test-doc-error" role="alert" data-testid="test-doc-load-failed">
+    <AppIcon name="warning" />
+    <span>{{ t('main.test_document.load_failed') }}</span>
+    <button type="button" class="btn btn-secondary btn-sm" data-testid="test-doc-retry" @click="retry">
+      {{ t('main.test_document.retry') }}
+    </button>
+  </div>
   <div v-if="structured" class="card test-doc-card" data-testid="test-document-body">
     <div class="card-hd">
       <span class="card-title">
@@ -45,7 +68,7 @@
         :can-edit="canEdit"
         @changed="reload"
       />
-      <TestReportPanel v-else-if="view?.kind === 'TSR'" :view="view" />
+      <TestReportPanel v-else-if="view?.kind === 'TSR'" :view="view" @changed="reload" />
     </div>
   </div>
   <div v-if="structured && mode === 'source'" class="test-doc-source">
@@ -69,6 +92,7 @@ import type { Tab } from '../../stores/tabs'
 import type { TestDocumentView } from '../../types/testRun'
 import TestReportPanel from './TestReportPanel.vue'
 import TestSpecPanel from './TestSpecPanel.vue'
+import { publishTestDocumentView, registerTestDocumentReload } from './testSpecRun'
 
 const props = defineProps<{
   tab: Tab
@@ -80,6 +104,8 @@ const { t } = useI18n()
 
 const view = ref<TestDocumentView | null>(null)
 const loading = ref(true)
+const loadFailed = ref(false)
+let unregisterReload: (() => void) | null = null
 const mode = ref<'structured' | 'source'>('structured')
 let generation = 0
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -103,13 +129,28 @@ async function reload() {
     // current one — generation guard, same idiom as the other async document views.
     if (current !== generation || docId !== props.tab.id) return
     view.value = (res.data as TestDocumentView) ?? null
+    loadFailed.value = false
+    // 0684 T#3: the action bar's run-state pill reads this same answer.
+    publishTestDocumentView(docId, view.value)
   } catch {
     if (current !== generation) return
-    // Fail open to the Markdown body: the canonical file is always readable there.
-    view.value = null
+    // Fail open to the Markdown body: the canonical file is always readable there. A view
+    // that was already showing stays (a poll that failed once is not a blank screen).
+    if (!view.value) loadFailed.value = true
   } finally {
     if (current === generation) loading.value = false
   }
+}
+
+function retry() {
+  loadFailed.value = false
+  loading.value = true
+  void reload()
+}
+
+function bindReload(docId: string) {
+  unregisterReload?.()
+  unregisterReload = registerTestDocumentReload(docId, reload)
 }
 
 function onOpenDocsRefresh(event: Event) {
@@ -123,15 +164,19 @@ function onOpenDocsRefresh(event: Event) {
 
 watch(
   () => props.tab.id,
-  () => {
+  (docId, previous) => {
     loading.value = true
+    loadFailed.value = false
     view.value = null
     mode.value = 'structured'
+    if (previous) publishTestDocumentView(previous, null)
+    bindReload(docId)
     void reload()
   },
 )
 
 onMounted(() => {
+  bindReload(props.tab.id)
   void reload()
   window.addEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
   pollTimer = setInterval(() => {
@@ -141,6 +186,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   generation += 1
+  unregisterReload?.()
+  publishTestDocumentView(props.tab.id, null)
   if (pollTimer) clearInterval(pollTimer)
   window.removeEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
 })
@@ -153,4 +200,12 @@ defineExpose({ reload })
 .test-doc-tabs { display: flex; gap: 6px; }
 .test-doc-contract { margin-left: 8px; font-weight: 500; }
 .test-doc-muted { color: var(--text-m); font-size: .8rem; }
+.test-doc-skeleton-row { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.test-doc-skeleton-bar { display: inline-block; height: 10px; border-radius: 4px; background: var(--border); animation: test-doc-pulse 1.2s ease-in-out infinite; }
+.test-doc-skeleton-bar--id { width: 64px; }
+.test-doc-skeleton-bar--title { flex: 1; }
+.test-doc-skeleton-bar--badge { width: 48px; }
+@keyframes test-doc-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+.test-doc-error { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 10px 14px; border: 1px solid var(--warning); background: var(--warning-l); color: var(--warning); border-radius: var(--r); font-size: .8rem; }
+
 </style>

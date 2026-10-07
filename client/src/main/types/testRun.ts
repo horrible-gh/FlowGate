@@ -59,6 +59,12 @@ export interface TestRun {
   source_identity?: Record<string, string>
   basis_id?: string | null
   run_kind?: string | null
+  // 0684 T#1/T#3: a server spec run's progress (spec_execution runs only).
+  phase?: 'queued' | 'preparing' | 'executing' | 'finalizing' | 'finished' | string | null
+  admission?: 'approval' | 'request' | string | null
+  selected_case_ids?: string[]
+  reported_case_ids?: string[]
+  prepare_refused?: { error: string; reasons?: string } | null
 }
 
 // ── Specification TS / TSR test report (flowgate.default.0549 T0008) ──────────────
@@ -198,4 +204,10 @@ export interface TestDocumentView {
   target_ts?: string | null
   report?: TestResultRecord | null
   gate?: { applies: boolean; passed: boolean; overall?: string | null } | null
+  // 0684 T#1/T#3: the Cases the live run has not reported yet (shown as PENDING), the newest
+  // server run's own outcome, the Cases [enter results] offers, and the TS state on a TSR.
+  pending_case_ids?: string[]
+  last_execution?: TestResultRecord | null
+  result_entry_case_ids?: string[]
+  ts_review_status?: string | null
 }

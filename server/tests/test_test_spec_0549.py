@@ -437,6 +437,34 @@ def _submit(env, results=None, **kw):
     return recorded, outcome
 
 
+@pytest.fixture(autouse=True)
+def _automated_results_stand_for_server_records(request, monkeypatch):
+    """In this suite, a submitted automated result stands for the record a server run leaves.
+
+    0684 T#3 (D#1 §3-8, CH S6): no person or worker may record an automated Case's result --
+    test_spec_entry_points_0684 holds that intake rule. The gate, report and chain contracts
+    here predate the server run and feed TC-001 (automated) through ``_submit``/the inbox, so
+    for this module only the intake filter lets them pass as the server run's record.
+    """
+    if "env" not in request.fixturenames:
+        return
+    env = request.getfixturevalue("env")
+    monkeypatch.setattr(env.svc, "refuse_server_run_results",
+                        lambda cases, normalized: (normalized, []))
+
+
+def _seed_server_result(env, monkeypatch, results):
+    """An earlier record that holds an automated Case's result, as a server run leaves it.
+
+    0684 T#3: an automated Case the server runs can no longer be entered, so a fixture that
+    needs such a record seeds it past the intake rule instead of through it.
+    """
+    with monkeypatch.context() as patched:
+        patched.setattr(env.svc, "refuse_server_run_results",
+                        lambda cases, normalized: (normalized, []))
+        return _submit(env, results)
+
+
 def test_spec_run_is_stored_terminal_with_per_case_verdicts(env):
     recorded, outcome = _submit(
         env,
@@ -1339,7 +1367,8 @@ def test_0682_product_change_is_the_same_stale_for_every_caller(env, monkeypatch
     monkeypatch.setattr(execution.ExistingRunnerAdapter, "run_pytest",
                         lambda nodeid, root, scratch, active: (
                             "pass", "<testsuite><testcase name='test_tc_1'/></testsuite>", 0, ""))
-    _submit(env, [{"case_id": "TC-001", "status": "PASS"}, {"case_id": "TC-002", "status": "PASS"}])
+    _seed_server_result(env, monkeypatch, [{"case_id": "TC-001", "status": "PASS"},
+                                           {"case_id": "TC-002", "status": "PASS"}])
     assert env.svc.tsr_gate_state(env.docs[TSR_ID])["passed"] is True
     admitted = execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
 
@@ -1797,8 +1826,10 @@ def test_0684_partial_rerun_report_keeps_the_earlier_record_of_unselected_cases(
     from modules.flow_gate.services import spec_execution_service as execution
     _automated_spec(env)
     monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
-    _submit(env, [{"case_id": "TC-001", "status": "PASS"}, {"case_id": "TC-002", "status": "PASS"}])
+    _seed_server_result(env, monkeypatch, [{"case_id": "TC-001", "status": "PASS"},
+                                           {"case_id": "TC-002", "status": "PASS"}])
     previous = env.db_test_runs.latest_spec_run(TS_ID, 2)
+
     assert previous["overall"] == "PASS"
     admitted = execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
     # The queued execution run is not a result record: the earlier record stays the latest.

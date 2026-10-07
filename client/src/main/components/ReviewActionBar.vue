@@ -148,6 +148,43 @@
           >
             <AppIcon name="chats" /> {{ t('main.review_action_bar.btn_create_conversation') }}
           </button>
+          <!-- 0684 T#3 (D#1 §3-8, §6-1): a contract-2 TS runs through the spec run entry point
+               only. The legacy [테스트 실행] below (/documents/test-run) and its delegation
+               drop-up are contract-1 controls. Here the slot is the run's state pill, [다시 실행]
+               (the same POST /test-spec/runs the approval uses) and, while a run is in flight,
+               [취소]. The pill reads the view TestDocumentBody already loaded for this TS. -->
+          <div v-else-if="isNextTestReportPending && isSpecContract" class="ab-spec-run" data-test="ab-spec-run">
+            <span
+              class="ab-spec-pill"
+              :class="`ab-spec-pill--${specState.tone}`"
+              data-test="ab-spec-run-pill"
+              :data-state="specState.key"
+            >
+              <AppIcon :name="specStateIcon" :spin="specState.active" />
+              {{ specStateLabel }}
+            </span>
+            <button
+              class="btn btn-primary btn-sm"
+              type="button"
+              data-test="ab-spec-rerun"
+              :disabled="!canSpecRerun"
+              @click="onSpecRerunClick"
+            >
+              <AppIcon :name="specStarting ? 'spinner' : 'arrow-clockwise'" :spin="specStarting" />
+              {{ t('main.test_document.rerun') }}
+            </button>
+            <button
+              v-if="specState.active && specState.runId"
+              class="btn btn-secondary btn-sm"
+              type="button"
+              data-test="ab-spec-cancel"
+              :disabled="specCancelling || specState.key === 'cancelling'"
+              @click="onSpecCancelClick"
+            >
+              <AppIcon :name="specCancelling ? 'spinner' : 'prohibit'" :spin="specCancelling" />
+              {{ t('main.test_document.cancel_run') }}
+            </button>
+          </div>
           <div v-else-if="isNextTestReportPending" class="ab-split-wrap">
             <!-- flowgate.default.0358 T0004 §9: while a run is in flight, this stays a
                  status indicator (not clickable) instead of falling back to the generic
@@ -356,9 +393,12 @@
             class="btn btn-success btn-sm"
             :disabled="!canApprove || isActionBarBusy"
             :title="approvalJobNotice || (gitSettling ? t('main.review_action_bar.git_settle_in_progress') : testGateBlocked ? t('main.review_action_bar.test_gate_blocked') : undefined)"
+            :aria-busy="approving"
+            data-test="ab-approve"
             @click="onApproveClick"
           >
-            <AppIcon name="check" /> {{ t('main.review_action_bar.btn_approve') }}
+            <!-- 0684 T#3 (D#1 §6-1): the click is visibly in progress until the server answers. -->
+            <AppIcon :name="approving ? 'spinner' : 'check'" :spin="approving" /> {{ t('main.review_action_bar.btn_approve') }}
           </button>
           <!-- 0674 T0004 §2-3 (C1): a final approval whose Git post-step is queued or needs
                recovery is not a finished approval and not a failed one either. -->
@@ -578,6 +618,14 @@ import { getRequest, postRequest } from '@shared/api'
 import ConfirmModal from './ConfirmModal.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
+import {
+  cancelSpecRun,
+  reloadTestDocument,
+  specErrorKey,
+  specRunState,
+  startSpecRun,
+  testDocumentView,
+} from './documents/testSpecRun'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import GitFinalizeAxis from './GitFinalizeAxis.vue'
 import {
@@ -623,6 +671,8 @@ const props = defineProps<{
   canNextAction?: boolean
   /** Latest test run status for TS -> TSR first-run action-bar mode. null means never run. */
   testRunStatus?: string | null
+  /** 0684 T#3: the TS contract (2 = specification run by /test-spec/runs, never /documents/test-run). */
+  testContractVersion?: number | null
   /**
    * 0441 TR0005 rev2: whether ANY document of this group has a run in flight. Sourced from
    * the document detail's group-scoped `group_test_run` block, so a sibling tab gets the
@@ -686,6 +736,9 @@ const dropdownPos = ref({ top: 8, left: 8 })
 const DROPDOWN_VIEWPORT_MARGIN = 8
 const DROPDOWN_TRIGGER_GAP = 6
 const { showToast } = useToast()
+// 0684 T#3 (D#1 §6-1): a refusal the user must read stays until they click it away
+// (useToast: a duration of 0 never expires).
+const TOAST_STICKY = 0
 const docTypeStore = useDocTypeStore()
 const gitAuxOpen = ref(false)
 
@@ -1140,6 +1193,82 @@ const testRunStatusLabel = computed(() =>
     ? t('main.test_run_strip.cancelling')
     : t('main.test_run_strip.running'),
 )
+
+// ── 0684 T#3 (D#1 §6-1): contract-2 run state, [다시 실행], [취소] ─────────────
+const specView = computed(() => testDocumentView(props.docId))
+const isSpecContract = computed(
+  () => props.testContractVersion === 2 || specView.value?.contract_version === 2,
+)
+const specState = computed(() => specRunState(specView.value))
+const specStarting = ref(false)
+const specCancelling = ref(false)
+
+function specReason(code: string | null): string {
+  if (!code) return ''
+  const key = `main.test_document.prepare_reason.${code}`
+  return te(key) ? t(key) : t('main.test_document.prepare_reason.unknown', { code })
+}
+
+const specStateLabel = computed(() => {
+  const state = specState.value
+  const prefix = 'main.test_document.run_state.'
+  if (state.key === 'executing') return t(prefix + 'executing', { done: state.done, total: state.total })
+  if (state.key === 'prepare_failed' || state.key === 'execution_failed') {
+    return t(prefix + state.key, { reason: specReason(state.error) })
+  }
+  if (state.key === 'done' || state.key === 'unchecked') {
+    return t(prefix + state.key, { overall: state.overall ?? 'NOT_RUN' })
+  }
+  return t(prefix + state.key)
+})
+
+const specStateIcon = computed(() => {
+  if (specState.value.active) return 'spinner'
+  if (specState.value.tone === 'success') return 'seal-check'
+  if (specState.value.tone === 'danger') return 'warning-circle'
+  if (specState.value.tone === 'warning') return 'warning'
+  return 'flask'
+})
+
+// D#1 §6-1: only with the TS approved, its report not approved and no run in flight.
+const canSpecRerun = computed(
+  () =>
+    !specStarting.value &&
+    !specState.value.active &&
+    !isAnyTestRunActive.value &&
+    !isGroupBusy.value &&
+    normalizedStatus.value === 'approved' &&
+    specView.value?.tsr_review_status !== 'approved',
+)
+
+async function onSpecRerunClick() {
+  if (!canSpecRerun.value) return
+  specStarting.value = true
+  try {
+    await startSpecRun(props.docId)
+    showToast(t('main.test_document.run_started'), 'success')
+    await reloadTestDocument(props.docId)
+  } catch (error) {
+    showToast(t(`main.test_document.errors.${specErrorKey(error)}`), 'danger', TOAST_STICKY)
+  } finally {
+    specStarting.value = false
+  }
+}
+
+async function onSpecCancelClick() {
+  const runId = specState.value.runId
+  if (!runId || specCancelling.value) return
+  specCancelling.value = true
+  try {
+    await cancelSpecRun(runId)
+    showToast(t('main.test_document.cancel_requested'), 'info')
+    await reloadTestDocument(props.docId)
+  } catch (error) {
+    showToast(t(`main.test_document.errors.${specErrorKey(error)}`), 'danger', TOAST_STICKY)
+  } finally {
+    specCancelling.value = false
+  }
+}
 
 function onNextCreateEmptyClick() {
   dropdownOpen.value = false
@@ -1653,7 +1782,7 @@ async function doApprove() {
     if (blockerText && e?.response?.data?.approval?.stage === 'precheck') {
       // Refused before anything was approved or queued — there is no Git outcome to settle.
       console.error(t('main.review_action_bar.error_approve_failed_log'), blockerText)
-      showToast(t('main.review_action_bar.toast_approve_failed', { detail: blockerText }), 'danger')
+      showToast(t('main.review_action_bar.toast_approve_failed', { detail: blockerText }), 'danger', TOAST_STICKY)
       return
     }
     const detail = blockerText ?? (typeof code === 'string' && code.startsWith('tr2_')
@@ -1687,7 +1816,7 @@ async function doApprove() {
         return
       }
       console.error(t('main.review_action_bar.error_approve_failed_log'), detail)
-      showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger')
+      showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger', TOAST_STICKY)
       return
     }
     // 0257 NR0003 §3: the server refusing approve on an already-approved doc is correct and
@@ -1702,8 +1831,10 @@ async function doApprove() {
       return
     }
     console.error(t('main.review_action_bar.error_approve_failed_log'), detail)
-    showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger')
+    // 0684 T#3 (D#1 §6-1): an approval refusal stays until the user closes it.
+    showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger', TOAST_STICKY)
   } finally {
+
     gitSettling.value = false
     approving.value = false
   }
@@ -2295,6 +2426,14 @@ onBeforeUnmount(() => {
 }
 /* 0549 T0008: why [approve] is disabled on a TSR that did not pass the test gate. */
 .ab-gate-hint { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--danger); white-space: nowrap; }
+/* 0684 T#3: contract-2 run state pill + [다시 실행] / [취소]. */
+.ab-spec-run { display: inline-flex; align-items: center; gap: 6px; }
+.ab-spec-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; font-size: .75rem; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text-s); white-space: nowrap; }
+.ab-spec-pill--info { color: var(--primary); border-color: var(--primary); }
+.ab-spec-pill--success { color: var(--success); border-color: var(--success); background: var(--success-l); }
+.ab-spec-pill--danger { color: var(--danger); border-color: var(--danger); background: var(--danger-l); }
+.ab-spec-pill--warning { color: var(--warning); border-color: var(--warning); background: var(--warning-l); }
+
 .ab-approval-job { color: #b45309; white-space: normal; max-width: 420px; }
 .ab-approval-job--recovery { color: var(--danger); }
 .ab-target-blocker { color: var(--danger); white-space: normal; max-width: 560px; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }

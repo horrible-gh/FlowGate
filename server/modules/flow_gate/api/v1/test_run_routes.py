@@ -88,6 +88,9 @@ def post_test_results(body: TestResultsBody, request: Request):
     """Record results for an approved specification TS (0549 T0008).
 
     Manual, external and imported automated (JUnit XML) results share this one model.
+    0684 T#3 (D#1 §3-8): a result for an automated Case the server runs is refused item by
+    item (``refused_results``) -- its official result comes from a server run only.
+
     Same permission gate as starting a run (admin or perm_test_run). The server maps the
     results onto the TS Case IDs, computes the overall verdict itself (a submitted
     ``overall`` is ignored), writes the TSR test report and applies the test gate.

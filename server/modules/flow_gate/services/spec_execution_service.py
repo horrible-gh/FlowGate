@@ -146,18 +146,26 @@ def admit_on_approval(doc: dict, parsed: dict, selected: list[dict], *, runner_i
             "selected_case_ids": [case["case_id"] for case in selected]}
 
 
-def _attach_chain(doc: dict, chain_context: dict) -> dict | None:
+ANY_RUN = object()
+
+
+def attach_chain(doc: dict, chain_context: dict, *, run_id=ANY_RUN) -> dict | None:
     """Hand an unmanned chain to the server run its TS approval already started.
 
     0684 T#1: the chain reaches the TSR head after the approval queued a run. Instead of
     refusing ``run_in_progress`` the chain rides that run (its context goes into the run's
     meta, so the recorded result carries it). A run that already PASSed the gate for this
     revision is attached as ``finished``. Anything else is not attachable: a new run starts.
+
+    ``run_id`` narrows the run in progress the chain may ride: by default any; a run id
+    rides only that run (the caller holds its run lock); None rides none.
     """
     from modules.flow_gate.services import test_run_service as runner
     doc_id = doc["doc_id"]
     with runner._admission_lock:
         running = db_test_runs.get_running_by_doc(doc_id)
+        if running and run_id is not ANY_RUN and running["run_id"] != run_id:
+            running = None
         if running and running.get("contract_version") == test_spec_service.CONTRACT_SPEC:
             meta = merge_run_meta(running["run_id"], chain=chain_context)
             return {**runner._run_response(running), "attached": True,
@@ -176,6 +184,27 @@ def _attach_chain(doc: dict, chain_context: dict) -> dict | None:
     return None
 
 
+_attach_chain = attach_chain
+
+
+def _stop_chain_without_result(doc: dict, run_id: str) -> None:
+    """A run that ended without recording a result still answers its chain (D#1 §3-9).
+
+    A prepare refusal or an execution error records no result, so the result path never
+    reaches the test gate. A chain riding this run would wait forever: tell the human why it
+    stopped and let the gate relabel the parked chain as blocked.
+    """
+    from modules.flow_gate.services import test_run_service as runner
+    finished = db_test_runs.get_run(run_id) or {"run_id": run_id}
+    if not test_spec_service.load_result_meta(finished.get("result_meta")).get("chain"):
+        return
+    try:
+        runner._maybe_notify_chain_failure(doc, {**finished, "triggered_via": "token"})
+        runner.continue_chain_after_test_gate(doc, None)
+    except Exception:  # noqa: BLE001 -- the run's terminal state is already written
+        runner.logger.warning("chain stop after %s failed", run_id, exc_info=True)
+
+
 def admit(doc_id: str, *, case_id: str | None, runner_id: str, locale: str,
           triggered_via: str = "ui", chain_context: dict | None = None) -> dict:
     """[Run again] / Case run / chain hand-off (D#1 §3-2).
@@ -191,7 +220,7 @@ def admit(doc_id: str, *, case_id: str | None, runner_id: str, locale: str,
     if paired and paired.get("doc_review_status") == "approved":
         raise runner._http_error(409, "tsr_already_approved", doc_id=doc_id)
     if chain_context is not None and case_id is None:
-        attached = _attach_chain(doc, chain_context)
+        attached = attach_chain(doc, chain_context)
         if attached is not None:
             return attached
     all_cases = parsed["cases"]
@@ -359,11 +388,15 @@ def execute(run: dict) -> None:
             code, _, reasons = str(exc).partition(":")
             if code.strip() not in _PREPARE_REFUSALS:
                 raise
-            # Not run at all: the run could not copy and measure its source.
-            merge_run_meta(run_id, phase=PHASE_FINISHED,
-                           prepare_refused={"error": code.strip(), "reasons": reasons.strip()})
-            db_test_runs.finish_run(run_id=run_id, status="failed", error=code.strip())
+            # Not run at all: the run could not copy and measure its source. The terminal
+            # write takes the run lock a binding chain holds, so the chain's token exists
+            # whenever its context does (test_run_service.hand_chain_to_server_run).
+            with runner._get_run_lock(run_id):
+                merge_run_meta(run_id, phase=PHASE_FINISHED,
+                               prepare_refused={"error": code.strip(), "reasons": reasons.strip()})
+                db_test_runs.finish_run(run_id=run_id, status="failed", error=code.strip())
             runner._emit_finished(doc, db_test_runs.get_run(run_id) or run, None)
+            _stop_chain_without_result(doc, run_id)
             return
         _record_basis(doc, run, basis)
         executed_identity = test_basis_service.source_identity(basis)
@@ -459,13 +492,16 @@ def execute(run: dict) -> None:
         runner._emit_finished(doc, db_test_runs.get_run(run_id) or run, None)
     except Exception as exc:
         runner.logger.warning("spec execution failed for %s: %s", run_id, exc, exc_info=True)
-        try:
-            merge_run_meta(run_id, phase=PHASE_FINISHED)
-        except Exception:  # noqa: BLE001 -- the terminal write below matters more
-            pass
-        db_test_runs.finish_run(run_id=run_id, status="failed", error="spec_execution_error")
+        with runner._get_run_lock(run_id):
+            try:
+                merge_run_meta(run_id, phase=PHASE_FINISHED)
+            except Exception:  # noqa: BLE001 -- the terminal write below matters more
+                pass
+            db_test_runs.finish_run(run_id=run_id, status="failed", error="spec_execution_error")
         runner._emit_finished(doc, db_test_runs.get_run(run_id) or run, None)
+        _stop_chain_without_result(doc, run_id)
     finally:
+
         if scratch:
             shutil.rmtree(scratch, ignore_errors=True)
         runner._unregister_active_run(run_id)
