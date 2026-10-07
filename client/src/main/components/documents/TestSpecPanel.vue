@@ -46,9 +46,9 @@
 
       <section v-if="view.test_basis" class="ts-basis" data-testid="test-basis">
         <strong>Test Basis</strong> <code>{{ view.test_basis.basis_id }}</code>
-        <div>Source: {{ view.test_basis.source.kind }} / {{ view.test_basis.source.git_revision || view.test_basis.source.bundle_id }}</div>
+        <div>Source: {{ view.test_basis.source.kind }} / {{ view.basis_source?.fingerprint_prefix || view.test_basis.source.git_revision || view.test_basis.source.bundle_id }}<span v-if="view.basis_source?.source_dirty"> (uncommitted)</span></div>
         <div>Test assets: {{ view.test_basis.test_assets.manifest_hash }} ({{ view.test_basis.test_assets.asset_count }})</div>
-        <div v-if="view.basis_valid === false" class="ts-basis-stale">Current basis is stale</div>
+        <div v-if="view.basis_valid === false" class="ts-basis-stale">Current basis is stale<span v-if="view.basis_verdict?.reasons?.length"> ({{ view.basis_verdict.reasons.join(', ') }})</span></div>
         <div>Automated progress: {{ view.progress?.automated_completed ?? 0 }}/{{ view.progress?.automated_total ?? 0 }}</div>
         <div v-if="view.active_run">Execution: {{ view.active_run.status }} ({{ view.active_run.run_id }})</div>
         <button type="button" class="btn btn-primary btn-sm" data-testid="test-spec-run-all"

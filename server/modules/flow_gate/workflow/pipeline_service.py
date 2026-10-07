@@ -891,8 +891,13 @@ def transition_document_review(
             content = test_run_service._read_doc_content_or_empty(doc)
             if test_spec_service.detect_contract_version(content) == test_spec_service.CONTRACT_SPEC:
                 parsed = test_spec_service.parse_spec(content)
+                # 0682 T#1: capture the Group worktree (uncommitted and untracked work
+                # included) into a Source Bundle outside the DB transaction. A Bundle
+                # failure refuses the approval with basis_capture_failed:<code>. A dry
+                # run (precheck) writes nothing, so it measures without a Bundle.
                 try:
-                    basis = test_basis_service.resolve(doc, parsed["cases"])
+                    basis = (test_basis_service.preflight(doc, parsed["cases"]) if dry_run
+                             else test_basis_service.capture(doc, parsed["cases"]))
                 except ValueError as exc:
                     raise TransitionError(str(exc)) from exc
                 spec_approval = (parsed, basis)
@@ -958,12 +963,15 @@ def transition_document_review(
             updated = db_docs.update(doc_id, update_fields)
             if not updated:
                 raise TransitionError("Review status transition failed")
+            # Same transaction: the new Pin replaces (releases) the previous Basis's Pin,
+            # and a rollback leaves the captured Bundle to the ordinary TTL.
+            test_basis_service.pin(updated, basis)
             initialized = test_basis_service.initialize(updated, parsed, basis, locale=locale)
             from modules.flow_gate.db import events as db_events
             db_events.insert_event(doc_id, "test_spec_basis_created", note=json.dumps({
                 "basis_id": basis["basis_id"], "ts_revision_no": doc.get("revision_no"),
                 "run_id": initialized["run_id"], "tsr_doc_id": initialized["tsr_doc_id"],
-                "source": basis["source"],
+                "source": basis["source"], "binding": basis.get("binding"),
                 "manifest_hash": basis["test_assets"]["manifest_hash"],
                 "actor": actor_user_id,
             }, ensure_ascii=False))

@@ -174,10 +174,14 @@ export interface TestDocumentView {
   test_basis?: {
     basis_id: string
     source: Record<string, string | null>
+    // 0682: where the Basis's Source Bundle lives; not part of basis_id.
+    binding?: Record<string, string | boolean | null> | null
     test_assets: { manifest_hash: string; asset_count: number }
     manifest: { path: string; content_hash: string; role: string }[]
   } | null
   basis_valid?: boolean
+  basis_verdict?: { state: 'valid' | 'stale' | 'unverifiable'; reasons: string[]; live_basis_id?: string | null } | null
+  basis_source?: { kind?: string | null; fingerprint_prefix?: string | null; captured_at?: string | null; source_dirty?: boolean | null; bundle_id?: string | null; git_revision?: string | null } | null
   case_capabilities?: Record<string, string>
   effective_result?: {
     summary: TestResultSummary & { overall: TestVerdict }

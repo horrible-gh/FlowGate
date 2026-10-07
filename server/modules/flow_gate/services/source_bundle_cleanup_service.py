@@ -74,6 +74,10 @@ def cleanup_bundle(bundle_id: str, *, trigger: str = "explicit") -> bool:
         return True
     if row["status"] != "created":
         return False
+    # A live Test Basis executes from a pinned Bundle (0682 D#1 3.7); only Group cleanup,
+    # which releases the Group's Pins first, may remove it.
+    if trigger != "group_finished" and db.is_pinned(bundle_id):
+        return False
     try:
         _safe_remove(materializer.bundle_path(row["project_id"], bundle_id))
         db.bundle_cleanup_success(bundle_id)
@@ -86,6 +90,7 @@ def cleanup_bundle(bundle_id: str, *, trigger: str = "explicit") -> bool:
 
 
 def cleanup_for_group(group_id: str) -> dict:
+    db.pin_release_group(group_id)
     scratch = db.scratch_candidates(group_id=group_id)
     scratch_deleted = sum(cleanup_scratch(row["scratch_key"], trigger="group_finished") for row in scratch)
     bundles = db.list_created(group_id=group_id)
@@ -98,7 +103,7 @@ def sweep_expired(now: datetime | None = None) -> dict:
     point = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
     scratch = db.scratch_candidates(expired_before=point)
     scratch_deleted = sum(cleanup_scratch(row["scratch_key"], trigger="ttl") for row in scratch)
-    bundles = db.list_created(expired_before=point)
+    bundles = db.list_created(expired_before=point, exclude_pinned=True)
     bundle_deleted = sum(cleanup_bundle(row["bundle_id"], trigger="ttl") for row in bundles)
     return {"scratch_matched": len(scratch), "scratch_deleted": scratch_deleted,
             "bundle_matched": len(bundles), "bundle_deleted": bundle_deleted}

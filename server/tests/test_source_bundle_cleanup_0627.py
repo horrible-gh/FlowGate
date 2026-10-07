@@ -47,6 +47,7 @@ def test_scratch_and_bundle_cleanup_are_independent(monkeypatch, tmp_path):
     monkeypatch.setattr(cleanup.db, "scratch_deleted", lambda _key: deleted.append("scratch"))
     monkeypatch.setattr(cleanup.db, "bundle_cleanup_success", lambda _id: None)
     monkeypatch.setattr(cleanup.db, "deleted", lambda _id: deleted.append("bundle"))
+    monkeypatch.setattr(cleanup.db, "is_pinned", lambda _id: False)
     assert cleanup.cleanup_scratch(key)
     assert not scratch.exists() and bundle.exists()
     assert cleanup.cleanup_bundle(bundle_id)

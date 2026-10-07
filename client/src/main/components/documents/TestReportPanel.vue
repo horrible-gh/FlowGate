@@ -18,7 +18,7 @@
         <strong>Current Test Basis</strong> <code>{{ view.test_basis.basis_id }}</code>
         <div>Source: {{ view.source_identity?.kind }} / {{ view.source_identity?.git_revision || view.source_identity?.bundle_id }}</div>
         <div>Test assets: {{ view.test_asset_identity?.manifest_hash }}</div>
-        <div v-if="view.basis_valid === false">Current basis is stale</div>
+        <div v-if="view.basis_valid === false">Current basis is stale<span v-if="view.basis_verdict?.reasons?.length"> ({{ view.basis_verdict.reasons.join(', ') }})</span></div>
         <div v-if="view.active_run">Execution: {{ view.active_run.status }} ({{ view.active_run.run_id }})</div>
       </section>
       <section v-if="view.stale_previous_result" class="tsr-stale" data-testid="tsr-stale">

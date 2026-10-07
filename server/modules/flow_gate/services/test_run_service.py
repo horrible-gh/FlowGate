@@ -1113,17 +1113,16 @@ def record_spec_results(
     stored_basis = test_basis_service.current(doc)
     basis = execution_basis or stored_basis
     if stored_basis and execution_basis is None:
-        try:
-            live_basis = test_basis_service.resolve(doc, parsed["cases"])
-        except ValueError as exc:
-            raise _http_error(409, "basis_unavailable", doc_id=doc_id, detail=str(exc)) from exc
-        if live_basis["basis_id"] != stored_basis["basis_id"]:
-            raise _http_error(409, "basis_stale", doc_id=doc_id,
-                              basis_id=stored_basis["basis_id"], live_basis_id=live_basis["basis_id"])
+        error = test_basis_service.verdict_error(
+            test_basis_service.verdict(doc, stored_basis, parsed["cases"]), _http_error,
+            doc_id=doc_id)
+        if error is not None:
+            raise error
     if execution_cases is not None:
         parsed = {**parsed, "cases": execution_cases}
     if basis:
-        source_identity = basis["source"]  # server authority outranks a caller's claim
+        # server authority outranks a caller's claim
+        source_identity = test_basis_service.source_identity(basis)
     # An approved test report is the record the workflow moved on with. New results would
     # silently rewrite it under its approval, so they are refused; re-testing goes through
     # the ordinary reopen (time machine) of the TSR/TS first.
@@ -1164,16 +1163,11 @@ def record_spec_results(
     with _admission_lock:
         if execution_basis:
             fresh_doc = db_docs.get_by_id(doc_id)
-            fresh_basis = test_basis_service.current(fresh_doc or {})
-            if not fresh_basis or fresh_basis["basis_id"] != execution_basis["basis_id"]:
-                raise _http_error(409, "basis_stale", doc_id=doc_id)
-            try:
-                live = test_basis_service.resolve(fresh_doc, test_spec_service.parse_spec(
-                    _read_doc_content_or_empty(fresh_doc))["cases"])
-            except (ValueError, TypeError) as exc:
-                raise _http_error(409, "basis_unavailable", doc_id=doc_id) from exc
-            if live["basis_id"] != execution_basis["basis_id"]:
-                raise _http_error(409, "basis_stale", doc_id=doc_id)
+            error = test_basis_service.verdict_error(test_basis_service.verdict(
+                fresh_doc, test_basis_service.current(fresh_doc or {}),
+                execution_basis=execution_basis), _http_error, doc_id=doc_id)
+            if error is not None:
+                raise error
         pending = db_test_runs.get_pending_failure_origin(doc_id)
         if pending is not None:
             raise _http_error(
@@ -1261,24 +1255,20 @@ def finalize_spec_results(doc: dict, run: dict, *, locale: str = "ko") -> dict:
             meta = test_spec_service.load_result_meta(run.get("result_meta"))
             run_basis_id = meta.get("basis_id")
             fresh_doc = db_docs.get_by_id(doc["doc_id"])
-            current_basis = test_basis_service.current(fresh_doc or {})
-            basis_valid = True
+            judged = None
             if run_basis_id:
-                basis_valid = bool(current_basis and current_basis["basis_id"] == run_basis_id)
-                if basis_valid:
-                    try:
-                        live = test_basis_service.resolve(
-                            fresh_doc, test_spec_service.parse_spec(
-                                _read_doc_content_or_empty(fresh_doc))["cases"]
-                        )
-                        basis_valid = live["basis_id"] == run_basis_id
-                    except (ValueError, TypeError):
-                        basis_valid = False
-            if not basis_valid:
+                judged = test_basis_service.verdict(
+                    fresh_doc, test_basis_service.current(fresh_doc or {}),
+                    execution_basis=meta.get("test_basis") or {"basis_id": run_basis_id})
+            if judged is not None and judged["state"] != test_basis_service.VALID:
                 meta["stale"] = True
+                meta["basis_state"] = judged["state"]
+                meta["basis_reasons"] = judged["reasons"]
                 db_test_runs.set_run_result_meta(run_id, json.dumps(meta, ensure_ascii=False))
                 return {"tsr_doc_id": None, "overall": "NOT_RUN", "gate_passed": False,
-                        "stale": True, "failure_origin": None, "continuation": None}
+                        "stale": True, "basis_state": judged["state"],
+                        "basis_reasons": judged["reasons"],
+                        "failure_origin": None, "continuation": None}
             try:
                 tsr_doc_id = assemble_tsr(
                     doc, run, db_test_runs.list_cases(run_id), locale=locale, run_chain=False
@@ -1408,15 +1398,14 @@ def tsr_gate_state(tsr_doc: Optional[dict]) -> dict:
         return {"applies": True, "passed": False, "overall": "BLOCKED",
                 "run_id": latest_any["run_id"], "basis_id": basis["basis_id"],
                 "execution_error": latest_any.get("error")}
-    basis_valid = True
-    if basis:
-        try:
-            live = test_basis_service.resolve(
-                ts_doc, test_spec_service.parse_spec(_read_doc_content_or_empty(ts_doc))["cases"]
-            )
-            basis_valid = basis_valid and live["basis_id"] == basis["basis_id"]
-        except (ValueError, TypeError):
-            basis_valid = False
+    judged = None
+    # 0682 D#1 3.11: an approved TSR is the record the workflow moved on with. A v1
+    # (HEAD-only) Basis can no longer be measured, but that must not overturn an approval
+    # made under it, so the recorded result stands for an already-approved report.
+    if basis and not ((tsr_doc or {}).get("doc_review_status") == "approved"
+                      and test_basis_service.outdated(basis)):
+        judged = test_basis_service.verdict(ts_doc, basis)
+    basis_valid = judged is None or judged["state"] == test_basis_service.VALID
     return {
         "applies": True,
         "passed": basis_valid and latest.get("overall") == "PASS" and latest.get("status") == "passed",
@@ -1424,6 +1413,8 @@ def tsr_gate_state(tsr_doc: Optional[dict]) -> dict:
         "run_id": latest.get("run_id"),
         "basis_id": (basis or {}).get("basis_id"),
         "stale": not basis_valid,
+        "basis_state": (judged or {}).get("state", test_basis_service.VALID),
+        "basis_reasons": (judged or {}).get("reasons", []),
     }
 
 
@@ -1645,14 +1636,15 @@ def describe_test_document(doc: dict) -> dict:
                 effective_run = db_test_runs.latest_spec_result(
                     doc["doc_id"], doc.get("revision_no") or 0, basis["basis_id"]
                 )
-                try:
-                    live = test_basis_service.resolve(doc, parsed["cases"])
-                    basis_valid = live["basis_id"] == basis["basis_id"]
-                except (ValueError, TypeError):
-                    basis_valid = False
+                # Display path: the Live Probe may reuse hashes of unchanged files (memo).
+                judged = test_basis_service.verdict(doc, basis, parsed["cases"], memo=True)
+                basis_valid = judged["state"] == test_basis_service.VALID
                 if not basis_valid:
                     effective_run = None
                 out["basis_valid"] = basis_valid
+                out["basis_verdict"] = {"state": judged["state"], "reasons": judged["reasons"],
+                                        "live_basis_id": judged["live_basis_id"]}
+                out["basis_source"] = test_basis_service.source_summary(basis)
                 out["effective_run_id"] = (effective_run or {}).get("run_id")
                 previous = next((
                     item for item in history
@@ -1695,10 +1687,13 @@ def describe_test_document(doc: dict) -> dict:
             target = db_docs.get_by_id(doc.get("target_id")) if doc.get("target_id") else None
             if target:
                 ts_view = describe_test_document(target)
-                for key in ("test_basis", "basis_valid", "effective_result",
+                for key in ("test_basis", "basis_valid", "basis_verdict", "basis_source",
+                            "effective_result",
                             "stale_previous_result", "run_history", "active_run", "progress"):
                     out[key] = ts_view.get(key)
-                out["source_identity"] = (ts_view.get("test_basis") or {}).get("source")
+                from modules.flow_gate.services import test_basis_service
+                out["source_identity"] = (test_basis_service.source_identity(ts_view["test_basis"])
+                                          if ts_view.get("test_basis") else None)
                 out["test_asset_identity"] = (ts_view.get("test_basis") or {}).get("test_assets")
         return out
     return {"kind": type_code, "doc_id": doc.get("doc_id"), "contract_version": None}
