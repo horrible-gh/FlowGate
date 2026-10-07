@@ -322,4 +322,31 @@ describe('TestRunStrip', () => {
       expect(wrapper.find('.run-strip-btn--invoke').attributes('disabled')).toBeUndefined()
     })
   })
+
+  // 0684 T#3 (D#1 §3-8, §6-1): the action bar owns a specification TS's run state, [run again]
+  // and [cancel]; this strip keeps only the manual/external result delegation.
+  describe('specification TS (contract 2)', () => {
+    it('offers the delegation only, never the legacy [run], and says the server runs automated Cases', () => {
+      const wrapper = mountStrip({ testContractVersion: 2 })
+      expect(wrapper.find('.run-strip').exists()).toBe(true)
+      expect(wrapper.find('.run-strip-btn--run').exists()).toBe(false)
+      expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.spec_ready'))
+      expect(wrapper.text()).toContain('the server runs the automated Cases')
+    })
+
+    it('steps aside while a server run is in flight (no second cancel next to the action bar)', () => {
+      for (const status of ['running', 'cancelling']) {
+        const wrapper = mountStrip({
+          testContractVersion: 2,
+          testRun: { run_id: 'trun_1', status, contract_version: 2 },
+        })
+        expect(wrapper.find('.run-strip').exists()).toBe(false)
+      }
+    })
+
+    it('stays hidden until the TS is approved', () => {
+      expect(mountStrip({ testContractVersion: 2, reviewStatus: 'pending_review',
+        testRun: { run_id: 'r', status: 'passed', contract_version: 2 } }).find('.run-strip').exists()).toBe(false)
+    })
+  })
 })

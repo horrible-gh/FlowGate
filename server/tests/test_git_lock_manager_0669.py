@@ -4,7 +4,8 @@
 2. acquire / release on resource_lock (L 2.5)
 3. (removed in unit 9c: the legacy bridge and Gate no longer exist)
 4. stale reclaim of a DEAD owner's row (L 2.9)
-5. unit 2 callers: ordinary source mutation and Bundle ensure hold G (D 3.9, 3.10)
+5. unit 2 callers: ordinary source mutation and a spec run's preparing copy hold G (D 3.9,
+   3.10; 0684 T#4 replaced the retired Source Bundle ensure with the run_prepare holder)
 """
 from __future__ import annotations
 
@@ -108,7 +109,7 @@ def test_reentry_counts_and_releases_on_last(store):
 def test_other_groups_do_not_block_each_other_but_same_group_does(store):
     a, b, c = _ctx(), _ctx(), _ctx()
     assert lm.acquire("G", P, group_id="g1", holder_kind="source_mutation", ctx=a).ok
-    assert lm.acquire("G", P, group_id="g2", holder_kind="bundle", ctx=b, mode="job").ok
+    assert lm.acquire("G", P, group_id="g2", holder_kind="run_prepare", ctx=b, mode="job").ok
     busy = lm.acquire("G", P, group_id="g1", holder_kind="source_mutation", ctx=c, mode="job")
     assert busy.kind == lm.BUSY and busy.blocker["holder_ctx_id"] == a.ctx_id
 
@@ -135,28 +136,36 @@ def test_dead_owner_row_is_reclaimed_on_acquire(store):
 
 @pytest.fixture
 def g_callers(store, monkeypatch, tmp_path):
-    from modules.flow_gate.services import source_bundle_service as bundles
     from modules.flow_gate.services import tr2_file_policy as policy
 
     monkeypatch.setattr(lm, "wait_budget", lambda domain, mode: 0.0)
     monkeypatch.setattr(policy, "_group_root", lambda *_: tmp_path)
     monkeypatch.setattr(policy, "managed_paths", lambda _gid: set())
     monkeypatch.setattr(policy.db_recovery, "has_unresolved", lambda _gid: False)
-    monkeypatch.setattr(bundles, "_ensure_under_lock", lambda pid, gid: {"bundle_id": gid})
-    return policy, bundles
+    return policy
 
 
-def test_source_mutation_and_bundle_of_other_groups_run_alongside(g_callers):
-    policy, bundles = g_callers
+def _run_prepare(group_id):
+    """The spec run's preparing copy takes G exactly like spec_execution_service does."""
+    outcome, ctx = lm.acquire_group(P, group_id, holder_kind="run_prepare", mode="run_prepare")
+    if outcome.ok:
+        assert gc.get_resource_lock(outcome.lock_key)["holder_kind"] == "run_prepare"
+        assert gc.get_resource_lock(outcome.lock_key)["hold_class"] == "long"
+        lm.release(ctx, outcome.lock_key)
+    return outcome
+
+
+def test_source_mutation_and_run_prepare_of_other_groups_run_alongside(g_callers):
+    policy = g_callers
     with policy.general_source_mutation(P, "g1", exact_paths=["a.py"], allow_missing_leaf=True):
         with policy.general_source_mutation(P, "g2", exact_paths=["a.py"], allow_missing_leaf=True):
             pass
-        assert bundles.ensure(P, "g2") == {"bundle_id": "g2"}
+        assert _run_prepare("g2").ok
     assert gc.list_locks_in_scope(P) == []
 
 
-def test_same_group_mutation_and_bundle_wait_on_g(g_callers):
-    policy, bundles = g_callers
+def test_same_group_mutation_and_run_prepare_wait_on_g(g_callers):
+    policy = g_callers
     with policy.general_source_mutation(P, "g1", exact_paths=["a.py"], allow_missing_leaf=True):
         with pytest.raises(policy.Tr2FilePolicyError) as busy:
             with policy.general_source_mutation(P, "g1", exact_paths=["a.py"], allow_missing_leaf=True):
@@ -164,6 +173,6 @@ def test_same_group_mutation_and_bundle_wait_on_g(g_callers):
         assert busy.value.code == policy.SOURCE_MUTATION_BUSY
         assert busy.value.details["reason_code"] == "lock_busy"
         assert busy.value.details["blocker"]["holder_kind"] == "source_mutation"
-        with pytest.raises(bundles.materializer.SourceBundleError) as bundle_busy:
-            bundles.ensure(P, "g1")
-        assert bundle_busy.value.code == "source_busy"
+        busy_prepare = _run_prepare("g1")
+        assert busy_prepare.kind == lm.BUSY
+        assert busy_prepare.blocker["holder_kind"] == "source_mutation"

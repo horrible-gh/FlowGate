@@ -59,6 +59,12 @@ export interface TestRun {
   source_identity?: Record<string, string>
   basis_id?: string | null
   run_kind?: string | null
+  // 0684 T#1/T#3: a server spec run's progress (spec_execution runs only).
+  phase?: 'queued' | 'preparing' | 'executing' | 'finalizing' | 'finished' | string | null
+  admission?: 'approval' | 'request' | string | null
+  selected_case_ids?: string[]
+  reported_case_ids?: string[]
+  prepare_refused?: { error: string; reasons?: string } | null
 }
 
 // ── Specification TS / TSR test report (flowgate.default.0549 T0008) ──────────────
@@ -174,14 +180,15 @@ export interface TestDocumentView {
   test_basis?: {
     basis_id: string
     source: Record<string, string | null>
-    // 0682: where the Basis's Source Bundle lives; not part of basis_id.
-    binding?: Record<string, string | boolean | null> | null
+    // 0684 T#2: what the run executed (git revision, dirty flag, measured time, run); not part of basis_id.
+    binding?: Record<string, unknown> | null
     test_assets: { manifest_hash: string; asset_count: number }
     manifest: { path: string; content_hash: string; role: string }[]
   } | null
-  basis_valid?: boolean
-  basis_verdict?: { state: 'valid' | 'stale' | 'unverifiable'; reasons: string[]; live_basis_id?: string | null } | null
-  basis_source?: { kind?: string | null; fingerprint_prefix?: string | null; captured_at?: string | null; source_dirty?: boolean | null; bundle_id?: string | null; git_revision?: string | null } | null
+  // 0684 T#2: null while the source is unchecked (display paths never measure).
+  basis_valid?: boolean | null
+  basis_verdict?: { state: 'valid' | 'stale' | 'unverifiable' | 'unchecked'; reasons: string[]; live_basis_id?: string | null } | null
+  basis_source?: { kind?: string | null; fingerprint_prefix?: string | null; measured_at?: string | null; captured_at?: string | null; source_dirty?: boolean | null; git_revision?: string | null; run_id?: string | null } | null
   case_capabilities?: Record<string, string>
   effective_result?: {
     summary: TestResultSummary & { overall: TestVerdict }
@@ -197,4 +204,10 @@ export interface TestDocumentView {
   target_ts?: string | null
   report?: TestResultRecord | null
   gate?: { applies: boolean; passed: boolean; overall?: string | null } | null
+  // 0684 T#1/T#3: the Cases the live run has not reported yet (shown as PENDING), the newest
+  // server run's own outcome, the Cases [enter results] offers, and the TS state on a TSR.
+  pending_case_ids?: string[]
+  last_execution?: TestResultRecord | null
+  result_entry_case_ids?: string[]
+  ts_review_status?: string | null
 }

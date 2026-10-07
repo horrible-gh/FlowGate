@@ -130,12 +130,61 @@ def start_snapshot_cleanup():
         logger.warning(f"[startup] snapshot cleanup bootstrap failed: {exc}")
 
 
-def start_source_bundle_cleanup():
+# 0684 T#4 (D#1 §7): the directory Source Bundle kept its Bundles and AI Scratch copies in,
+# under every storage root. Its DB rows went with migration 140.
+RETIRED_SOURCE_BUNDLE_DIR = "source-bundles"
+
+
+def _storage_roots() -> set:
+    """Every configured storage root, each collected on its own.
+
+    Not the effective root: FLOWGATE_STORAGE_DIR shadows the system setting, the default
+    and every project override in get_storage_root(), yet a store left under any of them
+    from before the location changed still has to go.
+    """
+    import os
+    from pathlib import Path
+    from modules.flow_gate.storage import paths as storage_paths
+
+    roots = {storage_paths.default_storage_root()}
+    env = os.environ.get("FLOWGATE_STORAGE_DIR", "").strip()
+    if env:
+        roots.add(Path(env))
+    system_root = storage_paths._system_storage_root_value()
+    if system_root:
+        roots.add(Path(system_root))
     try:
-        from modules.flow_gate.services import source_bundle_cleanup_service
-        source_bundle_cleanup_service.startup()
+        from modules.flow_gate.db import projects as db_projects
+        for row in db_projects.list_projects():
+            override = storage_paths._project_override_value(row.get("project_id"))
+            if override:
+                roots.add(Path(override))
     except Exception as exc:
-        logger.warning(f"[startup] Source Bundle cleanup bootstrap failed: {exc}")
+        logger.warning(f"[startup] project storage roots unavailable: {exc}")
+    return roots
+
+
+def remove_retired_source_bundle_storage(roots=None) -> list:
+    """Delete the retired Source Bundle store once; later boots find nothing and do nothing.
+
+    A link in place of the directory is left alone (never followed into another tree).
+    Returns the directories removed.
+    """
+    import shutil
+    from pathlib import Path
+
+    removed = []
+    for root in (roots if roots is not None else _storage_roots()):
+        target = Path(root) / RETIRED_SOURCE_BUNDLE_DIR
+        try:
+            if target.is_symlink() or not target.is_dir():
+                continue
+            shutil.rmtree(target)
+            removed.append(target)
+            logger.info(f"[startup] removed retired Source Bundle storage: {target}")
+        except Exception as exc:
+            logger.warning(f"[startup] retired Source Bundle storage cleanup failed for {target}: {exc}")
+    return removed
 
 
 def run_all():
@@ -148,5 +197,5 @@ def run_all():
     recover_git_sessions()
     encrypt_ai_provider_keys()
     start_snapshot_cleanup()
-    start_source_bundle_cleanup()
+    remove_retired_source_bundle_storage()
     recover_chat_commands()

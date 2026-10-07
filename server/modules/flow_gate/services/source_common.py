@@ -1,10 +1,10 @@
-"""Source-capture utilities shared by Source Bundle and legacy Snapshot (0672 T0004 stage 3).
+"""Source-capture utilities shared by the source fingerprint and legacy Snapshot (0672 T0004 stage 3).
 
-These used to live in ``snapshot_materialization_service`` and Source Bundle imported
-them from there, so the Bundle core could not outlive the legacy Snapshot module. They
-now belong to neither feature: capture exclusion policy, worker-facing locator
-redaction, and the path-only guard that keeps capture/scratch copies from being
-promoted into the live worktree through the canonical mutation tools.
+These used to live in ``snapshot_materialization_service``. They belong to no single
+feature: capture exclusion policy, worker-facing locator redaction, and the path-only
+guard that keeps legacy Snapshot copies from being promoted into the live worktree
+through the canonical mutation tools. (0684 T#4 removed Source Bundle, the other
+original user, and its Bundle/AI Scratch promotion guard with it.)
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from modules.flow_gate.storage import paths as storage_paths
 # The legacy Snapshot scratch directory name; kept out of every capture.
 LEGACY_SNAPSHOT_NAMESPACE = "source-snapshots"
 
-# Capture copy policy (Source Bundle and legacy Snapshot) is deliberately narrower than the TR
+# Capture copy policy (source fingerprint and legacy Snapshot) is deliberately narrower than the TR
 # change-list debris policy: dot-prefixed source such as .github remains source, while known
 # VCS/tool/build trees do not.
 EXCLUDED_DIR_NAMES = frozenset({
@@ -123,7 +123,6 @@ def redact_error_text(text: str, roots: Iterable[tuple[str, str]]) -> str:
 
 
 MUTATION_TOOL_NAMES = frozenset({"write_source_file", "patch_source_file", "remove_source_file"})
-_BUNDLE_ARTIFACT_RE = re.compile(r"(?:^|/)(?:source-bundles|scratch)/(?:sb_[0-9a-f]{32}|[0-9a-f]{64})(?:/|$)")
 _SNAPSHOT_ARTIFACT_RE = re.compile(r"(?:^|/)source-snapshots/(snap_[A-Za-z0-9_-]+)(?:/|$)")
 
 
@@ -137,13 +136,10 @@ class PromotionBlocked(Exception):
 
 
 def guard_artifact_promotion(tool_name: str, tool_input: dict) -> None:
-    """Refuse a live mutation whose path names a Bundle/Scratch or legacy Snapshot copy."""
+    """Refuse a live mutation whose path names a legacy Snapshot copy."""
     if tool_name not in MUTATION_TOOL_NAMES:
         return
     raw = str(tool_input.get("path") or "").replace("\\", "/")
-    if _BUNDLE_ARTIFACT_RE.search(raw):
-        raise PromotionBlocked(403, "bundle_promotion_blocked",
-                               "Bundle and AI Scratch cannot be promoted to worktree")
     if _SNAPSHOT_ARTIFACT_RE.search(raw):
         raise PromotionBlocked(
             403, "snapshot_promotion_blocked",

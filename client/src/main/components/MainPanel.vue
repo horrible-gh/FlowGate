@@ -637,6 +637,8 @@
       :review-request-label="getReviewRequestLabel(activeTabId)"
       :can-next-action="getWorkflowViewState(activeTabId).canNextAction"
       :test-run-status="exposedValue(docHeaderRefs[activeTabId]?.testRun)?.status ?? null"
+      :test-contract-version="exposedValue(docHeaderRefs[activeTabId]?.testContractVersion) ?? null"
+
       :group-test-run-active="exposedValue(docHeaderRefs[activeTabId]?.groupTestRunActive) ?? true"
       :test-gate-blocked="isTestGateBlocked(exposedValue(docHeaderRefs[activeTabId]?.testGate))"
       :head-doc-id="exposedValue(docHeaderRefs[activeTabId]?.headDocId) ?? null"
@@ -3903,7 +3905,11 @@ function testRunErrorMessage(e: unknown): string {
 
 async function onActionBarRunTest(tabId: string) {
   if ((getTabTypeCode(tabId) ?? '').toUpperCase() !== 'TS') return
+  // 0684 T#3 (D#1 §3-8): the legacy executable runner is contract 1 only; a specification TS
+  // runs through the action bar's own [다시 실행] (POST /test-spec/runs) and never reaches here.
+  if (exposedValue(docHeaderRefs[tabId]?.testContractVersion) === 2) return
   try {
+
     await postRequest('/api/v1/documents/test-run', { doc_id: tabId })
     showToast(t('main.test_run_strip.run_started'), 'info')
     docHeaderRefs[tabId]?.fetchDoc?.(tabId)

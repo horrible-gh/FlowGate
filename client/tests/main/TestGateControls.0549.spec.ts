@@ -83,7 +83,8 @@ describe('TestRunStrip — no server [run] for a specification TS', () => {
     const wrapper = mountStrip({ testContractVersion: 2 })
     expect(wrapper.find('.run-strip-btn--run').exists()).toBe(false)
     expect(wrapper.findAll('.run-strip-btn')).toHaveLength(2) // copy mention + invoke AI
-    expect(wrapper.text()).toContain('not executed by the server')
+    // 0684 T#3: the server runs the automated Cases; the hand-off is for manual/external ones.
+    expect(wrapper.text()).toContain('the server runs the automated Cases')
     wrapper.unmount()
   })
 

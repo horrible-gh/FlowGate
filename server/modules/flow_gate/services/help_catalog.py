@@ -28,7 +28,6 @@ from modules.flow_gate.documents.constants import WORK_PLAN_TYPE
 from modules.flow_gate.services import (
     engine_recipe_service,
     remote_tool_service,
-    source_bundle_exposure,
     step_verification_service,
     test_command_service,
     tool_registry,
@@ -57,8 +56,6 @@ CATALOG_ORDER: tuple[str, ...] = (
     "question",
     "submit",
     "source_tools",
-    "source_bundles",
-    "source_snapshots",
     "design_template",
     "authoring_guide",
     "test_commands",
@@ -76,8 +73,6 @@ ITEM_FORM: dict[str, str] = {
     "question": "content",
     "submit": "content",
     "source_tools": "children",
-    "source_bundles": "content",
-    "source_snapshots": "content",
     "design_template": "children",
     "authoring_guide": "children",
     "test_commands": "content",
@@ -119,8 +114,6 @@ TITLES: dict[str, dict[str, str]] = {
         "question": "질의(Q) 등록",
         "submit": "결과 제출 방법",
         "source_tools": "소스 도구",
-        "source_bundles": "Source Bundle 사용 정책",
-        "source_snapshots": "Legacy Snapshot 종료 안내",
         "design_template": "설계서 템플릿",
         "authoring_guide": "작성 지침",
         "test_commands": "검증된 테스트 명령",
@@ -137,8 +130,6 @@ TITLES: dict[str, dict[str, str]] = {
         "question": "Register a query (Q)",
         "submit": "How to submit",
         "source_tools": "Source tools",
-        "source_bundles": "Source Bundle policy",
-        "source_snapshots": "Legacy Snapshot retirement",
         "design_template": "Design document template",
         "authoring_guide": "Authoring guide",
         "test_commands": "Verified test commands",
@@ -155,8 +146,6 @@ TITLES: dict[str, dict[str, str]] = {
         "question": "質問(Q)の登録",
         "submit": "結果の提出方法",
         "source_tools": "ソースツール",
-        "source_bundles": "Source Bundle の利用方針",
-        "source_snapshots": "旧 Snapshot の廃止",
         "design_template": "設計書テンプレート",
         "authoring_guide": "作成ガイド",
         "test_commands": "検証済みテストコマンド",
@@ -196,8 +185,6 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "question": "막혔을 때 질의를 등록하는 방법.",
         "submit": "작성한 문서를 등록하는 요청 서식.",
         "source_tools": "이 토큰이 쓸 수 있는 원격 소스 도구 목록.",
-        "source_bundles": "자동 준비, 읽기·실행, freshness 및 promotion 금지 정책.",
-        "source_snapshots": "Legacy Snapshot 생성·승인 종료 및 역사 조회.",
         "design_template": "설계 타입별 표준 템플릿 본문.",
         "authoring_guide": "이 타입의 문서를 쓰는 방법.",
         "test_commands": "이 프로젝트에 등록된, 실행이 확인된 테스트 명령.",
@@ -214,8 +201,6 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "question": "How to register a query when you are blocked.",
         "submit": "Request format that registers the document you wrote.",
         "source_tools": "Remote source tools this token may call.",
-        "source_bundles": "Automatic preparation, access, execution, freshness, and no-promotion policy.",
-        "source_snapshots": "Legacy Snapshot creation and approval retirement.",
         "design_template": "Standard template body per design type.",
         "authoring_guide": "How to write a document of this type.",
         "test_commands": "Test commands registered for this project and verified on this host.",
@@ -232,8 +217,6 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "question": "行き詰まったときに質問を登録する方法。",
         "submit": "作成した文書を登録するリクエスト形式。",
         "source_tools": "このトークンが使えるリモートソースツールの一覧。",
-        "source_bundles": "自動準備、参照・実行、鮮度、昇格禁止の方針。",
-        "source_snapshots": "旧 Snapshot の作成・承認の廃止。",
         "design_template": "設計タイプ別の標準テンプレート本文。",
         "authoring_guide": "このタイプの文書を書く方法。",
         "test_commands": "このプロジェクトに登録され、実行が確認されたテストコマンド。",
@@ -272,7 +255,6 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
         "review_no_modify": "검토 작업에서는 대상 문서를 수정하거나 새 결과 문서를 만들지 말고, 지정된 판정만 제출하십시오.",
         "investigation_only": "이 단계는 조사 전용입니다. 소스 파일을 수정·생성·삭제하지 마십시오.",
         "assigned_scope_only": "이 작업에 배정된 그룹 작업 공간과 파일만 변경하고, 변경 파일은 작업 레포트에 빠짐없이 보고하십시오.",
-        "source_snapshot_policy": "Source Bundle은 소스 접근이나 실행이 필요할 때 자동 준비되며 사람 승인이 필요하지 않습니다. 영구 변경은 FlowGate 소스 변경 도구를 사용하고 Bundle/Scratch를 원본으로 취급하거나 되돌려 반영하지 마세요.",
     },
     "en": {
         "continuous_unattended": "This task is part of an UNMANNED continuous work chain. Nobody is watching.",
@@ -282,7 +264,6 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
         "review_no_modify": "In a review step, do not modify the target document or create a new result document — submit only the verdict you were asked for.",
         "investigation_only": "This step is investigation-only. Do not modify, create or delete source files.",
         "assigned_scope_only": "Change only the group workspace and files assigned to this task, and report every changed file in the work report.",
-        "source_snapshot_policy": "Source Bundle is prepared automatically when source access or execution needs it; no human approval is required. Use canonical FlowGate mutation tools for persistent edits. Bundle and Scratch are not the source of truth and cannot be promoted.",
     },
     "ja": {
         "continuous_unattended": "この作業は無人(UNMANNED)連続作業チェーンの一部です。人は見ていません。",
@@ -292,7 +273,6 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
         "review_no_modify": "レビュー作業では対象文書を修正したり新しい結果文書を作成したりせず、指定された判定のみを提出してください。",
         "investigation_only": "この段階は調査専用です。ソースファイルを修正・作成・削除しないでください。",
         "assigned_scope_only": "この作業に割り当てられたグループ作業領域とファイルのみ変更し、変更ファイルは作業レポートに漏れなく報告してください。",
-        "source_snapshot_policy": "Source Bundle はソース参照や実行が必要なとき自動準備され、人の承認は不要です。永続的な変更には FlowGate の正規ソース変更ツールを使い、Bundle/Scratch を原本として扱ったり昇格させたりしないでください。",
     },
 }
 
@@ -531,8 +511,6 @@ def resolve_context(token_rec: dict, locale: str, base_url: str) -> dict:
         "scratch_dir": token_rec.get("scratch_dir"),
         # An unmanned chain token carries the target sequence it is walking toward.
         "continuous": bool(token_rec.get("continuation_target_seq")),
-        # 0672 T0004: the one Source Bundle exposure judgment (TS/TSR preserved set only).
-        "bundle_exposure": source_bundle_exposure.for_token(token_rec),
         "token_rec": token_rec,
     }
 
@@ -576,20 +554,11 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
     if name in ALWAYS_VISIBLE:
         return VISIBLE
 
-    if (name in {"source_bundles", "source_snapshots"}
-            and ctx.get("action_scope") == "review"
-            and str(ctx.get("doc_type") or "").upper() == "TR"):
-        return Decision(False, "tr_review_live_source_only")
-
-    if name in {"source_tools", "source_bundles", "source_snapshots"}:
+    if name == "source_tools":
         if ctx.get("source_mode") != "remote":
             return Decision(False, "source_mode_local")
         if ctx.get("tool_kind") == "none":
             return Decision(False, "token_scope_none")
-        # 0672 T0004: Bundle help follows the one exposure judgment (TS/TSR preserved set only).
-        if (name != "source_tools"
-                and not source_bundle_exposure.exposed(ctx.get("bundle_exposure", source_bundle_exposure.NONE))):
-            return Decision(False, "source_bundle_ts_tsr_only")
         return VISIBLE
 
     authoring = ctx.get("action_scope") in AUTHORING_SCOPES
@@ -771,9 +740,6 @@ def _content_notices(ctx: dict) -> dict:
             "en": "TR may create test code, fixtures, and mocks and run available self-checks. Formal PASS and the test gate belong to TS/TSR; do not request an approval-based Snapshot for formal testing.",
             "ja": "TRではテストコード・fixture・mockを作成し、利用可能な環境でself-checkできます。正式なPASSとgateはTS/TSRが担当し、正式試験のために承認型Snapshotを要求しません。",
         }.get(ctx["locale"], ""))
-    bundle = source_bundle_exposure.exposed(ctx.get("bundle_exposure", source_bundle_exposure.NONE))
-    if ctx.get("source_mode") == "remote" and ctx.get("tool_kind") != "none" and bundle:
-        lines.append(_copy(NOTICE_LINES, ctx["locale"], "source_snapshot_policy"))
     return {"lines": lines}
 
 
@@ -1250,21 +1216,6 @@ def _content_step_verification_format(ctx: dict) -> dict:
     }
 
 
-def _content_source_snapshots(ctx: dict) -> dict:
-    """The old help URL remains an alias so historical mentions explain retirement."""
-    return {
-        "operation": "access_source_bundle / run_source_bundle",
-        "preparation": "Source Bundle is prepared automatically when source access or execution requires it; no human approval is needed.",
-        "read_only_observability": "GET /api/v1/source-bundles?project_id=...&group_id=... lists status, revision, dirty flag, dates, size, policy, hashes, freshness, origin, failure and cleanup state. It never approves, rejects or materializes.",
-        "access": ["status", "read", "search", "glob", "stat"],
-        "execution": "Build, test, lint, typecheck, dependency/static analysis and temporary experiments run only in disposable AI Scratch copied from the Bundle.",
-        "preferred_tools": ["read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "Merge Context Tool"],
-        "freshness": "Historical Bundle reads remain available; a current-worktree claim requires a fresh fingerprint and a stale claim is rejected.",
-        "legacy_snapshot": "New Snapshot requests and approve/reject/materialize/run endpoints return snapshot_feature_retired. Existing created Snapshots remain readable until TTL or group cleanup; no legacy fallback occurs after a Bundle failure.",
-        "persistent_changes": "Use canonical FlowGate write_source_file, patch_source_file or remove_source_file. Bundle and AI Scratch are not the source of truth and cannot be promoted, uploaded, committed, merged or synced back.",
-    }
-
-
 # ── tr_self_check (0654 T0004) ───────────────────────────────────────────────
 # The request contract itself is owned by api_server_tools.SCHEMAS["run_self_check"],
 # tr_self_check_service._validate_request and tr_self_check_policy; this item only
@@ -1355,16 +1306,15 @@ _SELF_CHECK_ERRORS: tuple[tuple[str, str, str, str], ...] = (
      "Cleanup of an earlier run's process tree is unfinished -> do not hammer new runs; report the reason and retry once after a short wait.",
      "以前の run のプロセス整理が未完了 → 新しい run を連打せず、理由を報告して少し待ってから1回だけ再試行する。"),
     ("selfcheck_worktree_unavailable",
-     "이 TR 의 관리 워크트리를 쓸 수 없다 → 반환된 사유를 보고한다. 다른 경로나 Bundle/Scratch 로 우회하지 않는다.",
-     "The managed worktree of this TR is unavailable -> report the returned reason; do not route around it with another path or a Bundle/Scratch.",
-     "このTRの管理ワークツリーを利用できない → 返された理由を報告する。別経路や Bundle/Scratch で回避しない。"),
+     "이 TR 의 관리 워크트리를 쓸 수 없다 → 반환된 사유를 보고한다. 다른 경로나 복사본으로 우회하지 않는다.",
+     "The managed worktree of this TR is unavailable -> report the returned reason; do not route around it with another path or a copy.",
+     "このTRの管理ワークツリーを利用できない → 返された理由を報告する。別経路やコピーで回避しない。"),
 )
 
 _SELF_CHECK_COPY: dict[str, dict] = {
     "ko": {
         "role": "TR 수정(edit) 단계에서 테스트·검증을 실행하는 공식 경로는 Self-check 하나다. 도구는 run_self_check / read_self_check / cancel_self_check 이다.",
         "no_fallback": [
-            "Source Bundle, AI Scratch, run_test 는 TR edit 의 Self-check 대체 수단이 아니다. TR edit 실행에서 access_source_bundle/run_source_bundle 은 self_check_required(409)로 거절된다.",
             "Self-check 를 쓸 수 없으면 반환된 reason/error_code 를 TR 에 보고하고, 다른 실행 수단을 찾거나 시도하지 않는다.",
             "실행할 명령은 TR 에 적힌 검증 명령 → T 에 적힌 검증 명령 → 변경에서 분명한 최소 검사 순으로 정한다. 정할 수 없으면 test_command_missing 으로 멈춘다.",
         ],
@@ -1384,7 +1334,6 @@ _SELF_CHECK_COPY: dict[str, dict] = {
     "en": {
         "role": "Self-check is the one official way to run tests/verification in a TR edit step. The tools are run_self_check / read_self_check / cancel_self_check.",
         "no_fallback": [
-            "Source Bundle, AI Scratch and run_test are not Self-check fallbacks for TR edit. In a TR edit run access_source_bundle/run_source_bundle are refused with self_check_required (409).",
             "If Self-check is unavailable, report the returned reason/error_code in the TR and do not look for or try another execution backend.",
             "Pick the command from the verification command named in the TR, else in the T, else the minimal check obvious from your change. If none can be determined, stop with test_command_missing.",
         ],
@@ -1404,7 +1353,6 @@ _SELF_CHECK_COPY: dict[str, dict] = {
     "ja": {
         "role": "TR修正(edit)段階でテスト・検証を実行する公式経路は Self-check ただ1つです。ツールは run_self_check / read_self_check / cancel_self_check です。",
         "no_fallback": [
-            "Source Bundle、AI Scratch、run_test は TR edit の Self-check 代替手段ではありません。TR edit の実行では access_source_bundle/run_source_bundle は self_check_required(409)で拒否されます。",
             "Self-check が使えない場合は、返された reason/error_code を TR に報告し、他の実行手段を探したり試したりしないでください。",
             "実行コマンドは、TRに記載の検証コマンド → Tに記載の検証コマンド → 変更から明らかな最小の検査、の順で決めます。決められない場合は test_command_missing で停止します。",
         ],
@@ -1474,65 +1422,8 @@ def _content_tr_self_check(ctx: dict) -> dict:
     }
 
 
-# ── source_bundles recovery guidance (0654 T0004) ────────────────────────────
-#: (code, ko, en, ja) — what the code means and what to do next.
-_BUNDLE_ERRORS: tuple[tuple[str, str, str, str], ...] = (
-    ("source_changed",
-     "Bundle 을 캡처하는 동안 source/worktree 가 바뀐 것을 감지한 fail-closed 일관성 가드다. 서로 다른 시점의 source 가 섞인 Bundle 을 만들지 않으려고 일부러 실패시킨다. 대상 변화: scan, hash/read, copy, post-copy verify, worktree identity/root 재확인, 동시 Bundle build. → 복구: 1) 동시 source 변경이 끝났는지 확인 2) worktree 가 안정된 상태인지 확인 3) Bundle ensure 를 다시 시도. 실패한 Bundle 은 source of truth 로 쓰지 않고 직접 promotion 하지 않는다. 일반적인 source_changed 는 별도 수동 unlock 대상이 아니다. capture 중에도 계속 변하면 반복 재시도해도 계속 실패할 수 있으니 변경이 멈춘 뒤 재시도한다.",
-     "A fail-closed consistency guard: the source/worktree was detected changing while the Bundle was being captured. It fails on purpose so a Bundle never mixes source from different moments. Covered changes: scan, hash/read, copy, post-copy verify, worktree identity/root recheck, concurrent Bundle build. -> Recovery: 1) confirm the concurrent source mutation has finished 2) confirm the worktree is stable 3) retry Bundle ensure. Never use a failed Bundle as the source of truth and never promote it directly. An ordinary source_changed is not a case for a manual unlock. If the source keeps changing during capture, repeated retries will keep failing; retry once it has stopped.",
-     "Bundle のキャプチャ中に source/worktree が変化したことを検知した fail-closed の整合性ガード。異なる時点の source が混ざった Bundle を作らないよう意図的に失敗させる。対象: scan、hash/read、copy、post-copy verify、worktree identity/root の再確認、並行 Bundle build。→ 復旧: 1) 並行する source 変更が終わったか確認 2) worktree が安定しているか確認 3) Bundle ensure を再試行。失敗した Bundle を source of truth にせず、直接 promotion もしない。通常の source_changed は手動 unlock の対象ではない。キャプチャ中に変化し続けると再試行しても失敗し続けるので、変化が止まってから再試行する。"),
-    ("source_busy",
-     "다른 source operation 이나 Self-check 가 project source lock 을 쓰는 중이다 → 그 작업이 끝난 뒤 다시 시도한다.",
-     "Another source operation or Self-check holds the project source lock -> retry after it finishes.",
-     "他の source operation や Self-check が project source lock を使用中 → その作業の終了後に再試行する。"),
-    ("build_wait_timeout",
-     "동시에 진행 중인 Bundle build 의 완료를 제한 시간 안에 확인하지 못했다 → Bundle 상태를 확인한 뒤 다시 시도한다.",
-     "The concurrent Bundle build did not finish within the wait limit -> check the Bundle state, then retry.",
-     "並行する Bundle build の完了を制限時間内に確認できなかった → Bundle の状態を確認してから再試行する。"),
-    ("group_worktree_unavailable",
-     "정확한 managed group worktree 를 확인할 수 없다 → Group/worktree 상태를 복구한 뒤 다시 시도한다.",
-     "The exact managed group worktree cannot be confirmed -> restore the group/worktree state, then retry.",
-     "正確な managed group worktree を確認できない → Group/worktree の状態を復旧してから再試行する。"),
-    ("build_timeout",
-     "Bundle build 가 시간 상한을 넘었다 → source 크기, 환경, 설정을 확인한다.",
-     "The Bundle build exceeded its time ceiling -> check source size, environment and settings.",
-     "Bundle build が時間上限を超えた → source サイズ、環境、設定を確認する。"),
-    ("resource_limit",
-     "파일 수, 개별 파일 크기, 총 크기 제한을 넘었다 → source, 제외 정책, limit 을 확인한다.",
-     "The file-count, per-file size or total size limit was exceeded -> check the source, exclusion policy and limits.",
-     "ファイル数・個別サイズ・総サイズの上限を超えた → source、除外ポリシー、limit を確認する。"),
-    ("unsafe_path",
-     "symlink, reparse point, 특수 파일 등 안전성 위반 경로가 있다 → source 구조를 고쳐야 한다.",
-     "A path violates safety rules (symlink, reparse point, special file, ...) -> the source structure must be fixed.",
-     "symlink・reparse point・特殊ファイルなど安全性違反のパスがある → source 構造の修正が必要。"),
-    ("bundle_unavailable",
-     "요청한 Bundle 이 정상 created + integrity 상태가 아니다 → 새로 Bundle ensure 를 한다.",
-     "The requested Bundle is not in a healthy created + integrity state -> run a fresh Bundle ensure.",
-     "要求した Bundle が正常な created + integrity 状態ではない → 新たに Bundle ensure を行う。"),
-)
-
-_BUNDLE_RECOVERY_NOTE: dict[str, str] = {
-    "ko": "Bundle 오류는 기능 고장이 아니라 다음 행동이 정해진 안내 대상이다. TR edit 단계의 검증은 Bundle 이 아니라 Self-check(tr_self_check 항목)로 수행하므로 Bundle 오류 때문에 검증을 포기하지 않는다.",
-    "en": "A Bundle error is guidance with a defined next action, not a broken feature. TR edit verification runs through Self-check (the tr_self_check item), not a Bundle, so a Bundle error is no reason to skip verification.",
-    "ja": "Bundle エラーは機能の故障ではなく、次の行動が決まっている案内対象です。TR edit 段階の検証は Bundle ではなく Self-check(tr_self_check 項目)で行うため、Bundle エラーを理由に検証を諦めないでください。",
-}
-
-
-def _content_source_bundles(ctx: dict) -> dict:
-    payload = _content_source_snapshots(ctx)
-    locale = ctx["locale"]
-    idx = _LOCALE_INDEX.get(locale, 1)
-    payload["error_recovery"] = {
-        "note": _BUNDLE_RECOVERY_NOTE.get(locale, _BUNDLE_RECOVERY_NOTE[FALLBACK_LOCALE]),
-        "errors": [{"code": row[0], "guidance": row[idx]} for row in _BUNDLE_ERRORS],
-    }
-    return payload
-
-
 _CONTENT_SUPPLIERS = {
     "notices": _content_notices,
-    "source_bundles": _content_source_bundles,
-    "source_snapshots": _content_source_snapshots,
     "group_documents": _content_group_documents,
     "document_access": _content_document_access,
     "document_attachments": _content_document_attachments,

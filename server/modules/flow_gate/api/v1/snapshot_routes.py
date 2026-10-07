@@ -9,7 +9,7 @@ router=APIRouter(prefix="/api/v1/snapshots",tags=["Snapshots"])
 def _error(exc): raise HTTPException(exc.status,detail={"code":exc.code,"message":exc.message})
 @router.post("")
 def request_snapshot(request:Request):
- raise HTTPException(410,detail={"code":"snapshot_feature_retired","message":"Legacy Snapshot requests are retired; use Source Bundle"})
+ raise HTTPException(410,detail={"code":"snapshot_feature_retired","message":"Legacy Snapshot requests are retired; use the live source tools"})
 @router.get("/pending")
 def pending(project_id:str|None=None,group_id:str|None=None,user=Depends(get_current_user)):
  service.retire_unmaterialized(materialization.SYSTEM_ACTOR_USER_ID)
@@ -59,7 +59,7 @@ def _cli_context(request:Request):
 
 @router.post("/cli/request")
 def cli_request_snapshot(request:Request):
- raise HTTPException(410,detail={"code":"snapshot_feature_retired","message":"Legacy Snapshot requests are retired; use Source Bundle"})
+ raise HTTPException(410,detail={"code":"snapshot_feature_retired","message":"Legacy Snapshot requests are retired; use the live source tools"})
 
 @router.get("/cli/{snapshot_id}/status")
 def cli_snapshot_status(snapshot_id:str,request:Request):
@@ -88,4 +88,4 @@ def cli_access_snapshot(snapshot_id:str,body:dict,request:Request):
 
 @router.post("/cli/{snapshot_id}/run")
 def cli_run_snapshot(snapshot_id:str,request:Request):
- raise HTTPException(410,detail={"code":"snapshot_feature_retired","message":"Legacy Snapshot execution is retired; use Source Bundle"})
+ raise HTTPException(410,detail={"code":"snapshot_feature_retired","message":"Legacy Snapshot execution is retired"})

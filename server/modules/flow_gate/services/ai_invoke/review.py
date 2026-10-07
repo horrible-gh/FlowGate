@@ -1098,6 +1098,10 @@ def run_review_gate(group_id: str, bundle: dict, run: dict) -> bool:
         if gate.get("approve_first") and slot is not None:
             if _svc()._settle_gate_pass(group_id, slot, bundle, run) != "continue":
                 return False
+        # 0684 T#3 (D#1 §3-9): a TSR head waits on its TS's server run -- no hop, no token.
+        from .chain import park_for_server_test_run
+        if park_for_server_test_run(group_id, bundle, run):
+            return False
         # Deliberately NOT re-queued, unlike the two branches below: _finalize_run already
         # ran begin_handoff for this boundary, and the work hop's own inbox self-chain is
         # what queues the hop after it. Queueing here instead would leave a live entry
@@ -1105,6 +1109,7 @@ def run_review_gate(group_id: str, bundle: dict, run: dict) -> bool:
         # rather than stopping on no_output_exhausted.
         _svc()._spawn_auto_resume(group_id, {**bundle, "last_stage": WORK_HOP_KIND})
         return True
+
 
     if stage in (REVIEW_HOP_KIND, REWORK_HOP_KIND):
         # last_stage / rounds_before / revision_before live ONLY in the memory queue, never

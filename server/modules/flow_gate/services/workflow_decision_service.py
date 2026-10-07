@@ -354,6 +354,24 @@ def is_auto_handled_step(
 # unmanned caller to parse both. One envelope, produced here.
 
 REVIEW_COUNT_DEFAULT = 0
+def _server_opened_tsr_head(seq_id, head: dict) -> bool:
+    """0684 T#1: a TSR head whose report the server opened when its TS was approved.
+
+    Approving a specification TS (contract 2) queues its test run and opens the TSR "test
+    running" at once (D#1 §3-1). That report is the server's, not a worker's draft in
+    progress, so an unmanned chain still takes the test hand-off below and rides the run.
+    """
+    if (head.get("type") or "").upper() != "TSR":
+        return False
+    pred_doc_id = db_wfseq.get_predecessor_result_doc_id(seq_id, head.get("id"))
+    pred_doc = db_documents.get_by_id(pred_doc_id) if pred_doc_id else None
+    if (pred_doc is None or (pred_doc.get("type_code") or "").upper() != "TS"
+            or pred_doc.get("doc_review_status") != "approved"):
+        return False
+    from modules.flow_gate.services import test_run_service
+    return test_run_service.ts_contract_version(pred_doc) == 2
+
+
 # TSR is assembled by the server (its content is stitched from the TS run), so like an
 # auto-handled N/T it has no worker output anybody could review.
 REVIEW_SERVER_ASSEMBLED_TYPES = {"TSR"}
@@ -1135,7 +1153,9 @@ def advance_workflow(
 
     result_doc_id = head.get("result_doc_id")
     result_review = head.get("result_doc_review_status")
-    if result_doc_id is not None and result_review != "approved":
+    if result_doc_id is not None and result_review != "approved" and not (
+        continuous and _server_opened_tsr_head(seq["id"], head)
+    ):
         raise ValueError(f"head_in_progress:{head['type']}:{head['label']}")
 
     # Q149 double-advance guard: an unconsumed token may already exist for this doc_ref.
@@ -1174,7 +1194,13 @@ def advance_workflow(
     # 0150: "the link that passes that scope down to tokens issued along the chain") instead of a 'new' token that
     # would ask the worker to write the TSR by hand. Managed advance (continuous=False) is
     # untouched — the FE drives runs via POST /documents/test-run(-request) explicitly.
+    # 0684 T#3 (D#1 §3-9): for a specification TS the engine no longer reaches this branch while
+    # the approval's server run is in progress or has passed -- the hop boundary binds the chain
+    # to the run and parks it (ai_invoke.chain.park_for_server_test_run). What still lands here
+    # is a hop that has something to enter: the token is a manual/external result-entry token
+    # (its mention lists only those Cases), and a copy-mention chain with no engine run.
     if continuous and head_type.upper() == "TSR":
+
         pred_doc_id = db_wfseq.get_predecessor_result_doc_id(seq["id"], head.get("id"))
         pred_doc = db_documents.get_by_id(pred_doc_id) if pred_doc_id else None
         if (

@@ -96,7 +96,7 @@ def validate_request_authority(token: dict, run: dict) -> dict:
  return token
 
 def create_request(data, actor):
- raise SnapshotRequestError(410, "snapshot_feature_retired", "Legacy Snapshot requests are retired; use Source Bundle")
+ raise SnapshotRequestError(410, "snapshot_feature_retired", "Legacy Snapshot requests are retired; use the live source tools")
 
 def retire_unmaterialized(actor="system"):
  """Idempotent rollout close; preserve created rows and their normal cleanup."""

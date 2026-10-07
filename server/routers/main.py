@@ -45,7 +45,6 @@ from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settin
 from modules.flow_gate.api.v1.chat_command_routes import router as _chat_command_router
 from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_router
 from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
-from modules.flow_gate.api.v1.source_bundle_routes import router as _source_bundle_router, overview_router as _source_bundle_overview_router
 from modules.flow_gate.api.v1.self_check_routes import router as _self_check_router
 from modules.flow_gate.api.v1.agent_routes import router as _agent_router
 from modules.flow_gate.api.v1.agent_job_routes import router as _agent_job_router
@@ -97,11 +96,6 @@ async def lifespan(app: FastAPI):
         snapshot_materialization_service.shutdown()
     except Exception:
         logger.warning("snapshot cleanup shutdown failed", exc_info=True)
-    try:
-        from modules.flow_gate.services import source_bundle_cleanup_service
-        source_bundle_cleanup_service.shutdown()
-    except Exception:
-        logger.warning("Source Bundle cleanup shutdown failed", exc_info=True)
     try:
         from modules.flow_gate.services.git import instance_registry
         instance_registry.shutdown()
@@ -222,8 +216,6 @@ app.include_router(_chat_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["Cha
 app.include_router(_chat_command_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatCommands"])
 app.include_router(_ui_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["UiSettings"])
 app.include_router(_snapshot_router, prefix=f"{CONTEXT}", tags=["Snapshots"])
-app.include_router(_source_bundle_router, prefix=f"{CONTEXT}", tags=["SourceBundles"])
-app.include_router(_source_bundle_overview_router, prefix=f"{CONTEXT}", tags=["SourceBundles"])
 app.include_router(_agent_router, prefix=f"{CONTEXT}/api/v1", tags=["Agents"])
 app.include_router(_agent_job_router, prefix=f"{CONTEXT}/api/v1", tags=["AgentJobs"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])

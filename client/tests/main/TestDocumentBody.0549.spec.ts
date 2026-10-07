@@ -81,6 +81,28 @@ describe('TestDocumentBody — contract boundary', () => {
     const wrapper = mountBody(TS_ID, 'TS')
     await flushPromises()
     expect(wrapper.find('[data-testid="test-doc-markdown"]').isVisible()).toBe(true)
+    // 0684 T#3 (D#1 §6-3): the failure is said, with a retry — not a silent empty body.
+    expect(wrapper.find('[data-testid="test-doc-load-failed"]').text()).toContain('Could not load the results.')
+    getRequest.mockResolvedValue({ data: { kind: 'TS', doc_id: TS_ID, contract_version: 2, cases: [], errors: [] } })
+    await wrapper.find('[data-testid="test-doc-retry"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="test-doc-load-failed"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="test-spec-panel"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows the Case table outline until the view answers (0684 T#3)', async () => {
+    let resolve: (value: unknown) => void = () => {}
+    getRequest.mockReturnValue(new Promise((done) => { resolve = done }))
+    const wrapper = mountBody(TS_ID, 'TS')
+    await nextTick()
+    expect(wrapper.find('[data-testid="test-doc-skeleton"]').exists()).toBe(true)
+    expect(wrapper.findAll('.test-doc-skeleton-row')).toHaveLength(4)
+    expect(wrapper.find('[data-testid="test-doc-markdown"]').isVisible()).toBe(false)
+    resolve({ data: { kind: 'TS', doc_id: TS_ID, contract_version: 2, cases: [], errors: [] } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="test-doc-skeleton"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="test-spec-panel"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -143,7 +165,7 @@ describe('TestSpecPanel — structured specification', () => {
     getRequest.mockResolvedValue(specView({
       test_basis: {
         basis_id: 'b'.repeat(64),
-        source: { kind: 'source_bundle', exclusion_policy_version: 'source-bundle-v1', content_fingerprint: 'f'.repeat(64) },
+        source: { kind: 'run_source', exclusion_policy_version: 'source-fingerprint-v1', content_fingerprint: 'f'.repeat(64) },
         test_assets: { policy_version: 'test-asset-v2', manifest_hash: 'm'.repeat(64), asset_count: 1 },
         manifest: [{ path: 'client/tests/main/a.spec.ts', content_hash: 'c'.repeat(64), role: 'test', kind: 'runner_unsupported_test' }],
       },
@@ -153,10 +175,131 @@ describe('TestSpecPanel — structured specification', () => {
     const wrapper = mountBody(TS_ID, 'TS')
     await flushPromises()
     const cards = wrapper.findAll('[data-testid="test-spec-case"]')
-    expect(cards[0].find('[data-testid="test-spec-case-capability"]').text()).toBe('runner_unsupported')
-    expect(cards[0].find('[data-testid="test-spec-runner-unsupported"]').text()).toContain('no automatic runner')
+    expect(cards[0].find('[data-testid="test-spec-case-capability"]').attributes('data-capability')).toBe('runner_unsupported')
+    expect(cards[0].find('[data-testid="test-spec-case-capability"]').text()).toBe('No automatic runner — NOT_RUN until a runner exists')
+    expect(cards[0].find('[data-testid="test-spec-runner-unsupported"]').text()).toContain('No automatic runner')
     expect(cards[0].find('[data-testid="test-spec-run-case"]').exists()).toBe(false)
     expect(cards[1].find('[data-testid="test-spec-runner-unsupported"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('offers a Case run without a stored Basis and holds it while a run is live (0684 T#1/T#3)', async () => {
+    getRequest.mockResolvedValue(specView({ case_capabilities: { 'TC-001': 'case_selectable', 'TC-002': 'manual' } }))
+    const wrapper = mountBody(TS_ID, 'TS')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="test-basis"]').exists()).toBe(false)
+    // 0684 T#3 (D#1 §3-8): the whole-TS run is the action bar's [run again]; the panel has none.
+    expect(wrapper.find('[data-testid="test-spec-run-all"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Run all automated Cases')
+    const runCase = wrapper.find('[data-testid="test-spec-run-case"]')
+    expect(runCase.attributes('disabled')).toBeUndefined()
+    expect(runCase.text()).toBe('Run')
+    postRequest.mockResolvedValue({ data: { run_id: 'trun_c' } })
+    await runCase.trigger('click')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(
+      `/api/v1/documents/${encodeURIComponent(TS_ID)}/test-spec/cases/TC-001/run`, {})
+    wrapper.unmount()
+    getRequest.mockResolvedValue(specView({
+      case_capabilities: { 'TC-001': 'case_selectable', 'TC-002': 'manual' },
+      active_run: { run_id: 'trun_9', status: 'running', phase: 'executing',
+        selected_case_ids: ['TC-001'], reported_case_ids: [] },
+      pending_case_ids: ['TC-001'],
+    }))
+    const live = mountBody(TS_ID, 'TS')
+    await flushPromises()
+    expect(live.find('[data-testid="test-spec-progress"]').text()).toContain('Running test (0/1)')
+    expect(live.find('[data-testid="test-spec-run-case"]').attributes('disabled')).toBeDefined()
+    const cards = live.findAll('[data-testid="test-spec-case"]')
+    expect(cards[0].find('[data-testid="test-spec-case-pending"]').text()).toContain('Pending')
+    expect(cards[0].find('[data-testid="test-spec-case-verdict"]').exists()).toBe(false)
+    live.unmount()
+  })
+
+  it('says why a Case run was refused, in the user language (0684 T#3)', async () => {
+    getRequest.mockResolvedValue(specView({ case_capabilities: { 'TC-001': 'case_selectable', 'TC-002': 'manual' } }))
+    postRequest.mockRejectedValue({ response: { status: 409, data: { error: 'run_in_progress', run_id: 'trun_x' } } })
+    const wrapper = mountBody(TS_ID, 'TS')
+    await flushPromises()
+    await wrapper.find('[data-testid="test-spec-run-case"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="test-spec-action-error"]').text()).toBe('A test run is already in progress.')
+    wrapper.unmount()
+  })
+
+  it('offers result entry for the entered Cases only (0684 T#3)', async () => {
+    getRequest.mockResolvedValue(specView({
+      case_capabilities: { 'TC-001': 'case_selectable', 'TC-002': 'manual' },
+      result_entry_case_ids: ['TC-002'],
+    }))
+    const wrapper = mountBody(TS_ID, 'TS')
+    await flushPromises()
+    await wrapper.find('[data-testid="test-spec-results-btn"]').trigger('click')
+    await flushPromises()
+    const rows = Array.from(document.body.querySelectorAll('[data-testid="tre-row"]'))
+    expect(rows.map((row) => row.getAttribute('data-case-id'))).toEqual(['TC-002'])
+    wrapper.unmount()
+
+    getRequest.mockResolvedValue(specView({
+      cases: [SPEC_CASES[0]],
+      case_capabilities: { 'TC-001': 'case_selectable' },
+      result_entry_case_ids: [],
+    }))
+    const serverOnly = mountBody(TS_ID, 'TS')
+    await flushPromises()
+    expect(serverOnly.find('[data-testid="test-spec-results-btn"]').exists()).toBe(false)
+    serverOnly.unmount()
+
+    // An automated Case with no server runner is not entered either (D#1 §3-8, CH S6).
+    getRequest.mockResolvedValue(specView({
+      case_capabilities: { 'TC-001': 'runner_unsupported', 'TC-002': 'manual' },
+    }))
+    const unsupported = mountBody(TS_ID, 'TS')
+    await flushPromises()
+    await unsupported.find('[data-testid="test-spec-results-btn"]').trigger('click')
+    await flushPromises()
+    const entryRows = Array.from(document.body.querySelectorAll('[data-testid="tre-row"]'))
+    expect(entryRows.map((row) => row.getAttribute('data-case-id'))).toEqual(['TC-002'])
+    unsupported.unmount()
+  })
+
+  it('shows the run basis in words and asks for a run after an asset edit (0684 T#3)', async () => {
+    getRequest.mockResolvedValueOnce(specView({
+      test_basis: {
+        basis_id: 'b'.repeat(64),
+        source: { kind: 'worktree_copy', content_fingerprint: 'f'.repeat(64) },
+        test_assets: { manifest_hash: 'm'.repeat(64), asset_count: 1 },
+        manifest: [{ path: 'tests/test_x.py', content_hash: 'c'.repeat(64), role: 'test' }],
+      },
+      basis_valid: false,
+      basis_verdict: { state: 'stale', reasons: ['source_changed'] },
+      basis_source: { fingerprint_prefix: 'ffffffffffff', git_revision: 'abcdef1234567890', source_dirty: true,
+        measured_at: '2026-10-08T01:02:03' },
+    }))
+    getRequest.mockResolvedValueOnce({ data: { content: 'def test_x(): pass\n', content_hash: 'c'.repeat(64) } })
+    const wrapper = mountBody(TS_ID, 'TS')
+    await flushPromises()
+    const basis = wrapper.find('[data-testid="test-basis"]')
+    expect(basis.text()).toContain('Run basis')
+    expect(basis.text()).toContain('Source fingerprint ffffffffffff')
+    expect(basis.text()).toContain('git abcdef123456')
+    expect(basis.text()).toContain('includes uncommitted changes')
+    expect(basis.text()).toContain('Run at 2026-10-08T01:02:03')
+    expect(wrapper.find('[data-testid="test-basis-verdict"]').text()).toBe('differs from the current source')
+    expect(wrapper.find('[data-testid="test-basis-stale"]').text()).toContain('Reasons: source_changed')
+    expect(wrapper.find('[data-testid="test-asset-manifest"]').text()).toContain('Test assets')
+    expect(wrapper.text()).not.toMatch(/Approved test assets|Save with expected hash|Current basis is stale|Automated progress/)
+    await wrapper.find('[data-testid="test-asset-manifest"] button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="test-asset-save"]').text()).toBe('Save (expected hash checked)')
+    putRequest.mockResolvedValue({ data: { ok: true } })
+    getRequest.mockResolvedValue(specView())
+    await wrapper.find('[data-testid="test-asset-save"]').trigger('click')
+    await flushPromises()
+    expect(putRequest).toHaveBeenCalledWith(
+      `/api/v1/documents/${encodeURIComponent(TS_ID)}/test-spec/assets/${encodeURIComponent('tests/test_x.py')}`,
+      { expected_hash: 'c'.repeat(64), content: 'def test_x(): pass\n' })
+    expect(wrapper.find('[data-testid="test-asset-edited"]').text()).toContain('run again')
     wrapper.unmount()
   })
 
@@ -244,7 +387,55 @@ describe('TestReportPanel — TSR test report', () => {
     wrapper.unmount()
   })
 
+  it('reads "pending" for Cases a live run has not reported and gives no verdict yet (0684 T#3)', async () => {
+    const view = reportView('NOT_RUN', false)
+    Object.assign(view.data, {
+      active_run: { run_id: 'trun_live', status: 'running', phase: 'executing',
+        selected_case_ids: ['TC-001', 'TC-002'], reported_case_ids: ['TC-001'] },
+      pending_case_ids: ['TC-002'],
+    })
+    getRequest.mockResolvedValue(view)
+    const wrapper = mountBody(TSR_ID, 'TSR')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="tsr-progress"]').text()).toContain('Running test (1/2)')
+    expect(wrapper.find('[data-testid="tsr-overall"]').exists()).toBe(false)
+    const rows = wrapper.findAll('[data-testid="tsr-row"]')
+    expect(rows[0].find('[data-testid="tsr-row-verdict"]').text()).toBe('PASS')
+    expect(rows[1].find('[data-testid="tsr-row-pending"]').text()).toContain('Pending')
+    expect(rows[1].classes()).not.toContain('tsr-row-bad')
+    wrapper.unmount()
+  })
+
+  it('warns that a result no longer holds for the current source and runs again (0684 T#3)', async () => {
+    const view = reportView('PASS', false)
+    Object.assign(view.data, {
+      ts_review_status: 'approved', doc_review_status: 'pending_review',
+      basis_valid: false, basis_verdict: { state: 'stale', reasons: ['source_changed'] },
+      test_basis: { basis_id: 'b'.repeat(64), source: {}, test_assets: { manifest_hash: 'm', asset_count: 0 }, manifest: [] },
+      basis_source: { fingerprint_prefix: 'aaaaaaaaaaaa' },
+      stale_previous_result: { run_id: 'trun_old', overall: 'PASS', cases: [] },
+      run_history: [{ run_id: 'trun_old', run_kind: 'spec_execution', status: 'passed', overall: 'PASS', basis_id: 'b' }],
+    })
+    getRequest.mockResolvedValue(view)
+    postRequest.mockResolvedValue({ data: { run_id: 'trun_new' } })
+    const wrapper = mountBody(TSR_ID, 'TSR')
+    await flushPromises()
+    const band = wrapper.find('[data-testid="tsr-stale-band"]')
+    expect(band.text()).toContain('The source changed after this run')
+    expect(band.text()).toContain('Reasons: source_changed')
+    expect(wrapper.find('[data-testid="tsr-basis"]').text()).toContain('Run basis')
+    expect(wrapper.find('[data-testid="tsr-stale"]').text()).toContain('Previous result (differs from the current source)')
+    expect(wrapper.find('[data-testid="tsr-run-history"]').text()).toContain('Run history')
+    expect(wrapper.text()).not.toMatch(/Current Test Basis|STALE previous result|Current basis is stale/)
+    await wrapper.find('[data-testid="tsr-rerun"]').trigger('click')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(
+      `/api/v1/documents/${encodeURIComponent(TS_ID)}/test-spec/runs`, {})
+    wrapper.unmount()
+  })
+
   it('keeps the Markdown body for a TSR assembled from a legacy run', async () => {
+
     getRequest.mockResolvedValue({ data: { kind: 'TSR', doc_id: TSR_ID, contract_version: 1 } })
     const wrapper = mountBody(TSR_ID, 'TSR')
     await flushPromises()

@@ -262,11 +262,6 @@ def transition_group(
         except Exception:
             # Group closure is already durable. Snapshot cleanup stays retryable via TTL.
             _log.warning("snapshot group-close cleanup failed for %s", group_id, exc_info=True)
-        try:
-            from modules.flow_gate.services import source_bundle_cleanup_service
-            source_bundle_cleanup_service.cleanup_for_group(group_id)
-        except Exception:
-            _log.warning("Source Bundle group-close cleanup failed for %s", group_id, exc_info=True)
 
     result = dict(updated or {})
     if warnings:
@@ -773,7 +768,26 @@ _TEST_GATE_MESSAGES = {
         "en": "The test specification (TS) has validation errors and cannot be approved: {errors}",
         "ja": "試験仕様書(TS)に構造検証エラーがあるため承認できません: {errors}",
     },
+    # 0684 T#1 (D#1 §3-1 step 4): which Case, which file -- checked for existence only.
+    "ts_asset": {
+        "ko": "자동 실행 Case {case_id}의 시험 파일 {path}을(를) 작업 공간에서 확인할 수 없어 승인할 수 없습니다 ({code}).",
+        "en": "Automated Case {case_id}: its test file {path} cannot be confirmed in the workspace, so the TS cannot be approved ({code}).",
+        "ja": "自動実行Case {case_id} の試験ファイル {path} を作業領域で確認できないため承認できません ({code})。",
+    },
+    "ts_run": {
+        "ko": "이 TS의 시험 run {run_id}이(가) 아직 정리되지 않아 승인할 수 없습니다 ({error}).",
+        "en": "Test run {run_id} of this TS is not settled yet, so the TS cannot be approved ({error}).",
+        "ja": "このTSの試験run {run_id} がまだ整理されていないため承認できません ({error})。",
+    },
 }
+
+
+def _spec_asset_refusal(raw: str, lang: str) -> str:
+    """``check_automation_assets`` raises "<code>: <case_id>: <path>"."""
+    code, _, rest = raw.partition(": ")
+    case_id, _, path = rest.partition(": ")
+    return _TEST_GATE_MESSAGES["ts_asset"][lang].format(
+        code=code or raw, case_id=case_id or "-", path=path or "-")
 
 
 def _require_test_gate_for_approval(doc: dict, locale: str = "ko") -> None:
@@ -887,20 +901,29 @@ def transition_document_review(
         _require_document_body_for_approval(doc, locale)
         _require_test_gate_for_approval(doc, locale)
         if str(doc.get("type_code") or "").upper() == "TS":
-            from modules.flow_gate.services import test_basis_service, test_run_service, test_spec_service
+            from modules.flow_gate.services import spec_execution_service, test_run_service, test_spec_service
             content = test_run_service._read_doc_content_or_empty(doc)
             if test_spec_service.detect_contract_version(content) == test_spec_service.CONTRACT_SPEC:
+                lang = locale if locale in ("ko", "en", "ja") else "ko"
                 parsed = test_spec_service.parse_spec(content)
-                # 0682 T#1: capture the Group worktree (uncommitted and untracked work
-                # included) into a Source Bundle outside the DB transaction. A Bundle
-                # failure refuses the approval with basis_capture_failed:<code>. A dry
-                # run (precheck) writes nothing, so it measures without a Bundle.
-                try:
-                    basis = (test_basis_service.preflight(doc, parsed["cases"]) if dry_run
-                             else test_basis_service.capture(doc, parsed["cases"]))
-                except ValueError as exc:
-                    raise TransitionError(str(exc)) from exc
-                spec_approval = (parsed, basis)
+                # 0684 T#1 (D#1 §3-1): approval fixes the specification and queues the test
+                # run; it never captures, copies or hashes the source, so it answers in the
+                # same short time whatever the worktree's size. The automated Cases' test
+                # files only have to exist and be safe here -- the run measures what it
+                # executes. The dry run (precheck) asks the same and writes nothing.
+                selected = spec_execution_service.automated_selection(parsed["cases"])
+                paired = test_run_service._active_tsr_for_ts(doc)
+                if paired and paired.get("doc_review_status") == "approved":
+                    selected = []  # the report is final; nothing may rewrite it
+                if selected:
+                    try:
+                        spec_execution_service.check_automation_assets(doc, selected)
+                    except ValueError as exc:
+                        raise TransitionError(_spec_asset_refusal(str(exc), lang)) from exc
+                    blocker = spec_execution_service.admission_blocker(doc_id)
+                    if blocker:
+                        raise TransitionError(_TEST_GATE_MESSAGES["ts_run"][lang].format(**blocker))
+                spec_approval = (parsed, selected)
 
     update_fields: dict[str, Any] = {
         "doc_review_status": next_status,
@@ -950,33 +973,50 @@ def transition_document_review(
         }
 
     if spec_approval is not None:
-        from modules.flow_gate.services import test_basis_service
-        parsed, basis = spec_approval
-        update_fields["meta"] = test_basis_service.metadata_with_basis(doc, basis)
+        from modules.flow_gate.services import spec_execution_service, test_basis_service
         from modules.flow_gate.services import test_run_service as _runner
+        parsed, selected = spec_approval
+        lang = locale if locale in ("ko", "en", "ja") else "ko"
+        # The Basis an earlier approval captured judged an earlier revision; the run
+        # admitted below measures this one. It is set aside for audit, never judged again.
+        update_fields["meta"] = test_basis_service.metadata_without_basis(
+            {"meta": update_fields.get("meta") or doc.get("meta")})
+        admitted = None
         with _runner._admission_lock, get_store().transaction():
             fresh = db_docs.get_by_id(doc_id)
             if (fresh or {}).get("doc_review_status") != current_review_status or (
                 fresh or {}
             ).get("revision_no") != doc.get("revision_no"):
                 raise TransitionError("TS changed during approval")
+            blocker = spec_execution_service.admission_blocker(doc_id) if selected else None
+            if blocker:
+                raise TransitionError(_TEST_GATE_MESSAGES["ts_run"][lang].format(**blocker))
             updated = db_docs.update(doc_id, update_fields)
             if not updated:
                 raise TransitionError("Review status transition failed")
-            # Same transaction: the new Pin replaces (releases) the previous Basis's Pin,
-            # and a rollback leaves the captured Bundle to the ordinary TTL.
-            test_basis_service.pin(updated, basis)
-            initialized = test_basis_service.initialize(updated, parsed, basis, locale=locale)
-            from modules.flow_gate.db import events as db_events
-            db_events.insert_event(doc_id, "test_spec_basis_created", note=json.dumps({
-                "basis_id": basis["basis_id"], "ts_revision_no": doc.get("revision_no"),
-                "run_id": initialized["run_id"], "tsr_doc_id": initialized["tsr_doc_id"],
-                "source": basis["source"], "binding": basis.get("binding"),
-                "manifest_hash": basis["test_assets"]["manifest_hash"],
-                "actor": actor_user_id,
-            }, ensure_ascii=False))
-            updated["test_basis"] = basis
-            updated["spec_initialization"] = initialized
+            if selected:
+                # Same transaction as the approval (D#1 §3-1 steps 5-6): the queued run and
+                # the report it opens exist exactly when the approval does.
+                admitted = spec_execution_service.admit_on_approval(
+                    updated, parsed, selected, runner_id=actor_user_id, locale=locale)
+                from modules.flow_gate.db import events as db_events
+                db_events.insert_event(doc_id, "test_spec_execution_admitted", note=json.dumps({
+                    "run_id": admitted["run"]["run_id"], "tsr_doc_id": admitted["tsr_doc_id"],
+                    "admission": spec_execution_service.ADMISSION_APPROVAL,
+                    "ts_revision_no": doc.get("revision_no"),
+                    "case_ids": admitted["selected_case_ids"], "actor": actor_user_id,
+                }, ensure_ascii=False))
+            updated["spec_execution"] = ({
+                "run_id": admitted["run"]["run_id"], "tsr_doc_id": admitted["tsr_doc_id"],
+                "selected_case_ids": admitted["selected_case_ids"], "status": "queued",
+            } if admitted else None)
+        if admitted:
+            # After commit: the run and its report are visible before anyone is told.
+            _runner._emit_started(updated, admitted["run"])
+            _runner._broadcast("group_view_refresh", updated, {
+                "group_id": updated.get("group_id"), "reason": "test_report_opened",
+                "doc_id": admitted["tsr_doc_id"], "run_id": admitted["run"]["run_id"],
+            })
     else:
         updated = db_docs.update(doc_id, update_fields)
         if not updated:

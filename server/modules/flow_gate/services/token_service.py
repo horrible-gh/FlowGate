@@ -459,11 +459,6 @@ def consume(
             + "}"
         ),
     })
-    try:
-        from modules.flow_gate.services import source_bundle_cleanup_service
-        source_bundle_cleanup_service.cleanup_for_token(token_id)
-    except Exception:
-        _log.warning("Source Bundle token cleanup failed for %s", token_id, exc_info=True)
     return True
 
 
@@ -549,8 +544,3 @@ def revoke(token_id: str, reason: str = "user_cancel") -> None:
             _log.warning(
                 "edit_once rollback failed after revoke for token %s", token_id, exc_info=True
             )
-        try:
-            from modules.flow_gate.services import source_bundle_cleanup_service
-            source_bundle_cleanup_service.cleanup_for_token(token_id)
-        except Exception:
-            _log.warning("Source Bundle token cleanup failed for %s", token_id, exc_info=True)

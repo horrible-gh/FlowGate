@@ -473,7 +473,8 @@ def _normalize_source_identity(raw: Any) -> dict:
     keys = (
         "bundle_id", "bundle_hash", "git_revision", "tree", "worktree", "branch",
         "runner", "runner_version", "tool", "tool_version", "executed_at", "ci_url",
-        # 0682 T#1: the Source Bundle a Basis v2 run actually executed from.
+        # 0682 T#1 Basis identity; bundle_sha256 is read only from v2 rows recorded before
+        # 0684 T#4 removed Source Bundle (stored results stay as written, D#1 §7).
         "kind", "basis_id", "content_fingerprint", "bundle_sha256", "exclusion_policy_version",
     )
     return {key: _clip(raw.get(key), 500) for key in keys if raw.get(key) not in (None, "")}
@@ -1023,5 +1024,111 @@ def render_report_markdown(*, doc: dict, run: dict, rows: list[dict], summary: d
             )
     else:
         lines.append(f"- {s['none']}")
+    lines.extend(["", s["footer"].format(run_id=run.get("run_id")), ""])
+    return "\n".join(lines)
+
+
+# 0684 T#1 (D#1 §3-4): the report a run opens before it has results. PENDING is a display
+# state only -- never a stored verdict -- so this body carries no overall and no gate line.
+PENDING = "PENDING"
+
+_PENDING_STRINGS = {
+    "ko": {
+        "kind": "> 문서 성격: 시험성적서 (TS {doc_id} revision {revision} 의 Case ID별 결과)",
+        "run": "> 시험 run: {run_id} · 접수 시각 {at}",
+        "state_queued": "> 상태: **시험 대기/실행 중** — 결과가 기록되면 이 레포트가 갱신된다. 아직 판정이 없다.",
+        "state_running": "> 상태: **시험 실행 중** — Case 결과 {done}/{total}건 반영. 남은 Case가 끝나면 결과가 기록되고 종합 판정이 정해진다.",
+        "state_prepare_refused": "> 상태: **준비 실패** ({reason}) — 시험을 실행하지 않았다. 원인을 해결한 뒤 다시 실행한다.",
+        "state_cancelled": "> 상태: **취소됨** — 시험 run이 결과 없이 취소됐다. 다시 실행한다.",
+        "state_failed": "> 상태: **실행 중단** ({reason}) — 기록된 결과가 없다. 다시 실행한다.",
+        "cases_heading": "## Case별 상태",
+        "cases_header": "| Case | 제목 | 필수 | 방식 | 기대 결과 | 상태 |",
+        "pending": "대기 (PENDING)", "not_selected": "이번 run 대상 아님", "no_result": "결과 없음",
+        "kept": "{status} (이전 기록 유지)",
+        "reported": "{status} (이번 run 결과)",
+        "footer": "*이 레포트는 시험 run {run_id} 접수 시 FlowGate가 만들었다. 종합 판정은 결과가 기록된 뒤 서버 기록으로 결정된다.*",
+        "yes": "필수", "no": "선택",
+    },
+    "en": {
+        "kind": "> Document: test report (per-Case-ID results of TS {doc_id} revision {revision})",
+        "run": "> Test run: {run_id} · admitted at {at}",
+        "state_queued": "> State: **test queued/running** — this report is updated when results are recorded. No verdict yet.",
+        "state_running": "> State: **test running** — {done}/{total} Case results in. The result is recorded and the overall verdict decided when the remaining Cases finish.",
+        "state_prepare_refused": "> State: **preparation failed** ({reason}) — the test was not run. Fix the cause and run again.",
+        "state_cancelled": "> State: **cancelled** — the test run was cancelled without results. Run again.",
+        "state_failed": "> State: **run aborted** ({reason}) — no results were recorded. Run again.",
+        "cases_heading": "## Case Status",
+        "cases_header": "| Case | Title | Required | Mode | Expected | Status |",
+        "pending": "pending (PENDING)", "not_selected": "not in this run", "no_result": "no result",
+        "kept": "{status} (earlier record kept)",
+        "reported": "{status} (this run)",
+        "footer": "*FlowGate opened this report when test run {run_id} was admitted. The overall verdict is decided by the server record once results are recorded.*",
+        "yes": "required", "no": "optional",
+    },
+    "ja": {
+        "kind": "> 文書種別: 試験成績書 (TS {doc_id} revision {revision} のCase ID別結果)",
+        "run": "> 試験run: {run_id} · 受付時刻 {at}",
+        "state_queued": "> 状態: **試験待機/実行中** — 結果が記録されるとこのレポートが更新される。まだ判定はない。",
+        "state_running": "> 状態: **試験実行中** — Case結果 {done}/{total}件反映。残りのCaseが終わると結果が記録され総合判定が決まる。",
+        "state_prepare_refused": "> 状態: **準備失敗** ({reason}) — 試験は実行されていない。原因を解消してから再実行する。",
+        "state_cancelled": "> 状態: **キャンセル** — 試験runは結果なしでキャンセルされた。再実行する。",
+        "state_failed": "> 状態: **実行中断** ({reason}) — 記録された結果はない。再実行する。",
+        "cases_heading": "## Case別状態",
+        "cases_header": "| Case | タイトル | 必須 | 方式 | 期待結果 | 状態 |",
+        "pending": "待機 (PENDING)", "not_selected": "今回のrun対象外", "no_result": "結果なし",
+        "kept": "{status} (以前の記録を維持)",
+        "reported": "{status} (今回のrun結果)",
+        "footer": "*このレポートは試験run {run_id} の受付時にFlowGateが作成した。総合判定は結果記録後にサーバー記録で決まる。*",
+        "yes": "必須", "no": "任意",
+    },
+}
+
+
+def render_pending_report_markdown(*, doc: dict, run: dict, cases: list[dict],
+                                   selected_case_ids: Iterable[str], title: str,
+                                   state: str = "queued", reason: Optional[str] = None,
+                                   kept: Optional[dict] = None, reported: Optional[dict] = None,
+                                   locale: str = "ko") -> str:
+    """The TSR body of a run that has no result record yet (0684 D#1 §3-4).
+
+    ``state`` is ``queued`` (admitted, nothing reported), ``running`` (some Cases reported),
+    ``prepare_refused``, ``cancelled`` or ``failed``. Selected Cases show PENDING while the
+    run is live; ``reported`` maps a Case ID key to the verdict the live run already reported
+    for it; ``kept`` maps a Case ID key to the verdict an earlier record of the same TS
+    revision still holds.
+    """
+    s = _PENDING_STRINGS.get(locale) or _PENDING_STRINGS["ko"]
+    selected = {case_id_key(case_id) for case_id in selected_case_ids}
+    kept = kept or {}
+    live = state in ("queued", "running")
+    reported = {key: status for key, status in (reported or {}).items() if key in selected} if live else {}
+    state_line = s.get("state_" + state) or s["state_failed"]
+    lines = [
+        f"# {title}",
+        "",
+        s["kind"].format(doc_id=doc.get("doc_id"), revision=run.get("revision_no")),
+        s["run"].format(run_id=run.get("run_id"), at=run.get("created_at") or run.get("started_at")),
+        state_line.format(reason=reason or "-", done=len(reported), total=len(selected)),
+        "",
+        s["cases_heading"],
+        "",
+        s["cases_header"],
+        "|---|---|---|---|---|---|",
+    ]
+    for case in cases:
+        key = case_id_key(case.get("case_id") or "")
+        if key in reported:
+            status = s["reported"].format(status=reported[key])
+        elif key in selected:
+            status = s["pending"] if live else s["no_result"]
+        elif key in kept:
+            status = s["kept"].format(status=kept[key])
+        else:
+            status = s["not_selected"] if case.get("execution_mode") == "automated" else s["no_result"]
+        lines.append(
+            f"| {_cell(case.get('case_id'))} | {_cell(case.get('title'))} | "
+            f"{s['yes'] if case.get('required') else s['no']} | {_cell(case.get('execution_mode'))} | "
+            f"{_cell(case.get('expected'))} | {status} |"
+        )
     lines.extend(["", s["footer"].format(run_id=run.get("run_id")), ""])
     return "\n".join(lines)

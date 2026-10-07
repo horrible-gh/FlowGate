@@ -2903,6 +2903,14 @@ def _handle_spec_test_results(
             _park_chain_on_test_gate(token_rec, doc_id, result["run_id"], chain_context)
             result.update({"continuation": True, "continuation_async": True,
                            "continuation_target_seq": token_rec.get("continuation_target_seq")})
+            if result.get("finished"):
+                # 0684 T#1: the approval's run already passed the gate before this chain
+                # token existed; with the token consumed the chain moves on now.
+                outcome = test_run_service.continue_attached_chain(
+                    db_docs.get_by_id(doc_id) or doc, result.get("tsr_doc_id"),
+                    api_base_url=chain_context.get("api_base_url"), locale=locale,
+                )
+                result["continuation_action"] = outcome.get("action")
         return JSONResponse(status_code=202, content=result)
 
     try:

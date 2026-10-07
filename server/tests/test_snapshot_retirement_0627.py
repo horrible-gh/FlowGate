@@ -1,11 +1,11 @@
-"""T#3: legacy Snapshot retirement and read-only Bundle visibility."""
+"""T#3: legacy Snapshot retirement (0684 T#4 removed the read-only Bundle visibility)."""
 import sqlite3
 from contextlib import nullcontext
 
 import pytest
 from fastapi import HTTPException
 
-from modules.flow_gate.api.v1 import snapshot_routes, source_bundle_routes
+from modules.flow_gate.api.v1 import snapshot_routes
 from modules.flow_gate.db import snapshot_requests
 from modules.flow_gate.services import (
     api_server_tools, help_catalog, snapshot_access_service,
@@ -117,43 +117,6 @@ def test_created_history_and_cleanup_contract_remain(monkeypatch):
     assert summary["deleted"] == 1
     assert cleaned == ["created"]
     store.conn.close()
-
-
-def test_bundle_history_is_metadata_only_and_help_describes_automatic_access(monkeypatch):
-    row = {
-        "bundle_id": "sb_1", "status": "created", "source_revision": "abc",
-        "source_dirty": 1, "content_fingerprint": "contenthash",
-        "bundle_sha256": "bundlehash", "exclusion_policy_version": "source-bundle-v1",
-        "file_count": 2, "byte_size": 10, "created_at": "2026-09-27",
-        "expires_at": "2026-09-28", "deleted_at": None,
-        "failure_code": None, "failure_reason": None,
-    }
-    monkeypatch.setattr(source_bundle_routes.db, "list_recent", lambda p, g: [row])
-    monkeypatch.setattr(source_bundle_routes.materializer, "resolve_worktree", lambda p, g: "root")
-    monkeypatch.setattr(source_bundle_routes.materializer, "inspect_source", lambda root, deadline: {
-        "source_revision": "other", "source_dirty": False, "content_fingerprint": "other",
-    })
-    result = source_bundle_routes.list_bundles("p", "g", user={"user_id": "u"})
-    bundle = result["bundles"][0]
-    assert (bundle["bundle_id"], bundle["freshness"], bundle["origin"]) == (
-        "sb_1", "stale", "automatic_source_access")
-    assert bundle["cleanup_state"] == "active"
-    assert "snapshot_path" not in bundle
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-    from modules.flow_gate.auth.middleware import get_current_user
-    app = FastAPI()
-    app.include_router(source_bundle_routes.overview_router)
-    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u"}
-    client = TestClient(app)
-    response = client.get("/api/v1/source-bundles", params={"project_id": "p", "group_id": "g"})
-    assert response.status_code == 200
-    assert response.json()["bundles"][0]["freshness"] == "stale"
-    assert client.post("/api/v1/source-bundles").status_code == 405
-    policy = help_catalog._content_source_snapshots({})
-    assert "automatically" in policy["preparation"]
-    assert "human approval" in policy["preparation"]
-    assert "snapshot_feature_retired" in policy["legacy_snapshot"]
 
 
 def test_retired_http_routes_return_410_even_without_a_request_body():
