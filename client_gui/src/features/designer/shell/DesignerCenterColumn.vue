@@ -2,10 +2,11 @@
   <!-- Center column: Workspace over the Bottom Dock. The Bottom Dock is a child of this
        column (not of the Body), so it can never reach under the Left / Right Docks. The
        Designer Center session passes through to the Workspace; the Bottom Inspector
-       (flowgate.v02.0036) gets the session's selected Node (later, the Minimap its Viewport). -->
+       (flowgate.v02.0036) gets the session's selected Node (later, the Minimap its Viewport).
+       flowgate.v02.0039 T#3: `unselected` (no work target yet) passes to both. -->
   <div class="designer-center-column" data-test="designer-center-column">
-    <DesignerWorkspace :center="center" />
-    <DesignerBottomDock :height="bottomHeight" :selected-node="center.activeSelectedNode.value" />
+    <DesignerWorkspace :center="center" :unselected="unselected" />
+    <DesignerBottomDock :height="bottomHeight" :selected-node="center.activeSelectedNode.value" :unselected="unselected" />
   </div>
 </template>
 
@@ -14,10 +15,14 @@ import type { DesignerCenterSession } from '../center/designerCenterSession'
 import DesignerBottomDock from './DesignerBottomDock.vue'
 import DesignerWorkspace from './DesignerWorkspace.vue'
 
-defineProps<{
-  center: DesignerCenterSession
-  bottomHeight: number
-}>()
+withDefaults(
+  defineProps<{
+    center: DesignerCenterSession
+    bottomHeight: number
+    unselected?: boolean
+  }>(),
+  { unselected: false },
+)
 </script>
 
 <style scoped>

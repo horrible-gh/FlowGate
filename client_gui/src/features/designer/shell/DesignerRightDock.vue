@@ -7,13 +7,20 @@
        shown and is only hidden afterwards, so its session (chat, Git badge, Palette items)
        survives a tab switch. Part intents with no target screen yet (Palette select / drag,
        Conversation open-change, Git open-diff / confirm settings / windows / badge) are
-       intentionally not handled here — later Feature groups wire them. -->
+       intentionally not handled here — later Feature groups wire them.
+       flowgate.v02.0039 T#3: with no work target (`unselected`) the tab row stays on screen
+       dimmed and unavailable and the body is an empty frame — no part is shown or mounted
+       until there is a target (confirmed initial-state design). A part mounted earlier stays
+       mounted but gets no Project / Flow context while there is no target, so a Project switch
+       back to the initial state does not read Git / Conversation data for the new Project. -->
   <aside
     class="designer-right-dock"
+    :class="{ 'is-unselected': unselected }"
     :aria-label="t('gui.designer.shell.tool_tabs_label')"
     data-test="designer-right-dock"
     :data-collapsed="collapsed ? 'true' : 'false'"
     :data-tool="tool"
+    :data-unselected="unselected ? 'true' : 'false'"
   >
     <header v-show="!collapsed" class="designer-right-header" data-test="designer-right-header">
       <Tabs
@@ -27,19 +34,19 @@
     </header>
 
     <div v-show="!collapsed" class="designer-right-body" data-test="designer-right-body">
-      <div v-if="mountedTools.palette" v-show="tool === 'palette'" class="designer-right-pane" data-test="designer-right-pane-palette">
+      <div v-if="mountedTools.palette" v-show="!unselected && tool === 'palette'" class="designer-right-pane" data-test="designer-right-pane-palette">
         <PalettePanel />
       </div>
       <div
         v-if="mountedTools.conversation"
-        v-show="tool === 'conversation'"
+        v-show="!unselected && tool === 'conversation'"
         class="designer-right-pane is-fill"
         data-test="designer-right-pane-conversation"
       >
-        <ConversationPanel :project-id="projectId" :group-id="activeFlow?.groupId ?? null" />
+        <ConversationPanel :project-id="partProjectId" :group-id="partFlow?.groupId ?? null" />
       </div>
-      <div v-if="mountedTools.git" v-show="tool === 'git'" class="designer-right-pane" data-test="designer-right-pane-git">
-        <DesignerGitPanel :project-id="projectId" :flow="activeFlow" :active="!collapsed && tool === 'git'" />
+      <div v-if="mountedTools.git" v-show="!unselected && tool === 'git'" class="designer-right-pane" data-test="designer-right-pane-git">
+        <DesignerGitPanel :project-id="partProjectId" :flow="partFlow" :active="!collapsed && !unselected && tool === 'git'" />
       </div>
     </div>
   </aside>
@@ -55,19 +62,28 @@ import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
 import PalettePanel from '../palette/PalettePanel.vue'
 import { DESIGNER_RIGHT_TOOLS, type DesignerRightTool } from './designerLayout'
 
-const props = defineProps<{
-  projectId: string | null
-  activeFlow: FlowRef | null
-  tool: DesignerRightTool
-  collapsed: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    projectId: string | null
+    activeFlow: FlowRef | null
+    tool: DesignerRightTool
+    collapsed: boolean
+    /** No work target yet (0039 T#3): tabs unavailable, no part shown. */
+    unselected?: boolean
+  }>(),
+  { unselected: false },
+)
 
 const emit = defineEmits<{ 'update:tool': [tool: DesignerRightTool] }>()
 
 const { t } = useI18n()
 
 const tabs = computed<TabItem[]>(() =>
-  DESIGNER_RIGHT_TOOLS.map((tool) => ({ key: tool, label: t(`gui.designer.shell.tool_${tool}`) })),
+  DESIGNER_RIGHT_TOOLS.map((tool) => ({
+    key: tool,
+    label: t(`gui.designer.shell.tool_${tool}`),
+    disabled: props.unselected,
+  })),
 )
 
 function onSelect(key: string) {
@@ -76,16 +92,22 @@ function onSelect(key: string) {
 }
 
 // Which parts have been shown at least once. Rendering detail of this Dock, not layout state:
-// it only grows, so nothing already mounted is ever torn down by a switch.
+// it only grows, so nothing already mounted is ever torn down by a switch. A part is not
+// mounted while there is no work target (0039 T#3); it mounts once there is one.
 const mountedTools = reactive<Record<DesignerRightTool, boolean>>({ palette: false, conversation: false, git: false })
 
 watch(
-  () => props.tool,
-  (tool) => {
-    mountedTools[tool] = true
+  [() => props.tool, () => props.unselected],
+  ([tool, unselected]) => {
+    if (!unselected) mountedTools[tool] = true
   },
   { immediate: true },
 )
+
+// Context handed to the mounted parts: none while there is no work target (0039 T#3). The parts
+// reset to their empty state and read nothing; the target's context arrives with the first choice.
+const partProjectId = computed(() => (props.unselected ? null : props.projectId))
+const partFlow = computed(() => (props.unselected ? null : props.activeFlow))
 </script>
 
 <style scoped>
@@ -105,6 +127,13 @@ watch(
   align-items: center;
   padding: 0 4px 0 6px;
   border-bottom: 1px solid var(--fg2-line);
+}
+
+/* No work target (0039 T#3, confirmed design v7): dimmed and unavailable. */
+.designer-right-dock.is-unselected .designer-right-header {
+  opacity: 0.46;
+  filter: saturate(0.55);
+  user-select: none;
 }
 
 /* The header draws the single bottom rule; the tab strip keeps only its active underline. */

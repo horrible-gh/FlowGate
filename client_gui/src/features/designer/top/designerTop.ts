@@ -238,11 +238,46 @@ export function nextRunMode(current: DesignerRunMode, cmd: DesignerTopCommand): 
   return current
 }
 
-/** Whether a menu command can be chosen in the current run state; everything else stays enabled. */
-export function isMenuCommandEnabled(cmd: DesignerTopCommand, runMode: DesignerRunMode): boolean {
+// --- work target (flowgate.v02.0039 T#3) ---------------------------------------------------------
+
+/**
+ * Commands that stay available while the Designer has no work target — nothing chosen in the
+ * Project Explorer and no Flow open (0039 confirmed design 15-designer-shell-initial-state-v7):
+ * creating / opening a Project, closing the Designer, Help and the Header entries. Everything
+ * else in the File, Edit, Run and View menus waits for a target. The Window menu is not a
+ * command list and stays available as a whole.
+ */
+const NO_TARGET_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopCommand>([
+  'project.new',
+  'project.open',
+  'designer.close',
+  'help.shortcuts',
+  'help.guide',
+  'help.about',
+  'header.notifications',
+  'header.ai',
+  'header.settings',
+  'header.user',
+])
+
+/**
+ * Whether a menu command can be chosen. Without a work target only NO_TARGET_COMMANDS can;
+ * with one, the run state decides and everything else stays enabled.
+ */
+export function isMenuCommandEnabled(cmd: DesignerTopCommand, runMode: DesignerRunMode, hasWorkTarget = true): boolean {
+  if (!hasWorkTarget) return NO_TARGET_COMMANDS.has(cmd)
   if (cmd === 'run.stop') return runMode !== null
   if (cmd === 'run.next' || cmd === 'run.all' || cmd === 'run.rerun') return runMode === null
   return true
+}
+
+/**
+ * Whether a submenu entry can be opened: without a work target only 최근 Project can; the
+ * recent Group / Flow lists and the layout density wait for a target (0039 T#3).
+ */
+export function isSubmenuEnabled(entry: DesignerMenuEntry, hasWorkTarget = true): boolean {
+  if (hasWorkTarget) return true
+  return entry.kind === 'recent' && entry.recent === 'project'
 }
 
 /** Toolbar zoom value: a Canvas zoom factor as a whole percent (1x when there is none). */

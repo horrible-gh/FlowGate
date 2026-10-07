@@ -71,11 +71,16 @@ async function settle() {
   for (let i = 0; i < 6; i += 1) await flushPromises()
 }
 
+// flowgate.v02.0039 T#3: entering leaves the Designer without a work target (Toolbar and most
+// menu items unavailable — DesignerInitialState.0039.spec.ts). These suites check the band in
+// the work state, so the user first chooses the Project row (one click).
 async function mountShell() {
   const pinia = createPinia()
   setActivePinia(pinia)
   useProjectStore().setCurrentProject(project('p', 'Alpha'))
   wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: [i18n, pinia] } })
+  await settle()
+  wrapper.get('[data-test="project-explorer-tree"] .explorer-row').element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
   await settle()
   return wrapper
 }

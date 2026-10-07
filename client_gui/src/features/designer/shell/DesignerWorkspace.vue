@@ -1,8 +1,12 @@
 <template>
   <!-- Final container for the center work area. flowgate.v02.0026: holds the Designer Center
-       (Flow Tabs + read-only Canvas); the tab strip and the Canvas scroll / pan themselves. -->
+       (Flow Tabs + read-only Canvas); the tab strip and the Canvas scroll / pan themselves.
+       flowgate.v02.0039 T#3: with no work target the work area is an empty frame — no Flow
+       tabs, no guide text, no Canvas (confirmed initial-state design). The Center session
+       lives in the Shell, so nothing is lost while the frame is shown. -->
   <section class="designer-workspace" data-test="designer-workspace">
-    <DesignerCenter :center="center" />
+    <div v-if="unselected" class="designer-workspace-frame" data-test="designer-center-unselected" />
+    <DesignerCenter v-else :center="center" />
   </section>
 </template>
 
@@ -10,9 +14,14 @@
 import DesignerCenter from '../center/DesignerCenter.vue'
 import type { DesignerCenterSession } from '../center/designerCenterSession'
 
-defineProps<{
-  center: DesignerCenterSession
-}>()
+withDefaults(
+  defineProps<{
+    center: DesignerCenterSession
+    /** No work target yet (0039 T#3): show the empty frame instead of the Designer Center. */
+    unselected?: boolean
+  }>(),
+  { unselected: false },
+)
 </script>
 
 <style scoped>
@@ -23,5 +32,12 @@ defineProps<{
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.designer-workspace-frame {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  background: #081421;
 }
 </style>

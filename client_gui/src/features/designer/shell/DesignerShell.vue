@@ -6,13 +6,17 @@
        flowgate.v02.0036: the Bottom Dock holds the real Inspector Frame (0035 v7) next to a
        Minimap placeholder. flowgate.v02.0037: the Right Dock is the Tool Panel holding the
        real Palette / Conversation / Git parts, fed the same Project and active Flow as the
-       left Dock. flowgate.v02.0038: the Top holds the real Header / Menu Bar / Toolbar. -->
+       left Dock. flowgate.v02.0038: the Top holds the real Header / Menu Bar / Toolbar.
+       flowgate.v02.0039 T#3: until the user chooses something in the Project Explorer (or a
+       Flow is open) the Designer shows its initial unselected state — every area keeps its
+       frame, the work controls are unavailable and nothing is unfolded. -->
   <div class="designer-shell" data-test="designer-shell">
     <DesignerTop
       :run-mode="top.runMode"
       :density="top.density"
       :zoom="zoom"
       :window-state="windowState"
+      :has-work-target="hasWorkTarget"
       @command="onTopCommand"
       @toggle-panel="onTogglePanel"
       @show-tab="onShowTab"
@@ -24,17 +28,20 @@
         :active-flow="activeFlowRef"
         :mode="layout.activeLeftMode"
         :collapsed="layout.leftCollapsed"
+        :unselected="!hasWorkTarget"
         @update:mode="layout.activeLeftMode = $event"
         @collapse="layout.leftCollapsed = true"
         @expand="layout.leftCollapsed = false"
         @activate-flow="onActivateFlow"
+        @update:selection="explorerSelection = $event"
       />
-      <DesignerCenterColumn :center="center" :bottom-height="layout.bottomHeight" />
+      <DesignerCenterColumn :center="center" :bottom-height="layout.bottomHeight" :unselected="!hasWorkTarget" />
       <DesignerRightDock
         :project-id="projectId"
         :active-flow="activeFlowRef"
         :tool="layout.activeRightTool"
         :collapsed="layout.rightCollapsed"
+        :unselected="!hasWorkTarget"
         @update:tool="layout.activeRightTool = $event"
       />
     </DesignerBody>
@@ -64,10 +71,20 @@
 // ■ 중지 and back. Everything else — Project / Group / Flow commands, edit, run execution,
 // Canvas zoom, search, Inspector / Minimap display, help, notifications, AI, settings, user —
 // is left to later Feature groups (0001-R §8).
-import { computed, reactive, watch } from 'vue'
+//
+// flowgate.v02.0039 T#3 — work target. The Project context (the current Project id) is not a
+// selection (0039 0001-R §4), so entering the Designer leaves it without a work target: the
+// Project Explorer shows the tree with nothing chosen, and every other area shows the confirmed
+// initial-state design (15-designer-shell-initial-state-v7) — Toolbar and target-bound menu
+// items unavailable, an empty Center frame, the Inspector frame only, the Minimap, the right
+// Tool Panel and the left navigation chrome dimmed. The first explicit choice in the Explorer
+// (the Explorer reports its selection through `update:selection`) or an open Flow is the work
+// target, and the Designer continues exactly as before. A Project change clears both, so the
+// new Project starts unselected again.
+import { computed, reactive, ref, watch } from 'vue'
 import { useProjectStore } from '@/features/project'
 import { createDesignerCenterSession } from '../center/designerCenterSession'
-import type { ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
+import type { ExplorerSelection, ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
 import {
   createDesignerTopState,
   nextRunMode,
@@ -98,13 +115,33 @@ const center = createDesignerCenterSession()
 // the File Explorer — no lookup or conversion needed.
 const activeFlowRef = center.activeFlowRef
 
+// The user's own choice in the Project Explorer, as that part reports it (never the context).
+const explorerSelection = ref<ExplorerSelection>(null)
+
+const hasWorkTarget = computed(() => explorerSelection.value !== null || activeFlowRef.value !== null)
+
+// The run buttons' UI state belongs to a target; it does not outlive it.
+watch(hasWorkTarget, (has) => {
+  if (!has) top.runMode = null
+})
+
 // The session ignores an activation for another Project.
 function onActivateFlow(payload: ProjectExplorerFlowEvent) {
   center.openFlow(payload)
 }
 
 // A Flow of the previous Project is never carried over: a new Project clears the Center.
-watch(projectId, (id) => center.setProject(id), { immediate: true })
+// The previous Project's choice does not carry over either (0039 T#3). It is dropped here, before
+// this render, rather than only when the Explorer reports its own reset a tick later. Otherwise
+// the right parts would briefly get the new Project as a work target and start reading its data.
+watch(
+  projectId,
+  (id) => {
+    center.setProject(id)
+    explorerSelection.value = null
+  },
+  { immediate: true },
+)
 
 // The Toolbar shows the zoom the active Canvas last reported (100% before it reports one).
 const zoom = computed(() => zoomPercent(center.activeView.value?.viewport?.zoom))
@@ -116,6 +153,7 @@ const windowState = computed<DesignerWindowState>(() => ({
 }))
 
 function onTopCommand(command: DesignerTopCommand) {
+  if (!hasWorkTarget.value) return
   top.runMode = nextRunMode(top.runMode, command)
 }
 
