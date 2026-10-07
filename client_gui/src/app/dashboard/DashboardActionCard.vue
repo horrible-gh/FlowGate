@@ -63,7 +63,8 @@ function onClick(navigate: (e: MouseEvent) => void, event: MouseEvent): void {
 <style scoped>
 .dash-card {
   position: relative;
-  display: block;
+  display: flex;
+  flex-direction: column;
   flex: 0 1 340px;
   width: 340px;
   min-width: 300px;
@@ -167,6 +168,7 @@ a.dash-card:hover {
   display: block;
   min-height: 48px;
   margin-top: 14px;
+  margin-bottom: 22px;
   font-size: 14px;
   line-height: 1.7;
   color: #a5b6c9;
@@ -175,7 +177,7 @@ a.dash-card:hover {
 
 .dash-card-action {
   height: 36px;
-  margin-top: 22px;
+  margin-top: auto;
   padding: 0 14px;
   display: flex;
   align-items: center;
