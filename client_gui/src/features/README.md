@@ -16,7 +16,10 @@ flowgate.v02.0023에서 `project/`에 프로젝트 그룹 트리(`/api/v1/projec
 Project Explorer와 File Explorer(0024)가 같은 프로젝트 문맥을 함께 씁니다. flowgate.v02.0024
 T0005에서는 File Explorer용 읽기 전용 Flow 파일 문맥(프로젝트 Git status, Flow tree, Base 기준
 changes, 단일 파일 diff, AI activity) API와 store 로더(`loadProjectGitStatus`/`loadFlowFileTree`/
-`loadFlowChanges`/`loadFlowFileDiff`/`loadFlowAiActivity`)를 추가했습니다.
+`loadFlowChanges`/`loadFlowFileDiff`/`loadFlowAiActivity`)를 추가했습니다. flowgate.v02.0033에서는
+Designer Git 부품이 같은 로더를 쓰도록 Git status 정규화에 pending 행·Base dirty·Base untracked
+필드를, AI activity에 run id·상태·action scope를 추가 필드로만 넓히고, Base 파일 diff·승인 후보
+파일 diff 로더(`loadBaseFileDiff`/`loadMergeReviewFileDiff`)를 추가했습니다.
 
 `designer/`는 v0.2 Designer 부품을 둡니다. `designer/projectExplorer/`가 Project > Group >
 Flow 탐색 부품(ProjectExplorer/ProjectTree/ProjectRow/GroupRow/FlowRow, 공통 행 프레임
@@ -84,8 +87,21 @@ AI 호출 polling tick(2.5초)마다, 호출이 끝난 직후, 결정 직후에 
 diff를 카드 아래에 엽니다. 탭 전환·Tool Panel Container·Palette·Git·Designer 조립은 이 부품에
 포함하지 않습니다.
 
+`git/`은 flowgate.v02.0033에서 추가된 Designer 우측 도구 영역용 Git 독립 부품입니다(시안 06 v7).
+`DesignerGitPanel`(`:project-id` + 활성 Flow `:flow`, `:active`, `:read-only`, `:source?` →
+`@badge-change`/`@open-diff`/`@open-confirm-settings`/`@windows-change`, expose
+`refresh`/`restoreWindow`/`closeWindow`)이 공개 경계이며, Git Header와 예외 카드(병합 충돌 · AI
+해결 중 · 병합 승인 대기 · 반영 보류 · 흐름 밖 미커밋 변경 · 원격 반영 실패)와 두 모달리스(충돌
+해결, 원격 반영 실패 상세)를 담습니다. 상태는 패널 수명의 `gitSession.ts` 세션이 단일 소유하고
+(Pinia 아님), 조회는 `gitSource.ts` 경계 뒤에서 `project/` 로더를, 동작은 `api.ts`의 기존 Git
+계약(conflicts/abort/review/approve/reject, finalize, push, base-commit/revert/remove,
+ai-invoke start/cancel/providers)을 씁니다. 보류 그룹 예정 반영 방식(S1)과 새 파일 총수·전체
+범위(S2) 서버 보강 전에는 1단계 잠정 동작이고, 응답에 그 필드가 있으면 2단계로 연결됩니다. Tool
+Panel Container·Designer 작업 표시줄·Center diff 탭·Inspector 확인 설정은 의도 event로만 경계를
+두고 이 부품에 포함하지 않습니다.
+
 `settings/`는 flowgate.v02.0020에서 추가된 Environment Settings(환경 설정) Feature입니다
 (시안 11~14: 워크스페이스 목록/상세, 시스템 › 사용자 / 보안 — `features/settings/index.ts`가
 라우팅되는 화면만 내보냅니다).
 
-Git 등 나머지 기능 이식은 별도 그룹의 후속 작업 대상입니다.
+나머지 기능 이식은 별도 그룹의 후속 작업 대상입니다.

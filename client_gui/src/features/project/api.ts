@@ -6,11 +6,14 @@
 // read-only project group tree (fetchProjectGroupTree) so the Designer and later v0.2 screens
 // share one tree request path instead of each growing one. flowgate.v02.0024 T0005 adds the
 // read-only Flow file context the Designer File Explorer needs (project Git status, Flow
-// tree, Base-relative changes, one-file diff, AI activity) below. archive/restore/
-// source-path and Git mutation endpoints are still not called here.
+// tree, Base-relative changes, one-file diff, AI activity) below. flowgate.v02.0033 widens the
+// Git status / AI activity normalization with the fields the Designer Git part reads and adds
+// the Base file and merge review file diff reads. archive/restore/source-path and Git
+// mutation endpoints are still not called here (the Git part's own api.ts owns those).
 
 import { extractApiErrorMessage, getRequest, postRequest } from '@shared/api'
 import type {
+  BaseFileDiff,
   CreateProjectInput,
   FlowAiActivity,
   FlowChangeSet,
@@ -19,7 +22,10 @@ import type {
   FlowFileTree,
   GroupTreeNode,
   GroupTreeNodeKind,
+  MergeReviewFileDiff,
   Project,
+  ProjectGitPendingPlan,
+  ProjectGitPendingRow,
   ProjectGitStatus,
   ProjectModule,
 } from './types'
@@ -188,6 +194,18 @@ interface RawGitSlot {
   writable?: boolean
 }
 
+interface RawGitPendingRow {
+  group_id: string
+  status?: string | null
+  merge_id?: number | null
+  ac_doc_id?: string | null
+  review_state?: string | null
+  final_approval_bound?: boolean | null
+  // S1 (flowgate.v02.0033-D §4.6) working names; absent on a server without S1.
+  planned_action?: string | null
+  planned_target_branch?: string | null
+}
+
 interface RawGitStatus {
   enabled?: boolean
   // The server fills an unset Base with its legacy main branch; base_branch_configured says
@@ -195,6 +213,18 @@ interface RawGitStatus {
   base_branch?: string | null
   base_branch_configured?: boolean | null
   slots?: RawGitSlot[] | null
+  pending?: RawGitPendingRow[] | null
+  base_dirty?: {
+    files?: string[] | null
+    merge_in_progress?: unknown
+    ai_run?: unknown
+  } | null
+  base_untracked?: {
+    files?: string[] | null
+    truncated?: boolean | null
+    // S2 working name; absent on a server without S2.
+    total?: number | null
+  } | null
 }
 
 interface RawFileNode {
@@ -246,7 +276,32 @@ function branchOrNull(value: string | null | undefined): string | null {
   return trimmed || null
 }
 
+// S1 is detected by the field being there at all, not by its value (0033-D §3.4).
+function toPendingPlan(raw: RawGitPendingRow): ProjectGitPendingPlan | null {
+  if (!('planned_action' in raw) && !('planned_target_branch' in raw)) return null
+  return {
+    action: branchOrNull(raw.planned_action),
+    targetBranch: branchOrNull(raw.planned_target_branch),
+  }
+}
+
+function toPendingRow(raw: RawGitPendingRow): ProjectGitPendingRow {
+  return {
+    groupId: raw.group_id,
+    status: raw.status ?? '',
+    mergeId: typeof raw.merge_id === 'number' ? raw.merge_id : null,
+    acDocId: raw.ac_doc_id || null,
+    reviewState: raw.review_state || null,
+    finalApprovalBound: raw.final_approval_bound === true,
+    plan: toPendingPlan(raw),
+  }
+}
+
+const pathList = (files: string[] | null | undefined) =>
+  (files ?? []).filter((f) => typeof f === 'string' && f).map(toSlashes)
+
 function toGitStatus(raw: RawGitStatus): ProjectGitStatus {
+  const untracked = raw.base_untracked ?? {}
   return {
     enabled: raw.enabled === true,
     // Only a Base the server confirms as configured counts. Its main-branch fallback for an
@@ -258,7 +313,26 @@ function toGitStatus(raw: RawGitStatus): ProjectGitStatus {
       status: slot.status ?? '',
       writable: slot.writable === true,
     })),
+    pending: (raw.pending ?? []).filter((row) => row && row.group_id).map(toPendingRow),
+    baseDirty: {
+      files: pathList(raw.base_dirty?.files),
+      mergeInProgress: !!raw.base_dirty?.merge_in_progress,
+      aiRun: !!raw.base_dirty?.ai_run,
+    },
+    baseUntracked: {
+      files: pathList(untracked.files),
+      truncated: untracked.truncated === true,
+      total: typeof untracked.total === 'number' && Number.isFinite(untracked.total) ? untracked.total : null,
+    },
   }
+}
+
+// Keeps the transport error on the thrown one, so a consumer that has to tell a 403/404 or
+// a network failure apart (the Designer Git part, 0033-D §4.5) can read the server code.
+function loadError(error: unknown, fallback: string): Error {
+  const wrapped = new Error(extractApiErrorMessage(error, fallback)) as Error & { cause?: unknown }
+  wrapped.cause = error
+  return wrapped
 }
 
 function toFileNode(raw: RawFileNode): FlowFileNode {
@@ -280,7 +354,7 @@ export async function fetchProjectGitStatus(projectId: string): Promise<ProjectG
     const raw = response.data?.status
     return raw ? toGitStatus(raw) : null
   } catch (error) {
-    throw new Error(extractApiErrorMessage(error, 'Failed to load the project Git status.'))
+    throw loadError(error, 'Failed to load the project Git status.')
   }
 }
 
@@ -374,13 +448,82 @@ export async function fetchFlowFileDiff(
 /** GET /api/v1/ai-invoke/active?group_id= — whether an AI run currently owns the group. */
 export async function fetchFlowAiActivity(groupId: string): Promise<FlowAiActivity> {
   try {
-    const response = await getRequest<{ active?: boolean; status?: string | null }>(
-      '/api/v1/ai-invoke/active',
-      { group_id: groupId },
-    )
+    const response = await getRequest<{
+      active?: boolean
+      status?: string | null
+      run_id?: string | null
+      action_scope?: string | null
+    }>('/api/v1/ai-invoke/active', { group_id: groupId })
     const data = response.data ?? {}
-    return { active: data.active === true && data.status !== 'finished' }
+    const active = data.active === true && data.status !== 'finished'
+    return {
+      active,
+      runId: active ? data.run_id || null : null,
+      status: active ? data.status || null : null,
+      actionScope: active ? data.action_scope || null : null,
+    }
   } catch (error) {
-    throw new Error(extractApiErrorMessage(error, 'Failed to load the Flow AI activity.'))
+    throw loadError(error, 'Failed to load the Flow AI activity.')
+  }
+}
+
+// ── Base / merge review file diff (flowgate.v02.0033) ─────────────────────────────────
+
+interface RawBaseFileDiff {
+  branch?: string | null
+  commit?: string | null
+  path: string
+  status: 'M' | 'A' | 'D'
+  old: BaseFileDiff['old']
+  new: BaseFileDiff['new']
+}
+
+/**
+ * GET /api/v1/projects/{pid}/git/diff?path= — HEAD blob vs working tree of one Base
+ * checkout file. `status` (A: not in HEAD / D: not on disk / M) is the server's answer; a
+ * hidden or vanished path is a 404.
+ */
+export async function fetchBaseFileDiff(projectId: string, path: string): Promise<BaseFileDiff> {
+  try {
+    const response = await getRequest<{ data: RawBaseFileDiff }>(`${projectGitPath(projectId)}/diff`, { path })
+    const data = response.data.data
+    return {
+      branch: branchOrNull(data.branch),
+      commit: data.commit ?? null,
+      path: toSlashes(data.path),
+      status: data.status,
+      old: data.old,
+      new: data.new,
+    }
+  } catch (error) {
+    throw loadError(error, 'Failed to load the file diff.')
+  }
+}
+
+interface RawReviewFileDiff {
+  path: string
+  status: 'M' | 'A' | 'D'
+  old: MergeReviewFileDiff['old']
+  new: MergeReviewFileDiff['new']
+}
+
+/**
+ * GET /api/v1/groups/{gid}/git/merge/{merge_id}/review-diff?path= — old/new of one file of
+ * the frozen review candidate (not the working tree).
+ */
+export async function fetchMergeReviewFileDiff(
+  groupId: string,
+  mergeId: number,
+  path: string,
+): Promise<MergeReviewFileDiff> {
+  try {
+    const response = await getRequest<{ data: RawReviewFileDiff }>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/git/merge/${encodeURIComponent(String(mergeId))}/review-diff`,
+      { path },
+    )
+    const data = response.data.data
+    return { groupId, mergeId, path: toSlashes(data.path), status: data.status, old: data.old, new: data.new }
+  } catch (error) {
+    throw loadError(error, 'Failed to load the file diff.')
   }
 }

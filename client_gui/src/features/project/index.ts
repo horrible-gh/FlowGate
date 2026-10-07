@@ -7,7 +7,10 @@
 export { useProjectStore } from './store'
 // Group tree types (flowgate.v02.0023) and Flow file context read models (flowgate.v02.0024
 // T0005) — type-only, so the runtime surface stays the store factory + ProjectDialog.
+// flowgate.v02.0033 adds the Base / review file diff and Git status row types the Designer
+// Git part reads through the same store loaders.
 export type {
+  BaseFileDiff,
   CreateProjectInput,
   FetchGroupTreeOptions,
   FlowAiActivity,
@@ -20,7 +23,12 @@ export type {
   FlowRef,
   GroupTreeNode,
   GroupTreeNodeKind,
+  MergeReviewFileDiff,
   Project,
+  ProjectGitBaseDirty,
+  ProjectGitBaseUntracked,
+  ProjectGitPendingPlan,
+  ProjectGitPendingRow,
   ProjectGitSlot,
   ProjectGitStatus,
   ProjectModule,

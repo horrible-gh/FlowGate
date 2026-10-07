@@ -20,6 +20,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type {
+  BaseFileDiff,
   CreateProjectInput,
   FetchGroupTreeOptions,
   FlowAiActivity,
@@ -27,16 +28,19 @@ import type {
   FlowFileDiff,
   FlowFileTree,
   GroupTreeNode,
+  MergeReviewFileDiff,
   Project,
   ProjectGitStatus,
 } from './types'
 import {
   createProject as createProjectApi,
   fetchActiveProjects as fetchActiveProjectsApi,
+  fetchBaseFileDiff,
   fetchFlowAiActivity,
   fetchFlowChangeSet,
   fetchFlowFileDiff,
   fetchFlowFileTree,
+  fetchMergeReviewFileDiff,
   fetchProjectGitStatus,
   fetchProjectGroupTree as fetchProjectGroupTreeApi,
 } from './api'
@@ -246,6 +250,17 @@ export const useProjectStore = defineStore('project', () => {
     return fetchFlowAiActivity(groupId)
   }
 
+  // flowgate.v02.0033: the Designer Git part's file reads. A conflict / uncommitted file is a
+  // Base checkout file (HEAD vs working tree); a merge review file is read from the frozen
+  // review candidate. Stateless like the loaders above.
+  function loadBaseFileDiff(projectId: string, path: string): Promise<BaseFileDiff> {
+    return fetchBaseFileDiff(projectId, path)
+  }
+
+  function loadMergeReviewFileDiff(groupId: string, mergeId: number, path: string): Promise<MergeReviewFileDiff> {
+    return fetchMergeReviewFileDiff(groupId, mergeId, path)
+  }
+
   function openDialog(): void {
     dialogOpen.value = true
     void fetchProjects()
@@ -281,5 +296,7 @@ export const useProjectStore = defineStore('project', () => {
     loadFlowChanges,
     loadFlowFileDiff,
     loadFlowAiActivity,
+    loadBaseFileDiff,
+    loadMergeReviewFileDiff,
   }
 })
