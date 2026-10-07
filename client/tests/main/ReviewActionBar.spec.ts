@@ -1725,7 +1725,9 @@ describe('ReviewActionBar — finalize target selector (T0016 C8)', () => {
     })
   }
 
-  it('defaults to the group work base ahead of the remembered project target and flags merge_only unmerge (0665)', async () => {
+  // 0685 T0006 §3: approving into the work base itself never asks for the check again —
+  // the merge_only unmerge limit is still told, but as a notice, not a gate.
+  it('approves the default work-base target with merge_only without a check, keeping the unmerge notice (0665 → 0685)', async () => {
     mockWorkBaseGroup((target) => ({
       work_base_ref: 'v0.2', unmerge_supported: target === 'main', incoming_work_base_commits: target === 'main' ? 3 : null,
     }))
@@ -1736,18 +1738,18 @@ describe('ReviewActionBar — finalize target selector (T0016 C8)', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="finalize-retarget-notice"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="finalize-unmerge-unsupported"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="finalize-target-ack"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="finalize-unmerge-unsupported"]').text()).toBe(
+      i18n.global.t('main.git_finalize.unmerge_unsupported_notice', { target: 'v0.2' }),
+    )
+    expect(wrapper.find('[data-test="finalize-target-ack"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="finalize-target-ack-reason"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="finalize-target-warn"]').classes()).not.toContain('ab-git-target-warn--ack')
     expect(wrapper.find('[data-test="finalize-work-base"]').text()).toContain('1111111111')
 
-    // Without the acknowledgement the approval does not run.
+    const confirm = wrapper.find('[data-dialog-action-id="confirm"]')
+    expect(confirm.attributes('disabled')).toBeUndefined()
     postRequest.mockClear()
-    await (wrapper.vm as any).doApprove()
-    await flushPromises()
-    expect(postRequest.mock.calls.some(([url]) => String(url).includes('/approve'))).toBe(false)
-
-    ;(wrapper.vm as any).gitTargetAck = true
-    await (wrapper.vm as any).doApprove()
+    await confirm.trigger('click')
     await flushPromises()
     const approveCall = postRequest.mock.calls.find(([url]) => String(url).includes('/documents/review_transitions/approve'))
     expect(approveCall?.[1]).toMatchObject({ git_action: 'merge_only', git_target_branch: 'v0.2' })
@@ -1776,6 +1778,49 @@ describe('ReviewActionBar — finalize target selector (T0016 C8)', () => {
     // main IS the project base: unmerge stays available, but the target still needs the check.
     expect(wrapper.find('[data-test="finalize-unmerge-unsupported"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="finalize-target-ack"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  // 0685 T0006 §4: the check that remains for another target names the real target, sits in
+  // the same highlighted box as the warnings, and an unchecked dialog stays open with its
+  // confirm button disabled instead of closing behind a toast.
+  it('keeps the dialog open with confirm disabled until the retarget check is ticked, then sends target and action (0685)', async () => {
+    mockWorkBaseGroup((target) => ({
+      work_base_ref: 'v0.2', unmerge_supported: target === 'main', incoming_work_base_commits: target === 'main' ? 3 : null,
+    }))
+    const wrapper = mount(ReviewActionBar, { props: acProps, global: { plugins: [i18n] } })
+    await flushPromises()
+    await wrapper.find('button.btn-success.btn-sm').trigger('click')
+    await flushPromises()
+    await wrapper.find('select#ab-git-target').setValue('main')
+    await flushPromises()
+
+    const box = wrapper.find('[data-test="finalize-target-warn"]')
+    expect(box.classes()).toContain('ab-git-target-warn--ack')
+    const ack = box.find('[data-test="finalize-target-ack"]')
+    expect(ack.text()).toBe(i18n.global.t('main.git_finalize.target_ack', { base: 'v0.2', target: 'main' }))
+    expect(ack.text()).toContain('main')
+    expect(box.find('[data-test="finalize-target-ack-reason"]').text()).toBe(
+      i18n.global.t('main.git_finalize.target_ack_required'),
+    )
+
+    const confirm = () => wrapper.find('[data-dialog-action-id="confirm"]')
+    expect(confirm().attributes('disabled')).toBeDefined()
+    postRequest.mockClear()
+    await confirm().trigger('click')
+    await flushPromises()
+    expect((wrapper.vm as any).showApproveConfirm).toBe(true)
+    expect(wrapper.find('[data-test="finalize-target-ack"]').exists()).toBe(true)
+    expect(postRequest.mock.calls.some(([url]) => String(url).includes('/approve'))).toBe(false)
+
+    await wrapper.find('[data-test="finalize-target-ack-input"]').setValue(true)
+    await flushPromises()
+    expect(wrapper.find('[data-test="finalize-target-ack-reason"]').exists()).toBe(false)
+    expect(confirm().attributes('disabled')).toBeUndefined()
+    await confirm().trigger('click')
+    await flushPromises()
+    const approveCall = postRequest.mock.calls.find(([url]) => String(url).includes('/documents/review_transitions/approve'))
+    expect(approveCall?.[1]).toMatchObject({ git_action: 'merge_only', git_target_branch: 'main' })
     wrapper.unmount()
   })
 })

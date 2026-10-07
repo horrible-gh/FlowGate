@@ -2313,10 +2313,19 @@ export default {
       target_busy_group: '対象ブランチ {target} は Group {group} の finalize #{merge_id} ({source} → {target}) が占有しています — 状態: {state}、開始: {started_at}',
       target_busy_unknown: '対象ブランチ {target} はマージ試行 #{merge_id} が占有しています — 状態: {state}、開始: {started_at}',
       target_owner_mismatch: '対象ブランチ {target} のワークスペース所有者が開いている試行と一致しないため、安全のため承認を止めました (マージ #{merge_id}、理由: {reason})。',
-      target_busy_hint_branch_merge: 'そのマージのレビューを承認するかマージを中止すると、再度承認できます。差し戻しでは占有は解除されません。',
-      target_busy_hint_group: 'その Group のコンフリクト/レビューを完了するか中止すると、再度承認できます。',
-      target_busy_open_review: '占有中のマージを開く',
+      target_busy_hint_branch_merge: 'マージのレビューを完了するかマージを中止してから、もう一度[承認]を押してください。マージのレビューを差し戻しても占有は解除されません。',
+      target_busy_hint_group: 'その Group のコンフリクト/レビューを完了するか中止してから、もう一度[承認]を押してください。',
+      // 0685 T0006 §1-2 — 短い案内 + 対象/動作を示すボタン。上の長い文言は[詳細]に残す。
+      target_busy_open_review: 'マージ #{merge_id} をレビュー',
       target_busy_state_unknown: '不明',
+      target_busy_open_review_title: '{source} → {target} のマージレビュー画面を開きます。承認は自動では再実行されません。',
+      target_busy_summary: '{target} で進行中のマージがあるため承認できません。',
+      target_owner_mismatch_summary: '{target} のワークスペース所有者を確認できないため、安全のため承認を止めました。',
+      target_busy_meta_branch_merge: '{source} → {target} · マージ #{merge_id} · {state}',
+      target_busy_meta_group: 'Group {group} · finalize #{merge_id} ({source} → {target}) · {state}',
+      target_busy_meta_unknown: 'マージ試行 #{merge_id} · {state}',
+      target_blocker_details: '詳細',
+      target_blocker_cleared: 'マージの状態が変わりました。もう一度[承認]を押して進めてください。',
       // 0607 T0004 §3.6 — 承認の応答が失われたあと、サーバーの Git 結果を確認している間の案内。
       git_settle_in_progress: 'サーバーがまだ Git 作業を処理しています。結果を確認できるまで承認ボタンをロックします。',
       git_settle_deferred: 'Git マージが競合で保留されました。競合解決画面から続けてください。',
@@ -3339,6 +3348,9 @@ export default {
       invalid_state: '現在の状態ではこの Git 操作を実行できません。',
       invalid_request: 'Git リクエストが正しくありません。',
       workflow_revert_pending: 'Time Machine の巻き戻しで承認コミットの取り消しがまだ終わっていません。反映案(TR2)画面の[コミット取消を再試行]でコミット取り消しを先に完了してください。それまではこのグループを再び巻き戻したり次の段階へ進めたりできません。',
+      // 0685 T0006 §5 — マージ開始後にブランチが動き、レビュー結果を反映できない場合。
+      stale_source: 'マージ開始後にソースブランチが変わったため、現在のレビュー結果をそのまま反映できません。このマージを中止して、もう一度開始してください。',
+      stale_target: 'マージ開始後に対象ブランチが変わったため、現在のレビュー結果をそのまま反映できません。このマージを中止して、もう一度開始してください。',
     },
     api_errors: {
       validation_failed: {
@@ -3428,8 +3440,9 @@ export default {
       // flowgate.default.0665 T0004 — グループの work base と異なる対象 / unmerge 制限
       incoming_work_base_commits: '{target} にまだない {base} のコミット {n} 件がこのグループの変更と一緒に入ります。',
       unmerge_unsupported_notice: '{target} はプロジェクトの基本ブランチではないため、このマージ(merge_only)は後で unmerge で取り消せません。取り消すには対象ブランチで revert するか Time Machine で再オープンします。',
-      target_ack: '上記を確認し、この対象へマージします。',
-      target_ack_required: 'マージ先の警告を確認(チェック)してから承認してください。',
+      // 0685 T0006 §4 — 作業基準と異なる対象を選んだ場合だけ表示する確認チェック。
+      target_ack: '{base} ではなく {target} にマージします。上記の警告を確認しました。',
+      target_ack_required: '上のチェックを入れると[承認]を押せます。',
       work_base_line: '作業基準: {base} ({sha})',
       commit_message_label: 'コミットメッセージ',
       commit_message_hint: '残りの変更を取り込むコミットの件名として使われます。必要に応じて編集してください。',

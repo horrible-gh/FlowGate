@@ -2323,10 +2323,19 @@ export default {
       target_busy_group: '대상 브랜치 {target}을(를) Group {group}의 finalize #{merge_id} ({source} → {target})가 점유 중입니다 — 상태: {state}, 시작: {started_at}',
       target_busy_unknown: '대상 브랜치 {target}을(를) 병합 시도 #{merge_id}가 점유 중입니다 — 상태: {state}, 시작: {started_at}',
       target_owner_mismatch: '대상 브랜치 {target}의 작업공간 소유자가 열린 시도와 맞지 않아 안전을 위해 승인을 멈췄습니다 (병합 #{merge_id}, 사유: {reason}).',
-      target_busy_hint_branch_merge: '그 병합의 검토를 승인하거나 병합을 중단하면 다시 승인할 수 있습니다. 반려는 점유를 풀지 않습니다.',
-      target_busy_hint_group: '그 Group의 충돌/검토를 끝내거나 중단하면 다시 승인할 수 있습니다.',
-      target_busy_open_review: '막고 있는 병합 열기',
+      target_busy_hint_branch_merge: '병합 검토를 마치거나 병합을 중단한 뒤 [승인]을 다시 누르세요. 병합 검토를 반려해도 점유는 풀리지 않습니다.',
+      target_busy_hint_group: '그 Group의 충돌/검토를 끝내거나 중단한 뒤 [승인]을 다시 누르세요.',
+      // 0685 T0006 §1-2 — 짧은 안내 + 대상/행동 중심 버튼. 위의 긴 문구는 [상세 정보]에 남는다.
+      target_busy_open_review: '병합 #{merge_id} 검토',
       target_busy_state_unknown: '알 수 없음',
+      target_busy_open_review_title: '{source} → {target} 병합 검토 화면을 엽니다. 승인은 자동으로 다시 실행되지 않습니다.',
+      target_busy_summary: '{target}에 진행 중인 병합이 있어 승인할 수 없습니다.',
+      target_owner_mismatch_summary: '{target} 작업공간의 소유자를 확인할 수 없어 안전을 위해 승인을 멈췄습니다.',
+      target_busy_meta_branch_merge: '{source} → {target} · 병합 #{merge_id} · {state}',
+      target_busy_meta_group: 'Group {group} · finalize #{merge_id} ({source} → {target}) · {state}',
+      target_busy_meta_unknown: '병합 시도 #{merge_id} · {state}',
+      target_blocker_details: '상세 정보',
+      target_blocker_cleared: '병합 상태가 바뀌었습니다. [승인]을 다시 눌러 진행하세요.',
       // 0607 T0004 §3.6 — Git 을 동반한 승인이 응답 없이 끊겼을 때 서버 상태를 확인하는 동안의 안내.
       git_settle_in_progress: '서버가 Git 작업을 아직 처리하고 있습니다. 결과가 확인될 때까지 승인 버튼을 잠급니다.',
       git_settle_deferred: 'Git 병합이 충돌로 보류되었습니다. 충돌 해결 화면에서 이어서 진행하세요.',
@@ -3342,6 +3351,9 @@ export default {
       invalid_state: '현재 상태에서는 이 Git 작업을 수행할 수 없습니다.',
       invalid_request: 'Git 요청이 올바르지 않습니다.',
       workflow_revert_pending: 'Time Machine 되돌리기의 승인 커밋 취소가 아직 끝나지 않았습니다. 반영안(TR2) 화면의 [커밋 취소 다시 시도]로 커밋 취소를 먼저 마치세요. 그 전에는 이 그룹을 다시 되돌리거나 다음 단계로 진행할 수 없습니다.',
+      // 0685 T0006 §5 — 병합 시작 뒤 브랜치가 움직여 검토 결과를 반영할 수 없는 경우.
+      stale_source: '병합을 시작한 뒤 원본 브랜치가 바뀌어 지금의 검토 결과를 그대로 반영할 수 없습니다. 이 병합을 중단하고 다시 시작하세요.',
+      stale_target: '병합을 시작한 뒤 대상 브랜치가 바뀌어 지금의 검토 결과를 그대로 반영할 수 없습니다. 이 병합을 중단하고 다시 시작하세요.',
     },
     // flowgate.default.0578 T0010 §2.2/작업6 — extractApiErrorMessage와 비-Git 오류
     // sink가 공유하는 등록 code 문구. GROUP_AI_RUN_LOCKED는 새 키를 만들지 않고
@@ -3434,8 +3446,9 @@ export default {
       // flowgate.default.0665 T0004 — 그룹 work base와 다른 대상, unmerge 제한 경고
       incoming_work_base_commits: '{target}에 없는 {base} 커밋 {n}개가 이 그룹 변경과 함께 들어갑니다.',
       unmerge_unsupported_notice: '{target}은(는) 프로젝트 기본 브랜치가 아니어서 이 병합(merge_only)은 나중에 되돌리기(unmerge)로 취소할 수 없습니다. 취소가 필요하면 대상 브랜치에서 revert하거나 Time Machine 재개방을 써야 합니다.',
-      target_ack: '위 내용을 확인했고 이 대상으로 진행합니다.',
-      target_ack_required: '머지 대상 경고를 확인(체크)해야 승인할 수 있습니다.',
+      // 0685 T0006 §4 — 작업 기준과 다른 대상을 고른 경우에만 표시되는 확인 체크.
+      target_ack: '{base}이(가) 아닌 {target}에 병합합니다. 위 경고를 확인했습니다.',
+      target_ack_required: '위 확인란을 체크해야 [승인]을 누를 수 있습니다.',
       work_base_line: '작업 기준: {base} ({sha})',
       commit_message_label: '커밋 메시지',
       commit_message_hint: '남은 변경을 흡수하는 커밋의 제목으로 쓰입니다. 필요하면 수정하세요.',

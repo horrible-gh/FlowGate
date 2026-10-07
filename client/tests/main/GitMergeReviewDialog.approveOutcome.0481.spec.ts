@@ -194,4 +194,27 @@ describe('GitMergeReviewDialog approve outcome (0481 T0010 rev3)', () => {
       dispatch.mockRestore()
     },
   )
+
+  // flowgate.default.0685 T0006 §5: the #206 incident — the source branch moved after the
+  // merge started. The toast and the outcome box say so and what to do, not "failed".
+  it.each([
+    ['stale_source', 'source branch'],
+    ['stale_target', 'target branch'],
+  ])('tells %s as a moved branch with the abort-and-restart action', async (code, words) => {
+    postRequest.mockRejectedValue(Object.assign(new Error('Request failed with status code 409'), {
+      isAxiosError: true,
+      response: { status: 409, data: { ok: false, error: { code, message: 'source branch moved' } } },
+    }))
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    await approve(wrapper)
+
+    const expected = i18n.global.t(`main.git_errors.${code}`)
+    expect(showToast).toHaveBeenLastCalledWith(expected, 'danger')
+    expect(expected).toContain(words)
+    expect(expected).toContain('Abort this merge and start it again')
+    expect(expected).not.toBe(i18n.global.t('main.git_finalize.failed'))
+    expect(wrapper.emitted('close')).toBeUndefined()
+  })
 })
