@@ -91,10 +91,15 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
     }
   })
 
-  it('is not assembled into the Designer yet (the Tool Panel Container is a later group)', () => {
-    for (const file of filesUnder(join(SRC, 'features/designer'))) {
-      expect(read(file), relative(SRC, file)).not.toMatch(/features\/conversation/)
-    }
+  // flowgate.v02.0037 — the Designer right Tool Panel assembles the part through the public
+  // surface, and only there.
+  it('is assembled into the Designer only by the right Tool Panel, through the public surface', () => {
+    const users = filesUnder(join(SRC, 'features/designer'))
+      .filter((file) => /features\/conversation/.test(read(file)))
+      .map((file) => relative(SRC, file).replace(/\\/g, '/'))
+    expect(users).toEqual(['features/designer/shell/DesignerRightDock.vue'])
+    const dock = read(join(SRC, 'features/designer/shell/DesignerRightDock.vue'))
+    expect(importsOf(dock).filter((spec) => /features\/conversation/.test(spec))).toEqual(['@/features/conversation'])
   })
 
   it('has the same conversation message keys in every locale', () => {

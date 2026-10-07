@@ -29,10 +29,12 @@ describe('features/designer structure (0024 T0005)', () => {
     expect(Object.keys(DesignerFeature).sort()).toEqual(['DesignerFileExplorer', 'DesignerShell', 'ProjectExplorer'])
   })
 
+  // flowgate.v02.0037: the right Tool Panel also mounts the Conversation and Git parts, through
+  // their public surfaces only (each part owns its own API; the Designer still owns none).
   it('owns no API/transport/store of its own: data comes only through the features/project public surface', () => {
     for (const file of FILES) {
       for (const spec of importsOf(read(file))) {
-        expect(spec, rel(file)).not.toMatch(/^@shared\/|^axios$|^pinia$|^vue-router$|^@\/features\/(?!project$)/)
+        expect(spec, rel(file)).not.toMatch(/^@shared\/|^axios$|^pinia$|^vue-router$|^@\/features\/(?!(project|conversation|git)$)/)
         expect(spec, rel(file)).not.toMatch(/features\/project\/(api|store|types)/)
       }
     }

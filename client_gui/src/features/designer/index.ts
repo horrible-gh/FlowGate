@@ -25,3 +25,6 @@ export { default as DesignerShell } from './shell/DesignerShell.vue'
 // Panel Container inside features/designer only, so it adds no export here either.
 // flowgate.v02.0036 — the bottom Inspector Frame (inspector/DesignerInspector.vue) is mounted by
 // the Shell's Bottom Dock only, so it adds no export here either.
+// flowgate.v02.0037 — the right Tool Panel Container is the Shell's Right Dock
+// (shell/DesignerRightDock.vue); it mounts the Palette, Conversation and Git parts and adds no
+// export here either.

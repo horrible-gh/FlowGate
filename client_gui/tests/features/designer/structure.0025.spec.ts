@@ -44,6 +44,11 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       // flowgate.v02.0036 — bottom Inspector: the Frame and the Graph Node type it is given.
       /^\.\.\/inspector\/DesignerInspector\.vue$/,
       /^\.\.\/center\/graph\/flowGraph$/,
+      // flowgate.v02.0037 — right Tool Panel: the Palette part and the public surfaces of the
+      // Conversation and Git parts.
+      /^\.\.\/palette\/PalettePanel\.vue$/,
+      /^@\/features\/conversation$/,
+      /^@\/features\/git$/,
     ]
     for (const name of SHELL_FILES) {
       for (const spec of importsOf(read(join(SHELL, name)))) {
@@ -58,6 +63,7 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
         expect(spec, name).not.toMatch(/projectExplorer\/(?!ProjectExplorer\.vue$|projectExplorerTree$)/)
         expect(spec, name).not.toMatch(/fileExplorer\/(?!DesignerFileExplorer\.vue$)/)
         expect(spec, name).not.toMatch(/designer\/shared\//)
+        expect(spec, name).not.toMatch(/palette\/(?!PalettePanel\.vue$)|features\/(conversation|git)\//)
         expect(spec, name).not.toMatch(/^\.\.\/index$|^\.\.$|@\/features\/designer/)
       }
     }
