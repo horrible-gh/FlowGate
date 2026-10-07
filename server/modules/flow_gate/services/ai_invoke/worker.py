@@ -1559,13 +1559,6 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
                     elif call["name"] in api_server_tools.SELF_CHECK_NAMES:
                         _status, resp = api_server_tools.self_check_call(run, current_token, call["name"], call["input"])
-                    elif call["name"] == "run_test":
-                        _status, resp = api_server_tools.run_test(run, call["input"], _svc()._remaining_sec(run))
-                    elif call["name"] == "access_source_bundle":
-                        _status, resp = api_server_tools.access_source_bundle(run, call["input"])
-                    elif call["name"] == "run_source_bundle":
-                        _status, resp = api_server_tools.run_source_bundle(
-                            run, call["input"], _svc()._remaining_sec(run))
                     elif call["name"] == "request_source_snapshot":
                         _status, resp = api_server_tools.request_source_snapshot(
                             run, current_token, call["input"],
@@ -1612,14 +1605,14 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     )
                 # 0505 T0006 (DB0005 3.3): read_document/create_question both dispatch
                 # through _api_bound_request -- one self-HTTP call point, one name. The
-                # other three branches above (SOURCE_OPS, run_test, read_help) are direct
+                # other two branches above (SOURCE_OPS, read_help) are direct
                 # in-process handlers, never self-HTTP, and stay out of last_tool_name
                 # entirely (DB0005 2 scope note).
                 if (
                     call["name"] not in api_server_tools.SOURCE_OPS
                     and call["name"] not in (
-                        "run_test", "read_help", _CHAT_HISTORY_TOOL_NAME, chat_command_service.TOOL_NAME,
-                        *api_server_tools.SNAPSHOT_NAMES, *api_server_tools.BUNDLE_NAMES,
+                        "read_help", _CHAT_HISTORY_TOOL_NAME, chat_command_service.TOOL_NAME,
+                        *api_server_tools.SNAPSHOT_NAMES,
                     )
                 ):
                     run["last_tool_name"] = "api_bound_request"

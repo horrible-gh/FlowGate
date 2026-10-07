@@ -1,4 +1,4 @@
-"""0654 T0004: the tr_self_check help item and the source_bundles recovery guidance.
+"""0654 T0004: the tr_self_check help item (0684 T#4 removed the source_bundles item).
 
 The item is documentation only. These tests pin it to the contracts it describes
 (``api_server_tools.SCHEMAS["run_self_check"]``, ``tr_self_check_service`` and
@@ -26,10 +26,6 @@ SELF_CHECK_ERROR_CODES = {
     "selfcheck_invalid_cwd", "selfcheck_disabled", "selfcheck_already_running",
     "selfcheck_source_busy", "selfcheck_recovery_incomplete", "selfcheck_worktree_unavailable",
 }
-BUNDLE_ERROR_CODES = {
-    "source_changed", "source_busy", "build_wait_timeout", "group_worktree_unavailable",
-    "build_timeout", "resource_limit", "unsafe_path", "bundle_unavailable",
-}
 
 
 def _ctx(locale="en", *, principal_kind="worker", action_scope="edit", doc_type="TR"):
@@ -42,10 +38,6 @@ def _ctx(locale="en", *, principal_kind="worker", action_scope="edit", doc_type=
 
 def _content(locale="en"):
     return help_catalog.build_item("tr_self_check", _ctx(locale))["content"]
-
-
-def _bundle(locale="en"):
-    return help_catalog.build_item("source_bundles", _ctx(locale))["content"]
 
 
 # ── H1 visibility ────────────────────────────────────────────────────────────
@@ -153,16 +145,21 @@ def test_lifecycle_describes_run_read_cancel_and_terminal_states(locale):
 # ── H6 no fallback ───────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("locale", LOCALES)
-def test_no_fallback_to_bundle_scratch_or_run_test(locale):
+def test_no_fallback_names_no_other_backend(locale):
+    # 0684 T#4: Source Bundle, AI Scratch and run_test no longer exist, so the help stops
+    # naming them as refused fallbacks; "no other execution path" is the whole rule.
     text = " ".join(_content(locale)["no_fallback"])
-    for token in ("Source Bundle", "AI Scratch", "run_test", "self_check_required"):
-        assert token in text
+    for token in ("Source Bundle", "AI Scratch", "run_test", "access_source_bundle", "run_source_bundle"):
+        assert token not in text
+    assert "test_command_missing" in text
 
 
 def test_help_matches_the_live_tr_edit_boundary():
-    # The claim "Bundle tools are refused for TR edit" is enforced by _guard_legacy_execution.
-    assert "self_check_required" in " ".join(_content("en")["no_fallback"])
-    assert hasattr(api_server_tools, "_guard_legacy_execution")
+    # Nothing but Self-check executes for a TR edit worker: the Bundle tools and run_test are
+    # not registered at all any more, so there is no legacy refusal left to describe.
+    for retired in ("access_source_bundle", "run_source_bundle", "run_test"):
+        assert retired not in api_server_tools.SCHEMAS
+    assert set(api_server_tools.SELF_CHECK_NAMES) <= set(api_server_tools.SCHEMAS)
 
 
 # ── error guidance ───────────────────────────────────────────────────────────
@@ -183,40 +180,12 @@ def test_documented_error_codes_exist_in_the_service_or_policy_source():
         assert f'"{row["code"]}"' in source, row["code"]
 
 
-# ── H7 / H8 Source Bundle recovery ───────────────────────────────────────────
+# ── H7 / H8 (0684 T#4) ───────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("locale", LOCALES)
-def test_bundle_recovery_lists_every_error(locale):
-    recovery = _bundle(locale)["error_recovery"]
-    rows = {row["code"]: row["guidance"] for row in recovery["errors"]}
-    assert set(rows) == BUNDLE_ERROR_CODES
-    assert all(text.strip() for text in rows.values())
-    assert recovery["note"]
-
-
-def test_source_changed_explains_fail_closed_and_the_recovery_procedure():
-    text = {row["code"]: row["guidance"] for row in _bundle("en")["error_recovery"]["errors"]}["source_changed"]
-    for token in ("fail-closed", "capture", "3) retry Bundle ensure", "source of truth", "promote",
-                  "manual unlock", "post-copy verify", "concurrent Bundle build"):
-        assert token in text, token
-
-
-def test_other_bundle_errors_carry_their_next_action():
-    rows = {row["code"]: row["guidance"] for row in _bundle("en")["error_recovery"]["errors"]}
-    assert "retry" in rows["source_busy"]
-    assert "retry" in rows["build_wait_timeout"] and "Bundle state" in rows["build_wait_timeout"]
-    assert "retry" in rows["group_worktree_unavailable"] and "worktree" in rows["group_worktree_unavailable"]
-    assert "fresh Bundle ensure" in rows["bundle_unavailable"]
-
-
-def test_bundle_note_tells_tr_edit_not_to_abandon_self_check():
-    assert "Self-check" in _bundle("en")["error_recovery"]["note"]
-
-
-def test_snapshot_alias_keeps_its_old_shape_without_recovery_block():
-    alias = help_catalog.build_item("source_snapshots", _ctx())["content"]
-    assert "error_recovery" not in alias
-    assert set(alias) <= set(_bundle())
+def test_source_bundle_recovery_item_is_retired():
+    assert "source_bundles" not in help_catalog.CATALOG_ORDER
+    assert "source_snapshots" not in help_catalog.CATALOG_ORDER
+    assert not any("Bundle" in row["guidance"] for row in _content("en")["errors"])
 
 
 # ── H9 locales ───────────────────────────────────────────────────────────────
@@ -231,7 +200,6 @@ def test_all_locales_carry_the_same_contract_shape():
             content["lifecycle"]["statuses"],
             [row["code"] for row in content["errors"]],
             len(content["no_fallback"]),
-            [row["code"] for row in _bundle(locale)["error_recovery"]["errors"]],
         ))
     assert shapes[0] == shapes[1] == shapes[2]
 

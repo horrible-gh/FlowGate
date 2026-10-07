@@ -473,7 +473,8 @@ def _normalize_source_identity(raw: Any) -> dict:
     keys = (
         "bundle_id", "bundle_hash", "git_revision", "tree", "worktree", "branch",
         "runner", "runner_version", "tool", "tool_version", "executed_at", "ci_url",
-        # 0682 T#1: the Source Bundle a Basis v2 run actually executed from.
+        # 0682 T#1 Basis identity; bundle_sha256 is read only from v2 rows recorded before
+        # 0684 T#4 removed Source Bundle (stored results stay as written, D#1 §7).
         "kind", "basis_id", "content_fingerprint", "bundle_sha256", "exclusion_policy_version",
     )
     return {key: _clip(raw.get(key), 500) for key in keys if raw.get(key) not in (None, "")}

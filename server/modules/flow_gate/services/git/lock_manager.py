@@ -3,7 +3,8 @@
 ``acquire`` / ``release`` — the domain locks (P/G/W/B/R/M) on ``resource_lock``, owned
 by an ``ExecutionContext``. Re-entry, order checks, stale reclaim and long-lock
 heartbeats follow L 2.3~2.9. Unit 2 moved ordinary source mutation (tr2_file_policy)
-and Source Bundle ensure onto G; unit 3 moved TR2 approval, TR commit, Time Machine
+and Source Bundle ensure onto G (0684 T#4 removed Source Bundle; a spec run's preparing
+copy now holds G as ``run_prepare``); unit 3 moved TR2 approval, TR commit, Time Machine
 cancel, the TR conflict commit and the TR2 document delete guard; unit 4 moved
 self-check and narrowed its recovery check to the Group.
 
@@ -77,7 +78,6 @@ _WAIT_PARAMS = {
     "interactive": ("FLOWGATE_INTERACTIVE_WAIT_SEC", 5, 0, 15),
     "freeze_interactive": ("FLOWGATE_FREEZE_INTERACTIVE_WAIT_SEC", 2, 0, 5),
     "selfcheck_start": ("FLOWGATE_SELFCHECK_START_WAIT_SEC", 5, 0, 15),
-    "bundle_start": ("FLOWGATE_BUNDLE_WAIT_SEC", 5, 0, 15),
     # 0684 T#2: a spec run's preparing copy waits for a source write of its Group in the
     # background (no request is held), so it may wait longer than an interactive caller.
     "run_prepare": ("FLOWGATE_RUN_PREPARE_WAIT_SEC", 30, 0, 120),
@@ -103,22 +103,21 @@ def wait_budget(domain: str, mode: str) -> float:
 RANK = {"P": 1, "G": 2, "W": 3, "B": 4, "R": 5, "M": 6}
 
 # L 2.7: holder kinds whose G/P/R/W/B hold is long (heartbeated). Everything else is short.
-_LONG_G_KINDS = {"selfcheck", "bundle", "tr2_apply", "run_prepare"}
+_LONG_G_KINDS = {"selfcheck", "tr2_apply", "run_prepare"}
 
 
-# resource_lock.holder_kind has a CHECK (migration 132). A caller-side kind outside it keeps its
-# own meaning for the hold class and the freeze guard, and is stored as the nearest listed kind
-# (found by the 0669 Self-check overlap run: finalize's G was refused by the CHECK).
+# resource_lock.holder_kind has a CHECK (migration 132; 140 replaced 'bundle' with 'run_prepare').
+# A caller-side kind outside it keeps its own meaning for the hold class and the freeze guard, and
+# is stored as the nearest listed kind (found by the 0669 Self-check overlap run: finalize's G was
+# refused by the CHECK).
 STORED_HOLDER_KINDS = frozenset((
-    "selfcheck", "bundle", "tr2_apply", "source_mutation", "tr_commit", "time_machine", "tr_conflict",
+    "selfcheck", "run_prepare", "tr2_apply", "source_mutation", "tr_commit", "time_machine", "tr_conflict",
     "approval_freeze", "publish", "worktree_provision", "worktree_cleanup", "base_mutation",
     "branch_meta", "branch_merge", "archive", "rerere", "merge_resolve", "review_action",
     "project_provision", "sweeper", "legacy_bridge"))
 _STORED_AS = {
     "finalize": "publish", "approval_retry": "review_action", "dispose": "worktree_cleanup",
     "sweep": "sweeper", "work_base_confirm": "source_mutation", "initial_sync": "worktree_provision",
-    # 0684 T#2: the run's copy-and-measure hold reads the worktree like a Bundle capture did.
-    "run_prepare": "bundle",
 }
 
 
@@ -546,7 +545,7 @@ def acquire(domain: str, project_id: str, *, group_id: Optional[str] = None,
         time.sleep(interval)
 
 
-# L 2.10: holder kinds a Group freeze claim turns away. selfcheck and bundle read the
+# L 2.10: holder kinds a Group freeze claim turns away. selfcheck and run_prepare read the
 # frozen SHA's content and stay allowed; approval_freeze is the claim's own job.
 _FREEZE_REJECTED_KINDS = frozenset(("source_mutation", "tr2_apply", "tr_commit", "time_machine",
                                     "tr_conflict"))

@@ -5,7 +5,6 @@ contains only operation arguments.
 """
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import time
@@ -13,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_access_service, snapshot_request_service, source_bundle_access_service, source_bundle_exposure, source_common, test_command_service, token_service, tool_registry, tr_self_check_service
+from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_access_service, snapshot_request_service, source_common, token_service, tool_registry, tr_self_check_service
 from modules.flow_gate.utils.help_url import help_url
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
@@ -22,10 +21,9 @@ CONFLICT_SCOPE = "resolve_conflict"
 # which validates every chunk. Whatever the registry grows into, these never reach it.
 _CONFLICT_NEVER_OPS = frozenset({"write", "patch", "remove"})
 BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
-BUNDLE_NAMES = ("access_source_bundle", "run_source_bundle")
 SNAPSHOT_NAMES = ("request_source_snapshot", "access_source_snapshot", "run_source_snapshot")
 SELF_CHECK_NAMES = ("run_self_check", "read_self_check", "cancel_self_check")
-SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
+SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
 SOURCE_OPS = {
     "read_source_file": "read", "search_source": "grep", "glob_source": "glob",
@@ -97,15 +95,12 @@ SCHEMAS = {
     "patch_source_file": _obj({"path": {"type": "string", "minLength": 1}, "old_string": {"type": "string", "minLength": 1}, "new_string": {"type": "string"}, "replace_all": {"type": "boolean"}, "encoding": {"type": "string"}}, ["path", "old_string", "new_string"]),
     "write_source_file": _obj({"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "mode": {"type": "string", "enum": ["create", "overwrite", "append"]}, "encoding": {"type": "string"}}, ["path", "content"]),
     "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),
-    "run_test": _obj({"command": {"type": "string", "minLength": 1}}, ["command"]),
     "run_self_check": _obj({"program": {"type": "string", "minLength": 1}, "args": {"type": "array", "items": {"type": "string"}}, "cwd": {"type": "string"}, "timeout_seconds": {"type": "integer", "minimum": 1}}, ["program"]),
     "read_self_check": _obj({
         "self_check_run_id": {"type": "string", "minLength": 1},
         "limit": {"type": "integer", "minimum": 1, "maximum": 100},
     }),
     "cancel_self_check": _obj({"self_check_run_id": {"type": "string", "minLength": 1}}, ["self_check_run_id"]),
-    "access_source_bundle": _obj({"bundle_id": {"type": "string"}, "operation": {"type": "string", "enum": ["status", "read", "search", "glob", "stat"]}, "path": {"type": "string"}, "pattern": {"type": "string"}, "glob": {"type": "string"}, "ignore_case": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "encoding": {"type": "string"}, "claim_current_worktree": {"type": "boolean"}}, ["operation"]),
-    "run_source_bundle": _obj({"bundle_id": {"type": "string"}, "task_kind": {"type": "string", "enum": sorted(source_bundle_access_service.TASK_KINDS)}, "command": {"type": "string", "minLength": 1}, "timeout_seconds": {"type": "integer", "minimum": 1}, "claim_current_worktree": {"type": "boolean"}}, ["task_kind", "command"]),
     "read_document": READ_DOCUMENT_SCHEMA,
     "read_help": READ_HELP_SCHEMA,
     "create_question": _obj({"questions": {"type": "array", "minItems": 1, "items": _obj({"title": {"type": "string"}, "body": {"type": "string", "minLength": 1}, "options": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}, "maxItems": 10}}, ["body"])}}, ["questions"]),
@@ -141,9 +136,7 @@ REGISTER_SCHEMAS = {
     "test_run": _obj({}),
 }
 
-DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *BUNDLE_NAMES, *SOURCE_NAMES, *SELF_CHECK_NAMES)}
-DESCRIPTIONS["access_source_bundle"] = "Read/status/search/glob/stat an immutable Source Bundle. Omit bundle_id to lazy ensure. Historical results do not claim current worktree freshness unless requested."
-DESCRIPTIONS["run_source_bundle"] = "Execute inside disposable AI Scratch copied from a Source Bundle. Omit bundle_id to lazy ensure. Same run and Bundle reuse Scratch. No promotion or live fallback."
+DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *SOURCE_NAMES, *SELF_CHECK_NAMES)}
 DESCRIPTIONS["run_self_check"] = (
     "The only way a TR edit worker runs tests/verification. Runs program+args[] (cwd, timeout_seconds) in the current "
     "managed worktree and returns a self_check_run_id. Use the verification command named in the TR, else in the T; "
@@ -158,12 +151,12 @@ DESCRIPTIONS["read_self_check"] = (
     "only TR edit workers may run or cancel Self-check."
 )
 DESCRIPTIONS["cancel_self_check"] = "Cancel a running run_self_check by self_check_run_id."
-DESCRIPTIONS["request_source_snapshot"] = "Retired (410). Source Bundle is prepared automatically when source access or execution needs it."
+DESCRIPTIONS["request_source_snapshot"] = "Retired (410). Use the live source tools."
 DESCRIPTIONS["access_source_snapshot"] = (
-    "Read a legacy created Snapshot for historical compatibility only. New work uses Source Bundle."
+    "Read a legacy created Snapshot for historical compatibility only. New work uses the live source tools."
 )
 DESCRIPTIONS["run_source_snapshot"] = (
-    "Retired (410). Use run_source_bundle; execution occurs in disposable AI Scratch."
+    "Retired (410). Execution is not offered through Snapshot."
 )
 DESCRIPTIONS["read_help"] = (
     "Read personalized help without HTTP. Empty input returns the help index; "
@@ -207,8 +200,13 @@ DESCRIPTIONS["merge_preview_source"] = (
 
 
 def ready() -> bool:
-    """Static readiness: registry, strict binder and allowlisted runner are all present."""
-    return set(SOURCE_NAMES) <= set(SCHEMAS) and callable(require_group_root) and callable(run_test)
+    """Static readiness: registry, strict binder and the TR Self-check runner are all present.
+
+    0684 T#4: run_test (a Source Bundle Scratch runner) is gone; the API provider's test
+    capability is the Self-check path a TR edit run verifies through.
+    """
+    return (set(SOURCE_NAMES) <= set(SCHEMAS) and set(SELF_CHECK_NAMES) <= set(SCHEMAS)
+            and callable(require_group_root) and callable(self_check_call))
 
 
 class ToolError(Exception):
@@ -237,22 +235,18 @@ def definitions_for_run(run: dict) -> list[dict]:
     # the authorized root, so advertisement must not reject a valid non-Git project fallback.
     kind, _reason = tool_registry.kind_for_step(scope, step_type)
     allowed_ops = set(tool_registry.tool_names(kind, scope))
-    # 0672 T0004: Bundle tools follow the one exposure judgment (TS/TSR preserved set only),
-    # never the kind. Every other step works on live source tools alone.
-    bundle = source_bundle_exposure.for_doc_ref(scope, run.get("doc_ref"), doc_ref_type=step_type)
-    if source_bundle_exposure.exposed(bundle):
-        names += ["access_source_bundle"]
     tr_edit = scope == "edit" and step_type == "TR" and bool(run.get("doc_ref"))
     tr_review = scope == "review" and step_type == "TR" and bool(run.get("doc_ref"))
     names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
     if tr_edit:
         # 0652/0656: TR edit uses Self-check as its execution path; TR review validates the live
-        # worktree plus read-only Self-check evidence. Neither context depends on Source Bundle.
+        # worktree plus read-only Self-check evidence.
         names += list(SELF_CHECK_NAMES)
     elif tr_review:
         names += ["read_self_check"]
-    elif bundle == source_bundle_exposure.RUN:
-        names += ["run_source_bundle", "run_test"]
+    # 0684 T#4: Source Bundle and its TS worker tools (access/run_source_bundle, run_test) are
+    # gone. Every step works on the live source tools; an official TS result comes only from
+    # the server spec run.
     result = []
     for name in names:
         schema = REGISTER_SCHEMAS[scope] if name == "register_document" else SCHEMAS[name]
@@ -392,7 +386,7 @@ def _snapshot_token(run: dict, raw_token: str) -> dict:
 
 
 def request_source_snapshot(run: dict, raw_token: str, tool_input: dict, remaining_sec: float = 0) -> tuple[int, dict]:
-    raise ToolError(410, "snapshot_feature_retired", "Legacy Snapshot requests are retired; use Source Bundle")
+    raise ToolError(410, "snapshot_feature_retired", "Legacy Snapshot requests are retired; use the live source tools")
     token = _snapshot_token(run, raw_token)
     data = snapshot_request_service.request_data_for_run(run, token, tool_input)
     try:
@@ -429,7 +423,7 @@ def access_source_snapshot(run: dict, raw_token: str, tool_input: dict) -> tuple
 def run_source_snapshot(
     run: dict, raw_token: str, tool_input: dict, remaining_sec: float,
 ) -> tuple[int, dict]:
-    raise ToolError(410, "snapshot_feature_retired", "Legacy Snapshot execution is retired; use Source Bundle")
+    raise ToolError(410, "snapshot_feature_retired", "Legacy Snapshot execution is retired")
     _snapshot_token(run, raw_token)
     try:
         return snapshot_access_service.execute(
@@ -441,42 +435,9 @@ def run_source_snapshot(
         return exc.status, exc.payload("execute")
 
 
-def _guard_legacy_execution(run: dict, name: str) -> None:
-    """0652 T0002 live boundary: legacy execution is refused for a TR edit run even if called directly."""
-    if tr_self_check_service.is_canonical_run(run):
-        raise ToolError(409, "self_check_required",
-                        f"{name} is disabled for TR edit runs (legacy_test_execution_disabled_for_tr); use run_self_check")
-
-
-def _guard_bundle_exposure(run: dict, name: str, need: str) -> None:
-    """0672 T0004: Bundle entry points answer only inside the TS/TSR preserved set."""
-    level = source_bundle_exposure.for_doc_ref(run.get("action_scope"), run.get("doc_ref"))
-    if level == source_bundle_exposure.NONE or (need == source_bundle_exposure.RUN and level != need):
-        raise ToolError(403, "source_bundle_not_available",
-                        f"{name} is available only to TS/TSR steps; use the live source tools")
-
-
-def access_source_bundle(run: dict, tool_input: dict) -> tuple[int, dict]:
-    _guard_legacy_execution(run, "access_source_bundle")
-    _guard_bundle_exposure(run, "access_source_bundle", source_bundle_exposure.ACCESS)
-    try:
-        return source_bundle_access_service.access(run, tool_input)
-    except source_bundle_access_service.BundleAccessError as exc:
-        return exc.status, exc.payload(str(tool_input.get("operation") or "status"))
-
-
-def run_source_bundle(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dict]:
-    _guard_legacy_execution(run, "run_source_bundle")
-    _guard_bundle_exposure(run, "run_source_bundle", source_bundle_exposure.RUN)
-    try:
-        return source_bundle_access_service.execute(run, tool_input, remaining_sec)
-    except source_bundle_access_service.BundleAccessError as exc:
-        return exc.status, exc.payload("execute")
-
-
 def source_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:
     # 0672 T0004 stage 3: a path-only guard from the shared source module; live source calls
-    # no longer reach into the Bundle or Snapshot services.
+    # never reach into the legacy Snapshot service.
     try:
         source_common.guard_artifact_promotion(name, tool_input)
     except source_common.PromotionBlocked as exc:
@@ -503,34 +464,6 @@ def test_root(run: dict) -> Path:
     if not root.is_dir():
         raise ToolError(409, "source_root_unavailable")
     return root
-
-
-def run_test(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dict]:
-    _guard_legacy_execution(run, "run_test")
-    _guard_bundle_exposure(run, "run_test", source_bundle_exposure.RUN)
-    normalized = test_command_service.normalize_command(tool_input["command"])
-    host_os = test_command_service.current_os()
-    allowed = [row for row in test_command_service.list_for_view(run["project_id"])
-               if row.get("verified_os") in (None, "", host_os)]
-    row = next((row for row in allowed if test_command_service.normalize_command(row.get("command") or row.get("command_raw") or "") == normalized), None)
-    if row is None:
-        raise ToolError(422, "not_verified")
-    command = row.get("command_raw") or row.get("command")
-    status, result = run_source_bundle(run, {"task_kind": "test", "command": command}, remaining_sec)
-    if status >= 400:
-        return status, result
-    payload = {"ok": True, "op": "run_test", "command": normalized,
-               "exit_code": result["exit_code"], "duration_ms": result["duration_ms"],
-               "stdout": result["stdout"], "stderr": result["stderr"],
-               "truncated": result["truncated"], "timed_out": result["timed_out"],
-               "bundle": result["bundle"], "scratch_reused": result["scratch_reused"]}
-    encoded = json.dumps(payload, ensure_ascii=False)
-    if len(encoded) > 16000:
-        excess = len(encoded) - 16000
-        payload["stdout"] = payload["stdout"][excess // 2:]
-        payload["stderr"] = payload["stderr"][excess - excess // 2:]
-        payload["truncated"] = True
-    return 200, payload
 
 
 # Worker-facing reasons: the cause is returned and the run stops; no other backend is tried.

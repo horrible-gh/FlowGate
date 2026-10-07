@@ -428,9 +428,6 @@ def source_identity(basis: dict | None) -> dict:
         "kind": source.get("kind"), "basis_id": basis.get("basis_id"),
         "content_fingerprint": source.get("content_fingerprint"),
         "exclusion_policy_version": source.get("exclusion_policy_version"),
-        # v2 records only (Source Bundle binding); a v3 Basis has no Bundle.
-        "bundle_id": binding.get("bundle_id") or source.get("bundle_id"),
-        "bundle_sha256": binding.get("bundle_sha256"),
         "git_revision": binding.get("git_revision") or source.get("git_revision"),
         "tree": source.get("tree"),
     }
@@ -446,8 +443,7 @@ def source_summary(basis: dict | None) -> dict:
     return {"kind": source.get("kind"), "fingerprint_prefix": fingerprint[:12] or None,
             "measured_at": measured_at, "captured_at": measured_at,
             "source_dirty": binding.get("source_dirty"),
-            "git_revision": binding.get("git_revision"), "run_id": binding.get("run_id"),
-            "bundle_id": binding.get("bundle_id")}
+            "git_revision": binding.get("git_revision"), "run_id": binding.get("run_id")}
 
 
 def asset_manifest(doc: dict, cases: list[dict]) -> list[dict]:

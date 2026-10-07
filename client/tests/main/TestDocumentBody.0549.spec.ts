@@ -165,7 +165,7 @@ describe('TestSpecPanel — structured specification', () => {
     getRequest.mockResolvedValue(specView({
       test_basis: {
         basis_id: 'b'.repeat(64),
-        source: { kind: 'source_bundle', exclusion_policy_version: 'source-bundle-v1', content_fingerprint: 'f'.repeat(64) },
+        source: { kind: 'run_source', exclusion_policy_version: 'source-fingerprint-v1', content_fingerprint: 'f'.repeat(64) },
         test_assets: { policy_version: 'test-asset-v2', manifest_hash: 'm'.repeat(64), asset_count: 1 },
         manifest: [{ path: 'client/tests/main/a.spec.ts', content_hash: 'c'.repeat(64), role: 'test', kind: 'runner_unsupported_test' }],
       },

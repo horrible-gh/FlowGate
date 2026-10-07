@@ -22,7 +22,7 @@ from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services import git_service, token_service
 from modules.flow_gate.services.snapshot_request_service import SnapshotRequestError
 # 0672 T0004 stage 3: the capture exclusion policy and worker-facing locator redaction moved to
-# source_common (shared with Source Bundle); re-exported here for the legacy Snapshot code and tests.
+# source_common (shared with the source fingerprint); re-exported here for the legacy Snapshot code and tests.
 from modules.flow_gate.services.source_common import (  # noqa: F401
     EXCLUDED_DIR_NAMES, EXCLUDED_DIR_PREFIXES, EXCLUDED_FILE_NAMES,
     PATH_REDACTION, SCRATCH_REDACTION, SERVER_REDACTION, STORAGE_REDACTION, WORKTREE_REDACTION,

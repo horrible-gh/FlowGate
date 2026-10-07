@@ -1,7 +1,8 @@
 """Source fingerprint: the one scan, exclusion and hash rule set for a Group worktree.
 
 0684 T#2 (D#1 §2-1, §3-3, §3-6): moved here from the Source Bundle materializer so the
-Test Basis no longer depends on Bundles. Three measurements share the rules:
+Test Basis no longer depends on Bundles; 0684 T#4 removed Source Bundle itself and this
+module is now the only owner of these rules. Three measurements share them:
 
 * ``inspect_source`` -- Live Probe: hash the worktree in place (decision paths: run
   finalize, manual result submission, TSR gate).
@@ -9,12 +10,11 @@ Test Basis no longer depends on Bundles. Three measurements share the rules:
   bytes actually copied, in one read (a spec run's preparing phase).
 * ``memo_lookup`` -- display paths: the last measured fingerprint while every scanned path,
   size and mtime is unchanged. It never hashes; a miss is "not measured", not a measurement.
-
-The materializer keeps importing these names for the Bundle code until T#4 removes it.
 """
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import stat
@@ -28,23 +28,33 @@ from modules.flow_gate.services.source_common import (
     EXCLUDED_DIR_NAMES, EXCLUDED_DIR_PREFIXES, EXCLUDED_FILE_NAMES,
 )
 
-# The scan/exclusion/hash rules are the ones Source Bundle v1 captured with, so a
-# fingerprint over the same tree is the same value either way.
+# The scan/exclusion/hash rules are the ones Source Bundle v1 captured with (kept unchanged
+# when Bundle was removed), so a fingerprint over the same tree is the same value.
 POLICY_VERSION = "source-fingerprint-v1"
 
+# 0684 T#4 (D#1 §7): the Source Bundle names these limits used to fall back to
+# (FLOWGATE_BUNDLE_MAX_FILES, ..._MAX_FILE_BYTES, ..._MAX_TOTAL_BYTES, ..._BUILD_SECONDS) are no
+# longer read. A deployment that still sets one gets a warning naming the neutral variable.
+_RETIRED_LIMIT_NAMES = {
+    "FLOWGATE_SOURCE_MAX_FILES": "FLOWGATE_BUNDLE_MAX_FILES",
+    "FLOWGATE_SOURCE_MAX_FILE_BYTES": "FLOWGATE_BUNDLE_MAX_FILE_BYTES",
+    "FLOWGATE_SOURCE_MAX_TOTAL_BYTES": "FLOWGATE_BUNDLE_MAX_TOTAL_BYTES",
+    "FLOWGATE_SOURCE_MEASURE_SECONDS": "FLOWGATE_BUNDLE_BUILD_SECONDS",
+}
 
-def _limit(name: str, legacy: str, default: int) -> int:
-    """Neutral env name first; the Source Bundle name is still read (D#1 §7)."""
-    raw = os.getenv(name) or os.getenv(legacy) or str(default)
+
+def _limit(name: str, default: int) -> int:
+    retired = _RETIRED_LIMIT_NAMES.get(name)
+    if retired and os.getenv(retired) and not os.getenv(name):
+        logging.getLogger(__name__).warning("%s is no longer read; set %s instead", retired, name)
+    raw = os.getenv(name) or str(default)
     return max(1, int(raw))
 
 
-MAX_FILES = _limit("FLOWGATE_SOURCE_MAX_FILES", "FLOWGATE_BUNDLE_MAX_FILES", 20000)
-MAX_FILE_BYTES = _limit("FLOWGATE_SOURCE_MAX_FILE_BYTES", "FLOWGATE_BUNDLE_MAX_FILE_BYTES",
-                        100 * 1024 * 1024)
-MAX_TOTAL_BYTES = _limit("FLOWGATE_SOURCE_MAX_TOTAL_BYTES", "FLOWGATE_BUNDLE_MAX_TOTAL_BYTES",
-                         500 * 1024 * 1024)
-MEASURE_SECONDS = _limit("FLOWGATE_SOURCE_MEASURE_SECONDS", "FLOWGATE_BUNDLE_BUILD_SECONDS", 120)
+MAX_FILES = _limit("FLOWGATE_SOURCE_MAX_FILES", 20000)
+MAX_FILE_BYTES = _limit("FLOWGATE_SOURCE_MAX_FILE_BYTES", 100 * 1024 * 1024)
+MAX_TOTAL_BYTES = _limit("FLOWGATE_SOURCE_MAX_TOTAL_BYTES", 500 * 1024 * 1024)
+MEASURE_SECONDS = _limit("FLOWGATE_SOURCE_MEASURE_SECONDS", 120)
 _SECRET = re.compile(
     r"^(?:\.env(?:\..*)?|\.netrc|\.npmrc|\.pypirc|credentials|credentials\.json|"
     r"service-account\.json|service_account\.json|secrets|id_(?:rsa|dsa|ecdsa|ed25519))$"
@@ -140,6 +150,7 @@ def _identity(root: Path, deadline):
 
 def _excluded(relative: str, is_dir: bool) -> bool:
     name = PurePosixPath(relative).name
+    # The two retired Bundle store names stay excluded: part of source-fingerprint-v1 (0684 T#4).
     if name in EXCLUDED_DIR_NAMES or (is_dir and name in {"source-bundles", "source-bundle-scratch"}) or name.startswith(EXCLUDED_DIR_PREFIXES):
         return True
     if is_dir:
@@ -214,8 +225,8 @@ def _safe_file(root: Path, relative: str, expected):
 def _hash_file(root, relative, expected, deadline, target=None, *, durable=True):
     """Hash one scanned file; with ``target`` also copy the very bytes hashed.
 
-    ``durable`` syncs the copy (a published Bundle). A run's disposable root is removed
-    after the run, so it skips the fsync.
+    ``durable`` fsyncs the copy. A run's disposable root is removed after the run, so it
+    skips the fsync.
     """
     source = _safe_file(root, relative, expected)
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)

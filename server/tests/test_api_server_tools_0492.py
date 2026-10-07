@@ -63,21 +63,34 @@ def test_non_mutating_types_get_read_tier(monkeypatch, tmp_path, step_type):
     assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)
 
 
-# 0672 T0004 (NR0003 §2.1/§7): a `new` token's doc_ref is the spine, so the Bundle tools are
-# judged from (scope, doc_ref type, head type). The kind -- and so the live source tools --
-# still follows doc_ref exactly as before; only the Bundle tools moved to the TS/TSR set.
-@pytest.mark.parametrize("doc_type, head_type, bundle_tools", [
-    ("TR", "TR", []),
-    ("TSR", "TSR", []),
-    ("TS", "TS", ["access_source_bundle", "run_source_bundle", "run_test"]),
-    ("TR", "TS", ["access_source_bundle", "run_source_bundle", "run_test"]),
+# 0684 T#4: Source Bundle is gone. The kind -- and so the live source tools -- still follows
+# doc_ref exactly as before; no (doc_ref, head) pair brings back access_source_bundle,
+# run_source_bundle or run_test (the TS(new) "TS"/"TR over TS" rows advertised them before).
+@pytest.mark.parametrize("doc_type, head_type", [
+    ("TR", "TR"),
+    ("TSR", "TSR"),
+    ("TS", "TS"),
+    ("TR", "TS"),
 ])
-def test_mutating_types_get_read_write_and_test_tier(monkeypatch, tmp_path, doc_type, head_type, bundle_tools):
+def test_mutating_types_get_read_write_tier(monkeypatch, tmp_path, doc_type, head_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": doc_type})
     monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: (head_type, False))
-    access = bundle_tools[:1]
-    run = bundle_tools[1:]
-    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + access + list(tools.SOURCE_OPS) + run
+    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS)
+
+
+@pytest.mark.parametrize("scope", ["new", "edit", "review"])
+@pytest.mark.parametrize("step_type", ["TS", "TSR"])
+def test_retired_bundle_tools_are_neither_advertised_nor_registered(monkeypatch, tmp_path, scope, step_type):
+    """0684 T#4: the TS/TSR worker Bundle tools are deleted, not just hidden."""
+    monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
+    monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: (step_type, False))
+    run = _run(tmp_path); run["action_scope"] = scope
+    names = {d["name"] for d in tools.definitions_for_run(run)}
+    for retired in ("access_source_bundle", "run_source_bundle", "run_test"):
+        assert retired not in names
+        assert retired not in tools.SCHEMAS and retired not in tools.DESCRIPTIONS
+        assert not hasattr(tools, retired)
+    assert not hasattr(tools, "BUNDLE_NAMES")
 
 
 @pytest.mark.parametrize("step_type", ["N", "NR", "T", "TR", "TSR", "TS"])
@@ -112,64 +125,21 @@ def test_source_call_uses_same_root_and_live_token(monkeypatch, tmp_path):
     assert seen == []
 
 
-def test_run_test_is_sync_allowlisted_and_cwd_bound(monkeypatch, tmp_path):
-    captured = {}
-    scratch = tmp_path / "scratch"
-    source = scratch / "source"
-    source.mkdir(parents=True)
-    bundle_access = tools.source_bundle_access_service
-
-    class Proc:
-        returncode = 7
-
-        def communicate(self, timeout):
-            captured["timeout"] = timeout
-            return b"stdout-tail", b"stderr-tail"
-
-    def popen(command, **kwargs):
-        captured.update(command=command, **kwargs)
-        return Proc()
-
-    monkeypatch.setattr(tools.test_command_service, "current_os", lambda: "windows")
-    monkeypatch.setattr(tools.test_command_service, "list_for_view",
-                        lambda _project: [{"command": "pytest -q", "verified_os": "windows"}])
-    monkeypatch.setattr(bundle_access, "_resolve",
-                        lambda _run, _bundle_id: {"bundle_id": "sb_test", "project_id": "p", "group_id": "g"})
-    monkeypatch.setattr(bundle_access, "_scratch", lambda _run, _row: (scratch, False))
-    monkeypatch.setattr(bundle_access, "_metadata", lambda _row, _current=None: {"bundle_id": "sb_test"})
-    monkeypatch.setattr(bundle_access, "_roots", lambda *_args: ())
-    monkeypatch.setattr(bundle_access, "_usage", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(bundle_access.subprocess, "Popen", popen)
-    # 0672 T0004: run_test answers only inside the TS/TSR preserved set (a TS edit run here).
-    monkeypatch.setattr(tools.source_bundle_exposure, "for_doc_ref", lambda *_a, **_k: "run")
-
-    status, result = tools.run_test(_run(tmp_path), {"command": " pytest   -q "}, 9)
-    assert status == 200 and result["exit_code"] == 7
-    assert captured["cwd"] == source and captured["timeout"] == 9
-    assert captured["command"] == "pytest -q"
-    assert set(captured["env"]) == {
-        "PATH", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR", "XDG_CACHE_HOME",
-        "FLOWGATE_SOURCE_BUNDLE_ID",
-    }
-    with pytest.raises(tools.ToolError) as exc:
-        tools.run_test(_run(tmp_path), {"command": "unregistered"}, 9)
-    assert exc.value.reason == "not_verified"
-
 @pytest.mark.parametrize("kind", ["openai", "claude"])
 def test_provider_round_trip_preserves_multiple_calls(monkeypatch, kind):
-    specs = [{"name": "read_source_file", "description": "read", "schema": tools.SCHEMAS["read_source_file"]}, {"name": "run_test", "description": "test", "schema": tools.SCHEMAS["run_test"]}]
+    specs = [{"name": "read_source_file", "description": "read", "schema": tools.SCHEMAS["read_source_file"]}, {"name": "stat_source", "description": "stat", "schema": tools.SCHEMAS["stat_source"]}]
     captured = {}
     if kind == "openai":
-        response = {"choices": [{"message": {"content": None, "tool_calls": [{"id": "1", "function": {"name": "read_source_file", "arguments": '{"path":"a.py"}'}}, {"id": "2", "function": {"name": "run_test", "arguments": '{"command":"pytest -q"}'}}]}}]}
+        response = {"choices": [{"message": {"content": None, "tool_calls": [{"id": "1", "function": {"name": "read_source_file", "arguments": '{"path":"a.py"}'}}, {"id": "2", "function": {"name": "stat_source", "arguments": '{"path":"b.py"}'}}]}}]}
         monkeypatch.setattr(invoke, "_http_post_json", lambda u, h, b, t: captured.update(body=b) or response)
         _, calls, _ = invoke._call_openai("https://example", "m", "k", [], 1, specs, "", {}, False)
-        assert captured["body"]["tools"][1]["function"]["name"] == "run_test"
+        assert captured["body"]["tools"][1]["function"]["name"] == "stat_source"
     else:
-        response = {"content": [{"type": "tool_use", "id": "1", "name": "read_source_file", "input": {"path": "a.py"}}, {"type": "tool_use", "id": "2", "name": "run_test", "input": {"command": "pytest -q"}}]}
+        response = {"content": [{"type": "tool_use", "id": "1", "name": "read_source_file", "input": {"path": "a.py"}}, {"type": "tool_use", "id": "2", "name": "stat_source", "input": {"path": "b.py"}}]}
         monkeypatch.setattr(invoke, "_http_post_json", lambda u, h, b, t: captured.update(body=b) or response)
         _, calls, _ = invoke._call_anthropic("https://example", "m", "k", [], 1, specs, "", {}, False)
-        assert captured["body"]["tools"][1]["name"] == "run_test"
-    assert [call["name"] for call in calls] == ["read_source_file", "run_test"]
+        assert captured["body"]["tools"][1]["name"] == "stat_source"
+    assert [call["name"] for call in calls] == ["read_source_file", "stat_source"]
 
 
 def test_api_capabilities_follow_toolset_readiness(monkeypatch):
@@ -183,7 +153,7 @@ def test_api_capabilities_follow_toolset_readiness(monkeypatch):
 def test_dispatcher_returns_a_result_for_every_call_id(monkeypatch, tmp_path, case):
     specs = [
         {"name": name, "description": name, "schema": tools.SCHEMAS[name]}
-        for name in ("read_source_file", "read_document", "read_help", "run_test")
+        for name in ("read_source_file", "read_document", "read_help", "stat_source")
     ] + [{
         "name": "register_document",
         "description": "register",
@@ -194,7 +164,7 @@ def test_dispatcher_returns_a_result_for_every_call_id(monkeypatch, tmp_path, ca
         first_calls = [
             {"id": "valid", "name": "read_document", "input": {"lines": {"start": 1, "end": 5}, "chars": None}},
             {"id": "help", "name": "read_help", "input": {}},
-            {"id": "invalid", "name": "run_test", "input": {}},
+            {"id": "invalid", "name": "stat_source", "input": {}},
             {"id": "register", "name": "register_document", "input": register_input},
         ]
     else:
@@ -410,28 +380,25 @@ def test_git_integration_lookup_failure_fails_closed(monkeypatch, tmp_path):
     assert caught.value.reason == "git_integration_lookup_failed"
 
 @pytest.mark.parametrize("step_type", ["TR", "TSR", "TS"])
-def test_non_git_mutating_types_complete_read_mutation_test_and_register(monkeypatch, tmp_path, step_type):
+def test_non_git_mutating_types_complete_read_mutation_and_register(monkeypatch, tmp_path, step_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
-    # 0672 T0004: run_test is advertised only inside the TS/TSR preserved set, so this
-    # read/mutation/test/register round trip runs as a TS(new) step over that doc_ref.
     monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: ("TS", False))
     seen = []
     monkeypatch.setattr(tools.remote_tool_service, "handle", lambda op, _token, _body: seen.append(op) or (200, {"ok": True, "op": op}))
-    monkeypatch.setattr(tools, "run_test", lambda _run, _input, _remaining: seen.append("run_test") or (200, {"ok": True}))
     monkeypatch.setattr(invoke.ai_settings_service, "get_provider_secret", lambda *_args: "key")
     monkeypatch.setattr(invoke, "_remaining_sec", lambda _run: 30)
     monkeypatch.setattr(invoke, "_inbox_register", lambda *_args: (200, {"ok": True, "doc_id": "registered"}))
     calls = [
         {"id": "read", "name": "read_source_file", "input": {"path": "a.py"}},
         {"id": "write", "name": "write_source_file", "input": {"path": "a.py", "content": "x"}},
-        {"id": "test", "name": "run_test", "input": {"command": "pytest -q"}},
+        {"id": "stat", "name": "stat_source", "input": {"path": "a.py"}},
         {"id": "register", "name": "register_document", "input": {"doc_type": "TR", "content": "complete"}},
     ]
     monkeypatch.setattr(invoke, "_call_openai", lambda *_args: (None, calls, {"role": "assistant", "content": None}))
     run = _run(tmp_path)
     run.update({"run_id": "run", "raw_token": "live", "docs_target": 1, "mode": "single", "cancel_event": SimpleNamespace(is_set=lambda: False), "timed_out": False})
     assert invoke._api_execute({"id": "provider", "kind": "openai", "api_base_url": "https://example", "api_model": "m"}, "prompt", run) == ("started_ok", None)
-    assert seen == ["read", "write", "run_test"]
+    assert seen == ["read", "write", "stat"]
 
 
 def test_read_document_schema_is_flat_and_nulls_are_local_only():

@@ -1,7 +1,7 @@
 """flowgate.default.0682 T#2 — Test Asset Policy: real repository layout and untracked assets.
 
-D#1 §3.8 / §7 T#2 regression set over real git repositories and the production Source
-Bundle capture (see basis_bundle_support). One policy (``asset_kind``) decides for the
+D#1 §3.8 / §7 T#2 regression set over real git repositories and the production source
+capture (see basis_support). One policy (``asset_kind``) decides for the
 approval manifest, the asset API and the locator: ``tests/**``, ``test/**``,
 ``server/tests/**``, ``client/tests/**`` and ``__tests__`` under ``src``/``client/src``;
 ``.py`` runs on the existing pytest runner, JS/TS is pinned and editable but
@@ -23,7 +23,7 @@ import subprocess
 import pytest
 from fastapi import HTTPException
 
-from basis_bundle_support import CASES, BasisEnv, git
+from basis_support import CASES, BasisEnv, git
 from modules.flow_gate.services import spec_execution_service as execution
 from modules.flow_gate.services import test_asset_service as assets
 from modules.flow_gate.services import test_basis_service as basis
@@ -510,7 +510,7 @@ def test_basis_from_the_t1_policy_is_stale_with_the_asset_policy_reason(env):
     assert basis.verdict(env.doc(doc["doc_id"]), fresh)["state"] == basis.VALID
 
 
-# ── Source Bundle capture with executable extensions (Windows lstat mode) ────
+# ── source capture with executable extensions (Windows lstat mode) ───────────
 # Windows reports execute bits for .bat/.cmd/.exe from Path.lstat()/os.fstat() but not
 # from DirEntry.stat(); the capture compared st_mode and failed every worktree that
 # holds such a file (FlowGate tracks client/run.bat and server/run-dev.bat).
@@ -520,21 +520,21 @@ EXECUTABLES = {"client/run.bat": b"@echo off\r\n", "server/run-dev.bat": b"@echo
 
 
 def test_scan_and_lstat_of_executable_extensions_compare_as_the_same_file(tmp_path):
-    from modules.flow_gate.services import source_bundle_materializer as materializer
+    from modules.flow_gate.services import source_fingerprint as fingerprint
     for name in ("run.bat", "run.cmd", "tool.exe", "notes.txt"):
         (tmp_path / name).write_bytes(b"x")
     for entry in os.scandir(tmp_path):
         scanned = entry.stat(follow_symlinks=False)
-        assert materializer._same(scanned, (tmp_path / entry.name).lstat()), entry.name
+        assert fingerprint._same(scanned, (tmp_path / entry.name).lstat()), entry.name
         fd = os.open(tmp_path / entry.name, os.O_RDONLY | getattr(os, "O_BINARY", 0))
         try:
-            assert materializer._same(scanned, os.fstat(fd)), entry.name
+            assert fingerprint._same(scanned, os.fstat(fd)), entry.name
         finally:
             os.close(fd)
     # A real change is still caught.
     before = (tmp_path / "run.bat").lstat()
     (tmp_path / "run.bat").write_bytes(b"xy")
-    assert not materializer._same(before, (tmp_path / "run.bat").lstat())
+    assert not fingerprint._same(before, (tmp_path / "run.bat").lstat())
 
 
 @pytest.fixture
@@ -551,9 +551,9 @@ def exe_env(env):
 
 def test_worktree_with_executable_extensions_is_captured(exe_env):
     import time
-    from modules.flow_gate.services import source_bundle_materializer as materializer
+    from modules.flow_gate.services import source_fingerprint as fingerprint
     root = exe_env.roots["g1"]
-    inspected = materializer.inspect_source(root.resolve(), time.monotonic() + 60)
+    inspected = fingerprint.inspect_source(root.resolve(), time.monotonic() + 60)
     hashed = {entry["path"]: entry["sha256"] for entry in inspected["entries"]}
     for relative in EXECUTABLES:
         assert hashed[relative] == _hash(root, relative)
@@ -592,15 +592,15 @@ def test_this_repository_worktree_executables_are_captured():
     # repeated here: other suites in the same run write server/logs while it is measured.
     import time
     from pathlib import Path
-    from modules.flow_gate.services import source_bundle_materializer as materializer
+    from modules.flow_gate.services import source_fingerprint as fingerprint
     root = Path(__file__).resolve().parents[2]
     if not (root / ".git").exists() or not (root / "client" / "run.bat").is_file():
         pytest.skip("not running inside the FlowGate repository worktree")
-    deadline = time.monotonic() + materializer.BUILD_SECONDS
-    files, _dirs = materializer._scan(root, deadline)
+    deadline = time.monotonic() + fingerprint.MEASURE_SECONDS
+    files, _dirs = fingerprint._scan(root, deadline)
     launchers = [(name, st) for name, st in files
                  if name.rsplit(".", 1)[-1].lower() in ("bat", "cmd", "exe", "com")]
     assert "client/run.bat" in {name for name, _st in launchers}
     for name, st in launchers:
-        item = materializer._hash_file(root, name, st, deadline)
+        item = fingerprint._hash_file(root, name, st, deadline)
         assert item["sha256"] == _hash(root, name)

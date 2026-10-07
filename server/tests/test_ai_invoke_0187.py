@@ -476,16 +476,16 @@ class TestRegistrationDiagnostics:
         calls = 0
         monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
         monkeypatch.setattr(svc.api_server_tools, "definitions_for_run", lambda _run: [{
-            "name": "run_test", "schema": {"type": "object"},
+            "name": "stat_source", "schema": {"type": "object"},
         }])
-        monkeypatch.setattr(svc.api_server_tools, "run_test", lambda *_: (200, {"ok": True}))
+        monkeypatch.setattr(svc.api_server_tools, "source_call", lambda *_: (200, {"ok": True}))
 
         def model(*_args):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise RuntimeError("model closed after direct tool")
-            tool = {"id": "tc-direct", "name": "run_test", "input": {}}
+            tool = {"id": "tc-direct", "name": "stat_source", "input": {}}
             return "worked", tool, {"role": "assistant", "content": "worked", "tool_calls": []}
 
         monkeypatch.setattr(svc, "_call_openai", model)
@@ -503,7 +503,7 @@ class TestRegistrationDiagnostics:
         assert first_turn["disposition"] == "direct_tools_only"
         assert first_turn["completion_selected"] is False
         assert first_turn["register_attempted"] is False
-        assert first_turn["tools"] == [{"name": "run_test", "status": 200, "registration": False}]
+        assert first_turn["tools"] == [{"name": "stat_source", "status": 200, "registration": False}]
         assert run["register_errors"] == []
         assert run["tool_call_misses"] == 0
         assert run["turn_limit_exhausted"] is False

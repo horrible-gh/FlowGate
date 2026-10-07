@@ -288,7 +288,7 @@ def test_startup_registers_before_git_recovery(monkeypatch):
     calls = []
     for name in ("configure_console_encoding", "record_deployment", "preload_singletons",
                  "recover_ai_invoke_leases", "encrypt_ai_provider_keys",
-                 "start_snapshot_cleanup", "start_source_bundle_cleanup"):
+                 "start_snapshot_cleanup", "remove_retired_source_bundle_storage"):
         monkeypatch.setattr(startup, name, lambda: None)
     monkeypatch.setattr(startup, "register_server_instance", lambda: calls.append("register"))
     monkeypatch.setattr(startup, "recover_git_sessions", lambda: calls.append("recover"))

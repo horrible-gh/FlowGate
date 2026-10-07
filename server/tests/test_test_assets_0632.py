@@ -14,7 +14,7 @@ import json
 import pytest
 from fastapi import HTTPException
 
-from basis_bundle_support import CASES, BasisEnv
+from basis_support import CASES, BasisEnv
 from modules.flow_gate.services import test_asset_service as assets
 from modules.flow_gate.services import test_basis_service as basis
 

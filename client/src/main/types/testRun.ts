@@ -188,7 +188,7 @@ export interface TestDocumentView {
   // 0684 T#2: null while the source is unchecked (display paths never measure).
   basis_valid?: boolean | null
   basis_verdict?: { state: 'valid' | 'stale' | 'unverifiable' | 'unchecked'; reasons: string[]; live_basis_id?: string | null } | null
-  basis_source?: { kind?: string | null; fingerprint_prefix?: string | null; measured_at?: string | null; captured_at?: string | null; source_dirty?: boolean | null; bundle_id?: string | null; git_revision?: string | null; run_id?: string | null } | null
+  basis_source?: { kind?: string | null; fingerprint_prefix?: string | null; measured_at?: string | null; captured_at?: string | null; source_dirty?: boolean | null; git_revision?: string | null; run_id?: string | null } | null
   case_capabilities?: Record<string, string>
   effective_result?: {
     summary: TestResultSummary & { overall: TestVerdict }

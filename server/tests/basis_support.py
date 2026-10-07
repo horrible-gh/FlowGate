@@ -5,8 +5,8 @@ copied bytes (no Source Bundle). These suites run the production fingerprint, co
 and verdict code over real git repositories. Only the edges are replaced: the Group ->
 worktree lookup (a dict of temp repositories), the run scratch root (a temp directory),
 the Group lock (``stub_group_lock``), and the documents/events tables (an in-memory dict
-that a failed transaction rolls back together with the SQLite rows). The Bundle tables are
-still created so a suite can show that nothing writes to them any more.
+that a failed transaction rolls back together with the SQLite rows). 0684 T#4 removed
+Source Bundle and its tables, so the SQLite connection starts empty.
 """
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ from pathlib import Path
 
 from group_lock_stub import stub_group_lock
 
-_MIGRATIONS = Path(__file__).resolve().parents[1] / "sql" / "migrations" / "sqlite"
 PROJECT = "flowgate"
 CASES = [{"case_id": "TC-001", "execution_mode": "automated",
           "automation_ref": "tests/test_a.py::test_a", "test_assets": "tests/fixture.json"}]
@@ -40,20 +39,17 @@ def make_repo(root: Path, value: str = "1") -> Path:
     git(root, "config", "user.name", "Test")
     git(root, "add", ".")
     git(root, "commit", "-m", "initial")
-    # Never captured: secret file names are excluded by the Bundle policy.
+    # Never captured: secret file names are excluded by the source fingerprint policy.
     (root / ".env").write_text("SECRET=1\n")
     return root
 
 
-class BundleStore:
+class BasisStore:
     """The store surface the db modules use, over one in-memory SQLite connection."""
 
     def __init__(self):
         self.conn = sqlite3.connect(":memory:", isolation_level=None, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        for name in ("122_source_bundles.sql", "123_source_bundle_cleanup_metrics.sql",
-                     "139_source_bundle_pins.sql"):
-            self.conn.executescript((_MIGRATIONS / name).read_text(encoding="utf-8"))
         self.docs: dict[str, dict] = {}
         self.events: list[tuple[str, str, dict]] = []
         self._depth = 0
@@ -96,18 +92,15 @@ class BasisEnv:
         from modules.flow_gate.db import connection
         from modules.flow_gate.db import documents as db_docs
         from modules.flow_gate.db import events as db_events
-        from modules.flow_gate.db import source_bundles as db_source_bundles
         from modules.flow_gate.services import source_fingerprint
         from modules.flow_gate.services import test_asset_service
         from modules.flow_gate.services import test_basis_service as basis
         from modules.flow_gate.services import test_run_service as runner
 
         self.tmp_path = tmp_path
-        self.store = BundleStore()
+        self.store = BasisStore()
         self.roots: dict[str, Path] = {}
         self.cases = copy.deepcopy(CASES)
-        self.db = db_source_bundles
-        monkeypatch.setattr(db_source_bundles, "get_store", lambda: self.store)
         monkeypatch.setattr(connection, "get_store", lambda: self.store)
         monkeypatch.setattr(test_asset_service, "get_store", lambda: self.store)
 

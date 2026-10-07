@@ -1,7 +1,7 @@
 """flowgate.default.0682 T#1 / 0684 T#2 — Test Basis exact source identity, run copy, stale.
 
 Regression set over real git repositories and the production fingerprint, copy, manifest
-and verdict code (see basis_bundle_support).
+and verdict code (see basis_support).
 
 0684 T#2 (D#1 §3-3, §3-5, §3-6, §3-7): there is no Source Bundle and no Basis on the TS.
 A run's preparing phase copies the Group worktree into its disposable root and
@@ -25,8 +25,8 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from basis_bundle_support import CASES, git
-from basis_bundle_support import BasisEnv
+from basis_support import CASES, git
+from basis_support import BasisEnv
 from group_lock_stub import stub_group_lock
 from modules.flow_gate.services import source_fingerprint as fingerprint
 from modules.flow_gate.services import spec_execution_service as execution
@@ -62,11 +62,6 @@ def _count_hashing(monkeypatch):
     return calls
 
 
-def _no_bundle_written(env):
-    assert env.store._fetch_all("SELECT * FROM source_bundles") == []
-    assert env.store._fetch_all("SELECT * FROM source_bundle_pins") == []
-
-
 # ── identity: the run's copy, uncommitted / untracked product work ────────────
 
 def test_run_copy_holds_uncommitted_and_untracked_work_and_its_basis_is_the_copied_bytes(env):
@@ -95,7 +90,6 @@ def test_run_copy_holds_uncommitted_and_untracked_work_and_its_basis_is_the_copi
     assert basis.verdict(env.doc(doc["doc_id"]), run_basis)["state"] == basis.VALID
     # Nothing is stored on the TS and no Bundle is captured or pinned.
     assert "test_basis" not in json.loads(env.doc(doc["doc_id"])["meta"])
-    _no_bundle_written(env)
 
 
 def test_run_copy_keeps_each_file_s_permission_bits(env, monkeypatch):
@@ -229,7 +223,6 @@ def test_a_chmod_during_the_copy_or_the_measure_is_a_source_change(env, monkeypa
     with pytest.raises(ValueError, match="basis_capture_failed:source_changed"):
         env.run_basis(doc, "run-chmod")
     assert not (env.tmp_path / "runs" / "run-chmod").exists()
-    _no_bundle_written(env)
     helper.chmod(0o755)
 
     def chmod_after_hashing(source, relative, expected_stat, deadline, out=None, **kwargs):
@@ -424,7 +417,6 @@ def test_a_change_during_the_copy_refuses_the_run_and_leaves_nothing(env, monkey
         env.run_basis(doc, "run-race")
     assert not (env.tmp_path / "runs" / "run-race").exists()
     assert env.doc(doc["doc_id"]) == before and env.store.events == []
-    _no_bundle_written(env)
 
 
 def test_the_copy_holds_the_group_source_lock_and_a_busy_source_refuses(env, monkeypatch):
@@ -602,7 +594,6 @@ def test_pipeline_approval_queues_the_run_without_measuring(env, monkeypatch):
     stored = json.loads(env.doc(doc["doc_id"])["meta"])
     assert "test_basis" not in stored
     assert stored["superseded_test_basis"]["basis_id"] == earlier["basis_id"]
-    _no_bundle_written(env)
     assert [e[1] for e in env.store.events] == ["test_spec_execution_admitted"]
 
 
@@ -620,7 +611,6 @@ def test_approval_precheck_measures_nothing(env, monkeypatch):
         doc_id=doc["doc_id"], action="approve", actor_user_id="u",
         user_permissions={"document.approve"})
     assert checked["next_status"] == "approved"
-    _no_bundle_written(env)
     assert env.admitted == []
     assert env.doc(doc["doc_id"])["doc_review_status"] == "pending_review"
 
@@ -758,7 +748,6 @@ def test_asset_edit_swaps_bytes_and_makes_earlier_results_stale(env, monkeypatch
     assert [e[1] for e in env.store.events] == ["test_spec_asset_updated"]
     assert measured == []  # no capture, no successor, no run
     assert "test_basis" not in json.loads(env.doc(doc["doc_id"])["meta"])
-    _no_bundle_written(env)
     judged = basis.verdict(env.doc(doc["doc_id"]), run_basis)
     assert judged["state"] == basis.STALE
     assert judged["reasons"] == [basis.REASON_SOURCE, basis.REASON_MANIFEST]
