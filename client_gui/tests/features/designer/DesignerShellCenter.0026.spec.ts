@@ -110,11 +110,15 @@ async function settle() {
   for (let i = 0; i < 6; i += 1) await flushPromises()
 }
 
+// flowgate.v02.0039 T#3: entering leaves the Designer without a work target; these suites
+// check the work state, so the user first chooses the Project row (one click).
 async function mountShell() {
   const pinia = createPinia()
   setActivePinia(pinia)
   useProjectStore().setCurrentProject(project('p', 'Alpha'))
   wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: [i18n, pinia] } })
+  await settle()
+  explorerRow(wrapper, 'Alpha').element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
   await settle()
   return wrapper
 }
@@ -281,7 +285,8 @@ describe('Designer Shell x Center — Explorers follow the active tab', () => {
 
     expect(tabIds(w)).toEqual([])
     expect(w.find('[data-test="designer-canvas"]').exists()).toBe(false)
-    expect(w.find('[data-test="designer-center-no-flow"]').exists()).toBe(true)
+    // flowgate.v02.0039 T#3: the new Project starts without a work target — empty Center frame.
+    expect(w.find('[data-test="designer-center-unselected"]').exists()).toBe(true)
     expect(fileFlow(w)).toBeNull()
     expect(projectActive(w)).toBeNull()
     expect(w.findComponent(ProjectExplorer).props('projectId')).toBe('q')

@@ -6,14 +6,14 @@
   <section class="project-explorer" :aria-label="t('gui.designer.project_explorer.title')" data-test="project-explorer">
     <!-- No visible title row: the surrounding Dock tab already names this view
          (0025 T0006 §2/§6). Search and refresh share one compact row. -->
-    <div class="project-explorer-search">
+    <div class="project-explorer-search" :class="{ 'is-unavailable': toolsDisabled }">
       <div class="project-explorer-search-field">
         <Input
           v-model="query"
           type="search"
           :placeholder="t('gui.designer.project_explorer.search_placeholder')"
           :aria-label="t('gui.designer.project_explorer.search_placeholder')"
-          :disabled="!projectId"
+          :disabled="!projectId || toolsDisabled"
           data-test="project-explorer-search"
         />
         <IconButton
@@ -34,7 +34,7 @@
         size="sm"
         :label="t('gui.designer.project_explorer.refresh')"
         :title="t('gui.designer.project_explorer.refresh')"
-        :disabled="!projectId || loading || refreshing"
+        :disabled="!projectId || loading || refreshing || toolsDisabled"
         data-test="project-explorer-refresh"
         @click="refresh"
       >
@@ -146,12 +146,18 @@ const props = withDefaults(
     refreshToken?: number
     /** Show final-approved / discarded Flows too (the Dashboard's "show" variant). */
     includeTerminal?: boolean
+    /**
+     * Makes the search and refresh row unavailable while the tree stays usable (0039 T#3: the
+     * Designer's initial state with no work target). Set by the Designer, not by this part.
+     */
+    toolsDisabled?: boolean
   }>(),
   {
     projectId: undefined,
     activeFlowId: null,
     refreshToken: 0,
     includeTerminal: false,
+    toolsDisabled: false,
   },
 )
 
@@ -159,6 +165,8 @@ const emit = defineEmits<{
   'select-group': [payload: ProjectExplorerGroupEvent]
   'select-flow': [payload: ProjectExplorerFlowEvent]
   'activate-flow': [payload: ProjectExplorerFlowEvent]
+  /** Every change of the user's selection, including the reset on a Project change. */
+  'update:selection': [selection: ExplorerSelection]
 }>()
 
 const { t } = useI18n()
@@ -188,6 +196,10 @@ const isSearching = computed(() => query.value.trim().length > 0)
 // Designer on a Project shows its tree with nothing selected and no current mark; only a
 // click / key on a row sets this, and a Project change clears it again.
 const selection = ref<ExplorerSelection>(null)
+
+// Reported upward so the Designer can tell "nothing chosen yet" from a chosen target
+// (0039 T#3). Only changes are reported: entering the Designer emits nothing.
+watch(selection, (next) => emit('update:selection', next))
 
 const rootNodeId = computed(() => (projectId.value ? projectNodeId(projectId.value) : null))
 const projectName = computed(() =>
@@ -385,6 +397,11 @@ defineExpose({ refresh })
   right: 2px;
   width: 24px;
   height: 24px;
+}
+
+.project-explorer-search.is-unavailable {
+  opacity: 0.46;
+  filter: saturate(0.55);
 }
 
 .project-explorer-body {

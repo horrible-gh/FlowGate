@@ -2,13 +2,16 @@
   <!-- Final container for the Designer's top band. flowgate.v02.0038 (0007-T §5): stacks the
        real Header / Menu Bar / Toolbar parts and owns only their order and row heights. What
        each part shows comes from the Shell as props, and every part event passes straight up
-       to the Shell — this container handles none of them itself. -->
+       to the Shell — this container handles none of them itself. flowgate.v02.0039 T#3: the
+       Shell's work-target flag goes to the Menu Bar (item availability) and the Toolbar
+       (dimmed and unavailable without a target). -->
   <header class="designer-top" data-test="designer-top">
     <DesignerHeader @command="emit('command', $event)" @search="emit('search', $event)" />
     <DesignerMenuBar
       :run-mode="runMode"
       :density="density"
       :window-state="windowState"
+      :has-work-target="hasWorkTarget"
       @command="emit('command', $event)"
       @toggle-panel="emit('toggle-panel', $event)"
       @show-tab="emit('show-tab', $event)"
@@ -19,6 +22,7 @@
       :run-mode="runMode"
       :density="density"
       :zoom="zoom"
+      :disabled="!hasWorkTarget"
       @command="emit('command', $event)"
       @update:density="emit('update:density', $event)"
     />
@@ -46,6 +50,8 @@ defineProps<{
   /** Zoom of the active Flow's Canvas, in percent. */
   zoom: number
   windowState: DesignerWindowState
+  /** Something is chosen in the Project Explorer or a Flow is open (0039 T#3). */
+  hasWorkTarget: boolean
 }>()
 
 const emit = defineEmits<{

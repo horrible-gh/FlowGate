@@ -4,21 +4,29 @@
        node / connect modes (0001-R §4.2) and no standing stop button: the run button that was
        used turns into ■ 중지 in place and the other one is disabled until the run stops
        (0001-R §4.1.1). 정렬 / 배치 ▾ is the same entry as the Edit menu's 정렬 / 배치… and emits
-       the same command. -->
-  <div class="designer-toolbar" role="toolbar" :aria-label="t('gui.designer.top.toolbar_label')" data-test="designer-toolbar">
+       the same command. flowgate.v02.0039 T#3: `disabled` (no work target yet) keeps every tool
+       on screen but dimmed and unavailable, as the confirmed initial-state design draws it. -->
+  <div
+    class="designer-toolbar"
+    :class="{ 'is-unavailable': disabled }"
+    role="toolbar"
+    :aria-label="t('gui.designer.top.toolbar_label')"
+    :aria-disabled="disabled ? 'true' : undefined"
+    data-test="designer-toolbar"
+  >
     <div class="designer-tool-group" data-test="designer-tool-group">
-      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.undo" @click="emit('command', 'edit.undo')">
+      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.undo" :disabled="disabled" @click="emit('command', 'edit.undo')">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5L3 9l4 4" /><path d="M3 9h9a5 5 0 0 1 0 10h-2" /></svg>
         <span>{{ t('gui.designer.top.tools.undo') }}</span>
       </button>
-      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.redo" @click="emit('command', 'edit.redo')">
+      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.redo" :disabled="disabled" @click="emit('command', 'edit.redo')">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13 5l4 4-4 4" /><path d="M17 9H8a5 5 0 0 0 0 10h2" /></svg>
         <span>{{ t('gui.designer.top.tools.redo') }}</span>
       </button>
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
-      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.arrange" @click="emit('command', 'edit.arrange')">
+      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.arrange" :disabled="disabled" @click="emit('command', 'edit.arrange')">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14M3 8h9M3 12h14M3 16h9" /></svg>
         <span>{{ t('gui.designer.top.tools.arrange') }}</span>
       </button>
@@ -31,7 +39,7 @@
         type="button"
         class="designer-tool"
         :class="{ 'is-running': runMode === run.mode }"
-        :disabled="runMode !== null && runMode !== run.mode"
+        :disabled="disabled || (runMode !== null && runMode !== run.mode)"
         :aria-pressed="runMode === run.mode ? 'true' : 'false'"
         data-test="designer-tool-run"
         :data-run="run.mode"
@@ -45,15 +53,15 @@
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
-      <button type="button" class="designer-tool is-compact" data-test="designer-tool" data-command="view.fit" @click="emit('command', 'view.fit')">
+      <button type="button" class="designer-tool is-compact" data-test="designer-tool" data-command="view.fit" :disabled="disabled" @click="emit('command', 'view.fit')">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4" /></svg>
         <span>{{ t('gui.designer.top.tools.zoom_fit') }}</span>
       </button>
-      <button type="button" class="designer-tool is-compact" data-test="designer-tool" data-command="view.zoom-out" @click="emit('command', 'view.zoom-out')">
+      <button type="button" class="designer-tool is-compact" data-test="designer-tool" data-command="view.zoom-out" :disabled="disabled" @click="emit('command', 'view.zoom-out')">
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="M7 10h6" /></svg>
         <span>{{ t('gui.designer.top.tools.zoom_out') }}</span>
       </button>
-      <button type="button" class="designer-tool is-compact" data-test="designer-tool" data-command="view.zoom-in" @click="emit('command', 'view.zoom-in')">
+      <button type="button" class="designer-tool is-compact" data-test="designer-tool" data-command="view.zoom-in" :disabled="disabled" @click="emit('command', 'view.zoom-in')">
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="M7 10h6M10 7v6" /></svg>
         <span>{{ t('gui.designer.top.tools.zoom_in') }}</span>
       </button>
@@ -69,6 +77,7 @@
           :aria-label="t(`gui.designer.top.densities.${level}`)"
           :title="t(`gui.designer.top.densities.${level}`)"
           :data-density="level"
+          :disabled="disabled"
           @click="emit('update:density', level)"
         >
           <span v-if="level === 'free'" class="designer-density-free" aria-hidden="true" />
@@ -83,12 +92,17 @@
 import { useI18n } from 'vue-i18n'
 import { DESIGNER_DENSITIES, type DesignerDensity, type DesignerRunMode, type DesignerTopCommand } from './designerTop'
 
-defineProps<{
-  runMode: DesignerRunMode
-  density: DesignerDensity
-  /** Zoom value shown next to the zoom buttons, in percent. */
-  zoom: number
-}>()
+withDefaults(
+  defineProps<{
+    runMode: DesignerRunMode
+    density: DesignerDensity
+    /** Zoom value shown next to the zoom buttons, in percent. */
+    zoom: number
+    /** True while the Designer has no work target (0039 T#3): every tool is unavailable. */
+    disabled?: boolean
+  }>(),
+  { disabled: false },
+)
 
 const emit = defineEmits<{
   command: [command: DesignerTopCommand]
@@ -191,6 +205,29 @@ const RUN_BUTTONS = [
   outline-offset: 1px;
 }
 
+/* No work target (0039 T#3, confirmed design v7): the whole band dims once; the buttons inside
+   do not dim a second time. */
+.designer-toolbar.is-unavailable > .designer-tool-group {
+  opacity: 0.38;
+  filter: saturate(0.45);
+  user-select: none;
+}
+
+.designer-toolbar.is-unavailable .designer-tool:disabled {
+  opacity: 1;
+  color: #66788d;
+  cursor: default;
+}
+
+.designer-toolbar.is-unavailable .designer-tool svg.is-run {
+  fill: #66788d;
+  stroke: #66788d;
+}
+
+.designer-toolbar.is-unavailable .designer-tool-density button {
+  cursor: default;
+}
+
 .designer-tool-zoom {
   display: flex;
   align-items: center;
@@ -231,7 +268,7 @@ const RUN_BUTTONS = [
   border-right: 0;
 }
 
-.designer-tool-density button:hover,
+.designer-tool-density button:hover:not(:disabled),
 .designer-tool-density button.is-on {
   background: #18437b;
   color: #58a6ff;

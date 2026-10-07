@@ -5,14 +5,19 @@
        Mount policy: an Explorer is mounted the first time its mode is shown and is only
        hidden afterwards (mode switch or collapse), so its search / expansion / selection /
        loaded tree survive. The Dock element itself always stays; collapsing turns it into a
-       rail that keeps the expand button and the current mode name. -->
+       rail that keeps the expand button and the current mode name.
+       flowgate.v02.0039 T#3: while the Designer has no work target (`unselected`) the mode
+       switch, the collapse button and the Explorer search are unavailable as the confirmed
+       initial-state design draws them, but the Project tree stays shown and clickable — a
+       click there is how the user makes the first selection (0001-R §2). -->
   <aside
     class="designer-left-dock"
-    :class="{ 'is-collapsed': collapsed }"
+    :class="{ 'is-collapsed': collapsed, 'is-unselected': unselected }"
     :aria-label="t('gui.designer.shell.explorer_title')"
     data-test="designer-left-dock"
     :data-collapsed="collapsed ? 'true' : 'false'"
     :data-mode="mode"
+    :data-unselected="unselected ? 'true' : 'false'"
   >
     <div v-if="collapsed" class="designer-left-rail" data-test="designer-left-rail">
       <IconButton
@@ -32,6 +37,7 @@
     <ExplorerModeTabs
       v-show="!collapsed"
       :model-value="mode"
+      :disabled="unselected"
       @update:model-value="emit('update:mode', $event)"
       @collapse="emit('collapse')"
     />
@@ -42,7 +48,9 @@
         v-show="mode === 'project'"
         :project-id="projectId"
         :active-flow-id="activeFlow?.groupId ?? null"
+        :tools-disabled="unselected"
         @activate-flow="emit('activate-flow', $event)"
+        @update:selection="emit('update:selection', $event)"
       />
       <DesignerFileExplorer
         v-if="mountedModes.file"
@@ -61,22 +69,28 @@ import type { FlowRef } from '@/features/project'
 import IconButton from '../../../components/ui/IconButton.vue'
 import DesignerFileExplorer from '../fileExplorer/DesignerFileExplorer.vue'
 import ProjectExplorer from '../projectExplorer/ProjectExplorer.vue'
-import type { ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
+import type { ExplorerSelection, ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
 import ExplorerModeTabs from './ExplorerModeTabs.vue'
 import type { DesignerLeftMode } from './designerLayout'
 
-const props = defineProps<{
-  projectId: string | null
-  activeFlow: FlowRef | null
-  mode: DesignerLeftMode
-  collapsed: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    projectId: string | null
+    activeFlow: FlowRef | null
+    mode: DesignerLeftMode
+    collapsed: boolean
+    /** No work target yet (0039 T#3): navigation chrome unavailable, tree still usable. */
+    unselected?: boolean
+  }>(),
+  { unselected: false },
+)
 
 const emit = defineEmits<{
   'update:mode': [mode: DesignerLeftMode]
   collapse: []
   expand: []
   'activate-flow': [payload: ProjectExplorerFlowEvent]
+  'update:selection': [selection: ExplorerSelection]
 }>()
 
 const { t } = useI18n()

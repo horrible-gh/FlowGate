@@ -5,14 +5,18 @@
        Boundaries for later groups: the header `header-meta` / `header-actions` slots and one
        Content slot per tab (`tab-documents`, `tab-qna`, `tab-attachments`, `tab-settings`),
        each given the selected Node. A tab nobody fills yet shows a placeholder line. The Frame
-       owns only the selected tab; it calls no API and holds no Node data of its own. -->
+       owns only the selected tab; it calls no API and holds no Node data of its own.
+       flowgate.v02.0039 T#3: `unselected` (the Designer has no work target yet) leaves only the
+       bottom frame — an empty header bar, no line, no tabs and no Content. -->
   <section
     class="designer-inspector"
     data-test="designer-inspector"
-    :data-selected="node ? 'true' : 'false'"
+    :data-selected="node && !unselected ? 'true' : 'false'"
+    :data-unselected="unselected ? 'true' : 'false'"
     :aria-label="t('gui.designer.inspector.label')"
   >
-    <p v-if="!node" class="designer-inspector-empty" data-test="designer-inspector-empty">
+    <div v-if="unselected" class="designer-inspector-frame" data-test="designer-inspector-frame" />
+    <p v-else-if="!node" class="designer-inspector-empty" data-test="designer-inspector-empty">
       {{ t('gui.designer.inspector.no_selection') }}
     </p>
     <template v-else>
@@ -62,8 +66,10 @@ const props = withDefaults(
     node: FlowGraphNode | null
     /** False hides the trailing 설정 tab (decided per card definition by a later group). */
     hasSettings?: boolean
+    /** The Designer has no work target yet (0039 T#3): frame only. */
+    unselected?: boolean
   }>(),
-  { hasSettings: true },
+  { hasSettings: true, unselected: false },
 )
 
 const { t } = useI18n()
@@ -105,6 +111,13 @@ function selectTab(key: string) {
   min-height: 0;
   overflow: hidden;
   background: #091624;
+}
+
+.designer-inspector-frame {
+  flex: 0 0 48px;
+  height: 48px;
+  border-bottom: 1px solid var(--fg2-line);
+  background: #0c1b2d;
 }
 
 .designer-inspector-empty {

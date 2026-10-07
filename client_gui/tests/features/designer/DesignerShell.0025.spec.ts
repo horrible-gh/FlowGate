@@ -8,6 +8,10 @@
  * flowgate.v02.0026 (0003-D §7.1): the Workspace now holds the Designer Center (Flow Tabs +
  * Canvas) instead of its placeholder, and an activated Flow opens a tab rendered with the
  * real Vue Flow — this file gives the Canvas a size and a ResizeObserver stand-in.
+ *
+ * flowgate.v02.0039 T#3: entering the Designer leaves it without a work target (initial
+ * unselected state, covered by DesignerInitialState.0039.spec.ts). These suites check the work
+ * state, so `mountShell` first makes the user's explicit choice — one click on the Project row.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -120,6 +124,10 @@ async function mountShell(projectId: string | null = 'p') {
   if (projectId) useProjectStore().setCurrentProject(project(projectId, projectId === 'p' ? 'Alpha' : 'Beta'))
   wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: [i18n, pinia] } })
   await settle()
+  if (projectId) {
+    explorerRow(wrapper, projectId === 'p' ? 'Alpha' : 'Beta').element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+    await settle()
+  }
   return wrapper
 }
 
@@ -304,7 +312,8 @@ describe('DesignerShell — active Flow', () => {
     await settle()
 
     expect(tabNames(w)).toEqual([])
-    expect(w.find('[data-test="designer-center-no-flow"]').exists()).toBe(true)
+    // flowgate.v02.0039 T#3: the new Project starts without a work target — empty Center frame.
+    expect(w.find('[data-test="designer-center-unselected"]').exists()).toBe(true)
     expect(w.findComponent(DesignerFileExplorer).props('flow')).toBeNull()
     expect(w.findComponent(DesignerFileExplorer).props('projectId')).toBe('q')
     expect(w.findComponent(ProjectExplorer).props('projectId')).toBe('q')
@@ -314,7 +323,11 @@ describe('DesignerShell — active Flow', () => {
   it('without a current Project both Explorers show their own empty state', async () => {
     const w = await mountShell(null)
     expect(w.find('[data-test="project-explorer-no-project"]').exists()).toBe(true)
-    await selectMode(w, '파일')
+    // flowgate.v02.0039 T#3: nothing can be chosen, so the mode switch stays unavailable; the
+    // Window menu still moves between the Explorers.
+    await get(w, 'designer-menubar').get('[data-menu="window"]').trigger('click')
+    await get(w, 'designer-menubar').get('[data-tab="file"]').trigger('click')
+    await settle()
     expect(w.find('[data-test="dfx-no-project"]').exists()).toBe(true)
     expect(getRequest).not.toHaveBeenCalled()
   })

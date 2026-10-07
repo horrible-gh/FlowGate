@@ -4,7 +4,10 @@
        switches to it. A choice, Escape or a press outside closes it. Arrow keys move between
        menus and items. Items emit commands (or the panel / tab / density / recent events) — the
        Shell connects what already has a target, the rest is the boundary for later Features.
-       No shortcut is shown next to any item (0007-T §7). -->
+       No shortcut is shown next to any item (0007-T §7). flowgate.v02.0039 T#3: without a work
+       target (`has-work-target` false) only the items of the confirmed initial-state design stay
+       enabled — 새 Project / Project 열기… / 최근 Project / Designer 닫기, the Window menu and
+       Help; the menu titles themselves always open. -->
   <nav
     ref="root"
     class="designer-menubar"
@@ -47,7 +50,7 @@
             type="button"
             role="menuitem"
             class="designer-menu-item"
-            :disabled="!isMenuCommandEnabled(entry.command, runMode)"
+            :disabled="!isMenuCommandEnabled(entry.command, runMode, hasWorkTarget)"
             data-test="designer-menu-item"
             :data-command="entry.command"
             @click="choose(() => emit('command', entry.command))"
@@ -84,7 +87,7 @@
           <div
             v-else
             class="designer-menu-subwrap"
-            @mouseenter="openSub = subKey(entry)"
+            @mouseenter="openSub = isSubmenuEnabled(entry, hasWorkTarget) ? subKey(entry) : null"
             @mouseleave="openSub = null"
           >
             <button
@@ -93,6 +96,7 @@
               class="designer-menu-item"
               aria-haspopup="menu"
               :aria-expanded="openSub === subKey(entry) ? 'true' : 'false'"
+              :disabled="!isSubmenuEnabled(entry, hasWorkTarget)"
               data-test="designer-menu-sub"
               :data-sub="subKey(entry)"
               @click="openSubmenu(subKey(entry), $event)"
@@ -159,6 +163,7 @@ import {
   DESIGNER_MENUS,
   EMPTY_RECENT_LISTS,
   isMenuCommandEnabled,
+  isSubmenuEnabled,
   type DesignerDensity,
   type DesignerMenuEntry,
   type DesignerMenuKey,
@@ -178,8 +183,10 @@ withDefaults(
     windowState: DesignerWindowState
     /** Recent Project / Group / Flow entries; empty until a later Feature feeds them. */
     recent?: DesignerRecentLists
+    /** False while nothing is chosen in the Project Explorer and no Flow is open (0039 T#3). */
+    hasWorkTarget?: boolean
   }>(),
-  { recent: () => EMPTY_RECENT_LISTS },
+  { recent: () => EMPTY_RECENT_LISTS, hasWorkTarget: true },
 )
 
 const emit = defineEmits<{
@@ -399,6 +406,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
 .designer-menu-item:disabled {
   color: #50677e;
   cursor: default;
+  opacity: 0.72;
 }
 
 .designer-menu-mark {

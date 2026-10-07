@@ -1,14 +1,21 @@
 <template>
   <!-- Final container for the bottom Dock. Lives inside the CenterColumn, so it is only ever
        as wide as the Center. flowgate.v02.0036 (0035 v7): the Inspector on the left and the
-       Minimap on the right, 7 : 3; the Minimap keeps its placeholder until its own group. -->
+       Minimap on the right, 7 : 3; the Minimap keeps its placeholder until its own group.
+       flowgate.v02.0039 T#3: with no work target the Inspector keeps only its frame and the
+       Minimap stays on screen dimmed and unavailable (confirmed initial-state design). -->
   <section
     class="designer-bottom-dock"
     data-test="designer-bottom-dock"
     :style="{ height: `${height}px`, gridTemplateColumns: DESIGNER_BOTTOM_DOCK_COLUMNS }"
   >
-    <DesignerInspector :node="selectedNode" />
-    <aside class="designer-bottom-minimap" data-test="designer-bottom-minimap">
+    <DesignerInspector :node="selectedNode" :unselected="unselected" />
+    <aside
+      class="designer-bottom-minimap"
+      :class="{ 'is-unavailable': unselected }"
+      :aria-disabled="unselected ? 'true' : undefined"
+      data-test="designer-bottom-minimap"
+    >
       <ShellPlaceholder
         area="minimap"
         :label="t('gui.designer.shell.minimap_label')"
@@ -25,12 +32,17 @@ import DesignerInspector from '../inspector/DesignerInspector.vue'
 import { DESIGNER_BOTTOM_DOCK_COLUMNS } from './designerLayout'
 import ShellPlaceholder from './ShellPlaceholder.vue'
 
-defineProps<{
-  /** bottomHeight from the Shell's layout state. */
-  height: number
-  /** The selected Node of the active Flow (Center session), or null. */
-  selectedNode: FlowGraphNode | null
-}>()
+withDefaults(
+  defineProps<{
+    /** bottomHeight from the Shell's layout state. */
+    height: number
+    /** The selected Node of the active Flow (Center session), or null. */
+    selectedNode: FlowGraphNode | null
+    /** No work target yet (0039 T#3). */
+    unselected?: boolean
+  }>(),
+  { unselected: false },
+)
 
 const { t } = useI18n()
 </script>
@@ -52,5 +64,12 @@ const { t } = useI18n()
   min-height: 0;
   overflow: auto;
   border-left: 1px solid var(--fg2-line);
+}
+
+.designer-bottom-minimap.is-unavailable {
+  opacity: 0.46;
+  filter: saturate(0.55);
+  pointer-events: none;
+  user-select: none;
 }
 </style>
