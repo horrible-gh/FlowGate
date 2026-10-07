@@ -20,7 +20,7 @@ import {
   type FlowTabsState,
 } from './flowTabs'
 import { fixtureFlowGraphSource } from './graph/fixtureFlowGraphSource'
-import type { FlowGraph } from './graph/flowGraph'
+import type { FlowGraph, FlowGraphNode } from './graph/flowGraph'
 import type { FlowGraphSource } from './graph/flowGraphSource'
 
 /** Graph read state of one open Flow. */
@@ -56,6 +56,11 @@ export interface DesignerCenterSession {
   readonly activeFlowRef: ComputedRef<FlowRef | null>
   readonly activeGraphLoad: ComputedRef<FlowGraphLoad | null>
   readonly activeView: ComputedRef<DeepReadonly<CanvasViewState> | null>
+  /**
+   * flowgate.v02.0036 — the selected Node of the active Flow's ready Graph, or null (no tab, Graph
+   * not ready, nothing selected). The bottom Inspector reads it; it is derived, never stored.
+   */
+  readonly activeSelectedNode: ComputedRef<FlowGraphNode | null>
 
   /** Sets the current project; a different project clears every tab, Graph and view. */
   setProject(projectId: string | null): void
@@ -200,6 +205,14 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     activeView: computed(() => {
       const id = exposed.activeFlowId
       return id === null ? null : exposed.views[id] ?? null
+    }),
+    activeSelectedNode: computed(() => {
+      const id = exposed.activeFlowId
+      if (id === null) return null
+      const load = exposed.graphs[id] as FlowGraphLoad | undefined
+      const nodeId = exposed.views[id]?.selectedNodeId ?? null
+      if (load?.status !== 'ready' || nodeId === null) return null
+      return load.graph.nodes.find((node) => node.id === nodeId) ?? null
     }),
     setProject,
     openFlow,

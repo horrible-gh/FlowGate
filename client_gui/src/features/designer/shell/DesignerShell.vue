@@ -2,8 +2,9 @@
   <!-- flowgate.v02.0025 — Designer Shell (0003-D §2.1): the Designer route screen.
        DesignerShell > Top + Body, Body > Left + Center + Right, Center > Workspace + Bottom.
        The Left Dock (0023/0024 Explorers) and the Workspace (0026 Designer Center: Flow Tabs +
-       read-only Canvas) are real; Top / Bottom / Right are the final containers with a
-       placeholder inside. -->
+       read-only Canvas) are real; Top / Right are the final containers with a placeholder
+       inside. flowgate.v02.0036: the Bottom Dock holds the real Inspector Frame (0035 v7) next
+       to a Minimap placeholder. -->
   <div class="designer-shell" data-test="designer-shell">
     <DesignerTop />
     <DesignerBody :left-width="leftColumnWidth(layout)" :right-width="rightColumnWidth(layout)">

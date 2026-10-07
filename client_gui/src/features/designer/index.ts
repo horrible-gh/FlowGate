@@ -23,3 +23,5 @@ export type {
 export { default as DesignerShell } from './shell/DesignerShell.vue'
 // flowgate.v02.0030 — the Palette part (palette/PalettePanel.vue) is mounted by the right Tool
 // Panel Container inside features/designer only, so it adds no export here either.
+// flowgate.v02.0036 — the bottom Inspector Frame (inspector/DesignerInspector.vue) is mounted by
+// the Shell's Bottom Dock only, so it adds no export here either.

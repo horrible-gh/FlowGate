@@ -41,6 +41,9 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       // flowgate.v02.0026 — Designer Center (0003-D §2.3): the screen and the session only.
       /^\.\.\/center\/DesignerCenter\.vue$/,
       /^\.\.\/center\/designerCenterSession$/,
+      // flowgate.v02.0036 — bottom Inspector: the Frame and the Graph Node type it is given.
+      /^\.\.\/inspector\/DesignerInspector\.vue$/,
+      /^\.\.\/center\/graph\/flowGraph$/,
     ]
     for (const name of SHELL_FILES) {
       for (const spec of importsOf(read(join(SHELL, name)))) {
@@ -81,7 +84,7 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
     const file = join(SRC, `app/i18n/${locale}.ts`)
     expect(read(file).match(/^ {2}designer:\s*\{/gm)).toHaveLength(1)
     const messages = (await import(`@/app/i18n/${locale}.ts`)).default as Record<string, Record<string, unknown>>
-    // flowgate.v02.0030 added the Palette block.
-    expect(Object.keys(messages.designer).sort()).toEqual(['center', 'file_explorer', 'palette', 'project_explorer', 'shell'])
+    // flowgate.v02.0030 added the Palette block, flowgate.v02.0036 the Inspector block.
+    expect(Object.keys(messages.designer).sort()).toEqual(['center', 'file_explorer', 'inspector', 'palette', 'project_explorer', 'shell'])
   })
 })
