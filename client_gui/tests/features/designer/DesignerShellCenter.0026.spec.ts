@@ -118,8 +118,6 @@ async function mountShell() {
   useProjectStore().setCurrentProject(project('p', 'Alpha'))
   wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: [i18n, pinia] } })
   await settle()
-  explorerRow(wrapper, 'Alpha').element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
-  await settle()
   return wrapper
 }
 
@@ -199,9 +197,10 @@ describe('Designer Shell x Center — opening Flows', () => {
 describe('Designer Shell x Center — Explorers follow the active tab', () => {
   it('a tab click moves the Project Explorer mark and the File Explorer target to that Flow', async () => {
     const w = await mountShell()
+    // flowgate.v02.0042: the mode tabs are available once a Flow is open.
+    await activate(w, 'Designer v0.2', 'Canvas')
     await selectMode(w, '파일')
     await selectMode(w, '프로젝트')
-    await activate(w, 'Designer v0.2', 'Canvas')
     expect(fileFlow(w)).toEqual({ groupId: 'p.ui.0002', name: 'Canvas' })
 
     await tab(w, 'p.ui.0001').get('[role="tab"]').trigger('click')
@@ -219,9 +218,9 @@ describe('Designer Shell x Center — Explorers follow the active tab', () => {
 
   it('closing another tab keeps the same FlowRef object, so the File Explorer does not reload', async () => {
     const w = await mountShell()
+    await activate(w, 'Designer v0.2', 'Canvas', 'Minimap')
     await selectMode(w, '파일')
     await selectMode(w, '프로젝트')
-    await activate(w, 'Designer v0.2', 'Canvas', 'Minimap')
     await tab(w, 'p.ui.0002').get('[role="tab"]').trigger('click')
     await settle()
     const flowRef = fileFlow(w)
@@ -240,9 +239,9 @@ describe('Designer Shell x Center — Explorers follow the active tab', () => {
 
   it('closing the active tab falls back to its right neighbour, else its left, and the Explorers match', async () => {
     const w = await mountShell()
+    await activate(w, 'Designer v0.2', 'Canvas', 'Minimap')
     await selectMode(w, '파일')
     await selectMode(w, '프로젝트')
-    await activate(w, 'Designer v0.2', 'Canvas', 'Minimap')
     await tab(w, 'p.ui.0002').get('[role="tab"]').trigger('click')
     await settle()
 
@@ -263,14 +262,17 @@ describe('Designer Shell x Center — Explorers follow the active tab', () => {
   it('closing the last tab leaves no active Flow: Center empty, File Explorer "no Flow", no Project mark', async () => {
     const w = await mountShell()
     await activate(w, 'Canvas')
+    await selectMode(w, '파일')
     await tab(w, 'p.ui.0002').get('[data-test="designer-flow-tab-close"]').trigger('click')
     await settle()
 
     expect(tabIds(w)).toEqual([])
-    expect(get(w, 'designer-center-no-flow').text()).toContain('열린 플로우 없음')
+    // flowgate.v02.0042: no open Flow is no work target — the empty Center frame, no guidance text.
+    expect(w.find('[data-test="designer-center-unselected"]').exists()).toBe(true)
+    expect(w.find('[data-test="designer-center-no-flow"]').exists()).toBe(false)
+    expect(get(w, 'designer-workspace').text()).toBe('')
     expect(projectActive(w)).toBeNull()
     expect(explorerRow(w, 'Canvas').classes()).not.toContain('is-active')
-    await selectMode(w, '파일')
     expect(fileFlow(w)).toBeNull()
     expect(w.find('[data-test="dfx-no-flow"]').exists()).toBe(true)
   })

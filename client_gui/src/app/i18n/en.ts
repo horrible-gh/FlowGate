@@ -96,8 +96,6 @@ export default {
     center: {
       tabs_label: 'Open flows',
       close_tab: 'Close {name}',
-      no_open_flow: 'No open flow',
-      no_open_flow_desc: 'Double-click a flow in the Project Explorer to open it here',
       graph_loading: 'Loading graph',
       graph_load_failed: 'Could not load the graph',
       retry: 'Retry',
@@ -274,7 +272,6 @@ export default {
     // flowgate.v02.0036 — bottom Inspector Frame (0035 v7: header + tabs + Content area).
     inspector: {
       label: 'Inspector',
-      no_selection: 'Select a card on the canvas',
       tabs_label: 'Inspector tabs',
       tabs: {
         documents: 'Documents',

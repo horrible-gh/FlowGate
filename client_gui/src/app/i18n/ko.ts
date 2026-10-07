@@ -99,8 +99,6 @@ export default {
     center: {
       tabs_label: '열린 플로우',
       close_tab: '{name} 닫기',
-      no_open_flow: '열린 플로우 없음',
-      no_open_flow_desc: '프로젝트 탐색기에서 플로우를 더블클릭하면 여기에 열립니다',
       graph_loading: '그래프를 불러오는 중',
       graph_load_failed: '그래프를 불러오지 못했습니다',
       retry: '다시 시도',
@@ -277,7 +275,6 @@ export default {
     // flowgate.v02.0036 — bottom Inspector Frame (0035 v7: header + tabs + Content area).
     inspector: {
       label: '인스펙터',
-      no_selection: '캔버스에서 카드를 선택하세요',
       tabs_label: '인스펙터 탭',
       tabs: {
         documents: '문서',

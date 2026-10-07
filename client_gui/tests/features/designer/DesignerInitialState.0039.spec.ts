@@ -7,7 +7,9 @@
  * frame (no Flow tabs, guide text or Canvas), the Inspector keeps only its frame, the Minimap,
  * the right Tool Panel and the left navigation chrome are dimmed and unavailable, the Toolbar is
  * unavailable and only the confirmed menu items stay enabled. The Project tree itself stays
- * shown and clickable; the first explicit choice there continues into the existing Designer.
+ * shown and clickable.
+ * flowgate.v02.0042: a plain click there only selects; opening a Flow (double click / Enter)
+ * continues into the existing Designer, and closing the last open Flow returns here.
  *
  * Mounted with the real Shell / parts and the real project store; only the HTTP layer
  * (`@shared/api`) is mocked, as in DesignerShell.0025.spec.ts.
@@ -74,6 +76,7 @@ const TREES: Record<string, unknown[]> = {
   q: [
     n({ id: 'project:q', parent_id: null, node_type: 'project', label: 'Beta' }),
     n({ id: 'module:q:m', parent_id: 'project:q', node_type: 'module', label: 'm' }),
+    n({ id: 'q.m.0001', parent_id: 'module:q:m', node_type: 'group', label: 'Beta Flow', number: '0001' }),
   ],
 }
 
@@ -299,16 +302,44 @@ describe('Designer initial state — no work target right after entry (0039 T#3)
   })
 })
 
-describe('Designer initial state — the first choice continues into the Designer (0039 T#3)', () => {
-  it('one click on the Project row brings back the existing Designer content and controls', async () => {
+// flowgate.v02.0042: only an open Flow is the work target. A plain click (click = select) on a
+// Project, Group or Flow row leaves the Designer unselected; a Flow double click / Enter
+// (select + open) continues into the existing Designer.
+describe('Designer initial state — only an open Flow continues into the Designer (0042)', () => {
+  it('one click on the Project, Group or Flow row selects it and keeps the initial state', async () => {
     const w = await mountShell()
     await click(w, 'Alpha')
-
     expect(explorerRow(w, 'Alpha').classes()).toContain('is-selected')
+    expectUnselectedState(w)
+
+    await click(w, 'UI 개선')
+    expect(explorerRow(w, 'UI 개선').classes()).toContain('is-selected')
+    expectUnselectedState(w)
+
+    await doubleClick(w, 'UI 개선')
+    await click(w, 'Canvas')
+    expect(explorerRow(w, 'Canvas').classes()).toContain('is-selected')
+    expect(w.getComponent(ProjectExplorer).props('activeFlowId')).toBeNull()
+    expectUnselectedState(w)
+    expect(w.find('[data-test="designer-palette"]').exists()).toBe(false)
+
+    const file = await openMenu(w, 'file')
+    expect(commandStates(file).enabled).toEqual(['project.new', 'project.open', 'designer.close'])
+  })
+
+  it('a Flow double click opens it and brings back the existing Designer content and controls', async () => {
+    const w = await mountShell()
+    await doubleClick(w, 'UI 개선')
+    await doubleClick(w, 'Canvas')
+
+    expect(w.findAll('[data-test="designer-flow-tab"]').map((t) => t.attributes('data-flow-id'))).toEqual(['p.ui.0002'])
     expect(get(w, 'designer-workspace').find('[data-test="designer-center"]').exists()).toBe(true)
     expect(w.find('[data-test="designer-center-unselected"]').exists()).toBe(false)
-    expect(get(w, 'designer-center-no-flow').text()).toContain('열린 플로우 없음')
-    expect(get(w, 'designer-inspector-empty').text()).toBe('캔버스에서 카드를 선택하세요')
+    expect(w.find('[data-test="designer-canvas"]').exists()).toBe(true)
+    expect(w.find('[data-test="designer-center-no-flow"]').exists()).toBe(false)
+    // No Node selected: an empty Inspector area, no guidance text.
+    expect(get(w, 'designer-inspector-empty').text()).toBe('')
+    expect(get(w, 'designer-inspector').text()).toBe('')
     expect(w.find('[data-test="designer-inspector-frame"]').exists()).toBe(false)
     expect(get(w, 'designer-bottom-minimap').classes()).not.toContain('is-unavailable')
     expect(get(w, 'designer-right-dock').attributes('data-unselected')).toBe('false')
@@ -325,20 +356,26 @@ describe('Designer initial state — the first choice continues into the Designe
     expect(commandStates(run).disabled).toEqual(['run.stop'])
   })
 
-  it('a Group choice is a work target too, and a Flow double click opens it as before', async () => {
+  it('closing the last open Flow returns to the initial state, even with a row still selected', async () => {
     const w = await mountShell()
-    await click(w, 'UI 개선')
-    expect(w.find('[data-test="designer-center-no-flow"]').exists()).toBe(true)
-
     await doubleClick(w, 'UI 개선')
     await doubleClick(w, 'Canvas')
-    expect(w.findAll('[data-test="designer-flow-tab"]').map((t) => t.attributes('data-flow-id'))).toEqual(['p.ui.0002'])
-    expect(w.find('[data-test="designer-canvas"]').exists()).toBe(true)
+    await w.get('[data-test="designer-tool-run"][data-run="all"]').trigger('click')
+    expect(w.get('[data-test="designer-tool-run"][data-run="all"]').attributes('aria-pressed')).toBe('true')
+
+    await w.get('[data-test="designer-flow-tab"][data-flow-id="p.ui.0002"] [data-test="designer-flow-tab-close"]').trigger('click')
+    await settle()
+
+    expect(explorerRow(w, 'Canvas').classes()).toContain('is-selected')
+    expectUnselectedState(w)
+    // The run state does not outlive its target.
+    expect(w.get('[data-test="designer-tool-run"][data-run="all"]').attributes('aria-pressed')).toBe('false')
   })
 
   it('a Project context change starts the new Project in the initial state again', async () => {
     const w = await mountShell()
-    await click(w, 'Alpha')
+    await doubleClick(w, 'UI 개선')
+    await doubleClick(w, 'Canvas')
     await w.get('[data-test="designer-tool-run"][data-run="all"]').trigger('click')
     expect(w.get('[data-test="designer-tool-run"][data-run="all"]').attributes('aria-pressed')).toBe('true')
 
@@ -352,7 +389,8 @@ describe('Designer initial state — the first choice continues into the Designe
 
   it('a Project context change after the Git / Conversation parts were shown reads nothing for the new Project', async () => {
     const w = await mountShell()
-    await click(w, 'Alpha')
+    await doubleClick(w, 'UI 개선')
+    await doubleClick(w, 'Canvas')
     const tool = (label: string) => get(w, 'designer-right-tool-tabs').findAll('[role="tab"]').find((tab) => tab.text() === label)!
     await tool('대화').trigger('click')
     await settle()
@@ -372,8 +410,12 @@ describe('Designer initial state — the first choice continues into the Designe
     expect(w.find('[data-test="designer-right-pane-conversation"]').exists()).toBe(true)
     expect(urls().filter((url) => !url.endsWith('/groups/tree'))).toEqual([])
 
-    // The first choice in the new Project hands the Git part the new context.
+    // A plain click in the new Project still reads nothing; opening its Flow hands the Git part
+    // the new context.
     await click(w, 'Beta')
+    expect(urls().filter((url) => !url.endsWith('/groups/tree'))).toEqual([])
+    await doubleClick(w, 'm')
+    await doubleClick(w, 'Beta Flow')
     expect(isShown(get(w, 'designer-right-pane-git').element)).toBe(true)
     expect(urls()).toContain('/api/v1/projects/q/git/status')
     expect(urls()).not.toContain('/api/v1/projects/p/git/status')

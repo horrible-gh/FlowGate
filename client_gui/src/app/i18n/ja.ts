@@ -96,8 +96,6 @@ export default {
     center: {
       tabs_label: '開いているフロー',
       close_tab: '{name} を閉じる',
-      no_open_flow: '開いているフローはありません',
-      no_open_flow_desc: 'プロジェクトエクスプローラーでフローをダブルクリックすると、ここに開きます',
       graph_loading: 'グラフを読み込み中',
       graph_load_failed: 'グラフを読み込めませんでした',
       retry: '再試行',
@@ -274,7 +272,6 @@ export default {
     // flowgate.v02.0036 — bottom Inspector Frame (0035 v7: header + tabs + Content area).
     inspector: {
       label: 'インスペクター',
-      no_selection: 'キャンバスでカードを選択してください',
       tabs_label: 'インスペクタータブ',
       tabs: {
         documents: 'ドキュメント',

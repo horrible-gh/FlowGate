@@ -1,7 +1,8 @@
 <template>
   <!-- flowgate.v02.0036 — bottom Inspector Frame (0035 v7): the common frame every Node shares.
-       No Node selected: one line, no header or tabs. A Node selected: header (40px) + tabs
-       (32px) fixed above a scrolling Content area — 72px before the content.
+       No Node selected: an empty area — no text (flowgate.v02.0042), header or tabs. A Node
+       selected: header (40px) + tabs (32px) fixed above a scrolling Content area — 72px before
+       the content.
        Boundaries for later groups: the header `header-meta` / `header-actions` slots and one
        Content slot per tab (`tab-documents`, `tab-qna`, `tab-attachments`, `tab-settings`),
        each given the selected Node. A tab nobody fills yet shows a placeholder line. The Frame
@@ -16,9 +17,7 @@
     :aria-label="t('gui.designer.inspector.label')"
   >
     <div v-if="unselected" class="designer-inspector-frame" data-test="designer-inspector-frame" />
-    <p v-else-if="!node" class="designer-inspector-empty" data-test="designer-inspector-empty">
-      {{ t('gui.designer.inspector.no_selection') }}
-    </p>
+    <div v-else-if="!node" class="designer-inspector-empty" data-test="designer-inspector-empty" />
     <template v-else>
       <InspectorHeader :node="node">
         <template #meta><slot name="header-meta" :node="node" /></template>
@@ -121,12 +120,7 @@ function selectTab(key: string) {
 }
 
 .designer-inspector-empty {
-  display: grid;
   flex: 1 1 auto;
-  place-items: center;
-  margin: 0;
-  color: var(--fg2-muted-2);
-  font-size: 13px;
 }
 
 /* The shared Tabs primitive, sized to the v7 32px tab row. Gap and side padding come from
