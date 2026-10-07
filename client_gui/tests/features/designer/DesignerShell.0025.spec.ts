@@ -193,8 +193,11 @@ describe('DesignerShell — container hierarchy', () => {
     expect([...workspace.element.children].map((c) => c.getAttribute('data-test'))).toEqual(['designer-center'])
     expect(workspace.get('[data-test="designer-center-no-flow"]').text()).toContain('열린 플로우 없음')
     expect(w.find('[data-test="designer-workspace-flow"]').exists()).toBe(false)
-    expect(label('designer-bottom-dock')).toBe('BOTTOM')
-    expect(get(w, 'designer-bottom-dock').text()).toContain('Inspector / Minimap')
+    // flowgate.v02.0036: the Bottom Dock holds the real Inspector (nothing selected yet) next
+    // to the Minimap placeholder.
+    expect(label('designer-bottom-dock')).toBe('MINIMAP')
+    expect(get(w, 'designer-bottom-minimap').text()).toContain('Minimap')
+    expect(get(w, 'designer-bottom-dock').get('[data-test="designer-inspector-empty"]').text()).toBe('캔버스에서 카드를 선택하세요')
     expect(label('designer-right-dock')).toBe('RIGHT')
     expect(get(w, 'designer-right-dock').text()).toContain('Palette / Git')
     // The left Dock holds the real Explorer, not a placeholder.
@@ -206,7 +209,7 @@ describe('DesignerShell — container hierarchy', () => {
     const body = get(w, 'designer-body')
     expect(body.attributes('data-left-width')).toBe('280')
     expect(body.attributes('data-right-width')).toBe('300')
-    expect(get(w, 'designer-bottom-dock').attributes('style')).toContain('height: 200px')
+    expect(get(w, 'designer-bottom-dock').attributes('style')).toContain('height: 300px')
   })
 })
 

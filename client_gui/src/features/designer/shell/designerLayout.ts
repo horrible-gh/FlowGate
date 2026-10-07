@@ -8,6 +8,8 @@
 //
 // The sizes are initial proposals to review on the real screen (0025-R §11), not final UX
 // values. Drag resize is not implemented yet; a later handle will change these same fields.
+// flowgate.v02.0036: the bottom Dock grew from 200 to 300px so the Inspector (0035 v7: 72px
+// header + tabs above its content) keeps a usable Content area next to the Canvas.
 
 export type DesignerLeftMode = 'project' | 'file'
 
@@ -29,13 +31,25 @@ export const DESIGNER_RAIL_WIDTH = 40
 /** The Center column never shrinks below this; the Body scrolls sideways instead. */
 export const DESIGNER_CENTER_MIN_WIDTH = 360
 
+/**
+ * flowgate.v02.0036 — the bottom Dock splits Inspector 7 : Minimap 3 (0035 v7). The Inspector
+ * track never drops below this, so at the 360px Center minimum it still holds every v7 tab
+ * (see inspectorTabStripMinWidth); the Minimap placeholder gives way first.
+ */
+export const DESIGNER_BOTTOM_INSPECTOR_MIN_WIDTH = 264
+export const DESIGNER_BOTTOM_MINIMAP_MIN_WIDTH = 96
+
+/** grid-template-columns of the bottom Dock: Inspector | Minimap. */
+export const DESIGNER_BOTTOM_DOCK_COLUMNS =
+  `minmax(${DESIGNER_BOTTOM_INSPECTOR_MIN_WIDTH}px, 7fr) minmax(${DESIGNER_BOTTOM_MINIMAP_MIN_WIDTH}px, 3fr)`
+
 export const DESIGNER_LAYOUT_DEFAULTS: Readonly<DesignerLayoutState> = Object.freeze({
   activeLeftMode: 'project',
   leftCollapsed: false,
   leftWidth: 280,
   rightCollapsed: false,
   rightWidth: 300,
-  bottomHeight: 200,
+  bottomHeight: 300,
 })
 
 export function createDesignerLayout(): DesignerLayoutState {

@@ -268,10 +268,23 @@ export default {
       expand_left: '좌측 패널 펼치기',
       top_label: 'TOP',
       top_parts: 'Header / MenuBar / Toolbar',
-      bottom_label: 'BOTTOM',
-      bottom_parts: 'Inspector / Minimap',
+      minimap_label: 'MINIMAP',
+      minimap_parts: 'Minimap',
       right_label: 'RIGHT',
       right_parts: 'Palette / Git',
+    },
+    // flowgate.v02.0036 — bottom Inspector Frame (0035 v7: header + tabs + Content area).
+    inspector: {
+      label: '인스펙터',
+      no_selection: '캔버스에서 카드를 선택하세요',
+      tabs_label: '인스펙터 탭',
+      tabs: {
+        documents: '문서',
+        qna: 'Q&A',
+        attachments: '첨부',
+        settings: '설정',
+      },
+      pane_placeholder: '{tab} 내용은 후속 작업에서 연결됩니다.',
     },
   },
   // flowgate.v02.0031 — Conversation part (Designer right tool area).

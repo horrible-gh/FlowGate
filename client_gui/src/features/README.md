@@ -69,6 +69,17 @@ DataTransfer `application/x-flowgate-palette-item`) 의도만 내보내고 Canva
 없음), 바인딩하지 않으면 세션 동안 부품이 보관합니다. `팔레트 / 대화 / Git` 탭과 Tool Panel
 Container는 후속 그룹이 조립하므로 Shell에는 아직 연결하지 않았고 공개 경계에도 내보내지 않습니다.
 
+flowgate.v02.0036에서 `designer/inspector/`에 Designer 중앙 하단 Inspector 프레임(`DesignerInspector`,
+헤더 줄 `InspectorHeader`, 탭 규칙 순수 모델 `inspectorTabs.ts`)을 추가하고 Bottom Dock Placeholder를
+`Inspector 7 : Minimap 3` 배치로 바꿨습니다(Minimap은 Placeholder 유지, 기본 높이 200 → 300px). 화면
+기준은 flowgate.v02.0035 v7 시안입니다. Node 미선택이면 한 줄 안내만, 선택하면 헤더(40px: 종류 아이콘 ·
+종류 · 제목 · 상태) + 탭(32px: `문서 · Q&A · 첨부 · 설정`) + Content 영역을 보입니다. 선택 Node는 Center
+세션의 파생값 `activeSelectedNode`로 받고, 선택 탭은 Node를 바꿔도 유지하며 `설정`이 없는 Node(`has-settings`
+false)에서는 `문서`로 돌아갑니다. 후속 기능은 헤더 `header-meta`/`header-actions` slot과 탭별 Content
+slot(`tab-documents`/`tab-qna`/`tab-attachments`/`tab-settings`, 선택 Node 전달)으로 주입하며, 채워지지 않은
+탭은 placeholder 한 줄을 보입니다. Node별 실제 기능·액션·API·상태 머신 연동과 Node 종류별 `설정` 유무는 후속
+그룹 대상이며 공개 경계에도 내보내지 않습니다.
+
 `conversation/`은 flowgate.v02.0031에서 추가된 Designer 우측 도구 영역용 Conversation 독립
 부품입니다(시안 03 우측 대화 영역). `ConversationPanel`(`:project-id` + 활성 Flow의
 `:group-id`, `@open-change`)이 공개 경계이며, 상단(채팅 목록 / 수정 가능한 제목 / 새 채팅) ·

@@ -265,10 +265,23 @@ export default {
       expand_left: 'Expand left panel',
       top_label: 'TOP',
       top_parts: 'Header / MenuBar / Toolbar',
-      bottom_label: 'BOTTOM',
-      bottom_parts: 'Inspector / Minimap',
+      minimap_label: 'MINIMAP',
+      minimap_parts: 'Minimap',
       right_label: 'RIGHT',
       right_parts: 'Palette / Git',
+    },
+    // flowgate.v02.0036 — bottom Inspector Frame (0035 v7: header + tabs + Content area).
+    inspector: {
+      label: 'Inspector',
+      no_selection: 'Select a card on the canvas',
+      tabs_label: 'Inspector tabs',
+      tabs: {
+        documents: 'Documents',
+        qna: 'Q&A',
+        attachments: 'Attachments',
+        settings: 'Settings',
+      },
+      pane_placeholder: '{tab} content will be connected in a later step.',
     },
   },
   // flowgate.v02.0031 — Conversation part (Designer right tool area).

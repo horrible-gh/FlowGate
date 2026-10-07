@@ -265,10 +265,23 @@ export default {
       expand_left: '左パネルを展開',
       top_label: 'TOP',
       top_parts: 'Header / MenuBar / Toolbar',
-      bottom_label: 'BOTTOM',
-      bottom_parts: 'Inspector / Minimap',
+      minimap_label: 'MINIMAP',
+      minimap_parts: 'Minimap',
       right_label: 'RIGHT',
       right_parts: 'Palette / Git',
+    },
+    // flowgate.v02.0036 — bottom Inspector Frame (0035 v7: header + tabs + Content area).
+    inspector: {
+      label: 'インスペクター',
+      no_selection: 'キャンバスでカードを選択してください',
+      tabs_label: 'インスペクタータブ',
+      tabs: {
+        documents: 'ドキュメント',
+        qna: 'Q&A',
+        attachments: '添付',
+        settings: '設定',
+      },
+      pane_placeholder: '{tab}の内容は後続の作業で接続されます。',
     },
   },
   // flowgate.v02.0031 — Conversation part (Designer right tool area).
