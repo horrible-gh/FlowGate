@@ -2326,10 +2326,19 @@ export default {
       target_busy_group: 'Target branch {target} is held by the finalize #{merge_id} of group {group} ({source} → {target}) — state: {state}, started: {started_at}',
       target_busy_unknown: 'Target branch {target} is held by merge attempt #{merge_id} — state: {state}, started: {started_at}',
       target_owner_mismatch: 'The workspace owner of target branch {target} does not match an open attempt, so the approval was stopped for safety (merge #{merge_id}, reason: {reason}).',
-      target_busy_hint_branch_merge: 'Approve the review of that merge or abort the merge, then approve again. Rejecting it does not release the target.',
-      target_busy_hint_group: 'Finish or abort the conflict/review of that group, then approve again.',
-      target_busy_open_review: 'Open the blocking merge',
+      target_busy_hint_branch_merge: 'Finish the merge review or abort the merge, then press [Approve] again. Rejecting the merge review does not release the target.',
+      target_busy_hint_group: 'Finish or abort the conflict/review of that group, then press [Approve] again.',
+      // 0685 T0006 §1-2 — short notice + a button named by its target/action. The long line above stays under [Details].
+      target_busy_open_review: 'Review merge #{merge_id}',
       target_busy_state_unknown: 'unknown',
+      target_busy_open_review_title: 'Opens the review of the {source} → {target} merge. The approval is not re-run automatically.',
+      target_busy_summary: 'A merge in progress on {target} blocks this approval.',
+      target_owner_mismatch_summary: 'The owner of the {target} workspace could not be confirmed, so the approval was stopped for safety.',
+      target_busy_meta_branch_merge: '{source} → {target} · merge #{merge_id} · {state}',
+      target_busy_meta_group: 'Group {group} · finalize #{merge_id} ({source} → {target}) · {state}',
+      target_busy_meta_unknown: 'Merge attempt #{merge_id} · {state}',
+      target_blocker_details: 'Details',
+      target_blocker_cleared: 'The merge state changed. Press [Approve] again to continue.',
       // 0607 T0004 §3.6 — shown while the server's Git result is being confirmed after a lost approve response.
       git_settle_in_progress: 'The server is still running Git for this approval. Approve stays locked until the result is confirmed.',
       git_settle_deferred: 'The Git merge stopped on a conflict. Continue from the conflict resolution screen.',
@@ -3346,6 +3355,9 @@ export default {
       invalid_state: 'This Git operation is not available in the current state.',
       invalid_request: 'The Git request is invalid.',
       workflow_revert_pending: 'A Time Machine rewind has not finished canceling an approved commit. Finish the commit cancel with [Retry commit cancel] on the proposal (TR2) first; until then this group cannot be rewound again or advanced.',
+      // 0685 T0006 §5 — a branch moved after the merge started, so the review cannot be applied.
+      stale_source: 'The source branch changed after this merge started, so the current review result cannot be applied as is. Abort this merge and start it again.',
+      stale_target: 'The target branch changed after this merge started, so the current review result cannot be applied as is. Abort this merge and start it again.',
     },
     api_errors: {
       validation_failed: {
@@ -3435,8 +3447,9 @@ export default {
       // flowgate.default.0665 T0004 — target differs from the group's work base / unmerge limit
       incoming_work_base_commits: '{n} commit(s) of {base} that {target} does not have yet will be merged along with this group.',
       unmerge_unsupported_notice: '{target} is not the project base branch, so this merge (merge_only) cannot be undone with unmerge later. To cancel it you would revert the merge on the target branch or reopen with Time Machine.',
-      target_ack: 'I have read the above and want to merge into this target.',
-      target_ack_required: 'Check the merge target warning before approving.',
+      // 0685 T0006 §4 — shown only when a target other than the work base is chosen.
+      target_ack: 'Merge into {target} instead of {base}. I have read the warning above.',
+      target_ack_required: 'Tick the box above to enable [Approve].',
       work_base_line: 'Work base: {base} ({sha})',
       commit_message_label: 'Commit message',
       commit_message_hint: 'Used as the subject of the commit that absorbs the remaining changes. Edit as needed.',

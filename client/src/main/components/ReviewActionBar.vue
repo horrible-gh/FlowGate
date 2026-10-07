@@ -372,27 +372,6 @@
             <AppIcon :name="approvalJob?.stage === 'recovery_required' ? 'warning' : 'hourglass-medium'" />
             {{ approvalJobNotice }}
           </span>
-          <!-- 0683 T0004 §3: a target workspace held by another attempt is named — owner type,
-               merge id, source → target, state, start — and a branch merge holding it can be
-               opened right here (its review/resolver) instead of a bare "another finalize". -->
-          <span
-            v-if="targetBlocker"
-            class="ab-gate-hint ab-target-blocker"
-            data-testid="ab-target-blocker"
-            role="alert"
-            :title="targetBlockerText"
-          >
-            <AppIcon name="warning" />
-            <span data-testid="ab-target-blocker-text">{{ targetBlockerText }}</span>
-            <span class="ab-target-blocker-hint">{{ targetBlockerHint }}</span>
-            <button
-              v-if="targetBlockerOpenable"
-              type="button"
-              class="btn btn-secondary btn-sm"
-              data-testid="ab-target-blocker-open"
-              @click="openBlockerReview"
-            >{{ t('main.review_action_bar.target_busy_open_review') }}</button>
-          </span>
           <span v-if="testGateBlocked" class="ab-gate-hint" data-testid="ab-test-gate-hint">
             <AppIcon name="prohibit" /> {{ t('main.review_action_bar.test_gate_blocked') }}
           </span>
@@ -440,6 +419,38 @@
       </template>
     </div>
 
+    <!-- 0683 T0004 §3 / 0685 T0006 §1: a target workspace held by another attempt is named
+         in its own alert above the bar, never between [승인] and [반려]. A short sentence
+         first, then source → target · merge id · state with the review button; the full
+         owner/start line stays one click away under the details toggle. -->
+    <div
+      v-if="targetBlocker"
+      class="ab-target-blocker"
+      data-testid="ab-target-blocker"
+      role="alert"
+    >
+      <p class="ab-target-blocker-summary" data-testid="ab-target-blocker-summary">
+        <AppIcon name="warning" />
+        <span>{{ targetBlockerSummary }}</span>
+      </p>
+      <div v-if="targetBlockerMeta || targetBlockerOpenable" class="ab-target-blocker-row">
+        <span v-if="targetBlockerMeta" class="ab-target-blocker-meta" data-testid="ab-target-blocker-meta">{{ targetBlockerMeta }}</span>
+        <button
+          v-if="targetBlockerOpenable"
+          type="button"
+          class="btn btn-secondary btn-sm"
+          data-testid="ab-target-blocker-open"
+          :title="targetBlockerOpenTitle"
+          @click="openBlockerReview"
+        >{{ targetBlockerOpenLabel }}</button>
+      </div>
+      <p v-if="targetBlockerHint" class="ab-target-blocker-hint" data-testid="ab-target-blocker-hint">{{ targetBlockerHint }}</p>
+      <details class="ab-target-blocker-details">
+        <summary>{{ t('main.review_action_bar.target_blocker_details') }}</summary>
+        <span data-testid="ab-target-blocker-text">{{ targetBlockerText }}</span>
+      </details>
+    </div>
+
     <!-- Approve confirm dialog. flowgate.default.0162 §3.1 "본선": when this approval
          completes a git-active group's workflow (an AC doc with a finalizable slot),
          the git finalize choice rides inside the same dialog and is applied right
@@ -449,6 +460,7 @@
       :title="t('main.review_action_bar.approve_confirm_title')"
       :message="showGitFinalizeBlock ? t('main.git_finalize.approve_message') : t('main.review_action_bar.approve_confirm_message')"
       :confirm-label="showGitFinalizeBlock ? t('main.git_finalize.approve_confirm') : undefined"
+      :confirm-disabled="gitTargetAckMissing"
       @confirm="doApprove"
     >
       <div v-if="showGitFinalizeBlock && gitFin" class="ab-git-fin">
@@ -508,23 +520,35 @@
           >
             <option v-for="branch in gitTargetCandidates" :key="branch" :value="branch">{{ branch }}</option>
           </select>
-          <p v-if="gitActionMerges && gitWorkBase && gitTargetBranch !== gitWorkBase" class="ab-git-retarget" role="status" data-test="finalize-retarget-notice">
-            {{ t('main.git_finalize.retarget_notice', { base: gitWorkBase, target: gitTargetBranch }) }}
-          </p>
-          <!-- 0665 T0004: work-base commits that would flow into a target other
-               than the group's work base, and the merge_only unmerge limit. -->
-          <p v-if="gitActionMerges && gitWorkBase && gitTargetBranch !== gitWorkBase && gitTargetPreview?.incoming_work_base_commits"
-             class="ab-git-retarget" role="alert" data-test="finalize-incoming-commits">
-            {{ t('main.git_finalize.incoming_work_base_commits', { n: gitTargetPreview.incoming_work_base_commits, base: gitWorkBase, target: gitTargetBranch }) }}
-          </p>
-          <p v-if="gitNormalChoice === 'merge_only' && gitTargetUnmergeUnsupported"
-             class="ab-git-retarget" role="alert" data-test="finalize-unmerge-unsupported">
-            {{ t('main.git_finalize.unmerge_unsupported_notice', { target: gitTargetBranch }) }}
-          </p>
-          <label v-if="gitTargetNeedsAck" class="ab-git-target-ack" data-test="finalize-target-ack">
-            <input v-model="gitTargetAck" type="checkbox" />
-            <span>{{ t('main.git_finalize.target_ack') }}</span>
-          </label>
+          <!-- 0665 T0004 / 0685 T0006 §3-4: the target warnings and, only when the target is
+               not the group's work base, the required check live in one highlighted box. -->
+          <div
+            v-if="gitTargetRetargeted || gitTargetUnmergeNotice"
+            class="ab-git-target-warn"
+            :class="{ 'ab-git-target-warn--ack': gitTargetNeedsAck }"
+            data-test="finalize-target-warn"
+          >
+            <p v-if="gitTargetRetargeted" class="ab-git-retarget" role="status" data-test="finalize-retarget-notice">
+              {{ t('main.git_finalize.retarget_notice', { base: gitWorkBase, target: gitTargetBranch }) }}
+            </p>
+            <!-- 0665 T0004: work-base commits that would flow into a target other
+                 than the group's work base, and the merge_only unmerge limit. -->
+            <p v-if="gitTargetRetargeted && gitTargetPreview?.incoming_work_base_commits"
+               class="ab-git-retarget" role="alert" data-test="finalize-incoming-commits">
+              {{ t('main.git_finalize.incoming_work_base_commits', { n: gitTargetPreview.incoming_work_base_commits, base: gitWorkBase, target: gitTargetBranch }) }}
+            </p>
+            <p v-if="gitTargetUnmergeNotice"
+               class="ab-git-retarget" role="alert" data-test="finalize-unmerge-unsupported">
+              {{ t('main.git_finalize.unmerge_unsupported_notice', { target: gitTargetBranch }) }}
+            </p>
+            <label v-if="gitTargetNeedsAck" class="ab-git-target-ack" data-test="finalize-target-ack">
+              <input v-model="gitTargetAck" type="checkbox" data-test="finalize-target-ack-input" />
+              <span>{{ t('main.git_finalize.target_ack', { base: gitWorkBase, target: gitTargetBranch }) }}</span>
+            </label>
+            <p v-if="gitTargetAckMissing" class="ab-git-target-ack-reason" role="status" data-test="finalize-target-ack-reason">
+              {{ t('main.git_finalize.target_ack_required') }}
+            </p>
+          </div>
           <p v-if="gitFin.work_base_sha" class="ab-git-work-base" data-test="finalize-work-base">
             {{ t('main.git_finalize.work_base_line', { base: gitWorkBase, sha: shortSha(gitFin.work_base_sync_sha || gitFin.work_base_sha) }) }}
           </p>
@@ -772,8 +796,9 @@ const gitTargetBranch = ref('')
 const gitTargetCandidates = ref<string[]>([])
 const gitActionMerges = computed(() => ['merge', 'merge_only'].includes(gitNormalChoice.value))
 // flowgate.default.0665 T0004: a merge target other than the group's work base, or a
-// merge_only the existing unmerge cannot undo, is shown with its consequences and
-// needs an explicit acknowledgement before the approval runs.
+// merge_only the existing unmerge cannot undo, is shown with its consequences.
+// 0685 T0006 §3: only the target change needs an explicit acknowledgement; approving
+// into the work base itself never asks for the check again.
 interface GitTargetPreview {
   target_branch: string
   work_base_ref: string
@@ -792,15 +817,19 @@ const gitTargetUnmergeUnsupported = computed(() => {
   }
   return !!gitFin.value?.base_branch && gitTargetBranch.value !== gitFin.value.base_branch
 })
+const gitTargetRetargeted = computed(
+  () => gitActionMerges.value && !!gitWorkBase.value && !!gitTargetBranch.value && gitTargetBranch.value !== gitWorkBase.value,
+)
+const gitTargetUnmergeNotice = computed(
+  () => gitNormalChoice.value === 'merge_only' && gitTargetUnmergeUnsupported.value,
+)
 const gitTargetNeedsAck = computed(
   () =>
     showGitFinalizeBlock.value &&
     !gitArchiveSelected.value &&
-    gitActionMerges.value &&
-    !!gitTargetBranch.value &&
-    ((!!gitWorkBase.value && gitTargetBranch.value !== gitWorkBase.value) ||
-      (gitNormalChoice.value === 'merge_only' && gitTargetUnmergeUnsupported.value)),
+    gitTargetRetargeted.value,
 )
+const gitTargetAckMissing = computed(() => gitTargetNeedsAck.value && !gitTargetAck.value)
 function shortSha(sha: string | null | undefined): string {
   return (sha || '').slice(0, 10)
 }
@@ -1434,6 +1463,46 @@ const targetBlockerText = computed(() => {
   return t('main.review_action_bar.target_busy_unknown', params)
 })
 
+// 0685 T0006 §1: what is visible first is one short sentence and, for a branch merge,
+// source → target · merge id · state; the long owner/start line above moves under details.
+const targetBlockerSummary = computed(() => {
+  const b = targetBlocker.value
+  if (!b) return ''
+  const target = b.targetBranch || '-'
+  return b.code === 'merge_target_owner_mismatch'
+    ? t('main.review_action_bar.target_owner_mismatch_summary', { target })
+    : t('main.review_action_bar.target_busy_summary', { target })
+})
+
+const targetBlockerMeta = computed(() => {
+  const b = targetBlocker.value
+  if (!b || b.code !== 'merge_target_busy') return ''
+  const params = {
+    target: b.targetBranch || '-',
+    merge_id: b.mergeId ?? '-',
+    source: b.sourceBranch || '-',
+    group: b.groupId || '-',
+    state: blockerStateLabel(b),
+  }
+  if (b.ownerType === 'branch_merge') return t('main.review_action_bar.target_busy_meta_branch_merge', params)
+  if (b.ownerType === 'group') return t('main.review_action_bar.target_busy_meta_group', params)
+  return t('main.review_action_bar.target_busy_meta_unknown', params)
+})
+
+// 0685 T0006 §2: the button says what it opens — that merge's review — and never
+// promises to continue the approval, which it does not re-run.
+const targetBlockerOpenLabel = computed(() =>
+  t('main.review_action_bar.target_busy_open_review', { merge_id: targetBlocker.value?.mergeId ?? '-' }),
+)
+
+const targetBlockerOpenTitle = computed(() => {
+  const b = targetBlocker.value
+  return t('main.review_action_bar.target_busy_open_review_title', {
+    source: b?.sourceBranch || '-',
+    target: b?.targetBranch || '-',
+  })
+})
+
 const targetBlockerHint = computed(() => {
   const b = targetBlocker.value
   if (!b || b.code !== 'merge_target_busy') return ''
@@ -1459,7 +1528,9 @@ function openBlockerReview() {
 function onBlockerChanged() {
   // The blocker moved (approved / aborted / rejected): its old description is no longer true;
   // the next [승인] re-asks the server.
+  if (!targetBlocker.value) return
   targetBlocker.value = null
+  showToast(t('main.review_action_bar.target_blocker_cleared'), 'info')
 }
 
 async function postApproveWithGitRetry(body: Record<string, unknown>) {
@@ -1484,9 +1555,10 @@ function onApproveClick() {
 
 async function doApprove() {
   if (!canApprove.value) return
-  if (gitTargetNeedsAck.value && !gitTargetAck.value) {
+  if (gitTargetAckMissing.value) {
     // 0665 T0004: never run a risky merge target without the explicit check.
-    showToast(t('main.git_finalize.target_ack_required'), 'warning')
+    // 0685 T0006 §4: the confirm button is disabled until then, so the dialog stays open
+    // and shows the reason next to the check instead of closing behind a toast.
     showApproveConfirm.value = true
     return
   }
@@ -2183,11 +2255,37 @@ onBeforeUnmount(() => {
 .ab-git-target select {
   width: 100%;
 }
+.ab-git-target-warn {
+  display: grid;
+  gap: 5px;
+}
+/* 0685 T0006 §4: a target other than the work base — warnings, the check and the reason the
+   confirm button is disabled are one highlighted box. */
+.ab-git-target-warn--ack {
+  padding: 8px;
+  border: 1px solid var(--warning, #d97706);
+  border-radius: 8px;
+  background: var(--warning-l, #fef3c7);
+}
 .ab-git-target-ack {
   display: flex;
   gap: 6px;
   align-items: flex-start;
   font-size: .72rem;
+}
+.ab-git-target-warn--ack .ab-git-retarget {
+  padding: 0;
+  background: transparent;
+}
+.ab-git-target-warn--ack .ab-git-target-ack {
+  color: var(--text);
+  font-size: .76rem;
+  font-weight: 700;
+}
+.ab-git-target-ack-reason {
+  margin: 0;
+  color: var(--danger);
+  font-size: .7rem;
 }
 .ab-git-work-base {
   margin: 0;
@@ -2297,8 +2395,43 @@ onBeforeUnmount(() => {
 .ab-gate-hint { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--danger); white-space: nowrap; }
 .ab-approval-job { color: #b45309; white-space: normal; max-width: 420px; }
 .ab-approval-job--recovery { color: var(--danger); }
-.ab-target-blocker { color: var(--danger); white-space: normal; max-width: 560px; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.ab-target-blocker-hint { color: var(--text-secondary, inherit); }
+/* 0685 T0006 §1: the blocker floats above the 60px bar (the bar is position:fixed, so it is
+   the containing block) instead of sitting in .sfb-actions — the action buttons keep their
+   place and width, long i18n text wraps inside the box, and nothing scrolls sideways. */
+.ab-target-blocker {
+  position: absolute;
+  right: 24px;
+  bottom: calc(100% + 8px);
+  left: 24px;
+  box-sizing: border-box;
+  max-width: 640px;
+  max-height: 40vh;
+  margin-left: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid #fecaca;
+  border-left: 3px solid var(--danger);
+  border-radius: 8px;
+  background: #fff5f5;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, .16);
+  color: var(--text);
+  font-size: .74rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.ab-target-blocker-summary { margin: 0; display: flex; align-items: flex-start; gap: 6px; color: var(--danger); font-weight: 700; }
+.ab-target-blocker-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.ab-target-blocker-meta { min-width: 0; font-family: var(--font-mono, monospace); color: var(--text-m, inherit); }
+.ab-target-blocker-row .btn { flex-shrink: 0; white-space: nowrap; }
+.ab-target-blocker-hint { margin: 0; color: var(--text-secondary, inherit); }
+.ab-target-blocker-details { color: var(--text-muted, #6b7280); }
+.ab-target-blocker-details summary { cursor: pointer; width: max-content; }
+@media (max-width: 760px) {
+  .ab-target-blocker { right: 12px; left: 12px; max-width: none; }
+}
 </style>
 
 

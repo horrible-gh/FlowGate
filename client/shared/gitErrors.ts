@@ -41,6 +41,10 @@ const ERROR_KEYS: Readonly<Record<string, string>> = Object.freeze({
   invalid_request: 'invalid_request',
   // 0660 T0004 §3 (RC3): a group whose Time Machine commit cancel is still pending.
   workflow_revert_pending: 'workflow_revert_pending',
+  // 0685 T0006 §5: the source/target branch moved after the merge started — the review
+  // result cannot be applied as is; the merge has to be aborted and started again.
+  stale_source: 'stale_source',
+  stale_target: 'stale_target',
 })
 
 export function resolveGitError(

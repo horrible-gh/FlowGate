@@ -47,6 +47,9 @@ const props = defineProps<{
   confirmLabel?: string
   cancelLabel?: string
   danger?: boolean
+  /** 0685 T0006 §4: the caller still needs something inside the slot (e.g. a required
+   *  check). The primary button stays disabled and the dialog stays open. */
+  confirmDisabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -77,11 +80,13 @@ const actions = computed<DialogAction[]>(() => [
     label: props.confirmLabel ?? t('common.confirm'),
     role: 'primary',
     tone: props.danger ? 'danger' : 'default',
+    disabled: !!props.confirmDisabled,
     onSelect: onConfirm,
   },
 ])
 
 function onConfirm() {
+  if (props.confirmDisabled) return
   emit('confirm')
   emit('update:visible', false)
 }
