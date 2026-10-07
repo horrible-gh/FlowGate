@@ -104,6 +104,8 @@
             data-testid="test-spec-run-case" @click="runAutomated(c.case_id)">Run Case</button>
           <span v-else-if="view.case_capabilities?.[c.case_id] === 'suite_only'"
             class="ts-case-note">Run all required</span>
+          <span v-else-if="view.case_capabilities?.[c.case_id] === 'runner_unsupported'"
+            class="ts-case-note" data-testid="test-spec-runner-unsupported">Asset pinned, no automatic runner — use result entry</span>
           <span v-else-if="c.execution_mode === 'manual' || c.execution_mode === 'external'"
             class="ts-case-note">Use result entry</span>
           <span

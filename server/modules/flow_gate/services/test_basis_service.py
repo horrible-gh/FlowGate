@@ -5,6 +5,11 @@ Bundle captured at approval, so uncommitted and untracked Group work is part of 
 binding (bundle id/sha, git revision, dirty flag) is stored beside it but kept out of
 basis_id. Every caller judges a Basis with ``verdict`` against a Live Probe that measures
 the worktree with the Bundle's own scan, exclusion and hash rules.
+
+Test Asset Policy (0682 D#1 §3.8, T#2): ``asset_kind`` is the one rule approval (manifest),
+the asset API and the locator share. Git tracking is not part of it: an asset must be in
+the captured Bundle (approval) or the Live Probe scan (judgement) with the same hash, and
+pass the path safety checks, so untracked test files a TR created are assets too.
 """
 from __future__ import annotations
 
@@ -14,7 +19,6 @@ import os
 import re
 import shutil
 import stat
-import subprocess
 import threading
 import time
 from datetime import datetime, timezone
@@ -22,11 +26,11 @@ from pathlib import Path, PurePosixPath
 
 from modules.flow_gate.storage import paths as storage_paths
 
-_LOCATOR = re.compile(r"^(tests?/[A-Za-z0-9_./-]+\.py)(?:::(\w+(?:::\w+)*))?$")
+_LOCATOR = re.compile(r"^([A-Za-z0-9_./-]+)(?:::(\w+(?:::\w+)*))?$")
 
 BASIS_VERSION = 2
 SOURCE_KIND = "source_bundle"
-ASSET_POLICY_VERSION = "test-asset-v1"
+ASSET_POLICY_VERSION = "test-asset-v2"
 RUNNER_GENERATION = 1
 
 VALID, STALE, UNVERIFIABLE = "valid", "stale", "unverifiable"
@@ -43,6 +47,21 @@ REASON_PROFILE = "execution_profile_changed"
 REASON_IDENTITY = "identity_changed"
 # Unverifiable reasons are "source_unmeasurable:<Source Bundle failure code>".
 REASON_UNMEASURABLE = "source_unmeasurable"
+
+# ── Test Asset Policy (D#1 §3.8) ──────────────────────────────────────────────
+# Roots match case-sensitively. Co-located roots only hold assets under a __tests__ directory.
+ASSET_ROOTS = (("tests",), ("test",), ("server", "tests"), ("client", "tests"))
+COLOCATED_ROOTS = (("src",), ("client", "src"))
+COLOCATED_DIR = "__tests__"
+KIND_RUNNABLE = "runnable_test"               # pytest through the existing runner
+KIND_UNSUPPORTED = "runner_unsupported_test"  # stored, pinned and editable; never auto-run
+KIND_FIXTURE = "fixture"
+ASSET_SUFFIXES = {
+    ".py": KIND_RUNNABLE,
+    **dict.fromkeys((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"), KIND_UNSUPPORTED),
+    **dict.fromkeys((".json", ".yaml", ".yml", ".toml", ".ini", ".txt", ".csv", ".xml",
+                     ".html", ".patch", ".snap"), KIND_FIXTURE),
+}
 
 _MEMO: dict[str, tuple[str, dict]] = {}
 _MEMO_GUARD = threading.Lock()
@@ -61,13 +80,103 @@ def canonical_hash(value: dict | list) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
+def asset_kind(path) -> str | None:
+    """Test Asset Policy: the asset kind of a source-relative path, or None if it cannot be one.
+
+    Lexical only (no disk access), so approval, the asset API and the locator agree on
+    it. Refused: absolute, drive, backslash, colon, control characters, empty/``.``/``..``
+    segments, paths outside the test roots (product source), a co-located file outside
+    ``__tests__``, a suffix with no kind, and anything the Source Bundle exclusion policy
+    leaves out (an excluded directory on the way or a secret file name): an asset the
+    capture never holds can be neither run nor judged.
+    """
+    if not isinstance(path, str) or not path or path.startswith("/") or "\\" in path or ":" in path:
+        return None
+    parts = path.split("/")
+    if any(part in ("", ".", "..") or any(ord(c) < 32 or ord(c) == 127 for c in part)
+           for part in parts):
+        return None
+    if bundle_excluded(path):
+        return None
+    head = tuple(parts)
+    inside = any(len(parts) > len(root) and head[:len(root)] == root for root in ASSET_ROOTS)
+    if not inside:
+        inside = any(len(parts) > len(root) + 1 and head[:len(root)] == root
+                     and COLOCATED_DIR in parts[len(root):-1] for root in COLOCATED_ROOTS)
+    if not inside:
+        return None
+    return ASSET_SUFFIXES.get(PurePosixPath(parts[-1]).suffix)
+
+
+def bundle_excluded(path: str) -> bool:
+    """Whether the Source Bundle exclusion policy leaves ``path`` out of every capture."""
+    from modules.flow_gate.services import source_bundle_materializer as materializer
+    parts = path.split("/")
+    return (any(materializer._excluded("/".join(parts[:end]), True) for end in range(1, len(parts)))
+            or materializer._excluded(path, False))
+
+
+def _test_only_path(path: str) -> bool:
+    """Eligibility check; the approved manifest remains the write authority."""
+    return asset_kind(path) is not None
+
+
+def safe_asset_file(root: Path, path: str) -> Path:
+    """The on-disk file of an eligible asset, refusing anything that could escape ``root``.
+
+    Every segment is checked with lstat: no symlink or reparse point anywhere on the way,
+    the exact on-disk name (a case-insensitive filesystem would otherwise accept another
+    spelling), directories on the way and a regular file at the end, and the resolved
+    target must still be ``root / path``. ``ValueError`` carries the refusal code.
+    """
+    from modules.flow_gate.services import source_bundle_materializer as materializer
+    if asset_kind(path) is None:
+        raise ValueError("test_asset_not_allowlisted")
+    base = Path(root)
+    current = base
+    parts = path.split("/")
+    for index, part in enumerate(parts):
+        try:
+            names = os.listdir(current)
+        except OSError as exc:
+            raise ValueError("test_asset_missing") from exc
+        if part not in names:
+            if any(name.casefold() == part.casefold() for name in names):
+                raise ValueError("test_asset_path_case_mismatch")
+            raise ValueError("test_asset_missing")
+        current = current / part
+        try:
+            st = current.lstat()
+        except OSError as exc:
+            raise ValueError("test_asset_missing") from exc
+        if materializer._linked(st):
+            raise ValueError("test_asset_unsafe_path")
+        last = index == len(parts) - 1
+        if not (stat.S_ISREG(st.st_mode) if last else stat.S_ISDIR(st.st_mode)):
+            raise ValueError("test_asset_unsafe_path" if last else "test_asset_missing")
+    if current.resolve() != base.resolve().joinpath(*parts):
+        raise ValueError("test_asset_unsafe_path")
+    return current
+
+
 def locator(case: dict) -> dict:
+    """Automation Locator: binds ``automation_ref`` through the Test Asset Policy.
+
+    A ``.py`` test under an asset root runs on the existing pytest runner
+    (``case_selectable`` with a node, ``suite_only`` without). A JS/TS test is pinned as a
+    "test" asset but has no runner: ``runner_unsupported``, never auto-selected. Anything
+    else (malformed, product source, a fixture) is ``unbound``.
+    """
     mode = case.get("execution_mode")
     if mode in ("manual", "external"):
         return {"capability": mode}
     raw = str(case.get("automation_ref") or "").strip()
     match = _LOCATOR.fullmatch(raw)
-    if not match or ".." in Path(match.group(1)).parts:
+    kind = asset_kind(match.group(1)) if match else None
+    if kind == KIND_UNSUPPORTED:
+        return {"capability": "runner_unsupported", "path": match.group(1),
+                "node": match.group(2)}
+    if kind != KIND_RUNNABLE:
         return {"capability": "unbound"}
     return {"capability": "case_selectable" if match.group(2) else "suite_only",
             "path": match.group(1), "node": match.group(2)}
@@ -82,22 +191,6 @@ def source_root(doc: dict) -> Path:
     return root
 
 
-def _git(root: Path, *args: str) -> str:
-    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=20)
-    if result.returncode:
-        raise ValueError("source_identity_unavailable: " + result.stderr.strip()[:300])
-    return result.stdout.strip()
-
-
-def _test_only_path(path: str) -> bool:
-    """Eligibility check; the approved manifest remains the write authority."""
-    pure = PurePosixPath(path)
-    return (not pure.is_absolute() and ".." not in pure.parts
-            and len(pure.parts) >= 2 and pure.parts[0] in {"test", "tests"}
-            and pure.suffix.lower() in {".py", ".json", ".yaml", ".yml", ".toml",
-                                        ".ini", ".txt", ".csv", ".xml"})
-
-
 def _roles(cases: list[dict]) -> dict[str, str]:
     roles: dict[str, str] = {}
     for case in cases:
@@ -105,7 +198,8 @@ def _roles(cases: list[dict]) -> dict[str, str]:
         if loc.get("path"):
             roles[loc["path"]] = "test"
         for raw in re.split(r"[,\n]", str(case.get("test_assets") or "")):
-            path = raw.strip().replace("\\", "/")
+            # Kept verbatim: the policy refuses a backslash path instead of rewriting it.
+            path = raw.strip()
             if path:
                 roles.setdefault(path, "fixture")
     return roles
@@ -114,23 +208,30 @@ def _roles(cases: list[dict]) -> dict[str, str]:
 def _manifest(roles: dict[str, str], hashes: dict[str, str], *, root: Path | None = None) -> list[dict]:
     """One manifest rule for capture and probe; hashes always come from the scan.
 
-    With ``root`` (capture) every asset must be eligible, tracked and present in the
-    captured Bundle. Without it (Live Probe) a gap is kept as a null hash, so it shows up
-    as a manifest change instead of an error.
+    With ``root`` (capture) every asset must pass the Test Asset Policy and be in the
+    captured Bundle; Git tracking is not asked, so an untracked test file a TR created is
+    an asset like a tracked one. Bundle membership stands for existence, hash and safety
+    (the capture refuses links and specials and hashes what it holds). Without ``root``
+    (Live Probe) a gap is kept as a null hash, so it shows up as a manifest change.
     """
     manifest = []
     for path, role in sorted(roles.items()):
-        eligible = _test_only_path(path)
+        kind = asset_kind(path)
         if root is not None:
-            if not eligible:
-                raise ValueError("product_source_or_invalid_test_asset: " + path)
+            if kind is None:
+                # Excluded by the Bundle policy: refused explicitly, never captured or run.
+                excluded = isinstance(path, str) and path and bundle_excluded(path)
+                raise ValueError(("test_asset_not_captured: " if excluded else
+                                  "product_source_or_invalid_test_asset: ") + path)
             if path not in hashes:
+                folded = path.casefold()
+                if any(name.casefold() == folded for name in hashes):
+                    raise ValueError("test_asset_path_case_mismatch: " + path)
                 missing = not (root / path).is_file()
                 raise ValueError(("automation_asset_missing: " if missing else
                                   "test_asset_not_captured: ") + path)
-            _git(root, "ls-files", "--error-unmatch", "--", path)
-        manifest.append({"path": path, "content_hash": hashes.get(path) if eligible else None,
-                         "role": role})
+        manifest.append({"path": path, "content_hash": hashes.get(path) if kind else None,
+                         "role": role, "kind": kind})
     return manifest
 
 

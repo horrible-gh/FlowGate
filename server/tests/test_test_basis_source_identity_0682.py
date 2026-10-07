@@ -127,9 +127,10 @@ def test_ts_revision_and_policy_changes_have_their_own_reasons(env, monkeypatch)
     env.store.docs[doc["doc_id"]]["revision_no"] = 2
     assert basis.verdict(env.doc(doc["doc_id"]), stored)["reasons"] == [basis.REASON_TS_REVISION]
     env.store.docs[doc["doc_id"]]["revision_no"] = 1
-    monkeypatch.setattr(basis, "ASSET_POLICY_VERSION", "test-asset-v2")
+    current_policy = basis.ASSET_POLICY_VERSION
+    monkeypatch.setattr(basis, "ASSET_POLICY_VERSION", current_policy + "-next")
     assert basis.verdict(env.doc(doc["doc_id"]), stored)["reasons"] == [basis.REASON_ASSET_POLICY]
-    monkeypatch.setattr(basis, "ASSET_POLICY_VERSION", "test-asset-v1")
+    monkeypatch.setattr(basis, "ASSET_POLICY_VERSION", current_policy)
     monkeypatch.setattr(materializer, "POLICY_VERSION", "source-bundle-v2")
     assert basis.verdict(env.doc(doc["doc_id"]), stored)["reasons"] == [basis.REASON_BUNDLE_POLICY]
 

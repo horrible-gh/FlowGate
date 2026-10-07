@@ -26,16 +26,17 @@ def _load(ts_id: str) -> tuple[dict, dict, dict]:
 
 
 def _entry(doc: dict, basis: dict, path: str) -> dict:
-    # Membership, not a path prefix, grants authority. Check eligibility again in
-    # case stored metadata is malformed or was written by an older implementation.
+    # Membership, not a path prefix, grants authority. Check eligibility again with the
+    # same Test Asset Policy approval used, in case stored metadata is malformed or was
+    # written by an older implementation. Git tracking is not asked (untracked assets
+    # are edited like tracked ones); the file itself must be safe to reach on disk.
     entries = {item["path"]: item for item in basis.get("manifest") or []}
-    if path not in entries or not test_basis_service._test_only_path(path):
+    if path not in entries or test_basis_service.asset_kind(path) is None:
         raise test_run_service._http_error(403, "test_asset_not_allowlisted", path=path)
-    target = (test_basis_service.source_root(doc) / path).resolve()
-    if (not target.is_relative_to(test_basis_service.source_root(doc).resolve())
-            or target != test_basis_service.source_root(doc).resolve() / path
-            or not target.is_file()):
-        raise test_run_service._http_error(409, "test_asset_missing", path=path)
+    try:
+        test_basis_service.safe_asset_file(test_basis_service.source_root(doc), path)
+    except ValueError as exc:
+        raise test_run_service._http_error(409, str(exc), path=path) from exc
     return entries[path]
 
 
@@ -150,6 +151,7 @@ def update(ts_id: str, path: str, *, expected_hash: str, content: str,
         # The first verdict ran before G: judge the whole Basis again now that no other
         # source mutation can run, so a product change made meanwhile is refused here.
         _require_live(doc, parsed, basis)
+        _entry(doc, basis, path)  # the path is still safe to write (no link swapped in)
         current_bytes = target.read_bytes()
         if hashlib.sha256(current_bytes).hexdigest() != old_hash:
             raise test_run_service._http_error(409, "expected_hash_mismatch", path=path,

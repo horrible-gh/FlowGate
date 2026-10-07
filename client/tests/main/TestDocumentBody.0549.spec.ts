@@ -139,6 +139,27 @@ describe('TestSpecPanel — structured specification', () => {
     wrapper.unmount()
   })
 
+  it('labels a JS/TS case runner_unsupported without a Run Case button (0682 T#2)', async () => {
+    getRequest.mockResolvedValue(specView({
+      test_basis: {
+        basis_id: 'b'.repeat(64),
+        source: { kind: 'source_bundle', exclusion_policy_version: 'source-bundle-v1', content_fingerprint: 'f'.repeat(64) },
+        test_assets: { policy_version: 'test-asset-v2', manifest_hash: 'm'.repeat(64), asset_count: 1 },
+        manifest: [{ path: 'client/tests/main/a.spec.ts', content_hash: 'c'.repeat(64), role: 'test', kind: 'runner_unsupported_test' }],
+      },
+      basis_valid: true,
+      case_capabilities: { 'TC-001': 'runner_unsupported', 'TC-002': 'manual' },
+    }))
+    const wrapper = mountBody(TS_ID, 'TS')
+    await flushPromises()
+    const cards = wrapper.findAll('[data-testid="test-spec-case"]')
+    expect(cards[0].find('[data-testid="test-spec-case-capability"]').text()).toBe('runner_unsupported')
+    expect(cards[0].find('[data-testid="test-spec-runner-unsupported"]').text()).toContain('no automatic runner')
+    expect(cards[0].find('[data-testid="test-spec-run-case"]').exists()).toBe(false)
+    expect(cards[1].find('[data-testid="test-spec-runner-unsupported"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('replaces [enter results] with the reason once the test report is approved', async () => {
     getRequest.mockResolvedValue(specView({ tsr_doc_id: 'x.0011-TSR', tsr_review_status: 'approved' }))
     const wrapper = mountBody(TS_ID, 'TS')
