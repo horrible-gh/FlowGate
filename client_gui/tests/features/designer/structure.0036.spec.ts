@@ -76,7 +76,7 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
   it.each(['ko', 'en', 'ja'])('i18n %s Inspector keys match the tab list and the Bottom placeholder strings are gone', async (locale) => {
     const messages = (await import(`@/app/i18n/${locale}.ts`)).default as Record<string, any>
     const inspector = messages.designer.inspector
-    expect(Object.keys(inspector).sort()).toEqual(['label', 'no_selection', 'pane_placeholder', 'tabs', 'tabs_label'].sort())
+    expect(Object.keys(inspector).sort()).toEqual(['label', 'pane_placeholder', 'tabs', 'tabs_label'].sort())
     expect(Object.keys(inspector.tabs)).toEqual([...INSPECTOR_TABS])
     expect(inspector.pane_placeholder).toContain('{tab}')
     expect(messages.designer.shell).not.toHaveProperty('bottom_label')

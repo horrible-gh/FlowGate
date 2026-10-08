@@ -120,8 +120,6 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
       [
         'tabs_label',
         'close_tab',
-        'no_open_flow',
-        'no_open_flow_desc',
         'graph_loading',
         'graph_load_failed',
         'retry',
@@ -135,6 +133,9 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
     for (const key of ['workspace_label', 'workspace_parts', 'active_flow', 'no_active_flow']) {
       expect(messages.designer.shell).not.toHaveProperty(key)
     }
+    // flowgate.v02.0042 — no guidance text while no Flow is open.
+    expect(messages.designer.center).not.toHaveProperty('no_open_flow')
+    expect(messages.designer.center).not.toHaveProperty('no_open_flow_desc')
   })
 
   it('ko Center strings use 플로우 and ja uses フロー', async () => {

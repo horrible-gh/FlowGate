@@ -10,8 +10,10 @@
  * real Vue Flow — this file gives the Canvas a size and a ResizeObserver stand-in.
  *
  * flowgate.v02.0039 T#3: entering the Designer leaves it without a work target (initial
- * unselected state, covered by DesignerInitialState.0039.spec.ts). These suites check the work
- * state, so `mountShell` first makes the user's explicit choice — one click on the Project row.
+ * unselected state, covered by DesignerInitialState.0039.spec.ts).
+ * flowgate.v02.0042: only an open Flow is the work target — a plain click in the Explorer is a
+ * selection and leaves the Designer unselected. Suites that check the work state open a Flow
+ * first (`activateCanvas`); `mountShell` itself opens nothing.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -124,10 +126,6 @@ async function mountShell(projectId: string | null = 'p') {
   if (projectId) useProjectStore().setCurrentProject(project(projectId, projectId === 'p' ? 'Alpha' : 'Beta'))
   wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: [i18n, pinia] } })
   await settle()
-  if (projectId) {
-    explorerRow(wrapper, projectId === 'p' ? 'Alpha' : 'Beta').element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
-    await settle()
-  }
   return wrapper
 }
 
@@ -190,6 +188,7 @@ describe('DesignerShell — container hierarchy', () => {
 
   it('shows each placeholder inside its final container', async () => {
     const w = await mountShell()
+    await activateCanvas(w)
     const label = (container: string) =>
       get(w, container).get('[data-test="designer-placeholder-label"]').text()
 
@@ -205,13 +204,14 @@ describe('DesignerShell — container hierarchy', () => {
     const workspace = get(w, 'designer-workspace')
     expect(workspace.find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
     expect([...workspace.element.children].map((c) => c.getAttribute('data-test'))).toEqual(['designer-center'])
-    expect(workspace.get('[data-test="designer-center-no-flow"]').text()).toContain('열린 플로우 없음')
+    expect(workspace.find('[data-test="designer-center-no-flow"]').exists()).toBe(false)
     expect(w.find('[data-test="designer-workspace-flow"]').exists()).toBe(false)
     // flowgate.v02.0036: the Bottom Dock holds the real Inspector (nothing selected yet) next
     // to the Minimap placeholder.
     expect(label('designer-bottom-dock')).toBe('MINIMAP')
     expect(get(w, 'designer-bottom-minimap').text()).toContain('Minimap')
-    expect(get(w, 'designer-bottom-dock').get('[data-test="designer-inspector-empty"]').text()).toBe('캔버스에서 카드를 선택하세요')
+    // flowgate.v02.0042: no Node selected leaves an empty Inspector area, no guidance text.
+    expect(get(w, 'designer-bottom-dock').get('[data-test="designer-inspector-empty"]').text()).toBe('')
     // flowgate.v02.0037: the Right Dock is the Tool Panel — [팔레트] [대화] [Git] over the real
     // Palette part, no placeholder.
     const right = get(w, 'designer-right-dock')
@@ -236,6 +236,7 @@ describe('DesignerShell — container hierarchy', () => {
 describe('DesignerShell — left Dock modes', () => {
   it('starts on the Project Explorer and mounts the File Explorer only when its tab first opens', async () => {
     const w = await mountShell()
+    await activateCanvas(w)
 
     expect(get(w, 'designer-left-dock').attributes('data-mode')).toBe('project')
     expect(isShown(get(w, 'project-explorer').element)).toBe(true)
@@ -255,6 +256,7 @@ describe('DesignerShell — left Dock modes', () => {
 
   it('keeps each Explorer state across tab switches without reloading', async () => {
     const w = await mountShell()
+    await activateCanvas(w)
     await get(w, 'project-explorer-search').setValue('Canvas')
     await settle()
     const treeCalls = () => getRequest.mock.calls.filter(([url]) => String(url).endsWith('/groups/tree')).length
@@ -298,7 +300,9 @@ describe('DesignerShell — active Flow', () => {
     explorerRow(w, 'Canvas').element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
     await settle()
     expect(tabNames(w)).toEqual([])
-    expect(w.find('[data-test="designer-center-no-flow"]').exists()).toBe(true)
+    // flowgate.v02.0042: a selection is not a work target — the Designer stays unselected.
+    expect(w.find('[data-test="designer-center-unselected"]').exists()).toBe(true)
+    expect(w.find('[data-test="designer-center-no-flow"]').exists()).toBe(false)
     expect(w.findComponent(ProjectExplorer).props('activeFlowId')).toBeNull()
   })
 
@@ -336,6 +340,7 @@ describe('DesignerShell — active Flow', () => {
 describe('DesignerShell — left collapse', () => {
   it('collapses to a rail and expands back to the same mode, width and Explorer state', async () => {
     const w = await mountShell()
+    await activateCanvas(w)
     await selectMode(w, '파일')
     await selectMode(w, '프로젝트')
     await get(w, 'project-explorer-search').setValue('Canvas')
@@ -384,6 +389,7 @@ describe('DesignerShell — left collapse', () => {
 describe('DesignerShell — UI refinements (T0006)', () => {
   it('has a single Left Dock header row: no "탐색기" title, only [프로젝트] [파일] + collapse', async () => {
     const w = await mountShell()
+    await activateCanvas(w)
     const dock = get(w, 'designer-left-dock')
     const header = get(w, 'designer-explorer-header')
     expect(header.findAll('[role="tab"]').map((tab) => tab.text())).toEqual(['프로젝트', '파일'])
@@ -470,7 +476,9 @@ describe('Korean Flow wording (T0006 §3)', () => {
     for (const text of texts) expect(text).not.toMatch(/Flow|흐름|플로(?!우)/)
     expect(ko.nav.designer.sub).toBe('그룹 · 플로우 설계')
     expect(ko.designer.center.tabs_label).toBe('열린 플로우')
-    expect(ko.designer.center.no_open_flow).toBe('열린 플로우 없음')
+    // flowgate.v02.0042: the no-open-Flow guidance strings are gone.
+    expect(ko.designer.center).not.toHaveProperty('no_open_flow')
+    expect(ko.designer.center).not.toHaveProperty('no_open_flow_desc')
     expect(ko.designer.shell).not.toHaveProperty('active_flow')
   })
 

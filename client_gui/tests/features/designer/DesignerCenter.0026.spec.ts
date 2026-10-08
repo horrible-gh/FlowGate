@@ -109,13 +109,17 @@ afterEach(() => {
 })
 
 describe('DesignerCenter — empty / loading / error', () => {
-  it('without tabs shows the "no open Flow" empty state and no Canvas', () => {
+  // flowgate.v02.0042: no open Flow leaves the Canvas area empty — no guidance text.
+  it('without tabs leaves the Canvas area empty: no guidance text, no state and no Canvas', () => {
     const w = mountCenter()
     expect(get(w, 'designer-center').exists()).toBe(true)
     expect(tabs(w)).toHaveLength(0)
-    const empty = get(w, 'designer-center-no-flow')
-    expect(empty.text()).toContain('열린 플로우 없음')
-    expect(empty.text()).toContain('프로젝트 탐색기에서 플로우를 더블클릭하면 여기에 열립니다')
+    expect(w.find('[data-test="designer-center-no-flow"]').exists()).toBe(false)
+    const area = w.get('.designer-center-canvas-area')
+    expect(area.element.children).toHaveLength(0)
+    expect(area.text()).toBe('')
+    expect(w.text()).not.toMatch(/열린 플로우 없음|더블클릭/)
+    expect(w.find('[data-test="designer-canvas-loading"]').exists()).toBe(false)
     expect(w.find('[data-test="designer-canvas"]').exists()).toBe(false)
   })
 

@@ -7,9 +7,9 @@
        Minimap placeholder. flowgate.v02.0037: the Right Dock is the Tool Panel holding the
        real Palette / Conversation / Git parts, fed the same Project and active Flow as the
        left Dock. flowgate.v02.0038: the Top holds the real Header / Menu Bar / Toolbar.
-       flowgate.v02.0039 T#3: until the user chooses something in the Project Explorer (or a
-       Flow is open) the Designer shows its initial unselected state — every area keeps its
-       frame, the work controls are unavailable and nothing is unfolded. -->
+       flowgate.v02.0039 T#3 / v02.0042: until a Flow is open the Designer shows its initial
+       unselected state — every area keeps its frame, the work controls are unavailable and
+       nothing is unfolded. A plain selection in the Project Explorer does not change that. -->
   <div class="designer-shell" data-test="designer-shell">
     <DesignerTop
       :run-mode="top.runMode"
@@ -33,7 +33,6 @@
         @collapse="layout.leftCollapsed = true"
         @expand="layout.leftCollapsed = false"
         @activate-flow="onActivateFlow"
-        @update:selection="explorerSelection = $event"
       />
       <DesignerCenterColumn :center="center" :bottom-height="layout.bottomHeight" :unselected="!hasWorkTarget" />
       <DesignerRightDock
@@ -77,14 +76,15 @@
 // Project Explorer shows the tree with nothing chosen, and every other area shows the confirmed
 // initial-state design (15-designer-shell-initial-state-v7) — Toolbar and target-bound menu
 // items unavailable, an empty Center frame, the Inspector frame only, the Minimap, the right
-// Tool Panel and the left navigation chrome dimmed. The first explicit choice in the Explorer
-// (the Explorer reports its selection through `update:selection`) or an open Flow is the work
-// target, and the Designer continues exactly as before. A Project change clears both, so the
-// new Project starts unselected again.
-import { computed, reactive, ref, watch } from 'vue'
+// Tool Panel and the left navigation chrome dimmed.
+// flowgate.v02.0042 — only an open Flow is the work target. A plain click in the Explorer is a
+// selection, not an opening (click = select, Flow double-click / Enter = select + open), so it
+// leaves the Designer unselected. Closing the last tab or changing the Project (which clears the
+// Center) returns the Designer to the unselected state.
+import { computed, reactive, watch } from 'vue'
 import { useProjectStore } from '@/features/project'
 import { createDesignerCenterSession } from '../center/designerCenterSession'
-import type { ExplorerSelection, ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
+import type { ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
 import {
   createDesignerTopState,
   nextRunMode,
@@ -115,10 +115,7 @@ const center = createDesignerCenterSession()
 // the File Explorer — no lookup or conversion needed.
 const activeFlowRef = center.activeFlowRef
 
-// The user's own choice in the Project Explorer, as that part reports it (never the context).
-const explorerSelection = ref<ExplorerSelection>(null)
-
-const hasWorkTarget = computed(() => explorerSelection.value !== null || activeFlowRef.value !== null)
+const hasWorkTarget = computed(() => activeFlowRef.value !== null)
 
 // The run buttons' UI state belongs to a target; it does not outlive it.
 watch(hasWorkTarget, (has) => {
@@ -131,14 +128,10 @@ function onActivateFlow(payload: ProjectExplorerFlowEvent) {
 }
 
 // A Flow of the previous Project is never carried over: a new Project clears the Center.
-// The previous Project's choice does not carry over either (0039 T#3). It is dropped here, before
-// this render, rather than only when the Explorer reports its own reset a tick later. Otherwise
-// the right parts would briefly get the new Project as a work target and start reading its data.
 watch(
   projectId,
   (id) => {
     center.setProject(id)
-    explorerSelection.value = null
   },
   { immediate: true },
 )

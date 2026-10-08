@@ -81,10 +81,12 @@ describe('Inspector tab rules', () => {
 })
 
 describe('DesignerInspector — Node not selected', () => {
-  it('shows one line and no header, tabs or Content area', () => {
+  // flowgate.v02.0042: the empty Inspector carries no guidance text.
+  it('shows an empty area with no text and no header, tabs or Content area', () => {
     const w = mountInspector({ node: null })
     expect(get(w, 'designer-inspector').attributes('data-selected')).toBe('false')
-    expect(get(w, 'designer-inspector-empty').text()).toBe('캔버스에서 카드를 선택하세요')
+    expect(get(w, 'designer-inspector-empty').text()).toBe('')
+    expect(get(w, 'designer-inspector').text()).toBe('')
     expect(w.find('[data-test="designer-inspector-header"]').exists()).toBe(false)
     expect(w.find('[data-test="designer-inspector-tabs"]').exists()).toBe(false)
     expect(w.find('[data-test="designer-inspector-body"]').exists()).toBe(false)
@@ -305,7 +307,7 @@ describe('DesignerCenterColumn — Bottom Dock with the Inspector', () => {
     expect((dock.element as HTMLElement).style.gridTemplateColumns).toBe(DESIGNER_BOTTOM_DOCK_COLUMNS)
   })
 
-  it('shows the Node selected in the Center session and goes back to the empty line', async () => {
+  it('shows the Node selected in the Center session and goes back to the empty area', async () => {
     const { w, center } = await mountColumn()
     expect(get(w, 'designer-inspector').attributes('data-selected')).toBe('false')
 
@@ -324,6 +326,6 @@ describe('DesignerCenterColumn — Bottom Dock with the Inspector', () => {
 
     center.closeFlow('f')
     await flushPromises()
-    expect(get(w, 'designer-inspector-empty').text()).toBe('캔버스에서 카드를 선택하세요')
+    expect(get(w, 'designer-inspector-empty').text()).toBe('')
   })
 })

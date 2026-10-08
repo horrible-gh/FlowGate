@@ -8,7 +8,8 @@
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import { setCurrentUser } from '@/core/auth/currentUser'
@@ -37,7 +38,34 @@ registerAppMessages(i18n)
 
 const TREE = [
   { id: 'project:p', parent_id: null, node_type: 'project', label: 'Alpha', type_code: null, number: null, filename: null, has_md: false, md_path: null },
+  { id: 'module:p:ui', parent_id: 'project:p', node_type: 'module', label: 'ui', title: 'UI 개선', type_code: null, number: null, filename: null, has_md: false, md_path: null },
+  { id: 'p.ui.0001', parent_id: 'module:p:ui', node_type: 'group', label: 'Canvas', type_code: null, number: '0001', filename: null, has_md: false, md_path: null },
 ]
+
+// --- Canvas environment for Vue Flow under jsdom (same stand-ins as DesignerShell.0025) -----
+// flowgate.v02.0042: the work state needs an open Flow, so the Canvas renders in these suites.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+const sizeProps = ['offsetWidth', 'offsetHeight'] as const
+const originalSize = sizeProps.map((p) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, p))
+
+beforeAll(() => {
+  vi.stubGlobal('ResizeObserver', ResizeObserverStub)
+  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 })
+  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 600 })
+})
+
+afterAll(() => {
+  vi.unstubAllGlobals()
+  sizeProps.forEach((p, i) => {
+    if (originalSize[i]) Object.defineProperty(HTMLElement.prototype, p, originalSize[i]!)
+    else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[p]
+  })
+})
+// -------------------------------------------------------------------------------------------
 
 function project(id: string, name: string): Project {
   return { id, name, description: '', color: null, isActive: true, createdAt: null, updatedAt: null, modules: [] }
@@ -71,17 +99,31 @@ async function settle() {
   for (let i = 0; i < 6; i += 1) await flushPromises()
 }
 
+/** A real browser double click on the Project Explorer row with this label. */
+async function doubleClickRow(w: VueWrapper<any>, label: string) {
+  const row = w
+    .findAll('[data-explorer-row]')
+    .find((r) => r.find('[data-test="project-explorer-label"]').text() === label)!
+    .find('.explorer-row')
+  for (const [type, detail] of [['click', 1], ['click', 2], ['dblclick', 2]] as const) {
+    row.element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, detail }))
+    await nextTick()
+  }
+  await settle()
+}
+
 // flowgate.v02.0039 T#3: entering leaves the Designer without a work target (Toolbar and most
 // menu items unavailable — DesignerInitialState.0039.spec.ts). These suites check the band in
-// the work state, so the user first chooses the Project row (one click).
+// the work state, so the user first opens a Flow (flowgate.v02.0042: only an open Flow is the
+// work target; a plain click only selects).
 async function mountShell() {
   const pinia = createPinia()
   setActivePinia(pinia)
   useProjectStore().setCurrentProject(project('p', 'Alpha'))
   wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: [i18n, pinia] } })
   await settle()
-  wrapper.get('[data-test="project-explorer-tree"] .explorer-row').element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
-  await settle()
+  await doubleClickRow(wrapper, 'UI 개선')
+  await doubleClickRow(wrapper, 'Canvas')
   return wrapper
 }
 
