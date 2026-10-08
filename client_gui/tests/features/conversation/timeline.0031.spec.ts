@@ -36,7 +36,7 @@ const change = (id: string, anchor: ActivityAnchor | null, createdAt: string | n
   deletions: 0,
   anchor,
 })
-const status = (id: string, createdAt: string | null): ConversationActivity => ({ kind: 'status', id, createdAt, tone: 'info', code: 'run_started', text: null })
+const status = (id: string, createdAt: string | null): ConversationActivity => ({ kind: 'status', id, createdAt, tone: 'info', code: 'run_cancelled', text: null })
 
 describe('mergeTurns', () => {
   it('orders by seq and ignores a seq already present', () => {

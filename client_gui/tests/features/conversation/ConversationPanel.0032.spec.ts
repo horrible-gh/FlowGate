@@ -173,6 +173,7 @@ describe('run change card (D0006 §6.1)', () => {
 describe('[새 채팅] (D0006 §6.1, §6.3)', () => {
   it('stays enabled and works while an AI run is in flight', async () => {
     const { source } = await mountPanel({ runs: { 'run-1': ['running'] } })
+    await find('conv-more-btn').trigger('click')
     await find('conv-invoke-ai').trigger('click')
     await flushPromises()
     expect(find('conv-send').classes()).toContain('is-stop')
@@ -180,16 +181,24 @@ describe('[새 채팅] (D0006 §6.1, §6.3)', () => {
     expect(button.attributes('disabled')).toBeUndefined()
     await button.trigger('click')
     await flushPromises()
-    expect(source.createChat).toHaveBeenCalledWith({ projectId: 'p', groupId: 'p.m.0001' }, '새 대화')
     expect((find('conv-title-input').element as HTMLInputElement).value).toBe('새 대화')
+    // flowgate.v02.0047: the draft's first send creates the chat.
+    await find('conv-input').setValue('다른 이야기')
+    await find('conv-composer').trigger('submit')
+    await flushPromises()
+    expect(source.createChat).toHaveBeenCalledWith({ projectId: 'p', groupId: 'p.m.0001' }, '새 대화', { autoTitle: true })
   })
 
-  it('keeps the open chat and shows a notice when the group is disposed', async () => {
+  it('keeps the draft text and shows a notice when the group is disposed', async () => {
     const { source } = await mountPanel()
     source.createChat.mockRejectedValueOnce(httpError(409, 'disposed', 'conversation_group_disposed'))
     await find('conv-new-btn').trigger('click')
+    await find('conv-input').setValue('빌드 다시')
+    await find('conv-composer').trigger('submit')
     await flushPromises()
-    expect((find('conv-title-input').element as HTMLInputElement).value).toBe('빌드 확인')
+    expect((find('conv-title-input').element as HTMLInputElement).value).toBe('새 대화')
+    expect((find('conv-input').element as HTMLTextAreaElement).value).toBe('빌드 다시')
+    expect(source.postTurn).not.toHaveBeenCalled()
     expect(find('conv-notice').text()).toContain('폐기된 플로우')
   })
 })

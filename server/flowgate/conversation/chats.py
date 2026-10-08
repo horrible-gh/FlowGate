@@ -9,12 +9,16 @@ pending CH head of a workflow stays the job of ``POST /documents/next-empty``.
 Decision order (D0006 §3.10.2): input -> ``perm_document_create`` -> project -> group ->
 group belongs to project -> group not disposed -> number reservation -> document file +
 row -> CH auto-complete (approved) -> 201.
+
+flowgate.v02.0047: ``"auto_title": true`` (optional) creates the chat owing its one AI title
+on the title it is created with (``auto_title.owed_meta``); without it nothing is owed.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any, Optional
 
+from flowgate.conversation import auto_title
 from flowgate.conversation import contracts as c
 from flowgate.conversation import legacy_adapter
 
@@ -51,6 +55,13 @@ def validate_input(body: Any) -> tuple[str, str, str]:
     return values["project_id"], values["group_id"], title
 
 
+def owes_auto_title(body: Any) -> bool:
+    value = body.get("auto_title", False) if isinstance(body, dict) else False
+    if not isinstance(value, bool):
+        raise _invalid("auto_title must be a boolean")
+    return value
+
+
 def _content(*, project_id: str, module: str, group_id: str, doc_code: str, title: str) -> str:
     lines = [
         "---",
@@ -85,6 +96,7 @@ def public(doc: dict) -> dict:
 
 def create_chat(user: dict, body: Any) -> dict:
     project_id, group_id, title = validate_input(body)
+    owes_title = owes_auto_title(body)
     if not legacy_adapter.has_permission(user, CREATE_PERMISSION, project_id):
         raise ChatCreateForbidden()
     if legacy_adapter.get_project(project_id) is None:
@@ -131,6 +143,8 @@ def create_chat(user: dict, body: Any) -> dict:
         "owner_id": user_id,
         "file_path": legacy_adapter.to_storage_relative(file_path, project_id),
     }
+    if owes_title:
+        data["meta"] = auto_title.owed_meta(title)
     doc: Optional[dict] = None
     try:
         with legacy_adapter.store_transaction():

@@ -1,6 +1,7 @@
 <template>
   <!-- flowgate.v02.0031 — top of the Conversation (R0001 §2): chat list, editable current
-       title, new chat. Nothing of this lives in the composer below. -->
+       title, new chat. Nothing of this lives in the composer below. flowgate.v02.0047: with
+       no chat open the title is the draft's — the one its first send creates the chat with. -->
   <div ref="rootEl" class="conv-head" data-test="conv-head">
     <button
       type="button"
@@ -22,8 +23,9 @@
       :aria-label="t('gui.conversation.header.title_label')"
       :title="t('gui.conversation.header.title_edit')"
       :placeholder="hasScope ? t('gui.conversation.header.no_chat') : t('gui.conversation.header.no_flow')"
-      :disabled="!activeChat || renaming || readOnly"
+      :disabled="(!activeChat && !draft) || renaming || readOnly"
       maxlength="100"
+      @focus="editBase = titleDraft"
       @keydown.enter.prevent="titleEl?.blur()"
       @keydown.esc.prevent="revertTitle"
       @blur="commitTitle"
@@ -81,6 +83,10 @@ const props = defineProps<{
   creating: boolean
   renaming: boolean
   readOnly?: boolean
+  /** No chat is open and the composer starts a new one. */
+  draft?: boolean
+  /** The title shown: the open chat's, or the draft's. */
+  title: string
 }>()
 
 const emit = defineEmits<{
@@ -95,31 +101,37 @@ const { t } = useI18n()
 const rootEl = ref<HTMLElement | null>(null)
 const titleEl = ref<HTMLInputElement | null>(null)
 const listOpen = ref(false)
-const titleDraft = ref(props.activeChat?.title ?? '')
+const titleDraft = ref(props.title)
+// The text the current edit started from.
+const editBase = ref(props.title)
 
-// The input follows the active chat (switch, rename confirmed or failed, new chat) unless it
-// is being edited.
+// The input follows the shown title (switch, rename confirmed or failed, new chat, AI title)
+// unless it is being edited.
 watch(
-  () => [props.activeChat?.id, props.activeChat?.title, props.renaming] as const,
+  () => [props.activeChat?.id, props.title, props.renaming, props.draft] as const,
   () => {
-    if (document.activeElement !== titleEl.value) titleDraft.value = props.activeChat?.title ?? ''
+    if (document.activeElement === titleEl.value) return
+    titleDraft.value = props.title
+    editBase.value = props.title
   },
 )
 
-// Enter blurs, blur commits — one rename per edit. An empty title is never sent.
+// Enter blurs, blur commits — one rename per edit. An empty title is never sent, and an edit
+// that changed nothing sends nothing (a title that arrived meanwhile then shows).
 function commitTitle(): void {
-  if (!props.activeChat) return
+  if (!props.activeChat && !props.draft) return
   const next = titleDraft.value.trim()
-  if (!next) {
-    titleDraft.value = props.activeChat.title
+  if (!next || next === editBase.value.trim()) {
+    titleDraft.value = props.title
     return
   }
-  if (next !== props.activeChat.title) emit('rename', next)
+  if (next !== props.title) emit('rename', next)
 }
 
 // Esc drops the edit; the blur that follows then has nothing to commit.
 function revertTitle(): void {
-  titleDraft.value = props.activeChat?.title ?? ''
+  titleDraft.value = props.title
+  editBase.value = props.title
   titleEl.value?.blur()
 }
 

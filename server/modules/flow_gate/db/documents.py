@@ -166,6 +166,14 @@ def update_review_cas(doc_id: str, expected_revision: int,
     ) == 1
 
 
+def update_meta_cas(doc_id: str, expected_meta: str, meta: str) -> bool:
+    """Replace ``meta`` only while it still is ``expected_meta`` (exact affected-row CAS)."""
+    return get_store()._execute_affected(
+        "UPDATE documents SET meta = ? WHERE doc_id = ? AND meta = ?",
+        [meta, doc_id, expected_meta],
+    ) == 1
+
+
 def delete(doc_id: str) -> None:
     store = get_store()
     doc = get_by_id(doc_id)

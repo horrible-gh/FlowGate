@@ -263,9 +263,51 @@ def update_document(doc_id: str, fields: dict[str, Any]) -> Optional[dict]:
     return db_documents.get_by_id(doc_id)
 
 
+def update_meta_cas(doc_id: str, expected_meta: str, meta: str) -> bool:
+    from modules.flow_gate.db import documents as db_documents
+
+    return bool(db_documents.update_meta_cas(doc_id, expected_meta, meta))
+
+
+def rename_document(doc_id: str, title: str, actor_user_id: str) -> Optional[dict]:
+    """The title write of ``PATCH /documents/{doc_id}`` (``document_service.update_document``)."""
+    from modules.flow_gate.documents import document_service
+
+    return document_service.update_document(doc_id, {"title": title}, actor_user_id=actor_user_id)
+
+
+# ── run-less one prompt (the AI connection test path) ────────────────────────
+
+# ``resolve_subject`` refusals: the provider cannot be used, nothing was asked.
+PROMPT_UNAVAILABLE_REASONS = frozenset({"provider_unavailable", "provider_not_found", "provider_disabled"})
+
+
+def complete_prompt(project_id: str, provider_id: str, prompt: str, *, timeout: float,
+                    max_tokens: int) -> tuple[Optional[str], Optional[str]]:
+    """(answer, None) or (None, reason) for one prompt on the project's effective AI
+    connection, through ``ai_connection_test_service.resolve_subject`` + ``execute_prompt``."""
+    from modules.flow_gate.services import ai_connection_test_service as connection
+    from modules.flow_gate.services.ai_invoke import runtime as probe
+
+    try:
+        subject = connection.resolve_subject(project_id, provider_id, fingerprint=False)
+    except connection.ConnectionTestError as exc:
+        return None, exc.code
+    outcome = connection.execute_prompt(subject, prompt, probe.ProbeHandle(), timeout, max_tokens=max_tokens)
+    if outcome.kind != probe.PROBE_OK:
+        return None, connection.FAILURE_REASON.get(outcome.kind, "internal_error")
+    return outcome.text, None
+
+
 # ── conversation turns ───────────────────────────────────────────────────────
 
 def current_head_seq(doc_id: str) -> int:
     from modules.flow_gate.db import conversation_turns
 
     return int(conversation_turns.current_head_seq(doc_id))
+
+
+def first_turns(doc_id: str, limit: int) -> list[dict]:
+    from modules.flow_gate.db import conversation_turns
+
+    return list(conversation_turns.first_turns(doc_id, limit))

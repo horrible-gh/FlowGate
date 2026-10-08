@@ -12,7 +12,7 @@
 // ends and once after each decision — and each read replaces them as a whole. A new chat is a
 // standalone CH; nothing is shown before the server has it.
 import { computed, reactive, readonly, type ComputedRef, type DeepReadonly } from 'vue'
-import { ConversationRequestError, DEFAULT_CHAT_SETTINGS, newIdempotencyKey } from './api'
+import { ConversationRequestError, DEFAULT_CHAT_SETTINGS, newIdempotencyKey, type CreateChatOptions } from './api'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
 import { buildTimeline, mergeTurns, replaceServerActivities, upsertActivity, type PendingTurn, type TimelineItem } from './timeline'
 import type {
@@ -104,10 +104,16 @@ export interface ConversationSession {
   readonly supportsActivities: boolean
 
   setScope(scope: ConversationScope | null): Promise<void>
+  /** Settles once the provider list of the current scope has loaded (or failed to). */
+  providersLoaded(): Promise<void>
   reloadChats(): Promise<void>
   selectChat(chatId: string): Promise<void>
   renameActiveChat(title: string): Promise<boolean>
-  createChat(title: string): Promise<boolean>
+  createChat(title: string, options?: CreateChatOptions): Promise<boolean>
+  /** Leaves the open chat for an unsaved new one: nothing exists until its first send. */
+  startDraft(): void
+  /** Shows a title the server already stored (the AI title of a new chat). */
+  setChatTitle(chatId: string, title: string): void
   loadOlder(): Promise<void>
   catchUp(): Promise<void>
   send(text: string): Promise<boolean>
@@ -190,6 +196,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
   let scopeGen = 0
   let chatGen = 0
   let providersProject: string | null = null
+  let providersLoad: Promise<void> = Promise.resolve()
   let noticeSeq = 0
   let unsubscribe: (() => void) | null = null
   // Highest read seq already reported for the active chat; it belongs to that chat and is
@@ -256,10 +263,19 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   // ── Scope / chat list ──────────────────────────────────────────────────────────────
-  async function loadProviders(projectId: string): Promise<void> {
-    if (providersProject === projectId && state.providersStatus !== 'error') return
+  function loadProviders(projectId: string): Promise<void> {
+    if (providersProject === projectId && state.providersStatus !== 'error') return providersLoad
     providersProject = projectId
     state.providersStatus = 'loading'
+    providersLoad = fetchProviders(projectId)
+    return providersLoad
+  }
+
+  function providersLoaded(): Promise<void> {
+    return providersLoad
+  }
+
+  async function fetchProviders(projectId: string): Promise<void> {
     try {
       const list = await source.listProviders(projectId)
       if (disposed || providersProject !== projectId) return
@@ -449,7 +465,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
    * list is read again and the new chat opens. A failure keeps the open chat, says why, and
    * never retries on its own — the button stays for another try.
    */
-  async function createChat(title: string): Promise<boolean> {
+  async function createChat(title: string, options?: CreateChatOptions): Promise<boolean> {
     const scope = state.scope
     const next = title.trim()
     if (!scope || !next || state.creatingChat) return false
@@ -458,7 +474,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     try {
       let created: ChatSummary
       try {
-        created = await source.createChat(scope, next)
+        created = options?.autoTitle ? await source.createChat(scope, next, { autoTitle: true }) : await source.createChat(scope, next)
       } catch (error) {
         if (!disposed && gen === scopeGen) notifyCreateFailed(error)
         return false
@@ -473,6 +489,17 @@ export function createConversationSession(options: ConversationSessionOptions = 
     } finally {
       state.creatingChat = false
     }
+  }
+
+  // flowgate.v02.0047: a new chat is a draft until its first send (chatStart.ts creates it then).
+  function startDraft(): void {
+    chatGen += 1
+    clearChat()
+    state.activeChatId = null
+  }
+
+  function setChatTitle(chatId: string, title: string): void {
+    state.chats = state.chats.map((c) => (c.id === chatId ? { ...c, title } : c))
   }
 
   function notifyCreateFailed(error: unknown): void {
@@ -688,9 +715,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
       const delivered = state.turns.filter((t) => t.speaker === 'ai').length > baseline
       // A one-shot source mode is consumed by the delivered answer (0568 rev3).
       if (delivered) void loadSettings()
+      // A delivered answer shows itself; only a run that ended without one says so.
       if (run.endReason === 'cancelled') addStatus('info', 'run_cancelled')
-      else if (delivered) addStatus('success', 'run_finished')
-      else addStatus('danger', 'run_no_reply', run.endReason)
+      else if (!delivered) addStatus('danger', 'run_no_reply', run.endReason)
       // Right after the end: the run change and the closed requests (D0006 §3.9.2-3).
       await loadActivities(chatId, gen)
       return
@@ -718,7 +745,6 @@ export function createConversationSession(options: ConversationSessionOptions = 
         state.runId = null
         return
       }
-      addStatus('info', 'run_started')
       void pollRun(chatId, runId, gen)
     } catch (error) {
       if (disposed || gen !== chatGen) return
@@ -830,10 +856,13 @@ export function createConversationSession(options: ConversationSessionOptions = 
     hasProviders,
     supportsActivities: source.supportsActivities,
     setScope,
+    providersLoaded,
     reloadChats,
     selectChat,
     renameActiveChat,
     createChat,
+    startDraft,
+    setChatTitle,
     loadOlder,
     catchUp,
     send,

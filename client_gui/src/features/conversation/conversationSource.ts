@@ -27,7 +27,9 @@ import type {
 export interface ConversationSource {
   listChats(scope: ConversationScope): Promise<ChatSummary[]>
   renameChat(chatId: string, title: string): Promise<ChatSummary>
-  createChat(scope: ConversationScope, title: string): Promise<ChatSummary>
+  createChat(scope: ConversationScope, title: string, options?: api.CreateChatOptions): Promise<ChatSummary>
+  /** The one AI title of a chat created with `autoTitle` (flowgate.v02.0047); optional. */
+  autoTitleChat?(chatId: string, providerId: string): Promise<ChatSummary>
 
   fetchTurns(chatId: string, query: api.TurnsQuery): Promise<TurnsPage>
   postTurn(chatId: string, input: api.PostTurnInput): Promise<{ turn: ConversationTurn | null; headSeq: number }>
@@ -59,6 +61,7 @@ export function createHttpConversationSource(): ConversationSource {
     listChats: api.fetchChats,
     renameChat: api.renameChat,
     createChat: api.createChat,
+    autoTitleChat: api.autoTitleChat,
     fetchTurns: api.fetchTurns,
     postTurn: api.postTurn,
     markRead: api.markRead,

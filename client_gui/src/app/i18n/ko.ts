@@ -425,7 +425,6 @@ export default {
       loading_older: '이전 대화를 불러오는 중...',
       read_boundary: '여기까지 읽음',
       empty: '아직 메시지가 없습니다. 아래에서 대화를 시작하세요.',
-      no_chat: '채팅이 없습니다. ＋ 버튼으로 새 채팅을 만드세요.',
       no_flow: '플로우를 열면 그 플로우의 대화가 여기에 표시됩니다.',
     },
     message: {
@@ -485,8 +484,6 @@ export default {
       more_lines: '{n}줄 더 있음',
     },
     status: {
-      run_started: 'AI 호출을 시작했습니다',
-      run_finished: 'AI 답변이 도착했습니다',
       run_cancelled: 'AI 호출을 중지했습니다',
       run_no_reply: 'AI 호출이 답변 없이 끝났습니다',
     },
@@ -506,6 +503,7 @@ export default {
       copy_mention: '멘션 복사',
       invoke_ai: 'AI 호출',
       ai_running: 'AI 호출 중',
+      more: '추가 메뉴',
       source_mode: 'AI 소스 모드',
       source: {
         read_only: '읽기',

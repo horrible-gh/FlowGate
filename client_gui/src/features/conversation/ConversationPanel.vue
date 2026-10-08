@@ -1,8 +1,9 @@
 <template>
   <!-- flowgate.v02.0031 — the Conversation part for the Designer's right tool area:
-       header (chat list / title / new chat) · one chronological timeline · participants ·
-       composer. It owns no tab button, panel header, collapse or width (R0001 §10): a Tool
-       Panel Container puts this element in its body and gives it the height to fill. -->
+       header (chat list / title / new chat) · participants · one chronological timeline ·
+       composer (flowgate.v02.0047: the v9 order). It owns no tab button, panel header,
+       collapse or width (R0001 §10): a Tool Panel Container puts this element in its body and
+       gives it the height to fill. -->
   <section class="conv-panel" data-test="conversation-panel" :aria-label="t('gui.conversation.label')">
     <ConversationHeader
       :chats="state.chats"
@@ -12,11 +13,14 @@
       :creating="state.creatingChat"
       :renaming="state.renaming"
       :read-only="readOnly"
+      :draft="start.isDraft.value"
+      :title="headerTitle"
       @select="session.selectChat"
-      @rename="session.renameActiveChat"
+      @rename="start.rename"
       @create="onCreate"
       @reload="session.reloadChats"
     />
+    <ConversationParticipants :participants="state.participants" />
     <Alert
       v-if="state.notice"
       class="conv-notice"
@@ -40,17 +44,17 @@
       :file-diff="state.fileDiff"
       @load-older="session.loadOlder"
       @reload="reloadChat"
-      @retry="session.retry"
+      @retry="start.retry"
       @decide="session.decideCommand"
       @open-change="(activity) => emit('open-change', activity)"
       @open-file="session.openChangeFile"
       @close-file="session.closeChangeFile"
       @read="session.reportRead"
     />
-    <ConversationParticipants :participants="state.participants" />
     <ConversationComposer
+      ref="composerEl"
       :chat-id="state.activeChatId"
-      :disabled="state.activeChatId === null || state.turnsStatus !== 'ready'"
+      :disabled="composerDisabled"
       :read-only="readOnly"
       :settings="state.settings"
       :saving-settings="state.savingSettings"
@@ -59,13 +63,13 @@
       :selected-provider-id="state.selectedProviderId"
       :providers-status="state.providersStatus"
       :has-providers="session.hasProviders.value"
-      :sending="state.sending"
+      :sending="state.sending || start.starting.value"
       :running="session.running.value"
       :run-starting="state.runId === 'starting'"
       :cancelling="state.cancelling"
       :copying-mention="state.copyingMention"
       :manual-copy-text="state.manualCopyText"
-      :on-send="session.send"
+      :on-send="start.send"
       @select-provider="session.selectProvider"
       @save-settings="onSaveSettings"
       @set-source-mode="session.setSourceMode"
@@ -84,17 +88,19 @@
 // session-wide data source (or a test) passes `source`; otherwise the HTTP source of the
 // existing contracts is used. Opening a work change as a whole is a request to the container
 // (`open-change`); one file of it opens its stored diff right under the card (flowgate.v02.0032,
-// D0006 §6.1).
-import { computed, onBeforeUnmount, watch } from 'vue'
+// D0006 §6.1). flowgate.v02.0047: with no chat open the composer starts one — [+] only leaves
+// the open chat, and the chat is created by its first send (chatStart.ts).
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Alert from '../../components/ui/Alert.vue'
 import { copyToClipboard } from '../../core/interaction/clipboard'
+import { createChatStart } from './chatStart'
 import ConversationComposer from './ConversationComposer.vue'
 import ConversationHeader from './ConversationHeader.vue'
 import ConversationParticipants from './ConversationParticipants.vue'
 import ConversationTimeline from './ConversationTimeline.vue'
 import { createConversationSession } from './conversationSession'
-import type { ConversationSource } from './conversationSource'
+import { createHttpConversationSource, type ConversationSource } from './conversationSource'
 import type { ChatSettingsPatch, ChatSummary, WorkChangeActivity } from './types'
 
 const props = defineProps<{
@@ -111,13 +117,29 @@ const emit = defineEmits<{
 
 const { t, te } = useI18n()
 
+const source = props.source ?? createHttpConversationSource()
 const session = createConversationSession({
-  source: props.source,
+  source,
   onAutoCopyMention: () => void copyMention(true),
 })
 const state = session.state
+const start = createChatStart({ session, source, defaultTitle: () => t('gui.conversation.header.new_title') })
+const composerEl = ref<InstanceType<typeof ConversationComposer> | null>(null)
 
 const activeChat = computed(() => (session.activeChat.value as ChatSummary | null) ?? null)
+
+const headerTitle = computed(() => {
+  if (activeChat.value) return activeChat.value.title
+  return start.isDraft.value ? (start.draftTitle.value ?? t('gui.conversation.header.new_title')) : ''
+})
+
+// A draft can be written once the Flow's chat list has been read (a send before that could
+// race the newest chat opening); an open chat once its turns are on screen.
+const composerDisabled = computed(() => {
+  if (!state.scope) return true
+  if (state.activeChatId === null) return state.chatsStatus === 'loading' || state.chatsStatus === 'idle'
+  return state.turnsStatus !== 'ready'
+})
 
 watch(
   () => [props.projectId, props.groupId] as const,
@@ -131,7 +153,6 @@ const emptyText = computed(() => {
   if (!state.scope) return t('gui.conversation.timeline.no_flow')
   if (state.chatsStatus === 'loading') return t('gui.conversation.header.list_loading')
   if (state.chatsStatus === 'error') return t('gui.conversation.header.list_failed')
-  if (!state.activeChatId) return t('gui.conversation.timeline.no_chat')
   return t('gui.conversation.timeline.empty')
 })
 
@@ -144,7 +165,8 @@ const noticeText = computed(() => {
 })
 
 function onCreate(): void {
-  void session.createChat(t('gui.conversation.header.new_title'))
+  start.startNew()
+  void nextTick(() => composerEl.value?.focus())
 }
 
 function reloadChat(): void {

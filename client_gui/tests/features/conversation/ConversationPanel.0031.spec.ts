@@ -130,13 +130,19 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     expect(source.renameChat).toHaveBeenCalledWith(A, '새 제목')
   })
 
-  it('creates a new chat from the header', async () => {
+  // flowgate.v02.0047: [+] opens an unsaved draft; its first send creates the chat.
+  it('starts a new chat from the header as a draft and creates it on the first send', async () => {
     const { source } = await mountPanel()
     await find('conv-new-btn').trigger('click')
     await flushPromises()
-    expect(source.createChat).toHaveBeenCalledWith({ projectId: 'p', groupId: 'p.m.0001' }, '새 대화')
+    expect(source.createChat).not.toHaveBeenCalled()
     expect((find('conv-title-input').element as HTMLInputElement).value).toBe('새 대화')
     expect(find('conv-log-empty').exists()).toBe(true)
+    await find('conv-input').setValue('첫 메시지')
+    await find('conv-composer').trigger('submit')
+    await flushPromises()
+    expect(source.createChat).toHaveBeenCalledWith({ projectId: 'p', groupId: 'p.m.0001' }, '새 대화', { autoTitle: true })
+    expect(source.postTurn).toHaveBeenCalledWith('p.m.0001.0012-CH', expect.objectContaining({ body: '첫 메시지' }))
   })
 
   it('approves and rejects a command request in the timeline', async () => {
@@ -202,9 +208,11 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
 
   it('selects the AI, calls it and turns the send button into STOP while it runs', async () => {
     const { source } = await mountPanel({ runs: { 'run-1': ['running'] } })
-    const select = find('conv-provider-select')
-    expect((select.element as HTMLSelectElement).value).toBe('opus')
-    await select.setValue('sonnet')
+    expect(find('conv-provider-name').text()).toBe('Opus 5')
+    await find('conv-provider-btn').trigger('click')
+    await findAll('conv-provider-option')[1].trigger('click')
+    expect(find('conv-provider-name').text()).toBe('Sonnet 5')
+    await find('conv-more-btn').trigger('click')
     await find('conv-invoke-ai').trigger('click')
     await flushPromises()
     expect(source.startChatRun).toHaveBeenCalledWith(A, 'sonnet')
@@ -214,13 +222,14 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     await send.trigger('click')
     await flushPromises()
     expect(source.cancelRun).toHaveBeenCalledWith('run-1')
-    expect(find('tl-status').text()).toContain('AI 호출을 시작했습니다')
+    // flowgate.v02.0047 rev3: no "AI 호출을 시작했습니다" line in the timeline.
+    expect(findAll('tl-status').map((s) => s.text()).join(' ')).not.toContain('AI 호출을 시작했습니다')
   })
 
   it('switches the AI source mode (읽기 / 편집 / 1회 편집) through the server', async () => {
     const { source } = await mountPanel()
     const buttons = find('conv-source-mode').findAll('button')
-    expect(buttons.map((b) => b.text())).toEqual(['읽기', '편집', '1회 편집'])
+    expect(buttons.map((b) => b.attributes('aria-label'))).toEqual(['읽기', '편집', '1회 편집'])
     expect(buttons[0].attributes('aria-pressed')).toBe('true')
     await buttons[2].trigger('click')
     await flushPromises()
@@ -228,7 +237,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     expect(find('conv-source-mode').findAll('button')[2].attributes('aria-pressed')).toBe('true')
   })
 
-  it('saves chat settings from the inline settings panel', async () => {
+  it('saves chat settings from the settings popover', async () => {
     const { source } = await mountPanel()
     await find('conv-settings-btn').trigger('click')
     await find('conv-setting-send-action').setValue('copy_mention')
@@ -241,6 +250,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
 
   it('copies the chat mention, and falls back to an inline manual copy', async () => {
     const { source } = await mountPanel()
+    await find('conv-more-btn').trigger('click')
     await find('conv-copy-mention').trigger('click')
     await flushPromises()
     expect(source.issueChatMention).toHaveBeenCalledWith(A)
@@ -248,6 +258,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     expect(find('conv-notice').text()).toContain('멘션을 복사했습니다')
 
     clipboard.copyToClipboard.mockResolvedValue(false)
+    await find('conv-more-btn').trigger('click')
     await find('conv-copy-mention').trigger('click')
     await flushPromises()
     const manual = find('conv-manual-copy')

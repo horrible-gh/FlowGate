@@ -1,11 +1,12 @@
 <template>
-  <!-- flowgate.v02.0031 — bottom of the Conversation (R0001 §8): chat settings, AI source mode
-       (읽기 / 편집 / 1회 편집), mention copy, AI call, AI select, input and send / stop. Every
-       control drives an existing contract through the session; nothing here opens a dialog
-       (0235 R0001) — settings and the manual-copy fallback are inline panels. -->
+  <!-- flowgate.v02.0031 — bottom of the Conversation (R0001 §8). Every control drives an existing
+       contract through the session; nothing here opens a dialog (0235 R0001) — settings, the
+       menus and the manual-copy fallback are inline. flowgate.v02.0047 (v9): input and send on
+       the first line; AI picker, source mode icons, settings (⚙) and the ⋯ menu (mention copy,
+       AI call) on the second. -->
   <form class="conv-compose" data-test="conv-composer" @submit.prevent="submit">
-    <div v-if="manualCopyText" class="conv-panel" data-test="conv-manual-copy">
-      <div class="conv-panel-head">
+    <div v-if="manualCopyText" class="conv-manual" data-test="conv-manual-copy">
+      <div class="conv-manual-head">
         <span>{{ t('gui.conversation.composer.manual_copy_title') }}</span>
         <button type="button" class="conv-link" data-test="conv-manual-copy-again" @click="emit('manual-copy-again')">
           {{ t('gui.conversation.composer.manual_copy_again') }}
@@ -15,110 +16,7 @@
       <textarea class="conv-manual-text" readonly spellcheck="false" :value="manualCopyText" @focus="($event.target as HTMLTextAreaElement).select()"></textarea>
     </div>
 
-    <div v-if="settingsOpen" class="conv-panel" data-test="conv-settings">
-      <div class="conv-panel-head">
-        <span>{{ t('gui.conversation.settings.title') }}</span>
-        <button type="button" class="conv-link" :aria-label="t('gui.conversation.close')" @click="settingsOpen = false">×</button>
-      </div>
-      <label class="conv-setting-row">
-        <span>{{ t('gui.conversation.settings.send_action') }}</span>
-        <select v-model="draftSendAction" class="conv-select" data-test="conv-setting-send-action">
-          <option value="none">{{ t('gui.conversation.settings.send_none') }}</option>
-          <option value="invoke_ai" :disabled="!hasProviders">{{ t('gui.conversation.settings.send_invoke') }}</option>
-          <option value="copy_mention">{{ t('gui.conversation.settings.send_copy') }}</option>
-        </select>
-      </label>
-      <label class="conv-setting-row">
-        <span>{{ t('gui.conversation.settings.context') }}</span>
-        <select v-model="draftRange" class="conv-select" data-test="conv-setting-context">
-          <option v-for="n in settings.contextTurnsPresets" :key="n" :value="String(n)">{{ t('gui.conversation.settings.context_turns', { n }) }}</option>
-          <option v-if="customTurns" :value="String(customTurns)">{{ t('gui.conversation.settings.context_turns', { n: customTurns }) }}</option>
-          <option value="all">{{ t('gui.conversation.settings.context_all') }}</option>
-        </select>
-      </label>
-      <div class="conv-panel-foot">
-        <button type="button" class="conv-link" @click="settingsOpen = false">{{ t('gui.conversation.cancel') }}</button>
-        <button type="button" class="conv-save" data-test="conv-settings-save" :disabled="savingSettings" @click="saveSettings">
-          {{ t('gui.conversation.save') }}
-        </button>
-      </div>
-    </div>
-
-    <div class="conv-assist">
-      <button
-        type="button"
-        class="conv-icon-btn"
-        :class="{ 'is-on': settingsOpen }"
-        data-test="conv-settings-btn"
-        :title="t('gui.conversation.settings.title')"
-        :aria-label="t('gui.conversation.settings.title')"
-        :aria-expanded="settingsOpen"
-        :disabled="readOnly"
-        @click="toggleSettings"
-      >
-        <span aria-hidden="true">⚙</span>
-      </button>
-      <!-- Server-confirmed only: the highlight moves once the PATCH answers (0568 T0004 §2). -->
-      <div
-        v-if="settings.sourceAccessModes.length > 0"
-        class="conv-source"
-        role="group"
-        data-test="conv-source-mode"
-        :aria-label="t('gui.conversation.composer.source_mode')"
-      >
-        <button
-          v-for="mode in settings.sourceAccessModes"
-          :key="mode"
-          type="button"
-          :class="{ 'is-on': settings.sourceAccessMode === mode }"
-          :aria-pressed="settings.sourceAccessMode === mode"
-          :title="t(`gui.conversation.composer.source_tip.${mode}`)"
-          :data-mode="mode"
-          :disabled="readOnly || pendingSourceMode !== null"
-          @click="emit('set-source-mode', mode)"
-        >
-          {{ pendingSourceMode === mode ? '…' : t(`gui.conversation.composer.source.${mode}`) }}
-        </button>
-      </div>
-      <span class="conv-assist-spacer"></span>
-      <button
-        type="button"
-        class="conv-icon-btn"
-        data-test="conv-copy-mention"
-        :title="t('gui.conversation.composer.copy_mention')"
-        :aria-label="t('gui.conversation.composer.copy_mention')"
-        :disabled="disabled || copyingMention"
-        @click="emit('copy-mention')"
-      >
-        <span aria-hidden="true">⧉</span>
-      </button>
-      <button
-        v-if="hasProviders"
-        type="button"
-        class="conv-icon-btn conv-icon-btn--ai"
-        data-test="conv-invoke-ai"
-        :title="running ? t('gui.conversation.composer.ai_running') : t('gui.conversation.composer.invoke_ai')"
-        :aria-label="t('gui.conversation.composer.invoke_ai')"
-        :disabled="disabled || readOnly || running"
-        @click="emit('invoke-ai')"
-      >
-        <span aria-hidden="true">{{ running ? '…' : '◆' }}</span>
-      </button>
-    </div>
-
     <div class="conv-pill">
-      <select
-        class="conv-provider"
-        data-test="conv-provider-select"
-        :title="t('gui.conversation.composer.provider')"
-        :aria-label="t('gui.conversation.composer.provider')"
-        :value="selectedProviderId"
-        :disabled="readOnly || providers.length === 0"
-        @change="emit('select-provider', ($event.target as HTMLSelectElement).value)"
-      >
-        <option v-if="providers.length === 0" value="">{{ providerPlaceholder }}</option>
-        <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
-      </select>
       <textarea
         ref="inputEl"
         v-model="draft"
@@ -145,18 +43,56 @@
         <span aria-hidden="true">{{ running ? '■' : sending ? '…' : '➤' }}</span>
       </button>
     </div>
+
+    <div class="conv-assist">
+      <ComposerModelPicker
+        :providers="providers"
+        :selected-id="selectedProviderId"
+        :status="providersStatus"
+        :disabled="readOnly"
+        @select="(id) => emit('select-provider', id)"
+      />
+      <ComposerSourceModes
+        :modes="settings.sourceAccessModes"
+        :current="settings.sourceAccessMode"
+        :pending="pendingSourceMode"
+        :disabled="readOnly"
+        @set="(mode) => emit('set-source-mode', mode)"
+      />
+      <span class="conv-assist-spacer"></span>
+      <ComposerSettings
+        :settings="settings"
+        :saving="savingSettings"
+        :has-providers="hasProviders"
+        :disabled="readOnly"
+        @save="(patch, done) => emit('save-settings', patch, done)"
+      />
+      <ComposerToolsMenu
+        :has-providers="hasProviders"
+        :running="running"
+        :mention-disabled="disabled || chatId === null || copyingMention"
+        :invoke-disabled="disabled || chatId === null || readOnly || running"
+        @copy-mention="emit('copy-mention')"
+        @invoke-ai="emit('invoke-ai')"
+      />
+    </div>
   </form>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch, type DeepReadonly } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ComposerModelPicker from './ComposerModelPicker.vue'
+import ComposerSettings from './ComposerSettings.vue'
+import ComposerSourceModes from './ComposerSourceModes.vue'
+import ComposerToolsMenu from './ComposerToolsMenu.vue'
 import { loadDraft, saveDraft } from './drafts'
-import type { ChatProvider, ChatSettings, ChatSettingsPatch, SendAction, SourceAccessMode } from './types'
+import type { ChatProvider, ChatSettings, ChatSettingsPatch, SourceAccessMode } from './types'
 
 const props = defineProps<{
+  /** The open chat; null while a new chat is a draft (its first send creates it). */
   chatId: string | null
-  /** No chat to talk in (no Flow / no conversation yet). */
+  /** Nothing can be sent now (no Flow, the chat is loading). */
   disabled: boolean
   readOnly?: boolean
   settings: DeepReadonly<ChatSettings>
@@ -191,21 +127,17 @@ const { t } = useI18n()
 
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 const draft = ref(loadDraft(props.chatId))
+// A draft's first send creates its chat, so chatId changes while the text is on its way: the
+// text stays with the message instead of being swapped for the new chat's (empty) draft.
+let carrying = false
 
 watch(
   () => props.chatId,
   (chatId) => {
+    if (carrying) return
     draft.value = loadDraft(chatId)
     void nextTick(autoGrow)
   },
-)
-
-const providerPlaceholder = computed(() =>
-  props.providersStatus === 'loading'
-    ? t('gui.conversation.composer.provider_loading')
-    : props.providersStatus === 'error'
-      ? t('gui.conversation.composer.provider_failed')
-      : t('gui.conversation.composer.provider_none'),
 )
 
 const sendTitle = computed(() => {
@@ -218,7 +150,7 @@ function autoGrow(): void {
   const el = inputEl.value
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = `${Math.min(el.scrollHeight, 96)}px`
+  el.style.height = `${Math.min(el.scrollHeight, 110)}px`
 }
 
 function onInput(): void {
@@ -230,50 +162,23 @@ async function submit(): Promise<void> {
   const text = draft.value.trim()
   if (!text || props.disabled || props.readOnly || props.sending || props.running) return
   const chatId = props.chatId
-  const ok = await props.onSend(text)
+  carrying = chatId === null
+  let ok = false
+  try {
+    ok = await props.onSend(text)
+  } finally {
+    carrying = false
+  }
+  const now = props.chatId
+  // The chat a draft's send created keeps the text of a send that did not go through.
+  if (chatId === null && now !== null && !ok) saveDraft(now, draft.value)
   // The draft survives a failed send (P0003 scenario 17); a sent one is cleared.
-  if (!ok || chatId !== props.chatId) return
+  if (!ok || (chatId !== null && chatId !== now)) return
   draft.value = ''
-  saveDraft(chatId, '')
+  saveDraft(now, '')
   await nextTick()
   autoGrow()
   inputEl.value?.focus()
-}
-
-// ── Chat settings panel (D0008 §6-2) ─────────────────────────────────────────────────
-const settingsOpen = ref(false)
-const draftSendAction = ref<SendAction>('none')
-const draftRange = ref('20')
-
-const customTurns = computed(() =>
-  props.settings.contextMode === 'recent' && !props.settings.contextTurnsPresets.includes(props.settings.contextTurns)
-    ? props.settings.contextTurns
-    : null,
-)
-
-function toggleSettings(): void {
-  if (settingsOpen.value) {
-    settingsOpen.value = false
-    return
-  }
-  // Opening never re-queries: it redraws the last confirmed settings.
-  draftSendAction.value = props.settings.sendAction
-  draftRange.value = props.settings.contextMode === 'all' ? 'all' : String(props.settings.contextTurns)
-  settingsOpen.value = true
-}
-
-function saveSettings(): void {
-  const patch: ChatSettingsPatch = { send_action: draftSendAction.value }
-  if (draftRange.value === 'all') {
-    // L0010 §2-7-4: never send context_turns with 'all' — the number must survive.
-    patch.context_mode = 'all'
-  } else {
-    patch.context_mode = 'recent'
-    patch.context_turns = Number(draftRange.value)
-  }
-  emit('save-settings', patch, (ok) => {
-    if (ok) settingsOpen.value = false
-  })
 }
 
 defineExpose({ focus: () => inputEl.value?.focus() })
@@ -283,12 +188,12 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 .conv-compose {
   position: relative;
   flex: 0 0 auto;
-  padding: 7px 8px 8px;
+  padding: 7px 8px;
   border-top: 1px solid var(--fg2-line);
   background: var(--fg2-control-surface-flat);
 }
 
-.conv-panel {
+.conv-manual {
   margin-bottom: 6px;
   border: 1px solid var(--fg2-line-strong);
   border-radius: var(--fg2-control-radius);
@@ -298,7 +203,7 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   color: var(--fg2-muted);
 }
 
-.conv-panel-head {
+.conv-manual-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -307,16 +212,8 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   font-weight: 700;
 }
 
-.conv-panel-head > span {
+.conv-manual-head > span {
   flex: 1;
-}
-
-.conv-panel-foot {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
 }
 
 .conv-link {
@@ -326,22 +223,6 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   font: inherit;
   font-weight: 400;
   cursor: pointer;
-}
-
-.conv-save {
-  height: 24px;
-  padding: 0 10px;
-  border: 1px solid var(--fg2-blue);
-  border-radius: var(--fg2-control-radius-sm);
-  background: var(--fg2-status-info-bg);
-  color: var(--fg2-text);
-  font: inherit;
-  cursor: pointer;
-}
-
-.conv-save:disabled {
-  cursor: progress;
-  opacity: var(--fg2-control-disabled-opacity);
 }
 
 .conv-manual-text {
@@ -357,101 +238,10 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   padding: 5px;
 }
 
-.conv-setting-row {
-  display: grid;
-  grid-template-columns: 76px 1fr;
-  align-items: center;
-  gap: 7px;
-  margin-top: 6px;
-}
-
-.conv-select {
-  height: 27px;
-  min-width: 0;
-  border: 1px solid var(--fg2-line-strong);
-  border-radius: var(--fg2-control-radius-sm);
-  background: var(--fg2-bg);
-  color: var(--fg2-text);
-  font: inherit;
-  padding: 0 5px;
-}
-
-.conv-assist {
-  height: 28px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 5px;
-}
-
-.conv-assist-spacer {
-  flex: 1;
-}
-
-.conv-icon-btn {
-  width: 26px;
-  height: 25px;
-  padding: 0;
-  border: 1px solid var(--fg2-line-strong);
-  border-radius: var(--fg2-control-radius-sm);
-  background: var(--fg2-control-surface);
-  color: var(--fg2-muted);
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.conv-icon-btn:hover:not(:disabled),
-.conv-icon-btn.is-on {
-  color: var(--fg2-text);
-  border-color: var(--fg2-control-hover-border);
-}
-
-.conv-icon-btn--ai {
-  color: var(--fg2-violet);
-}
-
-.conv-icon-btn:disabled,
-.conv-source button:disabled,
-.conv-provider:disabled {
-  cursor: not-allowed;
-  opacity: var(--fg2-control-disabled-opacity);
-}
-
-.conv-source {
-  display: flex;
-  height: 25px;
-  border: 1px solid var(--fg2-line-strong);
-  border-radius: var(--fg2-control-radius-sm);
-  overflow: hidden;
-}
-
-.conv-source button {
-  height: 23px;
-  padding: 0 7px;
-  border: 0;
-  border-right: 1px solid var(--fg2-line);
-  background: var(--fg2-control-surface-flat);
-  color: var(--fg2-muted);
-  font: inherit;
-  font-size: 10px;
-  cursor: pointer;
-}
-
-.conv-source button:last-child {
-  border-right: 0;
-}
-
-.conv-source button.is-on {
-  background: var(--fg2-status-info-bg);
-  color: var(--fg2-text);
-}
-
 .conv-pill {
-  min-height: 39px;
+  min-height: 43px;
   display: grid;
-  grid-template-columns: minmax(64px, 88px) minmax(0, 1fr) 31px;
+  grid-template-columns: minmax(0, 1fr) 39px;
   align-items: end;
   border: 1px solid var(--fg2-line-strong);
   border-radius: var(--fg2-control-radius);
@@ -459,29 +249,17 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   overflow: hidden;
 }
 
-.conv-provider {
-  height: 39px;
-  min-width: 0;
-  border: 0;
-  border-right: 1px solid var(--fg2-line);
-  background: var(--fg2-control-surface-flat);
-  color: var(--fg2-muted);
-  font: inherit;
-  font-size: 10.5px;
-  padding: 0 4px;
-  outline: 0;
-}
-
 .conv-input {
   min-width: 0;
-  max-height: 96px;
-  height: 39px;
+  min-height: 43px;
+  max-height: 110px;
+  height: 43px;
   resize: none;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--fg2-text);
-  padding: 10px 7px 7px;
+  padding: 12px 9px 8px;
   font: 12px/1.35 var(--fg2-font);
 }
 
@@ -490,9 +268,9 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 }
 
 .conv-send {
-  width: 31px;
-  height: 31px;
-  margin: 4px 4px 4px 0;
+  width: 32px;
+  height: 32px;
+  margin: 5px 5px 5px 0;
   padding: 0;
   border: 1px solid var(--fg2-blue);
   border-radius: var(--fg2-control-radius-sm);
@@ -500,7 +278,7 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   color: var(--fg2-status-info-fg);
   display: grid;
   place-items: center;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
 }
 
@@ -515,11 +293,22 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   opacity: var(--fg2-control-disabled-opacity);
 }
 
-.conv-icon-btn:focus-visible,
-.conv-source button:focus-visible,
-.conv-send:focus-visible,
-.conv-provider:focus-visible {
+.conv-send:focus-visible {
   outline: 2px solid var(--fg2-focus);
   outline-offset: 1px;
+}
+
+.conv-assist {
+  height: 29px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.conv-assist-spacer {
+  flex: 1;
+  min-width: 0;
 }
 </style>

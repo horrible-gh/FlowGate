@@ -301,6 +301,10 @@ def is_policy_control_path(path: str) -> bool:
 # /flowgate context prefix. The CLI `POST /chat-commands` is NOT exempt: its worker token
 # passes the lease check as the lease owner.
 _CONVERSATION_CREATE_PATH = re.compile(r"^(?:/flowgate)?/api/v1/conversations/?$")
+# flowgate.v02.0047: the one AI title of a just-created standalone CH. The first send may
+# start the chat's AI run at once, and the title write must not then be refused by it;
+# the handler only ever touches that CH's title, compare-and-set.
+_CONVERSATION_AUTO_TITLE_PATH = re.compile(r"^(?:/flowgate)?/api/v1/conversations/[^/]+/auto-title/?$")
 _CHAT_COMMAND_DECISION_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-commands/[^/]+/decision/?$")
 _CHAT_COMMAND_WORKER_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-commands(?:/[^/]+)?/?$")
 
@@ -311,7 +315,8 @@ def is_group_lease_exempt_path(path: str, method: str = "POST") -> bool:
     still check permission and group state themselves."""
     if str(method or "").upper() != "POST":
         return False
-    return bool(_CONVERSATION_CREATE_PATH.search(path) or _CHAT_COMMAND_DECISION_PATH.search(path))
+    return bool(_CONVERSATION_CREATE_PATH.search(path) or _CONVERSATION_AUTO_TITLE_PATH.search(path)
+                or _CHAT_COMMAND_DECISION_PATH.search(path))
 
 
 def classify_mutation_route(path: str, methods: set[str]) -> tuple[MutationResource, str]:
@@ -320,6 +325,8 @@ def classify_mutation_route(path: str, methods: set[str]) -> tuple[MutationResou
     # flowgate.v02.0032 T#1 (D0006 §3.10.3): explicit reasons for the Conversation routes.
     if _CONVERSATION_CREATE_PATH.search(path):
         return "group", "conversation_create_lease_exempt"
+    if _CONVERSATION_AUTO_TITLE_PATH.search(path):
+        return "group", "conversation_auto_title_lease_exempt"
     if _CHAT_COMMAND_DECISION_PATH.search(path):
         return "personal", "chat_command_decision"
     if _CHAT_COMMAND_WORKER_PATH.search(path):

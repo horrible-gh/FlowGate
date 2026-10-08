@@ -7,6 +7,7 @@
 //   chat list      GET   /api/v1/documents?project_id&group_id&type_code=CH
 //   rename         PATCH /api/v1/documents/{doc_id}                 { title }
 //   new chat       POST  /api/v1/conversations                      { project_id, group_id, title }
+//   AI title       POST  /api/v1/conversations/{doc_id}/auto-title  { provider_id }
 //   activity       GET   /api/v1/chat-activity/{doc_id}             commands + run changes, anchored
 //   run file diff  GET   /api/v1/chat-activity/{doc_id}/runs/{run_id}/diff?path=
 //   decision       POST  /api/v1/chat-commands/{request_id}/decision  { decision }
@@ -129,13 +130,33 @@ export async function renameChat(chatId: string, title: string): Promise<ChatSum
  * group and owns every other decision — no workflow head, sequence slot, `prev_doc_id` or
  * module is computed here, so it works in any workflow state and during an AI run.
  */
-export async function createChat(scope: ConversationScope, title: string): Promise<ChatSummary> {
+export interface CreateChatOptions {
+  /** flowgate.v02.0047: the chat owes its one AI title on the title it is created with. */
+  autoTitle?: boolean
+}
+
+export async function createChat(scope: ConversationScope, title: string, options: CreateChatOptions = {}): Promise<ChatSummary> {
+  const body = { project_id: scope.projectId, group_id: scope.groupId, title, ...(options.autoTitle ? { auto_title: true } : {}) }
   const created = await call(
-    () => postRequest<RawDocument>(`${API}/conversations`, { project_id: scope.projectId, group_id: scope.groupId, title }),
+    () => postRequest<RawDocument>(`${API}/conversations`, body),
     'Failed to create a chat.',
   )
   if (!created?.doc_id) throw new ConversationRequestError('The server returned no document id.', null, null)
   return toChatSummary({ ...created, title: created.title ?? title })
+}
+
+/**
+ * flowgate.v02.0047: the one AI title of a chat created with `autoTitle`, on the project's AI
+ * settings and the provider picked in the composer. The server keeps the debt itself: it is
+ * paid once, and a title the user set ends it (409 conversation_auto_title_not_owed /
+ * conversation_title_changed).
+ */
+export async function autoTitleChat(chatId: string, providerId: string): Promise<ChatSummary> {
+  const data = await call(
+    () => postRequest<RawDocument>(`${API}/conversations/${encodeURIComponent(chatId)}/auto-title`, { provider_id: providerId }),
+    'Failed to title the chat.',
+  )
+  return toChatSummary({ ...data, doc_id: data?.doc_id || chatId, title: data?.title ?? '' })
 }
 
 // ── Command requests / run changes (D0006 §5.1, §5.5) ─────────────────────────────────
