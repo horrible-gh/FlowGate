@@ -44,18 +44,20 @@ import {
   fetchProjectGitStatus,
   fetchProjectGroupTree as fetchProjectGroupTreeApi,
 } from './api'
-import {
-  clearStoredCurrentProjectId,
-  readStoredCurrentProjectId,
-  writeStoredCurrentProjectId,
-} from './currentProjectStorage'
+import { clearStoredCurrentProjectId, writeStoredCurrentProjectId } from './currentProjectStorage'
 
 export const useProjectStore = defineStore('project', () => {
   const projects = ref<Project[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
   const dialogOpen = ref(false)
-  const currentProjectId = ref<string | null>(readStoredCurrentProjectId())
+  // flowgate.v02.0040 (0001-R §1/§2): the current Project is the one the person opened with
+  // the Dialog's "열기" in this app session — nothing else. It is not seeded from the stored
+  // `fg_current_project_id` (written by v0.1 and by an earlier session): that id is not a
+  // choice the person made here, and the Designer, which shows the current Project's tree,
+  // must start without a Project until "열기". The key is still written on "열기" so v0.1
+  // keeps reading it as before.
+  const currentProjectId = ref<string | null>(null)
 
   const requestEpoch = ref(0)
 
@@ -75,15 +77,15 @@ export const useProjectStore = defineStore('project', () => {
     else clearStoredCurrentProjectId()
   }
 
-  // v0.1 fallback, reproduced at the store level (NR0003 §6.4, T#1 §4): a saved id still
-  // present in the active list wins as-is; otherwise the first active project becomes
-  // current; an empty active list clears current entirely.
+  // flowgate.v02.0040 (0001-R §1): the list refresh never picks a Project on its own. A current
+  // Project that is still in the active list stays; one that has left it is cleared (its stored
+  // id too); with no current Project there is nothing to do — the v0.1 fallback to the first
+  // active project is gone, because that made a Project current (and so shown in the Designer)
+  // without the person ever pressing "열기".
   function reconcileCurrentProject(): void {
-    const stillValid =
-      currentProjectId.value !== null &&
-      projects.value.some((p) => p.id === currentProjectId.value)
-    if (stillValid) return
-    applyCurrentProjectId(projects.value.length > 0 ? projects.value[0].id : null)
+    if (currentProjectId.value === null) return
+    if (projects.value.some((p) => p.id === currentProjectId.value)) return
+    applyCurrentProjectId(null)
   }
 
   // Shared by fetchProjects() and createProject()'s post-create refresh. `epoch` is the
@@ -164,6 +166,23 @@ export const useProjectStore = defineStore('project', () => {
   // future ProjectDialog's Dialog-local `selected` state, not in this store.
   function setCurrentProject(project: Project): void {
     applyCurrentProjectId(project.id)
+  }
+
+  // flowgate.v02.0040: one-shot "this Project was explicitly opened" signal for the Designer.
+  // Only the Dialog's "열기" raises it (right after setCurrentProject); the Designer's Project
+  // Explorer takes it on entry to start with that Project selected. Taking it clears it, so a
+  // later Designer entry from the Sidebar/Dashboard card (which never raises it) still starts
+  // unselected (0039 T#3). Not persisted: it only bridges the Dialog -> Designer move.
+  const explicitOpenProjectId = ref<string | null>(null)
+
+  function requestExplicitOpen(projectId: string): void {
+    explicitOpenProjectId.value = projectId
+  }
+
+  function takeExplicitOpen(): string | null {
+    const projectId = explicitOpenProjectId.value
+    explicitOpenProjectId.value = null
+    return projectId
   }
 
   // ── Group tree (flowgate.v02.0023) ───────────────────────────────────────────────
@@ -287,6 +306,8 @@ export const useProjectStore = defineStore('project', () => {
     fetchProjects,
     createProject,
     setCurrentProject,
+    requestExplicitOpen,
+    takeExplicitOpen,
     openDialog,
     closeDialog,
     getCachedGroupTree,

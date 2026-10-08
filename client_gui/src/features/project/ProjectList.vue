@@ -26,7 +26,6 @@
         :key="project.id"
         :project="project"
         :selected="project.id === selectedId"
-        :current="project.id === currentId"
         @select="emit('select', $event)"
         @open="emit('open', $event)"
       />
@@ -55,7 +54,6 @@ defineProps<{
   error: string | null
   hasAnyProjects: boolean
   selectedId: string | null
-  currentId: string | null
 }>()
 
 const emit = defineEmits<{ retry: []; select: [project: Project]; open: [project: Project] }>()

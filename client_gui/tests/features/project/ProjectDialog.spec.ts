@@ -176,6 +176,48 @@ describe('features/project/ProjectDialog', () => {
     wrapper.unmount()
   })
 
+  // flowgate.v02.0040: 열기 hands the opened Project to the App Shell (which moves to the
+  // Designer) and raises the one-shot explicit-open signal for that Project only.
+  it('a row 열기 calls setCurrentProject with that Project, raises the explicit-open signal and emits opened', async () => {
+    fetchActiveProjects.mockResolvedValue([project('a'), project('b')])
+    const wrapper = mountDialog()
+    const store = useProjectStore()
+    const setCurrent = vi.spyOn(store, 'setCurrentProject')
+    store.openDialog()
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    ;(document.querySelector('[data-project-id="b"] .project-row-open') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+
+    expect(setCurrent).toHaveBeenCalledTimes(1)
+    expect(setCurrent.mock.calls[0][0].id).toBe('b')
+    expect(wrapper.emitted('opened')).toHaveLength(1)
+    expect((wrapper.emitted('opened')![0][0] as Project).id).toBe('b')
+    expect(store.takeExplicitOpen()).toBe('b')
+    // Taking it clears it.
+    expect(store.takeExplicitOpen()).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('a plain row click or closing the Dialog never raises the explicit-open signal or emits opened', async () => {
+    fetchActiveProjects.mockResolvedValue([project('a'), project('b')])
+    const wrapper = mountDialog()
+    const store = useProjectStore()
+    store.openDialog()
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    ;(document.querySelectorAll('.project-row-main')[1] as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+    store.closeDialog()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.emitted('opened')).toBeUndefined()
+    expect(store.takeExplicitOpen()).toBeNull()
+    wrapper.unmount()
+  })
+
   it('a double-click on a row also opens it', async () => {
     fetchActiveProjects.mockResolvedValue([project('a')])
     const wrapper = mountDialog()
@@ -189,20 +231,53 @@ describe('features/project/ProjectDialog', () => {
 
     expect(store.currentProject?.id).toBe('a')
     expect(store.dialogOpen).toBe(false)
+    expect((wrapper.emitted('opened')![0][0] as Project).id).toBe('a')
     wrapper.unmount()
   })
 
-  it('marks the current Project with a Badge, independent of the Dialog-local selection', async () => {
+  // flowgate.v02.0040: opening the Dialog shows no pre-marked current Project and no default
+  // selection, even with a saved current Project -- only a row the person picks gets ✓.
+  it('opens with no 현재 Badge, no ✓ and no is-selected row, even when a current Project is saved', async () => {
     localStorage.setItem('fg_current_project_id', 'a')
+    fetchActiveProjects.mockResolvedValue([project('a'), project('b')])
+    const wrapper = mountDialog()
+    const store = useProjectStore()
+    store.openDialog()
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    // The saved id is not a choice made in this session: it is neither restored nor cleared,
+    // and opening the Dialog picks no Project (0040 0001-R §1).
+    expect(store.currentProjectId).toBeNull()
+    expect(localStorage.getItem('fg_current_project_id')).toBe('a')
+    const rows = document.querySelectorAll('.project-row')
+    expect(rows).toHaveLength(2)
+    expect(document.querySelector('.project-row .ui-badge')).toBeNull()
+    expect(document.querySelector('.project-list')?.textContent).not.toContain('현재')
+    expect(document.querySelector('.project-row.is-selected')).toBeNull()
+    expect(document.querySelector('.project-list [aria-current]')).toBeNull()
+    expect(document.querySelector('[aria-pressed="true"]')).toBeNull()
+    expect(Array.from(document.querySelectorAll('.project-row-select-mark')).map((el) => el.textContent)).toEqual(['', ''])
+
+    ;(document.querySelectorAll('.project-row-main')[1] as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect(rows[1].classList.contains('is-selected')).toBe(true)
+    expect(rows[1].querySelector('.project-row-select-mark')?.textContent).toBe('✓')
+    expect(rows[0].classList.contains('is-selected')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('opens with nothing selected when no current Project is saved either (no first-row default)', async () => {
     fetchActiveProjects.mockResolvedValue([project('a'), project('b')])
     const wrapper = mountDialog()
     useProjectStore().openDialog()
     await flushPromises()
     await wrapper.vm.$nextTick()
 
-    const rows = document.querySelectorAll('.project-row')
-    expect(rows[0].querySelector('.ui-badge')?.textContent).toBe('현재')
-    expect(rows[1].querySelector('.ui-badge')).toBeNull()
+    expect(document.querySelectorAll('.project-row')).toHaveLength(2)
+    expect(document.querySelector('.project-row.is-selected')).toBeNull()
+    expect(document.querySelector('[aria-pressed="true"]')).toBeNull()
+    expect(document.querySelector('.project-row .ui-badge')).toBeNull()
     wrapper.unmount()
   })
 
@@ -245,7 +320,7 @@ describe('features/project/ProjectDialog', () => {
     wrapper.unmount()
   })
 
-  it('places + 새 프로젝트 as an intro-area action beside the guidance text, and search as its own row below (MirageGlass 02-project-dialog.html parity), not a search toolbar', async () => {
+  it('places + 새 프로젝트 as an intro-area action, and search as its own row below (MirageGlass 02-project-dialog.html parity), not a search toolbar', async () => {
     currentUser.value = { username: 'admin', email: null, isAdmin: true }
     fetchActiveProjects.mockResolvedValue([project('a')])
     const wrapper = mountDialog()
@@ -292,16 +367,38 @@ describe('features/project/ProjectDialog', () => {
     wrapper.unmount()
   })
 
-  it('shows a body guidance block that does not imply a Designer move', async () => {
+  // flowgate.v02.0040: the body no longer repeats the header guidance; the header title /
+  // subtitle, search, list and the admin "+ 새 프로젝트" button stay, and no new text is added.
+  it('has no duplicate body guidance, keeping the header guidance, search, list and + 새 프로젝트', async () => {
+    currentUser.value = { username: 'admin', email: null, isAdmin: true }
+    fetchActiveProjects.mockResolvedValue([project('a')])
+    const wrapper = mountDialog()
+    useProjectStore().openDialog()
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    expect(document.querySelector('.pd-intro-title')).toBeNull()
+    expect(document.querySelector('.pd-intro-desc')).toBeNull()
+    const surfaceText = document.querySelector('.ui-modal-surface')?.textContent ?? ''
+    expect(surfaceText).not.toContain('프로젝트를 선택하세요.')
+    expect(surfaceText).not.toContain('아래 목록에서 작업할 프로젝트를 선택하거나')
+    expect(surfaceText).not.toContain('디자이너')
+    expect(document.querySelector('.pd-head-title')?.textContent).toBe('프로젝트 열기')
+    expect(document.querySelector('.pd-head-sub')?.textContent).toBe('기존 프로젝트를 선택하거나 새 프로젝트를 만드세요.')
+    expect(document.querySelector('.pd-intro')?.textContent?.trim()).toBe('+ 새 프로젝트')
+    expect(document.querySelector('.pd-search .pd-search-input')).not.toBeNull()
+    expect(document.querySelectorAll('.project-row')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('renders no empty intro row for a non-admin: search follows the header directly', async () => {
     fetchActiveProjects.mockResolvedValue([project('a')])
     const wrapper = mountDialog()
     useProjectStore().openDialog()
     await wrapper.vm.$nextTick()
 
-    expect(document.querySelector('.pd-intro-title')?.textContent).toBe('프로젝트를 선택하세요.')
-    expect(document.querySelector('.pd-intro-desc')).not.toBeNull()
-    const surfaceText = document.querySelector('.ui-modal-surface')?.textContent ?? ''
-    expect(surfaceText).not.toContain('디자이너')
+    expect(document.querySelector('.pd-intro')).toBeNull()
+    expect(document.querySelector('.pd-body')?.firstElementChild?.classList.contains('pd-search')).toBe(true)
     wrapper.unmount()
   })
 
@@ -459,10 +556,11 @@ describe('features/project/ProjectDialog', () => {
     store.openDialog()
     await flushPromises()
     await wrapper.vm.$nextTick()
-    // The reopened session gets its own fresh default selection, not one left over from
-    // the stale response that arrived while the Dialog was closed.
+    // The reopened session starts with nothing selected (flowgate.v02.0040: no default
+    // selection), and nothing left over from the stale response that arrived while closed.
+    expect(document.querySelectorAll('.project-row')).toHaveLength(2)
     const selected = Array.from(document.querySelectorAll('.project-row')).find((el) => el.querySelector('.project-row-main')?.getAttribute('aria-pressed') === 'true')
-    expect(selected).toBeTruthy()
+    expect(selected).toBeUndefined()
     wrapper.unmount()
   })
 

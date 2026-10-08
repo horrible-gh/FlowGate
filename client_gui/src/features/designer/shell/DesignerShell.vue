@@ -81,7 +81,12 @@
 // (the Explorer reports its selection through `update:selection`) or an open Flow is the work
 // target, and the Designer continues exactly as before. A Project change clears both, so the
 // new Project starts unselected again.
-import { computed, reactive, ref, watch } from 'vue'
+//
+// flowgate.v02.0040 — the Project Dialog's "열기" is such an explicit choice: the Project
+// Explorer takes the store's one-shot explicit-open signal on entry and reports that Project as
+// its selection. Whatever it did not take is dropped once this Shell is mounted, so the signal
+// never outlives the entry it was raised for.
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useProjectStore } from '@/features/project'
 import { createDesignerCenterSession } from '../center/designerCenterSession'
 import type { ExplorerSelection, ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
@@ -142,6 +147,10 @@ watch(
   },
   { immediate: true },
 )
+
+onMounted(() => {
+  projectStore.takeExplicitOpen()
+})
 
 // The Toolbar shows the zoom the active Canvas last reported (100% before it reports one).
 const zoom = computed(() => zoomPercent(center.activeView.value?.viewport?.zoom))

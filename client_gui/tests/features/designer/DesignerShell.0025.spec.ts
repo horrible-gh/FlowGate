@@ -322,7 +322,9 @@ describe('DesignerShell — active Flow', () => {
 
   it('without a current Project both Explorers show their own empty state', async () => {
     const w = await mountShell(null)
-    expect(w.find('[data-test="project-explorer-no-project"]').exists()).toBe(true)
+    expect(w.find('[data-test="project-explorer-no-project"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('선택된 프로젝트가 없습니다')
+    expect(w.text()).not.toContain('프로젝트를 열면 그룹과 플로우가')
     // flowgate.v02.0039 T#3: nothing can be chosen, so the mode switch stays unavailable; the
     // Window menu still moves between the Explorers.
     await get(w, 'designer-menubar').get('[data-menu="window"]').trigger('click')

@@ -10,7 +10,7 @@
  * (`@shared/api`) is mocked, as in DesignerShell.0025.spec.ts.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { createPinia, setActivePinia } from 'pinia'
+import { createPinia, getActivePinia, setActivePinia } from 'pinia'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import i18n from '@shared/i18n'
@@ -99,14 +99,25 @@ async function settle() {
   for (let i = 0; i < 6; i += 1) await flushPromises()
 }
 
-async function mountShell(projectId = 'p') {
+async function mountShell(projectId = 'p', explicitOpen: string | null = null) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useProjectStore().setCurrentProject(project(projectId, projectId === 'p' ? 'Alpha' : 'Beta'))
+  if (explicitOpen) useProjectStore().requestExplicitOpen(explicitOpen)
   wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: [i18n, pinia] } })
   await settle()
   return wrapper
 }
+
+/** Re-enter the Designer on the same store (as a later Sidebar / card entry would). */
+async function remountShell() {
+  wrapper?.unmount()
+  wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: [i18n, getActivePinia()!] } })
+  await settle()
+  return wrapper
+}
+
+const leftDock = (w: VueWrapper<any>) => w.get('[data-test="designer-left-dock"]')
 
 async function mountExplorer(props: Record<string, unknown>) {
   const pinia = createPinia()
@@ -195,6 +206,127 @@ describe('Designer entry — no default Explorer selection (0039 T#2)', () => {
 
     expect(rowLabels(w)).toEqual(['Beta', 'm'])
     expectNoSelectionUi(w)
+  })
+})
+
+// flowgate.v02.0040 — the Project Dialog's "열기" is an explicit choice. It reaches the Designer
+// as the store's one-shot explicit-open signal: with it the entered Project is selected and the
+// Designer has a work target; without it (Sidebar / card entry) the 0039 unselected start stays.
+describe('Designer entry after Project Dialog 열기 (flowgate.v02.0040)', () => {
+  it('selects the opened Project in the Explorer and gives the Designer a work target', async () => {
+    const w = await mountShell('p', 'p')
+
+    expect(rowLabels(w)).toEqual(['Alpha', 'UI 개선'])
+    expect(explorerRow(w, 'Alpha').attributes('aria-selected')).toBe('true')
+    expect(explorerRow(w, 'Alpha').find('.explorer-row').classes()).toContain('is-selected')
+    expect(explorerRow(w, 'UI 개선').attributes('aria-selected')).toBe('false')
+    expect(leftDock(w).attributes('data-unselected')).toBe('false')
+    // Selected, not "current": still no badge / text.
+    expect(tree(w).find('.ui-badge').exists()).toBe(false)
+    expect(tree(w).text()).not.toContain('현재')
+    expect(useProjectStore().currentProjectId).toBe('p')
+  })
+
+  it('without the signal the entry stays unselected with no work target', async () => {
+    const w = await mountShell('p')
+
+    expectNoSelectionUi(w)
+    expect(leftDock(w).attributes('data-unselected')).toBe('true')
+  })
+
+  it('consumes the signal once: a later entry without 열기 starts unselected again', async () => {
+    let w = await mountShell('p', 'p')
+    expect(explorerRow(w, 'Alpha').attributes('aria-selected')).toBe('true')
+    expect(useProjectStore().takeExplicitOpen()).toBeNull()
+
+    w = await remountShell()
+    expectNoSelectionUi(w)
+    expect(leftDock(w).attributes('data-unselected')).toBe('true')
+  })
+
+  it('ignores (and clears) a signal raised for another Project', async () => {
+    const w = await mountShell('p', 'q')
+
+    expectNoSelectionUi(w)
+    expect(leftDock(w).attributes('data-unselected')).toBe('true')
+    expect(useProjectStore().takeExplicitOpen()).toBeNull()
+  })
+
+  it('the explicit selection is still the user\'s: another click moves it, a Project change clears it', async () => {
+    const w = await mountShell('p', 'p')
+
+    await click(w, 'UI 개선')
+    expect(explorerRow(w, 'UI 개선').attributes('aria-selected')).toBe('true')
+    expect(explorerRow(w, 'Alpha').attributes('aria-selected')).toBe('false')
+
+    useProjectStore().setCurrentProject(project('q', 'Beta'))
+    await settle()
+    expect(rowLabels(w)).toEqual(['Beta', 'm'])
+    expectNoSelectionUi(w)
+    expect(leftDock(w).attributes('data-unselected')).toBe('true')
+  })
+
+  it('ProjectExplorer alone takes the signal and reports the selection upward', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useProjectStore().setCurrentProject(project('p', 'Alpha'))
+    useProjectStore().requestExplicitOpen('p')
+    wrapper = mount(ProjectExplorer, { props: {}, attachTo: document.body, global: { plugins: [i18n, pinia] } })
+    await settle()
+
+    expect(explorerRow(wrapper, 'Alpha').attributes('aria-selected')).toBe('true')
+    const reported = wrapper.emitted('update:selection') ?? []
+    expect(reported[reported.length - 1]).toEqual([{ kind: 'project', id: 'project:p' }])
+    expect(useProjectStore().takeExplicitOpen()).toBeNull()
+  })
+})
+
+// flowgate.v02.0040 (0001-R §1/§2): before the person opens a Project with "열기" the Designer has
+// no Project at all. A stored `fg_current_project_id` (v0.1 / an earlier session) is not restored,
+// so no Project / Group / Flow row can appear as if it had been chosen; the Project Dialog's
+// list refresh does not pick one either.
+describe('Designer entry with no Project opened in this session (flowgate.v02.0040)', () => {
+  it('shows no Project tree even when a current Project id is stored', async () => {
+    localStorage.setItem('fg_current_project_id', 'p')
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: [i18n, pinia] } })
+    await settle()
+
+    expect(useProjectStore().currentProjectId).toBeNull()
+    expect(wrapper.find('[data-test="project-explorer-tree"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="project-explorer-no-project"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('선택된 프로젝트가 없습니다')
+    expect(wrapper.text()).not.toContain('프로젝트를 열면 그룹과 플로우가')
+    expect(wrapper.findAll('[data-explorer-row][aria-selected="true"]')).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('현재')
+    expect(leftDock(wrapper).attributes('data-unselected')).toBe('true')
+    expect(getRequest).not.toHaveBeenCalledWith(expect.stringMatching(/\/groups\/tree$/), expect.anything())
+    // Left for v0.1; it does not drive the Designer.
+    expect(localStorage.getItem('fg_current_project_id')).toBe('p')
+  })
+
+  it('only 열기 gives the Designer its Project, selected; a later plain entry shows it unselected', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: [i18n, pinia] } })
+    await settle()
+    expect(wrapper.find('[data-test="project-explorer-no-project"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('선택된 프로젝트가 없습니다')
+    expect(wrapper.text()).not.toContain('프로젝트를 열면 그룹과 플로우가')
+
+    // What ProjectDialog.openProject() does on "열기".
+    useProjectStore().setCurrentProject(project('p', 'Alpha'))
+    useProjectStore().requestExplicitOpen('p')
+    let w = await remountShell()
+    expect(rowLabels(w)).toEqual(['Alpha', 'UI 개선'])
+    expect(explorerRow(w, 'Alpha').attributes('aria-selected')).toBe('true')
+    expect(leftDock(w).attributes('data-unselected')).toBe('false')
+
+    w = await remountShell()
+    expect(rowLabels(w)).toEqual(['Alpha', 'UI 개선'])
+    expectNoSelectionUi(w)
+    expect(leftDock(w).attributes('data-unselected')).toBe('true')
   })
 })
 

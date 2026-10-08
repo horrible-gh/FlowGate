@@ -206,8 +206,6 @@ export default {
       refresh: '再読み込み',
       search_placeholder: 'プロジェクト・グループ・フローを検索',
       search_clear: '検索をクリア',
-      no_project: 'プロジェクトが選択されていません。',
-      no_project_desc: 'プロジェクトを開くと、グループとフローがここに表示されます。',
       loading: 'プロジェクト構造を読み込んでいます...',
       load_failed: 'プロジェクト構造を読み込めませんでした。',
       refresh_failed: '再読み込みに失敗しました。前の一覧を表示しています。',

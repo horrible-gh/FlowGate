@@ -178,7 +178,9 @@ describe('ProjectExplorer — Project > Group > Flow', () => {
 
   it('shows the no-project state and makes no request without a project', async () => {
     const w = await mountExplorer({ projectId: null })
-    expect(w.find('[data-test="project-explorer-no-project"]').exists()).toBe(true)
+    expect(w.find('[data-test="project-explorer-no-project"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('선택된 프로젝트가 없습니다')
+    expect(w.text()).not.toContain('프로젝트를 열면 그룹과 플로우가')
     expect(w.find('[data-test="project-explorer-search"]').attributes('disabled')).toBeDefined()
     expect(getRequest).not.toHaveBeenCalled()
   })
