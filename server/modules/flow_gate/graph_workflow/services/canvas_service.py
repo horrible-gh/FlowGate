@@ -2,7 +2,10 @@
 
 ownership (engine router) -> node identity (keeper, may record a rematch) -> projection by
 ownership (v01: sequence, unassigned: documents + draft, graph / conflict: Graph definition) ->
-saved / auto positions -> collapse -> response. Run blocks stay null until S5 adds runs.
+saved / auto positions -> collapse -> response. A Graph Flow's revision view carries the run
+(P0008 S1-3): ``run`` block and each node's ``node_run``. A running / stopped run draws the revision
+it pinned (P0008 S5-2 may pin one older than the latest), so ``view.revision_no`` is the run's;
+with no such run the latest run is shown only when it ran the latest revision.
 """
 from __future__ import annotations
 
@@ -20,7 +23,7 @@ from modules.flow_gate.graph_workflow.projection.flow_snapshot import (
 )
 from modules.flow_gate.graph_workflow.projection.graph_projector import GraphView, add_draft, project_graph
 from modules.flow_gate.graph_workflow.projection.legacy_projector import Projection, project
-from modules.flow_gate.graph_workflow.store import assignment_store, definition_store, layout_store
+from modules.flow_gate.graph_workflow.store import assignment_store, definition_store, layout_store, run_store
 
 from .engine_router import block, confirm_block_reason, judge
 from .errors import FlowNotFound, GraphApiError
@@ -53,15 +56,18 @@ class _Definition:
         self.binding = assignment_store.root_binding(flow_id)
         self.bound_doc_id = follow_supersede(flow_id, docs, (self.binding or {}).get("doc_id"))
         self._flow_id = flow_id
-        self._revision: Optional[dict] = None
+        self._revisions: dict[int, Optional[dict]] = {}
 
-    def revision(self) -> Optional[dict]:
-        if self._revision is None and self.latest_no is not None:
-            self._revision = definition_store.revision(self._flow_id, self.latest_no)
-        return self._revision
+    def revision(self, number: Optional[int] = None) -> Optional[dict]:
+        number = self.latest_no if number is None else number
+        if number is None:
+            return None
+        if number not in self._revisions:
+            self._revisions[number] = definition_store.revision(self._flow_id, number)
+        return self._revisions[number]
 
-    def view(self, mode: str) -> GraphView:
-        record = self.draft if mode == "draft" else self.revision()
+    def view(self, mode: str, revision_no: Optional[int] = None) -> GraphView:
+        record = self.draft if mode == "draft" else self.revision(revision_no)
         nodes = list((record or {}).get("nodes") or [])
         bound_key = (self.binding or {}).get("node_key")
         if bound_key not in {n["node_key"] for n in nodes}:
@@ -105,10 +111,27 @@ def _pick_mode(flow_id: str, state: str, view: Optional[str], d: _Definition) ->
     return "revision" if d.latest_no is not None else ("draft" if d.draft is not None else None)
 
 
+def _flow_run(flow_id: str, latest_no: Optional[int]) -> Optional[dict]:
+    """The run the Canvas shows (P0008 S1-3 ``run``): the running / stopped one on whatever revision
+    it pinned, else the latest run when it ran the latest revision (a finished run of an older
+    revision is not laid over a newer one)."""
+    from .run_service import run_payload                     # noqa: PLC0415 — run_service -> graph_service -> here
+
+    run = run_store.active_run(flow_id)
+    if run is None:
+        latest, _total = run_store.list_runs(flow_id, 1, 0)
+        run = latest[0] if latest and int(latest[0]["revision_no"]) == latest_no else None
+    return run_payload(run["run_id"], with_nodes=True) if run else None
+
+
 def _project(flow_id: str, state: str, snap: FlowSnapshot, row_keys, protected, d: _Definition,
-             mode: Optional[str], lookup=lambda _ids: {}) -> Projection:
+             mode: Optional[str], lookup=lambda _ids: {}, run: Optional[dict] = None) -> Projection:
     if state in ("graph", "conflict") and mode is not None:
-        return project_graph(flow_id, state, snap.documents, d.view(mode), lookup)
+        view = d.view(mode, run["revision_no"] if mode == "revision" and run is not None else None)
+        if mode == "revision" and run is not None:
+            view.node_runs = {r["node_key"]: {k: v for k, v in r.items() if k not in ("node_key", "root_bound")}
+                              for r in run["node_runs"]}
+        return project_graph(flow_id, state, snap.documents, view, lookup)
     proj = project(flow_id, state, snap.documents, snap.sequence, snap.rows, row_keys, protected, lookup)
     if state == "unassigned" and mode == "draft":
         add_draft(proj, state, snap.documents, d.view("draft"))
@@ -119,19 +142,24 @@ def read_canvas(group: dict, user_id: Optional[str], *, view: Optional[str], col
                 client_id: Optional[str]) -> dict:
     flow_id = group["group_id"]
     project_id = group.get("project_id")
+    if run_store.active_run(flow_id) is not None:
+        from .result_binder import reconcile_if_needed       # noqa: PLC0415 — see _flow_run
+        reconcile_if_needed(flow_id, project_id)                 # L0009 §2.6.8 before a run read
     ident = ensure_identity(flow_id, project_id, user_id, client_id)
     snap = ident.snapshot
     own = judge(flow_id, snap.sequence)
     d = _Definition(flow_id, snap.docs_by_id)
     mode = _pick_mode(flow_id, own.state, view, d)
+    run = _flow_run(flow_id, d.latest_no) if own.state in ("graph", "conflict") else None
     proj = _project(flow_id, own.state, snap, ident.row_keys, ident.protected, d, mode,
-                    lambda ids: lookup_documents(ids))
+                    lambda ids: lookup_documents(ids), run)
     _place(proj, layout_store.positions(flow_id))
     applied, ignored = cm.parse_collapse(collapse)
     hidden_counts = _collapse(proj, applied)
     view_block = None
     if mode == "revision":
-        view_block = {"mode": "revision", "revision_no": d.latest_no, "draft_version": None}
+        view_block = {"mode": "revision", "revision_no": run["revision_no"] if run else d.latest_no,
+                      "draft_version": None}
     elif mode == "draft":
         view_block = {"mode": "draft", "revision_no": None, "draft_version": d.draft["draft_version"]}
     return {
@@ -145,7 +173,8 @@ def read_canvas(group: dict, user_id: Optional[str], *, view: Optional[str], col
         "edges": proj.edges,
         "external_relations": proj.external_relations,
         "viewport": layout_store.viewport(flow_id, user_id) if user_id else None,
-        "run": None,
+        "run": {k: run[k] for k in ("run_id", "status", "revision_no", "open_node_keys", "last_event_seq")}
+        if run else None,
         "identity": {
             "sequence_tag": ident.sequence_tag,
             "rematched": ident.rematched,
@@ -158,8 +187,9 @@ def read_canvas(group: dict, user_id: Optional[str], *, view: Optional[str], col
 def current_node_keys(flow_id: str) -> set[str]:
     """Keys a Canvas read can return now, collapse not applied (L0009 §2.3.8).
 
-    Every view counts (a Graph Flow's draft and revision views), so a node moved in either view
-    is stored. Reads the recorded mapping only (never rematches): safe inside a Flow guard.
+    Every view counts (a Graph Flow's draft and revision views, and the revision a running /
+    stopped run pinned), so a node moved in any of them is stored. Reads the recorded mapping only
+    (never rematches): safe inside a Flow guard.
     """
     snap = read_snapshot(flow_id)
     protected = protected_ids(snap.rows)
@@ -175,6 +205,11 @@ def current_node_keys(flow_id: str) -> set[str]:
     keys: set[str] = set()
     for mode in modes:
         proj = _project(flow_id, own.state, snap, row_keys, protected, d, mode)
+        keys |= {node["node_key"] for node in proj.nodes}
+    active = run_store.active_run(flow_id) if "revision" in modes else None
+    if active is not None and int(active["revision_no"]) != d.latest_no:
+        pinned = {"revision_no": int(active["revision_no"]), "node_runs": []}
+        proj = _project(flow_id, own.state, snap, row_keys, protected, d, "revision", run=pinned)
         keys |= {node["node_key"] for node in proj.nodes}
     return keys
 

@@ -80,6 +80,31 @@ _MESSAGES = {
         "en": "The graph cannot be confirmed. Check the {count} problem(s).",
         "ja": "グラフを確定できません。問題 {count} 件を確認してください。",
     },
+    "flow_unassigned": {
+        "ko": "확정된 Graph 개정이 없는 Flow는 실행할 수 없습니다.",
+        "en": "A flow without a confirmed Graph revision cannot be run.",
+        "ja": "確定した Graph リビジョンがないフローは実行できません。",
+    },
+    "run_not_found": {"ko": "실행을 찾을 수 없습니다.", "en": "Run not found.", "ja": "実行が見つかりません。"},
+    "run_already_active": {
+        "ko": "이미 진행 중인 실행이 있습니다.", "en": "A run is already in progress.", "ja": "すでに進行中の実行があります。",
+    },
+    "run_not_running": {
+        "ko": "진행 중인 실행이 아닙니다.", "en": "The run is not running.", "ja": "進行中の実行ではありません。",
+    },
+    "run_not_stopped": {
+        "ko": "정지된 실행이 아닙니다.", "en": "The run is not stopped.", "ja": "停止中の実行ではありません。",
+    },
+    "run_policy_undecided": {
+        "ko": "실행 규칙이 아직 정해지지 않아 실행을 시작할 수 없습니다.",
+        "en": "The run cannot start because its execution rules are not decided yet.",
+        "ja": "実行ルールがまだ決まっていないため、実行を開始できません。",
+    },
+    "root_binding_lost": {
+        "ko": "시작 노드에 결합된 기존 문서가 삭제되어 실행할 수 없습니다. 운영자 확인이 필요합니다.",
+        "en": "The document bound to the start node was deleted, so the flow cannot run. An operator must check it.",
+        "ja": "開始ノードに結合された既存文書が削除されたため実行できません。運用者の確認が必要です。",
+    },
     "feature_not_enabled": {
         "ko": "이 기능은 아직 열리지 않았습니다.", "en": "This feature is not enabled yet.", "ja": "この機能はまだ有効ではありません。",
     },

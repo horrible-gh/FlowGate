@@ -28,6 +28,14 @@ _STATE_BY_REVIEW = {
     "rejected": "blocked",
     "wf_in_progress": "in_progress",
 }
+# P0008 §2.3 — graph_node_runs.status -> Canvas state (a value L adds later maps to None).
+_STATE_BY_NODE_RUN = {
+    "pending": "draft",
+    "open": "in_progress",
+    "review": "review",
+    "done": "done",
+    "rejected": "blocked",
+}
 # Types that are complete the moment they exist (review status stays null).
 _DONE_ON_CREATE_TYPES = frozenset({"M", "CH"})
 
@@ -56,6 +64,11 @@ def document_state(doc_review_status, type_code) -> Optional[str]:
     if doc_review_status is None or doc_review_status == "":
         return "done" if normalize_type(type_code) in _DONE_ON_CREATE_TYPES else "in_progress"
     return _STATE_BY_REVIEW.get(str(doc_review_status))
+
+
+def node_run_state(status) -> Optional[str]:
+    """State of a Graph node from its ``node_run.status`` (P0008 §2.3 'Graph 노드 → state')."""
+    return _STATE_BY_NODE_RUN.get(str(status)) if status is not None else "draft"
 
 
 def slot_state(result_doc_id, doc_review_status, type_code) -> Optional[str]:

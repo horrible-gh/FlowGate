@@ -1,8 +1,9 @@
-"""flowgate.v02.0045 T0011 / T0013 — source-level guards for the Graph Workflow package.
+"""flowgate.v02.0045 T0011 / T0013 / T0015 — source-level guards for the Graph Workflow package.
 
 D0004 §2.1 (one responsibility per file, fixed dependency direction, pure domain) with the
-L0009 §1.5 numbers, and the v0.1 touch points of D0004 §4.3: route registration (S1~S4) and the
-S4 engine-router delegation calls (one import + one call per contact).
+L0009 §1.5 numbers, and the v0.1 touch points of D0004 §4.3: route registration (S1~S5) and the
+S4 engine-router delegation calls (one import + one call per contact). S5's document node
+executor only calls the existing token service (D0004 §2.2 "호출만").
 """
 from __future__ import annotations
 
@@ -31,7 +32,9 @@ ALLOWED_OUTSIDE = {
     "services": (
         "modules.flow_gate.db.connection", "modules.flow_gate.db.groups", "modules.flow_gate.db.documents",
         "modules.flow_gate.api.v1.events", "modules.flow_gate.services.work_plan_apply_service",
-        "modules.flow_gate.process_service",
+        "modules.flow_gate.process_service", "modules.flow_gate.services.token_service",
+        # S5 AI node start (D0004 §3.4, L0009 §2.6.6): the existing AI invoke and its mention, called only.
+        "modules.flow_gate.services.ai_invoke_service", "modules.flow_gate.services.mention_service",
     ),
     "projection": (
         "modules.flow_gate.db.documents", "modules.flow_gate.db.groups", "modules.flow_gate.db.workflow_sequences",
@@ -118,8 +121,10 @@ def test_route_registration_is_the_only_main_py_touch_point():
     assert graph_lines == [
         "from modules.flow_gate.graph_workflow.api.canvas_routes import router as _graph_canvas_router",
         "from modules.flow_gate.graph_workflow.api.graph_routes import router as _graph_definition_router",
+        "from modules.flow_gate.graph_workflow.api.run_routes import router as _graph_run_router",
         'app.include_router(_graph_canvas_router, prefix=f"{CONTEXT}", tags=["GraphCanvas"])',
         'app.include_router(_graph_definition_router, prefix=f"{CONTEXT}", tags=["GraphDefinition"])',
+        'app.include_router(_graph_run_router, prefix=f"{CONTEXT}", tags=["GraphRun"])',
     ]
 
 
@@ -169,6 +174,10 @@ def test_graph_tables_of_each_migration_are_the_same_in_three_dialects():
             "graph_revisions", "graph_revision_nodes", "graph_revision_edges",
         ],
         "143_graph_engine_assignment.sql": ["graph_assignments", "graph_root_bindings"],
+        "144_graph_runs.sql": [
+            "graph_runs", "graph_run_policy_entries", "graph_node_runs",
+            "graph_run_token_map", "graph_run_events", "graph_propagations",
+        ],
     }
     for name, tables in expected.items():
         found = {}

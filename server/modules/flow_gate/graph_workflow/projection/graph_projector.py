@@ -4,7 +4,8 @@
   edges, every live document not bound to a Graph node as a free document node, and reference
   edges. The root-bound start node shows the bound root document (the live end of its supersede
   chain) as its result; that document's own node is absorbed, so reference edges touching it
-  end at the Graph node (D0004 §3.6 / §3.7, P0008 S1-3).
+  end at the Graph node (D0004 §3.6 / §3.7, P0008 S1-3). With a run (revision view) a node
+  carries its ``node_run`` and run state, and its live result document is absorbed the same way.
 - ``add_draft`` (unassigned): the documents projection plus the draft's nodes and edges.
 Pure over its inputs; positions are placed by the canvas service.
 """
@@ -29,6 +30,7 @@ class GraphView:
     edges: list[dict] = field(default_factory=list)
     bound_node_key: Optional[str] = None              # root-bound start node, if any
     bound_doc_id: Optional[str] = None                # the bound root document (live end)
+    node_runs: dict = field(default_factory=dict)     # node_key -> P0008 §2.6 ``node_run`` block
 
 
 def to_graph_node(row: dict) -> GraphNode:
@@ -81,7 +83,15 @@ def _graph_nodes(out: Projection, view: GraphView, ownership: str, by_id: dict, 
     for row in view.nodes:
         bound = row["node_key"] == view.bound_node_key
         doc = by_id.get(view.bound_doc_id) if bound and view.bound_doc_id else None
+        run = view.node_runs.get(row["node_key"])
+        if run is not None and not bound and run.get("result_doc_id"):
+            result = by_id.get(run["result_doc_id"])
+            doc = result if result is not None and cm.is_alive(result, result.get("group_id")) else None
         node = graph_node(row, origin, ownership, doc, supersedes, bound)
+        if run is not None:
+            node["node_run"] = run
+            if not bound:
+                node["state"] = cm.node_run_state(run.get("status"))
         out.nodes.append(node)
         out.graph_nodes.append(node["node_key"])
         if doc is not None:

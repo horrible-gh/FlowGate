@@ -28,6 +28,10 @@ class EventType(str, Enum):
     # flowgate.v02.0045 P0008 §8.2 (S4): an unassigned Flow was assigned to the Graph engine
     # (confirmation) or to v0.1 (a decide run inside the engine router). Refresh signal only.
     FLOW_OWNERSHIP_CHANGED                = "flow_ownership_changed"
+    # flowgate.v02.0045 P0008 §8.2 (S5): a Graph run started / stopped / resumed / completed, and a
+    # node run changed state. Both carry the run's event_seq; refresh signal only.
+    GRAPH_RUN_STATUS_CHANGED              = "graph_run_status_changed"
+    GRAPH_NODE_STATE_CHANGED              = "graph_node_state_changed"
     # flowgate.default.0517 T0012 §12: durable snapshot request lifecycle changed
     # (requested/approved/rejected). Refresh-only signal — the client re-reads the
     # durable pending list rather than trusting the payload as the list itself.
