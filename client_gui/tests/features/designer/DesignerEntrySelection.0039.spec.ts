@@ -211,16 +211,18 @@ describe('Designer entry — no default Explorer selection (0039 T#2)', () => {
 
 // flowgate.v02.0040 — the Project Dialog's "열기" is an explicit choice. It reaches the Designer
 // as the store's one-shot explicit-open signal: with it the entered Project is selected and the
-// Designer has a work target; without it (Sidebar / card entry) the 0039 unselected start stays.
+// Designer shows it selected; without it (Sidebar / card entry) the 0039 unselected start stays.
+// flowgate.v02.0042: a selection is not a work target — only an open Flow is — so the Designer
+// stays in its initial (unselected) state either way.
 describe('Designer entry after Project Dialog 열기 (flowgate.v02.0040)', () => {
-  it('selects the opened Project in the Explorer and gives the Designer a work target', async () => {
+  it('selects the opened Project in the Explorer; the Designer still waits for an open Flow (0042)', async () => {
     const w = await mountShell('p', 'p')
 
     expect(rowLabels(w)).toEqual(['Alpha', 'UI 개선'])
     expect(explorerRow(w, 'Alpha').attributes('aria-selected')).toBe('true')
     expect(explorerRow(w, 'Alpha').find('.explorer-row').classes()).toContain('is-selected')
     expect(explorerRow(w, 'UI 개선').attributes('aria-selected')).toBe('false')
-    expect(leftDock(w).attributes('data-unselected')).toBe('false')
+    expect(leftDock(w).attributes('data-unselected')).toBe('true')
     // Selected, not "current": still no badge / text.
     expect(tree(w).find('.ui-badge').exists()).toBe(false)
     expect(tree(w).text()).not.toContain('현재')
@@ -321,7 +323,8 @@ describe('Designer entry with no Project opened in this session (flowgate.v02.00
     let w = await remountShell()
     expect(rowLabels(w)).toEqual(['Alpha', 'UI 개선'])
     expect(explorerRow(w, 'Alpha').attributes('aria-selected')).toBe('true')
-    expect(leftDock(w).attributes('data-unselected')).toBe('false')
+    // flowgate.v02.0042: selected, but no Flow is open, so the Designer stays unselected.
+    expect(leftDock(w).attributes('data-unselected')).toBe('true')
 
     w = await remountShell()
     expect(rowLabels(w)).toEqual(['Alpha', 'UI 개선'])

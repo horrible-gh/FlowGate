@@ -238,16 +238,32 @@ export function nextRunMode(current: DesignerRunMode, cmd: DesignerTopCommand): 
   return current
 }
 
-// --- work target (flowgate.v02.0039 T#3) ---------------------------------------------------------
+// --- menu targets (flowgate.v02.0039 T#3 / v02.0042 / v02.0043) ---------------------------------
 
 /**
- * Commands that stay available while the Designer has no work target — nothing chosen in the
- * Project Explorer and no Flow open (0039 confirmed design 15-designer-shell-initial-state-v7):
- * creating / opening a Project, closing the Designer, Help and the Header entries. Everything
- * else in the File, Edit, Run and View menus waits for a target. The Window menu is not a
- * command list and stays available as a whole.
+ * What the Designer holds for the menus to act on. `flow` is the work target of 0042 — an open
+ * Flow — behind the Edit / Run / View commands, the layout density and Flow 닫기. `project` is
+ * the Project context (the Project opened with 열기, 0040) behind the Group / Flow commands,
+ * their recent lists and Project 닫기. `group` is a Group row chosen in the Project Explorer,
+ * behind Group 닫기. The File menu follows each command's own precondition (0043 0001-R §3),
+ * not the work target alone: without it a first Flow could never be opened from the menu.
  */
-const NO_TARGET_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopCommand>([
+export interface DesignerMenuTargets {
+  project: boolean
+  group: boolean
+  flow: boolean
+}
+
+export const ALL_MENU_TARGETS: DesignerMenuTargets = Object.freeze({ project: true, group: true, flow: true })
+
+export const NO_MENU_TARGETS: DesignerMenuTargets = Object.freeze({ project: false, group: false, flow: false })
+
+/**
+ * Commands that never wait for a target (0039 confirmed design 15-designer-shell-initial-state-v7):
+ * creating / opening a Project, closing the Designer, Help and the Header entries. The Window
+ * menu is not a command list and stays available as a whole.
+ */
+const ALWAYS_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopCommand>([
   'project.new',
   'project.open',
   'designer.close',
@@ -260,24 +276,43 @@ const NO_TARGET_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopC
   'header.user',
 ])
 
+/** Commands that need the Project context only. */
+const PROJECT_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopCommand>([
+  'project.close',
+  'group.new',
+  'group.open',
+  'flow.new',
+  'flow.open',
+])
+
 /**
- * Whether a menu command can be chosen. Without a work target only NO_TARGET_COMMANDS can;
- * with one, the run state decides and everything else stays enabled.
+ * Whether a menu command can be chosen. ALWAYS_COMMANDS always can; PROJECT_COMMANDS need the
+ * Project context, Group 닫기 a chosen Group, Flow 닫기 an open Flow; everything else needs the
+ * open Flow and then the run state decides.
  */
-export function isMenuCommandEnabled(cmd: DesignerTopCommand, runMode: DesignerRunMode, hasWorkTarget = true): boolean {
-  if (!hasWorkTarget) return NO_TARGET_COMMANDS.has(cmd)
+export function isMenuCommandEnabled(
+  cmd: DesignerTopCommand,
+  runMode: DesignerRunMode,
+  targets: DesignerMenuTargets = ALL_MENU_TARGETS,
+): boolean {
+  if (ALWAYS_COMMANDS.has(cmd)) return true
+  if (PROJECT_COMMANDS.has(cmd)) return targets.project
+  if (cmd === 'group.close') return targets.group
+  if (cmd === 'flow.close') return targets.flow
+  if (!targets.flow) return false
   if (cmd === 'run.stop') return runMode !== null
   if (cmd === 'run.next' || cmd === 'run.all' || cmd === 'run.rerun') return runMode === null
   return true
 }
 
 /**
- * Whether a submenu entry can be opened: without a work target only 최근 Project can; the
- * recent Group / Flow lists and the layout density wait for a target (0039 T#3).
+ * Whether a submenu entry can be opened: 최근 Project always, 최근 Group / Flow with the Project
+ * context, the layout density with an open Flow.
  */
-export function isSubmenuEnabled(entry: DesignerMenuEntry, hasWorkTarget = true): boolean {
-  if (hasWorkTarget) return true
-  return entry.kind === 'recent' && entry.recent === 'project'
+export function isSubmenuEnabled(entry: DesignerMenuEntry, targets: DesignerMenuTargets = ALL_MENU_TARGETS): boolean {
+  if (entry.kind === 'density') return targets.flow
+  if (entry.kind === 'recent') return entry.recent === 'project' || targets.project
+  return true
 }
 
 /** Toolbar zoom value: a Canvas zoom factor as a whole percent (1x when there is none). */

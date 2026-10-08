@@ -220,3 +220,56 @@ export interface MergeReviewFileDiff {
   old: FlowDiffSide
   new: FlowDiffSide
 }
+
+// ── Recent items and Group / Flow creation (flowgate.v02.0043) ─────────────────────────
+// What the Designer File menu needs from this feature: the 최근 Project / Group / Flow lists
+// (recentStorage.ts) and the two creates the menu's 새 Group / 새 Flow dialogs call. Ids follow
+// the group tree: a Group id is its tree node id (`module:<project>:<name>`), a Flow id is the
+// v0.1 group id.
+
+/** A Project opened with "열기". */
+export interface RecentProject {
+  id: string
+  name: string
+}
+
+/** A Group (v0.1 module) opened in the Designer, with the Project it belongs to. */
+export interface RecentGroup {
+  id: string
+  name: string
+  projectId: string
+}
+
+/** A Flow (v0.1 group) opened in the Designer; `groupId` is its Group's tree node id. */
+export interface RecentFlow {
+  id: string
+  name: string
+  projectId: string
+  groupId: string
+}
+
+/** POST /projects/{id}/modules input: `name` is the module key ([a-z0-9_-]), `title` the display name. */
+export interface CreateGroupInput {
+  name: string
+  title: string
+}
+
+/** The created Group as the Designer sees it: `id` is the group tree node id. */
+export interface CreatedGroup {
+  id: string
+  name: string
+  title: string
+}
+
+/** POST /groups input; `moduleName` is the owning Group's module key. */
+export interface CreateFlowInput {
+  projectId: string
+  moduleName: string
+  title: string
+}
+
+/** The created Flow: `id` is the v0.1 group id the server reserved. */
+export interface CreatedFlow {
+  id: string
+  title: string
+}

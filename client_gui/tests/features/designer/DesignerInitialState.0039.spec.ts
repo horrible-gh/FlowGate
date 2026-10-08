@@ -23,6 +23,7 @@ import { registerAppMessages } from '@/app/i18n'
 import { DesignerShell, ProjectExplorer } from '@/features/designer'
 import {
   DESIGNER_MENUS,
+  NO_MENU_TARGETS,
   isMenuCommandEnabled,
   isSubmenuEnabled,
   type DesignerMenuEntry,
@@ -256,19 +257,23 @@ describe('Designer initial state — no work target right after entry (0039 T#3)
     expect(getRequest.mock.calls.map(([url]) => String(url)).filter((url) => !url.endsWith('/groups/tree'))).toEqual([])
   })
 
+  // flowgate.v02.0043: the File menu follows each command's own precondition — with the entered
+  // Project context the Group / Flow commands and Project 닫기 are available, Group 닫기 waits for a
+  // chosen Group and Flow 닫기 for an open Flow (DesignerFileMenu.0043.spec.ts). Edit / Run / View
+  // still wait for the work target.
   it('enables only the confirmed menu items', async () => {
     const w = await mountShell()
 
     const file = await openMenu(w, 'file')
     expect(commandStates(file)).toEqual({
-      enabled: ['project.new', 'project.open', 'designer.close'],
-      disabled: ['project.close', 'group.new', 'group.open', 'group.close', 'flow.new', 'flow.open', 'flow.close'],
+      enabled: ['project.new', 'project.open', 'project.close', 'group.new', 'group.open', 'flow.new', 'flow.open', 'designer.close'],
+      disabled: ['group.close', 'flow.close'],
     })
     const subs = file.findAll('[data-test="designer-menu-sub"]')
     expect(subs.map((el) => [el.attributes('data-sub'), isDisabled(el)])).toEqual([
       ['recent-project', false],
-      ['recent-group', true],
-      ['recent-flow', true],
+      ['recent-group', false],
+      ['recent-flow', false],
     ])
 
     for (const key of ['edit', 'run', 'view']) {
@@ -286,11 +291,12 @@ describe('Designer initial state — no work target right after entry (0039 T#3)
 
   it('a disabled submenu does not open on hover', async () => {
     const w = await mountShell()
-    const file = await openMenu(w, 'file')
-    await file.get('[data-sub="recent-flow"]').element.parentElement!.dispatchEvent(new MouseEvent('mouseenter'))
+    const view = await openMenu(w, 'view')
+    await view.get('[data-sub="density"]').element.parentElement!.dispatchEvent(new MouseEvent('mouseenter'))
     await nextTick()
-    expect(w.find('[data-test="designer-menu-subpop"][data-sub="recent-flow"]').exists()).toBe(false)
+    expect(w.find('[data-test="designer-menu-subpop"][data-sub="density"]').exists()).toBe(false)
 
+    const file = await openMenu(w, 'file')
     await file.get('[data-test="designer-menu-sub"][data-sub="recent-project"]').trigger('click')
     expect(w.find('[data-test="designer-menu-subpop"][data-sub="recent-project"]').exists()).toBe(true)
   })
@@ -324,7 +330,8 @@ describe('Designer initial state — only an open Flow continues into the Design
     expect(w.find('[data-test="designer-palette"]').exists()).toBe(false)
 
     const file = await openMenu(w, 'file')
-    expect(commandStates(file).enabled).toEqual(['project.new', 'project.open', 'designer.close'])
+    expect(commandStates(file).disabled).toEqual(['group.close', 'flow.close'])
+    expect(commandStates(file).enabled).not.toContain('flow.close')
   })
 
   it('a Flow double click opens it and brings back the existing Designer content and controls', async () => {
@@ -351,7 +358,8 @@ describe('Designer initial state — only an open Flow continues into the Design
     expect(get(w, 'designer-toolbar').findAll('button').some(isDisabled)).toBe(false)
 
     const file = await openMenu(w, 'file')
-    expect(commandStates(file).disabled).toEqual([])
+    // The chosen row is the Flow, not a Group: only Group 닫기 has nothing to act on.
+    expect(commandStates(file).disabled).toEqual(['group.close'])
     const run = await openMenu(w, 'run')
     expect(commandStates(run).disabled).toEqual(['run.stop'])
   })
@@ -462,8 +470,9 @@ describe('designerTop model — work target (0039 T#3)', () => {
     entry.kind === 'command' ? [entry.command] : [],
   )
 
-  it('without a target only 새 Project / Project 열기… / Designer 닫기 and Help stay enabled', () => {
-    expect(commands.filter((cmd) => isMenuCommandEnabled(cmd, null, false))).toEqual([
+  // flowgate.v02.0043: targets are the Project context, a chosen Group and the open Flow.
+  it('without any target only 새 Project / Project 열기… / Designer 닫기 and Help stay enabled', () => {
+    expect(commands.filter((cmd) => isMenuCommandEnabled(cmd, null, NO_MENU_TARGETS))).toEqual([
       'project.new',
       'project.open',
       'designer.close',
@@ -472,19 +481,40 @@ describe('designerTop model — work target (0039 T#3)', () => {
       'help.about',
     ])
     // The run state cannot re-enable anything without a target.
-    expect(isMenuCommandEnabled('run.stop', 'next', false)).toBe(false)
+    expect(isMenuCommandEnabled('run.stop', 'next', NO_MENU_TARGETS)).toBe(false)
   })
 
-  it('with a target (the default) the run state alone decides, as before', () => {
+  it('with the Project context alone the Group / Flow commands and Project 닫기 join; Group / Flow 닫기 wait for theirs', () => {
+    const projectOnly = { project: true, group: false, flow: false }
+    expect(commands.filter((cmd) => isMenuCommandEnabled(cmd, null, projectOnly))).toEqual([
+      'project.new',
+      'project.open',
+      'project.close',
+      'group.new',
+      'group.open',
+      'flow.new',
+      'flow.open',
+      'designer.close',
+      'help.shortcuts',
+      'help.guide',
+      'help.about',
+    ])
+    expect(isMenuCommandEnabled('group.close', null, { project: true, group: true, flow: false })).toBe(true)
+    expect(isMenuCommandEnabled('flow.close', null, { project: true, group: false, flow: true })).toBe(true)
+    expect(isMenuCommandEnabled('edit.undo', null, { project: true, group: true, flow: false })).toBe(false)
+  })
+
+  it('with every target (the default) the run state alone decides, as before', () => {
     expect(commands.filter((cmd) => !isMenuCommandEnabled(cmd, null))).toEqual(['run.stop'])
-    expect(commands.filter((cmd) => !isMenuCommandEnabled(cmd, null, true))).toEqual(['run.stop'])
+    expect(commands.filter((cmd) => !isMenuCommandEnabled(cmd, null, { project: true, group: true, flow: true }))).toEqual(['run.stop'])
   })
 
-  it('without a target only the 최근 Project submenu opens', () => {
+  it('submenus: 최근 Project always, 최근 Group / Flow with the Project context, density with the open Flow', () => {
     const subs = DESIGNER_MENUS.flatMap((menu) => menu.entries).filter(
       (entry): entry is DesignerMenuEntry => entry.kind === 'recent' || entry.kind === 'density',
     )
-    expect(subs.map((entry) => isSubmenuEnabled(entry, false))).toEqual([true, false, false, false])
+    expect(subs.map((entry) => isSubmenuEnabled(entry, NO_MENU_TARGETS))).toEqual([true, false, false, false])
+    expect(subs.map((entry) => isSubmenuEnabled(entry, { project: true, group: false, flow: false }))).toEqual([true, true, true, false])
     expect(subs.every((entry) => isSubmenuEnabled(entry))).toBe(true)
   })
 })

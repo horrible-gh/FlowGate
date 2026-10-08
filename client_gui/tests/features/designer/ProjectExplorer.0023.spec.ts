@@ -288,7 +288,11 @@ describe('ProjectExplorer — search', () => {
   it('filters Project/Group/Flow names while keeping and revealing ancestors', async () => {
     getRequest.mockResolvedValueOnce(ok(NODES))
     const w = await mountExplorer()
-    await w.find('[data-test="project-explorer-search"]').setValue('designer')
+    const search = w.find('[data-test="project-explorer-search"]')
+    expect(search.attributes('type')).toBe('text') // The right-hand clear button is the only X.
+    expect(w.find('[data-test="project-explorer-search-clear"]').exists()).toBe(false)
+    await search.setValue('designer')
+    expect(w.findAll('[data-test="project-explorer-search-clear"]')).toHaveLength(1)
     await flushPromises()
 
     expect(labels(w)).toEqual(['Alpha', 'UI 개선', 'Designer v0.2'])

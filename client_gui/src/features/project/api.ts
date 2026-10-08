@@ -14,7 +14,11 @@
 import { extractApiErrorMessage, getRequest, postRequest } from '@shared/api'
 import type {
   BaseFileDiff,
+  CreateFlowInput,
+  CreateGroupInput,
   CreateProjectInput,
+  CreatedFlow,
+  CreatedGroup,
   FlowAiActivity,
   FlowChangeSet,
   FlowFileDiff,
@@ -525,5 +529,55 @@ export async function fetchMergeReviewFileDiff(
     return { groupId, mergeId, path: toSlashes(data.path), status: data.status, old: data.old, new: data.new }
   } catch (error) {
     throw loadError(error, 'Failed to load the file diff.')
+  }
+}
+
+// ── Group / Flow creation (flowgate.v02.0043) ──────────────────────────────────────────
+// The same two server contracts the v0.1 explorer create modal calls
+// (client/src/main/components/CreateEditGroupModal.vue): module create (T505) and group create
+// (T191). Only the request shape and the id normalization live here.
+
+interface RawCreatedModule {
+  ok?: boolean
+  module_id?: string
+  name?: string | null
+  title?: string | null
+}
+
+/**
+ * POST /api/v1/projects/{pid}/modules — creates a Group (v0.1 module). The returned id is the
+ * group tree node id (`module:<project>:<name>`), the one the Project Explorer shows.
+ */
+export async function createGroup(projectId: string, input: CreateGroupInput): Promise<CreatedGroup> {
+  try {
+    const response = await postRequest<RawCreatedModule>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/modules`,
+      { name: input.name, title: input.title },
+    )
+    const name = response.data?.name || input.name
+    return { id: `module:${projectId}:${name}`, name, title: response.data?.title || input.title }
+  } catch (error) {
+    throw new Error(extractApiErrorMessage(error, 'Failed to create the group.'))
+  }
+}
+
+interface RawCreatedGroup {
+  group_id: string
+  created_at?: string | null
+}
+
+/** POST /api/v1/groups — creates a Flow (v0.1 group) under a Group; the server reserves the id. */
+export async function createFlow(input: CreateFlowInput): Promise<CreatedFlow> {
+  try {
+    const response = await postRequest<RawCreatedGroup>('/api/v1/groups', {
+      project_id: input.projectId,
+      title: input.title,
+      module: input.moduleName,
+      parent_id: null,
+      priority: null,
+    })
+    return { id: response.data.group_id, title: input.title }
+  } catch (error) {
+    throw new Error(extractApiErrorMessage(error, 'Failed to create the flow.'))
   }
 }

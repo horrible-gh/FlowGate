@@ -9,7 +9,9 @@
        flowgate.v02.0039 T#3: while the Designer has no work target (`unselected`) the mode
        switch, the collapse button and the Explorer search are unavailable as the confirmed
        initial-state design draws them, but the Project tree stays shown and clickable — a
-       click there is how the user makes the first selection (0001-R §2). -->
+       click there is how the user makes the first selection (0001-R §2).
+       flowgate.v02.0043: the Shell's Explorer state request (File menu: Group / Flow 열기,
+       Group 닫기) and refresh token (a new Group / Flow) pass through to the Project Explorer. -->
   <aside
     class="designer-left-dock"
     :class="{ 'is-collapsed': collapsed, 'is-unselected': unselected }"
@@ -49,6 +51,8 @@
         :project-id="projectId"
         :active-flow-id="activeFlow?.groupId ?? null"
         :tools-disabled="unselected"
+        :request="explorerRequest"
+        :refresh-token="refreshToken"
         @activate-flow="emit('activate-flow', $event)"
         @update:selection="emit('update:selection', $event)"
       />
@@ -69,7 +73,7 @@ import type { FlowRef } from '@/features/project'
 import IconButton from '../../../components/ui/IconButton.vue'
 import DesignerFileExplorer from '../fileExplorer/DesignerFileExplorer.vue'
 import ProjectExplorer from '../projectExplorer/ProjectExplorer.vue'
-import type { ExplorerSelection, ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
+import type { ExplorerSelection, ExplorerStateRequest, ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
 import ExplorerModeTabs from './ExplorerModeTabs.vue'
 import type { DesignerLeftMode } from './designerLayout'
 
@@ -81,8 +85,12 @@ const props = withDefaults(
     collapsed: boolean
     /** No work target yet (0039 T#3): navigation chrome unavailable, tree still usable. */
     unselected?: boolean
+    /** What the Designer asks the Project Explorer to select / open / close (0043). */
+    explorerRequest?: ExplorerStateRequest | null
+    /** Bumped to make the Project Explorer re-read its tree (0043). */
+    refreshToken?: number
   }>(),
-  { unselected: false },
+  { unselected: false, explorerRequest: null, refreshToken: 0 },
 )
 
 const emit = defineEmits<{

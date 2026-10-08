@@ -16,12 +16,21 @@
 // Explorer and File Explorer (0024) both read. Only the canonical flat node list is cached;
 // each consumer derives its own display shape and keeps its own view state (expansion,
 // selection, search) locally.
+//
+// flowgate.v02.0043 adds what the Designer File menu needs: the 최근 Project / Group / Flow
+// lists (recentStorage.ts), closing the current Project, opening a recent Project the way the
+// Dialog's "열기" does, a Dialog open that asks for the create child, and the Group / Flow
+// creates (api.ts) that invalidate the cached group tree of their Project.
 
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type {
   BaseFileDiff,
+  CreateFlowInput,
+  CreateGroupInput,
   CreateProjectInput,
+  CreatedFlow,
+  CreatedGroup,
   FetchGroupTreeOptions,
   FlowAiActivity,
   FlowChangeSet,
@@ -31,8 +40,13 @@ import type {
   MergeReviewFileDiff,
   Project,
   ProjectGitStatus,
+  RecentFlow,
+  RecentGroup,
+  RecentProject,
 } from './types'
 import {
+  createFlow as createFlowApi,
+  createGroup as createGroupApi,
   createProject as createProjectApi,
   fetchActiveProjects as fetchActiveProjectsApi,
   fetchBaseFileDiff,
@@ -43,8 +57,23 @@ import {
   fetchMergeReviewFileDiff,
   fetchProjectGitStatus,
   fetchProjectGroupTree as fetchProjectGroupTreeApi,
+  suggestProjectSlug,
 } from './api'
 import { clearStoredCurrentProjectId, writeStoredCurrentProjectId } from './currentProjectStorage'
+import {
+  pushRecent,
+  readRecentFlows,
+  readRecentGroups,
+  readRecentProjects,
+  writeRecentFlows,
+  writeRecentGroups,
+  writeRecentProjects,
+} from './recentStorage'
+
+export interface OpenDialogOptions {
+  /** Open the create child right away (the Designer's File › 새 Project). Admin-only downstream. */
+  create?: boolean
+}
 
 export const useProjectStore = defineStore('project', () => {
   const projects = ref<Project[]>([])
@@ -161,11 +190,55 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
+  // ── Recent Project / Group / Flow (flowgate.v02.0043) ───────────────────────────────
+  // Newest first, one entry per id, capped (recentStorage.ts). A Project is recorded when it
+  // is opened ("열기" / a recent entry); Groups and Flows are recorded by the Designer when it
+  // opens them. Nothing here is ever derived from the stored current Project id.
+  const recentProjects = ref<RecentProject[]>(readRecentProjects())
+  const recentGroups = ref<RecentGroup[]>(readRecentGroups())
+  const recentFlows = ref<RecentFlow[]>(readRecentFlows())
+
+  function recordRecentProject(entry: RecentProject): void {
+    recentProjects.value = pushRecent(recentProjects.value, { id: entry.id, name: entry.name })
+    writeRecentProjects(recentProjects.value)
+  }
+
+  function recordRecentGroup(entry: RecentGroup): void {
+    recentGroups.value = pushRecent(recentGroups.value, { id: entry.id, name: entry.name, projectId: entry.projectId })
+    writeRecentGroups(recentGroups.value)
+  }
+
+  function recordRecentFlow(entry: RecentFlow): void {
+    recentFlows.value = pushRecent(recentFlows.value, {
+      id: entry.id,
+      name: entry.name,
+      projectId: entry.projectId,
+      groupId: entry.groupId,
+    })
+    writeRecentFlows(recentFlows.value)
+  }
+
   // The only place currentProjectId is ever assigned from a Dialog-driven "open" action
   // (D0004 §3.4). Row selection alone must never call this — that distinction lives in the
   // future ProjectDialog's Dialog-local `selected` state, not in this store.
   function setCurrentProject(project: Project): void {
     applyCurrentProjectId(project.id)
+    recordRecentProject({ id: project.id, name: project.name })
+  }
+
+  // flowgate.v02.0043: File › 최근 Project. The same "열기" as the Dialog's — the Project becomes
+  // current and the one-shot explicit-open signal below is raised, so the Project Explorer
+  // selects it (0040) — without needing the active list to be loaded.
+  function openRecentProject(entry: RecentProject): void {
+    applyCurrentProjectId(entry.id)
+    requestExplicitOpen(entry.id)
+    recordRecentProject(entry)
+  }
+
+  // flowgate.v02.0043: File › Project 닫기. The Designer loses its Project context (its Explorers
+  // and Center clear); the stored id goes too, as when a current Project leaves the active list.
+  function closeCurrentProject(): void {
+    applyCurrentProjectId(null)
   }
 
   // flowgate.v02.0040: one-shot "this Project was explicitly opened" signal for the Designer.
@@ -173,6 +246,8 @@ export const useProjectStore = defineStore('project', () => {
   // Explorer takes it on entry to start with that Project selected. Taking it clears it, so a
   // later Designer entry from the Sidebar/Dashboard card (which never raises it) still starts
   // unselected (0039 T#3). Not persisted: it only bridges the Dialog -> Designer move.
+  // flowgate.v02.0043: readable, so an Explorer already showing that Project can react to a
+  // "열기" of the same Project (File › Project 열기… / 최근 Project from inside the Designer).
   const explicitOpenProjectId = ref<string | null>(null)
 
   function requestExplicitOpen(projectId: string): void {
@@ -238,6 +313,35 @@ export const useProjectStore = defineStore('project', () => {
     return promise
   }
 
+  // flowgate.v02.0043: a Group / Flow was created, so every cached tree of that Project is
+  // stale. Dropping them makes the next non-forced read go to the server; a consumer that
+  // already shows the tree re-reads with `force` on its own (the Explorer's refreshToken).
+  function invalidateGroupTree(projectId: string): void {
+    const next = { ...groupTrees.value }
+    for (const includeTerminal of [false, true]) delete next[groupTreeKey(projectId, includeTerminal)]
+    groupTrees.value = next
+  }
+
+  // ── Group / Flow creation (flowgate.v02.0043) ──────────────────────────────────────
+  // Stateless like the loaders below: the create dialogs own their own submit / stale guards.
+  // The Project list session's `requestEpoch` does not gate these.
+  async function createGroup(projectId: string, input: CreateGroupInput): Promise<CreatedGroup> {
+    const created = await createGroupApi(projectId, input)
+    invalidateGroupTree(projectId)
+    return created
+  }
+
+  async function createFlow(input: CreateFlowInput): Promise<CreatedFlow> {
+    const created = await createFlowApi(input)
+    invalidateGroupTree(input.projectId)
+    return created
+  }
+
+  /** The existing identifier suggestion (POST /slug/romanize) for a Group key. */
+  function suggestSlug(text: string): Promise<string | null> {
+    return suggestProjectSlug(text)
+  }
+
   // Flow file context (flowgate.v02.0024 T0005). The Designer File Explorer reaches the
   // project Git status and the active Flow's tree / Base-relative changes / diff / AI
   // activity only through these loaders, so features/designer owns no API or store of its
@@ -280,13 +384,25 @@ export const useProjectStore = defineStore('project', () => {
     return fetchMergeReviewFileDiff(groupId, mergeId, path)
   }
 
-  function openDialog(): void {
+  // flowgate.v02.0043: set by openDialog({ create: true }) and read once by ProjectDialog when it
+  // opens. Not persisted; a Dialog open without the option clears it.
+  const createRequested = ref(false)
+
+  function openDialog(options: OpenDialogOptions = {}): void {
+    createRequested.value = options.create === true
     dialogOpen.value = true
     void fetchProjects()
   }
 
+  function takeCreateRequest(): boolean {
+    const requested = createRequested.value
+    createRequested.value = false
+    return requested
+  }
+
   function closeDialog(): void {
     dialogOpen.value = false
+    createRequested.value = false
     // Invalidate any fetch/create still in flight from this session and drop any loading/
     // error state it left behind — a closed Dialog shows nothing.
     bumpEpoch()
@@ -303,15 +419,28 @@ export const useProjectStore = defineStore('project', () => {
     // Read-only id view: `currentProject` needs the active list loaded, but a screen that
     // only needs "which project" (e.g. the Designer) must not wait for or trigger it.
     currentProjectId: computed(() => currentProjectId.value),
+    // Read-only views of the recent lists and the explicit-open signal (flowgate.v02.0043).
+    recentProjects: computed(() => recentProjects.value),
+    recentGroups: computed(() => recentGroups.value),
+    recentFlows: computed(() => recentFlows.value),
+    explicitOpenProjectId: computed(() => explicitOpenProjectId.value),
     fetchProjects,
     createProject,
     setCurrentProject,
+    openRecentProject,
+    closeCurrentProject,
+    recordRecentGroup,
+    recordRecentFlow,
     requestExplicitOpen,
     takeExplicitOpen,
     openDialog,
+    takeCreateRequest,
     closeDialog,
     getCachedGroupTree,
     fetchGroupTree,
+    createGroup,
+    createFlow,
+    suggestSlug,
     loadProjectGitStatus,
     loadFlowFileTree,
     loadFlowChanges,

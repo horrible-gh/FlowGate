@@ -208,7 +208,8 @@ describe('T#3 App Shell entry points open the single Project Dialog (T0010 ยง1/ย
 
       const projectRow = wrapper.get('[data-test="project-explorer-tree"] [data-explorer-row]')
       expect(projectRow.attributes('aria-selected')).toBe('true')
-      expect(wrapper.get('[data-test="designer-left-dock"]').attributes('data-unselected')).toBe('false')
+      // flowgate.v02.0042: the selection is shown, but only an open Flow is the work target.
+      expect(wrapper.get('[data-test="designer-left-dock"]').attributes('data-unselected')).toBe('true')
     })
   }
 

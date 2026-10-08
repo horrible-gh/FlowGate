@@ -192,13 +192,14 @@ describe('Designer top band — Menu Bar', () => {
     expect(pop.text()).not.toMatch(/저장/)
     expect(pop.findAll('[role="separator"]')).toHaveLength(3)
 
-    // Recent items are not read yet: the submenu says so and offers nothing to choose.
+    // flowgate.v02.0043: the recent submenus list what was opened — mountShell opened the Flow
+    // `Canvas` of the Group `UI 개선` (DesignerFileMenu.0043.spec.ts covers the lists in full).
     await pop.get('[data-test="designer-menu-sub"][data-sub="recent-flow"]').element.parentElement!.dispatchEvent(new MouseEvent('mouseenter'))
     await flushPromises()
     expect(w.findAll('[data-test="designer-menu-subpop"]')).toHaveLength(1)
     const sub = w.get('[data-test="designer-menu-subpop"][data-sub="recent-flow"]')
-    expect(sub.get('[data-test="designer-menu-recent-empty"]').text()).toBe('최근 항목 없음')
-    expect(sub.get('[data-test="designer-menu-recent-empty"]').attributes('disabled')).toBeDefined()
+    expect(sub.findAll('[data-test="designer-menu-recent"]').map((el) => [el.attributes('data-id'), el.text()])).toEqual([['p.ui.0001', 'Canvas']])
+    expect(sub.find('[data-test="designer-menu-recent-empty"]').exists()).toBe(false)
   })
 
   it('Edit, Run, View and Help hold the confirmed items', async () => {
