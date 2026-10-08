@@ -25,6 +25,9 @@ class EventType(str, Enum):
     # flowgate.v02.0045 P0008 §8.2: Canvas layout saved / node identity rematched (S2). Later
     # stages add draft / revision reasons to the same event. Refresh signal only.
     GRAPH_CANVAS_CHANGED                  = "graph_canvas_changed"
+    # flowgate.v02.0045 P0008 §8.2 (S4): an unassigned Flow was assigned to the Graph engine
+    # (confirmation) or to v0.1 (a decide run inside the engine router). Refresh signal only.
+    FLOW_OWNERSHIP_CHANGED                = "flow_ownership_changed"
     # flowgate.default.0517 T0012 §12: durable snapshot request lifecycle changed
     # (requested/approved/rejected). Refresh-only signal — the client re-reads the
     # durable pending list rather than trusting the payload as the list itself.

@@ -8,8 +8,9 @@ external documents). Positions, viewport and collapse are applied by the canvas 
   Only live documents (P0008 §2.4) are drawn or bound: a superseded root is shown as the live
   end of its supersede chain, a cancelled root is not drawn (D0004 §3.7 "root 문서"), and a slot
   whose result document is no longer alive keeps its slot node without the document.
-- ``documents`` projection (unassigned, and graph until S3/S4 adds Graph storage): one node
-  per live document, no execution edges.
+- ``documents`` projection (unassigned): one node per live document, no execution edges. A
+  Graph draft of the Flow is added on top by ``graph_projector.add_draft``.
+The ``graph`` projection (ownership graph / conflict) is built by ``graph_projector``.
 Reference edges (``triggered_by`` / ``target``) are drawn only between documents drawn in this
 Flow; anything else goes to ``external_relations`` (P0008 §2.7).
 """
@@ -27,16 +28,18 @@ RELATIONS = (("triggered_by", "triggered_by"), ("target", "target_id"))
 
 @dataclass
 class Projection:
-    projection: str                                       # "sequence" | "documents"
+    projection: str                                       # "sequence" | "documents" | "graph"
     nodes: list[dict] = field(default_factory=list)       # P0008 §2.6 without "position"
     edges: list[dict] = field(default_factory=list)       # P0008 §2.7
     external_relations: list[dict] = field(default_factory=list)
     chain: list[str] = field(default_factory=list)        # root + slots, execution order
     free_docs: list[str] = field(default_factory=list)    # unbound document nodes, document order
+    graph_nodes: list[str] = field(default_factory=list)  # Graph / draft node keys, stored order
+    graph_edges: list[tuple] = field(default_factory=list)  # (source, target) of Graph / draft edges
     sequence_root_doc_id: Optional[str] = None
 
 
-def _doc_order(doc: dict):
+def doc_order(doc: dict):
     seq = doc.get("seq")
     return (seq if isinstance(seq, int) else 0, doc.get("doc_id") or "")
 
@@ -72,7 +75,16 @@ def _node(key, source, origin, doc_type, title, state, ownership, document=None,
     }
 
 
-def _doc_node(doc: dict, ownership: str, supersedes) -> dict:
+def supersedes_map(documents: list[dict]) -> dict[str, list[str]]:
+    """doc_id -> the doc_ids it superseded, in document order (``document.supersedes``)."""
+    out: dict[str, list[str]] = {}
+    for d in sorted(documents, key=doc_order):
+        if d.get("superseded_by"):
+            out.setdefault(d["superseded_by"], []).append(d["doc_id"])
+    return out
+
+
+def doc_node(doc: dict, ownership: str, supersedes) -> dict:
     return _node(
         doc_key(doc["doc_id"]), "document", "document", doc.get("type_code"), doc.get("title"),
         cm.document_state(doc.get("doc_review_status"), doc.get("type_code")), ownership,
@@ -91,11 +103,8 @@ def project(
     lookup: Callable[[list[str]], dict[str, dict]] = lambda _ids: {},
 ) -> Projection:
     by_id = {d["doc_id"]: d for d in documents if d.get("doc_id")}
-    supersedes: dict[str, list[str]] = {}
-    for d in sorted(documents, key=_doc_order):
-        if d.get("superseded_by"):
-            supersedes.setdefault(d["superseded_by"], []).append(d["doc_id"])
-    alive = sorted((d for d in documents if cm.is_alive(d, flow_id)), key=_doc_order)
+    supersedes = supersedes_map(documents)
+    alive = sorted((d for d in documents if cm.is_alive(d, flow_id)), key=doc_order)
 
     use_sequence = sequence is not None and ownership in ("v01", "conflict")
     out = Projection(projection="sequence" if use_sequence else "documents")
@@ -108,7 +117,7 @@ def project(
         result_ids = {r["result_doc_id"] for r in rows if r.get("result_doc_id")}
         root = _sequence_root(flow_id, sequence["doc_id"], by_id, extra, result_ids)
         if root:
-            root_node = _doc_node(root, ownership, supersedes)
+            root_node = doc_node(root, ownership, supersedes)
             out.nodes.append(root_node)
             out.chain.append(root_node["node_key"])
             out.sequence_root_doc_id = root["doc_id"]
@@ -146,13 +155,13 @@ def project(
     for doc in alive:
         if doc["doc_id"] in drawn:
             continue
-        node = _doc_node(doc, ownership, supersedes)
+        node = doc_node(doc, ownership, supersedes)
         out.nodes.append(node)
         out.free_docs.append(node["node_key"])
         drawn[doc["doc_id"]] = node["node_key"]
         drawn_docs.append(doc)
 
-    _reference_edges(out, flow_id, drawn, sorted(drawn_docs, key=_doc_order), by_id, lookup)
+    reference_edges(out, flow_id, drawn, sorted(drawn_docs, key=doc_order), by_id, lookup)
     return out
 
 
@@ -177,7 +186,7 @@ def _execution_edge(source: str, target: str) -> dict:
     }
 
 
-def _reference_edges(out: Projection, flow_id, drawn, drawn_docs, by_id, lookup) -> None:
+def reference_edges(out: Projection, flow_id, drawn, drawn_docs, by_id, lookup) -> None:
     pending: list[tuple[dict, str, str]] = []
     for doc in drawn_docs:
         for relation, column in RELATIONS:

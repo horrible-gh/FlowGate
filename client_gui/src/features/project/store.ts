@@ -40,6 +40,11 @@ import type {
   FlowCanvas,
   FlowCanvasLayoutInput,
   FlowCanvasLayoutResult,
+  FlowGraphConfirmResult,
+  FlowGraphDefinition,
+  FlowGraphDraftInput,
+  FlowGraphDraftSaveResult,
+  FlowGraphValidation,
   MergeReviewFileDiff,
   Project,
   ProjectGitStatus,
@@ -63,6 +68,12 @@ import {
   suggestProjectSlug,
 } from './api'
 import { fetchFlowCanvas, saveFlowCanvasLayout as saveFlowCanvasLayoutApi } from './flowCanvasApi'
+import {
+  confirmFlowGraphRevision as confirmFlowGraphRevisionApi,
+  fetchFlowGraph,
+  saveFlowGraphDraft as saveFlowGraphDraftApi,
+  validateFlowGraphDraft as validateFlowGraphDraftApi,
+} from './flowGraphApi'
 import { subscribeFlowCanvasChanges as subscribeFlowCanvasChangesApi, type FlowCanvasChangeHandlers } from './flowCanvasEvents'
 import { clearStoredCurrentProjectId, writeStoredCurrentProjectId } from './currentProjectStorage'
 import {
@@ -391,12 +402,30 @@ export const useProjectStore = defineStore('project', () => {
 
   // flowgate.v02.0045: the Designer Canvas Graph loader / saver (P0008 §3 / §4). Stateless like
   // the loaders above: per-Flow staleness and save batching belong to the Center session.
-  function loadFlowCanvas(flowId: string): Promise<FlowCanvas> {
-    return fetchFlowCanvas(flowId)
+  function loadFlowCanvas(flowId: string, view?: string): Promise<FlowCanvas> {
+    return fetchFlowCanvas(flowId, view)
   }
 
   function saveFlowCanvasLayout(flowId: string, input: FlowCanvasLayoutInput): Promise<FlowCanvasLayoutResult> {
     return saveFlowCanvasLayoutApi(flowId, input)
+  }
+
+  // flowgate.v02.0045 S3+S4: the Graph definition saver (P0008 §5 / §6). Draft batching, version
+  // tracking and key remapping belong to the Center session's draft editor.
+  function loadFlowGraph(flowId: string): Promise<FlowGraphDefinition> {
+    return fetchFlowGraph(flowId)
+  }
+
+  function saveFlowGraphDraft(flowId: string, input: FlowGraphDraftInput): Promise<FlowGraphDraftSaveResult> {
+    return saveFlowGraphDraftApi(flowId, input)
+  }
+
+  function validateFlowGraphDraft(flowId: string, draftVersion: number): Promise<FlowGraphValidation> {
+    return validateFlowGraphDraftApi(flowId, draftVersion)
+  }
+
+  function confirmFlowGraphRevision(flowId: string, draftVersion: number, baseRevisionNo: number | null): Promise<FlowGraphConfirmResult> {
+    return confirmFlowGraphRevisionApi(flowId, draftVersion, baseRevisionNo)
   }
 
   // Other tabs' / devices' Canvas changes of one project (P0008 §8). Returns the unsubscribe.
@@ -470,6 +499,10 @@ export const useProjectStore = defineStore('project', () => {
     loadMergeReviewFileDiff,
     loadFlowCanvas,
     saveFlowCanvasLayout,
+    loadFlowGraph,
+    saveFlowGraphDraft,
+    validateFlowGraphDraft,
+    confirmFlowGraphRevision,
     subscribeFlowCanvasChanges,
   }
 })

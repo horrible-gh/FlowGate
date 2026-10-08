@@ -5095,6 +5095,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             user_permissions={"document.update"},
         )
 
+    # flowgate.v02.0045 D0004 §4.3: a Graph-owned Flow hands the document to the result binder.
+    from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact
+    _graph_contact.after_inbox_registered(group["group_id"], canonical_doc_id, doc_type, token_rec.get("token_id"))
+
     # ── Step 8: Token consumption ────────────────────────────────────────────────────
     token_service.consume(
         token_id=token_rec["token_id"],

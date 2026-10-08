@@ -71,7 +71,11 @@ describe('fetchFlowCanvas', () => {
       editable: { move: true, structure: false },
       document: { docId: 'flowgate.v02.0048.0001-R', typeCode: 'R', seq: 1, title: 'Explorer 정렬 개선', docReviewStatus: 'wf_in_progress', status: 'open', supersedes: [] },
       slot: null,
+      graphNode: null,
     })
+    // flowgate.v02.0045 S3: no Graph definition shown on a v0.1 Flow.
+    expect(canvas.view).toBeNull()
+    expect(canvas.graph).toEqual({ draft: null, latestRevisionNo: null, rootBinding: null })
     expect(canvas.nodes[1].slot).toEqual({
       itemId: 4820, itemSeq: 5, order: 3, type: 'D', label: '정렬 기본설계', derivedStatus: 'pending', protected: false, sourceWpCardId: 'c_k0dtcr9pq80j',
     })

@@ -78,6 +78,10 @@ def _wire_advance_route(monkeypatch, captured):
     monkeypatch.setattr(wdr, "verify_bearer", lambda _r: {"issued_to": "pm-1"})
     monkeypatch.setattr(wdr._db_documents, "get_by_id", lambda _id: {"group_id": "g", "project_id": "flowgate"})
     monkeypatch.setattr(wdr._process_service, "is_group_disposed", lambda _g: False)
+    # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+    # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
+    monkeypatch.setattr(wdr._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
+    monkeypatch.setattr(wdr._graph_contact, "progress_refusal", lambda doc: None)
     monkeypatch.setattr(
         wdr, "advance_workflow",
         lambda **k: captured.update(k) or {"ok": True, "continuation_remaining": 3},
@@ -453,6 +457,10 @@ def test_decide_route_kicks_off_continuation_for_continuation_token(monkeypatch)
                      "status": "open", "doc_review_status": "wf_in_progress"},
     )
     monkeypatch.setattr(wdr._process_service, "is_group_disposed", lambda _g: False)
+    # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+    # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
+    monkeypatch.setattr(wdr._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
+    monkeypatch.setattr(wdr._graph_contact, "progress_refusal", lambda doc: None)
     import modules.flow_gate.services.token_service as _ts
     monkeypatch.setattr(_ts, "consume", lambda **k: None)
     monkeypatch.setattr(

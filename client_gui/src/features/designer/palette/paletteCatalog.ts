@@ -229,3 +229,25 @@ export function readPaletteDragData(transfer: Pick<DataTransfer, 'getData'> | nu
     return null
   }
 }
+
+/**
+ * flowgate.v02.0045 S3 (P0008 §5.1): the Graph node a dropped item stands for. A default item with
+ * a document type is a document node; the `confirm` card is a gate node; a user-defined item is a
+ * custom node. The node kind for drawing is the item's own kind key.
+ */
+export function paletteNodeSpec(definition: PaletteItemDefinition): {
+  nodeType: 'document' | 'gate' | 'custom'
+  docType: string | null
+  paletteItemId: string
+  label: string
+  kind: string
+} {
+  const nodeType = definition.docType ? 'document' : definition.custom ? 'custom' : 'gate'
+  return {
+    nodeType,
+    docType: nodeType === 'document' ? definition.docType : null,
+    paletteItemId: definition.itemId,
+    label: definition.label,
+    kind: definition.nodeKind,
+  }
+}

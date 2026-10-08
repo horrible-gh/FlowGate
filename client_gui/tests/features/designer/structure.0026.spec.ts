@@ -42,6 +42,14 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         // flowgate.v02.0045 S1+S2: the server Graph source and the layout save batching.
         'graph/serverFlowGraphSource.ts',
         'layoutSaveQueue.ts',
+        // flowgate.v02.0045 S3+S4 (D0004 §2.3 center/edit): edit commands, connection pre-check,
+        // the draft editor / controller and the draft bar.
+        'edit/DraftToolbar.vue',
+        'edit/connectionRules.ts',
+        'edit/draftController.ts',
+        'edit/draftEditor.ts',
+        'edit/draftModel.ts',
+        'edit/graphEditCommands.ts',
       ].sort(),
     )
   })
@@ -134,6 +142,7 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'node_kinds',
         'node_states',
         'ownership',
+        'edit',
       ].sort(),
     )
     // flowgate.v02.0045: one badge text per ownership state of P0008 §2.1.

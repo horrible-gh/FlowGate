@@ -3,14 +3,17 @@
        at the target anchor, in the FlowGate line colour. Rendered inside Vue Flow's edge
        <svg>; it draws the arrow itself instead of using the library's marker / theme. -->
   <!-- flowgate.v02.0045: a reference Edge (document relation, no execution meaning) is drawn
-       dashed so it never reads as "runs next" (D0004 §3.2). -->
+       dashed so it never reads as "runs next" (D0004 §3.2). flowgate.v02.0045 S3: an editable draft
+       edge has a wider hit line (double click removes it, FlowCanvas); one the last validation
+       reported is drawn in the warning colour. -->
   <g
     class="flow-edge"
-    :class="{ 'flow-edge-reference': edgeClass === 'reference' }"
+    :class="{ 'flow-edge-reference': edgeClass === 'reference', 'flow-edge-editable': editable, 'flow-edge-issue': issue }"
     data-test="designer-canvas-edge"
     :data-edge-id="id"
     :data-edge-class="edgeClass ?? ''"
   >
+    <path v-if="editable" class="flow-edge-hit" :d="path" />
     <path class="flow-edge-path" :d="path" data-test="designer-canvas-edge-path" />
     <path class="flow-edge-arrow" :d="arrow" data-test="designer-canvas-edge-arrow" />
   </g>
@@ -30,8 +33,10 @@ const props = withDefaults(
     sourcePosition?: Position
     targetPosition?: Position
     edgeClass?: string | null
+    editable?: boolean
+    issue?: boolean
   }>(),
-  { sourcePosition: Position.Right, targetPosition: Position.Left, edgeClass: null },
+  { sourcePosition: Position.Right, targetPosition: Position.Left, edgeClass: null, editable: false, issue: false },
 )
 
 const ARROW_LENGTH = 9
@@ -86,6 +91,21 @@ const arrow = computed(() => {
 .flow-edge-reference .flow-edge-path {
   stroke-dasharray: 5 4;
   stroke-width: 1.2;
+}
+
+.flow-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 12;
+  cursor: pointer;
+}
+
+.flow-edge-issue .flow-edge-path {
+  stroke: #ff9d51;
+}
+
+.flow-edge-issue .flow-edge-arrow {
+  fill: #ff9d51;
 }
 
 .flow-edge:hover .flow-edge-path {

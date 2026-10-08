@@ -19,6 +19,14 @@
 // the Flow waiting or running. A read that comes back while a save of the Flow is waiting or
 // running, or after a Node of the Flow was moved here since the read went out, may predate those
 // moves: it does not replace a shown Graph, and the Flow is read again once its saves settle.
+//
+// flowgate.v02.0045 S3+S4: a shown Graph that is an editable draft is edited through the draft
+// controller (edit/draftController.ts) — Palette drop, connect, remove, undo, validate, confirm.
+// Draft saves count as saves of the Flow for the re-read rule above. A node created here keeps a
+// `tmp_` key until its draft save answers the stored key; only then is its position saved — also
+// when the tab was closed (or the project changed) while that save ran: the controller keeps the
+// position shown at close and it is saved for the project the save belongs to. A tab of the Flow
+// opened again meanwhile reads the Flow once the save and the position save settled.
 import { computed, markRaw, reactive, readonly, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
 import { createCanvasViewState, sameViewport, type CanvasViewState, type CanvasViewport } from './canvasView'
@@ -31,6 +39,9 @@ import {
   type FlowTab,
   type FlowTabsState,
 } from './flowTabs'
+import type { ConnectionCheck } from './edit/connectionRules'
+import { createDraftController, type DraftEditState } from './edit/draftController'
+import { CLIENT_KEY_PREFIX, type CanvasNodeSpec } from './edit/draftModel'
 import { fixtureFlowGraphSource } from './graph/fixtureFlowGraphSource'
 import type { FlowGraph, FlowGraphNode } from './graph/flowGraph'
 import type { FlowGraphSource, FlowLayoutChange } from './graph/flowGraphSource'
@@ -57,6 +68,8 @@ export interface DesignerCenterState {
   graphs: Record<string, FlowGraphLoad>
   /** Keyed by Flow id, one entry per open tab. */
   views: Record<string, CanvasViewState>
+  /** flowgate.v02.0045 S3: draft editing state per open Flow with an editable / existing draft. */
+  edits: Record<string, DraftEditState>
 }
 
 export interface DesignerCenterSession {
@@ -95,6 +108,25 @@ export interface DesignerCenterSession {
   moveNode(flowId: string, nodeId: string, x: number, y: number): void
   /** flowgate.v02.0045: the Shell is going away — send pending saves and stop change reports. */
   dispose(): void
+
+  // flowgate.v02.0045 S3+S4 — Graph draft editing (edit/draftController.ts).
+  readonly activeEdit: ComputedRef<DeepReadonly<DraftEditState> | null>
+  /** Something was dropped on the Canvas at Graph coordinates (x, y): a Palette card adds a node. */
+  dropOnCanvas(flowId: string, transfer: Pick<DataTransfer, 'getData'>, x: number, y: number): boolean
+  /** Whether the draft would take an edge source -> target (pre-check, the server decides). */
+  checkConnection(flowId: string, source: string, target: string): ConnectionCheck
+  connectNodes(flowId: string, source: string, target: string): boolean
+  removeNode(flowId: string, nodeId: string): boolean
+  removeEdge(flowId: string, edgeId: string): boolean
+  undoEdit(flowId: string): boolean
+  validateDraft(flowId: string): Promise<void>
+  confirmDraft(flowId: string): Promise<void>
+  /** A Graph Flow showing its revision: start a draft from it. */
+  startDraft(flowId: string): Promise<void>
+  /** A Graph Flow: show its draft or its latest revision. */
+  showGraphView(flowId: string, view: 'draft' | 'revision'): void
+  /** Read the Flow again, dropping local draft edits a refused save left. */
+  reloadDraft(flowId: string): void
 }
 
 export interface DesignerCenterSessionOptions {
@@ -102,6 +134,10 @@ export interface DesignerCenterSessionOptions {
   source?: FlowGraphSource
   /** Quiet time before a batched layout save is sent (layoutSaveQueue.ts default when omitted). */
   layoutSaveDelayMs?: number
+  /** Quiet time before a draft save is sent (edit/draftEditor.ts default when omitted). */
+  draftSaveDelayMs?: number
+  /** Which node a Canvas drop means (the Shell reads Palette drags); absent = drops are ignored. */
+  readDrop?: (transfer: Pick<DataTransfer, 'getData'>) => CanvasNodeSpec | null
 }
 
 export function createDesignerCenterSession(options: DesignerCenterSessionOptions = {}): DesignerCenterSession {
@@ -113,6 +149,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     activeFlowId: null,
     graphs: {},
     views: {},
+    edits: {},
   })
 
   // Latest read token per Flow id; a result whose token is no longer the latest is dropped.
@@ -126,7 +163,10 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   const staleFlows = new Set<string>()
   // Node moves per Flow; a read compares it to tell whether a move happened meanwhile.
   const moveCounts = new Map<string, number>()
+  // flowgate.v02.0045 S3: the Graph definition a Graph Flow shows ('draft' | 'revision'), if chosen.
+  const graphViews = new Map<string, string>()
   let stopWatching: (() => void) | null = null
+  let disposed = false
 
   const isOpen = (projectId: string, flowId: string) =>
     state.projectId === projectId && findFlowTab(tabsState(), flowId) !== null
@@ -156,17 +196,67 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       (flowId, change) => sendLayout(projectId, flowId, change),
       options.layoutSaveDelayMs,
       (flowId) => {
-        if (projectId !== null && staleFlows.delete(flowId) && isOpen(projectId, flowId)) readGraph(flowId, true)
+        if (projectId !== null && !drafts.busy(flowId) && staleFlows.delete(flowId) && isOpen(projectId, flowId)) {
+          readGraph(flowId, true)
+        }
       },
     )
   }
 
   let layoutQueue = createQueue(null)
 
+  const savesBusy = (flowId: string) => layoutQueue.busy(flowId) || drafts.busy(flowId)
+
   function readWhenSaved(flowId: string) {
-    if (layoutQueue.busy(flowId)) staleFlows.add(flowId)
+    if (savesBusy(flowId)) staleFlows.add(flowId)
     else readGraph(flowId, true)
   }
+
+  function readyGraph(flowId: string): FlowGraph | null {
+    const load = state.graphs[flowId]
+    return load?.status === 'ready' ? load.graph : null
+  }
+
+  const drafts = createDraftController({
+    source,
+    projectId: () => state.projectId,
+    graph: readyGraph,
+    setGraph: (flowId, graph) => {
+      if (state.graphs[flowId]) state.graphs[flowId] = { status: 'ready', graph: markRaw(graph) }
+    },
+    renameSelection: (flowId, keyMap) => {
+      const view = state.views[flowId]
+      if (view?.selectedNodeId && keyMap[view.selectedNodeId]) view.selectedNodeId = keyMap[view.selectedNodeId]
+    },
+    queuePosition: (flowId, nodeId, x, y) => {
+      if (source.saveLayout) layoutQueue.queuePosition(flowId, nodeId, x, y)
+    },
+    keepPositions: (projectId, flowId, positions) => {
+      if (!source.saveLayout) return
+      if (projectId !== state.projectId) {
+        sendLayout(projectId, flowId, { positions: [...positions], viewport: null })
+        return
+      }
+      for (const p of positions) layoutQueue.queuePosition(flowId, p.nodeId, p.x, p.y)
+      layoutQueue.flush(flowId)
+      // The Flow opened again meanwhile may show the node without this position.
+      if (!disposed && isOpen(projectId, flowId)) readWhenSaved(flowId)
+    },
+    reread: (flowId) => {
+      if (state.projectId !== null && isOpen(state.projectId, flowId)) readWhenSaved(flowId)
+    },
+    settled: (flowId) => {
+      if (state.projectId !== null && !savesBusy(flowId) && staleFlows.delete(flowId) && isOpen(state.projectId, flowId)) {
+        readGraph(flowId, true)
+      }
+    },
+    setView: (flowId, view) => {
+      if (view === null) graphViews.delete(flowId)
+      else graphViews.set(flowId, view)
+    },
+    readDrop: options.readDrop,
+    delayMs: options.draftSaveDelayMs,
+  }, state.edits)
 
   function changedElsewhere(projectId: string, flowId: string) {
     if (isOpen(projectId, flowId)) readWhenSaved(flowId)
@@ -205,7 +295,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
     let request: Promise<FlowGraph>
     try {
-      request = source.loadGraph(projectId, flowId)
+      const view = graphViews.get(flowId)
+      request = view ? source.loadGraph(projectId, flowId, view) : source.loadGraph(projectId, flowId)
     } catch (error) {
       request = Promise.reject(error)
     }
@@ -216,12 +307,13 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
         // flowgate.v02.0045: the read may predate a move made here or a save still waiting or
         // running — keep the shown Graph (with its local moves) and read again once the saves
         // settle. A Graph still loading (a reopened tab) shows this one meanwhile.
-        const outdated = layoutQueue.busy(flowId) || (moveCounts.get(flowId) ?? 0) !== movesAtStart
+        const outdated = savesBusy(flowId) || (moveCounts.get(flowId) ?? 0) !== movesAtStart
         if (outdated && state.graphs[flowId]?.status === 'ready') {
           readWhenSaved(flowId)
           return
         }
         state.graphs[flowId] = { status: 'ready', graph: markRaw(graph) }
+        drafts.graphLoaded(flowId, graph)
         // A retried Graph keeps the selection only when the selected Node still exists.
         const view = state.views[flowId]
         // flowgate.v02.0045: the user's saved Viewport, unless this tab already has one.
@@ -245,9 +337,11 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   function setProject(projectId: string | null) {
     if (projectId === state.projectId) return
     layoutQueue.flushAll()
+    drafts.closeAll()
     layoutQueue = createQueue(projectId)
     pendingReads.clear()
     moveCounts.clear()
+    graphViews.clear()
     state.projectId = projectId
     watchProject(projectId)
     applyTabs(EMPTY_FLOW_TABS)
@@ -271,9 +365,11 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   function closeFlow(flowId: string) {
     if (!findFlowTab(tabsState(), flowId)) return
     layoutQueue.flush(flowId)
+    drafts.close(flowId)
     applyTabs(closeFlowTab(tabsState(), flowId))
     pendingReads.delete(flowId)
     moveCounts.delete(flowId)
+    graphViews.delete(flowId)
     delete state.graphs[flowId]
     delete state.views[flowId]
   }
@@ -310,10 +406,13 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     )
     state.graphs[flowId] = { status: 'ready', graph: markRaw({ ...load.graph, nodes }) }
     moveCounts.set(flowId, (moveCounts.get(flowId) ?? 0) + 1)
-    if (source.saveLayout) layoutQueue.queuePosition(flowId, nodeId, x, y)
+    // A node created here is stored with its position once its draft save answers its key.
+    if (source.saveLayout && !nodeId.startsWith(CLIENT_KEY_PREFIX)) layoutQueue.queuePosition(flowId, nodeId, x, y)
   }
 
   function dispose() {
+    disposed = true
+    drafts.closeAll()
     layoutQueue.flushAll()
     stopWatching?.()
     stopWatching = null
@@ -358,6 +457,21 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     commitViewport,
     moveNode,
     dispose,
+    activeEdit: computed(() => {
+      const id = exposed.activeFlowId
+      return id === null ? null : exposed.edits[id] ?? null
+    }),
+    dropOnCanvas: drafts.drop,
+    checkConnection: drafts.check,
+    connectNodes: drafts.connect,
+    removeNode: drafts.removeNode,
+    removeEdge: drafts.removeEdge,
+    undoEdit: drafts.undo,
+    validateDraft: drafts.validate,
+    confirmDraft: drafts.confirm,
+    startDraft: drafts.startDraft,
+    showGraphView: drafts.showView,
+    reloadDraft: drafts.reload,
   }
 }
 

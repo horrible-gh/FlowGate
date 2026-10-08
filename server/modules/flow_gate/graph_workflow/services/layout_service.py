@@ -13,21 +13,15 @@ from modules.flow_gate.graph_workflow.store import layout_store
 
 from .canvas_events import publish_canvas_changed
 from .canvas_service import current_node_keys
-from .errors import GraphApiError
 from .flow_guard import with_flow_guard
+from .graph_service import require_writable
 from .identity_keeper import ensure_identity
-
-
-def _disposed(flow_id: str) -> bool:
-    from modules.flow_gate.process_service import is_group_disposed   # v0.1 single source of truth
-    return is_group_disposed(flow_id)
 
 
 def save_layout(group: dict, user_id: str, req: LayoutRequest, client_id: Optional[str]) -> dict:
     flow_id = group["group_id"]
     project_id = group.get("project_id")
-    if _disposed(flow_id):
-        raise GraphApiError(409, "flow_disposed", {"flow_id": flow_id})
+    require_writable(flow_id)
     # Bring the node identities up to date first (a v0.1 edit since the last Canvas read).
     ensure_identity(flow_id, project_id, user_id, client_id)
 

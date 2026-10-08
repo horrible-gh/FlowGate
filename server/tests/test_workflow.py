@@ -1093,6 +1093,9 @@ class TestWorkflowDecideTransition:
             routes_mod, "decide_workflow",
             lambda **kw: {"status": "decided", "doc_id": kw["doc_id"], "sequence_count": 1, "head": None},
         )
+        # flowgate.v02.0045 S4: the route asks the Graph engine router first; this fake store
+        # serves documents / groups only, so the contact is the unassigned-Flow pass-through.
+        monkeypatch.setattr(routes_mod._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
 
         from unittest.mock import MagicMock
         fake_request = MagicMock()
@@ -1134,6 +1137,8 @@ class TestWorkflowDecideTransition:
             routes_mod, "decide_workflow",
             lambda **kw: {"status": "decided", "doc_id": kw["doc_id"], "sequence_count": 1, "head": None},
         )
+        # flowgate.v02.0045 S4: unassigned-Flow pass-through of the Graph contact (see above).
+        monkeypatch.setattr(routes_mod._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
 
         from unittest.mock import MagicMock
         response = routes_mod.post_workflow_decide(

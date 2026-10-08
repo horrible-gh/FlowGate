@@ -68,6 +68,9 @@ def sequence_world(monkeypatch):
         lambda request: {"_is_user_jwt": True, "issued_to": "usr_test", "is_admin": True},
     )
     monkeypatch.setattr(workflow_decision_routes, "_active_ai_run_response_for_user", lambda d, a: None)
+    # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+    # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
+    monkeypatch.setattr(workflow_decision_routes._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
     monkeypatch.setattr(wf_svc.db_documents, "get_by_id", lambda doc_id: dict(owner) if doc_id == ROOT else None)
     monkeypatch.setattr(wf_svc.db_documents, "update", lambda doc_id, values: None)
     monkeypatch.setattr(wf_svc.db_documents, "list_documents", lambda **kwargs: [])

@@ -139,6 +139,7 @@ import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSour
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
 import DesignerOpenDialog from '../fileMenu/DesignerOpenDialog.vue'
+import { paletteNodeSpec, readPaletteDragData } from '../palette/paletteCatalog'
 import {
   buildExplorerProject,
   projectNodeId,
@@ -183,7 +184,16 @@ const projectId = computed<string | null>(() => projectStore.currentProjectId)
 
 // flowgate.v02.0045 S1: real Flow Graphs through the project store's Canvas loaders (the sample
 // source stays the session default for tests and previews only).
-const center = createDesignerCenterSession({ source: createServerFlowGraphSource(projectStore) })
+// flowgate.v02.0045 S3 (D0004 §2.3 "Palette 연결"): a Palette card dropped on the Canvas becomes a
+// node of the Flow's Graph draft. The Shell is the only part that knows both: it tells the Center
+// session which node a drop means, so the Palette and the Canvas never know each other.
+const center = createDesignerCenterSession({
+  source: createServerFlowGraphSource(projectStore),
+  readDrop: (transfer) => {
+    const definition = readPaletteDragData(transfer)
+    return definition ? paletteNodeSpec(definition) : null
+  },
+})
 
 // The Project Explorer's Flow id is the v0.1 group id, which is exactly FlowRef.groupId of
 // the File Explorer — no lookup or conversion needed.

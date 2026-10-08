@@ -521,8 +521,10 @@ api.interceptors.response.use(
   },
 )
 
-export const postRequest = async <T>(path: string, data: unknown): Promise<AxiosResponse<T>> =>
-  api.post<T>(path, data)
+// `config` (optional, flowgate.v02.0045 S3): per-request extras such as the Canvas tab id header.
+// Without it the call is exactly the previous one.
+export const postRequest = async <T>(path: string, data: unknown, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
+  config ? api.post<T>(path, data, config) : api.post<T>(path, data)
 
 // 0282 NR0003 finding 3: the screen-load SQL log showed the client running the
 // same GET series twice (racing mounts / duplicated event listeners), roughly

@@ -423,6 +423,9 @@ def test_advance_route_maps_the_refusal_to_409_with_a_stable_code(monkeypatch):
         wdr._db_documents, "get_by_id",
         lambda _id: {"group_id": GROUP, "project_id": "flowgate"},
     )
+    # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+    # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
+    monkeypatch.setattr(wdr._graph_contact, "progress_refusal", lambda doc: None)
     monkeypatch.setattr(wdr._process_service, "is_group_disposed", lambda _g: False)
 
     def _raise(**_kwargs):

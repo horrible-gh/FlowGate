@@ -13,19 +13,24 @@ import type {
   FlowCanvasDocument,
   FlowCanvasEdge,
   FlowCanvasExternalRelation,
+  FlowCanvasGraphBlock,
+  FlowCanvasGraphNode,
   FlowCanvasLayoutInput,
   FlowCanvasLayoutResult,
   FlowCanvasNode,
+  FlowCanvasOwnership,
   FlowCanvasSlot,
+  FlowCanvasView,
   FlowCanvasViewport,
+  FlowGraphAssignee,
 } from './types'
 
-type Raw = Record<string, any>
+export type Raw = Record<string, any>
 
-const str = (value: unknown): string | null => (typeof value === 'string' ? value : null)
-const num = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+export const str = (value: unknown): string | null => (typeof value === 'string' ? value : null)
+export const num = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
 
-function toViewport(raw: Raw | null | undefined): FlowCanvasViewport | null {
+export function toViewport(raw: Raw | null | undefined): FlowCanvasViewport | null {
   if (!raw || typeof raw !== 'object') return null
   const x = num(raw.x)
   const y = num(raw.y)
@@ -60,6 +65,48 @@ function toSlot(raw: Raw | null | undefined): FlowCanvasSlot | null {
   }
 }
 
+export function toAssignee(raw: Raw | null | undefined): FlowGraphAssignee | null {
+  if (!raw || typeof raw.kind !== 'string') return null
+  return { kind: raw.kind, userId: str(raw.user_id), providerId: str(raw.provider_id) }
+}
+
+function toGraphNode(raw: Raw | null | undefined): FlowCanvasGraphNode | null {
+  if (!raw || typeof raw !== 'object') return null
+  return {
+    nodeType: String(raw.node_type ?? 'document'),
+    label: str(raw.label) ?? '',
+    paletteItemId: str(raw.palette_item_id),
+    assignee: toAssignee(raw.assignee),
+    rootBound: raw.root_bound === true,
+  }
+}
+
+function toView(raw: Raw | null | undefined): FlowCanvasView | null {
+  if (!raw || typeof raw.mode !== 'string') return null
+  return { mode: raw.mode, revisionNo: num(raw.revision_no), draftVersion: num(raw.draft_version) }
+}
+
+function toGraphBlock(raw: Raw | null | undefined): FlowCanvasGraphBlock {
+  const draft = raw?.draft
+  const binding = raw?.root_binding
+  return {
+    draft: draft && typeof draft === 'object' && num(draft.draft_version) !== null
+      ? {
+          draftVersion: num(draft.draft_version)!,
+          baseRevisionNo: num(draft.base_revision_no),
+          updatedAt: str(draft.updated_at),
+          updatedBy: str(draft.updated_by),
+          confirmable: draft.confirmable === true,
+          blockedReason: str(draft.blocked_reason),
+        }
+      : null,
+    latestRevisionNo: num(raw?.latest_revision_no),
+    rootBinding: binding && typeof binding.node_key === 'string'
+      ? { nodeKey: binding.node_key, docId: str(binding.doc_id), boundAtRevisionNo: num(binding.bound_at_revision_no) }
+      : null,
+  }
+}
+
 function toNode(raw: Raw): FlowCanvasNode {
   const position = raw.position ?? {}
   return {
@@ -74,6 +121,7 @@ function toNode(raw: Raw): FlowCanvasNode {
     editable: { move: raw.editable?.move === true, structure: raw.editable?.structure === true },
     document: toDocument(raw.document),
     slot: toSlot(raw.slot),
+    graphNode: toGraphNode(raw.graph_node),
   }
 }
 
@@ -99,6 +147,15 @@ function toExternal(raw: Raw): FlowCanvasExternalRelation {
   }
 }
 
+export function toOwnership(raw: Raw | null | undefined): FlowCanvasOwnership {
+  return {
+    state: String(raw?.state ?? 'unassigned'),
+    sequenceRootDocId: str(raw?.sequence_root_doc_id),
+    graphRevisionNo: num(raw?.graph_revision_no),
+    assignedAt: str(raw?.assigned_at),
+  }
+}
+
 export function toFlowCanvas(raw: Raw): FlowCanvas {
   const ownership = raw.ownership ?? {}
   const identity = raw.identity ?? {}
@@ -106,12 +163,7 @@ export function toFlowCanvas(raw: Raw): FlowCanvas {
   return {
     flowId: String(raw.flow_id),
     projectId: str(raw.project_id),
-    ownership: {
-      state: String(ownership.state ?? 'unassigned'),
-      sequenceRootDocId: str(ownership.sequence_root_doc_id),
-      graphRevisionNo: num(ownership.graph_revision_no),
-      assignedAt: str(ownership.assigned_at),
-    },
+    ownership: toOwnership(ownership),
     projection: String(raw.projection ?? ''),
     nodes: Array.isArray(raw.nodes) ? raw.nodes.map(toNode) : [],
     edges: Array.isArray(raw.edges) ? raw.edges.map(toEdge) : [],
@@ -127,11 +179,13 @@ export function toFlowCanvas(raw: Raw): FlowCanvas {
       ignoredKeys: Array.isArray(collapsed.ignored_keys) ? collapsed.ignored_keys.map(String) : [],
       hiddenCounts: collapsed.hidden_counts && typeof collapsed.hidden_counts === 'object' ? { ...collapsed.hidden_counts } : {},
     },
+    view: toView(raw.view),
+    graph: toGraphBlock(raw.graph),
   }
 }
 
 // Same shape as api.ts: a displayable message, with the transport error kept as `cause`.
-function wrapError(error: unknown, fallback: string): Error {
+export function wrapError(error: unknown, fallback: string): Error {
   const wrapped = new Error(extractApiErrorMessage(error, fallback)) as Error & { cause?: unknown }
   wrapped.cause = error
   return wrapped
@@ -148,12 +202,15 @@ function newCanvasClientId(): string {
 
 /** This tab's `x-canvas-client-id` (P0008 §1.1: 1~64 of [A-Za-z0-9_-], kept while the tab lives). */
 export const CANVAS_CLIENT_ID = newCanvasClientId()
-const canvasHeaders = () => ({ headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
+export const canvasHeaders = () => ({ headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
 
-/** GET /api/v1/flows/{flowId}/canvas — the Flow's Canvas graph (S1 + S2 positions / viewport). */
-export async function fetchFlowCanvas(flowId: string): Promise<FlowCanvas> {
+/**
+ * GET /api/v1/flows/{flowId}/canvas — the Flow's Canvas graph. `view` (`draft` | `revision`)
+ * picks the Graph definition of a Graph Flow; omitted, the server picks (P0008 §3).
+ */
+export async function fetchFlowCanvas(flowId: string, view?: string): Promise<FlowCanvas> {
   try {
-    const response = await getRequest<Raw>(canvasPath(flowId), {}, canvasHeaders())
+    const response = await getRequest<Raw>(canvasPath(flowId), view ? { view } : {}, canvasHeaders())
     return toFlowCanvas(response.data ?? {})
   } catch (error) {
     throw wrapError(error, 'Failed to load the flow canvas.')

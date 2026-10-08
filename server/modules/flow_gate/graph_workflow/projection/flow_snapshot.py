@@ -7,6 +7,8 @@ from typing import Iterable, Optional
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import workflow_sequences as db_sequences
+from modules.flow_gate.db.connection import get_store
+from modules.flow_gate.graph_workflow.domain.canvas_mapping import is_alive
 
 
 @dataclass
@@ -52,3 +54,17 @@ def lookup_documents(doc_ids: Iterable[str]) -> dict[str, dict]:
     """Documents outside the snapshot (other Flows), for external relations and slot results."""
     ids = [d for d in dict.fromkeys(doc_ids) if d]
     return db_documents.get_documents_by_ids(ids) if ids else {}
+
+
+def registered_doc_types(project_id: Optional[str]) -> set[str]:
+    """Document type codes registered for the project (system rows + the project's own rows)."""
+    rows = get_store()._fetch_all(
+        "SELECT DISTINCT type_code FROM document_types WHERE project_id IS NULL OR project_id = ?",
+        [project_id or ""],
+    )
+    return {str(r["type_code"]).upper() for r in rows or [] if r.get("type_code")}
+
+
+def alive_documents(snapshot: FlowSnapshot) -> list[dict]:
+    """The Flow's live documents (P0008 §2.4)."""
+    return [d for d in snapshot.documents if is_alive(d, snapshot.flow_id)]

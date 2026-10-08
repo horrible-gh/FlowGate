@@ -49,6 +49,8 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       // flowgate.v02.0037 — right Tool Panel: the Palette part and the public surfaces of the
       // Conversation and Git parts.
       /^\.\.\/palette\/PalettePanel\.vue$/,
+      // flowgate.v02.0045 S3 — the Shell reads a Palette drag dropped on the Canvas (D0004 §2.3).
+      /^\.\.\/palette\/paletteCatalog$/,
       /^@\/features\/conversation$/,
       /^@\/features\/git$/,
       // flowgate.v02.0038 — top band: the Header / Menu Bar / Toolbar parts and their model.
@@ -70,7 +72,9 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
         expect(spec, name).not.toMatch(/projectExplorer\/(?!ProjectExplorer\.vue$|projectExplorerTree$)/)
         expect(spec, name).not.toMatch(/fileExplorer\/(?!DesignerFileExplorer\.vue$)/)
         expect(spec, name).not.toMatch(/designer\/shared\//)
-        expect(spec, name).not.toMatch(/palette\/(?!PalettePanel\.vue$)|features\/(conversation|git)\//)
+        // flowgate.v02.0045 S3: the Palette catalog's drag reader is the one Palette module the
+        // Shell may use besides the panel (the Palette -> Canvas drop bridge, D0004 §2.3).
+        expect(spec, name).not.toMatch(/palette\/(?!PalettePanel\.vue$|paletteCatalog$)|features\/(conversation|git)\//)
         expect(spec, name).not.toMatch(/^\.\.\/index$|^\.\.$|@\/features\/designer/)
       }
     }
