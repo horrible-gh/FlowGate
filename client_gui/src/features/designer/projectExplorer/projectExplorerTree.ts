@@ -29,6 +29,8 @@ export interface ExplorerGroup {
   id: string
   projectId: string
   name: string
+  /** v0.1 module key (the server's `label`), the value a Flow create sends as `module`. */
+  moduleName: string
   flows: ExplorerFlow[]
 }
 
@@ -56,6 +58,18 @@ export interface ProjectExplorerFlowEvent extends ProjectExplorerGroupEvent {
 
 /** The one row the user last clicked. Selection is not activation (D0002 §10). */
 export type ExplorerSelection = { kind: 'project' | 'group' | 'flow'; id: string } | null
+
+/**
+ * flowgate.v02.0043 — what the Designer asks the Project Explorer to show after a File menu
+ * action: the selection to set (or clear) and the rows to open / close, by id. `seq` makes
+ * every request distinct, so the same request made twice is applied twice.
+ */
+export interface ExplorerStateRequest {
+  seq: number
+  select: ExplorerSelection
+  expand?: readonly string[]
+  collapse?: readonly string[]
+}
 
 /** Display tree after the search filter, plus the ids a search needs revealed. */
 export interface FilteredExplorerTree {
@@ -116,6 +130,7 @@ export function buildExplorerProject(
       id: moduleNode.id,
       projectId: id,
       name: moduleNode.title || moduleNode.label,
+      moduleName: moduleNode.label,
       flows: [],
     }
     // Depth-first over non-document descendants so nested groups stay in reading order.

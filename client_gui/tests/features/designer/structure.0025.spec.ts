@@ -52,6 +52,8 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       // flowgate.v02.0038 — top band: the Header / Menu Bar / Toolbar parts and their model.
       /^\.\.\/top\/Designer(Header|MenuBar|Toolbar)\.vue$/,
       /^\.\.\/top\/designerTop$/,
+      // flowgate.v02.0043 — File menu dialogs (Group / Flow 열기, 새 Group / Flow).
+      /^\.\.\/fileMenu\/Designer[A-Za-z]+Dialog\.vue$/,
     ]
     for (const name of SHELL_FILES) {
       for (const spec of importsOf(read(join(SHELL, name)))) {
@@ -94,7 +96,9 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
     expect(read(file).match(/^ {2}designer:\s*\{/gm)).toHaveLength(1)
     const messages = (await import(`@/app/i18n/${locale}.ts`)).default as Record<string, Record<string, unknown>>
     // flowgate.v02.0030 added the Palette block, flowgate.v02.0036 the Inspector block,
-    // flowgate.v02.0038 the top band block.
-    expect(Object.keys(messages.designer).sort()).toEqual(['center', 'file_explorer', 'inspector', 'palette', 'project_explorer', 'shell', 'top'])
+    // flowgate.v02.0038 the top band block, flowgate.v02.0043 the File menu dialogs block.
+    expect(Object.keys(messages.designer).sort()).toEqual([
+      'center', 'file_explorer', 'file_menu', 'inspector', 'palette', 'project_explorer', 'shell', 'top',
+    ])
   })
 })

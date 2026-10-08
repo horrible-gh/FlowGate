@@ -472,8 +472,9 @@ describe('Korean Flow wording (T0006 §3)', () => {
 
   it('ko Designer / navigation strings use 플로우, never Flow / 플로 / 흐름', async () => {
     const ko = (await import('@/app/i18n/ko.ts')).default as Record<string, any>
-    // flowgate.v02.0038: the top band block keeps the confirmed design wording (see above).
-    const body = Object.fromEntries(Object.entries(ko.designer).filter(([key]) => key !== 'top'))
+    // flowgate.v02.0038: the top band block keeps the confirmed design wording (see above);
+    // flowgate.v02.0043: so do the File menu dialogs, which carry the menu items' own names.
+    const body = Object.fromEntries(Object.entries(ko.designer).filter(([key]) => key !== 'top' && key !== 'file_menu'))
     const texts = [...strings(body), ko.nav.designer.sub, ko.dashboard.cards.designer.desc]
     for (const text of texts) expect(text).not.toMatch(/Flow|흐름|플로(?!우)/)
     expect(ko.nav.designer.sub).toBe('그룹 · 플로우 설계')

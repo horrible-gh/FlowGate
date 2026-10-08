@@ -9,9 +9,15 @@ export { useProjectStore } from './store'
 // T0005) — type-only, so the runtime surface stays the store factory + ProjectDialog.
 // flowgate.v02.0033 adds the Base / review file diff and Git status row types the Designer
 // Git part reads through the same store loaders.
+// flowgate.v02.0043 adds the recent Project / Group / Flow entries and the Group / Flow create
+// models the Designer File menu uses through the store.
 export type {
   BaseFileDiff,
+  CreateFlowInput,
+  CreateGroupInput,
   CreateProjectInput,
+  CreatedFlow,
+  CreatedGroup,
   FetchGroupTreeOptions,
   FlowAiActivity,
   FlowChangeEntry,
@@ -32,5 +38,8 @@ export type {
   ProjectGitSlot,
   ProjectGitStatus,
   ProjectModule,
+  RecentFlow,
+  RecentGroup,
+  RecentProject,
 } from './types'
 export { default as ProjectDialog } from './ProjectDialog.vue'

@@ -10,7 +10,7 @@
       <div class="project-explorer-search-field">
         <Input
           v-model="query"
-          type="search"
+          type="text"
           :placeholder="t('gui.designer.project_explorer.search_placeholder')"
           :aria-label="t('gui.designer.project_explorer.search_placeholder')"
           :disabled="!projectId || toolsDisabled"
@@ -125,6 +125,7 @@ import {
   type ExplorerGroup,
   type ExplorerProject,
   type ExplorerSelection,
+  type ExplorerStateRequest,
   type ProjectExplorerFlowEvent,
   type ProjectExplorerGroupEvent,
 } from './projectExplorerTree'
@@ -144,6 +145,12 @@ const props = withDefaults(
      * Designer's initial state with no work target). Set by the Designer, not by this part.
      */
     toolsDisabled?: boolean
+    /**
+     * flowgate.v02.0043 — the Designer's File menu asks this part to select a row and open /
+     * close rows (Group / Flow 열기, Group 닫기). Applied once per request (`seq`); the
+     * selection it sets is reported upward like a click.
+     */
+    request?: ExplorerStateRequest | null
   }>(),
   {
     projectId: undefined,
@@ -151,6 +158,7 @@ const props = withDefaults(
     refreshToken: 0,
     includeTerminal: false,
     toolsDisabled: false,
+    request: null,
   },
 )
 
@@ -190,6 +198,8 @@ const isSearching = computed(() => query.value.trim().length > 0)
 // click / key on a row sets this, and a Project change clears it again.
 // flowgate.v02.0040: the one exception is the user's own "열기" in the Project Dialog — that
 // is an explicit choice, handed over once through the store (see the Project watch below).
+// flowgate.v02.0043: the Designer's File menu (Group / Flow 열기, 최근 항목, a new Group / Flow,
+// Group 닫기) sets it too, through the `request` prop — also the user's own choice.
 const selection = ref<ExplorerSelection>(null)
 
 // Reported upward so the Designer can tell "nothing chosen yet" from a chosen target
@@ -247,6 +257,39 @@ watch(query, () => {
   searchOverrides.value = {}
 })
 
+function withRows(rows: Record<string, boolean>, open: readonly string[], close: readonly string[]): Record<string, boolean> {
+  const next = { ...rows }
+  for (const id of open) next[id] = true
+  for (const id of close) next[id] = false
+  return next
+}
+
+// The rows above a selected row; it is only seen when all of them are open.
+function ancestorIdsOf(target: NonNullable<ExplorerSelection>): string[] {
+  const project = displayProject.value
+  if (!project || target.kind === 'project') return []
+  if (target.kind === 'group') return [project.id]
+  const group = project.groups.find((g) => g.flows.some((flow) => flow.id === target.id))
+  return group ? [project.id, group.id] : [project.id]
+}
+
+// Whether the active search still shows that row (a row not in the tree yet is not shown).
+function isShownUnderSearch(target: NonNullable<ExplorerSelection>): boolean {
+  const project = filtered.value.project
+  if (!project) return false
+  if (target.kind === 'project') return project.id === target.id
+  if (target.kind === 'group') return project.groups.some((group) => group.id === target.id)
+  return project.groups.some((group) => group.flows.some((flow) => flow.id === target.id))
+}
+
+// flowgate.v02.0043: an explicit open from the Designer's File menu (Project 열기 / 최근 Project of
+// the shown Project, Group / Flow 열기, 최근 Group / Flow, a new Group / Flow) must be seen in this
+// tree. A search that hides the opened row is cleared — the same reset a Project change makes —
+// and the tree returns to what it was before the search; a search that still shows the row stays.
+function clearSearchHiding(target: NonNullable<ExplorerSelection>) {
+  if (isSearching.value && !isShownUnderSearch(target)) query.value = ''
+}
+
 // ── Selection / activation (reported upward only) ────────────────────────────
 
 function onSelectProject(project: ExplorerProject) {
@@ -283,6 +326,11 @@ function onActivateFlow(flow: ExplorerFlow) {
 // refresh/retry/refreshToken force a fresh read.
 
 let requestSeq = 0
+
+// The Project whose tree this part has switched to (set by the Project watch below). The
+// explicit-open watch further down acts only for this Project, so a signal raised together
+// with a Project change is left for the Project watch, whichever of the two runs first.
+let shownProjectId: string | null = null
 
 function messageOf(err: unknown): string {
   return err instanceof Error && err.message ? err.message : t('gui.designer.project_explorer.load_failed')
@@ -326,6 +374,7 @@ watch(
   ([pid], prev) => {
     const projectChanged = !prev || prev[0] !== pid
     if (projectChanged) {
+      shownProjectId = pid
       requestSeq += 1
       nodes.value = []
       loaded.value = false
@@ -352,6 +401,41 @@ watch(
   () => props.refreshToken,
   (next, prev) => {
     if (next !== prev) refresh()
+  },
+)
+
+// flowgate.v02.0043: 열기 of the Project this part already shows (File › Project 열기… / 최근
+// Project from inside the Designer) changes no Project, so the Project watch above never
+// runs; the one-shot signal is taken here instead and selects the Project root the same way.
+// A signal for another Project is not touched: the Project watch takes it when it switches.
+// A search with no result hides the root row too, so such a search is cleared first.
+watch(
+  () => projectStore.explicitOpenProjectId,
+  (opened) => {
+    if (opened === null || opened !== shownProjectId || opened !== projectId.value) return
+    projectStore.takeExplicitOpen()
+    const root = { kind: 'project' as const, id: projectNodeId(opened) }
+    clearSearchHiding(root)
+    selection.value = root
+  },
+)
+
+// flowgate.v02.0043: the Designer's request — rows to open / close (expansion is this part's
+// own view state, so it is changed here by id) and the selection to set or clear. Applied as
+// given even before the rows are on screen: a tree read that is still in flight (a Group /
+// Flow created a moment ago) shows them selected / open when it lands. The selected row's
+// ancestors are opened with it, and a search hiding it is cleared (clearSearchHiding); when
+// the search stays, its per-query overrides of the requested rows are set the same way.
+watch(
+  () => props.request,
+  (request) => {
+    if (!request) return
+    const open = [...(request.expand ?? []), ...(request.select ? ancestorIdsOf(request.select) : [])]
+    const close = request.collapse ?? []
+    expanded.value = withRows(expanded.value, open, close)
+    if (request.select) clearSearchHiding(request.select)
+    if (isSearching.value) searchOverrides.value = withRows(searchOverrides.value, open, close)
+    selection.value = request.select
   },
 )
 

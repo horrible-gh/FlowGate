@@ -9,18 +9,22 @@
        left Dock. flowgate.v02.0038: the Top holds the real Header / Menu Bar / Toolbar.
        flowgate.v02.0039 T#3 / v02.0042: until a Flow is open the Designer shows its initial
        unselected state — every area keeps its frame, the work controls are unavailable and
-       nothing is unfolded. A plain selection in the Project Explorer does not change that. -->
+       nothing is unfolded. A plain selection in the Project Explorer does not change that.
+       flowgate.v02.0043: the File menu is connected — its dialogs (Group / Flow 열기, 새 Group /
+       Flow) are mounted here and act on the same Project context, Explorer and Center. -->
   <div class="designer-shell" data-test="designer-shell">
     <DesignerTop
       :run-mode="top.runMode"
       :density="top.density"
       :zoom="zoom"
       :window-state="windowState"
-      :has-work-target="hasWorkTarget"
+      :targets="menuTargets"
+      :recent="recent"
       @command="onTopCommand"
       @toggle-panel="onTogglePanel"
       @show-tab="onShowTab"
       @update:density="top.density = $event"
+      @open-recent="onOpenRecent"
     />
     <DesignerBody :left-width="leftColumnWidth(layout)" :right-width="rightColumnWidth(layout)">
       <DesignerLeftDock
@@ -29,10 +33,13 @@
         :mode="layout.activeLeftMode"
         :collapsed="layout.leftCollapsed"
         :unselected="!hasWorkTarget"
+        :explorer-request="explorerRequest"
+        :refresh-token="explorerRefreshToken"
         @update:mode="layout.activeLeftMode = $event"
         @collapse="layout.leftCollapsed = true"
         @expand="layout.leftCollapsed = false"
         @activate-flow="onActivateFlow"
+        @update:selection="explorerSelection = $event"
       />
       <DesignerCenterColumn :center="center" :bottom-height="layout.bottomHeight" :unselected="!hasWorkTarget" />
       <DesignerRightDock
@@ -44,6 +51,29 @@
         @update:tool="layout.activeRightTool = $event"
       />
     </DesignerBody>
+
+    <DesignerOpenDialog
+      :open="dialog === 'group-open'"
+      kind="group"
+      :project-id="projectId"
+      @close="dialog = null"
+      @open-group="onGroupChosen"
+    />
+    <DesignerOpenDialog
+      :open="dialog === 'flow-open'"
+      kind="flow"
+      :project-id="projectId"
+      @close="dialog = null"
+      @open-flow="onFlowChosen"
+    />
+    <DesignerGroupCreateDialog :open="dialog === 'group-new'" :project-id="projectId" @close="dialog = null" @created="onGroupCreated" />
+    <DesignerFlowCreateDialog
+      :open="dialog === 'flow-new'"
+      :project-id="projectId"
+      :group-id="flowCreateGroupId"
+      @close="dialog = null"
+      @created="onFlowCreated"
+    />
   </div>
 </template>
 
@@ -59,17 +89,15 @@
 // calls no API. It reads the current Project id once and hands the same value to both
 // Explorers and the right Tool Panel, so they always look at one Project.
 //
-// File Explorer intents (select / open / open-diff / context) and Project Explorer plain
-// selection are intentionally not handled yet — their targets (Viewer, Modeless Window) do
-// not exist (0003-D DEFERRED).
+// File Explorer intents (select / open / open-diff / context) are intentionally not handled
+// yet — their targets (Viewer, Modeless Window) do not exist (0003-D DEFERRED).
 //
 // flowgate.v02.0038 — the top band's state (top/designerTop.ts: run button state, layout
 // density) is owned here next to the layout. Of the top commands the Shell handles those whose
 // target already exists: the Window menu shows / hides the left and right Docks and moves to
 // their tabs through the same layout fields the Docks use, and the run buttons switch to
-// ■ 중지 and back. Everything else — Project / Group / Flow commands, edit, run execution,
-// Canvas zoom, search, Inspector / Minimap display, help, notifications, AI, settings, user —
-// is left to later Feature groups (0001-R §8).
+// ■ 중지 and back. Edit, run execution, Canvas zoom, search, Inspector / Minimap display,
+// help, notifications, AI, settings, user are left to later Feature groups (0001-R §8).
 //
 // flowgate.v02.0039 T#3 — work target. The Project context (the current Project id) is not a
 // selection (0039 0001-R §4), so entering the Designer leaves it without a work target: the
@@ -85,14 +113,48 @@
 // flowgate.v02.0040 — the Project Dialog's "열기" raises a one-shot explicit-open signal in the
 // store. The Project Explorer takes it on entry; whatever it did not take is dropped once this
 // Shell is mounted, so the signal never outlives the entry it was raised for.
-import { computed, onMounted, reactive, watch } from 'vue'
-import { useProjectStore } from '@/features/project'
+//
+// flowgate.v02.0043 — the File menu (0043 0001-R). Every item reaches the product function that
+// already exists, nothing is a separate behaviour of the menu:
+//   · 새 Project / Project 열기… / 최근 Project — the Project Dialog and its "열기" (0040): the store
+//     opens the Dialog (with the create child for 새 Project) or opens the recent Project the way
+//     "열기" does; the Explorer selects the opened Project through the same explicit-open signal.
+//   · Project 닫기 — the store clears the current Project; Explorers and Center follow (0042).
+//   · 새 Group / Group 열기… / 최근 Group — the Group is selected and opened (its Flow list unfolded)
+//     in the Project Explorer; a new Group is created through the store and the tree re-read.
+//   · Group 닫기 — the Group chosen in the Explorer is folded and the selection cleared. The
+//     Explorer selection is listened to for this alone; it still does not activate anything.
+//   · 새 Flow / Flow 열기… / 최근 Flow — the same opening as the Explorer's double click (select +
+//     open in the Center); a new Flow is created through the store and the tree re-read.
+//   · Flow 닫기 — closes the active Flow tab, as the tab's own close does.
+//   · Designer 닫기 — this Shell is router-free; it emits `close-designer` and the App Shell
+//     moves to the Dashboard.
+// Availability follows each command's precondition (designerTop.ts DesignerMenuTargets). Recent
+// Project / Group / Flow entries are recorded in the store when a Project is opened and when
+// this Shell opens a Group or Flow; the Group / Flow lists show the current Project's entries.
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useProjectStore, type CreatedGroup } from '@/features/project'
 import { createDesignerCenterSession } from '../center/designerCenterSession'
-import type { ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
+import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
+import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
+import DesignerOpenDialog from '../fileMenu/DesignerOpenDialog.vue'
+import {
+  buildExplorerProject,
+  projectNodeId,
+  type ExplorerFlow,
+  type ExplorerGroup,
+  type ExplorerSelection,
+  type ExplorerStateRequest,
+  type ProjectExplorerFlowEvent,
+} from '../projectExplorer/projectExplorerTree'
 import {
   createDesignerTopState,
+  isMenuCommandEnabled,
   nextRunMode,
   zoomPercent,
+  type DesignerMenuTargets,
+  type DesignerRecentLists,
+  type DesignerRecentRequest,
   type DesignerTopCommand,
   type DesignerWindowPanel,
   type DesignerWindowState,
@@ -104,6 +166,11 @@ import DesignerLeftDock from './DesignerLeftDock.vue'
 import DesignerRightDock from './DesignerRightDock.vue'
 import DesignerTop from './DesignerTop.vue'
 import { createDesignerLayout, leftColumnWidth, rightColumnWidth } from './designerLayout'
+
+const emit = defineEmits<{
+  /** File › Designer 닫기: the App Shell leaves the Designer (this Shell owns no router). */
+  'close-designer': []
+}>()
 
 const projectStore = useProjectStore()
 
@@ -125,11 +192,6 @@ const hasWorkTarget = computed(() => activeFlowRef.value !== null)
 watch(hasWorkTarget, (has) => {
   if (!has) top.runMode = null
 })
-
-// The session ignores an activation for another Project.
-function onActivateFlow(payload: ProjectExplorerFlowEvent) {
-  center.openFlow(payload)
-}
 
 // A Flow of the previous Project is never carried over: a new Project clears the Center.
 watch(
@@ -153,11 +215,6 @@ const windowState = computed<DesignerWindowState>(() => ({
   activeTabs: [layout.activeLeftMode, layout.activeRightTool],
 }))
 
-function onTopCommand(command: DesignerTopCommand) {
-  if (!hasWorkTarget.value) return
-  top.runMode = nextRunMode(top.runMode, command)
-}
-
 function onTogglePanel(panel: DesignerWindowPanel) {
   if (panel === 'left') layout.leftCollapsed = !layout.leftCollapsed
   else if (panel === 'right') layout.rightCollapsed = !layout.rightCollapsed
@@ -171,6 +228,186 @@ function onShowTab(tab: DesignerWindowTab) {
   } else {
     layout.rightCollapsed = false
     layout.activeRightTool = tab
+  }
+}
+
+// --- File menu (flowgate.v02.0043) ---------------------------------------------------------------
+
+type FileMenuDialog = 'group-open' | 'flow-open' | 'group-new' | 'flow-new' | null
+
+const dialog = ref<FileMenuDialog>(null)
+
+// The Project Explorer's current selection, kept for Group 닫기 (which Group to fold) and for the
+// default Group of 새 Flow. It is not a work target (0042): nothing here activates on it.
+const explorerSelection = ref<ExplorerSelection>(null)
+
+const menuTargets = computed<DesignerMenuTargets>(() => ({
+  project: projectId.value !== null,
+  group: explorerSelection.value?.kind === 'group',
+  flow: hasWorkTarget.value,
+}))
+
+// The recent lists the Menu Bar shows: every opened Project; the Groups / Flows of the current
+// Project only (a Flow of another Project could not be opened in this Center anyway).
+const recent = computed<DesignerRecentLists>(() => {
+  const pid = projectId.value
+  return {
+    project: projectStore.recentProjects.map(({ id, name }) => ({ id, name })),
+    group: pid ? projectStore.recentGroups.filter((g) => g.projectId === pid).map(({ id, name }) => ({ id, name })) : [],
+    flow: pid ? projectStore.recentFlows.filter((f) => f.projectId === pid).map(({ id, name }) => ({ id, name })) : [],
+  }
+})
+
+// What the Shell asks the Project Explorer to show; each request is applied once (seq).
+const explorerRequest = ref<ExplorerStateRequest | null>(null)
+let explorerRequestSeq = 0
+
+function requestExplorer(request: Omit<ExplorerStateRequest, 'seq'>) {
+  explorerRequest.value = { ...request, seq: ++explorerRequestSeq }
+  // The result is in the Project Explorer: bring that Explorer to the front of the left Dock.
+  layout.activeLeftMode = 'project'
+}
+
+// Bumped after a Group / Flow was created so the Explorer re-reads the tree it shows.
+const explorerRefreshToken = ref(0)
+
+// The display tree of the current Project as the Explorer derives it, from the store's cache
+// (the Explorer has read it by the time a Group / Flow can be opened). Null before that.
+function explorerProject(pid: string) {
+  const nodes = projectStore.getCachedGroupTree(pid)
+  return nodes ? buildExplorerProject(nodes, projectNodeId(pid)) : null
+}
+
+// The Group's display name for the recent list. `known` is the name the caller already holds
+// (the create dialog's Group select); otherwise the cached tree, and when that cache is empty
+// (a create has just invalidated it, or the tree is not read yet) the name recorded before,
+// so a recent entry is never overwritten with the raw `module:<project>:<key>` id.
+function groupNameOf(pid: string, groupId: string, known?: string): string {
+  if (known) return known
+  return (
+    explorerProject(pid)?.groups.find((group) => group.id === groupId)?.name ??
+    projectStore.recentGroups.find((group) => group.id === groupId && group.projectId === pid)?.name ??
+    groupId
+  )
+}
+
+// Default Group for 새 Flow: the Group chosen in the Explorer, else the active Flow's Group.
+const flowCreateGroupId = computed<string | null>(() => {
+  const pid = projectId.value
+  if (!pid) return null
+  const selected = explorerSelection.value
+  if (selected?.kind === 'group') return selected.id
+  const flowId = activeFlowRef.value?.groupId ?? null
+  if (flowId === null) return null
+  return explorerProject(pid)?.groups.find((group) => group.flows.some((flow) => flow.id === flowId))?.id ?? null
+})
+
+// Every way of opening a Flow ends here — the Explorer's double click / Enter (`reveal` false:
+// the Explorer already shows that selection), Flow 열기…, 최근 Flow and a new Flow (`groupName`:
+// the name the create dialog showed, since the tree cache is being re-read at that moment). The
+// Center session ignores an activation for another Project.
+function openFlow(payload: ProjectExplorerFlowEvent, reveal: boolean, groupName?: string) {
+  center.openFlow(payload)
+  projectStore.recordRecentFlow({ id: payload.flowId, name: payload.flowName, projectId: payload.projectId, groupId: payload.groupId })
+  projectStore.recordRecentGroup({ id: payload.groupId, name: groupNameOf(payload.projectId, payload.groupId, groupName), projectId: payload.projectId })
+  if (reveal) requestExplorer({ select: { kind: 'flow', id: payload.flowId }, expand: [payload.groupId] })
+}
+
+function onActivateFlow(payload: ProjectExplorerFlowEvent) {
+  openFlow(payload, false)
+}
+
+// Opening a Group: it is selected in the Project Explorer and its Flow list unfolded.
+function openGroup(group: { id: string; name: string }, pid: string) {
+  projectStore.recordRecentGroup({ id: group.id, name: group.name, projectId: pid })
+  requestExplorer({ select: { kind: 'group', id: group.id }, expand: [group.id] })
+}
+
+function onGroupChosen(group: ExplorerGroup) {
+  dialog.value = null
+  const pid = projectId.value
+  if (pid) openGroup(group, pid)
+}
+
+function onFlowChosen(flow: ExplorerFlow) {
+  dialog.value = null
+  const pid = projectId.value
+  if (pid) openFlow({ projectId: pid, groupId: flow.groupId, flowId: flow.id, flowName: flow.name }, true)
+}
+
+function onGroupCreated(created: CreatedGroup) {
+  dialog.value = null
+  const pid = projectId.value
+  if (!pid) return
+  explorerRefreshToken.value += 1
+  openGroup({ id: created.id, name: created.title }, pid)
+}
+
+function onFlowCreated(created: DesignerCreatedFlow) {
+  dialog.value = null
+  const pid = projectId.value
+  if (!pid) return
+  explorerRefreshToken.value += 1
+  openFlow({ projectId: pid, groupId: created.groupId, flowId: created.id, flowName: created.title }, true, created.groupName)
+}
+
+function onOpenRecent(request: DesignerRecentRequest) {
+  if (request.kind === 'project') {
+    const entry = projectStore.recentProjects.find((p) => p.id === request.id)
+    if (entry) projectStore.openRecentProject(entry)
+    return
+  }
+  const pid = projectId.value
+  if (!pid) return
+  if (request.kind === 'group') {
+    const entry = projectStore.recentGroups.find((g) => g.id === request.id && g.projectId === pid)
+    if (entry) openGroup(entry, pid)
+    return
+  }
+  const entry = projectStore.recentFlows.find((f) => f.id === request.id && f.projectId === pid)
+  if (entry) openFlow({ projectId: pid, groupId: entry.groupId, flowId: entry.id, flowName: entry.name }, true)
+}
+
+function onTopCommand(command: DesignerTopCommand) {
+  // The parts disable what has no target; this is the same rule for a command that still arrives.
+  if (!isMenuCommandEnabled(command, top.runMode, menuTargets.value)) return
+  switch (command) {
+    case 'project.new':
+      projectStore.openDialog({ create: true })
+      return
+    case 'project.open':
+      projectStore.openDialog()
+      return
+    case 'project.close':
+      projectStore.closeCurrentProject()
+      return
+    case 'group.new':
+      dialog.value = 'group-new'
+      return
+    case 'group.open':
+      dialog.value = 'group-open'
+      return
+    case 'group.close': {
+      const selected = explorerSelection.value
+      if (selected?.kind === 'group') requestExplorer({ select: null, collapse: [selected.id] })
+      return
+    }
+    case 'flow.new':
+      dialog.value = 'flow-new'
+      return
+    case 'flow.open':
+      dialog.value = 'flow-open'
+      return
+    case 'flow.close': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null) center.closeFlow(flowId)
+      return
+    }
+    case 'designer.close':
+      emit('close-designer')
+      return
+    default:
+      top.runMode = nextRunMode(top.runMode, command)
   }
 }
 </script>

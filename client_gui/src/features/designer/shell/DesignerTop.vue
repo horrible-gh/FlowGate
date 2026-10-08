@@ -2,16 +2,18 @@
   <!-- Final container for the Designer's top band. flowgate.v02.0038 (0007-T §5): stacks the
        real Header / Menu Bar / Toolbar parts and owns only their order and row heights. What
        each part shows comes from the Shell as props, and every part event passes straight up
-       to the Shell — this container handles none of them itself. flowgate.v02.0039 T#3: the
-       Shell's work-target flag goes to the Menu Bar (item availability) and the Toolbar
-       (dimmed and unavailable without a target). -->
+       to the Shell — this container handles none of them itself. flowgate.v02.0039 T#3 /
+       v02.0043: the Shell's menu targets go to the Menu Bar (item availability) and the open
+       Flow among them to the Toolbar (dimmed and unavailable without one); the recent Project /
+       Group / Flow lists go to the Menu Bar's recent submenus. -->
   <header class="designer-top" data-test="designer-top">
     <DesignerHeader @command="emit('command', $event)" @search="emit('search', $event)" />
     <DesignerMenuBar
       :run-mode="runMode"
       :density="density"
       :window-state="windowState"
-      :has-work-target="hasWorkTarget"
+      :targets="targets"
+      :recent="recent"
       @command="emit('command', $event)"
       @toggle-panel="emit('toggle-panel', $event)"
       @show-tab="emit('show-tab', $event)"
@@ -22,7 +24,7 @@
       :run-mode="runMode"
       :density="density"
       :zoom="zoom"
-      :disabled="!hasWorkTarget"
+      :disabled="!targets.flow"
       @command="emit('command', $event)"
       @update:density="emit('update:density', $event)"
     />
@@ -33,26 +35,34 @@
 import DesignerHeader from '../top/DesignerHeader.vue'
 import DesignerMenuBar from '../top/DesignerMenuBar.vue'
 import DesignerToolbar from '../top/DesignerToolbar.vue'
-import type {
-  DesignerDensity,
-  DesignerRecentRequest,
-  DesignerRunMode,
-  DesignerSearchRequest,
-  DesignerTopCommand,
-  DesignerWindowPanel,
-  DesignerWindowState,
-  DesignerWindowTab,
+import {
+  EMPTY_RECENT_LISTS,
+  type DesignerDensity,
+  type DesignerMenuTargets,
+  type DesignerRecentLists,
+  type DesignerRecentRequest,
+  type DesignerRunMode,
+  type DesignerSearchRequest,
+  type DesignerTopCommand,
+  type DesignerWindowPanel,
+  type DesignerWindowState,
+  type DesignerWindowTab,
 } from '../top/designerTop'
 
-defineProps<{
-  runMode: DesignerRunMode
-  density: DesignerDensity
-  /** Zoom of the active Flow's Canvas, in percent. */
-  zoom: number
-  windowState: DesignerWindowState
-  /** Something is chosen in the Project Explorer or a Flow is open (0039 T#3). */
-  hasWorkTarget: boolean
-}>()
+withDefaults(
+  defineProps<{
+    runMode: DesignerRunMode
+    density: DesignerDensity
+    /** Zoom of the active Flow's Canvas, in percent. */
+    zoom: number
+    windowState: DesignerWindowState
+    /** Project context / chosen Group / open Flow (0039 T#3, 0042, 0043). */
+    targets: DesignerMenuTargets
+    /** Recent Project / Group / Flow entries for the File menu (0043). */
+    recent?: DesignerRecentLists
+  }>(),
+  { recent: () => EMPTY_RECENT_LISTS },
+)
 
 const emit = defineEmits<{
   command: [command: DesignerTopCommand]

@@ -4,7 +4,9 @@
     <div class="gui-app-body">
       <Sidebar v-if="!route.meta.fullscreen" />
       <main class="gui-route-content">
-        <RouterView />
+        <RouterView v-slot="{ Component }">
+          <component :is="Component" @close-designer="closeDesigner" />
+        </RouterView>
       </main>
     </div>
   </div>
@@ -27,6 +29,10 @@
 // features/project is router-free, so the move happens here, at the one Dialog mount both
 // the Sidebar and the Dashboard open. If the move does not happen, the Dialog's one-shot
 // explicit-open signal is dropped so it cannot reach a later, unrelated Designer entry.
+//
+// flowgate.v02.0043: the Designer's File › Designer 닫기 leaves the Designer for the Dashboard.
+// The Designer Shell is router-free as well, so it emits `close-designer` and the move happens
+// here, on the routed screen.
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { ProjectDialog, useProjectStore } from '@/features/project'
 import Sidebar from './components/Sidebar.vue'
@@ -45,6 +51,10 @@ async function openDesigner(): Promise<void> {
     // Same as any other move that did not end on the Designer, handled below.
   }
   if (router.currentRoute.value.name !== 'designer') projectStore.takeExplicitOpen()
+}
+
+function closeDesigner(): void {
+  void router.push('/')
 }
 </script>
 
