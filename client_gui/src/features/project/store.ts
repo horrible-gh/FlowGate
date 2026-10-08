@@ -37,6 +37,9 @@ import type {
   FlowFileDiff,
   FlowFileTree,
   GroupTreeNode,
+  FlowCanvas,
+  FlowCanvasLayoutInput,
+  FlowCanvasLayoutResult,
   MergeReviewFileDiff,
   Project,
   ProjectGitStatus,
@@ -59,6 +62,8 @@ import {
   fetchProjectGroupTree as fetchProjectGroupTreeApi,
   suggestProjectSlug,
 } from './api'
+import { fetchFlowCanvas, saveFlowCanvasLayout as saveFlowCanvasLayoutApi } from './flowCanvasApi'
+import { subscribeFlowCanvasChanges as subscribeFlowCanvasChangesApi, type FlowCanvasChangeHandlers } from './flowCanvasEvents'
 import { clearStoredCurrentProjectId, writeStoredCurrentProjectId } from './currentProjectStorage'
 import {
   pushRecent,
@@ -384,6 +389,21 @@ export const useProjectStore = defineStore('project', () => {
     return fetchMergeReviewFileDiff(groupId, mergeId, path)
   }
 
+  // flowgate.v02.0045: the Designer Canvas Graph loader / saver (P0008 §3 / §4). Stateless like
+  // the loaders above: per-Flow staleness and save batching belong to the Center session.
+  function loadFlowCanvas(flowId: string): Promise<FlowCanvas> {
+    return fetchFlowCanvas(flowId)
+  }
+
+  function saveFlowCanvasLayout(flowId: string, input: FlowCanvasLayoutInput): Promise<FlowCanvasLayoutResult> {
+    return saveFlowCanvasLayoutApi(flowId, input)
+  }
+
+  // Other tabs' / devices' Canvas changes of one project (P0008 §8). Returns the unsubscribe.
+  function subscribeFlowCanvasChanges(projectId: string, handlers: FlowCanvasChangeHandlers): () => void {
+    return subscribeFlowCanvasChangesApi(projectId, handlers)
+  }
+
   // flowgate.v02.0043: set by openDialog({ create: true }) and read once by ProjectDialog when it
   // opens. Not persisted; a Dialog open without the option clears it.
   const createRequested = ref(false)
@@ -448,5 +468,8 @@ export const useProjectStore = defineStore('project', () => {
     loadFlowAiActivity,
     loadBaseFileDiff,
     loadMergeReviewFileDiff,
+    loadFlowCanvas,
+    saveFlowCanvasLayout,
+    subscribeFlowCanvasChanges,
   }
 })

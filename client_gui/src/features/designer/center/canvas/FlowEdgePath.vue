@@ -2,7 +2,15 @@
   <!-- flowgate.v02.0026 — FlowGate Edge (0003-D §6.3): a smooth curve ending in an arrow head
        at the target anchor, in the FlowGate line colour. Rendered inside Vue Flow's edge
        <svg>; it draws the arrow itself instead of using the library's marker / theme. -->
-  <g class="flow-edge" data-test="designer-canvas-edge" :data-edge-id="id">
+  <!-- flowgate.v02.0045: a reference Edge (document relation, no execution meaning) is drawn
+       dashed so it never reads as "runs next" (D0004 §3.2). -->
+  <g
+    class="flow-edge"
+    :class="{ 'flow-edge-reference': edgeClass === 'reference' }"
+    data-test="designer-canvas-edge"
+    :data-edge-id="id"
+    :data-edge-class="edgeClass ?? ''"
+  >
     <path class="flow-edge-path" :d="path" data-test="designer-canvas-edge-path" />
     <path class="flow-edge-arrow" :d="arrow" data-test="designer-canvas-edge-arrow" />
   </g>
@@ -21,8 +29,9 @@ const props = withDefaults(
     targetY: number
     sourcePosition?: Position
     targetPosition?: Position
+    edgeClass?: string | null
   }>(),
-  { sourcePosition: Position.Right, targetPosition: Position.Left },
+  { sourcePosition: Position.Right, targetPosition: Position.Left, edgeClass: null },
 )
 
 const ARROW_LENGTH = 9
@@ -72,6 +81,11 @@ const arrow = computed(() => {
 .flow-edge-arrow {
   fill: var(--fg2-line-strong);
   stroke: none;
+}
+
+.flow-edge-reference .flow-edge-path {
+  stroke-dasharray: 5 4;
+  stroke-width: 1.2;
 }
 
 .flow-edge:hover .flow-edge-path {

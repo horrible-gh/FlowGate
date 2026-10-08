@@ -2,8 +2,10 @@
 // pure file that knows Vue Flow's node / edge shape. Vue Flow objects are rebuilt from the
 // Graph whenever it is drawn and never written back; the Graph itself is never modified.
 //
-// Every element is read-only for the library (no drag / connect / select / focus / delete):
-// FlowGate owns the selection (Center session) and passes it in as `data.selected`.
+// Every element is read-only for the library (no connect / select / focus / delete): FlowGate
+// owns the selection (Center session) and passes it in as `data.selected`. flowgate.v02.0045:
+// a Node the Graph marks `movable` can be dragged; the drop is reported back to the session as
+// a move, Vue Flow's own position is never the source of truth.
 import type { Edge, Node } from '@vue-flow/core'
 import type { FlowGraph } from '../graph/flowGraph'
 
@@ -20,13 +22,18 @@ export interface FlowGateNodeData {
 
 export type FlowGateVueFlowNode = Node<FlowGateNodeData>
 
+/** flowgate.v02.0045: the meaning class of an Edge, drawn as a solid or a dashed line. */
+export interface FlowGateEdgeData {
+  edgeClass: string | null
+}
+
 export function toVueFlowNodes(graph: FlowGraph, selectedNodeId: string | null): FlowGateVueFlowNode[] {
   return graph.nodes.map((node) => ({
     id: node.id,
     type: FLOWGATE_NODE_TYPE,
     position: { x: node.x, y: node.y },
     data: { kind: node.kind, title: node.title, state: node.state ?? null, selected: node.id === selectedNodeId },
-    draggable: false,
+    draggable: node.movable === true,
     connectable: false,
     selectable: false,
     focusable: false,
@@ -51,6 +58,7 @@ export function toVueFlowEdges(graph: FlowGraph): Edge[] {
       type: FLOWGATE_EDGE_TYPE,
       source: edge.source,
       target: edge.target,
+      data: { edgeClass: edge.edgeClass ?? null } satisfies FlowGateEdgeData,
       updatable: false,
       selectable: false,
       focusable: false,

@@ -105,6 +105,13 @@ export default {
       empty_graph: '표시할 노드가 없습니다',
       sample_data: '샘플 데이터',
       canvas_label: '{name} 캔버스',
+      // flowgate.v02.0045 — which engine owns the Flow (P0008 §2.1), Canvas badge.
+      ownership: {
+        unassigned: '담당: 미배정',
+        v01: '담당: v0.1(읽기)',
+        graph: '담당: Graph',
+        conflict: '담당 충돌 — 운영자 정리 필요',
+      },
       node_kinds: {
         requirement: '요구사항',
         research: '조사',

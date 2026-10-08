@@ -273,3 +273,113 @@ export interface CreatedFlow {
   id: string
   title: string
 }
+
+// ── Flow Canvas (flowgate.v02.0045 S1+S2) ────────────────────────────────────────────
+// The Canvas read / layout save contract of P0008 §2·§3·§4, camelCase. kind / state /
+// ownership / identitySource / origin are open keys: a value this build does not know is
+// passed through untouched and the Canvas falls back to its default look (P0008 §1.5).
+
+/** P0008 §2.1 — `unassigned` | `v01` | `graph` | `conflict` (open key). */
+export interface FlowCanvasOwnership {
+  state: string
+  sequenceRootDocId: string | null
+  graphRevisionNo: number | null
+  assignedAt: string | null
+}
+
+export interface FlowCanvasPosition {
+  x: number
+  y: number
+  /** `saved` = stored layout, `auto` = server auto placement (never stored). */
+  source: string
+}
+
+export interface FlowCanvasDocument {
+  docId: string
+  typeCode: string | null
+  seq: number | null
+  title: string | null
+  docReviewStatus: string | null
+  status: string | null
+  supersedes: string[]
+}
+
+export interface FlowCanvasSlot {
+  itemId: number
+  itemSeq: number | null
+  order: number
+  type: string
+  label: string | null
+  derivedStatus: string | null
+  protected: boolean
+  sourceWpCardId: string | null
+}
+
+export interface FlowCanvasNode {
+  /** Node identity (P0008 §1.6): opaque, stable across reads and v0.1 edits. */
+  nodeKey: string
+  identitySource: string
+  origin: string
+  kind: string
+  docType: string | null
+  title: string
+  state: string | null
+  position: FlowCanvasPosition
+  editable: { move: boolean; structure: boolean }
+  document: FlowCanvasDocument | null
+  slot: FlowCanvasSlot | null
+}
+
+export interface FlowCanvasEdge {
+  edgeId: string
+  /** `execution` decides what runs next; `reference` only shows a document relation. */
+  edgeClass: string
+  origin: string
+  source: string
+  target: string
+  relation: string | null
+  editable: boolean
+}
+
+export interface FlowCanvasExternalRelation {
+  nodeKey: string
+  relation: string
+  otherDocId: string
+  otherFlowId: string | null
+  otherTitle: string | null
+}
+
+export interface FlowCanvasViewport {
+  x: number
+  y: number
+  zoom: number
+}
+
+/** GET /api/v1/flows/{flowId}/canvas. */
+export interface FlowCanvas {
+  flowId: string
+  projectId: string | null
+  ownership: FlowCanvasOwnership
+  /** `documents` | `sequence` | `graph` (open key). */
+  projection: string
+  nodes: FlowCanvasNode[]
+  edges: FlowCanvasEdge[]
+  externalRelations: FlowCanvasExternalRelation[]
+  /** The requesting user's saved viewport, or null (fit all nodes). */
+  viewport: FlowCanvasViewport | null
+  identity: { sequenceTag: string | null; rematched: boolean; retiredNodeKeys: string[] }
+  collapsed: { applied: string[]; ignoredKeys: string[]; hiddenCounts: Record<string, number> }
+}
+
+/** PUT /api/v1/flows/{flowId}/canvas/layout input. `viewport: null` = unchanged. */
+export interface FlowCanvasLayoutInput {
+  positions: Array<{ nodeKey: string; x: number; y: number }>
+  viewport: FlowCanvasViewport | null
+}
+
+export interface FlowCanvasLayoutResult {
+  savedPositions: number
+  viewportSaved: boolean
+  /** Keys the server did not store (`retired` / `unknown_node_key`): re-read the Canvas. */
+  ignored: Array<{ nodeKey: string; reason: string }>
+}

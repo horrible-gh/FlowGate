@@ -29,6 +29,7 @@ import {
   type DesignerMenuEntry,
 } from '@/features/designer/top/designerTop'
 import { useProjectStore, type Project } from '@/features/project'
+import { answerFlowCanvas } from './flowCanvasResponse'
 
 const getRequest = vi.hoisted(() => vi.fn())
 vi.mock('@shared/api', () => ({
@@ -97,6 +98,9 @@ beforeEach(() => {
       return { data: { ok: true, status: { enabled: true, base_branch: 'v0.2', base_branch_configured: true, slots: [] } } }
     }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false, group_id: params.group_id } }
+    // flowgate.v02.0045: the Designer reads Flow Graphs from the server Canvas API.
+    const canvas = answerFlowCanvas(url)
+    if (canvas) return canvas
     throw new Error(`unexpected request ${url}`)
   })
 })

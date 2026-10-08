@@ -1,7 +1,8 @@
 <template>
-  <!-- flowgate.v02.0026 — read-only Canvas of one Flow (0003-D §3.3.3). The only screen part
-       that uses Vue Flow: it draws the FlowGate Graph through vueFlowMapping and turns library
-       events into FlowGate meaning — "select this Node / none" and "the Viewport is now ...".
+  <!-- flowgate.v02.0026 — Canvas of one Flow (0003-D §3.3.3). The only screen part that uses
+       Vue Flow: it draws the FlowGate Graph through vueFlowMapping and turns library events into
+       FlowGate meaning — "select this Node / none", "the Viewport is now ..." and (flowgate.v02.0045)
+       "this Node was moved to ..." / "the user finished a pan / zoom". Structure stays read-only.
        DesignerCenter keys it by Flow id, so every Flow gets its own Vue Flow instance. -->
   <div
     class="flow-canvas"
@@ -23,7 +24,7 @@
       :min-zoom="CANVAS_MIN_ZOOM"
       :max-zoom="CANVAS_MAX_ZOOM"
       :translate-extent="translateExtent"
-      :nodes-draggable="false"
+      :nodes-draggable="true"
       :nodes-connectable="false"
       :edges-updatable="false"
       :elements-selectable="false"
@@ -44,6 +45,8 @@
       @node-click="onNodeClick"
       @pane-click="emit('select-node', null)"
       @viewport-change="onViewportChange"
+      @viewport-change-end="onViewportChangeEnd"
+      @node-drag-stop="onNodeDragStop"
     >
       <template #node-flowgate="nodeProps">
         <FlowNodeCard :id="nodeProps.id" :data="nodeProps.data" />
@@ -57,6 +60,7 @@
           :target-y="edgeProps.targetY"
           :source-position="edgeProps.sourcePosition"
           :target-position="edgeProps.targetPosition"
+          :edge-class="edgeProps.data?.edgeClass ?? null"
         />
       </template>
     </VueFlow>
@@ -66,13 +70,25 @@
     <Badge v-if="sample" class="flow-canvas-sample" size="sm" tone="info" data-test="designer-canvas-sample">
       {{ t('gui.designer.center.sample_data') }}
     </Badge>
+    <Badge
+      v-else-if="ownershipLabel"
+      class="flow-canvas-sample"
+      size="sm"
+      :tone="graph.ownership === 'conflict' ? 'danger' : 'neutral'"
+      data-test="designer-canvas-ownership"
+      :data-ownership="graph.ownership"
+    >
+      {{ ownershipLabel }}
+    </Badge>
   </div>
 </template>
 
 <script setup lang="ts">
 // Input: Flow id / name, FlowGraph, stored Viewport (may be none), selected Node id, sample
-// flag. Output: `select-node` (Node id or null) and `viewport-change`. Never calls an API,
-// changes the session, edits the Graph or handles tabs.
+// flag. Output: `select-node` (Node id or null), `viewport-change`, and (flowgate.v02.0045)
+// `viewport-commit` (a user pan / zoom ended — Vue Flow reports no end for a programmatic fit)
+// and `node-move` (a movable Node was dropped). Never calls an API, changes the session, edits
+// the Graph or handles tabs.
 //
 // Viewport: a stored one is restored; without one, all Nodes are fitted once they are
 // measured (never above 1x) and the result is reported like any pan / zoom. A Viewport the
@@ -87,6 +103,7 @@ import { useI18n } from 'vue-i18n'
 import {
   VueFlow,
   type CoordinateExtent,
+  type NodeDragEvent,
   type NodeMouseEvent,
   type ViewportTransform,
   type VueFlowStore,
@@ -117,6 +134,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'select-node': [nodeId: string | null]
   'viewport-change': [viewport: CanvasViewport]
+  'viewport-commit': [viewport: CanvasViewport]
+  'node-move': [move: { nodeId: string; x: number; y: number }]
 }>()
 
 const { t } = useI18n()
@@ -125,6 +144,13 @@ const GRID_GAP = 22
 const CANVAS_EDGE_MARGIN = 40
 
 const nodes = computed(() => toVueFlowNodes(props.graph, props.selectedNodeId))
+
+// Known ownership keys only (open key, P0008 §1.5): an unknown value shows no badge.
+const OWNERSHIP_KEYS = ['unassigned', 'v01', 'graph', 'conflict']
+const ownershipLabel = computed(() => {
+  const key = props.graph.ownership
+  return key && OWNERSHIP_KEYS.includes(key) ? t(`gui.designer.center.ownership.${key}`) : ''
+})
 const edges = computed(() => toVueFlowEdges(props.graph))
 
 const translateExtent = computed<CoordinateExtent>(() => {
@@ -178,6 +204,17 @@ function onViewportChange({ x, y, zoom }: ViewportTransform) {
   fitted = true
   liveViewport.value = next
   emit('viewport-change', next)
+}
+
+function onViewportChangeEnd({ x, y, zoom }: ViewportTransform) {
+  onViewportChange({ x, y, zoom })
+  emit('viewport-commit', { x, y, zoom })
+}
+
+function onNodeDragStop({ nodes: dragged }: NodeDragEvent) {
+  for (const node of dragged) {
+    emit('node-move', { nodeId: node.id, x: node.position.x, y: node.position.y })
+  }
 }
 
 watch(

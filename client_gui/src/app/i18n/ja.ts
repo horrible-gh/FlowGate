@@ -102,6 +102,13 @@ export default {
       empty_graph: '表示するノードがありません',
       sample_data: 'サンプルデータ',
       canvas_label: '{name} キャンバス',
+      // flowgate.v02.0045 — which engine owns the Flow (P0008 §2.1), Canvas badge.
+      ownership: {
+        unassigned: '担当: 未割り当て',
+        v01: '担当: v0.1(読み取り専用)',
+        graph: '担当: Graph',
+        conflict: '担当の競合 — 運用者による整理が必要',
+      },
       node_kinds: {
         requirement: '要件',
         research: '調査',

@@ -132,9 +132,10 @@
 // Availability follows each command's precondition (designerTop.ts DesignerMenuTargets). Recent
 // Project / Group / Flow entries are recorded in the store when a Project is opened and when
 // this Shell opens a Group or Flow; the Group / Flow lists show the current Project's entries.
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useProjectStore, type CreatedGroup } from '@/features/project'
 import { createDesignerCenterSession } from '../center/designerCenterSession'
+import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
 import DesignerOpenDialog from '../fileMenu/DesignerOpenDialog.vue'
@@ -180,7 +181,9 @@ const top = reactive(createDesignerTopState())
 
 const projectId = computed<string | null>(() => projectStore.currentProjectId)
 
-const center = createDesignerCenterSession()
+// flowgate.v02.0045 S1: real Flow Graphs through the project store's Canvas loaders (the sample
+// source stays the session default for tests and previews only).
+const center = createDesignerCenterSession({ source: createServerFlowGraphSource(projectStore) })
 
 // The Project Explorer's Flow id is the v0.1 group id, which is exactly FlowRef.groupId of
 // the File Explorer — no lookup or conversion needed.
@@ -205,6 +208,9 @@ watch(
 onMounted(() => {
   projectStore.takeExplicitOpen()
 })
+
+// flowgate.v02.0045: send pending Canvas saves and close the Canvas change stream with the Shell.
+onBeforeUnmount(() => center.dispose())
 
 // The Toolbar shows the zoom the active Canvas last reported (100% before it reports one).
 const zoom = computed(() => zoomPercent(center.activeView.value?.viewport?.zoom))

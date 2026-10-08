@@ -39,6 +39,9 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'graph/fixtureFlowGraphSource.ts',
         'graph/flowGraph.ts',
         'graph/flowGraphSource.ts',
+        // flowgate.v02.0045 S1+S2: the server Graph source and the layout save batching.
+        'graph/serverFlowGraphSource.ts',
+        'layoutSaveQueue.ts',
       ].sort(),
     )
   })
@@ -53,8 +56,10 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
   })
 
   it('keeps the model, rules and session free of screens and Vue Flow', () => {
-    const pure = CENTER_FILES.filter((f) => /^(graph\/|flowTabs\.ts$|canvasView\.ts$|designerCenterSession\.ts$)/.test(rel(f)))
-    expect(pure).toHaveLength(6)
+    const pure = CENTER_FILES.filter((f) =>
+      /^(graph\/|flowTabs\.ts$|canvasView\.ts$|designerCenterSession\.ts$|layoutSaveQueue\.ts$)/.test(rel(f)),
+    )
+    expect(pure).toHaveLength(8)
     for (const file of pure) {
       for (const spec of importsOf(read(file))) {
         expect(spec, rel(file)).not.toMatch(/\.vue$|^@vue-flow\//)
@@ -128,8 +133,11 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'canvas_label',
         'node_kinds',
         'node_states',
+        'ownership',
       ].sort(),
     )
+    // flowgate.v02.0045: one badge text per ownership state of P0008 §2.1.
+    expect(Object.keys(messages.designer.center.ownership).sort()).toEqual(['conflict', 'graph', 'unassigned', 'v01'])
     for (const key of ['workspace_label', 'workspace_parts', 'active_flow', 'no_active_flow']) {
       expect(messages.designer.shell).not.toHaveProperty(key)
     }

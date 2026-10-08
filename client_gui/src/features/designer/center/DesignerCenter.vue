@@ -40,6 +40,8 @@
           :sample="center.isSampleSource"
           @select-node="center.selectNode(activeTab.flowId, $event)"
           @viewport-change="center.recordViewport(activeTab.flowId, $event)"
+          @viewport-commit="center.commitViewport(activeTab.flowId, $event)"
+          @node-move="center.moveNode(activeTab.flowId, $event.nodeId, $event.x, $event.y)"
         />
       </template>
     </div>

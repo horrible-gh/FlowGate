@@ -102,6 +102,13 @@ export default {
       empty_graph: 'No nodes to show',
       sample_data: 'Sample data',
       canvas_label: '{name} canvas',
+      // flowgate.v02.0045 — which engine owns the Flow (P0008 §2.1), Canvas badge.
+      ownership: {
+        unassigned: 'Owner: unassigned',
+        v01: 'Owner: v0.1 (read-only)',
+        graph: 'Owner: Graph',
+        conflict: 'Ownership conflict — operator cleanup needed',
+      },
       node_kinds: {
         requirement: 'Requirement',
         research: 'Research',

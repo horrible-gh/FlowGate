@@ -41,6 +41,8 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       // flowgate.v02.0026 — Designer Center (0003-D §2.3): the screen and the session only.
       /^\.\.\/center\/DesignerCenter\.vue$/,
       /^\.\.\/center\/designerCenterSession$/,
+      // flowgate.v02.0045 — the server Graph source the Shell hands to the Center session.
+      /^\.\.\/center\/graph\/serverFlowGraphSource$/,
       // flowgate.v02.0036 — bottom Inspector: the Frame and the Graph Node type it is given.
       /^\.\.\/inspector\/DesignerInspector\.vue$/,
       /^\.\.\/center\/graph\/flowGraph$/,
