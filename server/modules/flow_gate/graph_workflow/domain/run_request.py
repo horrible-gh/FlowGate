@@ -1,4 +1,4 @@
-"""Run API request checks (P0008 §7 S5-2 / S5-4 / S5-5, L0009 §1.4) — pure, no I/O.
+"""Run API request checks (P0008 §7 S5-2 / S5-4 / S5-5 / S6-1, L0009 §1.4) — pure, no I/O.
 
 Each returns ``(value, errors)``; ``errors`` uses the P0008 §1.3 ``{"field", "reason"}`` shape.
 A missing or empty body is allowed where every field is optional.
@@ -10,6 +10,7 @@ from typing import Any, Optional
 RUN_REASON_MAX_LEN = 500
 RUN_LIST_LIMIT_MIN = 1
 RUN_LIST_LIMIT_MAX = 100
+GATE_DECISIONS = ("confirm", "reject")
 
 
 def _is_int(value: Any) -> bool:
@@ -48,6 +49,27 @@ def parse_reason(body: Any) -> tuple[Optional[str], list[dict]]:
     if len(value) > RUN_REASON_MAX_LEN:
         return None, [{"field": "reason", "reason": "too_long"}]
     return value, []
+
+
+def parse_gate_decision(body: Any) -> tuple[tuple[Optional[str], Optional[str]], list[dict]]:
+    """``{"decision": "confirm" | "reject", "comment": "…"}`` (P0008 S6-1). ``comment`` is optional
+    and has the stop / resume ``reason`` limit (``RUN_REASON_MAX_LEN``)."""
+    raw, errors = _body(body)
+    if raw is None:
+        return (None, None), errors
+    decision = raw.get("decision")
+    if decision is None:
+        errors.append({"field": "decision", "reason": "required"})
+    elif decision not in GATE_DECISIONS:
+        errors.append({"field": "decision", "reason": "not_one_of:" + ",".join(GATE_DECISIONS)})
+    comment = raw.get("comment")
+    if comment is not None and not isinstance(comment, str):
+        errors.append({"field": "comment", "reason": "not_a_string"})
+    elif comment is not None and len(comment) > RUN_REASON_MAX_LEN:
+        errors.append({"field": "comment", "reason": "too_long"})
+    if errors:
+        return (None, None), errors
+    return (decision, comment), []
 
 
 def parse_page(limit: Optional[str], offset: Optional[str]) -> tuple[tuple[int, int], list[dict]]:

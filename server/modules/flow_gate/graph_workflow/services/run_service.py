@@ -71,11 +71,12 @@ def _undecided(flow_id: str, revision_no: int, missing: list[dict]) -> GraphApiE
                          {"flow_id": flow_id, "revision_no": revision_no, "undecided_policies": missing})
 
 
-def _missing(ctx: RunContext, entries: dict) -> list[dict]:
+def _missing(ctx: RunContext, entries: dict, extra: frozenset = frozenset()) -> list[dict]:
+    """L0009 §2.6.3 ``undecided_for``; ``extra`` adds what one step needs on top (gate: ``gate_node``)."""
     root = ctx.root_document() if ctx.binding else None
     required = required_policies(ctx.revision, (ctx.binding or {}).get("node_key"),
                                  (root or {}).get("doc_review_status"))
-    return undecided_for(required, entries)
+    return undecided_for(required | set(extra), entries)
 
 
 def start_run(group: dict, user_id: str, revision_no: Optional[int]) -> dict:

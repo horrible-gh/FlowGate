@@ -1,12 +1,14 @@
-"""Run routes (P0008 §7 S5-1~S5-5). Thin: no judgement lives here."""
+"""Run routes (P0008 §7 S5-1~S5-5, S6-1). Thin: no judgement lives here."""
 from __future__ import annotations
 
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Request
 
-from modules.flow_gate.graph_workflow.domain.run_request import parse_page, parse_reason, parse_start
-from modules.flow_gate.graph_workflow.services import canvas_service, run_service
+from modules.flow_gate.graph_workflow.domain.run_request import (
+    parse_gate_decision, parse_page, parse_reason, parse_start,
+)
+from modules.flow_gate.graph_workflow.services import canvas_service, gate_service, run_service
 
 from . import envelope
 
@@ -86,3 +88,18 @@ def post_run_stop(run_id: str, request: Request, body: Any = Body(default=None))
 @router.post("/runs/{run_id}/resume")
 def post_run_resume(run_id: str, request: Request, body: Any = Body(default=None)):
     return envelope.run(request, lambda: _control(request, run_id, body, run_service.resume_run))
+
+
+@router.post("/runs/{run_id}/nodes/{node_key}/gate-decision")
+def post_gate_decision(run_id: str, node_key: str, request: Request, body: Any = Body(default=None)):
+    def handle() -> dict:
+        user_id = envelope.authenticate(request)
+        envelope.client_id_of(request)
+        (decision, comment), errors = parse_gate_decision(body)
+        if errors:
+            raise envelope.invalid(request, errors)
+        group = canvas_service.load_flow(run_service.run_flow_id(run_id))
+        envelope.authorize(user_id, group, "write")
+        return gate_service.decide_gate(group, run_id, node_key, decision, comment, user_id)
+
+    return envelope.run(request, handle)

@@ -14,7 +14,8 @@ The ``undecided`` implementation of every key is always registered: any call rai
 - ``join.openable(node_key, in_edge_states) -> "open" | "wait" | "never"``
 - ``rejection_path.route(node_key, revision, state) -> (open [node_key], close [node_key])``
 - ``completion.is_complete(revision, state) -> bool``
-- ``report_pair`` / ``gate_node`` / ``custom_node``: slots only (S6, Q-5 / Q-11)
+- ``gate_node.judge(node_key, decision, comment) -> "confirmed" | "rejected"`` (S6 gate decision)
+- ``report_pair`` / ``custom_node``: slots only (Q-5 / Q-11)
 """
 from __future__ import annotations
 

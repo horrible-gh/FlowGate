@@ -100,6 +100,17 @@ _MESSAGES = {
         "en": "The run cannot start because its execution rules are not decided yet.",
         "ja": "実行ルールがまだ決まっていないため、実行を開始できません。",
     },
+    "gate_policy_undecided": {
+        "ko": "confirm 카드의 실행 의미가 아직 정해지지 않았습니다.",
+        "en": "What the confirm card does in a run is not decided yet.",
+        "ja": "confirm カードの実行上の意味がまだ決まっていません。",
+    },
+    "node_not_open": {
+        "ko": "열린 게이트 노드가 아닙니다.", "en": "The gate node is not open.", "ja": "開いているゲートノードではありません。",
+    },
+    "node_not_gate": {
+        "ko": "게이트 노드가 아닙니다.", "en": "The node is not a gate node.", "ja": "ゲートノードではありません。",
+    },
     "root_binding_lost": {
         "ko": "시작 노드에 결합된 기존 문서가 삭제되어 실행할 수 없습니다. 운영자 확인이 필요합니다.",
         "en": "The document bound to the start node was deleted, so the flow cannot run. An operator must check it.",
@@ -178,7 +189,7 @@ def run(request: Request, handler: Callable[[], dict], status: int = 200) -> JSO
     try:
         return ok(handler(), status)
     except GraphApiError as exc:
-        params, text = exc.params, exc.message
+        params, text = exc.params, exc.message or (message(exc.message_key, request) if exc.message_key else None)
         if exc.code == "graph_validation_failed":
             params = {**params, "issues": fill_issue_messages(params.get("issues") or [], locale_of(request))}
             text = text or message(exc.code, request).format(count=len(params["issues"]))

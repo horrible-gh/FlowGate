@@ -106,14 +106,17 @@ def emit_run_status(ctx: RunContext, from_status: Optional[str], to_status: str,
 
 
 def emit_node_state(ctx: RunContext, node_key: str, from_status: str, to_status: str, cause: str,
-                    result_doc_id: Optional[str], dispatch: Optional[dict] = None) -> int:
+                    result_doc_id: Optional[str], dispatch: Optional[dict] = None,
+                    note: Optional[dict] = None) -> int:
+    """``note`` (``actor_user_id``, ``reason``) is kept in the event log only; the SSE payload is P0008 §8.3."""
     seq = int(ctx.run["last_event_seq"]) + 1
     state = canvas_state_of(ctx, node_key, to_status)
     payload = run_events.node_state_payload(ctx.run, seq, node_key, from_status, to_status, state, cause,
                                             result_doc_id, dispatch)
     run_store.append_event(ctx.run_id, seq, run_events.NODE_STATE, payload, node_key=node_key,
                            from_status=from_status, to_status=to_status, cause=cause, result_doc_id=result_doc_id,
-                           canvas_state=state, actor_user_id=None, reason=None)
+                           canvas_state=state, actor_user_id=(note or {}).get("actor_user_id"),
+                           reason=(note or {}).get("reason"))
     ctx.run["last_event_seq"] = seq
     run_events.queue(ctx.project_id, ctx.flow_id, run_events.NODE_STATE, payload, doc_id=result_doc_id)
     return seq
@@ -124,13 +127,16 @@ def _assert_one(affected: int, what: str) -> None:
         raise AssertionError(f"graph run write missed its row: {what}")
 
 
-def apply_decision(ctx: RunContext, d: Decision) -> None:
-    """L0009 §2.6.6 ``apply_decision`` — transitions, propagation records, close, open, completion."""
+def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None) -> None:
+    """L0009 §2.6.6 ``apply_decision`` — transitions, propagation records, close, open, completion.
+
+    ``note`` (who decided, the comment) goes with the node transitions of the deciding event (gate).
+    """
     for t in d.node_transitions:
         _assert_one(run_store.transition_node_run(
             ctx.run_id, t.node, t.from_status, t.expected_doc_id, t.to_status, t.result_doc_id,
             finished=t.to_status in ("done", "rejected")), f"transition {t.node} {t.cause}")
-        seq = emit_node_state(ctx, t.node, t.from_status, t.to_status, t.cause, t.result_doc_id)
+        seq = emit_node_state(ctx, t.node, t.from_status, t.to_status, t.cause, t.result_doc_id, note=note)
         for p in d.propagation_new:
             if p.transition is t:
                 run_store.insert_propagation(ctx.run_id, seq, p.node, p.outcome, p.status)

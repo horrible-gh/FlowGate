@@ -11,6 +11,7 @@ class GraphApiError(Exception):
         self.code = code
         self.params = params or {}
         self.message = message
+        self.message_key: Optional[str] = None     # another message of the envelope table for this code
 
 
 class FlowNotFound(GraphApiError):
