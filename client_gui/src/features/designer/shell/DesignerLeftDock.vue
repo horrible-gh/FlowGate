@@ -7,9 +7,10 @@
        loaded tree survive. The Dock element itself always stays; collapsing turns it into a
        rail that keeps the expand button and the current mode name.
        flowgate.v02.0039 T#3: while the Designer has no work target (`unselected`) the mode
-       switch, the collapse button and the Explorer search are unavailable as the confirmed
+       switch, the collapse button and the Explorer refresh are unavailable as the confirmed
        initial-state design draws them, but the Project tree stays shown and clickable — a
-       click there is how the user makes the first selection (0001-R §2).
+       click there is how the user makes the first selection (0001-R §2). The Explorer search
+       is available whenever a Project is open (flowgate.v02.0044).
        flowgate.v02.0043: the Shell's Explorer state request (File menu: Group / Flow 열기,
        Group 닫기) and refresh token (a new Group / Flow) pass through to the Project Explorer. -->
   <aside
