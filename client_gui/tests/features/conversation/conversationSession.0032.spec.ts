@@ -84,7 +84,8 @@ describe('activity re-read during an AI run (D0006 §3.9.2)', () => {
     await clock.tick()
     expect(source.listActivities).toHaveBeenCalledTimes(2)
     expect(commandOf(session.state.activities, 'k1')?.state).toBe('pending_approval')
-    expect(session.timeline.value.map((i) => i.key)).toEqual(['turn:1', 'turn:2', 'command:k1', 'status:' + session.state.activities[0].id])
+    // flowgate.v02.0047 rev3: no run_started line next to it.
+    expect(session.timeline.value.map((i) => i.key)).toEqual(['turn:1', 'turn:2', 'command:k1'])
 
     // The user approves; the same live run keeps being polled and gets its reply.
     await session.decideCommand('k1', 'approve')

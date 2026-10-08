@@ -312,7 +312,7 @@ describe('command requests', () => {
 })
 
 describe('AI run', () => {
-  it('runs, picks up the reply and records start / finish in the timeline', async () => {
+  it('runs and picks up the reply without start / finish lines in the timeline', async () => {
     const { session, source, data } = setup()
     data.replies['run-1'] = { chatId: A, turn: turn(3, 'ai', 'reply', '2026-10-06T08:10:00Z') }
     await session.setScope(SCOPE)
@@ -324,7 +324,8 @@ describe('AI run', () => {
     expect(session.running.value).toBe(false)
     expect(session.state.turns.at(-1)?.body).toBe('reply')
     const statuses = session.state.activities.filter((a) => a.kind === 'status').map((a) => (a.kind === 'status' ? a.code : null))
-    expect(statuses).toEqual(['run_started', 'run_finished'])
+    // flowgate.v02.0047 rev3: the reply itself is the news; no run_started / run_finished.
+    expect(statuses).toEqual([])
     // A delivered answer re-reads the settings (an edit_once mode may have been used up).
     expect(source.fetchChatSettings.mock.calls.length).toBeGreaterThanOrEqual(2)
   })

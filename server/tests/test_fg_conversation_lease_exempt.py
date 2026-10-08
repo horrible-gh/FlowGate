@@ -41,6 +41,11 @@ LEASE = {"group_id": GROUP, "run_id": RUN_ID, "token_id": f"tok_{RUN_ID}", "acti
     ("/flowgate/api/v1/conversations", "DELETE", False),
     ("/flowgate/api/v1/documents/next-empty", "POST", False),
     ("/flowgate/api/v1/conversations/extra", "POST", False),
+    # flowgate.v02.0047: the one AI title of a new chat.
+    ("/flowgate/api/v1/conversations/fgp.v02.0001.0012-CH/auto-title", "POST", True),
+    ("/api/v1/conversations/fgp.v02.0001.0012-CH/auto-title", "POST", True),
+    ("/flowgate/api/v1/conversations/fgp.v02.0001.0012-CH/auto-title", "PATCH", False),
+    ("/flowgate/api/v1/conversations/a/b/auto-title", "POST", False),
     ("/flowgate/api/v1/documents/x/conversation/turn", "POST", False),
 ])
 def test_exempt_paths(path, method, exempt):
@@ -57,6 +62,8 @@ def test_policy_control_meaning_is_unchanged():
 def test_inventory_reasons():
     assert policy.classify_mutation_route("/flowgate/api/v1/conversations", {"POST"}) == (
         "group", "conversation_create_lease_exempt")
+    assert policy.classify_mutation_route("/flowgate/api/v1/conversations/{doc_id}/auto-title", {"POST"}) == (
+        "group", "conversation_auto_title_lease_exempt")
     assert policy.classify_mutation_route("/flowgate/api/v1/chat-commands/{request_id}/decision", {"POST"}) == (
         "personal", "chat_command_decision")
     assert policy.classify_mutation_route("/flowgate/api/v1/chat-commands", {"POST"}) == (
@@ -68,9 +75,10 @@ def test_the_application_routes_carry_those_reasons():
 
     found = {path: (route.mutation_resource, route.mutation_reason)
              for route, path in policy.iter_mutation_routes(app)
-             if "chat-commands" in path or path.endswith("/conversations")}
+             if "chat-commands" in path or "/conversations" in path}
     assert found == {
         "/flowgate/api/v1/conversations": ("group", "conversation_create_lease_exempt"),
+        "/flowgate/api/v1/conversations/{doc_id}/auto-title": ("group", "conversation_auto_title_lease_exempt"),
         "/flowgate/api/v1/chat-commands/{request_id}/decision": ("personal", "chat_command_decision"),
         "/flowgate/api/v1/chat-commands": ("system", "chat_command_worker"),
     }

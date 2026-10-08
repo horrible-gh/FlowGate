@@ -1,6 +1,7 @@
 <template>
   <!-- flowgate.v02.0031 — compact strip of who is in the conversation and how far each has
-       read (R0001 §7, D0002 §6). Filled by the turns call itself; no separate endpoint. -->
+       read (R0001 §7, D0002 §6). Filled by the turns call itself; no separate endpoint.
+       flowgate.v02.0047: the same chips, right under the title. -->
   <div v-if="participants.length > 0" class="conv-people" data-test="conv-participants">
     <span class="conv-people-label">{{ t('gui.conversation.participants.label') }}</span>
     <span
@@ -35,7 +36,7 @@ const { t } = useI18n()
   display: flex;
   align-items: center;
   gap: 5px;
-  border-top: 1px solid var(--fg2-line);
+  border-bottom: 1px solid var(--fg2-line);
   background: var(--fg2-control-surface-flat);
   overflow: hidden;
 }

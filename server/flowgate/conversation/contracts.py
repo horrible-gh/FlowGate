@@ -80,6 +80,12 @@ ERR_CONVERSATION_PROJECT_NOT_FOUND = "conversation_project_not_found"
 ERR_CONVERSATION_GROUP_NOT_FOUND = "conversation_group_not_found"
 ERR_CONVERSATION_GROUP_DISPOSED = "conversation_group_disposed"
 ERR_CONVERSATION_NUMBER_RESERVATION_FAILED = "conversation_number_reservation_failed"
+# flowgate.v02.0047: the one AI title of a new chat (auto_title.py).
+ERR_CONVERSATION_TITLE_CHANGED = "conversation_title_changed"
+ERR_CONVERSATION_AUTO_TITLE_NOT_OWED = "conversation_auto_title_not_owed"
+ERR_CONVERSATION_AUTO_TITLE_NO_MESSAGE = "conversation_auto_title_no_message"
+ERR_CONVERSATION_AUTO_TITLE_UNAVAILABLE = "conversation_auto_title_unavailable"
+ERR_CONVERSATION_AUTO_TITLE_FAILED = "conversation_auto_title_failed"
 
 # ── time and result-length limits (D0006 §3.5) ───────────────────────────────
 APPROVAL_WAIT_MAX_SEC = 900

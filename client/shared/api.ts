@@ -189,6 +189,10 @@ const LONG_RUNNING_PATHS = [
   // matches /\/git\// above.)
   /\/files\/tree/,
   /\/groups\/tree/,
+  // flowgate.v02.0047: the AI title of a new chat waits for one model answer, which the
+  // server allows up to 90s (auto_title.TIMEOUT_SEC); a CLI model often needs more than
+  // the 30s default, and the title was then dropped although the server still wrote it.
+  /\/conversations\/[^/]+\/auto-title/,
 ]
 
 // flowgate.default.0607 T0004 §3.5 (NR0003 §6): a final approval that carries a

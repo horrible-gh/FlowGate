@@ -421,7 +421,6 @@ export default {
       loading_older: '以前の会話を読み込み中...',
       read_boundary: 'ここまで既読',
       empty: 'まだメッセージがありません。下から会話を始めてください。',
-      no_chat: 'チャットがありません。＋ ボタンで新しいチャットを作成してください。',
       no_flow: 'フローを開くと、そのフローの会話がここに表示されます。',
     },
     message: {
@@ -481,8 +480,6 @@ export default {
       more_lines: 'あと {n} 行',
     },
     status: {
-      run_started: 'AI 呼び出しを開始しました',
-      run_finished: 'AI の返信が届きました',
       run_cancelled: 'AI 呼び出しを停止しました',
       run_no_reply: 'AI 呼び出しが返信なしで終了しました',
     },
@@ -502,6 +499,7 @@ export default {
       copy_mention: 'メンションをコピー',
       invoke_ai: 'AI 呼び出し',
       ai_running: 'AI 呼び出し中',
+      more: 'その他',
       source_mode: 'AI ソースモード',
       source: {
         read_only: '読み取り',

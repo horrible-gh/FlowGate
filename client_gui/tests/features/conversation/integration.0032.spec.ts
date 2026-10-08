@@ -54,6 +54,8 @@ function httpError(status: number, code: string) {
 
 /** The slice of the FlowGate server the Conversation panel talks to. */
 function createServer() {
+  // flowgate.v02.0047: chats created owing their AI title, with the provisional title.
+  const owedTitles = new Map<string, string>()
   const server = {
     chats: [{ doc_id: CHAT, title: '빌드 확인', type_code: 'CH', updated_at: '2026-10-06T08:00:00Z' }] as Array<Record<string, unknown>>,
     turns: {
@@ -120,9 +122,27 @@ function createServer() {
     if (method === 'POST' && path === '/api/v1/conversations') {
       const doc_id = `${GROUP}.00${server.nextChatNo++}-CH`
       const created = { doc_id, title: body.title, type_code: 'CH', updated_at: '2026-10-06T09:00:00Z' }
+      if (body.auto_title === true) owedTitles.set(doc_id, String(body.title))
       server.chats.unshift(created)
       server.turns[doc_id] = []
       return { ok: true, ...created, project_id: body.project_id, group_id: body.group_id, status: 'approved', created_at: created.updated_at }
+    }
+    if (method === 'POST' && path.endsWith('/conversation/turn')) {
+      const list = (server.turns[docPath(path)] ??= [])
+      const turn = { seq: list.length + 1, speaker: 'user', body: String(body.body), created_at: '2026-10-06T09:01:00Z' }
+      list.push(turn)
+      return { turn, head_seq: turn.seq }
+    }
+    // flowgate.v02.0047: the one AI title of a chat created owing it, while its provisional title stands.
+    const autoTitle = path.match(/^\/api\/v1\/conversations\/([^/]+)\/auto-title$/)
+    if (method === 'POST' && autoTitle) {
+      const chat = server.chats.find((c) => c.doc_id === decodeURIComponent(autoTitle[1]))!
+      const provisional = owedTitles.get(chat.doc_id)
+      owedTitles.delete(chat.doc_id)
+      if (provisional === undefined) throw httpError(409, 'conversation_auto_title_not_owed')
+      if (chat.title !== provisional) throw httpError(409, 'conversation_title_changed')
+      chat.title = '빌드 실패 원인'
+      return { ok: true, doc_id: chat.doc_id, title: chat.title, updated_at: '2026-10-06T09:02:00Z' }
     }
     throw httpError(404, `no route ${method} ${path}`)
   }
@@ -170,6 +190,7 @@ describe('Conversation production path (flowgate.v02.0032 T#2)', () => {
     expect(calls('GET', /^\/api\/v1\/chat-activity\//)).toHaveLength(1)
 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await find('conv-more-btn').trigger('click')
     await find('conv-invoke-ai').trigger('click')
     await flushPromises()
     expect(calls('POST', /^\/api\/v1\/ai-invoke\/start$/)).toHaveLength(1)
@@ -263,22 +284,38 @@ describe('Conversation production path (flowgate.v02.0032 T#2)', () => {
     expect(find('tl-command-approve').exists()).toBe(false)
   })
 
-  it('[새 채팅] during an AI run makes a standalone CH through POST /conversations, never next-empty', async () => {
+  it('[새 채팅] during an AI run makes a standalone CH through POST /conversations on the first send, never next-empty', async () => {
     createServer()
     await mountPanel()
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await find('conv-more-btn').trigger('click')
     await find('conv-invoke-ai').trigger('click')
     await flushPromises()
     expect(find('conv-send').classes()).toContain('is-stop')
 
     await find('conv-new-btn').trigger('click')
     await flushPromises()
+    // flowgate.v02.0047: [+] alone stores nothing.
+    expect(calls('POST', /^\/api\/v1\/conversations$/)).toHaveLength(0)
+    expect((find('conv-title-input').element as HTMLInputElement).value).toBe('새 대화')
+
+    await find('conv-input').setValue('빌드가 왜 실패했지?')
+    await find('conv-composer').trigger('submit')
+    await flushPromises()
     const [create] = calls('POST', /^\/api\/v1\/conversations$/)
-    expect(create.body).toEqual({ project_id: 'flowgate', group_id: GROUP, title: '새 대화' })
+    expect(create.body).toEqual({ project_id: 'flowgate', group_id: GROUP, title: '새 대화', auto_title: true })
     expect(transport.calls.some((c) => /next-empty/.test(c.path))).toBe(false)
     // The list is read again and the new chat opens with its own (empty) activity.
     expect(calls('GET', /^\/api\/v1\/documents$/).length).toBeGreaterThanOrEqual(2)
-    expect((find('conv-title-input').element as HTMLInputElement).value).toBe('새 대화')
     expect(calls('GET', /^\/api\/v1\/chat-activity\//).at(-1)?.path).toBe(`/api/v1/chat-activity/${GROUP}.0012-CH`)
+    const [sent] = calls('POST', /\/conversation\/turn$/)
+    expect(sent.path).toBe(`/api/v1/documents/${GROUP}.0012-CH/conversation/turn`)
+    expect(sent.body).toMatchObject({ body: '빌드가 왜 실패했지?' })
+    // Then, once, the AI title on the provider picked in the composer.
+    const titled = calls('POST', /\/auto-title$/)
+    expect(titled).toHaveLength(1)
+    expect(titled[0].path).toBe(`/api/v1/conversations/${GROUP}.0012-CH/auto-title`)
+    expect(titled[0].body).toEqual({ provider_id: 'opus' })
+    expect((find('conv-title-input').element as HTMLInputElement).value).toBe('빌드 실패 원인')
   })
 })

@@ -46,6 +46,7 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
     diffs: init.diffs ?? {},
   }
   let nextSeq = 100
+  const owedTitles = new Map<string, string>()
   let runCounter = 0
   const runCalls: Record<string, number> = {}
 
@@ -53,11 +54,24 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
     listChats: vi.fn(async () => data.chats.map((c) => ({ ...c }))),
     renameChat: vi.fn(async (chatId: string, title: string) => {
       const chat = data.chats.find((c) => c.id === chatId)!
+      owedTitles.delete(chatId)
       chat.title = title
       return { ...chat }
     }),
-    createChat: vi.fn(async (_scope: unknown, title: string) => {
+    // flowgate.v02.0047: like the server, the debt is kept here — paid once, ended by a rename;
+    // the title is derived from the first user turn.
+    autoTitleChat: vi.fn(async (chatId: string, _providerId: string) => {
+      const chat = data.chats.find((c) => c.id === chatId)!
+      const provisional = owedTitles.get(chatId)
+      owedTitles.delete(chatId)
+      if (provisional === undefined) throw new ConversationRequestError('not owed', 409, 'conversation_auto_title_not_owed')
+      if (chat.title !== provisional) throw new ConversationRequestError('changed', 409, 'conversation_title_changed')
+      chat.title = `AI: ${(data.turns[chatId] ?? []).find((t) => t.speaker === 'user')?.body ?? ''}`
+      return { ...chat }
+    }),
+    createChat: vi.fn(async (_scope: unknown, title: string, options?: { autoTitle?: boolean }) => {
       const chat = { id: `p.m.0001.00${data.chats.length + 10}-CH`, title, updatedAt: '2026-10-06T09:00:00Z' }
+      if (options?.autoTitle) owedTitles.set(chat.id, title)
       data.chats.unshift(chat)
       data.turns[chat.id] = []
       return { ...chat }

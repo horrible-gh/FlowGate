@@ -21,6 +21,7 @@ UPDATE … WHERE status=<expected_status>. If a race is detected, it raises 409.
 """
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Optional
 
@@ -176,10 +177,34 @@ def update_document(
 
     # Prevent direct status changes through update
     updates.pop("status", None)
+    ended = _chat_auto_title_ended(existing, updates)
+    if ended is not None:
+        updates["meta"] = ended
     doc = db_docs.update(doc_id, updates)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     return doc
+
+
+# flowgate.v02.0047: a CH created owing its one AI title (flowgate/conversation/auto_title.py)
+# stops owing it once its title is written here -- by hand, or as the AI title itself, which
+# marks the debt paid before writing -- so the AI never replaces a title the user set.
+_CHAT_AUTO_TITLE_KEY = "chat_auto_title"
+_CHAT_AUTO_TITLE_OPEN = ("owed", "claimed")
+
+
+def _chat_auto_title_ended(existing: dict, updates: dict[str, Any]) -> Optional[str]:
+    if "title" not in updates or str(existing.get("type_code") or "").upper() != "CH":
+        return None
+    try:
+        meta = json.loads(existing.get("meta") or "null")
+    except ValueError:
+        return None
+    marker = meta.get(_CHAT_AUTO_TITLE_KEY) if isinstance(meta, dict) else None
+    if not isinstance(marker, dict) or marker.get("state") not in _CHAT_AUTO_TITLE_OPEN:
+        return None
+    meta[_CHAT_AUTO_TITLE_KEY] = {**marker, "state": "manual"}
+    return json.dumps(meta, ensure_ascii=False)
 
 
 def _delete_document_row(doc: dict, actor_user_id: str) -> None:

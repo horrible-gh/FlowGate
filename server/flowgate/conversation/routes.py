@@ -11,13 +11,14 @@ User side (session)::
     GET  /chat-activity/{doc_id}?from_seq=&to_seq=&unplaced=
     GET  /chat-activity/{doc_id}/runs/{run_id}/diff?path=
     POST /conversations                                standalone CH, 201
+    POST /conversations/{doc_id}/auto-title            the one AI title of a new chat
 
 API providers never come through here: their ``run_command`` tool calls ``commands``
 in-process. Errors use ``{"ok": false, "error": {"code", "message"}}``; authentication
 and RBAC errors keep their existing shapes. All handlers are plain ``def`` (the store
 is synchronous; see test_event_loop_blocking_0279).
 
-The decision route and the conversation route are exempt from the group AI-run lease in
+The decision route and the two conversation routes are exempt from the group AI-run lease in
 ``GroupMutationPolicyMiddleware`` (D0006 §3.10.3); the handlers still check permission
 and group state themselves.
 """
@@ -29,6 +30,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from flowgate.conversation import activity
+from flowgate.conversation import auto_title
 from flowgate.conversation import chats
 from flowgate.conversation import commands
 from flowgate.conversation import contracts as c
@@ -116,5 +118,13 @@ def create_conversation(body: Any = Body(default=None), user=Depends(get_current
         return chats.create_chat(user, body)
     except chats.ChatCreateForbidden:
         raise HTTPException(status_code=403, detail="Forbidden")
+    except c.ConversationError as exc:
+        return _error(exc)
+
+
+@router.post("/conversations/{doc_id}/auto-title")
+def auto_title_conversation(doc_id: str, body: Any = Body(default=None), user=Depends(get_current_user)):
+    try:
+        return auto_title.generate(doc_id, user, body)
     except c.ConversationError as exc:
         return _error(exc)

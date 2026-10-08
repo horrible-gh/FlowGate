@@ -421,7 +421,6 @@ export default {
       loading_older: 'Loading earlier messages...',
       read_boundary: 'Read up to here',
       empty: 'No messages yet. Start the conversation below.',
-      no_chat: 'No chats yet. Create one with the ＋ button.',
       no_flow: 'Open a flow to see its conversations here.',
     },
     message: {
@@ -481,8 +480,6 @@ export default {
       more_lines: '{n} more lines',
     },
     status: {
-      run_started: 'AI call started',
-      run_finished: 'AI reply arrived',
       run_cancelled: 'AI call stopped',
       run_no_reply: 'AI call ended without a reply',
     },
@@ -502,6 +499,7 @@ export default {
       copy_mention: 'Copy mention',
       invoke_ai: 'Call AI',
       ai_running: 'AI call running',
+      more: 'More',
       source_mode: 'AI source mode',
       source: {
         read_only: 'Read',

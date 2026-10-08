@@ -30,6 +30,10 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
   it('holds the Conversation part files', () => {
     expect(FILES.map(rel).sort()).toEqual(
       [
+        'ComposerModelPicker.vue',
+        'ComposerSettings.vue',
+        'ComposerSourceModes.vue',
+        'ComposerToolsMenu.vue',
         'ConversationComposer.vue',
         'ConversationHeader.vue',
         'ConversationPanel.vue',
@@ -40,10 +44,12 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'TimelineMessage.vue',
         'api.ts',
         'changeDiff.ts',
+        'chatStart.ts',
         'conversationSession.ts',
         'conversationSource.ts',
         'drafts.ts',
         'index.ts',
+        'popover.ts',
         'timeline.ts',
         'types.ts',
       ].sort(),
@@ -79,7 +85,7 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
   })
 
   it('keeps the model, rules, source and session free of screens', () => {
-    for (const name of ['types.ts', 'timeline.ts', 'api.ts', 'conversationSource.ts', 'conversationSession.ts', 'drafts.ts', 'changeDiff.ts']) {
+    for (const name of ['types.ts', 'timeline.ts', 'api.ts', 'conversationSource.ts', 'conversationSession.ts', 'chatStart.ts', 'drafts.ts', 'changeDiff.ts']) {
       for (const spec of importsOf(read(join(CONV, name)))) expect(spec, name).not.toMatch(/\.vue$/)
     }
   })
