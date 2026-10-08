@@ -9,11 +9,22 @@ import type { Project } from '@/features/project/types'
 const fetchActiveProjects = vi.hoisted(() => vi.fn())
 const createProjectApi = vi.hoisted(() => vi.fn())
 const suggestProjectSlug = vi.hoisted(() => vi.fn())
+// flowgate.v02.0040: 열기 now lands on the Designer, whose Explorers read these.
+const fetchProjectGroupTree = vi.hoisted(() => vi.fn())
+const fetchProjectGitStatus = vi.hoisted(() => vi.fn())
 
 vi.mock('@/features/project/api', () => ({
   fetchActiveProjects,
   createProject: createProjectApi,
   suggestProjectSlug,
+  fetchProjectGroupTree,
+  fetchProjectGitStatus,
+  fetchFlowFileTree: vi.fn(async () => ({ nodes: [] })),
+  fetchFlowChangeSet: vi.fn(async () => ({ entries: [] })),
+  fetchFlowFileDiff: vi.fn(),
+  fetchFlowAiActivity: vi.fn(async () => ({ active: false })),
+  fetchBaseFileDiff: vi.fn(),
+  fetchMergeReviewFileDiff: vi.fn(),
 }))
 
 registerAppMessages(i18n)
@@ -68,6 +79,10 @@ beforeEach(() => {
   fetchActiveProjects.mockReset().mockResolvedValue([project('alpha'), project('beta')])
   createProjectApi.mockReset()
   suggestProjectSlug.mockReset().mockResolvedValue(null)
+  fetchProjectGroupTree.mockReset().mockImplementation(async (projectId: string) => [
+    { id: `project:${projectId}`, parentId: null, kind: 'project', label: projectId, title: null, number: null },
+  ])
+  fetchProjectGitStatus.mockReset().mockResolvedValue(null)
 })
 
 afterEach(() => {
@@ -164,32 +179,140 @@ describe('T#3 App Shell entry points open the single Project Dialog (T0010 §1/�
     expect(wrapper.get('[data-nav-key="git"]').classes()).toContain('active')
   })
 
-  it('opening a Project, closing, and reopening the Dialog shows that Project as current -- and never touches Git branch state', async () => {
-    const { wrapper } = await mountAppAt('/')
+  // flowgate.v02.0040 (supersedes T0010 §3's "close only"): 열기 makes the row's Project
+  // current and moves to the Designer with that Project selected in the Project Explorer --
+  // from both entry points -- and still never touches Git branch state.
+  for (const [entry, selector] of [
+    ['Sidebar', '[data-nav-key="projects"]'],
+    ['Dashboard card', '[data-card-key="projects"]'],
+  ] as const) {
+    it(`a row 열기 opened from the ${entry} moves to the Designer with that Project selected`, async () => {
+      const { wrapper, router } = await mountAppAt('/')
+      mounted = wrapper
+
+      await wrapper.get(selector).trigger('click')
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+
+      clickOn('[data-project-id="beta"] .project-row-open')
+      await flushPromises()
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+
+      expect(document.querySelector('.ui-modal-overlay')).toBeNull()
+      expect(router.currentRoute.value.name).toBe('designer')
+      expect(router.currentRoute.value.fullPath).toBe('/designer')
+      expect(localStorage.getItem('fg_current_branch')).toBeNull()
+      expect(localStorage.getItem('fg_current_project_id')).toBe('beta')
+      expect(fetchProjectGroupTree).toHaveBeenCalledWith('beta', expect.anything())
+
+      const projectRow = wrapper.get('[data-test="project-explorer-tree"] [data-explorer-row]')
+      expect(projectRow.attributes('aria-selected')).toBe('true')
+      expect(wrapper.get('[data-test="designer-left-dock"]').attributes('data-unselected')).toBe('false')
+    })
+  }
+
+  it('reopening the Dialog after 열기 shows no 현재 mark and no default selection', async () => {
+    const { wrapper, router } = await mountAppAt('/')
     mounted = wrapper
 
     await wrapper.get('[data-nav-key="projects"]').trigger('click')
     await flushPromises()
     await wrapper.vm.$nextTick()
-
     clickOn('[data-project-id="beta"] .project-row-open')
+    await flushPromises()
     await wrapper.vm.$nextTick()
 
-    // "열기" is current-confirm + close only (T0010 §3): no Designer route, no branch reset.
-    expect(document.querySelector('.ui-modal-overlay')).toBeNull()
-    expect(window.location.pathname).toBe('/app/')
-    expect(localStorage.getItem('fg_current_branch')).toBeNull()
-    expect(localStorage.getItem('fg_current_project_id')).toBe('beta')
-
+    await router.push('/')
+    await flushPromises()
     await wrapper.get('[data-nav-key="projects"]').trigger('click')
     await flushPromises()
     await wrapper.vm.$nextTick()
 
-    const betaRow = document.querySelector('[data-project-id="beta"] .project-row-main')
-    expect(betaRow?.getAttribute('aria-current')).toBe('true')
-    expect(betaRow?.textContent).toContain('현재')
-    const alphaRow = document.querySelector('[data-project-id="alpha"] .project-row-main')
-    expect(alphaRow?.getAttribute('aria-current')).toBeNull()
+    expect(document.querySelectorAll('.project-row')).toHaveLength(2)
+    expect(document.querySelector('.project-list [aria-current]')).toBeNull()
+    expect(document.querySelector('.project-list')?.textContent).not.toContain('현재')
+    expect(document.querySelector('.project-row.is-selected')).toBeNull()
+    expect(localStorage.getItem('fg_current_project_id')).toBe('beta')
+  })
+
+  // flowgate.v02.0040 (0001-R §1/§2): without a 열기 in this session the Designer has no Project
+  // at all — a stored id from v0.1 / an earlier session is not restored, so no Project tree is
+  // shown as if that Project had been chosen.
+  it('entering the Designer from the Sidebar (no 열기) shows no Project even when an id is stored', async () => {
+    localStorage.setItem('fg_current_project_id', 'beta')
+    const { wrapper } = await mountAppAt('/')
+    mounted = wrapper
+
+    await wrapper.get('[data-nav-key="designer"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-test="project-explorer-tree"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="project-explorer-no-project"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('선택된 프로젝트가 없습니다')
+    expect(wrapper.text()).not.toContain('프로젝트를 열면 그룹과 플로우가')
+    expect(wrapper.find('[data-explorer-row][aria-selected="true"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="designer-left-dock"]').attributes('data-unselected')).toBe('true')
+    expect(fetchProjectGroupTree).not.toHaveBeenCalled()
+    // The stored key is left for v0.1; it just does not drive the Designer.
+    expect(localStorage.getItem('fg_current_project_id')).toBe('beta')
+  })
+
+  it('opening and closing the Dialog without 열기 picks no Project, so the Designer still shows none', async () => {
+    const { wrapper, router } = await mountAppAt('/')
+    mounted = wrapper
+
+    await wrapper.get('[data-nav-key="projects"]').trigger('click')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(document.querySelectorAll('.project-row')).toHaveLength(2)
+    // A row click is only the Dialog-local candidate.
+    clickOn('[data-project-id="alpha"] .project-row-main')
+    await wrapper.vm.$nextTick()
+    clickOn('.pd-head .ui-icon-btn')
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.ui-modal-overlay')).toBeNull()
+    expect(localStorage.getItem('fg_current_project_id')).toBeNull()
+
+    await wrapper.get('[data-nav-key="designer"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    expect(router.currentRoute.value.name).toBe('designer')
+    expect(wrapper.find('[data-test="project-explorer-tree"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="project-explorer-no-project"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('선택된 프로젝트가 없습니다')
+    expect(wrapper.text()).not.toContain('프로젝트를 열면 그룹과 플로우가')
+    expect(wrapper.get('[data-test="designer-left-dock"]').attributes('data-unselected')).toBe('true')
+    expect(fetchProjectGroupTree).not.toHaveBeenCalled()
+  })
+
+  it('after 열기, a later Designer entry from the Sidebar shows that Project unselected', async () => {
+    const { wrapper, router } = await mountAppAt('/')
+    mounted = wrapper
+
+    await wrapper.get('[data-nav-key="projects"]').trigger('click')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    clickOn('[data-project-id="beta"] .project-row-open')
+    await flushPromises()
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(router.currentRoute.value.name).toBe('designer')
+
+    await router.push('/')
+    await flushPromises()
+    await wrapper.get('[data-nav-key="designer"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    const projectRow = wrapper.get('[data-test="project-explorer-tree"] [data-explorer-row]')
+    expect(projectRow.attributes('aria-selected')).toBe('false')
+    expect(wrapper.get('[data-test="designer-left-dock"]').attributes('data-unselected')).toBe('true')
   })
 
   it('mounts and opens without error when the stored current project id is invalid and the active list is empty', async () => {

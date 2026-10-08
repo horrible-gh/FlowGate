@@ -71,35 +71,63 @@ describe('fetchProjects', () => {
   })
 })
 
-describe('current project fallback (WP0005 T#1 §4)', () => {
-  it('keeps a saved current project that is still active', async () => {
+// flowgate.v02.0040 (0001-R §1/§2): only "열기" (setCurrentProject) makes a Project current.
+// The store neither restores the stored id at start-up nor picks the first active Project
+// when the list is fetched, so the Designer starts without a Project until the person opens one.
+describe('current project is never chosen automatically (flowgate.v02.0040)', () => {
+  it('does not restore a saved id at start-up and leaves the saved key alone', async () => {
     localStorage.setItem(CURRENT_KEY, 'b')
     fetchActiveProjects.mockResolvedValue([project('a'), project('b')])
     const store = useProjectStore()
+    expect(store.currentProjectId).toBeNull()
     await store.fetchProjects()
-    expect(store.currentProject?.id).toBe('b')
+    expect(store.currentProjectId).toBeNull()
+    expect(store.currentProject).toBeNull()
+    // Not this store's choice to drop: v0.1 still reads it.
+    expect(localStorage.getItem(CURRENT_KEY)).toBe('b')
   })
 
-  it('falls back to the first active project when the saved id is invalid', async () => {
+  it('does not fall back to the first active project when nothing is current', async () => {
+    fetchActiveProjects.mockResolvedValue([project('a'), project('b')])
+    const store = useProjectStore()
+    await store.fetchProjects()
+    expect(store.currentProjectId).toBeNull()
+    expect(store.currentProject).toBeNull()
+    expect(localStorage.getItem(CURRENT_KEY)).toBeNull()
+  })
+
+  it('does not fall back to the first active project when the saved id is invalid', async () => {
     localStorage.setItem(CURRENT_KEY, 'ghost')
     fetchActiveProjects.mockResolvedValue([project('a'), project('b')])
     const store = useProjectStore()
     await store.fetchProjects()
-    expect(store.currentProject?.id).toBe('a')
-    expect(localStorage.getItem(CURRENT_KEY)).toBe('a')
+    expect(store.currentProjectId).toBeNull()
+    expect(localStorage.getItem(CURRENT_KEY)).toBe('ghost')
   })
 
-  it('falls back to the first active project when nothing was saved', async () => {
+  it('keeps an opened project that is still active across a list refresh', async () => {
+    fetchActiveProjects.mockResolvedValue([project('a'), project('b')])
+    const store = useProjectStore()
+    store.setCurrentProject(project('b'))
+    await store.fetchProjects()
+    expect(store.currentProject?.id).toBe('b')
+    expect(localStorage.getItem(CURRENT_KEY)).toBe('b')
+  })
+
+  it('clears an opened project that is no longer active, without picking another', async () => {
     fetchActiveProjects.mockResolvedValue([project('a')])
     const store = useProjectStore()
+    store.setCurrentProject(project('b'))
     await store.fetchProjects()
-    expect(store.currentProject?.id).toBe('a')
+    expect(store.currentProjectId).toBeNull()
+    expect(store.currentProject).toBeNull()
+    expect(localStorage.getItem(CURRENT_KEY)).toBeNull()
   })
 
-  it('clears current when there are no active projects', async () => {
-    localStorage.setItem(CURRENT_KEY, 'a')
+  it('clears the opened project when there are no active projects', async () => {
     fetchActiveProjects.mockResolvedValue([])
     const store = useProjectStore()
+    store.setCurrentProject(project('a'))
     await store.fetchProjects()
     expect(store.currentProject).toBeNull()
     expect(localStorage.getItem(CURRENT_KEY)).toBeNull()

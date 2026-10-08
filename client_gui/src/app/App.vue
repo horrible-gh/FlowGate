@@ -8,7 +8,7 @@
       </main>
     </div>
   </div>
-  <ProjectDialog />
+  <ProjectDialog @opened="openDesigner" />
 </template>
 
 <script setup lang="ts">
@@ -22,12 +22,30 @@
 // A route with `meta.fullscreen` (the Designer, flowgate.v02.0025 T0006 §1) is a dedicated
 // workspace: Topbar and Sidebar are not rendered and the routed screen gets the whole
 // viewport. Every other route keeps the App chrome exactly as before.
-import { RouterView, useRoute } from 'vue-router'
-import { ProjectDialog } from '@/features/project'
+//
+// flowgate.v02.0040: a Project opened with the Dialog's "열기" goes straight to the Designer.
+// features/project is router-free, so the move happens here, at the one Dialog mount both
+// the Sidebar and the Dashboard open. If the move does not happen, the Dialog's one-shot
+// explicit-open signal is dropped so it cannot reach a later, unrelated Designer entry.
+import { RouterView, useRoute, useRouter } from 'vue-router'
+import { ProjectDialog, useProjectStore } from '@/features/project'
 import Sidebar from './components/Sidebar.vue'
 import Topbar from './components/Topbar.vue'
 
 const route = useRoute()
+const router = useRouter()
+const projectStore = useProjectStore()
+
+// A blocked, aborted or redirected move (anything that does not end on the Designer) counts
+// as "did not happen".
+async function openDesigner(): Promise<void> {
+  try {
+    await router.push('/designer')
+  } catch {
+    // Same as any other move that did not end on the Designer, handled below.
+  }
+  if (router.currentRoute.value.name !== 'designer') projectStore.takeExplicitOpen()
+}
 </script>
 
 <style scoped>

@@ -1,14 +1,13 @@
 <template>
   <li
     class="project-row"
-    :class="{ 'is-selected': selected, 'is-current': current }"
+    :class="{ 'is-selected': selected }"
     :data-project-id="project.id"
   >
     <button
       type="button"
       class="project-row-main"
       :aria-pressed="selected"
-      :aria-current="current ? 'true' : undefined"
       @click="emit('select', project)"
       @dblclick="emit('open', project)"
     >
@@ -17,7 +16,6 @@
       <span class="project-row-info">
         <span class="project-row-name-line">
           <span class="project-row-name">{{ project.name }}</span>
-          <Badge v-if="current" tone="success" size="sm">현재</Badge>
         </span>
         <span v-if="project.description" class="project-row-desc">{{ project.description }}</span>
       </span>
@@ -30,10 +28,11 @@
 <script setup lang="ts">
 // One Project row inside ProjectList (WP0005 T#2 §2.1/§2.3). Purely presentational: it
 // never decides what "select" or "open" means (that is ProjectDialog's job) and never
-// touches the store itself. `selected` (Dialog-local candidate) and `current` (store's
-// actual current Project) are two independent, non-color-only signals — a text Badge for
-// current and a visible checkmark plus aria-pressed for selected (D0004 §2.3/§3.3, T#2
-// §8) — so neither state is ever expressed by border/background color alone.
+// touches the store itself. `selected` (the Dialog-local candidate the person picked) is a
+// non-color-only signal — a visible checkmark plus aria-pressed (D0004 §2.3/§3.3, T#2 §8) —
+// so it is never expressed by border/background color alone. flowgate.v02.0040: the row no
+// longer marks the store's current Project ("현재" Badge / aria-current); nothing is shown as
+// chosen until the person picks a row.
 //
 // The row itself is not a native interactive element (a <li>, not a <button>, and not
 // role="option"/"listbox"): ProjectList renders a plain <ul>, so this <li> carries no ARIA
@@ -47,14 +46,12 @@
 // the one focusable control the state actually belongs to (project-row-main), not on the
 // non-interactive <li>.
 import { computed } from 'vue'
-import Badge from '../../components/ui/Badge.vue'
 import Button from '../../components/ui/Button.vue'
 import type { Project } from './types'
 
 const props = defineProps<{
   project: Project
   selected: boolean
-  current: boolean
 }>()
 const emit = defineEmits<{ select: [project: Project]; open: [project: Project] }>()
 
@@ -66,7 +63,7 @@ const emit = defineEmits<{ select: [project: Project]; open: [project: Project] 
 const formattedUpdatedAt = computed(() => props.project.updatedAt?.slice(0, 10) ?? '')
 
 // Project 식별 색상 (D0004 §2.3): purely a supplementary identity cue alongside the name —
-// never the only signal for anything (selected/current stay Badge+checkmark, per §8). A
+// never the only signal for anything (selected stays a checkmark, per §8). A
 // Project's `color` is nullable at the model level, so a neutral fallback swatch keeps the
 // dot from disappearing or rendering as `background: null`.
 const FALLBACK_COLOR = '#64748b'

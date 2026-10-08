@@ -12,12 +12,8 @@
 
     <template #default>
       <div class="pd-body">
-        <div class="pd-intro">
-          <div class="pd-intro-text">
-            <h3 class="pd-intro-title">프로젝트를 선택하세요.</h3>
-            <p class="pd-intro-desc">아래 목록에서 작업할 프로젝트를 선택하거나, 검색으로 찾아보세요.</p>
-          </div>
-          <Button v-if="isAdmin" type="button" variant="primary" size="sm" @click="createDialogOpen = true">
+        <div v-if="isAdmin" class="pd-intro">
+          <Button type="button" variant="primary" size="sm" @click="createDialogOpen = true">
             + 새 프로젝트
           </Button>
         </div>
@@ -41,7 +37,6 @@
           :error="store.error"
           :has-any-projects="store.projects.length > 0"
           :selected-id="selectedId"
-          :current-id="store.currentProject?.id ?? null"
           @retry="store.fetchProjects()"
           @select="selectProject"
           @open="openProject"
@@ -73,6 +68,12 @@
 // candidate a row-click picks, distinct from `store.currentProject` -- D0004 §2.1/§3.3,
 // T#1 §5 doc-comment). Only an explicit "열기"/double-click ever calls
 // `store.setCurrentProject()` (T#2 §3); a plain row click only ever updates `selectedId`.
+//
+// flowgate.v02.0040: nothing is pre-selected or marked current when the Dialog opens —
+// `selectedId` stays null until the person picks a row. "열기" also raises the store's
+// one-shot explicit-open signal and emits `opened`; this feature stays router-free, so the
+// App Shell (the single mount, reached from both Sidebar and Dashboard) does the move to the
+// Designer.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Button from '../../components/ui/Button.vue'
 import IconButton from '../../components/ui/IconButton.vue'
@@ -84,6 +85,8 @@ import ProjectCreateDialog from './ProjectCreateDialog.vue'
 import ProjectList from './ProjectList.vue'
 import { useProjectStore } from './store'
 import type { Project } from './types'
+
+const emit = defineEmits<{ opened: [project: Project] }>()
 
 const store = useProjectStore()
 const { user } = useCurrentUser()
@@ -104,12 +107,6 @@ const filteredProjects = computed<Project[]>(() => {
     (p) => p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || p.description.toLowerCase().includes(q),
   )
 })
-
-function pickDefaultSelection(): string | null {
-  const current = store.currentProject
-  if (current && store.projects.some((p) => p.id === current.id)) return current.id
-  return store.projects[0]?.id ?? null
-}
 
 // Every time this Dialog opens, Dialog-local state starts clean and search results are
 // unfiltered again (D0004 §3.1/§3.2) -- closing it never leaves stale search text or a
@@ -138,20 +135,6 @@ watch(
   },
 )
 
-// Initial selection is decided once the active list this open session fetched has
-// settled (D0004 §3.2 priority: saved current if still active, else the first Project,
-// else none) -- not on every later mutation of `store.projects`, so a create's list
-// refresh never silently resets a selection the person already changed.
-watch(
-  () => store.loading,
-  (loading, wasLoading) => {
-    if (!wasLoading || loading) return
-    if (!store.dialogOpen || store.error) return
-    if (selectedId.value !== null) return
-    selectedId.value = pickDefaultSelection()
-  },
-)
-
 // A search that hides the current selection candidate must not keep it selected out of
 // sight (D0004 §3.5, T#2 §4).
 watch(filteredProjects, (list) => {
@@ -168,7 +151,9 @@ function selectProject(project: Project): void {
 // picking a row alone (selectProject above) never does (D0004 §3.3/§3.4, T#2 §3).
 function openProject(project: Project): void {
   store.setCurrentProject(project)
+  store.requestExplicitOpen(project.id)
   store.closeDialog()
+  emit('opened', project)
 }
 
 function dismissToast(id: string | number): void {
@@ -235,29 +220,11 @@ function handleCreated(project: Project): void {
   padding: 16px 0;
 }
 
+/* Action row only (admin "+ 새 프로젝트"); the guidance text lives in the header alone. */
 .pd-intro {
   flex: none;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.pd-intro-text {
-  min-width: 0;
-}
-
-.pd-intro-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--fg2-text);
-}
-
-.pd-intro-desc {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: var(--fg2-muted);
+  justify-content: flex-end;
 }
 
 .pd-search {

@@ -207,8 +207,6 @@ export default {
       refresh: '새로고침',
       search_placeholder: '프로젝트, 그룹, 플로우 검색',
       search_clear: '검색어 지우기',
-      no_project: '선택된 프로젝트가 없습니다.',
-      no_project_desc: '프로젝트를 열면 그룹과 플로우가 여기에 표시됩니다.',
       loading: '프로젝트 구조를 불러오는 중...',
       load_failed: '프로젝트 구조를 불러오지 못했습니다.',
       refresh_failed: '새로고침에 실패했습니다. 이전 목록을 표시합니다.',

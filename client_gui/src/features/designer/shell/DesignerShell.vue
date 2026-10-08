@@ -81,7 +81,11 @@
 // selection, not an opening (click = select, Flow double-click / Enter = select + open), so it
 // leaves the Designer unselected. Closing the last tab or changing the Project (which clears the
 // Center) returns the Designer to the unselected state.
-import { computed, reactive, watch } from 'vue'
+//
+// flowgate.v02.0040 — the Project Dialog's "열기" raises a one-shot explicit-open signal in the
+// store. The Project Explorer takes it on entry; whatever it did not take is dropped once this
+// Shell is mounted, so the signal never outlives the entry it was raised for.
+import { computed, onMounted, reactive, watch } from 'vue'
 import { useProjectStore } from '@/features/project'
 import { createDesignerCenterSession } from '../center/designerCenterSession'
 import type { ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
@@ -135,6 +139,10 @@ watch(
   },
   { immediate: true },
 )
+
+onMounted(() => {
+  projectStore.takeExplicitOpen()
+})
 
 // The Toolbar shows the zoom the active Canvas last reported (100% before it reports one).
 const zoom = computed(() => zoomPercent(center.activeView.value?.viewport?.zoom))

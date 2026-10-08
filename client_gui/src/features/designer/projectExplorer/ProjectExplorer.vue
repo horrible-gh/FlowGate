@@ -45,21 +45,14 @@
     </div>
 
     <div class="project-explorer-body">
-      <EmptyState
-        v-if="!projectId"
-        compact
-        :title="t('gui.designer.project_explorer.no_project')"
-        :description="t('gui.designer.project_explorer.no_project_desc')"
-        data-test="project-explorer-no-project"
-      />
       <LoadingState
-        v-else-if="loading"
+        v-if="projectId && loading"
         size="sm"
         :label="t('gui.designer.project_explorer.loading')"
         data-test="project-explorer-loading"
       />
       <ErrorState
-        v-else-if="error !== null"
+        v-else-if="projectId && error !== null"
         compact
         :title="t('gui.designer.project_explorer.load_failed')"
         :message="error"
@@ -71,7 +64,7 @@
           </Button>
         </template>
       </ErrorState>
-      <template v-else-if="loaded">
+      <template v-else-if="projectId && loaded">
         <!-- Same contract as the Dashboard explorer (0449 T0004 item 1): a failed refresh
              rides ABOVE the tree it could not replace; the last good tree stays usable. -->
         <Alert
@@ -195,6 +188,8 @@ const isSearching = computed(() => query.value.trim().length > 0)
 // The user's own pick, never derived from the Project context (0039 0001-R §4): opening the
 // Designer on a Project shows its tree with nothing selected and no current mark; only a
 // click / key on a row sets this, and a Project change clears it again.
+// flowgate.v02.0040: the one exception is the user's own "열기" in the Project Dialog — that
+// is an explicit choice, handed over once through the store (see the Project watch below).
 const selection = ref<ExplorerSelection>(null)
 
 // Reported upward so the Designer can tell "nothing chosen yet" from a chosen target
@@ -342,6 +337,11 @@ watch(
       expanded.value = {}
       searchOverrides.value = {}
       query.value = ''
+      // The Dialog's one-shot explicit-open signal: taken (and so cleared) here, and only a
+      // signal for this very Project becomes the initial selection, which the selection watch
+      // reports upward like a click. Without it the tree starts unselected (0039 T#3).
+      const opened = projectStore.takeExplicitOpen()
+      if (pid && opened === pid) selection.value = { kind: 'project', id: projectNodeId(pid) }
     }
     if (pid) void load(!projectChanged)
   },

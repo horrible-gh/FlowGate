@@ -16,7 +16,6 @@ function baseProps() {
     error: null as string | null,
     hasAnyProjects: false,
     selectedId: null as string | null,
-    currentId: null as string | null,
   }
 }
 
@@ -44,18 +43,19 @@ describe('features/project/ProjectList', () => {
     expect(noResults.find('.ui-empty-state-title').text()).not.toBe(none.find('.ui-empty-state-title').text())
   })
 
-  it('renders one ProjectRow per project as a plain list (no listbox/option ARIA widget), forwarding selected/current by id', () => {
+  it('renders one ProjectRow per project as a plain list (no listbox/option ARIA widget), forwarding selected by id and no current mark', () => {
     const wrapper = mount(ProjectList, {
-      props: { ...baseProps(), projects: [project('a'), project('b')], hasAnyProjects: true, selectedId: 'b', currentId: 'a' },
+      props: { ...baseProps(), projects: [project('a'), project('b')], hasAnyProjects: true, selectedId: 'b' },
     })
     expect(wrapper.find('[role="listbox"]').exists()).toBe(false)
     expect(wrapper.find('[role="option"]').exists()).toBe(false)
     const mains = wrapper.findAll('.project-row-main')
     expect(mains).toHaveLength(2)
-    expect(mains[0].attributes('aria-current')).toBe('true')
+    expect(mains[0].attributes('aria-current')).toBeUndefined()
     expect(mains[0].attributes('aria-pressed')).toBe('false')
     expect(mains[1].attributes('aria-current')).toBeUndefined()
     expect(mains[1].attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('.ui-badge').exists()).toBe(false)
   })
 
   it('forwards select/open events from a row up to its own listeners', async () => {

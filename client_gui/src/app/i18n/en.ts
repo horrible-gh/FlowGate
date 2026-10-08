@@ -204,8 +204,6 @@ export default {
       refresh: 'Refresh',
       search_placeholder: 'Search projects, groups, flows',
       search_clear: 'Clear search',
-      no_project: 'No project selected.',
-      no_project_desc: 'Open a project to see its groups and flows here.',
       loading: 'Loading the project structure...',
       load_failed: 'Could not load the project structure.',
       refresh_failed: 'Refresh failed. Showing the previous list.',
