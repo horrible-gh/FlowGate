@@ -224,13 +224,17 @@ describe('Designer initial state — no work target right after entry (0039 T#3)
       'designer-menubar',
       'designer-toolbar',
     ])
+    // flowgate.v02.0046: a resize handle on each Dock ↔ Center line.
     expect([...get(w, 'designer-body').element.children].map((c) => c.getAttribute('data-test'))).toEqual([
       'designer-left-dock',
+      'designer-left-resize',
       'designer-center-column',
+      'designer-right-resize',
       'designer-right-dock',
     ])
     expect([...get(w, 'designer-center-column').element.children].map((c) => c.getAttribute('data-test'))).toEqual([
       'designer-workspace',
+      'designer-bottom-resize',
       'designer-bottom-dock',
     ])
     expect(get(w, 'designer-bottom-dock').find('[data-test="designer-inspector"]').exists()).toBe(true)

@@ -7,7 +7,8 @@
 // through events.
 //
 // The sizes are initial proposals to review on the real screen (0025-R §11), not final UX
-// values. Drag resize is not implemented yet; a later handle will change these same fields.
+// values. flowgate.v02.0046: the Body / CenterColumn resize handles change these same fields
+// (leftWidth / rightWidth / bottomHeight) within the bounds below.
 // flowgate.v02.0036: the bottom Dock grew from 200 to 300px so the Inspector (0035 v7: 72px
 // header + tabs above its content) keeps a usable Content area next to the Canvas.
 // flowgate.v02.0037: the right Dock became the Tool Panel; which tool it shows is layout state
@@ -64,6 +65,41 @@ export const DESIGNER_LAYOUT_DEFAULTS: Readonly<DesignerLayoutState> = Object.fr
 
 export function createDesignerLayout(): DesignerLayoutState {
   return { ...DESIGNER_LAYOUT_DEFAULTS }
+}
+
+/**
+ * flowgate.v02.0046 — drag resize bounds. A Dock never goes below its minimum; it only grows
+ * while the Center keeps DESIGNER_CENTER_MIN_WIDTH (the Workspace DESIGNER_WORKSPACE_MIN_HEIGHT
+ * above the bottom Dock). When there is no such room left (a narrow window) the Dock can still
+ * shrink but not grow past its current size, and the Body scrolls sideways as before.
+ */
+export const DESIGNER_LEFT_MIN_WIDTH = 200
+export const DESIGNER_RIGHT_MIN_WIDTH = 240
+export const DESIGNER_BOTTOM_MIN_HEIGHT = 160
+export const DESIGNER_WORKSPACE_MIN_HEIGHT = 160
+
+/** `size` kept within [min, max(min, room, current)], in whole px. */
+export function clampDockSize(size: number, min: number, room: number, current: number): number {
+  const max = Math.max(min, room, current)
+  return Math.round(Math.min(Math.max(size, min), max))
+}
+
+/** Left Dock width for a drag to `width`, in a Body `bodyWidth` px wide. */
+export function clampLeftWidth(layout: DesignerLayoutState, width: number, bodyWidth: number): number {
+  const room = bodyWidth - rightColumnWidth(layout) - DESIGNER_CENTER_MIN_WIDTH
+  return clampDockSize(width, DESIGNER_LEFT_MIN_WIDTH, room, layout.leftWidth)
+}
+
+/** Right Dock width for a drag to `width`, in a Body `bodyWidth` px wide. */
+export function clampRightWidth(layout: DesignerLayoutState, width: number, bodyWidth: number): number {
+  const room = bodyWidth - leftColumnWidth(layout) - DESIGNER_CENTER_MIN_WIDTH
+  return clampDockSize(width, DESIGNER_RIGHT_MIN_WIDTH, room, layout.rightWidth)
+}
+
+/** Bottom Dock height for a drag to `height`, in a Center column `columnHeight` px high. */
+export function clampBottomHeight(layout: DesignerLayoutState, height: number, columnHeight: number): number {
+  const room = columnHeight - DESIGNER_WORKSPACE_MIN_HEIGHT
+  return clampDockSize(height, DESIGNER_BOTTOM_MIN_HEIGHT, room, layout.bottomHeight)
 }
 
 /** Width the Body gives the left column for the current state. */

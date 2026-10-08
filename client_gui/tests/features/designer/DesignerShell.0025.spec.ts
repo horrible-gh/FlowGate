@@ -171,14 +171,18 @@ describe('DesignerShell — container hierarchy', () => {
 
     expect([...shell.children].map((c) => c.getAttribute('data-test'))).toEqual(['designer-top', 'designer-body'])
     const body = child(shell, 'designer-body')!
+    // flowgate.v02.0046: a resize handle on each Dock ↔ Center line.
     expect([...body.children].map((c) => c.getAttribute('data-test'))).toEqual([
       'designer-left-dock',
+      'designer-left-resize',
       'designer-center-column',
+      'designer-right-resize',
       'designer-right-dock',
     ])
     const center = child(body, 'designer-center-column')!
     expect([...center.children].map((c) => c.getAttribute('data-test'))).toEqual([
       'designer-workspace',
+      'designer-bottom-resize',
       'designer-bottom-dock',
     ])
     // The Bottom Dock lives in the Center column only — never a direct child of the Body.
