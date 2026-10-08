@@ -18,6 +18,7 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       'DesignerBottomDock.vue',
       'DesignerCenterColumn.vue',
       'DesignerLeftDock.vue',
+      'DesignerResizeHandle.vue',
       'DesignerRightDock.vue',
       'DesignerShell.vue',
       'DesignerTop.vue',
@@ -54,6 +55,8 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       /^\.\.\/top\/designerTop$/,
       // flowgate.v02.0043 — File menu dialogs (Group / Flow 열기, 새 Group / Flow).
       /^\.\.\/fileMenu\/Designer[A-Za-z]+Dialog\.vue$/,
+      // flowgate.v02.0046 — Dock resize handles: the shared single-axis drag interaction.
+      /^\.\.\/\.\.\/\.\.\/core\/interaction\/axisResize$/,
     ]
     for (const name of SHELL_FILES) {
       for (const spec of importsOf(read(join(SHELL, name)))) {
@@ -100,5 +103,17 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
     expect(Object.keys(messages.designer).sort()).toEqual([
       'center', 'file_explorer', 'file_menu', 'inspector', 'palette', 'project_explorer', 'shell', 'top',
     ])
+  })
+
+  // flowgate.v02.0046 TR0003 rev1 — jsdom lays nothing out, so the DOM tests cannot see where
+  // the Body's handles land. An absolutely placed grid item with only a start line spans to the
+  // container's far edge (`grid-column: 1` = the whole Body), which put the left handle on the
+  // Body's right edge in a real browser; each handle must name both lines of its Dock column.
+  it('pins each Body resize handle to its own Dock column with both grid lines', () => {
+    const body = read(join(SHELL, 'DesignerBody.vue'))
+    const rule = (side: string) =>
+      body.match(new RegExp(String.raw`\.designer-body-resize\.is-${side}\s*\{([^}]*)\}`))?.[1] ?? ''
+    expect(rule('left')).toMatch(/grid-column:\s*1\s*\/\s*2\s*;/)
+    expect(rule('right')).toMatch(/grid-column:\s*3\s*\/\s*4\s*;/)
   })
 })

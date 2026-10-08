@@ -11,7 +11,9 @@
        unselected state — every area keeps its frame, the work controls are unavailable and
        nothing is unfolded. A plain selection in the Project Explorer does not change that.
        flowgate.v02.0043: the File menu is connected — its dialogs (Group / Flow 열기, 새 Group /
-       Flow) are mounted here and act on the same Project context, Explorer and Center. -->
+       Flow) are mounted here and act on the same Project context, Explorer and Center.
+       flowgate.v02.0046: the left / right Dock widths and the bottom Dock height follow the
+       Body / CenterColumn resize handles; the Shell clamps each drag into the layout bounds. -->
   <div class="designer-shell" data-test="designer-shell">
     <DesignerTop
       :run-mode="top.runMode"
@@ -26,30 +28,48 @@
       @update:density="top.density = $event"
       @open-recent="onOpenRecent"
     />
-    <DesignerBody :left-width="leftColumnWidth(layout)" :right-width="rightColumnWidth(layout)">
-      <DesignerLeftDock
-        :project-id="projectId"
-        :active-flow="activeFlowRef"
-        :mode="layout.activeLeftMode"
-        :collapsed="layout.leftCollapsed"
-        :unselected="!hasWorkTarget"
-        :explorer-request="explorerRequest"
-        :refresh-token="explorerRefreshToken"
-        @update:mode="layout.activeLeftMode = $event"
-        @collapse="layout.leftCollapsed = true"
-        @expand="layout.leftCollapsed = false"
-        @activate-flow="onActivateFlow"
-        @update:selection="explorerSelection = $event"
-      />
-      <DesignerCenterColumn :center="center" :bottom-height="layout.bottomHeight" :unselected="!hasWorkTarget" />
-      <DesignerRightDock
-        :project-id="projectId"
-        :active-flow="activeFlowRef"
-        :tool="layout.activeRightTool"
-        :collapsed="layout.rightCollapsed"
-        :unselected="!hasWorkTarget"
-        @update:tool="layout.activeRightTool = $event"
-      />
+    <DesignerBody
+      :left-width="leftColumnWidth(layout)"
+      :right-width="rightColumnWidth(layout)"
+      :left-resizable="!layout.leftCollapsed"
+      :right-resizable="!layout.rightCollapsed"
+      @resize-left="(width, bodyWidth) => (layout.leftWidth = clampLeftWidth(layout, width, bodyWidth))"
+      @resize-right="(width, bodyWidth) => (layout.rightWidth = clampRightWidth(layout, width, bodyWidth))"
+    >
+      <template #left>
+        <DesignerLeftDock
+          :project-id="projectId"
+          :active-flow="activeFlowRef"
+          :mode="layout.activeLeftMode"
+          :collapsed="layout.leftCollapsed"
+          :unselected="!hasWorkTarget"
+          :explorer-request="explorerRequest"
+          :refresh-token="explorerRefreshToken"
+          @update:mode="layout.activeLeftMode = $event"
+          @collapse="layout.leftCollapsed = true"
+          @expand="layout.leftCollapsed = false"
+          @activate-flow="onActivateFlow"
+          @update:selection="explorerSelection = $event"
+        />
+      </template>
+      <template #center>
+        <DesignerCenterColumn
+          :center="center"
+          :bottom-height="layout.bottomHeight"
+          :unselected="!hasWorkTarget"
+          @resize-bottom="(height, columnHeight) => (layout.bottomHeight = clampBottomHeight(layout, height, columnHeight))"
+        />
+      </template>
+      <template #right>
+        <DesignerRightDock
+          :project-id="projectId"
+          :active-flow="activeFlowRef"
+          :tool="layout.activeRightTool"
+          :collapsed="layout.rightCollapsed"
+          :unselected="!hasWorkTarget"
+          @update:tool="layout.activeRightTool = $event"
+        />
+      </template>
     </DesignerBody>
 
     <DesignerOpenDialog
@@ -165,7 +185,14 @@ import DesignerCenterColumn from './DesignerCenterColumn.vue'
 import DesignerLeftDock from './DesignerLeftDock.vue'
 import DesignerRightDock from './DesignerRightDock.vue'
 import DesignerTop from './DesignerTop.vue'
-import { createDesignerLayout, leftColumnWidth, rightColumnWidth } from './designerLayout'
+import {
+  clampBottomHeight,
+  clampLeftWidth,
+  clampRightWidth,
+  createDesignerLayout,
+  leftColumnWidth,
+  rightColumnWidth,
+} from './designerLayout'
 
 const emit = defineEmits<{
   /** File › Designer 닫기: the App Shell leaves the Designer (this Shell owns no router). */
