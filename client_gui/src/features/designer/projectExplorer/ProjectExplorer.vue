@@ -6,14 +6,14 @@
   <section class="project-explorer" :aria-label="t('gui.designer.project_explorer.title')" data-test="project-explorer">
     <!-- No visible title row: the surrounding Dock tab already names this view
          (0025 T0006 §2/§6). Search and refresh share one compact row. -->
-    <div class="project-explorer-search" :class="{ 'is-unavailable': toolsDisabled }">
+    <div class="project-explorer-search" :class="{ 'is-unavailable': !projectId }">
       <div class="project-explorer-search-field">
         <Input
           v-model="query"
           type="text"
           :placeholder="t('gui.designer.project_explorer.search_placeholder')"
           :aria-label="t('gui.designer.project_explorer.search_placeholder')"
-          :disabled="!projectId || toolsDisabled"
+          :disabled="!projectId"
           data-test="project-explorer-search"
         />
         <IconButton
@@ -141,8 +141,9 @@ const props = withDefaults(
     /** Show final-approved / discarded Flows too (the Dashboard's "show" variant). */
     includeTerminal?: boolean
     /**
-     * Makes the search and refresh row unavailable while the tree stays usable (0039 T#3: the
-     * Designer's initial state with no work target). Set by the Designer, not by this part.
+     * Makes the refresh button unavailable while the tree stays usable (0039 T#3: the Designer's
+     * initial state with no work target). The search stays available whenever a Project is open
+     * (0044). Set by the Designer, not by this part.
      */
     toolsDisabled?: boolean
     /**

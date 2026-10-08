@@ -202,7 +202,7 @@ function expectUnselectedState(w: VueWrapper<any>) {
   expect(left.attributes('data-unselected')).toBe('true')
   expect(left.findAll('[data-test="designer-explorer-mode-tabs"] [role="tab"]').every(isDisabled)).toBe(true)
   expect(isDisabled(get(w, 'designer-left-collapse'))).toBe(true)
-  expect(isDisabled(get(w, 'project-explorer-search'))).toBe(true)
+  expect(isDisabled(get(w, 'project-explorer-search'))).toBe(false)
   expect(isDisabled(get(w, 'project-explorer-refresh'))).toBe(true)
 
   // Toolbar: every tool on screen and unavailable.
@@ -448,7 +448,7 @@ describe('ProjectExplorer — reports the user selection (0039 T#3)', () => {
     expect(wrapper.emitted('update:selection')!.at(-1)).toEqual([null])
   })
 
-  it('toolsDisabled makes search and refresh unavailable but leaves the tree usable', async () => {
+  it('toolsDisabled makes refresh unavailable but leaves the search and the tree usable', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     useProjectStore().setCurrentProject(project('p', 'Alpha'))
@@ -458,8 +458,13 @@ describe('ProjectExplorer — reports the user selection (0039 T#3)', () => {
       global: { plugins: [i18n, pinia] },
     })
     await settle()
-    expect(isDisabled(wrapper.get('[data-test="project-explorer-search"]'))).toBe(true)
+    expect(isDisabled(wrapper.get('[data-test="project-explorer-search"]'))).toBe(false)
     expect(isDisabled(wrapper.get('[data-test="project-explorer-refresh"]'))).toBe(true)
+    await wrapper.get('[data-test="project-explorer-search"]').setValue('UI')
+    await settle()
+    expect(wrapper.findAll('[data-explorer-row]').length).toBeGreaterThan(0)
+    await wrapper.get('[data-test="project-explorer-search"]').setValue('')
+    await settle()
     await click(wrapper, 'Alpha')
     expect(explorerRow(wrapper, 'Alpha').classes()).toContain('is-selected')
   })

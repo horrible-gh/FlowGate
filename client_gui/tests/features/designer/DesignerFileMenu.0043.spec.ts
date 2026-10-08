@@ -543,7 +543,7 @@ describe('Explorer visibility after a File menu open (review 1841)', () => {
   const search = (w: VueWrapper<any>) => get(w, 'project-explorer-search')
   const searchValue = (w: VueWrapper<any>) => (search(w).element as HTMLInputElement).value
 
-  /** A Flow open so the Explorer tools are available (0039 T#3), then a search typed. */
+  /** A Flow opened, then a search typed. */
   async function openAndSearch(w: VueWrapper<any>, query: string) {
     await doubleClick(w, 'UI 개선')
     await doubleClick(w, 'Designer v0.2')
