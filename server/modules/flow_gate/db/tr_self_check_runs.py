@@ -10,6 +10,7 @@ import json
 import uuid
 from typing import Any, Optional
 
+from . import dialect as _dialect
 from .connection import get_store, now_iso
 
 _MAX_TAIL_BYTES = 64 * 1024  # 64 KiB UTF-8 encoded byte limit
@@ -22,6 +23,28 @@ class SelfCheckAlreadyRunningError(Exception):
     def __init__(self, message: str, existing_run_id: str | None = None):
         super().__init__(message)
         self.existing_run_id = existing_run_id
+
+
+class DraftOwnerClosedError(Exception):
+    """A draft run's owner token is consumed, revoked or gone, so it can no longer own a run."""
+
+
+def _require_open_owner(store, owner_token_id: str) -> None:
+    """Fail the draft insert unless its TR(new) owner token is still unconsumed and unrevoked.
+
+    0638 T#1 rev1: runs inside the insert's transaction. On MySQL/PostgreSQL the row lock
+    (FOR UPDATE) is taken BEFORE the insert, the same order token consumption takes it
+    before link_owner_runs, so a registration either waits for this insert to commit (and
+    its link then sees the row) or has already consumed the token (and this insert rolls
+    back). SQLite has no FOR UPDATE; there the insert runs first and its write lock
+    serializes the two the same way.
+    """
+    sql = "SELECT consumed_at, revoked_at FROM tokens WHERE token_id = ?"
+    if store.dialect != _dialect.SQLITE:
+        sql += " FOR UPDATE"
+    row = store._fetch_one(sql, [owner_token_id])
+    if row is None or row.get("consumed_at") or row.get("revoked_at"):
+        raise DraftOwnerClosedError(f"draft owner token {owner_token_id} is no longer open")
 
 
 def compute_active_key(project_id: str, group_id: str) -> str:
@@ -102,7 +125,7 @@ def _normalize_row(row: dict | None) -> dict | None:
 def create_pending(
     project_id: str,
     group_id: str,
-    tr_doc_id: str,
+    tr_doc_id: str | None,
     requested_by: str | None,
     policy_version: str,
     program: str,
@@ -115,8 +138,19 @@ def create_pending(
     env_keys: list[str],
     run_id: str | None = None,
     source_lock_holder: str | None = None,
+    owner_token_id: str | None = None,
+    draft_doc_ref: str | None = None,
 ) -> dict:
-    """Atomically insert a pending self-check run row with active_key set."""
+    """Atomically insert a pending self-check run row with active_key set.
+
+    0638 T#1: ``tr_doc_id=None`` is a draft run owned by a TR(new) token; it then needs both
+    ``owner_token_id`` and ``draft_doc_ref`` (ck_selfcheck_owner, enforced here for MySQL).
+    The owner token must still be open when the row commits (:func:`_require_open_owner`);
+    otherwise :class:`DraftOwnerClosedError` and nothing is written, so no draft row can
+    land after its registration's link and stay unlinked.
+    """
+    if tr_doc_id is None and not (owner_token_id and draft_doc_ref):
+        raise ValueError("a draft self-check run needs owner_token_id and draft_doc_ref")
     store = get_store()
     active_key = compute_active_key(project_id, group_id)
     _validate_hash64(active_key, "active_key")
@@ -137,22 +171,28 @@ def create_pending(
 
     try:
         with store.transaction():
+            draft = tr_doc_id is None
+            lock_first = store.dialect != _dialect.SQLITE
+            if draft and lock_first:
+                _require_open_owner(store, owner_token_id)
             store._execute(
             "INSERT INTO tr_self_check_runs ("
-            " self_check_run_id, project_id, group_id, tr_doc_id, requested_by,"
+            " self_check_run_id, project_id, group_id, tr_doc_id, owner_token_id, draft_doc_ref, requested_by,"
             " policy_version, program, args_json, resolved_executable_path,"
             " resolved_executable_name, executable_origin, cwd_relative, timeout_seconds,"
             " env_keys_json, status, active_key, exit_code, timed_out, cancel_requested,"
             " source_changed_during_run, worktree_state_changed, recovery_state,"
             " cleanup_pending, created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, 0, 0, 0, 0, 'none', 0, ?, ?)",
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, 0, 0, 0, 0, 'none', 0, ?, ?)",
             [
-                rid, project_id, group_id, tr_doc_id, requested_by,
+                rid, project_id, group_id, tr_doc_id, owner_token_id, draft_doc_ref, requested_by,
                 policy_version, program, args_json, resolved_executable_path,
                 resolved_executable_name, executable_origin, cwd_relative, timeout_seconds,
                 env_keys_json, active_key, now, now,
             ],
         )
+            if draft and not lock_first:
+                _require_open_owner(store, owner_token_id)
             if source_lock_holder is not None:
                 store._execute(
                     "UPDATE tr_self_check_runs SET source_lock_holder = ? WHERE self_check_run_id = ?",
@@ -208,6 +248,50 @@ def list_by_doc(
 
     rows = store._fetch_all(query, params)
     return [_normalize_row(r) for r in rows if r is not None]  # type: ignore[misc]
+
+
+def get_run_for_owner(run_id: str, owner_token_id: str) -> dict | None:
+    """Lookup a draft run ensuring it belongs to the given TR(new) token and is still unlinked."""
+    row = get_store()._fetch_one(
+        "SELECT * FROM tr_self_check_runs WHERE self_check_run_id = ? AND owner_token_id = ?"
+        " AND tr_doc_id IS NULL",
+        [run_id, owner_token_id],
+    )
+    return _normalize_row(row)
+
+
+def list_by_owner(owner_token_id: str, limit: int = 20) -> list[dict]:
+    """List a TR(new) token's unlinked draft runs, created_at DESC, self_check_run_id DESC."""
+    rows = get_store()._fetch_all(
+        "SELECT * FROM tr_self_check_runs WHERE owner_token_id = ? AND tr_doc_id IS NULL"
+        " ORDER BY created_at DESC, self_check_run_id DESC LIMIT ?",
+        [owner_token_id, limit],
+    )
+    return [_normalize_row(r) for r in rows if r is not None]  # type: ignore[misc]
+
+
+def list_drafts_by_group(project_id: str, group_id: str, limit: int = 20) -> list[dict]:
+    """List a group's unlinked draft runs, created_at DESC, self_check_run_id DESC."""
+    rows = get_store()._fetch_all(
+        "SELECT * FROM tr_self_check_runs WHERE project_id = ? AND group_id = ? AND tr_doc_id IS NULL"
+        " ORDER BY created_at DESC, self_check_run_id DESC LIMIT ?",
+        [project_id, group_id, limit],
+    )
+    return [_normalize_row(r) for r in rows if r is not None]  # type: ignore[misc]
+
+
+def link_owner_runs(owner_token_id: str, tr_doc_id: str, project_id: str, group_id: str) -> int:
+    """Attach a TR(new) token's draft runs to the TR it registered (0638 T#1).
+
+    Only rows of the same project/group that are still unlinked move; a linked row is never
+    re-pointed. Active rows move too: their worker thread addresses them by run id only.
+    """
+    now = now_iso()
+    return get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET tr_doc_id = ?, linked_at = ?, updated_at = ?"
+        " WHERE owner_token_id = ? AND tr_doc_id IS NULL AND project_id = ? AND group_id = ?",
+        [tr_doc_id, now, now, owner_token_id, project_id, group_id],
+    )
 
 
 def get_active(project_id: str, group_id: str) -> dict | None:

@@ -177,10 +177,11 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     assert "changed_files_format" in _names(body)
     assert "step_verification_format" in _names(body)
     assert "authoring_guide" in _names(body)
+    # 0638 T#1: a TR(new) worker runs Self-check before its TR exists, so the item is listed.
+    assert "tr_self_check" in _names(body)
     assert _hidden(body) == {
         "design_template": "not_design_type",
         "test_commands": "not_ts_type",
-        "tr_self_check": "not_tr_edit",
     }
     assert body["context"]["tool_kind"] == "read_write"
     counts = {item["name"]: item["children_count"] for item in body["items"]}
@@ -595,7 +596,7 @@ def test_identifiers_never_translate(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
     body = client.get("/api/v1/help?locale=ja").json()
     assert _names(body)[:2] == ["notices", "group_documents"]
-    assert set(_hidden(body)) == {"design_template", "test_commands", "tr_self_check"}
+    assert set(_hidden(body)) == {"design_template", "test_commands"}  # 0638 T#1: TR(new) lists tr_self_check
 
 
 @pytest.mark.parametrize("locale", ["ko", "ja", "en"])

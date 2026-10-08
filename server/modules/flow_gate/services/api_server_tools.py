@@ -138,17 +138,20 @@ REGISTER_SCHEMAS = {
 
 DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *SOURCE_NAMES, *SELF_CHECK_NAMES)}
 DESCRIPTIONS["run_self_check"] = (
-    "The only way a TR edit worker runs tests/verification. Runs program+args[] (cwd, timeout_seconds) in the current "
-    "managed worktree and returns a self_check_run_id. Use the verification command named in the TR, else in the T; "
+    "The only way a TR edit or TR(new) worker runs tests/verification. Runs program+args[] (cwd, timeout_seconds) in "
+    "the current managed worktree and returns a self_check_run_id. In a TR(new) step the TR does not exist yet: the "
+    "run belongs to your work token and is attached to the TR when you register it. "
+    "Use the verification command named in the TR, else in the T; "
     "else the minimal check obvious from your change; if none can be determined stop with test_command_missing. "
     "Never search for another execution backend. If unavailable, report the returned reason and do not fall back."
 )
 DESCRIPTIONS["read_self_check"] = (
-    "Read Self-check evidence for the bound TR. Omit self_check_run_id to list recent runs, or pass one to read "
+    "Read Self-check evidence for the bound TR (in a TR(new) step: the runs your work token started). "
+    "Omit self_check_run_id to list recent runs, or pass one to read "
     "that run in detail. If the selected run is pending/running, repeat read_self_check until it reaches "
-    "completed/failed/cancelled. For a TR edit worker, on a non-zero exit read the output, fix the code within "
-    "scope, then run_self_check again. TR review workers are read-only and may only inspect the recorded evidence; "
-    "only TR edit workers may run or cancel Self-check."
+    "completed/failed/cancelled. For a TR edit or TR(new) worker, on a non-zero exit read the output, fix the code "
+    "within scope, then run_self_check again. TR review workers are read-only and may only inspect the recorded "
+    "evidence; only TR edit and TR(new) workers may run or cancel Self-check."
 )
 DESCRIPTIONS["cancel_self_check"] = "Cancel a running run_self_check by self_check_run_id."
 DESCRIPTIONS["request_source_snapshot"] = "Retired (410). Use the live source tools."
@@ -220,6 +223,19 @@ def _step_type(run: dict) -> str | None:
     return str(doc.get("type_code") or doc.get("type") or "").upper() if doc else None
 
 
+def _is_tr_new(run: dict) -> bool:
+    """A TR(new) run: before the TR exists, the step is the workflow head, not doc_ref's own type.
+
+    Same head lookup as remote_tool_service / help_catalog, so the advertisement, the help
+    item and tr_self_check_service.draft_target agree on what a TR(new) step is (0638 T#1).
+    """
+    if run.get("action_scope") != "new" or not run.get("doc_ref"):
+        return False
+    head_type, failed = remote_tool_service._worker_token_step_type_result(
+        {"doc_ref": run.get("doc_ref"), "action_scope": "new"})
+    return not failed and str(head_type or "").upper() == "TR"
+
+
 def definitions_for_run(run: dict) -> list[dict]:
     scope = run.get("action_scope")
     if scope not in DOCUMENT_SCOPES:
@@ -238,9 +254,10 @@ def definitions_for_run(run: dict) -> list[dict]:
     tr_edit = scope == "edit" and step_type == "TR" and bool(run.get("doc_ref"))
     tr_review = scope == "review" and step_type == "TR" and bool(run.get("doc_ref"))
     names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
-    if tr_edit:
+    if tr_edit or _is_tr_new(run):
         # 0652/0656: TR edit uses Self-check as its execution path; TR review validates the live
-        # worktree plus read-only Self-check evidence.
+        # worktree plus read-only Self-check evidence. 0638 T#1: a TR(new) worker runs it too,
+        # before its TR exists; the runs are owned by its token and linked on registration.
         names += list(SELF_CHECK_NAMES)
     elif tr_review:
         names += ["read_self_check"]
@@ -483,6 +500,8 @@ def self_check_call(run: dict, raw_token: str, name: str, tool_input: dict) -> t
         raise ToolError(401, "selfcheck_token_invalid") from exc
     doc_id = run.get("doc_ref")
     scope = run.get("action_scope")
+    if scope == "new":
+        return _draft_self_check_call(run, token, name, tool_input)
     if not (scope == token.get("action_scope") and scope in {"edit", "review"}
             and doc_id == token.get("doc_ref") and run.get("group_id") == token.get("group_id")
             and run.get("project_id") == token.get("project")
@@ -504,6 +523,33 @@ def self_check_call(run: dict, raw_token: str, name: str, tool_input: dict) -> t
             return 200, {"ok": True, "runs": tr_self_check_service.list_runs(doc_id, limit)}
         if name == "cancel_self_check":
             return 200, {"ok": True, **tr_self_check_service.cancel(doc_id, tool_input["self_check_run_id"])}
+        raise ToolError(422, "invalid_tool_call")
+    except tr_self_check_service.SelfCheckError as exc:
+        raise ToolError(exc.status, SELF_CHECK_WORKER_REASONS.get(exc.code, exc.code), exc.detail) from exc
+
+
+def _draft_self_check_call(run: dict, token: dict, name: str, tool_input: dict) -> tuple[int, dict]:
+    """0638 T#1: TR(new) Self-check. The live token owns the runs; there is no TR id yet.
+
+    The run must be the token's own run; draft_target then checks the token's sequence
+    document, project/group and that the workflow head is a pending TR.
+    """
+    if not (token.get("action_scope") == "new" and run.get("doc_ref") == token.get("doc_ref")
+            and run.get("group_id") == token.get("group_id") and run.get("project_id") == token.get("project")):
+        raise ToolError(403, "selfcheck_forbidden")
+    try:
+        if name == "run_self_check":
+            return 202, {"ok": True, **tr_self_check_service.start_draft(token, tool_input)}
+        if name == "read_self_check":
+            run_id = tool_input.get("self_check_run_id")
+            if run_id:
+                return 200, {"ok": True, **tr_self_check_service.read_draft(token, run_id)}
+            limit = tool_input.get("limit", 20)
+            if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+                raise ToolError(422, "schema_validation_failed", "input.limit must be between 1 and 100")
+            return 200, {"ok": True, "runs": tr_self_check_service.list_draft_runs(token, limit)}
+        if name == "cancel_self_check":
+            return 200, {"ok": True, **tr_self_check_service.cancel_draft(token, tool_input["self_check_run_id"])}
         raise ToolError(422, "invalid_tool_call")
     except tr_self_check_service.SelfCheckError as exc:
         raise ToolError(exc.status, SELF_CHECK_WORKER_REASONS.get(exc.code, exc.code), exc.detail) from exc

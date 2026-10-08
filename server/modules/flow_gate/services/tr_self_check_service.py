@@ -41,6 +41,7 @@ def _emit(row: dict | None) -> None:
         git_service._emit("self_check_run_updated", row["project_id"], row["group_id"], {
             "project_id": row["project_id"], "group_id": row["group_id"],
             "tr_doc_id": row["tr_doc_id"], "self_check_run_id": row["self_check_run_id"],
+            "draft": row.get("tr_doc_id") is None,
             "status": row["status"], "cancel_requested": row["cancel_requested"],
             "recovery_state": row["recovery_state"]})
 
@@ -58,7 +59,7 @@ def public(row: dict) -> dict:
             "timeout_seconds", "exit_code", "timed_out", "cancel_requested", "stdout_tail", "stderr_tail",
             "source_head_before", "source_head_after", "source_branch_before", "source_branch_after",
             "source_changed_during_run", "worktree_state_changed", "recovery_state", "error_code",
-            "created_at", "started_at", "finished_at", "updated_at")
+            "created_at", "started_at", "finished_at", "updated_at", "linked_at")
     result = {key: row.get(key) for key in keep}
     result["stdout_tail"] = _redact(result["stdout_tail"])
     result["stderr_tail"] = _redact(result["stderr_tail"])
@@ -73,6 +74,34 @@ def _document(doc_id: str) -> dict:
     if not group or group.get("deleted_at") or str(group.get("status") or "").upper() == "DISPOSED":
         raise SelfCheckError(409, "selfcheck_worktree_unavailable")
     return doc
+
+
+def draft_target(token: dict) -> dict:
+    """Admit a TR(new) worker token as the owner of pre-registration runs (0638 T#1).
+
+    The TR row does not exist yet, so the owner is the live token itself. The scope name
+    alone is not enough: the token's sequence document must sit in the token's own
+    project/group and its workflow head must be a pending TR -- the same head lookup that
+    decides the token's source tools and help (remote_tool_service). Returns the target
+    dict ``_start`` and ``_worktree`` take.
+    """
+    from modules.flow_gate.services import remote_tool_service  # lazy -- import cycle
+
+    token_id, doc_ref = token.get("token_id"), token.get("doc_ref")
+    project_id, group_id = token.get("project"), token.get("group_id")
+    if token.get("action_scope") != "new" or not (token_id and doc_ref and project_id and group_id):
+        raise SelfCheckError(403, "selfcheck_forbidden")
+    doc = db_documents.get_by_id(doc_ref)
+    if not doc or doc.get("project_id") != project_id or doc.get("group_id") != group_id:
+        raise SelfCheckError(403, "selfcheck_forbidden")
+    step_type, lookup_failed = remote_tool_service._worker_token_step_type_result(token)
+    if lookup_failed or str(step_type or "").upper() != "TR":
+        raise SelfCheckError(403, "selfcheck_forbidden")
+    group = db_groups.get_by_id(group_id)
+    if not group or group.get("deleted_at") or str(group.get("status") or "").upper() == "DISPOSED":
+        raise SelfCheckError(409, "selfcheck_worktree_unavailable")
+    return {"project_id": project_id, "group_id": group_id, "tr_doc_id": None,
+            "owner_token_id": token_id, "draft_doc_ref": doc_ref}
 
 
 def _worktree(doc: dict) -> Path:
@@ -266,13 +295,24 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
 
 def start(doc_id: str, request: dict, requested_by: str | None = None) -> dict:
     doc = _document(doc_id)
-    project_id, group_id = doc["project_id"], doc["group_id"]
+    return _start({"project_id": doc["project_id"], "group_id": doc["group_id"], "tr_doc_id": doc_id},
+                  request, requested_by)
+
+
+def start_draft(token: dict, request: dict) -> dict:
+    """Run Self-check for a TR that is not registered yet; the TR(new) token owns the run."""
+    return _start(draft_target(token), request, token.get("issued_to"))
+
+
+def _start(target: dict, request: dict, requested_by: str | None) -> dict:
+    """One admission/execution path for TR-bound and draft runs (same policy, worktree, G lock)."""
+    project_id, group_id = target["project_id"], target["group_id"]
     if not db_projects.tr_self_check_enabled(project_id):
         raise SelfCheckError(403, "selfcheck_disabled")
     if db_runs.has_group_recovery_incomplete(project_id, group_id):
         raise SelfCheckError(409, "selfcheck_recovery_incomplete")
     program, args, relative_cwd, timeout = _validate_request(request)
-    first_root = _worktree(doc)
+    first_root = _worktree(target)
     path_value, _ = policy.controlled_path(first_root, _HOST_PATH)
     try:
         command = policy.resolve_command(program, args, first_root, path_value)
@@ -299,7 +339,7 @@ def start(doc_id: str, request: dict, requested_by: str | None = None) -> dict:
     row = None
     runtime = None
     try:
-        root = _worktree(doc)
+        root = _worktree(target)
         if root != first_root:
             path_value, _ = policy.controlled_path(root, _HOST_PATH)
             command = policy.resolve_command(program, args, root, path_value)
@@ -310,9 +350,10 @@ def start(doc_id: str, request: dict, requested_by: str | None = None) -> dict:
         before = _probe(root)
         runtime = Path(tempfile.mkdtemp(prefix=f"flowgate-{run_id}-"))
         env = policy.scrubbed_env(path_value, runtime)
-        row = db_runs.create_pending(project_id, group_id, doc_id, requested_by,
+        row = db_runs.create_pending(project_id, group_id, target["tr_doc_id"], requested_by,
             policy.POLICY_VERSION, program, args, command.executable, command.name,
-            command.origin, relative_cwd, timeout, list(env), run_id=run_id, source_lock_holder=holder)
+            command.origin, relative_cwd, timeout, list(env), run_id=run_id, source_lock_holder=holder,
+            owner_token_id=target.get("owner_token_id"), draft_doc_ref=target.get("draft_doc_ref"))
         worker = threading.Thread(target=_finish, args=(run_id, ctx, lock_key, root, before,
             runtime, command, args, cwd, env, timeout), daemon=True, name=f"selfcheck-{run_id}")
         try:
@@ -328,6 +369,9 @@ def start(doc_id: str, request: dict, requested_by: str | None = None) -> dict:
         return public(row)
     except db_runs.SelfCheckAlreadyRunningError as exc:
         raise SelfCheckError(409, "selfcheck_already_running", exc.existing_run_id) from exc
+    except db_runs.DraftOwnerClosedError as exc:
+        # The TR registered (or the token was revoked) after draft_target admitted it.
+        raise SelfCheckError(403, "selfcheck_forbidden", "draft owner token is no longer open") from exc
     except policy.PolicyError as exc:
         raise SelfCheckError(422, exc.code) from exc
     finally:
@@ -351,7 +395,11 @@ def list_runs(doc_id: str, limit: int = 20) -> list[dict]:
 
 
 def cancel(doc_id: str, run_id: str) -> dict:
-    row = db_runs.get_run_for_doc(run_id, doc_id)
+    return _cancel(run_id, lambda: db_runs.get_run_for_doc(run_id, doc_id))
+
+
+def _cancel(run_id: str, lookup) -> dict:
+    row = lookup()
     if row is None:
         raise SelfCheckError(404, "selfcheck_run_not_found")
     db_runs.request_cancel(run_id)
@@ -360,9 +408,70 @@ def cancel(doc_id: str, run_id: str) -> dict:
     if item:
         item[1].set()
         item[0].cancel()
-    row = db_runs.get_run_for_doc(run_id, doc_id)
+    # A draft run may be linked to its TR between the two reads; fall back to the id.
+    row = lookup() or db_runs.get_run(run_id)
     _emit(row)
     return public(row)
+
+
+def read_draft(token: dict, run_id: str) -> dict:
+    target = draft_target(token)
+    row = db_runs.get_run_for_owner(run_id, target["owner_token_id"])
+    if row is None:
+        raise SelfCheckError(404, "selfcheck_run_not_found")
+    return public(row)
+
+
+def list_draft_runs(token: dict, limit: int = 20) -> list[dict]:
+    target = draft_target(token)
+    return [public(row) for row in db_runs.list_by_owner(target["owner_token_id"], limit=min(max(1, limit), 100))]
+
+
+def cancel_draft(token: dict, run_id: str) -> dict:
+    target = draft_target(token)
+    return _cancel(run_id, lambda: db_runs.get_run_for_owner(run_id, target["owner_token_id"]))
+
+
+def group_draft_run(run_id: str) -> dict | None:
+    """A still-unlinked draft run by id, for a console user (the route checks permission)."""
+    row = db_runs.get_run(run_id)
+    return row if row and row.get("tr_doc_id") is None else None
+
+
+def list_group_draft_runs(group_id: str, limit: int = 20) -> tuple[str, list[dict]]:
+    """``(project_id, runs)``: a group's unlinked draft runs, for a console user."""
+    group = db_groups.get_by_id(group_id)
+    if not group:
+        raise SelfCheckError(404, "selfcheck_draft_group_not_found")
+    project_id = group["project_id"]
+    rows = db_runs.list_drafts_by_group(project_id, group_id, limit=min(max(1, limit), 100))
+    return project_id, [public(row) for row in rows]
+
+
+def cancel_group_draft(run_id: str) -> dict:
+    return _cancel(run_id, lambda: group_draft_run(run_id))
+
+
+def link_draft_runs(token: dict, tr_doc_id: str | None) -> int:
+    """Attach a TR(new) token's draft runs to the TR that token just registered.
+
+    Called from token consumption, the one point every registration path (inbox new, the
+    API provider's register_document) passes with the created doc id. Anything that is not
+    a TR of the token's own project/group links nothing. Returns the number of linked runs.
+    """
+    token_id = token.get("token_id")
+    if token.get("action_scope") != "new" or not token_id or not tr_doc_id:
+        return 0
+    doc = db_documents.get_by_id(tr_doc_id)
+    if (not doc or str(doc.get("type_code") or "").upper() != "TR"
+            or doc.get("project_id") != token.get("project") or doc.get("group_id") != token.get("group_id")):
+        return 0
+    linked = db_runs.link_owner_runs(token_id, tr_doc_id, doc["project_id"], doc["group_id"])
+    if linked:
+        for row in db_runs.list_by_doc(tr_doc_id, limit=100):
+            if row.get("owner_token_id") == token_id:
+                _emit(row)
+    return linked
 
 
 def recover() -> set[str]:

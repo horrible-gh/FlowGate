@@ -459,7 +459,25 @@ def consume(
             + "}"
         ),
     })
+    _link_self_check_drafts(token_rec, doc_id)
     return True
+
+
+def _link_self_check_drafts(token_rec: dict, doc_id: Optional[str]) -> None:
+    """0638 T#1: a TR(new) token's pre-registration Self-check runs join the TR it registered.
+
+    Consumption is the one point every registration path passes with the created doc id.
+    Linking is evidence bookkeeping and never fails the registration it follows.
+    """
+    if not doc_id or token_rec.get("action_scope") != "new":
+        return
+    try:
+        from modules.flow_gate.services import tr_self_check_service  # lazy -- import cycle
+
+        tr_self_check_service.link_draft_runs(token_rec, doc_id)
+    except Exception:
+        _log.warning("self-check draft link failed for token %s -> %s",
+                     token_rec.get("token_id"), doc_id, exc_info=True)
 
 
 def increment_dry_run(token_id: str) -> None:

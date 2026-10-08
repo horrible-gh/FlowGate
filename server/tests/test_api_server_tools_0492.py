@@ -75,7 +75,9 @@ def test_non_mutating_types_get_read_tier(monkeypatch, tmp_path, step_type):
 def test_mutating_types_get_read_write_tier(monkeypatch, tmp_path, doc_type, head_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": doc_type})
     monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: (head_type, False))
-    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS)
+    # 0638 T#1: a TR(new) step (head TR) also gets Self-check, owned by its token until it registers the TR.
+    self_check = list(tools.SELF_CHECK_NAMES) if head_type == "TR" else []
+    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS) + self_check
 
 
 @pytest.mark.parametrize("scope", ["new", "edit", "review"])
@@ -238,7 +240,8 @@ def test_full_remote_source_toolset_is_exposed_without_worktree(monkeypatch, tmp
     monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: ("TR", False))
     names = [item["name"] for item in tools.definitions_for_run(_run(tmp_path))]
     # 0672 T0004: TR(new) keeps the full live toolset and no longer receives Bundle tools.
-    assert names == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS)
+    # 0638 T#1: ...and runs Self-check before its TR exists.
+    assert names == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS) + list(tools.SELF_CHECK_NAMES)
     assert {"read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "patch", "write", "remove"} == set(tools.SOURCE_OPS.values())
     for name in tools.SOURCE_OPS:
         assert tools.SCHEMAS[name]["additionalProperties"] is False
