@@ -91,7 +91,6 @@ from .git.commit import (
     _cancel_prelock_gate,
     _ledger_group_by_merge_sha,
     _merge_commit_subject,
-    _release_cancel_lock,
     _revert_one,
     _stage_worker_edits,
     _translate_guard,
@@ -307,7 +306,6 @@ def _set_status(
 
 from .git.lock import (
     LOCK_WAIT_SEC,
-    _acquire_lock,
     base_merge_in_progress,
     guard_base_free,
     guard_group_branch_merge_free,
@@ -521,11 +519,19 @@ from .git.base_slot import (
 
 from .git.group_work_base import (
     apply_group_work_base_ref,
+    default_work_base_ref_for_new_group,
     group_work_base_locked,
     list_group_work_base_options,
     locked_group_ids,
     resolve_group_work_base_ref,
     validate_group_work_base_ref,
+)
+from .git.scope_base import (
+    backfill_project as backfill_group_work_base,
+    classify_group as classify_group_work_base,
+    confirm_work_base as confirm_group_work_base,
+    describe as describe_group_work_base,
+    resolve_scope_floor,
 )
 
 
@@ -771,6 +777,7 @@ from .git.finalize import (
     manual_push,
     precheck_approve_git_action,
     precheck_approve_git_target,
+    finish_terminal_reopen,
     raise_if_git_session_blocks_reopen,
     realize_wf_done_transition,
     reopen_group_git,
@@ -1173,17 +1180,37 @@ def _validate_compare_base(base_root: Path, base_ref: str) -> str:
     return ref
 
 
+def _compare_base_merge_base(base_root: Path, base_ref: str, commit: str) -> tuple[str, str]:
+    """(branch, merge-base) for an explicitly requested comparison branch."""
+    base_branch = _validate_compare_base(base_root, base_ref)
+    merge_proc = _run_git(
+        ["merge-base", f"refs/heads/{base_branch}", commit],
+        cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    merge_base = (merge_proc.stdout or "").strip()
+    if merge_proc.returncode != 0 or not merge_base:
+        raise GitServiceError(
+            500, "git_error", _one_line_subject(merge_proc.stderr) or "merge-base failed"
+        )
+    return base_branch, merge_base
+
+
 def _group_diff_context(
     project_id: str, group_id: str, base_ref: Optional[str] = None
 ) -> tuple[str, str, str, Path, str]:
-    """(base_branch, branch, commit, worktree_path, merge_base) for group-vs-base diffs.
+    """(base_branch, branch, commit, worktree_path, scope_floor) for group diffs.
 
     Shared by the changes list and the per-file diff reader (0325 TR0007 rev1) so both
-    compare against the SAME merge-base — otherwise the summary and the diff a reviewer
+    compare against the SAME floor — otherwise the summary and the diff a reviewer
     opens from it could disagree about what this group changed.
 
-    ``base_ref`` overrides the group's own work base with an explicitly requested local
-    branch (flowgate.v02.0024 TR0004 rev2); omitted, the behaviour is unchanged.
+    flowgate.default.0665 T0004 (W2): the floor is the group's RECORDED work-base
+    commit (:func:`resolve_scope_floor`), not ``merge-base(<project base>, HEAD)`` --
+    a group forked from another branch otherwise lists that branch's whole history
+    as its own change.  An unverified/diverged floor is a 409, never a guess.
+
+    ``base_ref`` overrides that with an explicitly requested local branch, compared at
+    its merge-base (flowgate.v02.0024 TR0004 rev2); omitted, the recorded floor is used.
     """
     base_root, branch, commit = resolve_group_ref(project_id, group_id)
     cfg = db_git.get_config(project_id) or {}
@@ -1195,29 +1222,20 @@ def _group_diff_context(
     if not wt_path.exists():
         raise GitServiceError(409, "invalid_state", "group worktree is not available")
 
+    if base_ref is not None:
+        base_branch, merge_base = _compare_base_merge_base(base_root, base_ref, commit)
+        return base_branch, branch, commit, wt_path, merge_base
     # 0009-TR#1 rev2: this project pins some groups (e.g. v02) to a rolling
     # integration branch via groups.work_base_ref, which is where the group's own
-    # worktree actually forked from (git/worktree.py already resolves it that way).
-    # Comparing against the project-wide base_branch instead made every such group's
-    # scope diff include every sibling group already merged into that rolling branch.
-    if base_ref is not None:
-        base_branch = _validate_compare_base(base_root, base_ref)
-    else:
-        base_branch = resolve_group_work_base_ref(project_id, group_id, config=cfg) or "main"
-    merge_proc = _run_git(
-        ["merge-base", f"refs/heads/{base_branch}", commit],
-        cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
-    )
-    merge_base = (merge_proc.stdout or "").strip()
-    if merge_proc.returncode != 0 or not merge_base:
-        raise GitServiceError(
-            500, "git_error", _one_line_subject(merge_proc.stderr) or "merge-base failed"
-        )
-    return base_branch, branch, commit, wt_path, merge_base
+    # worktree actually forked from -- so that, not the project-wide base_branch, is
+    # the branch reported as compared against.
+    base_branch = resolve_group_work_base_ref(project_id, group_id, config=cfg) or "main"
+    floor = resolve_scope_floor(project_id, group_id, base_root, state=state, config=cfg, head=commit)
+    return base_branch, branch, commit, wt_path, floor["floor_sha"]
 
 
 def read_group_changes(project_id: str, group_id: str, base_ref: Optional[str] = None) -> dict:
-    """Tracked paths changed from the group's base commit through its worktree.
+    """Tracked paths changed from the group's recorded floor through its worktree.
 
     ``base_ref`` names the comparison branch explicitly (see ``_group_diff_context``);
     the response's ``base_branch`` always reports the branch actually compared against.
@@ -1225,6 +1243,8 @@ def read_group_changes(project_id: str, group_id: str, base_ref: Optional[str] =
     base_branch, branch, commit, wt_path, merge_base = _group_diff_context(
         project_id, group_id, base_ref=base_ref
     )
+    work_base_ref = resolve_group_work_base_ref(project_id, group_id) or base_branch
+    work_base = describe_group_work_base(db_git.get_state(group_id))
 
     diff_proc = _run_git(
         ["diff", "--name-status", "--no-renames", "-z", merge_base, "--"],
@@ -1281,6 +1301,12 @@ def read_group_changes(project_id: str, group_id: str, base_ref: Optional[str] =
         # 0325 TR0007 rev1: the changes viewer titles itself "<branch> ↔ <base>", and
         # the base branch is a project setting the client had no other way to read.
         "base_branch": base_branch, "changes": changes,
+        # 0665 T0004: what the list was actually measured against — the group's work
+        # base name and the exact recorded floor commit.
+        "work_base_ref": work_base_ref, "scope_base_sha": merge_base,
+        "work_base_sha": work_base.get("work_base_sha"),
+        "work_base_sync_sha": work_base.get("work_base_sync_sha"),
+        "work_base_state": work_base.get("work_base_state"),
         # 0382 proposal 3: the list may be collapsed but the count is always visible — nothing is pretended away.
         "tool_artifacts": sorted(set(tool_artifacts)),
     }}
@@ -1320,6 +1346,7 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
     result: dict = {
         "available": False, "reason": SRC_ROOT_ERROR,
         "worktree": None, "branch": None, "paths": [], "entries": [],
+        "work_base_ref": None, "scope_base_sha": None, "work_base_error": None,
     }
     wt_path, reason = effective_src_root_ex(project_id, group_id)
     result["reason"] = reason
@@ -1330,18 +1357,26 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
         state = db_git.get_state(group_id) or {}
         result["branch"] = (state.get("branch") or "").strip() or None
         cfg = db_git.get_config(project_id) or {}
-        # 0009-TR#1 rev2: use this group's own effective work base (groups.work_base_ref
-        # when pinned, else the project default) instead of always the project-wide
-        # base_branch -- see the matching note in _group_diff_context above.
-        base_branch = resolve_group_work_base_ref(project_id, group_id, config=cfg) or "main"
+        # 0009-TR#1 rev2: this group's own effective work base (groups.work_base_ref when
+        # pinned, else the project default), never the project-wide base_branch -- the
+        # recorded floor below (0665) is resolved against exactly that work base.
 
         entries_by_path: dict[str, dict] = {}
-        merge_proc = _run_git(
-            ["merge-base", f"refs/heads/{base_branch}", "HEAD"],
-            cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
-        )
-        merge_base = (merge_proc.stdout or "").strip()
-        if merge_proc.returncode == 0 and merge_base:
+        # flowgate.default.0665 T0004 (W1): the floor is the group's RECORDED
+        # work-base commit (fork SHA, or the last update's absorbed source SHA).
+        # The project base_branch says nothing about where THIS group started, and
+        # a work-base branch NAME's current tip says nothing about what an update
+        # absorbed.  An unverified/diverged floor is reported, never substituted.
+        try:
+            floor = resolve_scope_floor(project_id, group_id, wt_path, state=state, config=cfg)
+        except GitServiceError as exc:
+            result["reason"] = exc.code
+            result["work_base_error"] = {"code": exc.code, "details": exc.details}
+            return result
+        merge_base = floor["floor_sha"]
+        result["work_base_ref"] = floor["work_base_ref"]
+        result["scope_base_sha"] = merge_base
+        if merge_base:
             diff_proc = _run_git(
                 ["diff", "--name-status", "-M", "-z", merge_base, "--"],
                 cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
@@ -1633,9 +1668,9 @@ def read_group_file_diff(
     project_id: str, group_id: str, path: str, ref: Optional[str] = None,
     base_ref: Optional[str] = None,
 ) -> dict:
-    """old (merge-base blob) / new (group worktree, else branch commit) content.
+    """old (scope-floor blob) / new (group worktree, else branch commit) content.
 
-    The old side is the merge base with the configured base branch — the same
+    The old side is the group's recorded scope floor (0665 T0004) — the same
     reference ``read_group_changes`` diffs against, so the tree's changed markers and
     this view can never disagree. The new side prefers the live worktree file (which
     is what ``read_group_changes`` measures, so uncommitted work shows up) and falls
@@ -1658,23 +1693,17 @@ def read_group_file_diff(
         commit = ref
 
     cfg = db_git.get_config(project_id) or {}
-    # 0009-TR#1 rev2: keep this per-file diff's merge-base in lockstep with
-    # collect_scope_changes/_group_diff_context (see their notes) -- otherwise a
-    # reviewer opening one of THIS group's files from the summary list could see a
-    # different old/new pair than what the summary itself compared against.
     if base_ref is not None:
-        base_branch = _validate_compare_base(base_root, base_ref)
+        # flowgate.v02.0024 TR0004 rev2: the same explicit comparison branch
+        # _group_diff_context accepts, so this file diffs against that list's merge-base.
+        base_branch, merge_base = _compare_base_merge_base(base_root, base_ref, commit)
+        floor = {"work_base_ref": resolve_group_work_base_ref(project_id, group_id, config=cfg)}
     else:
+        # 0009-TR#1 rev2 / 0665 T0004: in lockstep with _group_diff_context -- the group's
+        # own work base, measured from its recorded floor.
         base_branch = resolve_group_work_base_ref(project_id, group_id, config=cfg) or "main"
-    merge_proc = _run_git(
-        ["merge-base", f"refs/heads/{base_branch}", commit],
-        cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
-    )
-    merge_base = (merge_proc.stdout or "").strip()
-    if merge_proc.returncode != 0 or not merge_base:
-        raise GitServiceError(
-            500, "git_error", _one_line_subject(merge_proc.stderr) or "merge-base failed"
-        )
+        floor = resolve_scope_floor(project_id, group_id, base_root, config=cfg, head=commit)
+        merge_base = floor["floor_sha"]
 
     old = _diff_side_from_commit(base_root, merge_base, normalized)
     wt_path = _group_worktree_path(project_id, group_id, branch)
@@ -1683,6 +1712,7 @@ def read_group_file_diff(
         new = _diff_side_from_commit(base_root, commit, normalized)
     return {"ok": True, "data": {
         "group_id": group_id, "branch": branch, "base_branch": base_branch,
+        "work_base_ref": floor["work_base_ref"], "scope_base_sha": merge_base,
         "commit": commit, "merge_base": merge_base, "path": path,
         "status": _diff_status(old, new, path), "old": old, "new": new,
     }}
@@ -1710,8 +1740,11 @@ CANCEL_LOCK_WAIT_SEC = LOCK_WAIT_SEC
 # keeps its conflict as a session row, the Git status panel opens an inline editor on that
 # row, and an AI can be handed a token bound to that merge_id and asked to resolve it. All
 
+from .git.rerere_checkpoint import hold as hold_merge
+
 from .git.conflict import (
     TR_CONFLICT_REVIEW_OPEN,
+    TR_CONFLICT_REVIEW_RESOLVED,
     _chunk_added_lines,
     _classify_conflict_chunks,
     _conflict_side_dropped,
@@ -1730,6 +1763,8 @@ from .git.conflict import (
     resolve_conflict_src_root,
     resolve_conflicts,
     separate_eol_conflicts,
+    tr_conflict_review,
+    tr_conflict_review_file_diff,
     tr_conflict_session,
 )
 
@@ -2693,9 +2728,36 @@ def record_auto_authority(group_id: str, merge_id: int, requested_auto: bool) ->
     db_git.set_session_context(merge_id, context)
 
 
+def _touch_review_activity(merge_id: int) -> None:
+    """0668 T0004: opening a pending review is activity for the sweep TTL — best-effort,
+    a timestamp write must never fail the screen that reads the review."""
+    try:
+        db_git.touch_session(merge_id)
+    except Exception:
+        _log.warning("review touch failed for merge %s", merge_id, exc_info=True)
+
+
+def _is_tr_conflict_merge(group_id: Optional[str], merge_id: int, project_id: Optional[str]) -> bool:
+    """A group-addressed review call naming an open TR revert/reapply conflict session."""
+    if project_id is not None or group_id is None:
+        return False
+    session = db_git.get_session(merge_id)
+    return (
+        session is not None
+        and session.get("group_id") == group_id
+        and db_git.session_kind(session) in db_git.TR_SESSION_KINDS
+    )
+
+
 def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
     """Approval-screen payload (L0007 §2.11 GET .../review) assembled ENTIRELY from
-    the frozen candidate — never a fresh worktree read (D0006 §3.3/§3.4)."""
+    the frozen candidate — never a fresh worktree read (D0006 §3.3/§3.4).
+
+    0668 T0004: a TR conflict session is reviewed on the same screen; its payload comes
+    from ``tr_conflict_review`` in the same shape. Opening a review is activity, so it
+    resets the sweep TTL (``touch_session``) like reading the conflict list does."""
+    if _is_tr_conflict_merge(group_id, merge_id, project_id):
+        return tr_conflict_review(group_id, merge_id)
     _session, _context, project_id, base_root, base_branch = _merge_review_session(
         group_id, merge_id, **_owner_kw(project_id),
     )
@@ -2706,6 +2768,8 @@ def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Opti
     if not review_state:
         raise GitServiceError(409, "review_not_ready", "this merge has not reached review yet")
     pending = review_state in REVIEW_PENDING_STATES
+    if pending:
+        _touch_review_activity(merge_id)
     return {
         "ok": True,
         "result": {
@@ -2798,6 +2862,8 @@ def read_merge_review_file_diff(
     old/new payload shape ``read_group_file_diff`` already returns so the client's
     existing file-diff viewer needs no new prop shape."""
     _validate_blob_path(path)
+    if _is_tr_conflict_merge(group_id, merge_id, project_id):
+        return tr_conflict_review_file_diff(group_id, merge_id, path)
     normalized = path.replace("\\", "/")
     _session, context, _project_id, base_root, _base_branch = _merge_review_session(
         group_id, merge_id, **_owner_kw(project_id),
@@ -2932,6 +2998,7 @@ def _complete_merge_review(
         group_id, merge_id, project_id, merge_commit_short, pushed,
         emit=False, cleanup_slot=False,
     )
+    db_git.consume_resolution_checkpoint(merge_id)
     approval = (
         approval_intent.commit_deferred_approval(group_id, merge_id, intent)
         if intent is not None else None
@@ -3082,9 +3149,10 @@ def approve_merge_review(
     if is_branch_merge and authority != "human":
         raise GitServiceError(403, "human_authority_required", "a branch merge is approved by a person")
     project_id = _session_project(session)
-    holder = f"review:{merge_id}:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
-        raise GitServiceError(409, "git_busy", f"another git operation is in progress for '{project_id}'")
+    # 0669 unit 8b: the session target's G/W/B plus R (it commits and pushes) instead of
+    # the project mutex.
+    from .git import branch_merge_publish as _bmp
+    lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action", publish=True)
     try:
         session = db_git.get_session(merge_id)
         context = db_git.session_context(session)
@@ -3256,7 +3324,7 @@ def approve_merge_review(
                 "reconciliation_kind": "push_remote_unknown",
             }}
     finally:
-        db_git.release_lock(project_id, holder)
+        _bmp.session_unlock(lock_ctx, lock_held)
 
 
 def reject_merge_review(
@@ -3287,9 +3355,10 @@ def reject_merge_review(
     if not base_head or not merge_head:
         raise GitServiceError(409, "restoration_verification_failed", "no resolver baseline recorded for this session")
 
-    holder = f"review:{merge_id}:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
-        raise GitServiceError(409, "git_busy", f"another git operation is in progress for '{project_id}'")
+    # 0669 unit 8b: the session target's G/W/B (the conflict is restored in its
+    # workspace) instead of the project mutex.
+    from .git import branch_merge_publish as _bmp
+    lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action")
     try:
         # 0009-TR rev5 (AI review finding): the checks above ran WITHOUT the lock,
         # so an approval (or another rejection) may have moved this session in the
@@ -3340,8 +3409,8 @@ def reject_merge_review(
         # at restoration_verification_failed on a server that has none — the merge
         # never ran, so no marker could come back (0555 T0008 §7).
         redo = _run_git(
-            [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge",
-             "--no-commit", "--no-ff", branch],
+            [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "-c", "rerere.enabled=false",
+             "-c", "rerere.autoupdate=false", "merge", "--no-commit", "--no-ff", branch],
             cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
         )
         remaining = _unmerged_paths(base_root)
@@ -3384,7 +3453,7 @@ def reject_merge_review(
         # the session opened with; take them out again exactly as finalize did.
         apply_eol_separation(merge_id, base_root)
     finally:
-        db_git.release_lock(project_id, holder)
+        _bmp.session_unlock(lock_ctx, lock_held)
 
     run_id = start_run(reason)
     if is_branch_merge:
@@ -3503,8 +3572,13 @@ def _materialize_pending_conversation_run(
     if detail is not None and (detail.get("status") or "").lower() not in ("finished", "done", "completed", "failed", "error"):
         return  # still running
 
-    holder = f"review:{merge_id}:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=0):
+    # 0669 unit 8b: the session target's G/W/B, one attempt and no wait (see above),
+    # instead of the project mutex.
+    from .git import branch_merge_publish as _bmp
+    try:
+        lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action",
+                                           mode=_bmp.locks.NO_WAIT)
+    except GitServiceError:
         return
     try:
         context = db_git.session_context(db_git.get_session(merge_id))
@@ -3715,7 +3789,7 @@ def _materialize_pending_conversation_run(
         context["conversation"] = conversation[-MAX_CHAT_TURNS:]
         db_git.set_session_context(merge_id, context)
     finally:
-        db_git.release_lock(project_id, holder)
+        _bmp.session_unlock(lock_ctx, lock_held)
 
 
 def send_review_message(
@@ -3768,9 +3842,9 @@ def send_review_message(
     # started is simply left unrecorded, and that run's own write-plan
     # submission is refused by `submit_review_write_plan`'s pending-run check.
     run_id = start_run()
-    holder = f"review:{merge_id}:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
-        raise GitServiceError(409, "git_busy", f"another git operation is in progress for '{project_id}'")
+    # 0669 unit 8b: the session target's G/W/B instead of the project mutex.
+    from .git import branch_merge_publish as _bmp
+    lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action")
     try:
         context = db_git.session_context(db_git.get_session(merge_id))
         if context.get("review_state") not in REVIEW_PENDING_STATES:
@@ -3799,7 +3873,7 @@ def send_review_message(
         context["pending_conversation_run_id"] = run_id
         db_git.set_session_context(merge_id, context)
     finally:
-        db_git.release_lock(project_id, holder)
+        _bmp.session_unlock(lock_ctx, lock_held)
     return {"ok": True, "result": {
         "status": "accepted", "review_state": context.get("review_state"),
         "run_id": run_id, "review_fingerprint": context.get("review_fingerprint"),
@@ -3825,8 +3899,13 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
     if trigger != "server_startup" and not _iso_is_due(context.get("reconcile_next_at")):
         return None
     project_id = _session_project(session)
-    holder = f"reconcile:{merge_id}:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
+    # 0669 unit 8b: the session target's G/W/B plus R (it asks the remote and may reset
+    # the target) instead of the project mutex.
+    from .git import branch_merge_publish as _bmp
+    try:
+        lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action",
+                                           publish=True)
+    except GitServiceError:
         return None
     try:
         session = db_git.get_session(merge_id)
@@ -3896,7 +3975,7 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
             return {"ok": True, "result": {"status": "manual_reconciliation_needed"}}
         return {"ok": True, "result": {"status": "retry_scheduled"}}
     finally:
-        db_git.release_lock(project_id, holder)
+        _bmp.session_unlock(lock_ctx, lock_held)
 
 
 def reconcile_due_merge_review_sessions(

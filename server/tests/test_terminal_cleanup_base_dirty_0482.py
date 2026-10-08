@@ -13,9 +13,14 @@ os.environ.setdefault("CONTEXT", "api")
 os.environ.setdefault("DB_TYPE", "sqlite")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from group_lock_stub import group_store, held_locks, hold_lock  # noqa: F401
 from modules.flow_gate.db import project_ai_leases
 from modules.flow_gate.services import git_service
 from modules.flow_gate.api.v1 import ai_invoke_routes
+
+# The backlog sweep takes each Group's G (+R) from the real lock manager (0669): these tests
+# run on the real SQLite lock store and look at the rows it leaves behind.
+pytestmark = pytest.mark.usefixtures("group_store")
 
 
 @pytest.fixture(autouse=True)
@@ -40,8 +45,6 @@ def test_terminal_cleanup_persists_snapshot_and_residual_reasons(monkeypatch):
     ]
     monkeypatch.setattr(git_service, "_require_enabled_config", lambda _p: {})
     monkeypatch.setattr(git_service, "git_available", lambda: True)
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda *_: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda *_: None)
     monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda _p: rows)
     monkeypatch.setattr(git_service, "_is_group_disposed", lambda gid: gid == "p.none.0003")
     monkeypatch.setattr(git_service, "tr_conflict_session", lambda gid: {"id": 1} if gid == "p.none.0002" else None)
@@ -52,6 +55,7 @@ def test_terminal_cleanup_persists_snapshot_and_residual_reasons(monkeypatch):
     result = git_service.cleanup_terminal_slots("p")
     assert result["result"] == {"cleaned": ["p.none.0001"], "failed": ["p.none.0003"]}
     assert saved["status"] == "partial" and saved["count"] == 1
+    assert held_locks("p") == []
     assert saved["pending"] == [
         {"group_id": "p.none.0002", "reason": "revert_conflict"},
         {"group_id": "p.none.0003", "reason": "teardown_failed"},
@@ -111,8 +115,6 @@ def test_project_lease_activate_rejects_replaced_acquiring_owner(monkeypatch):
 def test_terminal_cleanup_zero_candidates_persists_ok_snapshot(monkeypatch):
     monkeypatch.setattr(git_service, "_require_enabled_config", lambda _p: {})
     monkeypatch.setattr(git_service, "git_available", lambda: True)
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda *_: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda *_: None)
     monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda _p: [])
     saved = {}
     monkeypatch.setattr(git_service.db_terminal_cleanup, "put", lambda p, s, n, pending: saved.update(status=s, count=n, pending=pending) or {"last_run_status": s})
@@ -120,13 +122,12 @@ def test_terminal_cleanup_zero_candidates_persists_ok_snapshot(monkeypatch):
     result = git_service.cleanup_terminal_slots("p")
     assert result["result"] == {"cleaned": [], "failed": []}
     assert saved == {"status": "ok", "count": 0, "pending": []}
+    assert held_locks("p") == []
 
 
 def test_terminal_cleanup_all_failures_persist_failed_snapshot(monkeypatch):
     monkeypatch.setattr(git_service, "_require_enabled_config", lambda _p: {})
     monkeypatch.setattr(git_service, "git_available", lambda: True)
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda *_: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda *_: None)
     monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda _p: [{"group_id": "p.none.0001", "status": "merged"}])
     monkeypatch.setattr(git_service, "_cleanup_group_slot", lambda *_: False)
     saved = {}
@@ -134,19 +135,33 @@ def test_terminal_cleanup_all_failures_persist_failed_snapshot(monkeypatch):
 
     assert git_service.cleanup_terminal_slots("p")["result"]["failed"] == ["p.none.0001"]
     assert saved == {"status": "failed", "count": 0, "pending": [{"group_id": "p.none.0001", "reason": "teardown_failed"}]}
+    assert held_locks("p") == []
 
 
-def test_terminal_cleanup_busy_does_not_write_snapshot(monkeypatch):
+def test_terminal_cleanup_busy_group_stays_pending_and_others_are_cleaned(monkeypatch):
+    # 0669: the sweep no longer takes one project mutex, so a busy Group no longer fails the
+    # whole sweep with git_busy. Only that Group stays pending; the next one is cleaned.
     monkeypatch.setattr(git_service, "_require_enabled_config", lambda _p: {})
     monkeypatch.setattr(git_service, "git_available", lambda: True)
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda *_: False)
-    writes = []
-    monkeypatch.setattr(git_service.db_terminal_cleanup, "put", lambda *args: writes.append(args))
+    monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda _p: [
+        {"group_id": "p.none.0001", "status": "merged"},
+        {"group_id": "p.none.0002", "status": "merged"},
+    ])
+    cleaned_groups = []
+    monkeypatch.setattr(git_service, "_cleanup_group_slot",
+                        lambda _p, gid: cleaned_groups.append(gid) or True)
+    saved = {}
+    monkeypatch.setattr(git_service.db_terminal_cleanup, "put",
+                        lambda p, s, n, pending: saved.update(status=s, count=n, pending=pending) or {})
 
-    with pytest.raises(Exception) as exc:
-        git_service.cleanup_terminal_slots("p")
-    assert getattr(exc.value, "code", None) == "git_busy"
-    assert writes == []
+    with hold_lock("G", "p", group_id="p.none.0001", holder_kind="source_mutation"):
+        result = git_service.cleanup_terminal_slots("p")
+
+    assert result["result"] == {"cleaned": ["p.none.0002"], "failed": []}
+    assert cleaned_groups == ["p.none.0002"]   # the busy Group's slot was not touched
+    assert saved["pending"] == [
+        {"group_id": "p.none.0001", "reason": "git_busy", "reason_code": "lock_busy"}]
+    assert held_locks("p") == []
 
 
 def test_snapshot_memory_round_trip_is_atomic_shape(monkeypatch):

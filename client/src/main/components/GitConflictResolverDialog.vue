@@ -55,6 +55,17 @@
            around the body. That is the wrapper's only job: it adds no state and no condition,
            and its CSS is the flex column the surface body used to be. -->
       <div class="git-conflict-body" @keydown="onResolverKeydown">
+        <p v-if="allowHold && !savedResolvedCount" class="git-conflict-checkpoint-result">
+          {{ t('main.git_finalize.hold_no_resolution') }}
+        </p>
+        <p v-if="checkpointRecovery" class="git-conflict-checkpoint-result">
+          {{ t('main.git_finalize.checkpoint_recovery', {
+            previous: checkpointRecovery.previous_resolved,
+            reused: checkpointRecovery.reused_paths.length,
+            invalid: checkpointRecovery.invalid_paths.length,
+            remaining: checkpointRecovery.remaining_conflicts,
+          }) }}
+        </p>
         <div v-if="loadStatus === 'loading'" class="git-conflict-loading">
           <AppIcon name="spinner" spin />
           {{ t('main.git_finalize.loading_conflicts') }}
@@ -209,6 +220,7 @@
           v-if="showAiActions && aiStrip"
           class="git-conflict-ai-strip"
           :class="'git-conflict-ai-strip--' + aiStrip.kind"
+          :data-kind="aiStrip.kind"
           data-test="conflict-ai-run"
         >
           <AppIcon :name="aiStrip.icon" :spin="aiStrip.spin" />
@@ -294,6 +306,9 @@
           <template #action-ai-invoke>
             <AppIcon name="robot" /> {{ t('main.git_finalize.invoke_conflict_ai') }}
           </template>
+          <template #action-hold>
+            <AppIcon name="pause" /> {{ t('main.git_finalize.hold') }}
+          </template>
           <template #action-abort>
             <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
           </template>
@@ -367,6 +382,10 @@ const props = defineProps<{
   // has to be the one that says the run is happening. A string (not a boolean)
   // because the host owns i18n and the provider/elapsed values.
   aiRunNotice?: string | null
+  // 0674 T0004 §2-1 (D1): the host's sentence for a conflict AI run that ENDED without
+  // resolving the conflict (failed, partial, lost), reason and next steps included. Until
+  // 0674 the end of a run only re-read the list, so a failed run looked like no run at all.
+  aiRunFailure?: string | null
   // 0481 T0010 rev5 (반려 #1): [AI 호출]을 눌러 요청은 나갔지만 이 브라우저에 아직 실행
   // 기록이 없는 구간. 그 구간이 rev3 까지는 화면에 존재하지 않아서, 누른 사람에게는
   // "눌렀는데 아무 일도 안 일어난다"로 보였다. 호출 성공 여부와 무관하게 호스트가 켜고 끈다.
@@ -377,10 +396,20 @@ const props = defineProps<{
   // Opt-outs for the same reason `hideAiActions` is one: an omitted prop stays `false`.
   hideAutoAuthority?: boolean
   hideCopyMention?: boolean
+  allowHold?: boolean
+  allowPartialResolve?: boolean
+  savedResolvedCount?: number
+  checkpointRecovery?: {
+    previous_resolved: number
+    reused_paths: string[]
+    invalid_paths: string[]
+    remaining_conflicts: number
+  } | null
 }>()
 const emit = defineEmits<{
   close: []
   abort: []
+  hold: []
   submit: [auto: boolean]
   retry: []
   'ai-invoke': [message: string, auto: boolean]
@@ -458,6 +487,9 @@ const aiStrip = computed<{ kind: string; text: string; icon: string; spin: boole
   if (props.aiRunPending) {
     return { kind: 'run', text: t('main.git_finalize.conflict_ai_starting'), icon: 'spinner', spin: true, retry: false }
   }
+  if (props.aiRunFailure) {
+    return { kind: 'failed', text: props.aiRunFailure, icon: 'warning', spin: false, retry: false }
+  }
   if (props.providerLoading) {
     return { kind: 'wait', text: t('main.git_finalize.provider_loading'), icon: 'spinner', spin: true, retry: false }
   }
@@ -514,6 +546,19 @@ const footerActions = computed<DialogAction[]>(() => {
       onSelect: () => emit('ai-invoke', conflictMessage.value.trim(), autoResolve.value),
     })
   }
+  if (props.allowHold) {
+    actions.push({
+      id: 'hold',
+      label: t('main.git_finalize.hold'),
+      role: 'aux',
+      disabled: props.busy || !props.savedResolvedCount,
+      onSelect: () => {
+        if (window.confirm(t('main.git_finalize.hold_confirm', { n: props.savedResolvedCount || 0 }))) {
+          emit('hold')
+        }
+      },
+    })
+  }
   actions.push({
     id: 'abort',
     label: t('main.git_finalize.abort'),
@@ -525,7 +570,7 @@ const footerActions = computed<DialogAction[]>(() => {
     id: 'submit',
     label: t('main.git_finalize.resolve_submit'),
     role: 'primary',
-    disabled: props.busy || !allConflictsResolved.value,
+    disabled: props.busy || (!allConflictsResolved.value && !(props.allowPartialResolve && props.files.some(isFileResolved))),
     onSelect: () => emit('submit', autoResolve.value),
   })
   return actions
@@ -1072,6 +1117,17 @@ watch(
   border-top-color: #fecaca;
   background: #fef2f2;
   color: #b91c1c;
+}
+/* 0674 T0004 §2-1: a failed run's line carries the reason and the next steps, so it
+   wraps instead of being cut at one line. */
+.git-conflict-ai-strip--failed {
+  border-top-color: #fde68a;
+  background: #fffbeb;
+  color: #b45309;
+}
+.git-conflict-ai-strip--failed .git-conflict-ai-strip-text {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .git-conflict-ai-strip--wait {
   border-top-color: var(--border, #e2e8f0);

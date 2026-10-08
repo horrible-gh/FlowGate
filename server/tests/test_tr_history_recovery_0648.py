@@ -5,6 +5,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+from types import SimpleNamespace
+
+from group_lock_stub import stub_group_lock  # noqa: E402
 
 from modules.flow_gate.api.v1 import git_routes
 from modules.flow_gate.db import tr_history_recovery as recovery
@@ -68,6 +71,8 @@ def _install_reapply_harness(monkeypatch, *, compensate_kind="ok"):
     monkeypatch.setattr(trc.db_recovery, "has_unresolved", lambda _g: False)
     monkeypatch.setattr(trc.db_recovery, "unresolved_by_group", lambda _g: [])
     monkeypatch.setattr(trc.db_ledger, "reappliable_rows", lambda _g, _ids: [row])
+    monkeypatch.setattr(trc.db_ledger, "get_by_id", lambda _rid: dict(row))
+    monkeypatch.setattr(trc.db_docs, "get_by_id", lambda _did: {"doc_id": "d"})
     monkeypatch.setattr(trc, "_doc_codes", lambda _rows: {"d": "0001-TR2"})
     monkeypatch.setattr(
         trc.git_service, "open_cancel_session",
@@ -228,8 +233,7 @@ def test_recovery_required_blocks_ordinary_source_mutation(monkeypatch, tmp_path
     root = tmp_path / "worktree"
     root.mkdir()
     (root / "a.py").write_text("x", encoding="utf-8")
-    monkeypatch.setattr(policy.git_service, "_acquire_lock", lambda *_a, **_kw: True)
-    monkeypatch.setattr(policy.db_git, "release_lock", lambda *_a: None)
+    stub_group_lock(monkeypatch)
     monkeypatch.setattr(policy, "_group_root", lambda *_a: root)
     monkeypatch.setattr(policy.db_recovery, "has_unresolved", lambda _g: True)
 
@@ -252,7 +256,7 @@ def test_recovery_required_blocks_tr2_approval(monkeypatch):
 
     @contextmanager
     def source_lock(*_a, **_kw):
-        yield object()
+        yield SimpleNamespace(project_id="p", group_id="g")
 
     monkeypatch.setattr(approval.tr2_precheck, "source_lock", source_lock)
 
@@ -332,8 +336,7 @@ def test_cancel_then_failed_new_tr2_keeps_ordinary_recovery_path_open(monkeypatc
     monkeypatch.setattr(policy.db_ledger, "ownership_rows", lambda _g: rows)
     assert policy.managed_paths("g") == set()
 
-    monkeypatch.setattr(policy.git_service, "_acquire_lock", lambda *_a, **_kw: True)
-    monkeypatch.setattr(policy.db_git, "release_lock", lambda *_a: None)
+    stub_group_lock(monkeypatch)
     monkeypatch.setattr(policy, "_group_root", lambda *_a: root)
     with policy.general_source_mutation("p", "g", exact_paths=["a.py"]):
         (root / "a.py").write_text("human recovery", encoding="utf-8")

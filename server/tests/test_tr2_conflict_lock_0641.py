@@ -9,9 +9,11 @@ import threading
 
 import pytest
 
+from group_lock_stub import LockState, group_store  # noqa: F401
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.services import git_service
-from modules.flow_gate.services.git import branch_merge
+from modules.flow_gate.services.git import branch_merge as branch_merge_module
+from modules.flow_gate.services.git import branch_merge_publish
 from modules.flow_gate.services.git import conflict
 from modules.flow_gate.services import tr2_file_policy
 from modules.flow_gate.documents import tr2_approval_service
@@ -20,8 +22,15 @@ from modules.flow_gate.documents import tr2_precheck
 from modules.flow_gate.documents import tr2_service
 
 
+@pytest.fixture(autouse=True)
+def _real_group_locks(group_store):
+    """Conflict resolution and TR2 approval take the Group's G in a real store."""
+    yield
+
+
 class _Db:
     SESSION_KIND_GROUP_UPDATE = db_git.SESSION_KIND_GROUP_UPDATE
+    SESSION_KIND_MERGE = db_git.SESSION_KIND_MERGE
     TR_SESSION_KINDS = db_git.TR_SESSION_KINDS
 
     def __init__(self, kind: str, *, branch_merge: bool = False):
@@ -75,22 +84,13 @@ def _install(monkeypatch, tmp_path, kind, *, branch_merge=False, complete=False)
     target.write_text("original", encoding="utf-8")
 
     db = _Db(kind, branch_merge=branch_merge)
-    state = {"locked": False, "session_context_calls": 0, "writes": [], "git": []}
-
-    def acquire(project_id, holder, wait_sec=None):
-        assert project_id == "flowgate"
-        assert not state["locked"]
-        state["locked"] = True
-        return True
-
-    def release(project_id, holder):
-        assert state["locked"]
-        state["locked"] = False
+    state = LockState(session_context_calls=0, writes=[], git=[])
 
     def session_context(group_id, merge_id, **kwargs):
         state["session_context_calls"] += 1
-        # First call is the semantic pre-pass, second call MUST happen under project lock.
-        if state["session_context_calls"] >= 2:
+        # Call 1 is the semantic pre-pass, call 2 the pre-lock read that picks the domain
+        # (0669 unit 8b); call 3 onwards MUST happen under the group lock.
+        if state["session_context_calls"] >= 3:
             assert state["locked"] is True
         return db.get_session(merge_id), {}, "flowgate", root
 
@@ -110,9 +110,14 @@ def _install(monkeypatch, tmp_path, kind, *, branch_merge=False, complete=False)
 
     monkeypatch.setattr(git_service, "db_git", db)
     monkeypatch.setattr(git_service, "_session_context", session_context)
-    monkeypatch.setattr(git_service, "_acquire_lock", acquire)
-    monkeypatch.setattr(git_service.db_git, "release_lock", release, raising=False)
     monkeypatch.setattr(git_service, "_run_git", run_git)
+    # The workspace domain of the session (G for a Group session, W for the branch-merge
+    # target) is what the lock covers; resolving it from a real session needs merge_target
+    # state this fake Db does not carry.
+    monkeypatch.setattr(
+        branch_merge_publish, "session_domain",
+        lambda s: ("G", s["group_id"], None) if s.get("group_id") else ("W", None, "main"),
+    )
     monkeypatch.setattr(conflict, "_write_resolved_file", write)
     monkeypatch.setattr(conflict, "_conflict_side_violations", lambda *_: [])
     monkeypatch.setattr(conflict, "_classify_conflict_chunks", lambda *_: [])
@@ -129,14 +134,14 @@ def _install(monkeypatch, tmp_path, kind, *, branch_merge=False, complete=False)
     if branch_merge:
         monkeypatch.setattr(conflict, "_is_branch_merge_session", lambda _s: True)
         monkeypatch.setattr(
-            branch_merge, "note_resolution_submitted",
+            branch_merge_module, "note_resolution_submitted",
             lambda *_a, **_k: (
                 state["locked"] is True
                 or pytest.fail("branch resolution metadata updated outside project lock")
             ),
         )
         monkeypatch.setattr(
-            branch_merge, "note_review_pending",
+            branch_merge_module, "note_review_pending",
             lambda *_a, **_k: (
                 state["locked"] is True
                 or pytest.fail("branch review metadata updated outside project lock")
@@ -178,7 +183,7 @@ def test_every_supported_conflict_session_writes_and_git_adds_under_project_lock
     assert ["add", "--", "owned.txt"] in state["git"]
     assert db.resolved == ["owned.txt"]
     assert state["locked"] is False
-    assert state["session_context_calls"] >= 2
+    assert state["session_context_calls"] >= 3
 
 
 def test_locked_reread_rejects_source_change_before_first_write(monkeypatch, tmp_path):
@@ -193,7 +198,7 @@ def test_locked_reread_rejects_source_change_before_first_write(monkeypatch, tmp
         row = original_context(group_id, merge_id, **kwargs)
         if calls["n"] == 2:
             # Simulates an actor that changed bytes after the semantic pre-pass but before
-            # this resolver obtained the project mutex.
+            # this resolver obtained the group lock (call 2 is the pre-lock domain read).
             target.write_text("raced", encoding="utf-8")
         return row
 
@@ -290,32 +295,7 @@ def test_finalize_freeze_happens_under_same_resolution_lock_and_auto_approve_aft
 
 
 def _install_shared_mutex(monkeypatch, root: Path, state: dict):
-    mutex = threading.Lock()
-    owner = {"holder": None}
-
-    def acquire(project_id, holder, wait_sec=None):
-        timeout = 3.0 if wait_sec is None else max(float(wait_sec), 0.0)
-        ok = mutex.acquire(timeout=timeout)
-        if ok:
-            owner["holder"] = holder
-            state["locked"] = True
-        return ok
-
-    def release(project_id, holder):
-        assert owner["holder"] == holder
-        owner["holder"] = None
-        state["locked"] = False
-        mutex.release()
-
-    monkeypatch.setattr(git_service, "_acquire_lock", acquire)
-    monkeypatch.setattr(git_service.db_git, "release_lock", release, raising=False)
-    monkeypatch.setattr(tr2_precheck.db_git, "release_lock", release)
-    monkeypatch.setattr(tr2_precheck.db_git, "get_lock",
-                        lambda _project: (
-                            {"holder": owner["holder"]} if owner["holder"] else None
-                        ))
     monkeypatch.setattr(tr2_precheck, "_approval_root", lambda *_args: root)
-    return mutex
 
 
 def test_conflict_resolver_serializes_with_tr2_source_lock(monkeypatch, tmp_path):
@@ -474,8 +454,18 @@ def test_followup_tr2_can_modify_and_commit_already_managed_path(monkeypatch, tm
     succeeded = {
         "attempt_id": "prior-success",
         "state": "succeeded",
+        "ledger_row_id": 1,
         "commit_json": {"paths": ["managed.txt"]},
     }
+    monkeypatch.setattr(
+        tr2_file_policy.db_ledger,
+        "ownership_rows",
+        lambda _gid: [{
+            "id": 1, "group_id": group_id, "doc_id": f"{group_id}.0013-TR2",
+            "state": "live", "restored_from_id": None, "reopened_terminal_at": None,
+            "doc_type_code": "TR2",
+        }],
+    )
     monkeypatch.setattr(
         tr2_file_policy.db_attempts,
         "successful_by_group",
@@ -493,26 +483,6 @@ def test_followup_tr2_can_modify_and_commit_already_managed_path(monkeypatch, tm
         ),
     )
 
-    owner = {"holder": None}
-
-    def acquire(project_id, holder, wait_sec=None):
-        assert owner["holder"] is None
-        owner["holder"] = holder
-        return True
-
-    def release(project_id, holder):
-        assert owner["holder"] == holder
-        owner["holder"] = None
-
-    monkeypatch.setattr(git_service, "_acquire_lock", acquire)
-    monkeypatch.setattr(tr2_precheck.db_git, "release_lock", release)
-    monkeypatch.setattr(
-        tr2_precheck.db_git,
-        "get_lock",
-        lambda _project: (
-            {"holder": owner["holder"]} if owner["holder"] else None
-        ),
-    )
     monkeypatch.setattr(tr2_precheck, "_approval_root", lambda *_args: repo)
     monkeypatch.setattr(tr2_approval_service.db_git, "get_config", lambda _p: {})
     recorded = {}

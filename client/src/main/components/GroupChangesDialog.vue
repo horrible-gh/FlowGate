@@ -33,11 +33,16 @@
     @request-close="emit('close')"
   >
     <template #header>
-      <DialogHeader :title="t('main.group_changes.title')" icon="git-diff" @close="onHeaderClose">
+      <DialogHeader :title="titleText || t('main.group_changes.title')" icon="git-diff" @close="onHeaderClose">
         <template #subtitle>
-          <span class="gcd-mono">{{ branch || '-' }}</span>
-          ↔
-          <span class="gcd-mono">{{ baseBranch || 'main' }}</span>
+          <!-- 0670 T0004: the chat run view names its own comparison (run start → end)
+               instead of branch ↔ base; every other caller passes no subtitleText. -->
+          <span v-if="subtitleText" class="gcd-mono">{{ subtitleText }}</span>
+          <template v-else>
+            <span class="gcd-mono">{{ branch || '-' }}</span>
+            ↔
+            <span class="gcd-mono">{{ baseBranch || 'main' }}</span>
+          </template>
           <span class="gcd-dot">·</span>
           {{ t('main.group_changes.file_count', { n: changes.length }) }}
           <span v-if="totals.known" class="gcd-hd-lines">
@@ -225,7 +230,7 @@
     <template #footer>
       <DialogFooter :actions="actions">
         <template #action-back>
-          <AppIcon name="arrow-bend-up-left" /> {{ t('main.group_changes.back_to_approval') }}
+          <AppIcon name="arrow-bend-up-left" /> {{ backLabel || t('main.group_changes.back_to_approval') }}
         </template>
       </DialogFooter>
     </template>
@@ -264,6 +269,14 @@ const props = defineProps<{
   changes: GroupChangeData[]
   // 0382 proposal 3: "도구가 남긴 흔적" filtered out of the change list. Comes back empty on servers with no channel.
   toolArtifacts?: string[]
+  // 0670 T0004: the chat run change view reuses this screen as-is. It supplies its own
+  // per-file reader (run start tree ↔ run end tree), header text, return label and the
+  // file the user clicked. Absent, the group-branch behaviour is exactly as before.
+  diffLoader?: ((path: string) => Promise<GroupFileDiffData>) | null
+  titleText?: string | null
+  subtitleText?: string | null
+  backLabel?: string | null
+  initialPath?: string | null
 }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -282,7 +295,7 @@ function onHeaderClose() {
 const actions = computed<DialogAction[]>(() => [
   {
     id: 'back',
-    label: t('main.group_changes.back_to_approval'),
+    label: props.backLabel || t('main.group_changes.back_to_approval'),
     role: 'cancel',
     onSelect: () => emit('close'),
   },
@@ -462,7 +475,9 @@ async function loadDiff(path: string) {
   diffLoading.value = true
   diffError.value = false
   try {
-    const data = await explorerStore.fetchGroupBranchDiff(props.projectId, props.groupId, path)
+    const data = props.diffLoader
+      ? await props.diffLoader(path)
+      : await explorerStore.fetchGroupBranchDiff(props.projectId, props.groupId, path)
     // A slow response for a file the reviewer already navigated away from must not
     // overwrite what is on screen.
     diffCache.set(path, data)
@@ -496,7 +511,10 @@ watch(visibleFiles, (list) => {
  * behaviour - ESC closes this screen - is unchanged, it just arrives as `request-close`.
  */
 onMounted(() => {
-  const first = visibleFiles.value[0]
+  const wanted = props.initialPath
+    ? visibleFiles.value.find((file) => file.path === props.initialPath)
+    : undefined
+  const first = wanted ?? visibleFiles.value[0]
   if (first) select(first.path)
 })
 </script>

@@ -64,6 +64,8 @@ def insert_run(
     cases: list[dict],
     teardown: list[dict] | None = None,
     locale: str | None = None,
+    contract_version: int | None = None,
+    result_meta: str | None = None,
 ) -> dict:
     store = get_store()
     run_id = next_run_id()
@@ -79,6 +81,11 @@ def insert_run(
             "VALUES (?, ?, ?, 'running', ?, ?, ?, 0, 0, NULL, NULL, ?, NULL, NULL, ?, ?)",
             [run_id, doc_id, revision_no, triggered_via, runner_id, len(cases), now, locale, now],
         )
+        if contract_version is not None:
+            store._execute(
+                "UPDATE test_runs SET contract_version = ?, result_meta = ? WHERE run_id = ?",
+                [contract_version, result_meta, run_id],
+            )
         for item in [*setup, *cases, *teardown]:
             store._execute(
                 "INSERT INTO test_run_cases "
@@ -168,19 +175,44 @@ def insert_spec_run(
     return get_run(run_id)  # type: ignore[return-value]
 
 
+def _run_kind(row: dict) -> Optional[str]:
+    import json
+    try:
+        meta = json.loads(row.get("result_meta") or "{}")
+    except (TypeError, ValueError):
+        return None
+    return meta.get("run_kind") if isinstance(meta, dict) else None
+
+
+def _is_initialization(row: dict) -> bool:
+    """0684 T#1 (D#1 §7): a zero-result initialization run left by approvals before 0684.
+
+    Kept as history, never read as an attempt, a recent failure or a result.
+    """
+    return _run_kind(row) == "initialization"
+
+
 def latest_spec_run(doc_id: str, revision_no: Optional[int] = None) -> Optional[dict]:
-    """Newest contract-2 result record for a TS (optionally for one TS revision)."""
+    """Newest contract-2 result record for a TS (optionally for one TS revision).
+
+    0684 T#1: an execution run (``run_kind=spec_execution``) is not a result record -- its
+    results are recorded as a run of their own -- so a just-admitted or live run never
+    hides the earlier record its report keeps for the Cases it does not run.
+    """
     if revision_no is None:
-        return get_store()._fetch_one(
+        rows = get_store()._fetch_all(
             "SELECT * FROM test_runs WHERE doc_id = ? AND contract_version = 2 "
-            "ORDER BY created_at DESC, run_id DESC LIMIT 1",
+            "ORDER BY created_at DESC, run_id DESC",
             [doc_id],
         )
-    return get_store()._fetch_one(
-        "SELECT * FROM test_runs WHERE doc_id = ? AND contract_version = 2 AND revision_no = ? "
-        "ORDER BY created_at DESC, run_id DESC LIMIT 1",
-        [doc_id, revision_no],
-    )
+    else:
+        rows = get_store()._fetch_all(
+            "SELECT * FROM test_runs WHERE doc_id = ? AND contract_version = 2 AND revision_no = ? "
+            "ORDER BY created_at DESC, run_id DESC",
+            [doc_id, revision_no],
+        )
+    return next((row for row in rows
+                 if _run_kind(row) not in ("initialization", "spec_execution")), None)
 
 
 def latest_by_doc(doc_id: str) -> Optional[dict]:
@@ -200,6 +232,20 @@ def latest_by_tsr_doc(tsr_doc_id: str) -> Optional[dict]:
 def set_run_tsr_doc(run_id: str, tsr_doc_id: str) -> None:
     get_store()._execute(
         "UPDATE test_runs SET tsr_doc_id = ? WHERE run_id = ?", [tsr_doc_id, run_id]
+    )
+
+
+def set_execution_case_result(*, case_row_id: int, status: str, actual: Optional[str],
+                              case_meta: str) -> None:
+    """0684 T#1 (D#1 §3-4): one Case result of a live execution run, kept as it arrives.
+
+    The run's Case row carries it until the run records its result record, so the report
+    and the views show a finished Case while the remaining Cases still run.
+    """
+    get_store()._execute(
+        "UPDATE test_run_cases SET case_status = ?, result = ?, actual = ?, case_meta = ?, "
+        "finished_at = ? WHERE id = ?",
+        [status, _SPEC_RESULT_TO_LEGACY.get(status), actual, case_meta, now_iso(), case_row_id],
     )
 
 
@@ -379,10 +425,14 @@ def finish_run(
     FlowGateStore._execute's missing affected-row count — it just does not by itself
     tell the caller which side won a race. Callers that need to branch on the outcome
     must serialize with test_run_service._get_run_lock(run_id) around this call.
+
+    0684 T#1: a contract-2 run linked to the report it opened at admission keeps that
+    link when it finishes without assembling one (``tsr_doc_id`` None keeps the column).
     """
     get_store()._execute(
         "UPDATE test_runs SET status = ?, case_passed = ?, case_failed = ?, "
-        "tsr_doc_id = ?, error = ?, finished_at = ? WHERE run_id = ? AND status = 'running'",
+        "tsr_doc_id = COALESCE(?, tsr_doc_id), error = ?, finished_at = ? "
+        "WHERE run_id = ? AND status = 'running'",
         [status, case_passed, case_failed, tsr_doc_id, error, now_iso(), run_id],
     )
 
@@ -403,6 +453,14 @@ def cas_cancelling_to_cancelled(run_id: str, *, error: str = "cancelled_by_user"
         "UPDATE test_runs SET status = 'cancelled', error = ?, finished_at = ? "
         "WHERE run_id = ? AND status = 'cancelling'",
         [error, now_iso(), run_id],
+    )
+
+
+def list_active_spec_runs() -> list[dict]:
+    """Contract-2 runs still queued, running or cancelling (startup reap bookkeeping)."""
+    return get_store()._fetch_all(
+        "SELECT * FROM test_runs WHERE contract_version = 2 "
+        "AND status IN ('running', 'cancelling') ORDER BY created_at ASC, run_id ASC"
     )
 
 
@@ -430,3 +488,21 @@ def mark_orphaned_running() -> int:
     for row in cancelling_rows:
         cas_cancelling_to_cancelled(row["run_id"], error="cancelled_by_restart")
     return len(rows) + len(cancelling_rows)
+
+def latest_spec_result(doc_id: str, revision_no: int, basis_id: str) -> Optional[dict]:
+    import json
+    rows = get_store()._fetch_all(
+        "SELECT * FROM test_runs WHERE doc_id = ? AND contract_version = 2 "
+        "AND revision_no = ? AND overall IS NOT NULL "
+        "ORDER BY created_at DESC, run_id DESC", [doc_id, revision_no],
+    )
+    for row in rows:
+        try:
+            meta = json.loads(row.get("result_meta") or "{}")
+        except (TypeError, ValueError):
+            continue
+        if meta.get("run_kind") == "initialization":
+            continue  # 0684 T#1: zero results is no result (D#1 §7)
+        if meta.get("basis_id") == basis_id and not meta.get("stale"):
+            return row
+    return None

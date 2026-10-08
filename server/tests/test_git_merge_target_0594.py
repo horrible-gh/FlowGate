@@ -51,6 +51,8 @@ _SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 if str(_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVER_DIR))
 
+from group_lock_stub import held_locks  # noqa: E402
+
 _GIT = shutil.which("git") is not None
 needs_git = pytest.mark.skipif(not _GIT, reason="git binary unavailable")
 
@@ -63,6 +65,12 @@ class _MockTxn:
     def execute(self, sql, params=None):
         self._cur = self._conn.execute(sql, params or [])
         self._conn.commit()
+
+    @property
+    def cursor(self):
+        """The live cursor: FlowGateStore._execute_affected (every lock/job CAS write) reads the
+        affected-row count from it (same gap 0555 T0008 closed in the 0115 harness)."""
+        return self._cur
 
     def fetchone(self):
         row = self._cur.fetchone() if self._cur else None
@@ -533,17 +541,40 @@ def test_E2_startup_recovery_closes_an_interrupted_attempt(proj):
     gid = proj.group(1)
     proj.local_branch("develop")
     proj.ready(gid)
+    # an attempt left by the removed project mutex (holder ``op:...``): nothing can be running
+    # it any more (0669 unit 9c), so a restart closes it as interrupted
     attempt = _open_attempt(proj, gid, "develop", "op:crashed")
     db_git.set_status(gid, "merging")
-    assert db_git.try_acquire_lock(proj.pid, "op:crashed")     # stale pre-restart lock row
     assert proj.workspace("develop").exists()
     svc.startup_recovery()
     session = _session(attempt.merge_id)
     assert session["status"] == "aborted"
     assert _ctx(attempt.merge_id)["attempt_state"] == "interrupted"
     assert db_git.get_state(gid)["status"] == "waiting"
-    assert db_git.get_lock(proj.pid) is None
+    assert held_locks(proj.pid) == []
     assert not proj.workspace("develop").exists()
+
+
+def _live_job(project_id: str, tag: str) -> str:
+    """A branch_merge_publish job that has been created and not finished (a runner still has
+    it): what an attempt names as its holder while its merge is in flight."""
+    from modules.flow_gate.services.git import job_store
+
+    created = job_store.create_or_get_job(
+        "branch_merge_publish", project_id, {"branch_merge_attempt_id": f"e3-{tag}:0"},
+        target_key="develop", payload={"source_branch": "x", "target_branch": "develop"},
+        wake=False)
+    assert created.ok, created
+    return created.job["job_id"]
+
+
+def _end_job(job_id: str, status: str = "failed") -> None:
+    from modules.flow_gate.db.connection import get_store
+
+    with get_store().transaction():
+        get_store()._execute(
+            "UPDATE operation_job SET status = ?, lease_owner = NULL, lease_token = NULL, "
+            "lease_until = NULL WHERE job_id = ?", [status, job_id])
 
 
 @needs_git
@@ -553,13 +584,15 @@ def test_E3_live_in_progress_attempt_is_not_a_conflict_and_not_swept(proj):
     from modules.flow_gate.services.git import merge_target as mt
 
     gid = proj.group(1)
-    gid2 = proj.group(2)          # provisioned before the "live runner" holds the lock
+    gid2 = proj.group(2)
     proj.local_branch("develop")
     proj.ready(gid)
     proj.ready(gid2)
-    attempt = _open_attempt(proj, gid, "develop", "op:live")
-    base_attempt = _open_attempt(proj, gid2, "main", "op:live")
-    assert db_git.try_acquire_lock(proj.pid, "op:live")
+    # 0669: the live runner is the attempt job; while it is not terminal it owns the attempt
+    job_id = _live_job(proj.pid, "live")
+    holder = f"job:{job_id}"
+    attempt = _open_attempt(proj, gid, "develop", holder)
+    base_attempt = _open_attempt(proj, gid2, "main", holder)
     db_git.set_status(gid, "merging")
     session = _session(attempt.merge_id)
     assert mt.attempt_phase(session) == mt.PHASE_IN_PROGRESS
@@ -574,9 +607,11 @@ def test_E3_live_in_progress_attempt_is_not_a_conflict_and_not_swept(proj):
     assert _session(base_attempt.merge_id)["status"] == "open"
     assert svc.open_merge_session_of_project(proj.pid) is None
     svc.guard_base_free(proj.pid)
+    svc.startup_recovery()                      # a restart leaves a live job attempt alone too
+    assert _session(attempt.merge_id)["status"] == "open"
 
-    # runner gone → the next sweep closes both as interrupted
-    db_git.release_lock(proj.pid, "op:live")
+    # runner gone (the job ended) -> the next sweep closes both as interrupted
+    _end_job(job_id)
     svc.merge_session_sweep()
     assert _ctx(attempt.merge_id)["attempt_state"] == "interrupted"
     assert _ctx(base_attempt.merge_id)["attempt_state"] == "interrupted"
@@ -753,6 +788,28 @@ def _crash_finalize(proj, monkeypatch, gid: str, action: str, *, where: str):
             svc.finalize(gid, action, target_branch="develop")
 
 
+def _recover_job_after_crash(gid: str) -> dict:
+    """The process died inside the finalize job (0669 unit 9a): its lease lapses, the Sweeper
+    reconciles it, and the next claim settles the attempt under the target locks. Returns the
+    job after that claim."""
+    from modules.flow_gate.db import operation_job as db_jobs
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.services.git import job_runner, job_sweeper
+
+    job = db_jobs.jobs_of_group(gid, "base_publish", ("running",))[-1]
+    with get_store().transaction():
+        get_store()._execute("UPDATE operation_job SET lease_until = ? WHERE job_id = ?",
+                             ["2000-01-01T00:00:00+00:00", job["job_id"]])
+    assert job_sweeper.step_expired_leases(full=True) >= 1
+    with get_store().transaction():
+        get_store()._execute("UPDATE operation_job SET available_at = ? WHERE job_id = ?",
+                             ["2000-01-01T00:00:00+00:00", job["job_id"]])
+    claim = job_runner.try_claim(job["job_id"])
+    assert claim is not None, db_jobs.get_job(job["job_id"])
+    job_runner.execute(claim)
+    return db_jobs.get_job(job["job_id"])
+
+
 def _arm_crash(monkeypatch, where: str) -> None:
     from modules.flow_gate.services import git_service as svc
     from modules.flow_gate.services.git import merge_target as mt
@@ -810,10 +867,16 @@ def test_E4_crash_after_the_merge_landed_is_reconciled_to_completed(
     merge_id = int(session["merge_id"])
     landed = _git(["rev-parse", "develop"], cwd=proj.base).strip()
     assert "feature.txt" in _git(["ls-tree", "-r", "--name-only", "develop"], cwd=proj.base).split()
+    # 0669 unit 9a: the finalize job owns the attempt while its lease is valid, so a restart or
+    # a periodic sweep must not take it away ...
     if recover == "startup":
         svc.startup_recovery()
     else:
-        svc.merge_session_sweep()                            # runner gone: lock released
+        svc.merge_session_sweep()
+    assert _session(merge_id)["status"] == "open"
+    # ... the Sweeper reconciles the job once its lease lapsed, and its next claim settles it
+    job = _recover_job_after_crash(gid)
+    assert job["status"] == "succeeded", job
     ctx = _ctx(merge_id)
     assert _session(merge_id)["status"] == "done"
     assert ctx["attempt_state"] == "completed"               # never "interrupted"
@@ -825,6 +888,7 @@ def test_E4_crash_after_the_merge_landed_is_reconciled_to_completed(
     assert ("feature.txt" in proj.origin_files("develop")) is (action == "merge")
     assert not proj.workspace("develop").exists()
     assert proj.base_head_branch() == "main"
+    assert held_locks(proj.pid) == []
 
 
 @needs_git
@@ -842,17 +906,18 @@ def test_E4_crash_before_the_push_rolls_the_local_merge_back(proj, monkeypatch):
     inputs = _ctx(merge_id)["merge_inputs"]
     assert _git(["rev-parse", "develop"], cwd=proj.base).strip() != inputs["pre_head"]
     assert db_git.get_state(gid)["status"] == "merging"
-    svc.startup_recovery()
+    svc.startup_recovery()                                   # the live job keeps its attempt
+    assert _session(merge_id)["status"] == "open"
+    # the job's recovery claim: the unpushed merge commit is undone (never reported as a
+    # result), the attempt is closed as interrupted, and the same job runs the finalize again
+    job = _recover_job_after_crash(gid)
+    assert job["status"] == "succeeded", job
     assert _ctx(merge_id)["attempt_state"] == "interrupted"
-    assert db_git.get_state(gid)["status"] == "waiting"
-    # the unpushed merge commit is undone (never reported as a result)
-    assert _git(["rev-parse", "develop"], cwd=proj.base).strip() == inputs["pre_head"]
-    assert "feature.txt" not in proj.origin_files("develop")
-    assert not proj.workspace("develop").exists()
-    # and the group can finalize again normally
-    out = svc.finalize(gid, "merge", target_branch="develop")
-    assert out["result"]["status"] == "merged"
+    assert _git(["rev-parse", "develop^1"], cwd=proj.base).strip() == inputs["pre_head"]
+    assert db_git.get_state(gid)["status"] == "merged"
     assert "feature.txt" in proj.origin_files("develop")
+    assert not proj.workspace("develop").exists()
+    assert held_locks(proj.pid) == []
 
 
 @needs_git
@@ -1337,3 +1402,87 @@ def test_P_default_merge_target_route(proj):
     )
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["default_merge_target"] is None
+
+
+@needs_git
+def test_held_checkpoint_is_consumed_after_base_advance_and_clean_finalize(proj):
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services import git_service as svc
+
+    gid = proj.group(1)
+    (proj.wt(gid) / "shared.txt").write_text("group answer\n", encoding="utf-8")
+    _git(["add", "shared.txt"], cwd=proj.wt(gid))
+    _git(["commit", "-m", "group change"], cwd=proj.wt(gid))
+    held_base = proj.base_sha()
+    (proj.base / "unrelated.txt").write_text("other group advance\n", encoding="utf-8")
+    _git(["add", "unrelated.txt"], cwd=proj.base)
+    _git(["commit", "-m", "advance base"], cwd=proj.base)
+    _git(["push", "origin", "main"], cwd=proj.base)
+    proj.ready(gid)
+
+    old_merge_id = db_git.create_session(gid, ["shared.txt"], finalize_action="merge_only")
+    db_git.close_session(old_merge_id, "aborted")
+    checkpoint = db_git.create_resolution_checkpoint({
+        "project_id": proj.pid, "group_id": gid, "source_merge_id": old_merge_id,
+        "target_branch": "main", "source_branch": db_git.get_state(gid)["branch"],
+        "base_head": held_base,
+        "merge_head": _git(["rev-parse", "HEAD"], cwd=proj.wt(gid)).strip(),
+        "resolved_paths": ["shared.txt"], "conflict_origins": [],
+        "provenance": {"shared.txt": {"rerere_id": "held"}},
+    })
+    assert db_git.active_resolution_checkpoint(proj.pid, gid)["checkpoint_id"] == checkpoint["checkpoint_id"]
+
+    result = svc.finalize(gid, "merge_only")
+    assert result["result"]["status"] == "merged"
+    assert db_git.get_resolution_checkpoint(checkpoint["checkpoint_id"])["state"] == "consumed"
+    assert db_git.active_resolution_checkpoint(proj.pid, gid) is None
+
+# ── flowgate.default.0683 T0004 — group finalize blocker / plan-time recovery ────
+
+@needs_git
+def test_0683_group_blocker_details_name_the_group_finalize(proj):
+    """(9) a group finalize blocker is named as one: owner type, source, state, route."""
+    from modules.flow_gate.services import git_service as svc
+
+    gid_a = proj.group(1)
+    gid_b = proj.group(2)
+    proj.local_branch("develop")
+    merge_a = _conflict_on(proj, gid_a, "develop")["merge_id"]
+    (proj.wt(gid_b) / "b.txt").write_text("b\n", encoding="utf-8")
+    proj.ready(gid_b)
+    with pytest.raises(svc.GitServiceError) as caught:
+        svc.finalize(gid_b, "merge", target_branch="develop")
+    exc = caught.value
+    assert exc.code == "merge_target_busy"
+    d = exc.details
+    assert d["merge_id"] == merge_a and d["blocking_group_id"] == gid_a
+    assert d["blocking_owner_type"] == "group"
+    assert d["blocking_state"] == "conflict" and d["attempt_state"] == "conflict"
+    assert d["route"] == f"/api/v1/groups/{gid_a}/git/merge/{merge_a}"
+    assert d["source_branch"] == svc.db_git.get_state(gid_a)["branch"]
+    assert gid_a in exc.message and "branch merge" not in exc.message
+
+
+@needs_git
+def test_0683_interrupted_group_attempt_is_reclaimed_by_the_next_finalize(proj):
+    """(11) B's finalize settles A's dead attempt at plan time — no sweep in between."""
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services import git_service as svc
+
+    gid_a = proj.group(1)
+    gid_b = proj.group(2)
+    proj.local_branch("develop")
+    proj.ready(gid_a)
+    attempt = _open_attempt(proj, gid_a, "develop", "op:crashed")
+    db_git.set_status(gid_a, "merging")
+    assert (proj.workspace("develop") / "owner.json").exists()
+
+    (proj.wt(gid_b) / "b.txt").write_text("b\n", encoding="utf-8")
+    proj.ready(gid_b)
+    out = svc.finalize(gid_b, "merge", target_branch="develop")
+    assert out["result"]["status"] == "merged", out
+    assert _session(attempt.merge_id)["status"] == "aborted"
+    assert _ctx(attempt.merge_id)["attempt_state"] == "interrupted"
+    assert db_git.get_state(gid_a)["status"] == "waiting"
+    assert "b.txt" in proj.origin_files("develop")
+    assert held_locks(proj.pid) == []

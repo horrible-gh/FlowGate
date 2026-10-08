@@ -62,6 +62,7 @@ from modules.flow_gate.db import connection as db_connection  # noqa: E402
 from modules.flow_gate.db import git_integration as db_git  # noqa: E402
 from modules.flow_gate.db import tr_commit_ledger as db_ledger  # noqa: E402
 from modules.flow_gate.services import git_service as svc  # noqa: E402
+from group_lock_stub import stub_group_lock  # noqa: E402
 from modules.flow_gate.services import tr_commit_service as trc  # noqa: E402
 from modules.flow_gate.services.git_service import GitServiceError  # noqa: E402
 
@@ -106,6 +107,11 @@ class _SqliteStore:
     def _execute(self, sql, params=None):
         self._conn.execute(sql, params or [])
         self._conn.commit()
+
+    def _execute_affected(self, sql, params=None):
+        cur = self._conn.execute(sql, params or [])
+        self._conn.commit()
+        return cur.rowcount
 
     def _fetch_one(self, sql, params=None):
         row = self._conn.execute(sql, params or []).fetchone()
@@ -173,8 +179,7 @@ def git_active(monkeypatch, repo):
     })
     monkeypatch.setattr(svc, "_project_name", lambda project_id: "flowgate")
     monkeypatch.setattr(svc, "src_root", lambda project_name, branch: repo)
-    monkeypatch.setattr(svc.db_git, "try_acquire_lock", lambda project_id, holder: True)
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda project_id, holder: None)
+    stub_group_lock(monkeypatch)
     return repo
 
 
@@ -551,7 +556,7 @@ def test_the_sweep_closes_a_session_whose_revert_is_no_longer_in_flight(
 
 # ── 5. AI 에게 어느 질문인지 말해 준다 ────────────────────────────────────────
 
-def test_the_ai_mention_tells_a_revert_apart_from_a_merge():
+def test_the_ai_mention_tells_a_revert_apart_from_a_merge(monkeypatch):
     """같은 충돌 표식이라도 물음이 다르다.
 
     병합은 "두 갈래를 합쳐라"라서 양쪽을 다 남기면 대체로 맞는다. 되돌리기에 그 습관을
@@ -560,6 +565,8 @@ def test_the_ai_mention_tells_a_revert_apart_from_a_merge():
     """
     # 지연 임포트: 이 모듈은 앱 설정(ALLOWED_ORIGIN/CONTEXT)을 끌고 오므로 수집
     # 시점에 올리면 스위트 전체가 collection error 로 죽는다.
+    # Self-check Windows worker may have no USERNAME; PyMySQL imports getpass.
+    monkeypatch.setenv("USERNAME", "FlowGateTest")
     from modules.flow_gate.api import token_routes
 
     merge = token_routes._conflict_task_section("merge", {})

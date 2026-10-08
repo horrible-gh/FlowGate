@@ -154,7 +154,7 @@ def test_inbox_test_run_dry_run(monkeypatch):
     monkeypatch.setattr(
         inbox_routes.db_docs,
         "get_by_id",
-        lambda _id: {"doc_id": _id, "project_id": "flowgate"},
+        lambda _id: {"doc_id": _id, "project_id": "flowgate", "group_id": "flowgate.default.0138"},
     )
     inc = MagicMock()
     monkeypatch.setattr(inbox_routes.token_service, "increment_dry_run", inc)
@@ -197,7 +197,7 @@ def test_inbox_test_run_accepts_and_consumes(monkeypatch):
     monkeypatch.setattr(
         inbox_routes.db_docs,
         "get_by_id",
-        lambda _id: {"doc_id": _id, "project_id": "flowgate"},
+        lambda _id: {"doc_id": _id, "project_id": "flowgate", "group_id": "flowgate.default.0138"},
     )
     create = MagicMock(return_value={
         "ok": True,

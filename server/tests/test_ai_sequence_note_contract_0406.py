@@ -124,6 +124,10 @@ PAYLOAD_KEYS = {
     # change it was in none of the five places that tell a worker what to send back. Widened
     # from five keys to seven; the three this test is named for still round-trip below.
     "provider_id", "provider_display_name",
+    # 0649 T#1 (NR0003 O1): a row sent back is recognised by its id only, so the contract
+    # names that id in every place that tells a worker what to send back — the mention
+    # payload carries each stored row's item_id and the help example shows the key.
+    "item_id",
 }
 
 

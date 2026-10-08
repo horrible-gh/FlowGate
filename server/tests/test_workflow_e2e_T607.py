@@ -285,6 +285,9 @@ def _patch_pipeline_d1(monkeypatch, doc: dict):
     monkeypatch.setattr(ps, "db_docs", mock_docs)
     # These tests isolate slot/head and single-writer effects from body validation.
     monkeypatch.setattr(ps, "_require_document_body_for_approval", lambda doc, locale="ko": None)
+    # The workflow-head guard (0660 T0004 §5) fails closed without a sequence store, which
+    # these DB-less unit tests do not have; it is covered by test_tr2_lifecycle_0660.py.
+    monkeypatch.setattr(ps, "_require_workflow_head_for_approval", lambda doc, locale="ko": None)
     mock_events = MagicMock()
     mock_events.create = MagicMock(return_value={"id": 1})
     monkeypatch.setattr(el, "db_events", mock_events)
@@ -755,6 +758,9 @@ def test_transition_document_review_is_single_writer_for_doc_review_status(monke
     monkeypatch.setattr(ps, "db_docs", mock_docs)
     # These tests isolate slot/head and single-writer effects from body validation.
     monkeypatch.setattr(ps, "_require_document_body_for_approval", lambda doc, locale="ko": None)
+    # The workflow-head guard (0660 T0004 §5) fails closed without a sequence store, which
+    # these DB-less unit tests do not have; it is covered by test_tr2_lifecycle_0660.py.
+    monkeypatch.setattr(ps, "_require_workflow_head_for_approval", lambda doc, locale="ko": None)
     monkeypatch.setattr(el, "db_events", MagicMock())
     monkeypatch.setattr(el.db_events, "create", MagicMock(return_value={"id": 1}))
 

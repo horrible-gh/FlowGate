@@ -64,6 +64,7 @@
       :upload-busy="uploadBusy"
       @close="emit('close')"
       @edit-direct="emit('edit-direct')"
+      @edit-url-import="emit('edit-url-import')"
       @edit-mention="emit('edit-mention')"
       @invoke-command="emit('invoke-command')"
       @invoke-ai="emit('invoke-ai')"
@@ -88,6 +89,7 @@
     :upload-busy="uploadBusy"
     @close="emit('close')"
     @edit-direct="emit('edit-direct')"
+    @edit-url-import="emit('edit-url-import')"
     @edit-mention="emit('edit-mention')"
     @invoke-command="emit('invoke-command')"
     @invoke-ai="emit('invoke-ai')"
@@ -136,6 +138,7 @@ defineProps<{
 const emit = defineEmits<{
   close: []
   'edit-direct': []
+  'edit-url-import': []
   'edit-mention': []
   'invoke-command': []
   'invoke-ai': []

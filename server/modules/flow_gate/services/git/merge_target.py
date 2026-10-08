@@ -103,6 +103,13 @@ class MergeTargetContext:
     target_kind: str = "branch"
     target_group_id: Optional[str] = None
     managed_workspace: bool = True
+    # 0665 T0004: the target came from the group's work base (no explicit request).
+    defaulted_to_work_base: bool = False
+
+    @property
+    def unmerge_supported(self) -> bool:
+        """``finalize.unmerge`` rewinds the shared base checkout only (0594 §15)."""
+        return self.is_project_base
 
     def public(self) -> dict:
         return {
@@ -111,6 +118,7 @@ class MergeTargetContext:
             "target_group_id": self.target_group_id,
             "managed_workspace": self.managed_workspace,
             "is_project_base": self.is_project_base,
+            "unmerge_supported": self.unmerge_supported,
             "merge_id": self.merge_id,
             "started_at": self.started_at,
             "legacy": self.legacy,
@@ -352,12 +360,20 @@ def attempt_phase(session: dict, *, at_boot: bool = False) -> str:
     """Tell an in-flight attempt from a stopped one from a real conflict session.
 
     open + conflict files (or a review state)       → conflict
-    open + no files + its project-lock holder alive → in_progress
-    open + no files + lock gone                     → interrupted
+    open + no files + its job not terminal          → in_progress
+    open + no files + job terminal / gone / no job  → interrupted
 
     A legacy row (no target record) was only ever written on a conflict, so it
-    keeps meaning exactly that. ``at_boot``: no runner survives a restart, so a
-    pre-restart lock row (released later in startup) never proves liveness."""
+    keeps meaning exactly that.
+
+    0669 unit 6b: a final approval's attempt names ``job:{job_id}``. That job owns
+    the attempt's recovery for as long as it is not terminal — it settles the attempt
+    itself, under its own W/B and R, when it resumes (``approval_publish``) — so it
+    reads as in progress, at boot too. Only a terminal (or vanished) job hands the
+    attempt to the sweep/startup recovery. Unit 9c: every attempt runner is a job now
+    (approval, manual finalize, branch merge); an attempt naming any other holder was
+    left by the old project mutex, which no longer exists, so nothing can be running
+    it. ``at_boot`` no longer changes the answer and is kept for the callers."""
     from modules.flow_gate.services import git_service as _gs
     rec = target_record(session)
     if rec is None:
@@ -367,22 +383,37 @@ def attempt_phase(session: dict, *, at_boot: bool = False) -> str:
         return PHASE_CONFLICT
     if _gs.db_git.session_files(int(session["merge_id"])):
         return PHASE_CONFLICT
-    if at_boot:
-        return PHASE_INTERRUPTED
-    try:
-        project_id = _gs._session_project(session)
-        lock = _gs.db_git.get_lock(project_id)
-    except Exception:
-        lock = None
-    if lock and rec.get("lock_holder") and lock.get("holder") == rec.get("lock_holder"):
+    if _job_owns_attempt(rec.get("lock_holder")):
         return PHASE_IN_PROGRESS
     return PHASE_INTERRUPTED
+
+
+JOB_HOLDER_PREFIX = "job:"
+
+
+def _job_owns_attempt(lock_holder: Optional[str]) -> Optional[bool]:
+    """None: not a job holder. True: the job is not terminal (or cannot be read — never
+    take an attempt away from a job on a failed read). False: terminal or gone."""
+    if not lock_holder or not str(lock_holder).startswith(JOB_HOLDER_PREFIX):
+        return None
+    from modules.flow_gate.db import operation_job as db_jobs
+    from modules.flow_gate.db import request_cache as _request_cache
+    try:
+        _request_cache.invalidate()
+        job = db_jobs.get_job(str(lock_holder)[len(JOB_HOLDER_PREFIX):])
+    except Exception:
+        _log.warning("attempt job probe failed for %s", lock_holder, exc_info=True)
+        return True
+    return bool(job) and job.get("status") not in db_jobs.TERMINAL_STATUSES
 
 
 def holds_base_checkout(session: dict) -> bool:
     """Whether this open session owns the shared base checkout's merge state.
 
-    A non-base target never touches the base checkout. A base attempt that has not
+    A non-base target never touches the base checkout — but that does not make it
+    harmless: it owns its own target's managed workspace and blocks every other attempt
+    into that target (``inspect_workspace`` → ``merge_target_busy``, 0683 T0004 §5).
+    This predicate answers only the base-checkout question. A base attempt that has not
     produced a conflict is either running under the project lock (the lock already
     serializes it) or interrupted (startup/TTL recovery closes it) — neither is a
     conflict the base gate should report."""
@@ -458,6 +489,7 @@ def inspect_workspace(project_id: str, branch: str) -> tuple[str, dict]:
             # 0630 T0005: the claim is an ordinary branch merge, not a group's finalize.
             details["blocking_owner_type"] = _gs.db_git.OWNER_BRANCH_MERGE
             details["source_branch"] = rec.get("source_branch")
+        details.update(_blocker_details(project_id, session, rec, details))
         if (
             len(claims) == 1 and marker and not marker.get("_invalid")
             and str(marker.get("merge_id")) == str(session.get("merge_id"))
@@ -486,12 +518,79 @@ def inspect_workspace(project_id: str, branch: str) -> tuple[str, dict]:
     return "mismatch", {"reason": "owner_marker_mismatch", "merge_id": marker.get("merge_id")}
 
 
+def _blocker_details(project_id: str, session: dict, rec: dict, details: dict) -> dict:
+    """0683 T0004 §3 — what the refused caller needs to find the blocker: its owner type,
+    source, where it stands (state/review_state) and the route of its own screen.
+    Best-effort: a read failure here never changes the verdict it decorates."""
+    from modules.flow_gate.services import git_service as _gs
+    merge_id = session.get("merge_id")
+    group_id = session.get("group_id")
+    out: dict = {"project_id": project_id, "touched_at": session.get("touched_at")}
+    try:
+        context = _gs.db_git.session_context(session)
+        out["attempt_state"] = context.get(ATTEMPT_STATE_KEY)
+        out["review_state"] = context.get("review_state")
+        if details.get("blocking_owner_type") == _gs.db_git.OWNER_BRANCH_MERGE:
+            from . import branch_merge
+            out["blocking_state"] = branch_merge.ui_state(session)
+            out["route"] = f"/api/v1/projects/{project_id}/git/merge/{merge_id}"
+        else:
+            out["blocking_owner_type"] = _gs.db_git.OWNER_GROUP
+            out["source_branch"] = (_gs.db_git.get_state(group_id) or {}).get("branch") if group_id else None
+            out["blocking_state"] = context.get("review_state") or context.get(ATTEMPT_STATE_KEY)
+            out["route"] = f"/api/v1/groups/{group_id}/git/merge/{merge_id}" if group_id else None
+    except Exception:
+        _log.warning("merge target blocker details failed for merge %s", merge_id, exc_info=True)
+    return out
+
+
+def _busy_message(branch: str, details: dict) -> str:
+    """The owner type decides the wording — a branch merge is never called a finalize."""
+    from modules.flow_gate.services import git_service as _gs
+    merge_id = details.get("merge_id")
+    if details.get("blocking_owner_type") == _gs.db_git.OWNER_BRANCH_MERGE:
+        return (
+            f"branch merge #{merge_id} ({details.get('source_branch') or '?'} → {branch}) "
+            f"owns this target branch's workspace (state: {details.get('blocking_state') or '?'})"
+        )
+    return (
+        f"the finalize attempt #{merge_id} of group {details.get('blocking_group_id') or '?'} "
+        f"owns this target branch's workspace (state: {details.get('blocking_state') or '?'})"
+    )
+
+
+def _reclaim_interrupted_claim(project_id: str, merge_id) -> bool:
+    """0683 T0004 §4 — re-check a busy claim at plan time instead of waiting for the sweep.
+
+    Only an attempt whose runner is gone without ever reaching a conflict/review
+    (``PHASE_INTERRUPTED``) is settled here, through the same lock + recovery the sweep
+    uses (``cleanup.recover_interrupted_claim``). A live in-progress attempt, a
+    conflict/review wait, an unprovable landed merge and an owner mismatch all stay
+    exactly as they are, and the caller keeps refusing (fail closed)."""
+    from modules.flow_gate.services import git_service as _gs
+    try:
+        session = _gs.db_git.get_session(int(merge_id))
+    except Exception:
+        return False
+    if session is None or session.get("status") != "open":
+        return False
+    try:
+        if attempt_phase(session) != PHASE_INTERRUPTED:
+            return False
+        from . import cleanup
+        return cleanup.recover_interrupted_claim(session, project_id)
+    except Exception:
+        _log.warning("plan-time recovery of merge %s failed", merge_id, exc_info=True)
+        return False
+
+
 def raise_if_workspace_unavailable(project_id: str, branch: str) -> str:
     verdict, details = inspect_workspace(project_id, branch)
+    if verdict == "busy" and _reclaim_interrupted_claim(project_id, details.get("merge_id")):
+        verdict, details = inspect_workspace(project_id, branch)
     if verdict == "busy":
         raise _target_error(
-            409, "merge_target_busy",
-            "another finalize attempt owns this target branch's workspace", branch, **details,
+            409, "merge_target_busy", _busy_message(branch, details), branch, **details,
         )
     if verdict == "mismatch":
         raise _target_error(
@@ -556,17 +655,97 @@ def plan_finalize_target(
     if fixed is not None:
         return fixed
     base_branch = project_base_branch(cfg)
-    branch = requested or base_branch
+    # flowgate.default.0665 T0004 (W7): an omitted target is the GROUP's work base,
+    # never the project base -- merging a branch forked from ``v0.2`` into ``main``
+    # would carry the whole ``main..v0.2`` history along.  The project's remembered
+    # default target is a UI suggestion only and does not participate here.
+    defaulted = requested is None
+    branch = requested or default_target_of_group(project_id, group_id, cfg)
     if branch == base_branch:
-        return _base_context(project_id, base_branch)
-    validate_target_branch(project_id, _gs._base_root_of(project_id), branch)
+        return replace(_base_context(project_id, base_branch), defaulted_to_work_base=defaulted)
+    try:
+        validate_target_branch(project_id, _gs._base_root_of(project_id), branch)
+    except GitServiceError as exc:
+        if not defaulted:
+            raise
+        # A work base that cannot be a target is refused, not silently replaced
+        # by the project base.
+        raise GitServiceError(
+            exc.status, "merge_target_work_base_invalid",
+            "the group's work base cannot be used as the merge target; choose a target explicitly",
+            details={**(exc.details or {}), "work_base_ref": branch, "cause": exc.code},
+        ) from exc
     raise_if_workspace_unavailable(project_id, branch)
     wdir = workspace_dir(project_id, branch)
     return MergeTargetContext(
         project_id=project_id, base_branch=base_branch, target_branch=branch,
         is_project_base=False, root=wdir / WORKSPACE_TREE, workspace_dir=wdir,
-        workspace_key=workspace_key(branch),
+        workspace_key=workspace_key(branch), defaulted_to_work_base=defaulted,
     )
+
+
+def default_target_of_group(project_id: str, group_id: str, cfg: Optional[dict]) -> str:
+    """The merge target an omitted request means: the group's work base (0665 T0004)."""
+    from modules.flow_gate.services import git_service as _gs
+    return (
+        _gs.resolve_group_work_base_ref(project_id, group_id, config=cfg)
+        or project_base_branch(cfg)
+    )
+
+
+def preview_target(group_id: str, requested: Optional[str] = None) -> dict:
+    """What merging this group into ``requested`` (or its default) would mean.
+
+    Read-only.  ``incoming_work_base_commits`` counts work-base commits the target
+    does not contain yet -- history that would flow into the target alongside the
+    group's own change when the target is not the group's work base.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    project_id = _gs._project_of_group(group_id)
+    cfg = _gs.db_git.get_config(project_id) or {}
+    base_branch = project_base_branch(cfg)
+    work_base_ref = default_target_of_group(project_id, group_id, cfg)
+    target = normalize_requested_target(requested) or work_base_ref
+    is_work_base = target == work_base_ref
+    preview = {
+        "target_branch": target,
+        "work_base_ref": work_base_ref,
+        "project_base_branch": base_branch,
+        "is_work_base": is_work_base,
+        "is_project_base": target == base_branch,
+        "unmerge_supported": target == base_branch,
+        "incoming_work_base_commits": None,
+        "warnings": [],
+    }
+    if not is_work_base:
+        preview["warnings"].append("target_differs_from_work_base")
+    if target != base_branch:
+        preview["warnings"].append("unmerge_unsupported_for_non_base_target")
+    base_root = _gs._base_root_of(project_id)
+    if is_work_base or base_root is None or not (base_root / ".git").exists():
+        return preview
+    state = _gs.db_git.get_state(group_id) or {}
+    upper = None
+    try:
+        branch = (state.get("branch") or "").strip()
+        if branch and _gs._ref_exists(base_root, f"refs/heads/{branch}"):
+            upper = _gs.resolve_scope_floor(
+                project_id, group_id, base_root, state=state, config=cfg,
+                head=f"refs/heads/{branch}",
+            )["floor_sha"]
+    except GitServiceError:
+        upper = None
+    if upper is None:
+        upper = _gs._worktree_start_point(base_root, work_base_ref)
+    if not _gs._ref_exists(base_root, f"refs/heads/{target}"):
+        return preview
+    proc = _gs._run_git(["rev-list", "--count", f"refs/heads/{target}..{upper}"], cwd=base_root)
+    if proc.returncode == 0:
+        try:
+            preview["incoming_work_base_commits"] = int((proc.stdout or "0").strip())
+        except ValueError:
+            pass
+    return preview
 
 
 # ── Attempt lifecycle ────────────────────────────────────────────────────────
@@ -594,6 +773,9 @@ def open_attempt(
         "remote_expectation": remote_expectation,
         "finalize_action": action,
         "push": action == "merge",
+        # 0665 T0004: recorded for unattended runs that had no confirmation step.
+        "unmerge_supported": target.unmerge_supported,
+        "defaulted_to_work_base": target.defaulted_to_work_base,
     }
     merge_id = _gs.db_git.create_session(
         group_id, [], finalize_action=action,
@@ -696,7 +878,11 @@ def _remember_default_target(ctx: MergeTargetContext) -> None:
     finalize actually merged into becomes the project's suggested default target
     for the NEXT group's finalize dialog, instead of resetting to base_branch
     every time this dialog opens. The base branch itself is never remembered
-    here — it is already the fallback default when nothing is suggested."""
+    here — it is already the fallback default when nothing is suggested.
+
+    0665 T0004: this project-level memory ranks BELOW the group's own work base
+    (server default and UI order: pinned target → work base → remembered → base),
+    so it can no longer send a main-based group into ``v0.2``."""
     if ctx.is_project_base:
         return
     from modules.flow_gate.services import git_service as _gs

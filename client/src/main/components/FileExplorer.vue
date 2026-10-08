@@ -83,7 +83,8 @@
           <AppIcon name="arrow-clockwise" />
           <span>{{ updatePending ? t('main.explorer.git_updating') : t('main.explorer.git_update') }}</span>
         </button>
-        <span class="fx-git-update-status">{{ workBaseBranch }} · {{ updateStatusText }}</span>
+        <span class="fx-git-update-status" :title="workBaseTitle" data-test="work-base-status">{{ workBaseBranch }}<template v-if="workBaseFloorShort"> ({{ workBaseFloorShort }})</template> · {{ updateStatusText }}</span>
+        <span v-if="workBaseUnverified" class="fx-git-work-base-warn" role="status" data-test="work-base-unverified">{{ t('main.explorer.work_base_unverified') }}</span>
       </div>
       <div v-if="selectedGroupBusy" class="fx-readonly-badge">
         <AppIcon name="lock" />
@@ -321,11 +322,26 @@ type GroupGitState = {
   behind_count: number | null
   base_remote_behind_count: number | null
   work_base_ref: string | null
+  // 0665 T0004: the recorded commit the group's changes are measured from.
+  work_base_sha: string | null
+  work_base_sync_sha: string | null
+  work_base_state: string | null
   status: string
   merge_id: number | null
 }
 const groupGitState = ref<GroupGitState | null>(null)
 const workBaseBranch = computed(() => groupGitState.value?.work_base_ref || baseBranch.value)
+const workBaseFloor = computed(
+  () => groupGitState.value?.work_base_sync_sha || groupGitState.value?.work_base_sha || '',
+)
+const workBaseFloorShort = computed(() => workBaseFloor.value.slice(0, 10))
+const workBaseTitle = computed(() =>
+  workBaseFloor.value ? `${workBaseBranch.value} @ ${workBaseFloor.value}` : workBaseBranch.value || '',
+)
+const workBaseUnverified = computed(
+  () => !!groupGitState.value?.branch
+    && !['verified', 'confirmed'].includes(groupGitState.value?.work_base_state || ''),
+)
 const updatePending = ref(false)
 const baseDirtyDialog = ref<InstanceType<typeof GitBaseDirtyDialog> | null>(null)
 const untrackedConflictDialog = ref<InstanceType<typeof GitUntrackedConflictDialog> | null>(null)
@@ -553,6 +569,9 @@ async function loadGroupGitBadge(gid: string) {
       behind_count: st.behind_count ?? null,
       base_remote_behind_count: st.base_remote_behind_count ?? null,
       work_base_ref: st.work_base_ref ?? null,
+      work_base_sha: st.work_base_sha ?? null,
+      work_base_sync_sha: st.work_base_sync_sha ?? null,
+      work_base_state: st.work_base_state ?? null,
       status: String(st.status ?? 'none'),
       merge_id: st.merge_id == null ? null : Number(st.merge_id),
     } : null
@@ -1269,4 +1288,5 @@ watch(() => props.refreshToken, (next, prev) => {
 .fx-git-update-btn:not(:disabled):hover { background: rgba(255, 255, 255, 0.1); }
 .fx-git-update-btn:disabled { opacity: 0.58; cursor: not-allowed; }
 .fx-git-update-status { min-width: 0; color: var(--text-m); font-size: 0.7rem; overflow-wrap: anywhere; }
+.fx-git-work-base-warn { color: var(--warning, #d97706); font-size: 0.7rem; overflow-wrap: anywhere; }
 </style>

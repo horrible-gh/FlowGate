@@ -194,30 +194,48 @@ def _chat_lookup_sections(
     return sections
 
 
-def _start_paragraph(folded: int) -> list[str]:
-    """The paragraph that explains what ``after_seq`` is (L0010 §2-4-1).
+def _command_section(*, base: str, raw_token: str) -> str:
+    """0670 T0004: how a CLI chat worker runs tests/builds/git through FlowGate.
 
-    Unfolded, this is the existing wording, unchanged to the byte: it is what nearly
-    every call produces, and rewriting it would shake every check that pins it.
-
-    Folded, the original sentence is simply false — ``after_seq`` is no longer where
-    that worker stopped reading. Left alone, the worker concludes it has already read
-    the very turns it is about to be told were folded away, which is the whole reason
-    for saying anything at all.
+    Only an in-app AI invocation has a live run for a command to belong to, so the
+    copy-mention path (no run) never shows this. API providers get the same contract
+    as the in-process ``run_command`` tool.
     """
-    if folded == 0:
-        return [
-            "The after_seq above is YOUR last read position — the server tracks it, do not compute",
-            "it yourself. `head` carries the document intro and the opening of the conversation as",
-            "background; read it first, then the turns. If `next_after_seq` is not null, call again",
-            "with that value until it is null. Reading does not consume this token.",
-        ]
+    lines = [
+        "## Command execution",
+        "---",
+        "Run tests, builds, linters and git commands for this conversation through FlowGate so",
+        "they execute in this group's worktree under the user's command policy (run at once,",
+        "wait for the user's approval, or refuse). API tool-calling runs use the `run_command`",
+        "tool instead of this endpoint.",
+        "",
+        f"POST {base}/chat-commands",
+        f"Authorization: Bearer {raw_token}",
+        "",
+        '{"program": "pytest", "args": ["-q", "server/tests/test_x.py"], "cwd": ".",',
+        ' "timeout_seconds": 300, "wait_seconds": 60}',
+        "",
+        "program is the executable name only and args are separate strings: no shell, no",
+        "pipes/redirection/&&, no inline `python -c` / `node -e`. cwd is relative to the worktree.",
+        "When the response has terminal=false (waiting for approval, or still running), keep",
+        f"calling GET {base}/chat-commands/<request_id>?wait=60 with the same Authorization until",
+        "terminal=true. result carries status, exit_code, stdout, stderr, timed_out, rejected and",
+        "rejected_by. A rejected command was not run: do not resend it unchanged; continue with",
+        "what you have and say so in your reply. Running commands does not consume this token,",
+        "so finish the commands you need before you submit your turn.",
+    ]
+    return "\n".join(lines)
+
+
+def _start_paragraph(folded: int) -> list[str]:
+    """Explain the invocation-local meaning of ``after_seq``."""
+    del folded
     return [
-        "The after_seq above is where the server wants you to start — your own last read position,",
-        "moved forward to the recent-conversation range this user chose. The server tracks it, do",
-        "not compute it yourself. `head` carries the document intro and the opening of the",
-        "conversation as background; read it first, then the turns. If `next_after_seq` is not null,",
-        "call again with that value until it is null. Reading does not consume this token.",
+        "The after_seq above is the start of this invocation's conversation context window.",
+        "It is not a persisted model-memory cursor and may intentionally include turns seen by an",
+        "earlier invocation. `head` carries document metadata and intro only; conversation messages",
+        "are in `turns`. Read the selected turns first. If `next_after_seq` is not null, call again",
+        "with that value until it is null. Reading does not consume this token.",
     ]
 
 
@@ -275,31 +293,22 @@ def build_conversation_mention(
     # token they just issued/inspected. Threaded to _chat_lookup_sections so the CRUD
     # section this mention advertises matches the real grant, not a generic chat guess.
     source_access: Optional[str] = None,
-    # flowgate.v02.0032 T#1 (D0006 §3.4): True only from the in-app AI invoke path, whose
-    # token is bound to a live run that a chat tool (command request) can belong to. The
-    # sections come from the chat run hook port; the copy path (no run) never shows them.
+    # 0670 T0004 / flowgate.v02.0032 T#1 (D0006 §3.4): True only from the in-app AI invoke
+    # path, whose token is bound to a live run that a command request can belong to. The
+    # sections come from the chat run hook port (or, with none registered, the in-module
+    # command section); the copy path (no run) never shows them.
     command_execution: bool = False,
 ) -> str:
     """Build the single-turn chat mention used by copy and in-app invoke paths.
 
-    A pinned provider resumes from the cursor the server tracks for that provider.
-    An unpinned copy/fallback mention starts at zero because the eventual participant
-    is not known when the mention is issued. ``provider`` is display text only;
-    identity comes exclusively from the token-bound ``provider_id``.
+    Each invocation derives its context window from the saved mode/count and current
+    conversation head. A persisted provider participant cursor is delivery history, not
+    model memory, and does not choose that window. ``provider`` is display text only;
+    identity remains token-bound.
 
-    0362 T0012: ``user_id`` is whoever pressed the button, and the range they saved can
-    move the starting point forward from that cursor. Both call sites already hold the
-    value and neither sends it over the wire — the screen does not get to say how much
-    conversation an AI is handed, or a path that never went through the screen would
-    have no value there at all, or a made-up one (P0009 scenario 14). Left None, the
-    settings come out as their defaults, which is also what an unreachable store gives.
+    ``user_id`` selects the saved chat settings. Left None, defaults are used.
     """
-    del module  # Kept in the public signature for the two established call sites.
-    last_read = (
-        conversation_turns.get_last_read_seq(doc_id, f"provider:{provider_id}")
-        if provider_id
-        else 0
-    )
+    del module, provider_id  # Public signature is retained; neither chooses the window.
     settings = chat_settings_service.resolve_chat_settings_safe(user_id)
     context_mode = settings["context_mode"]
     # [all] adds no query. With the whole conversation on offer the head cannot change
@@ -309,7 +318,6 @@ def build_conversation_mention(
         conversation_turns.current_head_seq(doc_id) if context_mode == "recent" else 0
     )
     after_seq, folded = chat_settings_service.resolve_context_window(
-        last_read=last_read,
         head_seq=head_seq,
         mode=context_mode,
         turns=settings["context_turns"],
@@ -330,13 +338,9 @@ def build_conversation_mention(
     lines = [
         "## Conversation",
         "---",
-        "You are a participant in an ongoing conversation. Read the latest messages and",
-        "reply naturally and concisely. This is a chat — no document headers, no Q /",
-        "clarification registration, no review. Just talk.",
-        "",
         f"Conversation document: {doc_id}",
         "",
-        "Read what you have not read yet:",
+        "Read the conversation context selected for this invocation:",
         f"GET {api_base}/conversation/{doc_id}/turns?after_seq={after_seq}&include_head=1",
         f"Authorization: Bearer {raw_token}",
         "",
@@ -396,7 +400,10 @@ def build_conversation_mention(
     if command_execution:
         from modules.flow_gate.services import chat_run_hooks
 
-        for section in chat_run_hooks.chat_mention_sections(api_base, raw_token):
+        sections = chat_run_hooks.chat_mention_sections(api_base, raw_token)
+        if not chat_run_hooks.registered(chat_run_hooks.PROVIDE_CHAT_TOOLS):
+            sections = [_command_section(base=api_base, raw_token=raw_token)]
+        for section in sections:
             lines += ["", section]
     return "\n".join(lines)
 

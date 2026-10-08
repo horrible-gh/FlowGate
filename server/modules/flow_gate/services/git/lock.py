@@ -5,7 +5,6 @@ Extracted from git_service.py (flowgate.default.0550 T0015, D0006 §3.2/부록 A
 from __future__ import annotations
 
 import logging
-import time
 from typing import Optional
 
 from . import merge_target
@@ -15,18 +14,8 @@ _log = logging.getLogger(__name__)
 
 LOCK_WAIT_SEC = 5
 
-def _acquire_lock(project_id: str, holder: str, wait_sec: float = LOCK_WAIT_SEC) -> bool:
-    from modules.flow_gate.services import git_service as _gs
-    from modules.flow_gate.db import tr_self_check_runs as _selfcheck_runs
-    if _selfcheck_runs.has_recovery_incomplete(project_id):
-        return False
-    deadline = time.monotonic() + wait_sec
-    while True:
-        if _gs.db_git.try_acquire_lock(project_id, holder):
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.25)
+# 0669 unit 9c: the old project mutex (``_acquire_lock`` over git_project_lock) is gone.
+# Every Git/source path takes its domain locks through ``lock_manager``.
 
 
 def open_merge_session_of_project(project_id: str) -> Optional[dict]:

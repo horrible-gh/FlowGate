@@ -69,6 +69,10 @@ def test_human_ai_review_apply_conflict_and_history_flow(seed, storage_root, tmp
         body["quantities"]["TS"]["count"] = 1
         body["steps"] = wp.expand_steps(body["counted_types"], body["quantities"])
         for plan_step in body["steps"]:
+            # 0649 T#1 (NR0003 §5.1): every card here is new (the counts were 0), and a new
+            # card is sent without card_id — the server assigns one (else card_id_unknown).
+            plan_step.pop("card_id", None)
+        for plan_step in body["steps"]:
             if plan_step["locked"]:
                 continue
             plan_step["provider_id"] = "aip_opus"

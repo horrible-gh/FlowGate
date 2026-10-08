@@ -141,6 +141,32 @@ def _final_approve(doc_id: str, git_action: str | None = "merge") -> tuple[int, 
     return response.status_code, json.loads(response.body.decode("utf-8"))
 
 
+def _drive_jobs(group_id: str, limit: int = 6) -> int:
+    """What the Job Runner's workers do between two requests (0669 unit 5b): claim each waiting
+    job of the Group -- the approval's retry, the slot's worktree_cleanup -- and run it. The
+    retry backoff is let elapse first. Returns how many jobs ran."""
+    from modules.flow_gate.db import operation_job as db_jobs
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.services.git import job_runner, worktree_cleanup
+
+    worktree_cleanup.install()
+    ran = 0
+    for _ in range(limit):
+        progressed = False
+        for kind in ("final_approval_publish", "worktree_cleanup"):
+            for job in db_jobs.jobs_of_group(group_id, kind, ("pending", "blocked", "retry_wait")):
+                with get_store().transaction():
+                    get_store()._execute("UPDATE operation_job SET available_at = ? WHERE job_id = ?",
+                                         ["2000-01-01T00:00:00+00:00", job["job_id"]])
+                claim = job_runner.try_claim(job["job_id"])
+                if claim is not None:
+                    job_runner.execute(claim)
+                    progressed = ran = ran + 1
+        if not progressed:
+            break
+    return ran
+
+
 def _review_status(doc_id: str) -> str:
     from modules.flow_gate.db import documents as db_docs
 
@@ -177,6 +203,13 @@ def _branch_exists(group_id: str) -> bool:
         cwd=str(_base()), capture_output=True,
     )
     return proc.returncode == 0
+
+
+def _job(group_id: str) -> dict:
+    """The Group newest final_approval_publish job."""
+    from approval_job_fakes import job_of
+
+    return job_of(group_id)
 
 
 def _git_state(group_id: str) -> dict:
@@ -393,6 +426,7 @@ class TestMergeTimeoutRecovery0607:
         assert _origin_head(origin_repo) == head
         assert head.startswith(result["merge_commit"])
         assert _git_state(group)["status"] == "merged"
+        _drive_jobs(group)      # the slot teardown is a worktree_cleanup job now (0669 unit 7a)
         assert not _worktree(group).exists()
         assert not _branch_exists(group)
 
@@ -432,6 +466,7 @@ class TestMergeTimeoutRecovery0607:
         assert not (base / ".git" / "MERGE_HEAD").exists()
         assert _review_status(root_id) == "wf_done"
         assert _git_state(group)["status"] == "merged"
+        _drive_jobs(group)      # the slot teardown is a worktree_cleanup job now (0669 unit 7a)
         assert not _worktree(group).exists()
         assert not _branch_exists(group)
 
@@ -456,8 +491,10 @@ class TestMergeTimeoutRecovery0607:
         status, payload = _final_approve(ac_id)
         monkeypatch.undo()
 
-        assert status == 500, payload
-        assert payload["error"]["code"] == "git_error"
+        # a lost merge verdict with no commit is a 5xx: the approval stays a queued job
+        assert status == 200, payload
+        assert payload["approval"]["stage"] == "queued"
+        assert payload["block_reason"]["code"] == "git_error"
         assert _review_status(ac_id) == "pending_review"
         assert _rev(base, "HEAD") == pre
         assert _origin_head(origin_repo) == pre
@@ -465,9 +502,8 @@ class TestMergeTimeoutRecovery0607:
         assert _worktree(group).is_dir() and _branch_exists(group)
         assert _git_state(group)["worktree_registered"]
 
-        status, payload = _final_approve(ac_id)
-        assert status == 200, payload
-        assert payload["git"]["result"]["status"] == "merged"
+        assert _drive_jobs(group) >= 1
+        assert _review_status(ac_id) == "approved"
         assert _origin_head(origin_repo) == _rev(base, "HEAD")
 
     # ── Case D — merged locally, never pushed ────────────────────────────────
@@ -506,6 +542,7 @@ class TestMergeTimeoutRecovery0607:
         assert payload["approval"]["approved"] is True
         assert _review_status(root_id) == "wf_done"
         assert _git_state(group)["status"] == "merged"
+        _drive_jobs(group)      # the slot teardown is a worktree_cleanup job now (0669 unit 7a)
         assert not _worktree(group).exists()
         assert not _branch_exists(group)
 
@@ -525,19 +562,24 @@ class TestMergeTimeoutRecovery0607:
         status, payload = _final_approve(ac_id)
         monkeypatch.undo()
 
-        assert status == 500, payload
-        assert payload["error"]["code"] == "push_rejected"
+        # 0669 unit 6b: a rejected push is a 5xx -- the approval stays a queued job (retry_wait)
+        # instead of failing the request, and the intent is not lost.
+        assert status == 200, payload
         assert payload["approval"]["approved"] is False
+        assert payload["approval"]["stage"] == "queued" and payload["approval"]["deferred"] is True
+        assert payload["block_reason"]["code"] == "push_rejected"
         assert _review_status(ac_id) == "pending_review"
         assert _origin_head(origin_repo) == origin_before
-        assert _rev(base, "HEAD") == pre  # only this request's merge was rewound
+        assert _rev(base, "HEAD") == pre  # only this request merge was rewound
         assert _worktree(group).is_dir() and _branch_exists(group)
         state = _git_state(group)
         assert state["status"] == "waiting" and state["worktree_registered"]
+        assert _job(group)["status"] == "retry_wait"
 
-        status, payload = _final_approve(ac_id)
-        assert status == 200, payload
-        assert payload["git"]["result"]["status"] == "merged"
+        # the push works again: the Runner next claim finishes the very same approval
+        assert _drive_jobs(group) >= 1
+        assert _job(group)["status"] == "succeeded"
+        assert _review_status(ac_id) == "approved"
         assert _origin_head(origin_repo) == _rev(base, "HEAD")
         assert not _worktree(group).exists()
 
@@ -559,8 +601,9 @@ class TestMergeTimeoutRecovery0607:
         status, payload = _final_approve(ac_id)
         monkeypatch.undo()
 
-        assert status == 500, payload
-        assert payload["error"]["code"] == "push_rejected"
+        assert status == 200, payload
+        assert payload["approval"]["stage"] == "queued"
+        assert payload["block_reason"]["code"] == "push_rejected"
         assert _review_status(ac_id) == "pending_review"
         # the pre-existing merge is the only copy of the work: it stays
         assert _rev(base, "HEAD") == stranded
@@ -568,9 +611,9 @@ class TestMergeTimeoutRecovery0607:
         assert _worktree(group).is_dir() and _branch_exists(group)
         assert _git_state(group)["worktree_registered"]
 
-        status, payload = _final_approve(ac_id)
-        assert status == 200, payload
-        assert payload["git"]["result"]["status"] == "merged"
+        assert _drive_jobs(group) >= 1
+        assert _job(group)["status"] == "succeeded"
+        assert _review_status(ac_id) == "approved"
         assert _origin_head(origin_repo) == stranded
         assert not _worktree(group).exists()
 
@@ -595,6 +638,7 @@ class TestMergeTimeoutRecovery0607:
         assert _review_status(root_id) == "wf_done"
         assert _rev(base, "HEAD") == base_before
         assert _origin_head(origin_repo) == origin_before
+        _drive_jobs(group)      # the slot teardown is a worktree_cleanup job now (0669 unit 7a)
         assert not _worktree(group).exists()
         assert not _branch_exists(group)
 
@@ -634,46 +678,43 @@ class TestMergeTimeoutRecovery0607:
 
     # ── §3.6 server truth: is this group's approval still running Git? ───────
     def test_finalize_state_reports_an_approval_still_in_flight(self, origin_repo):
-        from modules.flow_gate.db import git_integration as db_git
         from modules.flow_gate.services import git_service as svc
+        from group_lock_stub import hold_lock
 
         group = f"{PROJECT}.default.0710"
-        _group_with_work(group, "g.py", "g = 1\n")
+        _root, ac_id = _group_with_work(group, "g.py", "g = 1\n")
         assert svc.get_finalize_state(group)["state"]["approval_in_flight"] is False
 
-        holder = f"approval:{group}.0002-AC:probe"
-        assert db_git.try_acquire_lock(PROJECT, holder)
-        try:
+        # 0669 unit 6b: an approval that cannot publish (R is held elsewhere) stays a live
+        # job whose Group is frozen -- that is what "still in flight" means now.
+        with hold_lock("R", PROJECT, holder_kind="publish"):
+            status, payload = _final_approve(ac_id)
+            assert status == 200 and payload["approval"]["stage"] == "queued", payload
             assert svc.get_finalize_state(group)["state"]["approval_in_flight"] is True
             assert svc.get_finalize_state(group, preview_ac=True)["state"]["approval_in_flight"] is True
             # another group's approval, or a plain git op, is not THIS approval
             assert svc.get_finalize_state(f"{PROJECT}.default.0701")["state"]["approval_in_flight"] is False
-        finally:
-            db_git.release_lock(PROJECT, holder)
-        other = f"approval:{PROJECT}.default.07100.0002-AC:probe"
-        assert db_git.try_acquire_lock(PROJECT, other)
-        try:
-            assert svc.get_finalize_state(group)["state"]["approval_in_flight"] is False
-        finally:
-            db_git.release_lock(PROJECT, other)
+        _drive_jobs(group)
+        assert _review_status(ac_id) == "approved"
+        assert svc.get_finalize_state(group)["state"]["approval_in_flight"] is False
 
-    def test_finalize_state_reports_unknown_when_the_lock_probe_itself_fails(
+    def test_finalize_state_reports_unknown_when_the_probe_itself_fails(
         self, origin_repo, monkeypatch,
     ):
-        """rev1 (human rejection): a failed lock probe must never masquerade as
-        `approval_in_flight: False` — the caller cannot tell "confirmed no approval
-        running" from "couldn't ask", so a probe failure has to say `None`/`null`,
+        """rev1 (human rejection): a failed probe must never masquerade as
+        `approval_in_flight: False` -- the caller cannot tell "confirmed no approval
+        running" from "could not ask", so a probe failure has to say `None`/`null`,
         distinct from both `True` and a genuinely confirmed `False`."""
-        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.db import operation_job as db_jobs
         from modules.flow_gate.services import git_service as svc
 
         group = f"{PROJECT}.default.0711"
         _group_with_work(group, "g2.py", "g = 2\n")
 
-        def _boom(project_id):
+        def _boom(group_id):
             raise RuntimeError("db unavailable")
 
-        monkeypatch.setattr(db_git, "get_lock", _boom)
+        monkeypatch.setattr(db_jobs, "get_group_freeze_claim", _boom)
         try:
             assert svc.approval_git_in_flight(group) is None
             assert svc.get_finalize_state(group)["state"]["approval_in_flight"] is None

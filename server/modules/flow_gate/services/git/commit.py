@@ -400,8 +400,10 @@ def create_tr_commit(group_id: str, subject: str) -> dict:
         _log.warning("tr commit precheck failed for %s", group_id, exc_info=True)
         return skip("commit_failed")
 
-    holder = f"trcommit:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder, wait_sec=TR_COMMIT_LOCK_WAIT_SEC):
+    # 0666 D 3.10: the Group's G, one attempt (TR_COMMIT_LOCK_WAIT_SEC = 0). A commit
+    # on the Group's own branch creates no ref, so no M.
+    lock = _acquire_group_lock(project_id, group_id, "tr_commit", no_wait=True)
+    if lock is None:
         return skip("git_busy")
     try:
         try:
@@ -452,10 +454,47 @@ def create_tr_commit(group_id: str, subject: str) -> dict:
         _log.warning("tr commit point failed for group %s", group_id, exc_info=True)
         return skip("commit_failed")
     finally:
-        try:
-            _gs.db_git.release_lock(project_id, holder)
-        except Exception:
-            _log.warning("tr commit lock release failed for %s", project_id, exc_info=True)
+        _release_group_lock(lock)
+
+
+def _acquire_group_lock(project_id: str, group_id: str, holder_kind: str, *,
+                        no_wait: bool = False) -> Optional[tuple]:
+    """The Group's G for the TR history paths (0666 D 3.10), or None when refused.
+
+    Never raises: these callers answer a refusal with ``git_busy`` and must not fail
+    the approval or rewind around them (D0005 K8). A caller bug (LockProgramError, e.g.
+    an acquire inside a DB transaction) is logged and refused the same way.
+    """
+    from . import lock_manager
+    try:
+        outcome, ctx = lock_manager.acquire_group(
+            project_id, group_id, holder_kind=holder_kind,
+            mode=lock_manager.NO_WAIT if no_wait else "interactive",
+        )
+    except lock_manager.LockProgramError:
+        _log.error("group lock refused for %s/%s (%s)", project_id, group_id, holder_kind,
+                   exc_info=True)
+        return None
+    except Exception:
+        _log.warning("group lock failed for %s/%s (%s)", project_id, group_id, holder_kind,
+                     exc_info=True)
+        return None
+    if not outcome.ok:
+        _log.info("group lock busy for %s/%s (%s): %s", project_id, group_id, holder_kind,
+                  lock_manager.outcome_details(outcome))
+        return None
+    return ctx, outcome.lock_key
+
+
+def _release_group_lock(lock: Optional[tuple]) -> None:
+    from . import lock_manager
+    if lock is None:
+        return
+    ctx, key = lock
+    try:
+        lock_manager.release(ctx, key)
+    except Exception:
+        _log.warning("group lock release failed for %s", key, exc_info=True)
 
 
 # L0007 §2.6 — the cancel commit's body always names the reverted commit in full, so
@@ -619,7 +658,7 @@ def cancel_group_status(group_id: str) -> str:
 
 
 def open_cancel_session(group_id: str, target_shas: Sequence[str]) -> dict:
-    """Evaluate L0007 §4.1 G2~G11 and, if all pass, hold the project git lock.
+    """Evaluate L0007 §4.1 G2~G11 and, if all pass, hold the Group's G lock.
 
     Returns ``{"ok": True, "session": {...}}`` or
     ``{"ok": False, "blocked_reason": <P0006 §5-3 code>, "block_sub": <L0007 detail>}``.
@@ -654,7 +693,8 @@ def open_cancel_session(group_id: str, target_shas: Sequence[str]) -> dict:
     project_id, cfg, state = gate["project_id"], gate["cfg"], gate["state"]
 
     holder = f"cancel:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder, wait_sec=_gs.CANCEL_LOCK_WAIT_SEC):  # G8
+    lock = _acquire_group_lock(project_id, group_id, "time_machine")         # G8 (0666 D 3.10)
+    if lock is None:
         return block("git_busy", "lock_timeout")
     try:
         try:
@@ -673,17 +713,18 @@ def open_cancel_session(group_id: str, target_shas: Sequence[str]) -> dict:
         if not _commits_present(wt_path, target_shas):                    # G11
             raise _CancelGateFailed("no_worktree", "commits_absent")
     except _CancelGateFailed as gate:
-        _release_cancel_lock(project_id, holder)
+        _release_group_lock(lock)
         return block(gate.reason, gate.sub)
     except Exception:
-        # A gate that blew up must not leave the project lock behind — the re-arm
-        # right after this would then wait five seconds and fail silently.
-        _release_cancel_lock(project_id, holder)
+        # A gate that blew up must not leave the lock behind — the re-arm right after
+        # this would then wait five seconds and fail silently.
+        _release_group_lock(lock)
         raise
     return {
         "ok": True, "blocked_reason": None, "block_sub": None,
         "session": {
             "project_id": project_id, "group_id": group_id, "holder": holder,
+            "group_lock": lock,
             "wt_path": wt_path, "author_env": _author_env_from_cfg(cfg),
         },
     }
@@ -695,9 +736,16 @@ def open_terminal_reopen_session(group_id: str) -> dict:
     The ordinary cancel gate returns ``already_merged`` before G8--G10 because a
     merged slot may legitimately be unregistered. Terminal reopen does not reset or
     revert, but its following re-arm can recreate the slot; therefore any existing
-    worktree must still be checked under the project lock so unrelated edits cannot
+    worktree must still be checked under the Group's G so unrelated edits cannot
     be overwritten. A missing terminal worktree is valid and needs no cleanliness
     check.
+
+    0669 unit 7d: G (time_machine), like the cancel session. The re-arm no longer
+    provisions inside the workflow transaction: it only checks C1 there, and the
+    worktree_provision job is registered under this G after the commit and runs once
+    the session is closed (``finish_terminal_reopen``). A worktree_cleanup job still
+    working on the slot refuses the reopen: it would go on emptying the tree the
+    reopen hands back.
     """
     from modules.flow_gate.services import git_service as _gs
     def block(reason: str, sub: str) -> dict:
@@ -708,26 +756,42 @@ def open_terminal_reopen_session(group_id: str) -> dict:
         return block(gate["blocked_reason"] or "git_inactive", gate["block_sub"] or "terminal_status_changed")
     project_id, cfg, state = gate["project_id"], gate["cfg"], gate["state"]
     holder = f"terminal-reopen:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder, wait_sec=_gs.CANCEL_LOCK_WAIT_SEC):
+    lock = _acquire_group_lock(project_id, group_id, "time_machine")
+    if lock is None:
         return block("git_busy", "lock_timeout")
     try:
+        if _slot_cleanup_in_flight(group_id):
+            raise _CancelGateFailed("git_busy", "slot_cleanup_in_flight")
         project_name = _gs._project_name(project_id)
         wt_path = _gs.src_root(project_name, state["branch"]) if project_name else None
         if wt_path is not None and wt_path.is_dir() and _gs.cancel_blocking_dirty(wt_path):
             raise _CancelGateFailed("dirty_worktree", "dirty_worktree")
     except _CancelGateFailed as gate_error:
-        _release_cancel_lock(project_id, holder)
+        _release_group_lock(lock)
         return block(gate_error.reason, gate_error.sub)
     except Exception:
-        _release_cancel_lock(project_id, holder)
+        _release_group_lock(lock)
         raise
     return {
         "ok": True, "blocked_reason": None, "block_sub": None,
         "session": {
             "project_id": project_id, "group_id": group_id, "holder": holder,
+            "group_lock": lock,
             "wt_path": wt_path, "author_env": _author_env_from_cfg(cfg),
         },
     }
+
+
+def _slot_cleanup_in_flight(group_id: str) -> bool:
+    """A non-terminal worktree_cleanup job of the Group (unit 7a); unreadable = yes."""
+    from modules.flow_gate.db import operation_job
+    from modules.flow_gate.db import request_cache
+    try:
+        request_cache.invalidate()
+        return bool(operation_job.active_jobs_of_group(group_id, "worktree_cleanup"))
+    except Exception:
+        _log.warning("cleanup job probe failed for %s", group_id, exc_info=True)
+        return True
 
 
 class _CancelGateFailed(Exception):
@@ -739,18 +803,14 @@ class _CancelGateFailed(Exception):
         self.sub = sub
 
 
-def _release_cancel_lock(project_id: str, holder: str) -> None:
-    from modules.flow_gate.services import git_service as _gs
-    try:
-        _gs.db_git.release_lock(project_id, holder)
-    except Exception:
-        _log.warning("tr cancel lock release failed for %s", project_id, exc_info=True)
-
-
 def close_cancel_session(session: Optional[dict]) -> None:
-    if not session:
+    """Release a cancel or terminal reopen session (Group G). Idempotent: a terminal
+    reopen closes its session early to let the provision job take G (unit 7d)."""
+    if not session or session.get("closed"):
         return
-    _release_cancel_lock(session["project_id"], session["holder"])
+    session["closed"] = True
+    if session.get("group_lock") is not None:
+        _release_group_lock(session["group_lock"])
 
 
 def uncommit_tr_suffix(session: dict, target_shas: Sequence[str]) -> dict:

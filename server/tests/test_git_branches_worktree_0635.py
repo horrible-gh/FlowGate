@@ -40,6 +40,14 @@ from modules.flow_gate.db import group_ai_leases, groups as db_groups
 _SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 
 
+from group_lock_stub import group_store  # noqa: F401
+import pytest as _pytest_locks
+
+# Group/base/remote work takes domain locks from the real lock manager (0669): these tests
+# run on the real SQLite lock/job store instead of stubbing the removed project mutex.
+pytestmark = _pytest_locks.mark.usefixtures("group_store")
+
+
 class _MockTxn:
     def __init__(self, conn):
         self._conn = conn
@@ -138,8 +146,6 @@ def repo(tmp_path, monkeypatch, attempt_db):
     monkeypatch.setattr(git_service.db_git, "get_config", lambda pid: {"enabled": 1, "base_branch": "main", "repo_url": ""})
     monkeypatch.setattr(git_service, "_base_root_of", lambda project_id: root)
     monkeypatch.setattr(git_service, "_load_secret_for", lambda cfg: "")
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda project_id, holder, **kw: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda project_id, holder: None)
     monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda project_id: list(states))
     monkeypatch.setattr(db_groups, "list_open_groups_by_work_base", lambda project_id, ref: [])
     subprocess.run(["git", "branch", "slot-live"], cwd=root, check=True)

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from group_lock_stub import group_store  # noqa: F401
 from modules.flow_gate.db import tr2_approval_attempts as db_attempts
 from modules.flow_gate.documents import tr2_precheck
 from modules.flow_gate.services import tr2_file_policy as policy
@@ -16,6 +17,12 @@ from modules.flow_gate.storage.safe_path import (
     MutationPathAliasError,
     resolve_mutation_target_no_alias,
 )
+
+
+@pytest.fixture(autouse=True)
+def _real_group_locks(group_store):
+    """Ordinary mutation and TR2 take the Group's G in a real store."""
+    yield
 
 
 def test_successful_by_group_uses_group_state_index_shape(monkeypatch):
@@ -147,12 +154,12 @@ def test_general_source_mutation_lock_resolve_authority_order(monkeypatch, tmp_p
     events = []
 
     monkeypatch.setattr(
-        policy.git_service, "_acquire_lock",
-        lambda project_id, holder: events.append("lock") or True,
+        policy, "_acquire_group",
+        lambda project_id, group_id: events.append("lock") or ("ctx", "key"),
     )
     monkeypatch.setattr(
-        policy.db_git, "release_lock",
-        lambda project_id, holder: events.append("unlock"),
+        policy, "_release_group",
+        lambda handle: events.append("unlock"),
     )
     monkeypatch.setattr(
         policy, "_group_root",
@@ -176,8 +183,8 @@ def test_general_source_mutation_blocks_exact_and_recursive(monkeypatch, tmp_pat
     (root / "server").mkdir(parents=True)
     (root / "server" / "a.py").write_text("x", encoding="utf-8")
 
-    monkeypatch.setattr(policy.git_service, "_acquire_lock", lambda *_: True)
-    monkeypatch.setattr(policy.db_git, "release_lock", lambda *_: None)
+    monkeypatch.setattr(policy, "_acquire_group", lambda *_: ("ctx", "key"))
+    monkeypatch.setattr(policy, "_release_group", lambda *_: None)
     monkeypatch.setattr(policy, "_group_root", lambda *_: root)
     monkeypatch.setattr(policy, "managed_paths", lambda _gid: {"server/a.py"})
 
@@ -364,31 +371,11 @@ def test_historical_backfill_zero_contract():
             assert "tr2_approval_attempts" not in path.read_text(encoding="utf-8")
 
 
-def _shared_project_lock(monkeypatch):
-    lock = threading.Lock()
-    owner = {"value": None}
-
-    def acquire(_project, holder, wait_sec=None):
-        ok = lock.acquire(timeout=3)
-        if ok:
-            owner["value"] = holder
-        return ok
-
-    def release(_project, holder):
-        assert owner["value"] == holder
-        owner["value"] = None
-        lock.release()
-
-    monkeypatch.setattr(policy.git_service, "_acquire_lock", acquire)
-    monkeypatch.setattr(policy.db_git, "release_lock", release)
-
-
 def test_interleaving_ordinary_first_tr2_reads_latest(monkeypatch, tmp_path):
     root = tmp_path / "worktree"
     root.mkdir()
     target = root / "a.py"
     target.write_text("before", encoding="utf-8")
-    _shared_project_lock(monkeypatch)
     managed = set()
     monkeypatch.setattr(policy, "_group_root", lambda *_: root)
     monkeypatch.setattr(policy, "managed_paths", lambda _gid: set(managed))
@@ -429,7 +416,6 @@ def test_interleaving_tr2_first_ordinary_rereads_and_blocks(monkeypatch, tmp_pat
     root.mkdir()
     target = root / "a.py"
     target.write_text("before", encoding="utf-8")
-    _shared_project_lock(monkeypatch)
     managed = set()
     monkeypatch.setattr(policy, "_group_root", lambda *_: root)
     monkeypatch.setattr(policy, "managed_paths", lambda _gid: set(managed))

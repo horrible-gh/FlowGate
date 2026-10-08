@@ -554,7 +554,9 @@ def test_9_sequence_mutation_archives_approved_ac_and_reopens_atomically(auto_st
     assert json.loads(old_ac["meta"])["workflow_invalidated_reason"] == "workflow_sequence_changed"
     assert git_service._group_ac_doc_id(ids["group_id"]) is None
     parsed = doc_routes._parse_doc_workflow(db_docs.get_by_id(ids["R"]))
-    assert parsed["workflow_head_type"] == "M"
+    # 0649 T#1 (NR0003 O1): the pending TSR right after the started TS is protected — it
+    # stays in place ahead of the new M row instead of being deleted, so it is the head.
+    assert parsed["workflow_head_type"] == "TSR"
     assert parsed["workflow_head_status"] == "pending"
 
 
@@ -568,19 +570,23 @@ def test_10_empty_pending_tail_mutation_archives_approved_ac(auto_store):
     # Without TSR, the seeded sequence has locked realised rows plus one pending TSR tail.
     ids = _seed_group(auto_store, "seqempty", root_done=True, with_ac=True)
     sequence = db_wfseq.get_sequence_by_doc_id(ids["R"])
-    assert any(
-        item["result_doc_id"] is None
-        for item in db_wfseq.get_sequence_items(sequence["id"])
-    )
+    # 0649 T#1 (NR0003 O1): that pending TSR follows a started TS, so it is protected and no
+    # edit removes it. The removable pending tail is an ordinary row after it.
+    db_wfseq.insert_sequence_item(sequence["id"], 9, "M", "Tail", "doc", 9)
+    pending = [
+        item for item in db_wfseq.get_sequence_items(sequence["id"])
+        if item["result_doc_id"] is None
+    ]
+    assert [item["type"] for item in pending] == ["TSR", "M"]
 
     result = decision.edit_workflow_pending(ids["R"], [])
 
     assert result["pending_count"] == 0
     assert db_docs.get_by_id(ids["R"])["doc_review_status"] == "wf_in_progress"
-    assert all(
-        item["result_doc_id"] is not None
-        for item in db_wfseq.get_sequence_items(sequence["id"])
-    )
+    assert [
+        item["type"] for item in db_wfseq.get_sequence_items(sequence["id"])
+        if item["result_doc_id"] is None
+    ] == ["TSR"]
     old_ac = db_docs.get_by_id(ids["AC"])
     assert old_ac["status"] == "archived"
     assert json.loads(old_ac["meta"])["workflow_invalidated_reason"] == "workflow_sequence_changed"

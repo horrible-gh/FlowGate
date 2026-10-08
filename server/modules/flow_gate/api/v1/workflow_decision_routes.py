@@ -29,6 +29,8 @@ from modules.flow_gate.services.auth_outbound import verify_bearer
 # instead of propagating to a handler-less root (see that module's docstring).
 _log = route_logging.get_logger(__name__)
 from modules.flow_gate.services.work_plan_sequence_service import NoteTooLong
+from modules.flow_gate.services.work_plan_card_identity import LegacyCardUnresolved
+from modules.flow_gate.services.work_plan_card_order import PlanOrderBlocked, PlanOrderViolation
 from modules.flow_gate.services.workflow_decision_service import (
     SequenceChanged,
     decide_workflow,
@@ -39,6 +41,9 @@ from modules.flow_gate.services.workflow_decision_service import (
     get_workflow_sequence,
     edit_workflow_pending,
     PlanRevisionChanged,
+    ProtectedRowEchoAmbiguous,
+    ProtectedRowModified,
+    SequenceItemStale,
     continuation_kickoff_after_decide,
     normalize_continuation_instruction_mode,
     normalize_continuation_auto_approve_item_seqs,
@@ -181,6 +186,12 @@ class EditSequenceItem(BaseModel):
     reviewer_provider_display_name: Optional[str] = None
     pre_instruction_text: Optional[str] = None
     pre_instruction_attachment: Optional[dict] = None
+    # 0649 T#1 (NR0003 O0/O1): the work-plan card the row belongs to, and — for a row that
+    # already exists — its DB id. A caller sending an existing row back names it with
+    # item_id; that is the only way the server recognises the echo of a protected row.
+    # A new row sends no item_id.
+    source_wp_card_id: Optional[str] = None
+    item_id: Optional[int] = None
 
 
 class EditSequenceBodyRequest(BaseModel):
@@ -196,6 +207,9 @@ class EditSequenceBodyRequest(BaseModel):
     # When present it (1) checks whether the plan changed meanwhile, (2) records an entry in the
     # plan's application history, and (3) allows creating the first sequence when no workflow exists yet.
     expected_plan: Optional[dict] = None
+    # 0649 T#1 (NR0003 O0): confirmations for a plan-reflecting save — today only
+    # "legacy_card_unresolved" (started legacy rows whose card cannot be proven).
+    acknowledged_codes: Optional[List[str]] = None
 
 
 class SequenceEditRequestBody(BaseModel):
@@ -944,6 +958,70 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             expected_plan=body.expected_plan,
             applied_by=auth.get("issued_to"),
             locale=request.headers.get("x-locale") or "ko",
+            acknowledged_codes=body.acknowledged_codes,
+        )
+    except ProtectedRowModified as exc:
+        # 0649 T#1 (NR0003 O1): an echo tried to change a protected row's identity.
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "protected_row_modified",
+                "doc_id": exc.doc_id,
+                "item_id": exc.item_id,
+                "fields": exc.fields,
+            },
+        )
+    except ProtectedRowEchoAmbiguous as exc:
+        # 0649 T#1 (NR0003 O1): a lone report item that may be an old caller's echo.
+        # Nothing was written; the caller reloads and sends the row back with its item_id.
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "protected_row_echo_ambiguous",
+                "doc_id": exc.doc_id,
+                "item_index": exc.item_index,
+                "type": exc.type_code,
+                "protected_item_ids": exc.protected_item_ids,
+            },
+        )
+    except SequenceItemStale as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "sequence_item_stale",
+                "doc_id": exc.doc_id,
+                "item_index": exc.item_index,
+                "item_id": exc.item_id,
+            },
+        )
+    except LegacyCardUnresolved as exc:
+        # 0649 T#1 (NR0003 O0): confirm first — acknowledged_codes: ["legacy_card_unresolved"].
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "legacy_card_unresolved",
+                "wp_doc_id": exc.wp_doc_id,
+                "rows": exc.rows,
+                "acknowledge_code": "legacy_card_unresolved",
+            },
+        )
+    except PlanOrderBlocked as exc:
+        # 0649 T#2 (NR0003 O2/O5): order_conflicts_started / started_card_removed /
+        # card_identity_mismatch / plan_rows_pending. Refused before anything was written.
+        return JSONResponse(
+            status_code=409,
+            content={**exc.detail, "error": exc.code, "wp_doc_id": exc.wp_doc_id},
+        )
+    except PlanOrderViolation as exc:
+        # 0649 T#2 (NR0003 O5): the rows this save would write do not follow the plan's
+        # card order. The write was rolled back.
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "plan_order_violation",
+                "wp_doc_id": exc.wp_doc_id,
+                "detail": exc.detail,
+            },
         )
     except PlanRevisionChanged as exc:
         # 0403 NR0004 F2: the workflow is unchanged but the plan moved. Rather than inserting the
@@ -1008,6 +1086,11 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             return JSONResponse(
                 status_code=404,
                 content={"error": "plan_not_found", "wp_doc_id": msg.split(":", 1)[1]},
+            )
+        if msg.startswith("plan_unreadable:"):
+            return JSONResponse(
+                status_code=409,
+                content={"error": "plan_unreadable", "wp_doc_id": msg.split(":", 1)[1]},
             )
         if msg.startswith("invalid_expected_plan:"):
             return JSONResponse(

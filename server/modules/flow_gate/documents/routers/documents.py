@@ -29,7 +29,7 @@ from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.db import conversation_turns as conv_turn_store
 from modules.flow_gate.db import mention_copies as db_mention_copies
 from modules.flow_gate.documents import attachments
-from modules.flow_gate.documents import document_service, document_types, template_service
+from modules.flow_gate.documents import document_service, document_types, template_service, url_import_service
 from modules.flow_gate.documents.type_code import doc_code_seq_text
 from modules.flow_gate.documents.constants import (
     AUTO_COMPLETE_TYPES,
@@ -96,6 +96,15 @@ def _reject_if_group_ai_running(doc: dict) -> None:
     assert_group_mutation_allowed(
         doc.get("group_id"), human_principal(), "document mutation"
     )
+
+
+def _reject_if_revert_pending(doc: dict) -> None:
+    """409 ``workflow_revert_pending`` while the group's Time Machine commit cancel is
+    pending (0660 T0004 §3, RC3). Only ``/return-point/cancel-commits`` stays open."""
+    from modules.flow_gate.services.workflow_rework_service import assert_no_revert_pending
+
+    if doc.get("group_id"):
+        assert_no_revert_pending(doc["group_id"])
 
 def _get_project_branch(project_id: str) -> str:
     """Dynamically look up project_settings.branch. Falls back to 'main' on failure."""
@@ -353,6 +362,11 @@ class DocumentUpdate(BaseModel):
 
 class DocumentContentUpdate(BaseModel):
     content: str
+
+
+class DocumentUrlImportRequest(BaseModel):
+    doc_id: str
+    url: str
 
 
 class RootTypeConvert(BaseModel):
@@ -1137,6 +1151,7 @@ def create_next_empty_document(
     if prev_doc.get("group_id") != body.group_id:
         raise HTTPException(status_code=422, detail="group_id does not match the previous document.")
     _reject_if_group_ai_running(prev_doc)
+    _reject_if_revert_pending(prev_doc)
 
     # prev_doc may be the sequence root OR a produced child (the just-approved doc the
     # FE navigated to). Resolve the owning sequence either way (0048 TR0009 — creating
@@ -1161,6 +1176,17 @@ def create_next_empty_document(
             status_code=409,
             detail="Workflow step has already been created.",
         )
+
+    # 0660 T0004 §1 (RC1): a TR2 cannot exist without its source root. Make sure of it
+    # here — provisioning a not-yet-ready group worktree synchronously — BEFORE the
+    # number is reserved and anything is written, so a refusal leaves nothing behind and
+    # tells the client whether a retry can help (retryable + public reason).
+    if type_code == "TR2":
+        from modules.flow_gate.documents import tr2_service as _tr2_pre
+        try:
+            _tr2_pre.ensure_source_root(body.project_id, body.group_id)
+        except _tr2_pre.Tr2ValidationError as exc:
+            return _tr2_error_response(exc)
 
     try:
         doc_code = numbering_service.reserve_document(
@@ -1324,14 +1350,53 @@ def create_next_empty_document(
         except OSError:
             pass
         if isinstance(exc, _tr2.Tr2ValidationError):
-            from modules.flow_gate.documents.tr2_errors import TR2_ERRORS as _TR2_ERRORS, error_payload
-            return JSONResponse(status_code=_TR2_ERRORS[exc.code].http_status,
-                                content=error_payload(exc.code, details=exc.details))
+            return _tr2_error_response(exc)
+        from modules.flow_gate.workflow.pipeline_service import WorkflowSlotConflictError
+        if isinstance(exc, WorkflowSlotConflictError):
+            # 0660 T0004 §2 (RC2): an identified workflow conflict, never a bare 500.
+            return JSONResponse(status_code=409, content=exc.body())
         raise
 
     # T528: child creation → automatically transition parent (R/M) open → closed
     _try_close_parent_on_child_created(body.prev_doc_id, current_user["user_id"])
     return {"data": doc, "doc_id": doc_id, "stored_path": str(doc_file_path)}
+
+
+def _tr2_error_response(exc) -> JSONResponse:
+    from modules.flow_gate.documents.tr2_errors import TR2_ERRORS as _TR2_ERRORS, error_payload
+    return JSONResponse(status_code=_TR2_ERRORS[exc.code].http_status,
+                        content=error_payload(exc.code, details=exc.details))
+
+
+@router.get("/next-empty/preflight")
+@require_permission("perm_document_create")
+def preflight_next_empty_document(
+    prev_doc_id: str = Query(...),
+    type_code: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Would ``POST /next-empty`` for this type be refused for a reason a retry cannot fix?
+
+    0660 T0004 §1.2: a git-off project with no ``src/<project_name>/<branch>`` can never
+    get a TR2, however often the user presses [생성]. The create dialog asks here when it
+    opens, so the operator guidance shows up front instead of after a failed attempt.
+    Read-only: a git-on group whose worktree is not ready yet answers ``ok`` because the
+    create path provisions it itself (§1.1); nothing is ensured or reserved here.
+    """
+    if (type_code or "").strip().upper() != "TR2":
+        return {"ok": True}
+    prev_doc = document_service.get_document(prev_doc_id)
+    if prev_doc is None:
+        raise HTTPException(status_code=404, detail=f"Previous document not found: {prev_doc_id}")
+    from modules.flow_gate.documents import tr2_service as _tr2_pre
+    from modules.flow_gate.documents.tr2_errors import error_payload
+    try:
+        _tr2_pre.resolve_source_root(prev_doc.get("project_id"), prev_doc.get("group_id"))
+    except _tr2_pre.Tr2ValidationError as exc:
+        if exc.code == "tr2_git_unavailable":
+            return {"ok": True, "provisioning": True}
+        return {"ok": False, "error": error_payload(exc.code, details=exc.details)}
+    return {"ok": True}
 
 
 class NextApprovedError(Exception):
@@ -1459,6 +1524,9 @@ def _work_plan_step_note_body(title: str, note: str) -> str:
 def _work_plan_instruction_descriptor(sequence_id: int, head: dict) -> Optional[dict]:
     """Return the durable WP instruction snapshot for ``head``, or ``None`` for legacy N/T.
 
+    Raises ``NextApprovedError(409)`` when ``head`` records a card whose key cannot be
+    resolved (NR0003 O6): no descriptor is better than one naming another card.
+
     The sequence already stores the WorkPlan document/revision identity independently from
     execution metadata.  The step key is reconstructed from that revision's same-type slot
     order; WorkPlan keys are canonical ``<type>#<ordinal>`` values.  No live WorkPlan body is
@@ -1477,6 +1545,39 @@ def _work_plan_instruction_descriptor(sequence_id: int, head: dict) -> Optional[
     source_doc = document_service.get_document(source_doc_id)
     if source_doc is None or str(source_doc.get("type_code") or "").upper() != WORK_PLAN_TYPE:
         return None
+
+    # 0649 T#2 (NR0003 O6, G5): a row that records its card takes the key that card had in
+    # the revision the row was poured from. Counting same-type rows of one revision (below)
+    # is only for rows poured before card ids existed (card id NULL): for a row with a card
+    # it could name another card's key, so a key that cannot be read from the snapshot (or
+    # from a retired row's own marker) refuses the materialization instead.
+    card_id = head.get("source_wp_card_id")
+    if card_id:
+        from modules.flow_gate.services import work_plan_card_identity as _cards
+
+        if _cards.is_retired_value(card_id):
+            card_key = _cards.retired_marker_key(card_id, source_revision_no)
+        else:
+            try:
+                card_key = _cards.step_key_for_card(source_doc, source_revision_no, card_id, type_code)
+            except Exception:  # noqa: BLE001 — an unreadable snapshot is a missing key
+                _log.warning(
+                    "work plan card key lookup failed: wp=%s rev=%s card=%s",
+                    source_doc_id, source_revision_no, card_id, exc_info=True,
+                )
+                card_key = None
+        if not card_key or not card_key.startswith(type_code + "#"):
+            raise NextApprovedError(
+                409,
+                f"WorkPlan step key for card {card_id} cannot be resolved "
+                f"in {source_doc_id} revision {source_revision_no}.",
+            )
+        return {
+            "source_wp_doc_id": source_doc_id,
+            "source_wp_revision_no": source_revision_no,
+            "source_wp_step_key": card_key,
+            "idempotency_key": f"{source_doc_id}:{source_revision_no}:{card_key}",
+        }
 
     same_type = []
     for item in _db_wfseq.get_sequence_items(sequence_id) or []:
@@ -2095,6 +2196,7 @@ def open_final_approval(
         raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    _reject_if_revert_pending(doc)
     project_id = doc.get("project_id")
     group_id = doc.get("group_id")
     module = doc.get("module") or "none"
@@ -2278,6 +2380,7 @@ def retry_reapply_tr_commits(
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    _reject_if_revert_pending(doc)
     project_id = doc.get("project_id")
     group_id = doc.get("group_id")
     if not project_id or not group_id:
@@ -2358,6 +2461,7 @@ def restore_workflow(
         raise HTTPException(status_code=400, detail="Document has no project/group")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    _reject_if_revert_pending(doc)
 
     with get_store().transaction():
         rp = _db_rp.get_by_group(group_id)
@@ -2668,6 +2772,35 @@ def get_mention_copy(
         "mention_kind": row["mention_kind"],
         "copied_at": row["copied_at"],
     }
+
+
+@router.post("/import-url")
+@require_permission("perm_document_update")
+def import_document_url(
+    body: DocumentUrlImportRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    doc = document_service.get_document(body.doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
+    _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
+    _reject_if_revert_pending(doc)
+    final_approved = document_service.is_final_approved(doc)
+    if not document_service.is_document_editable(doc, final_approved=final_approved):
+        if final_approved:
+            detail = "Modification not allowed after final approval."
+        else:
+            detail = f"Modification not allowed for status: {doc.get('status')}"
+        raise HTTPException(status_code=422, detail=detail)
+    try:
+        data = url_import_service.fetch_text(body.url)
+    except url_import_service.UrlImportError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    return {"data": data}
 
 
 @router.patch("/content")
@@ -3015,7 +3148,7 @@ def get_document(
             if type_code == "TS":
                 out["test_contract_version"] = _test_run_service.ts_contract_version(doc)
             else:
-                out["test_gate"] = _test_run_service.tsr_gate_state(doc)
+                out["test_gate"] = _test_run_service.tsr_gate_state(doc, memo=True)
     except Exception:  # noqa: BLE001 — display-only extras must not break document lookup
         pass
     # TR work-scope check result (0299 D0004 §6). It lives in meta, but is unfolded here so the
@@ -3318,6 +3451,7 @@ def update_document_workflow(
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    _reject_if_revert_pending(doc)
     if doc.get("type_code") not in WORKFLOW_ROOT_TYPES:
         raise HTTPException(status_code=400, detail="Only R/B workflow roots can have workflows configured.")
 

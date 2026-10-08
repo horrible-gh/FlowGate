@@ -137,7 +137,7 @@ describe('ReviewActionBar after a lost Git approve response (0607 T0004 §3.6)',
       i18n.global.t('main.review_action_bar.git_settle_in_progress'), 'info',
     )
     // no failure verdict while the server is still working
-    expect(showToast).not.toHaveBeenCalledWith(expect.anything(), 'danger')
+    expect(showToast.mock.calls.filter((call) => call[1] === 'danger')).toEqual([])
     expect(approveButton(wrapper).attributes('disabled')).toBeDefined()
     expect(approveButton(wrapper).attributes('title')).toBe(
       i18n.global.t('main.review_action_bar.git_settle_in_progress'),
@@ -190,13 +190,13 @@ describe('ReviewActionBar after a lost Git approve response (0607 T0004 §3.6)',
     await vi.advanceTimersByTimeAsync(POLL_MS + 100)
     expect(approveButton(wrapper).attributes('disabled')).toBeDefined()
     expect(approvePosts()).toHaveLength(1)
-    expect(showToast).not.toHaveBeenCalledWith(expect.anything(), 'danger')
+    expect(showToast.mock.calls.filter((call) => call[1] === 'danger')).toEqual([])
     expect(wrapper.emitted('approve')).toBeFalsy()
 
     await vi.advanceTimersByTimeAsync(POLL_MS + 100)
     expect(approveButton(wrapper).attributes('disabled')).toBeDefined()
     expect(approvePosts()).toHaveLength(1)
-    expect(showToast).not.toHaveBeenCalledWith(expect.anything(), 'danger')
+    expect(showToast.mock.calls.filter((call) => call[1] === 'danger')).toEqual([])
     expect(wrapper.emitted('approve')).toBeFalsy()
 
     // The server actually finishes now; the next poll finally gets a real,
@@ -223,7 +223,7 @@ describe('ReviewActionBar after a lost Git approve response (0607 T0004 §3.6)',
     await vi.advanceTimersByTimeAsync(POLL_MS + 100)
     expect(approveButton(wrapper).attributes('disabled')).toBeDefined()
     expect(approvePosts()).toHaveLength(1)
-    expect(showToast).not.toHaveBeenCalledWith(expect.anything(), 'danger')
+    expect(showToast.mock.calls.filter((call) => call[1] === 'danger')).toEqual([])
 
     // Only once the server explicitly confirms `false` does it converge.
     server.doc = 'approved'
@@ -248,7 +248,7 @@ describe('ReviewActionBar after a lost Git approve response (0607 T0004 §3.6)',
 
     expect(wrapper.emitted('approve')?.[0]).toEqual(['approved'])
     expect(approvePosts()).toHaveLength(1)
-    expect(showToast).not.toHaveBeenCalledWith(expect.anything(), 'danger')
+    expect(showToast.mock.calls.filter((call) => call[1] === 'danger')).toEqual([])
     expect(showToast).not.toHaveBeenCalledWith(expect.anything(), 'warning')
     expect(approveButton(wrapper).attributes('disabled')).toBeDefined() // approved: stays done
   })
@@ -261,7 +261,7 @@ describe('ReviewActionBar after a lost Git approve response (0607 T0004 §3.6)',
     await done
 
     expect(wrapper.emitted('approve')).toBeFalsy()
-    expect(showToast).toHaveBeenCalledWith(expect.any(String), 'danger')
+    expect(showToast).toHaveBeenCalledWith(expect.any(String), 'danger', 0)
     expect(approveButton(wrapper).attributes('disabled')).toBeUndefined()
     expect(approvePosts()).toHaveLength(1)
   })
@@ -273,7 +273,7 @@ describe('ReviewActionBar after a lost Git approve response (0607 T0004 §3.6)',
     expect(showToast).not.toHaveBeenCalledWith(
       i18n.global.t('main.review_action_bar.git_settle_in_progress'), 'info',
     )
-    expect(showToast).toHaveBeenCalledWith(expect.any(String), 'danger')
+    expect(showToast).toHaveBeenCalledWith(expect.any(String), 'danger', 0)
     expect(approveButton(wrapper).attributes('disabled')).toBeUndefined()
   })
 
@@ -286,7 +286,7 @@ describe('ReviewActionBar after a lost Git approve response (0607 T0004 §3.6)',
     expect(showToast).toHaveBeenCalledWith(
       i18n.global.t('main.review_action_bar.git_settle_deferred'), 'warning',
     )
-    expect(showToast).not.toHaveBeenCalledWith(expect.anything(), 'danger')
+    expect(showToast.mock.calls.filter((call) => call[1] === 'danger')).toEqual([])
     expect(wrapper.emitted('approve')).toBeFalsy()
   })
 
@@ -315,7 +315,7 @@ describe('ReviewActionBar after a lost Git approve response (0607 T0004 §3.6)',
 
     await vi.advanceTimersByTimeAsync(POLL_MS * 3)
     expect(finalizeGets()).toBe(settled)
-    expect(showToast).not.toHaveBeenCalledWith(expect.anything(), 'danger')
+    expect(showToast.mock.calls.filter((call) => call[1] === 'danger')).toEqual([])
     expect(approvePosts()).toHaveLength(1)
   })
 
@@ -331,6 +331,6 @@ describe('ReviewActionBar after a lost Git approve response (0607 T0004 §3.6)',
     expect(showToast).not.toHaveBeenCalledWith(
       i18n.global.t('main.review_action_bar.git_settle_in_progress'), 'info',
     )
-    expect(showToast).toHaveBeenCalledWith(expect.any(String), 'danger')
+    expect(showToast).toHaveBeenCalledWith(expect.any(String), 'danger', 0)
   })
 })

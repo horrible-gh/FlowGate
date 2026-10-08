@@ -873,8 +873,8 @@ describe('ContinuousWorkDialog', () => {
       )
       // TR@4 has a note, TS@5 does not → one step with no mention.
       expect(banner!.textContent).toContain(i18n.global.t('main.continuous_work.note_unset', { n: 1 }))
-      // The same non-blocking notice repeats in the bottom summary (D0010 §3.5).
-      expect(document.querySelector('.cwd-summary')!.textContent).toContain(
+      // The empty-mention count is shown once, in the source banner.
+      expect(document.querySelector('.cwd-summary')!.textContent).not.toContain(
         i18n.global.t('main.continuous_work.note_unset', { n: 1 }),
       )
       // Informational only — [Next] stays enabled.
@@ -1044,10 +1044,10 @@ describe('ContinuousWorkDialog', () => {
 
       const desc = document.querySelector('.cwd-restart-desc')
       expect(desc?.textContent).toBe(i18n.global.t('main.continuous_work.restart_count_desc'))
-      expect(desc?.textContent).toContain('작업')
-      expect(desc?.textContent).toContain('검수')
-      expect(desc?.textContent).toContain('수정')
-      expect(desc?.textContent).not.toContain('무관하게 항상')
+      expect(desc?.textContent).toContain('작업·검수·수정')
+      expect(desc?.textContent).toContain('무응답 실패에만')
+      expect(document.querySelector('.cwd-intro')).toBeNull()
+      expect(document.querySelectorAll('.cwd-toggle-desc')).toHaveLength(0)
       i18n.global.locale.value = originalLocale
 
       wrapper.unmount()

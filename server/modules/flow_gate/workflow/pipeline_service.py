@@ -165,11 +165,14 @@ def create_group(
     if not check_permission(user_permissions, ("project.group.manage",)):
         raise PermissionError("Permission 'project.group.manage' is required.")
 
+    from modules.flow_gate.services import git_service
     if work_base_ref is not None:
-        from modules.flow_gate.services import git_service
         work_base_ref = git_service.validate_group_work_base_ref(
             project_id, work_base_ref
         )
+    else:
+        # 0665 T0004: pin the creation-time project base (Git projects only).
+        work_base_ref = git_service.default_work_base_ref_for_new_group(project_id)
 
     now = now_iso()
     return db_groups.create(
@@ -259,11 +262,6 @@ def transition_group(
         except Exception:
             # Group closure is already durable. Snapshot cleanup stays retryable via TTL.
             _log.warning("snapshot group-close cleanup failed for %s", group_id, exc_info=True)
-        try:
-            from modules.flow_gate.services import source_bundle_cleanup_service
-            source_bundle_cleanup_service.cleanup_for_group(group_id)
-        except Exception:
-            _log.warning("Source Bundle group-close cleanup failed for %s", group_id, exc_info=True)
 
     result = dict(updated or {})
     if warnings:
@@ -545,8 +543,119 @@ _FILELESS_APPROVAL_STRUCTURE_MESSAGES = {
     "en": "This final approval is not the current workflow head, so it cannot be approved.",
     "ja": "この最終承認は現在のワークフローヘッドではないため承認できません。",
 }
+_NOT_WORKFLOW_HEAD_APPROVAL_MESSAGES = {
+    "ko": "이 문서는 현재 워크플로 단계(헤드)가 아니어서 승인할 수 없습니다. 앞선 단계 문서를 먼저 승인하십시오.",
+    "en": "This document is not the current workflow step (head), so it cannot be approved. Approve the earlier step first.",
+    "ja": "この文書は現在のワークフロー段階(ヘッド)ではないため承認できません。先の段階の文書を先に承認してください。",
+}
+_WORKFLOW_HEAD_UNAVAILABLE_MESSAGES = {
+    "ko": "현재 워크플로 단계(헤드)를 확인할 수 없어 승인하지 않았습니다. 잠시 후 다시 시도하십시오.",
+    "en": "The current workflow step (head) could not be read, so nothing was approved. Try again shortly.",
+    "ja": "現在のワークフロー段階(ヘッド)を確認できないため承認しませんでした。しばらくしてから再試行してください。",
+}
+_WORKFLOW_REVERT_PENDING_MESSAGES = {
+    "ko": "Time Machine 되돌리기의 승인 커밋 취소가 끝나지 않아 이 그룹의 워크플로를 진행할 수 없습니다. 반영안(TR2) 화면의 [커밋 취소 다시 시도]로 커밋 취소를 먼저 마치십시오.",
+    "en": "A Time Machine rewind has not finished canceling an approved commit, so this group's workflow cannot advance. Finish the commit cancel with [Retry commit cancel] on the proposal (TR2) first.",
+    "ja": "Time Machine の巻き戻しで承認コミットの取り消しが終わっていないため、このグループのワークフローは進められません。反映案(TR2)画面の[コミット取消を再試行]でコミット取り消しを先に完了してください。",
+}
 _APPROVED_REVIEW_STATUSES = {"approved", "wf_done"}
 _WORKFLOW_ROOT_TYPES = {"R", "B"}
+
+
+class WorkflowHeadMismatchError(TransitionError):
+    """Approval of a workflow step that is not the sequence's effective head (0660 T0004 §5).
+
+    A ``TransitionError`` so every approve surface already answers it with 409.
+    """
+
+    code = "workflow_not_head"
+
+
+class WorkflowHeadUnavailableError(TransitionError):
+    """The authoritative head of a slot document's sequence could not be read.
+
+    0660 T0004 §5 (S3): the head guard fails closed. Without a readable head there is no
+    way to tell an in-order approval from an out-of-order one, so nothing is approved.
+    """
+
+    code = "workflow_head_unavailable"
+
+
+class WorkflowRevertPendingError(TransitionError):
+    """A group whose Time Machine commit cancel is still pending cannot advance (RC3)."""
+
+    code = "workflow_revert_pending"
+
+
+def _require_no_revert_pending_for_approval(doc: dict, locale: str = "ko") -> None:
+    """Refuse every approval in a group while a reopened TR2's commit is still live.
+
+    0660 T0004 §3 (RC3, approach B): a blocked cancel leaves the group in an explicit
+    pending state in which only the cancel retry may run. The pending TR2 itself is
+    refused by its own rule (``tr2_revert_pending``); this closes the rest of the group,
+    so no other step can be approved on top of a source that still carries the commit.
+    Called for the workflow approvals only (slot results and the AC final approval), from
+    :func:`_require_workflow_head_for_approval`; an unreadable ledger fails closed.
+    """
+    group_id = doc.get("group_id")
+    if not group_id:
+        return
+    from modules.flow_gate.documents import tr2_service
+    lang = locale if locale in _WORKFLOW_REVERT_PENDING_MESSAGES else "ko"
+    try:
+        pending = tr2_service.group_revert_pending(group_id)
+    except Exception as exc:  # noqa: BLE001 — an unreadable ledger is not "nothing pending"
+        _log.warning("[approval] revert-pending lookup failed for %s: %s", group_id, exc)
+        raise WorkflowHeadUnavailableError(
+            _WORKFLOW_HEAD_UNAVAILABLE_MESSAGES.get(lang) or _WORKFLOW_HEAD_UNAVAILABLE_MESSAGES["ko"]
+        ) from exc
+    if not pending or pending == [doc.get("doc_id")]:
+        return
+    raise WorkflowRevertPendingError(_WORKFLOW_REVERT_PENDING_MESSAGES[lang])
+
+
+def _require_workflow_head_for_approval(doc: dict, locale: str = "ko") -> None:
+    """Refuse to approve a slot result that sits after the authoritative workflow head.
+
+    0660 T0004 §5 (S3): a Time Machine reopen re-pends every step from the target onward.
+    The effective head is then the EARLIEST of them, yet nothing stopped a later N/NR/T
+    from being approved first — out of order, ahead of the step the rewind returned to.
+    Only documents that occupy a workflow slot are checked; non-slot documents (root,
+    Q, AC, auto-complete M) keep their own rules — except that the AC final approval, like
+    every slot result, is refused while the group's commit cancel is pending (RC3).
+    """
+    doc_id = doc.get("doc_id")
+    if not doc_id or str(doc.get("type_code") or "").upper() in AUTO_COMPLETE_TYPES:
+        return
+    # An approved step is no longer anybody's head; approving it again is either an
+    # idempotent replay (TR2 request_key) or refused by the review rules themselves.
+    if doc.get("doc_review_status") in _APPROVED_REVIEW_STATUSES:
+        return
+    lang = locale if locale in _NOT_WORKFLOW_HEAD_APPROVAL_MESSAGES else "ko"
+    # Fail closed: an unreadable sequence, or a slot whose sequence names no head, is
+    # refused with its own code instead of being waved through as "probably the head".
+    try:
+        item = db_wfseq.get_item_by_result_doc_id(doc_id)
+        if item is None:
+            if str(doc.get("type_code") or "").upper() == "AC":
+                _require_no_revert_pending_for_approval(doc, locale)
+            return
+        if item.get("sequence_id") is None:
+            raise LookupError(f"workflow slot {item.get('id')} has no sequence")
+        head = db_wfseq.get_effective_head(item["sequence_id"])
+    except TransitionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — an unreadable sequence is not a head verdict
+        _log.warning("[approval] workflow head lookup failed for %s: %s", doc_id, exc)
+        raise WorkflowHeadUnavailableError(_WORKFLOW_HEAD_UNAVAILABLE_MESSAGES[lang]) from exc
+    _require_no_revert_pending_for_approval(doc, locale)
+    if head is None:
+        _log.warning("[approval] workflow sequence %s has no effective head for %s",
+                     item.get("sequence_id"), doc_id)
+        raise WorkflowHeadUnavailableError(_WORKFLOW_HEAD_UNAVAILABLE_MESSAGES[lang])
+    if head.get("id") == item.get("id"):
+        return
+    raise WorkflowHeadMismatchError(_NOT_WORKFLOW_HEAD_APPROVAL_MESSAGES[lang])
 
 
 def _empty_body_approval_message(locale: str = "ko") -> str:
@@ -659,7 +768,26 @@ _TEST_GATE_MESSAGES = {
         "en": "The test specification (TS) has validation errors and cannot be approved: {errors}",
         "ja": "試験仕様書(TS)に構造検証エラーがあるため承認できません: {errors}",
     },
+    # 0684 T#1 (D#1 §3-1 step 4): which Case, which file -- checked for existence only.
+    "ts_asset": {
+        "ko": "자동 실행 Case {case_id}의 시험 파일 {path}을(를) 작업 공간에서 확인할 수 없어 승인할 수 없습니다 ({code}).",
+        "en": "Automated Case {case_id}: its test file {path} cannot be confirmed in the workspace, so the TS cannot be approved ({code}).",
+        "ja": "自動実行Case {case_id} の試験ファイル {path} を作業領域で確認できないため承認できません ({code})。",
+    },
+    "ts_run": {
+        "ko": "이 TS의 시험 run {run_id}이(가) 아직 정리되지 않아 승인할 수 없습니다 ({error}).",
+        "en": "Test run {run_id} of this TS is not settled yet, so the TS cannot be approved ({error}).",
+        "ja": "このTSの試験run {run_id} がまだ整理されていないため承認できません ({error})。",
+    },
 }
+
+
+def _spec_asset_refusal(raw: str, lang: str) -> str:
+    """``check_automation_assets`` raises "<code>: <case_id>: <path>"."""
+    code, _, rest = raw.partition(": ")
+    case_id, _, path = rest.partition(": ")
+    return _TEST_GATE_MESSAGES["ts_asset"][lang].format(
+        code=code or raw, case_id=case_id or "-", path=path or "-")
 
 
 def _require_test_gate_for_approval(doc: dict, locale: str = "ko") -> None:
@@ -730,6 +858,12 @@ def transition_document_review(
     if not doc:
         raise ValueError(f"Document not found: {doc_id}")
 
+    # 0660 T0004 §5 (S3): approval follows the authoritative workflow head, whoever asks
+    # (the button is only a hint). Checked before the TR2 branch so a reopened, later TR2
+    # cannot be approved out of order either.
+    if action == "approve":
+        _require_workflow_head_for_approval(doc, locale)
+
     # TR2 alone needs a source-changing approval. All other actions and document
     # types keep the established review transition and TR commit semantics.
     if action == "approve" and doc.get("type_code") == "TR2":
@@ -762,9 +896,34 @@ def transition_document_review(
     if action == "reject" and not comment:
         raise ValueError("Comment required when rejecting (reason for rejection).")
 
+    spec_approval = None
     if action == "approve":
         _require_document_body_for_approval(doc, locale)
         _require_test_gate_for_approval(doc, locale)
+        if str(doc.get("type_code") or "").upper() == "TS":
+            from modules.flow_gate.services import spec_execution_service, test_run_service, test_spec_service
+            content = test_run_service._read_doc_content_or_empty(doc)
+            if test_spec_service.detect_contract_version(content) == test_spec_service.CONTRACT_SPEC:
+                lang = locale if locale in ("ko", "en", "ja") else "ko"
+                parsed = test_spec_service.parse_spec(content)
+                # 0684 T#1 (D#1 §3-1): approval fixes the specification and queues the test
+                # run; it never captures, copies or hashes the source, so it answers in the
+                # same short time whatever the worktree's size. The automated Cases' test
+                # files only have to exist and be safe here -- the run measures what it
+                # executes. The dry run (precheck) asks the same and writes nothing.
+                selected = spec_execution_service.automated_selection(parsed["cases"])
+                paired = test_run_service._active_tsr_for_ts(doc)
+                if paired and paired.get("doc_review_status") == "approved":
+                    selected = []  # the report is final; nothing may rewrite it
+                if selected:
+                    try:
+                        spec_execution_service.check_automation_assets(doc, selected)
+                    except ValueError as exc:
+                        raise TransitionError(_spec_asset_refusal(str(exc), lang)) from exc
+                    blocker = spec_execution_service.admission_blocker(doc_id)
+                    if blocker:
+                        raise TransitionError(_TEST_GATE_MESSAGES["ts_run"][lang].format(**blocker))
+                spec_approval = (parsed, selected)
 
     update_fields: dict[str, Any] = {
         "doc_review_status": next_status,
@@ -813,9 +972,55 @@ def transition_document_review(
             "update_fields": update_fields,
         }
 
-    updated = db_docs.update(doc_id, update_fields)
-    if not updated:
-        raise TransitionError("Review status transition failed")
+    if spec_approval is not None:
+        from modules.flow_gate.services import spec_execution_service, test_basis_service
+        from modules.flow_gate.services import test_run_service as _runner
+        parsed, selected = spec_approval
+        lang = locale if locale in ("ko", "en", "ja") else "ko"
+        # The Basis an earlier approval captured judged an earlier revision; the run
+        # admitted below measures this one. It is set aside for audit, never judged again.
+        update_fields["meta"] = test_basis_service.metadata_without_basis(
+            {"meta": update_fields.get("meta") or doc.get("meta")})
+        admitted = None
+        with _runner._admission_lock, get_store().transaction():
+            fresh = db_docs.get_by_id(doc_id)
+            if (fresh or {}).get("doc_review_status") != current_review_status or (
+                fresh or {}
+            ).get("revision_no") != doc.get("revision_no"):
+                raise TransitionError("TS changed during approval")
+            blocker = spec_execution_service.admission_blocker(doc_id) if selected else None
+            if blocker:
+                raise TransitionError(_TEST_GATE_MESSAGES["ts_run"][lang].format(**blocker))
+            updated = db_docs.update(doc_id, update_fields)
+            if not updated:
+                raise TransitionError("Review status transition failed")
+            if selected:
+                # Same transaction as the approval (D#1 §3-1 steps 5-6): the queued run and
+                # the report it opens exist exactly when the approval does.
+                admitted = spec_execution_service.admit_on_approval(
+                    updated, parsed, selected, runner_id=actor_user_id, locale=locale)
+                from modules.flow_gate.db import events as db_events
+                db_events.insert_event(doc_id, "test_spec_execution_admitted", note=json.dumps({
+                    "run_id": admitted["run"]["run_id"], "tsr_doc_id": admitted["tsr_doc_id"],
+                    "admission": spec_execution_service.ADMISSION_APPROVAL,
+                    "ts_revision_no": doc.get("revision_no"),
+                    "case_ids": admitted["selected_case_ids"], "actor": actor_user_id,
+                }, ensure_ascii=False))
+            updated["spec_execution"] = ({
+                "run_id": admitted["run"]["run_id"], "tsr_doc_id": admitted["tsr_doc_id"],
+                "selected_case_ids": admitted["selected_case_ids"], "status": "queued",
+            } if admitted else None)
+        if admitted:
+            # After commit: the run and its report are visible before anyone is told.
+            _runner._emit_started(updated, admitted["run"])
+            _runner._broadcast("group_view_refresh", updated, {
+                "group_id": updated.get("group_id"), "reason": "test_report_opened",
+                "doc_id": admitted["tsr_doc_id"], "run_id": admitted["run"]["run_id"],
+            })
+    else:
+        updated = db_docs.update(doc_id, update_fields)
+        if not updated:
+            raise TransitionError("Review status transition failed")
 
     log_state_changed(
         project_id=doc.get("project_id", ""),

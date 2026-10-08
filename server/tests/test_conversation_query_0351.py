@@ -269,7 +269,7 @@ def test_budget_disabled_when_the_byte_ceiling_is_misconfigured_to_zero(store, d
 
 # ── head / participants / me (P0003 §0-3·0-4, L0004 §2-10) ───────────────────
 
-def test_head_is_only_built_on_request_and_carries_the_background(store, doc):
+def test_head_is_only_built_on_request_and_carries_metadata_without_turn_copy(store, doc):
     _seed(5)
     bare = query.list_turns(doc_id=DOC_ID, actor=SESSION_ACTOR, after_seq=0)
     assert bare["head"] is None
@@ -284,7 +284,8 @@ def test_head_is_only_built_on_request_and_carries_the_background(store, doc):
     assert head["intro"] == "---\ntitle: 대화\n---"
     assert head["total_turns"] == 5
     assert head["head_seq"] == 5
-    assert [t["seq"] for t in head["opening_turns"]] == [1, 2, 3]  # OPENING_TURNS_MAX
+    assert "opening_turns" not in head
+    assert [t["seq"] for t in full["turns"]] == [1, 2, 3, 4, 5]
     assert full["me"]["participant_key"] == "user:u1"
 
 

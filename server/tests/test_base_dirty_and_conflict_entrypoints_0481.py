@@ -24,7 +24,13 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVER_DIR))
 
+import pytest  # noqa: E402
+
+from group_lock_stub import group_store  # noqa: E402,F401
 from modules.flow_gate.db import project_ai_leases  # noqa: E402
+
+# Review/reconcile/resolve take the session's domain lock (0669) on the real SQLite store.
+pytestmark = pytest.mark.usefixtures("group_store")
 
 
 class _Request:
@@ -184,8 +190,6 @@ def _review_session(monkeypatch, context: dict):
         git_service.db_git, "set_session_context",
         lambda _m, c: context.update(c),
     )
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda *a, **k: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda *a, **k: None)
     return git_service
 
 

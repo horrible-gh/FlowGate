@@ -62,6 +62,10 @@ def _chain_token_rec(target_seq=7):
 
 
 def test_inbox_test_run_chain_token_gets_continuation_envelope(monkeypatch):
+    monkeypatch.setenv("USERNAME", "flowgate-test")
+    monkeypatch.setenv("ALLOWED_ORIGIN", "http://127.0.0.1")
+    monkeypatch.setenv("CONTEXT", "test")
+    monkeypatch.setenv("DB_TYPE", "sqlite")
     from modules.flow_gate.api import inbox_routes
     from modules.flow_gate.services import test_run_service
 
@@ -72,7 +76,7 @@ def test_inbox_test_run_chain_token_gets_continuation_envelope(monkeypatch):
     monkeypatch.setattr(
         inbox_routes.db_docs,
         "get_by_id",
-        lambda _id: {"doc_id": _id, "project_id": "flowgate"},
+        lambda _id: {"doc_id": _id, "project_id": "flowgate", "group_id": "flowgate.default.0150"},
     )
     monkeypatch.setattr(
         test_run_service,
@@ -111,7 +115,7 @@ def test_inbox_test_run_ordinary_token_has_no_envelope(monkeypatch):
     monkeypatch.setattr(
         inbox_routes.db_docs,
         "get_by_id",
-        lambda _id: {"doc_id": _id, "project_id": "flowgate"},
+        lambda _id: {"doc_id": _id, "project_id": "flowgate", "group_id": "flowgate.default.0150"},
     )
     monkeypatch.setattr(
         test_run_service,

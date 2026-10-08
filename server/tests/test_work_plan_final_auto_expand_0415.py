@@ -59,11 +59,16 @@ def test_tc_1_final_wp_expands_through_shared_edit_ssot(monkeypatch):
             "provider_id", "provider_display_name", "review_count",
             "reviewer_provider_id", "reviewer_provider_display_name",
             "pre_instruction_text", "pre_instruction_attachment",
+            # 0649 T#1 (NR0003 O0): the row records which card it came from.
+            "source_wp_card_id",
         )
     }
     assert seen["args"] == (OWNER_ID, [expected_row])
     assert seen["kwargs"]["expected_workflow_tag"] == "before-tag"
-    assert seen["kwargs"]["expected_plan"] == {"wp_doc_id": WP_ID, "wp_revision_no": 2}
+    # 0649 T#2 (NR0003 O5): approval pours like replace_after and says so.
+    assert seen["kwargs"]["expected_plan"] == {
+        "wp_doc_id": WP_ID, "wp_revision_no": 2, "mode": "replace_after",
+    }
     assert seen["kwargs"]["applied_by"] == "wp_final_auto_expand"
 
 
@@ -169,6 +174,9 @@ def test_approval_hook_returns_success_when_final_expansion_fails(monkeypatch):
     monkeypatch.setattr(pipeline.db_docs, "get_by_id", lambda _doc_id: dict(stored))
     monkeypatch.setattr(pipeline.db_docs, "update", update)
     monkeypatch.setattr(pipeline, "_require_document_body_for_approval", lambda *_args: None)
+    # The workflow-head guard (0660 T0004 §5) fails closed without a sequence store; it is
+    # covered by test_tr2_lifecycle_0660.py.
+    monkeypatch.setattr(pipeline, "_require_workflow_head_for_approval", lambda *_args: None)
     monkeypatch.setattr(pipeline, "log_state_changed", lambda **_kwargs: None)
     # Make the canonical-body reload succeed so the test reaches expand_final_work_plan.
     monkeypatch.setattr(
@@ -395,9 +403,15 @@ def test_c1_c5_c7_final_approval_persists_nt_authoring_context_on_source_rows_on
     # The expansion and edit_workflow_pending functions themselves remain unmocked.
     monkeypatch.setattr(wpseq, "provider_view_of", lambda _project_id: {"readable": False})
     monkeypatch.setattr(wds, "_record_plan_application", lambda **_kwargs: True)
+    # 0649 T#2 (NR0003 O5): the save checks the rows against the plan it re-reads; this
+    # hand-built plan is that plan, with the card ids load_body() fills for a legacy body.
+    plan = {"steps": steps, "defaults": {"note": default_note}}
+    for step in steps:
+        step["card_id"] = step["pair_key"] if step["pair_role"] == "result" else step["key"]
+    monkeypatch.setattr(wds, "_load_plan_body", lambda _plan_doc: plan)
     result = wpseq.expand_final_work_plan(
         doc={**DOC, "project_id": "flowgate"},
-        plan={"steps": steps, "defaults": {"note": default_note}},
+        plan=plan,
     )
 
     assert result["status"] == "expanded"

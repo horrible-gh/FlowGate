@@ -65,8 +65,18 @@
         
       
 <div
+            v-if="preflightMessage && !flashMessage"
+            class="alert alert-warning"
+            data-testid="next-empty-preflight"
+            style="width:100%; margin-bottom:12px;"
+          >
+            <AppIcon name="warning" />
+            <span>{{ preflightMessage }}</span>
+          </div>
+<div
             v-if="flashMessage"
             :class="['alert', flashOk ? 'alert-success' : 'alert-danger']"
+            data-testid="next-empty-flash"
             style="width:100%; margin-bottom:12px;"
           >
             <AppIcon :name="flashOk ? 'check' : 'warning'" />
@@ -99,7 +109,8 @@ import DialogHeader from './dialogs/DialogHeader.vue'
 import DialogFooter from './dialogs/DialogFooter.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { postRequest } from '@shared/api'
+import { getRequest, postRequest } from '@shared/api'
+import { describeNextEmptyError, nextEmptyCodeText, readNextEmptyError } from './nextEmptyErrors'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import AppIcon from '@shared/AppIcon.vue'
 
@@ -126,6 +137,10 @@ const openAfter = ref(true)
 const submitting = ref(false)
 const flashMessage = ref('')
 const flashOk = ref(false)
+// 0660 T0004 §1.2 — a refusal no retry can fix (git off, no project source) is known before
+// the first [생성]; say so as soon as the dialog opens instead of after a failed attempt.
+const preflightMessage = ref('')
+let preflightSeq = 0
 
 const typeLabel = computed(() => {
   if (!props.docType) return t('main.next_empty_doc_modal.fallback_doc')
@@ -142,9 +157,30 @@ watch(
       openAfter.value = true
       flashMessage.value = ''
       flashOk.value = false
+      preflightMessage.value = ''
+      void runPreflight()
     }
   },
 )
+
+async function runPreflight() {
+  const seq = ++preflightSeq
+  if (props.docType !== 'TR2' || !props.prevDocId) return
+  try {
+    const res = await getRequest<any>(
+      `/api/v1/documents/next-empty/preflight?prev_doc_id=${encodeURIComponent(props.prevDocId)}`
+      + `&type_code=${encodeURIComponent(props.docType)}`,
+    )
+    if (seq !== preflightSeq) return
+    const data = (res.data as any) ?? {}
+    if (data.ok === false) {
+      const { code, reason } = readNextEmptyError(data.error)
+      preflightMessage.value = nextEmptyCodeText(code, reason, t) ?? ''
+    }
+  } catch {
+    // Advisory only: the create request still gets the authoritative answer.
+  }
+}
 
 function close() {
   if (submitting.value) return
@@ -188,10 +224,7 @@ async function submit() {
     emit('update:visible', false)
   } catch (e: any) {
     flashOk.value = false
-    const detail = e?.response?.data?.detail
-    flashMessage.value = Array.isArray(detail)
-      ? detail.map((d: any) => d.msg ?? d).join(', ')
-      : (detail ?? t('main.next_empty_doc_modal.error_create_failed'))
+    flashMessage.value = describeNextEmptyError(e, t).text
   } finally {
     submitting.value = false
   }

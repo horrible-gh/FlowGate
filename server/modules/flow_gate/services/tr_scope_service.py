@@ -385,6 +385,10 @@ def evaluate(
         "worktree": actual.get("worktree"),
         "scope_reason": actual.get("reason"),
         "file_manifest": file_manifest,
+        # 0665 T0004: the floor the manifest was measured against (None when unavailable).
+        "work_base_ref": actual.get("work_base_ref"),
+        "scope_base_sha": actual.get("scope_base_sha"),
+        "work_base_error": actual.get("work_base_error"),
     }
     if verdict == VERDICT_REJECT:
         result["notice"] = build_notice(result, locale)
@@ -686,11 +690,19 @@ def evaluate_group_unreported(project_id: str, group_id: str) -> dict:
 
     actual = git_service.collect_scope_changes(project_id, group_id)
     if not actual.get("available"):
-        return {
+        skipped = {
             "checked": False,
             "reason": actual.get("reason") or "scope_unavailable",
             "unreported": [],
         }
+        work_base_error = actual.get("work_base_error")
+        if work_base_error is not None:
+            # flowgate.default.0665 T0004: an unverified/diverged work-base floor is
+            # not "nothing to check" -- final approval must stop on it instead of
+            # passing a group whose change set could not be measured.
+            skipped["blocking"] = True
+            skipped["work_base_error"] = work_base_error
+        return skipped
 
     entries = {
         entry.get("path"): entry

@@ -134,9 +134,9 @@ def controlled_path(worktree: Path, host_path: str | None = None) -> tuple[str, 
 
 def resolve_command(program: str, args: list[str], worktree: Path, path_value: str,
                     denied: frozenset = DENIED, deny_git_helpers: bool = True) -> ResolvedCommand:
-    # flowgate.v02.0032 T#1: ``denied``/``deny_git_helpers`` let the chat command policy
-    # reuse this exact resolution (argv checks, PATH control, launcher adapter) with its
-    # own deny list. The defaults are the self-check policy, unchanged.
+    # 0670 T0004 / flowgate.v02.0032 T#1: ``denied``/``deny_git_helpers`` let the chat
+    # command policy reuse this exact resolution (argv checks, PATH control, launcher
+    # adapter) with its own deny list. The defaults are the Self-check policy, unchanged.
     name = canonical_name(program)
     if name in denied or (deny_git_helpers and name.startswith("git-")):
         raise PolicyError("selfcheck_program_denied")

@@ -153,6 +153,27 @@ def live_rows(group_id: str, doc_ids: Iterable[str]) -> list[dict[str, Any]]:
     )
 
 
+def revert_pending_doc_ids(group_id: str) -> list[str]:
+    """0660 T0004 §3 (RC3) — TR2 documents of this group that are reopened (not approved)
+    while their own approval commit is still live and cancelable, in doc_id order.
+
+    One query for the whole group: the workflow boundaries (reopen, approve, next-empty)
+    ask "is anything in this group still waiting for its commit cancel?". Terminal rows
+    are excluded for the same reason :func:`live_rows` excludes them.
+    """
+    rows = get_store()._fetch_all(
+        "SELECT DISTINCT l.doc_id "
+        "FROM tr_commit_ledger l "
+        "JOIN documents d ON d.doc_id = l.doc_id "
+        "WHERE l.group_id = ? AND l.state = 'live' AND l.reopened_terminal_at IS NULL "
+        "AND d.type_code = 'TR2' "
+        "AND COALESCE(d.doc_review_status, '') <> 'approved' "
+        "ORDER BY l.doc_id",
+        [group_id],
+    )
+    return [r["doc_id"] for r in rows]
+
+
 def latest_reopened_subject(group_id: str, doc_id: str) -> Optional[str]:
     """Return the durable subject of the most recent prior approval round this
     document's Time Machine reopen left behind, whichever of the two shapes it took.
@@ -390,6 +411,22 @@ def commit_rows_by_group(group_id: str) -> list[dict[str, Any]]:
         "WHERE l.group_id = ? AND l.state IN ('live', 'canceled') "
         "AND l.reopened_terminal_at IS NULL "
         "ORDER BY d.seq ASC, l.id ASC",
+        [group_id],
+    )
+
+
+def group_commit_evidence(group_id: str) -> list[dict[str, Any]]:
+    """Every commit this group's ledger ever recorded, for work-base floor checks.
+
+    flowgate.default.0665 T0004 (NR0003 §6 rule 6): unlike :func:`commit_rows_by_group`
+    this keeps terminal-reopened rows and needs no document join — a recorded group
+    commit is evidence of group work whatever happened to its document afterwards.
+    Ordered by ``id`` (ledger order = commit order, L0007).
+    """
+    return get_store()._fetch_all(
+        "SELECT id, commit_sha, cancel_commit, created_at FROM tr_commit_ledger "
+        "WHERE group_id = ? AND state IN ('live', 'canceled') AND commit_sha IS NOT NULL "
+        "ORDER BY id ASC",
         [group_id],
     )
 

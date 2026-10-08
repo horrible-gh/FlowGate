@@ -202,6 +202,9 @@ def save_config(project_id: str, body: dict) -> dict:
     else:
         tr_scope_stage = (existing.get("tr_scope_stage") if existing else None) or "observe"
 
+    new_base = (body.get("base_branch") or "main").strip() or "main"
+    pinned = _pin_legacy_work_bases_before_base_change(project_id, existing, new_base)
+
     row = _gs.db_git.upsert_config(project_id, {
         "repo_url": (body.get("repo_url") or "").strip(),
         "provider": provider,
@@ -215,7 +218,43 @@ def save_config(project_id: str, body: dict) -> dict:
         "author_email": author_email,
         "tr_scope_stage": tr_scope_stage,
     })
-    return {"ok": True, "configured": True, "config": _config_view(row)}
+    result = {"ok": True, "configured": True, "config": _config_view(row)}
+    if pinned:
+        result["pinned_work_base_groups"] = pinned
+    return result
+
+
+def _pin_legacy_work_bases_before_base_change(
+    project_id: str, existing: Optional[dict], new_base: str,
+) -> list[str]:
+    """flowgate.default.0665 T0004 (NR0003 §5.1/§7.5): a group whose work base is
+    still NULL follows the CURRENT project base.  Before the base changes, every such
+    group that already started Git work is pinned to the base it actually forked
+    from, so the change cannot silently move its work base, update source, reopen
+    check or scope.  A pin failure refuses the base change instead of leaving a
+    locked NULL row behind."""
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.services import git_service as _gs
+    if existing is None:
+        return []
+    old_base = (existing.get("base_branch") or "main").strip() or "main"
+    if old_base == new_base:
+        return []
+    pinned: list[str] = []
+    for group_id in sorted(_gs.locked_group_ids(project_id)):
+        group = db_groups.get_by_id(group_id)
+        if group is None or (group.get("work_base_ref") or "").strip():
+            continue
+        try:
+            db_groups.update_work_base_ref(group_id, old_base)
+        except Exception as exc:
+            raise GitServiceError(
+                409, "project_base_change_blocked",
+                "a started group still follows the project base and could not be pinned",
+                details={"group_id": group_id, "base_branch": old_base},
+            ) from exc
+        pinned.append(group_id)
+    return pinned
 
 
 def delete_config(project_id: str) -> dict:

@@ -5,6 +5,7 @@ import pytest
 from modules.flow_gate.documents import tr2_apply_adapter as apply
 from modules.flow_gate.documents import tr2_precheck as precheck
 from modules.flow_gate.documents import tr2_service as tr2
+from group_lock_stub import stub_group_lock
 
 
 def _edit(ident, path, old, new):
@@ -191,27 +192,22 @@ def test_write_time_anchor_drift_rolls_back_every_target(tmp_path, monkeypatch):
 
 
 def test_duplicate_request_key_never_reuses_lock_holder(tmp_path, monkeypatch):
-    holders = []
-
-    def acquire(_project_id, holder):
-        holders.append(holder)
-        return True
-
-    monkeypatch.setattr(precheck.git_service, "_acquire_lock", acquire)
-    monkeypatch.setattr(precheck.db_git, "release_lock", lambda *_: None)
+    stub_group_lock(monkeypatch)
     monkeypatch.setattr(precheck, "_approval_root", lambda *_: tmp_path)
-    with precheck.source_lock("p", "g", request_key="same"):
-        pass
-    with precheck.source_lock("p", "g", request_key="same"):
-        pass
-    assert len(holders) == 2 and holders[0] != holders[1]
+    holds = []
+    with precheck.source_lock("p", "g", request_key="same") as locked:
+        holds.append(locked)
+    with precheck.source_lock("p", "g", request_key="same") as locked:
+        holds.append(locked)
+    assert holds[0].holder != holds[1].holder
+    assert holds[0].lock[0].ctx_id != holds[1].lock[0].ctx_id
 
 
 def test_dirty_worktree_and_lock_denial(tmp_path, monkeypatch):
     monkeypatch.setattr(precheck.git_service, "probe_worktree_pending_changes", lambda _: True)
     with pytest.raises(tr2.Tr2ValidationError, match="tr2_worktree_dirty"):
         precheck._clean(tmp_path)
-    monkeypatch.setattr(precheck.git_service, "_acquire_lock", lambda *args: False)
+    stub_group_lock(monkeypatch, grant=False)
     with pytest.raises(tr2.Tr2ValidationError, match="tr2_source_locked"):
         with precheck.source_lock("p", "g"):
             pass
@@ -234,9 +230,10 @@ def test_revision_and_spec_identity_inside_authoritative_precheck(tmp_path, monk
     monkeypatch.setattr(tr2, "load_current", lambda _: body)
     monkeypatch.setattr(tr2, "verify_pair", lambda *_: None)
     monkeypatch.setattr(precheck, "_clean", lambda _: None)
-    monkeypatch.setattr(precheck.db_git, "get_lock", lambda _: {"holder": "holder"})
+    stub_group_lock(monkeypatch)
     monkeypatch.setattr(precheck, "_approval_root", lambda *_: tmp_path)
-    locked = precheck.LockedSource("p", "g", tmp_path, "holder")
+    locked = precheck.LockedSource("p", "g", tmp_path, "holder",
+                                   (precheck.lock_manager.new_context(), "G:stub"))
     with pytest.raises(tr2.Tr2ValidationError, match="tr2_spec_changed"):
         precheck.authoritative_precheck(doc["doc_id"], locked, expected_revision=1)
     with pytest.raises(tr2.Tr2ValidationError, match="tr2_spec_changed"):

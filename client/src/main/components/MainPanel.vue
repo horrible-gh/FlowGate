@@ -166,6 +166,7 @@
             :conversation-full-view-on="convFullViewOn"
             @close="tabsStore.closeTab(tab.id)"
             @edit-direct="onEditDirect(tab)"
+            @edit-url-import="onEditUrlImport(tab)"
             @edit-mention="onEditMentCopy(tab)"
             @invoke-command="onEditInvokeCommand(tab)"
             @invoke-ai="onEditInvokeAi(tab)"
@@ -636,6 +637,8 @@
       :review-request-label="getReviewRequestLabel(activeTabId)"
       :can-next-action="getWorkflowViewState(activeTabId).canNextAction"
       :test-run-status="exposedValue(docHeaderRefs[activeTabId]?.testRun)?.status ?? null"
+      :test-contract-version="exposedValue(docHeaderRefs[activeTabId]?.testContractVersion) ?? null"
+
       :group-test-run-active="exposedValue(docHeaderRefs[activeTabId]?.groupTestRunActive) ?? true"
       :test-gate-blocked="isTestGateBlocked(exposedValue(docHeaderRefs[activeTabId]?.testGate))"
       :head-doc-id="exposedValue(docHeaderRefs[activeTabId]?.headDocId) ?? null"
@@ -709,6 +712,7 @@
 
     <DocumentEditDialog
       :visible="editVisible"
+      :initial-url-mode="editUrlImportMode"
       :tab="editTab"
       :body="editBody"
       :full-content="editFullContent"
@@ -944,6 +948,7 @@ import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { groupIdFromDocId, isScreenOwnedRun, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
+import { normalizeGitError, resolveGitError } from '@shared/gitErrors'
 import {
   useDashboardStore,
   type DashboardWorkflow,
@@ -1896,8 +1901,17 @@ if (typeof window !== 'undefined') {
   })
 }
 
+const editUrlImportMode = ref(false)
+
 function onEditDirect(tab: Tab) {
   closeEditDropdown()
+  editUrlImportMode.value = false
+  openEditModal(tab)
+}
+
+function onEditUrlImport(tab: Tab) {
+  closeEditDropdown()
+  editUrlImportMode.value = true
   openEditModal(tab)
 }
 
@@ -2483,8 +2497,7 @@ async function onOpenFinalApproval(tabId: string) {
     // unmounts; its re-read would land after that and be discarded.
     openFinalApprovalTab(acId)
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? String(e)
-    showToast(detail, 'danger')
+    showToast(workflowActionErrorText(e), 'danger')
   }
 }
 
@@ -2859,6 +2872,16 @@ function cancelNeedsResultScreen(cancel: any): boolean {
     || (Array.isArray(cancel.skipped) && cancel.skipped.length > 0)
 }
 
+// 0660 T0004 §4 (S2): the rewind names every document it deleted. Close those tabs
+// whichever entry point started it — a strip cell rewinds from the root R, so the AC tab
+// is not the dialog's own document and the check below never saw it.
+function closeDeletedDocTabs(deleted: unknown) {
+  if (!Array.isArray(deleted)) return
+  for (const docId of deleted) {
+    if (typeof docId === 'string' && docId) tabsStore.closeTab(docId)
+  }
+}
+
 // The close-out the rewind always ends with: drop the stale AC tab, re-read the open
 // documents and land the user on the step they rewound to.
 function finishTimeMachine(acDocId: string, step: TimeMachineStep) {
@@ -2892,6 +2915,7 @@ async function onTimeMachineConfirm(payload: TimeMachineStep) {
     // 0332 — the rewind is committed no matter what the source cancel did, so the
     // commit markers and the Git status panel are stale from here on either way.
     refreshAfterCancel()
+    closeDeletedDocTabs(res.data?.deleted)
     const cancel = res.data?.tr_commit_cancel ?? null
     if (cancelNeedsResultScreen(cancel)) {
       // Stay open and become the result screen. The step the user rewound to opens when
@@ -2905,9 +2929,18 @@ async function onTimeMachineConfirm(payload: TimeMachineStep) {
     finishTimeMachine(acDocId, payload)
     showToast(reopenToast(cancel), 'success')
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? String(e)
-    showToast(detail, 'danger')
+    showToast(workflowActionErrorText(e), 'danger')
   }
+}
+
+// 0660 T0004 §3 (RC3): the workflow routes answer a refused group mutation with the
+// identified `{ok:false, error:{code}}` envelope (e.g. `workflow_revert_pending` while a
+// Time Machine commit cancel is pending). It has no `detail`, so the old toast printed
+// "AxiosError: Request failed with status code 409". Coded errors read the shared Git
+// error copy; anything else keeps the server's detail as before.
+function workflowActionErrorText(e: any): string {
+  if (normalizeGitError(e).code) return resolveGitError(e, t)
+  return e?.response?.data?.detail ?? String(e)
 }
 
 // The success toast carries the cancel count — "되감았다"만으로는 소스가 어떻게 됐는지
@@ -3124,8 +3157,7 @@ async function doWorkflowStepReturn() {
       })
     }
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? String(e)
-    showToast(detail, 'danger')
+    showToast(workflowActionErrorText(e), 'danger')
   } finally {
     returnPointRestoring.value = false
   }
@@ -3877,7 +3909,11 @@ function testRunErrorMessage(e: unknown): string {
 
 async function onActionBarRunTest(tabId: string) {
   if ((getTabTypeCode(tabId) ?? '').toUpperCase() !== 'TS') return
+  // 0684 T#3 (D#1 §3-8): the legacy executable runner is contract 1 only; a specification TS
+  // runs through the action bar's own [다시 실행] (POST /test-spec/runs) and never reaches here.
+  if (exposedValue(docHeaderRefs[tabId]?.testContractVersion) === 2) return
   try {
+
     await postRequest('/api/v1/documents/test-run', { doc_id: tabId })
     showToast(t('main.test_run_strip.run_started'), 'info')
     docHeaderRefs[tabId]?.fetchDoc?.(tabId)

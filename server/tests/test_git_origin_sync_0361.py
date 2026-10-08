@@ -69,6 +69,21 @@ from test_git_integration_0115 import (  # noqa: E402,F401 — fixtures used by 
 )
 
 
+from group_lock_stub import group_store  # noqa: F401
+import pytest as _pytest_locks
+
+# Group/base/remote work takes domain locks from the real lock manager (0669): these tests
+# run on the real SQLite lock/job store instead of stubbing the removed project mutex.
+
+
+@_pytest_locks.fixture(autouse=True)
+def _real_lock_store(request):
+    """The lock/job store for every test except the end-to-end ones that bring their own
+    migrated database (``tmp_db``): the lock manager runs on that one."""
+    if not {"dual_origin", "sync_project"} & set(request.fixturenames):
+        request.getfixturevalue("group_store")
+
+
 class _Proc:
     """Minimal stand-in for subprocess.CompletedProcess (returncode + stderr)."""
 
@@ -249,9 +264,7 @@ def test_manual_fetch_syncs_origin_before_fetching(monkeypatch):
     monkeypatch.setattr(svc, "src_root", lambda name, branch: Path("/base"))
     monkeypatch.setattr(svc, "_judge_base_slot", lambda root, branch: "checkout")
     monkeypatch.setattr(svc, "git_available", lambda: True)
-    monkeypatch.setattr(svc, "_acquire_lock", lambda pid, holder: True)
     monkeypatch.setattr(svc, "_load_secret_for", lambda cfg: "")
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda pid, holder: None)
     monkeypatch.setattr(svc, "_ref_exists", lambda repo, ref: False)
     monkeypatch.setattr(svc, "_dirty", lambda repo, include_untracked=True: False)
     monkeypatch.setattr(svc, "_base_ahead_behind", lambda root, branch: (0, 0))
@@ -372,8 +385,6 @@ def test_update_from_base_syncs_origin_before_fetching(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.db_git, "get_open_session_by_group", lambda group_id: None)
     monkeypatch.setattr(svc, "guard_base_free", lambda project_id: None)
     monkeypatch.setattr(svc, "git_available", lambda: True)
-    monkeypatch.setattr(svc, "_acquire_lock", lambda pid, holder: True)
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda pid, holder: None)
     monkeypatch.setattr(svc, "_dirty", lambda root, include_untracked=True: False)
     monkeypatch.setattr(svc, "_load_secret_for", lambda cfg: "")
 
@@ -417,8 +428,6 @@ def test_update_from_base_sync_failure_stops_before_fetch(monkeypatch, tmp_path)
     monkeypatch.setattr(svc.db_git, "get_open_session_by_group", lambda group_id: None)
     monkeypatch.setattr(svc, "guard_base_free", lambda project_id: None)
     monkeypatch.setattr(svc, "git_available", lambda: True)
-    monkeypatch.setattr(svc, "_acquire_lock", lambda pid, holder: True)
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda pid, holder: None)
     monkeypatch.setattr(svc, "_dirty", lambda root, include_untracked=True: False)
     monkeypatch.setattr(svc, "_load_secret_for", lambda cfg: "")
 
@@ -527,14 +536,18 @@ def test_manual_push_syncs_origin_before_pushing(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "src_root", lambda name, br: tmp_path)
     monkeypatch.setattr(svc, "guard_base_free", lambda pid: None)
     monkeypatch.setattr(svc, "git_available", lambda: True)
-    monkeypatch.setattr(svc, "_acquire_lock", lambda pid, holder: True)
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda pid, holder: None)
     monkeypatch.setattr(svc, "_load_secret_for", lambda cfg: "")
+    monkeypatch.setattr(svc.db_git, "get_config", lambda pid: {
+        "base_branch": "main", "username": None, "repo_url": "https://new.example/repo.git"})
+
+    tip = "a" * 40
 
     def fake_run_git(args, **kwargs):
         calls.append(list(args))
         if args[:2] == ["remote", "get-url"]:
             return _Proc(returncode=0, stdout="https://old.example/repo.git")
+        if args[:1] == ["for-each-ref"]:        # the local branch the push job pins (0669 unit 7c)
+            return _Proc(returncode=0, stdout=f"refs/heads/{branch} {tip}\n")
         if args[:1] == ["push"]:
             return _Proc(returncode=1, stderr="stop after push attempt")
         return _Proc(returncode=0)
@@ -547,7 +560,9 @@ def test_manual_push_syncs_origin_before_pushing(monkeypatch, tmp_path):
     sync_idx = calls.index(
         ["remote", "set-url", "origin", "https://new.example/repo.git"]
     )
-    push_idx = calls.index(["push", "origin", branch])
+    # 0669 unit 7c: the job pushes the pinned sha to the branch ref, not the branch name
+    push_idx = next(i for i, c in enumerate(calls) if c[:2] == ["push", "origin"])
+    assert calls[push_idx][2] == f"{tip}:refs/heads/{branch}"
     assert sync_idx < push_idx, (
         f"origin must be synced BEFORE manual_push pushes, got {calls}"
     )
@@ -566,14 +581,16 @@ def test_manual_push_sync_failure_stops_before_push(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "src_root", lambda name, br: tmp_path)
     monkeypatch.setattr(svc, "guard_base_free", lambda pid: None)
     monkeypatch.setattr(svc, "git_available", lambda: True)
-    monkeypatch.setattr(svc, "_acquire_lock", lambda pid, holder: True)
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda pid, holder: None)
     monkeypatch.setattr(svc, "_load_secret_for", lambda cfg: "")
+    monkeypatch.setattr(svc.db_git, "get_config", lambda pid: {
+        "base_branch": "main", "username": None, "repo_url": "https://new.example/repo.git"})
 
     calls: list[list[str]] = []
 
     def fake_run_git(args, **kwargs):
         calls.append(list(args))
+        if args[:1] == ["for-each-ref"]:
+            return _Proc(returncode=0, stdout=f"refs/heads/{branch} {'a' * 40}\n")
         return _Proc(returncode=0)
 
     monkeypatch.setattr(svc, "_run_git", fake_run_git)
@@ -583,9 +600,13 @@ def test_manual_push_sync_failure_stops_before_push(monkeypatch, tmp_path):
 
     monkeypatch.setattr(svc, "ensure_origin_matches_config", boom)
 
+    # 0669 unit 7c: an origin that cannot be synced is a transient read failure of the push
+    # job, not a request error: the job stays queued (409 git_busy + job id) and retries.
     with pytest.raises(GitServiceError) as caught:
         svc.manual_push("proj", branch)
-    assert caught.value.code == "git_error"
+    assert caught.value.code == "git_busy"
+    assert caught.value.details["queued"] is True
+    assert caught.value.details["reason_code"] == "remote_head_unknown"
     assert not any(c[:1] == ["push"] for c in calls), (
         "push must not run when origin sync fails"
     )
@@ -735,8 +756,6 @@ def dual_remote_branch_repo(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(svc, "_base_root_of", lambda project_id: root)
     monkeypatch.setattr(svc, "_load_secret_for", lambda cfg: "")
-    monkeypatch.setattr(svc, "_acquire_lock", lambda project_id, holder: True)
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda project_id, holder: None)
     monkeypatch.setattr(svc.db_git, "list_states_of_project", lambda project_id: [])
     monkeypatch.setattr(svc.db_git, "list_open_sessions", lambda: [])
     from modules.flow_gate.db import groups as db_groups

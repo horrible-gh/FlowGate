@@ -66,6 +66,15 @@ const KNOWN_CODES: ReadonlySet<string> = new Set([
   'pre_instruction_attachment_original_name_mismatch',
   'pre_instruction_attachment_digest_mismatch',
   'pre_instruction_attachment_outside_storage',
+  // 0649 T#1/T#3 (NR0003 §5.1) — mixed card order and card identity.
+  'pair_not_adjacent',
+  'ordinal_order_invalid',
+  'card_id_invalid',
+  'card_id_duplicate',
+  'card_id_pair_mismatch',
+  'card_id_missing',
+  'card_id_unknown',
+  'card_id_type_changed',
 ])
 
 // Keys `empty_selection`'s `what_key` param can carry (mirrors work_plan_service's

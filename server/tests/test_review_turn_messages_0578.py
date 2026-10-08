@@ -46,6 +46,20 @@ GROUP = "flowgate.default.0578"
 MERGE_ID = 9
 
 
+from group_lock_stub import group_store  # noqa: F401
+import pytest as _pytest_locks
+
+# Group/base/remote work takes domain locks from the real lock manager (0669): these tests
+# run on the real SQLite lock/job store instead of stubbing the removed project mutex.
+
+
+@_pytest_locks.fixture(autouse=True)
+def _real_lock_store(request):
+    """The lock store for every test except the ones that bring their own database."""
+    if "session_store" not in request.fixturenames:
+        request.getfixturevalue("group_store")
+
+
 def _has_hangul(text: str) -> bool:
     return any("가" <= ch <= "힣" or "ㄱ" <= ch <= "ㆎ" for ch in text)
 
@@ -87,8 +101,6 @@ def _session(monkeypatch, context: dict):
     monkeypatch.setattr(
         git_service.db_git, "set_session_context", lambda _m, c: context.update(c),
     )
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda *a, **k: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda *a, **k: None)
     return git_service
 
 

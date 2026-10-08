@@ -35,7 +35,6 @@
         <div v-if="presetActive" class="cwd-preset-banner">
           <div>
             <strong>{{ t('main.continuous_work.preset_source', { doc: preset?.sourceDocId }) }}</strong>
-            <span>{{ t('main.continuous_work.preset_not_started') }}</span>
             <span v-if="presetUnsetCount">{{ t('main.continuous_work.preset_unset', { n: presetUnsetCount }) }}</span>
           </div>
           <button type="button" class="btn btn-outline btn-sm" @click="revertPreset">{{ t('main.continuous_work.preset_revert') }}</button>
@@ -47,17 +46,21 @@
         <div v-else-if="showSequenceOriginBanner" class="cwd-preset-banner">
           <div>
             <strong>{{ t('main.continuous_work.sequence_source', { doc: sequenceSourceDocId }) }}</strong>
-            <span>{{ t('main.continuous_work.preset_not_started') }}</span>
             <span v-if="noteUnsetCount" class="cwd-note-unset-flag">{{ t('main.continuous_work.note_unset', { n: noteUnsetCount }) }}</span>
           </div>
           <button type="button" class="btn btn-outline btn-sm" @click="revertSequenceNotes">{{ t('main.continuous_work.preset_revert') }}</button>
         </div>
         <div v-if="presetRefreshMessage" class="cwd-preset-refresh">{{ presetRefreshMessage }}</div>
+        <!-- 0649 T#3 (NR0003 O2/O4): a preset fills the existing rows (keep-workflow). When the
+             plan's card order no longer matches them, starting would run another order than the
+             plan — the start stays off and the server's reason is shown. -->
+        <div v-if="presetActive && presetCardBlocker" class="cwd-preset-refresh is-blocked" data-test="preset-card-blocker">
+          {{ presetCardBlocker }}
+        </div>
 
         <!-- ── Body: left = step list, right = settings tabs (0317 T0010 rev4) ── -->
         <div class="cwd-body">
           <div class="cwd-col cwd-col-steps">
-            <p class="cwd-intro">{{ t('main.continuous_work.intro') }}</p>
             <!-- 0242: the step list / head / all-done / pre-decision handling all live in the
                  shared picker, which the AI-invoke dialog now presents too. -->
             <WorkflowStepPicker
@@ -112,7 +115,6 @@
                     <span class="cwd-toggle-title">
                       <AppIcon name="user-gear" /> {{ t('main.continuous_work.review_mode_label') }}
                     </span>
-                    <span class="cwd-toggle-desc">{{ t('main.continuous_work.review_mode_desc') }}</span>
                   </span>
                 </label>
 
@@ -124,7 +126,6 @@
                       <span class="cwd-toggle-title">
                         <AppIcon name="seal-check" /> {{ t('main.continuous_work.instruction_mode_auto') }}
                       </span>
-                      <span class="cwd-toggle-desc">{{ t('main.continuous_work.instruction_mode_auto_desc') }}</span>
                     </span>
                   </label>
                   <label class="cwd-mode" :class="{ active: instructionMode === 'ai_direct' }">
@@ -133,7 +134,6 @@
                       <span class="cwd-toggle-title">
                         <AppIcon name="robot" /> {{ t('main.continuous_work.instruction_mode_ai') }}
                       </span>
-                      <span class="cwd-toggle-desc">{{ t('main.continuous_work.instruction_mode_ai_desc') }}</span>
                     </span>
                   </label>
                 </div>
@@ -169,7 +169,7 @@
                      native-select combo pattern as the timeout picker above. -->
                 <div class="cwd-mode-group">
                   <div class="cwd-section-title">{{ t('main.continuous_work.restart_count_title') }}</div>
-                  <p class="cwd-toggle-desc cwd-restart-desc">{{ t('main.continuous_work.restart_count_desc') }}</p>
+                  <p class="cwd-restart-desc">{{ t('main.continuous_work.restart_count_desc') }}</p>
                   <label class="cwd-restart-combo">
                     <select
                       v-model.number="restartMaxAttempts"
@@ -233,9 +233,6 @@
                        지정" opt-in disclosure) and its select defaults to the header default
                        provider (never a blank option) — the user only touches the steps they
                        want to differ. -->
-                  <div v-if="excludedNote" class="cwd-scope-note">
-                    <AppIcon name="info" /> {{ excludedNote }}
-                  </div>
                   <!-- 0408 TR0021 2nd re-rejection ("왜 프로바이더는 안고치냐? 자동승인 상태면 N/T
                        빼야지... 이번 실행 미사용 이것떄문에 스크롤 생기니까 다 빼라 필요없는건
                        대체 왜넣은거야?"): reverts TR0018 rev1's "show every in-range row, read
@@ -283,11 +280,8 @@
                       v-model="defaultMessage"
                       type="text"
                       class="cwd-message-input cwd-message-default-input"
-                      :placeholder="t('main.continuous_work.message_default_placeholder')"
+                      :aria-label="t('main.continuous_work.message_default_label')"
                     />
-                  </div>
-                  <div v-if="excludedNote" class="cwd-scope-note">
-                    <AppIcon name="info" /> {{ excludedNote }}
                   </div>
                   <!-- 0408 M0019 1st re-rejection ("[자동승인] 인데 왜 N/T가 표시되게 했지?") + TR0021
                        2nd re-rejection ("프로바이더는 안고치냐... 다 빼라"): the mention AND provider
@@ -322,13 +316,7 @@
                    목표 뒤 단계처럼 이번 실행에 워커 산출물이 없는 칸은 검수 대상이 아니다. -->
               <div v-else class="cwd-tab-panel">
                 <div class="cwd-provider-block">
-                  <p class="cwd-review-intro">
-                    {{ t('main.continuous_work.review_intro') }}
-                    <span class="cwd-review-legend">{{ t('main.continuous_work.review_legend') }}</span>
-                  </p>
-                  <div v-if="excludedNote" class="cwd-scope-note">
-                    <AppIcon name="info" /> {{ excludedNote }}
-                  </div>
+                  <p class="cwd-review-legend">{{ t('main.continuous_work.review_legend') }}</p>
                   <div class="cwd-override-table">
                     <div v-for="row in reviewRows" :key="row.item.item_seq" class="cwd-override-row cwd-review-row">
                       <span class="cwd-override-step-no">{{ t('main.continuous_work.step_no_label', { n: row.stepNo }) }}</span>
@@ -360,7 +348,6 @@
 
             <div class="cwd-summary">
               {{ summaryText }}
-              <span v-if="sequenceSourceDocId && noteUnsetCount" class="cwd-note-unset-flag">{{ t('main.continuous_work.note_unset', { n: noteUnsetCount }) }}</span>
             </div>
           </div>
         </div>
@@ -584,6 +571,21 @@ const reviewCountOverrides = ref<Record<number, number>>({})
 // `defaultReviewerId`, 즉 프로젝트 유효 프로바이더 체인의 첫 항목이다.
 const reviewerOverrides = ref<Record<number, string>>({})
 const presetActive = ref(false)
+// 0649 T#3: keep-workflow codes that make a preset fill run an order other than the plan's.
+const PRESET_CARD_ORDER_BLOCKERS = new Set([
+  'order_differs', 'orphan_plan_rows', 'order_conflicts_started', 'started_card_removed',
+  'card_identity_mismatch', 'foreign_rows_interleaved', 'legacy_card_unresolved',
+])
+const presetCardBlocker = ref<string | null>(null)
+
+function cardBlockerMessage(
+  code: string | null | undefined,
+  warnings: Array<{ code: string; message?: string }> | undefined,
+): string | null {
+  if (!code || !PRESET_CARD_ORDER_BLOCKERS.has(code)) return null
+  return warnings?.find(warning => warning.code === code)?.message
+    || t('main.continuous_work.preset_card_order_blocked')
+}
 const presetTargetSeq = ref<number | null>(null)
 const editedSeqs = ref(new Set<number>())
 const prefilledMessageSeqs = ref(new Set<number>())
@@ -704,20 +706,6 @@ function onReviewerChange(item: WorkflowStepItem, value: string) {
   else next[item.item_seq] = value
   reviewerOverrides.value = next
 }
-
-/** Why the provider list is shorter than the step list — stated, not left to be guessed. */
-const excludedNote = computed(() => {
-  const sel = picker.value.selection
-  if (!sel || sel.fromDecision) return ''
-  const inRange = runnableSteps.value.filter(s => s.item_seq <= sel.targetSeq)
-  const beyondCount = runnableSteps.value.length - inRange.length
-  // 0408 TR0021 2nd re-rejection: auto-approved steps are excluded again (they no longer draw a row
-  // of their own to explain themselves with) but this note still only counts steps past the
-  // target — a step auto-approved WITHIN range still shows its stored provider on the picker's
-  // tag, so nothing about it is actually unexplained.
-  if (beyondCount > 0) return t('main.continuous_work.provider_scope_note_beyond', { beyond: beyondCount })
-  return ''
-})
 
 // 0399 T0018 --------------------------------------------------------------------------------
 // The normal "AI 호출" entry has no `preset` (that prop is only the legacy, pre-save work-plan
@@ -871,7 +859,9 @@ function onPickerChange(state: WorkflowStepPickerState) {
   picker.value = state
 }
 
-const canProceed = computed(() => picker.value.selection != null)
+const canProceed = computed(() =>
+  picker.value.selection != null && !(presetActive.value && presetCardBlocker.value),
+)
 
 const summaryText = computed(() => {
   if (picker.value.allDone) return t('main.continuous_work.all_done_summary')
@@ -1030,6 +1020,11 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
   restartMaxAttempts.value = RESTART_COUNT_DEFAULT
   activeTab.value = 'basic'
   presetRefreshMessage.value = ''
+  // a preset handed over with a card-order blocker already in its warnings starts blocked
+  const blocking = value?.warnings?.find(
+    warning => warning.severity === 'blocker' && PRESET_CARD_ORDER_BLOCKERS.has(warning.code),
+  )
+  presetCardBlocker.value = blocking ? cardBlockerMessage(blocking.code, value?.warnings) : null
   editedSeqs.value = new Set()
   prefilledMessageSeqs.value = new Set()
   touchedNoteSeqs.value = new Set()
@@ -1073,6 +1068,7 @@ async function refreshPresetForMode() {
       { instruction_mode: instructionMode.value },
     )
     const fill = res.data.fill_preview ?? {}
+    presetCardBlocker.value = cardBlockerMessage(res.data.apply_blockers?.keep_workflow, res.data.warnings)
     const incomingProviders: Record<number, string> = Object.fromEntries(
       Object.entries(fill.provider_overrides ?? {}).map(([key, value]) => [Number(key), String(value)]),
     )
@@ -1167,6 +1163,7 @@ watch(presetActive, (active) => {
 .cwd-preset-banner div { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 .cwd-preset-banner span { color:var(--text-m); }
 .cwd-preset-refresh { background:var(--surface-h); justify-content:flex-start; }
+.cwd-preset-refresh.is-blocked { color: var(--danger, #b91c1c); font-weight: 600; }
 .cwd-filled-badge { flex:0 0 auto; font-size:.61rem; color:#0f766e; background:#ccfbf1; border-radius:99px; padding:2px 5px; }
 .cwd-stored-provider--unavailable { color:#b45309; background:#fff7ed; }
 /* 0399 T0018: notice for steps with no mention — informational, never blocks (D0010 §3.5). */
@@ -1231,12 +1228,6 @@ watch(presetActive, (active) => {
   border-left: 1px solid var(--border);
   background: var(--surface-h);
   overflow: hidden;
-}
-.cwd-intro {
-  margin: 0;
-  font-size: .85rem;
-  color: var(--text-s);
-  line-height: 1.5;
 }
 .cwd-section-title {
   font-size: .72rem;
@@ -1319,7 +1310,7 @@ watch(presetActive, (active) => {
 .cwd-toggle input { margin-top: 3px; flex-shrink: 0; }
 .cwd-toggle-text { display: flex; flex-direction: column; gap: 2px; }
 .cwd-toggle-title { font-size: .85rem; font-weight: 600; color: var(--text); }
-.cwd-toggle-desc { font-size: .76rem; color: var(--text-m); line-height: 1.4; }
+.cwd-restart-desc { font-size: .76rem; color: var(--text-m); line-height: 1.4; margin: 0; }
 /* Timeout setting (0400 M0005 / TR0007 2nd rejection: "리스트 박스로 해라... 콤보박스"): a native
    select combo box, same input pattern as .aip-select-input in AiProviderSelect.vue. */
 .cwd-timeout-combo {
@@ -1401,17 +1392,6 @@ watch(presetActive, (active) => {
 }
 .cwd-provider-label { font-size: .78rem; color: var(--text-m); min-width: 56px; flex-shrink: 0; }
 .cwd-provider-select { flex: 1; min-width: 0; }
-/* 0337 R0001: sits between the default-provider row and the step list, outside the scroller —
-   the reason the list is shorter than the sequence must stay visible while the list scrolls. */
-.cwd-scope-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  font-size: .72rem;
-  line-height: 1.45;
-  color: var(--text-m);
-  flex-shrink: 0;
-}
 .cwd-override-table {
   display: flex;
   flex-direction: column;
@@ -1512,17 +1492,7 @@ watch(presetActive, (active) => {
 /* 0414 T0012 / 시안 45z739t7 의 .override-row-review: 한 행에 실행단계 번호, 문서 타입 배지,
    단계 라벨, 검수 횟수, 검수자를 한 줄로 놓는다. 횟수는 값이 짧아 좁고, 검수자는 프로바이더
    이름이 들어가므로 [프로바이더] 탭의 셀렉트와 같은 폭을 쓴다. */
-.cwd-review-intro {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  font-size: .76rem;
-  color: var(--text-m);
-  line-height: 1.45;
-  flex-shrink: 0;
-}
-.cwd-review-legend { font-size: .72rem; color: var(--text-s); }
+.cwd-review-legend { margin: 0; font-size: .72rem; color: var(--text-s); flex-shrink: 0; }
 .cwd-review-select {
   flex: 0 0 auto;
   min-width: 0;

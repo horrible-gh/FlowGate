@@ -14,6 +14,7 @@ from modules.flow_gate.db import tr_commit_ledger as db_ledger
 from modules.flow_gate.db import tr_history_recovery as db_recovery
 from modules.flow_gate.documents import tr2_service
 from modules.flow_gate.services import git_service
+from modules.flow_gate.services.git import lock_manager
 from modules.flow_gate.storage.safe_path import (
     MutationPathAliasError,
     MutationPathUnsafeError,
@@ -284,6 +285,23 @@ def _resolve(root: Path, path: str, *, allow_missing_leaf: bool) -> tuple[str, P
     return canonical, resolved
 
 
+def _acquire_group(project_id: str, group_id: str):
+    """This Group's G (0666 D 3.10): other Groups' mutations no longer wait on it."""
+    outcome, ctx = lock_manager.acquire_group(project_id, group_id, holder_kind="source_mutation")
+    if not outcome.ok:
+        raise Tr2FilePolicyError(
+            SOURCE_MUTATION_BUSY,
+            details={"project_id": project_id, "group_id": group_id,
+                     **lock_manager.outcome_details(outcome)},
+        )
+    return ctx, outcome.lock_key
+
+
+def _release_group(handle) -> None:
+    ctx, key = handle
+    lock_manager.release(ctx, key)
+
+
 @dataclass(frozen=True)
 class GeneralSourceMutation:
     project_id: str
@@ -306,15 +324,13 @@ def general_source_mutation(
     """Serialize an ordinary source mutation with TR2 approval and check ownership under lock.
 
     The critical ordering is fixed:
-      LOCK -> authoritative worktree resolve -> NO_ALIAS -> managed re-read -> ACT -> UNLOCK.
+      G LOCK -> authoritative worktree resolve -> NO_ALIAS -> managed re-read -> ACT -> UNLOCK.
+    Every other source-changing path of the Group takes the same G (0669 unit 9c
+    removed the old project mutex), so same-Group exclusion holds.
     Callers must perform the actual mutation inside the yielded context.
     """
     holder = f"tr2-file-policy:{group_id}:{uuid.uuid4().hex}"
-    if not git_service._acquire_lock(project_id, holder):
-        raise Tr2FilePolicyError(
-            SOURCE_MUTATION_BUSY,
-            details={"project_id": project_id, "group_id": group_id},
-        )
+    lock = _acquire_group(project_id, group_id)
     try:
         root = _group_root(project_id, group_id)
         try:
@@ -363,4 +379,4 @@ def general_source_mutation(
             recursive_targets=recursive_targets,
         )
     finally:
-        db_git.release_lock(project_id, holder)
+        _release_group(lock)

@@ -10,8 +10,9 @@ Three things live here and nowhere else:
 * **Reading and saving.**  ``resolve_chat_settings`` is deliberately the only reader,
   shared by the settings endpoint and the two mention paths (L0010 §2-1).  Two readers
   with two different repairs would show the user one value and apply another.
-* **The window.**  ``resolve_context_window`` turns (last read, head, mode, N) into the
-  ``after_seq`` a mention advertises and the number of turns that got folded away.
+* **The window.**  ``resolve_context_window`` turns (head, mode, N) into the
+  invocation-local ``after_seq`` and the number of older turns folded before that window.
+  A persisted provider read cursor is delivery/audit state, not cross-invocation model memory.
 
 Note the asymmetry between the two directions, which is intended (P0009 scenario 8):
 an unknown value *arriving* in a PATCH is rejected with 422, but an unknown value
@@ -29,10 +30,10 @@ storage inside one transaction when both arrive together (L0007 §2.2.2). The
 stale/corrupted-marker recovery sweep (:func:`recover_stale_claim`, L0007 §2.4.4)
 and the settings-read/PATCH contract around it.
 
-flowgate.v02.0032 T#1 (main 0670 contract) adds a third independent per-user setting
--- ``command_policy`` (chat command execution: always_approve / user_approval / reject,
-default user_approval) -- in its own ``user_chat_command_policy`` storage for the same
-reason as the source mode:
+0670 T0004 (ported to v0.2 as flowgate.v02.0032 T#1) adds a third independent per-user
+setting -- ``command_policy`` (chat command execution: always_approve / user_approval /
+reject, default user_approval) -- in its own ``user_chat_command_policy`` storage for the
+same reason as the source mode:
 saving it alone must never create (or change) the ``user_chat_settings`` row that
 ``is_default`` reads. The three existing fields keep their values, domains and
 precedence untouched.
@@ -73,7 +74,7 @@ CONTEXT_MODE_DEFAULT = "recent"
 SOURCE_ACCESS_DOMAIN = ("read_only", "edit", "edit_once")
 SOURCE_ACCESS_DEFAULT = "read_only"
 
-# -- flowgate.v02.0032 T#1: chat command execution policy -- its own storage too ----------
+# -- 0670 T0004 / flowgate.v02.0032 T#1: chat command execution policy -- its own storage too ----------
 COMMAND_POLICY_DOMAIN = ("always_approve", "user_approval", "reject")
 COMMAND_POLICY_DEFAULT = "user_approval"
 
@@ -131,7 +132,7 @@ def domain() -> dict:
 
 
 def resolve_command_policy(user_id: Optional[str]) -> str:
-    """flowgate.v02.0032 T#1: the stored command policy, repaired to the default on the way out.
+    """0670 T0004 / flowgate.v02.0032 T#1: the stored command policy, repaired to the default on the way out.
 
     Never raises -- like every other setting, a broken row must not stop a chat.
     """
@@ -324,7 +325,7 @@ def save_chat_settings(user_id: Optional[str], patch: dict) -> dict:
                 if source_mode is not None:
                     source_access_store.upsert(user_id, source_mode, now)
                 if command_policy is not None:
-                    # flowgate.v02.0032 T#1: own storage; a command-only PATCH leaves the legacy
+                    # 0670 T0004 / flowgate.v02.0032 T#1: own storage; a command-only PATCH leaves the legacy
                     # row (and therefore is_default) exactly as it was.
                     command_policy_store.upsert(user_id, command_policy, now)
     return settings_response(user_id)
@@ -475,26 +476,14 @@ def recover_stale_claim(user_id: str) -> str:
 
 
 def resolve_context_window(
-    *, last_read: int, head_seq: int, mode: str, turns: int
+    *, head_seq: int, mode: str, turns: int
 ) -> tuple[int, int]:
-    """Return (start, folded) for one mention (L0010 §2-3).
+    """Return the invocation-local ``(after_seq, folded)`` context window.
 
-    ``start`` is where the mention tells the worker to read from; ``folded`` is how many
-    turns it has *not* read and is being asked to skip.  They differ whenever the worker
-    had already read part of the conversation.
-
-    ``max(last_read, ...)`` is what keeps a range from dragging a caught-up worker
-    backwards: narrowing the window is meant to shorten the backlog, not to move
-    somebody's read position (P0009 scenario 15).
+    A provider participant cursor records delivery history, not memory carried by a new
+    model invocation, so it does not participate in this calculation.
     """
     if mode == "all":
-        # ``head_seq`` is deliberately not queried on this branch (L0010 §2-3), so it
-        # cannot be used to clamp here -- and must not be, because [all] has to produce
-        # the very mention this feature never touched (P0009 scenario 13).
-        return max(last_read, 0), 0
-    start = max(last_read, head_seq - turns)
-    # Covers the short conversation (head_seq - turns is negative) and the abnormal
-    # cursor that sits past the end of the conversation (L0010 §5).
-    start = min(max(start, 0), head_seq)
-    folded = max(0, start - last_read)
-    return start, folded
+        return 0, 0
+    start = max(0, head_seq - turns)
+    return start, start

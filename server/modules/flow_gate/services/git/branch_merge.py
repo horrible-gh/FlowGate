@@ -28,7 +28,6 @@ publish (local target ref and the ``push`` choice frozen when the attempt starte
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Optional
@@ -201,7 +200,7 @@ def record_event(session_or_id, event_type: str, **fields) -> None:
         _log.warning("branch merge event %s could not be recorded", event_type, exc_info=True)
 
 
-# ── Attempt lifecycle (called by branches.merge_branches under the project lock) ─
+# ── Attempt lifecycle (called by branches.run_merge inside the branch_merge_publish job) ─
 
 def open_attempt(
     ctx: merge_target.MergeTargetContext, *, source_branch: str, push: bool,
@@ -706,8 +705,18 @@ def note_resolution_submitted(session: dict, resolver_run_id: Optional[str]) -> 
 
 
 def note_review_pending(session: dict) -> None:
+    """Every conflict is resolved and the candidate is frozen: the resolver's part is over.
+
+    0683 T0004 §6: a ``running``/``starting`` AI status is settled to ``finished`` in the
+    stored context right here, instead of staying ``running`` and being corrected at read
+    time by ``attempt_view`` — the persisted record now says what really happened."""
     gs = _gs()
-    context = gs.db_git.session_context(gs.db_git.get_session(int(session["merge_id"])))
+    merge_id = int(session["merge_id"])
+    context = gs.db_git.session_context(gs.db_git.get_session(merge_id))
+    ai = dict(context.get(AI_KEY) or {})
+    if ai.get("status") in (AI_RUNNING, AI_STARTING):
+        ai.update({"status": AI_FINISHED, "finished_at": now_iso()})
+        context = _update(merge_id, **{AI_KEY: ai})
     fields = {"resolver_run_id": context.get("resolver_run_id"),
               "provider": context.get("resolver_provider"),
               "resolver_type": resolver_type(context)}
@@ -939,9 +948,10 @@ def abort(project_id: str, merge_id: int) -> dict:
         )
     target = merge_target.resolve_session_target(session)
     merge_target.raise_if_not_workspace_owner(target)
-    holder = f"branch-merge-abort:{merge_id}:{uuid.uuid4()}"
-    if not gs._acquire_lock(project_id, holder, wait_sec=gs.LOCK_WAIT_SEC):
-        raise GitServiceError(409, "git_busy", "another Git operation is in progress")
+    # 0669 unit 8a: the attempt's target domain (G / W / B), not the project mutex.
+    from . import branch_merge_publish
+    from . import lock_manager as locks
+    lock_ctx, lock_key = branch_merge_publish.attempt_lock(target)
     try:
         if target.root is not None and target.root.exists() and gs._merge_in_progress(target.root):
             proc = gs._run_git(["merge", "--abort"], cwd=target.root)
@@ -953,7 +963,8 @@ def abort(project_id: str, merge_id: int) -> dict:
         merge_target.close_attempt(merge_id, merge_target.ATTEMPT_ABORTED, error={"code": "user_abort"})
         cleaned = merge_target.release_workspace(target) if target.managed_workspace else False
     finally:
-        gs.db_git.release_lock(project_id, holder)
+        if lock_ctx.find_held(lock_key) is not None:
+            locks.release(lock_ctx, lock_key)
     _stop_resolver(merge_id, context)
     record_event(merge_id, EV_ABORTED)
     return {"ok": True, "result": {

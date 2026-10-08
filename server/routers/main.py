@@ -50,15 +50,16 @@ from modules.flow_gate.api.v1.conversation_routes import router as _conversation
 from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settings_router
 # flowgate.v02.0032 T#1 (D0006 §2.1, §5.1): the v0.2 Conversation contract (server/flowgate/).
 from flowgate.conversation.routes import router as _conversation_router
+from modules.flow_gate.api.v1.chat_command_routes import router as _chat_command_router
 from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_router
 from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
-from modules.flow_gate.api.v1.source_bundle_routes import router as _source_bundle_router, overview_router as _source_bundle_overview_router
 from modules.flow_gate.api.v1.self_check_routes import router as _self_check_router
 from modules.flow_gate.api.v1.agent_routes import router as _agent_router
 from modules.flow_gate.api.v1.agent_job_routes import router as _agent_job_router
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.services.git.credentials import git_error_envelope
+from modules.flow_gate.workflow.pipeline_service import WorkflowSlotConflictError
 from modules.flow_gate.services.mutation_policy import (
     GroupMutationPolicyMiddleware,
     MutationPolicyError,
@@ -104,10 +105,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("snapshot cleanup shutdown failed", exc_info=True)
     try:
-        from modules.flow_gate.services import source_bundle_cleanup_service
-        source_bundle_cleanup_service.shutdown()
+        from modules.flow_gate.services.git import instance_registry
+        instance_registry.shutdown()
     except Exception:
-        logger.warning("Source Bundle cleanup shutdown failed", exc_info=True)
+        logger.warning("server instance shutdown failed", exc_info=True)
 
 
 app = FastAPI(lifespan=lifespan)
@@ -154,6 +155,17 @@ async def git_service_exception_handler(request: Request, exc: GitServiceError):
 @app.exception_handler(MutationPolicyError)
 async def mutation_policy_exception_handler(request: Request, exc: MutationPolicyError):
     return mutation_error_response(exc)
+
+
+# 0660 T0004 §2 (RC2): a refused workflow slot write (the slot already holds another
+# document, or the document already sits in another slot) is a workflow conflict, not a
+# server fault. Uncaught it surfaced as a bare 500 the create dialog could only render as
+# "an error occurred". The exception already carries the identified {"error": {...}}
+# envelope (document/slot ids only, no paths), so answer it as the 409 it is — once,
+# here, for every route that registers a workflow result.
+@app.exception_handler(WorkflowSlotConflictError)
+async def workflow_slot_conflict_exception_handler(request: Request, exc: WorkflowSlotConflictError):
+    return JSONResponse(status_code=409, content=exc.body())
 
 
 app.add_middleware(SlowAPIMiddleware)
@@ -216,10 +228,11 @@ app.include_router(_git_router, prefix=f"{CONTEXT}", tags=["Git"])
 app.include_router(_conversation_worker_router, prefix=f"{CONTEXT}", tags=["Conversation"])
 app.include_router(_chat_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatSettings"])
 app.include_router(_conversation_router, prefix=f"{CONTEXT}/api/v1", tags=["Conversation"])
+# 0670: registered after the v0.2 Conversation router, which serves the same
+# /chat-commands and /chat-activity paths first.
+app.include_router(_chat_command_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatCommands"])
 app.include_router(_ui_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["UiSettings"])
 app.include_router(_snapshot_router, prefix=f"{CONTEXT}", tags=["Snapshots"])
-app.include_router(_source_bundle_router, prefix=f"{CONTEXT}", tags=["SourceBundles"])
-app.include_router(_source_bundle_overview_router, prefix=f"{CONTEXT}", tags=["SourceBundles"])
 app.include_router(_agent_router, prefix=f"{CONTEXT}/api/v1", tags=["Agents"])
 app.include_router(_agent_job_router, prefix=f"{CONTEXT}/api/v1", tags=["AgentJobs"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])

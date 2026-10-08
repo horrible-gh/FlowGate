@@ -94,6 +94,32 @@ def _hidden(body):
     return {entry["name"]: entry["reason"] for entry in body["hidden"]}
 
 
+# 0684 T#4: Source Bundle is removed. Its two help items (source_bundles and the
+# source_snapshots alias that carried the Bundle policy) and the Bundle notice are gone from
+# the catalog for every step -- the TS/TSR steps that used to keep them included.
+_BUNDLE_WORDS = ("Source Bundle", "source_bundle", "Bundle/Scratch")
+
+
+@pytest.mark.parametrize("scope, step_type", [
+    ("review", "TR"), ("review", "D"), ("review", "T"), ("new", "N"), ("new", "T"), ("edit", "TR"),
+    ("new", "TS"), ("edit", "TS"), ("review", "TS"), ("edit", "TSR"), ("review", "TSR"),
+])
+def test_bundle_help_items_and_notice_are_gone_for_every_step(monkeypatch, scope, step_type):
+    client = _client(monkeypatch, _token(scope), step_type=step_type)
+    body = client.get("/api/v1/help").json()
+    names = _names(body)
+    hidden = _hidden(body)
+    assert "source_tools" in names
+    for retired in ("source_bundles", "source_snapshots"):
+        assert retired not in names and retired not in hidden
+        assert client.get(f"/api/v1/help/items/{retired}").status_code == 404
+    notices = client.get("/api/v1/help/items/notices").json()["content"]["lines"]
+    assert not any(word in line for line in notices for word in _BUNDLE_WORDS)
+    assert "source_bundles" not in help_catalog.CATALOG_ORDER
+    assert "source_snapshots" not in help_catalog.CATALOG_ORDER
+    assert all("source_snapshot_policy" not in copy for copy in help_catalog.NOTICE_LINES.values())
+
+
 # ── index ────────────────────────────────────────────────────────────────────
 
 def test_index_for_a_design_token_lists_the_template_and_hides_the_task_items(monkeypatch):
@@ -105,11 +131,12 @@ def test_index_for_a_design_token_lists_the_template_and_hides_the_task_items(mo
     assert body["version"] == help_catalog.VERSION
     assert _names(body) == [
         "notices", "group_documents", "document_access", "document_attachments", "doc_type",
-        "question", "submit", "source_tools", "source_bundles", "source_snapshots", "design_template",
+        "question", "submit", "source_tools", "design_template",
     ]
     assert _hidden(body) == {
         "authoring_guide": "no_guide_for_type",
         "test_commands": "not_ts_type",
+        "tr_self_check": "not_tr_edit",
         "changed_files_format": "not_mutating_type",
         "step_verification_format": "not_tr_type",
     }
@@ -150,7 +177,11 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     assert "changed_files_format" in _names(body)
     assert "step_verification_format" in _names(body)
     assert "authoring_guide" in _names(body)
-    assert _hidden(body) == {"design_template": "not_design_type", "test_commands": "not_ts_type"}
+    assert _hidden(body) == {
+        "design_template": "not_design_type",
+        "test_commands": "not_ts_type",
+        "tr_self_check": "not_tr_edit",
+    }
     assert body["context"]["tool_kind"] == "read_write"
     counts = {item["name"]: item["children_count"] for item in body["items"]}
     # Stays 11: flowgate.default.0482 T0011 registered `resolve_base_dirty` as a
@@ -307,30 +338,11 @@ def test_notices_lines_follow_the_step_not_the_locale_file(monkeypatch):
     assert lines[0].startswith("이 작업은 무인(UNMANNED)")
     assert any("배정된 그룹 작업 공간" in line for line in lines)
 
-    attended = _client(monkeypatch, _token(), step_type="P") \
+    attended = _client(monkeypatch, _token(), step_type="TS") \
         .get("/api/v1/help/items/notices").json()
     attended_lines = attended["content"]["lines"]
     assert attended_lines[0] == help_catalog.NOTICE_LINES["ko"]["interactive_query_without_choice"]
-    assert help_catalog.NOTICE_LINES["ko"]["source_snapshot_policy"] in attended_lines
-
-
-def test_snapshot_notice_is_localized_and_hidden_without_source_tools(monkeypatch):
-    localized_policies = {
-        copy["source_snapshot_policy"] for copy in help_catalog.NOTICE_LINES.values()
-    }
-
-    for locale in ("ko", "en", "ja"):
-        remote_lines = _client(monkeypatch, _token(), step_type="P") \
-            .get(f"/api/v1/help/items/notices?locale={locale}").json()["content"]["lines"]
-        assert help_catalog.NOTICE_LINES[locale]["source_snapshot_policy"] in remote_lines
-
-        local_lines = _client(monkeypatch, _token(), step_type="TR", source_mode="local") \
-            .get(f"/api/v1/help/items/notices?locale={locale}").json()["content"]["lines"]
-        assert localized_policies.isdisjoint(local_lines)
-
-        no_scope_lines = _client(monkeypatch, _token("test_run"), step_type="TS") \
-            .get(f"/api/v1/help/items/notices?locale={locale}").json()["content"]["lines"]
-        assert localized_policies.isdisjoint(no_scope_lines)
+    assert not any("Source Bundle" in line for line in attended_lines)
 
 
 def test_continuous_notices_use_scope_bounded_autonomy_in_every_locale(monkeypatch):
@@ -385,6 +397,23 @@ def test_document_access_advertises_the_bounded_reads(monkeypatch):
     assert "section_id=<section_id>" in partial["section"]["url"]
     assert "include_matches=true" in partial["content_search"]["url"]
     assert "/documents/" in content["note"]
+    assert "conversation_history" not in content
+
+
+def test_chat_document_access_exposes_backward_conversation_history(monkeypatch):
+    doc_id = "flowgate.default.0372.0002-CH"
+    client = _client(monkeypatch, _token("chat", doc_ref=doc_id), step_type="CH")
+    history = client.get(
+        "/api/v1/help/items/document_access"
+    ).json()["content"]["conversation_history"]
+    assert history["forward"]["continue_with"] == "next_after_seq"
+    assert history["backward"]["continue_with"] == "prev_before_seq"
+    assert "before_seq=<seq>" in history["backward"]["url"]
+    assert doc_id in history["backward"]["url"]
+    assert "before_seq=<start+1>" in history["boundary"]
+    assert "do not consume" in history["token"]
+    assert "do not advance" in history["cursor"]
+    assert "last_read" in history["cursor"]
 
 
 def test_document_attachments_advertises_the_copy_request_body(monkeypatch):
@@ -566,7 +595,7 @@ def test_identifiers_never_translate(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
     body = client.get("/api/v1/help?locale=ja").json()
     assert _names(body)[:2] == ["notices", "group_documents"]
-    assert set(_hidden(body)) == {"design_template", "test_commands"}
+    assert set(_hidden(body)) == {"design_template", "test_commands", "tr_self_check"}
 
 
 @pytest.mark.parametrize("locale", ["ko", "ja", "en"])

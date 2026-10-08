@@ -76,7 +76,17 @@ def cancel_run(run_id: str) -> dict:
     # flowgate.v02.0032 T#1 (D0006 §2.3, §3.7): a chat run closes its command requests
     # first; the port's handler announces the cancel under its command launch gate, so no
     # command process can start once the run is cancelling. No-op for other scopes.
-    chat_run_hooks.chat_run_cancel(run, announce)
+    if not chat_run_hooks.chat_run_cancel(run, announce) and run.get("action_scope") == "chat":
+        # 0670: with no port handler registered (or one that failed), the in-module chat
+        # command service closes the gate itself -- the cancel is announced only under the
+        # run's command launch gate, after the gate has closed launches (a launch already
+        # past its live check spawned before the announcement and is killed by the stop).
+        from modules.flow_gate.services import chat_command_service
+
+        try:
+            chat_command_service.stop_run(run_id, on_closed=announce)
+        except Exception:
+            logger.warning("chat command stop failed for %s", run_id, exc_info=True)
     if run["status"] != "cancelling":
         announce()
     run["cancel_event"].set()
@@ -638,7 +648,61 @@ def clear_auto_resume(group_id: Optional[str]) -> None:
         _svc()._auto_resume.pop(group_id, None)
 
 
+def park_for_server_test_run(group_id: str, pending: dict, run: dict) -> bool:
+    """0684 T#3 (D#1 §3-9): the next head is a TSR whose server run IS the next step.
+
+    Approving a specification TS queued its run, so no hop starts and no hand-off token is
+    issued: the chain is bound to the run (test_run_service.hand_chain_to_server_run) and
+    parked on the test gate with the same durable ``test_run_pending`` row a hop that handed
+    a TS to the gate leaves. The run's outcome resumes the chain (PASS), sends it to
+    failure-origin review (FAIL), resumes it for manual/external entry, or stops it for a
+    human. True when the chain was parked here; False starts the ordinary hop.
+    """
+    from modules.flow_gate.services import test_run_service
+    from .runtime import TEST_RUN_PENDING_STOP_CODE
+
+    doc_ref = pending.get("doc_ref")
+    if not doc_ref or not pending.get("issued_to"):
+        return False
+    try:
+        to_end = bool(pending.get("to_end") or pending.get("target_seq") is None)
+        target_seq = _resolve_continuation_target(doc_ref, pending.get("target_seq"), to_end=to_end)
+        handed = test_run_service.hand_chain_to_server_run(
+            doc_ref,
+            issued_to=pending["issued_to"],
+            api_base_url=pending.get("api_base_url"),
+            locale=pending.get("locale") or "ko",
+            continuation_target_seq=target_seq,
+            continuation_review_mode=bool(pending.get("review_mode")),
+            continuation_instruction_mode=pending.get("instruction_mode"),
+            continuation_auto_approve_item_seqs=pending.get("auto_approve_item_seqs"),
+            ai_run_id=run.get("run_id"),
+        )
+    except Exception:  # noqa: BLE001 -- the ordinary hop is the safe fallback
+        logger.warning("server test-run hand-off failed for %s", group_id, exc_info=True)
+        return False
+    if handed is None:
+        return False
+    run["test_gate_doc_id"] = handed["ts_doc_id"]
+    _svc()._park_handoff(run, pending, TEST_RUN_PENDING_STOP_CODE)
+    # This hop already finalized, so the finalize-side resume ran before the row existed.
+    # A run that has ended by now (or ended while the chain was being bound) is answered here.
+    from modules.flow_gate.db import test_runs as db_test_runs
+    current = db_test_runs.get_run(handed["run_id"]) or {}
+    if handed.get("finished") or current.get("status") not in ("running", "cancelling"):
+        try:
+            test_run_service.resume_test_gate_chain_for_hop(
+                handed["ts_doc_id"], api_base_url=pending.get("api_base_url"),
+                locale=pending.get("locale"),
+            )
+        except Exception:  # noqa: BLE001 -- the parked row stays resumable by hand
+            logger.warning("test-gate resume after hand-off failed for %s", group_id,
+                           exc_info=True)
+    return True
+
+
 def _maybe_auto_resume_hop(run: dict) -> None:
+
     """After a hop's worker finalizes, re-spawn the next hop if the inbox self-chain queued
     one (Q153 opt-1). Server-triggered automation of resume_chain: the next start_run
     re-resolves the hop's provider, delivering true per-step providers on an unmanned chain.

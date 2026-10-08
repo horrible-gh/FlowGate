@@ -491,13 +491,6 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     # base (configured setting -> same-host loopback -> operator base).
     operator_api_base = run.get("api_base_url") or ""
     prompt, agent_api_base = _canonicalize_cli_prompt(prompt, operator_api_base)
-    bundle_api_base = (agent_api_base or operator_api_base).rstrip("/") + "/source-bundles/cli"
-    prompt = prompt.rstrip() + (
-        "\n\n## Source Bundle CLI boundary\n"
-        "Use FLOWGATE_BUNDLE_API with Authorization: Bearer $FLOWGATE_TOKEN for "
-        "ensure, status, access (read/search/glob/stat), and allowed run calls. "
-        "No human approval is required. Never consume an internal Bundle or Scratch path directly.\n"
-    )
     # CLI providers authenticate themselves; a configured api_key is deliberately
     # NOT exported (leak prevention, L0006 §2.3).
     env = {
@@ -511,7 +504,6 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         "FLOWGATE_SCRATCH": run["token_scratch_dir"],
         **_cli_scratch_env(scratch),
         "FLOWGATE_API_BASE": agent_api_base or operator_api_base,
-        "FLOWGATE_BUNDLE_API": bundle_api_base,
     }
     decision, reason = _resolve_cli_launch(provider, run, cmd)
     if decision is None:

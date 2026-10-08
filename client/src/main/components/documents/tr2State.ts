@@ -160,6 +160,7 @@ export const BODY_ERROR_KEYS: Record<string, string> = {
 const APPLY_CODES = new Set(['tr2_validation_failed', 'tr2_apply_failed', 'tr2_commit_failed', 'tr2_recovery_required', 'tr2_history_invariant_error'])
 const PRECHECK_CODES = new Set([
   'tr2_source_drift', 'tr2_edit_not_applicable', 'tr2_worktree_dirty', 'tr2_source_locked', 'tr2_git_unavailable',
+  'tr2_source_root_missing', 'tr2_worktree_provision_failed',
   'tr2_validation_command_unapproved', 'tr2_validation_command_os_mismatch', 'tr2_validation_command_unverified',
   'tr2_workflow_conflict', 'tr2_precheck_failed', 'tr2_history_revision_required', 'tr2_nested_transaction', 'tr2_principal_required',
 ])
@@ -190,6 +191,8 @@ export function describeTr2Error(exc: any, t: Translate, te: Exists): Tr2ErrorIn
       return info(t('main.tr2_body.errors.immutable', { reason: t(te(reasonKey) ? reasonKey : 'main.tr2_body.errors.immutable_reason.unknown') }))
     }
     case 'tr2_in_progress': return info(t('main.tr2_body.errors.in_progress'))
+    // 0660 T0004 §3: a reopen whose commit cancel is still pending — not editable, not approvable.
+    case 'tr2_revert_pending': return info(codeText(code, t, te))
     case 'tr2_spec_invalid': return info(t('main.tr2_body.errors.invalid', { loc: details.loc ?? '', reason: details.reason ?? '' }))
     case 'tr2_item_not_found': return info(t('main.tr2_body.errors.not_found'))
     case 'tr2_path_unsafe': return info(t('main.tr2_body.errors.path_unsafe', { loc: details.loc ?? '' }))

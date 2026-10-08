@@ -208,7 +208,7 @@ def test_test_run_cases_insert_and_cascade_work_with_foreign_keys_on(all_migrati
     ).fetchone()["n"] == 0
 
 
-def test_sqloader_migrator_end_to_end_leaves_test_run_cases_bound(tmp_path):
+def test_sqloader_migrator_end_to_end_leaves_test_run_cases_bound(tmp_path, monkeypatch):
     """Same guarantee through the real deployment path.
 
     conftest's all_migrations_db applies migrations with sqlite3.executescript and
@@ -218,6 +218,7 @@ def test_sqloader_migrator_end_to_end_leaves_test_run_cases_bound(tmp_path):
     """
     import sqlite3
 
+    monkeypatch.setenv("USERNAME", "flowgate-test")
     from sqloader.migrator import DatabaseMigrator
     from sqloader.sqlite3 import SQLiteWrapper
 
@@ -234,7 +235,7 @@ def test_sqloader_migrator_end_to_end_leaves_test_run_cases_bound(tmp_path):
             row["filename"]
             for row in conn.execute("SELECT filename FROM migrations").fetchall()
         }
-        assert "074_test_run_cancel_status.sql" in applied
+        assert "074a_test_run_cancel_status.sql" in applied
         assert "075_test_run_cases_fk_repair.sql" in applied
 
         run_sql = conn.execute(

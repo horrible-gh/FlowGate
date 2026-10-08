@@ -25,7 +25,7 @@ from modules.flow_gate.db.git_integration import (
 from . import approval_intent
 from . import merge_target
 from .command import GIT_LOCAL_TIMEOUT_SEC
-from .commit import _release_cancel_lock
+from .commit import _acquire_group_lock, _release_group_lock
 from .credentials import GitServiceError, _author_env_from_cfg
 
 _log = logging.getLogger(__name__)
@@ -369,7 +369,9 @@ def tr_conflict_session(group_id: str) -> Optional[dict]:
     }
 
 
-def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
+def commit_tr_conflict(
+    group_id: str, merge_id: int, *, review_fingerprint: Optional[str] = None,
+) -> dict:
     """Commit a resolved TR conflict — the second press, and the reason there is one.
 
     A merge conflict may finish itself: both sides were written by people, "keep both" is
@@ -384,6 +386,13 @@ def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
     So: the session parks at ``review_state='resolved'``, the person reads the diff, and
     this is what they press. Returns the new commit and the session context; the ledger
     writes are the caller's (tr_commit_service owns the ledger, this module owns git).
+
+    0668 T0004: the common review screen's [승인] arrives here with the
+    ``review_fingerprint`` it showed. Under the lock the fingerprint must still be the
+    session's and the live tree must still be the frozen one; otherwise nothing is
+    committed, the candidate is re-frozen and ``stale_review`` asks for a fresh look —
+    the same contract ``approve_merge_review`` gives a merge. The legacy ``tr-commit``
+    route passes no fingerprint and keeps its old behaviour.
     """
     from modules.flow_gate.services import git_service as _gs
     session, cfg, project_id, root = _gs._session_context(group_id, merge_id)
@@ -410,12 +419,30 @@ def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
             f"git still reports {len(unmerged)} unmerged path(s)",
         )
 
-    holder = f"trconflict:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder, wait_sec=_gs.CANCEL_LOCK_WAIT_SEC):
+    # 0666 D 3.10: the Group's G — another Group's work no longer blocks this commit.
+    lock = _acquire_group_lock(project_id, group_id, "tr_conflict")
+    if lock is None:
         raise GitServiceError(
             409, "git_busy", f"another git operation is in progress for '{project_id}'"
         )
     try:
+        if review_fingerprint is not None:
+            fresh = _gs.db_git.session_context(_gs.db_git.get_session(merge_id))
+            if not fresh.get("review_fingerprint"):
+                fresh.update(_freeze_tr_candidate(root, fresh))
+                _gs.db_git.set_session_context(merge_id, fresh)
+            stale = review_fingerprint != fresh.get("review_fingerprint")
+            if not stale and not _live_tr_candidate_matches(root, fresh):
+                fresh.update(_freeze_tr_candidate(root, fresh))
+                fresh["last_error"] = {"code": "identity_mismatch"}
+                _gs.db_git.set_session_context(merge_id, fresh)
+                stale = True
+            if stale:
+                raise GitServiceError(
+                    409, "stale_review",
+                    "the reviewed tree has changed since this fingerprint was shown",
+                    {"review_fingerprint": fresh.get("review_fingerprint")},
+                )
         # A resolution that keeps the tree exactly as HEAD has it — "take ours" on every
         # chunk, which is a perfectly reasonable answer and one an AI will sometimes give.
         # There is nothing to commit then, and an empty commit is noise in the history
@@ -440,7 +467,7 @@ def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
         # Either way the revert is over; the sequencer state is what is left of it.
         _gs._run_git(["revert", "--quit"], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
     finally:
-        _release_cancel_lock(project_id, holder)
+        _release_group_lock(lock)
 
     _gs.db_git.close_session(merge_id, "done")
     _gs._set_status(group_id, context.get("prev_status") or "waiting")
@@ -448,6 +475,8 @@ def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
         "ok": True,
         "result": {
             "status": "empty" if empty else "committed", "kind": kind, "commit": commit,
+            # 0668: the common review vocabulary, next to the TR-specific status.
+            "review_state": "completed",
             "doc_id": context.get("doc_id"), "doc_code": context.get("doc_code"),
             "ledger_row_id": context.get("ledger_row_id"),
             "target_sha": context.get("target_sha"),
@@ -483,6 +512,139 @@ def abort_tr_conflict(group_id: str, merge_id: int) -> dict:
             "ledger_row_id": context.get("ledger_row_id"),
         },
     }
+
+
+def _freeze_tr_candidate(root: Path, context: dict) -> dict:
+    """0668 T0004 — the TR conflict's review candidate, frozen like a merge's.
+
+    A TR conflict used to end at ``review_state='resolved'`` with no record of WHAT was
+    resolved, so the commit press could not tell the tree it was shown from the tree it
+    commits. This records the same fields the merge review gate reads (``base_head``,
+    ``snapshot_tree``, ``changes``, ``review_fingerprint``) so the common review screen can
+    show the diff and ``approve`` can demand the fingerprint the person actually saw.
+    There is no MERGE_HEAD in a revert; the reverted commit stands in for it in the
+    fingerprint so two TRs resolving to the same tree still fingerprint differently.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    unmerged = _gs._unmerged_paths(root)
+    if unmerged:
+        raise GitServiceError(
+            409, "conflict_markers_remain",
+            f"git still reports {len(unmerged)} unmerged path(s)",
+        )
+    base_head = _gs._rev_parse(root, "HEAD")
+    write_tree = _gs._run_git(["write-tree"], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+    if write_tree.returncode != 0:
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(write_tree.stderr))
+    snapshot_tree = (write_tree.stdout or "").strip()
+    ls = _gs._run_git(["ls-tree", "-r", "-z", snapshot_tree], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+    if ls.returncode != 0:
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(ls.stderr))
+    manifest = _gs._parse_ls_tree_z(ls.stdout or "")
+    diff_proc = _gs._run_git(
+        ["diff", "--name-status", "-M", "-z", base_head or "", snapshot_tree, "--"],
+        cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC,
+    )
+    if diff_proc.returncode != 0:
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(diff_proc.stderr))
+    return {
+        "base_head": base_head,
+        "snapshot_tree": snapshot_tree,
+        "changes": _gs._parse_name_status_manifest(diff_proc.stdout or ""),
+        "review_fingerprint": _gs._compute_review_fingerprint(
+            base_head, context.get("target_sha"), None, manifest,
+        ),
+    }
+
+
+def _live_tr_candidate_matches(root: Path, context: dict) -> bool:
+    """Is the tree the TR commit would record RIGHT NOW the one that was reviewed?"""
+    from modules.flow_gate.services import git_service as _gs
+    if _gs._unmerged_paths(root):
+        return False
+    if _gs._rev_parse(root, "HEAD") != context.get("base_head"):
+        return False
+    write_tree = _gs._run_git(["write-tree"], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+    if write_tree.returncode != 0:
+        return False
+    return (write_tree.stdout or "").strip() == context.get("snapshot_tree")
+
+
+def _tr_review_context(group_id: str, merge_id: int) -> tuple[dict, dict, Path]:
+    """``(session, context, root)`` of a resolved TR conflict, freezing a candidate for a
+    session parked before 0668 (resolved, but never fingerprinted)."""
+    from modules.flow_gate.services import git_service as _gs
+    session, _cfg, _project_id, root = _gs._session_context(group_id, merge_id)
+    if _gs.db_git.session_kind(session) not in _gs.db_git.TR_SESSION_KINDS:
+        raise GitServiceError(409, "review_not_ready", "not a TR conflict session")
+    context = _gs.db_git.session_context(session)
+    if context.get("review_state") != TR_CONFLICT_REVIEW_RESOLVED:
+        raise GitServiceError(409, "review_not_ready", "this conflict has not been resolved yet")
+    if not context.get("review_fingerprint"):
+        context.update(_freeze_tr_candidate(root, context))
+        _gs.db_git.set_session_context(merge_id, context)
+    return session, context, root
+
+
+def tr_conflict_review(group_id: str, merge_id: int) -> dict:
+    """0668 T0004 — GET …/review for a TR conflict: the common review screen's payload.
+
+    Same shape as ``get_merge_review`` so one screen serves both. What a TR review does
+    not have is said with the capability flags rather than with a different screen: no
+    review conversation and no reject (there is no resolver baseline to re-run a revert
+    from — the resolver itself is where a TR resolution is redone), only approve.
+    Opening the review is activity, so it resets the sweep TTL (0205 L §1).
+    """
+    from modules.flow_gate.services import git_service as _gs
+    session, context, _root = _tr_review_context(group_id, merge_id)
+    _gs._touch_review_activity(merge_id)
+    return {
+        "ok": True,
+        "result": {
+            "group_id": group_id,
+            "merge_id": merge_id,
+            "kind": _gs.db_git.session_kind(session),
+            "review_state": _gs.REVIEW_STATE_PENDING,
+            "review_fingerprint": context.get("review_fingerprint"),
+            "instruction_generation": 0,
+            "base_head": context.get("base_head"),
+            "merge_head": None,
+            "snapshot_tree": context.get("snapshot_tree"),
+            "changes": context.get("changes") or [],
+            "conflict_origins": [],
+            "conflict_supersedes": [],
+            "conversation": [],
+            "held_test_operations": [],
+            "pending_conversation": None,
+            "resolver_provider": context.get("resolver_provider"),
+            "auto_authority": False,
+            "reconciliation_kind": None,
+            "last_error": context.get("last_error"),
+            "can_approve": True,
+            "can_reject": False,
+            "can_send": False,
+            "owner_type": _session_owner_type(session),
+            "tr_conflict": {
+                "doc_id": context.get("doc_id"),
+                "doc_code": context.get("doc_code"),
+                "target_sha": (context.get("target_sha") or "")[:7] or None,
+                "subject": context.get("subject"),
+            },
+        },
+    }
+
+
+def tr_conflict_review_file_diff(group_id: str, merge_id: int, path: str) -> dict:
+    """Old(``base_head``)/new(``snapshot_tree``) of one path in a TR review candidate."""
+    from modules.flow_gate.services import git_service as _gs
+    normalized = path.replace("\\", "/")
+    _session, context, root = _tr_review_context(group_id, merge_id)
+    old = _gs._diff_side_from_commit(root, context.get("base_head"), normalized)
+    new = _gs._diff_side_from_commit(root, context.get("snapshot_tree"), normalized)
+    return {"ok": True, "data": {
+        "group_id": group_id, "merge_id": merge_id, "path": path,
+        "status": _gs._diff_status(old, new, path), "old": old, "new": new,
+    }}
 
 
 def _split_content_segments(content: str) -> Optional[list[dict]]:
@@ -1088,6 +1250,8 @@ def list_conflicts(group_id: Optional[str], merge_id: int, *, project_id: Option
         # 0594 T0012 (additive): the branch this merge lands on ("ours").
         "target_branch": target_branch,
         "files": files,
+        "resolved_paths": [row["path"] for row in _gs.db_git.session_files(merge_id) if row["resolved"]],
+        "checkpoint_recovery": context.get("checkpoint_recovery"),
         # 0608 T0005: session files that differed only in line endings and were already
         # merged on normalised text (apply_eol_separation) — nothing to resolve there.
         "eol_only_paths": list(context.get("eol_only_paths") or []),
@@ -1125,34 +1289,42 @@ def _apply_conflict_resolution_locked(
     *,
     expected_project_id: str,
 ) -> dict:
-    """Apply a validated conflict submission inside the owning project's Git mutex.
+    """Apply a validated conflict submission inside the session's workspace lock.
 
     The pre-lock pass in resolve_conflicts performs expensive semantic validation.
     This boundary then re-reads the authoritative session/root and verifies both the
     registered path set and the exact pre-write file content before the first write.
-    Thus no TR2 approval or other project Git mutation can interleave between the
-    final ownership check and write/git-add/session update.
+    Thus no Git mutation of the same workspace (TR2 approval, review action, merge)
+    can interleave between the final ownership check and write/git-add/session update.
+    0669 unit 8b: that lock is the session's G / W / B, no longer the project mutex.
     """
     from modules.flow_gate.services import git_service as _gs
     from modules.flow_gate.storage.safe_path import resolve_in_root
 
-    holder = f"resolve:{merge_id}:{uuid.uuid4().hex}"
-    if not _gs._acquire_lock(expected_project_id, holder, wait_sec=_gs.LOCK_WAIT_SEC):
-        raise GitServiceError(
-            409, "git_busy",
-            f"another git operation is in progress for '{expected_project_id}'",
-        )
+    # 0669 unit 8b: the session's workspace domain (TR / group update: the Group's G;
+    # finalize / branch merge: the target's G / W / B) instead of the project mutex. The
+    # domain comes from a pre-lock read; everything below re-reads under it as before.
+    from . import branch_merge_publish as _bmp
+    session_kwargs = (
+        {"project_id": expected_project_id} if group_id is None else {}
+    )
+    prelock_session = _gs._session_context(group_id, merge_id, **session_kwargs)[0]
+    lock_ctx, held = _bmp.session_lock(
+        prelock_session, expected_project_id,
+        holder_kind=(
+            "tr_conflict"
+            if _gs.db_git.session_kind(prelock_session) in _gs.db_git.TR_SESSION_KINDS
+            else "merge_resolve"
+        ),
+    )
 
     automatic = False
     snapshot: Optional[dict] = None
     result: Optional[dict] = None
     try:
-        # Owner identity and source root are authoritative only after the project mutex
-        # is ours. Branch-merge sessions are project-addressed; all other sessions stay
-        # group-addressed exactly as before.
-        session_kwargs = (
-            {"project_id": expected_project_id} if group_id is None else {}
-        )
+        # Owner identity and source root are authoritative only after the session's
+        # domain is ours. Branch-merge sessions are project-addressed; all other sessions
+        # stay group-addressed exactly as before.
         session, cfg, project_id, root = _gs._session_context(
             group_id, merge_id, **session_kwargs
         )
@@ -1199,6 +1371,9 @@ def _apply_conflict_resolution_locked(
 
         for path, target, content, _original in locked_staged:
             _write_resolved_file(root, path, target, content)
+            if _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_MERGE:
+                from . import rerere_checkpoint
+                rerere_checkpoint.record_resolution(merge_id, root, path)
             proc = _gs._run_git(["add", "--", path], cwd=root)
             if proc.returncode != 0:
                 raise GitServiceError(
@@ -1250,6 +1425,7 @@ def _apply_conflict_resolution_locked(
                 },
             }
         elif _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_GROUP_UPDATE:
+            update_context = _gs.db_git.session_context(session)
             proc = _gs._run_git(
                 [*_gs._GIT_IDENT, "commit", "-m", "Merge updated base into group"],
                 cwd=root,
@@ -1262,6 +1438,9 @@ def _apply_conflict_resolution_locked(
                 )
             head = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=root)
             merge_commit = (head.stdout or "").strip() or None
+            recorded = _record_group_update_resolution(
+                group_id, merge_id, root, update_context, cfg,
+            )
             _gs.db_git.close_session(merge_id, "done")
             result = {
                 "ok": True,
@@ -1270,10 +1449,20 @@ def _apply_conflict_resolution_locked(
                     "merge_commit": merge_commit,
                     "pushed": False,
                     "remaining_conflicts": [],
+                    "source_ref": recorded.get("source_ref"),
+                    "source_sha": recorded.get("source_sha"),
                 },
             }
         elif _gs.db_git.session_kind(session) in _gs.db_git.TR_SESSION_KINDS:
-            _set_tr_review_state(merge_id, TR_CONFLICT_REVIEW_RESOLVED)
+            # 0668 T0004: freeze the candidate under the same mutex as the writes, so the
+            # common review screen shows exactly what the commit press will record.
+            context = _gs.db_git.session_context(session)
+            context.update(_freeze_tr_candidate(root, context))
+            context["review_state"] = TR_CONFLICT_REVIEW_RESOLVED
+            provider_id, provider_name = _resolver_run_provider(resolver_run_id)
+            context["resolver_provider"] = provider_name or provider_id
+            context["last_error"] = None
+            _gs.db_git.set_session_context(merge_id, context)
             result = {
                 "ok": True,
                 "result": {
@@ -1281,6 +1470,7 @@ def _apply_conflict_resolution_locked(
                     "merge_commit": None,
                     "pushed": False,
                     "remaining_conflicts": [],
+                    "review_fingerprint": context["review_fingerprint"],
                 },
             }
         else:
@@ -1320,10 +1510,11 @@ def _apply_conflict_resolution_locked(
                 },
             }
     finally:
-        _gs.db_git.release_lock(expected_project_id, holder)
+        _bmp.session_unlock(lock_ctx, held)
 
-    # approve_merge_review owns/acquires its own project-lock boundary. Calling it while
-    # the resolver mutex is still held would deadlock because the DB lock is not re-entrant.
+    # approve_merge_review takes its own locks (the same target domain plus R). Taking R
+    # while this hold is still open would be legal now, but the review keeps its own
+    # boundary as before.
     if automatic:
         assert snapshot is not None
         return _gs.approve_merge_review(
@@ -1335,6 +1526,32 @@ def _apply_conflict_resolution_locked(
         )
     assert result is not None
     return result
+
+
+def _record_group_update_resolution(
+    group_id: Optional[str], merge_id: int, root: Path, context: dict, cfg: dict,
+) -> dict:
+    """flowgate.default.0665 T0004: the resolved update advances the scope floor to the
+    source SHA the session pinned when it opened.  A session opened before that pin
+    existed records nothing (the floor stays at the older, over-inclusive value).  A
+    failed record undoes the merge commit and closes the session as aborted, so an
+    update is never reported successful with a mismatched floor."""
+    from modules.flow_gate.services import git_service as _gs
+    from . import scope_base
+    source_sha = context.get("source_sha")
+    if not group_id or not source_sha:
+        return {}
+    project_id = _gs._project_of_group(group_id)
+    try:
+        return scope_base.record_update(
+            project_id, group_id, root, source_ref=context.get("source_ref") or source_sha,
+            source_sha=source_sha, floor_before=context.get("floor_before") or "",
+            path="conflict", merge_id=merge_id, config=cfg,
+        )
+    except Exception:
+        _gs._run_git(["reset", "--hard", "HEAD^1"], cwd=root)
+        _gs.db_git.close_session(merge_id, "aborted")
+        raise
 
 
 def resolve_conflicts(
@@ -1493,7 +1710,7 @@ def _resolver_run_provider(run_id: Optional[str]) -> tuple[Optional[str], Option
 
 
 def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
-    """Manual [hold] — abort the merge, preserve the work branch, reopen re-merge
+    """Manual [abort] — discard this merge attempt and preserve the work branch
     (0205 P scenario 9). Shares its end state with the auto-recovery sweep; only
     the trigger differs. The merge:{id} release is now best-effort legacy cleanup
     (0205 §2.1 stopped holding that lock). _set_status already broadcasts
@@ -1518,7 +1735,10 @@ def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[
         # index and conflict files, and this session stays open (fail-closed 409).
         merge_target.raise_if_not_workspace_owner(merge_target.resolve_session_target(session))
     if root.exists():
-        _gs._run_git(["merge", "--abort"], cwd=root)
+        proc = _gs._run_git(["merge", "--abort"], cwd=root)
+        if proc.returncode:
+            raise GitServiceError(500, "git_error", "Merge abort failed",
+                                  diagnostic=_gs._last_line(proc.stderr))
     if kind == _gs.db_git.SESSION_KIND_GROUP_UPDATE:
         _gs.db_git.close_session(merge_id, "aborted")
         return {"ok": True, "result": {
@@ -1530,6 +1750,8 @@ def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[
     # pressing 최종승인 again simply starts over with a fresh intent id. Note this is
     # the ONLY discard path besides the §3.3 validity mismatch: a review rejection or
     # a re-review does NOT get here and must leave the intent alone.
+    if kind == _gs.db_git.SESSION_KIND_MERGE:
+        _gs.db_git.invalidate_resolution_checkpoint_for_merge(merge_id)
     discarded = approval_intent.discard_intent(merge_id)
     # 0594 T0012 §9.3: an attempt records `aborted` and releases only its own
     # workspace (owner marker match); a legacy row is closed exactly as before.
@@ -1537,7 +1759,6 @@ def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[
         session, merge_target.ATTEMPT_ABORTED, error={"code": "user_abort"},
     )
     _gs._set_status(group_id, "waiting")
-    _gs.db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
     return {"ok": True, "result": {
         "status": "waiting", "branch_preserved": True,
         "final_approval_intent_discarded": discarded is not None,

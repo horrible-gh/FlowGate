@@ -32,8 +32,6 @@ TURN_LIMIT_DEFAULT = 50
 TURN_LIMIT_MAX = 200
 RESPONSE_TURNS_BYTE_MAX = 262_144
 TURN_WIRE_OVERHEAD = 320
-OPENING_TURNS_MAX = 3
-OPENING_TURNS_BYTE_MAX = 8_192
 INTRO_BYTE_MAX = 16_384
 READ_REASONS = ("viewed", "delivered")
 
@@ -136,20 +134,11 @@ def _carried_over_from(doc: dict) -> Optional[str]:
 
 
 def build_head(doc: dict) -> dict:
-    """L0004 §2-10.  Same for every requester, so repeat AI calls see a stable background."""
+    """L0004 §2-10. Stable document metadata; conversation messages live in turns."""
     doc_id = doc["doc_id"]
     intro = intro_text(doc)
     if _byte_len(intro) > INTRO_BYTE_MAX:
         intro = _cut_to_bytes(intro, INTRO_BYTE_MAX) + "\n…(intro truncated)"
-
-    opening: list[dict] = []
-    used = 0
-    for row in turn_store.first_turns(doc_id, OPENING_TURNS_MAX):
-        size = _byte_len(row.get("body"))
-        if opening and used + size > OPENING_TURNS_BYTE_MAX:
-            break
-        opening.append(turn_wire(row))
-        used += size
 
     return {
         "doc_id": doc_id,
@@ -159,7 +148,6 @@ def build_head(doc: dict) -> dict:
         "group_id": doc.get("group_id"),
         "target_id": doc.get("target_id") or doc.get("triggered_by"),
         "intro": intro,
-        "opening_turns": opening,
         "carried_over_from": _carried_over_from(doc),
         "total_turns": turn_store.count_turns(doc_id),
         "head_seq": turn_store.current_head_seq(doc_id),

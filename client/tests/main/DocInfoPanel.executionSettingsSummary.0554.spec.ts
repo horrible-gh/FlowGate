@@ -1,7 +1,8 @@
-// flowgate.default.0554 T0010 §9 / D0007 §6.3 — the two always-visible sidebar summary lines
-// ("검수 설정된 단계" / "사전지시 작성된 단계") the approved deck t17hbdfg v8 draws next to the
-// work-plan editor. Unlike the [프로바이더 배정] box above them, these render even when nothing
-// is set — a short "없음" line rather than being hidden entirely.
+// flowgate.default.0554 T0010 §9 / D0007 §6.3 drew two always-visible sidebar summary lines
+// ("검수 설정 요약" / "사전지시 작성 현황") next to the work-plan editor.
+// flowgate.default.0649 T#3 (NR0003 §9) removes exactly those two lines. What stays: the
+// [프로바이더 배정 (단계 기준)] box fed by the same GET, and — in the editor, not here — the
+// per-step review pill and pre-instruction drawer.
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
@@ -30,10 +31,17 @@ const baseProps = {
   collapsed: false,
 }
 
-function mountPanel(planBody: any, typeCode: string | null = 'WP') {
+function mountPanel(
+  planBody: any,
+  typeCode: string | null = 'WP',
+  assignments: Array<{ provider_id: string; display_name: string; step_count: number }> = [],
+  unassigned = 0,
+) {
   getRequest.mockImplementation((url: string) => {
     if (url.includes('/work-plan')) {
-      return Promise.resolve({ data: { assignment_summary: [], unassigned_step_count: 0, body: planBody } })
+      return Promise.resolve({
+        data: { assignment_summary: assignments, unassigned_step_count: unassigned, body: planBody },
+      })
     }
     return Promise.resolve({ data: { qa: { items: [] } } })
   })
@@ -56,32 +64,47 @@ const STEPS = [
   { key: 'TSR#1', locked: true, pair_role: 'result', review_count: 0, pre_instruction_text: null, pre_instruction_attachment: null },
 ]
 
-describe('DocInfoPanel — 검수/사전지시 요약 (0554 T0010 §9)', () => {
-  it('검수·사전지시가 설정된 단계 수와 목록을 보여준다 (잠긴 단계는 분모·목록 모두에서 제외)', async () => {
+describe('DocInfoPanel — 검수/사전지시 요약 제거 (0649 T#3, NR0003 §9)', () => {
+  it('검수·사전지시가 설정된 WP에서도 두 요약 섹션은 렌더되지 않는다', async () => {
     const wrapper = mountPanel({ steps: STEPS })
     await flushPromises()
 
-    // 4 unlocked steps total, 2 with review_count != 0 (T#1, TR#1).
-    expect(wrapper.get('[data-test="wp-review-summary"]').text())
-      .toBe(i18n.global.t('main.doc_info_panel.wp_review_summary_text', { total: 4, n: 2, list: 'T#1 · TR#1' }))
-
-    // Instruction-eligible = non-result, non-locked = D#1, T#1, TS#1 (3). Written = T#1, TS#1 (2).
-    expect(wrapper.get('[data-test="wp-instruction-summary"]').text())
-      .toBe(i18n.global.t('main.doc_info_panel.wp_instruction_summary_text', { total: 3, n: 2, list: 'T#1 · TS#1' }))
+    expect(wrapper.find('[data-test="wp-review-summary"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="wp-instruction-summary"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('검수 설정 요약')
+    expect(wrapper.text()).not.toContain('사전지시 작성 현황')
   })
 
-  it('아무것도 설정되지 않으면 짧은 없음 상태만 보인다', async () => {
-    const empty = STEPS.map((s) => ({ ...s, review_count: 0, pre_instruction_text: null, pre_instruction_attachment: null }))
-    const wrapper = mountPanel({ steps: empty })
+  it('요약 문구 i18n 키도 ko/en/ja 에서 사라졌다', () => {
+    for (const locale of ['ko', 'en', 'ja'] as const) {
+      const messages = i18n.global.getLocaleMessage(locale) as any
+      const panel = messages.main.doc_info_panel
+      for (const key of [
+        'wp_review_summary_title', 'wp_review_summary_text', 'wp_review_summary_none',
+        'wp_instruction_summary_title', 'wp_instruction_summary_text', 'wp_instruction_summary_none',
+      ]) {
+        expect(panel[key], `${locale}.${key}`).toBeUndefined()
+      }
+      // the kept box's copy is still there
+      expect(typeof panel.wp_assignments).toBe('string')
+    }
+  })
+
+  it('유지 대상: 프로바이더 배정(단계 기준) 섹션은 그대로 보인다', async () => {
+    const wrapper = mountPanel(
+      { steps: STEPS },
+      'WP',
+      [{ provider_id: 'p1', display_name: 'Provider One', step_count: 3 }],
+      1,
+    )
     await flushPromises()
 
-    expect(wrapper.get('[data-test="wp-review-summary"]').text())
-      .toBe(i18n.global.t('main.doc_info_panel.wp_review_summary_none'))
-    expect(wrapper.get('[data-test="wp-instruction-summary"]').text())
-      .toBe(i18n.global.t('main.doc_info_panel.wp_instruction_summary_none'))
+    expect(wrapper.text()).toContain(i18n.global.t('main.doc_info_panel.wp_assignments'))
+    expect(wrapper.find('.dip-wp-assignments').text()).toContain('Provider One')
+    expect(wrapper.text()).toContain(i18n.global.t('main.doc_info_panel.wp_unassigned_steps', { n: 1 }))
   })
 
-  it('WP가 아닌 문서에서는 두 요약 섹션이 아예 렌더되지 않는다', async () => {
+  it('WP가 아닌 문서에서도 요약 섹션은 없다', async () => {
     const wrapper = mountPanel({ steps: STEPS }, 'T')
     await flushPromises()
 

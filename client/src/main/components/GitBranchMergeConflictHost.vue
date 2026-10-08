@@ -39,8 +39,11 @@
     :selected-provider="aiProviderStore.selectedProviderId"
     :provider-loading="aiProviderStore.loading"
     :provider-errored="!!aiProviderStore.error"
+    :abortable="true"
+    :abort-busy="busy"
     @close="emit('close')"
     @resolved="onReviewResolved"
+    @abort="abortFromReview"
     @update:provider="aiProviderStore.selectProvider"
   />
 </template>
@@ -50,6 +53,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { resolveGitError } from '@shared/gitErrors'
+import { confirm } from '../composables/useDialogStack'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { useToast } from './common/useToast'
 import {
@@ -85,6 +89,10 @@ const { initConflictFile } = useConflictChunks()
 
 const REVIEW_STATES = new Set(['resolved_pending_review', 're_review', 'applying', 'reconciling'])
 const RESOLVE_STATES = new Set(['conflict', 'ai_resolving', 'conflict_remaining', 'interrupted', 'starting'])
+// 0683 T0004 §1 — states the server can still move on its own (the AI resolver finishing,
+// the attempt leaving `starting`); the host keeps reading them so a resolution that lands
+// while this dialog is open hands over to the review instead of sitting on the resolver.
+const LIVE_STATES = new Set(['ai_resolving', 'starting'])
 const POLL_MS = 3000
 
 const attempt = ref<BranchMergeAttempt | null>(null)
@@ -188,7 +196,7 @@ async function reload() {
 function schedulePoll() {
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = null
-  if (disposed || attempt.value?.state !== 'ai_resolving') return
+  if (disposed || !LIVE_STATES.has(attempt.value?.state || '')) return
   pollTimer = setTimeout(async () => {
     if (disposed) return
     const before = attempt.value?.state
@@ -196,6 +204,10 @@ function schedulePoll() {
       const current = await loadAttempt()
       if (current && current.state !== before) {
         if (!settleMode(current)) return
+        if (mode.value === 'review') {
+          // `resolved_pending_review` is not a finished merge: say the review is where it goes on.
+          showToast(t('main.git_review.resolved_pending_opened'), 'success')
+        }
         if (mode.value === 'resolve') await loadConflicts()
         errorMessage.value = aiFailureText()
         emit('changed')
@@ -278,9 +290,28 @@ async function abortMerge() {
     emit('close')
   } catch (e: any) {
     errorMessage.value = resolveGitError(e, t, 'main.git_branch_manager.op_failed')
+    // The review dialog has no error line of its own; never let a refused abort go unseen.
+    if (mode.value === 'review') showToast(errorMessage.value, 'danger')
   } finally {
     busy.value = false
   }
+}
+
+// 0683 T0004 §2 — giving the merge up from its review: the same project route the resolver's
+// [중단] uses (merge --abort → aborted → workspace released → resolver stopped).
+async function abortFromReview() {
+  if (busy.value) return
+  const att = attempt.value
+  const ok = await confirm({
+    title: t('main.git_branch_manager.review_abort_confirm_title'),
+    message: t('main.git_branch_manager.review_abort_confirm_message', {
+      source: att?.source_branch || '', target: att?.target_branch || '',
+    }),
+    danger: true,
+    confirmLabel: t('main.git_review.abort'),
+  })
+  if (!ok) return
+  await abortMerge()
 }
 
 async function onReviewResolved() {

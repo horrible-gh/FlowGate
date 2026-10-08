@@ -371,14 +371,20 @@ def test_readiness_names_what_approval_would_refuse(env):
 def test_readiness_after_a_reopen_requires_a_new_revision(env):
     """A Time Machine reopen puts an applied revision back in review; approval would refuse
     it (tr2_history_revision_required), so the read model must not call it ready."""
-    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import workflow_rework_service
+    from modules.flow_gate.services.mutation_policy import human_principal
     group = make_group("0110")
     client = full_api()
     (env["repo"] / "gate.ok").write_bytes(b"ok")
     t2 = auto_approved_t2(group)
     doc_id = submit_tr2(group, t2)
     assert approve(client, doc_id, 1, request_key="reopen:0110").status_code == 200
-    db_docs.update(doc_id, {"doc_review_status": "pending_review"})  # what a reopen leaves
+    # 0660 T0004 §3: a real reopen (status AND commit cancel). Flipping only the status
+    # is the RC3 state, which test_tr2_lifecycle_0660 covers as revert_pending.
+    user = {"user_id": USER, "is_admin": 1, "username": "tr2reviewer"}
+    workflow_rework_service.reopen_to_target(
+        doc_id=doc_id, target_seq=doc_row(doc_id)["seq"], actor=user,
+        mutation_context=human_principal(user))
     state = view(client, doc_id)["readiness"]
     assert (state["ready"], state["code"]) == (False, "tr2_history_revision_required")
     again = approve(client, doc_id, 1, request_key="reopen:0110:again")
@@ -453,7 +459,8 @@ def test_read_model_loads_the_proposal_when_the_worktree_is_unavailable(env, mon
 
 
 def test_time_machine_new_revision_reapproves_from_reverted_source(env):
-    """Cancel keeps ownership; a newly saved edit uses the reverted source baseline."""
+    """Cancel releases ownership (0641 file policy: a canceled lineage is inactive) and the
+    new approval takes it back; a newly saved edit uses the reverted source baseline."""
     from modules.flow_gate.db import tr_commit_ledger as db_ledger
     from modules.flow_gate.db import tr2_approval_attempts as db_attempts
     from modules.flow_gate.services import tr2_file_policy, workflow_rework_service
@@ -477,7 +484,7 @@ def test_time_machine_new_revision_reapproves_from_reverted_source(env):
     assert canceled_head != first_head
     assert source.read_bytes() == b"greeting = 'hello'\ncount = 1\n"
     assert git(env["repo"], "status", "--porcelain") == ""
-    assert tr2_file_policy.managed_paths(group["group_id"]) == {"src/app.txt"}
+    assert tr2_file_policy.managed_paths(group["group_id"]) == set()
     unchanged = approve(client, doc_id, 1, request_key="tm:0141:same")
     assert unchanged.status_code == 409
     assert unchanged.json()["code"] == "tr2_history_revision_required"

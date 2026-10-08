@@ -205,6 +205,11 @@ def _group_env(monkeypatch, tmp_path: Path, *, worktree: bool = True) -> tuple[P
     )
     monkeypatch.setattr(svc.db_git, "get_config", lambda pid: {"base_branch": "main"})
     monkeypatch.setattr(svc, "_run_git", lambda args, **kw: _Proc(0, "mergebase\n"))
+    # 0665 T0004: the old side is the group's RECORDED scope floor.
+    monkeypatch.setattr(svc, "resolve_scope_floor", lambda *a, **k: {
+        "floor_sha": "mergebase", "work_base_ref": "main", "work_base_sha": "mergebase",
+        "work_base_sync_sha": None, "work_base_state": "verified",
+    })
     monkeypatch.setattr(
         svc, "_group_worktree_path",
         lambda pid, gid, branch: wt_path if worktree else None,
@@ -274,14 +279,21 @@ def test_group_diff_rejects_a_non_sha_ref_pin(monkeypatch, tmp_path):
     assert exc.value.status == 400
 
 
-def test_group_diff_500s_when_no_merge_base_exists(monkeypatch, tmp_path):
+def test_group_diff_fails_explicitly_when_the_scope_floor_is_unusable(monkeypatch, tmp_path):
+    """0665 T0004: no recorded/verified floor is an explicit error -- the diff never
+    falls back to a merge-base with the project base."""
     _group_env(monkeypatch, tmp_path)
     _blobs(monkeypatch, {})
-    monkeypatch.setattr(svc, "_run_git", lambda args, **kw: _Proc(1, "", "no merge base"))
+
+    def unusable(*a, **k):
+        raise GitServiceError(409, "group_work_base_diverged", "floor unusable")
+
+    monkeypatch.setattr(svc, "resolve_scope_floor", unusable)
 
     with pytest.raises(GitServiceError) as exc:
         svc.read_group_file_diff("p1", "g1", "a.py")
-    assert exc.value.status == 500
+    assert exc.value.status == 409
+    assert exc.value.code == "group_work_base_diverged"
 
 
 def test_group_diff_cannot_escape_the_worktree(monkeypatch, tmp_path):

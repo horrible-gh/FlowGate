@@ -136,14 +136,14 @@ FIELDS = {
         "en": [("path", "string", True, None, "Path relative to the source root. Absolute paths and '..' are forbidden."), ("max_bytes", "integer", False, None, "Maximum bytes to read. If omitted, the whole file is read unless it exceeds the server limit, which returns 413."), ("offset", "integer", False, 0, "Zero-based byte position where reading starts."), ("length", "integer", False, None, "Maximum byte-window length. When used with max_bytes, the smaller value applies."), ("encoding", "string", False, "utf-8", "Decoding charset. Undecodable characters are replaced."), ("start_line", "integer", False, None, "1-based line number to start reading from. Must be sent together with end_line, and never together with offset/length/max_bytes."), ("end_line", "integer", False, None, "1-based, inclusive line number to stop reading at. Must satisfy start_line <= end_line. Past EOF, only the available lines are returned.")],
     },
     "diff": {
-        "ko": [("path", "string", False, None, "선택적 소스 루트 상대 경로."), ("target_ref", "string", False, "origin/main", "비교할 상대 ref. 옵션형과 revspec은 금지.")],
-        "ja": [("path", "string", False, None, "任意のソースルート相対パス。"), ("target_ref", "string", False, "origin/main", "比較対象ref。option形式とrevspecは禁止。")],
-        "en": [("path", "string", False, None, "Optional source-root-relative path."), ("target_ref", "string", False, "origin/main", "Target ref; option-shaped values and revspecs are forbidden.")],
+        "ko": [("path", "string", False, None, "선택적 소스 루트 상대 경로."), ("target_ref", "string", False, None, "비교할 상대 ref. 옵션형과 revspec은 금지. 생략하면 토큰 Group의 work base(Group이 없으면 Project base) start point — origin이 앞서면 origin/<branch>, 아니면 <branch>.")],
+        "ja": [("path", "string", False, None, "任意のソースルート相対パス。"), ("target_ref", "string", False, None, "比較対象ref。option形式とrevspecは禁止。省略時はトークンGroupのwork base(Groupがなければ Project base)のstart point — originが進んでいれば origin/<branch>、そうでなければ <branch>。")],
+        "en": [("path", "string", False, None, "Optional source-root-relative path."), ("target_ref", "string", False, None, "Target ref; option-shaped values and revspecs are forbidden. Omitted: the token group's work base (the project base without a group) start point — origin/<branch> when origin is ahead, else <branch>.")],
     },
     "log": {
-        "ko": [("path", "string", False, None, "선택적 소스 루트 상대 경로."), ("target_ref", "string", False, "origin/main", "비교할 상대 ref. 옵션형과 revspec은 금지."), ("max_count", "integer", False, None, "반환할 최대 커밋 수. 양의 정수."), ("side", "string", False, "target", "target=merge-base..target_ref(기본값) / head=merge-base..HEAD. HEAD 쪽에만 있는 커밋은 side=head 로 조회한다.")],
-        "ja": [("path", "string", False, None, "任意のソースルート相対パス。"), ("target_ref", "string", False, "origin/main", "比較対象ref。option形式とrevspecは禁止。"), ("max_count", "integer", False, None, "返す最大commit数。正の整数。"), ("side", "string", False, "target", "target=merge-base..target_ref(既定) / head=merge-base..HEAD。HEAD側にのみあるcommitはside=headで取得する。")],
-        "en": [("path", "string", False, None, "Optional source-root-relative path."), ("target_ref", "string", False, "origin/main", "Target ref; option-shaped values and revspecs are forbidden."), ("max_count", "integer", False, None, "Maximum commits to return; a positive integer."), ("side", "string", False, "target", "target=merge-base..target_ref (default) / head=merge-base..HEAD. Use side=head to see commits that exist only on HEAD.")],
+        "ko": [("path", "string", False, None, "선택적 소스 루트 상대 경로."), ("target_ref", "string", False, None, "비교할 상대 ref. 옵션형과 revspec은 금지. 생략하면 토큰 Group의 work base(Group이 없으면 Project base) start point — origin이 앞서면 origin/<branch>, 아니면 <branch>."), ("max_count", "integer", False, None, "반환할 최대 커밋 수. 양의 정수."), ("side", "string", False, "target", "target=merge-base..target_ref(기본값) / head=merge-base..HEAD. HEAD 쪽에만 있는 커밋은 side=head 로 조회한다.")],
+        "ja": [("path", "string", False, None, "任意のソースルート相対パス。"), ("target_ref", "string", False, None, "比較対象ref。option形式とrevspecは禁止。省略時はトークンGroupのwork base(Groupがなければ Project base)のstart point — originが進んでいれば origin/<branch>、そうでなければ <branch>。"), ("max_count", "integer", False, None, "返す最大commit数。正の整数。"), ("side", "string", False, "target", "target=merge-base..target_ref(既定) / head=merge-base..HEAD。HEAD側にのみあるcommitはside=headで取得する。")],
+        "en": [("path", "string", False, None, "Optional source-root-relative path."), ("target_ref", "string", False, None, "Target ref; option-shaped values and revspecs are forbidden. Omitted: the token group's work base (the project base without a group) start point — origin/<branch> when origin is ahead, else <branch>."), ("max_count", "integer", False, None, "Maximum commits to return; a positive integer."), ("side", "string", False, "target", "target=merge-base..target_ref (default) / head=merge-base..HEAD. Use side=head to see commits that exist only on HEAD.")],
     },
     "show": {
         "ko": [("sha", "string", True, None, "조회할 commit의 hex id(4~64자). 옵션형 문자열이나 revspec은 거절된다.")],
@@ -151,9 +151,9 @@ FIELDS = {
         "en": [("sha", "string", True, None, "Hex id of the commit to inspect (4-64 chars). Option-shaped strings and revspecs are rejected.")],
     },
     "merge_preview": {
-        "ko": [("target_ref", "string", False, "origin/main", "비교할 상대 ref. 옵션형과 revspec은 금지.")],
-        "ja": [("target_ref", "string", False, "origin/main", "比較対象ref。option形式とrevspecは禁止。")],
-        "en": [("target_ref", "string", False, "origin/main", "Target ref; option-shaped values and revspecs are forbidden.")],
+        "ko": [("target_ref", "string", False, None, "비교할 상대 ref. 옵션형과 revspec은 금지. 생략하면 토큰 Group의 work base(Group이 없으면 Project base) start point — origin이 앞서면 origin/<branch>, 아니면 <branch>.")],
+        "ja": [("target_ref", "string", False, None, "比較対象ref。option形式とrevspecは禁止。省略時はトークンGroupのwork base(Groupがなければ Project base)のstart point — originが進んでいれば origin/<branch>、そうでなければ <branch>。")],
+        "en": [("target_ref", "string", False, None, "Target ref; option-shaped values and revspecs are forbidden. Omitted: the token group's work base (the project base without a group) start point — origin/<branch> when origin is ahead, else <branch>.")],
     },
     "grep": {
         "ko": [("pattern", "string", True, None, "찾을 정규식(파이썬 re 문법)."), ("path", "string", False, "", "검색을 시작할 디렉터리. 비우면 소스 루트 전체."), ("glob", "string", False, None, "파일 필터. 예: **/*.py"), ("ignore_case", "boolean", False, False, "대소문자 무시."), ("max_results", "integer", False, None, "돌려줄 최대 매치 수. 채워지면 그 파일까지만 훑고 멈춘다.")],

@@ -109,11 +109,6 @@ def cleanup(run: dict, *, handoff: bool = False, reason: str = "normal_finish") 
         )
 
     attempt(run, "snapshot_cleanup", _cleanup_run_snapshots)
-    def _cleanup_run_bundle_scratch() -> None:
-        from modules.flow_gate.services import source_bundle_cleanup_service
-        source_bundle_cleanup_service.cleanup_for_run(str(run.get("run_id") or ""))
-
-    attempt(run, "source_bundle_scratch_cleanup", _cleanup_run_bundle_scratch)
 
     run.setdefault("outcome", "none")
     if not run.get("outcome"):

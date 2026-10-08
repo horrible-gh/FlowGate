@@ -88,6 +88,9 @@ def post_test_results(body: TestResultsBody, request: Request):
     """Record results for an approved specification TS (0549 T0008).
 
     Manual, external and imported automated (JUnit XML) results share this one model.
+    0684 T#3 (D#1 §3-8): a result for an automated Case the server runs is refused item by
+    item (``refused_results``) -- its official result comes from a server run only.
+
     Same permission gate as starting a run (admin or perm_test_run). The server maps the
     results onto the TS Case IDs, computes the overall verdict itself (a submitted
     ``overall`` is ignored), writes the TSR test report and applies the test gate.
@@ -202,3 +205,105 @@ def _build_api_base(request: Request) -> str:
     base = str(request.base_url).rstrip("/")
     context = settings.CONTEXT.rstrip("/")
     return f"{base}{context}/api/v1"
+
+
+@router.post("/documents/{ts_id}/test-spec/runs")
+def post_spec_run(ts_id: str, request: Request):
+    return _post_spec_execution(ts_id, None, request)
+
+
+@router.post("/documents/{ts_id}/test-spec/cases/{case_id}/run")
+def post_spec_case_run(ts_id: str, case_id: str, request: Request):
+    return _post_spec_execution(ts_id, case_id, request)
+
+
+def _post_spec_execution(ts_id: str, case_id: Optional[str], request: Request):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if not auth.get("_is_user_jwt"):
+        return JSONResponse(status_code=403, content={"error": "user_session_required"})
+    doc = db_docs.get_by_id(ts_id)
+    if doc is None:
+        return JSONResponse(status_code=404, content={"error": "doc_not_found", "doc_id": ts_id})
+    if not test_run_service.user_can_run_tests(
+        auth["issued_to"], doc.get("project_id") or "", bool(auth.get("is_admin"))
+    ):
+        return JSONResponse(status_code=403, content={"error": "permission_denied"})
+    from modules.flow_gate.services import spec_execution_service
+    try:
+        result = spec_execution_service.admit(
+            ts_id, case_id=case_id, runner_id=auth.get("issued_to") or "system",
+            locale=request.headers.get("x-locale") or "ko",
+        )
+    except Exception as exc:
+        if hasattr(exc, "status_code"):
+            return _err(exc)
+        raise
+    return JSONResponse(status_code=202, content=result)
+
+
+class TestAssetWriteBody(BaseModel):
+    expected_hash: str
+    content: str
+
+
+def _test_asset_auth(ts_id: str, request: Request):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if not auth.get("_is_user_jwt"):
+        return JSONResponse(status_code=403, content={"error": "user_session_required"})
+    doc = db_docs.get_by_id(ts_id)
+    if doc is None:
+        return JSONResponse(status_code=404, content={"error": "doc_not_found", "doc_id": ts_id})
+    if not test_run_service.user_can_run_tests(
+        auth["issued_to"], doc.get("project_id") or "", bool(auth.get("is_admin"))
+    ):
+        return JSONResponse(status_code=403, content={"error": "permission_denied"})
+    return auth
+
+
+@router.get("/documents/{ts_id}/test-spec/assets")
+def get_spec_assets(ts_id: str, request: Request):
+    auth = _test_asset_auth(ts_id, request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    from modules.flow_gate.services import test_asset_service
+    try:
+        return test_asset_service.manifest(ts_id)
+    except Exception as exc:
+        if hasattr(exc, "status_code"):
+            return _err(exc)
+        raise
+
+
+@router.get("/documents/{ts_id}/test-spec/assets/{path:path}")
+def get_spec_asset(ts_id: str, path: str, request: Request):
+    auth = _test_asset_auth(ts_id, request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    from modules.flow_gate.services import test_asset_service
+    try:
+        return test_asset_service.content(ts_id, path)
+    except Exception as exc:
+        if hasattr(exc, "status_code"):
+            return _err(exc)
+        raise
+
+
+@router.put("/documents/{ts_id}/test-spec/assets/{path:path}")
+def put_spec_asset(ts_id: str, path: str, body: TestAssetWriteBody, request: Request):
+    auth = _test_asset_auth(ts_id, request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    from modules.flow_gate.services import test_asset_service
+    try:
+        return test_asset_service.update(
+            ts_id, path, expected_hash=body.expected_hash, content=body.content,
+            actor_id=auth["issued_to"], locale=request.headers.get("x-locale") or "ko",
+        )
+    except Exception as exc:
+        if hasattr(exc, "status_code"):
+            return _err(exc)
+        raise

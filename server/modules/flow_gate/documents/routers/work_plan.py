@@ -92,6 +92,9 @@ class WorkPlanSuggest(BaseModel):
 
 class WorkPlanApplyPreview(BaseModel):
     instruction_mode: str = "auto_approved"
+    # 0649 T#1 (NR0003 O0/§5.4): codes the person already confirmed, e.g.
+    # "legacy_card_unresolved" — the preview then no longer counts it as a blocker.
+    acknowledged_codes: Optional[list[str]] = None
 
 
 class WorkPlanSequenceCandidates(BaseModel):
@@ -106,6 +109,9 @@ class WorkPlanApply(BaseModel):
     change_workflow: bool
     workflow_tag: str
     wp_revision_no: int
+    # 0649 T#1 (NR0003 O0/§5.4): without "legacy_card_unresolved" here, an apply over started
+    # legacy rows whose card cannot be proven is refused with 409 legacy_card_unresolved.
+    acknowledged_codes: Optional[list[str]] = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -321,8 +327,23 @@ def _emit(doc: dict, operation: str, payload: dict, actor: str) -> None:
         logger.warning(f"[work-plan] SSE publish failed (ignored): {exc}")
 
 
+def _started_card_ids(doc: dict, body: dict) -> set:
+    """0649 T#3 (NR0003 O7): cards the editor must keep in place — best effort.
+
+    A read failure only drops the editor's early lock; apply/pour/PATCH still refuse a plan
+    that moves or removes a started card (O2 and the post-write check).
+    """
+    try:
+        return set(wpa.started_card_ids(doc, body))
+    except Exception as exc:  # noqa: BLE001
+        import LogAssist.log as logger
+        logger.warning(f"[work-plan] started card lookup failed (ignored): {exc}")
+        return set()
+
+
 def _read_view(doc: dict, body: dict) -> dict:
     providers = _providers(doc.get("project_id") or "")
+    started_cards = _started_card_ids(doc, body)
     meta = {}
     try:
         meta = _json.loads(doc.get("meta") or "{}") or {}
@@ -379,6 +400,10 @@ def _read_view(doc: dict, body: dict) -> dict:
         "step_execution_status": [
             {
                 "step_key": step.get("key"),
+                # 0649 T#3 (NR0003 O7): which card the row belongs to and whether that card
+                # already started in the workflow (it cannot be moved or removed).
+                "card_id": step.get("card_id"),
+                "started": step.get("card_id") in started_cards,
                 "reviewer_provider": {
                     "provider_id": step.get("reviewer_provider_id"),
                     "enabled": (
@@ -947,8 +972,16 @@ def save_work_plan(
     # user throw away their edits with [reload] only to be told the values were
     # invalid anyway — two rounds of wasted work for one mistake.
     try:
-        plan = wp.validate(
+        # 0649 T#1 (NR0003 §5.1): card ids are checked against the body this save replaces
+        # and new cards get a server-assigned id, before the single-body validator runs.
+        submitted = wp.assign_card_ids(
             body.body,
+            wp.load_previous_body(doc),
+            project_id=doc.get("project_id"),
+            action="save",
+        )
+        plan = wp.validate(
+            submitted,
             project_id=doc.get("project_id"),
             doc_id=doc_id,
             action="save",
@@ -1307,6 +1340,7 @@ def _preview_sync(doc_id: str, body: WorkPlanApplyPreview, locale: str) -> dict:
         providers=_providers(doc.get("project_id") or ""),
         instruction_mode=body.instruction_mode,
         locale=locale,
+        acknowledged_codes=body.acknowledged_codes,
     )
 
 
@@ -1354,6 +1388,7 @@ def _apply_sync(
             wp_revision_no=body.wp_revision_no,
             applied_by=applied_by,
             locale=locale,
+            acknowledged_codes=body.acknowledged_codes,
         )
     except wpa.ApplyConflict as exc:
         copy = {
@@ -1367,9 +1402,24 @@ def _apply_sync(
                 "en": "The work plan changed after preview. Re-read it.",
                 "ja": "プレビュー後に作業計画が変わりました。読み直してください。",
             },
+            # 0649 T#1 (NR0003 O0): the same copy the preview warning shows.
+            "legacy_card_unresolved": {
+                lang: wpa._COPY[lang]["legacy_card_unresolved"].format(
+                    count=len(exc.payload.get("rows") or []),
+                )
+                for lang in ("ko", "en", "ja")
+            },
         }
+        # 0649 T#2 (NR0003 O2-O5): the card-order refusals speak with the preview's own copy.
+        if exc.code not in copy and exc.code in wpa._COPY["ko"]:
+            count = len(
+                exc.payload.get("rows") or exc.payload.get("cards") or exc.payload.get("keys") or []
+            ) or 1
+            copy[exc.code] = {
+                lang: wpa._COPY[lang][exc.code].format(count=count) for lang in ("ko", "en", "ja")
+            }
         payload = dict(exc.payload)
-        payload["message"] = copy[exc.code].get(locale, copy[exc.code]["ko"])
+        payload["message"] = (copy.get(exc.code) or {}).get(locale) or (copy.get(exc.code) or {}).get("ko") or exc.code
         return JSONResponse(status_code=409, content=payload)
 
 

@@ -1,7 +1,6 @@
 """Git integration storage (flowgate.default.0115 DB0007, migration 056).
 
-project_git_config / group_git_state / git_merge_session(+_file) / git_project_lock
-CRUD. Follows the dominant inline-SQL pattern (get_store()._fetch_one/_fetch_all/
+project_git_config / group_git_state / git_merge_session(+_file) CRUD. Follows the dominant inline-SQL pattern (get_store()._fetch_one/_fetch_all/
 _execute) used by db/remote_tool_grants.py.
 
 Secret handling invariant (DB0007 I5): ``secret_enc`` only ever receives values
@@ -11,10 +10,13 @@ and never logs it.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Optional
 
 from . import meta_cache
 from .connection import get_store, now_iso
+
+_log = logging.getLogger(__name__)
 
 PROVIDER_VALUES = ("github", "gitlab", "gitea", "gitbucket", "generic")
 ACTION_VALUES = ("merge", "merge_only", "push", "wait")
@@ -185,6 +187,207 @@ def set_initial_source_sync(group_id: str, sha: Optional[str]) -> None:
         "UPDATE group_git_state SET initial_source_sync_at = ?, "
         "initial_source_sync_sha = ?, updated_at = ? WHERE group_id = ?",
         [now_iso(), sha, now_iso(), group_id],
+    )
+
+
+# ── group work-base commit record (flowgate.default.0665 T0004, migration 129) ──
+
+WORK_BASE_VERIFIED = "verified"
+WORK_BASE_UNVERIFIED = "unverified"
+WORK_BASE_CONFIRMED = "confirmed"
+WORK_BASE_STATES = (WORK_BASE_VERIFIED, WORK_BASE_UNVERIFIED, WORK_BASE_CONFIRMED)
+WORK_BASE_LOG_KINDS = ("fork", "reopen_fork", "update", "backfill", "manual_confirm")
+
+
+def work_base_evidence(state: Optional[dict]) -> dict:
+    """Decoded ``work_base_evidence`` JSON; ``{}`` for NULL or an unreadable value."""
+    raw = (state or {}).get("work_base_evidence")
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return dict(raw)
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def set_work_base_record(
+    group_id: str,
+    *,
+    work_base_sha: Optional[str],
+    work_base_sync_sha: Optional[str],
+    state: str,
+    evidence: dict,
+) -> None:
+    """Replace the whole recorded floor of one group (fork, reopen, backfill, confirm)."""
+    if state not in WORK_BASE_STATES:
+        raise ValueError(f"invalid work base state: {state!r}")
+    now = now_iso()
+    get_store()._execute(
+        "UPDATE group_git_state SET work_base_sha = ?, work_base_sync_sha = ?, "
+        "work_base_state = ?, work_base_evidence = ?, work_base_recorded_at = ?, "
+        "updated_at = ? WHERE group_id = ?",
+        [work_base_sha, work_base_sync_sha, state,
+         json.dumps(evidence, ensure_ascii=False, sort_keys=True), now, now, group_id],
+    )
+
+
+def record_legacy_work_base_if_missing(
+    group_id: str, project_id: str, *, work_base_ref: str, work_base_sha: str,
+    evidence: dict,
+) -> bool:
+    """Atomically pin a legacy base, record a verified floor, and audit it once.
+
+    A conditional state update makes concurrent resolver calls idempotent. A
+    different base pin means the classification is stale and must not be saved.
+    """
+    from . import groups as db_groups
+
+    store = get_store()
+    with store.transaction():
+        row = get_state(group_id) or {}
+        if row.get("work_base_state") is not None:
+            return False
+        group = db_groups.get_by_id(group_id) or {}
+        if group.get("project_id") != project_id:
+            raise ValueError("group project changed during work-base recovery")
+        stored_ref = (group.get("work_base_ref") or "").strip()
+        if stored_ref and stored_ref != work_base_ref:
+            raise ValueError("group work-base ref changed during recovery")
+        if not stored_ref:
+            pinned = store._execute_affected(
+                "UPDATE groups SET work_base_ref = ?, updated_at = ? "
+                "WHERE group_id = ? AND work_base_ref IS NULL",
+                [work_base_ref, now_iso(), group_id],
+            )
+            if pinned != 1:
+                return False  # another request pinned it; re-read its record
+        now = now_iso()
+        recorded = store._execute_affected(
+            "UPDATE group_git_state SET work_base_sha = ?, work_base_sync_sha = NULL, "
+            "work_base_state = 'verified', work_base_evidence = ?, "
+            "work_base_recorded_at = ?, updated_at = ? "
+            "WHERE group_id = ? AND work_base_state IS NULL",
+            [work_base_sha, json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+             now, now, group_id],
+        )
+        if recorded != 1:
+            return False
+        append_work_base_log(
+            group_id, project_id, "backfill", source_sha=work_base_sha,
+            evidence={"state": "verified", "origin": evidence.get("origin")},
+        )
+    return True
+
+
+def set_work_base_sync(group_id: str, sync_sha: str, expected_floor: Optional[str]) -> bool:
+    """Advance ``work_base_sync_sha`` after a completed update-from-base.
+
+    Conditional on the floor the caller validated, so a concurrent confirm or
+    reopen cannot be overwritten with a value derived from a stale floor. The
+    caller holds the project Git lock (every floor writer does), so reading the
+    row back is an exact answer to "did the expected row move".
+    """
+    now = now_iso()
+    floor = expected_floor or ""
+    get_store()._execute(
+        "UPDATE group_git_state SET work_base_sync_sha = ?, work_base_recorded_at = ?, "
+        "updated_at = ? WHERE group_id = ? "
+        "AND COALESCE(work_base_sync_sha, work_base_sha, '') = ?",
+        [sync_sha, now, now, group_id, floor],
+    )
+    row = get_state(group_id) or {}
+    return row.get("work_base_sync_sha") == sync_sha
+
+
+def advance_work_base_sync(
+    group_id: str,
+    project_id: str,
+    sync_sha: str,
+    expected_floor: Optional[str],
+    *,
+    source_ref: Optional[str] = None,
+    result_head: Optional[str] = None,
+    merge_id: Optional[int] = None,
+    evidence: Optional[dict] = None,
+) -> bool:
+    """Advance the floor and append its ``update`` audit row as ONE record.
+
+    Returns False (nothing written) when the compare-and-set lost. When anything
+    fails after the floor moved -- the audit insert included -- the previous floor
+    is kept: the transaction rolls back, and because some adapters commit per
+    statement the previous value is also restored explicitly (only while the row
+    still holds ``sync_sha``) before the error propagates. The caller then rolls
+    the Git merge back, so the floor never names a commit HEAD does not contain.
+    """
+    previous = get_state(group_id) or {}
+    advanced = False
+    try:
+        with get_store().transaction():
+            if not set_work_base_sync(group_id, sync_sha, expected_floor):
+                return False
+            advanced = True
+            append_work_base_log(
+                group_id, project_id, "update", source_ref=source_ref, source_sha=sync_sha,
+                result_head=result_head, merge_id=merge_id, evidence=evidence,
+            )
+    except BaseException:
+        if advanced:
+            _restore_work_base_sync(group_id, sync_sha, previous)
+        raise
+    return True
+
+
+def _restore_work_base_sync(group_id: str, written_sha: str, previous: dict) -> None:
+    try:
+        get_store()._execute(
+            "UPDATE group_git_state SET work_base_sync_sha = ?, work_base_recorded_at = ?, "
+            "updated_at = ? WHERE group_id = ? AND work_base_sync_sha = ?",
+            [previous.get("work_base_sync_sha"), previous.get("work_base_recorded_at"),
+             now_iso(), group_id, written_sha],
+        )
+    except Exception:  # noqa: BLE001 -- the original failure is what propagates
+        import logging
+        logging.getLogger(__name__).error(
+            "work base floor restore failed for %s", group_id, exc_info=True)
+
+
+def append_work_base_log(
+    group_id: str,
+    project_id: str,
+    kind: str,
+    *,
+    source_ref: Optional[str] = None,
+    source_sha: Optional[str] = None,
+    result_head: Optional[str] = None,
+    merge_id: Optional[int] = None,
+    actor: Optional[str] = None,
+    evidence: Optional[dict] = None,
+) -> str:
+    if kind not in WORK_BASE_LOG_KINDS:
+        raise ValueError(f"invalid work base log kind: {kind!r}")
+    import uuid
+
+    log_id = uuid.uuid4().hex
+    get_store()._execute(
+        "INSERT INTO group_work_base_sync_log "
+        "(log_id, group_id, project_id, kind, source_ref, source_sha, result_head, "
+        "merge_id, actor, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [log_id, group_id, project_id, kind, source_ref, source_sha, result_head,
+         merge_id, actor,
+         json.dumps(evidence, ensure_ascii=False, sort_keys=True) if evidence else None,
+         now_iso()],
+    )
+    return log_id
+
+
+def list_work_base_log(group_id: str) -> list[dict]:
+    return get_store()._fetch_all(
+        "SELECT * FROM group_work_base_sync_log WHERE group_id = ? "
+        "ORDER BY created_at ASC, log_id ASC",
+        [group_id],
     )
 
 
@@ -508,6 +711,125 @@ def mark_file_resolved(merge_id: int, path: str) -> None:
     )
 
 
+CHECKPOINT_STATES = ("active", "consumed", "invalidated")
+
+
+def create_resolution_checkpoint(data: dict) -> dict:
+    """Persist one held finalize resolution independently of its merge session."""
+    import uuid
+
+    checkpoint_id = str(uuid.uuid4())
+    now = now_iso()
+    store = get_store()
+    with store.transaction():
+        store._execute(
+            "UPDATE git_resolution_checkpoint SET state = 'invalidated', updated_at = ? "
+            "WHERE project_id = ? AND group_id = ? AND state = 'active'",
+            [now, data["project_id"], data["group_id"]],
+        )
+        store._execute(
+            "INSERT INTO git_resolution_checkpoint "
+            "(checkpoint_id, project_id, group_id, source_merge_id, target_branch, "
+            "source_branch, base_head, merge_head, expected_remote_head, resolved_paths, "
+            "conflict_origins, provenance, state, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)",
+            [checkpoint_id, data["project_id"], data["group_id"], data["source_merge_id"],
+             data["target_branch"], data["source_branch"], data["base_head"],
+             data["merge_head"], data.get("expected_remote_head"),
+             json.dumps(data["resolved_paths"], ensure_ascii=False),
+             json.dumps(data.get("conflict_origins") or [], ensure_ascii=False),
+             json.dumps(data["provenance"], ensure_ascii=False), now, now],
+        )
+    return get_resolution_checkpoint(checkpoint_id)
+
+
+def rollback_resolution_checkpoint(checkpoint_id: str, previous_id: str | None) -> None:
+    """Undo the committed hold ledger transition when merge --abort failed."""
+    store = get_store()
+    with store.transaction():
+        store._execute(
+            "UPDATE git_resolution_checkpoint SET state = 'invalidated', updated_at = ? "
+            "WHERE checkpoint_id = ? AND state = 'active'",
+            [now_iso(), checkpoint_id],
+        )
+        if previous_id:
+            store._execute(
+                "UPDATE git_resolution_checkpoint SET state = 'active', updated_at = ? "
+                "WHERE checkpoint_id = ? AND state = 'invalidated'",
+                [now_iso(), previous_id],
+            )
+
+
+def get_resolution_checkpoint(checkpoint_id: str) -> Optional[dict]:
+    row = get_store()._fetch_one(
+        "SELECT * FROM git_resolution_checkpoint WHERE checkpoint_id = ?", [checkpoint_id]
+    )
+    return _decode_resolution_checkpoint(row)
+
+
+def _decode_resolution_checkpoint(row: Optional[dict]) -> Optional[dict]:
+    if row is None:
+        return None
+    result = dict(row)
+    for key in ("resolved_paths", "conflict_origins", "provenance", "replay_result"):
+        try:
+            result[key] = json.loads(result[key]) if result.get(key) else ([] if key != "provenance" else {})
+        except (TypeError, ValueError):
+            result[key] = [] if key != "provenance" else {}
+    return result
+
+
+def active_resolution_checkpoint(project_id: str, group_id: str) -> Optional[dict]:
+    row = get_store()._fetch_one(
+        "SELECT * FROM git_resolution_checkpoint WHERE project_id = ? AND group_id = ? "
+        "AND state = 'active' ORDER BY created_at DESC LIMIT 1",
+        [project_id, group_id],
+    )
+    return _decode_resolution_checkpoint(row)
+
+
+def set_resolution_checkpoint_replay(checkpoint_id: str, merge_id: int, result: dict) -> None:
+    get_store()._execute(
+        "UPDATE git_resolution_checkpoint SET replay_merge_id = ?, replay_result = ?, "
+        "updated_at = ? WHERE checkpoint_id = ? AND state = 'active'",
+        [merge_id, json.dumps(result, ensure_ascii=False), now_iso(), checkpoint_id],
+    )
+
+
+def invalidate_resolution_checkpoint(checkpoint_id: str) -> None:
+    get_store()._execute(
+        "UPDATE git_resolution_checkpoint SET state = 'invalidated', updated_at = ? "
+        "WHERE checkpoint_id = ? AND state = 'active'",
+        [now_iso(), checkpoint_id],
+    )
+
+
+def invalidate_resolution_checkpoint_for_merge(merge_id: int) -> None:
+    """Discard any hold or replayed checkpoint abandoned by explicit [abort]."""
+    get_store()._execute(
+        "UPDATE git_resolution_checkpoint SET state = 'invalidated', updated_at = ? "
+        "WHERE state = 'active' AND (source_merge_id = ? OR replay_merge_id = ?)",
+        [now_iso(), merge_id, merge_id],
+    )
+
+
+def consume_resolution_checkpoint(merge_id: int) -> None:
+    get_store()._execute(
+        "UPDATE git_resolution_checkpoint SET state = 'consumed', updated_at = ? "
+        "WHERE replay_merge_id = ? AND state = 'active'",
+        [now_iso(), merge_id],
+    )
+
+
+def consume_active_resolution_checkpoint(project_id: str, group_id: str) -> None:
+    """Finish a held checkpoint when retry merges cleanly without a conflict session."""
+    get_store()._execute(
+        "UPDATE git_resolution_checkpoint SET state = 'consumed', updated_at = ? "
+        "WHERE project_id = ? AND group_id = ? AND state = 'active'",
+        [now_iso(), project_id, group_id],
+    )
+
+
 def remaining_conflicts(merge_id: int) -> list[str]:
     rows = get_store()._fetch_all(
         "SELECT path FROM git_merge_session_file "
@@ -636,59 +958,4 @@ def list_states_of_project_any(project_id: str) -> list[dict]:
     idx_group_git_state_project(project_id, status) left prefix (DB0005 §4)."""
     return get_store()._fetch_all(
         "SELECT * FROM group_git_state WHERE project_id = ?", [project_id]
-    )
-
-
-# ── git_project_lock (INSERT = acquire, DELETE = release; DB0007 §2.5) ───────
-
-def try_acquire_lock(project_id: str, holder: str) -> bool:
-    """Attempt to take the project mutex. False when another holder owns it."""
-    try:
-        get_store()._execute(
-            "INSERT INTO git_project_lock (project_id, holder, acquired_at) "
-            "VALUES (?, ?, ?)",
-            [project_id, holder, now_iso()],
-        )
-    except Exception:
-        return False
-    # Verify the row is ours: some drivers swallow duplicate-key errors differently.
-    row = get_lock(project_id)
-    return bool(row and row.get("holder") == holder)
-
-
-def get_lock(project_id: str) -> Optional[dict]:
-    return get_store()._fetch_one(
-        "SELECT * FROM git_project_lock WHERE project_id = ?", [project_id]
-    )
-
-
-def release_lock(project_id: str, holder: str) -> None:
-    get_store()._execute(
-        "DELETE FROM git_project_lock WHERE project_id = ? AND holder = ?",
-        [project_id, holder],
-    )
-
-
-def transfer_lock(project_id: str, old_holder: str, new_holder: str) -> None:
-    """Hand the mutex to a merge session (L0006 §2.8 persistent inheritance)."""
-    store = get_store()
-    with store.transaction():
-        store._execute(
-            "DELETE FROM git_project_lock WHERE project_id = ? AND holder = ?",
-            [project_id, old_holder],
-        )
-        store._execute(
-            "INSERT INTO git_project_lock (project_id, holder, acquired_at) "
-            "VALUES (?, ?, ?)",
-            [project_id, new_holder, now_iso()],
-        )
-
-
-def list_locks() -> list[dict]:
-    return get_store()._fetch_all("SELECT * FROM git_project_lock", [])
-
-
-def force_release_lock(project_id: str) -> None:
-    get_store()._execute(
-        "DELETE FROM git_project_lock WHERE project_id = ?", [project_id]
     )

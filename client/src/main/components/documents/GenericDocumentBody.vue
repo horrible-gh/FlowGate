@@ -45,6 +45,9 @@
               <button class="edit-dropdown-item" type="button" @click="emit('edit-direct')">
                 <AppIcon name="note-pencil" /> {{ t('main.main_panel.edit_direct') }}
               </button>
+              <button v-if="!isFileTab(tab)" class="edit-dropdown-item" type="button" @click="emit('edit-url-import')">
+                <AppIcon name="download-simple" /> {{ t('main.document_preview.url_import') }}
+              </button>
               <button v-if="tab.typeCode" class="edit-dropdown-item" type="button" @click="emit('edit-mention')">
                 <AppIcon name="copy" /> {{ t('main.main_panel.copy_mention') }}
               </button>
@@ -158,6 +161,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   'edit-direct': []
+  'edit-url-import': []
   'edit-mention': []
   'invoke-command': []
   'invoke-ai': []

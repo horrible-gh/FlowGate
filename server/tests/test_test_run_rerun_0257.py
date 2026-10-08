@@ -8,6 +8,14 @@ B0001 fix are in test_tsr_slot_0257.py, and those are red without it.
 """
 from __future__ import annotations
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_pending_failure_origin(monkeypatch):
+    from modules.flow_gate.services import test_run_service
+    monkeypatch.setattr(test_run_service.db_test_runs, "get_pending_failure_origin", lambda _id: None)
+
 
 def test_pending_review_with_passed_prior_run_creates_fresh_run(monkeypatch, tmp_path):
     """A review reopen must not turn the previous passed run into a 409 gate."""

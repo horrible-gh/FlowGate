@@ -48,6 +48,7 @@ from modules.flow_gate.db import connection as db_connection  # noqa: E402
 from modules.flow_gate.db import git_integration as db_git  # noqa: E402
 from modules.flow_gate.db import tr_commit_ledger as db_ledger  # noqa: E402
 from modules.flow_gate.services import git_service as svc  # noqa: E402
+from group_lock_stub import stub_group_lock  # noqa: E402
 from modules.flow_gate.services import tr_commit_service as trc  # noqa: E402
 from modules.flow_gate.services import workflow_rework_service as rework  # noqa: E402
 
@@ -95,6 +96,11 @@ class _SqliteStore:
     def _execute(self, sql, params=None):
         self._conn.execute(sql, params or [])
         self._conn.commit()
+
+    def _execute_affected(self, sql, params=None):
+        cur = self._conn.execute(sql, params or [])
+        self._conn.commit()
+        return cur.rowcount
 
     def _fetch_one(self, sql, params=None):
         row = self._conn.execute(sql, params or []).fetchone()
@@ -163,8 +169,7 @@ def git_active(monkeypatch, repo):
     })
     monkeypatch.setattr(svc, "_project_name", lambda project_id: "flowgate")
     monkeypatch.setattr(svc, "src_root", lambda project_name, branch: repo)
-    monkeypatch.setattr(svc.db_git, "try_acquire_lock", lambda project_id, holder: True)
-    monkeypatch.setattr(svc.db_git, "release_lock", lambda project_id, holder: None)
+    stub_group_lock(monkeypatch)
     return repo
 
 
@@ -567,7 +572,7 @@ def test_a_busy_project_lock_is_retryable_and_never_waits_forever(
     real_store, git_active, monkeypatch,
 ):
     _ledger_commit(_GROUP, _TR_A, "a" * 40, "0009-TR: a")
-    monkeypatch.setattr(svc.db_git, "try_acquire_lock", lambda project_id, holder: False)
+    stub_group_lock(monkeypatch, grant=False)
     monkeypatch.setattr(svc, "CANCEL_LOCK_WAIT_SEC", 0)
 
     result = trc.cancel_tr_commits(_GROUP, [_TR_A])
@@ -580,16 +585,18 @@ def test_every_block_code_stays_inside_the_closed_protocol_set(real_store):
     문구를 갖고 있지 않다."""
     assert set(trc.CANCEL_BLOCK_RETRYABLE) == {
         "already_merged", "no_worktree", "git_inactive", "dirty_worktree", "git_busy",
+        "history_recovery_required",  # added by 0648 (TR history recovery)
     }
 
 
 @needs_git
-def test_the_lock_is_released_before_the_rearm_can_ask_for_it(real_store, git_active, repo):
+def test_the_lock_is_released_before_the_rearm_can_ask_for_it(
+    real_store, git_active, repo, monkeypatch,
+):
     """L0007 §2.1 ③ — 잠금은 재진입이 되지 않는다. 취소가 쥔 채로 끝나면 재무장이 5초를
     기다린 뒤 조용히 실패한다."""
     held: list[str] = []
-    svc.db_git.try_acquire_lock = lambda project_id, holder: (held.append(holder), True)[1]
-    svc.db_git.release_lock = lambda project_id, holder: held.remove(holder)
+    stub_group_lock(monkeypatch, held=held)
     (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
     sha_a = _commit(repo, "0009-TR: a")
     _ledger_commit(_GROUP, _TR_A, sha_a, "0009-TR: a")
@@ -1072,7 +1079,7 @@ def test_terminal_reopen_marks_the_row_terminal_without_touching_git(
     assert result["canceled"] == []
     assert result["skipped"] == []
     assert result["terminal_reopened"] == [
-        {"doc_id": _TR_A, "doc_code": "0009-TR", "commit": sha[:7]}
+        {"doc_id": _TR_A, "doc_code": "0009-TR", "history_track": "tr", "commit": sha[:7]}
     ]
     # base content and history are exactly as they were — no reset, no revert.
     assert _git(["rev-parse", "HEAD"], repo).strip() == head_before

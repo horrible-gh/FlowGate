@@ -124,7 +124,7 @@ const { t, locale } = useI18n()
 const { categoryLabel, modeLabel } = useTestVerdictLabels()
 
 const TEXT_FIELDS = [
-  'requirement', 'precondition', 'input', 'procedure', 'expected', 'check_points', 'automation_ref',
+  'requirement', 'precondition', 'input', 'procedure', 'expected', 'check_points', 'automation_ref', 'test_assets',
 ] as const
 const REQUIRED_TEXT: readonly string[] = ['requirement', 'procedure', 'expected', 'check_points']
 
@@ -147,6 +147,7 @@ function toDraft(c: Partial<TestSpecCase>): DraftCase {
     expected: c.expected ?? '',
     check_points: c.check_points ?? '',
     automation_ref: c.automation_ref ?? '',
+    test_assets: c.test_assets ?? '',
   }
 }
 

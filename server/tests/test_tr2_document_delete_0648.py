@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from group_lock_stub import stub_group_lock
 
 from modules.flow_gate.documents import document_service
 from modules.flow_gate.documents import tr2_approval_service as approval
@@ -53,8 +54,7 @@ def _install_delete(monkeypatch, *, active=False, recovery=False):
         document_service.db_events, "create",
         lambda _payload: state.__setitem__("events", state["events"] + 1),
     )
-    monkeypatch.setattr(document_service.git_service, "_acquire_lock", lambda *_a, **_kw: True)
-    monkeypatch.setattr(document_service.db_git, "release_lock", lambda *_a: None)
+    stub_group_lock(monkeypatch)
     monkeypatch.setattr(document_service.db_recovery, "has_unresolved", lambda _g: recovery)
     monkeypatch.setattr(
         document_service.tr2_file_policy, "has_active_source_effect",
@@ -230,14 +230,14 @@ def test_delete_mutex_order_is_initial_lock_fresh_recovery_active_delete_unlock(
         return dict(doc)
 
     monkeypatch.setattr(document_service.db_docs, "get_by_id", get)
-    monkeypatch.setattr(
-        document_service.git_service, "_acquire_lock",
-        lambda *_a, **_kw: events.append("lock") or True,
-    )
-    monkeypatch.setattr(
-        document_service.db_git, "release_lock",
-        lambda *_a: events.append("unlock"),
-    )
+    lm = document_service.lock_manager
+
+    def acquire_group(*_a, **_kw):
+        events.append("lock")
+        return lm.LockOutcome(lm.ACQUIRED, "G:stub", lock_epoch="stub"), lm.new_context()
+
+    monkeypatch.setattr(lm, "acquire_group", acquire_group)
+    monkeypatch.setattr(lm, "release", lambda *_a: events.append("unlock"))
     monkeypatch.setattr(
         document_service.db_recovery, "has_unresolved",
         lambda _g: events.append("recovery") or False,

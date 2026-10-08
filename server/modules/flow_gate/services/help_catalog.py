@@ -56,11 +56,10 @@ CATALOG_ORDER: tuple[str, ...] = (
     "question",
     "submit",
     "source_tools",
-    "source_bundles",
-    "source_snapshots",
     "design_template",
     "authoring_guide",
     "test_commands",
+    "tr_self_check",
     "changed_files_format",
     "step_verification_format",
 )
@@ -74,11 +73,10 @@ ITEM_FORM: dict[str, str] = {
     "question": "content",
     "submit": "content",
     "source_tools": "children",
-    "source_bundles": "content",
-    "source_snapshots": "content",
     "design_template": "children",
     "authoring_guide": "children",
     "test_commands": "content",
+    "tr_self_check": "content",
     "changed_files_format": "content",
     "step_verification_format": "content",
 }
@@ -116,11 +114,10 @@ TITLES: dict[str, dict[str, str]] = {
         "question": "질의(Q) 등록",
         "submit": "결과 제출 방법",
         "source_tools": "소스 도구",
-        "source_bundles": "Source Bundle 사용 정책",
-        "source_snapshots": "Legacy Snapshot 종료 안내",
         "design_template": "설계서 템플릿",
         "authoring_guide": "작성 지침",
         "test_commands": "검증된 테스트 명령",
+        "tr_self_check": "TR Self-check 사용법",
         "changed_files_format": "변경 파일 보고 서식",
         "step_verification_format": "단계별 확인 절 서식",
     },
@@ -133,11 +130,10 @@ TITLES: dict[str, dict[str, str]] = {
         "question": "Register a query (Q)",
         "submit": "How to submit",
         "source_tools": "Source tools",
-        "source_bundles": "Source Bundle policy",
-        "source_snapshots": "Legacy Snapshot retirement",
         "design_template": "Design document template",
         "authoring_guide": "Authoring guide",
         "test_commands": "Verified test commands",
+        "tr_self_check": "TR Self-check guide",
         "changed_files_format": "Changed-files report format",
         "step_verification_format": "Step-verification section format",
     },
@@ -150,11 +146,10 @@ TITLES: dict[str, dict[str, str]] = {
         "question": "質問(Q)の登録",
         "submit": "結果の提出方法",
         "source_tools": "ソースツール",
-        "source_bundles": "Source Bundle の利用方針",
-        "source_snapshots": "旧 Snapshot の廃止",
         "design_template": "設計書テンプレート",
         "authoring_guide": "作成ガイド",
         "test_commands": "検証済みテストコマンド",
+        "tr_self_check": "TR Self-check の使い方",
         "changed_files_format": "変更ファイル報告フォーマット",
         "step_verification_format": "段階別確認節フォーマット",
     },
@@ -190,11 +185,10 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "question": "막혔을 때 질의를 등록하는 방법.",
         "submit": "작성한 문서를 등록하는 요청 서식.",
         "source_tools": "이 토큰이 쓸 수 있는 원격 소스 도구 목록.",
-        "source_bundles": "자동 준비, 읽기·실행, freshness 및 promotion 금지 정책.",
-        "source_snapshots": "Legacy Snapshot 생성·승인 종료 및 역사 조회.",
         "design_template": "설계 타입별 표준 템플릿 본문.",
         "authoring_guide": "이 타입의 문서를 쓰는 방법.",
         "test_commands": "이 프로젝트에 등록된, 실행이 확인된 테스트 명령.",
+        "tr_self_check": "TR 수정 단계의 공식 검증 경로(run/read/cancel_self_check) 요청 서식·수명주기·오류 대응.",
         "changed_files_format": "제출 시 반드시 넣어야 하는 변경 파일 절의 서식.",
         "step_verification_format": "TR 제출 시 반드시 넣어야 하는 단계별 확인 절의 서식.",
     },
@@ -207,11 +201,10 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "question": "How to register a query when you are blocked.",
         "submit": "Request format that registers the document you wrote.",
         "source_tools": "Remote source tools this token may call.",
-        "source_bundles": "Automatic preparation, access, execution, freshness, and no-promotion policy.",
-        "source_snapshots": "Legacy Snapshot creation and approval retirement.",
         "design_template": "Standard template body per design type.",
         "authoring_guide": "How to write a document of this type.",
         "test_commands": "Test commands registered for this project and verified on this host.",
+        "tr_self_check": "The TR edit verification path (run/read/cancel_self_check): request format, lifecycle and error handling.",
         "changed_files_format": "Format of the changed-files section your submission must carry.",
         "step_verification_format": "Format of the step-verification section a TR submission must carry.",
     },
@@ -224,11 +217,10 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "question": "行き詰まったときに質問を登録する方法。",
         "submit": "作成した文書を登録するリクエスト形式。",
         "source_tools": "このトークンが使えるリモートソースツールの一覧。",
-        "source_bundles": "自動準備、参照・実行、鮮度、昇格禁止の方針。",
-        "source_snapshots": "旧 Snapshot の作成・承認の廃止。",
         "design_template": "設計タイプ別の標準テンプレート本文。",
         "authoring_guide": "このタイプの文書を書く方法。",
         "test_commands": "このプロジェクトに登録され、実行が確認されたテストコマンド。",
+        "tr_self_check": "TR修正段階の公式検証経路(run/read/cancel_self_check)のリクエスト形式・ライフサイクル・エラー対応。",
         "changed_files_format": "提出時に必ず入れる変更ファイル節のフォーマット。",
         "step_verification_format": "TR提出時に必ず入れる段階別確認節のフォーマット。",
     },
@@ -263,7 +255,6 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
         "review_no_modify": "검토 작업에서는 대상 문서를 수정하거나 새 결과 문서를 만들지 말고, 지정된 판정만 제출하십시오.",
         "investigation_only": "이 단계는 조사 전용입니다. 소스 파일을 수정·생성·삭제하지 마십시오.",
         "assigned_scope_only": "이 작업에 배정된 그룹 작업 공간과 파일만 변경하고, 변경 파일은 작업 레포트에 빠짐없이 보고하십시오.",
-        "source_snapshot_policy": "Source Bundle은 소스 접근이나 실행이 필요할 때 자동 준비되며 사람 승인이 필요하지 않습니다. 영구 변경은 FlowGate 소스 변경 도구를 사용하고 Bundle/Scratch를 원본으로 취급하거나 되돌려 반영하지 마세요.",
     },
     "en": {
         "continuous_unattended": "This task is part of an UNMANNED continuous work chain. Nobody is watching.",
@@ -273,7 +264,6 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
         "review_no_modify": "In a review step, do not modify the target document or create a new result document — submit only the verdict you were asked for.",
         "investigation_only": "This step is investigation-only. Do not modify, create or delete source files.",
         "assigned_scope_only": "Change only the group workspace and files assigned to this task, and report every changed file in the work report.",
-        "source_snapshot_policy": "Source Bundle is prepared automatically when source access or execution needs it; no human approval is required. Use canonical FlowGate mutation tools for persistent edits. Bundle and Scratch are not the source of truth and cannot be promoted.",
     },
     "ja": {
         "continuous_unattended": "この作業は無人(UNMANNED)連続作業チェーンの一部です。人は見ていません。",
@@ -283,7 +273,6 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
         "review_no_modify": "レビュー作業では対象文書を修正したり新しい結果文書を作成したりせず、指定された判定のみを提出してください。",
         "investigation_only": "この段階は調査専用です。ソースファイルを修正・作成・削除しないでください。",
         "assigned_scope_only": "この作業に割り当てられたグループ作業領域とファイルのみ変更し、変更ファイルは作業レポートに漏れなく報告してください。",
-        "source_snapshot_policy": "Source Bundle はソース参照や実行が必要なとき自動準備され、人の承認は不要です。永続的な変更には FlowGate の正規ソース変更ツールを使い、Bundle/Scratch を原本として扱ったり昇格させたりしないでください。",
     },
 }
 
@@ -339,7 +328,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
         "submit_review_dry_run": "검토 판정 제출은 두 단계로 이루어집니다. 먼저 최종 의미 페이로드와 `dry_run: true`를 POST로 보내 영수증을 받고, 동일한 페이로드를 그 `receipt`와 함께 (dry_run 없이) 다시 POST합니다. 판정, 검사 결과, 의견, 지문 또는 강제 사유를 다시 만들거나 정규화하지 마십시오. 인코딩 실패는 제출을 중단합니다. 강제를 자동으로 추가하지 마십시오.",
         "submit_encoding_guard": "본문이 깨진 글자(????)로 보이면 등록이 거절됩니다. 계산 순서: 먼저 본문을 UTF-8 파일로 쓰고, 그 파일에서 글자 수(body_chars)와 sha256(body_sha256)을 구한 다음 요청을 만드세요. 지문이 맞으면 그것으로 판정하고, 안 보내면 물음표 비율로 판정합니다. 지문이 어긋나거나 정말로 이대로 보내야 하면 force_encoding_reason 에 사유(공백 제외 10자 이상)를 적으세요.",
         "submit_work_plan": "작업계획의 content에는 design_template/WP 형식의 정본 JSON만 넣으십시오. 새 작업계획을 등록할 때 제목은 title, 붙일 문서는 prev_doc_id 요청 항목으로 보내며 JSON 본문에 넣지 마십시오. 수량은 근거 기반으로 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 count 0으로 둡니다(1로 추측하지 않습니다).",
-        "submit_workflow_sequence_edit": "손대지 않은 지시/일반 행은 받은 note/source_doc_id/source_revision_no/provider_id/provider_display_name을 그대로 보내고, 타입을 바꾸거나 새로 넣은 행은 다섯 값을 비우며, 지운 행과 NR/TR/TSR 행은 보내지 마십시오. provider_id·provider_display_name 키를 통째로 빼고 보내면 서버가 저장돼 있던 공급자를 그대로 지키며, 공급자를 정말로 비우려면 provider_id를 null로 명시해 보내십시오. 레포트 행의 값은 서버가 바로 앞 지시 행에서 자동으로 이어 붙입니다.",
+        "submit_workflow_sequence_edit": "손대지 않은 지시/일반 행은 받은 note/source_doc_id/source_revision_no/provider_id/provider_display_name을 그대로 보내고, 타입을 바꾸거나 새로 넣은 행은 다섯 값을 비우며, 지운 행과 NR/TR/TSR 행은 보내지 마십시오. provider_id·provider_display_name 키를 통째로 빼고 보내면 서버가 저장돼 있던 공급자를 그대로 지키며, 공급자를 정말로 비우려면 provider_id를 null로 명시해 보내십시오. 레포트 행의 값은 서버가 바로 앞 지시 행에서 자동으로 이어 붙입니다. 되돌려 보내는 기존 행에는 받은 item_id를 그대로 붙이고 새 행에는 붙이지 마십시오. 보호(protected) 행은 바꾸거나 빼지 않습니다.",
     },
     "en": {
         "group_documents": "To read a body, call GET {base}/document/{{doc_id}}.",
@@ -354,7 +343,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
         "submit_review_dry_run": "Review submission requires two steps: POST the final semantic payload with `dry_run: true`, receive a receipt, then POST the identical payload with that `receipt` and without `dry_run`. Do not rebuild or normalize verdict, findings, comment, fingerprints, or force reason between requests. Encoding failure stops submission; do not add force automatically.",
         "submit_encoding_guard": "A body that looks corrupted (mojibake '?'s) is rejected. Calculation order: write the body to a UTF-8 file first, compute its character count (body_chars) and sha256 (body_sha256) from that file, then build the request. A matching fingerprint is trusted over the question-mark heuristic; if none is sent, the heuristic runs instead. If the fingerprint mismatches, or you must send it as-is, put a reason (>=10 non-whitespace chars) in force_encoding_reason.",
         "submit_work_plan": "The work-plan content must contain only canonical JSON in the design_template/WP format. When registering a new work plan, send the title in the title request field and its attachment target in prev_doc_id; do not put either in the JSON body. Derive quantities from evidence; when there is no basis, keep the key in counted_types/quantities with count 0 -- never guess 1.",
-        "submit_workflow_sequence_edit": "Return note/source_doc_id/source_revision_no/provider_id/provider_display_name unchanged for untouched instruction and ordinary rows; clear all five for retyped or newly inserted rows; omit deleted and NR/TR/TSR rows. Omitting the provider_id and provider_display_name keys entirely keeps the provider already stored on the row; to genuinely empty it, send provider_id as an explicit null. The server carries the report-row values forward from the preceding instruction row.",
+        "submit_workflow_sequence_edit": "Return note/source_doc_id/source_revision_no/provider_id/provider_display_name unchanged for untouched instruction and ordinary rows; clear all five for retyped or newly inserted rows; omit deleted and NR/TR/TSR rows. Omitting the provider_id and provider_display_name keys entirely keeps the provider already stored on the row; to genuinely empty it, send provider_id as an explicit null. The server carries the report-row values forward from the preceding instruction row. Keep the item_id you received on every existing row you send back and never put one on a new row; protected rows are never changed or removed.",
     },
     "ja": {
         "group_documents": "本文まで読むには GET {base}/document/{{doc_id}} を呼び出してください。",
@@ -369,7 +358,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
         "submit_review_dry_run": "レビュー判定の提出は2つのステップで行われます。まずセマンティクペイロードの最終形を `dry_run: true` で POST し、レシートを受け取ります。その後、同じペイロードをそのレシートと共に (dry_run なしで) 再度 POST します。判定、検査結果、コメント、指紋、または強制理由を再構築または正規化しないでください。エンコーディング障害は提出を停止します。強制を自動的に追加しないでください。",
         "submit_encoding_guard": "本文が文字化け(????)に見える場合、登録は拒否されます。計算順序: まず本文をUTF-8ファイルとして書き出し、そのファイルから文字数(body_chars)とsha256(body_sha256)を求めてからリクエストを作成してください。フィンガープリントが一致すればそれを優先し、送らなければ疑問符比率で判定します。フィンガープリントが一致しない場合、またはどうしてもそのまま送る必要がある場合は、force_encoding_reason に理由(空白を除き10文字以上)を記入してください。",
         "submit_work_plan": "作業計画の content には design_template/WP 形式の正規 JSON だけを入れてください。新しい作業計画を登録する場合、タイトルは title、紐付け先文書は prev_doc_id リクエスト項目で送り、JSON 本文には入れないでください。数量は根拠から算定し、根拠がなければ counted_types/quantities にキーを残したまま count 0 とします(1 と推測しません)。",
-        "submit_workflow_sequence_edit": "変更しない指示行と通常行は受け取った note/source_doc_id/source_revision_no/provider_id/provider_display_name をそのまま返し、タイプを変えた行と新規行では5値を空にし、削除行と NR/TR/TSR 行は送らないでください。provider_id・provider_display_name のキーごと省いて送ると、サーバーは保存済みの供給者をそのまま保持します。本当に空にするには provider_id を null と明示してください。レポート行の値はサーバーが直前の指示行から自動的に引き継ぎます。",
+        "submit_workflow_sequence_edit": "変更しない指示行と通常行は受け取った note/source_doc_id/source_revision_no/provider_id/provider_display_name をそのまま返し、タイプを変えた行と新規行では5値を空にし、削除行と NR/TR/TSR 行は送らないでください。provider_id・provider_display_name のキーごと省いて送ると、サーバーは保存済みの供給者をそのまま保持します。本当に空にするには provider_id を null と明示してください。レポート行の値はサーバーが直前の指示行から自動的に引き継ぎます。返送する既存行には受け取った item_id をそのまま付け、新しい行には付けないでください。保護(protected)行は変更も削除もしません。",
     },
 }
 
@@ -565,7 +554,7 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
     if name in ALWAYS_VISIBLE:
         return VISIBLE
 
-    if name in {"source_tools", "source_bundles", "source_snapshots"}:
+    if name == "source_tools":
         if ctx.get("source_mode") != "remote":
             return Decision(False, "source_mode_local")
         if ctx.get("tool_kind") == "none":
@@ -589,6 +578,12 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
         if authoring and doc_type == "TS":
             return VISIBLE
         return Decision(False, "not_ts_type")
+
+    if name == "tr_self_check":
+        # Same judgment as api_server_tools.definitions_for_run(): a worker token on a TR edit step.
+        if ctx.get("principal_kind") == "worker" and ctx.get("action_scope") == "edit" and doc_type == "TR":
+            return VISIBLE
+        return Decision(False, "not_tr_edit")
 
     if name == "changed_files_format":
         if authoring and doc_type in MUTATING_TYPES:
@@ -739,8 +734,12 @@ def _content_notices(ctx: dict) -> dict:
     # A key requested by two conditions still prints once.
     ordered = list(dict.fromkeys(keys))
     lines = [_copy(NOTICE_LINES, ctx["locale"], key) for key in ordered]
-    if ctx.get("source_mode") == "remote" and ctx.get("tool_kind") != "none":
-        lines.append(_copy(NOTICE_LINES, ctx["locale"], "source_snapshot_policy"))
+    if ctx.get("doc_type") == "TR":
+        lines.append({
+            "ko": "TR에서는 test code/fixture/mock을 작성하고 접근 가능한 환경에서 self-check할 수 있습니다. 공식 시험 PASS와 gate는 TS/TSR 단계가 담당하며 공식 시험을 위해 승인형 Snapshot을 요청하지 않습니다.",
+            "en": "TR may create test code, fixtures, and mocks and run available self-checks. Formal PASS and the test gate belong to TS/TSR; do not request an approval-based Snapshot for formal testing.",
+            "ja": "TRではテストコード・fixture・mockを作成し、利用可能な環境でself-checkできます。正式なPASSとgateはTS/TSRが担当し、正式試験のために承認型Snapshotを要求しません。",
+        }.get(ctx["locale"], ""))
     return {"lines": lines}
 
 
@@ -793,7 +792,7 @@ def _content_document_access(ctx: dict) -> dict:
     base = ctx["base_url"]
     doc_id = ctx.get("doc_id") or "{doc_id}"
     project_filter = f"&project={ctx['project']}" if ctx.get("project") else ""
-    return {
+    payload = {
         "body": {
             "method": "GET",
             "url": f"{base}/document/{{doc_id}}",
@@ -826,6 +825,27 @@ def _content_document_access(ctx: dict) -> dict:
         },
         "note": _copy(_ITEM_NOTES, ctx["locale"], "document_access"),
     }
+    if ctx.get("action_scope") == "chat":
+        payload["conversation_history"] = {
+            "forward": {
+                "method": "GET",
+                "url": f"{base}/conversation/{doc_id}/turns?after_seq=<seq>&include_head=1",
+                "continue_with": "next_after_seq",
+            },
+            "backward": {
+                "method": "GET",
+                "url": f"{base}/conversation/{doc_id}/turns?before_seq=<seq>",
+                "continue_with": "prev_before_seq",
+            },
+            "boundary": (
+                "after_seq and before_seq are mutually exclusive. If an invocation starts at "
+                "after_seq=<start>, older context begins with before_seq=<start+1> because the "
+                "backward query returns seq < before_seq."
+            ),
+            "token": "Backward conversation reads do not consume the token.",
+            "cursor": "Backward conversation reads do not advance the forward participant last_read cursor.",
+        }
+    return payload
 
 def _attachment_permission_table() -> dict:
     """Which operations each kind may call, derived from the one judge.
@@ -1025,6 +1045,9 @@ def _content_submit(ctx: dict) -> dict:
             "body": {
                 "doc_id": doc_id,
                 "items": [{
+                    # 0649 T#1 (NR0003 O1): an existing row sent back keeps its item_id; a
+                    # new row has none. Protected rows are recognised by this id only.
+                    "item_id": "<EXISTING_ROW_ITEM_ID_OR_OMIT_FOR_NEW_ROW>",
                     "type": "<TYPE_CODE>",
                     "label": "<STEP_LABEL>",
                     "note": "<UNCHANGED_NOTE_OR_EMPTY>",
@@ -1193,25 +1216,214 @@ def _content_step_verification_format(ctx: dict) -> dict:
     }
 
 
-def _content_source_snapshots(ctx: dict) -> dict:
-    """The old help URL remains an alias so historical mentions explain retirement."""
+# ── tr_self_check (0654 T0004) ───────────────────────────────────────────────
+# The request contract itself is owned by api_server_tools.SCHEMAS["run_self_check"],
+# tr_self_check_service._validate_request and tr_self_check_policy; this item only
+# describes it, and a regression test pins the field set so the two cannot drift.
+SELF_CHECK_REQUEST_FIELDS: tuple[str, ...] = ("program", "args", "cwd", "timeout_seconds")
+SELF_CHECK_TIMEOUT_DEFAULT = 300
+SELF_CHECK_TIMEOUT_MAX = 1800
+
+SELF_CHECK_EXAMPLE: dict = {
+    "program": "pytest",
+    "args": ["-q", "server/tests/test_x.py"],
+    "cwd": ".",
+    "timeout_seconds": SELF_CHECK_TIMEOUT_DEFAULT,
+}
+SELF_CHECK_INVALID_EXAMPLE: dict = {"program": "pytest -q server/tests/test_x.py"}
+
+SELF_CHECK_STATUSES = ("pending", "running", "completed", "failed", "cancelled")
+SELF_CHECK_RESULT_FIELDS = (
+    "exit_code", "timed_out", "stdout_tail", "stderr_tail",
+    "source_changed_during_run", "worktree_state_changed", "error_code",
+)
+
+#: The REST contract behind run/read/cancel. Owned by
+#: modules/flow_gate/api/v1/self_check_routes.py (router prefix /api/v1/documents);
+#: a regression test compares this table with the registered FastAPI routes.
+SELF_CHECK_HTTP_BASE = "/flowgate/api/v1"
+SELF_CHECK_HTTP_OPERATIONS: tuple[tuple[str, str, str, int], ...] = (
+    ("run", "POST", "/documents/{tr_doc_id}/self-check/runs", 202),
+    ("read", "GET", "/documents/{tr_doc_id}/self-check/runs/{run_id}", 200),
+    ("cancel", "POST", "/documents/{tr_doc_id}/self-check/runs/{run_id}/cancel", 200),
+    ("list", "GET", "/documents/{tr_doc_id}/self-check/runs", 200),
+)
+
+_LOCALE_INDEX = {"ko": 1, "en": 2, "ja": 3}
+
+#: (code, ko, en, ja) — meaning and next action, never internal detail.
+_SELF_CHECK_ERRORS: tuple[tuple[str, str, str, str], ...] = (
+    ("selfcheck_invalid_request",
+     "요청이 객체가 아니거나 program/args/cwd/timeout_seconds 이외의 필드가 있다 → 네 필드만 보낸다.",
+     "The request is not an object or carries a field other than program/args/cwd/timeout_seconds -> send only those four.",
+     "リクエストがオブジェクトでない、または program/args/cwd/timeout_seconds 以外のフィールドがある → 4つのフィールドだけ送る。"),
+    ("selfcheck_invalid_program",
+     "program 이 실행 파일 이름 하나가 아니다(경로·구분자·제어문자 포함) → program 에는 실행 파일 이름만 넣고 옵션과 대상은 args 로 분리한다.",
+     "program is not a single executable name (path, separator or control character) -> pass only the executable name in program and move options/targets to args.",
+     "program が実行ファイル名1つではない(パス・区切り・制御文字を含む) → program には実行ファイル名だけを入れ、オプションと対象は args に分ける。"),
+    ("selfcheck_invalid_args",
+     "args 가 문자열 배열이 아니거나 개수(256)·길이(8192) 제한을 넘는다 → 문자열 배열로 줄여서 다시 보낸다.",
+     "args is not an array of strings or exceeds the count (256) / length (8192) limit -> resend a shorter array of strings.",
+     "args が文字列配列でない、または個数(256)・長さ(8192)の上限を超えている → 文字列配列に直して再送する。"),
+    ("selfcheck_invalid_timeout",
+     f"timeout_seconds 가 1~{SELF_CHECK_TIMEOUT_MAX} 범위의 정수가 아니다 → 범위 안의 정수로 보낸다(생략하면 {SELF_CHECK_TIMEOUT_DEFAULT}).",
+     f"timeout_seconds is not an integer in 1..{SELF_CHECK_TIMEOUT_MAX} -> send an in-range integer (omit for {SELF_CHECK_TIMEOUT_DEFAULT}).",
+     f"timeout_seconds が 1〜{SELF_CHECK_TIMEOUT_MAX} の整数ではない → 範囲内の整数を送る(省略時は {SELF_CHECK_TIMEOUT_DEFAULT})。"),
+    ("selfcheck_shell_operator",
+     "args 안에 |, &&, ;, >, < 같은 셸 연산자가 있다 → 명령을 하나씩 나누어 각각 별도 run 으로 실행한다.",
+     "args contains a shell operator such as |, &&, ;, > or < -> split the work into separate runs, one command each.",
+     "args に |, &&, ;, >, < などのシェル演算子がある → コマンドを1つずつ分け、別々の run で実行する。"),
+    ("selfcheck_inline_execution",
+     "python -c, node -e 같은 인라인 코드 실행이다 → 테스트 파일이나 스크립트 경로를 args 로 준다.",
+     "Inline code execution such as python -c or node -e -> pass a test file or script path in args.",
+     "python -c や node -e のようなインラインコード実行 → テストファイルやスクリプトのパスを args で渡す。"),
+    ("selfcheck_program_denied",
+     "정책이 금지한 실행 파일이다(셸, git, 네트워크·삭제·시스템 도구 등) → 테스트/린트/빌드용 실행 파일로 바꾼다. 우회를 시도하지 않는다.",
+     "The executable is denied by policy (shells, git, network/delete/system tools, ...) -> use a test/lint/build executable instead; do not try to work around it.",
+     "ポリシーで禁止された実行ファイル(シェル、git、ネットワーク・削除・システムツール等) → テスト/リント/ビルド用の実行ファイルに変える。回避は試みない。"),
+    ("selfcheck_executable_not_found",
+     "program 을 찾을 수 없다(설치되지 않았거나 'pytest -q ...' 처럼 명령 전체를 program 에 넣었다) → 이름만 정확히 쓰고 나머지는 args 로 옮긴다. 설치되지 않았다면 그 사실을 보고한다.",
+     "program cannot be found (not installed, or the whole command such as 'pytest -q ...' was put in program) -> write the bare name and move the rest to args; if it is not installed, report that.",
+     "program が見つからない(未インストール、または 'pytest -q ...' のようにコマンド全体を program に入れた) → 名前だけを正しく書き残りは args に移す。未インストールならその事実を報告する。"),
+    ("selfcheck_invalid_cwd",
+     "cwd 가 관리 워크트리 안의 존재하는 상대 디렉터리가 아니다(절대경로, 드라이브, 범위 밖) → 워크트리 기준 상대 경로를 쓰거나 '.' 로 둔다.",
+     "cwd is not an existing relative directory inside the managed worktree (absolute path, drive, outside) -> use a worktree-relative path or '.'.",
+     "cwd が管理ワークツリー内に存在する相対ディレクトリではない(絶対パス、ドライブ、範囲外) → ワークツリー基準の相対パスを使うか '.' のままにする。"),
+    ("selfcheck_disabled",
+     "이 프로젝트는 Self-check 가 꺼져 있다 → 반환된 사유를 TR 에 보고하고 다른 실행 수단을 찾지 않는다.",
+     "Self-check is disabled for this project -> report the returned reason in the TR and do not look for another execution path.",
+     "このプロジェクトでは Self-check が無効 → 返された理由を TR に報告し、他の実行手段を探さない。"),
+    ("selfcheck_already_running",
+     "이 TR 에 이미 실행 중인 run 이 있다(응답에 기존 self_check_run_id) → 그 run 을 read 로 조회해 끝나기를 기다리거나 cancel 한 뒤 다시 실행한다.",
+     "A run is already active for this TR (the response carries its self_check_run_id) -> read it and wait for it to finish, or cancel it, then run again.",
+     "このTRには実行中の run がある(応答に既存の self_check_run_id) → その run を read で確認して完了を待つか cancel してから再実行する。"),
+    ("selfcheck_source_busy",
+     "다른 소스 변경 작업이 프로젝트 소스 잠금을 잡고 있다 → 그 작업이 끝난 뒤 잠시 후 다시 시도한다.",
+     "Another source operation holds the project source lock -> retry after that operation finishes.",
+     "別のソース操作がプロジェクトのソースロックを保持している → その操作の終了後にしばらくして再試行する。"),
+    ("selfcheck_recovery_incomplete",
+     "이전 run 의 프로세스 정리가 아직 끝나지 않았다 → 새 run 을 반복해서 밀어 넣지 말고 사유를 보고한 뒤 잠시 후 한 번 더 시도한다.",
+     "Cleanup of an earlier run's process tree is unfinished -> do not hammer new runs; report the reason and retry once after a short wait.",
+     "以前の run のプロセス整理が未完了 → 新しい run を連打せず、理由を報告して少し待ってから1回だけ再試行する。"),
+    ("selfcheck_worktree_unavailable",
+     "이 TR 의 관리 워크트리를 쓸 수 없다 → 반환된 사유를 보고한다. 다른 경로나 복사본으로 우회하지 않는다.",
+     "The managed worktree of this TR is unavailable -> report the returned reason; do not route around it with another path or a copy.",
+     "このTRの管理ワークツリーを利用できない → 返された理由を報告する。別経路やコピーで回避しない。"),
+)
+
+_SELF_CHECK_COPY: dict[str, dict] = {
+    "ko": {
+        "role": "TR 수정(edit) 단계에서 테스트·검증을 실행하는 공식 경로는 Self-check 하나다. 도구는 run_self_check / read_self_check / cancel_self_check 이다.",
+        "no_fallback": [
+            "Self-check 를 쓸 수 없으면 반환된 reason/error_code 를 TR 에 보고하고, 다른 실행 수단을 찾거나 시도하지 않는다.",
+            "실행할 명령은 TR 에 적힌 검증 명령 → T 에 적힌 검증 명령 → 변경에서 분명한 최소 검사 순으로 정한다. 정할 수 없으면 test_command_missing 으로 멈춘다.",
+        ],
+        "field_desc": {
+            "program": "실행 파일 이름 하나. 예: pytest. 명령 문자열 전체 금지.",
+            "args": "옵션과 대상 경로의 문자열 배열. 기본 [].",
+            "cwd": "관리 워크트리 기준 상대 경로. 기본 \".\".",
+            "timeout_seconds": f"실행 제한 시간(초), 1~{SELF_CHECK_TIMEOUT_MAX} 정수. 기본 {SELF_CHECK_TIMEOUT_DEFAULT}.",
+        },
+        "http_note": "tr_doc_id 는 지금 수정 중인 TR 문서 id(토큰에 바인딩된 문서)이고 run_id 는 run 응답의 self_check_run_id 이다. 헤더는 Authorization: Bearer <작업 토큰> 을 그대로 쓴다. 성공 응답은 {ok:true, ...run 필드}, 라우트가 만드는 실패 응답은 {ok:false, error:{code, message, details}} 이며 code 는 아래 오류 표의 selfcheck_* 또는 forbidden 이다. 다른 문서의 토큰이나 edit 가 아닌 토큰은 403 이고 error.code 는 forbidden 이다(message·details 포함). 토큰 자체가 검증에 실패하면(Authorization 헤더 없음 401, 만료·무효 토큰, 권한 없음 403) 라우트가 아니라 인증 계층이 {ok:false, http_status, error_message, help_url} 을 돌려주며 error 객체가 없다. 응답에서 확인할 것: run 은 202 와 self_check_run_id·status, read/cancel 은 200 과 status(아래 statuses 중 하나).",
+        "invalid_note": "위 형식(명령 전체를 program 에 넣음)은 program/args 계약 위반이다. 'pytest' 와 ['-q', 'server/tests/test_x.py'] 로 나누어 보낸다.",
+        "lifecycle": "run_self_check → self_check_run_id 수신 → pending/running 동안 read_self_check 로 반복 조회 → completed / failed / cancelled. 필요하면 cancel_self_check.",
+        "non_zero": "exit_code 가 0 이 아닌 completed 는 전송 실패가 아니라 실제 검증 실패일 수 있다. stdout_tail/stderr_tail 을 읽고 → 범위 안에서 코드를 고치고 → 새 run_self_check 를 실행하는 것이 정상 절차다.",
+        "failed_note": "status=failed 는 실행 자체가 실패한 것이다. error_code 를 아래 오류 표로 해석한다.",
+        "changed_note": "source_changed_during_run / worktree_state_changed 가 true 이면 실행 중 소스나 워크트리 상태가 바뀐 것이므로 결과를 그대로 믿지 말고 안정된 뒤 다시 실행한다.",
+    },
+    "en": {
+        "role": "Self-check is the one official way to run tests/verification in a TR edit step. The tools are run_self_check / read_self_check / cancel_self_check.",
+        "no_fallback": [
+            "If Self-check is unavailable, report the returned reason/error_code in the TR and do not look for or try another execution backend.",
+            "Pick the command from the verification command named in the TR, else in the T, else the minimal check obvious from your change. If none can be determined, stop with test_command_missing.",
+        ],
+        "field_desc": {
+            "program": "One executable name, e.g. pytest. Never the whole command string.",
+            "args": "Array of strings: options and target paths. Default [].",
+            "cwd": "Path relative to the managed worktree. Default \".\".",
+            "timeout_seconds": f"Time limit in seconds, integer 1..{SELF_CHECK_TIMEOUT_MAX}. Default {SELF_CHECK_TIMEOUT_DEFAULT}.",
+        },
+        "http_note": "tr_doc_id is the TR document id you are editing (the document bound to the token) and run_id is the self_check_run_id from the run response. Send the same Authorization: Bearer <work token> header. Success is {ok:true, ...run fields}; route failures are {ok:false, error:{code, message, details}} where code is a selfcheck_* value from the error table below or forbidden. A token for another document or a non-edit token gets 403 with error.code forbidden (message and details included). If the token itself fails verification (missing Authorization header 401, expired or invalid token, no permission 403), the authentication layer answers instead of the route with {ok:false, http_status, error_message, help_url} and no error object. Verify in the response: run returns 202 with self_check_run_id and status; read/cancel return 200 with a status from the statuses list below.",
+        "invalid_note": "The form above (whole command in program) violates the program/args contract. Send 'pytest' and ['-q', 'server/tests/test_x.py'] separately.",
+        "lifecycle": "run_self_check -> receive self_check_run_id -> read_self_check repeatedly while pending/running -> completed / failed / cancelled. Use cancel_self_check if needed.",
+        "non_zero": "A completed run with a non-zero exit_code is not a transport failure; it may be a real verification failure. Read stdout_tail/stderr_tail, fix the code within scope, then start a new run_self_check. That is the normal procedure.",
+        "failed_note": "status=failed means the run itself failed. Interpret error_code with the error table below.",
+        "changed_note": "If source_changed_during_run / worktree_state_changed is true, the source or worktree state moved during the run; do not trust the result blindly and rerun once it is stable.",
+    },
+    "ja": {
+        "role": "TR修正(edit)段階でテスト・検証を実行する公式経路は Self-check ただ1つです。ツールは run_self_check / read_self_check / cancel_self_check です。",
+        "no_fallback": [
+            "Self-check が使えない場合は、返された reason/error_code を TR に報告し、他の実行手段を探したり試したりしないでください。",
+            "実行コマンドは、TRに記載の検証コマンド → Tに記載の検証コマンド → 変更から明らかな最小の検査、の順で決めます。決められない場合は test_command_missing で停止します。",
+        ],
+        "field_desc": {
+            "program": "実行ファイル名1つ。例: pytest。コマンド文字列全体は不可。",
+            "args": "オプションと対象パスの文字列配列。既定 []。",
+            "cwd": "管理ワークツリー基準の相対パス。既定 \".\"。",
+            "timeout_seconds": f"実行制限時間(秒)、1〜{SELF_CHECK_TIMEOUT_MAX} の整数。既定 {SELF_CHECK_TIMEOUT_DEFAULT}。",
+        },
+        "http_note": "tr_doc_id は今修正中の TR 文書 id(トークンに紐づく文書)、run_id は run 応答の self_check_run_id です。ヘッダーは Authorization: Bearer <作業トークン> をそのまま使います。成功は {ok:true, ...run フィールド}、ルートが返す失敗は {ok:false, error:{code, message, details}} で、code は下のエラー表の selfcheck_* または forbidden です。他文書のトークンや edit 以外のトークンは 403 で error.code は forbidden です(message と details を含む)。トークン自体の検証に失敗した場合(Authorization ヘッダーなし 401、期限切れ・無効トークン、権限なし 403)は、ルートではなく認証層が {ok:false, http_status, error_message, help_url} を返し、error オブジェクトはありません。応答で確認すること: run は 202 と self_check_run_id・status、read/cancel は 200 と status(下の statuses のいずれか)。",
+        "invalid_note": "上の形式(コマンド全体を program に入れる)は program/args 契約違反です。'pytest' と ['-q', 'server/tests/test_x.py'] に分けて送ってください。",
+        "lifecycle": "run_self_check → self_check_run_id を受け取る → pending/running の間 read_self_check を繰り返す → completed / failed / cancelled。必要なら cancel_self_check。",
+        "non_zero": "exit_code が 0 以外の completed は通信失敗ではなく、実際の検証失敗の可能性があります。stdout_tail/stderr_tail を読み、範囲内でコードを直し、新しい run_self_check を実行するのが正常な手順です。",
+        "failed_note": "status=failed は実行自体の失敗です。error_code を下のエラー表で解釈してください。",
+        "changed_note": "source_changed_during_run / worktree_state_changed が true なら実行中にソースやワークツリーの状態が変わっています。結果を鵜呑みにせず、安定してから再実行してください。",
+    },
+}
+
+
+def _content_tr_self_check(ctx: dict) -> dict:
+    locale = ctx["locale"]
+    copy = _SELF_CHECK_COPY.get(locale, _SELF_CHECK_COPY[FALLBACK_LOCALE])
+    idx = _LOCALE_INDEX.get(locale, 1)
+    types = {"program": "string", "args": "array<string>", "cwd": "string", "timeout_seconds": "integer"}
+    defaults = {"program": None, "args": [], "cwd": ".", "timeout_seconds": SELF_CHECK_TIMEOUT_DEFAULT}
     return {
-        "operation": "access_source_bundle / run_source_bundle",
-        "preparation": "Source Bundle is prepared automatically when source access or execution requires it; no human approval is needed.",
-        "read_only_observability": "GET /api/v1/source-bundles?project_id=...&group_id=... lists status, revision, dirty flag, dates, size, policy, hashes, freshness, origin, failure and cleanup state. It never approves, rejects or materializes.",
-        "access": ["status", "read", "search", "glob", "stat"],
-        "execution": "Build, test, lint, typecheck, dependency/static analysis and temporary experiments run only in disposable AI Scratch copied from the Bundle.",
-        "preferred_tools": ["read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "Merge Context Tool"],
-        "freshness": "Historical Bundle reads remain available; a current-worktree claim requires a fresh fingerprint and a stale claim is rejected.",
-        "legacy_snapshot": "New Snapshot requests and approve/reject/materialize/run endpoints return snapshot_feature_retired. Existing created Snapshots remain readable until TTL or group cleanup; no legacy fallback occurs after a Bundle failure.",
-        "persistent_changes": "Use canonical FlowGate write_source_file, patch_source_file or remove_source_file. Bundle and AI Scratch are not the source of truth and cannot be promoted, uploaded, committed, merged or synced back.",
+        "role": copy["role"],
+        "no_fallback": list(copy["no_fallback"]),
+        "tools": {"run": "run_self_check", "read": "read_self_check", "cancel": "cancel_self_check"},
+        "http": {
+            "base_url": SELF_CHECK_HTTP_BASE,
+            "note": copy["http_note"],
+            "operations": [
+                {"name": name, "method": method, "path": path,
+                 "url": SELF_CHECK_HTTP_BASE + path, "success_status": status}
+                for name, method, path, status in SELF_CHECK_HTTP_OPERATIONS
+            ],
+            "run_request_body": "request.example",
+            "response_ok_fields": ["ok", "self_check_run_id", "status", *SELF_CHECK_RESULT_FIELDS],
+            "error_shape": {"ok": False, "error": {"code": "selfcheck_*|forbidden", "message": "<code>", "details": {}}},
+            "auth_error_shape": {"ok": False, "http_status": 401, "error_message": "<reason>", "help_url": "<url>"},
+        },
+        "request": {
+            "fields": [
+                {
+                    "name": name,
+                    "type": types[name],
+                    "required": name == "program",
+                    "default": defaults[name],
+                    "description": copy["field_desc"][name],
+                }
+                for name in SELF_CHECK_REQUEST_FIELDS
+            ],
+            "example": dict(SELF_CHECK_EXAMPLE, args=list(SELF_CHECK_EXAMPLE["args"])),
+            "invalid_example": dict(SELF_CHECK_INVALID_EXAMPLE),
+            "invalid_example_note": copy["invalid_note"],
+        },
+        "lifecycle": {
+            "flow": copy["lifecycle"],
+            "statuses": list(SELF_CHECK_STATUSES),
+            "result_fields": list(SELF_CHECK_RESULT_FIELDS),
+            "non_zero_exit": copy["non_zero"],
+            "failed": copy["failed_note"],
+            "source_changed": copy["changed_note"],
+        },
+        "errors": [{"code": row[0], "guidance": row[idx]} for row in _SELF_CHECK_ERRORS],
     }
 
 
 _CONTENT_SUPPLIERS = {
     "notices": _content_notices,
-    "source_bundles": _content_source_snapshots,
-    "source_snapshots": _content_source_snapshots,
     "group_documents": _content_group_documents,
     "document_access": _content_document_access,
     "document_attachments": _content_document_attachments,
@@ -1219,6 +1431,7 @@ _CONTENT_SUPPLIERS = {
     "question": _content_question,
     "submit": _content_submit,
     "test_commands": _content_test_commands,
+    "tr_self_check": _content_tr_self_check,
     "changed_files_format": _content_changed_files_format,
     "step_verification_format": _content_step_verification_format,
 }
@@ -1388,7 +1601,13 @@ def _authoring_guide_body(type_code: str, locale: str) -> str:
     if type_code in {"N", "T"}:
         return mention_service._nt_authoring_section(type_code, locale)
     if type_code == "TR":
-        return _TR_AUTHORING_GUIDE.get(locale, _TR_AUTHORING_GUIDE[FALLBACK_LOCALE])
+        # TR owns implementation and test assets; the formal gate belongs to TS/TSR.
+        return (_TR_AUTHORING_GUIDE.get(locale, _TR_AUTHORING_GUIDE[FALLBACK_LOCALE])
+                + "\n" + {
+                    "ko": "시험 코드·fixture·mock은 작성하고 가능한 self-check 결과를 보고합니다. TR 완료에 공식 시험 PASS나 승인형 Snapshot은 필요하지 않습니다. 공식 gate는 TS/TSR에서 확인합니다.",
+                    "en": "Create test code, fixtures and mocks and report available self-checks. TR completion requires no formal PASS or approval-based Snapshot; TS/TSR owns the formal gate.",
+                    "ja": "テストコード・fixture・mockを作成し、実施可能なself-checkを報告します。TR完了に正式PASSや承認型Snapshotは不要で、正式gateはTS/TSRで確認します。",
+                }.get(locale, ""))
     raise ValueError(f"Unknown authoring guide type: {type_code}")
 
 

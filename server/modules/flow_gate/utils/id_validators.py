@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-from modules.flow_gate.documents.type_code import TYPE_CODE_PATTERN
+from modules.flow_gate.utils.type_code import TYPE_CODE_PATTERN
 
 SLUG_CHARS = r'[a-z0-9_\-]+'
 MODULE_CHARS = SLUG_CHARS

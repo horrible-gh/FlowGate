@@ -54,6 +54,9 @@ def _patch_pipeline_service(monkeypatch, doc: dict):
     monkeypatch.setattr(ps, "db_docs", mock_docs)
     # This helper tests workflow-state effects, not document-file validation.
     monkeypatch.setattr(ps, "_require_document_body_for_approval", lambda doc, locale="ko": None)
+    # The workflow-head guard (0660 T0004 §5) fails closed without a sequence store, which
+    # these DB-less unit tests do not have; it is covered by test_tr2_lifecycle_0660.py.
+    monkeypatch.setattr(ps, "_require_workflow_head_for_approval", lambda doc, locale="ko": None)
 
     mock_events = MagicMock()
     mock_events.create = MagicMock(return_value={"id": 1})

@@ -36,10 +36,15 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVER_DIR))
 
+from group_lock_stub import group_store  # noqa: E402,F401
 from modules.flow_gate.services import git_service  # noqa: E402
 
 _GIT = shutil.which("git") is not None
 needs_git = pytest.mark.skipif(not _GIT, reason="git binary unavailable")
+needs_node_syntax = pytest.mark.skipif(
+    not (Path(git_service._FLOWGATE_CLIENT_DIR) / "node_modules" / "typescript").is_dir(),
+    reason="client/node_modules (real css/ts parsers) unavailable in this checkout",
+)
 
 _IDENT = ["-c", "user.name=T", "-c", "user.email=t@t"]
 
@@ -129,6 +134,7 @@ def test_skip_still_runs_every_registered_validator(repo):
 
 
 @needs_git
+@needs_node_syntax
 def test_a_mixed_candidate_is_judged_only_on_the_files_that_have_a_validator(repo):
     # The exact shape of the reviewer's merge: two source files plus two build
     # artefacts. Only a real syntax error may stop it.
@@ -154,10 +160,10 @@ def test_the_mode_is_spelled_out_rather_than_silently_defaulted():
         )
 
 
-def test_approve_asks_for_the_merge_rule_not_the_write_plan_rule(monkeypatch):
+def test_approve_asks_for_the_merge_rule_not_the_write_plan_rule(monkeypatch, group_store):
     """The call site is the whole fix — pin which mode approval passes.
 
-    `approve_merge_review` is guarded by a project git lock, a session lookup and a
+    `approve_merge_review` is guarded by the session target's domain lock (real store), a session lookup and a
     fingerprint check before it reaches the validator; this drives it to exactly
     that point and stops there, so the assertion is about the argument and nothing
     else. The end-to-end proof that the merge now commits and pushes is the real
@@ -179,9 +185,7 @@ def test_approve_asks_for_the_merge_rule_not_the_write_plan_rule(monkeypatch):
     monkeypatch.setattr(git_service.db_git, "session_context", lambda _s: context)
     monkeypatch.setattr(git_service.db_git, "set_session_context", lambda *_a, **_k: None)
     monkeypatch.setattr(git_service.db_git, "get_config", lambda _p: {"base_branch": "main"})
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda *_a, **_k: None)
     monkeypatch.setattr(git_service, "_project_of_group", lambda _g: "test2")
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda *_a, **_k: True)
     monkeypatch.setattr(git_service, "_base_root_of", lambda _p: Path("."))
     monkeypatch.setattr(git_service, "_live_candidate_matches_snapshot", lambda *_a: True)
 

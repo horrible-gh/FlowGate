@@ -148,6 +148,43 @@
           >
             <AppIcon name="chats" /> {{ t('main.review_action_bar.btn_create_conversation') }}
           </button>
+          <!-- 0684 T#3 (D#1 §3-8, §6-1): a contract-2 TS runs through the spec run entry point
+               only. The legacy [테스트 실행] below (/documents/test-run) and its delegation
+               drop-up are contract-1 controls. Here the slot is the run's state pill, [다시 실행]
+               (the same POST /test-spec/runs the approval uses) and, while a run is in flight,
+               [취소]. The pill reads the view TestDocumentBody already loaded for this TS. -->
+          <div v-else-if="isNextTestReportPending && isSpecContract" class="ab-spec-run" data-test="ab-spec-run">
+            <span
+              class="ab-spec-pill"
+              :class="`ab-spec-pill--${specState.tone}`"
+              data-test="ab-spec-run-pill"
+              :data-state="specState.key"
+            >
+              <AppIcon :name="specStateIcon" :spin="specState.active" />
+              {{ specStateLabel }}
+            </span>
+            <button
+              class="btn btn-primary btn-sm"
+              type="button"
+              data-test="ab-spec-rerun"
+              :disabled="!canSpecRerun"
+              @click="onSpecRerunClick"
+            >
+              <AppIcon :name="specStarting ? 'spinner' : 'arrow-clockwise'" :spin="specStarting" />
+              {{ t('main.test_document.rerun') }}
+            </button>
+            <button
+              v-if="specState.active && specState.runId"
+              class="btn btn-secondary btn-sm"
+              type="button"
+              data-test="ab-spec-cancel"
+              :disabled="specCancelling || specState.key === 'cancelling'"
+              @click="onSpecCancelClick"
+            >
+              <AppIcon :name="specCancelling ? 'spinner' : 'prohibit'" :spin="specCancelling" />
+              {{ t('main.test_document.cancel_run') }}
+            </button>
+          </div>
           <div v-else-if="isNextTestReportPending" class="ab-split-wrap">
             <!-- flowgate.default.0358 T0004 §9: while a run is in flight, this stays a
                  status indicator (not clickable) instead of falling back to the generic
@@ -355,11 +392,26 @@
           <button
             class="btn btn-success btn-sm"
             :disabled="!canApprove || isActionBarBusy"
-            :title="gitSettling ? t('main.review_action_bar.git_settle_in_progress') : testGateBlocked ? t('main.review_action_bar.test_gate_blocked') : undefined"
+            :title="approvalJobNotice || (gitSettling ? t('main.review_action_bar.git_settle_in_progress') : testGateBlocked ? t('main.review_action_bar.test_gate_blocked') : undefined)"
+            :aria-busy="approving"
+            data-test="ab-approve"
             @click="onApproveClick"
           >
-            <AppIcon name="check" /> {{ t('main.review_action_bar.btn_approve') }}
+            <!-- 0684 T#3 (D#1 §6-1): the click is visibly in progress until the server answers. -->
+            <AppIcon :name="approving ? 'spinner' : 'check'" :spin="approving" /> {{ t('main.review_action_bar.btn_approve') }}
           </button>
+          <!-- 0674 T0004 §2-3 (C1): a final approval whose Git post-step is queued or needs
+               recovery is not a finished approval and not a failed one either. -->
+          <span
+            v-if="approvalJobNotice"
+            class="ab-gate-hint ab-approval-job"
+            :class="{ 'ab-approval-job--recovery': approvalJob?.stage === 'recovery_required' }"
+            data-testid="ab-approval-job"
+            :title="approvalJobNotice"
+          >
+            <AppIcon :name="approvalJob?.stage === 'recovery_required' ? 'warning' : 'hourglass-medium'" />
+            {{ approvalJobNotice }}
+          </span>
           <span v-if="testGateBlocked" class="ab-gate-hint" data-testid="ab-test-gate-hint">
             <AppIcon name="prohibit" /> {{ t('main.review_action_bar.test_gate_blocked') }}
           </span>
@@ -407,6 +459,38 @@
       </template>
     </div>
 
+    <!-- 0683 T0004 §3 / 0685 T0006 §1: a target workspace held by another attempt is named
+         in its own alert above the bar, never between [승인] and [반려]. A short sentence
+         first, then source → target · merge id · state with the review button; the full
+         owner/start line stays one click away under the details toggle. -->
+    <div
+      v-if="targetBlocker"
+      class="ab-target-blocker"
+      data-testid="ab-target-blocker"
+      role="alert"
+    >
+      <p class="ab-target-blocker-summary" data-testid="ab-target-blocker-summary">
+        <AppIcon name="warning" />
+        <span>{{ targetBlockerSummary }}</span>
+      </p>
+      <div v-if="targetBlockerMeta || targetBlockerOpenable" class="ab-target-blocker-row">
+        <span v-if="targetBlockerMeta" class="ab-target-blocker-meta" data-testid="ab-target-blocker-meta">{{ targetBlockerMeta }}</span>
+        <button
+          v-if="targetBlockerOpenable"
+          type="button"
+          class="btn btn-secondary btn-sm"
+          data-testid="ab-target-blocker-open"
+          :title="targetBlockerOpenTitle"
+          @click="openBlockerReview"
+        >{{ targetBlockerOpenLabel }}</button>
+      </div>
+      <p v-if="targetBlockerHint" class="ab-target-blocker-hint" data-testid="ab-target-blocker-hint">{{ targetBlockerHint }}</p>
+      <details class="ab-target-blocker-details">
+        <summary>{{ t('main.review_action_bar.target_blocker_details') }}</summary>
+        <span data-testid="ab-target-blocker-text">{{ targetBlockerText }}</span>
+      </details>
+    </div>
+
     <!-- Approve confirm dialog. flowgate.default.0162 §3.1 "본선": when this approval
          completes a git-active group's workflow (an AC doc with a finalizable slot),
          the git finalize choice rides inside the same dialog and is applied right
@@ -416,6 +500,7 @@
       :title="t('main.review_action_bar.approve_confirm_title')"
       :message="showGitFinalizeBlock ? t('main.git_finalize.approve_message') : t('main.review_action_bar.approve_confirm_message')"
       :confirm-label="showGitFinalizeBlock ? t('main.git_finalize.approve_confirm') : undefined"
+      :confirm-disabled="gitTargetAckMissing"
       @confirm="doApprove"
     >
       <div v-if="showGitFinalizeBlock && gitFin" class="ab-git-fin">
@@ -475,8 +560,37 @@
           >
             <option v-for="branch in gitTargetCandidates" :key="branch" :value="branch">{{ branch }}</option>
           </select>
-          <p v-if="gitActionMerges && gitFin.base_branch && gitTargetBranch !== gitFin.base_branch" class="ab-git-retarget" role="status" data-test="finalize-retarget-notice">
-            {{ t('main.git_finalize.retarget_notice', { base: gitFin.base_branch, target: gitTargetBranch }) }}
+          <!-- 0665 T0004 / 0685 T0006 §3-4: the target warnings and, only when the target is
+               not the group's work base, the required check live in one highlighted box. -->
+          <div
+            v-if="gitTargetRetargeted || gitTargetUnmergeNotice"
+            class="ab-git-target-warn"
+            :class="{ 'ab-git-target-warn--ack': gitTargetNeedsAck }"
+            data-test="finalize-target-warn"
+          >
+            <p v-if="gitTargetRetargeted" class="ab-git-retarget" role="status" data-test="finalize-retarget-notice">
+              {{ t('main.git_finalize.retarget_notice', { base: gitWorkBase, target: gitTargetBranch }) }}
+            </p>
+            <!-- 0665 T0004: work-base commits that would flow into a target other
+                 than the group's work base, and the merge_only unmerge limit. -->
+            <p v-if="gitTargetRetargeted && gitTargetPreview?.incoming_work_base_commits"
+               class="ab-git-retarget" role="alert" data-test="finalize-incoming-commits">
+              {{ t('main.git_finalize.incoming_work_base_commits', { n: gitTargetPreview.incoming_work_base_commits, base: gitWorkBase, target: gitTargetBranch }) }}
+            </p>
+            <p v-if="gitTargetUnmergeNotice"
+               class="ab-git-retarget" role="alert" data-test="finalize-unmerge-unsupported">
+              {{ t('main.git_finalize.unmerge_unsupported_notice', { target: gitTargetBranch }) }}
+            </p>
+            <label v-if="gitTargetNeedsAck" class="ab-git-target-ack" data-test="finalize-target-ack">
+              <input v-model="gitTargetAck" type="checkbox" data-test="finalize-target-ack-input" />
+              <span>{{ t('main.git_finalize.target_ack', { base: gitWorkBase, target: gitTargetBranch }) }}</span>
+            </label>
+            <p v-if="gitTargetAckMissing" class="ab-git-target-ack-reason" role="status" data-test="finalize-target-ack-reason">
+              {{ t('main.git_finalize.target_ack_required') }}
+            </p>
+          </div>
+          <p v-if="gitFin.work_base_sha" class="ab-git-work-base" data-test="finalize-work-base">
+            {{ t('main.git_finalize.work_base_line', { base: gitWorkBase, sha: shortSha(gitFin.work_base_sync_sha || gitFin.work_base_sha) }) }}
           </p>
         </div>
 
@@ -501,6 +615,16 @@
       </div>
     </ConfirmModal>
 
+    <!-- 0683 T0004 §3: the blocking branch merge's own resolver/review dialogs, on its
+         project-scoped routes (the same host the Branch Manager uses). -->
+    <GitBranchMergeConflictHost
+      v-if="blockerReviewMergeId != null && blockerReviewProjectId"
+      :project-id="blockerReviewProjectId"
+      :merge-id="blockerReviewMergeId"
+      @close="blockerReviewMergeId = null"
+      @changed="onBlockerChanged"
+    />
+
     <!-- Revision complete confirm dialog -->
     <ConfirmModal
       v-model:visible="showMarkRevisedConfirm"
@@ -518,6 +642,14 @@ import { getRequest, postRequest } from '@shared/api'
 import ConfirmModal from './ConfirmModal.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
+import {
+  cancelSpecRun,
+  reloadTestDocument,
+  specErrorKey,
+  specRunState,
+  startSpecRun,
+  testDocumentView,
+} from './documents/testSpecRun'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import GitFinalizeAxis from './GitFinalizeAxis.vue'
 import {
@@ -527,6 +659,12 @@ import {
 } from '../composables/finalizeAxis'
 import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { describeTr2Error } from './documents/tr2State'
+import GitBranchMergeConflictHost from './GitBranchMergeConflictHost.vue'
+import {
+  isOpenableBranchMergeBlocker,
+  mergeTargetBlockerOf,
+  type MergeTargetBlocker,
+} from '@shared/mergeTargetBlocker'
 
 type ActionBarMode = 'workflow' | 'next' | 'review' | 'q' | 'info' | 'sequence-complete' | 'rejected' | 'workflow-recover'
 
@@ -557,6 +695,8 @@ const props = defineProps<{
   canNextAction?: boolean
   /** Latest test run status for TS -> TSR first-run action-bar mode. null means never run. */
   testRunStatus?: string | null
+  /** 0684 T#3: the TS contract (2 = specification run by /test-spec/runs, never /documents/test-run). */
+  testContractVersion?: number | null
   /**
    * 0441 TR0005 rev2: whether ANY document of this group has a run in flight. Sourced from
    * the document detail's group-scoped `group_test_run` block, so a sibling tab gets the
@@ -620,6 +760,9 @@ const dropdownPos = ref({ top: 8, left: 8 })
 const DROPDOWN_VIEWPORT_MARGIN = 8
 const DROPDOWN_TRIGGER_GAP = 6
 const { showToast } = useToast()
+// 0684 T#3 (D#1 §6-1): a refusal the user must read stays until they click it away
+// (useToast: a duration of 0 never expires).
+const TOAST_STICKY = 0
 const docTypeStore = useDocTypeStore()
 const gitAuxOpen = ref(false)
 
@@ -657,6 +800,12 @@ async function onReleaseLeaseClick(): Promise<void> {
 interface GitFinState {
   branch: string | null
   base_branch?: string | null
+  // 0665 T0004: the group's work base is the default merge target.
+  work_base_ref?: string | null
+  default_target?: string | null
+  work_base_sha?: string | null
+  work_base_sync_sha?: string | null
+  work_base_state?: string | null
   finalize_target?: { target_branch?: string | null } | null
   status: string
   default_action: string | null
@@ -673,6 +822,25 @@ interface GitFinState {
   // the server. `null`/missing means the server could not confirm either way
   // (lock probe failure) — treat that the same as `true`, never as `false`.
   approval_in_flight?: boolean | null
+  // 0674 T0004 §2-4: this group's live final approval job (null = none waiting/running).
+  approval_job?: ApprovalJobView | null
+}
+// 0674 T0004 §2-3/§2-4: the server's job view (approval_publish.job_view) — from the
+// approve response's `job`/`approval.blocker`, or the finalize state's `approval_job`.
+interface ApprovalJobBlocker {
+  domain?: string | null
+  lock_key?: string | null
+  holder?: string | null
+  holder_kind?: string | null
+  since?: string | null
+}
+interface ApprovalJobView {
+  job_id?: string | null
+  status?: string | null
+  stage?: string | null
+  doc_id?: string | null
+  last_error_code?: string | null
+  blocker?: ApprovalJobBlocker | null
 }
 const gitFin = ref<GitFinState | null>(null)
 const gitNormalChoice = ref<string>('')
@@ -680,6 +848,62 @@ const gitArchiveSelected = ref(false)
 const gitTargetBranch = ref('')
 const gitTargetCandidates = ref<string[]>([])
 const gitActionMerges = computed(() => ['merge', 'merge_only'].includes(gitNormalChoice.value))
+// flowgate.default.0665 T0004: a merge target other than the group's work base, or a
+// merge_only the existing unmerge cannot undo, is shown with its consequences.
+// 0685 T0006 §3: only the target change needs an explicit acknowledgement; approving
+// into the work base itself never asks for the check again.
+interface GitTargetPreview {
+  target_branch: string
+  work_base_ref: string
+  unmerge_supported: boolean
+  incoming_work_base_commits: number | null
+}
+const gitTargetPreview = ref<GitTargetPreview | null>(null)
+const gitTargetAck = ref(false)
+const gitWorkBase = computed(
+  () => gitFin.value?.default_target || gitFin.value?.work_base_ref || gitFin.value?.base_branch || '',
+)
+const gitTargetUnmergeUnsupported = computed(() => {
+  if (!gitTargetBranch.value) return false
+  if (gitTargetPreview.value && gitTargetPreview.value.target_branch === gitTargetBranch.value) {
+    return !gitTargetPreview.value.unmerge_supported
+  }
+  return !!gitFin.value?.base_branch && gitTargetBranch.value !== gitFin.value.base_branch
+})
+const gitTargetRetargeted = computed(
+  () => gitActionMerges.value && !!gitWorkBase.value && !!gitTargetBranch.value && gitTargetBranch.value !== gitWorkBase.value,
+)
+const gitTargetUnmergeNotice = computed(
+  () => gitNormalChoice.value === 'merge_only' && gitTargetUnmergeUnsupported.value,
+)
+const gitTargetNeedsAck = computed(
+  () =>
+    showGitFinalizeBlock.value &&
+    !gitArchiveSelected.value &&
+    gitTargetRetargeted.value,
+)
+const gitTargetAckMissing = computed(() => gitTargetNeedsAck.value && !gitTargetAck.value)
+function shortSha(sha: string | null | undefined): string {
+  return (sha || '').slice(0, 10)
+}
+async function fetchGitTargetPreview(target: string) {
+  if (!props.groupId || !target) {
+    gitTargetPreview.value = null
+    return
+  }
+  try {
+    const { data } = await getRequest<{ ok: boolean; preview: GitTargetPreview }>(
+      `/api/v1/groups/${props.groupId}/git/finalize-target?target=${encodeURIComponent(target)}`,
+    )
+    if (gitTargetBranch.value === target) gitTargetPreview.value = data.preview
+  } catch {
+    gitTargetPreview.value = null
+  }
+}
+watch([gitTargetBranch, gitNormalChoice], ([target], [prevTarget]) => {
+  gitTargetAck.value = false
+  if (target !== prevTarget) void fetchGitTargetPreview(target as string)
+})
 const isAcDoc = computed(() => (props.docType ?? '').toUpperCase() === 'AC')
 // Show the choice only for an AC doc whose group slot is still actionable —
 // awaiting_choice / waiting with real choices offered. Terminal (merged/pushed),
@@ -714,6 +938,7 @@ async function fetchGitFin() {
     return
   }
   gitFin.value = state
+  adoptApprovalJob(state)
   const defaultAction = state.default_action || 'wait'
   if (state.action_axes) {
     const { scope } = positionOfAction(state.action_axes, defaultAction)
@@ -732,7 +957,8 @@ async function fetchGitFin() {
   // best-effort enrichment of the finalize UI above, not a precondition for it.
   // A 403/404/500 here must fall back to the pinned/base target instead of
   // wiping out the finalize block this dialog already has.
-  const fallbackTarget = state.finalize_target?.target_branch || state.base_branch || ''
+  const fallbackTarget = state.finalize_target?.target_branch
+    || state.default_target || state.work_base_ref || state.base_branch || ''
   // Keep the fallback as a real option as well as the model value. A native
   // select does not display a value that has no matching option, so leaving
   // candidates empty made the catalog-failure fallback look blank.
@@ -744,9 +970,11 @@ async function fetchGitFin() {
       .filter((branch: any) => (branch.kind === 'local' || branch.kind === 'base') && branch.name !== state.branch)
       .map((branch: any) => branch.name)
     // T0016 §2.2: an already-pinned open attempt always wins (never silently
-    // retargeted); otherwise prefer the project's persisted integration branch
-    // over resetting to base every time this dialog opens.
+    // retargeted). 0665 T0004: then the GROUP's work base -- the server's own
+    // default -- and only then the project's remembered integration branch.
     const defaultTarget = state.finalize_target?.target_branch
+      || state.default_target
+      || state.work_base_ref
       || catalog.data.default_merge_target
       || state.base_branch
       || catalog.data.base_branch
@@ -995,6 +1223,82 @@ const testRunStatusLabel = computed(() =>
     : t('main.test_run_strip.running'),
 )
 
+// ── 0684 T#3 (D#1 §6-1): contract-2 run state, [다시 실행], [취소] ─────────────
+const specView = computed(() => testDocumentView(props.docId))
+const isSpecContract = computed(
+  () => props.testContractVersion === 2 || specView.value?.contract_version === 2,
+)
+const specState = computed(() => specRunState(specView.value))
+const specStarting = ref(false)
+const specCancelling = ref(false)
+
+function specReason(code: string | null): string {
+  if (!code) return ''
+  const key = `main.test_document.prepare_reason.${code}`
+  return te(key) ? t(key) : t('main.test_document.prepare_reason.unknown', { code })
+}
+
+const specStateLabel = computed(() => {
+  const state = specState.value
+  const prefix = 'main.test_document.run_state.'
+  if (state.key === 'executing') return t(prefix + 'executing', { done: state.done, total: state.total })
+  if (state.key === 'prepare_failed' || state.key === 'execution_failed') {
+    return t(prefix + state.key, { reason: specReason(state.error) })
+  }
+  if (state.key === 'done' || state.key === 'unchecked') {
+    return t(prefix + state.key, { overall: state.overall ?? 'NOT_RUN' })
+  }
+  return t(prefix + state.key)
+})
+
+const specStateIcon = computed(() => {
+  if (specState.value.active) return 'spinner'
+  if (specState.value.tone === 'success') return 'seal-check'
+  if (specState.value.tone === 'danger') return 'warning-circle'
+  if (specState.value.tone === 'warning') return 'warning'
+  return 'flask'
+})
+
+// D#1 §6-1: only with the TS approved, its report not approved and no run in flight.
+const canSpecRerun = computed(
+  () =>
+    !specStarting.value &&
+    !specState.value.active &&
+    !isAnyTestRunActive.value &&
+    !isGroupBusy.value &&
+    normalizedStatus.value === 'approved' &&
+    specView.value?.tsr_review_status !== 'approved',
+)
+
+async function onSpecRerunClick() {
+  if (!canSpecRerun.value) return
+  specStarting.value = true
+  try {
+    await startSpecRun(props.docId)
+    showToast(t('main.test_document.run_started'), 'success')
+    await reloadTestDocument(props.docId)
+  } catch (error) {
+    showToast(t(`main.test_document.errors.${specErrorKey(error)}`), 'danger', TOAST_STICKY)
+  } finally {
+    specStarting.value = false
+  }
+}
+
+async function onSpecCancelClick() {
+  const runId = specState.value.runId
+  if (!runId || specCancelling.value) return
+  specCancelling.value = true
+  try {
+    await cancelSpecRun(runId)
+    showToast(t('main.test_document.cancel_requested'), 'info')
+    await reloadTestDocument(props.docId)
+  } catch (error) {
+    showToast(t(`main.test_document.errors.${specErrorKey(error)}`), 'danger', TOAST_STICKY)
+  } finally {
+    specCancelling.value = false
+  }
+}
+
 function onNextCreateEmptyClick() {
   dropdownOpen.value = false
   emit('create-empty')
@@ -1059,6 +1363,7 @@ const canApprove = computed(
   () =>
     !approving.value &&
     approvedDocId.value !== props.docId &&
+    !approvalJob.value &&
     !props.testGateBlocked &&
     ['pending_review', 'revised'].includes(normalizedStatus.value),
 )
@@ -1158,6 +1463,205 @@ function requestGitStatusRefresh() {
   }))
 }
 
+// flowgate.default.0674 T0004 §2-3 (C1): since 0669 a final approval the request could not
+// finish answers 200 with `approval.stage = "queued" | "recovery_required"` and a `job` —
+// the Git post-step waits on a lock (freeze_wait/blocked), a retry (retry_wait) or a
+// recovery verdict, and the Job Runner finishes it later. The bar used to read neither, so
+// the approval looked like it had simply not happened and the button was live again. Now
+// the job is shown, the button stays locked while it is not terminal, and the bar follows
+// it (the finalize state's `approval_job`, re-read on `git_approval_job_changed` /
+// `git_finalize_done` and by a slow poll) until it is gone.
+const approvalJob = ref<ApprovalJobView | null>(null)
+const APPROVAL_JOB_POLL_MS = 5_000
+let approvalJobTracking = false
+
+const approvalJobNotice = computed(() => {
+  const job = approvalJob.value
+  if (!job) return ''
+  const jobId = job.job_id || '-'
+  if (job.stage === 'recovery_required' || job.status === 'recovery_required') {
+    return t('main.review_action_bar.approval_job_recovery', { job: jobId })
+  }
+  const stageKey = `main.review_action_bar.approval_job_stage.${job.stage || job.status || 'pending'}`
+  const stage = te(stageKey) ? t(stageKey) : String(job.stage || job.status || '')
+  const head = t('main.review_action_bar.approval_job_queued', { stage, job: jobId })
+  const blocker = job.blocker
+  if (!blocker?.domain) return head
+  return `${head} ${t('main.review_action_bar.approval_job_blocker', {
+    domain: blocker.domain,
+    holder: blocker.holder_kind || blocker.holder || '-',
+  })}`
+})
+
+// The finalize state's job for THIS document; a server without the field has none.
+function approvalJobOfState(state: GitFinState): ApprovalJobView | null {
+  const job = state.approval_job ?? null
+  if (!job || (job.doc_id && job.doc_id !== props.docId)) return null
+  return job
+}
+
+function setApprovalJob(next: ApprovalJobView | null) {
+  const previous = approvalJob.value
+  approvalJob.value = next
+  if (next && !previous) void trackApprovalJob(approveGeneration)
+  if (previous && !next) void onApprovalJobSettled(approveGeneration)
+}
+
+function adoptApprovalJob(state: GitFinState) {
+  // `approval_in_flight` null/missing means "could not tell": keep what the bar has.
+  if (state.approval_in_flight === false) {
+    setApprovalJob(null)
+  } else if (state.approval_in_flight === true && state.approval_job !== undefined) {
+    setApprovalJob(approvalJobOfState(state))
+  }
+}
+
+async function refreshApprovalJob() {
+  if (!isAcDoc.value) return
+  const state = await fetchGitFinLive()
+  if (state) adoptApprovalJob(state)
+}
+
+async function trackApprovalJob(generation: number) {
+  if (approvalJobTracking) return
+  approvalJobTracking = true
+  try {
+    while (generation === approveGeneration && approvalJob.value) {
+      await new Promise((resolve) => setTimeout(resolve, APPROVAL_JOB_POLL_MS))
+      if (generation !== approveGeneration || !approvalJob.value) return
+      await refreshApprovalJob()
+    }
+  } finally {
+    approvalJobTracking = false
+  }
+}
+
+async function onApprovalJobSettled(generation: number) {
+  const serverStatus = await fetchServerReviewStatus()
+  if (generation !== approveGeneration) return
+  if (serverStatus === 'approved') {
+    approvedDocId.value = props.docId
+    showToast(t('main.review_action_bar.approval_job_done'), 'success')
+    emit('approve', 'approved')
+  }
+  requestGitStatusRefresh()
+}
+
+function onApprovalJobEvent(e: Event) {
+  if (matchesGitGroup(e)) void refreshApprovalJob()
+}
+
+watch(() => props.docId, () => {
+  approvalJob.value = null
+  targetBlocker.value = null
+  blockerReviewMergeId.value = null
+})
+
+// ── 0683 T0004 §3 — who holds the merge target ──────────────────────────────
+const targetBlocker = ref<MergeTargetBlocker | null>(null)
+const blockerReviewMergeId = ref<number | null>(null)
+const blockerReviewProjectId = computed(() => targetBlocker.value?.projectId || props.projectId || '')
+const targetBlockerOpenable = computed(() => isOpenableBranchMergeBlocker(targetBlocker.value))
+
+function blockerStateLabel(blocker: MergeTargetBlocker): string {
+  const state = blocker.state
+  if (!state) return t('main.review_action_bar.target_busy_state_unknown')
+  const key = `main.git_branch_manager.attempt_state.${state}`
+  return te(key) ? t(key) : state
+}
+
+function blockerTime(value: string | null): string {
+  return value ? value.replace('T', ' ').slice(0, 16) : '-'
+}
+
+const targetBlockerText = computed(() => {
+  const b = targetBlocker.value
+  if (!b) return ''
+  const params = {
+    target: b.targetBranch || '-',
+    merge_id: b.mergeId ?? '-',
+    source: b.sourceBranch || '-',
+    group: b.groupId || '-',
+    state: blockerStateLabel(b),
+    started_at: blockerTime(b.startedAt),
+    reason: b.reason || '-',
+  }
+  if (b.code === 'merge_target_owner_mismatch') return t('main.review_action_bar.target_owner_mismatch', params)
+  if (b.ownerType === 'branch_merge') return t('main.review_action_bar.target_busy_branch_merge', params)
+  if (b.ownerType === 'group') return t('main.review_action_bar.target_busy_group', params)
+  return t('main.review_action_bar.target_busy_unknown', params)
+})
+
+// 0685 T0006 §1: what is visible first is one short sentence and, for a branch merge,
+// source → target · merge id · state; the long owner/start line above moves under details.
+const targetBlockerSummary = computed(() => {
+  const b = targetBlocker.value
+  if (!b) return ''
+  const target = b.targetBranch || '-'
+  return b.code === 'merge_target_owner_mismatch'
+    ? t('main.review_action_bar.target_owner_mismatch_summary', { target })
+    : t('main.review_action_bar.target_busy_summary', { target })
+})
+
+const targetBlockerMeta = computed(() => {
+  const b = targetBlocker.value
+  if (!b || b.code !== 'merge_target_busy') return ''
+  const params = {
+    target: b.targetBranch || '-',
+    merge_id: b.mergeId ?? '-',
+    source: b.sourceBranch || '-',
+    group: b.groupId || '-',
+    state: blockerStateLabel(b),
+  }
+  if (b.ownerType === 'branch_merge') return t('main.review_action_bar.target_busy_meta_branch_merge', params)
+  if (b.ownerType === 'group') return t('main.review_action_bar.target_busy_meta_group', params)
+  return t('main.review_action_bar.target_busy_meta_unknown', params)
+})
+
+// 0685 T0006 §2: the button says what it opens — that merge's review — and never
+// promises to continue the approval, which it does not re-run.
+const targetBlockerOpenLabel = computed(() =>
+  t('main.review_action_bar.target_busy_open_review', { merge_id: targetBlocker.value?.mergeId ?? '-' }),
+)
+
+const targetBlockerOpenTitle = computed(() => {
+  const b = targetBlocker.value
+  return t('main.review_action_bar.target_busy_open_review_title', {
+    source: b?.sourceBranch || '-',
+    target: b?.targetBranch || '-',
+  })
+})
+
+const targetBlockerHint = computed(() => {
+  const b = targetBlocker.value
+  if (!b || b.code !== 'merge_target_busy') return ''
+  return b.ownerType === 'branch_merge'
+    ? t('main.review_action_bar.target_busy_hint_branch_merge')
+    : t('main.review_action_bar.target_busy_hint_group')
+})
+
+/** Remember a blocker named by an approve failure; returns its one-line description. */
+function noteTargetBlocker(input: unknown): string | null {
+  const blocker = mergeTargetBlockerOf(input)
+  if (!blocker) return null
+  targetBlocker.value = blocker
+  return targetBlockerText.value
+}
+
+function openBlockerReview() {
+  const b = targetBlocker.value
+  if (!isOpenableBranchMergeBlocker(b)) return
+  blockerReviewMergeId.value = b!.mergeId
+}
+
+function onBlockerChanged() {
+  // The blocker moved (approved / aborted / rejected): its old description is no longer true;
+  // the next [승인] re-asks the server.
+  if (!targetBlocker.value) return
+  targetBlocker.value = null
+  showToast(t('main.review_action_bar.target_blocker_cleared'), 'info')
+}
+
 async function postApproveWithGitRetry(body: Record<string, unknown>) {
   const url = `/api/v1/documents/review_transitions/approve`
   try {
@@ -1180,9 +1684,17 @@ function onApproveClick() {
 
 async function doApprove() {
   if (!canApprove.value) return
+  if (gitTargetAckMissing.value) {
+    // 0665 T0004: never run a risky merge target without the explicit check.
+    // 0685 T0006 §4: the confirm button is disabled until then, so the dialog stays open
+    // and shows the reason next to the check instead of closing behind a toast.
+    showApproveConfirm.value = true
+    return
+  }
   approving.value = true
   const generation = ++approveGeneration
   let sentGitAction = false
+  targetBlocker.value = null
   try {
     if (props.beforeApprove && !(await props.beforeApprove())) return
     // §3.1: the git finalize choice rides on the approve request only when the
@@ -1236,6 +1748,8 @@ async function doApprove() {
           t('main.git_status.base_untracked_conflict_toast', { files: blocked.join(', ') }),
           'warning',
         )
+      } else if (noteTargetBlocker(git)) {
+        showToast(targetBlockerText.value, 'warning')
       } else {
         showToast(git.error?.message || t('main.git_finalize.failed'), 'warning')
       }
@@ -1306,6 +1820,21 @@ async function doApprove() {
     const updated = payload?.document ?? payload?.data ?? payload
     const approved = approval?.approved === true
       || (approval == null && updated?.doc_review_status === 'approved')
+    if (!approved && (approval?.stage === 'queued' || approval?.stage === 'recovery_required')) {
+      // 0674 T0004 §2-3: not approved yet, not failed either — the job finishes it.
+      if (payload?.block_reason) noteTargetBlocker({ error: payload.block_reason })
+      const job = (payload?.job ?? {}) as ApprovalJobView
+      const recovery = approval.stage === 'recovery_required'
+      setApprovalJob({
+        ...job,
+        job_id: job.job_id ?? approval.job_id ?? null,
+        stage: recovery ? 'recovery_required' : (job.stage ?? job.status ?? 'pending'),
+        blocker: approval.blocker ?? job.blocker ?? null,
+        doc_id: props.docId,
+      })
+      showToast(approvalJobNotice.value, recovery ? 'warning' : 'info')
+      return
+    }
     if (!approved) {
       // Keep the button available for the same AC. The Git refresh/open event
       // above moves conflict sessions to their recovery surface and terminal
@@ -1320,9 +1849,17 @@ async function doApprove() {
   } catch (e: any) {
     // TR2 returns a specific refusal code; present its meaning in the approval bar.
     const code = e?.response?.data?.code
-    const detail = typeof code === 'string' && code.startsWith('tr2_')
+    // 0683 T0004 §3: a held merge target names its holder instead of the server's one line.
+    const blockerText = noteTargetBlocker(e)
+    if (blockerText && e?.response?.data?.approval?.stage === 'precheck') {
+      // Refused before anything was approved or queued — there is no Git outcome to settle.
+      console.error(t('main.review_action_bar.error_approve_failed_log'), blockerText)
+      showToast(t('main.review_action_bar.toast_approve_failed', { detail: blockerText }), 'danger', TOAST_STICKY)
+      return
+    }
+    const detail = blockerText ?? (typeof code === 'string' && code.startsWith('tr2_')
       ? describeTr2Error(e, t, te).text
-      : (e?.response?.data?.detail ?? e?.response?.data?.error?.message ?? e)
+      : (e?.response?.data?.detail ?? e?.response?.data?.error?.message ?? e))
     if (props.docType === 'TR2' && code === 'tr2_spec_changed') {
       emit('tr2-stale')
     }
@@ -1351,7 +1888,7 @@ async function doApprove() {
         return
       }
       console.error(t('main.review_action_bar.error_approve_failed_log'), detail)
-      showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger')
+      showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger', TOAST_STICKY)
       return
     }
     // 0257 NR0003 §3: the server refusing approve on an already-approved doc is correct and
@@ -1366,8 +1903,10 @@ async function doApprove() {
       return
     }
     console.error(t('main.review_action_bar.error_approve_failed_log'), detail)
-    showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger')
+    // 0684 T#3 (D#1 §6-1): an approval refusal stays until the user closes it.
+    showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger', TOAST_STICKY)
   } finally {
+
     gitSettling.value = false
     approving.value = false
   }
@@ -1521,6 +2060,8 @@ onMounted(() => {
   window.addEventListener('fg:git_pending_changed', onGitStatusChanged)
   window.addEventListener('fg:git_status_refresh', onGitStatusChanged)
   window.addEventListener('fg:git_status_open', onGitStatusChanged)
+  window.addEventListener('fg:git_approval_job_changed', onApprovalJobEvent)
+  window.addEventListener('fg:git_finalize_done', onApprovalJobEvent)
 })
 
 onBeforeUnmount(() => {
@@ -1530,6 +2071,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('fg:git_pending_changed', onGitStatusChanged)
   window.removeEventListener('fg:git_status_refresh', onGitStatusChanged)
   window.removeEventListener('fg:git_status_open', onGitStatusChanged)
+  window.removeEventListener('fg:git_approval_job_changed', onApprovalJobEvent)
+  window.removeEventListener('fg:git_finalize_done', onApprovalJobEvent)
 })
 </script>
 
@@ -1843,6 +2386,44 @@ onBeforeUnmount(() => {
 .ab-git-target select {
   width: 100%;
 }
+.ab-git-target-warn {
+  display: grid;
+  gap: 5px;
+}
+/* 0685 T0006 §4: a target other than the work base — warnings, the check and the reason the
+   confirm button is disabled are one highlighted box. */
+.ab-git-target-warn--ack {
+  padding: 8px;
+  border: 1px solid var(--warning, #d97706);
+  border-radius: 8px;
+  background: var(--warning-l, #fef3c7);
+}
+.ab-git-target-ack {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: .72rem;
+}
+.ab-git-target-warn--ack .ab-git-retarget {
+  padding: 0;
+  background: transparent;
+}
+.ab-git-target-warn--ack .ab-git-target-ack {
+  color: var(--text);
+  font-size: .76rem;
+  font-weight: 700;
+}
+.ab-git-target-ack-reason {
+  margin: 0;
+  color: var(--danger);
+  font-size: .7rem;
+}
+.ab-git-work-base {
+  margin: 0;
+  font-size: .7rem;
+  color: var(--text-muted, #6b7280);
+  font-family: var(--font-mono, monospace);
+}
 .ab-git-retarget {
   margin: 0;
   padding: 7px 9px;
@@ -1943,6 +2524,53 @@ onBeforeUnmount(() => {
 }
 /* 0549 T0008: why [approve] is disabled on a TSR that did not pass the test gate. */
 .ab-gate-hint { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--danger); white-space: nowrap; }
+/* 0684 T#3: contract-2 run state pill + [다시 실행] / [취소]. */
+.ab-spec-run { display: inline-flex; align-items: center; gap: 6px; }
+.ab-spec-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; font-size: .75rem; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text-s); white-space: nowrap; }
+.ab-spec-pill--info { color: var(--primary); border-color: var(--primary); }
+.ab-spec-pill--success { color: var(--success); border-color: var(--success); background: var(--success-l); }
+.ab-spec-pill--danger { color: var(--danger); border-color: var(--danger); background: var(--danger-l); }
+.ab-spec-pill--warning { color: var(--warning); border-color: var(--warning); background: var(--warning-l); }
+
+.ab-approval-job { color: #b45309; white-space: normal; max-width: 420px; }
+.ab-approval-job--recovery { color: var(--danger); }
+/* 0685 T0006 §1: the blocker floats above the 60px bar (the bar is position:fixed, so it is
+   the containing block) instead of sitting in .sfb-actions — the action buttons keep their
+   place and width, long i18n text wraps inside the box, and nothing scrolls sideways. */
+.ab-target-blocker {
+  position: absolute;
+  right: 24px;
+  bottom: calc(100% + 8px);
+  left: 24px;
+  box-sizing: border-box;
+  max-width: 640px;
+  max-height: 40vh;
+  margin-left: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid #fecaca;
+  border-left: 3px solid var(--danger);
+  border-radius: 8px;
+  background: #fff5f5;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, .16);
+  color: var(--text);
+  font-size: .74rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.ab-target-blocker-summary { margin: 0; display: flex; align-items: flex-start; gap: 6px; color: var(--danger); font-weight: 700; }
+.ab-target-blocker-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.ab-target-blocker-meta { min-width: 0; font-family: var(--font-mono, monospace); color: var(--text-m, inherit); }
+.ab-target-blocker-row .btn { flex-shrink: 0; white-space: nowrap; }
+.ab-target-blocker-hint { margin: 0; color: var(--text-secondary, inherit); }
+.ab-target-blocker-details { color: var(--text-muted, #6b7280); }
+.ab-target-blocker-details summary { cursor: pointer; width: max-content; }
+@media (max-width: 760px) {
+  .ab-target-blocker { right: 12px; left: 12px; max-width: none; }
+}
 </style>
 
 

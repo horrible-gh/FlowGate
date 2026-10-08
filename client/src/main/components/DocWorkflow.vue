@@ -71,6 +71,15 @@
                   <span v-if="opt.change.deleted > 0" class="minus">−{{ opt.change.deleted }}</span>
                   <span class="plus">+{{ opt.change.added }}</span>
                 </span>
+                <!-- 0649 T#3 (NR0003 O2/O5): a mode the server refuses says why, right here. The
+                     dialog still opens (it shows the detail and keeps [저장] off). -->
+                <span
+                  v-for="code in opt.blockers"
+                  :key="code"
+                  class="wf-apply-blocked"
+                  :data-test="`pour-blocked-${opt.mode}`"
+                >{{ t(`main.work_plan_pour.menu_blocked_${code}`) }}</span>
+                <span v-if="opt.needsAck" class="wf-apply-blocked is-ack">{{ t('main.work_plan_pour.menu_needs_ack') }}</span>
               </span>
             </button>
           </template>
@@ -351,6 +360,8 @@ interface CandidateResponse {
   row_count_change: RowCountChange
   notifications: Array<{ code: string; severity: string; count: number; [k: string]: unknown }>
   workflow_tag: string
+  // 0649 T#2/T#3: codes no confirmation can lift; empty/absent means the mode can be saved.
+  blockers?: string[]
 }
 
 const POUR_MODES = ['append', 'replace_after'] as const
@@ -417,8 +428,10 @@ const applyOptions = computed(() =>
       mode,
       icon: mode === 'append' ? 'arrow-down' : 'arrows-clockwise',
       change: candidates.value[mode]?.row_count_change,
+      blockers: candidates.value[mode]?.blockers ?? [],
+      needsAck: (candidates.value[mode]?.notifications ?? []).some(n => n.code === 'legacy_card_unresolved'),
     }))
-    .filter((opt): opt is { mode: PourMode; icon: string; change: RowCountChange } => !!opt.change),
+    .filter((opt): opt is { mode: PourMode; icon: string; change: RowCountChange; blockers: string[]; needsAck: boolean } => !!opt.change),
 )
 
 async function fetchCandidates(force = false): Promise<void> {
@@ -510,6 +523,7 @@ async function choosePourMode(mode: PourMode) {
     rowCountChange: data.row_count_change,
     notifications: data.notifications,
     workflowTag: data.workflow_tag,
+    blockers: data.blockers ?? [],
   }
   showEditModal.value = true
 }
@@ -735,6 +749,13 @@ function toggleSequenceCollapsed() {
   border-color: #16a34a;
 }
 /* M0020 — removed the blocked-state and reason text from beside the button. The reason is now stated inside the open menu. */
+.wf-apply-blocked {
+  display: block;
+  margin-top: 2px;
+  font-size: .68rem;
+  color: var(--danger, #b91c1c);
+}
+.wf-apply-blocked.is-ack { color: var(--warning, #b45309); }
 .wf-apply-msg {
   display: flex;
   align-items: center;

@@ -83,7 +83,10 @@ def test_a_finished_row_is_skipped_and_the_skip_is_reported():
     pending row was never touched. The contract now: a slot is a row that is still pending
     (or one this plan poured itself), and rows left out are reported, not dropped in silence.
     """
-    items = [item(4, "T", "done"), item(9, "T")]
+    # 0649 T#1 (NR0003 §3.6): a finished row is one holding a result document — the single
+    # "started" predicate. ``status`` alone (which only a hand-built dict can set without
+    # result_doc_id) no longer makes a row started.
+    items = [item(4, "T", "done", result="flowgate.default.0395.0004-T"), item(9, "T")]
     rows = svc.build_step_map([step("T#1"), step("T#2")], items)
     assert [(x["item_seq"], x["status"]) for x in rows] == [(9, "pending"), (None, "unmatched")]
     assert svc._slot_pool(items, None)[1] == [4]
@@ -319,21 +322,35 @@ def test_all_warning_codes_fire_and_have_distinct_three_locale_copy():
     }
     messages = {}
     for locale in ("ko", "en", "ja"):
-        warnings = svc.build_warnings(
-            plan_steps=plan_steps,
-            step_map=step_map,
-            provider_registry=REGISTRY,
-            projection=projection,
-            sequence_decided=False,
-            added=[{"plan_key": "D#2"}],
-            extra_item_seqs=[9],
-            unplaceable_keys=["X#1"],
-            order_differs_keys=["P#1"],
-            wp_review_status="pending_review",
-            unmatched_keys=["T#2"],
-            skipped_done_item_seqs=[7],
-            locale=locale,
-        )
+        warnings = []
+        # 0649 T#2 (NR0003 O2): a plan breaks its started prefix one way at a time, so the
+        # three started-card codes are driven by three calls.
+        for order_code in ("order_conflicts_started", "started_card_removed",
+                           "card_identity_mismatch"):
+            warnings += svc.build_warnings(
+                plan_steps=plan_steps,
+                step_map=step_map,
+                provider_registry=REGISTRY,
+                projection=projection,
+                sequence_decided=False,
+                added=[{"plan_key": "D#2"}],
+                extra_item_seqs=[9],
+                unplaceable_keys=["X#1"],
+                order_differs_keys=["P#1"],
+                wp_review_status="pending_review",
+                unmatched_keys=["T#2"],
+                skipped_done_item_seqs=[7],
+                locale=locale,
+                # 0649 T#1 (NR0003 O0): the unresolved / retired legacy rows of this plan.
+                card_classification={
+                    "unresolved_started": [{"item_id": 11, "item_seq": 11}],
+                    "retired_started": [{"item_id": 12, "item_seq": 12}],
+                },
+                # 0649 T#2 (NR0003 O2-O4).
+                order_blocker={"code": order_code, "cards": [{"card_id": "T#1", "key": "T#1"}]},
+                orphan_rows=[{"id": 13, "item_seq": 13, "type": "T"}],
+                interleaved_rows=[{"id": 14, "item_seq": 14, "type": "D"}],
+            )
         assert {row["code"] for row in warnings} == set(svc.WARNING_CODES)
         messages[locale] = {row["code"]: row["message"] for row in warnings}
         assert all(text.strip() for text in messages[locale].values())

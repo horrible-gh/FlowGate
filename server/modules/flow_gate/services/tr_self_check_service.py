@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import shutil
@@ -18,7 +19,9 @@ from modules.flow_gate.db import tr_self_check_runs as db_runs
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import tr_self_check_executor as executor
 from modules.flow_gate.services import tr_self_check_policy as policy
+from modules.flow_gate.services.git import lock_manager
 
+_log = logging.getLogger(__name__)
 _controls: dict[str, tuple[executor.ProcessControl, threading.Event]] = {}
 _controls_lock = threading.RLock()
 _HOST_PATH = os.environ.get("PATH", "")
@@ -27,8 +30,9 @@ _SECRET_RE = re.compile(r"(?i)\b((?:FLOWGATE_TOKEN|[A-Z0-9_]*(?:API_KEY|ACCESS_T
 
 
 class SelfCheckError(Exception):
-    def __init__(self, status: int, code: str, detail: str | None = None):
+    def __init__(self, status: int, code: str, detail: str | None = None, details: dict | None = None):
         self.status, self.code, self.detail = status, code, detail or code
+        self.details = details or {}
         super().__init__(self.detail)
 
 
@@ -112,7 +116,7 @@ def availability(doc_id: str) -> str:
             _worktree(doc)
         except SelfCheckError:
             return "managed_worktree_missing"
-        if db_runs.has_recovery_incomplete(doc["project_id"]):
+        if db_runs.has_group_recovery_incomplete(doc["project_id"], doc["group_id"]):
             return "recovery_incomplete"
         return "available"
     except Exception:
@@ -182,9 +186,10 @@ def _validate_request(request: dict) -> tuple[str, list[str], str, int]:
     return program, args, cwd, timeout
 
 
-def _finish(run_id: str, project_id: str, holder: str, root: Path, before: dict,
+def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root: Path, before: dict,
             runtime: Path, command: policy.ResolvedCommand, args: list[str], cwd: Path,
             env: dict[str, str], timeout: int) -> None:
+    holder = ctx.ctx_id
     control = None
     ownership = {}
     cancelled = threading.Event()
@@ -231,6 +236,8 @@ def _finish(run_id: str, project_id: str, holder: str, root: Path, before: dict,
                 while executor.start_identity(pid) == identity and time.monotonic() < deadline:
                     time.sleep(.1)
             if control.proc.poll() is None or (pid and identity and executor.start_identity(pid) == identity):
+                # L 2.24.2: the Group's G stays as a protected row; only this Group is blocked.
+                lock_manager.protect(ctx, lock_key, "selfcheck_reap_unconfirmed")
                 recovering = db_runs.mark_recovering(run_id)
                 if recovering:
                     db_runs.mark_recovery_incomplete(run_id, "process tree could not be reaped")
@@ -243,14 +250,18 @@ def _finish(run_id: str, project_id: str, holder: str, root: Path, before: dict,
             control.close()
         with _controls_lock:
             _controls.pop(run_id, None)
-        # A missing terminal commit retains the project lock for startup recovery.
+        if ctx.lock_lost:
+            _log.warning("selfcheck %s lost its Group lock during the run", run_id)
+        # A missing terminal commit keeps the Group lock (protected) for startup recovery.
         if terminal is not None:
-            git_service.db_git.release_lock(project_id, holder)
+            lock_manager.release(ctx, lock_key)
             _emit(terminal)
             try:
                 shutil.rmtree(runtime)
             except OSError as exc:
                 db_runs.set_cleanup_result(run_id, cleanup_pending=True, cleanup_error=str(exc))
+        elif ctx.find_held(lock_key) is not None:
+            lock_manager.protect(ctx, lock_key, "selfcheck_terminal_unrecorded")
 
 
 def start(doc_id: str, request: dict, requested_by: str | None = None) -> dict:
@@ -258,7 +269,7 @@ def start(doc_id: str, request: dict, requested_by: str | None = None) -> dict:
     project_id, group_id = doc["project_id"], doc["group_id"]
     if not db_projects.tr_self_check_enabled(project_id):
         raise SelfCheckError(403, "selfcheck_disabled")
-    if db_runs.has_recovery_incomplete(project_id):
+    if db_runs.has_group_recovery_incomplete(project_id, group_id):
         raise SelfCheckError(409, "selfcheck_recovery_incomplete")
     program, args, relative_cwd, timeout = _validate_request(request)
     first_root = _worktree(doc)
@@ -272,9 +283,19 @@ def start(doc_id: str, request: dict, requested_by: str | None = None) -> dict:
     if existing:
         raise SelfCheckError(409, "selfcheck_already_running", existing["self_check_run_id"])
     run_id = f"scr_{uuid.uuid4().hex[:24]}"
-    holder = f"selfcheck:{run_id}:{uuid.uuid4().hex[:12]}"
-    if not git_service._acquire_lock(project_id, holder, wait_sec=5):
-        raise SelfCheckError(409, "selfcheck_source_busy")
+    # D 3.8 / L 2.24.1: this Group's G for the whole run (long, heartbeated).
+    ctx = lock_manager.new_context("scr", run_id)
+    holder = ctx.ctx_id
+    try:
+        outcome = lock_manager.acquire("G", project_id, group_id=group_id, holder_kind="selfcheck",
+                                       mode="selfcheck_start", ctx=ctx)
+    except lock_manager.LockProgramError as exc:
+        raise SelfCheckError(500, "selfcheck_internal_error") from exc
+    if not outcome.ok:
+        code = ("selfcheck_recovery_incomplete" if outcome.kind == lock_manager.RECOVERY_REQUIRED
+                else "selfcheck_source_busy")
+        raise SelfCheckError(409, code, details=lock_manager.outcome_details(outcome))
+    lock_key = outcome.lock_key
     row = None
     runtime = None
     try:
@@ -292,14 +313,14 @@ def start(doc_id: str, request: dict, requested_by: str | None = None) -> dict:
         row = db_runs.create_pending(project_id, group_id, doc_id, requested_by,
             policy.POLICY_VERSION, program, args, command.executable, command.name,
             command.origin, relative_cwd, timeout, list(env), run_id=run_id, source_lock_holder=holder)
-        worker = threading.Thread(target=_finish, args=(run_id, project_id, holder, root, before,
+        worker = threading.Thread(target=_finish, args=(run_id, ctx, lock_key, root, before,
             runtime, command, args, cwd, env, timeout), daemon=True, name=f"selfcheck-{run_id}")
         try:
             worker.start()
         except Exception as exc:
             failed = db_runs.finish_failed(run_id, error_code="selfcheck_internal_error")
             if failed is not None:
-                git_service.db_git.release_lock(project_id, holder)
+                lock_manager.release(ctx, lock_key)
                 _emit(failed)
                 shutil.rmtree(runtime, ignore_errors=True)
             raise SelfCheckError(500, "selfcheck_internal_error") from exc
@@ -311,7 +332,7 @@ def start(doc_id: str, request: dict, requested_by: str | None = None) -> dict:
         raise SelfCheckError(422, exc.code) from exc
     finally:
         if row is None:
-            git_service.db_git.release_lock(project_id, holder)
+            lock_manager.release(ctx, lock_key)
             if runtime is not None:
                 shutil.rmtree(runtime, ignore_errors=True)
 
@@ -345,10 +366,17 @@ def cancel(doc_id: str, run_id: str) -> dict:
 
 
 def recover() -> set[str]:
-    """Recover orphan runs before generic Git cleanup, retaining unsafe lock owners."""
+    """Recover orphan runs before Git session recovery (L 2.24.3, 2.26 step 5).
+
+    Protection is per (project, group) G row now: a recovered run releases its Group's
+    G, an unproven one leaves it protected. Returns the projects whose protection could
+    not be written onto G; their run stays recovery_incomplete, which alone keeps the
+    Group's G closed (``lock_manager.group_recovery_check``).
+    """
     import signal
     import time
 
+    fallback: set[str] = set()
     for row in db_runs.list_orphan_active_runs():
         rid = row["self_check_run_id"]
         state = row["recovery_state"]
@@ -393,15 +421,21 @@ def recover() -> set[str]:
                 time.sleep(.1)
             if executor.start_identity(int(supervisor_pid)) == supervisor_identity:
                 safe = False
+        project_id, group_id = row["project_id"], row["group_id"]
         if safe:
             finished = db_runs.finish_recovered_interrupted(rid)
             if finished:
+                try:
+                    lock_manager.selfcheck_release_recovered(project_id, group_id, rid)
+                except Exception:
+                    _log.warning("selfcheck %s: releasing Group lock failed", rid, exc_info=True)
                 _emit(finished)
                 continue
         incomplete = db_runs.mark_recovery_incomplete(rid, "process ownership could not be proved absent")
         if incomplete:
             _emit(incomplete)
-    # Project protection is per project, but runs are per (project, group). Derive
-    # it from the DB after every run has been processed so one recovered run can
-    # never unprotect a project that still has another incomplete run.
-    return set(db_runs.list_recovery_incomplete_project_ids())
+        if not lock_manager.selfcheck_ensure_protected(project_id, group_id, rid):
+            _log.warning("selfcheck %s: G protection not written; recovery_incomplete keeps "
+                         "the Group closed", rid)
+            fallback.add(project_id)
+    return fallback

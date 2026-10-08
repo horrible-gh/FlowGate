@@ -16,6 +16,14 @@ from modules.flow_gate.services.git.credentials import GitServiceError
 from modules.flow_gate.workflow.routers import workflow
 
 
+from group_lock_stub import group_store as lock_store  # noqa: F401  (this module has its own group_store)
+import pytest as _pytest_locks
+
+# Group/base/remote work takes domain locks from the real lock manager (0669): these tests
+# run on the real SQLite lock/job store instead of stubbing the removed project mutex.
+pytestmark = _pytest_locks.mark.usefixtures("lock_store")
+
+
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", *args], cwd=repo, text=True, capture_output=True, check=False
@@ -519,8 +527,6 @@ def test_connected_worktree_lifecycle_uses_durable_group_base(
     monkeypatch.setattr(git_service.db_git, "get_config", lambda _pid: cfg)
     monkeypatch.setattr(git_service, "_project_name", lambda _pid: project_name)
     monkeypatch.setattr(git_service, "git_available", lambda: True)
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda *_args: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda *_args: None)
     monkeypatch.setattr(git_service, "_load_secret_for", lambda _cfg: "")
     monkeypatch.setattr(
         git_service, "_provision_base_locked",
@@ -546,16 +552,26 @@ def test_connected_worktree_lifecycle_uses_durable_group_base(
 
     # H1 can fail before creation; the later H2/source-access retry resolves the same
     # durable row and starts from the selected branch, never from request-local state.
+    # (0669 unit 7b: the worktree is provisioned by a job whose fetch step is the first thing
+    # that can fail, so H1 is injected there instead of in the base-slot check.)
     attempts = {"count": 0}
+    real_run_git = git_service._run_git
 
-    def provision(*_args):
-        attempts["count"] += 1
-        if attempts["count"] == 1:
-            return {"status": "failed", "reason": "injected"}
-        return {"status": "ready", "reason": None}
+    def run_git(args, **kwargs):
+        if list(args[:2]) == ["fetch", "origin"]:
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                return subprocess.CompletedProcess(args, 1, "", "injected")
+        return real_run_git(args, **kwargs)
 
-    monkeypatch.setattr(git_service, "_provision_base_locked", provision)
+    monkeypatch.setattr(git_service, "_run_git", run_git)
     assert git_service.ensure_worktree(project_id, "default", selected_group) == "failed"
+    # the failed fetch leaves the provision job in retry_wait; let its backoff elapse (the
+    # Runner's retry or the next source access is the "later" attempt of H2)
+    from modules.flow_gate.db.connection import get_store
+    with get_store().transaction():
+        get_store()._execute("UPDATE operation_job SET available_at = ? WHERE project_id = ?",
+                             ["2000-01-01T00:00:00+00:00", project_id])
     assert git_service.ensure_worktree(project_id, "default", selected_group) == "ok"
     selected_branch = git_service.worktree_branch_name(project_id, "default", selected_group)
     selected_wt = slots / selected_branch
@@ -655,9 +671,8 @@ def test_work_base_migration_owns_ordinal_119_in_every_dialect():
         assert sorted(p.name for p in directory.glob("119*_*.sql")) == [
             "119_group_work_base_ref.sql"
         ]
-        assert not [p.name for p in directory.glob("118*_*.sql")], (
-            f"{dialect}: 118 belongs to flowgate.default.0517's snapshot lineage"
-        )
+        # 118 is flowgate.default.0517's snapshot lineage (merged since); never this migration
+        assert [p.name for p in directory.glob("118*_*.sql")] == ["118_snapshot_lineage.sql"]
     assert ("118_group_work_base_ref.sql", "119_group_work_base_ref.sql") in RENAMES
 
 
@@ -726,8 +741,6 @@ def branch_repo(tmp_path, monkeypatch):
     cfg = {"enabled": 1, "base_branch": "main"}
     monkeypatch.setattr(branch_service, "_branch_context", lambda _pid: (cfg, root, "main"))
     monkeypatch.setattr(git_service, "_base_root_of", lambda _pid: root)
-    monkeypatch.setattr(git_service, "_acquire_lock", lambda _pid, _holder: True)
-    monkeypatch.setattr(git_service.db_git, "release_lock", lambda _pid, _holder: None)
     monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda _pid: [])
     monkeypatch.setattr(git_service.db_git, "list_open_sessions", lambda: [])
     return root

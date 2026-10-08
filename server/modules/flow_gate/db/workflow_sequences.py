@@ -6,7 +6,7 @@ Do not add new inline SQL.
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Iterable, Optional
 
 from .connection import FlowGateStore, get_store
 
@@ -155,6 +155,7 @@ def insert_sequence_item(
     reviewer_provider_display_name: Optional[str] = None,
     pre_instruction_text: Optional[str] = None,
     pre_instruction_attachment: Optional[dict | str] = None,
+    source_wp_card_id: Optional[str] = None,
 ) -> None:
     """Insert a sequence item.
 
@@ -175,7 +176,7 @@ def insert_sequence_item(
         sequence_id, item_seq, type_, label, doc_class, sort_order,
         note or "", source_doc_id, source_revision_no, provider_id, provider_display_name,
         review_count, reviewer_provider_id, reviewer_provider_display_name,
-        pre_instruction_text, attachment_json,
+        pre_instruction_text, attachment_json, source_wp_card_id,
     ])
 
 
@@ -220,8 +221,14 @@ def update_sequence_item_plan_snapshot(
     reviewer_provider_display_name: Optional[str] = None,
     pre_instruction_text: Optional[str] = None,
     pre_instruction_attachment: Optional[dict | str] = None,
+    source_wp_card_id: Optional[str] = None,
 ) -> None:
-    """Atomically replace the WorkPlan-owned execution snapshot for one pending row."""
+    """Atomically replace the WorkPlan-owned execution snapshot for one pending row.
+
+    0649 T#1 (NR0003 O0): ``source_wp_card_id`` records which card the row now serves.
+    ``None`` leaves the stored value as it is (the SQL coalesces), so a caller that does not
+    know about cards can never wipe the identity a pour already wrote.
+    """
 
     attachment_json = (
         json.dumps(pre_instruction_attachment, ensure_ascii=False, separators=(",", ":"))
@@ -241,15 +248,119 @@ def update_sequence_item_plan_snapshot(
         reviewer_provider_display_name,
         pre_instruction_text,
         attachment_json,
+        source_wp_card_id,
         item_id,
     ])
 
 
+def update_sequence_item_card_id(item_id: int, sequence_id: int, source_wp_card_id: str) -> None:
+    """Write only ``source_wp_card_id`` on one row (NR0003 O0 lazy backfill).
+
+    The one write a started row may receive besides nothing: its position, result document
+    and every other column stay exactly as they are. Scoped by ``sequence_id`` as well, so
+    a stale id from another sequence cannot be written through.
+    """
+    store = get_store()
+    sql = _sql(store, "workflow_sequences.update_sequence_item_card_id")
+    store._execute(sql, [source_wp_card_id, item_id, sequence_id])
+
+
+def update_sequence_item_echo_settings(
+    item_id: int,
+    sequence_id: int,
+    *,
+    note: str,
+    provider_id: Optional[str],
+    provider_display_name: Optional[str],
+    review_count: int = 0,
+    reviewer_provider_id: Optional[str] = None,
+    reviewer_provider_display_name: Optional[str] = None,
+) -> None:
+    """In-place update of a protected report row's execution settings (NR0003 O1 echo).
+
+    A protected pending report row (its instruction already started) is never deleted and
+    re-inserted, so its id/item_seq/sort_order survive an edit. What a person may still
+    change before it runs — note, provider, review — lands here. The SQL also requires
+    ``result_doc_id IS NULL``: a row that started meanwhile is not touched.
+    """
+    store = get_store()
+    sql = _sql(store, "workflow_sequences.update_sequence_item_echo_settings")
+    store._execute(sql, [
+        note or "",
+        provider_id,
+        provider_display_name,
+        review_count,
+        reviewer_provider_id,
+        reviewer_provider_display_name,
+        item_id,
+        sequence_id,
+    ])
+
+
 def delete_pending_items(sequence_id: int) -> None:
-    """Delete all items in PENDING status (for edit mode)."""
+    """Delete all items in PENDING status.
+
+    0649 T#1 (NR0003 O1): no longer used by the sequence edit — that path keeps protected
+    pending rows and calls :func:`delete_unprotected_pending_items`. Kept for callers that
+    really mean "every pending row".
+    """
     store = get_store()
     sql = _sql(store, "workflow_sequences.delete_pending_items")
     store._execute(sql, [sequence_id])
+
+
+def delete_unprotected_pending_items(sequence_id: int, keep_ids: Iterable[int]) -> None:
+    """Delete pending rows except ``keep_ids`` (the protected rows, NR0003 O1)."""
+    keep = sorted({int(item_id) for item_id in keep_ids})
+    if not keep:
+        delete_pending_items(sequence_id)
+        return
+    store = get_store()
+    sql = _sql(store, "workflow_sequences.delete_unprotected_pending_items").format(
+        keep_ids=", ".join("?" for _ in keep),
+    )
+    store._execute(sql, [sequence_id, *keep])
+
+
+# ── Started / protected rows (0649 T#1, NR0003 §3.6 / O1) ─────────────────────
+
+def is_started_row(row: dict) -> bool:
+    """The single predicate for "this row has started": it holds a result document.
+
+    ``status`` is not a column any more (migration 033); get_sequence_items derives it from
+    ``result_doc_id``. Three call sites used to spell the rule three ways; they all read this.
+    """
+    return row.get("result_doc_id") is not None
+
+
+def protected_row_ids(items: Iterable[dict]) -> set[int]:
+    """Rows no save may move, delete or renumber (NR0003 O1).
+
+    = every started row + the pending automatic report row sitting right after a started
+    instruction (by sort_order) whose type is that instruction's report type. Without the
+    second half, a T whose document exists but whose TR has not started lost its TR on the
+    next sequence edit, and nothing ever re-created it (G8).
+    """
+    from modules.flow_gate.services.workflow_decision_service import AUTO_REPORT_MAP
+
+    ordered = sorted(
+        (row for row in items or [] if row.get("id") is not None),
+        key=lambda row: (row.get("sort_order") or 0, row.get("id") or 0),
+    )
+    protected: set[int] = set()
+    previous: Optional[dict] = None
+    for row in ordered:
+        if is_started_row(row):
+            protected.add(int(row["id"]))
+        elif (
+            previous is not None
+            and is_started_row(previous)
+            and AUTO_REPORT_MAP.get(str(previous.get("type") or "").upper())
+            == str(row.get("type") or "").upper()
+        ):
+            protected.add(int(row["id"]))
+        previous = row
+    return protected
 
 
 def get_max_item_seq(sequence_id: int) -> int:
