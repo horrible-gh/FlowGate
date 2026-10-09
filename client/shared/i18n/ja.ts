@@ -1541,6 +1541,7 @@ export default {
       error_run_lost: '実行記録が失われました（サーバー再起動）。グループのドキュメントを直接確認してください。',
       error_cancel_failed: '実行の取消に失敗しました。',
       error_run_in_progress_orphaned: '前回の実行が異常終了し、ロックが残っています。下の[ロック解除]を押してください。',
+      error_token_scratch_storage_unsafe: 'ストレージルートが安全ではありません。管理者にStorage Rootの修正を依頼してから再試行してください。',
       review_start_button: '検収開始',
       review_rerun_button: '再検収',
       error_review_already_completed: '検収はすでに完了しています。再実行するには[再検収]を使用してください。',

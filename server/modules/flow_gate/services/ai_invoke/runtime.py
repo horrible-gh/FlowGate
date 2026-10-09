@@ -29,6 +29,7 @@ object this module created until a test replaces it.
 from __future__ import annotations
 
 import hashlib
+from contextvars import ContextVar
 import json
 import logging
 import re
@@ -52,6 +53,9 @@ from modules.flow_gate.storage import paths as storage_paths
 # is not a reason to renumber them. Every module in the package imports this
 # one logger rather than making its own.
 logger = logging.getLogger("modules.flow_gate.services.ai_invoke_service")
+
+# Request-local identity used by the compatibility rollback if admission fails unexpectedly.
+admission_run_id: ContextVar[str | None] = ContextVar("ai_admission_run_id", default=None)
 
 
 # ── Parameters (L0006 §1) ─────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ from modules.flow_gate.services import ai_invoke_service
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import token_service
+from modules.flow_gate.services import token_scratch
 from modules.flow_gate.services import workflow_decision_service
 from modules.flow_gate.services import work_plan_service
 from modules.flow_gate.settings import ai_execution_policy_service
@@ -927,6 +928,12 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             db_project_ai_leases.release(body.project, project_lease_owner)
         return JSONResponse(status_code=404, content={
             "code": "workflow_decision_unavailable", "message": str(exc)})
+    except token_scratch.TokenScratchStorageUnsafe:
+        if project_lease_owner:
+            db_project_ai_leases.release(body.project, project_lease_owner)
+        return JSONResponse(status_code=409, content={
+            "code": "token_scratch_storage_unsafe",
+            "message": "The configured storage root is unsafe. Ask an administrator to correct it, then retry."})
     except ValueError as exc:
         if project_lease_owner:
             db_project_ai_leases.release(body.project, project_lease_owner)

@@ -4139,6 +4139,8 @@ function aiInvokeStartErrorMessage(result: AiInvokeStartResult): string {
   switch (result.kind) {
     case 'run_in_progress_orphaned':
       return t('main.main_panel.error_ai_autostart_run_locked')
+    case 'token_scratch_storage_unsafe':
+      return t('main.ai_invoke_dialog.error_token_scratch_storage_unsafe')
     case 'review_already_completed':
       return t('main.ai_invoke_dialog.error_review_already_completed')
     case 'review_rerun_not_available':

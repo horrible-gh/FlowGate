@@ -215,3 +215,62 @@ def test_startup_sweep_reclaims_old_manifest_orphan(owned, monkeypatch):
     monkeypatch.setattr(token_scratch.db_projects, "list_projects", lambda: [{"project_id": PROJECT}])
     assert token_scratch.startup_sweep() == 1
     assert not orphan.exists()
+
+
+def test_create_accepts_normal_storage_root(owned):
+    root, _, _ = owned
+    token_id = "tok_20261009_000101"
+    child = root / "work" / "Project" / token_id
+    token_scratch.create(PROJECT, token_id, child)
+    assert (child / token_scratch.MANIFEST_NAME).is_file()
+
+
+def test_create_rejects_linked_storage_root(owned, monkeypatch, tmp_path, caplog):
+    real = tmp_path / "real_storage"
+    real.mkdir()
+    link = tmp_path / "linked_storage"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("directory symlink unavailable")
+    monkeypatch.setattr(token_scratch.storage_paths, "get_storage_root", lambda: link)
+    token_id = "tok_20261009_000102"
+    with pytest.raises(token_scratch.TokenScratchStorageUnsafe) as caught:
+        token_scratch.create(PROJECT, token_id, link / "work" / "Project" / token_id)
+    assert isinstance(caught.value, ValueError)
+    assert str(link) not in str(caught.value)
+    assert "symlink" in caplog.text
+    assert not (real / "work").exists()
+
+
+def test_create_rejects_lstat_failure(owned, monkeypatch, caplog):
+    root, _, _ = owned
+    original = Path.lstat
+    def fail_root(self, *args, **kwargs):
+        if self == root:
+            raise OSError("simulated lstat failure")
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(Path, "lstat", fail_root)
+    token_id = "tok_20261009_000103"
+    with pytest.raises(token_scratch.TokenScratchStorageUnsafe):
+        token_scratch.create(PROJECT, token_id, root / "work" / "Project" / token_id)
+    assert "lstat_failed" in caplog.text
+
+
+@pytest.mark.skipif(__import__("sys").platform != "win32", reason="Windows junction only")
+def test_create_rejects_junction_storage_root(owned, monkeypatch, tmp_path):
+    import subprocess
+    target = tmp_path / "junction_target"
+    target.mkdir()
+    junction = tmp_path / "junction_root"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        pytest.skip("junction creation unavailable")
+    monkeypatch.setattr(token_scratch.storage_paths, "get_storage_root", lambda: junction)
+    token_id = "tok_20261009_000104"
+    with pytest.raises(token_scratch.TokenScratchStorageUnsafe):
+        token_scratch.create(PROJECT, token_id, junction / "work" / "Project" / token_id)
+    assert not (target / "work").exists()

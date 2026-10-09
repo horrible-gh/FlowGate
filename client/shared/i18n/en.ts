@@ -1543,6 +1543,7 @@ export default {
       error_run_lost: 'The run record was lost (server restarted). Check the group documents directly.',
       error_cancel_failed: 'Failed to cancel the run.',
       error_run_in_progress_orphaned: 'The previous run ended abnormally and left its lock behind. Click [Release Lock] below.',
+      error_token_scratch_storage_unsafe: 'The storage root is unsafe. Ask an administrator to correct the Storage Root, then retry.',
       review_start_button: 'Start review',
       review_rerun_button: 'Review again',
       error_review_already_completed: 'This review is already complete. Use [Review again] to run it again.',
