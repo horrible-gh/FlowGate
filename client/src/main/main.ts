@@ -1,17 +1,27 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { isNavigationFailure, NavigationFailureType } from 'vue-router'
 import i18n from '@shared/i18n'
 import router from './router'
 import '@shared/variables.css'
 import '@shared/app.css'
 import App from './App.vue'
-import { getRequest, ensureValidAccessToken, startTokenAutoRefresh } from '@shared/api'
+import { getRequest, ensureValidAccessToken, refreshIsShared, startTokenAutoRefresh } from '@shared/api'
 
 // Recover token from sessionStorage if present (for F5 refresh)
 const getStoredAccessToken = (): string | null =>
   window.__accessToken__ || sessionStorage.getItem('fg_access_token') || null
 
 async function initializeApp() {
+  // flowgate.v02.0048 T#4 (D#1 §9.4): a tab opened with 'noopener' (the v0.2 Inspector's ↗ 열기)
+  // starts with an empty sessionStorage, so it has no access token. A remember-me login keeps its
+  // refresh token in localStorage: rotate it once here, through the shared lock path, before the
+  // router guard sees "no token". A session-only login has nothing to rotate in a new tab and goes
+  // through /login?next= instead.
+  if (!getStoredAccessToken() && refreshIsShared()) {
+    await ensureValidAccessToken()
+  }
+
   const token = getStoredAccessToken()
   if (token) {
     window.__accessToken__ = token
@@ -40,8 +50,15 @@ async function initializeApp() {
   app.use(router)
   
   // Wait for router to be ready before mounting to prevent premature redirects
-  await router.isReady()
-  
+  try {
+    await router.isReady()
+  } catch (error) {
+    // flowgate.v02.0048 T#4: the guard aborted the first navigation because it is sending this
+    // tab to /login?next=… — nothing to mount here.
+    if (isNavigationFailure(error, NavigationFailureType.aborted)) return
+    throw error
+  }
+
   app.mount('#app')
 }
 
