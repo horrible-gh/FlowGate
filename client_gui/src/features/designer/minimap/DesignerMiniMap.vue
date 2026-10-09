@@ -18,7 +18,7 @@
       ref="svgEl"
       class="designer-minimap-svg"
       :viewBox="`${shownBounds.x} ${shownBounds.y} ${shownBounds.width} ${shownBounds.height}`"
-      preserveAspectRatio="xMidYMid meet"
+      preserveAspectRatio="xMinYMin meet"
       aria-hidden="true"
       data-test="designer-minimap-svg"
       @pointerdown="onPointerDown"
@@ -78,7 +78,7 @@
 //
 // The drawn area holds all Nodes and the shown area. While a drag runs, that area stays as it
 // was at the press, so the map does not slide under the pointer.
-import { computed, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { DEFAULT_CANVAS_VIEWPORT, sameViewport, type CanvasSize, type CanvasViewport } from '../center/canvasView'
 import { flowNodeKindDisplay } from '../center/canvas/flowNodeKinds'
@@ -86,8 +86,10 @@ import { toVueFlowEdges } from '../center/canvas/vueFlowMapping'
 import type { FlowGraph } from '../center/graph/flowGraph'
 import {
   boxToWorld,
+  clampViewToMap,
   containsPoint,
   miniMapBounds,
+  miniMapPanelBounds,
   miniMapEdges,
   miniMapFit,
   miniMapNodes,
@@ -130,6 +132,27 @@ interface Drag {
 const svgEl = ref<SVGSVGElement | null>(null)
 const drag = shallowRef<Drag | null>(null)
 const dragging = computed(() => drag.value !== null)
+const panelSize = ref<CanvasSize | null>(null)
+const navigationBounds = shallowRef<WorldRect | null>(null)
+const requestedViewport = shallowRef<CanvasViewport | null>(null)
+let resizeObserver: ResizeObserver | null = null
+
+function measurePanel() {
+  const box = svgEl.value?.getBoundingClientRect()
+  if (box && box.width > 0 && box.height > 0) panelSize.value = { width: box.width, height: box.height }
+}
+
+watch(svgEl, (el) => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  if (!el) return
+  measurePanel()
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(measurePanel)
+    resizeObserver.observe(el)
+  }
+}, { flush: 'post', immediate: true })
+onBeforeUnmount(() => resizeObserver?.disconnect())
 
 const nodeShapes = computed(() => (props.graph ? miniMapNodes(props.graph) : []))
 // The same execution Edges the Canvas draws (reference / dangling / self edges are left out there).
@@ -139,8 +162,20 @@ const edgeLines = computed(() => {
 })
 const currentViewport = computed(() => props.viewport ?? DEFAULT_CANVAS_VIEWPORT)
 const view = computed(() => (nodeShapes.value.length ? viewportRect(currentViewport.value, props.canvasSize) : null))
-const bounds = computed(() => miniMapBounds(nodeShapes.value, view.value))
-const shownBounds = computed(() => (bounds.value ? (drag.value?.bounds ?? bounds.value) : null))
+const bounds = computed(() => {
+  const content = miniMapBounds(nodeShapes.value, view.value)
+  return content ? miniMapPanelBounds(content, panelSize.value ?? { width: 1, height: 1 }) : null
+})
+const shownBounds = computed(() => (bounds.value ? (drag.value?.bounds ?? navigationBounds.value ?? bounds.value) : null))
+
+// A map move keeps the map that existed before that move. Canvas pan, Graph edits and resize
+// release that snapshot, allowing exploration to expand and contract the map.
+watch(() => props.viewport, (next) => {
+  if (requestedViewport.value && sameViewport(next, requestedViewport.value)) return
+  navigationBounds.value = null
+  requestedViewport.value = null
+})
+watch([nodeShapes, () => props.canvasSize, panelSize], () => { navigationBounds.value = null })
 
 function maskPath(outer: WorldRect, inner: WorldRect): string {
   const rect = (r: WorldRect) => `M${r.x} ${r.y}h${r.width}v${r.height}h${-r.width}z`
@@ -149,9 +184,11 @@ function maskPath(outer: WorldRect, inner: WorldRect): string {
 
 function onPointerDown(event: PointerEvent) {
   const area = view.value
-  const drawn = bounds.value
   const el = svgEl.value
-  if (event.button !== 0 || drag.value || !area || !drawn || !el) return
+  if (event.button !== 0 || drag.value || !area || !el) return
+  measurePanel()
+  const drawn = shownBounds.value
+  if (!drawn) return
   const box = el.getBoundingClientRect()
   const fit = miniMapFit(drawn, { width: box.width, height: box.height })
   if (!fit) return
@@ -159,6 +196,7 @@ function onPointerDown(event: PointerEvent) {
   const point = boxToWorld({ x: event.clientX - box.left, y: event.clientY - box.top }, drawn, fit)
   // A press on the shown area grabs it where it was pressed; elsewhere it centers the area there.
   const inside = containsPoint(area, point)
+  navigationBounds.value = drawn
   drag.value = {
     pointerId: event.pointerId,
     bounds: drawn,
@@ -182,9 +220,13 @@ function moveTo(event: PointerEvent) {
   const current = drag.value
   if (!current) return
   const point = boxToWorld({ x: event.clientX - current.left, y: event.clientY - current.top }, current.bounds, current.fit)
-  const next = viewportAt(point.x - current.grabX, point.y - current.grabY, current.zoom)
+  const area = view.value
+  if (!area) return
+  const position = clampViewToMap(point.x - current.grabX, point.y - current.grabY, area, current.bounds)
+  const next = viewportAt(position.x, position.y, current.zoom)
   if (!Number.isFinite(next.x) || !Number.isFinite(next.y) || sameViewport(current.last, next)) return
   current.last = next
+  requestedViewport.value = next
   emit('viewport-change', next)
 }
 
@@ -199,7 +241,11 @@ function endDrag(commit: boolean) {
 // Another Flow (or none) — a drag of the previous one never reaches it.
 watch(
   () => [props.flowId, props.graph === null] as const,
-  () => endDrag(false),
+  () => {
+    endDrag(false)
+    navigationBounds.value = null
+    requestedViewport.value = null
+  },
 )
 </script>
 
@@ -211,7 +257,7 @@ watch(
   height: 100%;
   min-width: 0;
   min-height: 0;
-  padding: 8px;
+  padding: 0;
   overflow: hidden;
 }
 

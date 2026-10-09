@@ -35,7 +35,7 @@
 
     <div v-show="!collapsed" class="designer-right-body" data-test="designer-right-body">
       <div v-if="mountedTools.palette" v-show="!unselected && tool === 'palette'" class="designer-right-pane" data-test="designer-right-pane-palette">
-        <PalettePanel />
+        <PalettePanel :selected-item-id="selectedPaletteId" @select="emit('palette-select', $event)" @drag-start="emit('palette-drag-start')" />
       </div>
       <div
         v-if="mountedTools.conversation"
@@ -60,6 +60,7 @@ import { DesignerGitPanel } from '@/features/git'
 import type { FlowRef } from '@/features/project'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
 import PalettePanel from '../palette/PalettePanel.vue'
+import type { PaletteItemDefinition } from '../palette/paletteCatalog'
 import { DESIGNER_RIGHT_TOOLS, type DesignerRightTool } from './designerLayout'
 
 const props = withDefaults(
@@ -68,13 +69,18 @@ const props = withDefaults(
     activeFlow: FlowRef | null
     tool: DesignerRightTool
     collapsed: boolean
+    selectedPaletteId?: string | null
     /** No work target yet (0039 T#3): tabs unavailable, no part shown. */
     unselected?: boolean
   }>(),
-  { unselected: false },
+  { unselected: false, selectedPaletteId: null },
 )
 
-const emit = defineEmits<{ 'update:tool': [tool: DesignerRightTool] }>()
+const emit = defineEmits<{
+  'update:tool': [tool: DesignerRightTool]
+  'palette-select': [definition: PaletteItemDefinition]
+  'palette-drag-start': []
+}>()
 
 const { t } = useI18n()
 

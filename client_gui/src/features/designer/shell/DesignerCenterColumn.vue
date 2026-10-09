@@ -8,7 +8,7 @@
        flowgate.v02.0046: a resize handle on the Workspace ↔ Bottom Dock line asks the Shell for
        a new Bottom Dock height; the Workspace (and its Canvas) takes the rest. -->
   <div ref="columnRef" class="designer-center-column" data-test="designer-center-column">
-    <DesignerWorkspace :center="center" :unselected="unselected" />
+    <DesignerWorkspace :center="center" :unselected="unselected" :placing="placing" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" />
     <DesignerResizeHandle
       class="designer-center-resize"
       axis="y"
@@ -40,13 +40,18 @@ const props = withDefaults(
   defineProps<{
     center: DesignerCenterSession
     bottomHeight: number
+    placing?: boolean
     unselected?: boolean
   }>(),
-  { unselected: false },
+  { unselected: false, placing: false },
 )
 
 // Each drag step carries the column's own height, which the Shell's clamp keeps the Workspace's room in.
-const emit = defineEmits<{ 'resize-bottom': [height: number, columnHeight: number] }>()
+const emit = defineEmits<{
+  'resize-bottom': [height: number, columnHeight: number]
+  'canvas-place': [flowId: string, x: number, y: number]
+  'cancel-placement': []
+}>()
 
 const columnRef = ref<HTMLElement | null>(null)
 

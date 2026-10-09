@@ -37,7 +37,7 @@
           :key="item.id"
           :item="item"
           :label="labelOf(item)"
-          :selected="selectedId === item.id"
+          :selected="(selectedItemId === undefined ? selectedId : selectedItemId) === item.id"
           @select="onSelect(item)"
           @dragstart="onDragStart(item, $event)"
         />
@@ -69,6 +69,7 @@ const props = withDefaults(
   defineProps<{
     /** Default items; 03-designer-shell's Palette unless the Designer supplies its own. */
     items?: readonly BuiltinPaletteItem[]
+    selectedItemId?: string | null
     /**
      * User-defined items (v-model:custom-items). Left unbound, the Palette keeps the items
      * added in this session itself; bound, the parent owns — and may persist — the list.

@@ -11,6 +11,8 @@ import {
   boxToWorld,
   containsPoint,
   miniMapBounds,
+  miniMapPanelBounds,
+  clampViewToMap,
   miniMapEdges,
   miniMapFit,
   miniMapNodes,
@@ -66,11 +68,30 @@ describe('minimapGeometry (flowgate.v02.0049)', () => {
     const content = unionRect(nodes)!
     expect(content).toEqual({ x: -200, y: 0, width: 676, height: 392 })
     const pad = 676 * MINIMAP_PADDING_RATIO
-    expect(miniMapBounds(nodes, null)).toEqual({ x: -200 - pad, y: -pad, width: 676 + pad * 2, height: 392 + pad * 2 })
+    expect(miniMapBounds(nodes, null)).toEqual({ x: -200 - pad, y: 0, width: 676 + pad * 2, height: 392 + pad })
     const far = { x: 2000, y: 2000, width: 100, height: 100 }
     const withView = miniMapBounds(nodes, far)!
     expect(containsPoint(withView, { x: 2100, y: 2100 })).toBe(true)
     expect(miniMapBounds([], far)).toBeNull()
+  })
+
+  it('fills a panel from the top-left and clamps navigation without growing exploration', () => {
+    const node = { x: 0, y: 0, width: 176, height: 92 }
+    const start = miniMapBounds([node], { x: 0, y: 0, width: 400, height: 300 })!
+    expect(start.x).toBe(0)
+    expect(start.y).toBe(0)
+    expect(start.width).toBe(400)
+    expect(start.height).toBe(300)
+    const panel = miniMapPanelBounds(start, { width: 300, height: 180 })
+    expect(panel.width / panel.height).toBeCloseTo(300 / 180)
+    expect(panel.x).toBe(0)
+    expect(panel.y).toBe(0)
+    const bounded = clampViewToMap(999, -999, { x: 0, y: 0, width: 200, height: 150 }, panel)
+    expect(bounded).toEqual({ x: panel.width - 200, y: 0 })
+    const explored = miniMapBounds([node], { x: 1000, y: 800, width: 400, height: 300 })!
+    expect(explored.width).toBe(1400)
+    expect(explored.height).toBe(1100)
+    expect(miniMapBounds([node], { x: 0, y: 0, width: 400, height: 300 })).toEqual(start)
   })
 
   it('maps a MiniMap point to World coordinates like SVG xMidYMid meet', () => {

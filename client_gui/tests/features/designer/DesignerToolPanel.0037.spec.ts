@@ -113,6 +113,18 @@ describe('DesignerRightDock — Tool Panel', () => {
     expect(w.find('[data-test="designer-git-panel"]').exists()).toBe(false)
   })
 
+  it('passes Palette selection to the Shell and reflects placement cancellation', async () => {
+    const w = await mountDock()
+    const card = w.get('[data-test="designer-palette-item"][data-item-id="task"]')
+    await card.trigger('click')
+    const selected = w.emitted('palette-select')?.at(-1)?.[0] as { itemId: string }
+    expect(selected.itemId).toBe('task')
+    await w.setProps({ selectedPaletteId: selected.itemId })
+    expect(card.attributes('aria-pressed')).toBe('true')
+    await w.setProps({ selectedPaletteId: null })
+    expect(card.attributes('aria-pressed')).toBe('false')
+  })
+
   it('mounts each part on its first show and only hides it afterwards', async () => {
     const w = await mountDock({ activeFlow: { groupId: 'p.ui.0002', name: 'Canvas' } })
     const paletteEl = get(w, 'designer-palette').element

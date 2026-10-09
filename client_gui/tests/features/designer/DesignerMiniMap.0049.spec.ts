@@ -142,48 +142,38 @@ describe('DesignerMiniMap — drawing (flowgate.v02.0049)', () => {
     expect(w.find('[data-test="designer-minimap-viewport"]').exists()).toBe(false)
   })
 
-  it('a press outside the shown area centers it there; a drag moves it; the release commits', async () => {
-    const w = mountMap({ viewport: { x: 0, y: 0, zoom: 1 } })
+  it('moves the Viewport in all directions and keeps its map boundary fixed', async () => {
+    const w = mountMap({ viewport: { x: 0, y: 0, zoom: 2 } })
     stubBox(w)
     const svg = w.get('[data-test="designer-minimap-svg"]')
     const [bx, by, bw, bh] = svg.attributes('viewBox')!.split(' ').map(Number)
     const scale = Math.min(BOX.width / bw, BOX.height / bh)
-    const offX = (BOX.width - bw * scale) / 2
-    const offY = (BOX.height - bh * scale) / 2
-    const at = (x: number, y: number) => ({ clientX: BOX.left + offX + (x - bx) * scale, clientY: BOX.top + offY + (y - by) * scale })
+    const at = (x: number, y: number) => ({
+      clientX: BOX.left + (x - bx) * scale,
+      clientY: BOX.top + (y - by) * scale,
+    })
 
-    // The shown area is World (0,0)-(800,600); (576, 192) lies inside it — a grab, no move yet.
-    await svg.trigger('pointerdown', { button: 0, pointerId: 1, ...at(576, 192) })
-    expect(w.emitted('viewport-change')).toBeUndefined()
-    await svg.trigger('pointermove', { pointerId: 1, ...at(476, 92) })
+    await svg.trigger('pointerdown', { button: 0, pointerId: 1, ...at(200, 150) })
+    await svg.trigger('pointermove', { pointerId: 1, ...at(300, 250) })
     const moved = w.emitted('viewport-change')!.at(-1)![0] as { x: number; y: number; zoom: number }
-    expect(moved.zoom).toBe(1)
-    expect(moved.x).toBeCloseTo(100)
-    expect(moved.y).toBeCloseTo(100)
-    // The drawn area stays as it was at the press while the drag runs.
+    expect(moved).toEqual({ x: -200, y: -200, zoom: 2 })
     await w.setProps({ viewport: moved })
     expect(svg.attributes('viewBox')).toBe(`${bx} ${by} ${bw} ${bh}`)
     await svg.trigger('pointerup', { pointerId: 1 })
     expect(w.emitted('viewport-commit')).toEqual([[moved]])
 
-    // A press outside the shown area centers it on the pressed point: at zoom 2 the shown area
-    // is World (0,0)-(400,300); the press lands on n2 (World 488, 146), outside it.
-    await w.setProps({ viewport: { x: 0, y: 0, zoom: 2 } })
-    stubBox(w)
-    const [cx, cy, cw, ch] = w.get('[data-test="designer-minimap-svg"]').attributes('viewBox')!.split(' ').map(Number)
-    const cScale = Math.min(BOX.width / cw, BOX.height / ch)
-    const cAt = (x: number, y: number) => ({
-      clientX: BOX.left + (BOX.width - cw * cScale) / 2 + (x - cx) * cScale,
-      clientY: BOX.top + (BOX.height - ch * cScale) / 2 + (y - cy) * cScale,
-    })
-    await w.get('[data-test="designer-minimap-svg"]').trigger('pointerdown', { button: 0, pointerId: 2, ...cAt(488, 146) })
-    const centered = w.emitted('viewport-change')!.at(-1)![0] as { x: number; y: number; zoom: number }
-    // Shown area origin = (488 - 200, 146 - 150) -> Viewport = -origin * zoom.
-    expect(centered.zoom).toBe(2)
-    expect(centered.x).toBeCloseTo(-288 * 2)
-    expect(centered.y).toBeCloseTo(4 * 2)
-    await w.get('[data-test="designer-minimap-svg"]').trigger('pointercancel', { pointerId: 2 })
-    expect(w.emitted('viewport-commit')).toHaveLength(2)
+    await svg.trigger('pointerdown', { button: 0, pointerId: 2, ...at(999, 999) })
+    const corner = w.emitted('viewport-change')!.at(-1)![0] as { x: number; y: number; zoom: number }
+    expect(corner.x).toBeCloseTo(-(bw - 400) * 2)
+    expect(corner.y).toBeCloseTo(-(bh - 300) * 2)
+    await w.setProps({ viewport: corner })
+    expect(svg.attributes('viewBox')).toBe(`${bx} ${by} ${bw} ${bh}`)
+    await svg.trigger('pointercancel', { pointerId: 2 })
+
+    await svg.trigger('pointerdown', { button: 0, pointerId: 3, ...at(0, 0) })
+    const origin = w.emitted('viewport-change')!.at(-1)![0] as { x: number; y: number; zoom: number }
+    expect(origin).toEqual({ x: 0, y: 0, zoom: 2 })
+    await svg.trigger('pointerup', { pointerId: 3 })
   })
 
   it('drops a drag when the Flow changes and ignores presses with nothing shown', async () => {
@@ -278,6 +268,27 @@ describe('DesignerMiniMap — with the real Canvas and Center session (flowgate.
     expect(w.get('[data-test="designer-canvas"]').attributes('data-zoom')).toBe('2')
     expect(w.get('.vue-flow__transformationpane').attributes('style')).toContain(`translate(${view.x}px,${view.y}px) scale(2)`)
     expect(saves.some((s) => s.flowId === 'a' && s.change.viewport?.zoom === 2)).toBe(true)
+  })
+
+  it('shrinks a temporary Canvas exploration and keeps space occupied by a moved Node', async () => {
+    const w = setup()
+    await open('a')
+    center.recordViewport('a', { x: 0, y: 0, zoom: 1 })
+    await settle()
+    const initial = w.get('[data-test="designer-minimap-svg"]').attributes('viewBox')!
+    center.recordViewport('a', { x: -2400, y: -1800, zoom: 1 })
+    await settle()
+    const explored = w.get('[data-test="designer-minimap-svg"]').attributes('viewBox')!
+    expect(Number(explored.split(' ')[2])).toBeGreaterThan(Number(initial.split(' ')[2]))
+    center.recordViewport('a', { x: 0, y: 0, zoom: 1 })
+    await settle()
+    expect(w.get('[data-test="designer-minimap-svg"]').attributes('viewBox')).toBe(initial)
+
+    center.moveNode('a', 'a:n2', 2800, 1900)
+    await settle()
+    const occupied = w.get('[data-test="designer-minimap-svg"]').attributes('viewBox')!
+    expect(Number(occupied.split(' ')[2])).toBeGreaterThan(Number(initial.split(' ')[2]))
+    expect(w.get('[data-test="designer-minimap-node"][data-node-id="a:n2"]').attributes('x')).toBe('2800')
   })
 
   it('follows a Node move and a changed Edge set of the shown Graph', async () => {
