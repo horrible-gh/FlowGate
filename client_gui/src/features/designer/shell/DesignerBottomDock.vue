@@ -1,7 +1,7 @@
 <template>
   <!-- Final container for the bottom Dock. Lives inside the CenterColumn, so it is only ever
        as wide as the Center. flowgate.v02.0036 (0035 v7): the Inspector on the left and the
-       Minimap on the right, 7 : 3; the Minimap keeps its placeholder until its own group.
+       Minimap on the right, 7 : 3. flowgate.v02.0049: the real Minimap of the active Flow.
        flowgate.v02.0039 T#3: with no work target the Inspector keeps only its frame and the
        Minimap stays on screen dimmed and unavailable (confirmed initial-state design). -->
   <section
@@ -16,21 +16,33 @@
       :aria-disabled="unselected ? 'true' : undefined"
       data-test="designer-bottom-minimap"
     >
-      <ShellPlaceholder
-        area="minimap"
-        :label="t('gui.designer.shell.minimap_label')"
-        :parts="t('gui.designer.shell.minimap_parts')"
+      <DesignerMiniMap
+        :flow-id="minimap.flowId"
+        :graph="minimap.graph"
+        :viewport="minimap.viewport"
+        :canvas-size="minimap.canvasSize"
+        :selected-node-id="selectedNode?.id ?? null"
+        @viewport-change="emit('minimap-viewport', $event, false)"
+        @viewport-commit="emit('minimap-viewport', $event, true)"
       />
     </aside>
   </section>
 </template>
 
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n'
-import type { FlowGraphNode } from '../center/graph/flowGraph'
+import type { CanvasSize, CanvasViewport } from '../center/canvasView'
+import type { FlowGraph, FlowGraphNode } from '../center/graph/flowGraph'
 import DesignerInspector from '../inspector/DesignerInspector.vue'
+import DesignerMiniMap from '../minimap/DesignerMiniMap.vue'
 import { DESIGNER_BOTTOM_DOCK_COLUMNS } from './designerLayout'
-import ShellPlaceholder from './ShellPlaceholder.vue'
+
+/** flowgate.v02.0049: what the Minimap draws — the active Flow's ready Graph and Canvas view. */
+interface BottomDockMiniMap {
+  flowId: string | null
+  graph: FlowGraph | null
+  viewport: CanvasViewport | null
+  canvasSize: CanvasSize | null
+}
 
 withDefaults(
   defineProps<{
@@ -40,11 +52,14 @@ withDefaults(
     selectedNode: FlowGraphNode | null
     /** No work target yet (0039 T#3). */
     unselected?: boolean
+    /** flowgate.v02.0049: the Minimap's input (nothing to draw when omitted). */
+    minimap?: BottomDockMiniMap
   }>(),
-  { unselected: false },
+  { unselected: false, minimap: () => ({ flowId: null, graph: null, viewport: null, canvasSize: null }) },
 )
 
-const { t } = useI18n()
+// flowgate.v02.0049: the Minimap moved the shown area (`commit`: the press ended).
+const emit = defineEmits<{ 'minimap-viewport': [viewport: CanvasViewport, commit: boolean] }>()
 </script>
 
 <style scoped>
@@ -62,7 +77,7 @@ const { t } = useI18n()
 .designer-bottom-minimap {
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   border-left: 1px solid var(--fg2-line);
 }
 

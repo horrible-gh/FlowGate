@@ -38,9 +38,16 @@
 // run view) is shown editable as is (draftModel `editableRevision`) and its first edit saves a new
 // draft from it. 실행 confirms the draft as the next revision and the Flow shows its run again.
 // Revisions and runs are never changed by editing (the server keeps them apart from the draft).
-import { computed, markRaw, reactive, readonly, type ComputedRef, type DeepReadonly } from 'vue'
+import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
-import { createCanvasViewState, sameViewport, type CanvasViewState, type CanvasViewport } from './canvasView'
+import {
+  createCanvasViewState,
+  sameCanvasSize,
+  sameViewport,
+  type CanvasSize,
+  type CanvasViewState,
+  type CanvasViewport,
+} from './canvasView'
 import {
   EMPTY_FLOW_TABS,
   activateFlowTab,
@@ -101,6 +108,11 @@ export interface DesignerCenterSession {
    * not ready, nothing selected). The bottom Inspector reads it; it is derived, never stored.
    */
   readonly activeSelectedNode: ComputedRef<FlowGraphNode | null>
+  /**
+   * flowgate.v02.0049 — the Canvas area size the shown Canvas last reported, or null (none shown
+   * yet). One Canvas area serves every tab; the MiniMap turns it and the Viewport into the shown area.
+   */
+  readonly canvasSize: ComputedRef<CanvasSize | null>
 
   /** Sets the current project; a different project clears every tab, Graph and view. */
   setProject(projectId: string | null): void
@@ -117,8 +129,10 @@ export interface DesignerCenterSession {
   retryGraph(flowId: string): void
   /** Single selection of one Node, or none. */
   selectNode(flowId: string, nodeId: string | null): void
-  /** Records the Viewport the Canvas (or a later Minimap / Toolbar) reports. */
+  /** Records the Viewport the Canvas (or the Minimap / a later Toolbar) reports. */
   recordViewport(flowId: string, viewport: CanvasViewport): void
+  /** flowgate.v02.0049: the shown Canvas reports its area size (when shown and on every resize). */
+  recordCanvasSize(size: CanvasSize): void
   /** flowgate.v02.0045: a user pan / zoom ended — record it and save it (per user, per Flow). */
   commitViewport(flowId: string, viewport: CanvasViewport): void
   /** flowgate.v02.0045: a movable Node was dropped at (x, y) — move it and save its position. */
@@ -436,6 +450,13 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     view.viewport = { x: viewport.x, y: viewport.y, zoom: viewport.zoom }
   }
 
+  const canvasSize = shallowRef<CanvasSize | null>(null)
+
+  function recordCanvasSize(size: CanvasSize) {
+    if (!(size.width > 0) || !(size.height > 0) || sameCanvasSize(canvasSize.value, size)) return
+    canvasSize.value = { width: size.width, height: size.height }
+  }
+
   function commitViewport(flowId: string, viewport: CanvasViewport) {
     if (!state.views[flowId]) return
     recordViewport(flowId, viewport)
@@ -505,6 +526,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       if (load?.status !== 'ready' || nodeId === null) return null
       return load.graph.nodes.find((node) => node.id === nodeId) ?? null
     }),
+    canvasSize: computed(() => canvasSize.value),
     setProject,
     openFlow,
     activateFlow,
@@ -512,6 +534,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     retryGraph,
     selectNode,
     recordViewport,
+    recordCanvasSize,
     commitViewport,
     moveNode,
     dispose,

@@ -80,6 +80,13 @@ slot(`tab-documents`/`tab-qna`/`tab-attachments`/`tab-settings`, 선택 Node 전
 탭은 placeholder 한 줄을 보입니다. Node별 실제 기능·액션·API·상태 머신 연동과 Node 종류별 `설정` 유무는 후속
 그룹 대상이며 공개 경계에도 내보내지 않습니다.
 
+flowgate.v02.0049에서 Bottom Dock의 Minimap Placeholder를 실제 MiniMap(`designer/minimap/DesignerMiniMap.vue`,
+순수 기하 `minimapGeometry.ts`)으로 바꿨습니다. 활성 Flow의 준비된 Graph(신규 Graph·v0.1 레거시 동일), Center
+세션의 Viewport, Canvas가 Vue Flow 측정값으로 보고하는 Canvas 크기(`canvas-resize` → `recordCanvasSize`)를 그대로
+그리며 자체 Graph·Viewport 상태는 없습니다. Edge는 Canvas와 같은 `toVueFlowEdges` 결과(실행 Edge)만 그립니다.
+MiniMap을 누르거나 끌면 같은 zoom의 Viewport를 세션 `recordViewport`로 보내 Canvas가 적용하고, 손을 떼면
+`commitViewport`로 사용자 Pan처럼 저장합니다. 버튼·문구는 없습니다.
+
 flowgate.v02.0037에서 Shell의 Right Dock Placeholder를 우측 Tool Panel로 바꿨습니다. `DesignerRightDock`이
 `[팔레트] [대화] [Git]` 한 줄 헤더(Tabs primitive)와 본문을 가지고 0030 `PalettePanel`, 0031/0032
 `ConversationPanel`(`@/features/conversation`), 0033 `DesignerGitPanel`(`@/features/git`)을 그대로 부착합니다.

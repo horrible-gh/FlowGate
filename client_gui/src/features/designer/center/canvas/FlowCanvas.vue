@@ -107,7 +107,8 @@
 // flag. Output: `select-node` (Node id or null), `viewport-change`, and (flowgate.v02.0045)
 // `viewport-commit` (a user pan / zoom ended — Vue Flow reports no end for a programmatic fit)
 // and `node-move` (a movable Node was dropped). Never calls an API, changes the session, edits
-// the Graph or handles tabs.
+// the Graph or handles tabs. flowgate.v02.0049: `canvas-resize` — the Canvas area size Vue Flow
+// measured (it watches the resize itself), when shown and on every change, for the MiniMap.
 //
 // flowgate.v02.0045 S3 (editable draft only): `canvas-drop` (the drag data and the drop point in
 // Graph coordinates — what was dropped is for the session to tell), `node-connect` (a connection
@@ -148,6 +149,7 @@ import {
   CANVAS_MIN_ZOOM,
   DEFAULT_CANVAS_VIEWPORT,
   sameViewport,
+  type CanvasSize,
   type CanvasViewport,
 } from '../canvasView'
 import type { FlowGraph } from '../graph/flowGraph'
@@ -177,6 +179,7 @@ const emit = defineEmits<{
   'select-node': [nodeId: string | null]
   'viewport-change': [viewport: CanvasViewport]
   'viewport-commit': [viewport: CanvasViewport]
+  'canvas-resize': [size: CanvasSize]
   'node-move': [move: { nodeId: string; x: number; y: number }]
   'canvas-drop': [drop: { transfer: DataTransfer; x: number; y: number }]
   'node-connect': [connection: { source: string; target: string }]
@@ -363,6 +366,17 @@ watch(
   () => props.selectedNodeId,
   (nodeId) => {
     if (nodeId !== null) selectedEdgeId.value = null
+  },
+)
+
+watch(
+  () => {
+    const size = flow.value?.dimensions.value
+    return size ? `${size.width}x${size.height}` : ''
+  },
+  () => {
+    const size = flow.value?.dimensions.value
+    if (size && size.width > 0 && size.height > 0) emit('canvas-resize', { width: size.width, height: size.height })
   },
 )
 
