@@ -8,8 +8,12 @@ import type { InjectionKey } from 'vue'
 export type InspectorHostIntent =
   /** Select another Node of the same Flow ("→ 해당 카드"). */
   | { readonly kind: 'select-node'; readonly nodeId: string }
-  /** Read the selected Flow's Canvas again quietly (after a change that sends no event). */
-  | { readonly kind: 'refresh-flow' }
+  /**
+   * Read a Flow's Canvas again quietly (after a change that sends no event): the given open Flow, or the
+   * selected (active) Flow when none is given. flowgate.v02.0048 T#10: an answer that comes after another
+   * Flow tab was activated names the Flow it was asked for.
+   */
+  | { readonly kind: 'refresh-flow'; readonly flowId?: string }
   /** Open the right Tool Panel on the given tool. */
   | { readonly kind: 'show-tool'; readonly tool: 'git' }
 

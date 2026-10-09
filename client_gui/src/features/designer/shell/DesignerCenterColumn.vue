@@ -44,15 +44,18 @@ const props = withDefaults(
 const emit = defineEmits<{ 'resize-bottom': [height: number, columnHeight: number]; 'show-tool': [tool: 'git'] }>()
 
 // flowgate.v02.0048 T#1: the Bottom Dock's Inspector reads the session's selection context, and its Host
-// intents (inspector/inspectorHost.ts) are carried out here, always about the active Flow. Provided
+// intents (inspector/inspectorHost.ts) are carried out here, about the active Flow — or, for a
+// `refresh-flow` naming its Flow (T#10), that open Flow even when another tab is active. Provided
 // (the Dock injects the same key) so the Dock's props and events stay as they are.
 provide(Symbol.for('flowgate.designer.bottomDockInspector'), {
   selection: () => props.center.activeSelection.value,
-  host(intent: { readonly kind: string; readonly nodeId?: string; readonly tool?: string }) {
+  host(intent: { readonly kind: string; readonly nodeId?: string; readonly tool?: string; readonly flowId?: string }) {
     const flowId = props.center.state.activeFlowId
     if (intent.kind === 'select-node' && flowId !== null && intent.nodeId) props.center.selectNode(flowId, intent.nodeId)
-    else if (intent.kind === 'refresh-flow' && flowId !== null) props.center.refreshFlow(flowId)
-    else if (intent.kind === 'show-tool' && intent.tool === 'git') emit('show-tool', intent.tool)
+    else if (intent.kind === 'refresh-flow') {
+      const readFlowId = intent.flowId ?? flowId
+      if (readFlowId !== null) props.center.refreshFlow(readFlowId)
+    } else if (intent.kind === 'show-tool' && intent.tool === 'git') emit('show-tool', intent.tool)
   },
 })
 
