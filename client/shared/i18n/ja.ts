@@ -190,6 +190,16 @@ export default {
         confirm: 'ストレージパスの変更により既存のファイル位置が変更されます。続行しますか？',
         confirm_title: 'ストレージパス変更確認',
       },
+      scratch_ttl: {
+        label: 'Scratch保持期間',
+        value: '保持期間の値',
+        unit: '単位',
+        minute: '分',
+        hour: '時間',
+        day: '日',
+        hint: 'runとtokenのScratchに共通で適用されます。最小1分です。',
+        invalid: '1以上の整数と分、時間、日のいずれかを選択してください。',
+      },
       source_mode: {
         label: 'ローカル/リモートモード',
         default_mode: 'グローバル既定モード',

@@ -57,7 +57,8 @@ def sweep_token_scratches():
         from modules.flow_gate.services import token_scratch
 
         projects = token_scratch.startup_sweep()
-        logger.info(f"[startup] swept token scratch for {projects} project(s)")
+        purged = token_scratch.purge_expired_rows()
+        logger.info(f"[startup] swept token scratch for {projects} project(s); purged {purged} expired token row(s)")
     except Exception as exc:
         logger.warning(f"[startup] token scratch sweep failed: {exc}")
 

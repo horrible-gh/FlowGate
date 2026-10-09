@@ -43,6 +43,7 @@ from modules.flow_gate.db import ai_invoke_runs as db_ai_invoke_runs
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.settings import ai_execution_policy_service
+from modules.flow_gate.settings import scratch_retention
 from modules.flow_gate.storage import paths as storage_paths
 
 # The engine's log channel keeps its historical name: `caplog`/handler
@@ -60,7 +61,7 @@ RUN_TIMEOUT_CAP_SEC = 14400      # run total = min(BASE × docs_target, CAP)
 
 FAST_FAIL_WINDOW_SEC = 15        # nonzero exit + 0 docs inside this window ⇒ startup failure
 
-SCRATCH_RETENTION_DAYS = 7       # failed-run scratch retention
+SCRATCH_RETENTION_DAYS = 7       # legacy manifest format only; GC reads system settings
 
 LAST_MESSAGE_MAX_BYTES = 16384   # keep the tail, truncate the front
 
@@ -677,7 +678,7 @@ def _manifest_for(project_id: str, run_id: str, scratch: Path) -> dict:
         "scratch_path": str(scratch.resolve(strict=True)),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "completed_at": None,
-        "policy": {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True},
+        "policy": {"retention_source": "system_settings", "delete_on_complete": True},
     }
 
 
@@ -719,12 +720,15 @@ def _validate_scratch_manifest(project_id: str, run_id: str, scratch: Path) -> t
         if _svc()._is_reparse_or_symlink(manifest_path) or not manifest_path.is_file():
             return None, "manifest_missing"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        expected_policy = {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True}
+        valid_policies = (
+            {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True},
+            {"retention_source": "system_settings", "delete_on_complete": True},
+        )
         if manifest.get("schema") != SCRATCH_MANIFEST_SCHEMA or manifest.get("owner") != "flowgate.ai-invoke":
             return None, "manifest_identity_invalid"
         if manifest.get("project_id") != project_id or manifest.get("run_id") != run_id:
             return None, "manifest_owner_mismatch"
-        if manifest.get("scratch_path") != str(resolved) or manifest.get("policy") != expected_policy:
+        if manifest.get("scratch_path") != str(resolved) or manifest.get("policy") not in valid_policies:
             return None, "manifest_path_or_policy_mismatch"
         return manifest, "valid"
     except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
@@ -793,7 +797,7 @@ def _terminal_scratch_run(project_id: str, run_id: str, now: datetime) -> tuple[
         return None, "terminal_time_invalid"
     if started.strftime("%Y%m%d") != run_id[4:12]:
         return None, "run_date_mismatch"
-    if now - finished < timedelta(days=SCRATCH_RETENTION_DAYS):
+    if now - finished < scratch_retention.effective_retention():
         return None, "retention_active"
     return row, "terminal"
 
@@ -823,7 +827,7 @@ def _legacy_candidate(project_id: str, run_id: str, child: Path, now: datetime) 
         )):
             return False, "manifest_present_invalid"
         modified = datetime.fromtimestamp(child.stat().st_mtime, timezone.utc)
-        if now - modified < timedelta(days=SCRATCH_RETENTION_DAYS):
+        if now - modified < scratch_retention.effective_retention():
             return False, "legacy_recently_modified"
     except (OSError, RuntimeError, ValueError):
         return False, "legacy_path_unverifiable"
@@ -889,7 +893,7 @@ def _cleanup_retained_scratches(project_id: str) -> None:
                     continue
                 # No manifest rewrite is needed: the durable terminal timestamp is
                 # authoritative, and deletion still revalidates manifest identity.
-            elif now - completed < timedelta(days=SCRATCH_RETENTION_DAYS):
+            elif now - completed < scratch_retention.effective_retention():
                 _safe_scratch_log(project_id, run_id, child, "retained", "retention_active")
                 continue
             if _svc().is_run_live(run_id):

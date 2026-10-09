@@ -18,10 +18,16 @@ import startup  # noqa: E402
 from modules.flow_gate.db import ai_invoke_runs as db_runs  # noqa: E402
 from modules.flow_gate.db import group_ai_leases as db_leases  # noqa: E402
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
+from modules.flow_gate.settings import scratch_retention
 
 PROJECT = "project-0610"
 GROUP = "flowgate.default.0610"
 OLD = "aiv_20260822_000461"
+
+
+@pytest.fixture(autouse=True)
+def default_scratch_ttl(monkeypatch):
+    monkeypatch.setattr(scratch_retention, "effective_retention", lambda: timedelta(days=7))
 
 
 @pytest.fixture

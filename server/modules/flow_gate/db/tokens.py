@@ -276,6 +276,23 @@ def delete_expired(days_grace: int = 30) -> int:
     return 0  # rowcount is not exposed; for logging
 
 
+def list_expired_for_purge(days_grace: int = 30) -> list[dict]:
+    """Candidates only; callers must prove scratch cleanup before deleting a row."""
+    return [_decode_row(row) for row in get_store()._fetch_all(
+        "SELECT * FROM tokens WHERE expires_at < ? ORDER BY token_id",
+        [iso_days_ago(days_grace)],
+    )]
+
+
+def delete_expired_one(token_id: str, days_grace: int = 30) -> None:
+    """Purge one rechecked candidate after its filesystem path is absent."""
+    get_store()._execute(
+        "DELETE FROM tokens WHERE token_id = ? AND expires_at < ?",
+        [token_id, iso_days_ago(days_grace)],
+    )
+    _invalidate_token_cache()
+
+
 def count_by_date_prefix(date_str: str) -> int:
     """Count records where token_id LIKE 'tok_<date>_%' (for token_id numbering)."""
     row = get_store()._fetch_one(

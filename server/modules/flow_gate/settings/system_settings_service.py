@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 
 from modules.flow_gate.db import system_settings as _db
+from modules.flow_gate.db import connection as _connection
+from modules.flow_gate.settings import scratch_retention as _scratch_retention
 from modules.flow_gate.settings import ai_execution_policy_service as _ai_execution_policy_service
 from modules.flow_gate.storage.paths import get_storage_root
 
@@ -29,6 +32,8 @@ ALLOWLIST: set[str] = {
     "token_blacklist",
     "source_mode",
     "ai_repeat_count_max",
+    _scratch_retention.VALUE_KEY,
+    _scratch_retention.UNIT_KEY,
 }
 
 _VALUE_TYPES: dict[str, str] = {
@@ -49,6 +54,8 @@ _VALUE_TYPES: dict[str, str] = {
     "token_blacklist": "boolean",
     "source_mode": "string",
     "ai_repeat_count_max": "integer",
+    _scratch_retention.VALUE_KEY: "integer",
+    _scratch_retention.UNIT_KEY: "string",
 }
 
 
@@ -93,6 +100,15 @@ def get_all() -> list[dict]:
             "updated_at": "",
             "updated_by": None,
         })
+    for key, value, value_type, description in (
+        (_scratch_retention.VALUE_KEY, _scratch_retention.DEFAULT_VALUE, "integer", "Scratch retention amount"),
+        (_scratch_retention.UNIT_KEY, _scratch_retention.DEFAULT_UNIT, "string", "Scratch retention unit"),
+    ):
+        if not any(row.get("setting_key") == key for row in rows):
+            rows.append({
+                "setting_key": key, "setting_value": value, "value_type": value_type,
+                "description": description, "updated_at": "", "updated_by": None,
+            })
     return rows
 
 
@@ -117,6 +133,15 @@ def get_one(key: str) -> dict | None:
             "updated_at": "",
             "updated_by": None,
         }
+    if row is None and key in {_scratch_retention.VALUE_KEY, _scratch_retention.UNIT_KEY}:
+        is_value = key == _scratch_retention.VALUE_KEY
+        return {
+            "setting_key": key,
+            "setting_value": _scratch_retention.DEFAULT_VALUE if is_value else _scratch_retention.DEFAULT_UNIT,
+            "value_type": "integer" if is_value else "string",
+            "description": "Scratch retention amount" if is_value else "Scratch retention unit",
+            "updated_at": "", "updated_by": None,
+        }
     return row
 
 
@@ -134,12 +159,27 @@ def set_values(updates: dict[str, str | None], updated_by: str | None = None) ->
     ):
         raise ValueError("ai_repeat_count_max must be an integer between 1 and 30")
 
+    if _scratch_retention.VALUE_KEY in updates or _scratch_retention.UNIT_KEY in updates:
+        value = updates.get(_scratch_retention.VALUE_KEY)
+        unit = updates.get(_scratch_retention.UNIT_KEY)
+        if _scratch_retention.VALUE_KEY not in updates:
+            value = _db.get_value(_scratch_retention.VALUE_KEY, _scratch_retention.DEFAULT_VALUE)
+        if _scratch_retention.UNIT_KEY not in updates:
+            unit = _db.get_value(_scratch_retention.UNIT_KEY, _scratch_retention.DEFAULT_UNIT)
+        _scratch_retention.parse(value, unit)
+
+    # The value/unit pair commits together; unrelated single-key settings keep
+    # their established write path.
+    transaction = None
+    if _scratch_retention.VALUE_KEY in updates or _scratch_retention.UNIT_KEY in updates:
+        transaction = getattr(_connection.get_store(), "transaction", None)
     results = []
-    for key, val in updates.items():
-        vtype = _VALUE_TYPES.get(key, "string")
-        results.append(
-            _db.set_value(key, str(val) if val is not None else "", vtype, updated_by=updated_by)
-        )
+    with transaction() if transaction is not None else nullcontext():
+        for key, val in updates.items():
+            vtype = _VALUE_TYPES.get(key, "string")
+            results.append(
+                _db.set_value(key, str(val) if val is not None else "", vtype, updated_by=updated_by)
+            )
     return results
 
 

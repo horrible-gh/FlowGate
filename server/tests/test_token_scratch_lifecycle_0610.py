@@ -3,17 +3,23 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from modules.flow_gate.services import token_scratch, token_service
+from modules.flow_gate.settings import scratch_retention
 from modules.flow_gate.services import ai_invoke_service as ai
 
 PROJECT = "project-0610"
 OLD = "2000-01-01T00:00:00+00:00"
 FUTURE = "2999-01-01T00:00:00+00:00"
+
+
+@pytest.fixture(autouse=True)
+def default_scratch_ttl(monkeypatch):
+    monkeypatch.setattr(scratch_retention, "effective_retention", lambda: timedelta(days=7))
 
 
 @pytest.fixture

@@ -20,11 +20,12 @@ from modules.flow_gate.db import group_ai_leases as db_leases
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.storage import paths as storage_paths
+from modules.flow_gate.settings import scratch_retention
 
 _log = logging.getLogger(__name__)
 MANIFEST_NAME = ".flowgate-token-scratch.json"
 MANIFEST_SCHEMA = 1
-RETENTION_DAYS = 7
+RETENTION_DAYS = 7  # legacy manifest format only; GC reads system settings
 _TOKEN_ID = re.compile(r"\Atok_[0-9]{8}_[0-9]{6}\Z")
 _sweep_lock = threading.Lock()
 _last_sweep: dict[str, float] = {}
@@ -95,7 +96,7 @@ def create(project_id: str, token_id: str, scratch: Path) -> None:
             "token_id": token_id,
             "scratch_path": str(resolved),
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "policy": {"retention_days": RETENTION_DAYS},
+            "policy": {"retention_source": "system_settings"},
         }
         tmp = resolved / (MANIFEST_NAME + ".tmp")
         with tmp.open("x", encoding="utf-8", newline="\n") as handle:
@@ -124,7 +125,10 @@ def _manifest(project_id: str, token_id: str, scratch: Path) -> dict | None:
                 or data.get("project_id") != project_id
                 or data.get("token_id") != token_id
                 or data.get("scratch_path") != str(resolved)
-                or data.get("policy") != {"retention_days": RETENTION_DAYS}):
+                or data.get("policy") not in (
+                    {"retention_days": RETENTION_DAYS},
+                    {"retention_source": "system_settings"},
+                )):
             return None
         created = _timestamp(data.get("created_at"))
         return data if created is not None else None
@@ -182,7 +186,7 @@ def _eligible(project_id: str, token_id: str, scratch: Path, now: datetime) -> b
         # A complete, path-bound manifest is the only allowed proof for an
         # orphan whose INSERT never committed (or whose row was purged earlier).
         terminal = created
-    if now - terminal < timedelta(days=RETENTION_DAYS):
+    if now - terminal < scratch_retention.effective_retention():
         return False
     return not _referenced(project_id, token_id, scratch)
 
@@ -237,3 +241,32 @@ def startup_sweep() -> int:
     for project in projects:
         sweep(project["project_id"])
     return len(projects)
+
+
+def purge_expired_rows() -> int:
+    """Purge 30-day-old token rows only after their owned scratch is gone.
+
+    The caller runs the filesystem sweep first. A remaining, linked,
+    or mismatched path never authorizes a broad SQL expiry purge.
+    """
+    purged = 0
+    for row in db_tokens.list_expired_for_purge():
+        try:
+            project_id, token_id = row["project"], row["token_id"]
+            if not _TOKEN_ID.fullmatch(token_id) or not row.get("scratch_dir"):
+                continue
+            root = _root(project_id)
+            if (not root.is_dir() or _unsafe_link(root.parent.parent)
+                    or _unsafe_link(root.parent) or _unsafe_link(root)):
+                continue
+            candidate = root / token_id
+            stored = storage_paths.resolve_storage_dir(row["scratch_dir"], project_id)
+            if (stored is None or not _same_path(stored, candidate)
+                    or candidate.exists() or candidate.is_symlink()
+                    or _referenced(project_id, token_id, candidate)):
+                continue
+            db_tokens.delete_expired_one(token_id)
+            purged += 1
+        except Exception:
+            _log.warning("token row purge skipped", exc_info=True)
+    return purged
