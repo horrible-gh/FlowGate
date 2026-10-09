@@ -462,6 +462,9 @@ describe('DocumentBodyRouter — TS/TSR branch', () => {
           GenericDocumentBody: { template: '<div class="generic-stub">GENERIC</div>' },
           WorkPlanEditor: true, FinalApprovalBody: true, DiscardBody: true,
           ConversationDocumentView: true, QuestionDocumentBody: true,
+          // 0638 T#2: a T screen also mounts the group's pre-registration Self-check panel,
+          // which lists its runs on its own; that request is not a test-document read.
+          TrSelfCheckDraftPanel: true, TrSelfCheckPanel: true,
         },
       },
     })
