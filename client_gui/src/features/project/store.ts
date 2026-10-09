@@ -75,6 +75,7 @@ import {
   validateFlowGraphDraft as validateFlowGraphDraftApi,
 } from './flowGraphApi'
 import { subscribeFlowCanvasChanges as subscribeFlowCanvasChangesApi, type FlowCanvasChangeHandlers } from './flowCanvasEvents'
+import { subscribeProjectEvents as subscribeProjectEventsApi, type ProjectEventSubscription } from './projectEvents'
 import { clearStoredCurrentProjectId, writeStoredCurrentProjectId } from './currentProjectStorage'
 import {
   pushRecent,
@@ -433,6 +434,12 @@ export const useProjectStore = defineStore('project', () => {
     return subscribeFlowCanvasChangesApi(projectId, handlers)
   }
 
+  // flowgate.v02.0048 T#2: any event of one project over the same shared stream as the Canvas
+  // (projectEvents.ts, one EventSource per project). Returns the unsubscribe.
+  function subscribeProjectEvents(projectId: string, subscription: ProjectEventSubscription): () => void {
+    return subscribeProjectEventsApi(projectId, subscription)
+  }
+
   // flowgate.v02.0043: set by openDialog({ create: true }) and read once by ProjectDialog when it
   // opens. Not persisted; a Dialog open without the option clears it.
   const createRequested = ref(false)
@@ -504,5 +511,6 @@ export const useProjectStore = defineStore('project', () => {
     validateFlowGraphDraft,
     confirmFlowGraphRevision,
     subscribeFlowCanvasChanges,
+    subscribeProjectEvents,
   }
 })
