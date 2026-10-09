@@ -21,6 +21,7 @@ from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_events as db_events
 from modules.flow_gate.db.connection import get_store, now_iso
+from modules.flow_gate.services import token_scratch
 from modules.flow_gate.storage.paths import (
     get_storage_root,
     to_storage_relative,
@@ -209,15 +210,14 @@ def issue(
     expires_at_str = expires_at.isoformat(timespec="seconds")
 
     scratch_path = _scratch_dir(project, token_id)
-    scratch_path.mkdir(parents=True, exist_ok=True)
+    # Normalize the stored path before creating anything on disk, so a storage
+    # conversion error cannot leave an untracked directory behind.
+    stored_scratch = to_storage_relative(scratch_path, project)
+    token_scratch.create(project, token_id, scratch_path)
 
     source_access: Optional[str] = None
     one_shot_claimed = False
     claim_deferred = False
-    if action_scope == "chat":
-        source_access, claim_deferred = _resolve_chat_source_access(
-            issued_to, token_id, created_at_str
-        )
 
     data = {
         "token_id": token_id,
@@ -232,7 +232,7 @@ def issue(
         "expires_at": expires_at_str,
         # Persist relative (L0054.0002): scratch_dir lives under storage_root/work,
         # so it stays host/OS-invariant. verify() resolves it back to absolute.
-        "scratch_dir": to_storage_relative(scratch_path, project),
+        "scratch_dir": stored_scratch,
         "continuation_target_seq": continuation_target_seq,
         "continuation_review_mode": continuation_review_mode,
         # Chosen locale persisted so the unmanned self-chain honors it on every hop
@@ -266,18 +266,20 @@ def issue(
             ),
         })
 
-    if action_scope == "chat":
-        from modules.flow_gate.db import user_chat_source_access as db_source_access
-
+    try:
+        if action_scope == "chat":
+            source_access, claim_deferred = _resolve_chat_source_access(
+                issued_to, token_id, created_at_str
+            )
+            data["source_access"] = source_access
+        # The ordinary token also needs an atomic INSERT + event boundary: if
+        # event writing fails, leaving a live row after removing its directory
+        # would make the failed issue externally observable.
         with get_store().transaction():
-            if claim_deferred:
-                # The claim CAS's one_shot_token_id has an FK to tokens(token_id)
-                # (DB0008 §2.1), so the token row must already exist before the claim
-                # can reference it -- insert first with the conservative "read"
-                # placeholder, then fix the column up to "read_write" if the claim
-                # actually won, before this same transaction commits (db_tokens.
-                # set_source_access's docstring works through why that still satisfies
-                # "fixed at issue time", T0009 §6).
+            if action_scope == "chat" and claim_deferred:
+                from modules.flow_gate.db import user_chat_source_access as db_source_access
+                # The claim FK requires the row first. Both writes are inside
+                # this same transaction, as before.
                 data["source_access"] = "read"
                 _create_and_log()
                 claim_result = db_source_access.claim(
@@ -289,8 +291,12 @@ def issue(
                     db_tokens.set_source_access(token_id, source_access)
             else:
                 _create_and_log()
-    else:
-        _create_and_log()
+    except Exception:
+        if not token_scratch.delete_owned(project, token_id, scratch_path, rollback=True):
+            _log.warning("token issue scratch rollback failed for %s", token_id)
+        raise
+
+    token_scratch.sweep_on_issue(project)
 
     return {
         "raw_token": raw_token,

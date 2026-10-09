@@ -87,6 +87,22 @@ class _MockTxn:
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def _stub_legacy_test_scratch_layout(monkeypatch):
+    """These inbox tests intentionally supply arbitrary tmp_path scratch names.
+
+    Ownership and safe deletion of real tok_* paths are exercised separately in
+    test_token_scratch_lifecycle_0610.py.
+    """
+    from modules.flow_gate.services import token_service
+
+    monkeypatch.setattr(
+        token_service.token_scratch, "create",
+        lambda _project, _token, path: Path(path).mkdir(parents=True, exist_ok=True),
+    )
+    monkeypatch.setattr(token_service.token_scratch, "sweep_on_issue", lambda _project: None)
+
+
 @pytest.fixture(scope="module")
 def tmp_db():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:

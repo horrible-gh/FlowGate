@@ -51,6 +51,17 @@ def sweep_ai_run_scratches():
         logger.warning(f"[startup] AI-run scratch sweep failed: {exc}")
 
 
+def sweep_token_scratches():
+    """Sweep manifest-owned token directories after orphan lease recovery."""
+    try:
+        from modules.flow_gate.services import token_scratch
+
+        projects = token_scratch.startup_sweep()
+        logger.info(f"[startup] swept token scratch for {projects} project(s)")
+    except Exception as exc:
+        logger.warning(f"[startup] token scratch sweep failed: {exc}")
+
+
 def recover_git_sessions():
     """0115 L0006 E8: restore/clean merge-conflict sessions and stale git locks."""
     try:
@@ -94,5 +105,6 @@ def run_all():
     preload_singletons()
     recover_ai_invoke_leases()
     sweep_ai_run_scratches()
+    sweep_token_scratches()
     recover_git_sessions()
     encrypt_ai_provider_keys()
