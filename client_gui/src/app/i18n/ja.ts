@@ -272,6 +272,7 @@ export default {
       tool_git: 'Git',
     },
     // flowgate.v02.0036 — bottom Inspector Frame (0035 v7: header + tabs + Content area).
+    // flowgate.v02.0048 T#1: no placeholder line — a tab exists only with a registered feature.
     inspector: {
       label: 'インスペクター',
       tabs_label: 'インスペクタータブ',
@@ -281,7 +282,21 @@ export default {
         attachments: '添付',
         settings: '設定',
       },
-      pane_placeholder: '{tab}の内容は後続の作業で接続されます。',
+      // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
+      doc_status_label: 'ドキュメント状態',
+      run_status_label: '実行状態',
+      review_status: {
+        pending_review: 'レビュー待ち',
+        approved: '承認済み',
+        rejected: '差し戻し',
+        revised: '修正済み',
+      },
+      pane: {
+        loading: '読み込み中…',
+        empty: '表示する内容がありません。',
+        error: '読み込めませんでした。',
+        retry: '再試行',
+      },
     },
     // flowgate.v02.0038 — Designer top band (Header / Menu Bar / Toolbar). No shortcut text on
     // purpose (0007-T §7).

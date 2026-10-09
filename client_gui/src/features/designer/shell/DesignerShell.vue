@@ -59,6 +59,7 @@
           :bottom-height="layout.bottomHeight"
           :unselected="!hasWorkTarget"
           @resize-bottom="(height, columnHeight) => (layout.bottomHeight = clampBottomHeight(layout, height, columnHeight))"
+          @show-tool="onShowTab"
         />
       </template>
       <template #right>

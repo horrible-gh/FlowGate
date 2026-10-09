@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as DesignerFeature from '@/features/designer'
@@ -6,16 +6,18 @@ import { INSPECTOR_TABS } from '@/features/designer/inspector/inspectorTabs'
 
 // flowgate.v02.0036 — source-level guards for the bottom Inspector Frame (0036-R §2.2 / §2.4 /
 // §5.2) that a DOM test cannot see: a frame only, with no feature, API or state machine behind it.
+// flowgate.v02.0048 T#1 (D#1 §3.3): the guards cover the three Frame files; the rest of the
+// Inspector folder (registry, target, host, parts, features) is guarded by structure.0048.
 const SRC = resolve(__dirname, '../../../src')
 const INSPECTOR = join(SRC, 'features/designer/inspector')
-const INSPECTOR_FILES = readdirSync(INSPECTOR).sort()
+const INSPECTOR_FILES = ['DesignerInspector.vue', 'InspectorHeader.vue', 'inspectorTabs.ts']
 
 const read = (file: string) => readFileSync(file, 'utf8')
 const importsOf = (src: string) => [...src.matchAll(/^\s*import\s[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1])
 
 describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
-  it('holds exactly the Frame, its header and the tab rules', () => {
-    expect(INSPECTOR_FILES).toEqual(['DesignerInspector.vue', 'InspectorHeader.vue', 'inspectorTabs.ts'].sort())
+  it('keeps the Frame, its header and the tab rules (the folder listing is structure.0048 B1)', () => {
+    for (const name of INSPECTOR_FILES) expect(existsSync(join(INSPECTOR, name)), name).toBe(true)
   })
 
   it('imports only vue / vue-i18n, ui primitives, its own files and the Canvas Node kind / Graph Model contracts', () => {
@@ -76,9 +78,14 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
   it.each(['ko', 'en', 'ja'])('i18n %s Inspector keys match the tab list and the Bottom placeholder strings are gone', async (locale) => {
     const messages = (await import(`@/app/i18n/${locale}.ts`)).default as Record<string, any>
     const inspector = messages.designer.inspector
-    expect(Object.keys(inspector).sort()).toEqual(['label', 'pane_placeholder', 'tabs', 'tabs_label'].sort())
+    // flowgate.v02.0048 T#1: no `pane_placeholder` (no '연동 전' place); the header status labels
+    // and the common section states of the parts instead.
+    expect(Object.keys(inspector).sort()).toEqual(
+      ['label', 'tabs', 'tabs_label', 'doc_status_label', 'run_status_label', 'review_status', 'pane'].sort(),
+    )
     expect(Object.keys(inspector.tabs)).toEqual([...INSPECTOR_TABS])
-    expect(inspector.pane_placeholder).toContain('{tab}')
+    expect(Object.keys(inspector.review_status).sort()).toEqual(['approved', 'pending_review', 'rejected', 'revised'])
+    expect(Object.keys(inspector.pane).sort()).toEqual(['empty', 'error', 'loading', 'retry'])
     expect(messages.designer.shell).not.toHaveProperty('bottom_label')
     expect(messages.designer.shell).not.toHaveProperty('bottom_parts')
     expect(messages.designer.shell.minimap_label).toBe('MINIMAP')

@@ -3,80 +3,134 @@
        No Node selected: an empty area — no text (flowgate.v02.0042), header or tabs. A Node
        selected: header (40px) + tabs (32px) fixed above a scrolling Content area — 72px before
        the content.
-       Boundaries for later groups: the header `header-meta` / `header-actions` slots and one
-       Content slot per tab (`tab-documents`, `tab-qna`, `tab-attachments`, `tab-settings`),
-       each given the selected Node. A tab nobody fills yet shows a placeholder line. The Frame
-       owns only the selected tab; it calls no API and holds no Node data of its own.
        flowgate.v02.0039 T#3: `unselected` (the Designer has no work target yet) leaves only the
-       bottom frame — an empty header bar, no line, no tabs and no Content. -->
+       bottom frame — an empty header bar, no line, no tabs and no Content.
+       flowgate.v02.0048 T#1 (D#1 §5): the one injection point of the Inspector features. The
+       Frame turns the selection into an InspectorTarget and lays out what the registry gives for
+       it — header meta / header actions, and per tab the Content parts in `order`. A tab no
+       registration contributes to is not shown; with no tab at all (e.g. a Node without a
+       document) only the header is. The Frame knows no feature and calls no API; a feature's
+       Host intent leaves as the `host` event. -->
   <section
     class="designer-inspector"
     data-test="designer-inspector"
-    :data-selected="node && !unselected ? 'true' : 'false'"
+    :data-selected="target && !unselected ? 'true' : 'false'"
     :data-unselected="unselected ? 'true' : 'false'"
     :aria-label="t('gui.designer.inspector.label')"
   >
     <div v-if="unselected" class="designer-inspector-frame" data-test="designer-inspector-frame" />
-    <div v-else-if="!node" class="designer-inspector-empty" data-test="designer-inspector-empty" />
+    <div v-else-if="!target" class="designer-inspector-empty" data-test="designer-inspector-empty" />
     <template v-else>
-      <InspectorHeader :node="node">
-        <template #meta><slot name="header-meta" :node="node" /></template>
-        <template v-if="$slots['header-actions']" #actions><slot name="header-actions" :node="node" /></template>
+      <InspectorHeader :target="target">
+        <template v-if="headerMetas.length" #meta>
+          <component :is="entry.headerMeta" v-for="entry in headerMetas" :key="entry.key" :target="target" />
+        </template>
+        <template v-if="headerActions.length" #actions>
+          <component :is="entry.headerAction" v-for="entry in headerActions" :key="entry.key" :target="target" />
+        </template>
       </InspectorHeader>
-      <Tabs
-        class="designer-inspector-tabs"
-        data-test="designer-inspector-tabs"
-        :style="tabStripStyle"
-        :tabs="tabItems"
-        :model-value="activeTab"
-        :aria-label="t('gui.designer.inspector.tabs_label')"
-        @update:model-value="selectTab"
-      />
-      <div class="designer-inspector-body" role="tabpanel" data-test="designer-inspector-body" :data-tab="activeTab">
-        <slot :name="`tab-${activeTab}`" :node="node">
-          <p class="designer-inspector-placeholder" data-test="designer-inspector-placeholder">
-            {{ t('gui.designer.inspector.pane_placeholder', { tab: t(`gui.designer.inspector.tabs.${activeTab}`) }) }}
-          </p>
-        </slot>
-      </div>
+      <template v-if="tabs.length">
+        <Tabs
+          class="designer-inspector-tabs"
+          data-test="designer-inspector-tabs"
+          :style="tabStripStyle"
+          :tabs="tabItems"
+          :model-value="activeTab"
+          :aria-label="t('gui.designer.inspector.tabs_label')"
+          @update:model-value="selectTab"
+        />
+        <div class="designer-inspector-body" role="tabpanel" data-test="designer-inspector-body" :data-tab="activeTab">
+          <div
+            v-for="entry in tabContent"
+            :key="entry.key"
+            class="designer-inspector-section"
+            data-test="designer-inspector-section"
+            :data-key="entry.key"
+          >
+            <component :is="entry.tab!.component" :target="target" />
+          </div>
+        </div>
+      </template>
     </template>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, provide, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
-import type { FlowGraphNode } from '../center/graph/flowGraph'
+import type { FlowGraphSelection } from '../center/graph/flowGraph'
 import InspectorHeader from './InspectorHeader.vue'
+import { INSPECTOR_HOST, type InspectorHostIntent } from './inspectorHost'
+import {
+  contributionsFor,
+  inspectorRegistry,
+  installInspectorMessages,
+  registrationApplies,
+  type InspectorRegistry,
+} from './inspectorRegistry'
 import {
   DEFAULT_INSPECTOR_TAB,
   INSPECTOR_TAB_GAP,
   INSPECTOR_TAB_MIN_WIDTH,
   INSPECTOR_TAB_STRIP_PADDING_X,
-  inspectorTabsFor,
+  inspectorTabsWith,
   resolveInspectorTab,
   type InspectorTabKey,
 } from './inspectorTabs'
+import { toInspectorTarget } from './inspectorTarget'
 
 const props = withDefaults(
   defineProps<{
-    /** The selected Node of the active Flow, or null when nothing is selected. */
-    node: FlowGraphNode | null
-    /** False hides the trailing 설정 tab (decided per card definition by a later group). */
-    hasSettings?: boolean
+    /** The selected Node with its Flow and project (Center session), or null when nothing is selected. */
+    selection: FlowGraphSelection | null
     /** The Designer has no work target yet (0039 T#3): frame only. */
     unselected?: boolean
+    /** The feature registry; tests swap in a fixture registry. */
+    registry?: InspectorRegistry
   }>(),
-  { hasSettings: true, unselected: false },
+  { unselected: false, registry: () => inspectorRegistry },
 )
 
-const { t } = useI18n()
+const emit = defineEmits<{ host: [intent: InspectorHostIntent] }>()
 
-const tabs = computed(() => inspectorTabsFor(props.hasSettings))
+// The global composer: feature strings are merged into it before any feature part renders.
+const i18n = useI18n({ useScope: 'global' })
+const { t } = i18n
+// The registry is fixed for the Frame's life (the static collection, or a test fixture); its
+// parts are rendered as given, never through a reactive proxy.
+const registry = toRaw(props.registry)
+installInspectorMessages(i18n, registry)
+
+provide(INSPECTOR_HOST, { request: (intent) => emit('host', intent) })
+
+const target = computed(() => toInspectorTarget(props.selection))
+
+const contributions = computed(() => contributionsFor(registry, target.value))
+const headerMetas = computed(() => contributions.value.filter((entry) => entry.headerMeta))
+const headerActions = computed(() => contributions.value.filter((entry) => entry.headerAction))
+
+const tabs = computed(() => inspectorTabsWith(contributions.value.flatMap((entry) => (entry.tab ? [entry.tab.key] : []))))
+
+// One tab number supplier per registration, set up once; each sees the target only while its
+// registration applies to it (D#1 §5.2: at most one supplier per tab).
+const tabCounts = registry.entries.flatMap((entry) => {
+  if (!entry.tab?.count) return []
+  const scoped = computed(() => (target.value && registrationApplies(entry, target.value) ? target.value : null))
+  return [{ entry, tab: entry.tab.key, count: entry.tab.count(scoped) }]
+})
+
+function tabCount(key: InspectorTabKey): number | null {
+  const supplier = tabCounts.find((item) => item.tab === key && contributions.value.includes(item.entry))
+  return supplier?.count.value ?? null
+}
 
 const tabItems = computed<TabItem[]>(() =>
-  tabs.value.map((key) => ({ key, label: t(`gui.designer.inspector.tabs.${key}`) })),
+  tabs.value.map((key) => {
+    const label = t(`gui.designer.inspector.tabs.${key}`)
+    const count = tabCount(key)
+    return { key, label: count === null ? label : `${label} (${count})` }
+  }),
 )
 
 // Kept across Node changes and while nothing is selected (v7).
@@ -84,7 +138,9 @@ const selectedTab = ref<InspectorTabKey>(DEFAULT_INSPECTOR_TAB)
 
 const activeTab = computed(() => resolveInspectorTab(selectedTab.value, tabs.value))
 
-// A Node without the selected tab sends the selection back to 문서 for good (v7).
+const tabContent = computed(() => contributions.value.filter((entry) => entry.tab?.key === activeTab.value))
+
+// A Node without the selected tab sends the selection to its first tab for good (v7).
 watch(tabs, (next) => {
   selectedTab.value = resolveInspectorTab(selectedTab.value, next)
 })
@@ -165,13 +221,7 @@ function selectTab(key: string) {
   padding: 12px 14px;
 }
 
-.designer-inspector-placeholder {
-  margin: 0;
-  padding: 14px;
-  border: 1px dashed var(--fg2-line-strong);
-  border-radius: 8px;
-  color: var(--fg2-muted-2);
-  font-size: 12px;
-  text-align: center;
+.designer-inspector-section + .designer-inspector-section {
+  margin-top: 12px;
 }
 </style>

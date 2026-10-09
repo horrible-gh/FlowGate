@@ -1,0 +1,3 @@
+# flowgate.v02.0048 T#1: the root packaging rule `parts/` must not hide the Inspector's common parts
+# folder (D#1 §2.5). Not source; structure.0048 B1 lets this file sit in the Inspector root.
+!/parts/
