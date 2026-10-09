@@ -442,17 +442,23 @@ def list_by_group(group_id: str, limit: int) -> list[dict]:
 
 
 def list_review_loops_by_user(user_id: str, limit: int = 100) -> list[dict]:
-    """Finished runs that own a still-showing document-review-loop card, newest first.
+    """Restore a review-loop card only when it is the owner's latest run in its group.
 
-    0529 B0001: `card_dismissed_at IS NULL` is what makes [remove from list] stick. This
-    query is the ONLY source of the bootstrap cards /ai-invoke/active-all rebuilds after
-    a restart, so without the filter the card a user just removed came back on the next
-    bootstrap -- forever, since nothing else here ages a row out either.
+    The newest run may be a non-review-loop run or a dismissed review-loop card.
+    Both still supersede older cards; filtering dismissed rows before choosing the
+    latest would resurrect an older card after [remove from list]. Run history stays
+    untouched.
     """
     rows = get_store()._fetch_all(
         "SELECT r.* FROM ai_invoke_runs r "
         "INNER JOIN ai_invoke_document_review_loops l ON l.run_id = r.run_id "
         "WHERE r.issued_to = ? AND l.card_dismissed_at IS NULL "
+        "AND NOT EXISTS ("
+        "SELECT 1 FROM ai_invoke_runs newer "
+        "WHERE newer.issued_to = r.issued_to AND newer.group_id = r.group_id "
+        "AND (newer.started_at > r.started_at "
+        "OR (newer.started_at = r.started_at AND newer.run_id > r.run_id))"
+        ") "
         "ORDER BY r.started_at DESC, r.run_id DESC LIMIT ?",
         [user_id, limit],
     )
