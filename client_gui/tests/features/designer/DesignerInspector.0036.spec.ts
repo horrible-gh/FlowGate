@@ -295,7 +295,8 @@ describe('DesignerCenterColumn — Bottom Dock with the Inspector', () => {
     return { w: wrapper, center }
   }
 
-  it('lays the Inspector and the Minimap placeholder side by side in the Bottom Dock', async () => {
+  // flowgate.v02.0049: the Minimap placeholder became the real Minimap (nothing to draw yet).
+  it('lays the Inspector and the Minimap side by side in the Bottom Dock', async () => {
     const { w } = await mountColumn()
     const dock = get(w, 'designer-bottom-dock')
     expect(dock.attributes('style')).toContain('height: 300px')
@@ -303,7 +304,8 @@ describe('DesignerCenterColumn — Bottom Dock with the Inspector', () => {
       'designer-inspector',
       'designer-bottom-minimap',
     ])
-    expect(get(w, 'designer-bottom-minimap').get('[data-test="designer-placeholder-label"]').text()).toBe('MINIMAP')
+    expect(get(w, 'designer-bottom-minimap').find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
+    expect(get(w, 'designer-bottom-minimap').get('[data-test="designer-minimap"]').attributes('data-empty')).toBe('true')
     expect((dock.element as HTMLElement).style.gridTemplateColumns).toBe(DESIGNER_BOTTOM_DOCK_COLUMNS)
   })
 

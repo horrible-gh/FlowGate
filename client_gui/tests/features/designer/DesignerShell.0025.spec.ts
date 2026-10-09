@@ -193,8 +193,6 @@ describe('DesignerShell — container hierarchy', () => {
   it('shows each placeholder inside its final container', async () => {
     const w = await mountShell()
     await activateCanvas(w)
-    const label = (container: string) =>
-      get(w, container).get('[data-test="designer-placeholder-label"]').text()
 
     // flowgate.v02.0038: the Top holds the real Header / Menu Bar / Toolbar, no placeholder.
     const top = get(w, 'designer-top')
@@ -211,9 +209,11 @@ describe('DesignerShell — container hierarchy', () => {
     expect(workspace.find('[data-test="designer-center-no-flow"]').exists()).toBe(false)
     expect(w.find('[data-test="designer-workspace-flow"]').exists()).toBe(false)
     // flowgate.v02.0036: the Bottom Dock holds the real Inspector (nothing selected yet) next
-    // to the Minimap placeholder.
-    expect(label('designer-bottom-dock')).toBe('MINIMAP')
-    expect(get(w, 'designer-bottom-minimap').text()).toContain('Minimap')
+    // to the Minimap — flowgate.v02.0049: the real Minimap of the open Flow, no placeholder.
+    expect(get(w, 'designer-bottom-dock').find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
+    // It draws what the Canvas draws: nothing while the opened Flow has no Canvas Nodes on screen.
+    const canvasNodes = w.findAll('[data-test="designer-canvas-node"]').length
+    expect(get(w, 'designer-bottom-minimap').findAll('[data-test="designer-minimap-node"]')).toHaveLength(canvasNodes)
     // flowgate.v02.0042: no Node selected leaves an empty Inspector area, no guidance text.
     expect(get(w, 'designer-bottom-dock').get('[data-test="designer-inspector-empty"]').text()).toBe('')
     // flowgate.v02.0037: the Right Dock is the Tool Panel — [팔레트] [대화] [Git] over the real

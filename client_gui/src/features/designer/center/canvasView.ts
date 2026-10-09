@@ -9,6 +9,12 @@ export interface CanvasViewport {
   readonly zoom: number
 }
 
+/** flowgate.v02.0049: the Canvas area in screen pixels (what the MiniMap shows as the visible area). */
+export interface CanvasSize {
+  readonly width: number
+  readonly height: number
+}
+
 export interface CanvasViewState {
   /** null = not shown yet: the Canvas fits all Nodes on first display. */
   viewport: CanvasViewport | null
@@ -30,6 +36,11 @@ export function createCanvasViewState(): CanvasViewState {
 
 export function clampCanvasZoom(zoom: number): number {
   return Math.min(CANVAS_MAX_ZOOM, Math.max(CANVAS_MIN_ZOOM, zoom))
+}
+
+export function sameCanvasSize(a: CanvasSize | null, b: CanvasSize | null): boolean {
+  if (!a || !b) return a === b
+  return a.width === b.width && a.height === b.height
 }
 
 export function sameViewport(a: CanvasViewport | null, b: CanvasViewport | null): boolean {

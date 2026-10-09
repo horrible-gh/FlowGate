@@ -47,6 +47,7 @@
           @select-node="center.selectNode(activeTab.flowId, $event)"
           @viewport-change="center.recordViewport(activeTab.flowId, $event)"
           @viewport-commit="center.commitViewport(activeTab.flowId, $event)"
+          @canvas-resize="center.recordCanvasSize($event)"
           @node-move="center.moveNode(activeTab.flowId, $event.nodeId, $event.x, $event.y)"
           :editable="load.graph.draft?.editable === true"
           :can-connect="(source: string, target: string) => center.checkConnection(activeTab!.flowId, source, target).ok"

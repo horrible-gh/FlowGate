@@ -2,7 +2,8 @@
   <!-- Center column: Workspace over the Bottom Dock. The Bottom Dock is a child of this
        column (not of the Body), so it can never reach under the Left / Right Docks. The
        Designer Center session passes through to the Workspace; the Bottom Inspector
-       (flowgate.v02.0036) gets the session's selected Node (later, the Minimap its Viewport).
+       (flowgate.v02.0036) gets the session's selected Node; flowgate.v02.0049: the Minimap gets the
+       active Flow's ready Graph, Viewport and Canvas size, and its moves go back to the session.
        flowgate.v02.0039 T#3: `unselected` (no work target yet) passes to both.
        flowgate.v02.0046: a resize handle on the Workspace ↔ Bottom Dock line asks the Shell for
        a new Bottom Dock height; the Workspace (and its Canvas) takes the rest. -->
@@ -16,18 +17,26 @@
       data-test="designer-bottom-resize"
       @resize="emit('resize-bottom', $event, columnRef?.clientHeight ?? 0)"
     />
-    <DesignerBottomDock :height="bottomHeight" :selected-node="center.activeSelectedNode.value" :unselected="unselected" />
+    <DesignerBottomDock
+      :height="bottomHeight"
+      :selected-node="center.activeSelectedNode.value"
+      :unselected="unselected"
+      :minimap="minimap"
+      @minimap-viewport="onMiniMapViewport"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import type { CanvasViewport } from '../center/canvasView'
 import type { DesignerCenterSession } from '../center/designerCenterSession'
+import type { FlowGraph } from '../center/graph/flowGraph'
 import DesignerBottomDock from './DesignerBottomDock.vue'
 import DesignerResizeHandle from './DesignerResizeHandle.vue'
 import DesignerWorkspace from './DesignerWorkspace.vue'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     center: DesignerCenterSession
     bottomHeight: number
@@ -40,6 +49,26 @@ withDefaults(
 const emit = defineEmits<{ 'resize-bottom': [height: number, columnHeight: number] }>()
 
 const columnRef = ref<HTMLElement | null>(null)
+
+// flowgate.v02.0049: the Minimap reads the session's active Flow only — a Graph that is not ready
+// (loading, error, no tab) draws nothing, so another Flow's map never stays on screen.
+const minimap = computed(() => {
+  const { center } = props
+  const load = center.activeGraphLoad.value
+  return {
+    flowId: center.state.activeFlowId,
+    graph: load?.status === 'ready' ? (load.graph as FlowGraph) : null,
+    viewport: center.activeView.value?.viewport ?? null,
+    canvasSize: center.canvasSize.value,
+  }
+})
+
+function onMiniMapViewport(viewport: CanvasViewport, commit: boolean) {
+  const flowId = props.center.state.activeFlowId
+  if (flowId === null) return
+  if (commit) props.center.commitViewport(flowId, viewport)
+  else props.center.recordViewport(flowId, viewport)
+}
 </script>
 
 <style scoped>

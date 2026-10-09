@@ -47,6 +47,9 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       // flowgate.v02.0036 — bottom Inspector: the Frame and the Graph Node type it is given.
       /^\.\.\/inspector\/DesignerInspector\.vue$/,
       /^\.\.\/center\/graph\/flowGraph$/,
+      // flowgate.v02.0049 — bottom Minimap: the part and the Canvas view types it is given.
+      /^\.\.\/minimap\/DesignerMiniMap\.vue$/,
+      /^\.\.\/center\/canvasView$/,
       // flowgate.v02.0037 — right Tool Panel: the Palette part and the public surfaces of the
       // Conversation and Git parts.
       /^\.\.\/palette\/PalettePanel\.vue$/,
