@@ -11,7 +11,7 @@ import { toVueFlowEdges, toVueFlowNodes } from '@/features/designer/center/canva
 import { createDesignerCenterSession } from '@/features/designer/center/designerCenterSession'
 import type { FlowGraph } from '@/features/designer/center/graph/flowGraph'
 import type { FlowGraphChangeHandlers, FlowGraphSource, FlowLayoutChange } from '@/features/designer/center/graph/flowGraphSource'
-import { createServerFlowGraphSource, toFlowGraph } from '@/features/designer/center/graph/serverFlowGraphSource'
+import { CANVAS_COLLAPSE, createServerFlowGraphSource, toFlowGraph } from '@/features/designer/center/graph/serverFlowGraphSource'
 import { createLayoutSaveQueue } from '@/features/designer/center/layoutSaveQueue'
 
 function canvas(overrides: Partial<FlowCanvas> = {}): FlowCanvas {
@@ -51,8 +51,12 @@ describe('server Graph source (S1)', () => {
 
   it('is not sample data, reads through the store loader and saves layout in the transport shape', async () => {
     const saved: Array<[string, FlowCanvasLayoutInput]> = []
+    const reads: unknown[][] = []
     const source = createServerFlowGraphSource({
-      loadFlowCanvas: async (flowId) => canvas({ flowId }),
+      loadFlowCanvas: async (...args) => {
+        reads.push(args)
+        return canvas({ flowId: args[0] })
+      },
       saveFlowCanvasLayout: async (flowId, input): Promise<FlowCanvasLayoutResult> => {
         saved.push([flowId, input])
         return { savedPositions: 1, viewportSaved: true, ignored: [{ nodeKey: 'slot_old', reason: 'retired' }] }
@@ -60,6 +64,10 @@ describe('server Graph source (S1)', () => {
     })
     expect(source.isSample).toBe(false)
     expect((await source.loadGraph('p', 'f9')).flowId).toBe('f9')
+    await source.loadGraph('p', 'f9', 'draft')
+    // TR0020 rev5: every Canvas read leaves conversations out (no memo card for a new conversation).
+    expect(CANVAS_COLLAPSE).toEqual(['conversation'])
+    expect(reads).toEqual([['f9', undefined, ['conversation']], ['f9', 'draft', ['conversation']]])
     const result = await source.saveLayout!('p', 'f9', { positions: [{ nodeId: 'doc:a', x: 1, y: 2 }], viewport: { x: 0, y: 0, zoom: 1 } })
     expect(saved).toEqual([['f9', { positions: [{ nodeKey: 'doc:a', x: 1, y: 2 }], viewport: { x: 0, y: 0, zoom: 1 } }]])
     expect(result).toEqual({ ignoredNodeIds: ['slot_old'] })
@@ -68,7 +76,11 @@ describe('server Graph source (S1)', () => {
   it('Vue Flow input: only movable Nodes are draggable and Edges carry their class', () => {
     const graph = toFlowGraph(canvas())
     expect(toVueFlowNodes(graph, null).map((n) => n.draggable)).toEqual([true, true, false])
-    expect(toVueFlowEdges(graph).map((e) => e.data)).toEqual([{ edgeClass: 'execution' }, { edgeClass: 'reference' }])
+    // flowgate.v02.0045 T0019: both ends are done, so the execution Edge is progressed. TR0020 rev4:
+    // the reference relation is kept in the Graph but not drawn (no dashed fan-out from a document).
+    expect(toVueFlowEdges(graph).map((e) => [e.id, e.data])).toEqual([
+      ['seq:doc:a>slot_b', { edgeClass: 'execution', progressed: true, deletable: false }],
+    ])
     const sample: FlowGraph = { flowId: 's', nodes: [{ id: 'n', kind: 'task', title: 't', x: 0, y: 0 }], edges: [] }
     expect(toVueFlowNodes(sample, null)[0].draggable).toBe(false)
   })

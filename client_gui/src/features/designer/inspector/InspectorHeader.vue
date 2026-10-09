@@ -2,7 +2,9 @@
   <!-- flowgate.v02.0036 — Inspector header row (0035 v7, fixed 40px): kind icon box, kind
        badge and the Node title on the left; the meta slot (later: memo icon / origin badges),
        the state chip and the actions slot (later: primary action + its popover, ⋯) on the
-       right. It shows only what the Graph Model already has — no action is wired here. -->
+       right. It shows only what the Graph Model already has — no action is wired here.
+       flowgate.v02.0045 TR0020 rev2: a 설계 Node shows the same glyph and name as its Canvas card
+       (기본 설계 / 프로토콜 / 로직 / DB설계). -->
   <header
     class="inspector-header"
     :style="{ '--inspector-kind-accent': kind.accent }"
@@ -14,7 +16,7 @@
         <path :d="kind.icon" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
     </span>
-    <span class="inspector-header-kind" data-test="designer-inspector-kind">{{ t(`gui.designer.center.node_kinds.${kind.key}`) }}</span>
+    <span class="inspector-header-kind" data-test="designer-inspector-kind">{{ t(kindLabelKey) }}</span>
     <span class="inspector-header-title" :title="node.title" data-test="designer-inspector-title">{{ node.title }}</span>
     <span class="inspector-header-gap" />
     <slot name="meta" />
@@ -33,7 +35,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { flowNodeKindDisplay, flowNodeStateDisplay } from '../center/canvas/flowNodeKinds'
+import { flowNodeKindDisplay, flowNodeKindLabelKey, flowNodeStateDisplay } from '../center/canvas/flowNodeKinds'
 import type { FlowGraphNode } from '../center/graph/flowGraph'
 
 const props = defineProps<{
@@ -42,7 +44,8 @@ const props = defineProps<{
 
 const { t } = useI18n()
 
-const kind = computed(() => flowNodeKindDisplay(props.node.kind))
+const kind = computed(() => flowNodeKindDisplay(props.node.kind, props.node.docType))
+const kindLabelKey = computed(() => flowNodeKindLabelKey(props.node.kind, props.node.docType))
 const state = computed(() => flowNodeStateDisplay(props.node.state))
 </script>
 

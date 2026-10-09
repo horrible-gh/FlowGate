@@ -102,15 +102,12 @@ export default {
       graph_loading: '그래프를 불러오는 중',
       graph_load_failed: '그래프를 불러오지 못했습니다',
       retry: '다시 시도',
-      empty_graph: '표시할 노드가 없습니다',
       sample_data: '샘플 데이터',
       canvas_label: '{name} 캔버스',
-      // flowgate.v02.0045 — which engine owns the Flow (P0008 §2.1), Canvas badge.
-      ownership: {
-        unassigned: '담당: 미배정',
-        v01: '담당: v0.1(읽기)',
-        graph: '담당: Graph',
-        conflict: '담당 충돌 — 운영자 정리 필요',
+      // flowgate.v02.0045 T0019 — a selected Canvas edge: remove button / why it cannot be removed.
+      edge: {
+        remove: '연결선 삭제',
+        locked: '이미 진행된 연결선은 삭제할 수 없습니다',
       },
       node_kinds: {
         requirement: '요구사항',
@@ -122,40 +119,6 @@ export default {
         design: '설계',
         memo: '메모',
         unknown: '노드',
-      },
-      // flowgate.v02.0045 S3+S4 — Graph draft bar (draft / revision, save state, validate / confirm).
-      edit: {
-        draft: '초안 v{version}',
-        draft_new: '새 초안',
-        revision: '개정 r{no}',
-        saving: '저장 중…',
-        conflict: '다른 곳에서 초안이 먼저 저장되었습니다',
-        save_failed: '초안을 저장하지 못했습니다',
-        undo: '되돌리기',
-        validate: '검증',
-        confirm: '확정',
-        show_revision: '개정 보기',
-        show_draft: '초안 보기',
-        start_draft: '초안 편집',
-        reload: '다시 불러오기',
-        confirmable: '확정할 수 있습니다.',
-        issues: '확정할 수 없음 — 문제 {count}건',
-        confirmed: '개정 r{no}로 확정했습니다.',
-        blocked: {
-          flow_owned_by_v01: '다른 엔진(v0.1) 담당이라 이 초안은 확정할 수 없습니다.',
-          flow_ownership_conflict: '담당 충돌 상태라 이 초안은 확정할 수 없습니다.',
-          other: '이 초안은 지금 확정할 수 없습니다.',
-        },
-        errors: {
-          draft_version_conflict: '다른 곳에서 초안이 먼저 저장되었습니다. 다시 불러온 뒤 편집하세요.',
-          flow_owned_by_v01: '이 플로우는 v0.1 엔진이 담당합니다.',
-          flow_ownership_conflict: '담당 충돌 상태인 플로우입니다. 운영자 정리가 필요합니다.',
-          revision_conflict: '초안의 기준 개정이 최신이 아닙니다. 다시 불러오세요.',
-          draft_not_found: '확정하거나 검증할 초안이 없습니다.',
-          flow_disposed: '폐기된 플로우는 변경할 수 없습니다.',
-          flow_access_denied: '이 플로우를 편집할 권한이 없습니다.',
-          other: '요청을 처리하지 못했습니다.',
-        },
       },
       node_states: {
         draft: '작성 중',
@@ -406,6 +369,7 @@ export default {
         arrange: '정렬 / 배치 ▾',
         run_next: '다음 단계',
         run_all: '전체 실행',
+        validate: '검증',
         stop: '중지',
         zoom_fit: '화면 맞춤',
         zoom_out: '축소',

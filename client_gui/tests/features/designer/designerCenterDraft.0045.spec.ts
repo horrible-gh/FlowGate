@@ -3,7 +3,11 @@
  * Palette drop -> draft node (the Shell's `readDrop`), the first draft save (version 0), key
  * remapping with the node's position stored only after it has its key, connect / remove / undo,
  * re-reads deferred while a draft save waits, validation, confirmation (S4-1) and its refusal
- * with issues (S4-4), and starting a draft from a Graph Flow's revision. No DOM.
+ * with issues (S4-4). No DOM.
+ * TR0020 rev3: no start-draft / switch-view actions — a Graph Flow's latest revision is edited as
+ * is (its first save creates the draft), a stored draft is shown without asking, and 실행 shows
+ * the run again. TR0020 rev4: a refused save (conflict / error) reads the Flow again by itself —
+ * what the removed 다시 불러오기 button did — and the local edits it refused are dropped.
  * Rework (TR0014 r1): a tab closed / project changed while a new node's draft save runs still
  * stores the node's position once the save answers its key, and a reopened tab reads it.
  */
@@ -144,6 +148,32 @@ describe('Center session draft editing', () => {
     expect(drafts.at(-1)!.content.nodes.map((n) => n.key)).toEqual(['gn_a', 'gn_b'])
   })
 
+  it('a refused save reads the Flow again by itself and drops the refused edits (rev4)', async () => {
+    for (const code of ['draft_version_conflict', 'request_failed']) {
+      const { center, source, loads } = setup([unassigned(1)])
+      await vi.runAllTimersAsync()
+      source.saveDraft = vi.fn(async () => {
+        throw Object.assign(new Error('refused'), { code })
+      })
+      const before = loads.length
+      center.dropOnCanvas('f1', dataTransfer('task'), 10, 10)
+      expect(shown(center).nodes).toHaveLength(2)
+      await vi.runAllTimersAsync()
+      expect(source.saveDraft).toHaveBeenCalledTimes(1)
+      expect(loads.length, code).toBe(before + 1)
+      expect(center.state.edits.f1.status, code).toBe('idle')
+      expect(center.state.edits.f1.errorCode).toBeNull()
+      expect(shown(center).nodes.map((n) => n.id)).toEqual(['doc:r'])
+      // Editing goes on from the stored draft; the next save is tried again.
+      source.saveDraft = vi.fn(async (_p, _f, version) => ({ version: version + 1, keyMap: {} }))
+      expect(center.dropOnCanvas('f1', dataTransfer('task'), 10, 10)).toBe(true)
+      await vi.runAllTimersAsync()
+      expect(source.saveDraft).toHaveBeenCalledWith('p', 'f1', 1, expect.anything())
+      expect(center.state.edits.f1.status).toBe('idle')
+      expect(loads.length, code).toBe(before + 1)
+    }
+  })
+
   it('a re-read asked while a draft save waits runs only after the save', async () => {
     const { center, loads } = setup([unassigned()])
     await vi.runAllTimersAsync()
@@ -242,18 +272,65 @@ describe('Center session draft editing', () => {
     expect(source.saveLayout).toHaveBeenCalledWith('p', 'f1', { positions: [{ nodeId: 'gn_new10', x: 40, y: 70 }], viewport: null })
   })
 
-  it('a Graph Flow starts a draft from its latest revision and then shows the draft', async () => {
-    const graphFlow: FlowGraph = { flowId: 'f1', ownership: 'graph', nodes: [], edges: [], draft: null, viewMode: 'revision', latestRevisionNo: 2 }
-    const { center, source, loads, drafts } = setup([graphFlow])
-    source.loadRevision = vi.fn(async () => ({ revisionNo: 2, content: { nodes: [{ key: 'gn_r', isNew: false, nodeType: 'document', docType: 'R', paletteItemId: null, label: 'R', assignee: null }], edges: [] } }))
+  const graphNode = { id: 'gn_r', kind: 'requirement', title: 'R', state: 'done', x: 0, y: 0, movable: true, structureEditable: false,
+    definition: { nodeType: 'document', docType: 'R', paletteItemId: null, label: 'R', assignee: null } }
+  const runView = (extra: Partial<FlowGraph> = {}): FlowGraph => ({
+    flowId: 'f1', ownership: 'graph', nodes: [graphNode], edges: [], draft: null, viewMode: 'revision', latestRevisionNo: 2, viewRevisionNo: 2, ...extra,
+  })
+
+  it('a Graph Flow showing its latest revision is edited as is: the first save creates the draft from it', async () => {
+    const { center, source, loads, drafts } = setup([runView()])
+    source.loadRevision = vi.fn()
     await vi.runAllTimersAsync()
-    expect(center.dropOnCanvas('f1', dataTransfer('task'), 1, 1)).toBe(false)   // revision view: not editable
-    await center.startDraft('f1')
-    expect(drafts).toEqual([{ version: 0, content: { nodes: [{ key: 'gn_r', isNew: false, nodeType: 'document', docType: 'R', paletteItemId: null, label: 'R', assignee: null }], edges: [] } }])
+    const shown = center.activeGraphLoad.value
+    expect(shown?.status === 'ready' && shown.graph.draft).toEqual({ version: 0, editable: true, confirmable: true, blockedReason: null, baseRevisionNo: 2 })
+    expect(shown?.status === 'ready' && shown.graph.nodes[0].state).toBe('done')        // run state kept
+    expect(center.dropOnCanvas('f1', dataTransfer('task'), 40, 70)).toBe(true)
     await vi.runAllTimersAsync()
-    expect(loads.at(-1)).toEqual({ view: 'draft' })
-    center.showGraphView('f1', 'revision')
+    expect(drafts).toHaveLength(1)
+    expect(drafts[0].version).toBe(0)
+    expect(drafts[0].content.nodes.map((n) => [n.key, n.isNew])).toEqual([['gn_r', false], [expect.stringMatching(/^tmp_/), true]])
+    expect(source.loadRevision).not.toHaveBeenCalled()
+    // 실행: confirmed on top of revision 2, then the server's default view (the run) is read.
+    await expect(center.prepareRun('f1')).resolves.toBe(true)
+    expect(source.confirmDraft).toHaveBeenCalledWith('p', 'f1', 1, 2)
     await vi.runAllTimersAsync()
-    expect(loads.at(-1)).toEqual({ view: 'revision' })
+    expect(loads.at(-1)).toEqual({ view: undefined })
+  })
+
+  it('a run pinned to an older revision is not offered for editing', async () => {
+    const { center } = setup([runView({ viewRevisionNo: 1 })])
+    await vi.runAllTimersAsync()
+    expect(center.dropOnCanvas('f1', dataTransfer('task'), 1, 1)).toBe(false)
+    const shown = center.activeGraphLoad.value
+    expect(shown?.status === 'ready' && shown.graph.draft).toBeNull()
+  })
+
+  it('a Graph Flow with a stored draft shows the draft without asking', async () => {
+    const stored = { version: 3, editable: false, confirmable: true, blockedReason: null, baseRevisionNo: 2 }
+    const draftView: FlowGraph = { ...runView(), nodes: [{ ...graphNode, structureEditable: true }], draft: { ...stored, editable: true }, viewMode: 'draft' }
+    const { center, loads } = setup([runView({ draft: stored }), draftView])
+    await vi.runAllTimersAsync()
+    expect(loads).toEqual([{ view: undefined }, { view: 'draft' }])
+    const shown = center.activeGraphLoad.value
+    expect(shown?.status === 'ready' && shown.graph.viewMode).toBe('draft')
+    expect(center.dropOnCanvas('f1', dataTransfer('task'), 1, 1)).toBe(true)
+  })
+
+  it('a draft gone before its read falls back to the server default', async () => {
+    const { center, source, loads } = setup([runView()])
+    const answers: Array<() => FlowGraph> = [
+      () => runView({ draft: { version: 1, editable: false, confirmable: true, blockedReason: null, baseRevisionNo: 2 } }),
+      () => { throw new Error('draft_not_found') },
+      () => runView(),
+    ]
+    source.loadGraph = vi.fn(async (_p: string, _f: string, view?: string) => {
+      loads.push({ view })
+      return answers.shift()!()
+    })
+    center.retryGraph('f1')
+    await vi.runAllTimersAsync()
+    expect(loads.slice(-3)).toEqual([{ view: undefined }, { view: 'draft' }, { view: undefined }])
+    expect(center.activeGraphLoad.value?.status).toBe('ready')
   })
 })

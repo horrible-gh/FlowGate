@@ -402,8 +402,8 @@ export const useProjectStore = defineStore('project', () => {
 
   // flowgate.v02.0045: the Designer Canvas Graph loader / saver (P0008 §3 / §4). Stateless like
   // the loaders above: per-Flow staleness and save batching belong to the Center session.
-  function loadFlowCanvas(flowId: string, view?: string): Promise<FlowCanvas> {
-    return fetchFlowCanvas(flowId, view)
+  function loadFlowCanvas(flowId: string, view?: string, collapse?: readonly string[]): Promise<FlowCanvas> {
+    return fetchFlowCanvas(flowId, view, collapse)
   }
 
   function saveFlowCanvasLayout(flowId: string, input: FlowCanvasLayoutInput): Promise<FlowCanvasLayoutResult> {

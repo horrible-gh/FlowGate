@@ -24,6 +24,8 @@ export interface FlowGraphNode {
   readonly title: string
   /** Optional domain key, display only. */
   readonly state?: string | null
+  /** Display only (flowgate.v02.0045 T0019): the document type the Node stands for, if any. */
+  readonly docType?: string | null
   /** Free World coordinates — never derived from an order / sequence. */
   readonly x: number
   readonly y: number
@@ -96,4 +98,6 @@ export interface FlowGraph {
   readonly viewMode?: string | null
   /** Meaning: the latest confirmed revision number, or null. */
   readonly latestRevisionNo?: number | null
+  /** Meaning: the revision shown in the revision view (a run may pin an older one), else null. */
+  readonly viewRevisionNo?: number | null
 }

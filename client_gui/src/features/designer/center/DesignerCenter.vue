@@ -3,8 +3,12 @@
        Canvas area shows exactly one of: Graph loading / Graph error / Canvas, and stays empty
        (no guidance text — flowgate.v02.0042) while no Flow is open.
        User actions become Center session actions; this part knows nothing about Vue Flow.
-       flowgate.v02.0045 S3+S4: a Flow with a Graph draft (or a Graph Flow) also shows the draft bar
-       (edit/DraftToolbar.vue); the Canvas's structure edits go to the session's draft actions. -->
+       flowgate.v02.0045 S3+S4: the Canvas's structure edits go to the session's draft actions.
+       flowgate.v02.0045 TR0020 rev2: 되돌리기 / 검증 / 실행 are Toolbar tools. TR0020 rev3: no
+       편집 / 편집 마치기 — a Flow that already ran is edited right on the Canvas (the session picks
+       what it shows). TR0020 rev4: nothing is laid over the Canvas — no saving / refused-save /
+       검증 note (the edit note is gone); a refused save reads the Flow again by itself, and the
+       problems a 검증 or a refused 실행 reported only mark their cards / lines on the Canvas. -->
   <div class="designer-center" data-test="designer-center">
     <FlowTabStrip
       :tabs="center.state.tabs"
@@ -46,23 +50,12 @@
           @node-move="center.moveNode(activeTab.flowId, $event.nodeId, $event.x, $event.y)"
           :editable="load.graph.draft?.editable === true"
           :can-connect="(source: string, target: string) => center.checkConnection(activeTab!.flowId, source, target).ok"
-          :issue-ids="issueIds"
+          :issues="edit?.check?.issues ?? []"
           @canvas-drop="center.dropOnCanvas(activeTab.flowId, $event.transfer, $event.x, $event.y)"
           @node-connect="center.connectNodes(activeTab.flowId, $event.source, $event.target)"
           @node-remove="center.removeNode(activeTab.flowId, $event)"
           @edge-remove="center.removeEdge(activeTab.flowId, $event)"
           @undo="center.undoEdit(activeTab.flowId)"
-        />
-        <DraftToolbar
-          v-if="load && load.status === 'ready' && !center.isSampleSource && (load.graph.draft || load.graph.ownership === 'graph')"
-          :graph="load.graph"
-          :edit="edit"
-          @undo="center.undoEdit(activeTab.flowId)"
-          @validate="center.validateDraft(activeTab.flowId)"
-          @confirm="center.confirmDraft(activeTab.flowId)"
-          @start-draft="center.startDraft(activeTab.flowId)"
-          @show-view="center.showGraphView(activeTab.flowId, $event)"
-          @reload="center.reloadDraft(activeTab.flowId)"
         />
       </template>
     </div>
@@ -70,14 +63,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../components/ui/Button.vue'
 import ErrorState from '../../../components/ui/ErrorState.vue'
 import LoadingState from '../../../components/ui/LoadingState.vue'
 import FlowCanvas from './canvas/FlowCanvas.vue'
 import type { DesignerCenterSession } from './designerCenterSession'
-import DraftToolbar from './edit/DraftToolbar.vue'
 import FlowTabStrip from './FlowTabStrip.vue'
 
 const props = defineProps<{
@@ -90,9 +81,6 @@ const activeTab = props.center.activeTab
 const load = props.center.activeGraphLoad
 const view = props.center.activeView
 const edit = props.center.activeEdit
-
-// Nodes / edges the last validation (or refused confirmation) of the active draft reported.
-const issueIds = computed(() => (edit.value?.check?.issues ?? []).flatMap((issue) => [...issue.nodeIds, ...issue.edgeIds]))
 </script>
 
 <style scoped>

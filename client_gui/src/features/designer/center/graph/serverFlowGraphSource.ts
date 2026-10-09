@@ -29,7 +29,7 @@ import type {
 
 /** The project store loaders this source needs (`useProjectStore()` satisfies it). */
 export interface FlowCanvasLoaders {
-  loadFlowCanvas(flowId: string, view?: string): Promise<FlowCanvas>
+  loadFlowCanvas(flowId: string, view?: string, collapse?: readonly string[]): Promise<FlowCanvas>
   saveFlowCanvasLayout(flowId: string, input: FlowCanvasLayoutInput): Promise<FlowCanvasLayoutResult>
   /** Other tabs' / devices' Canvas changes (P0008 §8); absent = no change reports. */
   subscribeFlowCanvasChanges?(projectId: string, handlers: FlowCanvasChangeHandlers): () => void
@@ -39,6 +39,13 @@ export interface FlowCanvasLoaders {
   validateFlowGraphDraft?(flowId: string, draftVersion: number): Promise<FlowGraphValidation>
   confirmFlowGraphRevision?(flowId: string, draftVersion: number, baseRevisionNo: number | null): Promise<FlowGraphConfirmResult>
 }
+
+/**
+ * flowgate.v02.0045 TR0020 rev5: conversations (CH, and the Q / A of the same server collapse group,
+ * P0008 §2.5) are not part of the work flow; every Canvas read asks the server to leave them out,
+ * so a new conversation never shows up as a memo card.
+ */
+export const CANVAS_COLLAPSE: readonly string[] = ['conversation']
 
 /** P0008 §3 `graph` + `view` -> the draft the Canvas may edit. */
 function draftInfo(canvas: FlowCanvas): FlowGraphDraftInfo | null {
@@ -65,6 +72,7 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
       kind: node.kind,
       title: node.title,
       state: node.state,
+      docType: node.docType,
       x: node.position.x,
       y: node.position.y,
       positionSource: node.position.source,
@@ -93,6 +101,7 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
     draft: draftInfo(canvas),
     viewMode: canvas.view?.mode ?? null,
     latestRevisionNo: canvas.graph?.latestRevisionNo ?? null,
+    viewRevisionNo: canvas.view?.revisionNo ?? null,
   }
 }
 
@@ -142,7 +151,7 @@ export function createServerFlowGraphSource(loaders: FlowCanvasLoaders): FlowGra
     isSample: false,
     // The Flow id is the global v0.1 group id; the project id is not part of the address.
     loadGraph: async (_projectId: string, flowId: string, view?: string) =>
-      toFlowGraph(await (view ? loaders.loadFlowCanvas(flowId, view) : loaders.loadFlowCanvas(flowId))),
+      toFlowGraph(await loaders.loadFlowCanvas(flowId, view, CANVAS_COLLAPSE)),
     saveLayout: async (_projectId: string, flowId: string, change: FlowLayoutChange): Promise<FlowLayoutSaveResult> => {
       const result = await loaders.saveFlowCanvasLayout(flowId, toLayoutInput(change))
       return { ignoredNodeIds: result.ignored.map((item) => item.nodeKey) }

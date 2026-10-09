@@ -12,7 +12,6 @@ const NEW_FILES = [
   'features/designer/center/layoutSaveQueue.ts',
   // flowgate.v02.0045 T0013 (S3+S4)
   'features/project/flowGraphApi.ts',
-  'features/designer/center/edit/DraftToolbar.vue',
   'features/designer/center/edit/connectionRules.ts',
   'features/designer/center/edit/draftController.ts',
   'features/designer/center/edit/draftEditor.ts',

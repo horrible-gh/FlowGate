@@ -99,15 +99,12 @@ export default {
       graph_loading: 'Loading graph',
       graph_load_failed: 'Could not load the graph',
       retry: 'Retry',
-      empty_graph: 'No nodes to show',
       sample_data: 'Sample data',
       canvas_label: '{name} canvas',
-      // flowgate.v02.0045 — which engine owns the Flow (P0008 §2.1), Canvas badge.
-      ownership: {
-        unassigned: 'Owner: unassigned',
-        v01: 'Owner: v0.1 (read-only)',
-        graph: 'Owner: Graph',
-        conflict: 'Ownership conflict — operator cleanup needed',
+      // flowgate.v02.0045 T0019 — a selected Canvas edge: remove button / why it cannot be removed.
+      edge: {
+        remove: 'Remove connection',
+        locked: 'A connection already passed cannot be removed',
       },
       node_kinds: {
         requirement: 'Requirement',
@@ -119,40 +116,6 @@ export default {
         design: 'Design',
         memo: 'Memo',
         unknown: 'Node',
-      },
-      // flowgate.v02.0045 S3+S4 — Graph draft bar (draft / revision, save state, validate / confirm).
-      edit: {
-        draft: 'Draft v{version}',
-        draft_new: 'New draft',
-        revision: 'Revision r{no}',
-        saving: 'Saving…',
-        conflict: 'The draft was saved elsewhere first',
-        save_failed: 'The draft could not be saved',
-        undo: 'Undo',
-        validate: 'Validate',
-        confirm: 'Confirm',
-        show_revision: 'Show revision',
-        show_draft: 'Show draft',
-        start_draft: 'Edit as draft',
-        reload: 'Reload',
-        confirmable: 'The draft can be confirmed.',
-        issues: 'Cannot confirm — {count} problem(s)',
-        confirmed: 'Confirmed as revision r{no}.',
-        blocked: {
-          flow_owned_by_v01: 'Another engine (v0.1) owns this flow, so the draft cannot be confirmed.',
-          flow_ownership_conflict: 'The flow has an ownership conflict, so the draft cannot be confirmed.',
-          other: 'The draft cannot be confirmed now.',
-        },
-        errors: {
-          draft_version_conflict: 'The draft was saved elsewhere first. Reload it, then edit.',
-          flow_owned_by_v01: 'This flow is owned by the v0.1 engine.',
-          flow_ownership_conflict: 'This flow has an ownership conflict. An operator must resolve it.',
-          revision_conflict: 'The draft is not based on the latest revision. Reload it.',
-          draft_not_found: 'There is no draft to validate or confirm.',
-          flow_disposed: 'A disposed flow cannot be changed.',
-          flow_access_denied: 'You may not edit this flow.',
-          other: 'The request could not be processed.',
-        },
       },
       node_states: {
         draft: 'Draft',
@@ -402,6 +365,7 @@ export default {
         arrange: 'Align / Arrange ▾',
         run_next: 'Next Step',
         run_all: 'Run All',
+        validate: 'Validate',
         stop: 'Stop',
         zoom_fit: 'Fit',
         zoom_out: 'Zoom Out',

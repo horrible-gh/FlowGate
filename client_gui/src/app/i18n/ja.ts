@@ -99,15 +99,12 @@ export default {
       graph_loading: 'グラフを読み込み中',
       graph_load_failed: 'グラフを読み込めませんでした',
       retry: '再試行',
-      empty_graph: '表示するノードがありません',
       sample_data: 'サンプルデータ',
       canvas_label: '{name} キャンバス',
-      // flowgate.v02.0045 — which engine owns the Flow (P0008 §2.1), Canvas badge.
-      ownership: {
-        unassigned: '担当: 未割り当て',
-        v01: '担当: v0.1(読み取り専用)',
-        graph: '担当: Graph',
-        conflict: '担当の競合 — 運用者による整理が必要',
+      // flowgate.v02.0045 T0019 — a selected Canvas edge: remove button / why it cannot be removed.
+      edge: {
+        remove: '接続線を削除',
+        locked: 'すでに進行した接続線は削除できません',
       },
       node_kinds: {
         requirement: '要件',
@@ -119,40 +116,6 @@ export default {
         design: '設計',
         memo: 'メモ',
         unknown: 'ノード',
-      },
-      // flowgate.v02.0045 S3+S4 — Graph draft bar (draft / revision, save state, validate / confirm).
-      edit: {
-        draft: '下書き v{version}',
-        draft_new: '新しい下書き',
-        revision: 'リビジョン r{no}',
-        saving: '保存中…',
-        conflict: '別の場所で下書きが先に保存されました',
-        save_failed: '下書きを保存できませんでした',
-        undo: '元に戻す',
-        validate: '検証',
-        confirm: '確定',
-        show_revision: 'リビジョンを表示',
-        show_draft: '下書きを表示',
-        start_draft: '下書きとして編集',
-        reload: '再読み込み',
-        confirmable: '確定できます。',
-        issues: '確定できません — 問題 {count} 件',
-        confirmed: 'リビジョン r{no} として確定しました。',
-        blocked: {
-          flow_owned_by_v01: '別のエンジン（v0.1）の担当のため、この下書きは確定できません。',
-          flow_ownership_conflict: '担当が競合しているため、この下書きは確定できません。',
-          other: 'この下書きは今は確定できません。',
-        },
-        errors: {
-          draft_version_conflict: '別の場所で下書きが先に保存されました。再読み込みしてから編集してください。',
-          flow_owned_by_v01: 'このフローは v0.1 エンジンの担当です。',
-          flow_ownership_conflict: '担当が競合しているフローです。運用者による整理が必要です。',
-          revision_conflict: '下書きの基準リビジョンが最新ではありません。再読み込みしてください。',
-          draft_not_found: '検証・確定する下書きがありません。',
-          flow_disposed: '破棄されたフローは変更できません。',
-          flow_access_denied: 'このフローを編集する権限がありません。',
-          other: 'リクエストを処理できませんでした。',
-        },
       },
       node_states: {
         draft: '作成中',
@@ -402,6 +365,7 @@ export default {
         arrange: '整列 / 配置 ▾',
         run_next: '次のステップ',
         run_all: 'すべて実行',
+        validate: '検証',
         stop: '停止',
         zoom_fit: '画面に合わせる',
         zoom_out: '縮小',

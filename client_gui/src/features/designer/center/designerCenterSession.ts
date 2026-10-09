@@ -27,6 +27,17 @@
 // when the tab was closed (or the project changed) while that save ran: the controller keeps the
 // position shown at close and it is saved for the project the save belongs to. A tab of the Flow
 // opened again meanwhile reads the Flow once the save and the position save settled.
+//
+// flowgate.v02.0045 T0019: a Flow opened right after it was created may carry a default node
+// (`openFlow` option `seedNode`, the Shell gives a 요구사항 node). It is added to the Flow's draft
+// once the first Graph read shows it empty and editable — never to a Flow that has nodes. An Edge
+// the work already went through (graph/edgeProgress.ts) is never removed.
+//
+// flowgate.v02.0045 TR0020 rev3: no 편집 / 편집 마치기 — which definition a Graph Flow shows is
+// picked here. A stored draft (edits not run yet) is shown; with none, the latest revision (the
+// run view) is shown editable as is (draftModel `editableRevision`) and its first edit saves a new
+// draft from it. 실행 confirms the draft as the next revision and the Flow shows its run again.
+// Revisions and runs are never changed by editing (the server keeps them apart from the draft).
 import { computed, markRaw, reactive, readonly, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
 import { createCanvasViewState, sameViewport, type CanvasViewState, type CanvasViewport } from './canvasView'
@@ -41,11 +52,14 @@ import {
 } from './flowTabs'
 import type { ConnectionCheck } from './edit/connectionRules'
 import { createDraftController, type DraftEditState } from './edit/draftController'
-import { CLIENT_KEY_PREFIX, type CanvasNodeSpec } from './edit/draftModel'
+import { CLIENT_KEY_PREFIX, editableRevision, type CanvasNodeSpec } from './edit/draftModel'
 import { fixtureFlowGraphSource } from './graph/fixtureFlowGraphSource'
+import { isEdgeProgressed } from './graph/edgeProgress'
 import type { FlowGraph, FlowGraphNode } from './graph/flowGraph'
 import type { FlowGraphSource, FlowLayoutChange } from './graph/flowGraphSource'
 import { createLayoutSaveQueue } from './layoutSaveQueue'
+
+export type { CanvasNodeSpec }
 
 /** Graph read state of one open Flow. */
 export type FlowGraphLoad =
@@ -90,8 +104,11 @@ export interface DesignerCenterSession {
 
   /** Sets the current project; a different project clears every tab, Graph and view. */
   setProject(projectId: string | null): void
-  /** Project Explorer activation: open a new tab (and read its Graph) or activate the open one. */
-  openFlow(request: CenterFlowOpenRequest): void
+  /**
+   * Project Explorer activation: open a new tab (and read its Graph) or activate the open one.
+   * flowgate.v02.0045 T0019: `seedNode` — a just created Flow's default node (see above).
+   */
+  openFlow(request: CenterFlowOpenRequest, options?: { seedNode?: CanvasNodeSpec }): void
   /** Activates an open tab (tab click / arrow keys). Never re-reads the Graph. */
   activateFlow(flowId: string): void
   /** Closes a tab and drops its Graph, Viewport and Selection. */
@@ -121,10 +138,14 @@ export interface DesignerCenterSession {
   undoEdit(flowId: string): boolean
   validateDraft(flowId: string): Promise<void>
   confirmDraft(flowId: string): Promise<void>
-  /** A Graph Flow showing its revision: start a draft from it. */
-  startDraft(flowId: string): Promise<void>
-  /** A Graph Flow: show its draft or its latest revision. */
-  showGraphView(flowId: string, view: 'draft' | 'revision'): void
+  /**
+   * flowgate.v02.0045 TR0020 rev2: 실행 is about to start on the Flow — its edited draft is
+   * confirmed first (no separate 확정 on screen). Whether the run may start — at once when there
+   * is nothing to confirm, else once the confirmation answered.
+   */
+  prepareRun(flowId: string): boolean | Promise<boolean>
+  /** flowgate.v02.0045 TR0020 rev2: 검증 can run on the active Flow now (the Toolbar's button). */
+  readonly activeCanValidate: ComputedRef<boolean>
   /** Read the Flow again, dropping local draft edits a refused save left. */
   reloadDraft(flowId: string): void
 }
@@ -163,8 +184,11 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   const staleFlows = new Set<string>()
   // Node moves per Flow; a read compares it to tell whether a move happened meanwhile.
   const moveCounts = new Map<string, number>()
-  // flowgate.v02.0045 S3: the Graph definition a Graph Flow shows ('draft' | 'revision'), if chosen.
+  // flowgate.v02.0045 S3: the Graph definition a Graph Flow shows ('draft' | 'revision'), if chosen
+  // (TR0020 rev3: chosen by readGraph itself, never by a button).
   const graphViews = new Map<string, string>()
+  // flowgate.v02.0045 T0019: default nodes of just created Flows, until their Graph is first shown.
+  const seeds = new Map<string, CanvasNodeSpec>()
   let stopWatching: (() => void) | null = null
   let disposed = false
 
@@ -292,10 +316,10 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     if (!keepShown) state.graphs[flowId] = { status: 'loading' }
     const isCurrent = () => pendingReads.get(flowId) === token && state.projectId === projectId
     const movesAtStart = moveCounts.get(flowId) ?? 0
+    const view = graphViews.get(flowId)
 
     let request: Promise<FlowGraph>
     try {
-      const view = graphViews.get(flowId)
       request = view ? source.loadGraph(projectId, flowId, view) : source.loadGraph(projectId, flowId)
     } catch (error) {
       request = Promise.reject(error)
@@ -312,8 +336,21 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
           readWhenSaved(flowId)
           return
         }
-        state.graphs[flowId] = { status: 'ready', graph: markRaw(graph) }
-        drafts.graphLoaded(flowId, graph)
+        // TR0020 rev3: a Graph Flow with a stored draft shows the draft — read it instead.
+        if (graph.ownership === 'graph' && graph.viewMode === 'revision' && graph.draft && !graph.draft.editable) {
+          graphViews.set(flowId, 'draft')
+          readGraph(flowId, true)
+          return
+        }
+        const shown = source.saveDraft ? editableRevision(graph) ?? graph : graph
+        state.graphs[flowId] = { status: 'ready', graph: markRaw(shown) }
+        drafts.graphLoaded(flowId, shown)
+        const seed = seeds.get(flowId)
+        if (seed) {
+          seeds.delete(flowId)
+          // Only on a Graph with nothing on it and no saved draft: never a second node.
+          if (graph.draft?.editable === true && graph.draft.version === 0 && graph.nodes.length === 0) drafts.seed(flowId, seed)
+        }
         // A retried Graph keeps the selection only when the selected Node still exists.
         const view = state.views[flowId]
         // flowgate.v02.0045: the user's saved Viewport, unless this tab already has one.
@@ -328,6 +365,12 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       (error: unknown) => {
         if (!isCurrent()) return
         pendingReads.delete(flowId)
+        // TR0020 rev3: the draft is gone meanwhile (run / removed elsewhere) — the server's default.
+        if (view === 'draft') {
+          graphViews.delete(flowId)
+          readGraph(flowId, background)
+          return
+        }
         if (keepShown && state.graphs[flowId]?.status === 'ready') return
         state.graphs[flowId] = { status: 'error', message: error instanceof Error ? error.message : '' }
       },
@@ -342,6 +385,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     pendingReads.clear()
     moveCounts.clear()
     graphViews.clear()
+    seeds.clear()
     state.projectId = projectId
     watchProject(projectId)
     applyTabs(EMPTY_FLOW_TABS)
@@ -349,11 +393,12 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     state.views = {}
   }
 
-  function openFlow(request: CenterFlowOpenRequest) {
+  function openFlow(request: CenterFlowOpenRequest, options: { seedNode?: CanvasNodeSpec } = {}) {
     if (state.projectId === null || request.projectId !== state.projectId) return
     const { state: next, opened } = openFlowTab(tabsState(), request.flowId, request.flowName)
     applyTabs(next)
     if (!opened) return
+    if (options.seedNode) seeds.set(request.flowId, options.seedNode)
     state.views[request.flowId] = createCanvasViewState()
     readGraph(request.flowId)
   }
@@ -370,6 +415,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     pendingReads.delete(flowId)
     moveCounts.delete(flowId)
     graphViews.delete(flowId)
+    seeds.delete(flowId)
     delete state.graphs[flowId]
     delete state.views[flowId]
   }
@@ -419,6 +465,18 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     staleFlows.clear()
   }
 
+  // flowgate.v02.0045 TR0020 rev2: no 확정 step on screen. 실행 takes what was drawn: an editable,
+  // confirmable draft with something saved (or being saved) is confirmed as the next revision (the
+  // server's run unit) first, and the run starts only if that succeeds (refused: its issues show).
+  // Nothing to confirm is a go at once (not through a promise), so the run state changes in the
+  // same tick.
+  function prepareRun(flowId: string): boolean | Promise<boolean> {
+    const draft = readyGraph(flowId)?.draft
+    if (!draft?.editable || !draft.confirmable || !drafts.drawn(flowId)) return true
+    if (state.edits[flowId]?.action) return false
+    return drafts.confirm(flowId).then(() => state.edits[flowId]?.notice?.kind === 'confirmed')
+  }
+
   const exposed = readonly(state)
 
   const activeTab = computed(() => {
@@ -465,12 +523,21 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     checkConnection: drafts.check,
     connectNodes: drafts.connect,
     removeNode: drafts.removeNode,
-    removeEdge: drafts.removeEdge,
+    removeEdge: (flowId: string, edgeId: string) => {
+      const graph = readyGraph(flowId)
+      return !(graph && isEdgeProgressed(graph, edgeId)) && drafts.removeEdge(flowId, edgeId)
+    },
     undoEdit: drafts.undo,
     validateDraft: drafts.validate,
     confirmDraft: drafts.confirm,
-    startDraft: drafts.startDraft,
-    showGraphView: drafts.showView,
+    prepareRun,
+    activeCanValidate: computed(() => {
+      const id = exposed.activeFlowId
+      const draft = id === null ? null : readyGraph(id)?.draft
+      const edit = id === null ? undefined : exposed.edits[id]
+      const status = edit?.status ?? 'idle'
+      return !!draft?.editable && !edit?.action && status !== 'conflict' && (draft.version > 0 || status !== 'idle')
+    }),
     reloadDraft: drafts.reload,
   }
 }

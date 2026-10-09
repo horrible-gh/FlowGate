@@ -97,18 +97,16 @@ afterEach(() => {
 })
 
 describe('FlowCanvas with a server Graph (flowgate.v02.0045)', () => {
-  it('shows the ownership badge instead of the sample badge', async () => {
-    const w = await mountWith('v01')
-    expect(w.find('[data-test="designer-canvas-sample"]').exists()).toBe(false)
-    const badge = w.get('[data-test="designer-canvas-ownership"]')
-    expect(badge.text()).toBe('담당: v0.1(읽기)')
-    expect(badge.attributes('data-ownership')).toBe('v01')
-    wrapper!.unmount()
-    const conflict = await mountWith('conflict')
-    expect(conflict.get('[data-test="designer-canvas-ownership"]').text()).toBe('담당 충돌 — 운영자 정리 필요')
-    wrapper!.unmount()
-    const unknown = await mountWith('someday')
-    expect(unknown.find('[data-test="designer-canvas-ownership"]').exists()).toBe(false)
+  // flowgate.v02.0045 T0019: the top-right "담당: …" badge is gone, with nothing in its place.
+  it('shows neither the sample badge nor an ownership badge, whatever the ownership', async () => {
+    for (const ownership of ['v01', 'conflict', 'unassigned', 'graph', 'someday']) {
+      const w = await mountWith(ownership)
+      expect(w.find('[data-test="designer-canvas-sample"]').exists()).toBe(false)
+      expect(w.find('[data-test="designer-canvas-ownership"]').exists()).toBe(false)
+      expect(w.get('[data-test="designer-canvas"]').text()).not.toContain('담당')
+      wrapper!.unmount()
+      wrapper = null
+    }
   })
 
   it('turns a Node drop into a moved, saved position', async () => {

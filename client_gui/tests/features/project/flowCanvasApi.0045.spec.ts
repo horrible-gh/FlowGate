@@ -96,6 +96,19 @@ describe('fetchFlowCanvas', () => {
     expect([canvas.nodes[0].kind, canvas.nodes[0].state]).toEqual(['future_kind', 'future_state'])
   })
 
+  it('sends the collapse groups (P0008 §2.5) as one comma-separated query next to the view', async () => {
+    getRequest.mockResolvedValue({ data: RAW })
+    await fetchFlowCanvas('f', undefined, ['conversation'])
+    expect(getRequest).toHaveBeenLastCalledWith('/api/v1/flows/f/canvas', { collapse: 'conversation' }, expect.anything())
+    await fetchFlowCanvas('f', 'draft', ['conversation', 'memo'])
+    expect(getRequest).toHaveBeenLastCalledWith('/api/v1/flows/f/canvas', { view: 'draft', collapse: 'conversation,memo' }, expect.anything())
+    await fetchFlowCanvas('f', undefined, [])
+    expect(getRequest).toHaveBeenLastCalledWith('/api/v1/flows/f/canvas', {}, expect.anything())
+    setActivePinia(createPinia())
+    await useProjectStore().loadFlowCanvas('f', 'revision', ['conversation'])
+    expect(getRequest).toHaveBeenLastCalledWith('/api/v1/flows/f/canvas', { view: 'revision', collapse: 'conversation' }, expect.anything())
+  })
+
   it('rejects with a displayable message and keeps the transport error as cause', async () => {
     const transport = new Error('404')
     getRequest.mockRejectedValue(transport)

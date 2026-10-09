@@ -38,7 +38,8 @@ export interface DraftEditor {
   canUndo(): boolean
   /** True while an edit is waiting or a save runs — a Graph read now could be older. */
   busy(): boolean
-  apply(command: EditCommand): boolean
+  /** `undoable: false` — the edit is saved but never offered to undo (a Flow's default node). */
+  apply(command: EditCommand, undoable?: boolean): boolean
   undo(): boolean
   /** Sends a waiting save now. */
   flush(): void
@@ -161,11 +162,11 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
     errorCode: () => errorCode,
     canUndo: () => undoStack.length > 0 && status !== 'conflict',
     busy,
-    apply(command) {
+    apply(command, undoable = true) {
       if (status === 'conflict') return false
       const applied = applyCommand(current, command)
       if (!applied) return false
-      edit(applied.model, [...applied.undo])
+      edit(applied.model, undoable ? [...applied.undo] : null)
       return true
     },
     undo() {

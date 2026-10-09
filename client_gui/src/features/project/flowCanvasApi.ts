@@ -206,11 +206,15 @@ export const canvasHeaders = () => ({ headers: { 'x-canvas-client-id': CANVAS_CL
 
 /**
  * GET /api/v1/flows/{flowId}/canvas — the Flow's Canvas graph. `view` (`draft` | `revision`)
- * picks the Graph definition of a Graph Flow; omitted, the server picks (P0008 §3).
+ * picks the Graph definition of a Graph Flow; omitted, the server picks (P0008 §3). `collapse`:
+ * the collapse groups (P0008 §2.5, e.g. `conversation`) whose free documents the server leaves out.
  */
-export async function fetchFlowCanvas(flowId: string, view?: string): Promise<FlowCanvas> {
+export async function fetchFlowCanvas(flowId: string, view?: string, collapse: readonly string[] = []): Promise<FlowCanvas> {
+  const params: Record<string, string> = {}
+  if (view) params.view = view
+  if (collapse.length) params.collapse = collapse.join(',')
   try {
-    const response = await getRequest<Raw>(canvasPath(flowId), view ? { view } : {}, canvasHeaders())
+    const response = await getRequest<Raw>(canvasPath(flowId), params, canvasHeaders())
     return toFlowCanvas(response.data ?? {})
   } catch (error) {
     throw wrapError(error, 'Failed to load the flow canvas.')

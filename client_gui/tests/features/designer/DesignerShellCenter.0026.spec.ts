@@ -182,11 +182,12 @@ describe('Designer Shell x Center — opening Flows', () => {
     expect(canvas.attributes('data-flow-id')).toBe('p.ui.0002')
     const nodes = w.findAll('[data-test="designer-canvas-node"]')
     expect(nodes.length).toBeGreaterThan(0)
-    // flowgate.v02.0045: real Flow Nodes from GET /flows/{id}/canvas, no sample badge, the
-    // ownership badge instead.
+    // flowgate.v02.0045: real Flow Nodes from GET /flows/{id}/canvas, no sample badge.
+    // flowgate.v02.0045 T0019: no ownership badge either.
     expect(nodes.map((node) => node.attributes('data-node-id'))).toEqual(['doc:p.ui.0002.0001-R', 'doc:p.ui.0002.0002-N'])
     expect(w.find('[data-test="designer-canvas-sample"]').exists()).toBe(false)
-    expect(get(w, 'designer-canvas-ownership').text()).toBe('담당: 미배정')
+    expect(w.find('[data-test="designer-canvas-ownership"]').exists()).toBe(false)
+    expect(canvas.text()).not.toContain('담당')
     expect(getRequest.mock.calls.some(([url]) => url === '/api/v1/flows/p.ui.0002/canvas')).toBe(true)
   })
 

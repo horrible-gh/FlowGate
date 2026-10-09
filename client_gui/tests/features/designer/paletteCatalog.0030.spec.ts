@@ -148,7 +148,8 @@ describe('Palette drag payload', () => {
       docType: 'P',
       label: '프로토콜',
       icon: 'flow',
-      accent: '#34c8a2',
+      // flowgate.v02.0045 T0019: every 설계 card is purple.
+      accent: '#9b72ff',
       custom: false,
     })
   })

@@ -3,6 +3,12 @@
  * Flow: the draft bar (label, validate / confirm, issues), a Palette drop that becomes a draft
  * node, a connection between draft nodes (Vue Flow's connect event, as its handle drag would
  * emit it), Delete on the selected draft node, Ctrl+Z, and a v0.1 Flow that offers no editing.
+ * flowgate.v02.0045 TR0020 rev2: the bar is only an edit note (no 초안 name / 되돌리기 / 검증 /
+ * 확정); 검증 is the Toolbar's (the session's validateDraft), and 실행 confirms the draft first.
+ * TR0020 rev3: no 편집 / 편집 마치기 — a Graph Flow's run view is edited right on the Canvas and a
+ * stored draft is shown without asking.
+ * TR0020 rev4 (rejection item 1): nothing is laid over the Canvas at all — no saving note, no
+ * refused-save note, no 검증 result box; a problem only marks its card and names itself on hover.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { useVueFlow } from '@vue-flow/core'
@@ -60,12 +66,16 @@ function draftGraph(): FlowGraph {
 let center: DesignerCenterSession
 let wrapper: VueWrapper<any> | null = null
 let saved: FlowDraftContent[]
+let confirms: number[]
+let refuseConfirm: boolean
+/** The fake source's draft save (a test may swap it to refuse). */
+let saveDraft: (version: number, content: FlowDraftContent) => Promise<{ version: number; keyMap: Record<string, string> }>
 
 async function settle() {
   for (let i = 0; i < 4; i += 1) await flushPromises()
 }
 
-async function mountWith(graph: FlowGraph) {
+async function mountWith(graph: FlowGraph | ((view?: string) => FlowGraph)) {
   center = createDesignerCenterSession({
     draftSaveDelayMs: 0,
     layoutSaveDelayMs: 0,
@@ -75,17 +85,24 @@ async function mountWith(graph: FlowGraph) {
     },
     source: {
       isSample: false,
-      loadGraph: async () => graph,
+      loadGraph: async (_p, _f, view?: string) => (typeof graph === 'function' ? graph(view) : graph),
       saveLayout: async () => ({ ignoredNodeIds: [] }),
-      saveDraft: async (_p, _f, version, content) => {
-        saved.push(content)
-        return { version: version + 1, keyMap: {} }
-      },
+      saveDraft: (_p, _f, version, content) => saveDraft(version, content),
       validateDraft: async () => ({
         confirmable: false,
         issues: [{ code: 'rule_undecided', structure: 'join', nodeIds: ['gn_b'], edgeIds: [], message: '합류 규칙 미정' }],
       }),
-      confirmDraft: async () => 1,
+      confirmDraft: async (...args) => {
+        confirms.push(args[2])
+        if (refuseConfirm) {
+          throw Object.assign(new Error('refused'), {
+            code: 'graph_validation_failed',
+            issues: [{ code: 'rule_undecided', structure: 'join', nodeIds: ['gn_b'], edgeIds: [], message: '합류 규칙 미정' }],
+          })
+        }
+        return 1
+      },
+      loadRevision: async () => ({ revisionNo: 1, content: { nodes: [], edges: [] } }),
     },
   })
   center.setProject('p')
@@ -100,6 +117,12 @@ const wait = () => new Promise((resolve) => setTimeout(resolve, 5))
 beforeEach(() => {
   i18n.global.locale.value = 'ko'
   saved = []
+  confirms = []
+  refuseConfirm = false
+  saveDraft = async (version, content) => {
+    saved.push(content)
+    return { version: version + 1, keyMap: {} }
+  }
 })
 
 afterEach(() => {
@@ -108,9 +131,15 @@ afterEach(() => {
 })
 
 describe('FlowCanvas editing a Graph draft (flowgate.v02.0045 S3)', () => {
-  it('shows the draft bar and marks draft nodes connectable', async () => {
+  it('shows no draft name or draft buttons on the Canvas and marks draft nodes connectable', async () => {
     const w = await mountWith(draftGraph())
-    expect(w.get('[data-test="designer-draft-label"]').text()).toBe('초안 v2')
+    // TR0020 rev4: nothing is laid over the Canvas — the canvas area holds the Canvas and nothing else.
+    expect(w.find('[data-test="designer-draft-toolbar"]').exists()).toBe(false)
+    expect([...w.get('.designer-center-canvas-area').element.children].map((el) => el.getAttribute('data-test'))).toEqual(['designer-canvas'])
+    for (const gone of ['label', 'undo', 'validate', 'confirm', 'start', 'show-draft', 'show-revision']) {
+      expect(w.find(`[data-test="designer-draft-${gone}"]`).exists(), gone).toBe(false)
+    }
+    expect(w.text()).not.toMatch(/초안|확정|개정/)
     expect(w.get('[data-test="designer-canvas"]').attributes('data-editable')).toBe('true')
     const cards = w.findAll('[data-test="designer-canvas-node"]')
     expect(cards.map((c) => [c.attributes('data-node-id'), c.attributes('data-connectable')])).toEqual([
@@ -139,6 +168,50 @@ describe('FlowCanvas editing a Graph draft (flowgate.v02.0045 S3)', () => {
     expect(saved[0].nodes.map((n) => [n.docType, n.label, n.isNew])).toEqual([['R', '요구', false], ['D', '설계', false], ['T', '구현', true]])
   })
 
+  it('nothing appears while an edit is saved — no 저장 중 note, nothing over the Canvas (rev4)', async () => {
+    const w = await mountWith(draftGraph())
+    let release: () => void = () => {}
+    saveDraft = (version) => new Promise((resolve) => {
+      release = () => resolve({ version: version + 1, keyMap: {} })
+    })
+    expect(center.connectNodes('f1', 'gn_a', 'gn_b')).toBe(true)
+    expect(center.state.edits.f1.status).toBe('pending')
+    await wait()
+    await settle()
+    expect(center.state.edits.f1.status).toBe('saving')
+    const area = w.get('.designer-center-canvas-area')
+    expect([...area.element.children].map((el) => el.getAttribute('data-test'))).toEqual(['designer-canvas'])
+    expect(area.text()).not.toMatch(/저장|Saving|保存/)
+    release()
+    await settle()
+    expect(center.state.edits.f1.status).toBe('idle')
+    expect([...area.element.children].map((el) => el.getAttribute('data-test'))).toEqual(['designer-canvas'])
+  })
+
+  it('a refused save shows nothing either: the Flow is read again as stored (rev4)', async () => {
+    const loads: number[] = []
+    const w = await mountWith(() => {
+      loads.push(1)
+      return draftGraph()
+    })
+    const stored = saveDraft
+    saveDraft = async () => {
+      throw Object.assign(new Error('refused'), { code: 'draft_version_conflict' })
+    }
+    const before = loads.length
+    expect(center.connectNodes('f1', 'gn_a', 'gn_b')).toBe(true)
+    await wait()
+    await settle()
+    saveDraft = stored
+    expect(loads.length).toBe(before + 1)
+    expect(center.state.edits.f1.status).toBe('idle')
+    const load = center.state.graphs.f1
+    expect(load?.status === 'ready' && load.graph.edges).toEqual([])
+    expect([...w.get('.designer-center-canvas-area').element.children].map((el) => el.getAttribute('data-test'))).toEqual(['designer-canvas'])
+    expect(w.text()).not.toMatch(/저장|다시 불러오기/)
+    expect(w.findAll('button').map((b) => b.text())).not.toContain('다시 불러오기')
+  })
+
   it('connect, Delete and Ctrl+Z go through the draft commands', async () => {
     const w = await mountWith(draftGraph())
     const flow = useVueFlow('designer-canvas:f1')
@@ -156,14 +229,100 @@ describe('FlowCanvas editing a Graph draft (flowgate.v02.0045 S3)', () => {
     expect((center.state.graphs.f1 as { graph: FlowGraph }).graph.nodes.map((n) => n.id).sort()).toEqual(['doc:r', 'gn_a', 'gn_b'])
   })
 
-  it('validation issues are listed and highlight their node', async () => {
+  it('validation issues (the Toolbar 검증 runs the session validateDraft) only mark their node, which names the problem on hover', async () => {
     const w = await mountWith(draftGraph())
-    await w.get('[data-test="designer-draft-validate"]').trigger('click')
+    expect(center.activeCanValidate.value).toBe(true)
+    await center.validateDraft('f1')
     await settle()
-    expect(w.get('[data-test="designer-draft-check"]').attributes('data-confirmable')).toBe('false')
-    expect(w.findAll('[data-test="designer-draft-issue"]').map((i) => i.text())).toEqual(['합류 규칙 미정'])
-    const issueCard = w.findAll('[data-test="designer-canvas-node"]').find((c) => c.attributes('data-node-id') === 'gn_b')!
+    // rev4: no result box over the Canvas.
+    expect(w.find('[data-test="designer-draft-check"]').exists()).toBe(false)
+    expect([...w.get('.designer-center-canvas-area').element.children].map((el) => el.getAttribute('data-test'))).toEqual(['designer-canvas'])
+    const cards = w.findAll('[data-test="designer-canvas-node"]')
+    const issueCard = cards.find((c) => c.attributes('data-node-id') === 'gn_b')!
     expect(issueCard.attributes('data-issue')).toBe('true')
+    expect(issueCard.attributes('title')).toBe('합류 규칙 미정')
+    expect(cards.find((c) => c.attributes('data-node-id') === 'gn_a')!.attributes('title')).toBeUndefined()
+    // The next edit clears the mark.
+    expect(center.connectNodes('f1', 'gn_a', 'gn_b')).toBe(true)
+    await settle()
+    expect(w.findAll('[data-test="designer-canvas-node"]').find((c) => c.attributes('data-node-id') === 'gn_b')!.attributes('data-issue')).toBe('false')
+  })
+
+  it('실행 confirms the edited draft first and lets the run start', async () => {
+    await mountWith(draftGraph())
+    const ready = center.prepareRun('f1')
+    expect(ready).toBeInstanceOf(Promise)
+    await expect(ready).resolves.toBe(true)
+    expect(confirms).toEqual([2])
+  })
+
+  it('a refused confirmation stops the run and marks its issues on the Canvas, nothing more', async () => {
+    const w = await mountWith(draftGraph())
+    refuseConfirm = true
+    await expect(center.prepareRun('f1')).resolves.toBe(false)
+    await settle()
+    expect(w.find('[data-test="designer-draft-check"]').exists()).toBe(false)
+    const issueCard = w.findAll('[data-test="designer-canvas-node"]').find((c) => c.attributes('data-node-id') === 'gn_b')!
+    expect([issueCard.attributes('data-issue'), issueCard.attributes('title')]).toEqual(['true', '합류 규칙 미정'])
+    expect(w.text()).not.toMatch(/고친 뒤 실행하세요|문제 1건/)
+  })
+
+  it('nothing to confirm (v0.1 Flow, nothing drawn) lets the run start at once', async () => {
+    await mountWith({ ...draftGraph(), ownership: 'v01', draft: null, viewMode: null })
+    expect(center.prepareRun('f1')).toBe(true)
+    expect(center.activeCanValidate.value).toBe(false)
+    wrapper?.unmount()
+    await mountWith({ ...draftGraph(), nodes: [], draft: { version: 0, editable: true, confirmable: true, blockedReason: null, baseRevisionNo: null } })
+    expect(center.prepareRun('f1')).toBe(true)
+    expect(center.activeCanValidate.value).toBe(false)
+    expect(confirms).toEqual([])
+  })
+
+  // TR0020 rev3: the run view of a Graph Flow as the server sends it (Graph nodes not editable).
+  const runView = (): FlowGraph => ({
+    ...draftGraph(),
+    ownership: 'graph',
+    nodes: draftGraph().nodes.map((node) => (node.definition ? { ...node, state: 'done', structureEditable: false } : node)),
+    draft: null,
+    viewMode: 'revision',
+    latestRevisionNo: 1,
+    viewRevisionNo: 1,
+  })
+
+  it('a Graph Flow showing its run has no 편집 button and is edited right on the Canvas', async () => {
+    const w = await mountWith(runView())
+    expect(w.find('[data-test="designer-draft-edit"]').exists()).toBe(false)
+    expect(w.find('[data-test="designer-draft-finish"]').exists()).toBe(false)
+    expect(w.find('[data-test="designer-draft-toolbar"]').exists()).toBe(false)
+    expect(w.get('[data-test="designer-canvas"]').attributes('data-editable')).toBe('true')
+    // The Graph nodes take connections now.
+    const card = w.findAll('[data-test="designer-canvas-node"]').find((c) => c.attributes('data-node-id') === 'gn_a')!
+    expect(card.attributes('data-connectable')).toBe('true')
+    expect(center.connectNodes('f1', 'gn_a', 'gn_b')).toBe(true)
+    await wait()
+    await settle()
+    // The first edit saves the whole revision (its keys kept) plus the edit as a new draft.
+    expect(saved).toHaveLength(1)
+    expect(saved[0].nodes.map((n) => [n.key, n.isNew])).toEqual([['gn_a', false], ['gn_b', false]])
+    expect(saved[0].edges.map((e) => [e.source, e.target])).toEqual([['gn_a', 'gn_b']])
+    expect(w.findAll('button').map((b) => b.text())).not.toContain('편집 마치기')
+    // 실행 confirms it on top of the revision shown (no separate step).
+    await expect(center.prepareRun('f1')).resolves.toBe(true)
+    expect(confirms).toEqual([1])
+  })
+
+  it('a Graph Flow with a stored draft opens on the draft without a button', async () => {
+    const views: Array<string | undefined> = []
+    const w = await mountWith((view) => {
+      views.push(view)
+      return view === 'draft'
+        ? { ...draftGraph(), ownership: 'graph', latestRevisionNo: 1, viewRevisionNo: null }
+        : { ...runView(), draft: { version: 2, editable: false, confirmable: true, blockedReason: null, baseRevisionNo: 1 } }
+    })
+    expect(views).toEqual([undefined, 'draft'])
+    expect(w.get('[data-test="designer-canvas"]').attributes('data-editable')).toBe('true')
+    expect(w.find('[data-test="designer-draft-toolbar"]').exists()).toBe(false)
+    expect(w.findAll('button').map((b) => b.text())).not.toContain('편집')
   })
 
   it('a v0.1 Flow offers no draft bar and no drop', async () => {

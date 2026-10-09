@@ -1,7 +1,8 @@
 // flowgate.v02.0045 S3+S4 — Graph draft editing of the open Flows (D0004 §2.3 center/edit, §3.3):
 // one draft editor per Flow whose shown Graph is an editable draft, the Palette drop / connect /
-// remove / undo commands, and the draft actions — validate (S3-5), confirm (S4), start a draft
-// from the latest revision and switch the shown definition (P0008 §3 `view`).
+// remove / undo commands, and the draft actions — validate (S3-5) and confirm (S4). TR0020 rev3:
+// no start-draft / switch-view actions — the Center session picks the shown definition, and a
+// Graph Flow's revision is edited as is (its first save creates the draft).
 //
 // The Center session is the host: it owns the shown Graph, the layout queue and the reads; this
 // controller only hands it edited Graphs and asks for reads. A Palette drop arrives as the raw
@@ -10,6 +11,10 @@
 //
 // An editor stopped mid-save (tab closed, project changed) keeps its new nodes' shown positions
 // and stores them through `keepPositions` once the save answers their keys, Graph gone or not.
+//
+// TR0020 rev4: nothing about saving is shown. A save the server refuses (`conflict`: saved
+// elsewhere first; `error`) is answered the way the removed 다시 불러오기 button was: the Flow is
+// read again as stored, which drops the refused local edits (the editor is reset from the read).
 import type { FlowGraph } from '../graph/flowGraph'
 import type { FlowDraftCheck, FlowDraftError, FlowGraphSource } from '../graph/flowGraphSource'
 import { checkConnection, type ConnectionCheck } from './connectionRules'
@@ -17,7 +22,7 @@ import { draftFromGraph, remapGraph, withDraft, type CanvasNodeSpec, type DraftM
 import { createDraftEditor, type DraftEditor, type DraftEditStatus } from './draftEditor'
 import type { EditCommand } from './graphEditCommands'
 
-export type DraftAction = 'validate' | 'confirm' | 'start'
+export type DraftAction = 'validate' | 'confirm'
 
 /** What the Canvas shows about one Flow's draft editing. */
 export interface DraftEditState {
@@ -73,12 +78,17 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     return edits[flowId]
   }
 
+  const refused = (status: DraftEditStatus) => status === 'conflict' || status === 'error'
+
   function mirror(flowId: string) {
     const editor = editors.get(flowId)
     const state = stateOf(flowId)
+    const before = state.status
     state.status = editor?.status() ?? 'idle'
     state.errorCode = editor?.errorCode() ?? null
     state.canUndo = editor?.canUndo() ?? false
+    // A save just refused: read the Flow again as stored (no note, no button — TR0020 rev4).
+    if (editor && refused(state.status) && !refused(before)) host.reread(flowId)
     if (editor && !editor.busy()) host.settled?.(flowId)
   }
 
@@ -156,9 +166,9 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     mirror(flowId)
   }
 
-  function run(flowId: string, command: EditCommand): boolean {
+  function run(flowId: string, command: EditCommand, undoable = true): boolean {
     const editor = editors.get(flowId)
-    if (!editor || !editor.apply(command)) return false
+    if (!editor || !editor.apply(command, undoable)) return false
     const state = stateOf(flowId)
     state.check = null
     state.notice = null
@@ -167,17 +177,15 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     return true
   }
 
-  function drop(flowId: string, transfer: Pick<DataTransfer, 'getData'>, x: number, y: number): boolean {
+  function addNode(flowId: string, spec: CanvasNodeSpec, x: number, y: number, undoable = true): boolean {
     const editor = editors.get(flowId)
-    const spec = editor && host.readDrop ? host.readDrop(transfer) : null
-    if (!editor || !spec || !Number.isFinite(x) || !Number.isFinite(y)) return false
-    return run(flowId, {
-      type: 'add_node',
-      node: {
-        key: editor.newKey(), isNew: true, nodeType: spec.nodeType, docType: spec.docType,
-        paletteItemId: spec.paletteItemId, label: spec.label, assignee: null, kind: spec.kind, x, y,
-      },
-    })
+    if (!editor || !Number.isFinite(x) || !Number.isFinite(y)) return false
+    return run(flowId, { type: 'add_node', node: { ...spec, key: editor.newKey(), isNew: true, assignee: null, x, y } }, undoable)
+  }
+
+  function drop(flowId: string, transfer: Pick<DataTransfer, 'getData'>, x: number, y: number): boolean {
+    const spec = editors.has(flowId) && host.readDrop ? host.readDrop(transfer) : null
+    return !!spec && addNode(flowId, spec, x, y)
   }
 
   function check(flowId: string, source: string, target: string): ConnectionCheck {
@@ -245,31 +253,10 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     host.reread(flowId)
   })
 
-  /** A Graph Flow showing its revision: copy the revision into a new draft and show it. */
-  const startDraft = (flowId: string) => act(flowId, 'start', async (pid) => {
-    const { loadRevision, saveDraft } = host.source
-    if (!loadRevision || !saveDraft) throw Object.assign(new Error('not supported'), { code: 'draft_not_editable' })
-    const latest = await loadRevision(pid, flowId)
-    if (latest) {
-      try {
-        await saveDraft(pid, flowId, 0, latest.content)
-      } catch (error) {
-        if (codeOf(error) !== 'draft_version_conflict') throw error     // a draft exists already: show it
-      }
-    }
-    host.setView(flowId, 'draft')
-    host.reread(flowId)
-  })
-
   /** A tab closed / the project changed: send what waits, forget the Flow. */
   function close(flowId: string) {
     stop(flowId)
     delete edits[flowId]
-  }
-
-  function showView(flowId: string, view: 'draft' | 'revision') {
-    host.setView(flowId, view)
-    host.reread(flowId)
   }
 
   return {
@@ -280,11 +267,13 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     connect,
     removeNode: (flowId: string, nodeId: string) => run(flowId, { type: 'remove_node', key: nodeId }),
     removeEdge: (flowId: string, edgeId: string) => run(flowId, { type: 'disconnect', key: edgeId }),
+    /** flowgate.v02.0045 T0019: a new Flow's default node at (0, 0), not offered to undo. */
+    seed: (flowId: string, spec: CanvasNodeSpec) => addNode(flowId, spec, 0, 0, false),
+    /** TR0020 rev2: the Flow's editor has something saved or being saved (실행 confirms it first). */
+    drawn: (flowId: string) => !!editors.get(flowId) && (editors.get(flowId)!.version() > 0 || editors.get(flowId)!.busy()),
     undo,
     validate,
     confirm,
-    startDraft,
-    showView,
     /** Reads the Flow again (after a refused save: the stored draft replaces the local edits). */
     reload: (flowId: string) => host.reread(flowId),
     close,
