@@ -40,6 +40,17 @@ def recover_ai_invoke_leases():
         logger.warning(f"[startup] AI-run lease recovery failed: {exc}")
 
 
+def sweep_ai_run_scratches():
+    """0610: sweep run scratch after orphan leases have durable end records."""
+    try:
+        from modules.flow_gate.services import ai_invoke_service
+
+        projects = ai_invoke_service.startup_sweep_run_scratches()
+        logger.info(f"[startup] swept AI-run scratch for {projects} project(s)")
+    except Exception as exc:
+        logger.warning(f"[startup] AI-run scratch sweep failed: {exc}")
+
+
 def recover_git_sessions():
     """0115 L0006 E8: restore/clean merge-conflict sessions and stale git locks."""
     try:
@@ -82,5 +93,6 @@ def run_all():
     record_deployment()
     preload_singletons()
     recover_ai_invoke_leases()
+    sweep_ai_run_scratches()
     recover_git_sessions()
     encrypt_ai_provider_keys()

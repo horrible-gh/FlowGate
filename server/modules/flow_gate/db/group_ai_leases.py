@@ -101,6 +101,20 @@ def _append_event(**kwargs) -> None:
     _append_now(**kwargs)
 
 
+def get_by_run_id(run_id: str) -> Optional[dict]:
+    """Read a lease by run identity without expiring or changing it during scratch GC."""
+    if _using_memory():
+        with _memory_lock:
+            _sync_test_scope()
+            for row in _memory.values():
+                if row.get("run_id") == run_id:
+                    return dict(row)
+            return None
+    return get_store()._fetch_one(
+        "SELECT * FROM group_ai_leases WHERE run_id = ?", [run_id]
+    )
+
+
 def get(group_id: str) -> Optional[dict]:
     if _using_memory():
         with _memory_lock:
