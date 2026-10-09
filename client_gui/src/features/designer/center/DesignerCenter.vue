@@ -44,6 +44,7 @@
           :viewport="view?.viewport ?? null"
           :selected-node-id="view?.selectedNodeId ?? null"
           :sample="center.isSampleSource"
+          :placing="placing"
           @select-node="center.selectNode(activeTab.flowId, $event)"
           @viewport-change="center.recordViewport(activeTab.flowId, $event)"
           @viewport-commit="center.commitViewport(activeTab.flowId, $event)"
@@ -53,6 +54,8 @@
           :can-connect="(source: string, target: string) => center.checkConnection(activeTab!.flowId, source, target).ok"
           :issues="edit?.check?.issues ?? []"
           @canvas-drop="center.dropOnCanvas(activeTab.flowId, $event.transfer, $event.x, $event.y)"
+          @canvas-place="emit('canvas-place', activeTab.flowId, $event.x, $event.y)"
+          @cancel-placement="emit('cancel-placement')"
           @node-connect="center.connectNodes(activeTab.flowId, $event.source, $event.target)"
           @node-remove="center.removeNode(activeTab.flowId, $event)"
           @edge-remove="center.removeEdge(activeTab.flowId, $event)"
@@ -72,8 +75,14 @@ import FlowCanvas from './canvas/FlowCanvas.vue'
 import type { DesignerCenterSession } from './designerCenterSession'
 import FlowTabStrip from './FlowTabStrip.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   center: DesignerCenterSession
+  placing?: boolean
+}>(), { placing: false })
+
+const emit = defineEmits<{
+  'canvas-place': [flowId: string, x: number, y: number]
+  'cancel-placement': []
 }>()
 
 const { t } = useI18n()

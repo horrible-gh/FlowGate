@@ -95,12 +95,33 @@ export function unionRect(rects: readonly (WorldRect | null)[]): WorldRect | nul
   return { x: left, y: top, width: right - left, height: bottom - top }
 }
 
-/** All Nodes and the shown area, with some room around them; null when there is nothing to draw. */
+/** Graph Nodes and the current Canvas exploration. Padding belongs only to the Nodes. */
 export function miniMapBounds(nodes: readonly WorldRect[], view: WorldRect | null): WorldRect | null {
   if (nodes.length === 0) return null
-  const content = unionRect([...nodes, view])!
-  const pad = Math.max(content.width, content.height) * MINIMAP_PADDING_RATIO
-  return { x: content.x - pad, y: content.y - pad, width: content.width + pad * 2, height: content.height + pad * 2 }
+  const graph = unionRect(nodes)!
+  const pad = Math.max(graph.width, graph.height) * MINIMAP_PADDING_RATIO
+  const left = Math.min(0, graph.x - (graph.x < 0 ? pad : 0))
+  const top = Math.min(0, graph.y - (graph.y < 0 ? pad : 0))
+  const right = Math.max(graph.x + graph.width + pad, view ? view.x + view.width : 0)
+  const bottom = Math.max(graph.y + graph.height + pad, view ? view.y + view.height : 0)
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
+/** Fill the panel without stretching Nodes; spare space goes right or down. */
+export function miniMapPanelBounds(bounds: WorldRect, box: CanvasSize): WorldRect {
+  if (!(box.width > 0) || !(box.height > 0)) return bounds
+  const ratio = box.width / box.height
+  return bounds.width / bounds.height < ratio
+    ? { ...bounds, width: bounds.height * ratio }
+    : { ...bounds, height: bounds.width / ratio }
+}
+
+/** Keep the whole Viewport inside the finite map. */
+export function clampViewToMap(x: number, y: number, view: WorldRect, bounds: WorldRect): { x: number; y: number } {
+  return {
+    x: Math.max(bounds.x, Math.min(x, bounds.x + Math.max(0, bounds.width - view.width))),
+    y: Math.max(bounds.y, Math.min(y, bounds.y + Math.max(0, bounds.height - view.height))),
+  }
 }
 
 export function miniMapFit(bounds: WorldRect, box: CanvasSize): MiniMapFit | null {

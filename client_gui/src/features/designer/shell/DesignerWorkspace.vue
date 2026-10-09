@@ -6,7 +6,7 @@
        lives in the Shell, so nothing is lost while the frame is shown. -->
   <section class="designer-workspace" data-test="designer-workspace">
     <div v-if="unselected" class="designer-workspace-frame" data-test="designer-center-unselected" />
-    <DesignerCenter v-else :center="center" />
+    <DesignerCenter v-else :center="center" :placing="placing" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" />
   </section>
 </template>
 
@@ -17,11 +17,17 @@ import type { DesignerCenterSession } from '../center/designerCenterSession'
 withDefaults(
   defineProps<{
     center: DesignerCenterSession
+    placing?: boolean
     /** No work target yet (0039 T#3): show the empty frame instead of the Designer Center. */
     unselected?: boolean
   }>(),
-  { unselected: false },
+  { unselected: false, placing: false },
 )
+
+const emit = defineEmits<{
+  'canvas-place': [flowId: string, x: number, y: number]
+  'cancel-placement': []
+}>()
 </script>
 
 <style scoped>

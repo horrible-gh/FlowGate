@@ -168,6 +168,29 @@ describe('FlowCanvas editing a Graph draft (flowgate.v02.0045 S3)', () => {
     expect(saved[0].nodes.map((n) => [n.docType, n.label, n.isNew])).toEqual([['R', '요구', false], ['D', '설계', false], ['T', '구현', true]])
   })
 
+  it('a selected Palette card places through the existing draft drop path and Escape cancels', async () => {
+    const w = await mountWith(draftGraph())
+    await w.setProps({ placing: true })
+    const pane = w.get('.vue-flow__pane')
+    await pane.trigger('click', { clientX: 300, clientY: 200 })
+    const placed = w.emitted('canvas-place')?.at(-1)
+    expect(placed?.[0]).toBe('f1')
+    expect(placed?.[1]).toBeTypeOf('number')
+    expect(placed?.[2]).toBeTypeOf('number')
+
+    const item = DEFAULT_PALETTE_ITEMS.find((i) => i.id === 'task')!
+    const transfer = { getData: (type: string) => type === 'application/x-flowgate-palette-item'
+      ? JSON.stringify(paletteItemDefinition(item, '구현')) : '' }
+    expect(center.dropOnCanvas('f1', transfer, placed![1] as number, placed![2] as number)).toBe(true)
+    await settle()
+    await wait()
+    await settle()
+    expect(saved[0].nodes.at(-1)).toMatchObject({ docType: 'T', label: '구현', isNew: true })
+
+    await w.get('[data-test="designer-canvas"]').trigger('keydown', { key: 'Escape' })
+    expect(w.emitted('cancel-placement')).toHaveLength(1)
+  })
+
   it('nothing appears while an edit is saved — no 저장 중 note, nothing over the Canvas (rev4)', async () => {
     const w = await mountWith(draftGraph())
     let release: () => void = () => {}

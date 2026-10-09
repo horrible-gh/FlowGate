@@ -15,7 +15,7 @@
   <div
     ref="canvasEl"
     class="flow-canvas"
-    :class="{ 'is-connecting': connecting }"
+    :class="{ 'is-connecting': connecting, 'is-placing': placing }"
     role="region"
     :aria-label="t('gui.designer.center.canvas_label', { name: flowName })"
     data-test="designer-canvas"
@@ -168,11 +168,12 @@ const props = withDefaults(
     sample: boolean
     /** flowgate.v02.0045 S3: the shown Graph is an editable draft. */
     editable?: boolean
+    placing?: boolean
     /** Connection pre-check (edit/connectionRules.ts through the session). */
     canConnect?: ((source: string, target: string) => boolean) | null
     issues?: readonly FlowDraftIssue[]
   }>(),
-  { editable: false, canConnect: null, issues: () => [] },
+  { editable: false, placing: false, canConnect: null, issues: () => [] },
 )
 
 const emit = defineEmits<{
@@ -182,6 +183,8 @@ const emit = defineEmits<{
   'canvas-resize': [size: CanvasSize]
   'node-move': [move: { nodeId: string; x: number; y: number }]
   'canvas-drop': [drop: { transfer: DataTransfer; x: number; y: number }]
+  'canvas-place': [point: { x: number; y: number }]
+  'cancel-placement': []
   'node-connect': [connection: { source: string; target: string }]
   'node-remove': [nodeId: string]
   'edge-remove': [edgeId: string]
@@ -191,7 +194,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const GRID_GAP = 22
-const CANVAS_EDGE_MARGIN = 40
+// The Graph origin bounds direct Canvas pan on the top/left; right and bottom stay open.
 /** flowgate.v02.0045 T0019: how near a handle a dragged connection snaps to it (Vue Flow: 20). */
 const CONNECTION_RADIUS = 36
 
@@ -216,10 +219,10 @@ const selectedEdge = computed(() => edges.value.find((edge) => edge.id === selec
 
 const translateExtent = computed<CoordinateExtent>(() => {
   const { nodes: graphNodes } = props.graph
-  const left = graphNodes.length ? Math.min(...graphNodes.map((node) => node.x)) : 0
-  const top = graphNodes.length ? Math.min(...graphNodes.map((node) => node.y)) : 0
+  const left = graphNodes.length ? Math.min(0, ...graphNodes.map((node) => node.x)) : 0
+  const top = graphNodes.length ? Math.min(0, ...graphNodes.map((node) => node.y)) : 0
   return [
-    [left - CANVAS_EDGE_MARGIN, top - CANVAS_EDGE_MARGIN],
+    [left, top],
     [Infinity, Infinity],
   ]
 })
@@ -260,8 +263,13 @@ function onNodeClick({ node }: NodeMouseEvent) {
   emit('select-node', node.id)
 }
 
-function onPaneClick() {
+function onPaneClick(event: MouseEvent) {
   selectedEdgeId.value = null
+  if (props.placing && props.editable && flow.value) {
+    const point = flow.value.screenToFlowCoordinate({ x: event.clientX, y: event.clientY })
+    emit('canvas-place', { x: Math.max(0, Math.round(point.x)), y: Math.max(0, Math.round(point.y)) })
+    return
+  }
   emit('select-node', null)
 }
 
@@ -298,7 +306,7 @@ function onViewportChangeEnd({ x, y, zoom }: ViewportTransform) {
 
 function onNodeDragStop({ nodes: dragged }: NodeDragEvent) {
   for (const node of dragged) {
-    emit('node-move', { nodeId: node.id, x: node.position.x, y: node.position.y })
+    emit('node-move', { nodeId: node.id, x: Math.max(0, node.position.x), y: Math.max(0, node.position.y) })
   }
 }
 
@@ -314,7 +322,7 @@ function onDrop(event: DragEvent) {
   if (!props.editable || !event.dataTransfer || !flow.value) return
   event.preventDefault()
   const point = flow.value.screenToFlowCoordinate({ x: event.clientX, y: event.clientY })
-  emit('canvas-drop', { transfer: event.dataTransfer, x: Math.round(point.x), y: Math.round(point.y) })
+  emit('canvas-drop', { transfer: event.dataTransfer, x: Math.max(0, Math.round(point.x)), y: Math.max(0, Math.round(point.y)) })
 }
 
 // flowgate.v02.0045 T0019: Vue Flow also runs this on every Edge it is handed (its setEdges), not
@@ -335,6 +343,11 @@ function onEdgeDoubleClick({ edge }: EdgeMouseEvent) {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && props.placing) {
+    event.preventDefault()
+    emit('cancel-placement')
+    return
+  }
   const edge = selectedEdge.value
   if (edge && event.key === 'Escape') {
     selectedEdgeId.value = null
@@ -426,6 +439,10 @@ watch(
 
 .flow-canvas-flow :deep(.vue-flow__pane.dragging) {
   cursor: grabbing;
+}
+
+.flow-canvas.is-placing :deep(.vue-flow__pane) {
+  cursor: crosshair;
 }
 
 /* flowgate.v02.0045 TR0020 rev2: while a connection is dragged, a connectable card takes the

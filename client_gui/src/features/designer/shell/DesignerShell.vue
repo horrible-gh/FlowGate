@@ -14,7 +14,7 @@
        Flow) are mounted here and act on the same Project context, Explorer and Center.
        flowgate.v02.0046: the left / right Dock widths and the bottom Dock height follow the
        Body / CenterColumn resize handles; the Shell clamps each drag into the layout bounds. -->
-  <div class="designer-shell" data-test="designer-shell">
+  <div class="designer-shell" data-test="designer-shell" @keydown.esc="selectedPalette = null">
     <DesignerTop
       :run-mode="top.runMode"
       :density="top.density"
@@ -57,6 +57,9 @@
         <DesignerCenterColumn
           :center="center"
           :bottom-height="layout.bottomHeight"
+          :placing="selectedPalette !== null"
+          @canvas-place="onCanvasPlace"
+          @cancel-placement="selectedPalette = null"
           :unselected="!hasWorkTarget"
           @resize-bottom="(height, columnHeight) => (layout.bottomHeight = clampBottomHeight(layout, height, columnHeight))"
         />
@@ -68,7 +71,10 @@
           :tool="layout.activeRightTool"
           :collapsed="layout.rightCollapsed"
           :unselected="!hasWorkTarget"
+          :selected-palette-id="selectedPalette?.itemId ?? null"
           @update:tool="layout.activeRightTool = $event"
+          @palette-select="selectedPalette = $event"
+          @palette-drag-start="selectedPalette = null"
         />
       </template>
     </DesignerBody>
@@ -161,7 +167,7 @@ import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSour
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
 import DesignerOpenDialog from '../fileMenu/DesignerOpenDialog.vue'
-import { paletteNodeSpec, readPaletteDragData } from '../palette/paletteCatalog'
+import { paletteNodeSpec, readPaletteDragData, PALETTE_DRAG_MIME, type PaletteItemDefinition } from '../palette/paletteCatalog'
 import {
   buildExplorerProject,
   projectNodeId,
@@ -230,10 +236,23 @@ const center = createDesignerCenterSession({
 const activeFlowRef = center.activeFlowRef
 
 const hasWorkTarget = computed(() => activeFlowRef.value !== null)
+const selectedPalette = ref<PaletteItemDefinition | null>(null)
+
+function onCanvasPlace(flowId: string, x: number, y: number) {
+  const definition = selectedPalette.value
+  if (!definition) return
+  const transfer = { getData: (type: string) => type === PALETTE_DRAG_MIME ? JSON.stringify(definition) : '' }
+  if (center.dropOnCanvas(flowId, transfer, x, y)) selectedPalette.value = null
+}
+
+watch(() => center.state.activeFlowId, () => { selectedPalette.value = null })
 
 // The run buttons' UI state belongs to a target; it does not outlive it.
 watch(hasWorkTarget, (has) => {
-  if (!has) top.runMode = null
+  if (!has) {
+    top.runMode = null
+    selectedPalette.value = null
+  }
 })
 
 // A Flow of the previous Project is never carried over: a new Project clears the Center.
