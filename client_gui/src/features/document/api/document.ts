@@ -4,6 +4,15 @@
 //
 //   read   GET /api/v1/documents/{doc_id}   (perm_document_read; 404 when there is no such document)
 //
+// flowgate.v02.0048 T#5 — the documents tab's reads, on the same endpoint (no new server API):
+//   detail     the read above plus the review extras the tab shows: the rejection history
+//              (`rejection_history`, oldest first as stored) and whether an AI review exists
+//              (`ai_review` / `ai_review_history` — existence only, never a count: D#1 §10.4)
+//   relations  the documents a document superseded (the Canvas `document.supersedes` ids), one
+//              read each; a failed one is answered as missing instead of failing the others
+// The body (`/content`) is not read: the Inspector keeps summaries and opens the v0.1 screen for
+// the document itself (D#1 §9, §10.2).
+//
 // The response is the documents row plus workflow / review extras; only the fields below are
 // taken, snake_case -> camelCase. The v0.1 response shape is not changed.
 import { getRequest } from '@shared/api'
@@ -58,4 +67,78 @@ export function toDocumentRecord(raw: unknown): DocumentRecord {
 export async function documentRead(docId: string): Promise<DocumentRecord> {
   const response = await getRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}`)
   return toDocumentRecord(response.data)
+}
+
+/** One rejection of a document (`rejection_history` item). */
+export interface DocumentRejection {
+  readonly rejectionId: string | null
+  readonly reason: string
+  readonly rejectedAt: string | null
+  readonly rejectedBy: string | null
+  /** How the AI answered this rejection when it re-submitted the document, if recorded. */
+  readonly aiResponse: string | null
+}
+
+/** A document with what the documents tab shows besides its header fields. */
+export interface DocumentDetail extends DocumentRecord {
+  /** Rejections as stored: oldest first. */
+  readonly rejectionHistory: readonly DocumentRejection[]
+  /** An AI review exists for the document (existence only). */
+  readonly hasAiReview: boolean
+}
+
+function toDocumentRejection(raw: unknown): DocumentRejection | null {
+  if (!raw || typeof raw !== 'object') return null
+  const item = raw as Raw
+  const reason = text(item.reason)
+  if (reason === null) return null
+  return {
+    rejectionId: text(item.rejection_id),
+    reason,
+    rejectedAt: text(item.rejected_at),
+    rejectedBy: text(item.rejected_by),
+    aiResponse: text(item.ai_response),
+  }
+}
+
+/** The v0.1 document response -> DocumentDetail. Throws when it carries no doc_id. */
+export function toDocumentDetail(raw: unknown): DocumentDetail {
+  const record = toDocumentRecord(raw)
+  const row = raw as Raw
+  const history = Array.isArray(row.rejection_history) ? row.rejection_history : []
+  const reviews = Array.isArray(row.ai_review_history) ? row.ai_review_history : []
+  return {
+    ...record,
+    rejectionHistory: history.map(toDocumentRejection).filter((item): item is DocumentRejection => item !== null),
+    hasAiReview: reviews.length > 0 || (!!row.ai_review && typeof row.ai_review === 'object'),
+  }
+}
+
+/** Reads one document with its review extras. Transport errors are thrown as they are. */
+export async function documentDetailRead(docId: string): Promise<DocumentDetail> {
+  const response = await getRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}`)
+  return toDocumentDetail(response.data)
+}
+
+/** A related document by id: its record, or null when it could not be read. */
+export interface DocumentRelation {
+  readonly docId: string
+  readonly record: DocumentRecord | null
+  /** What the read threw (see documentErrorOf), or null. */
+  readonly error: unknown
+}
+
+/**
+ * Reads related documents (e.g. the ids a document superseded) in the given order. Never throws:
+ * each failed read is answered with `record: null` and its error, so one missing document does not
+ * hide the others.
+ */
+export async function documentRelationsRead(docIds: readonly string[]): Promise<DocumentRelation[]> {
+  const ids = [...new Set(docIds.filter((id) => typeof id === 'string' && id))]
+  const settled = await Promise.allSettled(ids.map((id) => documentRead(id)))
+  return settled.map((result, i) =>
+    result.status === 'fulfilled'
+      ? { docId: ids[i], record: result.value, error: null }
+      : { docId: ids[i], record: null, error: result.reason },
+  )
 }
