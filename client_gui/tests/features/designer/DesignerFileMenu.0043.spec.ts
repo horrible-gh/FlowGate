@@ -26,6 +26,7 @@ import { registerAppMessages } from '@/app/i18n'
 import { setCurrentUser } from '@/core/auth/currentUser'
 import { DesignerShell } from '@/features/designer'
 import { useProjectStore, type Project } from '@/features/project'
+import { answerFlowCanvas } from './flowCanvasResponse'
 
 const getRequest = vi.hoisted(() => vi.fn())
 const postRequest = vi.hoisted(() => vi.fn())
@@ -104,6 +105,9 @@ beforeEach(() => {
     }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false, group_id: params.group_id } }
     if (url === '/api/v1/projects') return { data: { projects: [] } }
+    // flowgate.v02.0045: the Designer reads Flow Graphs from the server Canvas API.
+    const canvas = answerFlowCanvas(url)
+    if (canvas) return canvas
     throw new Error(`unexpected request ${url}`)
   })
   postRequest.mockReset()

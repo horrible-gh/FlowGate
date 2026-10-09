@@ -811,6 +811,9 @@ class TestProdTypeGenuineTopologyProof:
                 "doc_review_status": "wf_pending",
             },
         )
+        # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+        # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
+        monkeypatch.setattr(workflow_routes._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
         monkeypatch.setattr(
             workflow_routes, "decide_workflow",
             lambda **kw: {"ok": True, "doc_class": kw["doc_class"]},

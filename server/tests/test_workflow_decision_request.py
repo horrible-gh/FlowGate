@@ -230,6 +230,9 @@ def test_workflow_decide_broadcasts_status_and_group_refresh(monkeypatch):
         },
     ]
     monkeypatch.setattr(routes._db_documents, "get_by_id", lambda _doc_id: docs.pop(0))
+    # flowgate.v02.0045 S4: no DB behind this test, so the Graph contact is the unassigned-Flow
+    # pass-through (its own regression tests run the real one: test_graph_v01_contact_0045.py).
+    monkeypatch.setattr(routes._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
 
     broadcast = MagicMock(return_value=1)
     from modules.flow_gate.api.v1.events import publisher

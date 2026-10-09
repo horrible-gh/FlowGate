@@ -327,7 +327,8 @@ describe('Designer top band — Window menu', () => {
 describe('Designer top band — Toolbar', () => {
   it('keeps the confirmed tools only: no select / add node / connect, with 정렬 / 배치 ▾', async () => {
     const w = await mountShell()
-    expect(toolTexts(w)).toEqual(['실행 취소', '다시 실행', '정렬 / 배치 ▾', '다음 단계', '전체 실행', '화면 맞춤', '축소', '확대'])
+    // flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons.
+    expect(toolTexts(w)).toEqual(['실행 취소', '다시 실행', '정렬 / 배치 ▾', '검증', '다음 단계', '전체 실행', '화면 맞춤', '축소', '확대'])
     expect(get(w, 'designer-toolbar').text()).not.toMatch(/선택|노드 추가|연결/)
     expect(get(w, 'designer-tool-zoom').text()).toBe('100%')
     expect(get(w, 'designer-tool-density').findAll('[role="radio"]').map((b) => b.attributes('aria-label'))).toEqual([

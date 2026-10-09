@@ -5,7 +5,10 @@
        used turns into ■ 중지 in place and the other one is disabled until the run stops
        (0001-R §4.1.1). 정렬 / 배치 ▾ is the same entry as the Edit menu's 정렬 / 배치… and emits
        the same command. flowgate.v02.0039 T#3: `disabled` (no work target yet) keeps every tool
-       on screen but dimmed and unavailable, as the confirmed initial-state design draws it. -->
+       on screen but dimmed and unavailable, as the confirmed initial-state design draws it.
+       flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons (it checks what 실행
+       would take); it is available while the open Flow's edited structure can be checked
+       (`canValidate`). -->
   <div
     class="designer-toolbar"
     :class="{ 'is-unavailable': disabled }"
@@ -33,6 +36,17 @@
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
+      <button
+        type="button"
+        class="designer-tool"
+        data-test="designer-tool"
+        data-command="run.validate"
+        :disabled="disabled || !canValidate || runMode !== null"
+        @click="emit('command', 'run.validate')"
+      >
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" /><path d="M6.5 10.2l2.4 2.4 4.6-5" /></svg>
+        <span>{{ t('gui.designer.top.tools.validate') }}</span>
+      </button>
       <button
         v-for="run in RUN_BUTTONS"
         :key="run.mode"
@@ -100,8 +114,10 @@ withDefaults(
     zoom: number
     /** True while the Designer has no work target (0039 T#3): every tool is unavailable. */
     disabled?: boolean
+    /** flowgate.v02.0045 TR0020 rev2: the open Flow's edited structure can be checked now. */
+    canValidate?: boolean
   }>(),
-  { disabled: false },
+  { disabled: false, canValidate: false },
 )
 
 const emit = defineEmits<{

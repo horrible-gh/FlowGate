@@ -56,6 +56,9 @@ from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
 from modules.flow_gate.api.v1.self_check_routes import router as _self_check_router
 from modules.flow_gate.api.v1.agent_routes import router as _agent_router
 from modules.flow_gate.api.v1.agent_job_routes import router as _agent_job_router
+from modules.flow_gate.graph_workflow.api.canvas_routes import router as _graph_canvas_router
+from modules.flow_gate.graph_workflow.api.graph_routes import router as _graph_definition_router
+from modules.flow_gate.graph_workflow.api.run_routes import router as _graph_run_router
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.services.git.credentials import git_error_envelope
@@ -235,6 +238,9 @@ app.include_router(_ui_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["UiSet
 app.include_router(_snapshot_router, prefix=f"{CONTEXT}", tags=["Snapshots"])
 app.include_router(_agent_router, prefix=f"{CONTEXT}/api/v1", tags=["Agents"])
 app.include_router(_agent_job_router, prefix=f"{CONTEXT}/api/v1", tags=["AgentJobs"])
+app.include_router(_graph_canvas_router, prefix=f"{CONTEXT}", tags=["GraphCanvas"])
+app.include_router(_graph_definition_router, prefix=f"{CONTEXT}", tags=["GraphDefinition"])
+app.include_router(_graph_run_router, prefix=f"{CONTEXT}", tags=["GraphRun"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])
 # Every mutation route must carry an inventory classification. Group routes also name
 # the standard resolver used by GroupMutationPolicyMiddleware.

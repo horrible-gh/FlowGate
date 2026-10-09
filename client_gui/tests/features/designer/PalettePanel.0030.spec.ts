@@ -93,7 +93,8 @@ describe('PalettePanel (flowgate.v02.0030)', () => {
     const w = mountPalette()
     const card = w.get('[data-item-id="db_design"]')
     expect(card.attributes('draggable')).toBe('true')
-    expect(card.attributes('style')).toContain('--palette-accent: #ff9d51')
+    // flowgate.v02.0045 T0019: every 설계 card is purple.
+    expect(card.attributes('style')).toContain('--palette-accent: #9b72ff')
     expect(card.attributes('data-node-kind')).toBe('design')
     expect(card.find('svg path').attributes('d')).toMatch(/^M5 5a7 3/)
   })

@@ -1,6 +1,7 @@
 import axios, {
   AxiosError,
   type AxiosInstance,
+  type AxiosRequestConfig,
   type AxiosResponse,
   type InternalAxiosRequestConfig,
 } from 'axios'
@@ -524,8 +525,10 @@ api.interceptors.response.use(
   },
 )
 
-export const postRequest = async <T>(path: string, data: unknown): Promise<AxiosResponse<T>> =>
-  api.post<T>(path, data)
+// `config` (optional, flowgate.v02.0045 S3): per-request extras such as the Canvas tab id header.
+// Without it the call is exactly the previous one.
+export const postRequest = async <T>(path: string, data: unknown, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
+  config ? api.post<T>(path, data, config) : api.post<T>(path, data)
 
 // 0282 NR0003 finding 3: the screen-load SQL log showed the client running the
 // same GET series twice (racing mounts / duplicated event listeners), roughly
@@ -543,14 +546,17 @@ const getRequestKey = (path: string, params: Record<string, unknown>): string =>
   return keys.length ? `${path}?${JSON.stringify(params, keys)}` : path
 }
 
+// `config` (optional) carries per-request extras such as headers (flowgate.v02.0045: the Canvas
+// tab id header). It is not part of the dedupe key: a caller sends the same extras for the same GET.
 export const getRequest = async <T>(
   path: string,
   params: Record<string, unknown> = {},
+  config: Omit<AxiosRequestConfig, 'params'> = {},
 ): Promise<AxiosResponse<T>> => {
   const key = getRequestKey(path, params)
   const inflight = inflightGets.get(key)
   if (inflight) return inflight as Promise<AxiosResponse<T>>
-  const request = api.get<T>(path, { params }).finally(() => {
+  const request = api.get<T>(path, { ...config, params }).finally(() => {
     inflightGets.delete(key)
   })
   inflightGets.set(key, request as Promise<AxiosResponse<unknown>>)
@@ -587,8 +593,8 @@ export const serverLogout = async (): Promise<void> => {
 export const patchRequest = async <T>(path: string, data: unknown): Promise<AxiosResponse<T>> =>
   api.patch<T>(path, data)
 
-export const putRequest = async <T>(path: string, data: unknown): Promise<AxiosResponse<T>> =>
-  api.put<T>(path, data)
+export const putRequest = async <T>(path: string, data: unknown, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
+  config ? api.put<T>(path, data, config) : api.put<T>(path, data)
 
 export const deleteRequest = async <T>(path: string): Promise<AxiosResponse<T>> =>
   api.delete<T>(path)

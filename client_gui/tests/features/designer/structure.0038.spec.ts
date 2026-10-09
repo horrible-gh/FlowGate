@@ -65,7 +65,8 @@ describe('features/designer/top structure (flowgate.v02.0038)', () => {
     const toolbar = read(join(TOP, 'DesignerToolbar.vue'))
     const toolKeys = [...toolbar.matchAll(/gui\.designer\.top\.tools\.(\w+)/g)].map((m) => m[1])
     expect(toolKeys.filter((key) => /select|node|connect/.test(key))).toEqual([])
-    expect(toolbar).not.toMatch(/data-command="(?!edit\.|view\.)/)
+    // flowgate.v02.0045 TR0020 rev2: 검증 (run.validate) is a Toolbar tool next to the run buttons.
+    expect(toolbar).not.toMatch(/data-command="(?!edit\.|view\.|run\.validate")/)
   })
 
   // jsdom has no layout, so the Header width rules (checked in a real browser at 1024-1920px)

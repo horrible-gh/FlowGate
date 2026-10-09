@@ -1,16 +1,33 @@
 <template>
-  <!-- flowgate.v02.0026 — read-only Canvas of one Flow (0003-D §3.3.3). The only screen part
-       that uses Vue Flow: it draws the FlowGate Graph through vueFlowMapping and turns library
-       events into FlowGate meaning — "select this Node / none" and "the Viewport is now ...".
-       DesignerCenter keys it by Flow id, so every Flow gets its own Vue Flow instance. -->
+  <!-- flowgate.v02.0026 — Canvas of one Flow (0003-D §3.3.3). The only screen part that uses
+       Vue Flow: it draws the FlowGate Graph through vueFlowMapping and turns library events into
+       FlowGate meaning — "select this Node / none", "the Viewport is now ..." and (flowgate.v02.0045)
+       "this Node was moved to ..." / "the user finished a pan / zoom". flowgate.v02.0045 S3: on an
+       editable draft (`editable`) also "something was dropped here", "connect these two nodes",
+       "remove this node / edge" and "undo" — the Canvas never changes the Graph itself.
+       DesignerCenter keys it by Flow id, so every Flow gets its own Vue Flow instance.
+       flowgate.v02.0045 T0019: no empty-Graph text and no ownership badge; an Edge can be selected
+       (click) and, when deletable, removed (its remove button or Delete / Backspace).
+       flowgate.v02.0045 TR0020 rev2: while a connection is dragged (`is-connecting`) every
+       connectable card is a drop area as a whole (FlowNodeCard). TR0020 rev4: nothing is laid
+       over the Canvas (no edit note); an Edge gets its two Nodes so it attaches to the facing
+       sides (FlowEdgePath); the last validation's problems only mark their cards / lines. -->
   <div
+    ref="canvasEl"
     class="flow-canvas"
+    :class="{ 'is-connecting': connecting }"
     role="region"
     :aria-label="t('gui.designer.center.canvas_label', { name: flowName })"
     data-test="designer-canvas"
     :data-flow-id="flowId"
     :data-selected-node-id="selectedNodeId ?? ''"
+    :data-selected-edge-id="selectedEdge?.id ?? ''"
     :data-zoom="String(liveViewport.zoom)"
+    :data-editable="editable ? 'true' : 'false'"
+    tabindex="-1"
+    @dragover="onDragOver"
+    @drop="onDrop"
+    @keydown="onKeydown"
   >
     <!-- Dot grid drawn here (no extra Vue Flow package); it follows pan / zoom. -->
     <div class="flow-canvas-grid" :style="gridStyle" aria-hidden="true" />
@@ -23,13 +40,15 @@
       :min-zoom="CANVAS_MIN_ZOOM"
       :max-zoom="CANVAS_MAX_ZOOM"
       :translate-extent="translateExtent"
-      :nodes-draggable="false"
-      :nodes-connectable="false"
+      :nodes-draggable="true"
+      :nodes-connectable="editable"
+      :is-valid-connection="isValidConnection"
       :edges-updatable="false"
       :elements-selectable="false"
       :nodes-focusable="false"
       :edges-focusable="false"
       :connect-on-click="false"
+      :connection-radius="CONNECTION_RADIUS"
       :delete-key-code="null"
       :selection-key-code="null"
       :multi-selection-key-code="null"
@@ -42,8 +61,15 @@
       @init="onInit"
       @nodes-initialized="onNodesInitialized"
       @node-click="onNodeClick"
-      @pane-click="emit('select-node', null)"
+      @pane-click="onPaneClick"
       @viewport-change="onViewportChange"
+      @viewport-change-end="onViewportChangeEnd"
+      @node-drag-stop="onNodeDragStop"
+      @connect="onConnect"
+      @connect-start="connecting = true"
+      @connect-end="connecting = false"
+      @edge-click="onEdgeClick"
+      @edge-double-click="onEdgeDoubleClick"
     >
       <template #node-flowgate="nodeProps">
         <FlowNodeCard :id="nodeProps.id" :data="nodeProps.data" />
@@ -57,12 +83,19 @@
           :target-y="edgeProps.targetY"
           :source-position="edgeProps.sourcePosition"
           :target-position="edgeProps.targetPosition"
+          :source-node="edgeProps.sourceNode"
+          :target-node="edgeProps.targetNode"
+          :edge-class="edgeProps.data?.edgeClass ?? null"
+          :editable="edgeProps.data?.editable === true"
+          :issue="edgeProps.data?.issue === true"
+          :issue-text="edgeProps.data?.issueText ?? ''"
+          :progressed="edgeProps.data?.progressed === true"
+          :selected="edgeProps.data?.selected === true"
+          :deletable="edgeProps.data?.deletable === true"
+          @remove="removeEdge(edgeProps.id)"
         />
       </template>
     </VueFlow>
-    <p v-if="graph.nodes.length === 0" class="flow-canvas-empty" data-test="designer-canvas-empty-graph">
-      {{ t('gui.designer.center.empty_graph') }}
-    </p>
     <Badge v-if="sample" class="flow-canvas-sample" size="sm" tone="info" data-test="designer-canvas-sample">
       {{ t('gui.designer.center.sample_data') }}
     </Badge>
@@ -71,8 +104,17 @@
 
 <script setup lang="ts">
 // Input: Flow id / name, FlowGraph, stored Viewport (may be none), selected Node id, sample
-// flag. Output: `select-node` (Node id or null) and `viewport-change`. Never calls an API,
-// changes the session, edits the Graph or handles tabs.
+// flag. Output: `select-node` (Node id or null), `viewport-change`, and (flowgate.v02.0045)
+// `viewport-commit` (a user pan / zoom ended — Vue Flow reports no end for a programmatic fit)
+// and `node-move` (a movable Node was dropped). Never calls an API, changes the session, edits
+// the Graph or handles tabs.
+//
+// flowgate.v02.0045 S3 (editable draft only): `canvas-drop` (the drag data and the drop point in
+// Graph coordinates — what was dropped is for the session to tell), `node-connect` (a connection
+// dragged between two draft nodes the `canConnect` pre-check accepts), `node-remove` (Delete /
+// Backspace on the selected draft node), `edge-remove` (double click on a draft edge) and `undo`
+// (Ctrl / Cmd + Z). `issues`: what the last validation reported — its nodes / edges are marked
+// and name the problem on hover; nothing else is shown for it (TR0020 rev4).
 //
 // Viewport: a stored one is restored; without one, all Nodes are fitted once they are
 // measured (never above 1x) and the result is reported like any pan / zoom. A Viewport the
@@ -81,12 +123,20 @@
 //
 // Pan bound: the view never goes further up or left than CANVAS_EDGE_MARGIN past the top-most /
 // left-most Node; right and down stay open. Vue Flow applies it to pan, zoom, fit and restore.
+//
+// flowgate.v02.0045 T0019 — Edge selection is the Canvas's own (one Edge or none, never together
+// with a selected Node): a click on an Edge selects it, a click on a Node or the pane clears it.
+// Selecting is allowed for every Edge; removing (`edge-remove`) only for a deletable one — an
+// editable draft Edge the work has not gone through (vueFlowMapping `deletable`).
 import '@vue-flow/core/dist/style.css'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   VueFlow,
+  type Connection,
   type CoordinateExtent,
+  type EdgeMouseEvent,
+  type NodeDragEvent,
   type NodeMouseEvent,
   type ViewportTransform,
   type VueFlowStore,
@@ -101,31 +151,65 @@ import {
   type CanvasViewport,
 } from '../canvasView'
 import type { FlowGraph } from '../graph/flowGraph'
+import type { FlowDraftIssue } from '../graph/flowGraphSource'
 import FlowEdgePath from './FlowEdgePath.vue'
 import FlowNodeCard from './FlowNodeCard.vue'
 import { toVueFlowEdges, toVueFlowNodes } from './vueFlowMapping'
 
-const props = defineProps<{
-  flowId: string
-  flowName: string
-  graph: FlowGraph
-  viewport: CanvasViewport | null
-  selectedNodeId: string | null
-  sample: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    flowId: string
+    flowName: string
+    graph: FlowGraph
+    viewport: CanvasViewport | null
+    selectedNodeId: string | null
+    sample: boolean
+    /** flowgate.v02.0045 S3: the shown Graph is an editable draft. */
+    editable?: boolean
+    /** Connection pre-check (edit/connectionRules.ts through the session). */
+    canConnect?: ((source: string, target: string) => boolean) | null
+    issues?: readonly FlowDraftIssue[]
+  }>(),
+  { editable: false, canConnect: null, issues: () => [] },
+)
 
 const emit = defineEmits<{
   'select-node': [nodeId: string | null]
   'viewport-change': [viewport: CanvasViewport]
+  'viewport-commit': [viewport: CanvasViewport]
+  'node-move': [move: { nodeId: string; x: number; y: number }]
+  'canvas-drop': [drop: { transfer: DataTransfer; x: number; y: number }]
+  'node-connect': [connection: { source: string; target: string }]
+  'node-remove': [nodeId: string]
+  'edge-remove': [edgeId: string]
+  undo: []
 }>()
 
 const { t } = useI18n()
 
 const GRID_GAP = 22
 const CANVAS_EDGE_MARGIN = 40
+/** flowgate.v02.0045 T0019: how near a handle a dragged connection snaps to it (Vue Flow: 20). */
+const CONNECTION_RADIUS = 36
 
-const nodes = computed(() => toVueFlowNodes(props.graph, props.selectedNodeId))
-const edges = computed(() => toVueFlowEdges(props.graph))
+const canvasEl = ref<HTMLElement | null>(null)
+const selectedEdgeId = ref<string | null>(null)
+/** flowgate.v02.0045 TR0020 rev2: a connection is being dragged (cards become drop areas). */
+const connecting = ref(false)
+
+// Node / Edge id -> the problems reported on it, one per line.
+const issueMap = computed(() => {
+  const map = new Map<string, string>()
+  for (const issue of props.issues) {
+    const text = issue.message || issue.code
+    for (const id of [...issue.nodeIds, ...issue.edgeIds]) map.set(id, map.has(id) ? `${map.get(id)}\n${text}` : text)
+  }
+  return map
+})
+const nodes = computed(() => toVueFlowNodes(props.graph, props.selectedNodeId, issueMap.value))
+const edges = computed(() => toVueFlowEdges(props.graph, issueMap.value, selectedEdgeId.value))
+/** The selected Edge as drawn, or null (also when it left the Graph). */
+const selectedEdge = computed(() => edges.value.find((edge) => edge.id === selectedEdgeId.value) ?? null)
 
 const translateExtent = computed<CoordinateExtent>(() => {
   const { nodes: graphNodes } = props.graph
@@ -169,7 +253,31 @@ function fitOnFirstDisplay() {
 }
 
 function onNodeClick({ node }: NodeMouseEvent) {
+  selectedEdgeId.value = null
   emit('select-node', node.id)
+}
+
+function onPaneClick() {
+  selectedEdgeId.value = null
+  emit('select-node', null)
+}
+
+// ── flowgate.v02.0045 T0019: Edge selection and removal ───────────────────────────────────────
+
+function onEdgeClick({ edge }: EdgeMouseEvent) {
+  selectedEdgeId.value = edge.id
+  if (props.selectedNodeId !== null) emit('select-node', null)
+  // Delete / Backspace reach the Canvas only while it has the focus.
+  canvasEl.value?.focus({ preventScroll: true })
+}
+
+/** Removes an Edge when it may be removed; a progressed or read-only Edge stays. */
+function removeEdge(edgeId: string): boolean {
+  const edge = edges.value.find((candidate) => candidate.id === edgeId)
+  if (!props.editable || edge?.data?.deletable !== true) return false
+  if (selectedEdgeId.value === edgeId) selectedEdgeId.value = null
+  emit('edge-remove', edgeId)
+  return true
 }
 
 function onViewportChange({ x, y, zoom }: ViewportTransform) {
@@ -179,6 +287,84 @@ function onViewportChange({ x, y, zoom }: ViewportTransform) {
   liveViewport.value = next
   emit('viewport-change', next)
 }
+
+function onViewportChangeEnd({ x, y, zoom }: ViewportTransform) {
+  onViewportChange({ x, y, zoom })
+  emit('viewport-commit', { x, y, zoom })
+}
+
+function onNodeDragStop({ nodes: dragged }: NodeDragEvent) {
+  for (const node of dragged) {
+    emit('node-move', { nodeId: node.id, x: node.position.x, y: node.position.y })
+  }
+}
+
+// ── flowgate.v02.0045 S3: structure edits of an editable draft ─────────────────────────────
+
+function onDragOver(event: DragEvent) {
+  if (!props.editable || !event.dataTransfer) return
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'copy'
+}
+
+function onDrop(event: DragEvent) {
+  if (!props.editable || !event.dataTransfer || !flow.value) return
+  event.preventDefault()
+  const point = flow.value.screenToFlowCoordinate({ x: event.clientX, y: event.clientY })
+  emit('canvas-drop', { transfer: event.dataTransfer, x: Math.round(point.x), y: Math.round(point.y) })
+}
+
+// flowgate.v02.0045 T0019: Vue Flow also runs this on every Edge it is handed (its setEdges), not
+// only on a dragged connection — an Edge already in the Graph is drawn as it is, or a redraw of the
+// Edges (a selection, a validation mark) would drop them all.
+function isValidConnection(connection: Connection): boolean {
+  const id = (connection as Connection & { id?: unknown }).id
+  if (typeof id === 'string' && props.graph.edges.some((edge) => edge.id === id)) return true
+  return props.editable && (props.canConnect?.(connection.source, connection.target) ?? false)
+}
+
+function onConnect(connection: Connection) {
+  if (isValidConnection(connection)) emit('node-connect', { source: connection.source, target: connection.target })
+}
+
+function onEdgeDoubleClick({ edge }: EdgeMouseEvent) {
+  removeEdge(edge.id)
+}
+
+function onKeydown(event: KeyboardEvent) {
+  const edge = selectedEdge.value
+  if (edge && event.key === 'Escape') {
+    selectedEdgeId.value = null
+    return
+  }
+  if (edge && (event.key === 'Delete' || event.key === 'Backspace')) {
+    // A selected Edge takes the key even when it cannot be removed (nothing else is removed).
+    event.preventDefault()
+    removeEdge(edge.id)
+    return
+  }
+  if (!props.editable) return
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
+    event.preventDefault()
+    emit('undo')
+    return
+  }
+  if ((event.key === 'Delete' || event.key === 'Backspace') && props.selectedNodeId) {
+    const node = props.graph.nodes.find((n) => n.id === props.selectedNodeId)
+    if (node?.structureEditable && node.definition) {
+      event.preventDefault()
+      emit('node-remove', node.id)
+    }
+  }
+}
+
+// A Node selected from anywhere (Canvas, Inspector, ...) ends the Edge selection.
+watch(
+  () => props.selectedNodeId,
+  (nodeId) => {
+    if (nodeId !== null) selectedEdgeId.value = null
+  },
+)
 
 watch(
   () => props.viewport,
@@ -228,15 +414,22 @@ watch(
   cursor: grabbing;
 }
 
-.flow-canvas-empty {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  margin: 0;
-  color: var(--fg2-muted);
-  font-size: 13px;
-  transform: translate(-50%, -50%);
+/* flowgate.v02.0045 TR0020 rev2: while a connection is dragged, a connectable card takes the
+   drop anywhere on it (its whole-card target handle) and lights up under the pointer; the start
+   strips step aside so they never catch the drop. */
+.flow-canvas.is-connecting :deep(.flow-node-drop) {
+  pointer-events: all;
+  cursor: crosshair;
+}
+
+.flow-canvas.is-connecting :deep(.flow-node-link) {
   pointer-events: none;
+}
+
+.flow-canvas.is-connecting :deep(.flow-node-drop:hover),
+.flow-canvas.is-connecting :deep(.flow-node-drop.vue-flow__handle-valid) {
+  background: color-mix(in srgb, var(--flow-node-accent) 14%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--flow-node-accent) 75%, transparent);
 }
 
 .flow-canvas-sample {

@@ -31,14 +31,28 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'canvas/FlowCanvas.vue',
         'canvas/FlowEdgePath.vue',
         'canvas/FlowNodeCard.vue',
+        // flowgate.v02.0045 TR0020 rev4: which sides an Edge attaches to.
+        'canvas/edgeGeometry.ts',
         'canvas/flowNodeKinds.ts',
         'canvas/vueFlowMapping.ts',
         'canvasView.ts',
         'designerCenterSession.ts',
         'flowTabs.ts',
+        // flowgate.v02.0045 T0019: which Edges the work already went through.
+        'graph/edgeProgress.ts',
         'graph/fixtureFlowGraphSource.ts',
         'graph/flowGraph.ts',
         'graph/flowGraphSource.ts',
+        // flowgate.v02.0045 S1+S2: the server Graph source and the layout save batching.
+        'graph/serverFlowGraphSource.ts',
+        'layoutSaveQueue.ts',
+        // flowgate.v02.0045 S3+S4 (D0004 §2.3 center/edit): edit commands, connection pre-check,
+        // the draft editor / controller (TR0020 rev4: no draft bar — nothing is laid over the Canvas).
+        'edit/connectionRules.ts',
+        'edit/draftController.ts',
+        'edit/draftEditor.ts',
+        'edit/draftModel.ts',
+        'edit/graphEditCommands.ts',
       ].sort(),
     )
   })
@@ -53,8 +67,10 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
   })
 
   it('keeps the model, rules and session free of screens and Vue Flow', () => {
-    const pure = CENTER_FILES.filter((f) => /^(graph\/|flowTabs\.ts$|canvasView\.ts$|designerCenterSession\.ts$)/.test(rel(f)))
-    expect(pure).toHaveLength(6)
+    const pure = CENTER_FILES.filter((f) =>
+      /^(graph\/|flowTabs\.ts$|canvasView\.ts$|designerCenterSession\.ts$|layoutSaveQueue\.ts$)/.test(rel(f)),
+    )
+    expect(pure).toHaveLength(9)
     for (const file of pure) {
       for (const spec of importsOf(read(file))) {
         expect(spec, rel(file)).not.toMatch(/\.vue$|^@vue-flow\//)
@@ -123,13 +139,19 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'graph_loading',
         'graph_load_failed',
         'retry',
-        'empty_graph',
         'sample_data',
         'canvas_label',
         'node_kinds',
         'node_states',
+        // flowgate.v02.0045 T0019: a selected Edge's remove button / why it cannot be removed.
+        // (TR0020 rev4: no `edit` strings — nothing about saving / 검증 is shown on the Canvas.)
+        'edge',
       ].sort(),
     )
+    // flowgate.v02.0045 T0019: no empty-Graph text and no ownership badge any more.
+    expect(messages.designer.center).not.toHaveProperty('empty_graph')
+    expect(messages.designer.center).not.toHaveProperty('ownership')
+    expect(Object.keys(messages.designer.center.edge).sort()).toEqual(['locked', 'remove'])
     for (const key of ['workspace_label', 'workspace_parts', 'active_flow', 'no_active_flow']) {
       expect(messages.designer.shell).not.toHaveProperty(key)
     }

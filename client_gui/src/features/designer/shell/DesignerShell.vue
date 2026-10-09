@@ -22,6 +22,7 @@
       :window-state="windowState"
       :targets="menuTargets"
       :recent="recent"
+      :can-validate="center.activeCanValidate.value"
       @command="onTopCommand"
       @toggle-panel="onTogglePanel"
       @show-tab="onShowTab"
@@ -152,12 +153,15 @@
 // Availability follows each command's precondition (designerTop.ts DesignerMenuTargets). Recent
 // Project / Group / Flow entries are recorded in the store when a Project is opened and when
 // this Shell opens a Group or Flow; the Group / Flow lists show the current Project's entries.
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useProjectStore, type CreatedGroup } from '@/features/project'
-import { createDesignerCenterSession } from '../center/designerCenterSession'
+import { createDesignerCenterSession, type CanvasNodeSpec } from '../center/designerCenterSession'
+import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
 import DesignerOpenDialog from '../fileMenu/DesignerOpenDialog.vue'
+import { paletteNodeSpec, readPaletteDragData } from '../palette/paletteCatalog'
 import {
   buildExplorerProject,
   projectNodeId,
@@ -200,6 +204,7 @@ const emit = defineEmits<{
 }>()
 
 const projectStore = useProjectStore()
+const { t } = useI18n()
 
 const layout = reactive(createDesignerLayout())
 
@@ -207,7 +212,18 @@ const top = reactive(createDesignerTopState())
 
 const projectId = computed<string | null>(() => projectStore.currentProjectId)
 
-const center = createDesignerCenterSession()
+// flowgate.v02.0045 S1: real Flow Graphs through the project store's Canvas loaders (the sample
+// source stays the session default for tests and previews only).
+// flowgate.v02.0045 S3 (D0004 §2.3 "Palette 연결"): a Palette card dropped on the Canvas becomes a
+// node of the Flow's Graph draft. The Shell is the only part that knows both: it tells the Center
+// session which node a drop means, so the Palette and the Canvas never know each other.
+const center = createDesignerCenterSession({
+  source: createServerFlowGraphSource(projectStore),
+  readDrop: (transfer) => {
+    const definition = readPaletteDragData(transfer)
+    return definition ? paletteNodeSpec(definition) : null
+  },
+})
 
 // The Project Explorer's Flow id is the v0.1 group id, which is exactly FlowRef.groupId of
 // the File Explorer — no lookup or conversion needed.
@@ -232,6 +248,9 @@ watch(
 onMounted(() => {
   projectStore.takeExplicitOpen()
 })
+
+// flowgate.v02.0045: send pending Canvas saves and close the Canvas change stream with the Shell.
+onBeforeUnmount(() => center.dispose())
 
 // The Toolbar shows the zoom the active Canvas last reported (100% before it reports one).
 const zoom = computed(() => zoomPercent(center.activeView.value?.viewport?.zoom))
@@ -333,8 +352,8 @@ const flowCreateGroupId = computed<string | null>(() => {
 // the Explorer already shows that selection), Flow 열기…, 최근 Flow and a new Flow (`groupName`:
 // the name the create dialog showed, since the tree cache is being re-read at that moment). The
 // Center session ignores an activation for another Project.
-function openFlow(payload: ProjectExplorerFlowEvent, reveal: boolean, groupName?: string) {
-  center.openFlow(payload)
+function openFlow(payload: ProjectExplorerFlowEvent, reveal: boolean, groupName?: string, seedNode?: CanvasNodeSpec) {
+  center.openFlow(payload, seedNode ? { seedNode } : undefined)
   projectStore.recordRecentFlow({ id: payload.flowId, name: payload.flowName, projectId: payload.projectId, groupId: payload.groupId })
   projectStore.recordRecentGroup({ id: payload.groupId, name: groupNameOf(payload.projectId, payload.groupId, groupName), projectId: payload.projectId })
   if (reveal) requestExplorer({ select: { kind: 'flow', id: payload.flowId }, expand: [payload.groupId] })
@@ -375,7 +394,24 @@ function onFlowCreated(created: DesignerCreatedFlow) {
   const pid = projectId.value
   if (!pid) return
   explorerRefreshToken.value += 1
-  openFlow({ projectId: pid, groupId: created.groupId, flowId: created.id, flowName: created.title }, true, created.groupName)
+  openFlow(
+    { projectId: pid, groupId: created.groupId, flowId: created.id, flowName: created.title },
+    true,
+    created.groupName,
+    defaultFlowNode(),
+  )
+}
+
+// flowgate.v02.0045 T0019: a new Flow starts with one 요구사항 node on its Canvas (a document node of
+// the root type R, L0009 §2.5.1), added to its Graph draft by the Center session.
+function defaultFlowNode(): CanvasNodeSpec {
+  return {
+    nodeType: 'document',
+    docType: 'R',
+    paletteItemId: null,
+    label: t('gui.designer.center.node_kinds.requirement'),
+    kind: 'requirement',
+  }
 }
 
 function onOpenRecent(request: DesignerRecentRequest) {
@@ -433,6 +469,30 @@ function onTopCommand(command: DesignerTopCommand) {
     case 'designer.close':
       emit('close-designer')
       return
+    // flowgate.v02.0045 TR0020 rev2: 되돌리기 / 검증 act on the open Flow's edited structure, and
+    // 실행 takes that structure — it is confirmed first and the run starts only if that succeeds.
+    case 'edit.undo': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null) center.undoEdit(flowId)
+      return
+    }
+    case 'run.validate': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null && center.activeCanValidate.value) void center.validateDraft(flowId)
+      return
+    }
+    case 'run.next':
+    case 'run.all': {
+      const flowId = center.state.activeFlowId
+      if (flowId === null) return
+      const start = (go: boolean) => {
+        if (go && top.runMode === null) top.runMode = nextRunMode(top.runMode, command)
+      }
+      const ready = center.prepareRun(flowId)
+      if (typeof ready === 'boolean') start(ready)
+      else void ready.then(start)
+      return
+    }
     default:
       top.runMode = nextRunMode(top.runMode, command)
   }

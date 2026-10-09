@@ -11,6 +11,12 @@ export { useProjectStore } from './store'
 // Git part reads through the same store loaders.
 // flowgate.v02.0043 adds the recent Project / Group / Flow entries and the Group / Flow create
 // models the Designer File menu uses through the store.
+// flowgate.v02.0045 adds the Flow Canvas read / layout save models the Designer Center reads
+// through the store loaders (loadFlowCanvas / saveFlowCanvasLayout), and the handler shape of
+// the store's Canvas change subscription (subscribeFlowCanvasChanges).
+// flowgate.v02.0045 S3+S4 adds the Graph definition models (draft save, validation, confirmation)
+// the Designer Center saves through the store loaders.
+export type { FlowCanvasChangeHandlers } from './flowCanvasEvents'
 export type {
   BaseFileDiff,
   CreateFlowInput,
@@ -21,11 +27,36 @@ export type {
   FetchGroupTreeOptions,
   FlowAiActivity,
   FlowChangeEntry,
+  FlowCanvas,
+  FlowCanvasDocument,
+  FlowCanvasEdge,
+  FlowCanvasExternalRelation,
+  FlowCanvasGraphBlock,
+  FlowCanvasGraphNode,
+  FlowCanvasLayoutInput,
+  FlowCanvasLayoutResult,
+  FlowCanvasNode,
+  FlowCanvasOwnership,
+  FlowCanvasPosition,
+  FlowCanvasSlot,
+  FlowCanvasView,
+  FlowCanvasViewport,
   FlowChangeSet,
   FlowDiffSide,
   FlowFileDiff,
   FlowFileNode,
   FlowFileTree,
+  FlowGraphAssignee,
+  FlowGraphConfirmResult,
+  FlowGraphDefinition,
+  FlowGraphDefinitionEdge,
+  FlowGraphDefinitionNode,
+  FlowGraphDraftEdgeInput,
+  FlowGraphDraftInput,
+  FlowGraphDraftNodeInput,
+  FlowGraphDraftSaveResult,
+  FlowGraphIssue,
+  FlowGraphValidation,
   FlowRef,
   GroupTreeNode,
   GroupTreeNodeKind,

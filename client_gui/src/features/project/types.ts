@@ -273,3 +273,244 @@ export interface CreatedFlow {
   id: string
   title: string
 }
+
+// ── Flow Canvas (flowgate.v02.0045 S1+S2) ────────────────────────────────────────────
+// The Canvas read / layout save contract of P0008 §2·§3·§4, camelCase. kind / state /
+// ownership / identitySource / origin are open keys: a value this build does not know is
+// passed through untouched and the Canvas falls back to its default look (P0008 §1.5).
+
+/** P0008 §2.1 — `unassigned` | `v01` | `graph` | `conflict` (open key). */
+export interface FlowCanvasOwnership {
+  state: string
+  sequenceRootDocId: string | null
+  graphRevisionNo: number | null
+  assignedAt: string | null
+}
+
+export interface FlowCanvasPosition {
+  x: number
+  y: number
+  /** `saved` = stored layout, `auto` = server auto placement (never stored). */
+  source: string
+}
+
+export interface FlowCanvasDocument {
+  docId: string
+  typeCode: string | null
+  seq: number | null
+  title: string | null
+  docReviewStatus: string | null
+  status: string | null
+  supersedes: string[]
+}
+
+export interface FlowCanvasSlot {
+  itemId: number
+  itemSeq: number | null
+  order: number
+  type: string
+  label: string | null
+  derivedStatus: string | null
+  protected: boolean
+  sourceWpCardId: string | null
+}
+
+export interface FlowCanvasNode {
+  /** Node identity (P0008 §1.6): opaque, stable across reads and v0.1 edits. */
+  nodeKey: string
+  identitySource: string
+  origin: string
+  kind: string
+  docType: string | null
+  title: string
+  state: string | null
+  position: FlowCanvasPosition
+  editable: { move: boolean; structure: boolean }
+  document: FlowCanvasDocument | null
+  slot: FlowCanvasSlot | null
+  /** flowgate.v02.0045 S3: the Graph definition of a draft / revision node (P0008 §2.6). */
+  graphNode?: FlowCanvasGraphNode | null
+}
+
+/** P0008 §2.6 `graph_node`: what a Graph node is, besides where it is drawn. */
+export interface FlowCanvasGraphNode {
+  /** `document` | `gate` | `custom` (P0008 §5.1). */
+  nodeType: string
+  label: string
+  paletteItemId: string | null
+  assignee: FlowGraphAssignee | null
+  /** The start node the Flow's existing root R / B document is bound to (D0004 §3.7). */
+  rootBound: boolean
+}
+
+export interface FlowGraphAssignee {
+  kind: string
+  userId: string | null
+  providerId: string | null
+}
+
+/** P0008 §3 `view`: which Graph definition the Canvas shows. */
+export interface FlowCanvasView {
+  /** `revision` | `draft`. */
+  mode: string
+  revisionNo: number | null
+  draftVersion: number | null
+}
+
+/** P0008 §3 `graph` block. */
+export interface FlowCanvasGraphBlock {
+  draft: {
+    draftVersion: number
+    baseRevisionNo: number | null
+    updatedAt: string | null
+    updatedBy: string | null
+    confirmable: boolean
+    /** Why the draft cannot be confirmed: `flow_owned_by_v01` | `flow_ownership_conflict`. */
+    blockedReason: string | null
+  } | null
+  latestRevisionNo: number | null
+  rootBinding: { nodeKey: string; docId: string | null; boundAtRevisionNo: number | null } | null
+}
+
+export interface FlowCanvasEdge {
+  edgeId: string
+  /** `execution` decides what runs next; `reference` only shows a document relation. */
+  edgeClass: string
+  origin: string
+  source: string
+  target: string
+  relation: string | null
+  editable: boolean
+}
+
+export interface FlowCanvasExternalRelation {
+  nodeKey: string
+  relation: string
+  otherDocId: string
+  otherFlowId: string | null
+  otherTitle: string | null
+}
+
+export interface FlowCanvasViewport {
+  x: number
+  y: number
+  zoom: number
+}
+
+/** GET /api/v1/flows/{flowId}/canvas. */
+export interface FlowCanvas {
+  flowId: string
+  projectId: string | null
+  ownership: FlowCanvasOwnership
+  /** `documents` | `sequence` | `graph` (open key). */
+  projection: string
+  nodes: FlowCanvasNode[]
+  edges: FlowCanvasEdge[]
+  externalRelations: FlowCanvasExternalRelation[]
+  /** The requesting user's saved viewport, or null (fit all nodes). */
+  viewport: FlowCanvasViewport | null
+  identity: { sequenceTag: string | null; rematched: boolean; retiredNodeKeys: string[] }
+  collapsed: { applied: string[]; ignoredKeys: string[]; hiddenCounts: Record<string, number> }
+  /** flowgate.v02.0045 S3: the shown Graph definition, or null (no Graph nodes drawn). */
+  view?: FlowCanvasView | null
+  graph?: FlowCanvasGraphBlock | null
+}
+
+/** PUT /api/v1/flows/{flowId}/canvas/layout input. `viewport: null` = unchanged. */
+export interface FlowCanvasLayoutInput {
+  positions: Array<{ nodeKey: string; x: number; y: number }>
+  viewport: FlowCanvasViewport | null
+}
+
+export interface FlowCanvasLayoutResult {
+  savedPositions: number
+  viewportSaved: boolean
+  /** Keys the server did not store (`retired` / `unknown_node_key`): re-read the Canvas. */
+  ignored: Array<{ nodeKey: string; reason: string }>
+}
+
+// ── Graph definition (flowgate.v02.0045 S3+S4) ───────────────────────────────────────
+// P0008 §5 / §6: draft save (whole replacement), validation and confirmation. Node / edge keys
+// are opaque; a new node or edge carries a `tmp_` client key until the save answers its key.
+
+/** P0008 §5.1 node of a draft save. Exactly one of nodeKey / clientKey. */
+export interface FlowGraphDraftNodeInput {
+  nodeKey: string | null
+  clientKey: string | null
+  nodeType: string
+  docType: string | null
+  paletteItemId: string | null
+  label: string
+  assignee: FlowGraphAssignee | null
+}
+
+/** P0008 §5.1 edge; source / target are node keys or client keys of the same request. */
+export interface FlowGraphDraftEdgeInput {
+  edgeId: string | null
+  clientKey: string | null
+  source: string
+  target: string
+}
+
+export interface FlowGraphDraftInput {
+  /** The draft version this save replaces (0 = the first save). */
+  draftVersion: number
+  nodes: FlowGraphDraftNodeInput[]
+  edges: FlowGraphDraftEdgeInput[]
+}
+
+export interface FlowGraphDraftSaveResult {
+  draftVersion: number
+  /** client key -> issued key, for nodes and edges alike. */
+  keyMap: Record<string, string>
+  removedNodeKeys: string[]
+  removedEdgeIds: string[]
+}
+
+/** P0008 S3-5 issue: `code` / `structure` are open keys, `message` is display text. */
+export interface FlowGraphIssue {
+  code: string
+  ruleRef: string | null
+  structure: string | null
+  nodeKeys: string[]
+  edgeIds: string[]
+  message: string
+}
+
+export interface FlowGraphValidation {
+  draftVersion: number
+  confirmable: boolean
+  issues: FlowGraphIssue[]
+  rootBindingPreview: { status: string; nodeKey: string | null; docId: string | null; reason: string | null } | null
+}
+
+export interface FlowGraphConfirmResult {
+  revisionNo: number
+  ownership: FlowCanvasOwnership
+  rootBinding: { status: string; nodeKey: string | null; docId: string | null; boundAtRevisionNo: number | null }
+  retiredNodeKeys: string[]
+}
+
+export interface FlowGraphDefinitionNode {
+  nodeKey: string
+  nodeType: string
+  docType: string | null
+  paletteItemId: string | null
+  label: string
+  assignee: FlowGraphAssignee | null
+}
+
+export interface FlowGraphDefinitionEdge {
+  edgeId: string
+  source: string
+  target: string
+}
+
+/** GET /api/v1/flows/{flowId}/graph (P0008 §5.2). */
+export interface FlowGraphDefinition {
+  flowId: string
+  ownership: FlowCanvasOwnership
+  draft: { draftVersion: number; nodes: FlowGraphDefinitionNode[]; edges: FlowGraphDefinitionEdge[] } | null
+  latestRevision: { revisionNo: number; nodes: FlowGraphDefinitionNode[]; edges: FlowGraphDefinitionEdge[] } | null
+  policies: Record<string, string>
+}

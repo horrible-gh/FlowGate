@@ -99,9 +99,13 @@ export default {
       graph_loading: 'Loading graph',
       graph_load_failed: 'Could not load the graph',
       retry: 'Retry',
-      empty_graph: 'No nodes to show',
       sample_data: 'Sample data',
       canvas_label: '{name} canvas',
+      // flowgate.v02.0045 T0019 — a selected Canvas edge: remove button / why it cannot be removed.
+      edge: {
+        remove: 'Remove connection',
+        locked: 'A connection already passed cannot be removed',
+      },
       node_kinds: {
         requirement: 'Requirement',
         research: 'Research',
@@ -361,6 +365,7 @@ export default {
         arrange: 'Align / Arrange ▾',
         run_next: 'Next Step',
         run_all: 'Run All',
+        validate: 'Validate',
         stop: 'Stop',
         zoom_fit: 'Fit',
         zoom_out: 'Zoom Out',

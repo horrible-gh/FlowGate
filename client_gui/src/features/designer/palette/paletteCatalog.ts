@@ -14,7 +14,7 @@
 // definition contract holds them (the per-user UI settings are a closed field list), so the
 // Palette only emits them and whoever mounts it may keep them (PalettePanel v-model).
 
-import type { FlowNodeKindKey } from '../center/canvas/flowNodeKinds'
+import { flowNodeKindDisplay, type FlowNodeKindKey } from '../center/canvas/flowNodeKinds'
 import { DEFAULT_PALETTE_ICON, isPaletteIconChoice, type PaletteIconKey } from './paletteIcons'
 
 export const PALETTE_CATEGORIES = ['design', 'workflow', 'control'] as const
@@ -81,12 +81,15 @@ function builtin(
   return { id, category, nodeKind, docType, icon, accent, custom: false, labelKey: id }
 }
 
+/** flowgate.v02.0045 T0019: every 설계 card is purple — the Canvas color of the 'design' kind. */
+const DESIGN_ACCENT = flowNodeKindDisplay('design').accent
+
 /** The default Palette of 03-designer-shell, in display order. */
 export const DEFAULT_PALETTE_ITEMS: readonly BuiltinPaletteItem[] = [
-  builtin('basic_design', 'design', 'design', 'D', 'monitor', '#5b8def'),
-  builtin('protocol', 'design', 'design', 'P', 'flow', '#34c8a2'),
-  builtin('logic', 'design', 'design', 'L', 'logic', '#9b72ff'),
-  builtin('db_design', 'design', 'design', 'DB', 'database', '#ff9d51'),
+  builtin('basic_design', 'design', 'design', 'D', 'monitor', DESIGN_ACCENT),
+  builtin('protocol', 'design', 'design', 'P', 'flow', DESIGN_ACCENT),
+  builtin('logic', 'design', 'design', 'L', 'logic', DESIGN_ACCENT),
+  builtin('db_design', 'design', 'design', 'DB', 'database', DESIGN_ACCENT),
   builtin('research', 'workflow', 'research', 'N', 'search', '#22c98c'),
   builtin('plan', 'workflow', 'plan', 'WP', 'clipboard', '#15c9d4'),
   builtin('task', 'workflow', 'task', 'T', 'pencil', '#f59e0b'),
@@ -227,5 +230,27 @@ export function readPaletteDragData(transfer: Pick<DataTransfer, 'getData'> | nu
     }
   } catch {
     return null
+  }
+}
+
+/**
+ * flowgate.v02.0045 S3 (P0008 §5.1): the Graph node a dropped item stands for. A default item with
+ * a document type is a document node; the `confirm` card is a gate node; a user-defined item is a
+ * custom node. The node kind for drawing is the item's own kind key.
+ */
+export function paletteNodeSpec(definition: PaletteItemDefinition): {
+  nodeType: 'document' | 'gate' | 'custom'
+  docType: string | null
+  paletteItemId: string
+  label: string
+  kind: string
+} {
+  const nodeType = definition.docType ? 'document' : definition.custom ? 'custom' : 'gate'
+  return {
+    nodeType,
+    docType: nodeType === 'document' ? definition.docType : null,
+    paletteItemId: definition.itemId,
+    label: definition.label,
+    kind: definition.nodeKind,
   }
 }

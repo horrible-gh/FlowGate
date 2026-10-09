@@ -1,7 +1,7 @@
 /**
  * flowgate.v02.0026 — Designer Shell x Designer Center (0003-D §4.1 / §7.1). The real Shell
  * with the real 0023 Project Explorer, 0024 File Explorer, project store, Center session and
- * fixture Graph source; only the HTTP layer (`@shared/api`) is mocked, the same way as
+ * server Graph source (flowgate.v02.0045); only the HTTP layer (`@shared/api`) is mocked, as
  * DesignerShell.0025. This file alone gives the Canvas a size and a ResizeObserver stand-in.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -12,6 +12,7 @@ import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import { DesignerFileExplorer, DesignerShell, ProjectExplorer } from '@/features/designer'
 import { useProjectStore, type Project } from '@/features/project'
+import { answerFlowCanvas } from './flowCanvasResponse'
 
 const getRequest = vi.hoisted(() => vi.fn())
 vi.mock('@shared/api', () => ({
@@ -95,6 +96,9 @@ beforeEach(() => {
       return { data: { data: { group_id: decodeURIComponent(group[1]), branch: 'flow', commit: 'c0ffee', base_branch: params.base ?? 'v0.2', changes: [] } } }
     }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false, group_id: params.group_id } }
+    // flowgate.v02.0045: the Designer reads Flow Graphs from the server Canvas API.
+    const canvas = answerFlowCanvas(url)
+    if (canvas) return canvas
     throw new Error(`unexpected request ${url}`)
   })
 })
@@ -165,7 +169,7 @@ const treeCalls = (groupId: string) =>
   getRequest.mock.calls.filter(([url]) => String(url) === `/api/v1/projects/p/git/groups/${groupId}/tree`).length
 
 describe('Designer Shell x Center — opening Flows', () => {
-  it('activating two Flows opens two tabs with the second active, and the Canvas shows its sample Graph', async () => {
+  it('activating two Flows opens two tabs with the second active, and the Canvas shows its server Graph', async () => {
     const w = await mountShell()
     await activate(w, 'Designer v0.2', 'Canvas')
 
@@ -178,8 +182,13 @@ describe('Designer Shell x Center — opening Flows', () => {
     expect(canvas.attributes('data-flow-id')).toBe('p.ui.0002')
     const nodes = w.findAll('[data-test="designer-canvas-node"]')
     expect(nodes.length).toBeGreaterThan(0)
-    for (const node of nodes) expect(node.attributes('data-node-id')!.startsWith('p.ui.0002:')).toBe(true)
-    expect(get(w, 'designer-canvas-sample').text()).toBe('샘플 데이터')
+    // flowgate.v02.0045: real Flow Nodes from GET /flows/{id}/canvas, no sample badge.
+    // flowgate.v02.0045 T0019: no ownership badge either.
+    expect(nodes.map((node) => node.attributes('data-node-id'))).toEqual(['doc:p.ui.0002.0001-R', 'doc:p.ui.0002.0002-N'])
+    expect(w.find('[data-test="designer-canvas-sample"]').exists()).toBe(false)
+    expect(w.find('[data-test="designer-canvas-ownership"]').exists()).toBe(false)
+    expect(canvas.text()).not.toContain('담당')
+    expect(getRequest.mock.calls.some(([url]) => url === '/api/v1/flows/p.ui.0002/canvas')).toBe(true)
   })
 
   it('double-clicking an open Flow again keeps two tabs and activates the first', async () => {

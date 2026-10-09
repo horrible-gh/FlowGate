@@ -1,25 +1,43 @@
 <template>
   <!-- flowgate.v02.0026 — FlowGate Node card (0003-D §6.3, look of MirageGlass 03-designer-shell):
        a fixed 176x92 card in a kind-colored frame. The head row holds the kind icon box, the kind
-       name and the state; the body holds the one-line title. The handles only give Edges an
-       anchor (target on the left, source on the right); they are invisible and never
-       connectable. -->
+       name and the state; the body holds the one-line title. The handles give Edges an anchor
+       (target on the left, source on the right). flowgate.v02.0045 S3: on a node of an editable
+       draft (`data.connectable`) they are shown and a connection can be dragged from / to them;
+       otherwise they stay invisible and never connectable. `data.issue` marks a node the last
+       validation reported. flowgate.v02.0045 T0019: a 설계 card is named like its Palette card.
+       flowgate.v02.0045 TR0020 rev2: no handle dots. On a connectable card a connection ends
+       anywhere on the target card — the target handle covers the whole card and takes the pointer
+       only while a connection is being dragged (FlowCanvas `is-connecting`). A 설계 card shows its
+       document type's glyph. TR0020 rev4 (rejection item 3): a connection starts from any side —
+       four start strips run along the card's top, right, bottom and left edges (one source handle
+       each); the Edge itself is drawn between the facing sides (FlowEdgePath / edgeGeometry.ts).
+       A card the last validation reported names the problem on hover (`data.issueText`). -->
   <div
     class="flow-node-card"
-    :class="{ 'is-selected': data.selected, 'is-unknown': kind.key === 'unknown' }"
+    :class="{ 'is-selected': data.selected, 'is-unknown': kind.key === 'unknown', 'has-issue': data.issue === true }"
     :style="{ '--flow-node-accent': kind.accent }"
     data-test="designer-canvas-node"
     :data-node-id="id"
     :data-kind="kind.key"
+    :data-connectable="data.connectable ? 'true' : 'false'"
+    :data-issue="data.issue ? 'true' : 'false'"
+    :title="data.issue && data.issueText ? data.issueText : undefined"
   >
-    <Handle type="target" :position="Position.Left" :connectable="false" class="flow-node-handle" />
+    <Handle
+      type="target"
+      :position="Position.Left"
+      :connectable="data.connectable === true"
+      class="flow-node-handle"
+      :class="{ 'is-connectable': data.connectable, 'flow-node-drop': data.connectable }"
+    />
     <div class="flow-node-head">
       <span class="flow-node-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24">
           <path :d="kind.icon" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </span>
-      <span class="flow-node-kind" data-test="designer-canvas-node-kind">{{ t(`gui.designer.center.node_kinds.${kind.key}`) }}</span>
+      <span class="flow-node-kind" data-test="designer-canvas-node-kind">{{ t(kindLabelKey) }}</span>
       <span
         v-if="state"
         class="flow-node-state"
@@ -30,7 +48,16 @@
     <div class="flow-node-body">
       <p class="flow-node-title" :title="data.title" data-test="designer-canvas-node-title">{{ data.title }}</p>
     </div>
-    <Handle type="source" :position="Position.Right" :connectable="false" class="flow-node-handle" />
+    <Handle
+      v-for="side in LINK_SIDES"
+      :id="side.id"
+      :key="side.id"
+      type="source"
+      :position="side.position"
+      :connectable="data.connectable === true"
+      class="flow-node-handle"
+      :class="{ 'is-connectable': data.connectable, 'flow-node-link': data.connectable, [`flow-node-link-${side.id}`]: data.connectable }"
+    />
   </div>
 </template>
 
@@ -38,7 +65,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Handle, Position } from '@vue-flow/core'
-import { flowNodeKindDisplay, flowNodeStateDisplay } from './flowNodeKinds'
+import { flowNodeKindDisplay, flowNodeKindLabelKey, flowNodeStateDisplay } from './flowNodeKinds'
 import type { FlowGateNodeData } from './vueFlowMapping'
 
 const props = defineProps<{
@@ -46,9 +73,18 @@ const props = defineProps<{
   data: FlowGateNodeData
 }>()
 
+/** The four start strips of a connectable card, one source handle per side. */
+const LINK_SIDES = [
+  { id: 'top', position: Position.Top },
+  { id: 'right', position: Position.Right },
+  { id: 'bottom', position: Position.Bottom },
+  { id: 'left', position: Position.Left },
+] as const
+
 const { t } = useI18n()
 
-const kind = computed(() => flowNodeKindDisplay(props.data.kind))
+const kind = computed(() => flowNodeKindDisplay(props.data.kind, props.data.docType))
+const kindLabelKey = computed(() => flowNodeKindLabelKey(props.data.kind, props.data.docType))
 const state = computed(() => flowNodeStateDisplay(props.data.state))
 </script>
 
@@ -160,5 +196,104 @@ const state = computed(() => flowNodeStateDisplay(props.data.state))
   background: transparent;
   opacity: 0;
   pointer-events: none;
+}
+
+/* flowgate.v02.0045 TR0020 rev2 / rev4: a draft node's connection areas, no dots.
+   Start: a strip along each of the four sides (inside the card — the card clips what sticks
+   out). Hovering the card shows the strips as a soft frame in the card color; the cursor turns to
+   a crosshair over them. The middle of the card still drags the card.
+   End: the target handle covers the whole card and stays out of the pointer's way until a
+   connection is dragged (FlowCanvas). Where the drawn Edge attaches is not these handles' business
+   (FlowEdgePath picks the facing sides). */
+.flow-node-card :deep(.flow-node-handle.is-connectable) {
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  opacity: 1;
+  transform: none;
+}
+
+.flow-node-card :deep(.flow-node-link) {
+  z-index: 2;
+  pointer-events: all;
+  cursor: crosshair;
+  transition: background 0.14s ease, box-shadow 0.14s ease;
+}
+
+.flow-node-card :deep(.flow-node-link-top),
+.flow-node-card :deep(.flow-node-link-bottom) {
+  right: auto;
+  left: 0;
+  width: 100%;
+  height: 14px;
+}
+
+.flow-node-card :deep(.flow-node-link-top) {
+  top: 0;
+  bottom: auto;
+}
+
+.flow-node-card :deep(.flow-node-link-bottom) {
+  top: auto;
+  bottom: 0;
+}
+
+.flow-node-card :deep(.flow-node-link-left),
+.flow-node-card :deep(.flow-node-link-right) {
+  top: 0;
+  bottom: auto;
+  width: 24px;
+  height: 100%;
+}
+
+.flow-node-card :deep(.flow-node-link-left) {
+  right: auto;
+  left: 0;
+}
+
+.flow-node-card :deep(.flow-node-link-right) {
+  right: 0;
+  left: auto;
+}
+
+.flow-node-card[data-connectable='true']:hover :deep(.flow-node-link-top) {
+  background: linear-gradient(to top, transparent, color-mix(in srgb, var(--flow-node-accent) 16%, transparent));
+  box-shadow: inset 0 2px 0 color-mix(in srgb, var(--flow-node-accent) 70%, transparent);
+}
+
+.flow-node-card[data-connectable='true']:hover :deep(.flow-node-link-bottom) {
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--flow-node-accent) 16%, transparent));
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--flow-node-accent) 70%, transparent);
+}
+
+.flow-node-card[data-connectable='true']:hover :deep(.flow-node-link-left) {
+  background: linear-gradient(to left, transparent, color-mix(in srgb, var(--flow-node-accent) 16%, transparent));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--flow-node-accent) 70%, transparent);
+}
+
+.flow-node-card[data-connectable='true']:hover :deep(.flow-node-link-right) {
+  background: linear-gradient(to right, transparent, color-mix(in srgb, var(--flow-node-accent) 16%, transparent));
+  box-shadow: inset -2px 0 0 color-mix(in srgb, var(--flow-node-accent) 70%, transparent);
+}
+
+.flow-node-card :deep(.flow-node-link:hover) {
+  background-color: color-mix(in srgb, var(--flow-node-accent) 22%, transparent);
+}
+
+.flow-node-card :deep(.flow-node-drop) {
+  top: 0;
+  bottom: auto;
+  left: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.flow-node-card.has-issue {
+  outline: 2px solid #ff9d51;
+  outline-offset: 2px;
 }
 </style>

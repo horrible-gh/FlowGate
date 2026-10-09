@@ -50,6 +50,7 @@ from modules.flow_gate.services.workflow_decision_service import (
     validate_continuation_auto_approve_item_seqs,
 )
 from modules.flow_gate.db import documents as _db_documents
+from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact  # D0004 §4.3
 from modules.flow_gate import process_service as _process_service
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.workflow.pipeline_service import transition_document as _transition_document
@@ -291,13 +292,13 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
         return _disposed
 
     try:
-        result = decide_workflow(
+        result = _graph_contact.guarded_assignment(_pre_doc, lambda: decide_workflow(
             doc_id=doc_id,
             doc_class=body.doc_class,
             sequence=[item.model_dump() for item in body.sequence],
             force_encoding_reason=body.force_encoding_reason,
             locale=request.headers.get("x-locale") or "ko",
-        )
+        ), auth.get("issued_to"))
     except LookupError as exc:
         code, _, val = str(exc).partition(":")
         if code == "doc_not_found":
@@ -331,6 +332,9 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
             status_code=500,
             content={"error": "internal_error", "detail": str(exc)},
         )
+
+    if isinstance(result, JSONResponse):  # Graph / conflict Flow (P0008 §9)
+        return result
 
     # draft → open transition: auto-transition head document (R) status on workflow decision
     _doc = _db_documents.get_by_id(doc_id)
@@ -594,6 +598,9 @@ def _advance_after_auth(
     if _active_run is not None:
         log("refused", status=_active_run.status_code, code="group_mutation_blocked")
         return _active_run
+    _graph_refusal = _graph_contact.progress_refusal(_pre_doc)  # Graph / conflict Flow (P0008 §9)
+    if _graph_refusal is not None:
+        return _refused(409, *_graph_refusal)
 
     # 0352 T0004 §2/§3.4: this is a FRESH client request naming the selection, so the full
     # 422 validation (including "already done") runs here — not inside advance_workflow,
@@ -950,7 +957,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
         return _active_run
 
     try:
-        result = edit_workflow_pending(
+        result = _graph_contact.guarded_assignment(_pre_doc, lambda: edit_workflow_pending(
             doc_id=body.doc_id,
             new_items=[item.model_dump(exclude_unset=True) for item in body.items],
             force_encoding_reason=body.force_encoding_reason,
@@ -959,7 +966,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             applied_by=auth.get("issued_to"),
             locale=request.headers.get("x-locale") or "ko",
             acknowledged_codes=body.acknowledged_codes,
-        )
+        ), auth.get("issued_to"))
     except ProtectedRowModified as exc:
         # 0649 T#1 (NR0003 O1): an echo tried to change a protected row's identity.
         return JSONResponse(
@@ -1116,6 +1123,8 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
         return JSONResponse(status_code=400, content={"error": msg})
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": "internal_error", "detail": str(exc)})
+    if isinstance(result, JSONResponse):  # Graph / conflict Flow (P0008 §9)
+        return result
 
     # SSE broadcast: AI sequence edits happen through a worker PATCH, so the user's
     # browser does not receive the modal-local saved event. Reuse the existing group

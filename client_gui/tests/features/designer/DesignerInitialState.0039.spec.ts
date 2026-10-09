@@ -29,6 +29,7 @@ import {
   type DesignerMenuEntry,
 } from '@/features/designer/top/designerTop'
 import { useProjectStore, type Project } from '@/features/project'
+import { answerFlowCanvas } from './flowCanvasResponse'
 
 const getRequest = vi.hoisted(() => vi.fn())
 vi.mock('@shared/api', () => ({
@@ -97,6 +98,9 @@ beforeEach(() => {
       return { data: { ok: true, status: { enabled: true, base_branch: 'v0.2', base_branch_configured: true, slots: [] } } }
     }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false, group_id: params.group_id } }
+    // flowgate.v02.0045: the Designer reads Flow Graphs from the server Canvas API.
+    const canvas = answerFlowCanvas(url)
+    if (canvas) return canvas
     throw new Error(`unexpected request ${url}`)
   })
 })
@@ -210,7 +214,8 @@ function expectUnselectedState(w: VueWrapper<any>) {
   expect(toolbar.attributes('aria-disabled')).toBe('true')
   expect(toolbar.classes()).toContain('is-unavailable')
   const buttons = toolbar.findAll('button')
-  expect(buttons.length).toBe(12)
+  // flowgate.v02.0045 TR0020 rev2: + 검증 before the run buttons.
+  expect(buttons.length).toBe(13)
   expect(buttons.every(isDisabled)).toBe(true)
 }
 
@@ -359,7 +364,8 @@ describe('Designer initial state — only an open Flow continues into the Design
     expect(get(w, 'designer-explorer-mode-tabs').findAll('[role="tab"]').some(isDisabled)).toBe(false)
     expect(isDisabled(get(w, 'project-explorer-search'))).toBe(false)
     expect(get(w, 'designer-toolbar').attributes('aria-disabled')).toBeUndefined()
-    expect(get(w, 'designer-toolbar').findAll('button').some(isDisabled)).toBe(false)
+    // flowgate.v02.0045 TR0020 rev2: 검증 waits for an edited structure (none on this Flow).
+    expect(get(w, 'designer-toolbar').findAll('button:not([data-command="run.validate"])').some(isDisabled)).toBe(false)
 
     const file = await openMenu(w, 'file')
     // The chosen row is the Flow, not a Group: only Group 닫기 has nothing to act on.

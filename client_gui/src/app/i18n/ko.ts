@@ -102,9 +102,13 @@ export default {
       graph_loading: '그래프를 불러오는 중',
       graph_load_failed: '그래프를 불러오지 못했습니다',
       retry: '다시 시도',
-      empty_graph: '표시할 노드가 없습니다',
       sample_data: '샘플 데이터',
       canvas_label: '{name} 캔버스',
+      // flowgate.v02.0045 T0019 — a selected Canvas edge: remove button / why it cannot be removed.
+      edge: {
+        remove: '연결선 삭제',
+        locked: '이미 진행된 연결선은 삭제할 수 없습니다',
+      },
       node_kinds: {
         requirement: '요구사항',
         research: '조사',
@@ -365,6 +369,7 @@ export default {
         arrange: '정렬 / 배치 ▾',
         run_next: '다음 단계',
         run_all: '전체 실행',
+        validate: '검증',
         stop: '중지',
         zoom_fit: '화면 맞춤',
         zoom_out: '축소',

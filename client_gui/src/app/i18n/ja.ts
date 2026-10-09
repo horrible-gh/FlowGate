@@ -99,9 +99,13 @@ export default {
       graph_loading: 'グラフを読み込み中',
       graph_load_failed: 'グラフを読み込めませんでした',
       retry: '再試行',
-      empty_graph: '表示するノードがありません',
       sample_data: 'サンプルデータ',
       canvas_label: '{name} キャンバス',
+      // flowgate.v02.0045 T0019 — a selected Canvas edge: remove button / why it cannot be removed.
+      edge: {
+        remove: '接続線を削除',
+        locked: 'すでに進行した接続線は削除できません',
+      },
       node_kinds: {
         requirement: '要件',
         research: '調査',
@@ -361,6 +365,7 @@ export default {
         arrange: '整列 / 配置 ▾',
         run_next: '次のステップ',
         run_all: 'すべて実行',
+        validate: '検証',
         stop: '停止',
         zoom_fit: '画面に合わせる',
         zoom_out: '縮小',

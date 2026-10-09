@@ -301,11 +301,13 @@ describe('DesignerCenter — Canvas', () => {
     expect(w.find('[data-test="designer-canvas-sample"]').exists()).toBe(false)
   })
 
-  it('a Graph without Nodes keeps the Canvas and shows the empty-Graph notice', async () => {
+  // flowgate.v02.0045 T0019: no empty-Graph text (and no replacement for it).
+  it('a Graph without Nodes keeps the Canvas and shows no empty-Graph text', async () => {
     const w = mountCenter()
     await openReady('a', 'Alpha', { flowId: 'a', nodes: [], edges: [] })
     expect(get(w, 'designer-canvas').attributes('data-zoom')).toBe('1')
-    expect(get(w, 'designer-canvas-empty-graph').text()).toBe('표시할 노드가 없습니다')
+    expect(w.find('[data-test="designer-canvas-empty-graph"]').exists()).toBe(false)
+    expect(get(w, 'designer-canvas').text()).not.toContain('표시할 노드가 없습니다')
     expect(w.findAll('[data-test="designer-canvas-node"]')).toHaveLength(0)
   })
 })

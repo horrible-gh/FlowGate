@@ -25,6 +25,7 @@
       :density="density"
       :zoom="zoom"
       :disabled="!targets.flow"
+      :can-validate="canValidate"
       @command="emit('command', $event)"
       @update:density="emit('update:density', $event)"
     />
@@ -60,8 +61,10 @@ withDefaults(
     targets: DesignerMenuTargets
     /** Recent Project / Group / Flow entries for the File menu (0043). */
     recent?: DesignerRecentLists
+    /** flowgate.v02.0045 TR0020 rev2: the Toolbar's 검증 is available. */
+    canValidate?: boolean
   }>(),
-  { recent: () => EMPTY_RECENT_LISTS },
+  { recent: () => EMPTY_RECENT_LISTS, canValidate: false },
 )
 
 const emit = defineEmits<{

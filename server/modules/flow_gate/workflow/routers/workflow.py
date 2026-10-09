@@ -1032,6 +1032,10 @@ async def document_review_transition_endpoint(
             except Exception:
                 pass
 
+        # flowgate.v02.0045 D0004 §4.3: a Graph-owned Flow hands the decision to the result binder.
+        from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact
+        _graph_contact.after_review_decided((result or {}).get("group_id"), doc_id, action)
+
         # 0332 D0005 K1 — TR 승인 커밋 포인트. 자리가 여기인 이유 셋:
         #   * 승인 전이는 이미 DB 에 커밋된 뒤다(pipeline_service 는 자기 트랜잭션을
         #     열지 않는다). 그래서 git 이 무엇을 하든 승인은 이미 서 있다.

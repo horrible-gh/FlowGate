@@ -134,6 +134,9 @@ def test_patch_route_maps_empty_guard_to_400(monkeypatch):
         "doc_id": _id, "group_id": "flowgate.default.0119",
     })
     monkeypatch.setattr(routes, "_disposed_group_response", lambda *_a, **_k: None)
+    # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+    # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
+    monkeypatch.setattr(routes._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
     monkeypatch.setattr(
         routes, "edit_workflow_pending",
         lambda **_k: (_ for _ in ()).throw(
@@ -168,6 +171,9 @@ def test_patch_route_broadcasts_group_refresh_after_success(monkeypatch):
         "doc_review_status": "wf_in_progress",
     })
     monkeypatch.setattr(routes, "_disposed_group_response", lambda *_a, **_k: None)
+    # flowgate.v02.0045 S4: the route asks the Graph engine router first; this test has no DB
+    # behind it, so the contact is the unassigned / v0.1 pass-through (real one: test_graph_v01_contact_0045.py).
+    monkeypatch.setattr(routes._graph_contact, "guarded_assignment", lambda doc, call, actor=None: call())
     monkeypatch.setattr(routes, "edit_workflow_pending", lambda **_k: {
         "status": "updated",
         "doc_id": "flowgate.default.0119.0001-B",
