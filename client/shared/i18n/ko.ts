@@ -192,6 +192,16 @@ export default {
         confirm: '스토리지 경로 변경 시 기존 파일 위치가 변경됩니다. 계속하시겠습니까?',
         confirm_title: '스토리지 경로 변경 확인',
       },
+      scratch_ttl: {
+        label: 'Scratch 보존 기간',
+        value: '보존 기간 값',
+        unit: '단위',
+        minute: '분',
+        hour: '시간',
+        day: '일',
+        hint: 'run 및 token Scratch에 공통 적용됩니다. 최소 1분입니다.',
+        invalid: '1 이상의 정수와 분, 시간 또는 일 단위를 선택하세요.',
+      },
       source_mode: {
         label: '로컬/원격 모드',
         default_mode: '전역 기본 모드',

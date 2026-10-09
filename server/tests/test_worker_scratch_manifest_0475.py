@@ -16,6 +16,12 @@ sys.path.insert(0, str(_SERVER_DIR))
 
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
 from modules.flow_gate.services import mention_service  # noqa: E402
+from modules.flow_gate.settings import scratch_retention
+
+
+@pytest.fixture(autouse=True)
+def default_scratch_ttl(monkeypatch):
+    monkeypatch.setattr(scratch_retention, "effective_retention", lambda: timedelta(days=7))
 
 
 def _root(monkeypatch, tmp_path, project="project-0475"):
@@ -49,7 +55,7 @@ def test_create_scratch_has_atomic_manifest_and_owned_subdirs(monkeypatch, tmp_p
         "schema": 1, "owner": "flowgate.ai-invoke", "project_id": "project-0475",
         "run_id": run_id, "scratch_path": str(scratch.resolve()),
         "created_at": manifest["created_at"], "completed_at": None,
-        "policy": {"retention_days": 7, "delete_on_complete": True},
+        "policy": {"retention_source": "system_settings", "delete_on_complete": True},
     }
     serialized = json.dumps(manifest)
     for secret in ("TOKEN_SENTINEL", "PROMPT_SENTINEL", "COMMAND_SENTINEL"):

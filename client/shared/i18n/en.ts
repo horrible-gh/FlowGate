@@ -192,6 +192,16 @@ export default {
         confirm: 'Changing the storage path will relocate existing files. Continue?',
         confirm_title: 'Confirm Storage Path Change',
       },
+      scratch_ttl: {
+        label: 'Scratch retention',
+        value: 'Retention value',
+        unit: 'Unit',
+        minute: 'Minutes',
+        hour: 'Hours',
+        day: 'Days',
+        hint: 'Applies to both run and token scratch. Minimum: 1 minute.',
+        invalid: 'Enter a positive whole number and select minutes, hours, or days.',
+      },
       source_mode: {
         label: 'Local/Remote Mode',
         default_mode: 'Global default mode',

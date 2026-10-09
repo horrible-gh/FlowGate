@@ -40,6 +40,29 @@ def recover_ai_invoke_leases():
         logger.warning(f"[startup] AI-run lease recovery failed: {exc}")
 
 
+def sweep_ai_run_scratches():
+    """0610: sweep run scratch after orphan leases have durable end records."""
+    try:
+        from modules.flow_gate.services import ai_invoke_service
+
+        projects = ai_invoke_service.startup_sweep_run_scratches()
+        logger.info(f"[startup] swept AI-run scratch for {projects} project(s)")
+    except Exception as exc:
+        logger.warning(f"[startup] AI-run scratch sweep failed: {exc}")
+
+
+def sweep_token_scratches():
+    """Sweep manifest-owned token directories after orphan lease recovery."""
+    try:
+        from modules.flow_gate.services import token_scratch
+
+        projects = token_scratch.startup_sweep()
+        purged = token_scratch.purge_expired_rows()
+        logger.info(f"[startup] swept token scratch for {projects} project(s); purged {purged} expired token row(s)")
+    except Exception as exc:
+        logger.warning(f"[startup] token scratch sweep failed: {exc}")
+
+
 def register_server_instance():
     """0669 1a (0666 L 2.26 steps 1~2): register this process before any lock recovery.
 
@@ -193,6 +216,8 @@ def run_all():
     record_deployment()
     preload_singletons()
     recover_ai_invoke_leases()
+    sweep_ai_run_scratches()
+    sweep_token_scratches()
     register_server_instance()
     recover_git_sessions()
     encrypt_ai_provider_keys()

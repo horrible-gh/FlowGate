@@ -39,9 +39,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
 from fastapi import HTTPException
+from modules.flow_gate.db import ai_invoke_runs as db_ai_invoke_runs
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.settings import ai_execution_policy_service
+from modules.flow_gate.settings import scratch_retention
 from modules.flow_gate.storage import paths as storage_paths
 
 # The engine's log channel keeps its historical name: `caplog`/handler
@@ -59,7 +61,7 @@ RUN_TIMEOUT_CAP_SEC = 14400      # run total = min(BASE × docs_target, CAP)
 
 FAST_FAIL_WINDOW_SEC = 15        # nonzero exit + 0 docs inside this window ⇒ startup failure
 
-SCRATCH_RETENTION_DAYS = 7       # failed-run scratch retention
+SCRATCH_RETENTION_DAYS = 7       # legacy manifest format only; GC reads system settings
 
 LAST_MESSAGE_MAX_BYTES = 16384   # keep the tail, truncate the front
 
@@ -724,7 +726,7 @@ def _manifest_for(project_id: str, run_id: str, scratch: Path) -> dict:
         "scratch_path": str(scratch.resolve(strict=True)),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "completed_at": None,
-        "policy": {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True},
+        "policy": {"retention_source": "system_settings", "delete_on_complete": True},
     }
 
 
@@ -766,12 +768,15 @@ def _validate_scratch_manifest(project_id: str, run_id: str, scratch: Path) -> t
         if _svc()._is_reparse_or_symlink(manifest_path) or not manifest_path.is_file():
             return None, "manifest_missing"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        expected_policy = {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True}
+        valid_policies = (
+            {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True},
+            {"retention_source": "system_settings", "delete_on_complete": True},
+        )
         if manifest.get("schema") != SCRATCH_MANIFEST_SCHEMA or manifest.get("owner") != "flowgate.ai-invoke":
             return None, "manifest_identity_invalid"
         if manifest.get("project_id") != project_id or manifest.get("run_id") != run_id:
             return None, "manifest_owner_mismatch"
-        if manifest.get("scratch_path") != str(resolved) or manifest.get("policy") != expected_policy:
+        if manifest.get("scratch_path") != str(resolved) or manifest.get("policy") not in valid_policies:
             return None, "manifest_path_or_policy_mismatch"
         return manifest, "valid"
     except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
@@ -809,8 +814,94 @@ def _delete_owned_scratch(project_id: str, run_id: str, scratch: Path) -> tuple[
     return True, "deleted"
 
 
+# 503daac8 introduced manifests on 2026-08-28. The run ID has only a date,
+# so same-day directories cannot be classified safely as pre-manifest.
+_MANIFEST_INTRODUCED_DATE = datetime(2026, 8, 28, tzinfo=timezone.utc).date()
+
+
+def _aware_time(value: object) -> Optional[datetime]:
+    try:
+        parsed = datetime.fromisoformat(str(value))
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _terminal_scratch_run(project_id: str, run_id: str, now: datetime) -> tuple[Optional[dict], str]:
+    """Require a matching finished DB row and no in-memory or durable lease owner."""
+    if _svc().is_run_live(run_id):
+        return None, "live_run"
+    try:
+        if db_group_ai_leases.get_by_run_id(run_id) is not None:
+            return None, "lease_present"
+        row = db_ai_invoke_runs.get(run_id)
+    except Exception:
+        return None, "durable_state_unavailable"
+    if row is None or row.get("project_id") != project_id or row.get("status") != "finished":
+        return None, "terminal_record_missing"
+    started = _aware_time(row.get("started_at"))
+    finished = _aware_time(row.get("finished_at"))
+    if started is None or finished is None or finished < started:
+        return None, "terminal_time_invalid"
+    if started.strftime("%Y%m%d") != run_id[4:12]:
+        return None, "run_date_mismatch"
+    if now - finished < scratch_retention.effective_retention():
+        return None, "retention_active"
+    return row, "terminal"
+
+
+def _legacy_candidate(project_id: str, run_id: str, child: Path, now: datetime) -> tuple[bool, str]:
+    """Classify only a pre-503daac8, manifest-absent direct managed child."""
+    if not _RUN_ID_RE.fullmatch(run_id):
+        return False, "invalid_run_id"
+    try:
+        run_date = datetime.strptime(run_id[4:12], "%Y%m%d").date()
+        if run_date >= _MANIFEST_INTRODUCED_DATE:
+            return False, "not_pre_manifest"
+        root = _project_scratch_root(project_id)
+        if (_svc()._is_reparse_or_symlink(root.parent)
+                or _svc()._is_reparse_or_symlink(root)
+                or _svc()._is_reparse_or_symlink(child)):
+            return False, "reparse_or_symlink"
+        root_resolved = root.resolve(strict=True)
+        resolved = child.resolve(strict=True)
+        if resolved.parent != root_resolved or child.parent.resolve(strict=True) != root_resolved:
+            return False, "outside_or_nested"
+        if not resolved.is_dir() or resolved.name != run_id:
+            return False, "path_identity_mismatch"
+        if any((resolved / name).exists() or (resolved / name).is_symlink() for name in (
+            SCRATCH_MANIFEST_NAME, SCRATCH_MANIFEST_NAME + ".tmp",
+            SCRATCH_MANIFEST_NAME + ".update",
+        )):
+            return False, "manifest_present_invalid"
+        modified = datetime.fromtimestamp(child.stat().st_mtime, timezone.utc)
+        if now - modified < scratch_retention.effective_retention():
+            return False, "legacy_recently_modified"
+    except (OSError, RuntimeError, ValueError):
+        return False, "legacy_path_unverifiable"
+    return True, "legacy_candidate"
+
+
+def _delete_legacy_scratch(project_id: str, run_id: str, child: Path, now: datetime) -> tuple[bool, str]:
+    """Recheck path, manifest absence, and durable state immediately before removal."""
+    valid, reason = _legacy_candidate(project_id, run_id, child, now)
+    if not valid:
+        return False, reason
+    row, reason = _terminal_scratch_run(project_id, run_id, now)
+    if row is None:
+        return False, reason
+    try:
+        shutil.rmtree(child)
+    except Exception:
+        return False, "delete_failed"
+    if child.exists() or child.is_symlink():
+        return False, "delete_incomplete"
+    _safe_scratch_log(project_id, run_id, child, "deleted", "verified_legacy_terminal")
+    return True, "deleted"
+
+
 def _cleanup_retained_scratches(project_id: str) -> None:
-    """Delete only manifest-proven direct children retained for at least seven days."""
+    """Sweep proven retained, crash orphan, and pre-manifest run scratch."""
     try:
         root = _project_scratch_root(project_id)
         if not root.is_dir() or _svc()._is_reparse_or_symlink(root):
@@ -823,24 +914,60 @@ def _cleanup_retained_scratches(project_id: str) -> None:
                 continue
             manifest, reason = _validate_scratch_manifest(project_id, run_id, child)
             if manifest is None:
+                if reason != "manifest_missing":
+                    _safe_scratch_log(project_id, run_id, child, "skipped", reason)
+                    continue
+                valid, reason = _legacy_candidate(project_id, run_id, child, now)
+                if valid:
+                    row, reason = _terminal_scratch_run(project_id, run_id, now)
+                    valid = row is not None
+                if valid:
+                    deleted, reason = _delete_legacy_scratch(project_id, run_id, child, now)
+                    if deleted:
+                        continue
                 _safe_scratch_log(project_id, run_id, child, "skipped", reason)
                 continue
-            try:
-                completed = datetime.fromisoformat(str(manifest.get("completed_at")))
-                if completed.tzinfo is None:
-                    raise ValueError
-                age = now - completed.astimezone(timezone.utc)
-            except (TypeError, ValueError):
-                _safe_scratch_log(project_id, run_id, child, "skipped", "completion_time_invalid")
-                continue
-            if age < timedelta(days=SCRATCH_RETENTION_DAYS):
+            completed = _aware_time(manifest.get("completed_at"))
+            if completed is None:
+                if manifest.get("completed_at") is not None:
+                    _safe_scratch_log(project_id, run_id, child, "skipped", "completion_time_invalid")
+                    continue
+                created = _aware_time(manifest.get("created_at"))
+                row, reason = _terminal_scratch_run(project_id, run_id, now)
+                finished = _aware_time(row.get("finished_at")) if row else None
+                if created is None or finished is None or created > finished:
+                    reason = "orphan_evidence_mismatch" if row else reason
+                    _safe_scratch_log(project_id, run_id, child, "skipped", reason)
+                    continue
+                # No manifest rewrite is needed: the durable terminal timestamp is
+                # authoritative, and deletion still revalidates manifest identity.
+            elif now - completed < scratch_retention.effective_retention():
                 _safe_scratch_log(project_id, run_id, child, "retained", "retention_active")
+                continue
+            if _svc().is_run_live(run_id):
+                _safe_scratch_log(project_id, run_id, child, "retained", "live_run")
+                continue
+            try:
+                if db_group_ai_leases.get_by_run_id(run_id) is not None:
+                    _safe_scratch_log(project_id, run_id, child, "retained", "lease_present")
+                    continue
+            except Exception:
+                _safe_scratch_log(project_id, run_id, child, "retained", "durable_state_unavailable")
                 continue
             deleted, delete_reason = _svc()._delete_owned_scratch(project_id, run_id, child)
             if not deleted:
                 _safe_scratch_log(project_id, run_id, child, "retained", delete_reason)
     except Exception:
         logger.warning("ai-invoke scratch sweep failed")
+
+
+def startup_sweep_run_scratches() -> int:
+    """Sweep all known projects after startup lease recovery, including inactive ones."""
+    projects = db_projects.list_projects()
+    for project in projects:
+        _cleanup_retained_scratches(project["project_id"])
+    return len(projects)
+
 
 
 def prompt_digest(text: Optional[str]) -> tuple[int, Optional[str]]:
