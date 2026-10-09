@@ -10,7 +10,11 @@
        it — header meta / header actions, and per tab the Content parts in `order`. A tab no
        registration contributes to is not shown; with no tab at all (e.g. a Node without a
        document) only the header is. The Frame knows no feature and calls no API; a feature's
-       Host intent leaves as the `host` event. -->
+       Host intent leaves as the `host` event.
+       flowgate.v02.0048 T#3 (D#1 §7.3): the header follows the target. When the target document's
+       review status, an AI run of its Flow or its documents change on the server, the Frame asks
+       for the Flow to be read again quietly (`refresh-flow`); the new selection then gives the
+       header and the Canvas card the same values. The Frame keeps no copy of the server state. -->
   <section
     class="designer-inspector"
     data-test="designer-inspector"
@@ -79,6 +83,7 @@ import {
   type InspectorTabKey,
 } from './inspectorTabs'
 import { toInspectorTarget } from './inspectorTarget'
+import { useInspectorEvents } from './useInspectorResource'
 
 const props = withDefaults(
   defineProps<{
@@ -105,6 +110,16 @@ installInspectorMessages(i18n, registry)
 provide(INSPECTOR_HOST, { request: (intent) => emit('host', intent) })
 
 const target = computed(() => toInspectorTarget(props.selection))
+
+/** Server events after which the header (the selected Flow's Canvas read) may be out of date. */
+const HEADER_REFRESH_EVENTS = ['doc_review_status_changed', 'ai_invoke_finished', 'document_explorer_refresh'] as const
+
+// A reconnect is left to the Canvas, which reads every open Flow again on its own.
+useInspectorEvents(() => (props.unselected ? null : target.value), {
+  events: HEADER_REFRESH_EVENTS,
+  resync: false,
+  changed: () => emit('host', { kind: 'refresh-flow' }),
+})
 
 const contributions = computed(() => contributionsFor(registry, target.value))
 const headerMetas = computed(() => contributions.value.filter((entry) => entry.headerMeta))

@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 // The registry module checks the real registrations when it loads and throws on a broken one.
@@ -25,8 +25,13 @@ function loadedRegistry(): RegistryModule {
 // the violations, run on the real source (expect none) and on the boundary fixtures under
 // fixtures/structure0048/ (expect them to be caught). Owned by T#1; T#3 / T#4 add B9~B11 / B15
 // once, feature sets never edit it.
+// flowgate.v02.0048 T#3: B8 lets composables use `@/features/document` and `useInspectorResource`;
+// B9 (no transport in feature screens / declarations), B10 (the Designer reaches features/document
+// only through its index) and B11 (features/document reaches only the shared transport and its own
+// files; its index is `export *` lines) — checked on src/features and on fixtures/structure0048/document.
 
 const SRC = resolve(__dirname, '../../../src')
+const FEATURES_ROOT = join(SRC, 'features')
 const INSPECTOR = join(SRC, 'features/designer/inspector')
 const FIXTURES = join(__dirname, 'fixtures/structure0048')
 
@@ -100,7 +105,13 @@ const FEATURE_RULES: readonly { kind: string; file: RegExp; rule: ImportRule }[]
     kind: 'composable',
     file: /^use[A-Z][A-Za-z]*\.ts$/,
     rule: {
-      allowed: [/^vue$/, OWN, /^\.\.\/\.\.\/(inspectorTarget|inspectorHost|openDocument)$/, /^@\/core\/auth\/currentUser$/],
+      allowed: [
+        /^vue$/,
+        OWN,
+        /^\.\.\/\.\.\/(inspectorTarget|inspectorHost|openDocument|useInspectorResource)$/,
+        /^@\/core\/auth\/currentUser$/,
+        /^@\/features\/document$/,
+      ],
       forbidden: /^@shared\/|^pinia$|^axios$|^vue-router$/,
       body: /\baxios\b|defineStore|localStorage|sessionStorage/,
     },
@@ -122,6 +133,15 @@ const FEATURE_RULES: readonly { kind: string; file: RegExp; rule: ImportRule }[]
     },
   },
 ]
+
+/** B9 — feature files that only show or declare: no transport of their own. */
+const B9_FILE = /^(register|messages)\.ts$|\.vue$/
+const B9_TRANSPORT = /fetch\(|\baxios\b|@shared\/api\b/
+
+/** B11 — what features/document may import besides its own files: the shared transport. */
+const DOCUMENT_SHARED = /^@shared\/(api|apiErrors)$/
+/** B11 — the one line kind of features/document/index.ts (comments and blank lines aside). */
+const DOCUMENT_INDEX_LINE = /^export \* from '\.\/[A-Za-z/]+'$/
 
 /** B14 — undecided features (D#1 §8.4) must not be registered or worded. */
 const UNDECIDED_MARKER = /expand|delegat|memo|ai_delivery|tsc/i
@@ -145,6 +165,29 @@ function importsOf(src: string): ImportRef[] {
   const dynamics = [...src.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => ({ spec: m[1], typeOnly: false }))
   return [...statics, ...dynamics]
 }
+
+/** Module specifiers a file depends on: its imports and its `export … from` re-exports. */
+function specifiersOf(src: string): string[] {
+  const reexports = [...src.matchAll(/^\s*export\s[^'"]*?\sfrom\s*['"]([^'"]+)['"]/gm)].map((m) => m[1])
+  return [...importsOf(src).map((ref) => ref.spec), ...reexports]
+}
+
+/** .ts / .vue files under a folder, recursively. */
+function sourceFiles(dir: string): string[] {
+  return list(dir).flatMap((name) => {
+    const full = join(dir, name)
+    if (isDir(full)) return sourceFiles(full)
+    return /\.(ts|vue)$/.test(name) ? [full] : []
+  })
+}
+
+/** `path` is `root` or lies under it. */
+function inside(root: string, path: string): boolean {
+  const rel = relative(root, path)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+const slashes = (path: string) => path.replace(/\\/g, '/')
 
 function ruleViolations(code: string, label: string, src: string, rule: ImportRule): string[] {
   const out: string[] = []
@@ -202,6 +245,48 @@ function featureViolations(root: string, key: string): string[] {
       continue
     }
     out.push(...ruleViolations(kind.kind === 'model' ? 'B7' : 'B8', label, src, kind.rule))
+    const transport = B9_FILE.test(name) ? src.match(B9_TRANSPORT) : null
+    if (transport) out.push(`B9 ${label}: uses '${transport[0]}'`)
+  }
+  return out
+}
+
+/**
+ * B10 — every Designer file reaches features/document only through `@/features/document`: a deep alias
+ * and any relative path into the folder (its root, its index or a file in it) are violations. `features` = a src/features root.
+ */
+function documentImportViolations(features: string): string[] {
+  const designer = join(features, 'designer')
+  const document = join(features, 'document')
+  const out: string[] = []
+  for (const file of sourceFiles(designer)) {
+    for (const spec of specifiersOf(read(file))) {
+      const target = spec.startsWith('.') ? resolve(dirname(file), spec) : null
+      const deep = /^@\/features\/document\//.test(spec) || (target !== null && inside(document, target))
+      if (deep) out.push(`B10 ${slashes(relative(features, file))}: import '${spec}'`)
+    }
+  }
+  return out
+}
+
+/**
+ * B11 — features/document imports the shared transport and its own files only, holds no screen,
+ * and its index holds `export *` lines only.
+ */
+function documentFeatureViolations(document: string): string[] {
+  const out: string[] = []
+  for (const file of sourceFiles(document)) {
+    const label = `document/${slashes(relative(document, file))}`
+    if (file.endsWith('.vue')) out.push(`B11 ${label}: features/document holds no screen`)
+    for (const spec of specifiersOf(read(file))) {
+      const own = spec.startsWith('.') && inside(document, resolve(dirname(file), spec))
+      if (!own && !DOCUMENT_SHARED.test(spec)) out.push(`B11 ${label}: import '${spec}'`)
+    }
+  }
+  const index = join(document, 'index.ts')
+  if (!existsSync(index)) return [...out, 'B11 document/index.ts: missing']
+  for (const line of read(index).split(/\r?\n/).map((text) => text.trim())) {
+    if (line && !line.startsWith('//') && !DOCUMENT_INDEX_LINE.test(line)) out.push(`B11 document/index.ts: '${line}' is not an export * line`)
   }
   return out
 }
@@ -249,7 +334,7 @@ describe('features/designer/inspector structure (flowgate.v02.0048)', () => {
     expect(frameViolations(INSPECTOR)).toEqual([])
   })
 
-  it.each(FEATURES.length ? FEATURES : ['(no feature folder yet)'])('B3 / B6 / B7 / B8: feature folder %s', (key) => {
+  it.each(FEATURES.length ? FEATURES : ['(no feature folder yet)'])('B3 / B6 / B7 / B8 / B9: feature folder %s', (key) => {
     if (!FEATURES.length) {
       expect(isDir(join(INSPECTOR, 'features')) ? featureFolders(INSPECTOR) : []).toEqual([])
       return
@@ -259,6 +344,14 @@ describe('features/designer/inspector structure (flowgate.v02.0048)', () => {
 
   it('B4 / B5 / B12 / B14: the registrations keep the contract, the three locales and no undecided feature', () => {
     expect(registryViolations(REAL_MODULES)).toEqual([])
+  })
+
+  it('B10: the Designer imports features/document only through @/features/document', () => {
+    expect(documentImportViolations(FEATURES_ROOT)).toEqual([])
+  })
+
+  it('B11: features/document reaches only the shared transport and its own files; its index is export * lines', () => {
+    expect(documentFeatureViolations(join(FEATURES_ROOT, 'document'))).toEqual([])
   })
 
   it('B13: the module registry (import.meta.glob) holds exactly the feature folders with a register.ts', () => {
@@ -300,6 +393,40 @@ describe('structure.0048 checks catch boundary violations (fixtures/structure004
     expect(codes(violations)).toEqual(['B1', 'B2', 'B3', 'B6', 'B7', 'B8'])
     // The type-only registry import of the same register.ts is allowed.
     expect(violations.filter((line) => line.startsWith('B8 features/epsilon/register.ts'))).toHaveLength(1)
+  })
+
+  it('the document fixtures: a clean Designer + features/document passes; each B9 / B10 / B11 violation is named', () => {
+    const clean = join(FIXTURES, 'document/clean')
+    expect(boundaryViolations(join(clean, 'designer/inspector'))).toEqual([])
+    expect(documentImportViolations(clean)).toEqual([])
+    expect(documentFeatureViolations(join(clean, 'document'))).toEqual([])
+
+    const boundary = join(FIXTURES, 'document/boundary')
+    const feature = boundaryViolations(join(boundary, 'designer/inspector'))
+    expect(feature).toEqual(
+      expect.arrayContaining([
+        "B9 features/zeta/ZetaTab.vue: uses 'axios'",
+        "B9 features/zeta/register.ts: uses '@shared/api'",
+        "B9 features/zeta/messages.ts: uses 'fetch('",
+        "B8 features/zeta/useZeta.ts: import '@/features/document/api/qa'",
+      ]),
+    )
+    expect(codes(feature)).toEqual(['B8', 'B9'])
+    expect(documentImportViolations(boundary).sort()).toEqual([
+      "B10 designer/center/peek.ts: import '../../document/api/review'",
+      "B10 designer/center/rootPeek.ts: import '../../document'",
+      "B10 designer/inspector/features/zeta/useZeta.ts: import '@/features/document/api/qa'",
+    ])
+    expect(documentFeatureViolations(join(boundary, 'document')).sort()).toEqual([
+      'B11 document/DocumentCard.vue: features/document holds no screen',
+      "B11 document/api/attachments.ts: import 'axios'",
+      "B11 document/api/qa.ts: import '@/features/project'",
+      "B11 document/api/qa.ts: import 'vue'",
+      "B11 document/api/review.ts: import '../../designer/inspector/inspectorTarget'",
+      "B11 document/index.ts: 'export * from 'vue'' is not an export * line",
+      "B11 document/index.ts: 'export { documentRead } from './api/document'' is not an export * line",
+      "B11 document/index.ts: import 'vue'",
+    ])
   })
 
   it('the registry fixture fails on key, order, value sets, locales and undecided markers', () => {
