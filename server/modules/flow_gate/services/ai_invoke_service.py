@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
+from .ai_invoke.runtime import admission_run_id
+
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.services import token_service
 from .ai_invoke import facade as _facade
@@ -24,7 +26,8 @@ from .ai_invoke.facade import *  # noqa: F401,F403  (inventory: facade.__all__)
 _admission_start_run = start_run
 
 
-def _rollback_partial_group_admission(kwargs: dict, active_before: dict | None) -> None:
+def _rollback_partial_group_admission(kwargs: dict, active_before: dict | None,
+                                      expected_run_id: str | None) -> None:
     """Best-effort cleanup for a start_run exception before a usable run exists.
 
     start_run acquires a durable group lease before token/mention/scratch/run setup. Several
@@ -35,7 +38,7 @@ def _rollback_partial_group_admission(kwargs: dict, active_before: dict | None) 
     Never touch a lease that existed before this call, a project-scoped run, or a lease whose
     run is already present in the live registry. Those are real owners, not partial admission.
     """
-    if active_before is not None or kwargs.get("action_scope") == "resolve_base_dirty":
+    if not expected_run_id or active_before is not None or kwargs.get("action_scope") == "resolve_base_dirty":
         return
     group_id = str(kwargs.get("group_id") or "")
     if not group_id:
@@ -52,7 +55,7 @@ def _rollback_partial_group_admission(kwargs: dict, active_before: dict | None) 
     if not active:
         return
     run_id = str(active.get("run_id") or "")
-    if not run_id:
+    if run_id != expected_run_id:
         return
     # A registered run has crossed the in-memory admission boundary. Its worker/finalizer owns
     # cleanup; releasing it here would turn an unrelated post-start exception into split-brain.
@@ -117,12 +120,13 @@ def start_run(*args, **kwargs):
             # start fail that previously could have succeeded.
             active_before = None
 
+    identity_token = admission_run_id.set(None)
     try:
         return _admission_start_run(**kwargs)
     except (HTTPException, LookupError, ValueError):
         raise
     except Exception as exc:
-        _rollback_partial_group_admission(kwargs, active_before)
+        _rollback_partial_group_admission(kwargs, active_before, admission_run_id.get())
         _facade.logger.exception(
             "ai-invoke unexpected pre-run start failure group_id=%s action_scope=%s",
             group_id,
@@ -142,3 +146,5 @@ def start_run(*args, **kwargs):
                 "phase": "pre_run_admission",
             },
         ) from exc
+    finally:
+        admission_run_id.reset(identity_token)

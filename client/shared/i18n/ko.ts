@@ -1543,6 +1543,7 @@ export default {
       error_run_lost: '실행 기록이 소실되었습니다(서버 재기동). 그룹 문서를 직접 확인하세요.',
       error_cancel_failed: '실행 취소에 실패했습니다.',
       error_run_in_progress_orphaned: '이전 실행이 비정상 종료되어 잠금이 남아 있습니다. 아래 [잠금 해제]를 눌러 주세요.',
+      error_token_scratch_storage_unsafe: 'Storage Root가 안전하지 않습니다. 관리자에게 Storage Root 수정을 요청한 뒤 다시 시도해 주세요.',
       review_start_button: '검수 시작',
       review_rerun_button: '재검수',
       error_review_already_completed: '이미 완료된 검수입니다. 다시 검수하려면 [재검수] 버튼을 사용하세요.',

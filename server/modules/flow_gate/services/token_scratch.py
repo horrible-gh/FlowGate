@@ -23,6 +23,33 @@ from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate.settings import scratch_retention
 
 _log = logging.getLogger(__name__)
+
+
+class TokenScratchStorageUnsafe(ValueError):
+    """Storage root failed the token scratch safety policy."""
+
+
+def _unsafe_reason(path: Path) -> str | None:
+    try:
+        if path.is_symlink():
+            return "symlink"
+        if bool(getattr(path.lstat(), "st_file_attributes", 0)
+                & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)):
+            return "reparse_point"
+    except OSError:
+        return "lstat_failed"
+    return None
+
+
+def _reject_unsafe(root: Path, reason: str) -> None:
+    # The configured path is useful in server logs but must never enter the API response.
+    try:
+        _, source = storage_paths.resolve_storage_root()
+    except Exception:
+        source = "unknown"
+    _log.error("token scratch storage unsafe: reason=%s effective_source=%s root=%s",
+               reason, source, root)
+    raise TokenScratchStorageUnsafe("Token scratch storage root is unsafe.")
 MANIFEST_NAME = ".flowgate-token-scratch.json"
 MANIFEST_SCHEMA = 1
 RETENTION_DAYS = 7  # legacy manifest format only; GC reads system settings
@@ -78,12 +105,12 @@ def create(project_id: str, token_id: str, scratch: Path) -> None:
     root = _root(project_id)
     storage_root = root.parent.parent
     if storage_root.exists() and _unsafe_link(storage_root):
-        raise ValueError("token scratch storage root is unsafe")
+        _reject_unsafe(storage_root, _unsafe_reason(storage_root) or "unsafe_path")
     storage_root.mkdir(parents=True, exist_ok=True)
     root.mkdir(parents=True, exist_ok=True)
     if (_unsafe_link(storage_root) or _unsafe_link(root.parent) or _unsafe_link(root)
             or not _same_path(scratch, (root / token_id).resolve(strict=False))):
-        raise ValueError("token scratch root is unsafe")
+        _reject_unsafe(storage_root, "unsafe_scratch_root_or_path")
     scratch.mkdir(exist_ok=False)
     try:
         resolved = _checked_child(project_id, token_id, scratch)

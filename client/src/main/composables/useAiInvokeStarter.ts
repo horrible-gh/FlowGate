@@ -72,6 +72,7 @@ export interface AiInvokeStartOptions {
 export type AiInvokeStartResult =
   | { ok: true; data: any }
   | { ok: false; kind: 'run_in_progress_orphaned'; groupId: string }
+  | { ok: false; kind: 'token_scratch_storage_unsafe' }
   | { ok: false; kind: 'review_already_completed' }
   | { ok: false; kind: 'review_rerun_not_available' }
   | { ok: false; kind: 'no_provider_registered' }
@@ -207,6 +208,9 @@ export async function startAiInvoke(
         return { ok: true, data: { ...data, group_id: groupId, adopted: true } }
       }
       return { ok: false, kind: 'run_in_progress_orphaned', groupId }
+    }
+    if (status === 409 && data.code === 'token_scratch_storage_unsafe') {
+      return { ok: false, kind: 'token_scratch_storage_unsafe' }
     }
     if (status === 409 && data.code === 'review_already_completed') {
       return { ok: false, kind: 'review_already_completed' }

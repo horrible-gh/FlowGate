@@ -68,6 +68,7 @@ from .runtime import (
     _note_issued_raw_token,
     _runs_lock,
     _svc,
+    admission_run_id,
     logger,
     prompt_digest,
 )
@@ -1229,144 +1230,176 @@ def start_run(
             raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
                               run_id=active.get("run_id"))
 
+    if not project_scoped:
+        admission_run_id.set(run_id)
+
     # The group lease is the serialization point: this check runs only after this request
     # owns it and before token issuance. Thus two concurrent normal starts cannot both
     # observe NONE, while reruns remain possible without a UNIQUE(doc_id, revision_no).
-    review_admission_superseded_review_id: Optional[int] = None
-    if action_scope == "review" and review_intent is not None:
-        doc = db_docs.get_by_id(doc_ref) or {}
-        revision_no = int(doc.get("revision_no") or 0)
-        completed = db_document_reviews.get_latest_for_revision(doc_ref, revision_no)
-        if completed is not None and review_intent == "normal":
-            if not project_scoped:
-                db_group_ai_leases.release(
-                    group_id, run_id, reason="review_admission_completed"
+    issue = None
+    try:
+        review_admission_superseded_review_id: Optional[int] = None
+        if action_scope == "review" and review_intent is not None:
+            doc = db_docs.get_by_id(doc_ref) or {}
+            revision_no = int(doc.get("revision_no") or 0)
+            completed = db_document_reviews.get_latest_for_revision(doc_ref, revision_no)
+            if completed is not None and review_intent == "normal":
+                if not project_scoped:
+                    db_group_ai_leases.release(
+                        group_id, run_id, reason="review_admission_completed"
+                    )
+                raise _http_error(
+                    409, "review_already_completed",
+                    "This document revision has already been reviewed; use rerun to review it again.",
+                    review_id=completed.get("id"), revision_no=revision_no,
                 )
-            raise _http_error(
-                409, "review_already_completed",
-                "This document revision has already been reviewed; use rerun to review it again.",
-                review_id=completed.get("id"), revision_no=revision_no,
-            )
-        if completed is not None and review_intent == "rerun":
-            # Reuse the row observed while holding the admission lease. Re-querying at
-            # registration time would let a concurrent append change what this rerun means.
-            review_admission_superseded_review_id = int(completed["id"])
-        if completed is None and review_intent == "rerun":
-            if not project_scoped:
-                db_group_ai_leases.release(
-                    group_id, run_id, reason="review_admission_no_completed_review"
+            if completed is not None and review_intent == "rerun":
+                # Reuse the row observed while holding the admission lease. Re-querying at
+                # registration time would let a concurrent append change what this rerun means.
+                review_admission_superseded_review_id = int(completed["id"])
+            if completed is None and review_intent == "rerun":
+                if not project_scoped:
+                    db_group_ai_leases.release(
+                        group_id, run_id, reason="review_admission_no_completed_review"
+                    )
+                raise _http_error(
+                    409, "review_rerun_not_available",
+                    "This document revision has no completed review to rerun.",
+                    revision_no=revision_no,
                 )
-            raise _http_error(
-                409, "review_rerun_not_available",
-                "This document revision has no completed review to rerun.",
-                revision_no=revision_no,
-            )
 
-    if document_review_loop is not None and issue_builder is not None:
-        # 0417 T0013: tell the (possibly stage-aware) issue_builder which stage this hop is —
-        # a loop that starts_with_rework must mint an edit-scoped token on its very first hop,
-        # not a review-scoped one. See the matching comment on ai_invoke_routes._issue_review.
-        issue_builder.loop_stage = initial_stage
-    if issue_builder is not None:
-        # 0359 L0007 §2.9: hand the run identity to the builder so the token it mints carries
-        # ai_run_id. NR0003 §4 measured 1,346 continuous tokens with an EMPTY ai_run_id — every
-        # one of them was issued through this branch, which never passed it, so there was no
-        # bridge from a dead hop's token back to the run that died. Builders that do not accept
-        # the keyword (review / sequence_edit / test_run) keep being called with no arguments.
-        try:
-            issue = _call_issue_builder(issue_builder, run_id)
-        except work_plan_attachment_service.PreInstructionAttachmentError as exc:
-            # 0554 T0014 §5: a rework issue_builder (issue_rework_request) already revoked
-            # the token it minted before re-raising — this only has the group lease left to
-            # give back, mirroring the mention_unavailable/run_lease_lost cleanups below.
-            if not project_scoped:
-                db_group_ai_leases.release(
-                    group_id, run_id, reason="admission_rollback_pre_instruction_attachment_invalid"
-                )
-            raise _http_error(
-                409, exc.code,
-                "WorkPlan pre-instruction attachment is not valid for this step.",
-                source_doc_id=exc.source_doc_id,
-            )
-        mention = issue.get("mention")
-    else:
-        issue = token_service.issue(
-            project=project_id,
-            # A project-scoped run has no group, and `tokens.group_id` is a foreign key
-            # into `groups`: minting this token against the synthetic `<project>.none.0000`
-            # key violated it the same way the group lease above did. The remote source
-            # tools already document and take the group-less path for these tokens
-            # (remote_tool_service._resolve_root / _resolve_root_for_mutation).
-            group_id=None if project_scoped else group_id,
-            action_scope=action_scope,
-            doc_ref=doc_ref,
-            issued_to=issued_to,
-            continuation_target_seq=continuation_target_seq if mode == "continuous" else None,
-            continuation_review_mode=bool(mode == "continuous" and continuation_review_mode),
-            continuation_instruction_mode=continuation_instruction_mode if mode == "continuous" else None,
-            # 0578 T0006 §3 work item 3-4: a merge-review conversation run is `single`, so this
-            # dropped the language the reviewer started the turn in and the worker's help /
-            # tool prose came back in the server default. Only the LOCALE widens -- the other
-            # continuation_* fields stay continuous-only, because they describe a chain hop
-            # and a resolve_conflict run is not one.
-            continuation_locale=(
-                continuation_locale
-                if (mode == "continuous" or action_scope == "resolve_conflict")
-                else None
-            ),
-            merge_id=merge_id if action_scope == "resolve_conflict" else None,
-            provider_id=provider_id,
-            ai_run_id=run_id,
-            continuation_auto_approve_item_seqs=(
-                continuation_auto_approve_item_seqs if mode == "continuous" else None
-            ),
-        )
-        mention = mention_builder(issue["raw_token"], issue["scratch_dir"])
-    if not mention:
-        # No prompt ⇒ nothing to launch. Discard the token and its acquiring lease.
-        try:
-            token_service.revoke(issue["token_id"], reason="ai_invoke_mention_unavailable")
-        except Exception:
-            logger.warning("token revoke failed after mention_unavailable", exc_info=True)
-        if not project_scoped:
-            db_group_ai_leases.release(group_id, run_id, reason="admission_rollback_mention_unavailable")
-        raise _http_error(409, "mention_unavailable",
-                          "Could not build a worker mention for this document.")
-
-    if action_scope == "resolve_conflict":
-        _mention_chars = len(mention)
-        if _mention_chars > CONFLICT_MENTION_MAX_CHARS:
-            # Refuse before the token is spent on a provider that will only reject it
-            # after launch. No tail truncation here — a silently dropped conflict chunk
-            # would let a resolution look complete while missing part of the merge.
+        if document_review_loop is not None and issue_builder is not None:
+            # 0417 T0013: tell the (possibly stage-aware) issue_builder which stage this hop is —
+            # a loop that starts_with_rework must mint an edit-scoped token on its very first hop,
+            # not a review-scoped one. See the matching comment on ai_invoke_routes._issue_review.
+            issue_builder.loop_stage = initial_stage
+        if issue_builder is not None:
+            # 0359 L0007 §2.9: hand the run identity to the builder so the token it mints carries
+            # ai_run_id. NR0003 §4 measured 1,346 continuous tokens with an EMPTY ai_run_id — every
+            # one of them was issued through this branch, which never passed it, so there was no
+            # bridge from a dead hop's token back to the run that died. Builders that do not accept
+            # the keyword (review / sequence_edit / test_run) keep being called with no arguments.
             try:
-                token_service.revoke(issue["token_id"], reason="ai_invoke_conflict_prompt_too_large")
-            except Exception:
-                logger.warning("token revoke failed after conflict_prompt_too_large", exc_info=True)
-            if not project_scoped:
-                db_group_ai_leases.release(
-                    group_id, run_id, reason="admission_rollback_conflict_prompt_too_large"
+                issue = _call_issue_builder(issue_builder, run_id)
+            except work_plan_attachment_service.PreInstructionAttachmentError as exc:
+                # 0554 T0014 §5: a rework issue_builder (issue_rework_request) already revoked
+                # the token it minted before re-raising — this only has the group lease left to
+                # give back, mirroring the mention_unavailable/run_lease_lost cleanups below.
+                if not project_scoped:
+                    db_group_ai_leases.release(
+                        group_id, run_id, reason="admission_rollback_pre_instruction_attachment_invalid"
+                    )
+                raise _http_error(
+                    409, exc.code,
+                    "WorkPlan pre-instruction attachment is not valid for this step.",
+                    source_doc_id=exc.source_doc_id,
                 )
-            raise _http_error(
-                409, "conflict_prompt_too_large",
-                "This merge conflict's resolve prompt is too large for any provider to accept. "
-                "Split the merge into smaller commits or resolve part of it manually, then retry.",
-                prompt_chars=_mention_chars, limit_chars=CONFLICT_MENTION_MAX_CHARS,
+            mention = issue.get("mention")
+        else:
+            issue = token_service.issue(
+                project=project_id,
+                # A project-scoped run has no group, and `tokens.group_id` is a foreign key
+                # into `groups`: minting this token against the synthetic `<project>.none.0000`
+                # key violated it the same way the group lease above did. The remote source
+                # tools already document and take the group-less path for these tokens
+                # (remote_tool_service._resolve_root / _resolve_root_for_mutation).
+                group_id=None if project_scoped else group_id,
+                action_scope=action_scope,
+                doc_ref=doc_ref,
+                issued_to=issued_to,
+                continuation_target_seq=continuation_target_seq if mode == "continuous" else None,
+                continuation_review_mode=bool(mode == "continuous" and continuation_review_mode),
+                continuation_instruction_mode=continuation_instruction_mode if mode == "continuous" else None,
+                # 0578 T0006 §3 work item 3-4: a merge-review conversation run is `single`, so this
+                # dropped the language the reviewer started the turn in and the worker's help /
+                # tool prose came back in the server default. Only the LOCALE widens -- the other
+                # continuation_* fields stay continuous-only, because they describe a chain hop
+                # and a resolve_conflict run is not one.
+                continuation_locale=(
+                    continuation_locale
+                    if (mode == "continuous" or action_scope == "resolve_conflict")
+                    else None
+                ),
+                merge_id=merge_id if action_scope == "resolve_conflict" else None,
+                provider_id=provider_id,
+                ai_run_id=run_id,
+                continuation_auto_approve_item_seqs=(
+                    continuation_auto_approve_item_seqs if mode == "continuous" else None
+                ),
             )
+            mention = mention_builder(issue["raw_token"], issue["scratch_dir"])
+        if not mention:
+            # No prompt ⇒ nothing to launch. Discard the token and its acquiring lease.
+            try:
+                token_service.revoke(issue["token_id"], reason="ai_invoke_mention_unavailable")
+            except Exception:
+                logger.warning("token revoke failed after mention_unavailable", exc_info=True)
+            if not project_scoped:
+                db_group_ai_leases.release(group_id, run_id, reason="admission_rollback_mention_unavailable")
+            raise _http_error(409, "mention_unavailable",
+                              "Could not build a worker mention for this document.")
 
-    lease = (
-        db_group_ai_leases.activate(
-            group_id, run_id, issue.get("token_id"), action_scope, issued_to,
-            _svc().RUN_TIMEOUT_CAP_SEC,
+        if action_scope == "resolve_conflict":
+            _mention_chars = len(mention)
+            if _mention_chars > CONFLICT_MENTION_MAX_CHARS:
+                # Refuse before the token is spent on a provider that will only reject it
+                # after launch. No tail truncation here — a silently dropped conflict chunk
+                # would let a resolution look complete while missing part of the merge.
+                try:
+                    token_service.revoke(issue["token_id"], reason="ai_invoke_conflict_prompt_too_large")
+                except Exception:
+                    logger.warning("token revoke failed after conflict_prompt_too_large", exc_info=True)
+                if not project_scoped:
+                    db_group_ai_leases.release(
+                        group_id, run_id, reason="admission_rollback_conflict_prompt_too_large"
+                    )
+                raise _http_error(
+                    409, "conflict_prompt_too_large",
+                    "This merge conflict's resolve prompt is too large for any provider to accept. "
+                    "Split the merge into smaller commits or resolve part of it manually, then retry.",
+                    prompt_chars=_mention_chars, limit_chars=CONFLICT_MENTION_MAX_CHARS,
+                )
+
+        lease = (
+            db_group_ai_leases.activate(
+                group_id, run_id, issue.get("token_id"), action_scope, issued_to,
+                _svc().RUN_TIMEOUT_CAP_SEC,
+            )
+            if not project_scoped else None
         )
-        if not project_scoped else None
-    )
-    if not project_scoped and lease is None:
-        try:
-            token_service.revoke(issue["token_id"], reason="ai_invoke_lease_lost")
-        except Exception:
-            logger.warning("token revoke failed after lease loss", exc_info=True)
-        raise _http_error(409, "run_lease_lost", "The AI run lease could not be activated.")
+        if not project_scoped and lease is None:
+            try:
+                token_service.revoke(issue["token_id"], reason="ai_invoke_lease_lost")
+            except Exception:
+                logger.warning("token revoke failed after lease loss", exc_info=True)
+            raise _http_error(409, "run_lease_lost", "The AI run lease could not be activated.")
+    except Exception:
+        # Only this request's still-acquiring lease may be released. Named failure paths
+        # can have already revoked/released it; repeating those operations is harmless.
+        current = None
+        if not project_scoped:
+            try:
+                current = db_group_ai_leases.get_active(group_id)
+            except Exception:
+                logger.warning("admission rollback lease lookup failed run_id=%s group_id=%s",
+                               run_id, group_id, exc_info=True)
+        owns_acquiring = bool(current and current.get("run_id") == run_id
+                              and current.get("state") == "acquiring")
+        if project_scoped or owns_acquiring:
+            if isinstance(issue, dict) and issue.get("token_id"):
+                try:
+                    token_service.revoke(issue["token_id"], reason="ai_invoke_admission_rollback")
+                except Exception:
+                    logger.warning("admission token rollback failed run_id=%s", run_id, exc_info=True)
+            if owns_acquiring:
+                try:
+                    db_group_ai_leases.release(
+                        group_id, run_id, reason="admission_rollback_pre_activation_failure"
+                    )
+                except Exception:
+                    logger.warning("admission lease rollback failed run_id=%s group_id=%s",
+                                   run_id, group_id, exc_info=True)
+        raise
     # 0346 T0005 §2-5 / D0004 §3-3: the handoff-note tab's common note and/or this hop's
     # individual note are prepended here, at the single point every hop's prompt (built by
     # whichever of the three builders ran above) has already converged into one string — see
