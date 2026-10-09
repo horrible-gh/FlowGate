@@ -49,6 +49,8 @@ export interface InspectorRegistration {
   readonly ownerships?: readonly string[]
   /** The feature needs a document bound to the Node. */
   readonly requiresDocument: boolean
+  /** The feature needs a v0.1 sequence slot on the Node (a sequence row); absent = no. */
+  readonly requiresSlot?: boolean
   readonly tab?: InspectorTabContribution
   /** Header action part (right of the state chip); its one input is `target`. */
   readonly headerAction?: Component
@@ -115,6 +117,7 @@ export function registrationViolations(modules: Readonly<Record<string, unknown>
       }
     }
     if (typeof entry.requiresDocument !== 'boolean') out.push(`${label}: requiresDocument is not a boolean`)
+    if (entry.requiresSlot !== undefined && typeof entry.requiresSlot !== 'boolean') out.push(`${label}: requiresSlot is not a boolean`)
     const tab = entry.tab
     if (tab !== undefined) {
       if (!isObject(tab) || !INSPECTOR_TABS.includes(tab.key as InspectorTabKey)) {
@@ -151,6 +154,7 @@ export const inspectorRegistry: InspectorRegistry = createInspectorRegistry(
 /** Whether a registration's declared conditions all hold for the target (D#1 §5.3 rule 1). */
 export function registrationApplies(entry: InspectorRegistration, target: InspectorTarget): boolean {
   if (entry.requiresDocument && !target.docId) return false
+  if (entry.requiresSlot && !target.slot) return false
   if (entry.cardKinds?.length && !entry.cardKinds.includes(target.cardKind)) return false
   const docType = target.docType?.trim().toUpperCase() ?? null
   if (entry.docTypes?.length && !(docType && entry.docTypes.includes(docType))) return false
