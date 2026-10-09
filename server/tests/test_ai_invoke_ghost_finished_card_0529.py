@@ -189,6 +189,57 @@ def loop_db(tmp_path, monkeypatch):
     conn.close()
 
 
+class TestGroupCardRestoration0418:
+    def test_newer_non_loop_run_suppresses_older_review_loop_without_deleting_history(self, loop_db):
+        loop_db.execute(
+            "INSERT INTO ai_invoke_runs(run_id, issued_to, group_id, started_at, finished_at) "
+            "VALUES (?,?,?,?,?)",
+            ["aiv_newer", OWNER, GHOST_GROUP, "2026-09-01T09:00:00+09:00",
+             "2026-09-01T10:00:00+09:00"],
+        )
+        loop_db.commit()
+
+        assert db_runs.list_review_loops_by_user(OWNER) == []
+        assert loop_db.execute("SELECT COUNT(*) FROM ai_invoke_runs").fetchone()[0] == 2
+        assert db_loops.get(GHOST_RUN) is not None
+
+    def test_dismissing_latest_never_reveals_an_older_loop_card(self, loop_db):
+        older = "aiv_older_loop"
+        loop_db.execute(
+            "INSERT INTO ai_invoke_runs(run_id, issued_to, group_id, started_at, finished_at) "
+            "VALUES (?,?,?,?,?)",
+            [older, OWNER, GHOST_GROUP, "2026-08-29T07:00:00+09:00",
+             "2026-08-29T08:00:00+09:00"],
+        )
+        loop_db.commit()
+        db_loops.insert({**LOOP_ROW, "run_id": older,
+                         "started_at": "2026-08-29T07:00:00+09:00"})
+        assert [row["run_id"] for row in db_runs.list_review_loops_by_user(OWNER)] == [GHOST_RUN]
+
+        assert db_loops.dismiss_card(GHOST_RUN) is True
+        assert db_runs.list_review_loops_by_user(OWNER) == []
+        assert db_loops.get(older) is not None
+        assert loop_db.execute("SELECT COUNT(*) FROM ai_invoke_runs").fetchone()[0] == 2
+
+    def test_other_group_still_restores_its_own_latest_card(self, loop_db):
+        other_group = "flowgate.default.0418"
+        other_run = "aiv_other_group"
+        loop_db.execute("INSERT INTO groups VALUES (?)", [other_group])
+        loop_db.execute(
+            "INSERT INTO ai_invoke_runs(run_id, issued_to, group_id, started_at, finished_at) "
+            "VALUES (?,?,?,?,?)",
+            [other_run, OWNER, other_group, "2026-09-01T09:00:00+09:00",
+             "2026-09-01T10:00:00+09:00"],
+        )
+        loop_db.commit()
+        db_loops.insert({**LOOP_ROW, "run_id": other_run, "group_id": other_group,
+                         "started_at": "2026-09-01T09:00:00+09:00"})
+
+        assert {row["run_id"] for row in db_runs.list_review_loops_by_user(OWNER)} == {
+            GHOST_RUN, other_run,
+        }
+
+
 class TestDismissCardIsDurableAndNonDestructive:
     def test_the_bootstrap_listing_returns_the_card_until_it_is_dismissed(self, loop_db):
         assert [row["run_id"] for row in db_runs.list_review_loops_by_user(OWNER)] == [GHOST_RUN]
@@ -406,6 +457,23 @@ def bootstrap_doubles(monkeypatch):
 
 
 class TestActiveAllStopsResurrectingTheGhost:
+    def test_live_run_suppresses_same_group_restored_card(self, bootstrap_doubles, monkeypatch):
+        bootstrap_doubles["loop_rows"] = [
+            {"run_id": GHOST_RUN, "group_id": GHOST_GROUP, "finished_at": _iso_ago(minutes=2)},
+        ]
+        monkeypatch.setattr(svc, "_runs", {
+            "aiv_live": {"run_id": "aiv_live", "group_id": GHOST_GROUP,
+                         "doc_ref": "flowgate.default.0481.0005-TR",
+                         "issued_to": OWNER, "status": "running"},
+        })
+        monkeypatch.setattr(svc, "_open_q_doc_ids_by_groups", lambda groups: {})
+        monkeypatch.setattr(diagnostics, "get_status",
+                            lambda run_id, **kwargs: {"run_id": run_id, "status": "running"})
+
+        payload = svc.active_all(OWNER)
+
+        assert [run["run_id"] for run in payload["runs"]] == ["aiv_live"]
+
     def test_a_fresh_review_loop_card_is_still_restored_after_a_restart(self, bootstrap_doubles):
         # The restore exists for exactly this: `_runs` is empty because the process
         # restarted, and the card has to come back.

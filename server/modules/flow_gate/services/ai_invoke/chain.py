@@ -1987,6 +1987,7 @@ def active_all(user_id: str) -> dict:
     # sweeps its in-memory copy of this very card with.
     from modules.flow_gate.db import ai_invoke_runs as db_runs
     live_ids = {run["run_id"] for run in candidates}
+    current_groups = {run["group_id"] for run in candidates} | {row["group_id"] for row in rows}
     try:
         stored_loop_rows = db_runs.list_review_loops_by_user(user_id)
     except Exception:
@@ -1994,7 +1995,7 @@ def active_all(user_id: str) -> dict:
         stored_loop_rows = []
     retention_minutes = _finished_card_retention_minutes(user_id)
     for row in stored_loop_rows:
-        if row["run_id"] in live_ids:
+        if row["run_id"] in live_ids or row["group_id"] in current_groups:
             continue
         if _review_loop_card_expired(row, retention_minutes):
             continue
