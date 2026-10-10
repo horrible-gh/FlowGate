@@ -374,6 +374,127 @@ describe('ConversationView optimistic send', () => {
     expect(wrapper.find('.conv-row.is-failed').exists()).toBe(false)
   })
 
+  it('keeps a failed turn before later SSE and catch-up page turns', async () => {
+    serve(page([turn(1)], { head_seq: 1 }), page([turn(4)], { head_seq: 4 }))
+    postRequest.mockRejectedValue({ response: { status: 409, data: { detail: 'conflict' } } })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.find('textarea').setValue('failed A')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.find('.conv-row.is-failed .conv-body').text()).toBe('failed A')
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('failed A')
+
+    emitTurn({ doc_id: DOC_ID, head_seq: 2, turn: turn(2, { body: 'SSE B' }) })
+    emitTurn({ doc_id: DOC_ID, head_seq: 3, turn: turn(3, { body: 'SSE C' }) })
+    await flushPromises()
+    window.dispatchEvent(new CustomEvent('fg:sse_reconnected'))
+    await flushPromises()
+
+    expect(wrapper.findAll('.conv-body').map((n) => n.text())).toEqual([
+      'turn 1', 'failed A', 'SSE B', 'SSE C', 'turn 4',
+    ])
+    expect(wrapper.find('.conv-row.is-failed .conv-retry').exists()).toBe(true)
+  })
+
+  it('places a late turn from the earlier page above the failed bubble', async () => {
+    serve(page([], { head_seq: 1 }))
+    postRequest.mockRejectedValue({ response: { status: 409, data: { detail: 'conflict' } } })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.find('textarea').setValue('failed A')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    emitTurn({ doc_id: DOC_ID, head_seq: 1, turn: turn(1, { body: 'earlier' }) })
+    emitTurn({ doc_id: DOC_ID, head_seq: 2, turn: turn(2, { body: 'later' }) })
+    await flushPromises()
+
+    expect(wrapper.findAll('.conv-body').map((n) => n.text())).toEqual([
+      'earlier', 'failed A', 'later',
+    ])
+  })
+
+  it('keeps an earlier failure above a later successful send and SSE reply', async () => {
+    serve(page([turn(1)], { head_seq: 1 }))
+    postRequest.mockRejectedValueOnce({ response: { status: 409, data: { detail: 'conflict' } } })
+      .mockResolvedValueOnce({ data: { ok: true, head_seq: 2, turn: turn(2, { body: 'sent B' }), me: null } })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.find('textarea').setValue('failed A')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    await wrapper.find('textarea').setValue('sent B')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    emitTurn({ doc_id: DOC_ID, head_seq: 3, turn: turn(3, { speaker: 'ai', body: 'reply C' }) })
+    await flushPromises()
+
+    expect(wrapper.findAll('.conv-body').map((n) => n.text())).toEqual([
+      'turn 1', 'failed A', 'sent B', 'reply C',
+    ])
+    expect(wrapper.findAll('.conv-row.is-failed')).toHaveLength(1)
+  })
+
+  it('moves a successful retry to server seq order without duplicating a prior SSE turn', async () => {
+    serve(page([turn(1)], { head_seq: 1 }))
+    postRequest.mockRejectedValueOnce({ response: { status: 409, data: { detail: 'conflict' } } })
+      .mockResolvedValueOnce({ data: { ok: true, head_seq: 2, turn: turn(2, { body: 'sent B' }), me: null } })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.find('textarea').setValue('failed A')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    const firstKey = (postRequest.mock.calls[0][1] as { idempotency_key: string }).idempotency_key
+    await wrapper.find('textarea').setValue('sent B')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    emitTurn({ doc_id: DOC_ID, head_seq: 3, turn: turn(3, { speaker: 'ai', body: 'reply C' }) })
+    await flushPromises()
+
+    let resolveRetry: (value: unknown) => void = () => {}
+    postRequest.mockImplementationOnce(() => new Promise((resolve) => { resolveRetry = resolve }))
+    await wrapper.find('.conv-retry').trigger('click')
+    await flushPromises()
+    emitTurn({ doc_id: DOC_ID, head_seq: 4, turn: turn(4, { body: 'failed A' }) })
+    await flushPromises()
+    resolveRetry({ data: { ok: true, replayed: true, head_seq: 4, turn: turn(4, { body: 'failed A' }), me: null } })
+    await flushPromises()
+
+    const retryKey = (postRequest.mock.calls[2][1] as { idempotency_key: string }).idempotency_key
+    expect(retryKey).toBe(firstKey)
+    expect(wrapper.findAll('.conv-body').map((n) => n.text())).toEqual([
+      'turn 1', 'sent B', 'reply C', 'failed A',
+    ])
+    expect(wrapper.findAll('.conv-row')).toHaveLength(4)
+    expect(wrapper.find('.conv-row.is-failed').exists()).toBe(false)
+  })
+
+  it('leaves a failed retry in place when later turns arrive', async () => {
+    serve(page([turn(1)], { head_seq: 1 }))
+    postRequest.mockRejectedValue({ response: { status: 409, data: { detail: 'conflict' } } })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.find('textarea').setValue('failed A')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    emitTurn({ doc_id: DOC_ID, head_seq: 2, turn: turn(2, { body: 'later B' }) })
+    await flushPromises()
+    await wrapper.find('.conv-retry').trigger('click')
+    await flushPromises()
+    emitTurn({ doc_id: DOC_ID, head_seq: 3, turn: turn(3, { body: 'later C' }) })
+    await flushPromises()
+
+    expect(wrapper.findAll('.conv-body').map((n) => n.text())).toEqual([
+      'turn 1', 'failed A', 'later B', 'later C',
+    ])
+    expect(wrapper.find('.conv-row.is-failed .conv-retry').exists()).toBe(true)
+  })
+
   it('drops the placeholder when the pushed turn wins the race with the response', async () => {
     serve(page([], { head_seq: 0 }))
     let resolvePost: (v: unknown) => void = () => {}

@@ -1078,15 +1078,19 @@ function hasSeq(seq: number): boolean {
   return seq > 0 && turns.value.some((turn) => turn.seq === seq)
 }
 
-/** Insert in seq order, ignoring a turn already on screen. Optimistic bubbles (seq 0)
- *  always sort last — they are, by definition, the newest thing this client knows. */
+/** Keep local bubbles at the position where they were sent. Their based_on_seq is
+ *  the server head at that moment: earlier numbered turns belong above the bubble,
+ *  while later turns belong below it. Confirmed turns still sort by server seq. */
 function insertInSeqOrder(turn: ConvTurn): void {
   if (hasSeq(turn.seq)) return
   const list = turns.value
   let at = list.length
   for (let i = 0; i < list.length; i++) {
     const other = list[i]
-    if (!other.seq || other.seq > turn.seq) { at = i; break }
+    if (other.seq > turn.seq || (!other.seq && (other.based_on_seq ?? 0) >= turn.seq)) {
+      at = i
+      break
+    }
   }
   list.splice(at, 0, turn)
 }
@@ -1624,14 +1628,13 @@ async function postTurn(temp: ConvTurn): Promise<boolean> {
       const data = res.data as any
       const saved: ConvTurn | undefined = data?.turn
       const at = turns.value.findIndex((turn) => turn.localId === temp.localId)
-      if (saved && !hasSeq(saved.seq)) {
-        // Swap the placeholder for the numbered turn, in place, so the bubble does not
-        // visibly jump. Only this one turn arrives — never the whole body (P0003 scenario 3).
-        if (at >= 0) turns.value.splice(at, 1, saved)
-        else insertInSeqOrder(saved)
+      if (saved) {
+        // A confirmed turn follows server seq, which may differ from the local attempt
+        // position (especially after a retry). Remove the placeholder first so SSE or
+        // a page that arrived before the POST response cannot leave a duplicate.
+        if (at >= 0) turns.value.splice(at, 1)
+        insertInSeqOrder(saved)
       } else if (at >= 0) {
-        // Already on screen (SSE beat the response, or this was a replay) — drop the
-        // duplicate placeholder rather than showing the message twice.
         turns.value.splice(at, 1)
       }
       headSeq.value = Math.max(headSeq.value, Number(data?.head_seq) || 0)
