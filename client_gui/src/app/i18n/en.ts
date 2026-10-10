@@ -290,6 +290,19 @@ export default {
         approved: 'Approved',
         rejected: 'Rejected',
         revised: 'Revised',
+        wf_in_progress: 'In progress',
+        wf_done: 'Done',
+      },
+      run_status: {
+        pending: 'Pending',
+        open: 'Running',
+        running: 'Running',
+        review: 'In review',
+        done: 'Done',
+        completed: 'Completed',
+        rejected: 'Rejected',
+        failed: 'Failed',
+        stopped: 'Stopped',
       },
       pane: {
         loading: 'Loading…',
@@ -313,6 +326,7 @@ export default {
         copy_id: 'Copy ID',
         copied: 'ID copied',
         kind_bug: 'Bug',
+        state_tip: 'Document status: {doc} / Run status: {run}',
       },
       // flowgate.v02.0051 — common display parts (parts/): slot line, 🛡 review badge, origin badge,
       // lock line, run settings block.

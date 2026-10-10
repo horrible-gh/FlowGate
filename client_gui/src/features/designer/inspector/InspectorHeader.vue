@@ -17,7 +17,13 @@
        (the R/B 종류 배지 ▾ of kindSwitch); the three state texts (document review status · run
        status · ● Canvas state) sit in one pill group, the v7 single status pill; and the line never
        spills: it clips at its own edge, the actions scroll sideways when the Inspector is at its
-       264px minimum, and the ✎ 메모 label folds to its glyph below 420px. -->
+       264px minimum, and the ✎ 메모 label folds to its glyph below 420px.
+       flowgate.v02.0052 묶음 A — the v7 single status pill (0035 insp.js render `● {st} · {sub}`,
+       stTip): one user-facing label — the Canvas state, else the document review status, else the
+       run status — and a `· sub` only for a server state that says something else than the label
+       (the server's own Canvas mapping decides "the same"). Internal values (wf_*, run status) never
+       show as text: a value without a display name is left to the tooltip (unless it is all there
+       is); the raw values sit in the tooltip, in data attributes and in hidden spans. -->
   <header
     class="inspector-header"
     :style="{ '--inspector-kind-accent': kind.accent }"
@@ -51,31 +57,33 @@
       data-test="designer-inspector-memo"
     >✎ <span class="inspector-header-memo-label">{{ t('gui.designer.inspector.header.memo') }}</span></button>
     <span
-      v-if="target.docReviewStatus || target.nodeRun?.status || state"
+      v-if="pill"
       class="inspector-header-pill"
-      :class="`inspector-header-pill--${state?.tone ?? 'neutral'}`"
+      :class="`inspector-header-pill--${pill.tone}`"
+      :title="pill.title"
       data-test="designer-inspector-pill"
+      :data-tone="pill.tone"
+      :data-state="target.canvasState ?? ''"
+      :data-doc-status="target.docReviewStatus ?? ''"
+      :data-run-status="target.nodeRun?.status ?? ''"
     >
+      <span class="inspector-header-pill-label" data-test="designer-inspector-pill-label">{{ pill.label }}</span>
+      <span v-if="pill.sub" class="inspector-header-pill-sub" data-test="designer-inspector-pill-sub">· {{ pill.sub }}</span>
+      <!-- The server values stay in the DOM (hidden: the raw value as data-value, the display name as
+           text) for tests and debugging. -->
       <span
         v-if="target.docReviewStatus"
-        class="inspector-header-status"
-        :title="t('gui.designer.inspector.doc_status_label')"
+        hidden
         data-test="designer-inspector-doc-status"
         :data-value="target.docReviewStatus"
-      >{{ reviewStatusText }}</span>
+      >{{ reviewStatusText ?? '' }}</span>
       <span
         v-if="target.nodeRun?.status"
-        class="inspector-header-status"
-        :title="t('gui.designer.inspector.run_status_label')"
+        hidden
         data-test="designer-inspector-run-status"
         :data-value="target.nodeRun.status"
-      >{{ target.nodeRun.status }}</span>
-      <span
-        v-if="state"
-        class="inspector-header-state"
-        :class="`inspector-header-state--${state.tone}`"
-        data-test="designer-inspector-state"
-      >{{ t(`gui.designer.center.node_states.${state.key}`) }}</span>
+      >{{ runStatusText ?? '' }}</span>
+      <span v-if="state" hidden data-test="designer-inspector-state" :data-value="state.key">{{ stateText }}</span>
     </span>
     <div v-if="$slots.actions" class="inspector-header-actions" data-test="designer-inspector-actions">
       <slot name="actions" />
@@ -135,10 +143,108 @@ const kindLabelKey = computed(() =>
 )
 const state = computed(() => flowNodeStateDisplay(props.target.canvasState))
 
+type PillTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
+
+/** Tones of the server states when they lead the pill (no Canvas state). */
+const REVIEW_TONES: Readonly<Record<string, PillTone>> = {
+  pending_review: 'warning',
+  approved: 'success',
+  rejected: 'danger',
+  revised: 'info',
+  wf_in_progress: 'info',
+  wf_done: 'success',
+}
+const RUN_TONES: Readonly<Record<string, PillTone>> = {
+  pending: 'neutral',
+  open: 'info',
+  running: 'info',
+  review: 'warning',
+  done: 'success',
+  completed: 'success',
+  rejected: 'danger',
+  failed: 'danger',
+  stopped: 'neutral',
+}
+
+/* The Canvas state each server value stands for (server canvas_mapping.py `_STATE_BY_REVIEW` /
+   `_STATE_BY_NODE_RUN`): a server state that maps to the shown Canvas state says the same thing
+   and is not shown again; any other (or unknown) value becomes the `· sub`. */
+const STATE_BY_REVIEW: Readonly<Record<string, string>> = {
+  approved: 'done',
+  wf_done: 'done',
+  pending_review: 'review',
+  revised: 'review',
+  rejected: 'blocked',
+  wf_in_progress: 'in_progress',
+}
+const STATE_BY_RUN: Readonly<Record<string, string>> = {
+  pending: 'draft',
+  open: 'in_progress',
+  review: 'review',
+  done: 'done',
+  rejected: 'blocked',
+}
+
+/** Display name of a server value, or null when it has none (an internal code never shows as text). */
+function displayOf(group: 'review_status' | 'run_status', value: string): string | null {
+  const key = `gui.designer.inspector.${group}.${value}`
+  return te(key) ? t(key) : null
+}
+
 const reviewStatusText = computed(() => {
   const value = props.target.docReviewStatus ?? ''
-  const key = `gui.designer.inspector.review_status.${value}`
-  return te(key) ? t(key) : value
+  return value ? displayOf('review_status', value) : null
+})
+const runStatusText = computed(() => {
+  const value = props.target.nodeRun?.status ?? ''
+  return value ? displayOf('run_status', value) : null
+})
+const stateText = computed(() => (state.value ? t(`gui.designer.center.node_states.${state.value.key}`) : ''))
+
+/** The tooltip part of a server value: "display (raw)", or the raw value alone. */
+const tipOf = (display: string | null, raw: string): string => (raw ? (display ? `${display} (${raw})` : raw) : '—')
+
+interface HeaderPill {
+  readonly label: string
+  readonly tone: PillTone
+  readonly sub: string | null
+  readonly title: string
+}
+
+const pill = computed<HeaderPill | null>(() => {
+  const canvas = state.value
+  const doc = props.target.docReviewStatus ?? ''
+  const run = props.target.nodeRun?.status ?? ''
+  if (!canvas && !doc && !run) return null
+  const docText = reviewStatusText.value
+  const runText = runStatusText.value
+  let label: string
+  let tone: PillTone
+  if (canvas) {
+    label = stateText.value
+    tone = canvas.tone
+  } else if (doc && (docText || !runText)) {
+    // A document value without a display name leads only when nothing better is there.
+    label = docText ?? doc
+    tone = REVIEW_TONES[doc] ?? 'neutral'
+  } else {
+    label = runText ?? run
+    tone = RUN_TONES[run] ?? 'neutral'
+  }
+  // The sub: a server state with a display name that says something else than the label.
+  const subs: (string | null)[] = []
+  if (canvas) {
+    if (doc && STATE_BY_REVIEW[doc] !== canvas.key) subs.push(docText)
+    if (run && STATE_BY_RUN[run] !== canvas.key) subs.push(runText)
+  } else if (doc && run && label === docText && STATE_BY_RUN[run] !== STATE_BY_REVIEW[doc]) {
+    subs.push(runText)
+  }
+  const sub = subs
+    .filter((text): text is string => text !== null && text !== label)
+    .filter((text, index, all) => all.indexOf(text) === index)
+    .join(' · ')
+  const title = t('gui.designer.inspector.header.state_tip', { doc: tipOf(docText, doc), run: tipOf(runText, run) })
+  return { label, tone, sub: sub || null, title }
 })
 
 // ⋯ → ID 복사: the bound document's id to the clipboard. Nothing to copy without a document or
@@ -264,13 +370,13 @@ onScopeDispose(() => {
   opacity: 0.7;
 }
 
-/* v7 `.status-pill`, one pill: [document review status · run status · ● Canvas state]. The pill
-   takes the Canvas state's tone; the two server texts inside it are muted and shrink first. */
+/* v7 `.status-pill`, one pill: `● {label} · {sub}` in the tone of the label's state (0035
+   insp.css `.status-pill.*`). The sub is lighter and shrinks first. */
 .inspector-header-pill {
   display: inline-flex;
   flex: 0 1 auto;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 20px;
   min-width: 0;
   padding: 0 8px;
@@ -281,40 +387,10 @@ onScopeDispose(() => {
   color: var(--fg2-muted);
   font-size: 11px;
   white-space: nowrap;
+  cursor: help;
 }
 
-.inspector-header-pill--info {
-  border-color: var(--fg2-status-info-border);
-  background: var(--fg2-status-info-bg);
-}
-
-.inspector-header-pill--success {
-  border-color: var(--fg2-status-success-border);
-  background: var(--fg2-status-success-bg);
-}
-
-.inspector-header-pill--warning {
-  border-color: var(--fg2-status-warning-border);
-  background: var(--fg2-status-warning-bg);
-}
-
-.inspector-header-pill--danger {
-  border-color: var(--fg2-status-danger-border);
-  background: var(--fg2-status-danger-bg);
-}
-
-.inspector-header-state {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 5px;
-  color: var(--fg2-muted);
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.inspector-header-state::before {
+.inspector-header-pill::before {
   content: '';
   flex: 0 0 auto;
   width: 6px;
@@ -323,38 +399,42 @@ onScopeDispose(() => {
   background: currentColor;
 }
 
-.inspector-header-state--info {
+.inspector-header-pill--info {
+  border-color: var(--fg2-status-info-border);
+  background: var(--fg2-status-info-bg);
   color: var(--fg2-status-info-fg);
 }
 
-.inspector-header-state--success {
+.inspector-header-pill--success {
+  border-color: var(--fg2-status-success-border);
+  background: var(--fg2-status-success-bg);
   color: var(--fg2-status-success-fg);
 }
 
-.inspector-header-state--warning {
+.inspector-header-pill--warning {
+  border-color: var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
   color: var(--fg2-status-warning-fg);
 }
 
-.inspector-header-state--danger {
+.inspector-header-pill--danger {
+  border-color: var(--fg2-status-danger-border);
+  background: var(--fg2-status-danger-bg);
   color: var(--fg2-status-danger-fg);
 }
 
-.inspector-header-status {
+.inspector-header-pill-label {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.inspector-header-pill-sub {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: var(--fg2-muted);
-  font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
+  opacity: 0.85;
   text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.inspector-header-status + .inspector-header-status::before,
-.inspector-header-status + .inspector-header-state::before {
-  content: '·';
-  margin-right: 6px;
-  opacity: 0.6;
 }
 
 /* The actions keep their buttons whole; on a narrow Inspector the group scrolls sideways instead of

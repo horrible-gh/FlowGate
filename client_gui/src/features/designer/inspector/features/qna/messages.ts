@@ -1,14 +1,18 @@
 // flowgate.v02.0048 T#7 — Q&A tab strings, merged under `gui.inspector.qna` (D#1 §5.5). The three
 // locales keep the same keys (structure.0048 B12). Reason keys use the shared names of D#1 §8.3
 // rule 6-2.
+// flowgate.v02.0052 묶음 A — the v7 wordings (0035 insp.js qaRow / qaPane / openQA): the state chips,
+// the short inline answer line, the folded 완료 group and the ↗ window.
+// flowgate.v02.0052 T#1 — two chips only, the ones the response proves: 미답변 (no answer, whoever
+// asked — it does not say whether an AI is answering, who reviews it or whether it was handed to the
+// user) and 완료. The window has no 편집 badge (answering is not editing the question).
 export default {
   ko: {
     empty: '이 문서에 등록된 질문이 없습니다.',
     question: 'Q{seq}',
     state: {
-      waiting: '답변 대기',
-      open: '미답변',
-      answered: '답변됨',
+      unanswered: '미답변',
+      answered: '완료',
     },
     side: {
       human: '사용자',
@@ -17,11 +21,20 @@ export default {
       unknown: '알 수 없음({kind})',
     },
     asked_by: '질문: {side}',
-    answered_by: '답변: {side}',
+    answered_by: '답: {side}',
     picked: '선택: {labels}',
     options: '선택지',
     answer_placeholder: '답변을 입력하거나 선택지를 고릅니다.',
+    answer_short_placeholder: '짧게 답변…',
     answer: '💬 답변',
+    send: '보내기',
+    open: '열기',
+    done_group: '완료',
+    window: {
+      title: 'Q&A',
+      view: '읽기 전용',
+      gone: '이 질문은 더 이상 목록에 없습니다.',
+    },
     reason: {
       read_only_conflict: 'Flow 소유가 충돌해 읽기 전용입니다.',
       read_only_revision: '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 답변합니다.',
@@ -49,9 +62,8 @@ export default {
     empty: 'No questions are registered on this document.',
     question: 'Q{seq}',
     state: {
-      waiting: 'Awaiting answer',
-      open: 'Unanswered',
-      answered: 'Answered',
+      unanswered: 'Unanswered',
+      answered: 'Done',
     },
     side: {
       human: 'User',
@@ -60,11 +72,20 @@ export default {
       unknown: 'Unknown ({kind})',
     },
     asked_by: 'Asked by: {side}',
-    answered_by: 'Answered by: {side}',
+    answered_by: 'Answer: {side}',
     picked: 'Picked: {labels}',
     options: 'Options',
     answer_placeholder: 'Write an answer or pick an option.',
+    answer_short_placeholder: 'Short answer…',
     answer: '💬 Answer',
+    send: 'Send',
+    open: 'Open',
+    done_group: 'Done',
+    window: {
+      title: 'Q&A',
+      view: 'Read only',
+      gone: 'This question is no longer in the list.',
+    },
     reason: {
       read_only_conflict: 'Read only: the Flow ownership is in conflict.',
       read_only_revision: 'Read only: this is a confirmed Graph revision view. Answer in the draft view.',
@@ -92,9 +113,8 @@ export default {
     empty: 'この文書に登録された質問はありません。',
     question: 'Q{seq}',
     state: {
-      waiting: '回答待ち',
-      open: '未回答',
-      answered: '回答済み',
+      unanswered: '未回答',
+      answered: '完了',
     },
     side: {
       human: 'ユーザー',
@@ -103,11 +123,20 @@ export default {
       unknown: '不明({kind})',
     },
     asked_by: '質問: {side}',
-    answered_by: '回答: {side}',
+    answered_by: '答: {side}',
     picked: '選択: {labels}',
     options: '選択肢',
     answer_placeholder: '回答を入力するか選択肢を選びます。',
+    answer_short_placeholder: '短く回答…',
     answer: '💬 回答',
+    send: '送信',
+    open: '開く',
+    done_group: '完了',
+    window: {
+      title: 'Q&A',
+      view: '読み取り専用',
+      gone: 'この質問はもう一覧にありません。',
+    },
     reason: {
       read_only_conflict: 'フローの所有が競合しているため読み取り専用です。',
       read_only_revision: '確定した Graph revision の表示のため読み取り専用です。draft 表示で回答します。',

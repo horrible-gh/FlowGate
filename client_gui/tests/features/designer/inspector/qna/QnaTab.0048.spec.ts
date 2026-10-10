@@ -7,6 +7,9 @@
  * real hub (only for the target document), a failed read with retry, and a Node change. Last, the
  * real registry: the Q&A tab with its number in the Frame (the number follows the events and the
  * answers), and no tab on a Node without a document.
+ * flowgate.v02.0052 묶음 A — the v7 shape: one line per question with the last answer in its small
+ * line, the inline answer line (field + 보내기) under every question without an answer, the folded
+ * 완료 group (open when nothing is pending), and the ↗ modeless window with the full form.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -209,17 +212,37 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       [12, 'open'],
       [11, 'answered'],
     ])
-    expect(itemEl(w, 10).find('[data-test="qna-item-state"]').text()).toBe('답변 대기')
-    expect(itemEl(w, 12).find('[data-test="qna-item-state"]').text()).toBe('미답변')
+    // 0052 T#1: the response proves only answered or not — every unanswered question is 미답변
+    // (neutral) whoever asked it; the asker kind is never shown as a team review or a hand-off.
+    for (const id of [10, 13, 12]) {
+      expect(itemEl(w, id).find('[data-test="qna-item-state"]').text(), String(id)).toBe('미답변')
+      expect(itemEl(w, id).find('[data-test="qna-item-state"]').attributes('data-tone'), String(id)).toBe('neutral')
+    }
+    expect(w.text()).not.toContain('팀 내 검토')
+    expect(itemEl(w, 11).find('[data-test="qna-item-state"]').text()).toBe('완료')
+    // The answered question folds under the 완료 group while questions are pending.
+    expect(w.find('[data-test="qna-done-group"]').attributes('aria-expanded')).toBe('false')
+    expect(w.find('[data-test="qna-done-count"]').text()).toBe('1')
+    expect(itemEl(w, 11).attributes('style')).toContain('display: none')
+    await w.find('[data-test="qna-done-group"]').trigger('click')
+    expect(itemEl(w, 11).attributes('style') ?? '').not.toContain('display: none')
+  })
+
+  it('a document whose questions are all answered opens the 완료 group', async () => {
+    threads.set(V01_DOC, [threads.get(V01_DOC)!.find((entry) => entry.id === 11)!])
+    const w = await mountTab(v01Target())
+    expect(w.find('[data-test="qna-done-group"]').attributes('aria-expanded')).toBe('true')
+    expect(itemEl(w, 11).attributes('style') ?? '').not.toContain('display: none')
   })
 
   it('shows who asked and who answered — never a guessed provider', async () => {
     const w = await mountTab(v01Target())
-    expect(itemEl(w, 10).find('[data-test="qna-item-asker"]').text()).toBe('질문: AI · Claude Opus 5.5')
-    expect(itemEl(w, 13).find('[data-test="qna-item-asker"]').text()).toBe('질문: AI(실행 정보 없음)')
-    expect(itemEl(w, 12).find('[data-test="qna-item-asker"]').text()).toBe('질문: 사용자')
-    expect(itemEl(w, 11).find('[data-test="qna-answer-side"]').text()).toBe('답변: 사용자')
+    expect(itemEl(w, 10).find('[data-test="qna-item-asker"]').text()).toBe('AI · Claude Opus 5.5')
+    expect(itemEl(w, 13).find('[data-test="qna-item-asker"]').text()).toBe('AI(실행 정보 없음)')
+    expect(itemEl(w, 12).find('[data-test="qna-item-asker"]').text()).toBe('사용자')
+    expect(itemEl(w, 11).find('[data-test="qna-answer-side"]').text()).toBe('답: 사용자')
     expect(itemEl(w, 11).find('[data-test="qna-answer-body"]').text()).toBe('ok')
+    expect(itemEl(w, 10).find('[data-test="qna-answer"]').exists()).toBe(false)
   })
 
   it('an answered question has no answer form; an unanswered one (AI or person asked) has one', async () => {
@@ -228,6 +251,94 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
     for (const id of [10, 12, 13]) expect(itemEl(w, id).find('[data-test="qna-answer-form"]').exists(), String(id)).toBe(true)
     expect(itemEl(w, 10).findAll('[data-test="qna-option"]').map((el) => el.text())).toEqual(['코드 품질', '성능'])
     expect(itemEl(w, 13).findAll('[data-test="qna-option"]')).toHaveLength(0)
+  })
+
+  // flowgate.v02.0052 묶음 A — v7 ↗ (0035 insp.js openQA): the question in a modeless window.
+  describe('the ↗ window', () => {
+    const windowOf = (id: number) => document.body.querySelector<HTMLElement>(`[data-test="qna-window"][data-item="${id}"]`)
+    const windowText = (id: number, test: string) => windowOf(id)?.querySelector(`[data-test="${test}"]`)?.textContent ?? null
+
+    async function open(w: VueWrapper<any>, id: number) {
+      await itemEl(w, id).find('[data-test="qna-open"]').trigger('click')
+      await flushPromises()
+      const win = windowOf(id)
+      if (!win) throw new Error(`window ${id} not opened`)
+      return win
+    }
+
+    it('shows the full question, its answers and the full form; no 편집 badge — answering is not editing', async () => {
+      const w = await mountTab(v01Target())
+      await open(w, 10)
+      expect(windowText(10, 'qna-window-body')).toBe('어느 범위를 조사할까요?')
+      expect(windowText(10, 'qna-window-asker')).toBe('질문: AI · Claude Opus 5.5')
+      expect(windowOf(10)!.querySelector('[data-test="qna-window-form"]')).not.toBeNull()
+      expect(windowOf(10)!.querySelectorAll('[data-test="qna-window-option"]')).toHaveLength(2)
+      expect(document.body.querySelector('[data-test="qna-window-mode"]')).toBeNull()
+      expect(windowText(10, 'qna-window-state')).toBe('미답변')
+      await open(w, 11)
+      expect(windowText(11, 'qna-window-body')).toBe('범위를 가정했습니다.')
+      expect(windowOf(11)!.querySelectorAll('[data-test="qna-window-answer"]')).toHaveLength(1)
+      expect(windowOf(11)!.querySelector('[data-test="qna-window-form"]')).toBeNull()
+      // An answered question of a writable Flow is not "read only" either.
+      expect(document.body.querySelector('[data-test="qna-window-mode"]')).toBeNull()
+      expect(document.body.querySelectorAll('[data-test="qna-window"]')).toHaveLength(2)
+      // ↗ again on an open question keeps the one window.
+      await itemEl(w, 10).find('[data-test="qna-open"]').trigger('click')
+      expect(document.body.querySelectorAll('[data-test="qna-window"]')).toHaveLength(2)
+    })
+
+    it('an answer sent from the window reaches the server and the form closes; the inline draft is the same draft', async () => {
+      const w = await mountTab(v01Target())
+      const win = await open(w, 13)
+      const field = win.querySelector<HTMLTextAreaElement>('textarea[data-test="qna-window-body-input"]')!
+      field.value = ' 창에서 답변 '
+      field.dispatchEvent(new Event('input'))
+      await flushPromises()
+      expect((itemEl(w, 13).find('textarea').element as HTMLTextAreaElement).value).toBe(' 창에서 답변 ')
+      win.querySelector<HTMLButtonElement>('[data-test="qna-window-submit"]')!.click()
+      await flushPromises()
+      expect(qaAnswerCall).toHaveBeenCalledWith({ docId: V01_DOC, itemId: 13, body: '창에서 답변', selectedOptionIds: [] })
+      expect(itemEl(w, 13).attributes('data-state')).toBe('answered')
+      expect(windowOf(13)!.querySelector('[data-test="qna-window-form"]')).toBeNull()
+      expect(windowText(13, 'qna-window-state')).toBe('완료')
+      expect(document.body.querySelector('[data-test="qna-window-mode"]')).toBeNull()
+    })
+
+    it('the title line: the long title is the shrinking part with its full text as a tooltip; the badge stays apart', async () => {
+      const long = '아주 긴 질문 제목 '.repeat(12).trim()
+      threads.set(V01_DOC, threads.get(V01_DOC)!.map((entry) => (entry.id === 10 ? { ...entry, title: long } : entry)))
+      const w = await mountTab(v01Target({ readOnly: 'revision' }))
+      const win = await open(w, 10)
+      const panel = win.closest('.ui-modeless-panel')!
+      const sub = panel.querySelector<HTMLElement>('[data-test="qna-window-sub"]')!
+      expect(sub.textContent).toBe(`Q1 · ${long}`)
+      expect(sub.getAttribute('title')).toBe(`Q1 · ${long}`)
+      const mode = panel.querySelector<HTMLElement>('[data-test="qna-window-mode"]')!
+      // The badge is a sibling after the title, not inside the text that is cut with an ellipsis.
+      expect(sub.contains(mode)).toBe(false)
+      expect(mode.parentElement).toBe(sub.parentElement)
+      expect(mode.textContent).toBe('읽기 전용')
+      expect(mode.getAttribute('title')).toBe('확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 답변합니다.')
+      // The answer form stays in the read-only window (disabled with its reason), as before.
+      expect(win.querySelector('[data-test="qna-window-form"]')).not.toBeNull()
+      expect(win.querySelector<HTMLButtonElement>('[data-test="qna-window-submit"]')!.disabled).toBe(true)
+    })
+
+    it('a read-only Flow opens the window read only with the reason; closing removes it; a Node change closes every window', async () => {
+      const w = await mountTab(v01Target({ readOnly: 'conflict' }))
+      const win = await open(w, 13)
+      expect(document.body.querySelector('[data-test="qna-window-mode"]')?.textContent).toBe('읽기 전용')
+      expect(document.body.querySelector('[data-test="qna-window-mode"]')?.getAttribute('title')).toBe('Flow 소유가 충돌해 읽기 전용입니다.')
+      expect(win.querySelector('[data-test="qna-window-reason"]')?.textContent).toBe('Flow 소유가 충돌해 읽기 전용입니다.')
+      expect(win.querySelector<HTMLButtonElement>('[data-test="qna-window-submit"]')!.disabled).toBe(true)
+      win.closest('.ui-modeless-panel')!.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click()
+      await flushPromises()
+      expect(windowOf(13)).toBeNull()
+      await open(w, 10)
+      await w.setProps({ target: v01Target({ readOnly: 'conflict', docId: OTHER_DOC, nodeId: `doc:${OTHER_DOC}` }) })
+      await flushPromises()
+      expect(document.body.querySelectorAll('[data-test="qna-window"]')).toHaveLength(0)
+    })
   })
 
   it('a document without questions shows the empty state', async () => {
@@ -495,7 +606,7 @@ describe('Q&A tab — server events (flowgate.v02.0048 T#7)', () => {
     await flushPromises()
     expect(qaReadCall).toHaveBeenCalledTimes(2)
     expect(itemEl(w, 13).attributes('data-state')).toBe('answered')
-    expect(itemEl(w, 13).find('[data-test="qna-answer-side"]').text()).toBe('답변: AI · Codex')
+    expect(itemEl(w, 13).find('[data-test="qna-answer-side"]').text()).toBe('답: AI · Codex')
   })
 
   it('a Q&A frame without doc_id follows the default rule: the target Flow reads again, another Flow does not', async () => {

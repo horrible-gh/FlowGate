@@ -111,13 +111,18 @@ describe('the Frame lays out the kind badge and the ⋯ menu items', () => {
 describe('the header line (flowgate.v02.0051 stage 2)', () => {
   const none = fixtureRegistry([])
 
-  it('the three state texts sit in one pill group that takes the Canvas state tone', () => {
+  // flowgate.v02.0052 묶음 A: one label (the Canvas state) in its tone; server states that say the same
+  // are not repeated; the raw values stay in hidden spans and the tooltip.
+  it('the states sit in one pill that takes the Canvas state tone and says each thing once', () => {
     const w = mountFrame(SELECTIONS.graph, none)
     const pill = get(w, 'designer-inspector-pill')
     expect(pill.classes()).toContain('inspector-header-pill--success')
-    expect(pill.find('[data-test="designer-inspector-doc-status"]').text()).toBe('승인됨')
-    expect(pill.find('[data-test="designer-inspector-run-status"]').text()).toBe('completed')
-    expect(pill.find('[data-test="designer-inspector-state"]').text()).toBe('완료')
+    expect(pill.find('[data-test="designer-inspector-pill-label"]').text()).toBe('완료')
+    expect(pill.find('[data-test="designer-inspector-pill-sub"]').exists()).toBe(false)
+    expect(pill.find('[data-test="designer-inspector-doc-status"]').attributes('data-value')).toBe('approved')
+    expect(pill.find('[data-test="designer-inspector-run-status"]').attributes('data-value')).toBe('completed')
+    expect(pill.find('[data-test="designer-inspector-state"]').attributes('data-value')).toBe('done')
+    expect(pill.attributes('title')).toBe('문서 상태: 승인됨 (approved) / 실행 상태: 완료 (completed)')
   })
 
   it('a Node with no state at all has no pill', () => {
@@ -126,7 +131,8 @@ describe('the header line (flowgate.v02.0051 stage 2)', () => {
     expect(w.find('[data-test="designer-inspector-pill"]').exists()).toBe(false)
     // The support gate has the Canvas state 'draft': the pill holds that state alone.
     const gate = mountFrame(SELECTIONS.graphGate, none)
-    expect(gate.get('[data-test="designer-inspector-pill"]').text()).toBe('작성 중')
+    expect(gate.get('[data-test="designer-inspector-pill-label"]').text()).toBe('작성 중')
+    expect(gate.find('[data-test="designer-inspector-pill-sub"]').exists()).toBe(false)
   })
 
   it('a B root: the 버그 name, the bug glyph and the red accent', () => {

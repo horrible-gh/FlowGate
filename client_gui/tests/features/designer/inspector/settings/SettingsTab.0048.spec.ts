@@ -373,7 +373,9 @@ describe('settings tab — reading (flowgate.v02.0048 T#9)', () => {
 
   it('a started row: shown, every field and saving disabled with the started reason (D#2 E3)', async () => {
     const w = await mountTab(targetFor(STARTED))
-    expect(w.find('[data-test="settings-row-state"]').text()).toBe('시작됨')
+    // flowgate.v02.0052 묶음 A: the 🔒 line says it once; the row state line is not repeated.
+    expect(w.find('[data-test="inspector-lock-note"]').text()).toBe('🔒 시작됨')
+    expect(w.find('[data-test="settings-row-state"]').exists()).toBe(false)
     for (const name of ['provider', 'reviewCount', 'reviewer'] as const) expect(isDisabled(select(w, name))).toBe(true)
     expect(isDisabled(saveButton(w))).toBe(true)
     expect(reasonText(w)).toBe('이미 시작된 단계라 설정을 바꿀 수 없습니다.')
@@ -563,7 +565,8 @@ describe('settings tab — saving (flowgate.v02.0048 T#9, D#2 §2.4)', () => {
     expect(saveCall).not.toHaveBeenCalled()
     expect(failureText(w)).toBe('그사이 단계 목록이 바뀌어 저장하지 않았습니다. 다시 읽은 값을 확인한 뒤 저장하세요.')
     expect(refreshes()).toBe(1)
-    expect(w.find('[data-test="settings-row-state"]').text()).toBe('시작됨')
+    expect(w.find('[data-test="inspector-lock-note"]').text()).toBe('🔒 시작됨')
+    expect(w.find('[data-test="settings-row-state"]').exists()).toBe(false)
     expect(isDisabled(select(w, 'provider'))).toBe(true)
   })
 

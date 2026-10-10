@@ -178,7 +178,9 @@ describe('documents tab — real-shaped data of the fixtures', () => {
     expect(previous[0].text()).toContain('#9')
 
     expect(paneState(w).exists()).toBe(false)
-    expect(find(w, 'documents-edit-hint').text()).toBe('문서 작성·편집은 ↗ 열기로 v0.1 문서 화면에서 합니다.')
+    // flowgate.v02.0052 묶음 A: no prose line; where editing happens is the ↗ 열기 hover text.
+    expect(find(w, 'documents-edit-hint').exists()).toBe(false)
+    expect(find(w, 'documents-open').attributes('title')).toBe('문서 작성·편집은 v0.1 문서 화면에서 합니다 (새 탭에서 엽니다)')
   })
 
   it('graph: the read document and the Graph node run; no slot, no rejection, no previous document', async () => {

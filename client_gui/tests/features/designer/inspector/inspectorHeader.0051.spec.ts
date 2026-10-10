@@ -2,6 +2,9 @@
  * flowgate.v02.0051 — the v7 header line on every card (InspectorHeader): the 읽기 전용 tag from the
  * target, the ✎ 메모 button shown but disabled (no memo API yet), the ● state pill, and the ⋯ menu
  * with ID 복사 — enabled with a document and the clipboard, copying the bound document's id.
+ * flowgate.v02.0052 묶음 A — the single status pill: one user-facing label (the Canvas state first),
+ * a `· sub` only for a server state that says something else, never an internal value as text, the
+ * server values in the tooltip and the data attributes.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -87,6 +90,70 @@ describe('InspectorHeader (flowgate.v02.0051)', () => {
     item.click()
     await flushPromises()
     expect(writeText).not.toHaveBeenCalled()
+  })
+
+  // flowgate.v02.0052 묶음 A — the v7 single status pill.
+  describe('the status pill', () => {
+    const pill = (w: VueWrapper<any>) => get(w, 'designer-inspector-pill')
+    const label = (w: VueWrapper<any>) => get(w, 'designer-inspector-pill-label').text()
+    const sub = (w: VueWrapper<any>) => w.find('[data-test="designer-inspector-pill-sub"]')
+
+    it('shows the Canvas state once, with a document state that says something else as the sub', () => {
+      const w = mountHeader(SELECTIONS.v01)
+      expect(label(w)).toBe('진행 중')
+      expect(sub(w).text()).toBe('· 검수 대기')
+      expect(pill(w).attributes('data-tone')).toBe('info')
+      expect(pill(w).attributes('data-doc-status')).toBe('pending_review')
+      expect(pill(w).attributes('title')).toBe('문서 상태: 검수 대기 (pending_review) / 실행 상태: —')
+    })
+
+    it('a server state with the same meaning as the Canvas state is not repeated; a run status has plain words', () => {
+      const w = mountHeader(SELECTIONS.graph)
+      expect(label(w)).toBe('완료')
+      expect(sub(w).exists()).toBe(false)
+      expect(pill(w).attributes('data-run-status')).toBe('completed')
+      expect(pill(w).attributes('title')).toBe('문서 상태: 승인됨 (approved) / 실행 상태: 완료 (completed)')
+      expect(pill(w).text()).not.toContain('completed')
+    })
+
+    it('never shows an internal workflow value as text', () => {
+      const base = targetOf(SELECTIONS.v01)
+      const w = mount(InspectorHeader, {
+        attachTo: document.body,
+        props: { target: { ...base, canvasState: 'in_progress', docReviewStatus: 'wf_in_progress' } },
+        global: { plugins: [i18n] },
+      })
+      wrapper = w
+      expect(label(w)).toBe('진행 중')
+      expect(sub(w).exists()).toBe(false)
+      expect(pill(w).text()).not.toContain('wf_in_progress')
+      expect(get(w, 'designer-inspector-doc-status').attributes('data-value')).toBe('wf_in_progress')
+    })
+
+    it('without a Canvas state the document state leads; a value without a display name stays in the tooltip', () => {
+      const base = targetOf(SELECTIONS.v01)
+      const w = mount(InspectorHeader, {
+        attachTo: document.body,
+        props: { target: { ...base, canvasState: null, docReviewStatus: 'wf_done', nodeRun: { status: 'odd', openedAt: null, finishedAt: null, resultDocId: null } } },
+        global: { plugins: [i18n] },
+      })
+      wrapper = w
+      expect(label(w)).toBe('완료')
+      expect(pill(w).attributes('data-tone')).toBe('success')
+      expect(sub(w).exists()).toBe(false)
+      expect(pill(w).attributes('title')).toBe('문서 상태: 완료 (wf_done) / 실행 상태: odd')
+    })
+
+    it('no state at all: no pill', () => {
+      const base = targetOf(SELECTIONS.v01)
+      const w = mount(InspectorHeader, {
+        attachTo: document.body,
+        props: { target: { ...base, canvasState: null, docReviewStatus: null, nodeRun: null } },
+        global: { plugins: [i18n] },
+      })
+      wrapper = w
+      expect(w.find('[data-test="designer-inspector-pill"]').exists()).toBe(false)
+    })
   })
 
   it('follows the locale', () => {

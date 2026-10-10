@@ -7,7 +7,10 @@
        started step, the 지시서 사용 / 생략 and 검수 뒤 진행 rows (not stored on a Node yet: disabled with the
        reason — the test card has its own in testRunSettings), and the common 실행 설정 block
        (InspectorRunSettings) whose 실행 AI · 검수 AI · 검수 횟수 are the three 0048 fields and whose 재시작 ·
-       실행 제한 시간 · 검수 기준 are not connected yet. Save, reasons and the running hop stay as in 0048. -->
+       실행 제한 시간 · 검수 기준 are not connected yet. Save, reasons and the running hop stay as in 0048.
+       flowgate.v02.0052 묶음 A — no prose in the body (v7 execSettings keeps explanations in tooltips):
+       the save hint is the save button's hover text, the row state line yields to the 🔒 line once the
+       step started, and the running hop folds into one wrapped line. -->
   <div class="inspector-settings" data-test="inspector-settings" :data-status="status">
     <InspectorPaneState v-if="noSlot" state="empty" :message="t(k('no_slot'))" />
     <template v-else>
@@ -26,7 +29,8 @@
       <InspectorLockNote v-if="started" :text="t(k('state.started'))" />
       <div class="inspector-settings-head" data-test="settings-row">
         <span class="inspector-settings-title">{{ title }}</span>
-        <span class="inspector-settings-sub" data-test="settings-row-state">{{ t(k(stateKey)) }}</span>
+        <!-- Once the step started the 🔒 line above already says so. -->
+        <span v-if="!started" class="inspector-settings-sub" data-test="settings-row-state">{{ t(k(stateKey)) }}</span>
       </div>
 
       <template v-if="policyRows">
@@ -69,10 +73,10 @@
           variant="primary"
           :disabled="!availability.save.enabled"
           :loading="busy"
+          :title="t(k('hint'))"
           data-test="settings-save"
           @click="save"
         >{{ t(k('save')) }}</Button>
-        <span class="inspector-settings-sub">{{ t(k('hint')) }}</span>
       </div>
       <div v-if="availability.save.reason" data-test="settings-reason">
         <InspectorReason :text="t(k(availability.save.reason))" />
@@ -81,9 +85,11 @@
 
       <div v-if="hop" class="inspector-settings-hop" data-test="settings-hop">
         <span class="inspector-settings-label">{{ t(k('hop.title')) }}</span>
-        <span data-test="settings-hop-provider">{{ t(k('hop.provider'), { name: hop.providerName ?? '—' }) }} · {{ t(k(`hop.match.${hop.provider}`)) }}</span>
-        <span data-test="settings-hop-review-count">{{ t(k('hop.review_count'), { count: hopCount }) }} · {{ t(k(`hop.match.${hop.reviewCount}`)) }}</span>
-        <span data-test="settings-hop-reviewer">{{ t(k('hop.reviewer'), { name: hop.reviewerName ?? '—' }) }} · {{ t(k(`hop.match.${hop.reviewer}`)) }}</span>
+        <span class="inspector-settings-hop-values">
+          <span data-test="settings-hop-provider">{{ t(k('hop.provider'), { name: hop.providerName ?? '—' }) }} · {{ t(k(`hop.match.${hop.provider}`)) }}</span>
+          <span data-test="settings-hop-review-count">{{ t(k('hop.review_count'), { count: hopCount }) }} · {{ t(k(`hop.match.${hop.reviewCount}`)) }}</span>
+          <span data-test="settings-hop-reviewer">{{ t(k('hop.reviewer'), { name: hop.reviewerName ?? '—' }) }} · {{ t(k(`hop.match.${hop.reviewer}`)) }}</span>
+        </span>
       </div>
     </template>
   </div>
@@ -221,11 +227,27 @@ const hopCount = computed(() => {
   font-size: 11.5px;
 }
 
+/* One wrapped line (v7 keeps no prose block): title, then the three values separated by ·. */
 .inspector-settings-hop {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-wrap: wrap;
+  gap: 2px 8px;
   padding-top: 6px;
   border-top: 1px solid var(--fg2-line);
+  font-size: 11.5px;
+}
+
+.inspector-settings-hop-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  min-width: 0;
+  color: var(--fg2-muted);
+}
+
+.inspector-settings-hop-values > span + span::before {
+  content: '·';
+  margin-right: 6px;
+  opacity: 0.6;
 }
 </style>

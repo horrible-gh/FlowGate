@@ -293,6 +293,22 @@ export default {
         approved: '승인됨',
         rejected: '반려됨',
         revised: '수정됨',
+        // flowgate.v02.0052 묶음 A — the root workflow states, in plain words (never wf_*).
+        wf_in_progress: '진행 중',
+        wf_done: '완료',
+      },
+      // flowgate.v02.0052 묶음 A — the Graph node run status (graph_node_runs.status) in plain words; an
+      // unknown value shows as sent.
+      run_status: {
+        pending: '대기',
+        open: '실행 중',
+        running: '실행 중',
+        review: '검수 중',
+        done: '완료',
+        completed: '완료',
+        rejected: '반려됨',
+        failed: '실패',
+        stopped: '중단됨',
       },
       pane: {
         loading: '불러오는 중…',
@@ -316,6 +332,8 @@ export default {
         copy_id: 'ID 복사',
         copied: 'ID 복사됨',
         kind_bug: '버그',
+        // flowgate.v02.0052 묶음 A — the status pill tooltip: the server values behind the one label.
+        state_tip: '문서 상태: {doc} / 실행 상태: {run}',
       },
       // flowgate.v02.0051 — common display parts (parts/): slot line, 🛡 review badge, origin badge,
       // lock line, run settings block.

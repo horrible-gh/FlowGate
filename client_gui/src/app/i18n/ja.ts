@@ -290,6 +290,19 @@ export default {
         approved: '承認済み',
         rejected: '差し戻し',
         revised: '修正済み',
+        wf_in_progress: '進行中',
+        wf_done: '完了',
+      },
+      run_status: {
+        pending: '待機',
+        open: '実行中',
+        running: '実行中',
+        review: 'レビュー中',
+        done: '完了',
+        completed: '完了',
+        rejected: '差し戻し',
+        failed: '失敗',
+        stopped: '停止',
       },
       pane: {
         loading: '読み込み中…',
@@ -313,6 +326,7 @@ export default {
         copy_id: 'IDをコピー',
         copied: 'IDをコピーしました',
         kind_bug: 'バグ',
+        state_tip: 'ドキュメント状態: {doc} / 実行状態: {run}',
       },
       // flowgate.v02.0051 — common display parts (parts/): slot line, 🛡 review badge, origin badge,
       // lock line, run settings block.
