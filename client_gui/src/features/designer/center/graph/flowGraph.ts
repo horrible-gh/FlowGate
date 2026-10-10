@@ -15,6 +15,11 @@
 // Graph definition — a node's `definition` (what the draft / revision node is) and
 // `structureEditable`, an edge's `editable`, and the Flow's `draft` state. Layout fields stay
 // x / y / positionSource / movable / viewport.
+//
+// flowgate.v02.0048 T#1 (D#1 §4.1 / §4.2): the per-Node detail the Inspector needs — the bound
+// document, the v0.1 sequence slot and the Graph node run — as optional meaning fields, plus the
+// selection context (FlowGraphSelection) the Center session hands to the bottom Inspector. The
+// Canvas card does not read them, so the Canvas look does not change.
 
 export interface FlowGraphNode {
   /** Unique within the Graph — the server node identity for a server Graph. */
@@ -37,6 +42,41 @@ export interface FlowGraphNode {
   readonly structureEditable?: boolean
   /** Meaning: the Graph definition of a draft / revision node; absent for document / slot nodes. */
   readonly definition?: FlowGraphNodeDefinition | null
+  /** Meaning (0048): the live document bound to the Node, or null / absent (no document). */
+  readonly document?: FlowGraphNodeDocument | null
+  /** Meaning (0048): the v0.1 sequence slot behind the Node (v0.1 Flows only). */
+  readonly slot?: FlowGraphNodeSlot | null
+  /** Meaning (0048): the Graph node run state (Graph Flows only). */
+  readonly nodeRun?: FlowGraphNodeRun | null
+}
+
+export interface FlowGraphNodeDocument {
+  readonly docId: string
+  readonly typeCode: string | null
+  readonly seq: number | null
+  readonly title: string | null
+  readonly docReviewStatus: string | null
+  readonly status: string | null
+  /** Ids of the earlier documents this one replaces. */
+  readonly supersedes: readonly string[]
+}
+
+export interface FlowGraphNodeSlot {
+  readonly itemId: number
+  readonly itemSeq: number | null
+  readonly order: number
+  readonly type: string
+  readonly label: string | null
+  readonly derivedStatus: string | null
+  readonly protected: boolean
+  readonly sourceWpCardId: string | null
+}
+
+export interface FlowGraphNodeRun {
+  readonly status: string | null
+  readonly openedAt: string | null
+  readonly finishedAt: string | null
+  readonly resultDocId: string | null
 }
 
 export interface FlowGraphNodeDefinition {
@@ -100,4 +140,11 @@ export interface FlowGraph {
   readonly latestRevisionNo?: number | null
   /** Meaning: the revision shown in the revision view (a run may pin an older one), else null. */
   readonly viewRevisionNo?: number | null
+}
+
+/** flowgate.v02.0048 T#1: the selected Node with the Flow and project it belongs to (Center session -> Inspector). */
+export interface FlowGraphSelection {
+  readonly projectId: string
+  readonly graph: FlowGraph
+  readonly node: FlowGraphNode
 }

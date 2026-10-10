@@ -130,10 +130,12 @@ def test_route_registration_is_the_only_main_py_touch_point():
 
 # D0004 §4.3: v0.1 file -> number of contacts in it. Each contact is a delegation call to
 # graph_workflow.api.v01_contact (decide / sequence save / advance / inbox / review).
+# flowgate.v02.0048 D#2 §4.2: + the R↔B root-type conversion (guarded like a sequence save).
 V01_CONTACT_FILES = {
     "modules/flow_gate/api/v1/workflow_decision_routes.py": 3,
     "modules/flow_gate/api/inbox_routes.py": 1,
     "modules/flow_gate/workflow/routers/workflow.py": 1,
+    "modules/flow_gate/documents/routers/documents.py": 1,
 }
 
 

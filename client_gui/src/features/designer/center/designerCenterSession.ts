@@ -33,6 +33,10 @@
 // once the first Graph read shows it empty and editable — never to a Flow that has nodes. An Edge
 // the work already went through (graph/edgeProgress.ts) is never removed.
 //
+// flowgate.v02.0048 T#1 (D#1 §4.2 / §5.7): `activeSelection` gives the bottom Inspector the
+// selected Node together with its Flow's Graph and the project; `refreshFlow` reads a Flow again
+// quietly (as a change elsewhere does) after a change that sends no event.
+//
 // flowgate.v02.0045 TR0020 rev3: no 편집 / 편집 마치기 — which definition a Graph Flow shows is
 // picked here. A stored draft (edits not run yet) is shown; with none, the latest revision (the
 // run view) is shown editable as is (draftModel `editableRevision`) and its first edit saves a new
@@ -62,7 +66,7 @@ import { createDraftController, type DraftEditState } from './edit/draftControll
 import { CLIENT_KEY_PREFIX, editableRevision, type CanvasNodeSpec } from './edit/draftModel'
 import { fixtureFlowGraphSource } from './graph/fixtureFlowGraphSource'
 import { isEdgeProgressed } from './graph/edgeProgress'
-import type { FlowGraph, FlowGraphNode } from './graph/flowGraph'
+import type { FlowGraph, FlowGraphNode, FlowGraphSelection } from './graph/flowGraph'
 import type { FlowGraphSource, FlowLayoutChange } from './graph/flowGraphSource'
 import { createLayoutSaveQueue } from './layoutSaveQueue'
 
@@ -103,6 +107,8 @@ export interface DesignerCenterSession {
   readonly activeFlowRef: ComputedRef<FlowRef | null>
   readonly activeGraphLoad: ComputedRef<FlowGraphLoad | null>
   readonly activeView: ComputedRef<DeepReadonly<CanvasViewState> | null>
+  /** flowgate.v02.0048 T#1: the selected Node with its Flow's Graph and the project, or null. */
+  readonly activeSelection: ComputedRef<FlowGraphSelection | null>
   /**
    * flowgate.v02.0036 — the selected Node of the active Flow's ready Graph, or null (no tab, Graph
    * not ready, nothing selected). The bottom Inspector reads it; it is derived, never stored.
@@ -127,6 +133,11 @@ export interface DesignerCenterSession {
   closeFlow(flowId: string): void
   /** Reads the Graph of an open Flow again. */
   retryGraph(flowId: string): void
+  /**
+   * flowgate.v02.0048 T#1: reads an open Flow again in the background (the shown Graph stays until
+   * the new one arrives), once this tab's saves of the Flow have settled.
+   */
+  refreshFlow(flowId: string): void
   /** Single selection of one Node, or none. */
   selectNode(flowId: string, nodeId: string | null): void
   /** Records the Viewport the Canvas (or the Minimap / a later Toolbar) reports. */
@@ -439,6 +450,10 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     readGraph(flowId)
   }
 
+  function refreshFlow(flowId: string) {
+    if (state.projectId !== null) changedElsewhere(state.projectId, flowId)
+  }
+
   function selectNode(flowId: string, nodeId: string | null) {
     const view = state.views[flowId]
     if (view && view.selectedNodeId !== nodeId) view.selectedNodeId = nodeId
@@ -500,6 +515,15 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   const exposed = readonly(state)
 
+  const activeSelectedNode = computed(() => {
+    const id = exposed.activeFlowId
+    if (id === null) return null
+    const load = exposed.graphs[id] as FlowGraphLoad | undefined
+    const nodeId = exposed.views[id]?.selectedNodeId ?? null
+    if (load?.status !== 'ready' || nodeId === null) return null
+    return load.graph.nodes.find((node) => node.id === nodeId) ?? null
+  })
+
   const activeTab = computed(() => {
     const id = exposed.activeFlowId
     return id === null ? null : exposed.tabs.find((tab) => tab.flowId === id) ?? null
@@ -518,13 +542,13 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       const id = exposed.activeFlowId
       return id === null ? null : exposed.views[id] ?? null
     }),
-    activeSelectedNode: computed(() => {
+    activeSelectedNode,
+    activeSelection: computed(() => {
+      const node = activeSelectedNode.value
       const id = exposed.activeFlowId
-      if (id === null) return null
-      const load = exposed.graphs[id] as FlowGraphLoad | undefined
-      const nodeId = exposed.views[id]?.selectedNodeId ?? null
-      if (load?.status !== 'ready' || nodeId === null) return null
-      return load.graph.nodes.find((node) => node.id === nodeId) ?? null
+      const load = id === null ? undefined : (exposed.graphs[id] as FlowGraphLoad | undefined)
+      if (!node || exposed.projectId === null || load?.status !== 'ready') return null
+      return { projectId: exposed.projectId, graph: load.graph, node }
     }),
     canvasSize: computed(() => canvasSize.value),
     setProject,
@@ -532,6 +556,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     activateFlow,
     closeFlow,
     retryGraph,
+    refreshFlow,
     selectNode,
     recordViewport,
     recordCanvasSize,

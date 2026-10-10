@@ -330,6 +330,16 @@ export interface FlowCanvasNode {
   slot: FlowCanvasSlot | null
   /** flowgate.v02.0045 S3: the Graph definition of a draft / revision node (P0008 §2.6). */
   graphNode?: FlowCanvasGraphNode | null
+  /** flowgate.v02.0048 T#1: the run state of a Graph node (P0008 §2.6 `node_run`); absent elsewhere. */
+  nodeRun?: FlowCanvasNodeRun | null
+}
+
+/** P0008 §2.6 `node_run`: what the Inspector shows of a Graph node's run (status kept as the server sends it). */
+export interface FlowCanvasNodeRun {
+  status: string | null
+  openedAt: string | null
+  finishedAt: string | null
+  resultDocId: string | null
 }
 
 /** P0008 §2.6 `graph_node`: what a Graph node is, besides where it is drawn. */

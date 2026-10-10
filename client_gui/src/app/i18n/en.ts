@@ -272,6 +272,7 @@ export default {
       tool_git: 'Git',
     },
     // flowgate.v02.0036 — bottom Inspector Frame (0035 v7: header + tabs + Content area).
+    // flowgate.v02.0048 T#1: no placeholder line — a tab exists only with a registered feature.
     inspector: {
       label: 'Inspector',
       tabs_label: 'Inspector tabs',
@@ -281,7 +282,80 @@ export default {
         attachments: 'Attachments',
         settings: 'Settings',
       },
-      pane_placeholder: '{tab} content will be connected in a later step.',
+      // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
+      doc_status_label: 'Document status',
+      run_status_label: 'Run status',
+      review_status: {
+        pending_review: 'Pending review',
+        approved: 'Approved',
+        rejected: 'Rejected',
+        revised: 'Revised',
+      },
+      pane: {
+        loading: 'Loading…',
+        empty: 'Nothing to show.',
+        no_document: 'No document is connected.',
+        no_settings: 'Settings are not connected for this card yet.',
+        error: 'Could not load.',
+        retry: 'Retry',
+        // flowgate.v02.0051 — a v7 item whose operation is not connected yet (shown, inactive).
+        disabled: 'Not supported yet.',
+      },
+      // flowgate.v02.0051 — the rest of the v7 header line, on every card.
+      header: {
+        read_only: 'Read only',
+        read_only_conflict: 'Ownership conflict — read only',
+        read_only_revision: 'Revision view — read only',
+        memo: 'Memo',
+        memo_unavailable: 'Memo — not connected yet',
+        more: 'More',
+        copy_id: 'Copy ID',
+        copied: 'ID copied',
+        kind_bug: 'Bug',
+      },
+      // flowgate.v02.0051 — common display parts (parts/): slot line, 🛡 review badge, origin badge,
+      // lock line, run settings block.
+      slot: {
+        empty: 'None yet',
+        progress: 'Progress',
+        open: 'Open',
+        write: 'Write',
+      },
+      review: {
+        pass: 'AI review ×{n} · {remain} finding(s) left',
+        warn: 'AI review ×{n} · response needed',
+        run: 'AI review round {n} running',
+        limit: 'Review rounds used up · {remain} finding(s) left',
+      },
+      origin: {
+        ai: '🤖 AI',
+        wp: '⇉ WP',
+        ai_title: 'Node expanded by AI delegation',
+        wp_title: 'Node expanded by a human work plan',
+      },
+      lock: {
+        running: 'Running',
+      },
+      unconnected: 'Not connected yet',
+      slot_state: {
+        writing: 'Writing',
+        closed: 'Closed',
+      },
+      menu: {
+        history: 'Run history',
+        stop: '■ Stop',
+        rerun: '↻ Run again',
+      },
+      run_settings: {
+        title: 'Run settings',
+        advanced: 'Advanced',
+        run_ai: 'Run AI',
+        restart: 'Restart',
+        review_ai: 'Review AI',
+        review_count: 'Review rounds',
+        time_limit: 'Run time limit',
+        review_basis: 'Review basis',
+      },
     },
     // flowgate.v02.0038 — Designer top band (Header / Menu Bar / Toolbar). No shortcut text on
     // purpose (0007-T §7).

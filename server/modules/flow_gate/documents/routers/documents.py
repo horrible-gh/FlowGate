@@ -31,6 +31,7 @@ from modules.flow_gate.db import mention_copies as db_mention_copies
 from modules.flow_gate.documents import attachments
 from modules.flow_gate.documents import document_service, document_types, template_service, url_import_service
 from modules.flow_gate.documents.type_code import doc_code_seq_text
+from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact  # D#2 §4.2 (flowgate.v02.0048 T#10)
 from modules.flow_gate.documents.constants import (
     AUTO_COMPLETE_TYPES,
     INSTRUCTION_AUTO_TYPES,
@@ -3424,17 +3425,24 @@ def convert_root_type(
     This is allowed ONLY on a pristine root — before the workflow decision is taken
     — and rewrites the identity atomically. Rejections: 404 (missing), 422 (not a
     root / invalid target), 409 (decision already taken or target id collision).
+
+    flowgate.v02.0048 T#10 (D#2 §3.3 C / §4.2): the conversion runs through the engine
+    router's v0.1 contact. A Flow owned by a Graph definition (or claimed by both engines)
+    is refused with the v0.1 flat 409 (``flow_owned_by_graph`` / ``flow_ownership_conflict``)
+    before anything is rewritten — its root binding and start Node keep the old identity
+    and a revision is never rewritten. An unassigned Flow converts inside the Flow guard;
+    a v0.1 Flow and a document without a group convert exactly as before.
     """
     doc = document_service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
-    return {
-        "data": document_service.convert_root_document_type(
-            doc_id, body.new_type, actor_user_id=current_user["user_id"]
-        )
-    }
+    actor = current_user["user_id"]
+    result = _graph_contact.guarded_assignment(doc, lambda: document_service.convert_root_document_type(doc_id, body.new_type, actor_user_id=actor), actor)
+    if isinstance(result, JSONResponse):
+        return result
+    return {"data": result}
 
 
 
