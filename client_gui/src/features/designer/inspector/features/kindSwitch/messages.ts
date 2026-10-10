@@ -9,6 +9,9 @@ export default {
     },
     switch: '⇄ {to}(으)로 전환',
     switch_hint: '{from} 문서를 {to} 문서로 바꿉니다. 문서 번호가 바뀝니다.',
+    // flowgate.v02.0051 — the v7 종류 배지 ▾ and its menu.
+    badge_hint: '종류 전환: 그룹의 첫 실행 전까지',
+    menu_title: '종류 (그룹 첫 실행 전까지)',
     confirm: {
       title: '종류 전환',
       message: '{from} 문서를 {to} 문서로 바꿉니다. 문서 번호({from_code} → {to_code})가 바뀌고, Canvas를 다시 읽은 뒤 선택이 풀립니다.',
@@ -47,6 +50,8 @@ export default {
     },
     switch: '⇄ Switch to {to}',
     switch_hint: 'Turns this {from} into a {to}. The document number changes.',
+    badge_hint: 'Kind switch: until the group first runs',
+    menu_title: 'Kind (until the group first runs)',
     confirm: {
       title: 'Kind switch',
       message: 'Turns this {from} into a {to}. The document number changes ({from_code} → {to_code}); the Canvas is read again and the selection is cleared.',
@@ -85,6 +90,8 @@ export default {
     },
     switch: '⇄ {to}に切り替え',
     switch_hint: 'この{from}文書を{to}文書に変えます。文書番号が変わります。',
+    badge_hint: '種類の切り替え: グループの初回実行まで',
+    menu_title: '種類（グループの初回実行まで）',
     confirm: {
       title: '種類の切り替え',
       message: 'この{from}文書を{to}文書に変えます。文書番号({from_code} → {to_code})が変わり、Canvasを読み直したあと選択が解除されます。',

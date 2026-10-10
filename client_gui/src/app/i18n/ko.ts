@@ -297,8 +297,69 @@ export default {
       pane: {
         loading: '불러오는 중…',
         empty: '표시할 내용이 없습니다.',
+        no_document: '연결된 문서가 없습니다.',
+        no_settings: '이 카드의 설정은 아직 연결되지 않았습니다.',
         error: '불러오지 못했습니다.',
         retry: '다시 시도',
+        // flowgate.v02.0051 — a v7 item whose operation is not connected yet (shown, inactive).
+        disabled: '아직 지원하지 않는 동작입니다.',
+      },
+      // flowgate.v02.0051 — the rest of the v7 header line, on every card.
+      header: {
+        read_only: '읽기 전용',
+        read_only_conflict: '소유권 충돌 — 읽기 전용',
+        read_only_revision: '리비전 보기 — 읽기 전용',
+        memo: '메모',
+        memo_unavailable: '메모 — 아직 연결되지 않음',
+        more: '더보기',
+        copy_id: 'ID 복사',
+        copied: 'ID 복사됨',
+        kind_bug: '버그',
+      },
+      // flowgate.v02.0051 — common display parts (parts/): slot line, 🛡 review badge, origin badge,
+      // lock line, run settings block.
+      slot: {
+        empty: '아직 없음',
+        progress: '진행률',
+        open: '열기',
+        write: '작성',
+      },
+      review: {
+        pass: 'AI 검수 {n}회 · 남은 지적 {remain}',
+        warn: 'AI 검수 {n}회 · 대응 필요',
+        run: 'AI 검수 {n}회차 진행 중',
+        limit: '검수 횟수 소진 · 남은 지적 {remain}',
+      },
+      origin: {
+        ai: '🤖 AI',
+        wp: '⇉ WP',
+        ai_title: 'AI 위임이 전개한 Node',
+        wp_title: '사람 WP가 전개한 Node',
+      },
+      lock: {
+        running: '실행 중',
+      },
+      // flowgate.v02.0051 stage 2 — card parts: the "not connected" wording, slot buttons, the plain
+      // document states, the run-card ⋯ items, and the bug kind in the header.
+      unconnected: '아직 연결되지 않음',
+      slot_state: {
+        writing: '작성 중',
+        closed: '완료',
+      },
+      menu: {
+        history: '실행 이력',
+        stop: '■ 중단',
+        rerun: '↻ 재실행',
+      },
+      run_settings: {
+        title: '실행 설정',
+        advanced: '고급',
+        run_ai: '실행 AI',
+        restart: '재시작',
+        review_ai: '검수 AI',
+        review_count: '검수 횟수',
+        time_limit: '실행 제한 시간',
+        review_basis: '검수 기준',
       },
     },
     // flowgate.v02.0038 — Designer top band (Header / Menu Bar / Toolbar). The Project / Group /

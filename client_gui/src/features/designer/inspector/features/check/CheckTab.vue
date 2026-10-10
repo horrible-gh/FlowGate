@@ -4,25 +4,19 @@
        approval Git finished without its approval, the final approval job still running), with
        "Git 패널 열기" (Host intent `show-tool: git`) for Git in detail and ↗ 열기 for the v0.1 AC screen.
        The final approval itself is the header action (CheckAction). A thin container: useCheck reads,
-       checkModel decides the wording. -->
+       checkModel decides the wording.
+       flowgate.v02.0051 stage 2 — the v7 확인 card (0035 cmid.* / cend.*): the one 확인 결과 result line
+       (check state pill · Git state and branch as its summary · "Git 패널 열기 ↗" · ↗), built from the
+       common slot list part; the Git notes and the running-job line stay below. -->
   <section class="inspector-check" data-test="inspector-check" :data-review="reviewStatus ?? ''" :data-git="git?.status ?? ''">
-    <div class="inspector-check-line">
-      <h4 class="inspector-check-heading">{{ t(k('title')) }}</h4>
-      <span class="inspector-check-state" data-test="check-review" :data-key="reviewKey">{{ t(k(reviewKey), { status: reviewStatus ?? '' }) }}</span>
-    </div>
+    <InspectorSlotList :slots="lines" @open="open" @nav="openGit">
+      <template #summary>
+        <span v-if="gitLine" class="inspector-check-git" data-test="check-git" :data-status="gitLine.status" :data-tone="gitLine.tone">{{ t(k(gitLine.key), { status: gitLine.status }) }}</span>
+        <span v-if="git?.branch && git.status !== 'none'" class="inspector-check-sub" data-test="check-git-branch">{{ t(k('git.branch'), { branch: git.branch }) }}</span>
+      </template>
+    </InspectorSlotList>
 
-    <div class="inspector-check-line">
-      <span class="inspector-check-sub">{{ t(k('git.title')) }}</span>
-      <InspectorPaneState v-if="gitStatus === 'loading' && !git" state="loading" />
-      <span
-        v-else-if="gitLine"
-        class="inspector-check-state"
-        data-test="check-git"
-        :data-status="gitLine.status"
-        :data-tone="gitLine.tone"
-      >{{ t(k(gitLine.key), { status: gitLine.status }) }}</span>
-      <span v-if="git?.branch && git.status !== 'none'" class="inspector-check-sub" data-test="check-git-branch">{{ t(k('git.branch'), { branch: git.branch }) }}</span>
-    </div>
+    <InspectorPaneState v-if="gitStatus === 'loading' && !git" state="loading" />
     <div v-if="gitErrorKey" data-test="check-git-error">
       <InspectorReason :text="t(k(gitErrorKey))" tone="warning" />
     </div>
@@ -30,36 +24,17 @@
     <div v-if="jobLine" data-test="check-job">
       <InspectorReason :text="t(k(jobLine.key), { ...jobLine.params })" tone="warning" />
     </div>
-
-    <div class="inspector-check-line">
-      <Button
-        v-if="availability.openGit.visible"
-        size="sm"
-        variant="secondary"
-        :title="t(k('open_git_hint'))"
-        data-test="check-open-git"
-        @click="openGit"
-      >{{ t(k('open_git')) }}</Button>
-      <Button
-        v-if="availability.open.visible"
-        size="sm"
-        variant="ghost"
-        :title="t(k('open_hint'))"
-        data-test="check-open"
-        @click="open"
-      >{{ t(k('open')) }}</Button>
-    </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Button from '../../../../../components/ui/Button.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
+import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { checkGitLine, checkGitNotes, checkJobLine, checkReviewKey } from './checkModel'
+import { checkGitLine, checkGitNotes, checkJobLine, checkReviewKey, checkReviewTone } from './checkModel'
 import { useCheck } from './useCheck'
 
 const props = defineProps<{
@@ -76,6 +51,25 @@ const reviewKey = computed(() => checkReviewKey(reviewStatus.value))
 const gitLine = computed(() => (git.value ? checkGitLine(git.value.status) : null))
 const notes = computed(() => (git.value ? checkGitNotes(git.value) : []))
 const jobLine = computed(() => checkJobLine(git.value, props.target.docId))
+
+/** The one v7 line: the check state as the pill; the Git state and branch are rendered as the summary above. */
+const lines = computed<InspectorSlotView[]>(() => {
+  const tone = checkReviewTone(reviewStatus.value)
+  return [
+    {
+      key: 'result',
+      kind: 'result',
+      name: t(k('slot.result')),
+      id: props.target.docId,
+      state: { label: t(k(reviewKey.value), { status: reviewStatus.value ?? '' }), tone },
+      focus: tone === 'warning',
+      danger: tone === 'danger' || gitLine.value?.tone === 'danger',
+      nav: availability.value.openGit.visible ? { label: t(k('open_git')), title: t(k('open_git_hint')) } : null,
+      open: availability.value.open.visible ? 'enabled' : 'none',
+      testIds: { state: 'check-review', nav: 'check-open-git', open: 'check-open' },
+    },
+  ]
+})
 </script>
 
 <style scoped>
@@ -88,40 +82,30 @@ const jobLine = computed(() => checkJobLine(git.value, props.target.docId))
   border-bottom: 1px solid var(--fg2-border, transparent);
 }
 
-.inspector-check-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 8px;
-  min-width: 0;
+.inspector-check-git {
+  overflow: hidden;
+  color: #9cb1c7;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
 }
 
-.inspector-check-heading {
-  margin: 0;
-  font-size: 12.5px;
-  font-weight: 700;
-}
-
-.inspector-check-state {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.inspector-check-state[data-tone='warning'] {
+.inspector-check-git[data-tone='warning'] {
   color: var(--fg2-status-warning-fg);
 }
 
-.inspector-check-state[data-tone='danger'] {
+.inspector-check-git[data-tone='danger'] {
   color: var(--fg2-status-danger-fg);
 }
 
-.inspector-check-state[data-tone='success'] {
+.inspector-check-git[data-tone='success'] {
   color: var(--fg2-status-success-fg, inherit);
 }
 
 .inspector-check-sub {
   margin: 0;
+  overflow: hidden;
   color: var(--fg2-muted);
   font-size: 11.5px;
+  text-overflow: ellipsis;
 }
 </style>

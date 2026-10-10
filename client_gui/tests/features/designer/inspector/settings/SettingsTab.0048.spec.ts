@@ -310,7 +310,9 @@ async function mountTab(target: InspectorTarget) {
   return wrapper
 }
 
-const select = (w: VueWrapper<any>, name: 'provider' | 'reviewCount' | 'reviewer') => w.find(`select[data-test="settings-${name}"]`)
+// flowgate.v02.0051 stage 2: the three fields sit in the common run settings block (InspectorRunSettings).
+const RUN_FIELD = { provider: 'run_ai', reviewCount: 'review_count', reviewer: 'review_ai' } as const
+const select = (w: VueWrapper<any>, name: 'provider' | 'reviewCount' | 'reviewer') => w.find(`select[data-test="inspector-run-settings-${RUN_FIELD[name]}"]`)
 const valueOf = (w: VueWrapper<any>, name: 'provider' | 'reviewCount' | 'reviewer') => (select(w, name).element as HTMLSelectElement).value
 const optionLabels = (w: VueWrapper<any>, name: 'provider' | 'reviewCount' | 'reviewer') => select(w, name).findAll('option').map((option) => option.text())
 const isDisabled = (el: ReturnType<VueWrapper<any>['find']>) => el.attributes('disabled') !== undefined
@@ -350,10 +352,16 @@ describe('settings tab — reading (flowgate.v02.0048 T#9)', () => {
     expect(reasonText(w)).toBe('바꾼 설정이 없습니다.')
   })
 
-  it('only the three stored settings are offered (no restart / time limit / review criteria / instruction use)', async () => {
+  // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): the v7 items that are not stored on a Node are drawn
+  // inactive next to the three stored settings — never usable, never hidden.
+  it('the three stored settings are usable; 재시작 · 지시서 · 검수 뒤 진행 are drawn disabled with their reason', async () => {
     const w = await mountTab(targetFor(PENDING))
-    expect(w.findAll('select')).toHaveLength(3)
-    for (const word of ['재시작', '제한 시간', '검수 기준', '지시서 사용', '검수 뒤 진행', '연동 전']) expect(w.text()).not.toContain(word)
+    const selects = w.findAll('select')
+    expect(selects).toHaveLength(4)
+    expect(selects.filter((item) => item.attributes('disabled') !== undefined).map((item) => item.attributes('data-test'))).toEqual(['inspector-run-settings-restart'])
+    for (const name of ['provider', 'reviewCount', 'reviewer'] as const) expect(isDisabled(select(w, name))).toBe(false)
+    for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeDefined()
+    expect(w.text()).not.toContain('연동 전')
   })
 
   it('a stored AI that is no longer offered stays shown, marked', async () => {
@@ -778,7 +786,9 @@ describe('settings tab in the Frame (real registry, flowgate.v02.0048 T#9)', () 
 
   it('a v0.1 step not started (no document): 설정 is its only tab and the save goes through the Frame’s refresh-flow', async () => {
     const w = await mountFrame(selectionOf(GRAPH, PENDING.id))
-    expect(tabLabels(w)).toEqual(['설정'])
+    // flowgate.v02.0051 stage 2: the card's own documents part gives the 문서 tab as well.
+    expect(tabLabels(w)).toContain('설정')
+    await openTab(w, '설정')
     expect(w.find('[data-test="inspector-settings"]').exists()).toBe(true)
     await choose(w, 'provider', 'aip_opus')
     await saveNow(w)
@@ -791,15 +801,19 @@ describe('settings tab in the Frame (real registry, flowgate.v02.0048 T#9)', () 
     expect(tabLabels(w)).toContain('설정')
     wrapper!.unmount()
     w = await mountFrame(SELECTIONS.v01NoDocument)
-    expect(tabLabels(w)).toEqual(['설정'])
+    expect(tabLabels(w)).toContain('설정')
   })
 
-  it.each(['graph', 'graphGate', 'unassigned', 'conflict'] as const)('the %s Flow has no settings tab (v0.1 Node settings only, D#1 §8.3)', async (name) => {
+  // flowgate.v02.0051 stage 2: a card's own settings part (AI 위임 · test · check) may give a 설정 tab anywhere;
+  // the v0.1 run settings themselves stay on v0.1 Flows only.
+  it.each(['graph', 'graphGate', 'unassigned', 'conflict'] as const)('the %s Flow has no v0.1 run settings (v0.1 Node settings only, D#1 §8.3)', async (name) => {
     const w = await mountFrame(SELECTIONS[name])
-    expect(tabLabels(w)).not.toContain('설정')
+    if (tabLabels(w).includes('설정')) await openTab(w, '설정')
+    expect(w.find('[data-test="inspector-settings"]').exists()).toBe(false)
+    expect(sequenceRead).not.toHaveBeenCalled()
   })
 
-  it('R/B (AI delegation), AC and WP cards have no settings tab on a v0.1 Flow (D#1 §10.1)', async () => {
+  it('R/B (AI delegation), AC and WP cards have no v0.1 run settings on a v0.1 Flow (D#1 §10.1)', async () => {
     const card = (id: string, type: string, kind: string): FlowGraphNode => ({
       id,
       kind,
@@ -814,7 +828,9 @@ describe('settings tab in the Frame (real registry, flowgate.v02.0048 T#9)', () 
     const graph: FlowGraph = { ...GRAPH, nodes: [ROOT_NODE, card('wp', 'WP', 'plan'), card('acx', 'AC', 'approval'), card('bbbb', 'B', 'requirement')] }
     for (const node of graph.nodes) {
       const w = await mountFrame(selectionOf(graph, node.id))
-      expect(tabLabels(w)).not.toContain('설정')
+      if (tabLabels(w).includes('설정')) await openTab(w, '설정')
+      expect(w.find('[data-test="inspector-settings"]').exists()).toBe(false)
+      expect(sequenceRead).not.toHaveBeenCalled()
       wrapper!.unmount()
       wrapper = null
     }
@@ -825,7 +841,7 @@ describe('settings tab in the Frame (real registry, flowgate.v02.0048 T#9)', () 
     ['T', 'task'],
     ['D', 'design'],
     ['TS', 'test'],
-  ])('a free %s document on a v0.1 Flow (no sequence slot) has no settings tab and reads nothing (D#2 §2.4 rule 3)', async (type, kind) => {
+  ])('a free %s document on a v0.1 Flow (no sequence slot) has no v0.1 run settings and reads nothing (D#2 §2.4 rule 3)', async (type, kind) => {
     const free: FlowGraphNode = {
       ...FREE_DOC,
       id: `doc:${FLOW}.0019-${type}`,
@@ -836,7 +852,7 @@ describe('settings tab in the Frame (real registry, flowgate.v02.0048 T#9)', () 
     }
     const w = await mountFrame(selectionOf({ ...GRAPH, nodes: [...GRAPH.nodes, free] }, free.id))
     expect(tabLabels(w).length).toBeGreaterThan(0)
-    expect(tabLabels(w)).not.toContain('설정')
+    if (tabLabels(w).includes('설정')) await openTab(w, '설정')
     expect(w.find('[data-test="inspector-settings"]').exists()).toBe(false)
     expect(sequenceRead).not.toHaveBeenCalled()
   })

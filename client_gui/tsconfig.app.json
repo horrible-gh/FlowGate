@@ -27,5 +27,14 @@
       "axios": ["./node_modules/axios"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue", "src/**/*.d.ts", "../client/shared/**/*.ts", "../client/shared/**/*.vue"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.vue",
+    "src/**/*.d.ts",
+    "preview/**/*.ts",
+    "preview/**/*.vue",
+    "../client/shared/**/*.ts",
+    "../client/shared/**/*.vue"
+  ]
 }

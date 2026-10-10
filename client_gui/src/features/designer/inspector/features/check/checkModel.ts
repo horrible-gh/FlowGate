@@ -265,3 +265,30 @@ export function checkFailureKey(kind: CheckFailureKind): string {
 export function checkGitErrorKey(kind: string): string {
   return kind === 'forbidden' ? 'git.read_forbidden' : 'git.read_failed'
 }
+
+// --- flowgate.v02.0051 stage 2 — the v7 확인 결과 result line (0035 cmid.* / cend.*) -------------------------
+
+export type CheckSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
+
+/** The tone of the 확인 결과 pill for a review status: waiting is the human's turn (amber), approved green, rejected red. */
+export function checkReviewTone(status: string | null): CheckSlotTone {
+  if (status === null) return 'neutral'
+  if (CHECK_UNDER_REVIEW.includes(status)) return 'warning'
+  if (status === 'approved') return 'success'
+  if (status === 'rejected') return 'danger'
+  return 'neutral'
+}
+
+/** The pill tone of the Git line on the result slot: the check feature's tone names mapped to the chip's. */
+export function checkGitTone(tone: CheckTone): CheckSlotTone {
+  switch (tone) {
+    case 'warning':
+      return 'warning'
+    case 'danger':
+      return 'danger'
+    case 'success':
+      return 'success'
+    default:
+      return 'neutral'
+  }
+}

@@ -463,12 +463,14 @@ describe('WP summary in the Frame (real registry)', () => {
 
   const tabLabels = (w: W) => w.findAll('[data-test="designer-inspector-tabs"] [role="tab"]').map((tab) => tab.text())
 
-  it('registers key workPlan, order 410, plan cards with a document, the documents tab only', () => {
+  // flowgate.v02.0051 stage 2: plan cards with or without a document; the documents tab, the ⇉ 전개 header
+  // actions (drawn disabled) and the 작성 사람 badge.
+  it('registers key workPlan, order 410, plan cards with or without a document: documents tab, header action and meta', () => {
     const entry = inspectorRegistry.entries.find((candidate) => candidate.key === 'workPlan')!
-    expect(entry).toMatchObject({ key: 'workPlan', order: 410, cardKinds: ['plan'], requiresDocument: true })
+    expect(entry).toMatchObject({ key: 'workPlan', order: 410, cardKinds: ['plan'], requiresDocument: false })
     expect(entry.tab?.key).toBe('documents')
-    expect(entry.headerAction).toBeUndefined()
-    expect(entry.headerMeta).toBeUndefined()
+    expect(entry.headerAction).toBeDefined()
+    expect(entry.headerMeta).toBeDefined()
     expect(entry.ownerships ?? []).toEqual([])
   })
 
@@ -490,10 +492,8 @@ describe('WP summary in the Frame (real registry)', () => {
     expect(opened).toEqual([[`/main/?doc=${encodeURIComponent(WP_DOC)}`, '_blank', 'noopener']])
   })
 
-  it.each([
-    ['a TR card', selectionOf(PLAN_FLOWS.v01, V01_TASK_NODE.id)],
-    ['a WP Node without a document', planSelection('v01', WP_EMPTY_NODE)],
-  ])('%s: no summary, no read; the tab row is the same as without the registration', async (_name, selection) => {
+  it('a TR card: no summary, no read; the tab row is the same as without the registration', async () => {
+    const selection = selectionOf(PLAN_FLOWS.v01, V01_TASK_NODE.id)
     const w = await mountFrame(selection)
     expect(el(w, 'inspector-work-plan').exists()).toBe(false)
     expect(planRead).not.toHaveBeenCalled()
@@ -502,6 +502,20 @@ describe('WP summary in the Frame (real registry)', () => {
     const modules = registrationModules(inspectorRegistry.entries.filter((entry) => entry.key !== 'workPlan'))
     const w2 = await mountFrame(selection, createInspectorRegistry(modules))
     expect(tabLabels(w2)).toEqual(withSummary)
+  })
+
+  // flowgate.v02.0051 stage 2 (0051-R §2.3): a WP Node without a document keeps the card's shape — the two
+  // lines empty, nothing read, the header actions drawn disabled.
+  it('a WP Node without a document: the two lines empty, no read, the deploy actions disabled', async () => {
+    const w = await mountFrame(planSelection('v01', WP_EMPTY_NODE))
+    const section = el(w, 'inspector-work-plan')
+    expect(section.exists()).toBe(true)
+    expect(section.attributes('data-has-document')).toBe('false')
+    expect(section.findAll('[data-test="inspector-slot"]').map((line) => line.attributes('data-empty'))).toEqual(['true', 'true'])
+    expect(planRead).not.toHaveBeenCalled()
+    expect(el(w, 'work-plan-rev').exists()).toBe(false)
+    expect(el(w, 'work-plan-open').exists()).toBe(false)
+    expect(el(w, 'work-plan-deploy').attributes('disabled')).toBeDefined()
   })
 
   it('a failed WP read leaves the documents list and the header as they are', async () => {
@@ -522,11 +536,14 @@ describe('WP summary in the Frame (real registry)', () => {
     expect(el(w2, 'inspector-work-plan').exists()).toBe(false)
   })
 
-  it('no undecided wording or Step editing in the WP summary (D#1 §8.4)', async () => {
+  it('no Step editing in the WP summary; the only operations are ↗ 열기 (the slot line and the summary line)', async () => {
     const w = await mountFrame(planSelection('v01', WP_NODE))
     const section = el(w, 'inspector-work-plan')
-    for (const word of ['전개', '재계획', '⇉', '⟳', '위임', '메모', 'AI 전달', '연동 전']) expect(section.text()).not.toContain(word)
+    for (const word of ['재계획', '⟳', '위임', '메모', 'AI 전달', '연동 전']) expect(section.text()).not.toContain(word)
     expect(section.findAll('input, select, textarea').length).toBe(0)
-    expect(section.findAll('button').map((button) => button.attributes('data-test'))).toEqual(['work-plan-open'])
+    expect(section.findAll('button').map((button) => button.attributes('data-test'))).toEqual(['inspector-slot-open', 'work-plan-open'])
+    // flowgate.v02.0051 stage 2: the v7 lines above the summary — the plan with its pill, the deploy result empty.
+    expect(section.findAll('[data-test="inspector-slot-name"]').map((name) => name.text())).toEqual(['작업계획 (WP)', '전개'])
+    expect(section.find('[data-test="inspector-slot-empty"]').text()).toBe('전개 전')
   })
 })

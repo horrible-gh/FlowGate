@@ -150,9 +150,11 @@ describe('DesignerInspector — Node selected', () => {
     expect(get(w, 'designer-inspector-title').text()).toBe('토큰 갱신 로직 수정')
     expect(get(w, 'designer-inspector-title').attributes('title')).toBe('토큰 갱신 로직 수정')
     expect(get(w, 'designer-inspector-state').text()).toBe('진행 중')
-    // No action is wired in this group: the actions area is not even rendered.
+    // No feature action is registered: the actions area is not rendered. flowgate.v02.0051: the v7
+    // header's own controls — ✎ 메모 (no memo API yet: disabled) and the ⋯ menu — are on every card.
     expect(w.find('[data-test="designer-inspector-actions"]').exists()).toBe(false)
-    expect(w.findAll('[data-test="designer-inspector-header"] button')).toHaveLength(0)
+    expect(get(w, 'designer-inspector-memo').attributes('disabled')).toBeDefined()
+    expect(get(w, 'designer-inspector-more').exists()).toBe(true)
   })
 
   it('shows an unknown kind with the default look and omits an unknown state', () => {
@@ -193,17 +195,16 @@ describe('DesignerInspector — Node selected', () => {
     expect(activeTabLabel(w)).toBe('Q&A')
   })
 
-  it('shows no 설정 for a Node no settings feature applies to and sends a 설정 selection back to 문서', async () => {
+  it('keeps 설정 visible and selected when the next Node has no settings contribution', async () => {
     const w = mountInspector({ selection: sel(TASK) })
     await clickTab(w, '설정')
-    expect(activeTabLabel(w)).toBe('설정')
     await w.setProps({ selection: sel(REQ) })
-    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부'])
-    expect(activeTabLabel(w)).toBe('문서')
-    // The fallback sticks: coming back to a Node with settings stays on 문서.
-    await w.setProps({ selection: sel(TASK) })
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
-    expect(activeTabLabel(w)).toBe('문서')
+    expect(activeTabLabel(w)).toBe('설정')
+    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
+    await w.setProps({ selection: sel(TASK) })
+    expect(activeTabLabel(w)).toBe('설정')
+    expect(get(w, 'injected-settings').exists()).toBe(true)
   })
 
   it('lays out the registered header parts and one Content panel per tab, given the target', async () => {
@@ -215,11 +216,15 @@ describe('DesignerInspector — Node selected', () => {
     expect(get(w, 'injected-qna').text()).toBe('토큰 갱신 로직 수정')
   })
 
-  it('shows no tab at all for a Node without a document (header only)', () => {
+  it('keeps four tabs on a Node without a document and explains the empty tabs', async () => {
     const w = mountInspector({ selection: sel(ODD) })
     expect(get(w, 'designer-inspector-title').text()).toBe('새 종류')
-    expect(w.find('[data-test="designer-inspector-tabs"]').exists()).toBe(false)
-    expect(w.find('[data-test="designer-inspector-body"]').exists()).toBe(false)
+    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
+    await clickTab(w, 'Q&A')
+    expect(get(w, 'designer-inspector-tab-state').text()).toContain('연결된 문서가 없습니다.')
+    await clickTab(w, '설정')
+    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
   })
 })
 

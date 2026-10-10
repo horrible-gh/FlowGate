@@ -3,8 +3,13 @@
        the selected TS / TSR with its progress, the Case tally, the result summary (and a TSR's test gate),
        the recent runs, ▶ 실행 / ■ 취소 with the reason when disabled and the refusal the server answered,
        and ↗ 열기 for everything in detail. A thin container: useTestSpec reads and calls, testSpecModel
-       decides the form, the state and availability. -->
+       decides the form, the state and availability.
+       flowgate.v02.0051 stage 2 — the v7 테스트 card (0035 test.*) on top: the three slot lines 지시 (TS) ·
+       케이스 (TSC) · 결과 (TSR), built from the common slot list part out of the same test view; the 0048
+       tally, buttons, reasons and history stay below as reused content. -->
   <section class="inspector-test-spec" data-test="inspector-test-spec" :data-status="status" :data-form="form">
+    <InspectorSlotList :slots="lines" @open="openLine" />
+
     <div class="inspector-test-spec-line">
       <h4 class="inspector-test-spec-heading">{{ t(k('title')) }}</h4>
       <span
@@ -103,15 +108,16 @@ import { useI18n } from 'vue-i18n'
 import Button from '../../../../../components/ui/Button.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
+import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { testSpecVerdictKey } from './testSpecModel'
+import { testSpecSlots, testSpecVerdictKey, type TestSpecSlot } from './testSpecModel'
 import { useTestSpec } from './useTestSpec'
 
 const props = defineProps<{
   target: InspectorTarget
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 const k = (key: string) => `gui.inspector.testSpec.${key}`
 
@@ -128,6 +134,49 @@ const shownReason = computed(() => {
   if (stop.visible && stop.reason) return stop.reason
   return null
 })
+
+/** The pill text: the Frame's wording for a review / document state, this feature's for a run state, the raw value otherwise. */
+function stateLabel(state: NonNullable<TestSpecSlot['state']>): string {
+  const key = state.key.startsWith('state.') ? k(state.key) : `gui.designer.inspector.${state.key}`
+  return te(key) ? t(key) : state.raw
+}
+
+function summaryOf(slot: TestSpecSlot): string | null {
+  switch (slot.summary) {
+    case 'tally':
+      return t(k('tally'), { ...tally.value })
+    case 'counts':
+      return counts.value ? t(k('counts'), { ...counts.value }) : null
+    case 'progress':
+      return t(k('progress'), { done: runState.value.done, total: runState.value.total })
+    default:
+      return null
+  }
+}
+
+const lines = computed<InspectorSlotView[]>(() =>
+  testSpecSlots(view.value, props.target).map((slot) => ({
+    key: slot.key,
+    kind: slot.kind,
+    form: slot.form,
+    name: t(k(`slot.${slot.key}`)),
+    id: slot.id,
+    empty: slot.empty,
+    emptyText: slot.emptyKey ? t(k(slot.emptyKey)) : null,
+    state: slot.state ? { label: stateLabel(slot.state), tone: slot.state.tone } : null,
+    summary: summaryOf(slot),
+    progress: slot.progress,
+    focus: slot.focus,
+    danger: slot.state?.tone === 'danger',
+    open: slot.open,
+    write: slot.write,
+    writeReason: slot.write === 'disabled' ? t(k('write_unconnected')) : null,
+  })),
+)
+
+function openLine(line: InspectorSlotView) {
+  if (line.id) open(line.id)
+}
 </script>
 
 <style scoped>

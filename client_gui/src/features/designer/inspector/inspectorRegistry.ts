@@ -56,6 +56,16 @@ export interface InspectorRegistration {
   readonly headerAction?: Component
   /** Header meta part (left of the state chip); its one input is `target`. */
   readonly headerMeta?: Component
+  /**
+   * flowgate.v02.0051 — header kind badge part: replaces the static 종류 badge (the R/B 종류 배지 ▾ of
+   * kindSwitch). The Frame lays out the first that applies; its one input is `target`.
+   */
+  readonly headerKind?: Component
+  /**
+   * flowgate.v02.0051 — ⋯ menu part: the card's own items after the common ID 복사 (실행 이력 · ■ 중단 ·
+   * ↻ 재실행 …). Its inputs are `target` and `close` (closes the menu).
+   */
+  readonly headerMenu?: Component
   readonly messages: InspectorMessages
 }
 
@@ -127,7 +137,9 @@ export function registrationViolations(modules: Readonly<Record<string, unknown>
         if (tab.count !== undefined && typeof tab.count !== 'function') out.push(`${label}: tab count is not a function`)
       }
     }
-    if (!tab && !entry.headerAction && !entry.headerMeta) out.push(`${label}: contributes no tab, header action or header meta`)
+    if (!tab && !entry.headerAction && !entry.headerMeta && !entry.headerKind && !entry.headerMenu) {
+      out.push(`${label}: contributes no tab, header action, header meta, header kind or header menu`)
+    }
     const messages = entry.messages
     for (const locale of INSPECTOR_LOCALES) {
       if (!isObject(messages) || !isObject(messages[locale])) out.push(`${label}: messages has no '${locale}' block`)

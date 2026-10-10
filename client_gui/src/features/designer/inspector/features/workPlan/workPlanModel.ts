@@ -140,3 +140,56 @@ export function workPlanAvailability(input: WorkPlanInput): WorkPlanAvailability
   const item = input.hasDocument ? OPEN : HIDDEN
   return { read: item, open: item }
 }
+
+// --- flowgate.v02.0051 stage 2 — the v7 작업계획 card shape (0035 plan.m.*) --------------------------------
+
+export type WorkPlanDeployOperation = 'deploy' | 'redeploy'
+
+export const WORK_PLAN_DEPLOY_OPERATIONS: readonly WorkPlanDeployOperation[] = ['deploy', 'redeploy']
+
+export interface WorkPlanDeployItem {
+  readonly visible: boolean
+  readonly enabled: boolean
+  /** Message key (under `gui.inspector.workPlan.`) of why it is disabled, or null. */
+  readonly reason: string | null
+}
+
+/**
+ * ⇉ 전개 · ⇉ 재전개 ▾: both are drawn on every plan card and neither is usable — deploying a plan onto
+ * the Canvas has no Inspector API (D#1 §8.4). Shown disabled with that reason (0051-R §2.3).
+ */
+export function workPlanDeployActions(_input: { readonly hasDocument: boolean }): Readonly<Record<WorkPlanDeployOperation, WorkPlanDeployItem>> {
+  const item: WorkPlanDeployItem = { visible: true, enabled: false, reason: 'deploy.unconnected' }
+  return { deploy: item, redeploy: item }
+}
+
+export type WorkPlanSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
+
+/** The plan line's state pill: a message key under `gui.designer.inspector.` with the raw server value. */
+export interface WorkPlanSlotState {
+  readonly key: string
+  readonly raw: string
+  readonly tone: WorkPlanSlotTone
+}
+
+const REVIEW_TONES: Readonly<Record<string, WorkPlanSlotTone>> = {
+  pending_review: 'warning',
+  approved: 'success',
+  rejected: 'danger',
+  revised: 'info',
+}
+
+/** The pill of the plan document: its review status, else its document status (draft / open / closed). */
+export function workPlanSlotState(reviewStatus: string | null, docStatus: string | null): WorkPlanSlotState | null {
+  const review = reviewStatus?.trim() ?? ''
+  if (review) return { key: `review_status.${review}`, raw: review, tone: REVIEW_TONES[review] ?? 'neutral' }
+  const status = docStatus?.trim() ?? ''
+  if (!status) return null
+  if (status === 'closed') return { key: 'slot_state.closed', raw: status, tone: 'neutral' }
+  return { key: 'slot_state.writing', raw: status, tone: 'info' }
+}
+
+/** A human decision waits on the plan (v7: the line is highlighted). */
+export function workPlanSlotFocus(state: WorkPlanSlotState | null): boolean {
+  return state !== null && (state.raw === 'pending_review' || state.raw === 'rejected')
+}

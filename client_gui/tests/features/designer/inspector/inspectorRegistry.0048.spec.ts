@@ -45,7 +45,7 @@ describe('createInspectorRegistry — contract checks (D#1 §5.4)', () => {
     ['an unknown doc type', [registration({ key: 'a', order: 1, headerMeta: PART, docTypes: ['M'] })], undefined, /docTypes has unknown value 'M'/],
     ['a doc type outside its card kinds', [registration({ key: 'a', order: 1, headerMeta: PART, cardKinds: ['test'], docTypes: ['TS', 'WP'] })], undefined, /docTypes 'WP' is not a type of cardKinds \[test\]/],
     ['an unknown tab key', [registration({ key: 'a', order: 1, tab: { key: 'memo' as never, component: PART } })], undefined, /tab key 'memo' is not an Inspector tab/],
-    ['no contribution', [registration({ key: 'a', order: 1 })], undefined, /contributes no tab, header action or header meta/],
+    ['no contribution', [registration({ key: 'a', order: 1 })], undefined, /contributes no tab, header action, header meta, header kind or header menu/],
     ['a missing locale', [registration({ key: 'a', order: 1, headerMeta: PART, messages: { ko: {}, en: {} } as never })], undefined, /messages has no 'ja' block/],
   ])('throws on %s, naming the folder', (_label, entries, folders, message) => {
     const modules = registrationModules(entries, folders)

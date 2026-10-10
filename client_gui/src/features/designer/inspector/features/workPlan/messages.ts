@@ -2,6 +2,28 @@
 // locales keep the same keys (structure.0048 B12). The section only reads, so it has no disabling reason.
 export default {
   ko: {
+    // flowgate.v02.0051 stage 2 — the v7 slot lines, header actions and author badge.
+    slot: {
+      plan: '작업계획 (WP)',
+      deploy: '전개',
+    },
+    slot_summary: 'rev {rev} · Step {steps}',
+    slot_empty: {
+      plan: '아직 없음',
+      deploy: '전개 전',
+    },
+    write_unconnected: '작성 — 아직 연결되지 않음 (v0.1 문서 화면에서 작성)',
+    steps_title: 'Step 요약',
+    deploy: {
+      label: '전개',
+      deploy: '⇉ 전개',
+      redeploy: '⇉ 재전개 ▾',
+      unconnected: 'WP 전개는 아직 연결되지 않았습니다 (0048 D#1 §8.4).',
+    },
+    author: {
+      human: '작성 사람',
+      human_title: '사람 WP: 사람이 쓰고 사람이 전개합니다. AI가 쓴 계획은 아직 없습니다.',
+    },
     title: '작업계획',
     rev: 'WP rev {rev}',
     totals: '설계 {designSheets}장 · 작업 {workSets}세트 · Step {steps}개',
@@ -31,6 +53,27 @@ export default {
     },
   },
   en: {
+    slot: {
+      plan: 'Work plan (WP)',
+      deploy: 'Deployment',
+    },
+    slot_summary: 'rev {rev} · Step {steps}',
+    slot_empty: {
+      plan: 'Not yet',
+      deploy: 'Before deployment',
+    },
+    write_unconnected: 'Write — not connected yet (written in the v0.1 document screen)',
+    steps_title: 'Step summary',
+    deploy: {
+      label: 'Deploy',
+      deploy: '⇉ Deploy',
+      redeploy: '⇉ Redeploy ▾',
+      unconnected: 'Deploying a work plan is not connected yet (0048 D#1 §8.4).',
+    },
+    author: {
+      human: 'By person',
+      human_title: 'Human WP: a person writes and deploys it. No AI-written plan exists yet.',
+    },
     title: 'Work plan',
     rev: 'WP rev {rev}',
     totals: '{designSheets} design sheet(s) · {workSets} work set(s) · {steps} Step(s)',
@@ -60,6 +103,27 @@ export default {
     },
   },
   ja: {
+    slot: {
+      plan: '作業計画 (WP)',
+      deploy: '展開',
+    },
+    slot_summary: 'rev {rev} · Step {steps}',
+    slot_empty: {
+      plan: 'まだなし',
+      deploy: '展開前',
+    },
+    write_unconnected: '作成 — まだ連携されていません（v0.1 の文書画面で作成）',
+    steps_title: 'Step 要約',
+    deploy: {
+      label: '展開',
+      deploy: '⇉ 展開',
+      redeploy: '⇉ 再展開 ▾',
+      unconnected: 'WP の展開はまだ連携されていません（0048 D#1 §8.4）。',
+    },
+    author: {
+      human: '作成 人',
+      human_title: '人の WP: 人が書いて人が展開します。AI が書いた計画はまだありません。',
+    },
     title: '作業計画',
     rev: 'WP rev {rev}',
     totals: '設計{designSheets}枚 · 作業{workSets}セット · Step {steps}件',

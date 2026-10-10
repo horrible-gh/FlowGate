@@ -2,6 +2,20 @@
 // locales keep the same keys (structure.0048 B12). Reason keys use the shared names of D#1 §8.3 rule 6-2.
 export default {
   ko: {
+    // flowgate.v02.0051 stage 2 — the v7 settings tab shape: 지시서 · 검수 뒤 진행 (not stored on a Node yet).
+    instruction: {
+      label: '지시서',
+      hint: '생략하면 문서 탭에 지시서 줄이 나오지 않습니다',
+      use: '사용',
+      omit: '생략',
+    },
+    policy: {
+      label: '검수 뒤 진행',
+      hint: '실행 방식(다음 단계 / 전체 실행 · AI 위임)이 기본 정책. 사람 확인 필요는 자동 진행보다 우선',
+      follow: '실행 방식 따름',
+      human: '사람 확인 필요',
+    },
+    unconnected: '아직 Node에 저장되지 않는 항목입니다. 표시만 하며 바꿀 수 없습니다.',
     title: '{seq}단계 · {type} · {label}',
     title_no_seq: '{type} · {label}',
     state: {
@@ -73,6 +87,19 @@ export default {
     },
   },
   en: {
+    instruction: {
+      label: 'Instruction',
+      hint: 'When omitted, the documents tab shows no instruction line',
+      use: 'Use',
+      omit: 'Omit',
+    },
+    policy: {
+      label: 'After review',
+      hint: 'The run mode (next step / run all · AI delegation) is the default policy. "Human check" wins over automatic progress',
+      follow: 'Follow run mode',
+      human: 'Human check',
+    },
+    unconnected: 'Not stored on the Node yet. Shown only; it cannot be changed.',
     title: 'Step {seq} · {type} · {label}',
     title_no_seq: '{type} · {label}',
     state: {
@@ -144,6 +171,19 @@ export default {
     },
   },
   ja: {
+    instruction: {
+      label: '指示書',
+      hint: '省略すると文書タブに指示書の行が出ません',
+      use: '使用',
+      omit: '省略',
+    },
+    policy: {
+      label: 'レビュー後の進行',
+      hint: '実行方式（次の段階 / 全体実行 · AI委任）が既定の方針。「人の確認が必要」は自動進行より優先',
+      follow: '実行方式に従う',
+      human: '人の確認が必要',
+    },
+    unconnected: 'まだノードに保存されない項目です。表示のみで変更できません。',
     title: '{seq}段階 · {type} · {label}',
     title_no_seq: '{type} · {label}',
     state: {
