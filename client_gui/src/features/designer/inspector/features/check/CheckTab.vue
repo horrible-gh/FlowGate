@@ -16,6 +16,8 @@
       </template>
     </InspectorSlotList>
 
+    <details v-if="(gitStatus === 'loading' && !git) || gitErrorKey || notes.length || jobLine" :key="target.docId ?? undefined" class="inspector-check-details" data-test="check-details">
+      <summary>{{ t('gui.designer.inspector.pane.details') }}</summary>
     <InspectorPaneState v-if="gitStatus === 'loading' && !git" state="loading" />
     <div v-if="gitErrorKey" data-test="check-git-error">
       <InspectorReason :text="t(k(gitErrorKey))" tone="warning" />
@@ -24,6 +26,7 @@
     <div v-if="jobLine" data-test="check-job">
       <InspectorReason :text="t(k(jobLine.key), { ...jobLine.params })" tone="warning" />
     </div>
+    </details>
   </section>
 </template>
 

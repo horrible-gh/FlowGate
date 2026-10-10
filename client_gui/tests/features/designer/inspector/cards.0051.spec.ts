@@ -117,6 +117,14 @@ describe('요구사항 / 버그 card line (requirementCardModel)', () => {
     expect(requirementCardSlots(facts(REQ, 'B'))[0].name).toBe('bug')
     expect(requirementCardSlots(facts(REQ, 'R', NO_DOCUMENT))[0]).toMatchObject({ empty: true, write: 'disabled' })
   })
+
+  it('a root in its workflow shows the plain wording, never wf_in_progress / wf_done (0052)', () => {
+    expect(requirementCardSlots(facts(REQ, 'R', { docReviewStatus: 'wf_in_progress', docStatus: 'open' }))[0].state).toEqual({ key: 'slot_state.in_progress', raw: 'wf_in_progress', tone: 'running' })
+    expect(requirementCardSlots(facts(REQ, 'R', { docReviewStatus: 'wf_done', docStatus: 'open' }))[0].state).toEqual({ key: 'slot_state.closed', raw: 'wf_done', tone: 'success' })
+    const w = mount(RequirementSlots, { props: { target: facts(REQ, 'R', { docReviewStatus: 'wf_in_progress', docStatus: 'open' }) }, global })
+    expect(w.text()).toContain('진행 중')
+    expect(w.text()).not.toContain('wf_in_progress')
+  })
 })
 
 describe('Graph gate (gateCardModel)', () => {

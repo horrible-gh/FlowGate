@@ -301,6 +301,7 @@ export default {
         no_settings: '이 카드의 설정은 아직 연결되지 않았습니다.',
         error: '불러오지 못했습니다.',
         retry: '다시 시도',
+        details: '상세 정보',
         // flowgate.v02.0051 — a v7 item whose operation is not connected yet (shown, inactive).
         disabled: '아직 지원하지 않는 동작입니다.',
       },
@@ -344,6 +345,7 @@ export default {
       unconnected: '아직 연결되지 않음',
       slot_state: {
         writing: '작성 중',
+        in_progress: '진행 중',
         closed: '완료',
       },
       menu: {

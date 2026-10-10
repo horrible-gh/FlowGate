@@ -374,11 +374,14 @@ describe('documents tab in the Frame (real registry)', () => {
     ['graph', SELECTIONS.graph, GRAPH_DOC],
     ['unassigned', SELECTIONS.unassigned, 'flowgate.v02.0050.0001-R'],
     ['conflict', SELECTIONS.conflict, 'flowgate.v02.0051.0003-D'],
-  ])('%s document Node: the 문서 tab holds the documents section', async (_label, selection, docId) => {
+  ])('%s document Node: the 문서 tab shows the card slots only, not the documents section beneath them (0052)', async (_label, selection, docId) => {
     const w = await mountFrame(selection)
     expect(tabLabels(w)).toContain('문서')
-    const section = w.get('[data-test="designer-inspector-section"][data-key="documents"]')
-    expect(section.get('[data-test="documents-current"]').attributes('data-doc')).toBe(docId)
+    expect(w.find('[data-test="designer-inspector-section"][data-key="documents"]').exists()).toBe(false)
+    expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
+    expect(w.findAll('[data-test="inspector-slot-name"]').map((name) => name.attributes('title'))).toContain(docId)
+    expect(w.text()).not.toContain('현재 문서')
+    expect(w.text()).not.toContain('v0.1 문서 화면에서 합니다')
   })
 
   it.each([

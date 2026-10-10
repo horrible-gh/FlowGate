@@ -720,14 +720,12 @@ describe('test section in the Frame (real registry)', () => {
 
   const tabLabels = (w: W) => w.findAll('[data-test="designer-inspector-tabs"] [role="tab"]').map((tab) => tab.text())
 
-  it.each(['v01', 'graph', 'unassigned'] as const)('TS in a %s Flow: the documents tab shows the test section above the documents list', async (flow) => {
+  it.each(['v01', 'graph', 'unassigned'] as const)('TS in a %s Flow: the documents tab shows the test section alone', async (flow) => {
     const w = await mountFrame(testSelection(flow, TS_NODE))
     const section = el(w, 'inspector-test-spec')
     expect(section.exists()).toBe(true)
-    const documents = w.find('[data-test="inspector-documents"]')
-    expect(documents.exists()).toBe(true)
-    // order 420 < 500: stacked above.
-    expect(section.element.compareDocumentPosition(documents.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // flowgate.v02.0052: the common documents list is not repeated beneath the card.
+    expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
     expect(viewRead).toHaveBeenCalledWith(TS_DOC)
   })
 
@@ -749,12 +747,11 @@ describe('test section in the Frame (real registry)', () => {
     expect(w2.find('[data-test="inspector-documents"]').exists()).toBe(true)
   })
 
-  it('a failed test read leaves the documents list and the header as they are', async () => {
+  it('a failed test read stays in the test section', async () => {
     viewRead.mockRejectedValue(axiosError(500, { detail: 'boom' }))
     const w = await mountFrame(testSelection('v01', TS_NODE))
     expect(el(w, 'inspector-test-spec').find('[data-test="inspector-pane-state"]').attributes('data-state')).toBe('error')
-    expect(w.find('[data-test="inspector-documents"]').exists()).toBe(true)
-    expect(w.find('[data-test="inspector-documents"] [data-test="inspector-pane-state"][data-state="error"]').exists()).toBe(false)
+    expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
   })
 
   it('▶ 실행 in the Frame starts the run of the selected TS', async () => {

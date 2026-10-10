@@ -10,6 +10,8 @@
   <section class="inspector-test-spec" data-test="inspector-test-spec" :data-status="status" :data-form="form">
     <InspectorSlotList :slots="lines" @open="openLine" />
 
+    <details :key="target.docId ?? undefined" class="inspector-test-spec-details" data-test="test-spec-details">
+      <summary>{{ t('gui.designer.inspector.pane.details') }}</summary>
     <div class="inspector-test-spec-line">
       <h4 class="inspector-test-spec-heading">{{ t(k('title')) }}</h4>
       <span
@@ -99,6 +101,7 @@
         </ul>
       </template>
     </template>
+    </details>
   </section>
 </template>
 

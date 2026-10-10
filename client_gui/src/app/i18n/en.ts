@@ -298,6 +298,7 @@ export default {
         no_settings: 'Settings are not connected for this card yet.',
         error: 'Could not load.',
         retry: 'Retry',
+        details: 'Details',
         // flowgate.v02.0051 — a v7 item whose operation is not connected yet (shown, inactive).
         disabled: 'Not supported yet.',
       },
@@ -339,6 +340,7 @@ export default {
       unconnected: 'Not connected yet',
       slot_state: {
         writing: 'Writing',
+        in_progress: 'In progress',
         closed: 'Closed',
       },
       menu: {

@@ -35,9 +35,18 @@ const REVIEW_TONES: Readonly<Record<string, RequirementSlotTone>> = {
   revised: 'info',
 }
 
+/** flowgate.v02.0052: the workflow states a root R / B takes after approval. The slot pill shows
+ *  their plain wording, never the internal value (wf_in_progress / wf_done). */
+const WORKFLOW_STATES: Readonly<Record<string, Pick<RequirementSlotState, 'key' | 'tone'>>> = {
+  wf_in_progress: { key: 'slot_state.in_progress', tone: 'running' },
+  wf_done: { key: 'slot_state.closed', tone: 'success' },
+}
+
 /** The pill of a bound document: its review status, else its document status (draft / open / closed). */
 export function requirementDocumentState(reviewStatus: string | null, docStatus: string | null): RequirementSlotState | null {
   const review = reviewStatus?.trim() ?? ''
+  const workflow = WORKFLOW_STATES[review]
+  if (workflow) return { ...workflow, raw: review }
   if (review) return { key: `review_status.${review}`, raw: review, tone: REVIEW_TONES[review] ?? 'neutral' }
   const status = docStatus?.trim() ?? ''
   if (!status) return null

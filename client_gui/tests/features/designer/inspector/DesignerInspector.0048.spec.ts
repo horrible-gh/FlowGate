@@ -250,7 +250,8 @@ describe('DesignerInspector — registry layout', () => {
   it('stacks the Content parts of one tab in `order`', () => {
     const wp = { ...SELECTIONS.unassigned, node: { ...SELECTIONS.unassigned.node, document: { ...SELECTIONS.unassigned.node.document!, typeCode: 'WP' } } }
     const w = mountFrame({ selection: wp })
-    expect(sections(w)).toEqual(['workPlan', 'documents'])
+    // flowgate.v02.0052: card slots lead the 문서 tab; the common documents section is not repeated beneath them.
+    expect(sections(w)).toEqual(['workPlan'])
     expect(tabLabels(w)).toEqual(['문서', 'Q&A (3)', '첨부', '설정'])
   })
 

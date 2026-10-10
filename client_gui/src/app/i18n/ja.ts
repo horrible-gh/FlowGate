@@ -298,6 +298,7 @@ export default {
         no_settings: 'このカードの設定はまだ接続されていません。',
         error: '読み込めませんでした。',
         retry: '再試行',
+        details: '詳細',
         // flowgate.v02.0051 — a v7 item whose operation is not connected yet (shown, inactive).
         disabled: 'まだ対応していない操作です。',
       },
@@ -339,6 +340,7 @@ export default {
       unconnected: 'まだ連携されていません',
       slot_state: {
         writing: '作成中',
+        in_progress: '進行中',
         closed: '完了',
       },
       menu: {

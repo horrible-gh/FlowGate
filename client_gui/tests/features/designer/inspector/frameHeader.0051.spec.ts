@@ -5,7 +5,7 @@
  * registry on Nodes without a document: a Graph gate and a Graph R Node no longer show the header only.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
 import { registrationViolations } from '@/features/designer/inspector/inspectorRegistry'
@@ -192,15 +192,21 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
   })
 
-  it('places card slots first and keeps existing document details in a disclosure', async () => {
+  it('shows only card slots and keeps the document open action reachable', async () => {
     const w = mountFrame(SELECTIONS.v01)
     await flushPromises()
     expect(sections(w)).toContain('taskCard')
-    expect(sections(w)).toContain('documents')
-    const details = get(w, 'designer-inspector-details')
-    expect(details.element.tagName).toBe('DETAILS')
-    expect(details.attributes('open')).toBeUndefined()
-    expect(details.find('summary').text()).toBe('현재 문서')
+    expect(sections(w)).not.toContain('documents')
+    expect(get(w, 'inspector-task-card').find('[data-test="inspector-slot-list"]').exists()).toBe(true)
+    expect(w.find('[data-test="designer-inspector-details"]').exists()).toBe(false)
+    expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
+    expect(get(w, 'designer-inspector-body').text()).not.toContain('현재 문서')
+    expect(get(w, 'designer-inspector-body').text()).not.toContain('문서 상태 open rev 0')
+    expect(get(w, 'designer-inspector-body').text()).not.toContain('문서 작성·편집은')
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    await get(w, 'inspector-task-card').get('[data-test="inspector-slot-open"]').trigger('click')
+    expect(open).toHaveBeenCalledWith(`/main/?doc=${encodeURIComponent(SELECTIONS.v01.node.document!.docId)}`, '_blank', 'noopener')
+    open.mockRestore()
   })
 
   it('shows unavailable settings for a Graph research card without a settings contribution', async () => {
