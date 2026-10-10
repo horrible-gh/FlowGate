@@ -95,7 +95,9 @@ const clamped = computed(() => Math.max(0, Math.min(100, Math.round(props.progre
 <style scoped>
 .inspector-slot {
   display: grid;
-  grid-template-columns: 24px minmax(72px, 104px) minmax(0, 1fr) auto;
+  /* T#4: the buttons column may shrink below its content on a narrow Inspector (264px); the line's
+     nav label then ellipsises (InspectorSlotList) and the ↗ / ＋ keep their place. */
+  grid-template-columns: 24px minmax(72px, 104px) minmax(0, 1fr) minmax(0, max-content);
   gap: 9px;
   align-items: center;
   box-sizing: border-box;
@@ -105,6 +107,13 @@ const clamped = computed(() => Math.max(0, Math.min(100, Math.round(props.progre
   border: 1px solid var(--fg2-line);
   border-radius: 8px;
   background: #0e2034;
+}
+
+/* A narrow slot list (264px Inspector): the name column stays at its minimum so the buttons keep the room. */
+@container (max-width: 360px) {
+  .inspector-slot {
+    grid-template-columns: 24px 72px minmax(0, 1fr) minmax(0, max-content);
+  }
 }
 
 .inspector-slot-icon {
@@ -180,7 +189,9 @@ const clamped = computed(() => Math.max(0, Math.min(100, Math.round(props.progre
 .inspector-slot-buttons {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+  min-width: 0;
 }
 
 .inspector-slot.is-empty {

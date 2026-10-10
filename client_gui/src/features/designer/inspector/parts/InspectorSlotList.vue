@@ -43,6 +43,7 @@
         size="sm"
         variant="secondary"
         :disabled="line.nav.disabled ?? false"
+        class="inspector-slot-nav"
         :title="line.nav.title ?? undefined"
         :data-test="line.testIds?.nav ?? 'inspector-slot-nav'"
         @click="emit('nav', line)"
@@ -126,5 +127,26 @@ const { t } = useI18n()
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+  container-type: inline-size;
+}
+
+/* flowgate.v02.0052 T#4 — on a narrow line (264px Inspector) the "{nav} ↗" label gives way first
+   (ellipsis), so the ↗ open and ＋ write buttons after it stay in the line. */
+.inspector-slot-nav {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.inspector-slot-nav :deep(.ui-btn-content) {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@container (max-width: 360px) {
+  .inspector-slot-nav {
+    padding: 0 8px;
+  }
 }
 </style>

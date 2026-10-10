@@ -6,8 +6,11 @@
  * a `· sub` only for a server state that says something else, never an internal value as text, the
  * server values in the tooltip and the data attributes.
  */
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { h } from 'vue'
 import InspectorHeader from '@/features/designer/inspector/InspectorHeader.vue'
 import { prepareInspectorI18n, SELECTIONS, targetOf } from './support/inspectorSupport'
 
@@ -213,6 +216,59 @@ describe('InspectorHeader (flowgate.v02.0051)', () => {
       wrapper = w
       expect(w.find('[data-test="designer-inspector-pill"]').exists()).toBe(false)
     })
+  })
+
+  // flowgate.v02.0052 T#4: on the 264px Inspector the 작업계획 meta badge pushed the ⋯ out of the line.
+  it('a card meta part sits in its own shrinkable place before ✎ 메모; the ⋯ stays the last item', () => {
+    const w = mount(InspectorHeader, {
+      attachTo: document.body,
+      props: { target: targetOf(SELECTIONS.v01) },
+      slots: { meta: () => h('span', { 'data-test': 'meta-part' }, '작성 사람') },
+      global: { plugins: [i18n] },
+    })
+    wrapper = w
+    const meta = get(w, 'designer-inspector-meta')
+    expect(meta.classes()).toContain('inspector-header-meta')
+    expect(meta.get('[data-test="meta-part"]').text()).toBe('작성 사람')
+    const items = Array.from(get(w, 'designer-inspector-header').element.children)
+    expect(items.indexOf(meta.element)).toBeLessThan(items.indexOf(get(w, 'designer-inspector-memo').element))
+    expect(items.at(-1)?.querySelector('[data-test="designer-inspector-more"]')).not.toBeNull()
+    w.unmount()
+    expect(mountHeader(SELECTIONS.v01).find('[data-test="designer-inspector-meta"]').exists()).toBe(false)
+  })
+
+  // flowgate.v02.0052 T#4 rev1 (R §2.2): below a 560px Inspector the header is two lines — the title
+  // line and the state line (읽기 전용, pill, actions) — laid out by the frame around it. jsdom has no
+  // layout (the px were measured in the real Designer), so the DOM shape and the rule are checked here.
+  it('sits in its size frame; the state-line parts are header items the narrow rule can move', () => {
+    const w = mount(InspectorHeader, {
+      attachTo: document.body,
+      props: { target: targetOf(SELECTIONS.conflict) },
+      slots: { actions: () => h('button', { 'data-test': 'probe-action' }, '승인') },
+      global: { plugins: [i18n] },
+    })
+    wrapper = w
+    const header = get(w, 'designer-inspector-header').element
+    const frame = header.parentElement!
+    expect(frame.classList.contains('inspector-header-frame')).toBe(true)
+    expect(Array.from(frame.children)).toEqual([header])
+    const items = Array.from(header.children)
+    for (const test of ['designer-inspector-read-only', 'designer-inspector-pill', 'designer-inspector-actions']) {
+      expect(items, test).toContain(get(w, test).element)
+    }
+    expect(get(w, 'designer-inspector-actions').get('[data-test="probe-action"]').text()).toBe('승인')
+  })
+
+  it('keeps the narrow two-line rule: wrap, a line break, and the state line after it', () => {
+    const src = readFileSync(resolve(__dirname, '../../../../src/features/designer/inspector/InspectorHeader.vue'), 'utf8')
+    expect(src).toContain('container: inspector-header-frame / inline-size;')
+    const at = src.indexOf('@container inspector-header-frame (max-width: 560px) {')
+    expect(at).toBeGreaterThan(0)
+    const rule = src.slice(at, src.indexOf('\n}\n', at))
+    expect(rule).toMatch(/\.inspector-header \{[^}]*flex-wrap: wrap;[^}]*height: auto;/)
+    expect(rule).toMatch(/\.inspector-header::after \{[^}]*flex: 0 0 100%;[^}]*order: 1;/)
+    expect(rule).toMatch(/\.inspector-header-read-only,\s*\.inspector-header-pill,\s*\.inspector-header-actions \{\s*order: 2;/)
+    expect(rule).toMatch(/\.inspector-header-title \{[^}]*min-width: 48px;/)
   })
 
   it('follows the locale', () => {

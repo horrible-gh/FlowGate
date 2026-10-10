@@ -27,97 +27,108 @@
        flowgate.v02.0052 T#3 — a Canvas `blocked` is the server's translation of a rejection
        (canvas_mapping.py: rejected → blocked). The pill names what happened — the rejection's own
        display name (반려됨, v7 work.rej `st:['반려됨','danger']`) — instead of the Canvas word (보류);
-       the Canvas value stays in data-state, the hidden state span and the Canvas card. -->
-  <header
-    class="inspector-header"
-    :style="{ '--inspector-kind-accent': kind.accent }"
-    data-test="designer-inspector-header"
-    :data-kind="kind.key"
-    :data-read-only="target.readOnly ?? ''"
-  >
-    <span class="inspector-header-icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24">
-        <path :d="kind.icon" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-    </span>
-    <slot name="kind">
-      <span class="inspector-header-kind" data-test="designer-inspector-kind">{{ t(kindLabelKey) }}</span>
-    </slot>
-    <span class="inspector-header-title" :title="target.title" data-test="designer-inspector-title">{{ target.title }}</span>
-    <span
-      v-if="target.readOnly"
-      class="inspector-header-read-only"
-      :title="t(`gui.designer.inspector.header.read_only_${target.readOnly}`)"
-      data-test="designer-inspector-read-only"
-      :data-reason="target.readOnly"
-    >{{ t('gui.designer.inspector.header.read_only') }}</span>
-    <span class="inspector-header-gap" />
-    <slot name="meta" />
-    <button
-      type="button"
-      class="inspector-header-memo"
-      disabled
-      :title="t('gui.designer.inspector.header.memo_unavailable')"
-      data-test="designer-inspector-memo"
-    >✎ <span class="inspector-header-memo-label">{{ t('gui.designer.inspector.header.memo') }}</span></button>
-    <span
-      v-if="pill"
-      class="inspector-header-pill"
-      :class="`inspector-header-pill--${pill.tone}`"
-      :title="pill.title"
-      data-test="designer-inspector-pill"
-      :data-tone="pill.tone"
-      :data-state="target.canvasState ?? ''"
-      :data-doc-status="target.docReviewStatus ?? ''"
-      :data-run-status="target.nodeRun?.status ?? ''"
+       the Canvas value stays in data-state, the hidden state span and the Canvas card.
+       flowgate.v02.0052 T#4 — at the 264px Inspector the line keeps its ⋯ and its pill label: the title
+       gives way first, then the meta part (작성 사람) and the actions shrink and clip instead of pushing
+       the ⋯ menu out of the line.
+       flowgate.v02.0052 T#4 rev1 (R §2.2: title, state and the real actions stay visible on a narrow
+       Inspector) — one line cannot hold them below about 560px (measured: the title went to 0 and the
+       pill / actions were cut up to a 504px Inspector), so there the header becomes two lines: the
+       title line (icon, kind, title, meta, ✎, ⋯) and the state line (읽기 전용, ● pill, actions), the
+       actions wrapping instead of scrolling. The frame around the header is the size container the
+       header itself is laid out by. Wider Inspectors keep the v7 single 40px line unchanged. -->
+  <div class="inspector-header-frame">
+    <header
+      class="inspector-header"
+      :style="{ '--inspector-kind-accent': kind.accent }"
+      data-test="designer-inspector-header"
+      :data-kind="kind.key"
+      :data-read-only="target.readOnly ?? ''"
     >
-      <span class="inspector-header-pill-label" data-test="designer-inspector-pill-label">{{ pill.label }}</span>
-      <span v-if="pill.sub" class="inspector-header-pill-sub" data-test="designer-inspector-pill-sub">· {{ pill.sub }}</span>
-      <!-- The server values stay in the DOM (hidden: the raw value as data-value, the display name as
-           text) for tests and debugging. -->
+      <span class="inspector-header-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path :d="kind.icon" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <slot name="kind">
+        <span class="inspector-header-kind" data-test="designer-inspector-kind">{{ t(kindLabelKey) }}</span>
+      </slot>
+      <span class="inspector-header-title" :title="target.title" data-test="designer-inspector-title">{{ target.title }}</span>
       <span
-        v-if="target.docReviewStatus"
-        hidden
-        data-test="designer-inspector-doc-status"
-        :data-value="target.docReviewStatus"
-      >{{ reviewStatusText ?? '' }}</span>
+        v-if="target.readOnly"
+        class="inspector-header-read-only"
+        :title="t(`gui.designer.inspector.header.read_only_${target.readOnly}`)"
+        data-test="designer-inspector-read-only"
+        :data-reason="target.readOnly"
+      >{{ t('gui.designer.inspector.header.read_only') }}</span>
+      <span class="inspector-header-gap" />
+      <span v-if="$slots.meta" class="inspector-header-meta" data-test="designer-inspector-meta"><slot name="meta" /></span>
+      <button
+        type="button"
+        class="inspector-header-memo"
+        disabled
+        :title="t('gui.designer.inspector.header.memo_unavailable')"
+        data-test="designer-inspector-memo"
+      >✎ <span class="inspector-header-memo-label">{{ t('gui.designer.inspector.header.memo') }}</span></button>
       <span
-        v-if="target.nodeRun?.status"
-        hidden
-        data-test="designer-inspector-run-status"
-        :data-value="target.nodeRun.status"
-      >{{ runStatusText ?? '' }}</span>
-      <span v-if="state" hidden data-test="designer-inspector-state" :data-value="state.key">{{ stateText }}</span>
-    </span>
-    <div v-if="$slots.actions" class="inspector-header-actions" data-test="designer-inspector-actions">
-      <slot name="actions" />
-    </div>
-    <Dropdown>
-      <template #trigger="{ toggle, triggerAttrs }">
-        <IconButton
-          v-bind="triggerAttrs"
-          class="inspector-header-more"
-          :label="t('gui.designer.inspector.header.more')"
-          :title="t('gui.designer.inspector.header.more')"
-          variant="secondary"
-          size="sm"
-          data-test="designer-inspector-more"
-          @click="toggle"
-        >⋯</IconButton>
-      </template>
-      <template #default="{ close }">
-        <button
-          type="button"
-          role="menuitem"
-          class="inspector-header-menu-item"
-          :disabled="!canCopy"
-          data-test="designer-inspector-copy-id"
-          @click="copyId"
-        >{{ t(copied ? 'gui.designer.inspector.header.copied' : 'gui.designer.inspector.header.copy_id') }}</button>
-        <slot name="menu" :close="close" />
-      </template>
-    </Dropdown>
-  </header>
+        v-if="pill"
+        class="inspector-header-pill"
+        :class="`inspector-header-pill--${pill.tone}`"
+        :title="pill.title"
+        data-test="designer-inspector-pill"
+        :data-tone="pill.tone"
+        :data-state="target.canvasState ?? ''"
+        :data-doc-status="target.docReviewStatus ?? ''"
+        :data-run-status="target.nodeRun?.status ?? ''"
+      >
+        <span class="inspector-header-pill-label" data-test="designer-inspector-pill-label">{{ pill.label }}</span>
+        <span v-if="pill.sub" class="inspector-header-pill-sub" data-test="designer-inspector-pill-sub">· {{ pill.sub }}</span>
+        <!-- The server values stay in the DOM (hidden: the raw value as data-value, the display name as
+             text) for tests and debugging. -->
+        <span
+          v-if="target.docReviewStatus"
+          hidden
+          data-test="designer-inspector-doc-status"
+          :data-value="target.docReviewStatus"
+        >{{ reviewStatusText ?? '' }}</span>
+        <span
+          v-if="target.nodeRun?.status"
+          hidden
+          data-test="designer-inspector-run-status"
+          :data-value="target.nodeRun.status"
+        >{{ runStatusText ?? '' }}</span>
+        <span v-if="state" hidden data-test="designer-inspector-state" :data-value="state.key">{{ stateText }}</span>
+      </span>
+      <div v-if="$slots.actions" class="inspector-header-actions" data-test="designer-inspector-actions">
+        <slot name="actions" />
+      </div>
+      <Dropdown>
+        <template #trigger="{ toggle, triggerAttrs }">
+          <IconButton
+            v-bind="triggerAttrs"
+            class="inspector-header-more"
+            :label="t('gui.designer.inspector.header.more')"
+            :title="t('gui.designer.inspector.header.more')"
+            variant="secondary"
+            size="sm"
+            data-test="designer-inspector-more"
+            @click="toggle"
+          >⋯</IconButton>
+        </template>
+        <template #default="{ close }">
+          <button
+            type="button"
+            role="menuitem"
+            class="inspector-header-menu-item"
+            :disabled="!canCopy"
+            data-test="designer-inspector-copy-id"
+            @click="copyId"
+          >{{ t(copied ? 'gui.designer.inspector.header.copied' : 'gui.designer.inspector.header.copy_id') }}</button>
+          <slot name="menu" :close="close" />
+        </template>
+      </Dropdown>
+    </header>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -290,6 +301,14 @@ onScopeDispose(() => {
 </script>
 
 <style scoped>
+/* The size container of the header line (T#4 rev1): a container query cannot change the layout of the
+   container itself, so the narrow two-line rule below queries this frame. */
+.inspector-header-frame {
+  flex: 0 0 auto;
+  min-width: 0;
+  container: inspector-header-frame / inline-size;
+}
+
 .inspector-header {
   display: flex;
   flex: 0 0 40px;
@@ -337,9 +356,10 @@ onScopeDispose(() => {
   white-space: nowrap;
 }
 
-/* A long title shrinks first; the kind badge and the right side keep their place. */
+/* A long title shrinks first; the kind badge and the right side keep their place. The large shrink
+   weight lets the title give way before the pill, the meta part and the actions (T#4: 264px). */
 .inspector-header-title {
-  flex: 0 1 auto;
+  flex: 0 1000 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--fg2-text);
@@ -364,6 +384,16 @@ onScopeDispose(() => {
 .inspector-header-gap {
   flex: 1 1 8px;
   min-width: 8px;
+}
+
+/* The card meta part (the 작업계획 작성 사람 badge): clips on a narrow line rather than pushing the ⋯ out. */
+.inspector-header-meta {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* v7 `.hd-memo.none`: the memo button with no memo — dim; disabled until a memo API exists. */
@@ -481,6 +511,61 @@ onScopeDispose(() => {
 
   .inspector-header-memo {
     padding: 0 6px;
+  }
+}
+
+/* Narrow Inspector (264px up to 560px), T#4 rev1: two lines. The title line keeps the icon, kind,
+   title, meta, ✎ and ⋯ (DOM order); the line break (::after) and the state line (읽기 전용, the
+   pill, the actions) follow by `order`. The title takes the free room of its line (so the ✎ and ⋯
+   stay at its end) and never goes below a few letters; the meta part shares what is left. The pill
+   shows its whole label; the actions keep every button whole and wrap. */
+@container inspector-header-frame (max-width: 560px) {
+  .inspector-header {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    height: auto;
+    min-height: 40px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .inspector-header::after {
+    content: '';
+    flex: 0 0 100%;
+    order: 1;
+    height: 0;
+  }
+
+  .inspector-header-gap {
+    display: none;
+  }
+
+  .inspector-header-title {
+    flex: 4 1 0;
+    min-width: 48px;
+  }
+
+  .inspector-header-meta {
+    flex: 1 1 0;
+    max-width: max-content;
+  }
+
+  .inspector-header-read-only,
+  .inspector-header-pill,
+  .inspector-header-actions {
+    order: 2;
+  }
+
+  .inspector-header-pill {
+    max-width: 100%;
+  }
+
+  .inspector-header-actions {
+    flex: 1 1 0;
+    flex-wrap: wrap;
+    row-gap: 4px;
+    min-width: auto;
+    overflow: visible;
   }
 }
 

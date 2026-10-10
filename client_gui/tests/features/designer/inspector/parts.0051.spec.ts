@@ -15,6 +15,7 @@ import InspectorPaneState from '@/features/designer/inspector/parts/InspectorPan
 import InspectorReviewBadge from '@/features/designer/inspector/parts/InspectorReviewBadge.vue'
 import InspectorRunSettings from '@/features/designer/inspector/parts/InspectorRunSettings.vue'
 import InspectorSegment from '@/features/designer/inspector/parts/InspectorSegment.vue'
+import InspectorSlotList from '@/features/designer/inspector/parts/InspectorSlotList.vue'
 import InspectorSlotRow from '@/features/designer/inspector/parts/InspectorSlotRow.vue'
 import InspectorStatusChip from '@/features/designer/inspector/parts/InspectorStatusChip.vue'
 import { prepareInspectorI18n } from './support/inspectorSupport'
@@ -96,6 +97,25 @@ describe('InspectorSlotRow', () => {
 
   it('a form document (케이스 (TSC)) takes the 🧪 icon', () => {
     expect(mount(InspectorSlotRow, { props: { name: '케이스 (TSC)', form: true, empty: true }, global }).text()).toContain('🧪')
+  })
+})
+
+// flowgate.v02.0052 T#4: on the 264px Inspector the "{nav} ↗" label is the part that gives way, so the
+// ↗ open after it stays in the line (the 확인 card's Git 패널 열기 ↗ used to push it out).
+describe('InspectorSlotList — nav before ↗', () => {
+  it('the nav button carries the shrinking class and comes before the ↗ open; both still emit', async () => {
+    const line = { name: '확인 결과', kind: 'result' as const, nav: { label: 'Git 패널 열기' }, open: 'enabled' as const }
+    const w = mount(InspectorSlotList, { props: { slots: [line] }, global })
+    const buttons = w.get('[data-test="inspector-slot-buttons"]')
+    const nav = buttons.get('[data-test="inspector-slot-nav"]')
+    expect(nav.classes()).toContain('inspector-slot-nav')
+    expect(nav.text()).toBe('Git 패널 열기 ↗')
+    const order = Array.from(buttons.element.children)
+    expect(order.indexOf(nav.element)).toBeLessThan(order.indexOf(buttons.get('[data-test="inspector-slot-open"]').element))
+    await nav.trigger('click')
+    await buttons.get('[data-test="inspector-slot-open"]').trigger('click')
+    expect(w.emitted('nav')).toHaveLength(1)
+    expect(w.emitted('open')).toHaveLength(1)
   })
 })
 
