@@ -6,6 +6,8 @@
 //
 // flowgate.v02.0045 S3+S4: the Graph definition fields (node definition, editable draft, view) and
 // the draft operations (save, validate, confirm, start from the latest revision) of P0008 §5 / §6.
+//
+// flowgate.v02.0048 T#1: each Node also keeps its bound document, v0.1 slot and Graph node run.
 import type {
   FlowCanvas,
   FlowCanvasChangeHandlers,
@@ -88,6 +90,9 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
             rootBound: node.graphNode.rootBound,
           }
         : null,
+      document: node.document,
+      slot: node.slot,
+      nodeRun: node.nodeRun ?? null,
     })),
     edges: canvas.edges.map((edge) => ({
       id: edge.edgeId,

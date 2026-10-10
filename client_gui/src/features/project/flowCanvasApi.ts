@@ -18,6 +18,7 @@ import type {
   FlowCanvasLayoutInput,
   FlowCanvasLayoutResult,
   FlowCanvasNode,
+  FlowCanvasNodeRun,
   FlowCanvasOwnership,
   FlowCanvasSlot,
   FlowCanvasView,
@@ -81,6 +82,12 @@ function toGraphNode(raw: Raw | null | undefined): FlowCanvasGraphNode | null {
   }
 }
 
+// flowgate.v02.0048 T#1: kept for the Inspector; the top-level `run` and edge `condition` stay dropped.
+function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
+  if (!raw || typeof raw !== 'object') return null
+  return { status: str(raw.status), openedAt: str(raw.opened_at), finishedAt: str(raw.finished_at), resultDocId: str(raw.result_doc_id) }
+}
+
 function toView(raw: Raw | null | undefined): FlowCanvasView | null {
   if (!raw || typeof raw.mode !== 'string') return null
   return { mode: raw.mode, revisionNo: num(raw.revision_no), draftVersion: num(raw.draft_version) }
@@ -109,6 +116,7 @@ function toGraphBlock(raw: Raw | null | undefined): FlowCanvasGraphBlock {
 
 function toNode(raw: Raw): FlowCanvasNode {
   const position = raw.position ?? {}
+  const nodeRun = toNodeRun(raw.node_run)
   return {
     nodeKey: String(raw.node_key),
     identitySource: String(raw.identity_source ?? ''),
@@ -122,6 +130,8 @@ function toNode(raw: Raw): FlowCanvasNode {
     document: toDocument(raw.document),
     slot: toSlot(raw.slot),
     graphNode: toGraphNode(raw.graph_node),
+    // Only a Graph node with a run carries it (the field stays absent elsewhere, as before 0048).
+    ...(nodeRun ? { nodeRun } : {}),
   }
 }
 

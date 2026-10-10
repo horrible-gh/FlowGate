@@ -3,13 +3,15 @@
        as wide as the Center. flowgate.v02.0036 (0035 v7): the Inspector on the left and the
        Minimap on the right, 7 : 3. flowgate.v02.0049: the real Minimap of the active Flow.
        flowgate.v02.0039 T#3: with no work target the Inspector keeps only its frame and the
-       Minimap stays on screen dimmed and unavailable (confirmed initial-state design). -->
+       Minimap stays on screen dimmed and unavailable (confirmed initial-state design).
+       flowgate.v02.0048 T#1 (D#1 §4.2 / §5.7): the Inspector gets the selection context and its
+       Host intents are passed up unchanged — the Dock knows no Inspector feature. -->
   <section
     class="designer-bottom-dock"
     data-test="designer-bottom-dock"
     :style="{ height: `${height}px`, gridTemplateColumns: DESIGNER_BOTTOM_DOCK_COLUMNS }"
   >
-    <DesignerInspector :node="selectedNode" :unselected="unselected" />
+    <DesignerInspector :selection="inspector?.selection() ?? null" :unselected="unselected" @host="inspector?.host($event)" />
     <aside
       class="designer-bottom-minimap"
       :class="{ 'is-unavailable': unselected }"
@@ -57,6 +59,16 @@ withDefaults(
   }>(),
   { unselected: false, minimap: () => ({ flowId: null, graph: null, viewport: null, canvasSize: null }) },
 )
+// flowgate.v02.0048 T#1: the Center column provides the Inspector's selection context and the place
+// its Host intents go (inspector/inspectorHost.ts, which the Shell does not import — structure.0025),
+// so the Dock's props and events stay as they are. Null when the Dock is mounted without it.
+import { inject } from 'vue'
+import type { FlowGraphSelection } from '../center/graph/flowGraph'
+interface BottomDockInspector {
+  readonly selection: () => FlowGraphSelection | null
+  readonly host: (intent: { readonly kind: string; readonly nodeId?: string; readonly tool?: string }) => void
+}
+const inspector = inject<BottomDockInspector | null>(Symbol.for('flowgate.designer.bottomDockInspector'), null)
 
 // flowgate.v02.0049: the Minimap moved the shown area (`commit`: the press ended).
 const emit = defineEmits<{ 'minimap-viewport': [viewport: CanvasViewport, commit: boolean] }>()

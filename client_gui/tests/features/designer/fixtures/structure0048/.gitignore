@@ -1,0 +1,2 @@
+# flowgate.v02.0048 T#1: the root packaging rule `parts/` must not hide the fixtures' parts folders.
+!/*/parts/

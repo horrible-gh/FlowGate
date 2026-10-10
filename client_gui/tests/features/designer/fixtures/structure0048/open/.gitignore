@@ -1,0 +1,3 @@
+# flowgate.v02.0048 T#4: the root packaging rule `parts/` must not hide the open fixtures' parts folders
+# (open/boundary/parts/LinkPart.vue). The fixtures/structure0048/.gitignore rule reaches one level only.
+!/*/parts/

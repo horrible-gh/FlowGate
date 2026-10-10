@@ -23,6 +23,7 @@ import { useDocTypeStore } from './stores/docTypeStore'
 import { useProjectStore } from './stores/project'
 import { useAiInvokeRunsStore } from './stores/aiInvokeRuns'
 import { useTabsStore } from './stores/tabs'
+import { useDocDeepLink } from './composables/useDocDeepLink'
 import { registerDiagnosticsContext, startLongTaskObserver } from '@shared/diagnostics/runtimeDiagnostics'
 
 const { locale } = useI18n()
@@ -30,6 +31,7 @@ const docTypeStore = useDocTypeStore()
 const projectStore = useProjectStore()
 const aiInvokeRunsStore = useAiInvokeRunsStore()
 const tabsStore = useTabsStore()
+const { openDocFromQuery } = useDocDeepLink()
 
 // P0008 S1: one bootstrap per app mount restores running + paused + awaiting cards.
 // It lives here rather than in the miniplayer because that component now renders inside
@@ -47,6 +49,8 @@ onMounted(() => {
     openDocId: tabsStore.activeTabId,
   }))
   startLongTaskObserver()
+  // flowgate.v02.0048 T#4: `/main/?doc=<doc_id>` (v0.2 Inspector ↗ 열기) opens that document.
+  void openDocFromQuery()
 })
 
 // Reload labels when locale changes

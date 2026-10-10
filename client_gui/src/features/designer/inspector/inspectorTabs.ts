@@ -1,27 +1,29 @@
 // flowgate.v02.0036 — tab list of the bottom Inspector (0035 v7): 문서 · Q&A · 첨부 · 설정, in
-// this fixed order for every Node. The first three are always there; only the trailing 설정 tab
-// may be missing for a Node that has nothing to set, so the tabs before it never move. Which
-// Nodes have settings comes with the card definition in a later group — until then the parent
-// decides (DesignerInspector `has-settings`, default true).
+// this fixed order for every Node.
+// flowgate.v02.0048 T#1 (D#1 §5.3): a tab is shown only when a registered feature contributes to
+// it for the selected Node — no empty tab and no placeholder. The order never changes; which tabs
+// exist comes from the registry, never from a per-Node flag.
 
 export const INSPECTOR_TABS = ['documents', 'qna', 'attachments', 'settings'] as const
 
 export type InspectorTabKey = (typeof INSPECTOR_TABS)[number]
 
-/** The tab a hidden selection falls back to (v7: leaving a Node's 설정 tab returns to 문서). */
+/** The tab selected first (v7: 문서). */
 export const DEFAULT_INSPECTOR_TAB: InspectorTabKey = 'documents'
 
-/** Tabs shown for one Node, in INSPECTOR_TABS order. */
-export function inspectorTabsFor(hasSettings: boolean): readonly InspectorTabKey[] {
-  return hasSettings ? INSPECTOR_TABS : INSPECTOR_TABS.filter((key) => key !== 'settings')
+/** Tabs shown for one Node: those with a contribution, in INSPECTOR_TABS order. */
+export function inspectorTabsWith(contributed: Iterable<string>): readonly InspectorTabKey[] {
+  const keys = new Set(contributed)
+  return INSPECTOR_TABS.filter((key) => keys.has(key))
 }
 
 /**
  * The selected tab is kept while the user moves between Nodes (v7); when the new Node does
- * not have it, the selection goes back to 문서.
+ * not have it, the selection goes to the first shown tab (usually 문서). With no tab shown the
+ * selection is left as it is.
  */
 export function resolveInspectorTab(current: InspectorTabKey, available: readonly InspectorTabKey[]): InspectorTabKey {
-  return available.includes(current) ? current : DEFAULT_INSPECTOR_TAB
+  return available.includes(current) || available.length === 0 ? current : available[0]
 }
 
 // Tab strip geometry. The strip never scrolls or wraps: when the Inspector is narrow (the

@@ -275,6 +275,7 @@ export default {
       tool_git: 'Git',
     },
     // flowgate.v02.0036 — bottom Inspector Frame (0035 v7: header + tabs + Content area).
+    // flowgate.v02.0048 T#1: no placeholder line — a tab exists only with a registered feature.
     inspector: {
       label: '인스펙터',
       tabs_label: '인스펙터 탭',
@@ -284,7 +285,21 @@ export default {
         attachments: '첨부',
         settings: '설정',
       },
-      pane_placeholder: '{tab} 내용은 후속 작업에서 연결됩니다.',
+      // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
+      doc_status_label: '문서 상태',
+      run_status_label: '실행 상태',
+      review_status: {
+        pending_review: '검수 대기',
+        approved: '승인됨',
+        rejected: '반려됨',
+        revised: '수정됨',
+      },
+      pane: {
+        loading: '불러오는 중…',
+        empty: '표시할 내용이 없습니다.',
+        error: '불러오지 못했습니다.',
+        retry: '다시 시도',
+      },
     },
     // flowgate.v02.0038 — Designer top band (Header / Menu Bar / Toolbar). The Project / Group /
     // Flow / Node wording follows the confirmed top-band design (0001-R rev2,

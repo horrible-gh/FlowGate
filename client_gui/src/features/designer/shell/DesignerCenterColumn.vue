@@ -6,7 +6,10 @@
        active Flow's ready Graph, Viewport and Canvas size, and its moves go back to the session.
        flowgate.v02.0039 T#3: `unselected` (no work target yet) passes to both.
        flowgate.v02.0046: a resize handle on the Workspace ↔ Bottom Dock line asks the Shell for
-       a new Bottom Dock height; the Workspace (and its Canvas) takes the rest. -->
+       a new Bottom Dock height; the Workspace (and its Canvas) takes the rest.
+       flowgate.v02.0048 T#1 (D#1 §4.2 / §5.7): the Inspector gets the session's selection context.
+       Its Host intents are carried out here — select another Node, read the Flow again quietly —
+       or, for a Tool Panel, passed up to the Shell. -->
   <div ref="columnRef" class="designer-center-column" data-test="designer-center-column">
     <DesignerWorkspace :center="center" :unselected="unselected" :placing="placing" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" />
     <DesignerResizeHandle
@@ -34,6 +37,7 @@ import type { DesignerCenterSession } from '../center/designerCenterSession'
 import type { FlowGraph } from '../center/graph/flowGraph'
 import DesignerBottomDock from './DesignerBottomDock.vue'
 import DesignerResizeHandle from './DesignerResizeHandle.vue'
+import { provide } from 'vue'
 import DesignerWorkspace from './DesignerWorkspace.vue'
 
 const props = withDefaults(
@@ -51,7 +55,24 @@ const emit = defineEmits<{
   'resize-bottom': [height: number, columnHeight: number]
   'canvas-place': [flowId: string, x: number, y: number]
   'cancel-placement': []
+  'show-tool': [tool: 'git']
 }>()
+
+// flowgate.v02.0048 T#1: the Bottom Dock's Inspector reads the session's selection context, and its Host
+// intents (inspector/inspectorHost.ts) are carried out here, about the active Flow — or, for a
+// refresh-flow naming its Flow (T#10), that open Flow even when another tab is active. Provided
+// (the Dock injects the same key) so the Dock's props and events stay as they are.
+provide(Symbol.for('flowgate.designer.bottomDockInspector'), {
+  selection: () => props.center.activeSelection.value,
+  host(intent: { readonly kind: string; readonly nodeId?: string; readonly tool?: string; readonly flowId?: string }) {
+    const flowId = props.center.state.activeFlowId
+    if (intent.kind === 'select-node' && flowId !== null && intent.nodeId) props.center.selectNode(flowId, intent.nodeId)
+    else if (intent.kind === 'refresh-flow') {
+      const readFlowId = intent.flowId ?? flowId
+      if (readFlowId !== null) props.center.refreshFlow(readFlowId)
+    } else if (intent.kind === 'show-tool' && intent.tool === 'git') emit('show-tool', intent.tool)
+  },
+})
 
 const columnRef = ref<HTMLElement | null>(null)
 

@@ -1,10 +1,13 @@
 <template>
   <!-- flowgate.v02.0036 — Inspector header row (0035 v7, fixed 40px): kind icon box, kind
-       badge and the Node title on the left; the meta slot (later: memo icon / origin badges),
-       the state chip and the actions slot (later: primary action + its popover, ⋯) on the
-       right. It shows only what the Graph Model already has — no action is wired here.
+       badge and the Node title on the left; the meta part, the state chip and the actions on the
+       right.
        flowgate.v02.0045 TR0020 rev2: a 설계 Node shows the same glyph and name as its Canvas card
-       (기본 설계 / 프로토콜 / 로직 / DB설계). -->
+       (기본 설계 / 프로토콜 / 로직 / DB설계).
+       flowgate.v02.0048 T#1 (D#1 §8.3 rule 7): the target's real states next to the Canvas state
+       chip — the bound document's review status and, on a Graph Node, its run status — each as
+       the display text of the server value (an unknown value shows as sent). The meta / actions
+       slots take the parts the Frame lays out from the registry. -->
   <header
     class="inspector-header"
     :style="{ '--inspector-kind-accent': kind.accent }"
@@ -17,9 +20,23 @@
       </svg>
     </span>
     <span class="inspector-header-kind" data-test="designer-inspector-kind">{{ t(kindLabelKey) }}</span>
-    <span class="inspector-header-title" :title="node.title" data-test="designer-inspector-title">{{ node.title }}</span>
+    <span class="inspector-header-title" :title="target.title" data-test="designer-inspector-title">{{ target.title }}</span>
     <span class="inspector-header-gap" />
     <slot name="meta" />
+    <span
+      v-if="target.docReviewStatus"
+      class="inspector-header-status"
+      :title="t('gui.designer.inspector.doc_status_label')"
+      data-test="designer-inspector-doc-status"
+      :data-value="target.docReviewStatus"
+    >{{ reviewStatusText }}</span>
+    <span
+      v-if="target.nodeRun?.status"
+      class="inspector-header-status"
+      :title="t('gui.designer.inspector.run_status_label')"
+      data-test="designer-inspector-run-status"
+      :data-value="target.nodeRun.status"
+    >{{ target.nodeRun.status }}</span>
     <span
       v-if="state"
       class="inspector-header-state"
@@ -36,17 +53,23 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { flowNodeKindDisplay, flowNodeKindLabelKey, flowNodeStateDisplay } from '../center/canvas/flowNodeKinds'
-import type { FlowGraphNode } from '../center/graph/flowGraph'
+import type { InspectorTarget } from './inspectorTarget'
 
 const props = defineProps<{
-  node: FlowGraphNode
+  target: InspectorTarget
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 
-const kind = computed(() => flowNodeKindDisplay(props.node.kind, props.node.docType))
-const kindLabelKey = computed(() => flowNodeKindLabelKey(props.node.kind, props.node.docType))
-const state = computed(() => flowNodeStateDisplay(props.node.state))
+const kind = computed(() => flowNodeKindDisplay(props.target.nodeKind, props.target.docType))
+const kindLabelKey = computed(() => flowNodeKindLabelKey(props.target.nodeKind, props.target.docType))
+const state = computed(() => flowNodeStateDisplay(props.target.canvasState))
+
+const reviewStatusText = computed(() => {
+  const value = props.target.docReviewStatus ?? ''
+  const key = `gui.designer.inspector.review_status.${value}`
+  return te(key) ? t(key) : value
+})
 </script>
 
 <style scoped>
@@ -148,6 +171,17 @@ const state = computed(() => flowNodeStateDisplay(props.node.state))
   border-color: var(--fg2-status-danger-border);
   background: var(--fg2-status-danger-bg);
   color: var(--fg2-status-danger-fg);
+}
+
+.inspector-header-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg2-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inspector-header-actions {
