@@ -3,7 +3,9 @@
        API gives it — type · seq · title, review status, rejection reason and history, AI review
        existence, the documents it superseded — with the v0.1 sequence slot or the Graph node run
        of the Node. ↗ 열기 opens a document in the v0.1 screen, where writing and editing happen.
-       A thin container: useDocuments reads, documentsModel decides what is shown. -->
+       A thin container: useDocuments reads, documentsModel decides what is shown.
+       flowgate.v02.0052 묶음 A — no prose line in the body: where writing and editing happen is the
+       ↗ 열기 button's hover text (v7 keeps explanations in tooltips). -->
   <div v-if="view" class="inspector-documents" data-test="inspector-documents" :data-status="status">
     <section class="inspector-documents-current" data-test="documents-current" :data-doc="view.current.docId">
       <div class="inspector-documents-line">
@@ -37,7 +39,6 @@
       </div>
       <InspectorPaneState v-if="status === 'loading' && !stale" state="loading" />
       <InspectorPaneState v-else-if="errorKey" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
-      <p class="inspector-documents-hint" data-test="documents-edit-hint">{{ t(k('edit_hint')) }}</p>
     </section>
 
     <section v-if="view.slot" class="inspector-documents-section" data-test="documents-slot">
@@ -165,7 +166,6 @@ function reviewText(value: string): string {
 
 .inspector-documents-seq,
 .inspector-documents-time,
-.inspector-documents-hint,
 .inspector-documents-sub {
   color: var(--fg2-muted);
 }
@@ -184,11 +184,6 @@ function reviewText(value: string): string {
   align-items: center;
   gap: 8px;
   color: var(--fg2-muted);
-}
-
-.inspector-documents-hint {
-  margin: 0;
-  font-size: 11.5px;
 }
 
 .inspector-documents-heading {

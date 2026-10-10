@@ -290,14 +290,34 @@ export default {
         approved: 'Approved',
         rejected: 'Rejected',
         revised: 'Revised',
+        wf_in_progress: 'In progress',
+        wf_done: 'Done',
+      },
+      run_status: {
+        pending: 'Pending',
+        open: 'Running',
+        running: 'Running',
+        review: 'In review',
+        done: 'Done',
+        completed: 'Completed',
+        rejected: 'Rejected',
+        failed: 'Failed',
+        stopped: 'Stopped',
       },
       pane: {
         loading: 'Loading…',
         empty: 'Nothing to show.',
         no_document: 'No document is connected.',
-        no_settings: 'Settings are not connected for this card yet.',
+        no_settings: 'This card kind has no Inspector run settings.',
+        no_settings_for: {
+          graph: 'Run settings of a Graph Flow Node are not supported in the Inspector yet.',
+          conflict: 'The Flow ownership is in conflict, so no run settings are shown.',
+          unassigned: 'This Flow has no run model (v0.1 · Graph) yet, so it has no run settings.',
+          no_slot: 'This Node is not a v0.1 step, so it has no run settings.',
+        },
         error: 'Could not load.',
         retry: 'Retry',
+        details: 'Details',
         // flowgate.v02.0051 — a v7 item whose operation is not connected yet (shown, inactive).
         disabled: 'Not supported yet.',
       },
@@ -312,6 +332,7 @@ export default {
         copy_id: 'Copy ID',
         copied: 'ID copied',
         kind_bug: 'Bug',
+        state_tip: 'Document status: {doc} / Run status: {run}',
       },
       // flowgate.v02.0051 — common display parts (parts/): slot line, 🛡 review badge, origin badge,
       // lock line, run settings block.
@@ -319,6 +340,7 @@ export default {
         empty: 'None yet',
         progress: 'Progress',
         open: 'Open',
+        open_hint: 'Opens the v0.1 document screen in a new tab. The new tab may ask you to sign in again.',
         write: 'Write',
       },
       review: {
@@ -339,12 +361,11 @@ export default {
       unconnected: 'Not connected yet',
       slot_state: {
         writing: 'Writing',
+        in_progress: 'In progress',
         closed: 'Closed',
       },
       menu: {
         history: 'Run history',
-        stop: '■ Stop',
-        rerun: '↻ Run again',
       },
       run_settings: {
         title: 'Run settings',

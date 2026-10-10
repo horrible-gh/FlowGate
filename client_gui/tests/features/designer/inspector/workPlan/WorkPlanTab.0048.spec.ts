@@ -474,14 +474,12 @@ describe('WP summary in the Frame (real registry)', () => {
     expect(entry.ownerships ?? []).toEqual([])
   })
 
-  it.each(['v01', 'graph', 'unassigned', 'conflict'] as const)('WP in a %s Flow: the documents tab shows the summary above the documents list', async (flow) => {
+  it.each(['v01', 'graph', 'unassigned', 'conflict'] as const)('WP in a %s Flow: the documents tab shows the summary alone', async (flow) => {
     const w = await mountFrame(planSelection(flow, WP_NODE))
     const section = el(w, 'inspector-work-plan')
     expect(section.exists()).toBe(true)
-    const documents = w.find('[data-test="inspector-documents"]')
-    expect(documents.exists()).toBe(true)
-    // order 410 < 500: stacked above.
-    expect(section.element.compareDocumentPosition(documents.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // flowgate.v02.0052: the common documents list is not repeated beneath the card.
+    expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
     expect(planRead).toHaveBeenCalledWith(WP_DOC)
     expect(textOf(w, 'work-plan-rev')).toBe('WP rev 3')
   })
@@ -518,12 +516,11 @@ describe('WP summary in the Frame (real registry)', () => {
     expect(el(w, 'work-plan-deploy').attributes('disabled')).toBeDefined()
   })
 
-  it('a failed WP read leaves the documents list and the header as they are', async () => {
+  it('a failed WP read stays in the summary section', async () => {
     planRead.mockRejectedValue(axiosError(500, { detail: 'boom' }))
     const w = await mountFrame(planSelection('v01', WP_NODE))
     expect(paneState(w).attributes('data-state')).toBe('error')
-    expect(w.find('[data-test="inspector-documents"]').exists()).toBe(true)
-    expect(w.find('[data-test="inspector-documents"] [data-test="inspector-pane-state"][data-state="error"]').exists()).toBe(false)
+    expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
   })
 
   it('the WP card has the same tabs with or without the summary (it only adds to the documents tab)', async () => {

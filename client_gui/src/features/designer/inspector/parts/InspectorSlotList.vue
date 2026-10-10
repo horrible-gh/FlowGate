@@ -5,7 +5,10 @@
        the lines (which slots the card has, what each shows, which buttons are usable) and hears the
        presses as events; a button whose operation is not connected is shown disabled with its reason
        (0051-R §2.3), never left out. A feature may hand its own test ids per line (`testIds`) and may
-       render a line's summary itself through the `summary` scoped slot. -->
+       render a line's summary itself through the `summary` scoped slot.
+       flowgate.v02.0052 T#3 — every ↗ opens the v0.1 document screen in a new tab (openDocument,
+       noopener): that tab starts without this tab's session and, unless the login was kept, goes
+       through the login screen (0048 D#1 §9.4). The enabled ↗ says so in its tooltip, so the login screen does not read as a failure. -->
   <div class="inspector-slot-list" data-test="inspector-slot-list">
     <InspectorSlotRow
       v-for="line in slots"
@@ -40,6 +43,7 @@
         size="sm"
         variant="secondary"
         :disabled="line.nav.disabled ?? false"
+        class="inspector-slot-nav"
         :title="line.nav.title ?? undefined"
         :data-test="line.testIds?.nav ?? 'inspector-slot-nav'"
         @click="emit('nav', line)"
@@ -47,7 +51,7 @@
       <IconButton
         v-if="line.open && line.open !== 'none'"
         :label="t('gui.designer.inspector.slot.open')"
-        :title="line.open === 'disabled' ? (line.openReason ?? t('gui.designer.inspector.unconnected')) : t('gui.designer.inspector.slot.open')"
+        :title="line.open === 'disabled' ? (line.openReason ?? t('gui.designer.inspector.unconnected')) : t('gui.designer.inspector.slot.open_hint')"
         variant="secondary"
         size="sm"
         :disabled="line.open === 'disabled'"
@@ -123,5 +127,26 @@ const { t } = useI18n()
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+  container-type: inline-size;
+}
+
+/* flowgate.v02.0052 T#4 — on a narrow line (264px Inspector) the "{nav} ↗" label gives way first
+   (ellipsis), so the ↗ open and ＋ write buttons after it stay in the line. */
+.inspector-slot-nav {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.inspector-slot-nav :deep(.ui-btn-content) {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@container (max-width: 360px) {
+  .inspector-slot-nav {
+    padding: 0 8px;
+  }
 }
 </style>

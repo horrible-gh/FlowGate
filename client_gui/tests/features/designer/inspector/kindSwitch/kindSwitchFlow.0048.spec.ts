@@ -304,7 +304,8 @@ describe('unassigned Flow: the switch, the Canvas and the Inspector agree (D#2 �
     await select(center, `doc:${ROOT_B}`)
     expect(center.activeSelection.value?.node.document?.docId).toBe(ROOT_B)
     expect(documentRead).toHaveBeenCalledWith(ROOT_B)
-    expect(detailRead).toHaveBeenCalledWith(ROOT_B)
+    // flowgate.v02.0052: the card slot leads the 문서 tab; the common documents detail is not read beneath it.
+    expect(detailRead).not.toHaveBeenCalled()
     expect(documentRead).not.toHaveBeenCalledWith(ROOT_R)
     expect(find('kind-switch-open').attributes('data-to')).toBe('R')
     expect(find('kind-switch-open').text()).toBe('버그 ▾')

@@ -21,7 +21,7 @@ export default {
       tbd: 'manual · external 흐름 그리지 않음',
       tbd_title: 'manual · external 케이스의 결과를 받는 흐름은 TSR 계약 정리 뒤',
       mode: '실행 방식',
-      mode_hint: 'v7: 카드 전체의 자동 / 수동 선택을 뺌. TS 계약(contract 2)은 케이스마다 execution_mode를 가짐',
+      mode_hint: '카드 전체의 자동 / 수동 선택은 없고, 케이스마다 실행 방식(execution_mode)을 가짐',
       per_case: '케이스별',
       decided_in_cases: '케이스 문서에서 정함',
       automated: 'automated {n}',
@@ -30,7 +30,8 @@ export default {
       unknown: '—',
     },
     locked: '실행 중',
-    unconnected: '이 설정은 아직 Node에 저장되지 않습니다. 표시만 하며 바꿀 수 없습니다.',
+    // flowgate.v02.0052 T#2 — one short line (the same reason is each control's tooltip).
+    unconnected: '미연결 — Node에 저장되지 않아 바꿀 수 없습니다.',
   },
   en: {
     instruction: {
@@ -53,7 +54,7 @@ export default {
       tbd: 'manual · external flow not drawn',
       tbd_title: 'How manual · external case results come in is drawn after the TSR contract is settled',
       mode: 'Execution mode',
-      mode_hint: 'v7 removed the card-wide automatic / manual choice. The TS contract (contract 2) gives every case its execution_mode',
+      mode_hint: 'No card-wide automatic / manual choice: every case has its own execution_mode',
       per_case: 'Per case',
       decided_in_cases: 'decided in the case document',
       automated: 'automated {n}',
@@ -62,7 +63,7 @@ export default {
       unknown: '—',
     },
     locked: 'Running',
-    unconnected: 'These settings are not stored on the Node yet. Shown only; nothing can be changed.',
+    unconnected: 'Not connected — not stored on the Node, so it cannot be changed.',
   },
   ja: {
     instruction: {
@@ -85,7 +86,7 @@ export default {
       tbd: 'manual · external の流れは未作図',
       tbd_title: 'manual · external ケースの結果を受け取る流れは TSR 契約の整理後',
       mode: '実行方式',
-      mode_hint: 'v7: カード全体の自動 / 手動選択を外した。TS 契約（contract 2）はケースごとに execution_mode を持つ',
+      mode_hint: 'カード全体の自動 / 手動の選択はなく、ケースごとに実行方式(execution_mode)を持つ',
       per_case: 'ケースごと',
       decided_in_cases: 'ケース文書で決める',
       automated: 'automated {n}',
@@ -94,6 +95,6 @@ export default {
       unknown: '—',
     },
     locked: '実行中',
-    unconnected: 'この設定はまだノードに保存されません。表示のみで変更できません。',
+    unconnected: '未接続 — ノードに保存されないため変更できません。',
   },
 }

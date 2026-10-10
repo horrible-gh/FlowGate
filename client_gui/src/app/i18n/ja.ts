@@ -290,14 +290,34 @@ export default {
         approved: '承認済み',
         rejected: '差し戻し',
         revised: '修正済み',
+        wf_in_progress: '進行中',
+        wf_done: '完了',
+      },
+      run_status: {
+        pending: '待機',
+        open: '実行中',
+        running: '実行中',
+        review: 'レビュー中',
+        done: '完了',
+        completed: '完了',
+        rejected: '差し戻し',
+        failed: '失敗',
+        stopped: '停止',
       },
       pane: {
         loading: '読み込み中…',
         empty: '表示する内容がありません。',
         no_document: '関連付けられた文書がありません。',
-        no_settings: 'このカードの設定はまだ接続されていません。',
+        no_settings: 'このカードの種類は Inspector の実行設定の対象ではありません。',
+        no_settings_for: {
+          graph: 'Graph フローのノードの実行設定は Inspector ではまだサポートしていません。',
+          conflict: 'フローの所有が競合しているため、実行設定を表示しません。',
+          unassigned: '実行方式(v0.1 · Graph)が決まっていないフローのため、実行設定はありません。',
+          no_slot: 'v0.1 の段階に属さないノードのため、実行設定はありません。',
+        },
         error: '読み込めませんでした。',
         retry: '再試行',
+        details: '詳細',
         // flowgate.v02.0051 — a v7 item whose operation is not connected yet (shown, inactive).
         disabled: 'まだ対応していない操作です。',
       },
@@ -312,6 +332,7 @@ export default {
         copy_id: 'IDをコピー',
         copied: 'IDをコピーしました',
         kind_bug: 'バグ',
+        state_tip: 'ドキュメント状態: {doc} / 実行状態: {run}',
       },
       // flowgate.v02.0051 — common display parts (parts/): slot line, 🛡 review badge, origin badge,
       // lock line, run settings block.
@@ -319,6 +340,7 @@ export default {
         empty: 'まだありません',
         progress: '進捗',
         open: '開く',
+        open_hint: '新しいタブで v0.1 の文書画面を開きます。新しいタブでは再ログインが必要な場合があります。',
         write: '作成',
       },
       review: {
@@ -339,12 +361,11 @@ export default {
       unconnected: 'まだ連携されていません',
       slot_state: {
         writing: '作成中',
+        in_progress: '進行中',
         closed: '完了',
       },
       menu: {
         history: '実行履歴',
-        stop: '■ 中断',
-        rerun: '↻ 再実行',
       },
       run_settings: {
         title: '実行設定',

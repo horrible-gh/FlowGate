@@ -7,7 +7,7 @@ export default {
       end: '그룹 종료',
       unknown: '—',
       tbd: '토론 중',
-      tbd_title: '확인 카드가 중간 승인인지 그룹 종료인지를 누가 정하는지, 종료 = 아카이브인지는 토론 중입니다 (v7 §5).',
+      tbd_title: '확인 카드가 중간 승인인지 그룹 종료인지를 누가 정하는지, 종료 = 아카이브인지는 토론 중입니다.',
     },
     git: {
       title: 'Git 반영',
@@ -21,7 +21,8 @@ export default {
       summary_merge: '작업 브랜치를 main에 병합하고 원격 반영',
       summary_commit: '작업 브랜치에 커밋만 남김 (정상 완료)',
       summary_hold: 'Git 반영 보류 — 나중에 우측 Git 탭의 “지금 반영”',
-      unconnected: 'Node에 저장되는 설정이 아직 없습니다. 반영 방식은 헤더의 최종 확인 대화상자에서 고릅니다.',
+      // flowgate.v02.0052 T#2 — one short line: nothing is stored on the Node; the final approval asks it.
+      unconnected: '미연결 — 반영 방식은 최종 확인 때 고릅니다.',
     },
   },
   en: {
@@ -31,7 +32,7 @@ export default {
       end: 'Group end',
       unknown: '—',
       tbd: 'Under discussion',
-      tbd_title: 'Who decides whether a check card is a mid approval or the group end, and whether end means archive, is under discussion (v7 §5).',
+      tbd_title: 'Who decides whether a check card is a mid approval or the group end, and whether end means archive, is under discussion.',
     },
     git: {
       title: 'Git reflection',
@@ -45,7 +46,7 @@ export default {
       summary_merge: 'Merge the work branch into main and push',
       summary_commit: 'Leave commits on the work branch only (normal completion)',
       summary_hold: 'Hold the Git reflection — "Reflect now" later in the Git panel',
-      unconnected: 'No setting is stored on the Node yet. The method is chosen in the final-approval dialog in the header.',
+      unconnected: 'Not connected — the method is chosen at the final approval.',
     },
   },
   ja: {
@@ -55,7 +56,7 @@ export default {
       end: 'グループ終了',
       unknown: '—',
       tbd: '検討中',
-      tbd_title: '確認カードが中間承認かグループ終了かを誰が決めるか、終了 = アーカイブかは検討中です（v7 §5）。',
+      tbd_title: '確認カードが中間承認かグループ終了かを誰が決めるか、終了 = アーカイブかは検討中です。',
     },
     git: {
       title: 'Git 反映',
@@ -69,7 +70,7 @@ export default {
       summary_merge: '作業ブランチを main にマージしてリモートへ反映',
       summary_commit: '作業ブランチにコミットだけ残す（正常完了）',
       summary_hold: 'Git 反映を保留 — あとで右の Git タブの「今すぐ反映」',
-      unconnected: 'ノードに保存される設定はまだありません。反映方法はヘッダーの最終確認ダイアログで選びます。',
+      unconnected: '未接続 — 反映方法は最終確認で選びます。',
     },
   },
 }

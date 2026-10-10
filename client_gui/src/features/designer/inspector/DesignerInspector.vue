@@ -17,7 +17,7 @@
        (`headerKind`, the first that applies) and the ⋯ menu items (`headerMenu`, in `order`).
        flowgate.v02.0051 stage 3: every selected Node keeps the four v7 tabs. Missing data
        receives an empty state and unconnected settings a disabled state. Card slots lead the
-       document tab; existing document details remain in a disclosure below them. -->
+       document tab; the card slot opens the existing document screen for full detail. -->
   <section
     class="designer-inspector"
     data-test="designer-inspector"
@@ -60,11 +60,7 @@
             data-test="designer-inspector-section"
             :data-key="entry.key"
           >
-            <details v-if="entry.key === 'documents' && hasCardDocuments" class="designer-inspector-details" data-test="designer-inspector-details">
-              <summary>{{ t('gui.inspector.documents.current') }}</summary>
-              <component :is="entry.tab!.component" :target="target" />
-            </details>
-            <component v-else :is="entry.tab!.component" :target="target" />
+            <component :is="entry.tab!.component" :target="target" />
           </div>
           <div
             v-if="!tabContent.length"
@@ -105,6 +101,7 @@ import {
   INSPECTOR_TAB_GAP,
   INSPECTOR_TAB_MIN_WIDTH,
   INSPECTOR_TAB_STRIP_PADDING_X,
+  inspectorNoSettingsKey,
    resolveInspectorTab,
   type InspectorTabKey,
 } from './inspectorTabs'
@@ -181,14 +178,20 @@ const selectedTab = ref<InspectorTabKey>(DEFAULT_INSPECTOR_TAB)
 
 const activeTab = computed(() => resolveInspectorTab(selectedTab.value, tabs.value))
 
-const tabContent = computed(() => contributions.value.filter((entry) => entry.tab?.key === activeTab.value))
-const hasCardDocuments = computed(() => activeTab.value === 'documents' && tabContent.value.some((entry) => entry.key !== 'documents'))
+const tabContent = computed(() => {
+  const entries = contributions.value.filter((entry) => entry.tab?.key === activeTab.value)
+  // Card slots already open the bound document. Do not repeat its v0.1 metadata beneath them.
+  return activeTab.value === 'documents' && entries.some((entry) => entry.key !== 'documents')
+    ? entries.filter((entry) => entry.key !== 'documents')
+    : entries
+})
 const emptyTabMessage = computed(() => {
   if (!target.value?.docId && (activeTab.value === 'qna' || activeTab.value === 'attachments')) {
     return t('gui.designer.inspector.pane.no_document')
   }
-  return activeTab.value === 'settings'
-    ? t('gui.designer.inspector.pane.no_settings')
+  // flowgate.v02.0052 T#2: the settings tab says why this card has none (not one blanket "not connected").
+  return activeTab.value === 'settings' && target.value
+    ? t(`gui.designer.inspector.pane.${inspectorNoSettingsKey(target.value)}`)
     : t('gui.designer.inspector.pane.empty')
 })
 
@@ -290,19 +293,23 @@ function selectTab(key: string) {
   text-align: center;
 }
 
-.designer-inspector-details {
+.designer-inspector-body :deep(.inspector-work-plan-details),
+.designer-inspector-body :deep(.inspector-test-spec-details),
+.designer-inspector-body :deep(.inspector-check-details) {
   min-width: 0;
-  padding-top: 10px;
-  border-top: 1px solid var(--fg2-line);
 }
 
-.designer-inspector-details summary {
+.designer-inspector-body :deep(.inspector-work-plan-details summary),
+.designer-inspector-body :deep(.inspector-test-spec-details summary),
+.designer-inspector-body :deep(.inspector-check-details summary) {
   color: var(--fg2-muted);
   font-size: 11.5px;
   cursor: pointer;
 }
 
-.designer-inspector-details[open] summary {
+.designer-inspector-body :deep(.inspector-work-plan-details[open] summary),
+.designer-inspector-body :deep(.inspector-test-spec-details[open] summary),
+.designer-inspector-body :deep(.inspector-check-details[open] summary) {
   margin-bottom: 10px;
 }
 </style>

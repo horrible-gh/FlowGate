@@ -742,14 +742,12 @@ describe('check card in the Frame (real registry)', () => {
     expect(entry.docTypes).toBeUndefined()
   })
 
-  it.each(['v01', 'graph', 'unassigned'] as const)('AC in a %s Flow: the section sits above the documents list, the final approval in the header', async (ownership) => {
+  it.each(['v01', 'graph', 'unassigned'] as const)('AC in a %s Flow: the section leads the documents tab alone, the final approval in the header', async (ownership) => {
     const w = await mountFrame(acSelection({ ownership, viewMode: ownership === 'v01' ? null : 'draft' }))
     const section = el(w, 'inspector-check')
-    const documents = w.find('[data-test="inspector-documents"]')
     expect(section.exists()).toBe(true)
-    expect(documents.exists()).toBe(true)
-    // order 430 < 500: stacked above.
-    expect(section.element.compareDocumentPosition(documents.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // flowgate.v02.0052: the common documents list is not repeated beneath the card.
+    expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
     const actions = w.get('[data-test="designer-inspector-actions"]')
     expect(actions.find('[data-test="check-approve"]').text()).toBe('최종 확인')
     // The review header actions (T#6) are not on an AC.
@@ -792,13 +790,12 @@ describe('check card in the Frame (real registry)', () => {
     expect(el(w2, 'inspector-check').exists()).toBe(false)
   })
 
-  it('a failed Git read leaves the documents list and the header as they are', async () => {
+  it('a failed Git read leaves the header as it is', async () => {
     // Both check parts (section and header action) read the Git state; both fail.
     gitRead.mockRejectedValue(axiosError(500, {}))
     const w = await mountFrame(acSelection())
     expect(el(w, 'check-git-error').exists()).toBe(true)
-    expect(w.find('[data-test="inspector-documents"]').exists()).toBe(true)
-    expect(w.find('[data-test="inspector-documents"] [data-test="inspector-pane-state"][data-state="error"]').exists()).toBe(false)
+    expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
     expect(w.get('[data-test="designer-inspector-header"]').text()).toContain('Final Approval')
   })
 

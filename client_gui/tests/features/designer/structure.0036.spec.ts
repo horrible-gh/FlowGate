@@ -83,16 +83,22 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     // flowgate.v02.0051: the v7 header line (header), the `disabled` pane state and the strings of
     // the common display parts (slot · review · origin · lock · run_settings).
     // flowgate.v02.0051 stage 2: the card parts' common wordings (unconnected · slot_state · menu).
+    // flowgate.v02.0052 묶음 A: the header pill's plain words — the workflow states (wf_*), the node run
+    // status (run_status) and the pill tooltip (header.state_tip).
     expect(Object.keys(inspector).sort()).toEqual(
-      ['label', 'tabs', 'tabs_label', 'doc_status_label', 'run_status_label', 'review_status', 'pane', 'header', 'slot', 'review', 'origin', 'lock', 'run_settings', 'unconnected', 'slot_state', 'menu'].sort(),
+      ['label', 'tabs', 'tabs_label', 'doc_status_label', 'run_status_label', 'review_status', 'run_status', 'pane', 'header', 'slot', 'review', 'origin', 'lock', 'run_settings', 'unconnected', 'slot_state', 'menu'].sort(),
     )
     expect(Object.keys(inspector.tabs)).toEqual([...INSPECTOR_TABS])
-    expect(Object.keys(inspector.review_status).sort()).toEqual(['approved', 'pending_review', 'rejected', 'revised'])
-    expect(Object.keys(inspector.pane).sort()).toEqual(['disabled', 'empty', 'error', 'loading', 'no_document', 'no_settings', 'retry'])
-    expect(Object.keys(inspector.header).sort()).toEqual(['copied', 'copy_id', 'kind_bug', 'memo', 'memo_unavailable', 'more', 'read_only', 'read_only_conflict', 'read_only_revision'])
-    expect(Object.keys(inspector.slot).sort()).toEqual(['empty', 'open', 'progress', 'write'])
-    expect(Object.keys(inspector.slot_state).sort()).toEqual(['closed', 'writing'])
-    expect(Object.keys(inspector.menu).sort()).toEqual(['history', 'rerun', 'stop'])
+    expect(Object.keys(inspector.review_status).sort()).toEqual(['approved', 'pending_review', 'rejected', 'revised', 'wf_done', 'wf_in_progress'])
+    expect(Object.keys(inspector.run_status).sort()).toEqual(['completed', 'done', 'failed', 'open', 'pending', 'rejected', 'review', 'running', 'stopped'])
+    expect(Object.keys(inspector.pane).sort()).toEqual(['details', 'disabled', 'empty', 'error', 'loading', 'no_document', 'no_settings', 'no_settings_for', 'retry'])
+    // flowgate.v02.0052 T#2: why the 설정 tab is empty (inspectorNoSettingsKey).
+    expect(Object.keys(inspector.pane.no_settings_for).sort()).toEqual(['conflict', 'graph', 'no_slot', 'unassigned'])
+    expect(Object.keys(inspector.header).sort()).toEqual(['copied', 'copy_id', 'kind_bug', 'memo', 'memo_unavailable', 'more', 'read_only', 'read_only_conflict', 'read_only_revision', 'state_tip'])
+    expect(Object.keys(inspector.slot).sort()).toEqual(['empty', 'open', 'open_hint', 'progress', 'write'])
+    expect(Object.keys(inspector.slot_state).sort()).toEqual(['closed', 'in_progress', 'writing'])
+    // flowgate.v02.0052 T#3: ■ 중단 / ↻ 재실행 belong to the top 실행 menu, the card keeps 실행 이력 only.
+    expect(Object.keys(inspector.menu).sort()).toEqual(['history'])
     expect(Object.keys(inspector.run_settings).sort()).toEqual(['advanced', 'restart', 'review_ai', 'review_basis', 'review_count', 'run_ai', 'time_limit', 'title'])
     expect(messages.designer.shell).not.toHaveProperty('bottom_label')
     expect(messages.designer.shell).not.toHaveProperty('bottom_parts')

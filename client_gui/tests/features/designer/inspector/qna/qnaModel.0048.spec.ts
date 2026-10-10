@@ -194,7 +194,8 @@ describe('keys and wording (flowgate.v02.0048 T#7)', () => {
       ...['read_only_conflict', 'read_only_revision', 'disposed', 'ai_running', 'busy'].map((reason) => `reason.${reason}`),
       ...kinds.map(qnaFailureKey),
       ...kinds.map(qnaErrorKey),
-      ...['waiting', 'open', 'answered'].map((state) => `state.${state}`),
+      // 0052 T#1: the tab shows two chips for the three model states (waiting / open -> unanswered).
+      ...['unanswered', 'answered'].map((state) => `state.${state}`),
       'side.human',
       'side.ai',
       'side.ai_named',

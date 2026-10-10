@@ -54,4 +54,17 @@ withDefaults(
   gap: 8px;
   min-width: 0;
 }
+
+/* flowgate.v02.0052 T#2 — in a narrow block (the 264px Inspector) the label sits above its control,
+   so the control keeps its width instead of running past the block. */
+@container (max-width: 320px) {
+  .inspector-control-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .inspector-control-value {
+    flex-wrap: wrap;
+  }
+}
 </style>

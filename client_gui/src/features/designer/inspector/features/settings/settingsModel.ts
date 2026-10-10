@@ -53,6 +53,18 @@ export function settingsRowState(row: Pick<SettingsRowFacts, 'status'>): Setting
   return row.status === 'pending' ? 'editable' : 'started'
 }
 
+/**
+ * flowgate.v02.0052 T#2 — where the step stands, as the server derives `status` (get_sequence_items):
+ * pending = no result document yet; done = its result document is approved; in_progress = the result
+ * document exists and is not approved (running, in review, rejected and reworked). Only pending can be set.
+ */
+export type SettingsRowPhase = 'pending' | 'in_progress' | 'done'
+
+export function settingsRowPhase(row: Pick<SettingsRowFacts, 'status'>): SettingsRowPhase {
+  if (row.status === 'pending') return 'pending'
+  return row.status === 'done' ? 'done' : 'in_progress'
+}
+
 /** The settings of one row; the display names follow the chosen AI (null = the project default). */
 export interface SettingsDraft {
   readonly providerId: string | null

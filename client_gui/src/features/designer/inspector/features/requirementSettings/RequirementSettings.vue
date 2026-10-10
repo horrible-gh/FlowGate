@@ -3,11 +3,16 @@
        block with its 끄기 / 켜기 switch; while ON, 범위 · AI Team, the Supervisor note and the 안전 한도
        block. Built from the common parts. A thin container: requirementSettingsModel gives the view
        (always OFF and not changeable until a delegation API exists — the controls are disabled with the
-       reason, 0051-R §2.3). `view` may be handed in for a fixture preview of the ON shape. -->
+       reason, 0051-R §2.3). `view` may be handed in for a fixture preview of the ON shape.
+       flowgate.v02.0052 T#2 — no prose block: OFF is one short line (the v7 explanation is its tooltip)
+       and "not connected" is a tag beside the disabled switch (the reason is its tooltip). -->
   <div class="inspector-requirement-settings" data-test="inspector-requirement-settings" :data-delegation="shown.delegation" :data-connected="shown.connected ? 'true' : 'false'">
     <InspectorLockNote v-if="shown.locked" :text="t(k('delegation.locked'))" />
     <InspectorBlock :title="t(k('delegation.title'))" :sub="t(k('delegation.sub'))" :locked="shown.locked" data-test="requirement-delegation">
       <template #head>
+        <span v-if="!shown.connected" data-test="requirement-settings-unconnected">
+          <InspectorTbdNote kind="tag" :label="t(k('delegation.unconnected_tag'))" :title="t(k('delegation.unconnected'))" />
+        </span>
         <InspectorSegment
           :model-value="shown.delegation"
           :options="[
@@ -42,7 +47,7 @@
           <InspectorTbdNote kind="tag" :label="t(k('delegation.tbd'))" />
         </p>
       </template>
-      <p v-else class="inspector-requirement-settings-note" data-test="requirement-delegation-off">{{ t(k('delegation.off_note')) }}</p>
+      <p v-else class="inspector-requirement-settings-note" data-test="requirement-delegation-off" :title="t(k('delegation.off_note'))">{{ t(k('delegation.off_short')) }}</p>
     </InspectorBlock>
 
     <InspectorBlock v-if="shown.delegation === 'on'" :title="t(k('limits.title'))" :sub="t(k('limits.sub'))" :locked="shown.locked" data-test="requirement-limits">
@@ -57,7 +62,6 @@
       </div>
     </InspectorBlock>
 
-    <InspectorReason v-if="!shown.connected" :text="t(k('delegation.unconnected'))" data-test="requirement-settings-unconnected" />
   </div>
 </template>
 
@@ -70,7 +74,6 @@ import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorBlock from '../../parts/InspectorBlock.vue'
 import InspectorControlRow from '../../parts/InspectorControlRow.vue'
 import InspectorLockNote from '../../parts/InspectorLockNote.vue'
-import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorSegment from '../../parts/InspectorSegment.vue'
 import InspectorStatusChip from '../../parts/InspectorStatusChip.vue'
 import InspectorTbdNote from '../../parts/InspectorTbdNote.vue'

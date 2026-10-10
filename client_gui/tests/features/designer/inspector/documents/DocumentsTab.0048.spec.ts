@@ -178,7 +178,9 @@ describe('documents tab — real-shaped data of the fixtures', () => {
     expect(previous[0].text()).toContain('#9')
 
     expect(paneState(w).exists()).toBe(false)
-    expect(find(w, 'documents-edit-hint').text()).toBe('문서 작성·편집은 ↗ 열기로 v0.1 문서 화면에서 합니다.')
+    // flowgate.v02.0052 묶음 A: no prose line; where editing happens is the ↗ 열기 hover text.
+    expect(find(w, 'documents-edit-hint').exists()).toBe(false)
+    expect(find(w, 'documents-open').attributes('title')).toBe('문서 작성·편집은 v0.1 문서 화면에서 합니다 (새 탭에서 엽니다)')
   })
 
   it('graph: the read document and the Graph node run; no slot, no rejection, no previous document', async () => {
@@ -374,11 +376,14 @@ describe('documents tab in the Frame (real registry)', () => {
     ['graph', SELECTIONS.graph, GRAPH_DOC],
     ['unassigned', SELECTIONS.unassigned, 'flowgate.v02.0050.0001-R'],
     ['conflict', SELECTIONS.conflict, 'flowgate.v02.0051.0003-D'],
-  ])('%s document Node: the 문서 tab holds the documents section', async (_label, selection, docId) => {
+  ])('%s document Node: the 문서 tab shows the card slots only, not the documents section beneath them (0052)', async (_label, selection, docId) => {
     const w = await mountFrame(selection)
     expect(tabLabels(w)).toContain('문서')
-    const section = w.get('[data-test="designer-inspector-section"][data-key="documents"]')
-    expect(section.get('[data-test="documents-current"]').attributes('data-doc')).toBe(docId)
+    expect(w.find('[data-test="designer-inspector-section"][data-key="documents"]').exists()).toBe(false)
+    expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
+    expect(w.findAll('[data-test="inspector-slot-name"]').map((name) => name.attributes('title'))).toContain(docId)
+    expect(w.text()).not.toContain('현재 문서')
+    expect(w.text()).not.toContain('v0.1 문서 화면에서 합니다')
   })
 
   it.each([

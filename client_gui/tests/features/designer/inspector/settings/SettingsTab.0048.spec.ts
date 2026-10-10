@@ -371,12 +371,44 @@ describe('settings tab — reading (flowgate.v02.0048 T#9)', () => {
     expect(optionLabels(w, 'provider').at(-1)).toBe('Old AI (등록되지 않은 AI)')
   })
 
-  it('a started row: shown, every field and saving disabled with the started reason (D#2 E3)', async () => {
+  // flowgate.v02.0052 T#2: the step's phase is the server's row status — done (result approved) is one
+  // done line with the stored values, in_progress (result not approved yet) stays drawn but locked.
+  it('a done row (its result approved): one 완료 line with the stored values, no controls and no save (D#2 E3)', async () => {
     const w = await mountTab(targetFor(STARTED))
-    expect(w.find('[data-test="settings-row-state"]').text()).toBe('시작됨')
+    expect(w.find('[data-test="settings-row"]').text()).toContain('4단계 · T · 작업지시')
+    expect(w.find('[data-test="settings-row-state"]').text()).toBe('완료')
+    expect(w.find('[data-test="settings-row"]').attributes('title')).toBe('완료된 단계라 설정을 바꿀 수 없습니다.')
+    expect(w.find('[data-test="settings-done-provider"]').text()).toBe('실행 AI Claude Haiku')
+    expect(w.find('[data-test="settings-done-reviewCount"]').text()).toBe('검수 횟수 안 함')
+    // No review: the reviewer is not listed.
+    expect(w.find('[data-test="settings-done-reviewer"]').exists()).toBe(false)
+    expect(w.findAll('select')).toHaveLength(0)
+    expect(w.find('[data-test="inspector-segment-option"]').exists()).toBe(false)
+    expect(saveButton(w).exists()).toBe(false)
+    expect(w.find('[data-test="settings-reason"]').exists()).toBe(false)
+    expect(w.find('[data-test="inspector-lock-note"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('시작됨')
+  })
+
+  it('a done row with a review lists the reviewer it ran with', async () => {
+    rows[0] = { ...rows[0], review_count: -1, reviewer_provider_id: 'aip_sonnet', reviewer_provider_display_name: 'Claude Sonnet' }
+    const w = await mountTab(targetFor(STARTED))
+    expect(w.find('[data-test="settings-done-reviewCount"]').text()).toBe('검수 횟수 통과할 때까지')
+    expect(w.find('[data-test="settings-done-reviewer"]').text()).toBe('검수 AI Claude Sonnet')
+  })
+
+  it('an in-progress row (result not approved yet): the values stay drawn under one 🔒 line, locked, without a save', async () => {
+    rows[0] = { ...rows[0], status: 'in_progress' }
+    const w = await mountTab(targetFor(STARTED))
+    expect(w.find('[data-test="inspector-lock-note"]').text()).toBe('🔒 진행·검수 중 — 설정 변경 불가')
+    expect(w.find('[data-test="settings-row-state"]').exists()).toBe(false)
+    expect(w.find('[data-test="settings-done-values"]').exists()).toBe(false)
+    expect(valueOf(w, 'provider')).toBe('aip_haiku')
     for (const name of ['provider', 'reviewCount', 'reviewer'] as const) expect(isDisabled(select(w, name))).toBe(true)
-    expect(isDisabled(saveButton(w))).toBe(true)
-    expect(reasonText(w)).toBe('이미 시작된 단계라 설정을 바꿀 수 없습니다.')
+    expect(w.get('[data-test="inspector-run-settings"]').classes()).toContain('is-locked')
+    expect(saveButton(w).exists()).toBe(false)
+    expect(w.find('[data-test="settings-reason"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('완료')
   })
 
   it('a protected pending report row (after a started instruction) can be set', async () => {
@@ -563,8 +595,10 @@ describe('settings tab — saving (flowgate.v02.0048 T#9, D#2 §2.4)', () => {
     expect(saveCall).not.toHaveBeenCalled()
     expect(failureText(w)).toBe('그사이 단계 목록이 바뀌어 저장하지 않았습니다. 다시 읽은 값을 확인한 뒤 저장하세요.')
     expect(refreshes()).toBe(1)
-    expect(w.find('[data-test="settings-row-state"]').text()).toBe('시작됨')
+    expect(w.find('[data-test="inspector-lock-note"]').text()).toBe('🔒 진행·검수 중 — 설정 변경 불가')
+    expect(w.find('[data-test="settings-row-state"]').exists()).toBe(false)
     expect(isDisabled(select(w, 'provider'))).toBe(true)
+    expect(saveButton(w).exists()).toBe(false)
   })
 
   it.each([
@@ -700,6 +734,58 @@ describe('settings tab — guard, events, Node change (flowgate.v02.0048 T#9)', 
     expect(sequenceRead).toHaveBeenCalledTimes(1)
   })
 
+  // flowgate.v02.0052 T#2 rework: a step that starts while the Node holds an unsaved change shows what the
+  // server holds — the 🔒 values of a step in progress and the done line of an approved one — and the
+  // change is dropped, not only hidden.
+  async function startWithUnsavedChange(status: string, event: (typeof SETTINGS_EVENTS)[number]) {
+    vi.useFakeTimers()
+    const w = await mountTab(targetFor(PENDING))
+    stream.open()
+    await choose(w, 'provider', 'aip_opus')
+    await choose(w, 'reviewCount', '0')
+    expect(valueOf(w, 'provider')).toBe('aip_opus')
+    expect(isDisabled(saveButton(w))).toBe(false)
+    rows[2] = { ...rows[2], status }
+    stream.emit(event, { groupId: FLOW, docId: `${FLOW}.0006-T` })
+    await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
+    await flushPromises()
+    expect(sequenceRead).toHaveBeenCalledTimes(2)
+    return w
+  }
+
+  it('an unsaved change, then the step starts (in progress) on the same Node: the locked values are the stored ones', async () => {
+    const w = await startWithUnsavedChange('in_progress', 'ai_invoke_started')
+    expect(w.find('[data-test="inspector-lock-note"]').text()).toBe('🔒 진행·검수 중 — 설정 변경 불가')
+    expect(valueOf(w, 'provider')).toBe('aip_haiku')
+    expect(valueOf(w, 'reviewCount')).toBe('2')
+    expect(valueOf(w, 'reviewer')).toBe('aip_sonnet')
+    for (const name of ['provider', 'reviewCount', 'reviewer'] as const) expect(isDisabled(select(w, name))).toBe(true)
+    expect(w.find('[data-test="settings-reviewer-reason"]').exists()).toBe(false)
+    expect(saveButton(w).exists()).toBe(false)
+    expect(patches).toHaveLength(0)
+    // The change is gone, not hidden: were the row read as pending again, it would show the stored values unchanged.
+    rows[2] = { ...rows[2], status: 'pending' }
+    stream.emit('group_view_refresh', { groupId: FLOW, docId: ROOT })
+    await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
+    await flushPromises()
+    expect(valueOf(w, 'provider')).toBe('aip_haiku')
+    expect(valueOf(w, 'reviewCount')).toBe('2')
+    expect(isDisabled(saveButton(w))).toBe(true)
+    expect(reasonText(w)).toBe('바꾼 설정이 없습니다.')
+  })
+
+  it('an unsaved change, then the step is done on the same Node: the done line lists the stored values', async () => {
+    const w = await startWithUnsavedChange('done', 'doc_review_status_changed')
+    expect(w.find('[data-test="settings-row-state"]').text()).toBe('완료')
+    expect(w.find('[data-test="settings-done-provider"]').text()).toBe('실행 AI Claude Haiku')
+    expect(w.find('[data-test="settings-done-reviewCount"]').text()).toBe('검수 횟수 2회')
+    expect(w.find('[data-test="settings-done-reviewer"]').text()).toBe('검수 AI Claude Sonnet')
+    expect(w.findAll('select')).toHaveLength(0)
+    expect(saveButton(w).exists()).toBe(false)
+    expect(w.text()).not.toContain('Claude Opus')
+    expect(patches).toHaveLength(0)
+  })
+
   it('read-only revision (a v0.1 target never has it; the rule is the shared one): everything off with its reason', async () => {
     const w = await mountTab(targetFor(PENDING, { readOnly: 'revision' }))
     expect(isDisabled(select(w, 'provider'))).toBe(true)
@@ -813,6 +899,18 @@ describe('settings tab in the Frame (real registry, flowgate.v02.0048 T#9)', () 
     expect(sequenceRead).not.toHaveBeenCalled()
   })
 
+  // flowgate.v02.0052 T#2: an empty 설정 tab says why — never one blanket "not connected yet".
+  it.each([
+    ['conflict', '플로우 소유가 충돌해 실행 설정을 표시하지 않습니다.'],
+    ['graphGate', '이 카드 종류는 Inspector 실행 설정 대상이 아닙니다.'],
+  ] as const)('the empty 설정 tab of the %s fixture says why', async (name, text) => {
+    const w = await mountFrame(SELECTIONS[name])
+    await openTab(w, '설정')
+    expect(w.get('[data-test="designer-inspector-tab-state"]').attributes('data-state')).toBe('disabled')
+    expect(w.get('[data-test="designer-inspector-tab-state"]').text()).toContain(text)
+    expect(w.text()).not.toContain('아직 연결되지 않았습니다')
+  })
+
   it('R/B (AI delegation), AC and WP cards have no v0.1 run settings on a v0.1 Flow (D#1 §10.1)', async () => {
     const card = (id: string, type: string, kind: string): FlowGraphNode => ({
       id,
@@ -831,6 +929,8 @@ describe('settings tab in the Frame (real registry, flowgate.v02.0048 T#9)', () 
       if (tabLabels(w).includes('설정')) await openTab(w, '설정')
       expect(w.find('[data-test="inspector-settings"]').exists()).toBe(false)
       expect(sequenceRead).not.toHaveBeenCalled()
+      // flowgate.v02.0052 T#2: the WP card is no run settings target — said so, not "not connected yet".
+      if (node.id === 'wp') expect(w.get('[data-test="designer-inspector-tab-state"]').text()).toContain('이 카드 종류는 Inspector 실행 설정 대상이 아닙니다.')
       wrapper!.unmount()
       wrapper = null
     }
@@ -855,5 +955,7 @@ describe('settings tab in the Frame (real registry, flowgate.v02.0048 T#9)', () 
     if (tabLabels(w).includes('설정')) await openTab(w, '설정')
     expect(w.find('[data-test="inspector-settings"]').exists()).toBe(false)
     expect(sequenceRead).not.toHaveBeenCalled()
+    // flowgate.v02.0052 T#2 (the test card draws its own TS settings, so it has no empty state).
+    if (kind !== 'test') expect(w.get('[data-test="designer-inspector-tab-state"]').text()).toContain('v0.1 단계에 속하지 않은 Node라 실행 설정이 없습니다.')
   })
 })

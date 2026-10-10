@@ -9,7 +9,8 @@
   <section class="inspector-work-plan" data-test="inspector-work-plan" :data-status="status" :data-has-document="hasDocument ? 'true' : 'false'">
     <InspectorSlotList :slots="lines" @open="open" />
 
-    <template v-if="hasDocument">
+    <details v-if="hasDocument" :key="target.docId ?? undefined" class="inspector-work-plan-details" data-test="work-plan-details">
+      <summary>{{ t('gui.designer.inspector.pane.details') }}</summary>
       <span v-if="!view && unreadableRevision !== null" class="inspector-work-plan-rev" data-test="work-plan-rev">{{ t(k('rev'), { rev: unreadableRevision }) }}</span>
       <InspectorPaneState v-if="status === 'loading' && !view" state="loading" />
       <InspectorPaneState v-else-if="errorKey && !view" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
@@ -62,7 +63,7 @@
           @click="open"
         >{{ t(k('open')) }}</Button>
       </div>
-    </template>
+    </details>
   </section>
 </template>
 

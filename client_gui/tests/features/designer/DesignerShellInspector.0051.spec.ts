@@ -118,7 +118,10 @@ describe('Designer Shell x Inspector (T#2)', () => {
     expect(get('designer-canvas').attributes('data-selected-node-id')).toBe('gn_task')
     expect(get('designer-inspector-title').text()).toBe('구현 레포트')
     expect(get('designer-inspector-doc-status').text()).toBe('검수 대기')
-    expect(get('designer-inspector-run-status').text()).toBe('waiting_review')
+    // flowgate.v02.0052 묶음 A: a run status without a display name is kept as the raw value only
+    // (data-value, tooltip) and never shown as text.
+    expect(get('designer-inspector-run-status').attributes('data-value')).toBe('waiting_review')
+    expect(get('designer-inspector-pill').text()).not.toContain('waiting_review')
     expect(wrapper!.findAll('[data-test="designer-inspector-tabs"] [role="tab"]')).toHaveLength(4)
     for (const area of ['designer-bottom-minimap', 'designer-left-dock', 'designer-right-dock', 'designer-workspace']) {
       expect(get(area).exists()).toBe(true)

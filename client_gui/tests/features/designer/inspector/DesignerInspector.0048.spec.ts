@@ -170,16 +170,25 @@ describe('Node selection shows the real document state in the header', () => {
     expect(center.activeSelection.value).toMatchObject({ projectId: 'flowgate', graph: { flowId: 'flowgate.v02.0048', ownership: 'v01' }, node: { id: 'slot_t1' } })
     expect(get(w, 'designer-inspector-kind').text()).toBe('작업')
     expect(get(w, 'designer-inspector-title').text()).toBe('T#1 결과')
-    const status = get(w, 'designer-inspector-doc-status')
-    expect(status.text()).toBe('반려됨')
-    expect(status.attributes('data-value')).toBe('rejected')
-    expect(status.attributes('title')).toBe('문서 상태')
+    // flowgate.v02.0052 묶음 A: one pill; the raw values sit in the tooltip and data attributes.
+    // flowgate.v02.0052 T#3: the Canvas `blocked` of a rejected document is named as the rejection
+    // (반려됨, v7 work.rej), not as the Canvas word 보류; the Canvas value stays in the state span.
+    const pill = get(w, 'designer-inspector-pill')
+    expect(get(w, 'designer-inspector-pill-label').text()).toBe('반려됨')
+    expect(pill.attributes('data-tone')).toBe('danger')
+    // The Canvas word stays only in the hidden diagnostic span.
     expect(get(w, 'designer-inspector-state').text()).toBe('보류')
+    expect(get(w, 'designer-inspector-state').attributes('hidden')).toBeDefined()
+    expect(pill.find('[data-test="designer-inspector-pill-sub"]').exists()).toBe(false)
+    expect(pill.attributes('title')).toBe('문서 상태: 반려됨 (rejected) / 실행 상태: —')
+    expect(get(w, 'designer-inspector-doc-status').attributes('data-value')).toBe('rejected')
+    expect(get(w, 'designer-inspector-state').attributes('data-value')).toBe('blocked')
     expect(w.find('[data-test="designer-inspector-run-status"]').exists()).toBe(false)
 
     center.selectNode('flowgate.v02.0048', 'doc:flowgate.v02.0048.0001-R')
     await flushPromises()
-    expect(get(w, 'designer-inspector-doc-status').text()).toBe('승인됨')
+    expect(get(w, 'designer-inspector-doc-status').attributes('data-value')).toBe('approved')
+    expect(get(w, 'designer-inspector-pill').attributes('title')).toContain('문서 상태: 승인됨 (approved)')
   })
 
   it('ownership graph: the bound document status and the node run status; a gate shows neither', async () => {
@@ -190,10 +199,12 @@ describe('Node selection shows the real document state in the header', () => {
     center.selectNode('flowgate.v02.0049', 'gn_tr')
     await flushPromises()
     expect(get(w, 'designer-inspector-title').text()).toBe('구현 레포트')
-    expect(get(w, 'designer-inspector-doc-status').text()).toBe('검수 대기')
-    const run = get(w, 'designer-inspector-run-status')
-    expect(run.text()).toBe('waiting_review')
-    expect(run.attributes('title')).toBe('실행 상태')
+    expect(get(w, 'designer-inspector-doc-status').attributes('data-value')).toBe('pending_review')
+    expect(get(w, 'designer-inspector-run-status').attributes('data-value')).toBe('waiting_review')
+    // A run status without a display name never shows as text: tooltip only.
+    const pill = get(w, 'designer-inspector-pill')
+    expect(pill.text()).not.toContain('waiting_review')
+    expect(pill.attributes('title')).toBe('문서 상태: 검수 대기 (pending_review) / 실행 상태: waiting_review')
 
     center.selectNode('flowgate.v02.0049', 'gn_gate')
     await flushPromises()
@@ -202,14 +213,15 @@ describe('Node selection shows the real document state in the header', () => {
     expect(w.find('[data-test="designer-inspector-run-status"]').exists()).toBe(false)
   })
 
-  it('an unknown review status shows as sent; en shows its own wording', async () => {
+  it('a workflow value has plain words (never wf_* as text); en shows its own wording', async () => {
     const raw = { ...V01_RAW, nodes: [{ ...V01_RAW.nodes[0], document: { ...V01_RAW.nodes[0].document, doc_review_status: 'wf_done' } }] }
     const { w } = await selectThroughSession(raw, 'doc:flowgate.v02.0048.0001-R')
-    expect(get(w, 'designer-inspector-doc-status').text()).toBe('wf_done')
+    expect(get(w, 'designer-inspector-doc-status').attributes('data-value')).toBe('wf_done')
+    expect(get(w, 'designer-inspector-pill').text()).not.toContain('wf_done')
+    expect(get(w, 'designer-inspector-pill').attributes('title')).toContain('문서 상태: 완료 (wf_done)')
     i18n.global.locale.value = 'en'
     const { w: en } = await selectThroughSession(V01_RAW, 'slot_t1')
-    expect(get(en, 'designer-inspector-doc-status').text()).toBe('Rejected')
-    expect(get(en, 'designer-inspector-doc-status').attributes('title')).toBe('Document status')
+    expect(get(en, 'designer-inspector-pill').attributes('title')).toBe('Document status: Rejected (rejected) / Run status: —')
   })
 })
 
@@ -250,7 +262,8 @@ describe('DesignerInspector — registry layout', () => {
   it('stacks the Content parts of one tab in `order`', () => {
     const wp = { ...SELECTIONS.unassigned, node: { ...SELECTIONS.unassigned.node, document: { ...SELECTIONS.unassigned.node.document!, typeCode: 'WP' } } }
     const w = mountFrame({ selection: wp })
-    expect(sections(w)).toEqual(['workPlan', 'documents'])
+    // flowgate.v02.0052: card slots lead the 문서 tab; the common documents section is not repeated beneath them.
+    expect(sections(w)).toEqual(['workPlan'])
     expect(tabLabels(w)).toEqual(['문서', 'Q&A (3)', '첨부', '설정'])
   })
 
