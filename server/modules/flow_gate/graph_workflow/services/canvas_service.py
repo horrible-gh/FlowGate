@@ -25,6 +25,7 @@ from modules.flow_gate.graph_workflow.projection.graph_projector import GraphVie
 from modules.flow_gate.graph_workflow.projection.legacy_projector import Projection, project
 from modules.flow_gate.graph_workflow.store import assignment_store, definition_store, layout_store, run_store
 
+from . import card_document_ports
 from .engine_router import block, confirm_block_reason, judge
 from .errors import FlowNotFound, GraphApiError
 from .identity_keeper import ensure_identity, keys_from_record
@@ -55,6 +56,7 @@ class _Definition:
         self.latest_no = definition_store.latest_revision_no(flow_id)
         self.binding = assignment_store.root_binding(flow_id)
         self.bound_doc_id = follow_supersede(flow_id, docs, (self.binding or {}).get("doc_id"))
+        self.cards = card_document_ports.card_view(flow_id, docs)     # flowgate.v02.0053 T#1
         self._flow_id = flow_id
         self._revisions: dict[int, Optional[dict]] = {}
 
@@ -73,7 +75,9 @@ class _Definition:
         if bound_key not in {n["node_key"] for n in nodes}:
             bound_key = None
         return GraphView(mode=mode, nodes=nodes, edges=list((record or {}).get("edges") or []),
-                         bound_node_key=bound_key, bound_doc_id=self.bound_doc_id if bound_key else None)
+                         bound_node_key=bound_key, bound_doc_id=self.bound_doc_id if bound_key else None,
+                         card_docs={n["node_key"]: self.cards.lines_for(n) for n in nodes},
+                         hidden_doc_ids=frozenset(self.cards.hidden_doc_ids))
 
     def graph_block(self, state: str) -> dict:
         draft = None
@@ -132,7 +136,8 @@ def _project(flow_id: str, state: str, snap: FlowSnapshot, row_keys, protected, 
             view.node_runs = {r["node_key"]: {k: v for k, v in r.items() if k not in ("node_key", "root_bound")}
                               for r in run["node_runs"]}
         return project_graph(flow_id, state, snap.documents, view, lookup)
-    proj = project(flow_id, state, snap.documents, snap.sequence, snap.rows, row_keys, protected, lookup)
+    hidden = frozenset(d.cards.hidden_doc_ids) if state == "unassigned" and mode == "draft" else frozenset()
+    proj = project(flow_id, state, snap.documents, snap.sequence, snap.rows, row_keys, protected, lookup, hidden)
     if state == "unassigned" and mode == "draft":
         add_draft(proj, state, snap.documents, d.view("draft"))
     return proj

@@ -18,6 +18,7 @@ from modules.flow_gate.graph_workflow.projection.run_documents import flow_docum
 from modules.flow_gate.graph_workflow.store import assignment_store, definition_store, run_store
 
 from . import node_dispatch, run_events
+from .card_document_ports import result_bound
 
 DISPATCH_FIELDS = ("token_issued", "mention_id", "issued_to", "error_code")
 
@@ -137,6 +138,8 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None) ->
             ctx.run_id, t.node, t.from_status, t.expected_doc_id, t.to_status, t.result_doc_id,
             finished=t.to_status in ("done", "rejected")), f"transition {t.node} {t.cause}")
         seq = emit_node_state(ctx, t.node, t.from_status, t.to_status, t.cause, t.result_doc_id, note=note)
+        if t.result_doc_id and t.result_doc_id != t.expected_doc_id:
+            result_bound(ctx.flow_id, t.node, t.result_doc_id)        # flowgate.v02.0053 T#1: fills the line
         for p in d.propagation_new:
             if p.transition is t:
                 run_store.insert_propagation(ctx.run_id, seq, p.node, p.outcome, p.status)

@@ -63,11 +63,14 @@ def db_path():
 
 
 @pytest.fixture()
-def env(db_path, monkeypatch):
+def env(db_path, monkeypatch, tmp_path):
     from modules.flow_gate.db import _SqliteTxnAdapter
     from modules.flow_gate.graph_workflow.api import canvas_routes, envelope, graph_routes
     from modules.flow_gate.graph_workflow.services import canvas_events
 
+    # flowgate.v02.0053 T#1: with the card document ports registered (startup / an earlier lifespan in
+    # this process) a draft save files the cards' documents; keep them in a temp storage root.
+    monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path / "storage"))
     monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
     state = {"denied": set(), "events": []}
 

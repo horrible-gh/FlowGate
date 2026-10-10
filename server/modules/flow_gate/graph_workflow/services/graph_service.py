@@ -3,7 +3,9 @@
 Draft save and validation run inside the Flow guard: the ownership judgement, the
 ``draft_version`` comparison and the write are one unit. A draft save replaces the Flow's draft
 as a whole (P0008 S3-1); concurrent saves are refused by version (Q-13 provisional rule, S3-2).
-Structure is not checked on save, only on validation / confirmation.
+Structure is not checked on save, only on validation / confirmation. The same unit brings the
+cards' documents in line with the draft (flowgate.v02.0053 T#1, ``card_document_ports.draft_saved``;
+the feature lives in ``flowgate.card_documents``).
 """
 from __future__ import annotations
 
@@ -31,6 +33,7 @@ from modules.flow_gate.graph_workflow.store import assignment_store, definition_
 
 from .canvas_events import publish_canvas_changed
 from .canvas_service import follow_supersede
+from . import card_document_ports
 from .engine_router import Ownership, block, confirm_block_reason, read_ownership, require_graph_editable
 from .errors import GraphApiError
 from .flow_guard import with_flow_guard
@@ -190,11 +193,14 @@ def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optio
         removed_edges = [e["edge_id"] for e in (current or {}).get("edges", []) if e["edge_id"] not in new_edges]
         for key in removed_nodes:
             layout_store.retire(flow_id, key, "draft_removed")
+        card_documents = card_document_ports.draft_saved(group, user_id, nodes, removed_nodes, registered,
+                                                         ((current or latest) or {}).get("nodes", []))
         version = req.draft_version + 1
         publish_canvas_changed(project_id=project_id, flow_id=flow_id, reason="draft", actor_user_id=user_id,
                                origin_client_id=client_id, draft_version=version)
         return {"flow_id": flow_id, "draft_version": version, "key_map": key_map,
-                "removed_node_keys": removed_nodes, "removed_edge_ids": removed_edges}
+                "removed_node_keys": removed_nodes, "removed_edge_ids": removed_edges,
+                "card_documents": card_documents}
 
     return with_flow_guard(flow_id, body)
 

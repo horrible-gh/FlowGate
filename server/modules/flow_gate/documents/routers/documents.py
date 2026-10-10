@@ -3432,6 +3432,7 @@ def convert_root_type(
     before anything is rewritten — its root binding and start Node keep the old identity
     and a revision is never rewritten. An unassigned Flow converts inside the Flow guard;
     a v0.1 Flow and a document without a group convert exactly as before.
+    flowgate.v02.0053 T#1: in that guard a Designer card line holding the root follows the new id.
     """
     doc = document_service.get_document(doc_id)
     if doc is None:
@@ -3439,7 +3440,7 @@ def convert_root_type(
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
     actor = current_user["user_id"]
-    result = _graph_contact.guarded_assignment(doc, lambda: document_service.convert_root_document_type(doc_id, body.new_type, actor_user_id=actor), actor)
+    result = _graph_contact.guarded_root_conversion(doc, lambda: document_service.convert_root_document_type(doc_id, body.new_type, actor_user_id=actor), actor)
     if isinstance(result, JSONResponse):
         return result
     return {"data": result}
