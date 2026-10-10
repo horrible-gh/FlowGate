@@ -112,8 +112,13 @@ DOC = {
 
 def _run(**overrides):
     row = {
+        # 0661 T0004 safety boundary 1: the dispatcher answers only items THIS run raised,
+        # so every stubbed open item below names this run as its asker.
+        "run_id": "aiv_requester",
+        "group_id": "flowgate.default.0551",
         "doc_ref": "flowgate.default.0551.0002-N",
         "project_id": "flowgate",
+        "continuation_review_count_overrides": None,
         "issued_to": "u-worker",
         "api_base_url": "http://127.0.0.1:8089/flowgate/api/v1",
         "continuation_reviewer_overrides": None,
@@ -182,7 +187,7 @@ class TestDispatchQuestionResponder:
         monkeypatch.setattr(db_questions, "get_container_by_doc",
                              lambda doc_id: {"id": 1, "status": "pending"})
         monkeypatch.setattr(db_question_items, "list_unanswered",
-                             lambda qpk: [{"id": 201, "seq": 1}])
+                             lambda qpk: [{"id": 201, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"}])
         monkeypatch.setattr(finalize.db_docs, "get_by_id", lambda doc_id: None)
         finalize._dispatch_question_responder(_run())
         assert self.calls == []
@@ -194,7 +199,7 @@ class TestDispatchQuestionResponder:
         monkeypatch.setattr(db_questions, "get_container_by_doc",
                              lambda doc_id: {"id": 1, "status": "pending"})
         monkeypatch.setattr(db_question_items, "list_unanswered",
-                             lambda qpk: [{"id": 202, "seq": 2}, {"id": 201, "seq": 1}])
+                             lambda qpk: [{"id": 202, "seq": 2, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"}, {"id": 201, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"}])
         finalize._dispatch_question_responder(_run())
         assert len(self.calls) == 1
         assert self.calls[0]["item"]["id"] == 201
@@ -203,10 +208,10 @@ class TestDispatchQuestionResponder:
         monkeypatch.setattr(db_questions, "get_container_by_doc",
                              lambda doc_id: {"id": 1, "status": "pending"})
         monkeypatch.setattr(db_question_items, "list_unanswered",
-                             lambda qpk: [{"id": 201, "seq": 1}])
+                             lambda qpk: [{"id": 201, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"}])
         monkeypatch.setattr(
-            review, "resolve_question_responder",
-            lambda reviewer_overrides, item_seq, base_provider_id, project_id: "aip_reviewer",
+            review, "resolve_question_responder_with_source",
+            lambda *a, **kw: ("aip_reviewer", "reviewer_override"),
         )
         finalize._dispatch_question_responder(
             _run(continuation_reviewer_overrides={"3": "aip_reviewer"}))
@@ -216,22 +221,29 @@ class TestDispatchQuestionResponder:
         monkeypatch.setattr(db_questions, "get_container_by_doc",
                              lambda doc_id: {"id": 1, "status": "pending"})
         monkeypatch.setattr(db_question_items, "list_unanswered",
-                             lambda qpk: [{"id": 201, "seq": 1}])
+                             lambda qpk: [{"id": 201, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"}])
         seen: dict = {}
 
-        def _resolver(reviewer_overrides, item_seq, base_provider_id, project_id):
+        def _resolver(reviewer_overrides, item_seq, base_provider_id, project_id,
+                      doc_ref=None, review_count_overrides=None):
             seen.update(reviewer_overrides=reviewer_overrides, item_seq=item_seq,
-                        base_provider_id=base_provider_id, project_id=project_id)
-            return None
+                        base_provider_id=base_provider_id, project_id=project_id,
+                        doc_ref=doc_ref, review_count_overrides=review_count_overrides)
+            return None, "default"
 
-        monkeypatch.setattr(review, "resolve_question_responder", _resolver)
+        monkeypatch.setattr(review, "resolve_question_responder_with_source", _resolver)
         finalize._dispatch_question_responder(_run(
             continuation_reviewer_overrides={"3": "aip_x"},
             continuation_base_provider_id="aip_header",
+            continuation_review_count_overrides={"3": 1},
         ))
+        # 0661 T0004 F1: the spine doc_ref and the review-count map now reach the resolver
+        # too, so a reviewer that lives only on the stored sequence can be found.
         assert seen == {
             "reviewer_overrides": {"3": "aip_x"}, "item_seq": 3,
             "base_provider_id": "aip_header", "project_id": "flowgate",
+            "doc_ref": "flowgate.default.0551.0002-N",
+            "review_count_overrides": {"3": 1},
         }
 
     def test_no_resolved_provider_still_dispatches_with_none(self, monkeypatch):
@@ -240,7 +252,7 @@ class TestDispatchQuestionResponder:
         monkeypatch.setattr(db_questions, "get_container_by_doc",
                              lambda doc_id: {"id": 1, "status": "pending"})
         monkeypatch.setattr(db_question_items, "list_unanswered",
-                             lambda qpk: [{"id": 201, "seq": 1}])
+                             lambda qpk: [{"id": 201, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"}])
         finalize._dispatch_question_responder(_run())
         assert len(self.calls) == 1
         assert self.calls[0]["provider_id"] is None
@@ -253,7 +265,7 @@ class TestDispatchQuestionResponder:
         monkeypatch.setattr(db_questions, "get_container_by_doc",
                              lambda doc_id: {"id": 1, "status": "pending"})
         monkeypatch.setattr(db_question_items, "list_unanswered",
-                             lambda qpk: [{"id": 201, "seq": 1}])
+                             lambda qpk: [{"id": 201, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"}])
 
         def _boom(**kw):
             from fastapi import HTTPException
@@ -303,13 +315,21 @@ class TestDispatchQuestionResponderRealExecution:
         monkeypatch.setattr(db_questions, "get_container_by_doc",
                              lambda doc_id: {"id": 1, "status": "pending"})
         monkeypatch.setattr(db_question_items, "list_unanswered",
-                             lambda qpk: [{"id": 201, "seq": 1}])
+                             lambda qpk: [{"id": 201, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"}])
         monkeypatch.setattr(
             q_answer_invoke_service, "resolve_item",
             lambda doc_id, item_id: {
                 "id": item_id, "seq": item_id, "title": "Q", "body": "b", "options": [],
             },
         )
+        # 0661 T0004: the durable responder-state writes dispatch_answer_run and the
+        # responder's own finalization perform — no database behind this harness, so they
+        # are in-memory no-ops here (test_q_responder_chain_0661 covers them for real).
+        monkeypatch.setattr(db_question_items, "get_by_pk", lambda pk: None)
+        monkeypatch.setattr(db_question_items, "claim_responder_dispatch",
+                             lambda *a, **kw: True)
+        monkeypatch.setattr(db_question_items, "set_responder_state", lambda *a, **kw: True)
+        monkeypatch.setattr(db_question_items, "list_by_responder_run", lambda run_id: [])
         # Everything below is what dispatch_answer_run/issue_answer_token need once
         # admission actually admits the run (never reached by the admission-failure case,
         # which raises before any of it) — the same collaborators
@@ -352,7 +372,7 @@ class TestDispatchQuestionResponderRealExecution:
         # ...and admission refused before any worker was ever launched, so nothing here
         # touched the pending question — state preserved.
         assert launches == []
-        assert db_question_items.list_unanswered(1) == [{"id": 201, "seq": 1}]
+        assert db_question_items.list_unanswered(1) == [{"id": 201, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"}]
 
         # Recovery: once a provider is available again, the SAME unmodified dispatch call
         # is admitted and a real worker launches (asynchronously, on the worker thread the
@@ -397,7 +417,7 @@ class TestDispatchQuestionResponderRealExecution:
         # No AI answer landed (the oracle this run was judged by was never satisfied), so
         # the question is exactly as unanswered as it was before the attempt — state
         # preserved, the same as the admission-failure case above.
-        assert db_question_items.list_unanswered(1) == [{"id": 201, "seq": 1}]
+        assert db_question_items.list_unanswered(1) == [{"id": 201, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"}]
 
         # Recovery: a fresh dispatch after the timed-out attempt still reaches a real
         # worker on the same, unmodified code path (asynchronously, hence the wait).
@@ -421,8 +441,11 @@ class TestFinalizeRunHookPlacement:
             base.svc.db_questions, "get_container_by_doc",
             base._container_lookup({base.ANCHOR: {"id": 9, "status": "pending"}}),
         )
+        # 0661 T0004 boundary 1: the open item must have been raised by THIS hop (the only
+        # live run in the patched registry) or the dispatcher leaves it alone.
         monkeypatch.setattr(db_question_items, "list_unanswered",
-                             lambda qpk: [{"id": 501, "seq": 1}])
+                             lambda qpk: [{"id": 501, "seq": 1, "asker_kind": "ai",
+                                           "asker_ai_run_id": next(iter(base.svc._runs), None)}])
         monkeypatch.setattr(
             q_answer_invoke_service, "resolve_item",
             lambda doc_id, item_id: {

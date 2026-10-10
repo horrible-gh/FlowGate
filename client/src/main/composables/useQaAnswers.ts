@@ -17,6 +17,14 @@ export interface QaOption {
   id: string
   label: string
 }
+// 0661 T0004 F6: the REQUESTED half of an AI answer's provenance — which provider was
+// asked (the step's reviewer, the header pick, ...) and whether a fallback ran — so an
+// answer can say "the assigned reviewer answered" vs "a fallback did". null = no evidence.
+export interface QaAnswerProvenance {
+  requested_provider_id?: string | null
+  provider_source?: string | null
+  fallback_used?: boolean | null
+}
 export interface QaAnswer {
   body: string
   author_kind: string
@@ -26,6 +34,21 @@ export interface QaAnswer {
   // bound run (the [Copy Mention] hand-off starts no run, so this is legitimately
   // unknown rather than dropped).
   author_provider?: AiProvenance | null
+  author_provenance?: QaAnswerProvenance | null
+}
+// 0661 T0004 F3/F5: the automatic responder's durable state for this item. null when no
+// in-app AI responder ever touched it. 'failed' is a TECHNICAL failure (error_code says
+// which; [AI 답변 요청] re-dispatches it); 'user_decision' is the AI's explicit "a human
+// must decide this" — nothing retries it, the user answers.
+export interface QaResponder {
+  state: 'dispatched' | 'answered' | 'failed' | 'user_decision' | string
+  run_id?: string | null
+  requested_provider_id?: string | null
+  provider_source?: string | null
+  error_code?: string | null
+  error_message?: string | null
+  attempts?: number
+  updated_at?: string | null
 }
 export interface QaItem {
   id: number
@@ -38,6 +61,7 @@ export interface QaItem {
   answers?: QaAnswer[]
   // 0582 T0005 §D: the AI run/provider that raised this question (asker_kind='ai' only).
   asker_provider?: AiProvenance | null
+  responder?: QaResponder | null
 }
 
 export function useQaAnswers(docId: Ref<string>) {

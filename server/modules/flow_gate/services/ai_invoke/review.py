@@ -359,34 +359,88 @@ def resolve_step_executor(
     return _first_enabled_provider_id(project_id)
 
 
+# Provenance labels for the responder pick (0661 T0004 F1/F6): stored on the item row at
+# dispatch (question_items.responder_provider_source) so an answer can later be matched
+# against WHY that provider was asked, not just WHICH one actually ran.
+QUESTION_RESPONDER_SOURCE_REVIEWER_OVERRIDE = "reviewer_override"
+QUESTION_RESPONDER_SOURCE_SEQUENCE_REVIEWER = "sequence_reviewer"
+QUESTION_RESPONDER_SOURCE_HEADER = "header"
+QUESTION_RESPONDER_SOURCE_DEFAULT = "default"
+
+
+def resolve_question_responder_with_source(
+    reviewer_overrides: Optional[dict],
+    item_seq: Optional[int],
+    base_provider_id: Optional[str],
+    project_id: Optional[str],
+    doc_ref: Optional[str] = None,
+    review_count_overrides: Optional[dict] = None,
+) -> tuple[Optional[str], str]:
+    """Who answers this hop's pending question, and which tier chose them.
+
+    flowgate.default.0661 T0004 F1 (0003-NR §2.2): the 0551 resolver read only the runtime
+    reviewer override, so a reviewer that lived solely on the stored workflow sequence --
+    the normal case for a WP-planned chain -- never answered its own step's question. The
+    tiers are now the same ones `resolve_reviewer` walks, in the order T0004 §F1 fixes:
+
+      1. runtime reviewer override for this item_seq (an explicit per-run pick wins even
+         when the step's review count is 0 -- the user named a reviewer for THIS run);
+      2. the stored sequence reviewer, ONLY when the step is reviewed at all: the
+         effective review count (runtime count override, else the stored row, else
+         REVIEW_COUNT_DEFAULT) must be non-zero. `review_count=0` means "nobody reviews
+         this step", which is not the same as "reviewed by the project default" -- a
+         `review_count>0 / reviewer NULL` row says the latter, and for a question that
+         falls through to tier 3 rather than conjuring a reviewer the general gate
+         would also only pick by default;
+      3. the run's header/default selected provider (`continuation_base_provider_id`);
+      4. nothing: (None, "default") -- `dispatch_answer_run`'s ordinary provider chain /
+         default policy decides, exactly as a manual [AI 답변 요청] click with no
+         provider chosen already does. No new default-provider logic is built here.
+
+    A disabled candidate at tier 1 or 2 falls to tier 3, never straight to the project
+    default (that would reorder tier 3 behind tier 4, the 0551 T#1 invariant).
+    """
+    candidate: Optional[str] = None
+    source = QUESTION_RESPONDER_SOURCE_DEFAULT
+    if _map_contains(reviewer_overrides, item_seq):
+        candidate = _map_lookup(reviewer_overrides, item_seq)
+        source = QUESTION_RESPONDER_SOURCE_REVIEWER_OVERRIDE
+    else:
+        _count, stored_reviewer = _stored_review_policy_for_item_seq(doc_ref, item_seq)
+        if stored_reviewer and resolve_review_count(
+            review_count_overrides, item_seq, doc_ref
+        ) != 0:
+            candidate = stored_reviewer
+            source = QUESTION_RESPONDER_SOURCE_SEQUENCE_REVIEWER
+    if candidate and _provider_enabled(project_id, candidate):
+        return candidate, source
+    if candidate:
+        logger.warning(
+            "question responder: reviewer %s (%s) is not enabled for %s -- "
+            "falling back to the header pick for item_seq %s",
+            candidate, source, project_id, item_seq,
+        )
+    if base_provider_id and _provider_enabled(project_id, base_provider_id):
+        return base_provider_id, QUESTION_RESPONDER_SOURCE_HEADER
+    return None, QUESTION_RESPONDER_SOURCE_DEFAULT
+
+
 def resolve_question_responder(
     reviewer_overrides: Optional[dict],
     item_seq: Optional[int],
     base_provider_id: Optional[str],
     project_id: Optional[str],
+    doc_ref: Optional[str] = None,
+    review_count_overrides: Optional[dict] = None,
 ) -> Optional[str]:
-    """Who answers this hop's pending question (NR0003 §11 제안 1, T#1).
-
-    Priority: 1) the step's own reviewer, if still enabled -- the reviewer already reads
-    every document this hop produces, so a question raised while producing it is exactly
-    their business. 2) the run's header/default selected provider
-    (`continuation_base_provider_id`), if still enabled -- the same provider a manual
-    [AI 답변 요청] click would use today (NR0003 §4). 3) neither: return None and let
-    `dispatch_answer_run`'s ordinary provider chain/default policy decide, exactly as a
-    manual [AI 답변 요청] click with no provider chosen already does -- no new
-    default-provider logic is built here.
-
-    Unlike `resolve_reviewer`, an invalid/absent reviewer does NOT fall straight to the
-    project default here: the header pick sits between the two, and reusing
-    `resolve_reviewer`'s own fallback would skip it and silently reorder step 3 ahead of
-    step 2.
-    """
-    reviewer_id = _map_lookup(reviewer_overrides, item_seq)
-    if reviewer_id and _provider_enabled(project_id, reviewer_id):
-        return reviewer_id
-    if base_provider_id and _provider_enabled(project_id, base_provider_id):
-        return base_provider_id
-    return None
+    """Who answers this hop's pending question (NR0003 §11 제안 1, T#1; tiers in
+    `resolve_question_responder_with_source`, which this wraps for callers that only
+    need the provider id)."""
+    provider_id, _source = resolve_question_responder_with_source(
+        reviewer_overrides, item_seq, base_provider_id, project_id,
+        doc_ref=doc_ref, review_count_overrides=review_count_overrides,
+    )
+    return provider_id
 
 
 # doc_review_status values that mean "this output is not through the gate yet".

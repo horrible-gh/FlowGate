@@ -34,6 +34,7 @@ sys.path.insert(0, str(_SERVER_DIR))
 
 from modules.flow_gate.db import ai_invoke_paused_chains as db_paused  # noqa: E402
 from modules.flow_gate.db import ai_invoke_runs as db_runs  # noqa: E402
+from modules.flow_gate.db import question_items as db_question_items  # noqa: E402
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
 from modules.flow_gate.services.ai_invoke import oracle as oracle_module  # noqa: E402
 from modules.flow_gate.services import workflow_decision_service as wds  # noqa: E402
@@ -256,6 +257,18 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "ORACLE_SETTLE_SEC", 0)
     monkeypatch.setattr(svc, "_runs", {})
     monkeypatch.setattr(svc, "_auto_resume", {})
+    # 0661 T0004 (harness repair): admission.start_run probes the group's branch-merge claim
+    # (0635) through the store before anything else; this fixture runs with no database
+    # (`_get_db()` is None under TESTING=1), so every start_run died with
+    # `branch_merge_claim_query_failed` and no engine test in the files reusing `env` could
+    # reach admission. No claim is ever open here — same stub test_ai_invoke_pre_run_start_
+    # rollback_0550 already uses.
+    monkeypatch.setattr(svc.git_service, "get_branch_merge_group_claim", lambda _gid: None)
+    # Same reason for the 0669 final-approval freeze probe (`_refuse_frozen_group` reads the
+    # durable freeze claim and refuses with 503 when the store cannot be read): no group is
+    # frozen in this harness.
+    from modules.flow_gate.services.ai_invoke import admission as _admission
+    monkeypatch.setattr(_admission, "_refuse_frozen_group", lambda _gid: None)
     monkeypatch.setattr(svc.db_docs, "get_documents_by_group_id", docs.get_documents_by_group_id)
     monkeypatch.setattr(svc.db_docs, "get_group_max_seq", docs.get_group_max_seq)
     monkeypatch.setattr(svc.db_docs, "get_by_id", docs.get_by_id)
@@ -630,12 +643,16 @@ class TestNoOutputRetry:
 
 # ── What must NOT be retried (L0007 §2.4 / P0006 [엣지]) ─────────────────────
 
+JUDGED_RUN_ID = "run_judged_0359"
+
+
 def _judged_run(**over):
     run = {
         "mode": "continuous", "cancel_event": threading.Event(), "end_reason": "exited",
         "pause_requested": False, "completion_oracle": None, "action_scope": "new",
         "docs_target": 1, "docs_reached": 0, "attempts_used": 1, "group_id": GROUP,
         "started_mono": time.monotonic(), "timeout_sec": 3600, "outcome": "none",
+        "run_id": JUDGED_RUN_ID,
     }
     run.update(over)
     return run
@@ -760,8 +777,7 @@ class TestRetryEligibility:
         # registered a Q (outcome "none") still reaches it and is labelled — the half of
         # this T that turns "quietly dead" into "waiting on a human".
         monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
-        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
-                            _container_lookup({ANCHOR: {"status": "pending"}}))
+        _open_question_of(monkeypatch)
         run = _judged_run(mode="single", action_scope="edit", scope_oracle_run=True,
                           completion_oracle=(lambda: False), docs_target=0, outcome="none",
                           doc_ref=DOC_REF)
@@ -1067,11 +1083,38 @@ def _container_lookup(mapping):
     return lambda doc_id: mapping.get(doc_id)
 
 
+class _AnyRun:
+    """An asker_ai_run_id equal to whichever run probes it. The end-to-end cases mint their
+    run id inside start_run, so they cannot name it up front; the unit cases pass a real id."""
+
+    def __eq__(self, other):
+        return other is not None
+
+    def __ne__(self, other):
+        return other is None
+
+    __hash__ = None
+
+
+def _open_question_of(monkeypatch, asker_run_id=None, asker_kind="ai", status="pending"):
+    """One open item on ANCHOR, registered by ``asker_run_id`` (default: the probing run).
+
+    0661 T0004 (review rej_01M4HRWSVP3M0BSH finding 1): `_has_pending_question` is keyed on
+    the run's own open item, not on the container status alone.
+    """
+    monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
+    monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
+                        _container_lookup({ANCHOR: {"id": 7, "status": status}}))
+    owner = _AnyRun() if asker_run_id is None else asker_run_id
+    monkeypatch.setattr(db_question_items, "list_unanswered", lambda question_pk: [
+        {"id": 70, "seq": 1, "asker_kind": asker_kind, "asker_ai_run_id": owner},
+    ])
+
+
 class TestPendingQuestionGuard:
     def test_blocked_while_a_question_is_still_open(self, monkeypatch):
         monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
-        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
-                             _container_lookup({ANCHOR: {"status": "pending"}}))
+        _open_question_of(monkeypatch)
         run = _judged_run_with_doc_ref()
         assert svc._retry_eligible(run) is False
         assert run["retry_block_reason"] == "question_pending"
@@ -1082,8 +1125,7 @@ class TestPendingQuestionGuard:
         # regressed to querying run["doc_ref"] as-is would see nothing and wrongly retry.
         assert DOC_REF != ANCHOR
         monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
-        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
-                             _container_lookup({ANCHOR: {"status": "pending"}}))
+        _open_question_of(monkeypatch)
         run = _judged_run_with_doc_ref()
         assert svc._retry_eligible(run) is False
         assert run["retry_block_reason"] == "question_pending"
@@ -1117,13 +1159,46 @@ class TestPendingQuestionGuard:
 
     def test_partial_output_still_wins_over_a_stale_open_question(self, monkeypatch):
         # docs_reached >= 1 must block the retry on its own account — an unrelated open
-        # question must not relabel a hop that already produced its document.
-        monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
-        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
-                             _container_lookup({ANCHOR: {"status": "pending"}}))
-        run = _judged_run_with_doc_ref(docs_reached=1)
+        # question (another run's) must not relabel a hop that already produced its document.
+        _open_question_of(monkeypatch, asker_run_id="run_someone_else")
+        run = _judged_run_with_doc_ref(docs_reached=1, outcome="partial")
         assert svc._retry_eligible(run) is False
         assert run.get("retry_block_reason") != "question_pending"
+
+    def test_partial_output_then_own_question_is_question_pending(self, monkeypatch):
+        # 0661 T0004 F4 (review rej_01M4HRWSVP3M0BSH finding 2): a hop that landed part of
+        # its documents and then registered its OWN Q parks as question_pending — before,
+        # the partial-output guard returned first and the Q never reached the responder.
+        _open_question_of(monkeypatch, asker_run_id=JUDGED_RUN_ID)
+        run = _judged_run_with_doc_ref(docs_reached=1, docs_target=3, outcome="partial")
+        assert svc._retry_eligible(run) is False
+        assert run["retry_block_reason"] == "question_pending"
+        assert svc._resolve_stop_code(run, respawn_pending=False) == "question_pending"
+
+    def test_a_completed_hop_is_not_relabelled_by_its_own_open_question(self, monkeypatch):
+        _open_question_of(monkeypatch, asker_run_id=JUDGED_RUN_ID)
+        run = _judged_run_with_doc_ref(docs_reached=1, outcome="complete")
+        assert svc._retry_eligible(run) is False
+        assert run.get("retry_block_reason") != "question_pending"
+
+    @pytest.mark.parametrize("asker_run_id, asker_kind", [
+        ("run_someone_else", "ai"),      # another (older) run's Q on the same anchor
+        (None, "human"),                 # a person's Q
+    ])
+    def test_a_foreign_open_question_does_not_park_an_empty_hop(
+            self, monkeypatch, asker_run_id, asker_kind):
+        # 0661 T0004 safety boundary 1 (review rej_01M4HRWSVP3M0BSH finding 1): the anchor
+        # stays 'pending' because of a Q this run did not register. The empty hop is an
+        # ordinary no-output hop (retry), never a question_pending park that the responder
+        # dispatch — keyed on this run's own items — could not serve.
+        _open_question_of(monkeypatch, asker_run_id=asker_run_id or "", asker_kind=asker_kind)
+        run = _judged_run_with_doc_ref()
+        assert svc._retry_eligible(run) is True
+        assert run.get("retry_block_reason") != "question_pending"
+
+    def test_no_run_id_means_no_question_pending(self, monkeypatch):
+        _open_question_of(monkeypatch)
+        assert svc._has_pending_question(DOC_REF, None) is False
 
 
 class TestQuestionPendingStopCode:
@@ -1152,8 +1227,7 @@ class TestQuestionPendingStopCode:
 class TestPendingQuestionEndToEnd:
     def test_question_only_hop_stops_without_burning_retries_or_alerting(self, env, monkeypatch):
         monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
-        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
-                             _container_lookup({ANCHOR: {"status": "pending"}}))
+        _open_question_of(monkeypatch)
         launches = _scripted_worker(env, monkeypatch, [
             ("작업 전 확인이 필요해 Q를 등록했습니다.", False),
         ])
@@ -1245,8 +1319,7 @@ class TestSingleReworkNoOutputRecovery0446:
         """§4-2 case 2 — NR0003's 4 legitimate stops, told apart from the 11 dead ones."""
         self._no_sequence(monkeypatch)
         monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
-        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
-                            _container_lookup({ANCHOR: {"status": "pending"}}))
+        _open_question_of(monkeypatch)
         launches = _scripted_rework_worker(env, monkeypatch, [
             ("원격 도구 503. Q item_id=202 등록. 불완전한 TR은 제출하지 않았습니다.", None),
         ])

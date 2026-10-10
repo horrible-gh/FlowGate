@@ -592,7 +592,7 @@ def no_pending_question(monkeypatch):
     # The question_pending probe sits ABOVE the budget line on purpose (T0008's "a Q stop is
     # not a failure" contract). Silence it so these cases reach the gate under test; the
     # ordering itself is owned by test_ai_invoke_no_output_retry_0359.py.
-    monkeypatch.setattr(svc, "_has_pending_question", lambda doc_ref: False)
+    monkeypatch.setattr(svc, "_has_pending_question", lambda doc_ref, asker_run_id=None: False)
     monkeypatch.setattr(svc, "peek_auto_resume", lambda group_id: None)
 
 
@@ -641,7 +641,7 @@ class TestBudgetExhaustedReason:
     def test_question_pending_still_outranks_the_budget_gate(self, monkeypatch):
         # §3-4: the order must not change. A run that is BOTH out of budget and waiting on a
         # human answer keeps the question_pending name — that stop is not a failure.
-        monkeypatch.setattr(svc, "_has_pending_question", lambda doc_ref: True)
+        monkeypatch.setattr(svc, "_has_pending_question", lambda doc_ref, asker_run_id=None: True)
         monkeypatch.setattr(svc, "peek_auto_resume", lambda group_id: None)
         run = _budget_run(timeout_sec=3600, elapsed_sec=3400)
         assert svc._retry_eligible(run) is False
