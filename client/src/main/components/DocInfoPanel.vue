@@ -205,6 +205,17 @@
               <strong class="dip-qa-card-title">Q{{ item.seq }} · {{ item.title || item.body }}</strong>
             </div>
             <p class="dip-qa-card-body">{{ item.body }}</p>
+            <!-- 0661 T0004 F3/F5: an open item the automatic AI responder could not close —
+                 technical failure (code) or an explicit hand-off to the user. -->
+            <p
+              v-if="!itemAnswered(item) && item.responder && (item.responder.state === 'failed' || item.responder.state === 'user_decision')"
+              class="dip-qa-responder"
+              :class="item.responder.state"
+            >
+              {{ item.responder.state === 'failed'
+                ? t('main.doc_info_panel.qa_responder_failed', { code: item.responder.error_code ?? '' })
+                : t('main.doc_info_panel.qa_responder_user_decision') }}
+            </p>
             <!-- group 0243 R0001: the card previews the options; picking one happens in the
                  full view, which [답변] opens. -->
             <ul v-if="(item.options?.length ?? 0) > 0" class="dip-qa-opt-list">
@@ -1421,6 +1432,9 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
 .dip-qa-add { color: var(--primary); }
 .dip-qa-hint { font-size: .72rem; color: #6b7280; padding: 4px 0; }
 .dip-qa-error { font-size: .72rem; color: var(--danger); padding: 4px 0; }
+.dip-qa-responder { font-size: .68rem; font-weight: 600; margin: 2px 0 4px; }
+.dip-qa-responder.failed { color: var(--danger); }
+.dip-qa-responder.user_decision { color: #6d28d9; }
 .dip-qa-form {
   display: flex; flex-direction: column; gap: 6px;
   margin: 6px 0; padding: 8px; background: #f8fafc;

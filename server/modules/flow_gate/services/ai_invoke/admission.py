@@ -503,6 +503,15 @@ def startup_recover_leases() -> int:
     # 0406 T0022 work item 4: the same startup also recovers hop handoffs that were cut
     # off. It pairs with lease reclaim: one recovers the lock, the other the intent.
     _svc().startup_recover_handoffs()
+    # 0661 T0004 F3: question items whose AI responder died with the previous process
+    # become a visible 'failed / interrupted' the Q&A panel can re-dispatch, instead of a
+    # 'dispatched' claim that would refuse the next dispatch forever.
+    try:
+        from modules.flow_gate.services import q_service as _q_service
+
+        _q_service.startup_recover_question_responders()
+    except Exception:
+        logger.warning("question responder startup recovery failed", exc_info=True)
     return len(victims)
 
 
@@ -1294,6 +1303,16 @@ def start_run(
                     "WorkPlan pre-instruction attachment is not valid for this step.",
                     source_doc_id=exc.source_doc_id,
                 )
+            except HTTPException:
+                # 0661 T0004 (review rej_01M4HRWSVP3M0BSH finding 3): a builder may refuse the
+                # run before minting anything — the Q responder builder does when its durable
+                # item claim fails (a person answered first). Nothing was issued, so only the
+                # group lease acquired above has to be given back before the refusal surfaces.
+                if not project_scoped:
+                    db_group_ai_leases.release(
+                        group_id, run_id, reason="admission_rollback_issue_builder_refused"
+                    )
+                raise
             mention = issue.get("mention")
         else:
             issue = token_service.issue(

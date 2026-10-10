@@ -85,7 +85,10 @@ class _MockTxn:
         self._cur = None
 
     def execute(self, sql: str, params=None):
+        # Returns the cursor like the real sqlite adapter, so FlowGateStore._execute_affected
+        # (the guarded answer_count increment) can read rowcount.
         self._cur = self._conn.execute(sql, params or [])
+        return self._cur
 
     def fetch_one(self):
         if self._cur is None:
@@ -202,7 +205,13 @@ def seed_data(tmp_db):
 def _edit_token(doc_ref: str, tmp_path, *, ai_run_id: str | None = None) -> str:
     """Issue an inbox/edit token (the token a worker actually holds)."""
     from modules.flow_gate.services import token_service
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
+    # 0661 T0004 (harness repair): token_scratch.create refuses any scratch path outside the
+    # storage root, and pytest's tmp_path never is one -- the on-disk scratch directory is
+    # irrelevant to these route tests, so its creation is stubbed alongside _scratch_dir.
+    with (
+        patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"),
+        patch.object(token_service.token_scratch, "create", lambda *a, **kw: None),
+    ):
         result = token_service.issue(
             project=PROJECT, group_id=GROUP, action_scope="edit",
             doc_ref=doc_ref, issued_to=USER, ai_run_id=ai_run_id,

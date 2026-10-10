@@ -813,7 +813,7 @@ class TestRetryBudgetSeparation:
 
     def test_the_gate_reads_the_separated_budget(self, clock, monkeypatch):
         # End to end through `_retry_eligible`, in the shape 0400 built for it.
-        monkeypatch.setattr(svc, "_has_pending_question", lambda doc_ref: False)
+        monkeypatch.setattr(svc, "_has_pending_question", lambda doc_ref, asker_run_id=None: False)
         monkeypatch.setattr(svc, "peek_auto_resume", lambda group_id: None)
 
         def _judged(**over):

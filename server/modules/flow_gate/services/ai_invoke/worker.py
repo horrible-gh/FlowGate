@@ -27,6 +27,7 @@ from fastapi import HTTPException
 from modules.flow_gate.db import conversation_turns
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
+from modules.flow_gate.db import question_items as db_question_items
 from modules.flow_gate.db import questions as db_questions
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.services import api_server_tools
@@ -594,8 +595,16 @@ def _attempt_elapsed_sec(run: dict) -> int:
     return max(0, int(time.monotonic() - started))
 
 
-def _has_pending_question(doc_ref: Optional[str]) -> bool:
-    """NR0003 follow-up proposal 1: does doc_ref carry a query still waiting on the human?
+def _has_pending_question(doc_ref: Optional[str], asker_run_id: Optional[str] = None) -> bool:
+    """NR0003 follow-up proposal 1: does doc_ref carry a query THIS run is still waiting on?
+
+    0661 T0004 safety boundary 1 (review rej_01M4HRWSVP3M0BSH finding 1): an open
+    container alone is not evidence. An older Q, a human's Q or another run's Q can keep
+    the same anchor 'pending' indefinitely, and a new hop that then ends empty would park
+    as question_pending with no item the responder dispatch may take (it only takes items
+    ``asker_ai_run_id == this run``), so the chain stalled for good. The probe is now true
+    only when an open item was AI-registered by ``asker_run_id`` — the same key the
+    dispatch uses, so a question_pending park always has something to dispatch.
 
     q_service.add_questions/register_answer keep the container's status 'pending' for as
     long as any item has answer_count=0, and flip it to 'done' only once every item is
@@ -609,15 +618,21 @@ def _has_pending_question(doc_ref: Optional[str]) -> bool:
     it (q_tapi_routes.py). Querying doc_ref (the run's spine) here would silently miss
     every container the router actually wrote once that reanchoring moved off the spine.
     """
-    if not doc_ref:
+    if not doc_ref or not asker_run_id:
         return False
     try:
         anchor = q_service.resolve_question_anchor(doc_ref)
         container = db_questions.get_container_by_doc(anchor)
+        if not container or container.get("status") != "pending":
+            return False
+        unanswered = db_question_items.list_unanswered(container["id"])
     except Exception:
         logger.warning("ai-invoke pending-question probe failed for %s", doc_ref, exc_info=True)
         return False
-    return bool(container) and container.get("status") == "pending"
+    return any(
+        (row.get("asker_kind") or "") == "ai" and row.get("asker_ai_run_id") == asker_run_id
+        for row in unanswered or []
+    )
 
 
 def _retry_eligible(run: dict) -> bool:
@@ -668,6 +683,22 @@ def _retry_eligible(run: dict) -> bool:
         # A rework with output still keeps this guard: its edit token can revise the
         # document mid-run, and another attempt could write a second revision.
         return False        # this hop DID hand off; the next hop is already queued
+    # 0661 T0004 F4 (review rej_01M4HRWSVP3M0BSH finding 2): the question probe sits ABOVE
+    # the partial-output and scoped-success guards below. A hop that landed part of its
+    # documents and then registered a Q is still waiting on an answer; before this it left
+    # through "partial output is still output" with no stop code, so the chain was neither
+    # parked on question_pending nor handed to the responder. Only a hop that did NOT
+    # complete qualifies, and only for a Q this very run registered (`_has_pending_question`
+    # keys on asker_ai_run_id) — an older or foreign open Q never relabels a hop.
+    if run.get("outcome") != "complete" and _svc()._has_pending_question(
+            run.get("doc_ref"), run.get("run_id")):
+        # NR0003 follow-up proposal 1: this hop stopped to wait for a human answer, not because
+        # it failed — spending another attempt (and another provider) on a question the
+        # human has not even seen yet would waste both without ever getting a different
+        # outcome. _resolve_stop_code below reads this back into "question_pending" instead
+        # of "no_output_exhausted" so the false-failure notification never fires.
+        run["retry_block_reason"] = "question_pending"
+        return False
     if int(run.get("docs_reached") or 0) >= 1:
         return False        # partial output is still output — a rerun would double-write
     if scope_retry and run.get("outcome") != "none":
@@ -677,16 +708,8 @@ def _retry_eligible(run: dict) -> bool:
         # retry and write a SECOND revision over its own work. The scoped equivalent of
         # "output is output" is the judge's own verdict, so require it explicitly.
         return False
-    # Reached with outcome == "none": a hop that only registered a Q looks exactly like one
-    # that died, and the guard below is the only thing that tells them apart (§3-2).
-    if _svc()._has_pending_question(run.get("doc_ref")):
-        # NR0003 follow-up proposal 1: this hop stopped to wait for a human answer, not because
-        # it failed — spending another attempt (and another provider) on a question the
-        # human has not even seen yet would waste both without ever getting a different
-        # outcome. _resolve_stop_code below reads this back into "question_pending" instead
-        # of "no_output_exhausted" so the false-failure notification never fires.
-        run["retry_block_reason"] = "question_pending"
-        return False
+    # Reached with outcome == "none" and no open Q of this run: the question probe above
+    # already told a Q-only hop apart from one that died (§3-2).
     # 0443 T0002 (R0001): the cap is now the run's own resolved "재시작 횟수" pick
     # (attempts_max), not always the fixed constant — -1 means unlimited.
     attempts_max = run.get("attempts_max")

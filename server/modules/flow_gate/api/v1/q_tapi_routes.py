@@ -220,6 +220,18 @@ class AiAnswerRequest(BaseModel):
     provider_id: Optional[str] = None
 
 
+class EscalateRequest(BaseModel):
+    """[사용자 판단 이관] body (0661 T0004 F5) — the responder's reason a human must decide."""
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def reason_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("reason must not be empty")
+        return v
+
+
 class RegisterAnswerRequest(BaseModel):
     body: str = ""
     author_kind: str = "human"
@@ -257,7 +269,16 @@ def _resolve_ai_provenance(ai_run_id: Optional[str]) -> dict:
     [Copy Mention] hand-off, which starts no run by design.
     """
     from modules.flow_gate.services.ai_invoke.provenance import resolve_run_provenance
-    return resolve_run_provenance(ai_run_id, doc_id=None, allowed_action_scopes=None)
+    snapshot = resolve_run_provenance(ai_run_id, doc_id=None, allowed_action_scopes=None)
+    if ai_run_id and not snapshot:
+        # 0661 T0004 F6: the run id came from the VERIFIED token, not from the body, so it
+        # is evidence in its own right even when the provider half cannot be read (the
+        # run finalized already, or this process never saw it). Keeping it lets the
+        # asker/answer row be matched to its run — the self-answer guard and the
+        # responder settle both key on exactly that id. The provider stays NULL
+        # ("unconfirmed"), never guessed.
+        return {"ai_run_id": ai_run_id}
+    return snapshot
 
 
 def _add_questions_response(
@@ -302,10 +323,27 @@ def _register_answer_response(
             author_provenance=_resolve_ai_provenance(ai_run_id) if body.author_kind == "ai" else None,
             auto_resume_api_base_url=_operator_facing_api_base(request),
             auto_resume_locale=request.headers.get("x-locale") or "ko",
+            # 0661 T0004 F6: the token's verified run — the asker run may not close its
+            # own question (q_service.register_answer raises 403).
+            writer_ai_run_id=ai_run_id if body.author_kind == "ai" else None,
         )
     except HTTPException as exc:
         return _fail(exc.status_code, exc.detail)
     return JSONResponse(content={"ok": True, **result})
+
+
+def _force_session_author_human(body: RegisterAnswerRequest, forced_kind: Optional[str]) -> None:
+    """A worker token forces 'ai'; a login session can only ever be 'human' (0661 T0004 F6).
+
+    Before this a session could send author_kind='ai' and have it stored verbatim with
+    NULL provenance — an answer that LOOKED like an AI's with no run behind it. The
+    session is the person; the value is corrected rather than rejected so no existing
+    client that happened to send the field breaks.
+    """
+    if forced_kind is not None:
+        body.author_kind = forced_kind
+    elif body.author_kind != "human":
+        body.author_kind = "human"
 
 
 def _detail_response(doc_id: str, user_id: str) -> JSONResponse:
@@ -339,6 +377,17 @@ def post_add_questions(
     ch_rejected = _reject_conversation_doc(doc_id)
     if ch_rejected is not None:
         return ch_rejected
+    if forced_kind is not None and q_service.is_question_responder_run(ai_run_id):
+        # 0661 T0004 safety boundary 5: an answer-only responder registering a question
+        # of its own would park nothing (it is a single run) yet leave a fresh open Q that
+        # keeps the original chain parked and could draw another responder — a Q→Q loop.
+        # The responder has exactly two outputs: an answer, or the escalate signal.
+        return _fail(
+            403,
+            "A question-responder run may not register new questions. Answer the question "
+            "it was dispatched for, or hand it to a user through .../escalate when a human "
+            "decision is genuinely required.",
+        )
     if forced_kind is not None:
         body.asker_kind = forced_kind
         # B0001 / NR0003 (group 0059): the worker token is bound to the workflow spine
@@ -371,8 +420,7 @@ def post_register_answer_by_path(
     if isinstance(auth, JSONResponse):
         return auth
     user_id, forced_kind, ai_run_id = auth
-    if forced_kind is not None:
-        body.author_kind = forced_kind
+    _force_session_author_human(body, forced_kind)
     return _register_answer_response(doc_id, item_id, body, user_id, request, ai_run_id=ai_run_id)
 
 
@@ -391,9 +439,48 @@ def post_register_answer(
     if isinstance(auth, JSONResponse):
         return auth
     user_id, forced_kind, ai_run_id = auth
-    if forced_kind is not None:
-        body.author_kind = forced_kind
+    _force_session_author_human(body, forced_kind)
     return _register_answer_response(doc_id, item_id, body, user_id, request, ai_run_id=ai_run_id)
+
+
+# ── POST /q/{doc_id}/items/{item_id}/escalate — responder hands the question to a user ──
+
+@router.post("/q/{doc_id}/items/{item_id}/escalate")
+def post_escalate_to_user(
+    doc_id: str,
+    item_id: int,
+    body: EscalateRequest,
+    request: Request,
+):
+    """The dispatched AI responder reports that a HUMAN must decide this question
+    (flowgate.default.0661 T0004 F5).
+
+    Deliberately NOT an answer: no answer row is written, the item stays open, the
+    container stays pending and the parked chain stays parked until a person answers.
+    Only the responder run that was dispatched for this item may call it (its token
+    carries the run id; q_service checks it against `question_items.responder_run_id`),
+    so neither a session, a copied mention nor the work AI's own token can push a
+    question onto the user this way.
+    """
+    auth = _resolve_writer(request, doc_id)
+    if isinstance(auth, JSONResponse):
+        return auth
+    user_id, forced_kind, ai_run_id = auth
+    if forced_kind is None or not ai_run_id:
+        return _fail(
+            403, "Only the AI responder run dispatched for this question may hand it to a user.",
+        )
+    project_id = _doc_project_or_403(doc_id, user_id, "perm_document_create", reject_disposed=True)
+    if isinstance(project_id, JSONResponse):
+        return project_id
+    try:
+        result = q_service.escalate_to_user(
+            doc_id, item_id, body.reason,
+            writer_ai_run_id=ai_run_id, actor_user_id=user_id, notify_audience=user_id,
+        )
+    except HTTPException as exc:
+        return _fail(exc.status_code, exc.detail)
+    return JSONResponse(content={"ok": True, **result})
 
 
 # ── Answer hand-off — give one query item to an AI worker ────────────────────────────
