@@ -348,6 +348,7 @@ export default {
         empty: '아직 없음',
         progress: '진행률',
         open: '열기',
+        open_hint: '새 탭에서 v0.1 문서 화면으로 엽니다. 새 탭에서는 다시 로그인해야 할 수 있습니다.',
         write: '작성',
       },
       review: {
@@ -375,8 +376,6 @@ export default {
       },
       menu: {
         history: '실행 이력',
-        stop: '■ 중단',
-        rerun: '↻ 재실행',
       },
       run_settings: {
         title: '실행 설정',

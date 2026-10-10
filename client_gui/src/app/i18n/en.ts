@@ -340,6 +340,7 @@ export default {
         empty: 'None yet',
         progress: 'Progress',
         open: 'Open',
+        open_hint: 'Opens the v0.1 document screen in a new tab. The new tab may ask you to sign in again.',
         write: 'Write',
       },
       review: {
@@ -365,8 +366,6 @@ export default {
       },
       menu: {
         history: 'Run history',
-        stop: '■ Stop',
-        rerun: '↻ Run again',
       },
       run_settings: {
         title: 'Run settings',

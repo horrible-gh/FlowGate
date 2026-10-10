@@ -178,7 +178,7 @@ describe('the real registry on Nodes without a document', () => {
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
     expect(sections(w)).toEqual(['researchCard'])
     const items = await openMenu(w)
-    expect(items.map((item) => item.textContent?.trim())).toEqual(['ID 복사', '실행 이력', '■ 중단', '↻ 재실행'])
+    expect(items.map((item) => item.textContent?.trim())).toEqual(['ID 복사', '실행 이력'])
     expect(items.slice(1).every((item) => (item as HTMLButtonElement).disabled)).toBe(true)
   })
 })
@@ -210,6 +210,10 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     expect(get(w, 'designer-inspector-body').text()).not.toContain('문서 상태 open rev 0')
     expect(get(w, 'designer-inspector-body').text()).not.toContain('문서 작성·편집은')
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    // flowgate.v02.0052 T#3: the ↗ tooltip says it opens the v0.1 screen in a new tab that may sign in again.
+    expect(get(w, 'inspector-task-card').get('[data-test="inspector-slot-open"]').attributes('title')).toBe(
+      '새 탭에서 v0.1 문서 화면으로 엽니다. 새 탭에서는 다시 로그인해야 할 수 있습니다.',
+    )
     await get(w, 'inspector-task-card').get('[data-test="inspector-slot-open"]').trigger('click')
     expect(open).toHaveBeenCalledWith(`/main/?doc=${encodeURIComponent(SELECTIONS.v01.node.document!.docId)}`, '_blank', 'noopener')
     open.mockRestore()

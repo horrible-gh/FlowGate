@@ -340,6 +340,7 @@ export default {
         empty: 'まだありません',
         progress: '進捗',
         open: '開く',
+        open_hint: '新しいタブで v0.1 の文書画面を開きます。新しいタブでは再ログインが必要な場合があります。',
         write: '作成',
       },
       review: {
@@ -365,8 +366,6 @@ export default {
       },
       menu: {
         history: '実行履歴',
-        stop: '■ 中断',
-        rerun: '↻ 再実行',
       },
       run_settings: {
         title: '実行設定',

@@ -144,6 +144,65 @@ describe('InspectorHeader (flowgate.v02.0051)', () => {
       expect(pill(w).attributes('title')).toBe('문서 상태: 완료 (wf_done) / 실행 상태: odd')
     })
 
+    // flowgate.v02.0052 T#3: Canvas `blocked` is the server's word for a rejection (canvas_mapping.py).
+    it('a rejected document on a blocked Canvas state reads 반려됨, never 보류; the raw values stay', () => {
+      const base = targetOf(SELECTIONS.v01)
+      const w = mount(InspectorHeader, {
+        attachTo: document.body,
+        props: { target: { ...base, canvasState: 'blocked', docReviewStatus: 'rejected', nodeRun: null } },
+        global: { plugins: [i18n] },
+      })
+      wrapper = w
+      expect(label(w)).toBe('반려됨')
+      expect(sub(w).exists()).toBe(false)
+      expect(pill(w).attributes('data-tone')).toBe('danger')
+      expect(pill(w).attributes('data-state')).toBe('blocked')
+      // The Canvas word stays only in the hidden diagnostic span.
+      expect(get(w, 'designer-inspector-state').text()).toBe('보류')
+      expect(get(w, 'designer-inspector-state').attributes('hidden')).toBeDefined()
+      expect(pill(w).attributes('title')).toBe('문서 상태: 반려됨 (rejected) / 실행 상태: —')
+      expect(get(w, 'designer-inspector-state').attributes('data-value')).toBe('blocked')
+      expect(get(w, 'designer-inspector-doc-status').attributes('data-value')).toBe('rejected')
+    })
+
+    it('a rejected Graph node run on a blocked Canvas state reads 반려됨 as well', () => {
+      const base = targetOf(SELECTIONS.graph)
+      const w = mount(InspectorHeader, {
+        attachTo: document.body,
+        props: { target: { ...base, canvasState: 'blocked', docReviewStatus: null, nodeRun: { status: 'rejected', openedAt: null, finishedAt: null, resultDocId: null } } },
+        global: { plugins: [i18n] },
+      })
+      wrapper = w
+      expect(label(w)).toBe('반려됨')
+      expect(sub(w).exists()).toBe(false)
+      expect(pill(w).attributes('data-tone')).toBe('danger')
+      expect(pill(w).attributes('title')).toBe('문서 상태: — / 실행 상태: 반려됨 (rejected)')
+    })
+
+    it('a blocked Canvas state with no rejection behind it keeps the Canvas word (nothing is invented)', () => {
+      const base = targetOf(SELECTIONS.v01)
+      const w = mount(InspectorHeader, {
+        attachTo: document.body,
+        props: { target: { ...base, canvasState: 'blocked', docReviewStatus: null, nodeRun: null } },
+        global: { plugins: [i18n] },
+      })
+      wrapper = w
+      expect(label(w)).toBe('보류')
+    })
+
+    it('a document under review (검수 대기) is not shown as 반려됨 or 보류', () => {
+      const base = targetOf(SELECTIONS.v01)
+      const w = mount(InspectorHeader, {
+        attachTo: document.body,
+        props: { target: { ...base, canvasState: 'review', docReviewStatus: 'pending_review', nodeRun: null } },
+        global: { plugins: [i18n] },
+      })
+      wrapper = w
+      expect(label(w)).toBe('검토 중')
+      expect(pill(w).text()).not.toContain('반려')
+      expect(pill(w).text()).not.toContain('보류')
+    })
+
     it('no state at all: no pill', () => {
       const base = targetOf(SELECTIONS.v01)
       const w = mount(InspectorHeader, {

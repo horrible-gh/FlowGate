@@ -23,7 +23,11 @@
        run status — and a `· sub` only for a server state that says something else than the label
        (the server's own Canvas mapping decides "the same"). Internal values (wf_*, run status) never
        show as text: a value without a display name is left to the tooltip (unless it is all there
-       is); the raw values sit in the tooltip, in data attributes and in hidden spans. -->
+       is); the raw values sit in the tooltip, in data attributes and in hidden spans.
+       flowgate.v02.0052 T#3 — a Canvas `blocked` is the server's translation of a rejection
+       (canvas_mapping.py: rejected → blocked). The pill names what happened — the rejection's own
+       display name (반려됨, v7 work.rej `st:['반려됨','danger']`) — instead of the Canvas word (보류);
+       the Canvas value stays in data-state, the hidden state span and the Canvas card. -->
   <header
     class="inspector-header"
     :style="{ '--inspector-kind-accent': kind.accent }"
@@ -185,6 +189,9 @@ const STATE_BY_RUN: Readonly<Record<string, string>> = {
   rejected: 'blocked',
 }
 
+/** The rejected values a Canvas `blocked` comes from (canvas_mapping.py `_STATE_BY_REVIEW` / `_STATE_BY_NODE_RUN`). */
+const REJECTED = 'rejected'
+
 /** Display name of a server value, or null when it has none (an internal code never shows as text). */
 function displayOf(group: 'review_status' | 'run_status', value: string): string | null {
   const key = `gui.designer.inspector.${group}.${value}`
@@ -220,7 +227,15 @@ const pill = computed<HeaderPill | null>(() => {
   const runText = runStatusText.value
   let label: string
   let tone: PillTone
-  if (canvas) {
+  if (canvas?.key === 'blocked' && doc === REJECTED && docText) {
+    // A rejected document: 반려됨, not the Canvas word for it.
+    label = docText
+    tone = REVIEW_TONES[doc] ?? canvas.tone
+  } else if (canvas?.key === 'blocked' && run === REJECTED && runText) {
+    // A rejected Graph node run, the same.
+    label = runText
+    tone = RUN_TONES[run] ?? canvas.tone
+  } else if (canvas) {
     label = stateText.value
     tone = canvas.tone
   } else if (doc && (docText || !runText)) {

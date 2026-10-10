@@ -275,10 +275,14 @@ describe('card header parts', () => {
     expect(origin.get('[data-test="work-plan-author"]').text()).toBe('작성 사람')
   })
 
-  it('InspectorRunMenu: 실행 이력 · ■ 중단 · ↻ 재실행, each disabled with the common reason', () => {
+  // flowgate.v02.0052 T#3: run control lives in the top Menu Bar / Toolbar (실행 중지 · 재실행); the card
+  // no longer repeats ■ 중단 / ↻ 재실행. 실행 이력 has no top counterpart and stays.
+  it('InspectorRunMenu: 실행 이력 only, disabled with the common reason', () => {
     const w = mount(InspectorRunMenu, { global })
     const items = w.findAll('[role="menuitem"]')
-    expect(items.map((item) => item.text())).toEqual(['실행 이력', '■ 중단', '↻ 재실행'])
+    expect(items.map((item) => item.text())).toEqual(['실행 이력'])
+    expect(w.text()).not.toContain('중단')
+    expect(w.text()).not.toContain('재실행')
     for (const item of items) {
       expect(item.attributes('disabled')).toBeDefined()
       expect(item.attributes('title')).toBe('아직 연결되지 않음')
@@ -351,6 +355,6 @@ describe('card settings parts', () => {
     i18n.global.locale.value = 'en'
     expect(mount(ResearchSlots, { props: { target: facts(V01_TR, 'NR') }, global }).findAll('[data-test="inspector-slot-name"]').map((n) => n.text())).toEqual(['Instruction', 'Report'])
     expect(mount(GateActions, { props: { target: GATE }, global }).get('[data-test="gate-confirm"]').text()).toBe('✓ Confirm')
-    expect(mount(InspectorRunMenu, { global }).findAll('[role="menuitem"]').map((item) => item.text())).toEqual(['Run history', '■ Stop', '↻ Run again'])
+    expect(mount(InspectorRunMenu, { global }).findAll('[role="menuitem"]').map((item) => item.text())).toEqual(['Run history'])
   })
 })
