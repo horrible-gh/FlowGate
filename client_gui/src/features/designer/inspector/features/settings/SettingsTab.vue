@@ -10,7 +10,10 @@
        실행 제한 시간 · 검수 기준 are not connected yet. Save, reasons and the running hop stay as in 0048.
        flowgate.v02.0052 묶음 A — no prose in the body (v7 execSettings keeps explanations in tooltips):
        the save hint is the save button's hover text, the row state line yields to the 🔒 line once the
-       step started, and the running hop folds into one wrapped line. -->
+       step started, and the running hop folds into one wrapped line.
+       flowgate.v02.0052 T#2 — the step's phase is the server's (sequence row `status`): 시작 전 keeps the
+       form and the save; 진행·검수 중 keeps the values drawn locked under one 🔒 line (no save — the server
+       ignores a started row); 완료 shows one done line with the stored values instead of the controls. -->
   <div class="inspector-settings" data-test="inspector-settings" :data-status="status">
     <InspectorPaneState v-if="noSlot" state="empty" :message="t(k('no_slot'))" />
     <template v-else>
@@ -25,8 +28,20 @@
     <InspectorPaneState v-if="!noSlot && status === 'loading' && !row" state="loading" />
     <InspectorPaneState v-else-if="errorKey && !row" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
     <InspectorPaneState v-else-if="!row && status === 'ready'" state="loading" :message="t(k('no_row'))" />
+    <template v-else-if="row && fields && phase === 'done'">
+      <div class="inspector-settings-head" data-test="settings-row" :title="t(k('reason.done'))">
+        <span class="inspector-settings-title">{{ title }}</span>
+        <span data-test="settings-row-state"><InspectorStatusChip :label="t(k('state.done'))" tone="success" /></span>
+      </div>
+      <p class="inspector-settings-values" data-test="settings-done-values">
+        <span v-for="item in doneValues" :key="item.field" :data-test="`settings-done-${item.field}`">
+          <span class="inspector-settings-label">{{ t(k(`field.${item.label}`)) }}</span> {{ item.value }}
+        </span>
+      </p>
+      <InspectorPaneState v-if="errorKey" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
+    </template>
     <template v-else-if="row && fields">
-      <InspectorLockNote v-if="started" :text="t(k('state.started'))" />
+      <InspectorLockNote v-if="started" :text="t(k('state.in_progress'))" />
       <div class="inspector-settings-head" data-test="settings-row">
         <span class="inspector-settings-title">{{ title }}</span>
         <!-- Once the step started the 🔒 line above already says so. -->
@@ -62,25 +77,28 @@
         </InspectorBlock>
       </template>
 
-      <InspectorRunSettings :fields="runFields" :advanced-open="advancedOpen" @update:advanced-open="advancedOpen = $event" @update:field="onField" />
+      <InspectorRunSettings :fields="runFields" :locked="started" :advanced-open="advancedOpen" @update:advanced-open="advancedOpen = $event" @update:field="onField" />
       <div v-if="reviewerReason" data-test="settings-reviewer-reason">
         <InspectorReason :text="t(k(reviewerReason))" />
       </div>
 
-      <div class="inspector-settings-bar">
-        <Button
-          size="sm"
-          variant="primary"
-          :disabled="!availability.save.enabled"
-          :loading="busy"
-          :title="t(k('hint'))"
-          data-test="settings-save"
-          @click="save"
-        >{{ t(k('save')) }}</Button>
-      </div>
-      <div v-if="availability.save.reason" data-test="settings-reason">
-        <InspectorReason :text="t(k(availability.save.reason))" />
-      </div>
+      <!-- A started row is never saved (the server ignores its echo): the 🔒 line is its reason. -->
+      <template v-if="!started">
+        <div class="inspector-settings-bar">
+          <Button
+            size="sm"
+            variant="primary"
+            :disabled="!availability.save.enabled"
+            :loading="busy"
+            :title="t(k('hint'))"
+            data-test="settings-save"
+            @click="save"
+          >{{ t(k('save')) }}</Button>
+        </div>
+        <div v-if="availability.save.reason" data-test="settings-reason">
+          <InspectorReason :text="t(k(availability.save.reason))" />
+        </div>
+      </template>
       <InspectorPaneState v-if="errorKey" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
 
       <div v-if="hop" class="inspector-settings-hop" data-test="settings-hop">
@@ -106,8 +124,9 @@ import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorRunSettings, { type InspectorRunSettingsField, type InspectorRunSettingsFields } from '../../parts/InspectorRunSettings.vue'
 import InspectorSegment from '../../parts/InspectorSegment.vue'
+import InspectorStatusChip from '../../parts/InspectorStatusChip.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { settingsReviewCountKey, settingsRowState, type SettingsField } from './settingsModel'
+import { settingsReviewCountKey, settingsRowPhase, settingsRowState, type SettingsField } from './settingsModel'
 import { useSettings } from './useSettings'
 
 const props = defineProps<{
@@ -142,9 +161,11 @@ const started = computed(() => {
   return !current || settingsRowState(current) === 'started'
 })
 
+const phase = computed(() => (row.value ? settingsRowPhase(row.value) : null))
+
 const stateKey = computed(() => {
   const current = row.value
-  if (!current || started.value) return 'state.started'
+  if (!current || started.value) return 'state.in_progress'
   return current.protected ? 'state.protected' : 'state.editable'
 })
 
@@ -173,6 +194,20 @@ const runFields = computed<InspectorRunSettingsFields>(() => {
   }
   for (const name of UNCONNECTED) out[name] = { value: '', options: [], disabled: true, reason: t(k('unconnected')) }
   return out
+})
+
+/** A done step's stored values (the reviewer only while a review runs), as the fields' choices name them. */
+const doneValues = computed(() => {
+  const label = (field: SettingsField) => {
+    const value = fields.value?.[field].value ?? ''
+    return optionsOf(field).find((option) => option.value === value)?.label ?? '—'
+  }
+  const items = [
+    { field: 'provider', label: 'provider', value: label('provider') },
+    { field: 'reviewCount', label: 'review_count', value: label('reviewCount') },
+  ]
+  if (row.value?.reviewCount !== 0) items.push({ field: 'reviewer', label: 'reviewer', value: label('reviewer') })
+  return items
 })
 
 function onField(name: InspectorRunSettingsField, value: string) {
@@ -220,6 +255,14 @@ const hopCount = computed(() => {
 
 .inspector-settings-label {
   color: var(--fg2-muted);
+}
+
+.inspector-settings-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 11.5px;
 }
 
 .inspector-settings-sub {

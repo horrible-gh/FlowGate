@@ -177,8 +177,20 @@ export function useSettings(target: () => InspectorTarget | null): SettingsTabSt
 
   const noSlot = computed(() => !target()?.slot)
   const row = computed(() => settingsRowFor(readState.value?.sequence.items ?? null, target()?.slot ?? null))
-  const shown = computed<SettingsDraft | null>(() => draft.value ?? (row.value ? settingsDraftOf(row.value) : null))
-  const changed = computed(() => (row.value ? settingsChanged(row.value, draft.value) : false))
+  // flowgate.v02.0052 T#2 rework: only a row not started yet takes a draft. A started row (in progress or
+  // done) is history and shows what the server holds; a draft left from before it started (an event read
+  // the row again on the same Node) is dropped, so it never shows nor comes back.
+  const rowState = computed(() => (row.value ? settingsRowState(row.value) : null))
+  const editable = computed(() => rowState.value === 'editable')
+  watch(rowState, (now) => {
+    if (now === 'started') draft.value = null
+  })
+  const shown = computed<SettingsDraft | null>(() => {
+    const current = row.value
+    if (!current) return null
+    return (editable.value ? draft.value : null) ?? settingsDraftOf(current)
+  })
+  const changed = computed(() => (row.value && editable.value ? settingsChanged(row.value, draft.value) : false))
 
   // The read holds no row for the slot: the rows were written again since the Canvas was read (another
   // save). Read the Canvas again once for that slot so the Node takes its row's new id.
@@ -204,7 +216,7 @@ export function useSettings(target: () => InspectorTarget | null): SettingsTabSt
       groupDisposed: readState.value?.groupDisposed === true,
       aiRunning: readState.value?.run.active === true,
       blocked: blocked.value,
-      row: row.value ? settingsRowState(row.value) : null,
+      row: rowState.value,
       reviewCount: shown.value?.reviewCount ?? 0,
       changed: changed.value,
       busy: busy.value,

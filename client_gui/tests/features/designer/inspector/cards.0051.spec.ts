@@ -287,12 +287,20 @@ describe('card header parts', () => {
 })
 
 describe('card settings parts', () => {
-  it('RequirementSettings: the OFF explanation, the switch disabled, the reason; ON (fixture) draws 범위 · AI Team · 안전 한도', () => {
+  it('RequirementSettings: the OFF line, the switch disabled, the 미연결 tag; ON (fixture) draws 범위 · AI Team · 안전 한도', () => {
     const w = mount(RequirementSettings, { props: { target: REQ }, global })
     expect(w.get('[data-test="inspector-requirement-settings"]').attributes('data-delegation')).toBe('off')
-    expect(w.get('[data-test="requirement-delegation-off"]').text()).toContain('꺼져 있으면 직접 구성하거나')
+    // flowgate.v02.0052 T#2: one short OFF line; the v7 explanation stays as its tooltip.
+    const off = w.get('[data-test="requirement-delegation-off"]')
+    expect(off.text()).toBe('꺼짐 — 직접 구성하거나 작업계획(WP)으로 전개')
+    expect(off.attributes('title')).toContain('꺼져 있으면 직접 구성하거나')
     for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="requirement-settings-unconnected"]').text()).toContain('AI 위임은 아직 연결되지 않았습니다')
+    // "Not connected" is a tag beside the switch (reason in its tooltip), not a sentence in the body.
+    const unconnected = w.get('[data-test="requirement-settings-unconnected"] [data-test="inspector-tbd"]')
+    expect(unconnected.text()).toBe('미연결')
+    expect(unconnected.attributes('title')).toBe('AI 위임 API가 아직 없어 표시만 하며 바꿀 수 없습니다.')
+    expect(w.get('[data-test="requirement-delegation"] .inspector-block-head').find('[data-test="requirement-settings-unconnected"]').exists()).toBe(true)
+    expect(w.text()).not.toContain('0051-R')
     expect(w.find('[data-test="requirement-limits"]').exists()).toBe(false)
 
     const on: RequirementSettingsView = {
@@ -322,7 +330,7 @@ describe('card settings parts', () => {
     expect(w.get('[data-test="test-run-mode-automated"]').text()).toBe('automated —')
     expect(w.get('[data-test="inspector-tbd"]').text()).toBe('manual · external 흐름 그리지 않음')
     for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="test-run-settings-unconnected"]').text()).toContain('아직 Node에 저장되지 않습니다')
+    expect(w.get('[data-test="test-run-settings-unconnected"]').text()).toBe('미연결 — Node에 저장되지 않아 바꿀 수 없습니다.')
     expect(w.find('[data-test="inspector-lock-note"]').exists()).toBe(false)
     const running = mount(TestRunSettings, { props: { target: { ...GRAPH_TS, nodeRun: { status: 'running', openedAt: null, finishedAt: null, resultDocId: null } } }, global })
     expect(running.get('[data-test="inspector-lock-note"]').text()).toContain('실행 중')
@@ -333,7 +341,7 @@ describe('card settings parts', () => {
     expect(w.get('[data-test="check-settings-usage-value"]').text()).toBe('—')
     expect(w.get('[data-test="inspector-tbd"]').text()).toBe('토론 중')
     for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="check-settings-summary"]').text()).toBe('Node에 저장되는 설정이 아직 없습니다. 반영 방식은 헤더의 최종 확인 대화상자에서 고릅니다.')
+    expect(w.get('[data-test="check-settings-summary"]').text()).toBe('미연결 — 반영 방식은 최종 확인 때 고릅니다.')
     const fixture = mount(CheckSettings, { props: { target: V01_TR, view: { usage: 'end', scope: 'merge', target: 'main', push: true, keepBranch: false, connected: true } }, global })
     expect(fixture.get('[data-test="check-settings-usage-value"]').text()).toBe('그룹 종료')
     expect(fixture.get('[data-test="check-settings-summary"]').text()).toBe('작업 브랜치를 main에 병합하고 원격 반영')

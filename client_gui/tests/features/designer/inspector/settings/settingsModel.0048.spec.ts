@@ -20,6 +20,7 @@ import {
   settingsReviewCountKey,
   settingsReviewCountOptions,
   settingsRowFor,
+  settingsRowPhase,
   settingsRowState,
   type SettingsHopFacts,
   type SettingsInput,
@@ -154,6 +155,17 @@ describe('settingsModel — the row (flowgate.v02.0048 T#9, D#2 §2.4)', () => {
 
   it('a protected pending report row is editable (the server saves it in place, D#2 §2.4 rule 3)', () => {
     expect(settingsRowState(rows[1])).toBe('editable')
+  })
+
+  // flowgate.v02.0052 T#2: the server derives status from the result document (get_sequence_items):
+  // none -> pending, approved -> done, anything else (running, in review, rejected) -> in_progress.
+  it.each<[string, string]>([
+    ['pending', 'pending'],
+    ['in_progress', 'in_progress'],
+    ['done', 'done'],
+    ['archived', 'in_progress'],
+  ])('row phase: %s -> %s (only done reads as done)', (status, phase) => {
+    expect(settingsRowPhase({ status })).toBe(phase)
   })
 })
 

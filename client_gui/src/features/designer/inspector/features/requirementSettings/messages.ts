@@ -14,7 +14,10 @@ export default {
       supervisor_note: '계획 AI · 질문 판단 · 진행 판단 = AI Team의 Supervisor. Supervisor 없는 팀을 골랐을 때 막을지 경고만 할지',
       tbd: '미정',
       locked: '위임 진행 중',
-      unconnected: 'AI 위임은 아직 연결되지 않았습니다 (0051-R §3.3). 표시만 하며 바꿀 수 없습니다.',
+      // flowgate.v02.0052 T#2 — one short line in the body; the full OFF explanation and the reason are tooltips.
+      off_short: '꺼짐 — 직접 구성하거나 작업계획(WP)으로 전개',
+      unconnected_tag: '미연결',
+      unconnected: 'AI 위임 API가 아직 없어 표시만 하며 바꿀 수 없습니다.',
     },
     limits: {
       title: '안전 한도',
@@ -41,7 +44,9 @@ export default {
       supervisor_note: "Planning, question handling and progress decisions = the AI Team's Supervisor. Whether a team without a Supervisor is blocked or only warned about is",
       tbd: 'undecided',
       locked: 'Delegation in progress',
-      unconnected: 'AI delegation is not connected yet (0051-R §3.3). Shown only; nothing can be changed.',
+      off_short: 'Off — build it yourself or deploy a work plan (WP)',
+      unconnected_tag: 'Not connected',
+      unconnected: 'There is no AI delegation API yet: shown only, it cannot be changed.',
     },
     limits: {
       title: 'Safety limits',
@@ -68,7 +73,9 @@ export default {
       supervisor_note: '計画 AI · 質問判断 · 進行判断 = AI Team の Supervisor。Supervisor のないチームを選んだとき止めるか警告だけにするかは',
       tbd: '未定',
       locked: '委任進行中',
-      unconnected: 'AI委任はまだ連携されていません（0051-R §3.3）。表示のみで変更できません。',
+      off_short: 'オフ — 自分で構成するか作業計画(WP)で展開',
+      unconnected_tag: '未接続',
+      unconnected: 'AI委任の API がまだないため、表示のみで変更できません。',
     },
     limits: {
       title: '安全上限',

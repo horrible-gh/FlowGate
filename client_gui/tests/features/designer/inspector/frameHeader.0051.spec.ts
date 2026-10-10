@@ -220,6 +220,14 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'graph', nodes: [node] }, node.id))
     await clickTab(w, '설정')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
-    expect(get(w, 'designer-inspector-tab-state').text()).toContain('이 카드의 설정은 아직 연결되지 않았습니다.')
+    // flowgate.v02.0052 T#2: it says why — a Graph Node's run settings are not supported in the Inspector yet.
+    expect(get(w, 'designer-inspector-tab-state').text()).toContain('Graph 플로우 Node의 실행 설정은 Inspector에서 아직 지원하지 않습니다.')
+  })
+
+  it('names why the settings tab is empty for an undecided Flow (flowgate.v02.0052 T#2)', async () => {
+    const node = { ...UNASSIGNED_REQ_NODE, id: 'doc_n', kind: 'research', docType: 'N', document: null }
+    const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'unassigned', nodes: [node] }, node.id))
+    await clickTab(w, '설정')
+    expect(get(w, 'designer-inspector-tab-state').text()).toContain('실행 방식(v0.1 · Graph)이 정해지지 않은 플로우라 실행 설정이 없습니다.')
   })
 })

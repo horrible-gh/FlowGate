@@ -31,6 +31,8 @@ withDefaults(
 .inspector-block {
   box-sizing: border-box;
   min-width: 0;
+  /* flowgate.v02.0052 T#2 — the rows inside follow the block's width, not the window's (264px Inspector). */
+  container-type: inline-size;
   padding: 10px 12px;
   border: 1px solid var(--fg2-line);
   border-radius: 8px;

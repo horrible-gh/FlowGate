@@ -101,6 +101,7 @@ import {
   INSPECTOR_TAB_GAP,
   INSPECTOR_TAB_MIN_WIDTH,
   INSPECTOR_TAB_STRIP_PADDING_X,
+  inspectorNoSettingsKey,
    resolveInspectorTab,
   type InspectorTabKey,
 } from './inspectorTabs'
@@ -188,8 +189,9 @@ const emptyTabMessage = computed(() => {
   if (!target.value?.docId && (activeTab.value === 'qna' || activeTab.value === 'attachments')) {
     return t('gui.designer.inspector.pane.no_document')
   }
-  return activeTab.value === 'settings'
-    ? t('gui.designer.inspector.pane.no_settings')
+  // flowgate.v02.0052 T#2: the settings tab says why this card has none (not one blanket "not connected").
+  return activeTab.value === 'settings' && target.value
+    ? t(`gui.designer.inspector.pane.${inspectorNoSettingsKey(target.value)}`)
     : t('gui.designer.inspector.pane.empty')
 })
 
