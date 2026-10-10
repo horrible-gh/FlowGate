@@ -88,7 +88,7 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     )
     expect(Object.keys(inspector.tabs)).toEqual([...INSPECTOR_TABS])
     expect(Object.keys(inspector.review_status).sort()).toEqual(['approved', 'pending_review', 'rejected', 'revised'])
-    expect(Object.keys(inspector.pane).sort()).toEqual(['disabled', 'empty', 'error', 'loading', 'retry'])
+    expect(Object.keys(inspector.pane).sort()).toEqual(['disabled', 'empty', 'error', 'loading', 'no_document', 'no_settings', 'retry'])
     expect(Object.keys(inspector.header).sort()).toEqual(['copied', 'copy_id', 'kind_bug', 'memo', 'memo_unavailable', 'more', 'read_only', 'read_only_conflict', 'read_only_revision'])
     expect(Object.keys(inspector.slot).sort()).toEqual(['empty', 'open', 'progress', 'write'])
     expect(Object.keys(inspector.slot_state).sort()).toEqual(['closed', 'writing'])

@@ -66,12 +66,18 @@
             </details>
             <component v-else :is="entry.tab!.component" :target="target" />
           </div>
-          <InspectorPaneState
+          <div
             v-if="!tabContent.length"
-            :state="activeTab === 'settings' ? 'disabled' : 'empty'"
-            :message="emptyTabMessage"
+            class="designer-inspector-tab-state"
             data-test="designer-inspector-tab-state"
-          />
+            :data-state="activeTab === 'settings' ? 'disabled' : 'empty'"
+          >
+            <EmptyState v-if="activeTab !== 'settings'" compact :title="emptyTabMessage" />
+            <p v-else class="designer-inspector-disabled" role="note" aria-disabled="true">
+              <span aria-hidden="true">⊘</span>
+              <span>{{ emptyTabMessage }}</span>
+            </p>
+          </div>
         </div>
       </template>
     </template>
@@ -81,10 +87,10 @@
 <script setup lang="ts">
 import { computed, provide, ref, toRaw } from 'vue'
 import { useI18n } from 'vue-i18n'
+import EmptyState from '../../../components/ui/EmptyState.vue'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
 import type { FlowGraphSelection } from '../center/graph/flowGraph'
 import InspectorHeader from './InspectorHeader.vue'
-import InspectorPaneState from './parts/InspectorPaneState.vue'
 import { INSPECTOR_HOST, type InspectorHostIntent } from './inspectorHost'
 import {
   contributionsFor,
@@ -264,6 +270,24 @@ function selectTab(key: string) {
 
 .designer-inspector-section + .designer-inspector-section {
   margin-top: 12px;
+}
+
+.designer-inspector-tab-state {
+  min-width: 0;
+}
+
+.designer-inspector-disabled {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px dashed #2b4562;
+  border-radius: 8px;
+  color: #6f87a0;
+  font-size: 12px;
+  text-align: center;
 }
 
 .designer-inspector-details {
