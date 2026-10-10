@@ -2,7 +2,12 @@
   <!-- flowgate.v02.0048 T#9 — settings tab (D#1 §10.2 T#9 row, D#2 §2.2): the run AI, the review count and
        the reviewer of the selected Node's v0.1 sequence step, saved on the step row (no server change). A
        thin container: useSettings reads and saves, settingsModel decides the row, the choices and
-       availability. -->
+       availability.
+       flowgate.v02.0051 stage 2 — drawn in the v7 settings shape (0035 execSettings): the 🔒 line of a
+       started step, the 지시서 사용 / 생략 and 검수 뒤 진행 rows (not stored on a Node yet: disabled with the
+       reason — the test card has its own in testRunSettings), and the common 실행 설정 block
+       (InspectorRunSettings) whose 실행 AI · 검수 AI · 검수 횟수 are the three 0048 fields and whose 재시작 ·
+       실행 제한 시간 · 검수 기준 are not connected yet. Save, reasons and the running hop stay as in 0048. -->
   <div class="inspector-settings" data-test="inspector-settings" :data-status="status">
     <InspectorPaneState v-if="noSlot" state="empty" :message="t(k('no_slot'))" />
     <template v-else>
@@ -18,21 +23,42 @@
     <InspectorPaneState v-else-if="errorKey && !row" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
     <InspectorPaneState v-else-if="!row && status === 'ready'" state="loading" :message="t(k('no_row'))" />
     <template v-else-if="row && fields">
+      <InspectorLockNote v-if="started" :text="t(k('state.started'))" />
       <div class="inspector-settings-head" data-test="settings-row">
         <span class="inspector-settings-title">{{ title }}</span>
         <span class="inspector-settings-sub" data-test="settings-row-state">{{ t(k(stateKey)) }}</span>
       </div>
 
-      <label v-for="field in FIELDS" :key="field.name" class="inspector-settings-field" :data-test="`settings-field-${field.name}`">
-        <span class="inspector-settings-label">{{ t(k(field.label)) }}</span>
-        <Select
-          :model-value="fields[field.name].value"
-          :options="optionsOf(field.name)"
-          :disabled="!availability[field.name].enabled"
-          :data-test="`settings-${field.name}`"
-          @update:model-value="set(field.name, $event)"
-        />
-      </label>
+      <template v-if="policyRows">
+        <InspectorBlock :locked="started" data-test="settings-instruction">
+          <InspectorControlRow :label="t(k('instruction.label'))" :hint="t(k('instruction.hint'))">
+            <InspectorSegment
+              :model-value="null"
+              :options="[
+                { value: 'use', label: t(k('instruction.use')), title: t(k('unconnected')) },
+                { value: 'omit', label: t(k('instruction.omit')), title: t(k('unconnected')) },
+              ]"
+              disabled
+              :aria-label="t(k('instruction.label'))"
+            />
+          </InspectorControlRow>
+        </InspectorBlock>
+        <InspectorBlock :locked="started" data-test="settings-policy">
+          <InspectorControlRow :label="t(k('policy.label'))" :hint="t(k('policy.hint'))">
+            <InspectorSegment
+              :model-value="null"
+              :options="[
+                { value: 'follow', label: t(k('policy.follow')), title: t(k('unconnected')) },
+                { value: 'human', label: t(k('policy.human')), title: t(k('unconnected')) },
+              ]"
+              disabled
+              :aria-label="t(k('policy.label'))"
+            />
+          </InspectorControlRow>
+        </InspectorBlock>
+      </template>
+
+      <InspectorRunSettings :fields="runFields" :advanced-open="advancedOpen" @update:advanced-open="advancedOpen = $event" @update:field="onField" />
       <div v-if="reviewerReason" data-test="settings-reviewer-reason">
         <InspectorReason :text="t(k(reviewerReason))" />
       </div>
@@ -64,12 +90,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../../components/ui/Button.vue'
-import Select from '../../../../../components/ui/Select.vue'
+import InspectorBlock from '../../parts/InspectorBlock.vue'
+import InspectorControlRow from '../../parts/InspectorControlRow.vue'
+import InspectorLockNote from '../../parts/InspectorLockNote.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
+import InspectorRunSettings, { type InspectorRunSettingsField, type InspectorRunSettingsFields } from '../../parts/InspectorRunSettings.vue'
+import InspectorSegment from '../../parts/InspectorSegment.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { settingsReviewCountKey, settingsRowState, type SettingsField } from './settingsModel'
 import { useSettings } from './useSettings'
@@ -82,11 +112,15 @@ const { t } = useI18n()
 
 const k = (key: string) => `gui.inspector.settings.${key}`
 
-const FIELDS: readonly { readonly name: SettingsField; readonly label: string }[] = [
-  { name: 'provider', label: 'field.provider' },
-  { name: 'reviewCount', label: 'field.review_count' },
-  { name: 'reviewer', label: 'field.reviewer' },
-]
+/** The 0048 fields behind the v7 run settings block. */
+const FIELD_OF: Readonly<Partial<Record<InspectorRunSettingsField, SettingsField>>> = {
+  run_ai: 'provider',
+  review_count: 'reviewCount',
+  review_ai: 'reviewer',
+}
+
+/** v7 items with no place on a v0.1 sequence row yet. */
+const UNCONNECTED: readonly InspectorRunSettingsField[] = ['restart', 'time_limit', 'review_basis']
 
 const { row, noSlot, fields, availability, hop, status, errorKey, busy, failure, saved, set, save, reload } = useSettings(() => props.target)
 
@@ -97,17 +131,47 @@ const title = computed(() => {
   return current.itemSeq === null ? t(k('title_no_seq'), params) : t(k('title'), params)
 })
 
+const started = computed(() => {
+  const current = row.value
+  return !current || settingsRowState(current) === 'started'
+})
+
 const stateKey = computed(() => {
   const current = row.value
-  if (!current || settingsRowState(current) === 'started') return 'state.started'
+  if (!current || started.value) return 'state.started'
   return current.protected ? 'state.protected' : 'state.editable'
 })
+
+/** The 지시서 / 검수 뒤 진행 rows: on the cards v7 gives them to; the test card draws its own (testRunSettings). */
+const policyRows = computed(() => props.target.cardKind !== 'test')
+
+const advancedOpen = ref(false)
 
 function optionsOf(field: SettingsField) {
   return (fields.value?.[field].options ?? []).map((option) => ({
     value: option.value,
     label: option.label ?? t(k(option.key ?? ''), option.params),
   }))
+}
+
+const runFields = computed<InspectorRunSettingsFields>(() => {
+  const out: Partial<Record<InspectorRunSettingsField, InspectorRunSettingsFields[InspectorRunSettingsField]>> = {}
+  for (const [name, field] of Object.entries(FIELD_OF) as [InspectorRunSettingsField, SettingsField][]) {
+    const item = availability.value[field]
+    out[name] = {
+      value: fields.value?.[field].value ?? '',
+      options: optionsOf(field),
+      disabled: !item.enabled,
+      reason: item.reason && item.reason !== 'reason.busy' ? t(k(item.reason)) : null,
+    }
+  }
+  for (const name of UNCONNECTED) out[name] = { value: '', options: [], disabled: true, reason: t(k('unconnected')) }
+  return out
+})
+
+function onField(name: InspectorRunSettingsField, value: string) {
+  const field = FIELD_OF[name]
+  if (field) set(field, value)
 }
 
 // The reviewer's own reason (review count "none") shows under the fields; a common reason shows once, by save.
@@ -128,7 +192,6 @@ const hopCount = computed(() => {
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  max-width: 420px;
   font-size: 12px;
 }
 
@@ -147,14 +210,6 @@ const hopCount = computed(() => {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.inspector-settings-field {
-  display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
 }
 
 .inspector-settings-label {

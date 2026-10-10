@@ -186,8 +186,14 @@ describe('message keys (flowgate.v02.0048 T#13)', () => {
     expect(missing).toEqual([])
   })
 
-  it.each(['ko', 'en', 'ja'] as const)('%s wording names no undecided feature (D#1 §8.4)', (locale) => {
-    const words = JSON.stringify(workPlanMessages[locale])
-    for (const word of ['전개', '재계획', '위임', '메모', 'AI 전달', 'expand', 'replan', 'delegat', '展開', '再計画']) expect(words).not.toContain(word)
+  // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): an undecided feature may be worded and drawn inactive;
+  // the deploy strings exist with the reason they are inactive, and nothing names a replan or a memo.
+  it.each(['ko', 'en', 'ja'] as const)('%s wording: ⇉ 전개 / 재전개 are worded with their inactive reason; no replan, delegation or memo wording', (locale) => {
+    const messages = workPlanMessages[locale] as Record<string, unknown>
+    for (const key of ['deploy.deploy', 'deploy.redeploy', 'deploy.unconnected', 'slot.plan', 'slot.deploy', 'slot_empty.deploy', 'author.human']) {
+      expect(typeof lookup(messages, key), `${locale} ${key}`).toBe('string')
+    }
+    const words = JSON.stringify(messages)
+    for (const word of ['재계획', '위임', '메모', 'AI 전달', 'replan', 'delegat', '再計画']) expect(words).not.toContain(word)
   })
 })

@@ -2,6 +2,11 @@
 // locales keep the same keys (structure.0048 B12). Reason keys follow D#1 §8.3 rule 6-2.
 export default {
   ko: {
+    // flowgate.v02.0051 stage 2 — the v7 확인 결과 line.
+    slot: {
+      result: '확인 결과',
+      git_panel: 'Git 패널',
+    },
     label: '최종 확인',
     title: '최종 확인 · Git 반영',
     approve: '최종 확인',
@@ -98,6 +103,10 @@ export default {
     },
   },
   en: {
+    slot: {
+      result: 'Check result',
+      git_panel: 'Git panel',
+    },
     label: 'Final check',
     title: 'Final check · Git reflection',
     approve: 'Final check',
@@ -194,6 +203,10 @@ export default {
     },
   },
   ja: {
+    slot: {
+      result: '確認結果',
+      git_panel: 'Git パネル',
+    },
     label: '最終確認',
     title: '最終確認 · Git 反映',
     approve: '最終確認',

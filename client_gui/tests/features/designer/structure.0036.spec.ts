@@ -80,12 +80,20 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     const inspector = messages.designer.inspector
     // flowgate.v02.0048 T#1: no `pane_placeholder` (no '연동 전' place); the header status labels
     // and the common section states of the parts instead.
+    // flowgate.v02.0051: the v7 header line (header), the `disabled` pane state and the strings of
+    // the common display parts (slot · review · origin · lock · run_settings).
+    // flowgate.v02.0051 stage 2: the card parts' common wordings (unconnected · slot_state · menu).
     expect(Object.keys(inspector).sort()).toEqual(
-      ['label', 'tabs', 'tabs_label', 'doc_status_label', 'run_status_label', 'review_status', 'pane'].sort(),
+      ['label', 'tabs', 'tabs_label', 'doc_status_label', 'run_status_label', 'review_status', 'pane', 'header', 'slot', 'review', 'origin', 'lock', 'run_settings', 'unconnected', 'slot_state', 'menu'].sort(),
     )
     expect(Object.keys(inspector.tabs)).toEqual([...INSPECTOR_TABS])
     expect(Object.keys(inspector.review_status).sort()).toEqual(['approved', 'pending_review', 'rejected', 'revised'])
-    expect(Object.keys(inspector.pane).sort()).toEqual(['empty', 'error', 'loading', 'retry'])
+    expect(Object.keys(inspector.pane).sort()).toEqual(['disabled', 'empty', 'error', 'loading', 'no_document', 'no_settings', 'retry'])
+    expect(Object.keys(inspector.header).sort()).toEqual(['copied', 'copy_id', 'kind_bug', 'memo', 'memo_unavailable', 'more', 'read_only', 'read_only_conflict', 'read_only_revision'])
+    expect(Object.keys(inspector.slot).sort()).toEqual(['empty', 'open', 'progress', 'write'])
+    expect(Object.keys(inspector.slot_state).sort()).toEqual(['closed', 'writing'])
+    expect(Object.keys(inspector.menu).sort()).toEqual(['history', 'rerun', 'stop'])
+    expect(Object.keys(inspector.run_settings).sort()).toEqual(['advanced', 'restart', 'review_ai', 'review_basis', 'review_count', 'run_ai', 'time_limit', 'title'])
     expect(messages.designer.shell).not.toHaveProperty('bottom_label')
     expect(messages.designer.shell).not.toHaveProperty('bottom_parts')
     expect(messages.designer.shell.minimap_label).toBe('MINIMAP')

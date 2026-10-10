@@ -6,15 +6,18 @@
        flowgate.v02.0039 T#3: `unselected` (the Designer has no work target yet) leaves only the
        bottom frame — an empty header bar, no line, no tabs and no Content.
        flowgate.v02.0048 T#1 (D#1 §5): the one injection point of the Inspector features. The
-       Frame turns the selection into an InspectorTarget and lays out what the registry gives for
-       it — header meta / header actions, and per tab the Content parts in `order`. A tab no
-       registration contributes to is not shown; with no tab at all (e.g. a Node without a
-       document) only the header is. The Frame knows no feature and calls no API; a feature's
-       Host intent leaves as the `host` event.
+       Frame turns the selection into an InspectorTarget and lays out registry contributions
+       for the header and tab Content in `order`. The Frame knows no feature and calls no API;
+       a feature's Host intent leaves as the `host` event.
        flowgate.v02.0048 T#3 (D#1 §7.3): the header follows the target. When the target document's
        review status, an AI run of its Flow or its documents change on the server, the Frame asks
        for the Flow to be read again quietly (`refresh-flow`); the new selection then gives the
-       header and the Canvas card the same values. The Frame keeps no copy of the server state. -->
+       header and the Canvas card the same values. The Frame keeps no copy of the server state.
+       flowgate.v02.0051 stage 2: two more header places from the registry — the kind badge part
+       (`headerKind`, the first that applies) and the ⋯ menu items (`headerMenu`, in `order`).
+       flowgate.v02.0051 stage 3: every selected Node keeps the four v7 tabs. Missing data
+       receives an empty state and unconnected settings a disabled state. Card slots lead the
+       document tab; existing document details remain in a disclosure below them. -->
   <section
     class="designer-inspector"
     data-test="designer-inspector"
@@ -26,11 +29,17 @@
     <div v-else-if="!target" class="designer-inspector-empty" data-test="designer-inspector-empty" />
     <template v-else>
       <InspectorHeader :target="target">
+        <template v-if="headerKind" #kind>
+          <component :is="headerKind.headerKind" :key="headerKind.key" :target="target" />
+        </template>
         <template v-if="headerMetas.length" #meta>
           <component :is="entry.headerMeta" v-for="entry in headerMetas" :key="entry.key" :target="target" />
         </template>
         <template v-if="headerActions.length" #actions>
           <component :is="entry.headerAction" v-for="entry in headerActions" :key="entry.key" :target="target" />
+        </template>
+        <template v-if="headerMenus.length" #menu="{ close }">
+          <component :is="entry.headerMenu" v-for="entry in headerMenus" :key="entry.key" :target="target" :close="close" />
         </template>
       </InspectorHeader>
       <template v-if="tabs.length">
@@ -51,7 +60,23 @@
             data-test="designer-inspector-section"
             :data-key="entry.key"
           >
-            <component :is="entry.tab!.component" :target="target" />
+            <details v-if="entry.key === 'documents' && hasCardDocuments" class="designer-inspector-details" data-test="designer-inspector-details">
+              <summary>{{ t('gui.inspector.documents.current') }}</summary>
+              <component :is="entry.tab!.component" :target="target" />
+            </details>
+            <component v-else :is="entry.tab!.component" :target="target" />
+          </div>
+          <div
+            v-if="!tabContent.length"
+            class="designer-inspector-tab-state"
+            data-test="designer-inspector-tab-state"
+            :data-state="activeTab === 'settings' ? 'disabled' : 'empty'"
+          >
+            <EmptyState v-if="activeTab !== 'settings'" compact :title="emptyTabMessage" />
+            <p v-else class="designer-inspector-disabled" role="note" aria-disabled="true">
+              <span aria-hidden="true">⊘</span>
+              <span>{{ emptyTabMessage }}</span>
+            </p>
           </div>
         </div>
       </template>
@@ -60,8 +85,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, provide, ref, toRaw, watch } from 'vue'
+import { computed, provide, ref, toRaw } from 'vue'
 import { useI18n } from 'vue-i18n'
+import EmptyState from '../../../components/ui/EmptyState.vue'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
 import type { FlowGraphSelection } from '../center/graph/flowGraph'
 import InspectorHeader from './InspectorHeader.vue'
@@ -75,11 +101,11 @@ import {
 } from './inspectorRegistry'
 import {
   DEFAULT_INSPECTOR_TAB,
+  INSPECTOR_TABS,
   INSPECTOR_TAB_GAP,
   INSPECTOR_TAB_MIN_WIDTH,
   INSPECTOR_TAB_STRIP_PADDING_X,
-  inspectorTabsWith,
-  resolveInspectorTab,
+   resolveInspectorTab,
   type InspectorTabKey,
 } from './inspectorTabs'
 import { toInspectorTarget } from './inspectorTarget'
@@ -124,8 +150,10 @@ useInspectorEvents(() => (props.unselected ? null : target.value), {
 const contributions = computed(() => contributionsFor(registry, target.value))
 const headerMetas = computed(() => contributions.value.filter((entry) => entry.headerMeta))
 const headerActions = computed(() => contributions.value.filter((entry) => entry.headerAction))
+const headerKind = computed(() => contributions.value.find((entry) => entry.headerKind) ?? null)
+const headerMenus = computed(() => contributions.value.filter((entry) => entry.headerMenu))
 
-const tabs = computed(() => inspectorTabsWith(contributions.value.flatMap((entry) => (entry.tab ? [entry.tab.key] : []))))
+const tabs = computed(() => target.value && !props.unselected ? INSPECTOR_TABS : [])
 
 // One tab number supplier per registration, set up once; each sees the target only while its
 // registration applies to it (D#1 §5.2: at most one supplier per tab).
@@ -154,10 +182,14 @@ const selectedTab = ref<InspectorTabKey>(DEFAULT_INSPECTOR_TAB)
 const activeTab = computed(() => resolveInspectorTab(selectedTab.value, tabs.value))
 
 const tabContent = computed(() => contributions.value.filter((entry) => entry.tab?.key === activeTab.value))
-
-// A Node without the selected tab sends the selection to its first tab for good (v7).
-watch(tabs, (next) => {
-  selectedTab.value = resolveInspectorTab(selectedTab.value, next)
+const hasCardDocuments = computed(() => activeTab.value === 'documents' && tabContent.value.some((entry) => entry.key !== 'documents'))
+const emptyTabMessage = computed(() => {
+  if (!target.value?.docId && (activeTab.value === 'qna' || activeTab.value === 'attachments')) {
+    return t('gui.designer.inspector.pane.no_document')
+  }
+  return activeTab.value === 'settings'
+    ? t('gui.designer.inspector.pane.no_settings')
+    : t('gui.designer.inspector.pane.empty')
 })
 
 // Strip geometry comes from the tab rules so the Shell's minimum Inspector width and the CSS agree.
@@ -238,5 +270,39 @@ function selectTab(key: string) {
 
 .designer-inspector-section + .designer-inspector-section {
   margin-top: 12px;
+}
+
+.designer-inspector-tab-state {
+  min-width: 0;
+}
+
+.designer-inspector-disabled {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px dashed #2b4562;
+  border-radius: 8px;
+  color: #6f87a0;
+  font-size: 12px;
+  text-align: center;
+}
+
+.designer-inspector-details {
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--fg2-line);
+}
+
+.designer-inspector-details summary {
+  color: var(--fg2-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.designer-inspector-details[open] summary {
+  margin-bottom: 10px;
 }
 </style>

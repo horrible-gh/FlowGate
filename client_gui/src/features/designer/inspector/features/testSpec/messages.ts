@@ -3,6 +3,18 @@
 // rule 6-2.
 export default {
   ko: {
+    // flowgate.v02.0051 stage 2 — the v7 slot lines.
+    slot: {
+      instruction: '지시 (TS)',
+      cases: '케이스 (TSC)',
+      result: '결과 (TSR)',
+    },
+    empty: {
+      write: '작성 필요',
+      after_run: '실행 후',
+      legacy: '이전 형식',
+    },
+    write_unconnected: '작성 — 아직 연결되지 않음 (v0.1 문서 화면에서 작성)',
     title: '테스트 실행',
     run: '▶ 실행',
     run_hint: '자동 케이스 전체를 서버에서 실행합니다',
@@ -93,6 +105,17 @@ export default {
     },
   },
   en: {
+    slot: {
+      instruction: 'Instruction (TS)',
+      cases: 'Cases (TSC)',
+      result: 'Result (TSR)',
+    },
+    empty: {
+      write: 'Needs writing',
+      after_run: 'After run',
+      legacy: 'Legacy form',
+    },
+    write_unconnected: 'Write — not connected yet (written in the v0.1 document screen)',
     title: 'Test run',
     run: '▶ Run',
     run_hint: 'Runs every automated case on the server',
@@ -183,6 +206,17 @@ export default {
     },
   },
   ja: {
+    slot: {
+      instruction: '指示 (TS)',
+      cases: 'ケース (TSC)',
+      result: '結果 (TSR)',
+    },
+    empty: {
+      write: '作成が必要',
+      after_run: '実行後',
+      legacy: '旧形式',
+    },
+    write_unconnected: '作成 — まだ連携されていません（v0.1 の文書画面で作成）',
     title: 'テスト実行',
     run: '▶ 実行',
     run_hint: '自動ケースをすべてサーバーで実行します',

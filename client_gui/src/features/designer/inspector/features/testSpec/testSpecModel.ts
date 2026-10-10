@@ -356,3 +356,90 @@ export function testSpecDeniedBy(kind: TestSpecFailureKind): boolean {
 export function testSpecErrorKey(kind: TestSpecFailureKind): string {
   return kind === 'forbidden' || kind === 'not_found' || kind === 'network' ? `error.${kind}` : 'error.other'
 }
+
+// --- flowgate.v02.0051 stage 2 — the v7 테스트 card lines (0035 test.*: 지시 (TS) · 케이스 (TSC) · 결과 (TSR)) ---
+
+export type TestSpecSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
+
+export interface TestSpecSlotState {
+  /** `review_status.*` / `slot_state.*` are the Frame's wordings; `state.*` this feature's run states. */
+  readonly key: string
+  readonly raw: string
+  readonly tone: TestSpecSlotTone
+}
+
+export interface TestSpecSlot {
+  readonly key: 'instruction' | 'cases' | 'result'
+  readonly kind: 'document' | 'result'
+  readonly form: boolean
+  readonly id: string | null
+  readonly empty: boolean
+  readonly emptyKey: string | null
+  readonly state: TestSpecSlotState | null
+  /** Which summary the line shows: the Case tally, the result counts, or the run progress. */
+  readonly summary: 'tally' | 'counts' | 'progress' | null
+  readonly progress: number | null
+  readonly focus: boolean
+  readonly open: 'enabled' | 'none'
+  readonly write: 'disabled' | 'none'
+}
+
+const REVIEW_TONES: Readonly<Record<string, TestSpecSlotTone>> = {
+  pending_review: 'warning',
+  approved: 'success',
+  rejected: 'danger',
+  revised: 'info',
+}
+
+function reviewState(status: string | null): TestSpecSlotState | null {
+  const review = status?.trim() ?? ''
+  return review ? { key: `review_status.${review}`, raw: review, tone: REVIEW_TONES[review] ?? 'neutral' } : null
+}
+
+const RUN_TONES: Readonly<Record<TestSpecTone, TestSpecSlotTone>> = { info: 'running', success: 'success', danger: 'danger', warning: 'warning', neutral: 'neutral' }
+
+/**
+ * The three v7 lines from the test view and the target. Without a view yet, the selected Node's own
+ * document fills its line and the others wait; the Case line stands for the Cases inside the TS
+ * (contract 2 — a separate Case document does not exist in 0048) and carries the tally only.
+ */
+export function testSpecSlots(view: TestSpecViewFacts | null, target: TestSpecTargetFacts): readonly TestSpecSlot[] {
+  const type = target.docType?.trim().toUpperCase() ?? ''
+  const tsId = view ? (view.kind === 'TS' ? view.docId : view.tsDocId) : type === 'TS' ? target.docId : null
+  const tsrId = view ? (view.kind === 'TSR' ? view.docId : view.tsrDocId) : type === 'TSR' ? target.docId : null
+  const tsState = view ? reviewState(view.tsReviewStatus) : null
+  const form = testSpecForm(view)
+  const run = testSpecRunState(view)
+  const live = run.active && !!run.total
+
+  const instruction: TestSpecSlot = tsId
+    ? { key: 'instruction', kind: 'document', form: false, id: tsId, empty: false, emptyKey: null, state: tsState, summary: null, progress: null, focus: tsState?.raw === 'pending_review' || tsState?.raw === 'rejected', open: 'enabled', write: 'none' }
+    : { key: 'instruction', kind: 'document', form: false, id: null, empty: true, emptyKey: 'empty.write', state: null, summary: null, progress: null, focus: false, open: 'none', write: 'disabled' }
+
+  const cases: TestSpecSlot =
+    form === 'spec'
+      ? { key: 'cases', kind: 'document', form: true, id: null, empty: false, emptyKey: null, state: null, summary: 'tally', progress: null, focus: false, open: 'none', write: 'none' }
+      : { key: 'cases', kind: 'document', form: true, id: null, empty: true, emptyKey: form === 'legacy' ? 'empty.legacy' : 'empty.after_run', state: null, summary: null, progress: null, focus: false, open: 'none', write: 'none' }
+
+  const resultState: TestSpecSlotState | null =
+    view && run.key !== 'none' ? { key: `state.${run.key}`, raw: run.key, tone: RUN_TONES[run.tone] } : view ? reviewState(view.tsrReviewStatus) : null
+  const hasResult = tsrId !== null || (view !== null && run.key !== 'none')
+  const result: TestSpecSlot = hasResult
+    ? {
+        key: 'result',
+        kind: 'result',
+        form: false,
+        id: tsrId,
+        empty: false,
+        emptyKey: null,
+        state: resultState,
+        summary: live ? 'progress' : testSpecCounts(view) ? 'counts' : null,
+        progress: live ? Math.round((run.done / run.total) * 100) : null,
+        focus: run.overall === 'fail' || view?.tsrReviewStatus === 'pending_review' || view?.tsrReviewStatus === 'rejected',
+        open: tsrId ? 'enabled' : 'none',
+        write: 'none',
+      }
+    : { key: 'result', kind: 'result', form: false, id: null, empty: true, emptyKey: 'empty.after_run', state: null, summary: null, progress: null, focus: false, open: 'none', write: 'none' }
+
+  return [instruction, cases, result]
+}

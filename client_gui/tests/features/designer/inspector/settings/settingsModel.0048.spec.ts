@@ -292,8 +292,16 @@ describe('settingsModel — refusals and keys (flowgate.v02.0048 T#9)', () => {
         expect(typeof value, `${locale} ${key}`).toBe('string')
       }
     }
-    // D#2 §2.2 / D#1 §8.4: restart, time limit, review criteria, instruction use, after-review are not offered.
+    // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): the v7 rows that are not stored on a Node (지시서 사용 /
+    // 생략 · 검수 뒤 진행) are worded and drawn inactive with their reason; restart / time limit / review criteria
+    // are the Frame's run settings strings, not this feature's.
+    for (const key of ['instruction.label', 'instruction.use', 'instruction.omit', 'policy.label', 'policy.follow', 'policy.human', 'unconnected']) {
+      for (const locale of ['ko', 'en', 'ja'] as const) {
+        const value = key.split('.').reduce<unknown>((node, part) => (node as Record<string, unknown> | undefined)?.[part], messages[locale])
+        expect(typeof value, `${locale} ${key}`).toBe('string')
+      }
+    }
     const text = JSON.stringify(messages.ko)
-    for (const word of ['재시작', '제한 시간', '검수 기준', '지시서', '검수 뒤']) expect(text).not.toContain(word)
+    for (const word of ['재시작', '제한 시간', '검수 기준']) expect(text).not.toContain(word)
   })
 })

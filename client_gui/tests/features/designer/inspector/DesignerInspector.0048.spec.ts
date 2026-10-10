@@ -238,9 +238,9 @@ function mountFrame(props: Record<string, unknown>, registry: InspectorRegistry 
 }
 
 describe('DesignerInspector — registry layout', () => {
-  it('shows only tabs with a contribution, in the fixed order, with the tab number', () => {
+  it('shows four tabs in fixed order and keeps the contributed Q&A number', () => {
     const w = mountFrame({ selection: SELECTIONS.v01 })
-    expect(tabLabels(w)).toEqual(['문서', 'Q&A (3)', '설정'])
+    expect(tabLabels(w)).toEqual(['문서', 'Q&A (3)', '첨부', '설정'])
     expect(activeTabLabel(w)).toBe('문서')
     expect(get(w, 'designer-inspector-body').attributes('data-tab')).toBe('documents')
     expect(sections(w)).toEqual(['documents'])
@@ -251,7 +251,7 @@ describe('DesignerInspector — registry layout', () => {
     const wp = { ...SELECTIONS.unassigned, node: { ...SELECTIONS.unassigned.node, document: { ...SELECTIONS.unassigned.node.document!, typeCode: 'WP' } } }
     const w = mountFrame({ selection: wp })
     expect(sections(w)).toEqual(['workPlan', 'documents'])
-    expect(tabLabels(w)).toEqual(['문서', 'Q&A (3)'])
+    expect(tabLabels(w)).toEqual(['문서', 'Q&A (3)', '첨부', '설정'])
   })
 
   it('puts header meta before the state chip and header actions in the actions area', () => {
@@ -262,42 +262,43 @@ describe('DesignerInspector — registry layout', () => {
     expect(order.indexOf('designer-inspector-doc-status')).toBeLessThan(order.indexOf('designer-inspector-state'))
     expect(get(w, 'designer-inspector-actions').get('[data-test="probe-actions"]').exists()).toBe(true)
     // graph ownership: no settings registration applies.
-    expect(tabLabels(w)).toEqual(['문서', 'Q&A (3)'])
+    expect(tabLabels(w)).toEqual(['문서', 'Q&A (3)', '첨부', '설정'])
   })
 
-  it('a Node without a document shows the header only — no tabs, no Content, no empty tab', () => {
+  it('a Node without a document keeps the four-tab frame and an empty document state', () => {
     const w = mountFrame({ selection: SELECTIONS.graphGate })
     expect(get(w, 'designer-inspector').attributes('data-selected')).toBe('true')
     expect(get(w, 'designer-inspector-title').text()).toBe('확인 게이트')
     expect(get(w, 'probe-badge').exists()).toBe(true)
-    expect(w.find('[data-test="designer-inspector-tabs"]').exists()).toBe(false)
-    expect(w.find('[data-test="designer-inspector-body"]').exists()).toBe(false)
+    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
     expect(w.find('[data-test="designer-inspector-actions"]').exists()).toBe(false)
   })
 
-  it('with no registration at all a document Node shows the header only', () => {
+  it('with no registration a document Node keeps four tabs and an empty state', () => {
     const w = mountFrame({ selection: SELECTIONS.v01 }, fixtureRegistry([]))
     expect(get(w, 'designer-inspector-doc-status').text()).toBe('검수 대기')
-    expect(w.find('[data-test="designer-inspector-tabs"]').exists()).toBe(false)
+    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
     expect(w.find('[data-test="designer-inspector-actions"]').exists()).toBe(false)
-    expect(w.text()).not.toMatch(/후속|later step|後続/)
   })
 
-  it('keeps the selected tab across Nodes and sends a missing tab to the first shown tab for good', async () => {
+  it('keeps the selected tab across Nodes, including an empty settings tab', async () => {
     const w = mountFrame({ selection: SELECTIONS.v01 })
     await clickTab(w, '설정')
     expect(sections(w)).toEqual(['settings'])
     await w.setProps({ selection: null })
     await w.setProps({ selection: SELECTIONS.v01 })
     expect(activeTabLabel(w)).toBe('설정')
-    // A documentless Node shows no tabs and leaves the selection alone.
+    // A documentless Node keeps four tabs and the selected settings state.
     await w.setProps({ selection: SELECTIONS.graphGate })
     await w.setProps({ selection: SELECTIONS.v01 })
     expect(activeTabLabel(w)).toBe('설정')
     await w.setProps({ selection: SELECTIONS.graph })
-    expect(activeTabLabel(w)).toBe('문서')
+    expect(activeTabLabel(w)).toBe('설정')
+    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
     await w.setProps({ selection: SELECTIONS.v01 })
-    expect(activeTabLabel(w)).toBe('문서')
+    expect(activeTabLabel(w)).toBe('설정')
     await clickTab(w, 'Q&A (3)')
     await w.setProps({ selection: SELECTIONS.unassigned })
     expect(activeTabLabel(w)).toBe('Q&A (3)')
@@ -311,9 +312,9 @@ describe('DesignerInspector — registry layout', () => {
     ])
     COUNT_TARGETS.length = 0
     const w = mountFrame({ selection: SELECTIONS.v01 }, counted)
-    expect(tabLabels(w)).toEqual(['문서', 'Q&A (3)'])
+    expect(tabLabels(w)).toEqual(['문서', 'Q&A (3)', '첨부', '설정'])
     await w.setProps({ selection: SELECTIONS.graph })
-    expect(tabLabels(w)).toEqual(['문서'])
+    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
     expect(COUNT_TARGETS).toContain('flowgate.v02.0048.0011-TR')
     expect(COUNT_TARGETS).not.toContain('flowgate.v02.0049.0007-TS')
   })

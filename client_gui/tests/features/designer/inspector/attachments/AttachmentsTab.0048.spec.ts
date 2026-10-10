@@ -736,10 +736,11 @@ describe('attachments tab in the Frame (real registry)', () => {
     expect(tabLabels(w)).toContain('첨부')
   })
 
-  it('a Node without a document has no attachments tab and reads nothing', async () => {
+  it('a Node without a document shows an empty attachments tab and reads nothing', async () => {
     const w = await mountFrame(SELECTIONS.v01NoDocument)
-    // flowgate.v02.0048 T#9: a v0.1 step not started yet keeps its settings tab (D#2 E3); no 첨부 tab.
-    expect(tabLabels(w).some((label) => label.startsWith('첨부'))).toBe(false)
+    expect(tabLabels(w)).toContain('첨부')
+    await openTab(w, '첨부')
+    expect(w.get('[data-test="designer-inspector-tab-state"]').attributes('data-state')).toBe('empty')
     expect(listCall).not.toHaveBeenCalled()
   })
 

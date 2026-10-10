@@ -1,0 +1,57 @@
+<template>
+  <!-- flowgate.v02.0051 — one v7 setting row (0035 base `.control-row`): a label on the left (with
+       an optional hover hint) and the control on the right. Display only; the control comes from the
+       caller (a Select, a segment, an input). -->
+  <div class="inspector-control-row" data-test="inspector-control-row" :data-label="label">
+    <span class="inspector-control-label" :title="hint ?? undefined">{{ label }}</span>
+    <span class="inspector-control-value"><slot /></span>
+  </div>
+</template>
+
+<script setup lang="ts">
+withDefaults(
+  defineProps<{
+    label: string
+    hint?: string | null
+  }>(),
+  { hint: null },
+)
+</script>
+
+<style scoped>
+.inspector-control-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  margin: 7px 0;
+  color: #94a8bd;
+  font-size: 12px;
+}
+
+.inspector-control-row:first-child {
+  margin-top: 0;
+}
+
+.inspector-control-row:last-child {
+  margin-bottom: 0;
+}
+
+.inspector-control-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-control-label[title] {
+  cursor: help;
+}
+
+.inspector-control-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+</style>

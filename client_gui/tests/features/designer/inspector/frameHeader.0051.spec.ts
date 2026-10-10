@@ -1,0 +1,213 @@
+/**
+ * flowgate.v02.0051 stage 2 — the Frame's two new header places and the header's v7 line: a registration
+ * may contribute the kind badge (`headerKind`, replacing the static one) and ⋯ menu items (`headerMenu`,
+ * after ID 복사); the three state texts sit in one pill group; a B root takes the bug look. Last, the real
+ * registry on Nodes without a document: a Graph gate and a Graph R Node no longer show the header only.
+ */
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { defineComponent, h } from 'vue'
+import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
+import { registrationViolations } from '@/features/designer/inspector/inspectorRegistry'
+import {
+  fixtureRegistry,
+  prepareInspectorI18n,
+  probePart,
+  registration,
+  registrationModules,
+  SELECTIONS,
+  selectionOf,
+  UNASSIGNED_GRAPH,
+  UNASSIGNED_REQ_NODE,
+} from './support/inspectorSupport'
+
+const i18n = prepareInspectorI18n()
+
+let wrapper: VueWrapper<any> | null = null
+
+beforeEach(() => {
+  i18n.global.locale.value = 'ko'
+})
+
+afterEach(() => {
+  wrapper?.unmount()
+  wrapper = null
+  document.body.innerHTML = ''
+})
+
+const get = (w: VueWrapper<any>, test: string) => w.get(`[data-test="${test}"]`)
+const tabLabels = (w: VueWrapper<any>) => w.findAll('[data-test="designer-inspector-tabs"] [role="tab"]').map((t) => t.text())
+const sections = (w: VueWrapper<any>) => w.findAll('[data-test="designer-inspector-section"]').map((s) => s.attributes('data-key'))
+
+async function clickTab(w: VueWrapper<any>, label: string) {
+  const tab = w.findAll('[data-test="designer-inspector-tabs"] [role="tab"]').find((t) => t.text() === label)
+  if (!tab) throw new Error(`no tab ${label}`)
+  await tab.trigger('click')
+  await flushPromises()
+}
+
+function mountFrame(selection: Parameters<typeof selectionOf>[0] | (typeof SELECTIONS)[keyof typeof SELECTIONS], registry?: ReturnType<typeof fixtureRegistry>) {
+  wrapper = mount(DesignerInspector, {
+    attachTo: document.body,
+    props: { selection: selection as never, ...(registry ? { registry } : {}) },
+    global: { plugins: [i18n] },
+  })
+  return wrapper
+}
+
+async function openMenu(w: VueWrapper<any>) {
+  await get(w, 'designer-inspector-more').trigger('click')
+  await flushPromises()
+  return [...document.body.querySelectorAll<HTMLElement>('.ui-dropdown-menu [role="menuitem"]')]
+}
+
+/** A ⋯ menu probe: one item naming its key and whether it got `close`. */
+const menuProbe = defineComponent({
+  props: { target: { type: Object, required: true }, close: { type: Function, required: false } },
+  setup: (props) => () => h('button', { type: 'button', role: 'menuitem', 'data-test': 'probe-menu', 'data-close': typeof props.close === 'function' ? 'yes' : 'no' }, 'probe'),
+})
+
+describe('registry contract (flowgate.v02.0051)', () => {
+  it('a registration may contribute only a header kind badge, or only ⋯ menu items', () => {
+    const modules = registrationModules([
+      registration({ key: 'kind', order: 1, requiresDocument: false, headerKind: probePart('kind') }),
+      registration({ key: 'menu', order: 2, requiresDocument: false, headerMenu: menuProbe }),
+    ])
+    expect(registrationViolations(modules)).toEqual([])
+  })
+
+  it('a registration contributing nothing names every place', () => {
+    expect(registrationViolations(registrationModules([registration({ key: 'none', order: 1 })]))).toEqual([
+      'features/none: contributes no tab, header action, header meta, header kind or header menu',
+    ])
+  })
+})
+
+describe('the Frame lays out the kind badge and the ⋯ menu items', () => {
+  const registry = fixtureRegistry([
+    registration({ key: 'kind', order: 1, requiresDocument: false, headerKind: probePart('kind') }),
+    registration({ key: 'kindToo', order: 2, requiresDocument: false, headerKind: probePart('kindToo') }),
+    registration({ key: 'menu', order: 3, requiresDocument: false, headerMenu: menuProbe }),
+    registration({ key: 'docs', order: 4, tab: { key: 'documents', component: probePart('documents') } }),
+  ])
+
+  it('the first applying headerKind replaces the static badge; headerMenu items follow ID 복사 with `close`', async () => {
+    const w = mountFrame(SELECTIONS.v01, registry)
+    const header = get(w, 'designer-inspector-header')
+    expect(header.find('[data-test="probe-kind"]').exists()).toBe(true)
+    expect(header.find('[data-test="probe-kindToo"]').exists()).toBe(false)
+    expect(header.find('[data-test="designer-inspector-kind"]').exists()).toBe(false)
+    const items = await openMenu(w)
+    expect(items.map((item) => item.getAttribute('data-test'))).toEqual(['designer-inspector-copy-id', 'probe-menu'])
+    expect(items[1].getAttribute('data-close')).toBe('yes')
+  })
+
+  it('without a headerKind the static badge stays', () => {
+    const w = mountFrame(SELECTIONS.v01, fixtureRegistry([registration({ key: 'docs', order: 4, tab: { key: 'documents', component: probePart('documents') } })]))
+    expect(get(w, 'designer-inspector-kind').text()).toBe('작업')
+  })
+})
+
+describe('the header line (flowgate.v02.0051 stage 2)', () => {
+  const none = fixtureRegistry([])
+
+  it('the three state texts sit in one pill group that takes the Canvas state tone', () => {
+    const w = mountFrame(SELECTIONS.graph, none)
+    const pill = get(w, 'designer-inspector-pill')
+    expect(pill.classes()).toContain('inspector-header-pill--success')
+    expect(pill.find('[data-test="designer-inspector-doc-status"]').text()).toBe('승인됨')
+    expect(pill.find('[data-test="designer-inspector-run-status"]').text()).toBe('completed')
+    expect(pill.find('[data-test="designer-inspector-state"]').text()).toBe('완료')
+  })
+
+  it('a Node with no state at all has no pill', () => {
+    const node = { ...UNASSIGNED_REQ_NODE, id: 'gn_bare', state: null, document: null }
+    const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, nodes: [node] }, node.id), none)
+    expect(w.find('[data-test="designer-inspector-pill"]').exists()).toBe(false)
+    // The support gate has the Canvas state 'draft': the pill holds that state alone.
+    const gate = mountFrame(SELECTIONS.graphGate, none)
+    expect(gate.get('[data-test="designer-inspector-pill"]').text()).toBe('작성 중')
+  })
+
+  it('a B root: the 버그 name, the bug glyph and the red accent', () => {
+    const node = { ...UNASSIGNED_REQ_NODE, id: 'doc:b', docType: 'B', document: { ...UNASSIGNED_REQ_NODE.document!, docId: 'flowgate.v02.0050.0001-B', typeCode: 'B' } }
+    const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, nodes: [node] }, node.id), none)
+    expect(get(w, 'designer-inspector-kind').text()).toBe('버그')
+    expect((get(w, 'designer-inspector-header').element as HTMLElement).style.getPropertyValue('--inspector-kind-accent')).toBe('#ef4444')
+    w.unmount()
+    wrapper = null
+    i18n.global.locale.value = 'en'
+    expect(get(mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, nodes: [node] }, node.id), none), 'designer-inspector-kind').text()).toBe('Bug')
+  })
+})
+
+describe('the real registry on Nodes without a document', () => {
+  it('a Graph gate: the documents tab with the 확인 결과 line, ✓ 확인 / ✕ 반려 ▾ disabled in the header', async () => {
+    const w = mountFrame(SELECTIONS.graphGate)
+    await flushPromises()
+    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(sections(w)).toEqual(['gateCard'])
+    expect(get(w, 'inspector-gate-card').find('[data-test="inspector-slot-name"]').text()).toBe('확인 결과')
+    const confirm = get(w, 'designer-inspector-actions').get('[data-test="gate-confirm"]')
+    expect(confirm.attributes('disabled')).toBeDefined()
+  })
+
+  it('a Graph R Node without a document: the 요구사항 line and the AI 위임 settings, the static badge (no switch without a document)', async () => {
+    const node = { ...UNASSIGNED_REQ_NODE, id: 'gn_r', document: null }
+    const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'graph', nodes: [node] }, node.id))
+    await flushPromises()
+    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(sections(w)).toEqual(['requirementCard'])
+    expect(get(w, 'inspector-requirement-card').find('[data-test="inspector-slot-empty"]').text()).toBe('아직 없음')
+    expect(get(w, 'designer-inspector-kind').text()).toBe('요구사항')
+    await clickTab(w, '설정')
+    expect(sections(w)).toEqual(['requirementSettings'])
+    expect(get(w, 'inspector-requirement-settings').attributes('data-delegation')).toBe('off')
+  })
+
+  it('a Graph research Node without a document: both lines empty and the run-card ⋯ items disabled', async () => {
+    const node = { ...UNASSIGNED_REQ_NODE, id: 'gn_n', kind: 'research', docType: 'N', document: null }
+    const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'graph', nodes: [node] }, node.id))
+    await flushPromises()
+    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(sections(w)).toEqual(['researchCard'])
+    const items = await openMenu(w)
+    expect(items.map((item) => item.textContent?.trim())).toEqual(['ID 복사', '실행 이력', '■ 중단', '↻ 재실행'])
+    expect(items.slice(1).every((item) => (item as HTMLButtonElement).disabled)).toBe(true)
+  })
+})
+
+describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
+  it('keeps v7 tabs and a card result line on a documentless Graph gate', async () => {
+    const w = mountFrame(SELECTIONS.graphGate)
+    await flushPromises()
+    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(get(w, 'inspector-gate-card').find('[data-test="inspector-slot-name"]').text()).toBe('확인 결과')
+    await clickTab(w, 'Q&A')
+    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
+    expect(get(w, 'designer-inspector-tab-state').text()).toContain('연결된 문서가 없습니다.')
+    await clickTab(w, '첨부')
+    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
+    await clickTab(w, '설정')
+    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
+  })
+
+  it('places card slots first and keeps existing document details in a disclosure', async () => {
+    const w = mountFrame(SELECTIONS.v01)
+    await flushPromises()
+    expect(sections(w)).toContain('taskCard')
+    expect(sections(w)).toContain('documents')
+    const details = get(w, 'designer-inspector-details')
+    expect(details.element.tagName).toBe('DETAILS')
+    expect(details.attributes('open')).toBeUndefined()
+    expect(details.find('summary').text()).toBe('현재 문서')
+  })
+
+  it('shows unavailable settings for a Graph research card without a settings contribution', async () => {
+    const node = { ...UNASSIGNED_REQ_NODE, id: 'gn_n_layout', kind: 'research', docType: 'N', document: null }
+    const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'graph', nodes: [node] }, node.id))
+    await clickTab(w, '설정')
+    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
+    expect(get(w, 'designer-inspector-tab-state').text()).toContain('이 카드의 설정은 아직 연결되지 않았습니다.')
+  })
+})

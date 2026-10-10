@@ -156,8 +156,15 @@ const WINDOW_OPEN = /\b(?:window|globalThis|self)\s*\.\s*open\s*\(/g
 const FEATURES_LITERAL = /^'([^'\\]*)'$|^"([^"\\]*)"$|^`([^`\\$]*)`$/
 const NOOPENER_ON = /^noopener(?:=(?:yes|true|0*[1-9]\d*))?$/i
 
-/** B14 — undecided features (D#1 §8.4) must not be registered or worded. */
+/**
+ * B14 — undecided features (D#1 §8.4). flowgate.v02.0051 (turn 7): an undecided item may be named and
+ * drawn — disabled, as the v7 screen shows it (0051-R §2.3) — but never operated: no feature file calls a
+ * function, or wires a template handler, named after one. Comments are not source here.
+ */
 const UNDECIDED_MARKER = /expand|delegat|memo|ai_delivery|tsc/i
+const UNDECIDED_CALL = /(?<!function\s)(?<!\.)\b([A-Za-z_$][\w$]*)\s*\(/g
+const UNDECIDED_HANDLER = /@(?:click|submit|change|input|keydown|keyup|update:[\w-]+)(?:\.[\w.]+)*="\s*([A-Za-z_$][\w$.]*)\s*"/g
+const COMMENTS = /\/\*[\s\S]*?\*\/|<!--[\s\S]*?-->|(^|[^:'"`])\/\/[^\n]*/g
 
 // --- Checks ----------------------------------------------------------------------------------------
 
@@ -365,7 +372,7 @@ const keyPaths = (value: unknown, prefix = ''): string[] =>
     ? Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => [`${prefix}${key}`, ...keyPaths(child, `${prefix}${key}.`)])
     : []
 
-/** B4 / B5 (registry contract), B12 (same keys in ko / en / ja), B14 (undecided markers). */
+/** B4 / B5 (registry contract), B12 (same keys in ko / en / ja). */
 function registryViolations(modules: Record<string, unknown>): string[] {
   const out = loadedRegistry().registrationViolations(modules).map((line) => `B4/B5 ${line}`)
   for (const [path, module] of Object.entries(modules)) {
@@ -378,12 +385,24 @@ function registryViolations(modules: Record<string, unknown>): string[] {
       const other = keyPaths(messages[locale]).sort()
       if (JSON.stringify(other) !== JSON.stringify(ko)) out.push(`B12 features/${folder}: ${locale} keys differ from ko`)
     }
-    if (UNDECIDED_MARKER.test(String(entry.key))) out.push(`B14 features/${folder}: key '${String(entry.key)}' names an undecided feature`)
-    for (const path of new Set(['ko', 'en', 'ja'].flatMap((locale) => keyPaths(messages[locale])))) {
-      if (UNDECIDED_MARKER.test(path.split('.').pop() ?? '')) out.push(`B14 features/${folder}: message key '${path}' names an undecided feature`)
-    }
   }
   return out
+}
+
+/** B14 — every feature file of an Inspector root: no call or template handler named after an undecided feature. */
+function undecidedViolations(root: string): string[] {
+  const out = new Set<string>()
+  for (const key of featureFolders(root)) {
+    const dir = join(root, 'features', key)
+    for (const name of list(dir)) {
+      if (isDir(join(dir, name)) || !/\.(ts|vue)$/.test(name)) continue
+      const label = `features/${key}/${name}`
+      const src = read(join(dir, name)).replace(COMMENTS, '$1')
+      for (const call of src.matchAll(UNDECIDED_CALL)) if (UNDECIDED_MARKER.test(call[1])) out.add(`B14 ${label}: calls '${call[1]}('`)
+      for (const handler of src.matchAll(UNDECIDED_HANDLER)) if (UNDECIDED_MARKER.test(handler[1])) out.add(`B14 ${label}: handler '${handler[1]}'`)
+    }
+  }
+  return [...out]
 }
 
 const codes = (violations: string[]) => [...new Set(violations.map((line) => line.split(' ')[0]))].sort()
@@ -406,8 +425,12 @@ describe('features/designer/inspector structure (flowgate.v02.0048)', () => {
     expect(featureViolations(INSPECTOR, key)).toEqual([])
   })
 
-  it('B4 / B5 / B12 / B14: the registrations keep the contract, the three locales and no undecided feature', () => {
+  it('B4 / B5 / B12: the registrations keep the contract and the three locales', () => {
     expect(registryViolations(REAL_MODULES)).toEqual([])
+  })
+
+  it('B14: an undecided feature may be named and drawn, but no feature file calls or wires an operation named after one', () => {
+    expect(undecidedViolations(INSPECTOR)).toEqual([])
   })
 
   it('B10: the Designer imports features/document only through @/features/document', () => {
@@ -513,7 +536,7 @@ describe('structure.0048 checks catch boundary violations (fixtures/structure004
     }
   })
 
-  it('the registry fixture fails on key, order, value sets, locales and undecided markers', () => {
+  it('the registry fixture fails on key, order, value sets and locales — not on naming an undecided feature', () => {
     const violations = registryViolations(REGISTRY_FIXTURE)
     expect(violations).toEqual(
       expect.arrayContaining([
@@ -523,10 +546,16 @@ describe('structure.0048 checks catch boundary violations (fixtures/structure004
         "B4/B5 features/three: ownerships has unknown value 'legacy'",
         "B4/B5 features/three: docTypes 'WP' is not a type of cardKinds [test]",
         'B12 features/one: ja keys differ from ko',
-        "B14 features/one: message key 'memo' names an undecided feature",
-        "B14 features/tscRunner: key 'tscRunner' names an undecided feature",
       ]),
     )
-    expect(codes(violations)).toEqual(['B12', 'B14', 'B4/B5'])
+    expect(codes(violations)).toEqual(['B12', 'B4/B5'])
+  })
+
+  it('the registry fixture: a call or a template handler named after an undecided feature is a B14 violation; naming it is not', () => {
+    expect(undecidedViolations(join(FIXTURES, 'registry')).sort()).toEqual([
+      "B14 features/one/useOne.ts: calls 'memoSave('",
+      "B14 features/tscRunner/TscRunnerTab.vue: handler 'startTsc'",
+      "B14 features/tscRunner/useTscRunner.ts: calls 'tscRun('",
+    ])
   })
 })

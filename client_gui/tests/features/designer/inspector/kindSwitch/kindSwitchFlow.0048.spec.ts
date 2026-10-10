@@ -262,9 +262,17 @@ async function activate(center: Center, flowId: string) {
 
 const find = (test: string) => wrapper!.find(`[data-test="${test}"]`)
 
-async function confirmSwitch() {
+/** flowgate.v02.0051 stage 2: the switch is the header 종류 배지 ▾ — open its menu, pick the other kind, then confirm. */
+async function pickOther() {
   await find('kind-switch-open').trigger('click')
   await flushPromises()
+  const to = find('kind-switch-open').attributes('data-to')
+  document.body.querySelector<HTMLButtonElement>(`[data-test="kind-switch-item-${to}"]`)?.click()
+  await flushPromises()
+}
+
+async function confirmSwitch() {
+  await pickOther()
   const [, submit] = [...document.body.querySelectorAll<HTMLButtonElement>('.ui-confirm-actions button')]
   submit.click()
   await flushPromises()
@@ -276,7 +284,7 @@ describe('unassigned Flow: the switch, the Canvas and the Inspector agree (D#2 �
     expect(canvasNodes(center)).toEqual([{ id: `doc:${ROOT_R}`, docType: 'R', docId: ROOT_R }])
     await select(center, `doc:${ROOT_R}`)
     expect(find('designer-inspector-title').text()).toBe('새 요구사항')
-    expect(find('kind-switch-open').text()).toBe('⇄ 버그(으)로 전환')
+    expect(find('kind-switch-open').text()).toBe('요구사항 ▾')
     expect(loadFlowCanvas).toHaveBeenCalledTimes(1)
 
     await confirmSwitch()
@@ -299,7 +307,7 @@ describe('unassigned Flow: the switch, the Canvas and the Inspector agree (D#2 �
     expect(detailRead).toHaveBeenCalledWith(ROOT_B)
     expect(documentRead).not.toHaveBeenCalledWith(ROOT_R)
     expect(find('kind-switch-open').attributes('data-to')).toBe('R')
-    expect(find('kind-switch-open').text()).toBe('⇄ 요구사항(으)로 전환')
+    expect(find('kind-switch-open').text()).toBe('버그 ▾')
 
     await confirmSwitch()
     expect(convertCall).toHaveBeenLastCalledWith(ROOT_B, 'R')
@@ -354,8 +362,7 @@ describe('a stale Canvas: the Flow became a Graph Flow meanwhile', () => {
     const { center, loadFlowCanvas } = await openFlow()
     await select(center, `doc:${ROOT_R}`)
     server.ownership = 'graph'
-    await find('kind-switch-open').trigger('click')
-    await flushPromises()
+    await pickOther()
     const [, submit] = [...document.body.querySelectorAll<HTMLButtonElement>('.ui-confirm-actions button')]
     submit.click()
     // The refusal is read before the Canvas answer moves the selection.

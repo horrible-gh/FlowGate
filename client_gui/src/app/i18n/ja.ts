@@ -294,8 +294,67 @@ export default {
       pane: {
         loading: '読み込み中…',
         empty: '表示する内容がありません。',
+        no_document: '関連付けられた文書がありません。',
+        no_settings: 'このカードの設定はまだ接続されていません。',
         error: '読み込めませんでした。',
         retry: '再試行',
+        // flowgate.v02.0051 — a v7 item whose operation is not connected yet (shown, inactive).
+        disabled: 'まだ対応していない操作です。',
+      },
+      // flowgate.v02.0051 — the rest of the v7 header line, on every card.
+      header: {
+        read_only: '読み取り専用',
+        read_only_conflict: '所有権の競合 — 読み取り専用',
+        read_only_revision: 'リビジョン表示 — 読み取り専用',
+        memo: 'メモ',
+        memo_unavailable: 'メモ — まだ接続されていません',
+        more: 'その他',
+        copy_id: 'IDをコピー',
+        copied: 'IDをコピーしました',
+        kind_bug: 'バグ',
+      },
+      // flowgate.v02.0051 — common display parts (parts/): slot line, 🛡 review badge, origin badge,
+      // lock line, run settings block.
+      slot: {
+        empty: 'まだありません',
+        progress: '進捗',
+        open: '開く',
+        write: '作成',
+      },
+      review: {
+        pass: 'AIレビュー {n}回 · 残り指摘 {remain}',
+        warn: 'AIレビュー {n}回 · 対応が必要',
+        run: 'AIレビュー {n}回目 進行中',
+        limit: 'レビュー回数を使い切り · 残り指摘 {remain}',
+      },
+      origin: {
+        ai: '🤖 AI',
+        wp: '⇉ WP',
+        ai_title: 'AI委任が展開したNode',
+        wp_title: '人のWPが展開したNode',
+      },
+      lock: {
+        running: '実行中',
+      },
+      unconnected: 'まだ連携されていません',
+      slot_state: {
+        writing: '作成中',
+        closed: '完了',
+      },
+      menu: {
+        history: '実行履歴',
+        stop: '■ 中断',
+        rerun: '↻ 再実行',
+      },
+      run_settings: {
+        title: '実行設定',
+        advanced: '詳細',
+        run_ai: '実行AI',
+        restart: '再開',
+        review_ai: 'レビューAI',
+        review_count: 'レビュー回数',
+        time_limit: '実行制限時間',
+        review_basis: 'レビュー基準',
       },
     },
     // flowgate.v02.0038 — Designer top band (Header / Menu Bar / Toolbar). No shortcut text on

@@ -7,6 +7,9 @@
  * Canvas read again when the Flow moved under it, the guards (disposed, AI running) read through the real
  * hub, read-only views and a Node change. Last, the real registry puts the switch in the Frame header of an
  * unassigned R / B root only — never on v01, Graph or conflict Flows or on other cards.
+ * flowgate.v02.0051 stage 2: the switch is drawn as the v7 header 종류 배지 ▾ (headerKind) — the badge opens
+ * a menu, picking the other kind opens the same confirmation; a disabled switch carries its reason as the
+ * badge's hover text instead of a line.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -156,26 +159,43 @@ const B_NODE: FlowGraphNode = {
 const TARGET_B = targetOf(selectionOf({ ...UNASSIGNED_GRAPH, nodes: [B_NODE] }, B_NODE.id))
 
 const find = (test: string) => wrapper!.find(`[data-test="${test}"]`)
+/** flowgate.v02.0051 stage 2: the switch is the v7 header 종류 배지 ▾ — the badge opens a menu, the other kind opens the confirmation. */
 const openButton = () => find('kind-switch-open')
 const line = () => find('kind-switch-line')
 const confirmButtons = () => [...document.body.querySelectorAll<HTMLButtonElement>('.ui-confirm-actions button')]
 const confirmText = () => document.body.querySelector('.ui-confirm-message')?.textContent ?? ''
+const menuItem = (kind: 'R' | 'B') => document.body.querySelector<HTMLButtonElement>(`[data-test="kind-switch-item-${kind}"]`)
 
-async function confirmSwitch() {
+/** Opens the badge menu and picks the other kind: the confirmation opens (when the switch is usable). */
+async function pickOther() {
   await openButton().trigger('click')
   await flushPromises()
+  const to = openButton().attributes('data-to') as 'R' | 'B'
+  menuItem(to)?.click()
+  await flushPromises()
+}
+
+async function confirmSwitch() {
+  await pickOther()
   const [, submit] = confirmButtons()
   submit.click()
   await flushPromises()
 }
 
 describe('the switch button and its confirmation', () => {
-  it('an unassigned R root offers "⇄ 버그(으)로 전환" and reads its guards', async () => {
+  it('an unassigned R root shows the 요구사항 ▾ badge whose menu offers 버그, and reads its guards', async () => {
     await mountSwitch(TARGET_R)
-    expect(openButton().text()).toBe('⇄ 버그(으)로 전환')
+    expect(openButton().text()).toBe('요구사항 ▾')
     expect(openButton().attributes('data-to')).toBe('B')
     expect(openButton().attributes('disabled')).toBeUndefined()
-    expect(openButton().attributes('title')).toBe('요구사항 문서를 버그 문서로 바꿉니다. 문서 번호가 바뀝니다.')
+    expect(openButton().attributes('title')).toBe('종류 전환: 그룹의 첫 실행 전까지')
+    await openButton().trigger('click')
+    await flushPromises()
+    expect(menuItem('R')?.getAttribute('aria-checked')).toBe('true')
+    expect(menuItem('B')?.textContent?.trim()).toBe('🐞버그')
+    menuItem('R')!.click()
+    await flushPromises()
+    expect(confirmButtons()).toEqual([])
     expect(documentRead).toHaveBeenCalledWith(ROOT_R)
     expect(activityRead).toHaveBeenCalledWith(FLOW)
     expect(line().exists()).toBe(false)
@@ -184,14 +204,13 @@ describe('the switch button and its confirmation', () => {
   it('a B root offers the way back', async () => {
     docs.set(ROOT_B, { typeCode: 'B', disposed: false })
     await mountSwitch(TARGET_B)
-    expect(openButton().text()).toBe('⇄ 요구사항(으)로 전환')
+    expect(openButton().text()).toBe('버그 ▾')
     expect(openButton().attributes('data-to')).toBe('R')
   })
 
-  it('the click asks first; cancel sends nothing', async () => {
+  it('picking the other kind asks first; cancel sends nothing', async () => {
     await mountSwitch(TARGET_R)
-    await openButton().trigger('click')
-    await flushPromises()
+    await pickOther()
     expect(confirmText()).toBe('요구사항 문서를 버그 문서로 바꿉니다. 문서 번호(0001-R → 0001-B)가 바뀌고, Canvas를 다시 읽은 뒤 선택이 풀립니다.')
     const [cancel, submit] = confirmButtons()
     expect([cancel.textContent?.trim(), submit.textContent?.trim()]).toEqual(['취소', '전환'])
@@ -205,11 +224,11 @@ describe('the switch button and its confirmation', () => {
   it('en / ja strings', async () => {
     i18n.global.locale.value = 'en'
     await mountSwitch(TARGET_R)
-    expect(openButton().text()).toBe('⇄ Switch to Bug')
+    expect(openButton().text()).toBe('Requirement ▾')
     wrapper!.unmount()
     i18n.global.locale.value = 'ja'
     await mountSwitch(TARGET_R)
-    expect(openButton().text()).toBe('⇄ バグに切り替え')
+    expect(openButton().text()).toBe('要件 ▾')
   })
 })
 
@@ -243,7 +262,7 @@ describe('a switch (D#2 §3.4)', () => {
     await wrapper!.setProps({ target: TARGET_B })
     await flushPromises()
     expect(line().exists()).toBe(false)
-    expect(openButton().text()).toBe('⇄ 요구사항(으)로 전환')
+    expect(openButton().text()).toBe('버그 ▾')
     expect(openButton().attributes('disabled')).toBeUndefined()
     expect(documentRead).toHaveBeenLastCalledWith(ROOT_B)
 
@@ -307,8 +326,7 @@ describe('refusals: a reason, the state read again, the Canvas too when the Flow
     refusal = networkError()
     await confirmSwitch()
     expect(line().attributes('data-kind')).toBe('failure')
-    await openButton().trigger('click')
-    await flushPromises()
+    await pickOther()
     expect(line().exists()).toBe(false)
     confirmButtons()[1].click()
     await flushPromises()
@@ -333,8 +351,8 @@ describe('guards and events', () => {
     docs.get(ROOT_R)!.disposed = true
     await mountSwitch(TARGET_R)
     expect(openButton().attributes('disabled')).toBeDefined()
-    expect(line().attributes('data-kind')).toBe('reason')
-    expect(line().text()).toBe('폐기된 그룹이라 바꿀 수 없습니다.')
+    expect(openButton().attributes('title')).toBe('폐기된 그룹이라 바꿀 수 없습니다.')
+    expect(line().exists()).toBe(false)
     await openButton().trigger('click')
     await flushPromises()
     expect(confirmButtons()).toEqual([])
@@ -346,16 +364,16 @@ describe('guards and events', () => {
     running = true
     await mountSwitch(TARGET_R)
     stream.open()
-    expect(line().text()).toBe('AI 실행 중이라 바꿀 수 없습니다.')
+    expect(openButton().attributes('title')).toBe('AI 실행 중이라 바꿀 수 없습니다.')
     running = false
     stream.emit('ai_invoke_finished', { groupId: 'flowgate.v02.9999' })
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
     await flushPromises()
-    expect(line().text()).toBe('AI 실행 중이라 바꿀 수 없습니다.')
+    expect(openButton().attributes('title')).toBe('AI 실행 중이라 바꿀 수 없습니다.')
     stream.emit('ai_invoke_finished', { groupId: FLOW })
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
     await flushPromises()
-    expect(line().exists()).toBe(false)
+    expect(openButton().attributes('title')).toBe('종류 전환: 그룹의 첫 실행 전까지')
     expect(openButton().attributes('disabled')).toBeUndefined()
   })
 
@@ -367,7 +385,7 @@ describe('guards and events', () => {
     stream.emit('document_explorer_refresh', { docId: ROOT_R, groupId: FLOW })
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
     await flushPromises()
-    expect(line().text()).toBe('폐기된 그룹이라 바꿀 수 없습니다.')
+    expect(openButton().attributes('title')).toBe('폐기된 그룹이라 바꿀 수 없습니다.')
   })
 
   it('an unanswered guard read does not block (the server refuses in the same states)', async () => {
@@ -381,7 +399,7 @@ describe('guards and events', () => {
     const target = { ...TARGET_R, viewMode: 'revision', readOnly: 'revision' as const }
     await mountSwitch(target)
     expect(openButton().attributes('disabled')).toBeDefined()
-    expect(line().text()).toBe('Graph revision 보기에서는 바꿀 수 없습니다. draft 보기로 옮기세요.')
+    expect(openButton().attributes('title')).toBe('Graph revision 보기에서는 바꿀 수 없습니다. draft 보기로 옮기세요.')
   })
 
   it.each([
@@ -407,10 +425,12 @@ const rootOn = (graph: Pick<FlowGraph, 'ownership' | 'viewMode'>, node: FlowGrap
   selectionOf({ ...UNASSIGNED_GRAPH, ...graph, nodes: [node] }, node.id)
 
 describe('in the Frame (real registry)', () => {
-  it('an unassigned R root has the switch in its header actions', async () => {
+  it('an unassigned R root has the switch as its header kind badge (flowgate.v02.0051: headerKind)', async () => {
     await mountFrame(SELECTIONS.unassigned)
-    expect(wrapper!.get('[data-test="designer-inspector-actions"]').find('[data-test="inspector-kind-switch"]').exists()).toBe(true)
-    expect(find('kind-switch-open').text()).toBe('⇄ 버그(으)로 전환')
+    expect(wrapper!.get('[data-test="designer-inspector-header"]').find('[data-test="inspector-kind-switch"]').exists()).toBe(true)
+    expect(find('kind-switch-open').text()).toBe('요구사항 ▾')
+    // The static badge gives way to the switch.
+    expect(wrapper!.findAll('[data-test="designer-inspector-kind"]')).toHaveLength(0)
   })
 
   it('a host intent leaves the Frame as its `host` event', async () => {
@@ -441,6 +461,6 @@ describe('in the Frame (real registry)', () => {
   it('a B root on an unassigned Flow offers the way back', async () => {
     docs.set(ROOT_B, { typeCode: 'B', disposed: false })
     await mountFrame(rootOn({ ownership: 'unassigned', viewMode: 'draft' }, B_NODE))
-    expect(find('kind-switch-open').text()).toBe('⇄ 요구사항(으)로 전환')
+    expect(find('kind-switch-open').text()).toBe('버그 ▾')
   })
 })

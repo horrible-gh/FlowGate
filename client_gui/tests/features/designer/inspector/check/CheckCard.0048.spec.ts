@@ -219,8 +219,9 @@ describe('check section — state shown (flowgate.v02.0048 T#12)', () => {
     expect(el(w, 'check-git').attributes('data-tone')).toBe('warning')
     expect(el(w, 'check-git-branch').text()).toBe('브랜치 test2_default_0034')
     expect(w.findAll('[data-test="check-git-note"]').map((note) => note.text())).toEqual(['본 브랜치보다 2커밋 앞서고 0커밋 뒤처져 있습니다'])
-    expect(el(w, 'check-open-git').text()).toBe('Git 패널 열기')
-    expect(el(w, 'check-open').text()).toBe('↗ 열기')
+    // flowgate.v02.0051 stage 2: both are the 확인 결과 slot line's buttons (v7 "{nav} ↗" and ↗).
+    expect(el(w, 'check-open-git').text()).toBe('Git 패널 열기 ↗')
+    expect(el(w, 'check-open').text()).toBe('↗')
     expect(documentRead).toHaveBeenCalledWith(AC_DOC)
     expect(gitRead).toHaveBeenCalledWith(FLOW)
     expect(activityRead).toHaveBeenCalledWith(FLOW)
@@ -805,6 +806,9 @@ describe('check card in the Frame (real registry)', () => {
     acs.get(AC_DOC)!.status = status
     const w = await mountFrame(acSelection({}, { ...AC_NODE, document: { ...AC_NODE.document!, docReviewStatus: status } }))
     const text = w.text()
-    for (const word of ['게이트', 'gate', '위임', '전개', '메모', 'AI 전달', '재시도', '마지막 확인', '연동 전']) expect(text).not.toContain(word)
+    // flowgate.v02.0051: the v7 header's ✎ 메모 is on every card as a disabled control (no memo API yet,
+    // 0051-R §2.3) — shown, never working; the undecided wording stays out of the check card itself.
+    for (const word of ['게이트', 'gate', '위임', '전개', 'AI 전달', '재시도', '마지막 확인', '연동 전']) expect(text).not.toContain(word)
+    expect(w.get('[data-test="designer-inspector-memo"]').attributes('disabled')).toBeDefined()
   })
 })
