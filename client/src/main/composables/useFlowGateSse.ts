@@ -808,6 +808,29 @@ export function useFlowGateSse(refreshAll: (epoch: number | null) => void) {
       } catch { /* ignore parse errors */ }
     })
 
+    // 0661 T0004 F3/F5: the automatic Q responder left an item open — technical failure or
+    // an explicit hand-off to the user. Toast the fact (the kind tells them apart) and ask
+    // the Q&A panel to re-read the item's durable `responder` block.
+    on('qna_responder_state_changed', (e: Event) => {
+      try {
+        const data = JSON.parse((e as MessageEvent).data)
+        const payload = data.payload ?? {}
+        const docId = payload.doc_id ?? data.doc_id ?? ''
+        const isDecision = payload.state === 'user_decision'
+        showToast(
+          t(isDecision
+            ? 'main.notifications.q_user_decision_required'
+            : 'main.notifications.q_responder_failed', { doc: docId, code: payload.error_code ?? '' }),
+          isDecision ? 'info' : 'error',
+        )
+        if (typeof window !== 'undefined' && docId) {
+          const detail = { doc_id: docId, project: data.project ?? payload.project_id ?? null }
+          window.dispatchEvent(new CustomEvent('fg:qa_refresh', { detail }))
+        }
+        invalidateAndRefresh(data.project ?? payload.project_id)
+      } catch { /* ignore parse errors */ }
+    })
+
     on('doc_review_status_changed', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)

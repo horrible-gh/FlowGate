@@ -40,6 +40,31 @@
       </div>
     </div>
 
+    <!-- Scratch retention -->
+    <div class="card mb-4" data-test="scratch-ttl-card">
+      <div class="card-hd">
+        <span class="card-title"><AppIcon name="clock" style="color:var(--primary);" /> {{ $t('settings.system.scratch_ttl.label') }}</span>
+      </div>
+      <div class="card-bd pad">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="scratch-ttl-value">{{ $t('settings.system.scratch_ttl.value') }}</label>
+            <input id="scratch-ttl-value" type="number" class="form-ctrl" v-model="scratchTtlValue" min="1" step="1" data-test="scratch-ttl-value">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="scratch-ttl-unit">{{ $t('settings.system.scratch_ttl.unit') }}</label>
+            <select id="scratch-ttl-unit" class="form-ctrl" v-model="scratchTtlUnit" data-test="scratch-ttl-unit">
+              <option value="minute">{{ $t('settings.system.scratch_ttl.minute') }}</option>
+              <option value="hour">{{ $t('settings.system.scratch_ttl.hour') }}</option>
+              <option value="day">{{ $t('settings.system.scratch_ttl.day') }}</option>
+            </select>
+          </div>
+        </div>
+        <p class="form-hint">{{ $t('settings.system.scratch_ttl.hint') }}</p>
+        <p v-if="scratchTtlError" class="form-hint" role="alert">{{ $t('settings.system.scratch_ttl.invalid') }}</p>
+      </div>
+    </div>
+
     <!-- Source mode -->
     <div class="card mb-4">
       <div class="card-hd">
@@ -177,7 +202,7 @@
     <!-- Save -->
     <div class="flex" style="justify-content:flex-end; gap:10px;">
       <button class="btn btn-secondary" @click="resetSettings"><AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}</button>
-      <button class="btn btn-primary" @click="saveAll"><AppIcon name="floppy-disk" /> {{ $t('common.save') }}</button>
+      <button class="btn btn-primary" data-test="system-settings-save" @click="saveAll"><AppIcon name="floppy-disk" /> {{ $t('common.save') }}</button>
     </div>
 
     <!-- Storage path change confirmation modal -->
@@ -226,6 +251,9 @@ const storageInput = ref('');
 const showStorageConfirm = ref(false);
 const pendingSystemPatch = ref(null);
 const logRetention = ref(30);
+const scratchTtlValue = ref('7');
+const scratchTtlUnit = ref('day');
+const scratchTtlError = ref(false);
 const logLevel = ref('INFO');
 const logLevels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'];
 const fileLogEnabled = ref(true);
@@ -251,6 +279,9 @@ onMounted(async () => {
 function applySystemSettingsToForm() {
   storageInput.value = s.systemSettings.storage_root ?? '';
   logRetention.value = s.systemSettings.log_retention_days ?? 30;
+  scratchTtlValue.value = String(s.systemSettings.scratch_ttl_value ?? '7');
+  scratchTtlUnit.value = s.systemSettings.scratch_ttl_unit ?? 'day';
+  scratchTtlError.value = false;
   logLevel.value = s.systemSettings.log_level ?? 'INFO';
   fileLogEnabled.value = s.systemSettings.file_log !== 'false';
   auditEnabled.value = s.systemSettings.audit !== 'false';
@@ -318,6 +349,8 @@ async function openStorageBrowser() {
 function buildSystemPatch() {
   return {
     log_retention_days: String(logRetention.value),
+    scratch_ttl_value: String(scratchTtlValue.value),
+    scratch_ttl_unit: scratchTtlUnit.value,
     log_level: logLevel.value,
     file_log: fileLogEnabled.value ? 'true' : 'false',
     audit: auditEnabled.value ? 'true' : 'false',
@@ -332,6 +365,8 @@ function buildSystemPatch() {
 }
 
 async function saveAll() {
+  scratchTtlError.value = !/^[1-9]\d*$/.test(scratchTtlValue.value) || !['minute', 'hour', 'day'].includes(scratchTtlUnit.value);
+  if (scratchTtlError.value) return;
   const patch = buildSystemPatch();
   const trimmed = storageInput.value.trim();
   if (trimmed && trimmed !== s.systemSettings.storage_root) {

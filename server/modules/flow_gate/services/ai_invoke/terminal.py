@@ -164,7 +164,9 @@ def claim_abandon(run: dict) -> bool:
     """Race recovery against successor gate OPEN with no external I/O in the lock."""
     lock = run.setdefault("_terminal_lock", threading.RLock())
     with lock:
-        if run.get("_handoff_succeeded"):
+        # 0504 F4: a gate that completed the chain already cleared its intent and released
+        # its lease (review._settle_gate_pass); there is nothing left to abandon or park.
+        if run.get("_handoff_succeeded") or run.get("_chain_completed"):
             return False
         run["_terminal_abandoned"] = True
         return True

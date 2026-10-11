@@ -112,6 +112,27 @@ describe('AiInvokeMiniplayer', () => {
     wrapper.unmount()
   })
 
+  it('shows one card and badge for successive runs in the same group', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0418'
+    store.trackStarted({ run_id: 'run-27', group_id: groupId, doc_ref: '0027-TR' })
+    store.trackFinished({ run_id: 'run-27', group_id: groupId, outcome: 'complete' })
+    store.trackStarted({ run_id: 'run-28', group_id: groupId, doc_ref: '0028-TR' })
+    await openPopover(wrapper)
+
+    expect(wrapper.findAll('.aiv-mini__card')).toHaveLength(1)
+    expect(wrapper.find('.aiv-mini__card').text()).toContain('0028-TR')
+    expect(wrapper.find('[data-test="ai-miniplayer-chip-badge"]').text()).toBe('1')
+    expect(store.finishedCount).toBe(0)
+
+    store.trackFinished({ run_id: 'run-28', group_id: groupId, outcome: 'complete' })
+    await flushPromises()
+    expect(wrapper.findAll('.aiv-mini__card')).toHaveLength(1)
+    expect(store.finishedCount).toBe(1)
+    wrapper.unmount()
+  })
+
   it('toggles the popover from the chip and closes on Escape', async () => {
     const wrapper = mountPlayer()
     await flushPromises()

@@ -141,6 +141,11 @@ def env(monkeypatch):
     monkeypatch.setattr(svc, "has_active_run", lambda _g: False)
     monkeypatch.setattr(svc, "get_active_status", lambda _g: {"run_id": "aiv_1"})
     monkeypatch.setattr(svc, "request_auto_resume", lambda *a, **kw: None)
+    # 0688 T#2: the inbox asks whether the submitting hop left a question of its own open, and
+    # a probe that cannot read the questions keeps the document unapproved. This rig has no questions table;
+    # its hops ask nothing.
+    from modules.flow_gate.services.ai_invoke import finalize
+    monkeypatch.setattr(finalize, "open_questions_raised_by_run", lambda _g, _r: [])
     return rig
 
 

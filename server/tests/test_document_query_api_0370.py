@@ -699,11 +699,7 @@ def test_inbox_edit_response_carries_the_change_summary(tmp_path, storage_root):
             patch.object(git_service, "worktree_untracked_summary", return_value={
                 "total_count": 3, "excluded_artifact_count": 2,
                 "staged_new_file_count": 1,
-            }), \
-            patch.object(
-                inbox_routes.step_verification_service, "evaluate",
-                return_value={"verdict": "pass", "codes": []},
-            ):
+            }):
         app = FastAPI()
         app.include_router(inbox_routes.router)
         resp = TestClient(app).post(
@@ -769,11 +765,7 @@ def test_inbox_edit_summary_failure_does_not_fail_the_save(tmp_path, storage_roo
     with patch("modules.flow_gate.rbac.permission_service.has_permission", return_value=True), \
             patch.object(token_service, "verify", return_value=token_rec), \
             patch.object(token_service, "consume", return_value=None), \
-            patch.object(change_summary_service, "build", _boom), \
-            patch.object(
-                inbox_routes.step_verification_service, "evaluate",
-                return_value={"verdict": "pass", "codes": []},
-            ):
+            patch.object(change_summary_service, "build", _boom):
         app = FastAPI()
         app.include_router(inbox_routes.router)
         resp = TestClient(app).post(

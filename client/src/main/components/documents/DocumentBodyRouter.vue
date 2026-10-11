@@ -102,6 +102,12 @@
     @bind-text-viewer="emit('bind-text-viewer', $event)"
   />
   <TrSelfCheckPanel v-if="tab.type === 'md' && tab.typeCode === 'TR'" :tab="tab" />
+  <!-- 0638 T#2: before its TR exists, a TR(new) worker's Self-check runs belong to the group,
+       not to any document; the instruction (T) screen is where that work is followed. -->
+  <TrSelfCheckDraftPanel
+    v-else-if="tab.type === 'md' && tab.typeCode === 'T'"
+    :group-id="tab.id.split('.').slice(0, -1).join('.')"
+  />
 </template>
 
 <script setup lang="ts">
@@ -114,6 +120,7 @@ import GenericDocumentBody from './GenericDocumentBody.vue'
 import QuestionDocumentBody from './QuestionDocumentBody.vue'
 import TestDocumentBody from './TestDocumentBody.vue'
 import Tr2DocumentBody from './Tr2DocumentBody.vue'
+import TrSelfCheckDraftPanel from './TrSelfCheckDraftPanel.vue'
 import TrSelfCheckPanel from './TrSelfCheckPanel.vue'
 
 defineProps<{

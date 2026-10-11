@@ -50,10 +50,6 @@ SCANNED_ROOTS = ["modules", "templates", "flowgate"]
 # all in a file with none today fails the census the moment it appears. An existing
 # file's cap is exactly its measured count; one more line above that is new Korean.
 FILE_LINE_CAPS: dict[str, int] = {
-    # 21 -> 45, 2 -> 13, 61 -> 70: flowgate.default.0467 T0002 added the [단계별 확인]
-    # required-section gate (step_verification_service, wired into both inbox handlers'
-    # Step 5.71) plus its ko notice/comment text — product copy and design-rationale
-    # comments, not the kind of stray Korean this census exists to catch.
     "modules/flow_gate/api/inbox_routes.py": 45,
     # 5 -> 7: flowgate.default.0481 T0008 added the merge review gate's [자동]
     # checkbox wiring (record_auto_authority called from the [AI 호출] start path) —
@@ -193,9 +189,6 @@ FILE_LINE_CAPS: dict[str, int] = {
     "modules/flow_gate/services/mention_service.py": 176,
     "modules/flow_gate/services/q_answer_invoke_service.py": 24,
     "modules/flow_gate/services/remote_tool_service.py": 14,
-    # New file (flowgate.default.0467 T0002) — mirrors tr_scope_service.py's shape
-    # (required-section parser + ko/en notice text), so a comparable line count.
-    "modules/flow_gate/services/step_verification_service.py": 49,
     "modules/flow_gate/services/test_run_service.py": 28,
     # 45 -> 97. Measured, split into its two causes: 55 lines were already there before
     # 0523 touched this file (drift merged in by other groups, the same untracked-by-this-

@@ -51,11 +51,15 @@ def _stub_token_io(monkeypatch):
     """Stub the filesystem / event side effects of token_service.issue."""
     from pathlib import Path
     from modules.flow_gate.services import token_service
+    from contextlib import nullcontext
     monkeypatch.setattr(token_service, "_scratch_dir", lambda *a, **k: Path("."))
     monkeypatch.setattr(token_service, "to_storage_relative", lambda *a, **k: ".")
     monkeypatch.setattr(token_service, "_active_pepper", lambda: ("p1", "pepper"))
     monkeypatch.setattr(token_service, "_next_token_id", lambda: "tok_test")
     monkeypatch.setattr(token_service.db_events, "create", lambda *a, **k: None)
+    monkeypatch.setattr(token_service.token_scratch, "create", lambda *a, **k: None)
+    monkeypatch.setattr(token_service.token_scratch, "sweep_on_issue", lambda *a, **k: None)
+    monkeypatch.setattr(token_service, "get_store", lambda: type("Store", (), {"transaction": lambda self: nullcontext()})())
 
 
 def test_issue_passes_continuation_locale_to_create(monkeypatch):

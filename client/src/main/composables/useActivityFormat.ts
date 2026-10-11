@@ -23,6 +23,10 @@ const ACTIVITY_COLORS: Record<string, string> = {
   // fell back to the default slate dot (no entry here) alongside its missing i18n label. Red pairs
   // it with the emerald completion dot the same way test_run_repair_exhausted pairs with its amber retry.
   continuous_work_failed: '#dc2626',
+  // flowgate.default.0661 T0004: the automatic Q responder needs a human — red for a
+  // technical failure (re-dispatch from the Q&A panel), violet for an explicit hand-off.
+  qna_responder_failed: '#dc2626',
+  qna_user_decision_required: '#7c3aed',
 }
 
 // R0001 group 0135 / N0008 (mockup 3): map an AI review verdict to a trust tone so a completed feed row

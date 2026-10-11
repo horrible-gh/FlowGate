@@ -8,6 +8,11 @@ class EventType(str, Enum):
     EDIT_MARKER_ADDED                     = "edit_marker_added"
     QNA_Q_REGISTERED                      = "qna_q_registered"   # D022 §3-3 Phase 3 added
     QNA_ANSWER_REGISTERED                 = "qna_answer_registered"
+    # flowgate.default.0661 T0004 (0003-NR F3/F5): the automatic Q responder changed state
+    # without registering an answer — a technical failure ('failed', with an error code) or
+    # an explicit hand-off to a human ('user_decision'). Refresh + toast signal; the Q&A
+    # panel re-reads the item's `responder` block rather than trusting the payload.
+    QNA_RESPONDER_STATE_CHANGED           = "qna_responder_state_changed"
     DOC_REVIEW_STATUS_CHANGED             = "doc_review_status_changed"  # M026 §8-1 Phase 5 added
     AI_REVIEW_ARRIVED                     = "ai_review_arrived"  # inbox action:review push — notify reviewers a verdict landed
     TEST_RUN_STARTED                      = "test_run_started"

@@ -47,9 +47,17 @@ def test_visible_only_for_a_worker_on_a_tr_edit_step():
     assert "tr_self_check" in help_catalog.visible_names(_ctx())
 
 
+def test_visible_for_a_worker_on_a_tr_new_step():
+    # 0638 T#1: a TR(new) worker runs Self-check before its TR exists (doc_type is the head type).
+    assert help_catalog.decide_visibility("tr_self_check", _ctx(action_scope="new")).visible is True
+    assert "tr_self_check" in help_catalog.visible_names(_ctx(action_scope="new"))
+
+
 @pytest.mark.parametrize("overrides", [
     {"action_scope": "review"},
-    {"action_scope": "new"},
+    {"action_scope": "test_run"},
+    {"action_scope": "new", "doc_type": "T"},
+    {"action_scope": "new", "doc_type": "TSR"},
     {"doc_type": "TS"},
     {"doc_type": "TSR"},
     {"doc_type": "T"},
@@ -216,7 +224,9 @@ def test_locales_are_actually_translated():
 def test_index_lists_the_item_after_test_commands_for_tr_edit_only():
     order = help_catalog.visible_names(_ctx())
     assert order.index("tr_self_check") == order.index("changed_files_format") - 1
-    assert "tr_self_check" not in help_catalog.visible_names(_ctx(action_scope="new"))
+    new_order = help_catalog.visible_names(_ctx(action_scope="new"))
+    assert new_order.index("tr_self_check") == new_order.index("changed_files_format") - 1
+    assert "tr_self_check" not in help_catalog.visible_names(_ctx(action_scope="review"))
 
 
 def test_build_item_shape_is_the_usual_content_envelope():
@@ -244,6 +254,26 @@ def test_http_operations_match_the_registered_routes(locale):
     assert listed == _registered_routes()
     for op in http["operations"]:
         assert op["url"] == http["base_url"] + op["path"]
+
+
+def _registered_draft_routes():
+    from modules.flow_gate.api.v1 import self_check_routes
+    return {(method, route.path) for route in self_check_routes.draft_router.routes
+            for method in route.methods if method != "HEAD"}
+
+
+@pytest.mark.parametrize("locale", LOCALES)
+def test_tr_new_http_operations_match_the_registered_draft_routes(locale):
+    # 0638 T#1: the TR(new) help points at the token-owned draft routes, never a document path.
+    content = help_catalog.build_item("tr_self_check", _ctx(locale, action_scope="new"))["content"]
+    assert content["stage"] == "new"
+    http = content["http"]
+    assert http["note"] and http["note"] != _content(locale)["http"]["note"]
+    listed = {(op["method"], "/api/v1" + op["path"]) for op in http["operations"]}
+    assert listed == _registered_draft_routes()
+    assert all("{tr_doc_id}" not in op["path"] for op in http["operations"])
+    assert {op["name"] for op in http["operations"]} == {"run", "read", "cancel", "list"}
+    assert _content(locale)["stage"] == "edit"
 
 
 def test_http_help_alone_is_enough_to_run_read_and_cancel():

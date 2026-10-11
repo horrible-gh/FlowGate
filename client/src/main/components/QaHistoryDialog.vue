@@ -29,6 +29,13 @@
                 <span class="qhd-badge" :class="answered(item) ? 'done' : 'pending'">
                   {{ answered(item) ? t('main.doc_info_panel.qa_answered') : t('main.doc_info_panel.qa_answering') }}
                 </span>
+                <!-- 0661 T0004 F3/F5: what the automatic AI responder did with an open item —
+                     still writing, failed technically (with the code), or handed to the user. -->
+                <span
+                  v-if="!answered(item) && responderBadge(item)"
+                  class="qhd-badge qhd-responder-badge"
+                  :class="responderBadgeClass(item)"
+                >{{ responderBadge(item) }}</span>
                 <span class="qhd-seq">Q{{ item.seq }}</span>
                 <span v-if="item.title" class="qhd-title-text">{{ item.title }}</span>
                 <span class="qhd-asker">
@@ -40,6 +47,11 @@
                    surface (mirrors QaReviewHistoryDialog's full-content view). -->
               <div class="qhd-blabel">{{ t('main.doc_info_panel.qa_question') }}</div>
               <p class="qhd-box">{{ item.body }}</p>
+              <p
+                v-if="!answered(item) && responderNote(item)"
+                class="qhd-responder-note"
+                :class="responderBadgeClass(item)"
+              >{{ responderNote(item) }}</p>
               <!-- group 0243 R0001: an answered query shows its options read-only, marking
                    which one the answer picked (a free-form answer marks none). -->
               <template v-if="(item.options?.length ?? 0) > 0 && answered(item)">
@@ -60,7 +72,12 @@
                 <div class="qhd-blabel">{{ t('main.doc_info_panel.qa_answer') }}</div>
                 <p v-for="(a, ai) in item.answers" :key="ai" class="qhd-box qhd-answer">
                   <AppIcon :name="a.author_kind === 'ai' ? 'robot' : 'user'" class="qhd-answer-icon" />
-                  <span>{{ a.body }}</span>
+                  <span class="qhd-answer-text">
+                    <span>{{ a.body }}</span>
+                    <!-- 0661 T0004 F6: who actually answered — the provider, a fallback for the
+                         requested one, or external/unconfirmed (a [Copy Mention] hand-off). -->
+                    <span v-if="a.author_kind === 'ai'" class="qhd-answer-prov">{{ answerProvenance(a) }}</span>
+                  </span>
                 </p>
               </template>
 
@@ -173,7 +190,7 @@ import DialogHeader from './dialogs/DialogHeader.vue'
 import DialogFooter from './dialogs/DialogFooter.vue'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { QaItem } from '../composables/useQaAnswers'
+import type { QaAnswer, QaItem } from '../composables/useQaAnswers'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 
@@ -246,6 +263,43 @@ function answered(item: QaItem): boolean {
 // Option ids the answers on this item picked — used to mark them in the read-only view.
 function pickedIds(item: QaItem): string[] {
   return (item.answers ?? []).flatMap((a) => a.selected_options ?? [])
+}
+
+// 0661 T0004 F3/F5: the automatic responder's state on an OPEN item. The three outcomes are
+// kept apart on purpose — "still writing", "could not (technical, code shown)", and "the AI
+// says a person must decide" — because they call for different actions from the user.
+function responderBadge(item: QaItem): string | null {
+  const r = item.responder
+  if (!r) return null
+  if (r.state === 'dispatched') return t('main.doc_info_panel.qa_responder_dispatched')
+  if (r.state === 'failed') return t('main.doc_info_panel.qa_responder_failed', { code: r.error_code ?? '' })
+  if (r.state === 'user_decision') return t('main.doc_info_panel.qa_responder_user_decision')
+  return null
+}
+function responderBadgeClass(item: QaItem): string {
+  const s = item.responder?.state
+  return s === 'failed' ? 'failed' : s === 'user_decision' ? 'decision' : 'pending'
+}
+function responderNote(item: QaItem): string | null {
+  const r = item.responder
+  if (!r || (r.state !== 'failed' && r.state !== 'user_decision')) return null
+  const detail = r.error_message || ''
+  if (r.state === 'user_decision') return t('main.doc_info_panel.qa_responder_user_decision_hint', { detail })
+  return t('main.doc_info_panel.qa_responder_failed_hint', { detail })
+}
+
+// 0661 T0004 F6: provider line under an AI answer. No run/provider evidence at all means an
+// external hand-off ([Copy Mention]) — shown as unconfirmed, never as a guessed provider.
+function answerProvenance(a: QaAnswer): string {
+  const p = a.author_provider
+  const name = p?.ai_provider_name || p?.ai_provider_id || ''
+  if (!name) return t('main.doc_info_panel.qa_answer_provider_unconfirmed')
+  if (a.author_provenance?.fallback_used) {
+    return t('main.doc_info_panel.qa_answer_provider_fallback', {
+      name, requested: a.author_provenance?.requested_provider_id ?? '',
+    })
+  }
+  return t('main.doc_info_panel.qa_answer_provider', { name })
 }
 
 function togglePick(id: string) {
@@ -336,6 +390,18 @@ function onClose() {
 }
 .qhd-answer { display: flex; gap: 6px; align-items: flex-start; border-left: 3px solid #22c55e; margin-top: 4px; }
 .qhd-answer-icon { color: #15803d; margin-top: 2px; }
+.qhd-answer-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qhd-answer-prov { font-size: .62rem; color: var(--text-m); }
+/* 0661 T0004: responder outcome badges — red = technical failure (re-dispatchable),
+   violet = the AI handed the decision to the user. */
+.qhd-badge.failed { background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+.qhd-badge.decision { background: #ede9fe; color: #6d28d9; border: 1px solid #ddd6fe; }
+.qhd-responder-note {
+  font-size: .72rem; margin: 4px 0 0; padding: 4px 8px; border-radius: 5px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.qhd-responder-note.failed { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.qhd-responder-note.decision { background: #f5f3ff; color: #5b21b6; border: 1px solid #ddd6fe; }
 
 
 /* R0001 (group 0093): inline answer form within the full view (mirrors the

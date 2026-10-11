@@ -586,9 +586,7 @@ export function compareRunEntries(a: AiInvokeRunEntry, b: AiInvokeRunEntry): num
   // the tie — otherwise the order of two finished cards is whatever the object yields.
   if (sortRank(a) === 3) {
     if (a.finishedAtMs !== b.finishedAtMs) return (b.finishedAtMs ?? 0) - (a.finishedAtMs ?? 0)
-    // 0563 T0007 §5: the same group can now hold several finished cards at once, so a
-    // finish-time tie still needs a stable order -- runId is the final tie-break (never
-    // blank for a card that reached this predicate).
+    // A finish-time tie still needs a stable order across groups and legacy data.
     const byGroup = a.groupId.localeCompare(b.groupId)
     return byGroup !== 0 ? byGroup : a.runId.localeCompare(b.runId)
   }
@@ -628,16 +626,20 @@ function loadPersistedFinished(): Record<string, AiInvokeRunEntry> {
     const ttlMs = retentionMsFromMirror()
     const now = Date.now()
     const restored: Record<string, AiInvokeRunEntry> = {}
-    // Rekeyed by entry.runId regardless of the stored object's own keys: a legacy
-    // snapshot keyed the outer object by groupId (one finished card per group), a
-    // current one by runId (several per group can coexist -- 0563 T0007). Reading the
-    // entry's own runId field restores both shapes the same way, no version flag needed.
+    const latestByGroup = new Map<string, AiInvokeRunEntry>()
+    // Accept both legacy group-keyed and run-keyed snapshots, but keep only the
+    // newest card per group. Old 0563 snapshots may contain several cards per group.
     for (const entry of Object.values(parsed as Record<string, AiInvokeRunEntry>)) {
       const runId = entry?.runId ? String(entry.runId) : ''
-      if (runId && isFinishedCard(entry) && !isExpired(entry.finishedAtMs as number, now, ttlMs)) {
-        restored[runId] = entry
+      if (!runId || !entry.groupId || !isFinishedCard(entry)
+        || isExpired(entry.finishedAtMs as number, now, ttlMs)) continue
+      const latest = latestByGroup.get(entry.groupId)
+      if (!latest || (entry.finishedAtMs as number) > (latest.finishedAtMs as number)
+        || (entry.finishedAtMs === latest.finishedAtMs && runId > latest.runId)) {
+        latestByGroup.set(entry.groupId, entry)
       }
     }
+    for (const entry of latestByGroup.values()) restored[entry.runId] = entry
     return restored
   } catch {
     return {}
@@ -728,12 +730,21 @@ function persistFinished(finishedByRun: Record<string, AiInvokeRunEntry>): void 
 
 export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   const runsByGroup = reactive<Record<string, AiInvokeRunEntry>>({})
-  // Run-keyed completion history, separate from the group-keyed current/active state
-  // above (0563 T0007): a new run starting in a group must never evict that group's
-  // still-unread finished card, and the same group can hold several finished runs at
-  // once. Seeded synchronously from sessionStorage, same reasoning as the old
-  // runsByGroup seed this replaces (see loadPersistedFinished's own comment).
+  // Keep the run id for card actions, while allowing at most one finished card per
+  // group. A new run replaces its group's old card; audit history remains on the server.
   const finishedByRun = reactive<Record<string, AiInvokeRunEntry>>(loadPersistedFinished())
+  const supersededRunIds = new Set<string>()
+
+  function replaceFinishedForGroup(groupId: string, keepRunId = ''): void {
+    let changed = false
+    for (const [runId, entry] of Object.entries(finishedByRun)) {
+      if (entry.groupId !== groupId || runId === keepRunId) continue
+      supersededRunIds.add(runId)
+      delete finishedByRun[runId]
+      changed = true
+    }
+    if (changed) schedulePersist()
+  }
   const now = ref(Date.now())
   const discoveryInFlight = new Set<string>()
   const refreshingRunIds = new Set<string>()
@@ -843,6 +854,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       finishedAtMs: Date.now(),
     }
     delete runsByGroup[groupId]
+    replaceFinishedForGroup(groupId, finished.runId)
     finishedByRun[finished.runId] = finished
     clearHandoffTracking(groupId)
     schedulePersist()
@@ -867,6 +879,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     if (!payload?.run_id || !groupId) return
     payload = { ...payload, group_id: groupId }
     const runId = String(payload.run_id)
+    if (finishedByRun[runId] || supersededRunIds.has(runId)) return
     const continuationMarker = payload.continuation_pending === true
     const previous = runsByGroup[groupId]
     // A delayed frame for the completed hop must not erase its adoption timers. Only a
@@ -878,11 +891,10 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       // A real start (including a replacement run_id) is authoritative adoption.
       clearHandoffTracking(groupId)
     }
-    // 0563 T0007: `previous` is never a finished/lost card any more -- trackFinished(),
-    // markLost() and finalizeHandoff() all move a settled run into finishedByRun the
-    // moment it lands, so this active slot only ever holds a running/pause_requested/
-    // paused entry. A new run therefore replaces at most a stale ACTIVE entry, and the
-    // group's finished history is untouched by construction.
+    // A new run owns the group's sole monitor slot. Forget previous displayed
+    // completions and ignore any late terminal event from a displaced live run.
+    if (previous?.runId && previous.runId !== runId) supersededRunIds.add(previous.runId)
+    replaceFinishedForGroup(groupId)
     runsByGroup[groupId] = startedEntry(payload, previous)
   }
 
@@ -934,9 +946,14 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     if (!payload?.run_id || !groupId) return
     payload = { ...payload, group_id: groupId }
     const runId = String(payload.run_id)
+    if (supersededRunIds.has(runId)) return
     const activeEntry = runsByGroup[groupId]
-    // A conflicting, still-active DIFFERENT run owns this group now -- a late/duplicate
-    // finish for an older run_id must never touch it (0563 T0007 §4 item 4).
+    // A late finish from a displaced run belongs in the execution history, not the
+    // single current monitor slot.
+    if (activeEntry && activeEntry.runId !== runId) {
+      supersededRunIds.add(runId)
+      return
+    }
     const matchingActiveEntry = activeEntry?.runId === runId ? activeEntry : undefined
 
     // Base prefers the live active entry, then a previously recorded finished card for
@@ -1044,10 +1061,10 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
         runsByGroup[groupId] = merged
       }
     } else {
-      // A real completion (0563 T0007 §4 items 1-3): normalize into the run-keyed
-      // history and clear the active slot ONLY if it was still pointing at this run --
-      // a newer run already occupying the group's active slot is never touched.
+      // The latest completion replaces the group's former card. Keep its run id so
+      // durable review-loop dismissal still addresses the correct server row.
       if (activeEntry && activeEntry.runId === runId) delete runsByGroup[groupId]
+      replaceFinishedForGroup(groupId, runId)
       finishedByRun[runId] = merged
     }
     if (handoffPending && ownsGroupHandoff) {
@@ -1082,6 +1099,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     // other terminal card -- see isFinishedCard (phase 'finished' OR 'lost').
     const lost: AiInvokeRunEntry = { ...run, phase: 'lost', cancelling: false, finishedAtMs: Date.now() }
     delete runsByGroup[groupId]
+    replaceFinishedForGroup(groupId, lost.runId)
     finishedByRun[lost.runId] = lost
     schedulePersist()
   }
@@ -1227,9 +1245,10 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
         if (!groupId) continue
         pausedGroups.add(groupId)
         const existing = runsByGroup[groupId]
-        // A live/finished card for the same group outranks the paused snapshot
-        // (the row may simply not be consumed yet while a resumed run reports in).
+        // A live card outranks the paused snapshot (the row may simply not be
+        // consumed yet while a resumed run reports in).
         if (existing && existing.phase !== 'paused') continue
+        replaceFinishedForGroup(groupId)
         runsByGroup[groupId] = pausedEntry(row, existing)
       }
       // Paused cards the server no longer knows are stale (resumed elsewhere,
@@ -1367,6 +1386,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     )
     const payload = response.data ?? {}
     if (payload.dismissed || payload.already_dismissed) {
+      supersededRunIds.add(runId)
       delete finishedByRun[runId]
       schedulePersist()
     }
@@ -1377,6 +1397,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     // ACTIVE_PHASES/paused exclusion it used to carry existed for exactly that reason)
     // -- that band now lives entirely in finishedByRun, keyed by the run's own id.
     if (finishedByRun[runId]) {
+      supersededRunIds.add(runId)
       delete finishedByRun[runId]
       schedulePersist()
     }
@@ -1431,6 +1452,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
         durable.push(dismissFinishedCard(runId))
         continue
       }
+      supersededRunIds.add(runId)
       delete finishedByRun[runId]
       removed = true
     }
@@ -1686,11 +1708,20 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     flushPersist()
   })
 
-  // 0563 T0007 §5: the merged projection the header popover / dashboard card render --
-  // current group state (active/paused) plus the run-keyed finished/lost history. The
-  // existing sort priority (Q wait > active > paused > finished) and its tie-break are
-  // unchanged; only the source is now two records instead of one.
-  const allEntries = computed(() => [...Object.values(runsByGroup), ...Object.values(finishedByRun)])
+  // One visible card per group. Current work takes priority; a restored legacy
+  // snapshot with several completions still projects only its newest result.
+  const allEntries = computed(() => {
+    const byGroup = new Map<string, AiInvokeRunEntry>()
+    for (const entry of Object.values(finishedByRun)) {
+      const previous = byGroup.get(entry.groupId)
+      if (!previous || (entry.finishedAtMs ?? 0) > (previous.finishedAtMs ?? 0)
+        || (entry.finishedAtMs === previous.finishedAtMs && entry.runId > previous.runId)) {
+        byGroup.set(entry.groupId, entry)
+      }
+    }
+    for (const entry of Object.values(runsByGroup)) byGroup.set(entry.groupId, entry)
+    return [...byGroup.values()]
+  })
 
   // The one entry a group-scoped surface (the inline document banner, the git panels'
   // own-run notices) should show right now: the live/paused state if there is one,
@@ -1724,14 +1755,14 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     retentionTtlMs,
     inlineResultWindowMs: computed(() => Math.min(INLINE_RESULT_WINDOW_MS, retentionTtlMs.value)),
     refreshRetentionSetting,
-    activeCount: computed(() => Object.values(runsByGroup).filter(run => ACTIVE_PHASES.includes(run.phase)).length),
-    awaitingQCount: computed(() => Object.values(runsByGroup).filter(isAwaitingQ).length),
-    pausedCount: computed(() => Object.values(runsByGroup).filter(run => run.phase === 'paused').length),
+    activeCount: computed(() => allEntries.value.filter(run => ACTIVE_PHASES.includes(run.phase)).length),
+    awaitingQCount: computed(() => allEntries.value.filter(isAwaitingQ).length),
+    pausedCount: computed(() => allEntries.value.filter(run => run.phase === 'paused').length),
     // Alive exactly as long as the card is (0294 B0001) — the sweep, a dismiss or an
     // acknowledged read drops the entry and these fall back on their own, so the chip
     // needs no expiry timer of its own.
-    finishedCount: computed(() => Object.values(finishedByRun).filter(isFinishedCard).length),
-    finishedAlertCount: computed(() => Object.values(finishedByRun).filter(isFinishedAlert).length),
+    finishedCount: computed(() => allEntries.value.filter(isFinishedCard).length),
+    finishedAlertCount: computed(() => allEntries.value.filter(isFinishedAlert).length),
     trackStarted,
     trackProviderSwitched,
     trackFinished,

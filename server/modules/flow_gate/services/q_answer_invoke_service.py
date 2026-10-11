@@ -42,9 +42,48 @@ from fastapi import HTTPException
 
 from modules.flow_gate.db import answers as db_answers
 from modules.flow_gate.db import groups as db_groups
+from modules.flow_gate.db import question_items as db_question_items
 from modules.flow_gate.services import ai_invoke_service, q_service, token_service
 
 logger = logging.getLogger(__name__)
+
+# flowgate.default.0661 T0004: admission code for "this item already has a live responder".
+RESPONDER_IN_PROGRESS_CODE = "question_responder_in_progress"
+# Review rej_01M4HRWSVP3M0BSH finding 3: the run could not claim the item durably (it was
+# answered in the meantime, another run owns it, or the claim write failed) — no token.
+RESPONDER_CLAIM_REFUSED_CODE = "question_responder_claim_refused"
+
+
+def _claim_item_for_run(
+    item_id: int,
+    run_id: str,
+    provider_id: Optional[str],
+    provider_source: Optional[str],
+) -> bool:
+    """Claim the item for ``run_id``; True only when this run durably owns an open item.
+
+    The CAS (`claim_responder_dispatch`) changes nothing for an answered item and for a
+    second claim by the same run, so a refused write is told apart by re-reading the row:
+    a token re-issue inside the run that already holds the claim is fine, anything else
+    (a person answered just before the start, another run owns it) is not. A failed write
+    or read is a refusal too — the claim is what keeps one responder per item.
+    """
+    try:
+        if db_question_items.claim_responder_dispatch(
+            item_id, run_id, provider_id, provider_source,
+        ):
+            return True
+        row = db_question_items.get_by_pk(item_id)
+    except Exception:
+        logger.warning("q-answer responder claim failed for item %s run %s",
+                       item_id, run_id, exc_info=True)
+        return False
+    return bool(
+        row
+        and int(row.get("answer_count") or 0) == 0
+        and row.get("responder_run_id") == run_id
+        and row.get("responder_state") == db_question_items.RESPONDER_DISPATCHED
+    )
 
 
 def _ai_answer_count(item_id: int) -> int:
@@ -60,15 +99,40 @@ def _ai_answer_count(item_id: int) -> int:
         return 0
 
 
-def _make_oracle(item_id: int, baseline: int):
+def _item_row(item_id: int) -> Optional[dict]:
+    """The durable item row, or None when it cannot be read (the guards below degrade)."""
+    try:
+        return db_question_items.get_by_pk(item_id)
+    except Exception:
+        logger.warning("q-answer item row read failed for item %s", item_id, exc_info=True)
+        return None
+
+
+def _make_oracle(item_id: int, baseline: int, run_holder: Optional[dict] = None):
     """Completion oracle: did a NEW AI answer land on this item since dispatch?
 
     Counts only author_kind='ai' rows past the dispatch-time baseline, so a human who
     answers the item while the worker is running does not mark the run complete, and an
     item that already carried an AI answer (re-request) still needs a fresh one.
+
+    0661 T0004 F5: the responder's explicit hand-off to a user is the OTHER way this run
+    can finish its job. `run_holder["run_id"]` is filled by the issue builder once the
+    engine names the run; an item escalated by THIS run (responder_state='user_decision'
+    with that run id) satisfies the oracle, so the run ends as complete rather than being
+    mistaken for a worker that silently produced nothing.
     """
     def _satisfied() -> bool:
-        return _ai_answer_count(item_id) > baseline
+        if _ai_answer_count(item_id) > baseline:
+            return True
+        run_id = (run_holder or {}).get("run_id")
+        if not run_id:
+            return False
+        row = _item_row(item_id)
+        return bool(
+            row
+            and row.get("responder_state") == db_question_items.RESPONDER_USER_DECISION
+            and row.get("responder_run_id") == run_id
+        )
 
     return _satisfied
 
@@ -195,9 +259,38 @@ def build_answer_mention(
         "author_kind 는 서버가 'ai' 로 고정하므로 보내지 않아도 됩니다. "
         "이 토큰은 이 문서에만 쓸 수 있습니다."
     )
+    # 0661 T0004 F5: the hand-off to a human is a SEPARATE signal, never an answer body.
+    # The normal path is to answer; this is the exception path, and the conditions are
+    # spelled out so uncertainty, a failed tool call or a thin context never become a
+    # hand-off (T0004 "자동답변 우선 계약").
+    escalate_url = f"{api_base_url}/q/{doc_id}/items/{item_id}/escalate"
+    lines.append("")
+    lines.append("[사용자 판단 이관 — 예외 경로]")
+    lines.append(
+        "정상 경로는 위 답변 등록입니다. 참조 문서·소스·기존 정책을 확인하고도 "
+        "**사람의 업무적 의사결정**(요구사항 선택, 승인/우선순위 판단 등)이 반드시 필요한 질의에 한해, "
+        "답변을 등록하지 말고 아래 이관 신호를 보내십시오."
+    )
+    lines.append(
+        "단순한 확신 부족, 조사 시간 부족, 도구 호출 실패, 빈 출력은 이관 사유가 아닙니다 — "
+        "그런 경우에는 근거를 밝힌 최선의 답변을 등록하십시오."
+    )
+    lines.append(f"POST {escalate_url}")
+    lines.append(f"Authorization: Bearer {raw_token}")
+    lines.append("Content-Type: application/json")
+    lines.append("")
+    lines.append('{"reason": "<사람이 결정해야 하는 이유와 선택지 요약>"}')
+    lines.append("")
+    lines.append(
+        "이관 신호를 보낸 뒤에는 답변을 등록하지 마십시오. "
+        "이 토큰으로 새 질의(Q)를 등록할 수는 없습니다(질의에 대한 질의 금지)."
+    )
     lines.append("")
     lines.append("[완료 기준]")
-    lines.append("위 POST 가 200 으로 성공하면 작업 완료입니다. 그 외 문서 등록은 하지 마십시오.")
+    lines.append(
+        "답변 등록 POST 가 200 으로 성공하면 작업 완료입니다. "
+        "예외 경로인 이관 POST 가 200 이면 그것으로 작업을 끝냅니다. 그 외 문서 등록은 하지 마십시오."
+    )
     return "\n".join(lines)
 
 
@@ -250,6 +343,45 @@ def issue_answer_token(
     }
 
 
+def _live_responder_run_id(item_id: int) -> Optional[str]:
+    """The run id of a responder still working on this item, else None (0661 T0004 F2).
+
+    A durable 'dispatched' row whose run this process no longer tracks (a crash, a
+    restart) does NOT block: that row is stale and the startup sweep / next dispatch
+    supersedes it. Lookup failures block nothing — the group lease remains the hard guard.
+    """
+    row = _item_row(item_id)
+    if not row or row.get("responder_state") != db_question_items.RESPONDER_DISPATCHED:
+        return None
+    run_id = row.get("responder_run_id")
+    if not run_id:
+        return None
+    try:
+        from modules.flow_gate.services.ai_invoke import runtime as ai_runtime
+
+        return run_id if ai_runtime.is_run_live(run_id) else None
+    except Exception:
+        logger.warning("q-answer responder liveness probe failed for %s", item_id, exc_info=True)
+        return None
+
+
+def _record_dispatch_failure(item_id: int, exc: HTTPException, actor_user_id: Optional[str]) -> None:
+    """Admission refused the responder — leave WHY on the item (0661 T0004 F3), best-effort."""
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    code = str(detail.get("code") or "dispatch_error")
+    message = detail.get("message") or (
+        exc.detail if isinstance(exc.detail, str) else f"HTTP {exc.status_code}"
+    )
+    try:
+        q_service.mark_responder_failed(
+            item_id, code, str(message), actor_user_id=actor_user_id,
+            notify_audience=actor_user_id,
+        )
+    except Exception:
+        logger.warning("q-answer dispatch failure could not be recorded for item %s",
+                       item_id, exc_info=True)
+
+
 def dispatch_answer_run(
     *,
     doc: dict,
@@ -257,49 +389,92 @@ def dispatch_answer_run(
     issued_to: str,
     api_base_url: str,
     provider_id: Optional[str] = None,
+    provider_source: Optional[str] = None,
+    actor_user_id: Optional[str] = None,
 ) -> dict:
     """Issue the item-bound edit token and launch the answer run.
 
     Returns the ai_invoke_service.start_run payload (run_id / status / provider …).
     Raises HTTPException for admission failures (no provider, run already in progress),
     which the caller surfaces with the ai-invoke error envelope.
+
+    0661 T0004 (F2/F3/F6): one responder per item at a time — an item whose 'dispatched'
+    run is still live is refused with `question_responder_in_progress` before admission
+    (the group lease would refuse it anyway, but with a code that says nothing about the
+    item). The run that IS admitted claims the item durably from inside the issue builder
+    (`question_items.responder_run_id`, requested provider + why it was picked), which is
+    what the finalization settle, the escalate route and the self-answer guard key on. An
+    admission refusal is written to the item as a 'failed' state with the admission code
+    instead of vanishing into a log line.
     """
     doc_id = doc.get("doc_id") or ""
     group_id = doc.get("group_id") or ""
     project_id = doc.get("project_id") or ""
     item_id = int(item["id"])
 
+    live_run_id = _live_responder_run_id(item_id)
+    if live_run_id:
+        raise HTTPException(status_code=409, detail={
+            "code": RESPONDER_IN_PROGRESS_CODE,
+            "message": "An AI responder is already answering this question.",
+            "run_id": live_run_id,
+        })
+
     # Baseline BEFORE the worker starts, so the oracle only credits this run's answer.
     baseline = _ai_answer_count(item_id)
+    run_holder: dict = {"run_id": None}
 
     # Declaring ai_run_id is what makes ai_invoke_service._call_issue_builder hand the run
     # identity over (it inspects the signature); a bare def would silently keep minting the
     # lease-orphan token that made every answer POST 403 GROUP_AI_RUN_OWNER_MISMATCH.
     def _issue(ai_run_id: Optional[str] = None) -> dict:
+        if ai_run_id:
+            # Fail closed (review rej_01M4HRWSVP3M0BSH finding 3): without the durable claim
+            # a person may have answered between the dispatch and this point, and an AI
+            # token minted anyway would POST a second answer onto an answered item. Raising
+            # here mints nothing; admission gives the group lease back and the caller sees
+            # the refusal.
+            if not _claim_item_for_run(item_id, ai_run_id, provider_id, provider_source):
+                raise HTTPException(status_code=409, detail={
+                    "code": RESPONDER_CLAIM_REFUSED_CODE,
+                    "message": (
+                        "This question could not be claimed for an AI responder (it was "
+                        "answered or claimed in the meantime)."
+                    ),
+                    "item_id": item_id,
+                })
+            run_holder["run_id"] = ai_run_id
         return issue_answer_token(
             doc=doc, item=item, issued_to=issued_to, api_base_url=api_base_url,
             ai_run_id=ai_run_id,
         )
 
-    return ai_invoke_service.start_run(
-        project_id=project_id,
-        module=None,
-        group_id=group_id,
-        doc_ref=doc_id,
-        action_scope="edit",
-        mode="single",
-        continuation_target_seq=None,
-        continuation_review_mode=False,
-        continuation_instruction_mode=None,
-        continuation_locale=None,
-        issued_to=issued_to,
-        api_base_url=api_base_url,
-        # issue_builder supplies the mention; this is only the engine's fallback path.
-        mention_builder=lambda _raw, _scratch: None,
-        provider_id=provider_id,
-        issue_builder=_issue,
-        completion_oracle=_make_oracle(item_id, baseline),
-    )
+    try:
+        return ai_invoke_service.start_run(
+            project_id=project_id,
+            module=None,
+            group_id=group_id,
+            doc_ref=doc_id,
+            action_scope="edit",
+            mode="single",
+            continuation_target_seq=None,
+            continuation_review_mode=False,
+            continuation_instruction_mode=None,
+            continuation_locale=None,
+            issued_to=issued_to,
+            api_base_url=api_base_url,
+            # issue_builder supplies the mention; this is only the engine's fallback path.
+            mention_builder=lambda _raw, _scratch: None,
+            provider_id=provider_id,
+            issue_builder=_issue,
+            completion_oracle=_make_oracle(item_id, baseline, run_holder),
+        )
+    except HTTPException as exc:
+        if run_holder["run_id"] is None:
+            # An answered item is never flagged (mark_responder_failed skips it), so a claim
+            # lost to a person's answer leaves no failure behind; a claim write error does.
+            _record_dispatch_failure(item_id, exc, actor_user_id or issued_to)
+        raise
 
 
 def resolve_item(doc_id: str, item_id: int) -> dict:

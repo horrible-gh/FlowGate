@@ -58,7 +58,6 @@ function mountPanel() {
         NextEmptyDocModal: true,
         CommandSelectorModal: true,
         QTDetailViewer: true,
-        StepVerificationCard: true,
       },
     },
   })

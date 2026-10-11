@@ -18,15 +18,9 @@
       <div v-if="runs.length" style="margin-top:14px">
         <strong>Recent history</strong>
         <select v-model="selectedId" class="form-ctrl" @change="selectRun">
-          <option v-for="item in runs" :key="item.self_check_run_id" :value="item.self_check_run_id">{{ item.created_at }} · {{ item.program }} · {{ item.status }}</option>
+          <option v-for="item in runs" :key="item.self_check_run_id" :value="item.self_check_run_id">{{ item.created_at }} · {{ item.program }} · {{ item.status }}<template v-if="item.linked_at"> · TR 등록 전</template></option>
         </select>
-        <div v-if="selected">
-          <p>Status: {{ selected.status }} · Exit code: {{ selected.exit_code ?? '—' }} · Timed out: {{ selected.timed_out ? 'yes' : 'no' }}</p>
-          <p v-if="selected.source_changed_during_run || selected.worktree_state_changed" class="alert alert-warning">Source or worktree state changed during this run.</p>
-          <p v-if="selected.error_code">{{ selected.error_code }}</p>
-          <label class="form-label">stdout</label><pre class="code-block">{{ selected.stdout_tail || '' }}</pre>
-          <label class="form-label">stderr</label><pre class="code-block">{{ selected.stderr_tail || '' }}</pre>
-        </div>
+        <TrSelfCheckRunDetail v-if="selected" :run="selected" />
       </div>
     </div>
   </section>
@@ -36,21 +30,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { getRequest, postRequest } from '@shared/api';
 import type { Tab } from '../../stores/tabs';
-
-interface SelfCheckRun {
-  self_check_run_id: string;
-  status: string;
-  created_at?: string | null;
-  program?: string | null;
-  cancel_requested?: boolean;
-  exit_code?: number | null;
-  timed_out?: boolean;
-  stdout_tail?: string | null;
-  stderr_tail?: string | null;
-  source_changed_during_run?: boolean;
-  worktree_state_changed?: boolean;
-  error_code?: string | null;
-}
+import TrSelfCheckRunDetail, { type SelfCheckRun } from './TrSelfCheckRunDetail.vue';
+import { serializedRefresh } from './selfCheckRefresh';
 
 interface SelfCheckListResponse {
   ok: boolean;
@@ -80,13 +61,14 @@ const active = computed(() => runs.value.find((row) => row.status === 'pending' 
 const base = computed(() => `/api/v1/documents/${props.tab.id}/self-check/runs`);
 let timer: ReturnType<typeof setInterval> | null = null;
 
-async function refresh() {
+// A link event arriving while a list GET is in flight must not reuse that GET's (older) response.
+const refresh = serializedRefresh(async () => {
   try {
     const { data } = await getRequest<SelfCheckListResponse>(base.value);
     runs.value = data.runs || [];
     if (!selectedId.value || !runs.value.some((row) => row.self_check_run_id === selectedId.value)) selectedId.value = runs.value[0]?.self_check_run_id || '';
   } catch { /* REST is authoritative; retain last visible result */ }
-}
+});
 
 async function load() {
   if (props.tab.projectId) {

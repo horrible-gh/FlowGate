@@ -209,7 +209,7 @@ def test_register_answer_invokes_auto_resume_only_after_last_item(
     )
     monkeypatch.setattr(q_service.db_answers, "insert", lambda **kwargs: None)
     monkeypatch.setattr(
-        q_service.db_question_items, "increment_answer_count", lambda **kwargs: None
+        q_service.db_question_items, "increment_answer_count", lambda **kwargs: True
     )
     monkeypatch.setattr(
         q_service.db_question_items, "list_unanswered", lambda question_id: unanswered
@@ -282,6 +282,16 @@ def test_restart_resume_preserves_chain_trace_and_requestions(env, monkeypatch):
         svc.db_questions,
         "get_container_by_doc",
         lambda doc_id: {"id": 9, "status": "pending"} if q_state["open"] else None,
+    )
+    # 0661 T0004: the question_pending probe is keyed on the hop's OWN open item
+    # (asker_ai_run_id == the run), so each requester hop of this timeline owns one.
+    monkeypatch.setattr(
+        base.db_question_items,
+        "list_unanswered",
+        lambda question_pk: (
+            [{"id": 90, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": base._AnyRun()}]
+            if q_state["open"] else []
+        ),
     )
     monkeypatch.setattr(
         q_service.db_questions,

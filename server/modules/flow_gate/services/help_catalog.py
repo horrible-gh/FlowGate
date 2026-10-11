@@ -28,7 +28,6 @@ from modules.flow_gate.documents.constants import WORK_PLAN_TYPE
 from modules.flow_gate.services import (
     engine_recipe_service,
     remote_tool_service,
-    step_verification_service,
     test_command_service,
     tool_registry,
     tr_scope_service,
@@ -61,7 +60,6 @@ CATALOG_ORDER: tuple[str, ...] = (
     "test_commands",
     "tr_self_check",
     "changed_files_format",
-    "step_verification_format",
 )
 
 ITEM_FORM: dict[str, str] = {
@@ -78,7 +76,6 @@ ITEM_FORM: dict[str, str] = {
     "test_commands": "content",
     "tr_self_check": "content",
     "changed_files_format": "content",
-    "step_verification_format": "content",
 }
 
 _CATALOG = frozenset(CATALOG_ORDER)
@@ -119,7 +116,6 @@ TITLES: dict[str, dict[str, str]] = {
         "test_commands": "검증된 테스트 명령",
         "tr_self_check": "TR Self-check 사용법",
         "changed_files_format": "변경 파일 보고 서식",
-        "step_verification_format": "단계별 확인 절 서식",
     },
     "en": {
         "notices": "Notices",
@@ -135,7 +131,6 @@ TITLES: dict[str, dict[str, str]] = {
         "test_commands": "Verified test commands",
         "tr_self_check": "TR Self-check guide",
         "changed_files_format": "Changed-files report format",
-        "step_verification_format": "Step-verification section format",
     },
     "ja": {
         "notices": "注意事項",
@@ -151,7 +146,6 @@ TITLES: dict[str, dict[str, str]] = {
         "test_commands": "検証済みテストコマンド",
         "tr_self_check": "TR Self-check の使い方",
         "changed_files_format": "変更ファイル報告フォーマット",
-        "step_verification_format": "段階別確認節フォーマット",
     },
 }
 
@@ -188,9 +182,8 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "design_template": "설계 타입별 표준 템플릿 본문.",
         "authoring_guide": "이 타입의 문서를 쓰는 방법.",
         "test_commands": "이 프로젝트에 등록된, 실행이 확인된 테스트 명령.",
-        "tr_self_check": "TR 수정 단계의 공식 검증 경로(run/read/cancel_self_check) 요청 서식·수명주기·오류 대응.",
+        "tr_self_check": "TR 작성(new)·수정(edit) 단계의 공식 검증 경로(run/read/cancel_self_check) 요청 서식·수명주기·오류 대응.",
         "changed_files_format": "제출 시 반드시 넣어야 하는 변경 파일 절의 서식.",
-        "step_verification_format": "TR 제출 시 반드시 넣어야 하는 단계별 확인 절의 서식.",
     },
     "en": {
         "notices": "What this step forbids and must not be skipped.",
@@ -204,9 +197,8 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "design_template": "Standard template body per design type.",
         "authoring_guide": "How to write a document of this type.",
         "test_commands": "Test commands registered for this project and verified on this host.",
-        "tr_self_check": "The TR edit verification path (run/read/cancel_self_check): request format, lifecycle and error handling.",
+        "tr_self_check": "The TR new/edit verification path (run/read/cancel_self_check): request format, lifecycle and error handling.",
         "changed_files_format": "Format of the changed-files section your submission must carry.",
-        "step_verification_format": "Format of the step-verification section a TR submission must carry.",
     },
     "ja": {
         "notices": "この作業で必ず守るべき禁止事項。",
@@ -220,9 +212,8 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "design_template": "設計タイプ別の標準テンプレート本文。",
         "authoring_guide": "このタイプの文書を書く方法。",
         "test_commands": "このプロジェクトに登録され、実行が確認されたテストコマンド。",
-        "tr_self_check": "TR修正段階の公式検証経路(run/read/cancel_self_check)のリクエスト形式・ライフサイクル・エラー対応。",
+        "tr_self_check": "TR作成(new)・修正(edit)段階の公式検証経路(run/read/cancel_self_check)のリクエスト形式・ライフサイクル・エラー対応。",
         "changed_files_format": "提出時に必ず入れる変更ファイル節のフォーマット。",
-        "step_verification_format": "TR提出時に必ず入れる段階別確認節のフォーマット。",
     },
 }
 
@@ -287,7 +278,7 @@ QUESTION_HELP_COPY: dict[str, dict] = {
             "R0001 본문이 한 줄이라 DS 설계 대상이 불명확합니다. 구체적 기능 범위와 인수 기준은 무엇입니까?",
             "멘트의 next_type 은 DS 인데 질의가 필요합니다. 질의를 먼저 등록할까요, 모호함을 가정하고 DS 를 작성할까요?",
         ),
-        "continue_note": "질의를 등록해도 작업은 멈추지 않습니다. 무인 연속 작업에서는 가정을 명시하고 계속 진행하세요.",
+        "continue_note": "질의를 등록해도 지금 하는 작업은 멈추지 않습니다. 무인 연속 작업에서는 가정을 명시하고 이번 단계의 산출물을 제출하세요. 이 실행이 등록한 질의가 열려 있으면 체인은 다음 단계(검수 포함)로 넘어가기 전에 보류되고, 해당 단계의 검수 AI(없으면 기본 AI)가 답한 뒤 자동으로 재개됩니다. 답변을 기다리거나 조회하며 대기하지 마세요.",
         "option_labels": ("<옵션1 — 선택 · 없으면 생략>", "<옵션2>"),
     },
     "en": {
@@ -297,7 +288,7 @@ QUESTION_HELP_COPY: dict[str, dict] = {
             "The R0001 body has only one line, so the DS design scope is unclear. What are the specific feature scope and acceptance criteria?",
             "The mention says next_type is DS, but clarification is needed. Should the query be registered first, or should DS be drafted with explicit assumptions?",
         ),
-        "continue_note": "Registering a query does not pause the work. In an unmanned chain, state your assumption and keep going.",
+        "continue_note": "Registering a query does not pause the work in progress. In an unmanned chain, state your assumption and submit this step's output. While a query this run registered is still open, the chain is held before the next step (review included); the step's reviewer AI (else the default AI) answers it and the chain then resumes on its own. Do not wait or poll for the answer.",
         "option_labels": ("<option 1 — optional, omit if not needed>", "<option 2>"),
     },
     "ja": {
@@ -307,7 +298,7 @@ QUESTION_HELP_COPY: dict[str, dict] = {
             "R0001の本文が1行だけなので、DS設計の対象が不明確です。具体的な機能範囲と受入基準は何ですか。",
             "メンションのnext_typeはDSですが、確認が必要です。先に質問を登録するべきですか、それとも前提を明記してDSを作成するべきですか。",
         ),
-        "continue_note": "質問を登録しても作業は止まりません。無人の連続作業では前提を明記して続行してください。",
+        "continue_note": "質問を登録しても進行中の作業は止まりません。無人の連続作業では前提を明記し、この段階の成果物を提出してください。この実行が登録した質問が未回答のままの間、チェーンは次の段階(レビューを含む)へ進む前に保留され、その段階のレビューAI(いなければ既定のAI)が回答した後に自動で再開されます。回答を待ったり照会し続けたりしないでください。",
         "option_labels": ("<選択肢1 — 任意・不要なら省略>", "<選択肢2>"),
     },
 }
@@ -371,8 +362,6 @@ _TR_AUTHORING_GUIDE: dict[str, str] = {
         "3. 어떻게 확인했는가 — 실행한 테스트 명령과 그 결과. 돌리지 못했으면 그 사실을 적습니다.\n"
         "4. 남은 것 — 이번에 하지 않은 범위와 그 이유.\n"
         "5. 변경 파일 절 — 서식은 도움말 항목 changed_files_format 에 있습니다.\n"
-        "6. 단계별 확인 절 — 검수자가 그대로 따라 하면 되는 확인 절차. 서식은 도움말 항목\n"
-        "   step_verification_format 에 있습니다.\n"
         "\n"
         "확인을 사용자에게 넘기지 마십시오. 재현·수정·측정까지 마친 뒤 제출합니다.\n"
     ),
@@ -384,8 +373,6 @@ _TR_AUTHORING_GUIDE: dict[str, str] = {
         "3. How you verified it — the test commands you ran and their results. If you could not run them, say so.\n"
         "4. What is left — the scope you did not cover and why.\n"
         "5. The changed-files section — its format is in the changed_files_format help item.\n"
-        "6. The step-verification section — a procedure the reviewer can follow verbatim.\n"
-        "   Its format is in the step_verification_format help item.\n"
         "\n"
         "Do not hand verification back to the user. Reproduce, fix and measure before submitting.\n"
     ),
@@ -397,8 +384,6 @@ _TR_AUTHORING_GUIDE: dict[str, str] = {
         "3. どう確認したか — 実行したテストコマンドとその結果。実行できなかった場合はその事実。\n"
         "4. 残ったもの — 今回対応しなかった範囲とその理由。\n"
         "5. 変更ファイル節 — フォーマットはヘルプ項目 changed_files_format にあります。\n"
-        "6. 段階別確認節 — 検収者がそのまま従える確認手順。フォーマットはヘルプ項目\n"
-        "   step_verification_format にあります。\n"
         "\n"
         "確認をユーザーに委ねないでください。再現・修正・計測まで済ませてから提出します。\n"
     ),
@@ -580,8 +565,9 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
         return Decision(False, "not_ts_type")
 
     if name == "tr_self_check":
-        # Same judgment as api_server_tools.definitions_for_run(): a worker token on a TR edit step.
-        if ctx.get("principal_kind") == "worker" and ctx.get("action_scope") == "edit" and doc_type == "TR":
+        # Same judgment as api_server_tools.definitions_for_run(): a worker token on a TR edit
+        # step, or (0638 T#1) on a TR(new) step -- doc_type is then the workflow head's type.
+        if ctx.get("principal_kind") == "worker" and ctx.get("action_scope") in AUTHORING_SCOPES and doc_type == "TR":
             return VISIBLE
         return Decision(False, "not_tr_edit")
 
@@ -589,11 +575,6 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
         if authoring and doc_type in MUTATING_TYPES:
             return VISIBLE
         return Decision(False, "not_mutating_type")
-
-    if name == "step_verification_format":
-        if authoring and doc_type == "TR":
-            return VISIBLE
-        return Decision(False, "not_tr_type")
 
     return Decision(False, "unknown_item")
 
@@ -1096,7 +1077,6 @@ def _content_submit(ctx: dict) -> dict:
         if str(doc_type).upper() in tool_registry.MUTATING_STEP_TYPES:
             body["content"] = "<Fill this in>\n\n" + tr_scope_service.tr_section_placeholder(ctx["locale"])
             if str(doc_type).upper() == "TR":
-                body["content"] += "\n" + step_verification_service.section_placeholder(ctx["locale"])
                 body["commit_message"] = (
                     "<This TR's own approval commit subject, used verbatim. Conventional "
                     "commit format: type(scope): summary — e.g. "
@@ -1131,8 +1111,6 @@ def _content_submit(ctx: dict) -> dict:
         }
     if str(doc_type).upper() in tool_registry.MUTATING_STEP_TYPES and scope != "edit":
         payload["changed_files_required"] = True
-    if str(doc_type).upper() == "TR" and scope != "edit":
-        payload["step_verification_required"] = True
     return payload
 
 
@@ -1176,46 +1154,6 @@ def _content_changed_files_format(ctx: dict) -> dict:
     }
 
 
-_STEP_VERIFICATION_RULE: dict[str, str] = {
-    "ko": "섹션 제목은 '### '(레벨 3)로 씁니다. 개요는 한 줄, 스텝은 하나 이상, 스텝마다 기대치가 하나 이상 있어야 합니다.",
-    "en": "Section titles use '### ' (level 3). One summary line, at least one step, and every step needs at least one Expected line.",
-    "ja": "セクション見出しは '### '(レベル3)で書きます。概要は1行、ステップは1つ以上、各ステップに期待値の行が1つ以上必要です。",
-}
-
-_STEP_VERIFICATION_EXAMPLE: dict[str, str] = {
-    "ko": (
-        "### 로그인 화면 확인\n"
-        "- 개요: 잘못된 비밀번호 입력 시 오류 문구가 뜬다\n"
-        "- 스텝: 임의의 비밀번호로 로그인 시도\n"
-        "  - 기대치: '비밀번호가 올바르지 않습니다' 문구가 화면에 표시된다\n"
-    ),
-    "en": (
-        "### Login screen check\n"
-        "- Summary: An error message appears on a wrong password\n"
-        "- Step: Attempt login with any wrong password\n"
-        "  - Expected: The message 'Incorrect password' is shown on screen\n"
-    ),
-}
-
-
-def _content_step_verification_format(ctx: dict) -> dict:
-    locale = ctx["locale"]
-    guide = step_verification_service.section_guide(locale)
-    placeholder = step_verification_service.section_placeholder(locale)
-    heading = placeholder.split("\n", 1)[0]
-    example_body = _STEP_VERIFICATION_EXAMPLE.get(locale, _STEP_VERIFICATION_EXAMPLE["ko"])
-    none_marker = step_verification_service._spelling_none(locale)
-    return {
-        "required": True,
-        "heading": heading,
-        "guide": guide,
-        "placeholder": placeholder,
-        "rule": _STEP_VERIFICATION_RULE.get(locale, _STEP_VERIFICATION_RULE["ko"]),
-        "example": f"{heading}\n\n{example_body}",
-        "empty_case": f"{heading}\n\n{none_marker}\n",
-    }
-
-
 # ── tr_self_check (0654 T0004) ───────────────────────────────────────────────
 # The request contract itself is owned by api_server_tools.SCHEMAS["run_self_check"],
 # tr_self_check_service._validate_request and tr_self_check_policy; this item only
@@ -1247,6 +1185,16 @@ SELF_CHECK_HTTP_OPERATIONS: tuple[tuple[str, str, str, int], ...] = (
     ("read", "GET", "/documents/{tr_doc_id}/self-check/runs/{run_id}", 200),
     ("cancel", "POST", "/documents/{tr_doc_id}/self-check/runs/{run_id}/cancel", 200),
     ("list", "GET", "/documents/{tr_doc_id}/self-check/runs", 200),
+)
+
+#: 0638 T#1: the same contract for a TR(new) worker, before its TR exists. Owned by
+#: self_check_routes.draft_router (prefix /api/v1/self-check/draft); the token alone names
+#: the owner, so no path segment names a document. A regression test pins it to the routes.
+SELF_CHECK_DRAFT_HTTP_OPERATIONS: tuple[tuple[str, str, str, int], ...] = (
+    ("run", "POST", "/self-check/draft/runs", 202),
+    ("read", "GET", "/self-check/draft/runs/{run_id}", 200),
+    ("cancel", "POST", "/self-check/draft/runs/{run_id}/cancel", 200),
+    ("list", "GET", "/self-check/draft/runs", 200),
 )
 
 _LOCALE_INDEX = {"ko": 1, "en": 2, "ja": 3}
@@ -1313,7 +1261,7 @@ _SELF_CHECK_ERRORS: tuple[tuple[str, str, str, str], ...] = (
 
 _SELF_CHECK_COPY: dict[str, dict] = {
     "ko": {
-        "role": "TR 수정(edit) 단계에서 테스트·검증을 실행하는 공식 경로는 Self-check 하나다. 도구는 run_self_check / read_self_check / cancel_self_check 이다.",
+        "role": "TR 작성(new)·수정(edit) 단계에서 테스트·검증을 실행하는 공식 경로는 Self-check 하나다. 도구는 run_self_check / read_self_check / cancel_self_check 이다.",
         "no_fallback": [
             "Self-check 를 쓸 수 없으면 반환된 reason/error_code 를 TR 에 보고하고, 다른 실행 수단을 찾거나 시도하지 않는다.",
             "실행할 명령은 TR 에 적힌 검증 명령 → T 에 적힌 검증 명령 → 변경에서 분명한 최소 검사 순으로 정한다. 정할 수 없으면 test_command_missing 으로 멈춘다.",
@@ -1325,6 +1273,7 @@ _SELF_CHECK_COPY: dict[str, dict] = {
             "timeout_seconds": f"실행 제한 시간(초), 1~{SELF_CHECK_TIMEOUT_MAX} 정수. 기본 {SELF_CHECK_TIMEOUT_DEFAULT}.",
         },
         "http_note": "tr_doc_id 는 지금 수정 중인 TR 문서 id(토큰에 바인딩된 문서)이고 run_id 는 run 응답의 self_check_run_id 이다. 헤더는 Authorization: Bearer <작업 토큰> 을 그대로 쓴다. 성공 응답은 {ok:true, ...run 필드}, 라우트가 만드는 실패 응답은 {ok:false, error:{code, message, details}} 이며 code 는 아래 오류 표의 selfcheck_* 또는 forbidden 이다. 다른 문서의 토큰이나 edit 가 아닌 토큰은 403 이고 error.code 는 forbidden 이다(message·details 포함). 토큰 자체가 검증에 실패하면(Authorization 헤더 없음 401, 만료·무효 토큰, 권한 없음 403) 라우트가 아니라 인증 계층이 {ok:false, http_status, error_message, help_url} 을 돌려주며 error 객체가 없다. 응답에서 확인할 것: run 은 202 와 self_check_run_id·status, read/cancel 은 200 과 status(아래 statuses 중 하나).",
+        "draft_http_note": "TR 작성(new) 단계에서는 TR 문서가 아직 없으므로 문서 id 대신 작업 토큰이 실행의 소유자다. 경로에 문서 id 를 넣지 않고 Authorization: Bearer <작업 토큰> 만 보낸다. run_id 는 run 응답의 self_check_run_id 이다. 목록·조회·취소는 이 토큰이 시작한 실행만 대상으로 한다. 이 토큰으로 TR 을 등록하면 그 실행들은 등록된 TR 에 연결되고(linked_at), 이후에는 TR 문서 경로(/documents/{tr_doc_id}/self-check/runs)로 조회한다. 워크플로 head 가 TR 이 아닌 new 토큰, 다른 그룹·프로젝트의 토큰은 403 이고 error.code 는 forbidden 이다. 성공·실패 응답 형식과 인증 계층 오류 형식은 edit 단계와 같다.",
         "invalid_note": "위 형식(명령 전체를 program 에 넣음)은 program/args 계약 위반이다. 'pytest' 와 ['-q', 'server/tests/test_x.py'] 로 나누어 보낸다.",
         "lifecycle": "run_self_check → self_check_run_id 수신 → pending/running 동안 read_self_check 로 반복 조회 → completed / failed / cancelled. 필요하면 cancel_self_check.",
         "non_zero": "exit_code 가 0 이 아닌 completed 는 전송 실패가 아니라 실제 검증 실패일 수 있다. stdout_tail/stderr_tail 을 읽고 → 범위 안에서 코드를 고치고 → 새 run_self_check 를 실행하는 것이 정상 절차다.",
@@ -1332,7 +1281,7 @@ _SELF_CHECK_COPY: dict[str, dict] = {
         "changed_note": "source_changed_during_run / worktree_state_changed 가 true 이면 실행 중 소스나 워크트리 상태가 바뀐 것이므로 결과를 그대로 믿지 말고 안정된 뒤 다시 실행한다.",
     },
     "en": {
-        "role": "Self-check is the one official way to run tests/verification in a TR edit step. The tools are run_self_check / read_self_check / cancel_self_check.",
+        "role": "Self-check is the one official way to run tests/verification in a TR new or edit step. The tools are run_self_check / read_self_check / cancel_self_check.",
         "no_fallback": [
             "If Self-check is unavailable, report the returned reason/error_code in the TR and do not look for or try another execution backend.",
             "Pick the command from the verification command named in the TR, else in the T, else the minimal check obvious from your change. If none can be determined, stop with test_command_missing.",
@@ -1344,6 +1293,7 @@ _SELF_CHECK_COPY: dict[str, dict] = {
             "timeout_seconds": f"Time limit in seconds, integer 1..{SELF_CHECK_TIMEOUT_MAX}. Default {SELF_CHECK_TIMEOUT_DEFAULT}.",
         },
         "http_note": "tr_doc_id is the TR document id you are editing (the document bound to the token) and run_id is the self_check_run_id from the run response. Send the same Authorization: Bearer <work token> header. Success is {ok:true, ...run fields}; route failures are {ok:false, error:{code, message, details}} where code is a selfcheck_* value from the error table below or forbidden. A token for another document or a non-edit token gets 403 with error.code forbidden (message and details included). If the token itself fails verification (missing Authorization header 401, expired or invalid token, no permission 403), the authentication layer answers instead of the route with {ok:false, http_status, error_message, help_url} and no error object. Verify in the response: run returns 202 with self_check_run_id and status; read/cancel return 200 with a status from the statuses list below.",
+        "draft_http_note": "In a TR new step the TR document does not exist yet, so the work token, not a document id, owns the run. Put no document id in the path; send only Authorization: Bearer <work token>. run_id is the self_check_run_id from the run response. list/read/cancel only see the runs this token started. When this token registers the TR, those runs are linked to it (linked_at) and are read from then on through the TR document paths (/documents/{tr_doc_id}/self-check/runs). A new token whose workflow head is not a TR, or a token of another group/project, gets 403 with error.code forbidden. Success/failure and authentication-layer error shapes are the same as in the edit step.",
         "invalid_note": "The form above (whole command in program) violates the program/args contract. Send 'pytest' and ['-q', 'server/tests/test_x.py'] separately.",
         "lifecycle": "run_self_check -> receive self_check_run_id -> read_self_check repeatedly while pending/running -> completed / failed / cancelled. Use cancel_self_check if needed.",
         "non_zero": "A completed run with a non-zero exit_code is not a transport failure; it may be a real verification failure. Read stdout_tail/stderr_tail, fix the code within scope, then start a new run_self_check. That is the normal procedure.",
@@ -1351,7 +1301,7 @@ _SELF_CHECK_COPY: dict[str, dict] = {
         "changed_note": "If source_changed_during_run / worktree_state_changed is true, the source or worktree state moved during the run; do not trust the result blindly and rerun once it is stable.",
     },
     "ja": {
-        "role": "TR修正(edit)段階でテスト・検証を実行する公式経路は Self-check ただ1つです。ツールは run_self_check / read_self_check / cancel_self_check です。",
+        "role": "TR作成(new)・修正(edit)段階でテスト・検証を実行する公式経路は Self-check ただ1つです。ツールは run_self_check / read_self_check / cancel_self_check です。",
         "no_fallback": [
             "Self-check が使えない場合は、返された reason/error_code を TR に報告し、他の実行手段を探したり試したりしないでください。",
             "実行コマンドは、TRに記載の検証コマンド → Tに記載の検証コマンド → 変更から明らかな最小の検査、の順で決めます。決められない場合は test_command_missing で停止します。",
@@ -1363,6 +1313,7 @@ _SELF_CHECK_COPY: dict[str, dict] = {
             "timeout_seconds": f"実行制限時間(秒)、1〜{SELF_CHECK_TIMEOUT_MAX} の整数。既定 {SELF_CHECK_TIMEOUT_DEFAULT}。",
         },
         "http_note": "tr_doc_id は今修正中の TR 文書 id(トークンに紐づく文書)、run_id は run 応答の self_check_run_id です。ヘッダーは Authorization: Bearer <作業トークン> をそのまま使います。成功は {ok:true, ...run フィールド}、ルートが返す失敗は {ok:false, error:{code, message, details}} で、code は下のエラー表の selfcheck_* または forbidden です。他文書のトークンや edit 以外のトークンは 403 で error.code は forbidden です(message と details を含む)。トークン自体の検証に失敗した場合(Authorization ヘッダーなし 401、期限切れ・無効トークン、権限なし 403)は、ルートではなく認証層が {ok:false, http_status, error_message, help_url} を返し、error オブジェクトはありません。応答で確認すること: run は 202 と self_check_run_id・status、read/cancel は 200 と status(下の statuses のいずれか)。",
+        "draft_http_note": "TR作成(new)段階では TR 文書がまだ無いため、文書 id ではなく作業トークンが実行の所有者です。パスに文書 id を入れず、Authorization: Bearer <作業トークン> だけを送ります。run_id は run 応答の self_check_run_id です。一覧・取得・取消はこのトークンが開始した実行だけが対象です。このトークンで TR を登録すると、それらの実行は登録された TR に連結され(linked_at)、以後は TR 文書のパス(/documents/{tr_doc_id}/self-check/runs)で取得します。ワークフロー head が TR でない new トークンや他グループ・他プロジェクトのトークンは 403 で error.code は forbidden です。成功・失敗の応答形式と認証層エラーの形式は edit 段階と同じです。",
         "invalid_note": "上の形式(コマンド全体を program に入れる)は program/args 契約違反です。'pytest' と ['-q', 'server/tests/test_x.py'] に分けて送ってください。",
         "lifecycle": "run_self_check → self_check_run_id を受け取る → pending/running の間 read_self_check を繰り返す → completed / failed / cancelled。必要なら cancel_self_check。",
         "non_zero": "exit_code が 0 以外の completed は通信失敗ではなく、実際の検証失敗の可能性があります。stdout_tail/stderr_tail を読み、範囲内でコードを直し、新しい run_self_check を実行するのが正常な手順です。",
@@ -1378,17 +1329,21 @@ def _content_tr_self_check(ctx: dict) -> dict:
     idx = _LOCALE_INDEX.get(locale, 1)
     types = {"program": "string", "args": "array<string>", "cwd": "string", "timeout_seconds": "integer"}
     defaults = {"program": None, "args": [], "cwd": ".", "timeout_seconds": SELF_CHECK_TIMEOUT_DEFAULT}
+    # 0638 T#1: a TR(new) worker has no TR id yet; its runs go through the token-owned draft routes.
+    draft = ctx.get("action_scope") == "new"
+    operations = SELF_CHECK_DRAFT_HTTP_OPERATIONS if draft else SELF_CHECK_HTTP_OPERATIONS
     return {
         "role": copy["role"],
+        "stage": "new" if draft else "edit",
         "no_fallback": list(copy["no_fallback"]),
         "tools": {"run": "run_self_check", "read": "read_self_check", "cancel": "cancel_self_check"},
         "http": {
             "base_url": SELF_CHECK_HTTP_BASE,
-            "note": copy["http_note"],
+            "note": copy["draft_http_note"] if draft else copy["http_note"],
             "operations": [
                 {"name": name, "method": method, "path": path,
                  "url": SELF_CHECK_HTTP_BASE + path, "success_status": status}
-                for name, method, path, status in SELF_CHECK_HTTP_OPERATIONS
+                for name, method, path, status in operations
             ],
             "run_request_body": "request.example",
             "response_ok_fields": ["ok", "self_check_run_id", "status", *SELF_CHECK_RESULT_FIELDS],
@@ -1433,7 +1388,6 @@ _CONTENT_SUPPLIERS = {
     "test_commands": _content_test_commands,
     "tr_self_check": _content_tr_self_check,
     "changed_files_format": _content_changed_files_format,
-    "step_verification_format": _content_step_verification_format,
 }
 
 

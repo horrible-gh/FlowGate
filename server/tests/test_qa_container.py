@@ -75,7 +75,10 @@ class _MockTxn:
         self._cur = None
 
     def execute(self, sql, params=None):
+        # Returns the cursor like the real sqlite adapter, so FlowGateStore._execute_affected
+        # (the guarded answer_count increment) can read rowcount.
         self._cur = self._conn.execute(sql, params or [])
+        return self._cur
 
     def fetchone(self):
         if self._cur is None:

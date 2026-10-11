@@ -97,6 +97,41 @@ def _notify_q_answered(
     ))
 
 
+def _notify_responder_state(
+    audience: Optional[str],
+    doc_id: str,
+    project_id: Optional[str],
+    item_id: int,
+    *,
+    state: str,
+    error_code: Optional[str],
+    message: Optional[str],
+    run_id: Optional[str],
+) -> None:
+    """The automatic responder left this item unanswered — refresh + toast (0661 T0004 F3/F5).
+
+    Carries the state so the toast can tell a technical failure from an explicit
+    hand-off, but the panel re-reads the item (`fg:qa_refresh`) for the durable truth.
+    """
+    if not audience:
+        return
+    publish_event_threadsafe(FlowEvent(
+        event_type=EventType.QNA_RESPONDER_STATE_CHANGED,
+        payload={
+            "doc_id": doc_id,
+            "project_id": project_id,
+            "item_id": item_id,
+            "state": state,
+            "error_code": error_code,
+            "message": message,
+            "run_id": run_id,
+        },
+        audience=audience,
+        project=project_id,
+        doc_id=doc_id,
+    ))
+
+
 # ── Input normalization ──────────────────────────────────────────────────────────
 
 def _validate_options(raw_options: Any) -> list[str]:
@@ -357,6 +392,38 @@ def add_questions(
 
 # ── Last-answer → paused-chain continuation (flowgate.default.0551 T#2) ────────
 
+def _park_waits_on_open_question(row: dict, open_doc_ids: list[str]) -> bool:
+    """Does the parked chain still wait on one of the group's open questions? (0688 T#2)
+
+    A question_pending park waits on the questions ITS hop raised: both parks key on
+    ``asker_ai_run_id`` (the Q-only probe in worker._retry_eligible and the hand-off park,
+    0688 T#1), and ``stop_run_id`` is that hop. Any other open item in the group -- a
+    person's own question, another run's, an older one, on this container or another --
+    is not what the chain stopped for, yet the group-wide rule kept it parked until somebody
+    answered that too (0688 NR0003 §5). A row without a stop run, a container that cannot
+    be read, or an open document whose container is missing keep the group-wide rule.
+    """
+    requester_run_id = row.get("stop_run_id")
+    if not requester_run_id:
+        return True
+    try:
+        for doc_id in open_doc_ids:
+            container = db_questions.get_container_by_doc(doc_id)
+            if container is None:
+                return True
+            for item in db_question_items.list_unanswered(container["id"]) or []:
+                if (
+                    (item.get("asker_kind") or "") == "ai"
+                    and item.get("asker_ai_run_id") == requester_run_id
+                ):
+                    return True
+    except Exception:
+        logger.warning("question auto-resume: open-item lookup failed for %s",
+                       row.get("group_id"), exc_info=True)
+        return True
+    return False
+
+
 def auto_resume_answered_chain(
     *,
     doc_id: str,
@@ -364,7 +431,7 @@ def auto_resume_answered_chain(
     locale: str = "ko",
     responder_run: Optional[dict] = None,
 ) -> Optional[dict]:
-    """Resume the durable question_pending chain once the group has no open Q.
+    """Resume the durable question_pending chain once the questions it waits on are answered.
 
     This is orchestration only: ai_invoke_service.resume_chain remains the one
     resume engine and its group lock + paused-row compare-and-swap remain the one
@@ -394,8 +461,10 @@ def auto_resume_answered_chain(
         ):
             return None
         # A container can be done while another document in the same group still has
-        # an unanswered item. The group-wide query is the final gate.
-        if db_questions.list_open_doc_ids_by_group(group_id):
+        # an unanswered item, so the group's open containers are read -- but only the
+        # parked hop's OWN open items hold the chain (0688 T#2, _park_waits_on_open_question).
+        open_doc_ids = db_questions.list_open_doc_ids_by_group(group_id)
+        if open_doc_ids and _park_waits_on_open_question(row, open_doc_ids):
             return None
 
         requester_run_id = row.get("stop_run_id")
@@ -433,17 +502,23 @@ def auto_resume_answered_chain(
             detail = exc.detail if isinstance(exc.detail, dict) else {}
             logger.info(
                 "question auto-resume deferred group_id=%s code=%s "
-                "requester_run_id=%s responder_run_id=%s chain_id=%s",
+                "requester_run_id=%s responder_run_id=%s chain_id=%s stop_code=%s "
+                "answer_check_item_ids=%s",
                 group_id,
                 detail.get("code") or exc.status_code,
                 trace["requester_run_id"],
                 trace["responder_run_id"],
                 trace["paused_chain_id"],
+                detail.get("stop_code"),
+                detail.get("answer_check_item_ids"),
             )
             return None
 
         trace["resumed_run_id"] = resumed.get("run_id")
         trace["resumed_chain_id"] = resumed.get("chain_id")
+        if resumed.get("answer_check_item_ids"):
+            # 0688 T#2: the resumed review round checks the document against these answers.
+            trace["answer_check_item_ids"] = list(resumed["answer_check_item_ids"])
         resumed["question_resume_trace"] = trace
         # Keep the correlation on the live run too, so GET status exposes the same
         # evidence as the immediate answer response. The structured log remains the
@@ -487,6 +562,7 @@ def register_answer(
     author_provenance: Optional[dict] = None,
     auto_resume_api_base_url: Optional[str] = None,
     auto_resume_locale: str = "ko",
+    writer_ai_run_id: Optional[str] = None,
 ) -> dict:
     """Register an answer to a query item and transition the container status (atomic).
 
@@ -497,6 +573,14 @@ def register_answer(
     An answer may pick an option, write freely, or do both (L0008 §4). Picking alone fills
     body with the chosen option's label, so answers.body stays non-blank and every existing
     body-only reader (ment assembly, the answer list) works unchanged (DB0007 §5).
+
+    ``writer_ai_run_id`` (0661 T0004 F6) is the server-verified run bound to the AI
+    token that is answering — NOT a request field. The run that registered the question
+    (``question_items.asker_ai_run_id``) may not close its own question with it: a worker
+    answering itself would mark the Q done and auto-resume the chain it parked, which is
+    exactly the contract B0001 ruled out. A human session passes None. An AI token with
+    no bound run (the [Copy Mention] hand-off) also passes None and is not checked — it
+    has no run identity to compare, and that path is already shown as external/unconfirmed.
     """
     if author_kind not in ("human", "ai"):
         raise HTTPException(status_code=400, detail="author_kind must be 'human' or 'ai'")
@@ -517,6 +601,46 @@ def register_answer(
             status_code=404,
             detail=f"question_item {item_id} does not belong to document {doc_id}",
         )
+    if (
+        author_kind == "ai"
+        and writer_ai_run_id
+        and item.get("asker_ai_run_id")
+        and item.get("asker_ai_run_id") == writer_ai_run_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "An AI run may not answer the question it registered itself. Leave it "
+                "for the assigned responder or a user; the chain resumes once the answer "
+                "lands."
+            ),
+        )
+    # Review rej_01M4HRWSVP3M0BSH findings 3/4: the run dispatched as this item's responder
+    # answers at most once, only while nobody else has, and never after it handed the item
+    # to a user (escalate). The checks here give the precise refusal; the CAS increment in
+    # the transaction below is what actually holds against a concurrent human answer.
+    responder_writer = bool(
+        author_kind == "ai"
+        and writer_ai_run_id
+        and item.get("responder_run_id") == writer_ai_run_id
+    )
+    if responder_writer:
+        if item.get("responder_state") == db_question_items.RESPONDER_USER_DECISION:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This question was handed to a user (user decision required); the "
+                    "responder that escalated it may not answer it."
+                ),
+            )
+        if int(item.get("answer_count") or 0) > 0:
+            raise HTTPException(status_code=409, detail="This question already has an answer.")
+    elif item.get("responder_state") and int(item.get("answer_count") or 0) > 0:
+        # TR0005 rev1 review: an item the automatic responder took on takes one answer from
+        # anyone — a person answering after the responder's answer landed is refused, not
+        # stacked as a second answer. The guarded increment below holds the same rule
+        # against a read that is already stale.
+        raise HTTPException(status_code=409, detail="This question already has an answer.")
 
     selected = list(selected_option_ids or [])
     if len(selected) > MAX_SELECTED:
@@ -540,6 +664,24 @@ def register_answer(
     q_status = container["status"]
     store = get_store()
     with store.transaction():
+        if responder_writer and not db_question_items.increment_answer_count_for_responder(
+            item_id, writer_ai_run_id,
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This question was answered, escalated or re-claimed concurrently; the "
+                    "responder's answer was not registered."
+                ),
+            )
+        if not responder_writer and not db_question_items.increment_answer_count(pk=item_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This question was answered concurrently by its AI responder; the "
+                    "answer was not registered."
+                ),
+            )
         db_answers.insert(
             question_item_id=item_id, body=body,
             author_kind=author_kind, author_id=author_id,
@@ -547,8 +689,16 @@ def register_answer(
             author_ai_run_id=_provenance.get("ai_run_id"),
             author_actual_provider_id=_provenance.get("actual_provider_id"),
             author_actual_provider_name=_provenance.get("actual_provider_name"),
+            author_requested_provider_id=_provenance.get("requested_provider_id"),
+            author_provider_source=_provenance.get("provider_source"),
+            author_fallback_used=_provenance.get("fallback_used"),
         )
-        db_question_items.increment_answer_count(pk=item_id)
+        if item.get("responder_state"):
+            # 0661 T0004 F2/F3: whoever answered (the dispatched AI responder, a manual
+            # [AI 답변 요청] run or a person), the item is no longer waiting on a responder.
+            db_question_items.set_responder_state(
+                item_id, db_question_items.RESPONDER_ANSWERED, None, None,
+            )
         unanswered = db_question_items.list_unanswered(container["id"])
         if not unanswered and q_status != "done":
             db_questions.update_status(doc_id, "done")
@@ -572,7 +722,9 @@ def register_answer(
         "author_kind": author_kind,
         "status": q_status,
     }
-    if not unanswered and auto_resume_api_base_url:
+    # 0688 T#2: an AI-asked item can be the one a parked chain waits on even while other,
+    # unrelated items keep its container open; auto_resume_answered_chain decides that.
+    if auto_resume_api_base_url and (not unanswered or (item.get("asker_kind") or "") == "ai"):
         trace = auto_resume_answered_chain(
             doc_id=doc_id,
             api_base_url=auto_resume_api_base_url,
@@ -581,6 +733,257 @@ def register_answer(
         if trace is not None:
             result["question_resume_trace"] = trace
     return result
+
+
+# ── Automatic responder outcomes (flowgate.default.0661 T0004 F3/F5) ────────────────
+#
+# Three outcomes of a responder run are kept apart on purpose (T0004 "실패 ≠ 정상 답변 ≠
+# 사용자 판단 필요"): an answer row (register_answer above), a TECHNICAL failure
+# (mark_responder_failed — the item stays open and can be re-dispatched from the panel),
+# and the responder's EXPLICIT hand-off to a person (escalate_to_user — nothing retries
+# it; a human answers). None of them touches the container status or the parked chain:
+# `auto_resume_answered_chain`'s open-Q gate keeps the original run parked until the LAST
+# of its own hop's items carries an answer (0688 T#2: unrelated open items do not count).
+
+RESPONDER_ERROR_USER_DECISION = "user_decision_required"
+_RESPONDER_MESSAGE_MAX = 2000
+
+
+def _clip_message(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+    text = str(text).strip()
+    return text[:_RESPONDER_MESSAGE_MAX] if text else None
+
+
+def _announce_responder_state(
+    container: dict,
+    item: dict,
+    *,
+    state: str,
+    error_code: Optional[str],
+    message: Optional[str],
+    run_id: Optional[str],
+    actor_user_id: Optional[str],
+    notify_audience: Optional[str],
+) -> None:
+    """SSE refresh/toast + the durable notification-feed row. Best-effort on both."""
+    doc_id = container.get("doc_id")
+    project_id = container.get("project_id")
+    try:
+        _notify_responder_state(
+            notify_audience or container.get("pm_id") or container.get("created_by"),
+            doc_id, project_id, item["id"],
+            state=state, error_code=error_code, message=message, run_id=run_id,
+        )
+    except Exception:
+        logger.warning("responder state notice failed for %s/%s", doc_id, item.get("id"),
+                       exc_info=True)
+    try:
+        from modules.flow_gate.workflow import event_logger
+
+        doc = db_documents.get_by_id(doc_id) if doc_id else None
+        event_logger.log_question_responder_event(
+            event_type=(
+                event_logger.EVT_QNA_USER_DECISION_REQUIRED
+                if state == db_question_items.RESPONDER_USER_DECISION
+                else event_logger.EVT_QNA_RESPONDER_FAILED
+            ),
+            project_id=project_id or (doc or {}).get("project_id") or "",
+            actor_user_id=actor_user_id or container.get("created_by") or AI_SYSTEM_USER,
+            group_id=(doc or {}).get("group_id"),
+            document_id=(doc or {}).get("id"),
+            doc_id=doc_id,
+            item_id=item.get("id"),
+            item_seq=item.get("seq"),
+            run_id=run_id,
+            error_code=error_code,
+            message=message,
+            requested_provider_id=item.get("responder_requested_provider_id"),
+        )
+    except Exception:
+        logger.warning("responder state event failed for %s/%s", doc_id, item.get("id"),
+                       exc_info=True)
+
+
+def mark_responder_failed(
+    item_id: int,
+    error_code: str,
+    message: Optional[str],
+    *,
+    run_id: Optional[str] = None,
+    actor_user_id: Optional[str] = None,
+    notify_audience: Optional[str] = None,
+) -> bool:
+    """Record a TECHNICAL responder failure on the item (state 'failed').
+
+    Never flags an item that already carries an answer, and with ``run_id`` only the
+    owning run's finalization can write it (its own 'dispatched' claim). Without
+    ``run_id`` (an admission refusal: this attempt never claimed the item) it never
+    touches a 'dispatched' claim or a 'user_decision' hand-off at all -- a claim is
+    written inside the issue builder BEFORE the run is registered live, so a liveness
+    probe cannot tell a dead claim from one that is just starting (TR0005 rev2 review).
+    The reads below only pick the early exits; the write itself is one CAS
+    (``fail_responder``: answer_count = 0, plus the owner's 'dispatched' claim with
+    ``run_id``, or the very state/run the caller read without it), so an answer or a new
+    claim committed after these reads is never relabelled 'failed'. Returns whether the
+    state changed (and was announced).
+    """
+    item = db_question_items.get_by_pk(item_id)
+    if item is None or int(item.get("answer_count") or 0) > 0:
+        return False
+    observed_state = item.get("responder_state")
+    if run_id is None and observed_state in (
+        db_question_items.RESPONDER_DISPATCHED, db_question_items.RESPONDER_USER_DECISION,
+    ):
+        return False
+    changed = db_question_items.fail_responder(
+        item_id, error_code, _clip_message(message), run_id=run_id,
+        observed_state=observed_state, observed_run_id=item.get("responder_run_id"),
+    )
+    if not changed:
+        return False
+    container = db_questions.get_by_pk(item["question_id"]) or {}
+    _announce_responder_state(
+        container, item,
+        state=db_question_items.RESPONDER_FAILED, error_code=error_code,
+        message=_clip_message(message), run_id=run_id or item.get("responder_run_id"),
+        actor_user_id=actor_user_id, notify_audience=notify_audience,
+    )
+    return True
+
+
+def escalate_to_user(
+    doc_id: str,
+    item_id: int,
+    reason: str,
+    *,
+    writer_ai_run_id: Optional[str],
+    actor_user_id: Optional[str] = None,
+    notify_audience: Optional[str] = None,
+) -> dict:
+    """The assigned AI responder says a HUMAN must decide this question (0661 T0004 F5).
+
+    A separate signal from an answer POST: no answer row is written, answer_count stays 0,
+    the container stays 'pending' and the parked chain stays parked. Only the responder
+    run that was dispatched for this very item (``question_items.responder_run_id``) may
+    send it — a work AI's own token, a copied mention or a session cannot — and an item
+    that already has an answer cannot be escalated. Idempotent for a repeated signal
+    from the same run.
+    """
+    reason = (reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason must not be empty")
+    container = db_questions.get_container_by_doc(doc_id)
+    if container is None:
+        raise HTTPException(status_code=404, detail=f"Question container for {doc_id} does not exist")
+    item = db_question_items.get_by_pk(item_id)
+    if item is None or item["question_id"] != container["id"]:
+        raise HTTPException(
+            status_code=404,
+            detail=f"question_item {item_id} does not belong to document {doc_id}",
+        )
+    if not writer_ai_run_id or item.get("responder_run_id") != writer_ai_run_id:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Only the AI responder run dispatched for this question may hand it to a "
+                "user."
+            ),
+        )
+    if int(item.get("answer_count") or 0) > 0:
+        raise HTTPException(status_code=409, detail="This question already has an answer.")
+    message = _clip_message(reason)
+    if item.get("responder_state") == db_question_items.RESPONDER_USER_DECISION:
+        return {
+            "doc_id": doc_id, "item_id": item_id,
+            "state": db_question_items.RESPONDER_USER_DECISION, "status": container["status"],
+            "already": True,
+        }
+    # One CAS (TR0005 rev1 review): only this run's 'dispatched' claim on a still
+    # unanswered item becomes 'user_decision' — a person's answer that committed after the
+    # checks above wins and the hand-off is refused instead of overwriting 'answered'.
+    changed = db_question_items.escalate_responder(
+        item_id, writer_ai_run_id, RESPONDER_ERROR_USER_DECISION, message,
+    )
+    if not changed:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This question was answered or its responder state changed concurrently; it "
+                "was not handed to a user."
+            ),
+        )
+    _announce_responder_state(
+        container, item,
+        state=db_question_items.RESPONDER_USER_DECISION,
+        error_code=RESPONDER_ERROR_USER_DECISION, message=message, run_id=writer_ai_run_id,
+        actor_user_id=actor_user_id, notify_audience=notify_audience,
+    )
+    return {
+        "doc_id": doc_id, "item_id": item_id,
+        "state": db_question_items.RESPONDER_USER_DECISION, "status": container["status"],
+        "already": False,
+    }
+
+
+def is_question_responder_run(run_id: Optional[str]) -> bool:
+    """Was ``run_id`` dispatched as an answer-only responder for some question item?
+
+    Durable (question_items.responder_run_id), so it holds across a restart and for a
+    manual [AI 답변 요청] run alike. False on lookup failure — the caller uses it to
+    deny a responder a second kind of write, and an unknown run keeps the ordinary rules.
+    """
+    if not run_id:
+        return False
+    try:
+        return bool(db_question_items.list_by_responder_run(run_id))
+    except Exception:
+        logger.warning("responder run lookup failed for %s", run_id, exc_info=True)
+        return False
+
+
+def startup_recover_question_responders() -> int:
+    """Settle responder items whose run died with the previous process (0661 T0004 F3).
+
+    At startup nothing is live, so every item still 'dispatched' belongs to a run that
+    never finalized. An item that received an answer meanwhile is closed as 'answered';
+    the rest become a visible 'failed / interrupted' the panel can re-dispatch — instead
+    of a 'dispatched' that would block the next dispatch forever. Returns the number of
+    rows settled.
+    """
+    try:
+        rows = db_question_items.list_dispatched()
+    except Exception:
+        logger.warning("question responder startup sweep could not read items", exc_info=True)
+        return 0
+    settled = 0
+    for row in rows:
+        run_id = row.get("responder_run_id")
+        try:
+            from modules.flow_gate.services.ai_invoke import runtime as ai_runtime
+
+            if run_id and ai_runtime.is_run_live(run_id):
+                continue
+            if int(row.get("answer_count") or 0) > 0:
+                db_question_items.set_responder_state(
+                    row["id"], db_question_items.RESPONDER_ANSWERED, None, None, run_id=run_id,
+                )
+                settled += 1
+                continue
+            if mark_responder_failed(
+                row["id"], "interrupted",
+                f"Responder run {run_id or '(unknown)'} was lost to a server restart before it "
+                "registered an answer. Use [AI 답변 요청] on the question to dispatch it again.",
+                run_id=run_id,
+            ):
+                settled += 1
+        except Exception:
+            logger.warning("question responder startup sweep failed for item %s",
+                           row.get("id"), exc_info=True)
+    if settled:
+        logger.warning("[q_service] startup settled %d interrupted question responder(s)", settled)
+    return settled
 
 
 # ── Lookup ───────────────────────────────────────────────────────────────────────
@@ -609,6 +1012,53 @@ def _provider_view(run_id: Any, provider_id: Any, provider_name: Any) -> Optiona
     return {"ai_run_id": run_id, "ai_provider_id": provider_id, "ai_provider_name": provider_name}
 
 
+def _responder_view(item_dict: dict) -> Optional[dict]:
+    """Pop the migration-142 responder columns into one nested block (0661 T0004 F3/F5).
+
+    None when no in-app responder ever touched the item (legacy rows, human-only Q&A), so
+    the UI shows nothing rather than an empty state machine.
+    """
+    state = item_dict.pop("responder_state", None)
+    run_id = item_dict.pop("responder_run_id", None)
+    requested = item_dict.pop("responder_requested_provider_id", None)
+    source = item_dict.pop("responder_provider_source", None)
+    code = item_dict.pop("responder_error_code", None)
+    message = item_dict.pop("responder_error_message", None)
+    attempts = item_dict.pop("responder_attempts", None)
+    updated_at = item_dict.pop("responder_updated_at", None)
+    if not state:
+        return None
+    return {
+        "state": state,
+        "run_id": run_id,
+        "requested_provider_id": requested,
+        "provider_source": source,
+        "error_code": code,
+        "error_message": message,
+        "attempts": int(attempts or 0),
+        "updated_at": updated_at,
+    }
+
+
+def _answer_provenance_view(answer_dict: dict) -> Optional[dict]:
+    """Pop the requested-provider half of an AI answer's evidence (0661 T0004 F6).
+
+    `author_provider` (above) keeps its 0582 shape — the ACTUAL provider. This sibling
+    says what was ASKED for and whether a fallback ran, so a row can prove on its own
+    that the assigned reviewer (or not) answered. None when there is no evidence.
+    """
+    requested = answer_dict.pop("author_requested_provider_id", None)
+    source = answer_dict.pop("author_provider_source", None)
+    fallback = answer_dict.pop("author_fallback_used", None)
+    if requested is None and source is None and fallback is None:
+        return None
+    return {
+        "requested_provider_id": requested,
+        "provider_source": source,
+        "fallback_used": None if fallback is None else bool(fallback),
+    }
+
+
 def get_qa_detail(doc_id: str) -> dict:
     """The document's query container + items + answers tree. Empty structure if no container.
 
@@ -635,6 +1085,7 @@ def get_qa_detail(doc_id: str) -> dict:
             item_dict.pop("asker_actual_provider_id", None),
             item_dict.pop("asker_actual_provider_name", None),
         )
+        item_dict["responder"] = _responder_view(item_dict)
         answers = []
         for answer in db_answers.list_by_question_item(item["id"]):
             answer_dict = dict(answer)
@@ -644,6 +1095,7 @@ def get_qa_detail(doc_id: str) -> dict:
                 answer_dict.pop("author_actual_provider_id", None),
                 answer_dict.pop("author_actual_provider_name", None),
             )
+            answer_dict["author_provenance"] = _answer_provenance_view(answer_dict)
             answers.append(answer_dict)
         item_dict["answers"] = answers
         result["items"].append(item_dict)

@@ -59,6 +59,12 @@ _NOTIFICATION_EVENT_TYPES = (
     # fires once at the cap — the single case the user must intervene. Both bounded → no 0118 flood.
     "test_run_repair",
     "test_run_repair_exhausted",
+    # flowgate.default.0661 T0004 (0003-NR F3/F5): the automatic Q responder needs a human.
+    # `qna_responder_failed` = technical failure (re-dispatch from the Q&A panel);
+    # `qna_user_decision_required` = the AI explicitly handed the question over. At most
+    # one row per responder attempt and no automatic re-dispatch of the same item → bounded.
+    "qna_responder_failed",
+    "qna_user_decision_required",
 )
 
 
@@ -363,6 +369,14 @@ def _normalize_activity(
         # flowgate.default.0157: the loop hit the attempt cap and stopped — the one case the user must
         # intervene. Points at the TS document; the attempt history rides in the event metadata.
         activity_type = "test_run_repair_exhausted"
+        if not doc:
+            metadata_doc_id = metadata.get("doc_id")
+            if metadata_doc_id:
+                doc = documents.get(str(metadata_doc_id))
+    elif event_type in ("qna_responder_failed", "qna_user_decision_required"):
+        # flowgate.default.0661 T0004: an unanswered Q the automatic responder could not
+        # close. Points at the document that hosts the Q so the user lands on its Q&A panel.
+        activity_type = event_type
         if not doc:
             metadata_doc_id = metadata.get("doc_id")
             if metadata_doc_id:

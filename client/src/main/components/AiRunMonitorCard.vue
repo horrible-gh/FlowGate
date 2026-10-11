@@ -9,9 +9,10 @@
         {{ t('main.ai_miniplayer.dash_title') }}
       </span>
       <span v-if="entries.length > 0" class="airm-count">
-        {{ t('main.ai_miniplayer.fab_summary', {
+        {{ t(store.finishedCount > 0 ? 'main.ai_miniplayer.fab_summary_done' : 'main.ai_miniplayer.fab_summary', {
           running: store.activeCount,
-          waiting: store.awaitingQCount + store.pausedCount,
+          waiting: store.pausedCount,
+          done: store.finishedCount,
         }) }}
       </span>
     </div>
@@ -114,14 +115,12 @@ const tabsStore = useTabsStore()
 const explorerStore = useExplorerStore()
 const projectStore = useProjectStore()
 
-// 0563 T0007 §5: the merged projection (current group state + run-keyed finished
-// history) -- a group can now show an active card and several finished ones at once.
+// The store projects one current or latest finished card per group.
 const entries = computed<AiInvokeRunEntry[]>(() =>
   store.allEntries.slice().sort(compareRunEntries),
 )
 
-// A finished/lost card's identity is its runId (several can share a groupId now);
-// every other phase is still addressed by its groupId the way it always was.
+// Finished card actions address their run id; current cards use the group id.
 function cardKey(entry: AiInvokeRunEntry): string {
   return entry.phase === 'finished' || entry.phase === 'lost' ? entry.runId : entry.groupId
 }

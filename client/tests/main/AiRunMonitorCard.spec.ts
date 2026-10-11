@@ -88,6 +88,23 @@ describe('AiRunMonitorCard (dashboard)', () => {
     wrapper.unmount()
   })
 
+  it('counts only the latest card of a group alongside another group', async () => {
+    const wrapper = mountCard()
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0418'
+    store.trackStarted({ run_id: 'run-old', group_id: groupId, doc_ref: '0026-TR' })
+    store.trackFinished({ run_id: 'run-old', group_id: groupId, outcome: 'complete' })
+    store.trackStarted({ run_id: 'run-current', group_id: groupId, doc_ref: '0027-TR' })
+    store.trackStarted({ run_id: 'run-other', group_id: 'flowgate.default.other', doc_ref: 'other' })
+    await flushPromises()
+
+    expect(wrapper.findAll('.airm-row')).toHaveLength(2)
+    expect(wrapper.text()).toContain('0027-TR')
+    expect(wrapper.text()).not.toContain('0026-TR')
+    expect(store.activeCount + store.pausedCount + store.finishedCount).toBe(2)
+    wrapper.unmount()
+  })
+
   it('shows chain progress instead of the shrinking hop target', async () => {
     const wrapper = mountCard()
     const store = useAiInvokeRunsStore()

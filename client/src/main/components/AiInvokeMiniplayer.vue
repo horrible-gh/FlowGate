@@ -336,15 +336,12 @@ const busy = reactive(new Set<string>())
 const titles = reactive<Record<string, string>>({})
 const releaseErrors = reactive<Record<string, string>>({})
 
-// 0563 T0007 §5: the merged projection (current group state + run-keyed finished
-// history) -- a group can now show an active card and several finished ones at once.
+// The store projects one current or latest finished card per group.
 const entries = computed<AiInvokeRunEntry[]>(() =>
   store.allEntries.slice().sort(compareRunEntries),
 )
 
-// The identity a card-scoped control (busy guard, error text, list key) should use:
-// a finished/lost card's identity is its runId (several can share a groupId now), every
-// other phase is still addressed by its groupId the way it always was.
+// Finished card actions address their run id; current cards use the group id.
 function cardKey(entry: AiInvokeRunEntry): string {
   return entry.phase === 'finished' || entry.phase === 'lost' ? entry.runId : entry.groupId
 }

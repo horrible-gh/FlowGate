@@ -87,7 +87,10 @@ class _MockTxn:
         self._cur = None
 
     def execute(self, sql: str, params=None):
+        # Returns the cursor like the real sqlite adapter, so FlowGateStore._execute_affected
+        # (the 0661 claim / guarded answer_count CAS writes) can read rowcount.
         self._cur = self._conn.execute(sql, params or [])
+        return self._cur
 
     def fetch_one(self):
         if self._cur is None:
@@ -145,7 +148,12 @@ def patch_store(tmp_db):
             return _QUERIES[key]
 
     conn_mod.STORE = _PatchedStore()
-    yield
+    # 0661 (harness repair, as in test_qa_route_auth): token_scratch.create refuses a scratch
+    # root outside the storage root, which a test host's temp dir is; the on-disk scratch
+    # directory is irrelevant to these dispatch tests.
+    from modules.flow_gate.services import token_service
+    with patch.object(token_service.token_scratch, "create", lambda *a, **kw: None):
+        yield
     conn_mod.STORE = original
 
 

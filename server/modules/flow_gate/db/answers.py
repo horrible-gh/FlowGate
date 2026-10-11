@@ -33,6 +33,9 @@ def insert(
     author_ai_run_id: Optional[str] = None,
     author_actual_provider_id: Optional[str] = None,
     author_actual_provider_name: Optional[str] = None,
+    author_requested_provider_id: Optional[str] = None,
+    author_provider_source: Optional[str] = None,
+    author_fallback_used: Optional[bool] = None,
 ) -> None:
     """answers INSERT (DB0006 §4.2 — author_kind/author_id; author_id NULL for AI).
 
@@ -43,6 +46,11 @@ def insert(
     (0582 T0005 §4/§D) — always None for a human answer, and None for an AI answer
     whose token carried no bound run (the [Copy Mention] hand-off starts no run by
     design, so it is legitimately unknown rather than dropped).
+
+    ``author_requested_provider_id`` / ``author_provider_source`` /
+    ``author_fallback_used`` (0661 T0004 F6, migration 142) are the requested half of
+    the same snapshot: together with the actual provider they let a row prove on its
+    own whether the assigned reviewer answered or a fallback did. None = no evidence.
     """
     store = get_store()
     store._execute(
@@ -50,6 +58,8 @@ def insert(
         [
             question_item_id, body, author_kind, author_id, selected_options,
             author_ai_run_id, author_actual_provider_id, author_actual_provider_name,
+            author_requested_provider_id, author_provider_source,
+            None if author_fallback_used is None else int(bool(author_fallback_used)),
         ],
     )
 

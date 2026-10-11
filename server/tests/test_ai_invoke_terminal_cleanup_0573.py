@@ -11,6 +11,7 @@ import pytest
 
 from modules.flow_gate.db import group_ai_leases as leases
 from modules.flow_gate.db import project_ai_leases as project_leases
+from modules.flow_gate.db import questions as db_questions
 from modules.flow_gate.services import ai_invoke_service as svc
 from modules.flow_gate.services import process_runner
 from modules.flow_gate.services.ai_invoke import chain, finalize, terminal, worker
@@ -54,6 +55,9 @@ def env(monkeypatch):
     monkeypatch.setattr(svc, "_execute_provider_chain", lambda *a: True)
     monkeypatch.setattr(svc, "_classify_end_reason", lambda r, ok: None)
     monkeypatch.setattr(svc, "_judge_hop", lambda r: None)
+    # 0688 T#2: no hop here asks anything -- the group has no open question container. The
+    # hand-off's own-question probe lists them, and parks the chain when it cannot.
+    monkeypatch.setattr(db_questions, "list_open_doc_ids_by_group", lambda group_id: [])
     monkeypatch.setattr(project_leases, "_memory_mode", lambda: True)
     project_leases._memory.clear()
     leases._memory.clear()

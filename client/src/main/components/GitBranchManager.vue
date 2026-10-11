@@ -147,9 +147,8 @@
         >{{ t('main.git_branch_manager.merge_btn') }}</button>
       </div>
 
-      <!-- 0630 T0005 §12 — a conflict is no longer a failed merge: the server keeps it
-           as a persistent attempt and has already started its AI resolver. This box
-           only says so and opens the EXISTING resolver / review dialogs on it. -->
+      <!-- A conflict is a persistent attempt. AI starts only on the user's request;
+           this card opens the existing resolver / review dialogs on that attempt. -->
       <div
         v-if="mergeResult?.mergeId != null"
         class="branch-result branch-result--conflict"
@@ -257,6 +256,7 @@
 
     <GitBranchMergeConflictHost
       v-if="openMergeId != null"
+      :key="`${projectId}:${openMergeId}`"
       :project-id="projectId"
       :merge-id="openMergeId"
       @close="onConflictHostClosed"
@@ -525,10 +525,12 @@ function syncSelections(opts: { forceTarget?: string | null } = {}) {
   }
 }
 async function load(opts: { forceTarget?: string | null } = {}) {
-  if (!props.projectId) return
+  const projectId = props.projectId
+  if (!projectId || unmounted) return
   error.value = ''
   try {
-    const { data } = await getRequest<any>(`/api/v1/projects/${props.projectId}/git/branches`)
+    const { data } = await getRequest<any>(`/api/v1/projects/${projectId}/git/branches`)
+    if (unmounted || props.projectId !== projectId) return
     catalog.value = {
       base_branch: data?.base_branch || null,
       default_merge_target: data?.default_merge_target || null,
@@ -536,12 +538,16 @@ async function load(opts: { forceTarget?: string | null } = {}) {
     }
     openMerges.value = Array.isArray(data?.open_branch_merges) ? data.open_branch_merges : []
     syncSelections(opts)
+    recoverPendingReviews()
+    watchConflictAttempt()
     emit('catalog', { state: 'ready', base_branch: catalog.value.base_branch, default_merge_target: catalog.value.default_merge_target })
   } catch (e: any) {
     // §4.1 — this catalog's own read failure never reaches (or blanks) the
     // surrounding Git finalize UI; it only shows up in this section.
+    if (unmounted || props.projectId !== projectId) return
     error.value = e?.response?.data?.error?.message || t('main.git_branch_manager.load_failed')
     emit('catalog', { state: 'error', base_branch: catalog.value.base_branch, default_merge_target: catalog.value.default_merge_target })
+    watchConflictAttempt()
   }
 }
 async function run(fn: () => Promise<void>) {
@@ -664,8 +670,7 @@ async function confirmMerge() {
         push,
       })
       if ((data?.status === 'conflict' || data?.status === 'resolved_pending_review') && data?.merge_id != null) {
-        // 0630 T0005 — 202: the conflict is a persistent attempt, not an error, and the
-        // server already started (or tried to start) its AI resolver.
+        // 202: the conflict is a persistent attempt; AI requires an explicit request.
         mergeResult.value = {
           source: sourceLabel, target: targetLabel,
           mergeId: Number(data.merge_id),
@@ -707,9 +712,8 @@ async function confirmMerge() {
 function loadQuietly() { void load() }
 
 // 0683 T0004 §1 — conflict → AI resolve → `resolved_pending_review` must reach a person.
-// While the conflict card of the merge just started is up (and its dialogs are not), the
-// attempt is re-read from the server; the moment it reaches review the review dialog opens
-// on it. `resolved_pending_review` is NOT a merged result — only the review's approve is.
+// Follow both recent result cards and persisted attempts restored from the catalog.
+// The server's pending state opens the existing review; only its approve finishes a merge.
 const REVIEW_ATTEMPT_STATES = new Set(['resolved_pending_review', 're_review', 'applying', 'reconciling'])
 const CLOSED_ATTEMPT_STATES = new Set(['completed', 'aborted', 'failed', 'interrupted'])
 const ATTEMPT_WATCH_MS = 3000
@@ -725,12 +729,18 @@ function stopAttemptWatch() {
   attemptWatchTimer = null
 }
 function handOffToReview(mergeId: number) {
-  stopAttemptWatch()
   if (mergeResult.value?.mergeId === mergeId) mergeResult.value = { ...mergeResult.value, aiStatus: 'review' }
-  if (autoOpenedMergeIds.has(mergeId) || openMergeId.value != null) return
+  if (unmounted || !showManage.value || autoOpenedMergeIds.has(mergeId) || openMergeId.value != null) return
   autoOpenedMergeIds.add(mergeId)
   showToast(t('main.git_branch_manager.merge_review_ready_toast'), 'success')
   openMergeId.value = mergeId
+}
+// Recover all persisted project attempts, including ones with no recent result card.
+// REST polling also covers refresh/re-entry and missed SSE events. Never invent review state.
+function recoverPendingReviews() {
+  const pending = openMerges.value.find(attempt => isReviewState(attempt.state)
+    && !autoOpenedMergeIds.has(attempt.merge_id))
+  if (pending) handOffToReview(pending.merge_id)
 }
 async function readConflictAttempt(mergeId: number): Promise<{ state?: string; ai?: { status?: string }; pushed?: boolean } | null> {
   const { data } = await getRequest<{ ok: boolean; result?: any }>(
@@ -761,32 +771,54 @@ function settleConflictCard(mergeId: number, attempt: { state?: string; ai?: { s
 }
 function watchConflictAttempt() {
   stopAttemptWatch()
-  const mergeId = mergeResult.value?.mergeId
-  if (unmounted || mergeId == null || openMergeId.value != null) return
+  if (unmounted || (!openMerges.value.length && mergeResult.value?.mergeId == null)) return
+  const projectId = props.projectId
   attemptWatchTimer = setTimeout(async () => {
     attemptWatchTimer = null
-    if (unmounted || mergeResult.value?.mergeId !== mergeId || openMergeId.value != null) return
-    let live = true
-    try {
-      live = settleConflictCard(mergeId, await readConflictAttempt(mergeId))
-    } catch {
-      // a transient read failure keeps the card; the next tick retries
+    if (unmounted || props.projectId !== projectId) return
+    const mergeId = mergeResult.value?.mergeId
+    if (mergeId != null && openMergeId.value !== mergeId) {
+      try {
+        const attempt = await readConflictAttempt(mergeId)
+        if (unmounted || props.projectId !== projectId) return
+        settleConflictCard(mergeId, attempt)
+      } catch {
+        // Keep the last state and retry; a failed read cannot mean review or completion.
+      }
     }
-    if (live) watchConflictAttempt()
+    if (unmounted || props.projectId !== projectId) return
+    await load()
   }, ATTEMPT_WATCH_MS)
 }
 async function onConflictHostClosed() {
   const closed = openMergeId.value
-  openMergeId.value = null
-  loadQuietly()
-  if (closed == null || mergeResult.value?.mergeId !== closed) return
-  try {
-    if (settleConflictCard(closed, await readConflictAttempt(closed))) watchConflictAttempt()
-  } catch {
-    watchConflictAttempt()
+  // Closing a review opened manually has the same suppression as automatic hand-off.
+  if (closed != null && (openMerges.value.some(a => a.merge_id === closed && isReviewState(a.state))
+    || (mergeResult.value?.mergeId === closed && mergeResult.value.aiStatus === 'review'))) {
+    autoOpenedMergeIds.add(closed)
   }
+  openMergeId.value = null
+  const projectId = props.projectId
+  if (closed != null && mergeResult.value?.mergeId === closed) {
+    try {
+      const attempt = await readConflictAttempt(closed)
+      if (unmounted || props.projectId !== projectId) return
+      settleConflictCard(closed, attempt)
+    } catch {
+      // load() below restarts the shared watcher even after a transient failure.
+    }
+  }
+  await load()
 }
-watch(() => props.projectId, loadQuietly)
+watch(() => props.projectId, () => {
+  stopAttemptWatch()
+  autoOpenedMergeIds.clear()
+  openMergeId.value = null
+  openMerges.value = []
+  mergeResult.value = null
+  loadQuietly()
+})
+watch(showManage, visible => { if (visible) recoverPendingReviews() })
 onMounted(loadQuietly)
 onBeforeUnmount(() => {
   unmounted = true

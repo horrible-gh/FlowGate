@@ -86,6 +86,10 @@ def issued(monkeypatch):
     monkeypatch.setattr(q_answer, "_source_tool_block", lambda *_a, **_k: [])
     monkeypatch.setattr(q_answer, "_document_lookup_block", lambda *_a, **_k: [])
     monkeypatch.setattr(q_answer, "_ai_answer_count", lambda _item_id: 0)
+    # 0661 T0004: the builder now claims the item durably before minting (no DB here).
+    monkeypatch.setattr(q_answer.db_question_items, "get_by_pk", lambda _pk: None)
+    monkeypatch.setattr(q_answer.db_question_items, "claim_responder_dispatch",
+                        lambda *_a, **_k: True)
 
     captured: dict = {}
 

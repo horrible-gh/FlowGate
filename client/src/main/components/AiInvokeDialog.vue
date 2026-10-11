@@ -981,6 +981,9 @@ async function start(reviewIntent?: 'rerun') {
         lockedGroupId.value = result.groupId
         startError.value = t('main.ai_invoke_dialog.error_run_in_progress_orphaned')
         break
+      case 'token_scratch_storage_unsafe':
+        startError.value = t('main.ai_invoke_dialog.error_token_scratch_storage_unsafe')
+        break
       case 'review_already_completed':
         startError.value = t('main.ai_invoke_dialog.error_review_already_completed')
         break

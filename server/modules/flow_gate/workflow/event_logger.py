@@ -74,6 +74,25 @@ EVT_REVIEW_ANNOTATION_READ_FAILED = "review_annotation_read_failed"
 EVT_REVIEW_ANNOTATION_WRITE_FAILED = "review_annotation_write_failed"
 EVT_DEPLOYMENT_STARTED = "deployment_started"
 EVT_CHANGE_SUMMARY_RECORDED = "change_summary_recorded"
+# EVT_QNA_RESPONDER_FAILED / EVT_QNA_USER_DECISION_REQUIRED — flowgate.default.0661 T0004
+#   (0003-NR F3/F5). The automatic Q responder could not register an answer: either a
+#   TECHNICAL failure (provider unavailable, admission/lease conflict, timeout, the run ended
+#   without an answer) or the responder's EXPLICIT "a human must decide this" signal. Before
+#   this the first case was a single logger.warning and the second had no representation at
+#   all, so a parked chain waited on a Q nobody knew was stuck (0003-NR §2.6 table). Both are
+#   on the notification feed (dashboard_service._NOTIFICATION_EVENT_TYPES); each fires at most
+#   once per responder attempt and the chain never re-dispatches the same item on its own, so
+#   neither can flood.
+EVT_QNA_RESPONDER_FAILED = "qna_responder_failed"
+EVT_QNA_USER_DECISION_REQUIRED = "qna_user_decision_required"
+# EVT_QNA_ANSWERS_DELIVERED -- flowgate.default.0688 T#2. Which answers to an AI question a
+#   chain's review / rework hop was given in its mention, keyed by that hop's run and the
+#   answer ids. The review gate reads it back (review._answers_checked_by_reviews): a review
+#   round checked an answer only when its own run's row names it, so an answer that landed
+#   while the round was running is never taken as checked by it. At most one row per
+#   review/rework hop that carried answers; deliberately NOT on the notification feed -- it
+#   records normal behaviour, and is the trace of which question / answer a fix followed.
+EVT_QNA_ANSWERS_DELIVERED = "qna_answers_delivered"
 
 
 def log_event(
@@ -329,6 +348,54 @@ def log_continuous_work_failed(
     )
 
 
+def log_question_responder_event(
+    *,
+    event_type: str,
+    project_id: str,
+    actor_user_id: str,
+    group_id: str | None,
+    document_id: int | None,
+    doc_id: str | None,
+    item_id: int | None,
+    item_seq: int | None = None,
+    run_id: str | None = None,
+    error_code: str | None = None,
+    message: str | None = None,
+    requested_provider_id: str | None = None,
+) -> dict:
+    """Record one automatic-Q-responder outcome that needs a human (0661 T0004 F3/F5).
+
+    ``event_type`` is EVT_QNA_RESPONDER_FAILED (technical: the item stays unanswered and
+    can be re-dispatched from the Q&A panel) or EVT_QNA_USER_DECISION_REQUIRED (the AI
+    said a human must decide; nothing will retry it). The two are distinct event types
+    on purpose: the feed, the Q&A panel and the tests must never collapse "could not run"
+    into "should not be answered by an AI".
+    """
+    meta: dict[str, Any] = {}
+    if doc_id:
+        meta["doc_id"] = doc_id
+    if item_id is not None:
+        meta["item_id"] = item_id
+    if item_seq is not None:
+        meta["item_seq"] = item_seq
+    if run_id:
+        meta["run_id"] = run_id
+    if error_code:
+        meta["error_code"] = error_code
+    if message:
+        meta["message"] = message
+    if requested_provider_id:
+        meta["requested_provider_id"] = requested_provider_id
+    return log_event(
+        event_type=event_type,
+        project_id=project_id,
+        actor_user_id=actor_user_id,
+        group_id=group_id,
+        document_id=document_id,
+        metadata=meta or None,
+    )
+
+
 def log_test_run_repair(
     *,
     project_id: str,
@@ -421,6 +488,49 @@ def log_review_annotation_failed(
             "error": str(error),
         },
     )
+
+
+def log_answer_delivery(
+    *, project_id: str, actor_user_id: str, group_id: str | None, doc_id: str,
+    revision_no: int | None, stage: str, run_id: str | None, chain_id: str | None,
+    items: list[dict],
+) -> dict:
+    """Record the answers a chain hop's mention carries (flowgate.default.0688 T#2).
+
+    Raises on a write failure: the caller does not launch a hop whose delivery is not on
+    record.
+    """
+    return log_event(
+        event_type=EVT_QNA_ANSWERS_DELIVERED, project_id=project_id,
+        actor_user_id=actor_user_id, group_id=group_id,
+        metadata={"doc_id": doc_id, "revision_no": revision_no, "stage": stage,
+                  "run_id": run_id, "chain_id": chain_id, "items": items},
+    )
+
+
+def list_answer_deliveries(doc_id: str) -> list[dict]:
+    """Every answer delivery recorded for ``doc_id``, oldest first, as metadata dicts.
+
+    Matched on the metadata's ``doc_id`` the way the other run-keyed lookups of this table
+    match theirs (``metadata LIKE``), then checked exactly: a row whose metadata cannot be
+    decoded, or names another document, is left out. Raises on a read failure.
+    """
+    from modules.flow_gate.db.connection import get_store
+
+    rows = get_store()._fetch_all(
+        "SELECT id, metadata FROM workflow_events WHERE event_type = ? AND metadata LIKE ? "
+        "ORDER BY id",
+        [EVT_QNA_ANSWERS_DELIVERED, f'%"doc_id": {json.dumps(doc_id, ensure_ascii=False)}%'],
+    )
+    found: list[dict] = []
+    for row in rows or []:
+        try:
+            meta = json.loads(row.get("metadata") or "")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(meta, dict) and meta.get("doc_id") == doc_id:
+            found.append(meta)
+    return found
 
 
 def count_review_annotation_failures(*, since: str | None = None) -> dict:
