@@ -14,6 +14,10 @@ T-A scope:
 """
 from __future__ import annotations
 
+from modules.flow_gate.services.workflow_completion_service import (
+    completion_fields, slot_status,
+)
+
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
@@ -50,13 +54,11 @@ _NEXT_CANDIDATES: dict[str, list[str]] = {
 }
 
 
-def _derive_status(result_doc_id, result_review: str | None) -> str:
-    """Derive workflow slot status from result_doc_id + doc_review_status (D030 §2 SSOT)."""
-    if result_doc_id is None:
-        return "pending"
-    if result_review == "approved":
-        return "done"
-    return "in_progress"
+def _derive_status(result_doc_id, result_review: str | None, item: dict | None = None) -> str:
+    """Legacy two-argument callers keep working; full rows share the completion contract."""
+    return slot_status(item if item is not None else {
+        "result_doc_id": result_doc_id, "result_doc_review_status": result_review,
+    })
 
 
 def _head_response(
@@ -74,9 +76,10 @@ def _head_response(
             "type":      head_type,
             "label":     head.get("label", ""),
             "doc_class": head.get("doc_class", doc_class),
-            "status":    _derive_status(head.get("result_doc_id"), head.get("result_doc_review_status")),
+            "status":    _derive_status(head.get("result_doc_id"), head.get("result_doc_review_status"), head),
             "sort_order": head.get("sort_order"),
             "next_candidates": _NEXT_CANDIDATES.get(head_type, []),
+            **completion_fields(head),
         }
     return {
         "doc_id":   doc_id,
@@ -178,8 +181,9 @@ def get_workflow_sequence(doc_id: str, request: Request):
             "type":      head_type,
             "label":     head.get("label", ""),
             "doc_class": head.get("doc_class", doc_class),
-            "status":    _derive_status(head.get("result_doc_id"), head.get("result_doc_review_status")),
+            "status":    _derive_status(head.get("result_doc_id"), head.get("result_doc_review_status"), head),
             "next_candidates": _NEXT_CANDIDATES.get(head_type, []),
+            **completion_fields(head),
         }
 
     return JSONResponse(content={
@@ -222,13 +226,14 @@ def _serialize_item(
         "label":     item.get("label"),
         "doc_class": item.get("doc_class"),
         "sort_order": item.get("sort_order"),
-        "status":    _derive_status(item.get("result_doc_id"), item.get("result_doc_review_status")),
+        "status":    _derive_status(item.get("result_doc_id"), item.get("result_doc_review_status"), item),
         # 0018 R0001 — workflow-strip time-machine: expose the slot's realised document
         # so the FE can map a clicked strip cell to its rollback target with slot identity
         # (repeated types resolve correctly). result_doc_id = the document that filled this
         # slot; result_seq = that document's documents.seq, i.e. the reopen target_seq.
         "result_doc_id": item.get("result_doc_id"),
         "result_seq":    item.get("result_seq"),
+        **completion_fields(item),
         "note": item.get("note") or "",
         "source_doc_id": item.get("source_doc_id"),
         "source_revision_no": item.get("source_revision_no"),

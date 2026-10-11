@@ -14,6 +14,8 @@ trigger), which is also where the existing tests patch them.
 
 from __future__ import annotations
 
+from modules.flow_gate.services.workflow_completion_service import slot_completed
+
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
@@ -1394,8 +1396,7 @@ def _resolve_continuation_target(
         head = next((
             item.get("item_seq")
             for item in sorted(items, key=lambda candidate: candidate.get("item_seq") or 0)
-            if item.get("result_doc_id") is None
-            or item.get("result_doc_review_status") != "approved"
+            if not slot_completed(item)
         ), None)
     if head is not None and resolved < head:
         raise HTTPException(status_code=409, detail={
@@ -1476,15 +1477,15 @@ def _sequence_completion_state(
     if not items:
         return False, None          # a sequence with no slots proves nothing was finished
     for item in sorted(items, key=lambda i: i.get("item_seq") or 0):
-        if item.get("result_doc_id") is None or item.get("result_doc_review_status") != "approved":
+        if not slot_completed(item):
             return True, item.get("item_seq")
     return True, None
 
 
 def _next_incomplete_item_seq(doc_ref: str) -> Optional[int]:
     """First workflow slot that is not complete (L0009 §2.3). Completion uses the
-    existing slot definition — result document exists AND is approved — exactly as
-    ai_invoke_routes._continuation_target_error judges it."""
+    shared approved/automatic/valid-decision contract, also used by SQL/head and
+    ai_invoke_routes._continuation_target_error."""
     return _sequence_completion_state(doc_ref)[1]
 
 

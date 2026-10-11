@@ -27,11 +27,10 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from scratch_support import remove_tree, session_scratch
+from scratch_support import remove_tree
 from group_lock_stub import hold_group_lock
 
 os.environ["TESTING"] = "1"
@@ -47,7 +46,6 @@ sys.path.insert(0, str(_SERVER_DIR))
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git binary unavailable")
 
-_SCRATCH = session_scratch("tr2-connected-0565")
 
 PROJECT = "tr2e2e"
 MODULE = "default"
@@ -181,8 +179,9 @@ def git(repo: Path, *args: str) -> str:
 
 
 @pytest.fixture
-def repo():
-    path = _SCRATCH / f"wt-{os.urandom(6).hex()}"
+def repo(tmp_path):
+    # Keep Git artifacts in pytest basetemp (the Self-check token scratch).
+    path = tmp_path / "repo"
     (path / "src").mkdir(parents=True)
     git(path, "init", "-b", "work")
     git(path, "config", "core.autocrlf", "false")  # byte-exact on every host
@@ -258,10 +257,12 @@ def make_group(code: str) -> dict:
 
 def issue_token(group: dict, scope: str, doc_ref: str) -> str:
     from modules.flow_gate.services import token_service
-    with patch.object(token_service, "_scratch_dir", return_value=_SCRATCH / "tokens"):
-        return token_service.issue(project=PROJECT, group_id=group["group_id"],
-                                   action_scope=scope, doc_ref=doc_ref,
-                                   issued_to=USER)["raw_token"]
+    # Use the real per-token path under this case's configured storage root.
+    # The old shared scratch override was outside that root and is correctly
+    # rejected by token_scratch's containment/ownership guard.
+    return token_service.issue(project=PROJECT, group_id=group["group_id"],
+                               action_scope=scope, doc_ref=doc_ref,
+                               issued_to=USER)["raw_token"]
 
 
 def post_inbox(group: dict, body: dict, doc_ref: str):

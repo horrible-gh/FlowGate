@@ -6,6 +6,10 @@ doc_class (R/Q/B) input + response.
 """
 from __future__ import annotations
 
+from modules.flow_gate.services.workflow_completion_service import (
+    completion_fields, slot_completed, slot_status,
+)
+
 import json as _json
 import logging
 import re
@@ -1000,7 +1004,7 @@ def _auto_complete_instruction_heads(
         # An already-produced-but-unapproved head means a worker doc is mid-flight; leave it
         # to advance_workflow's head_in_progress guard rather than stacking another doc.
         rdid = head.get("result_doc_id")
-        if rdid is not None and head.get("result_doc_review_status") != "approved":
+        if rdid is not None and not slot_completed(head):
             break
         # Defensive non-progress guard: approving the head must move it forward; if the same
         # head reappears, stop instead of looping forever.
@@ -1153,7 +1157,7 @@ def advance_workflow(
 
     result_doc_id = head.get("result_doc_id")
     result_review = head.get("result_doc_review_status")
-    if result_doc_id is not None and result_review != "approved" and not (
+    if result_doc_id is not None and not slot_completed(head) and not (
         continuous and _server_opened_tsr_head(seq["id"], head)
     ):
         raise ValueError(f"head_in_progress:{head['type']}:{head['label']}")
@@ -1254,6 +1258,7 @@ def advance_workflow(
                 "continuation_auto_approve_item_seqs": auto_approve_item_seqs,
                 "continuation_remaining": remaining,
                 "head_item_seq": head_item_seq,
+                **completion_fields(head),
             }
         # No approved TS predecessor behind this TSR head → there is nothing to hand off,
         # and the guard below refuses rather than falling through to a 'new' token.
@@ -1380,6 +1385,7 @@ def advance_workflow(
         "continuation_auto_approve_item_seqs": auto_approve_item_seqs if continuous else None,
         "continuation_remaining": remaining,
         "head_item_seq": head_item_seq,
+        **completion_fields(head),
     }
 
 
@@ -1639,7 +1645,8 @@ def request_sequence_edit(
             "item_seq": it.get("item_seq"),
             "type": it["type"],
             "label": _safe_label(it["label"], it["type"], locale),
-            "status": it["status"],
+            "status": slot_status(it),
+            **completion_fields(it),
             "source_wp_card_id": it.get("source_wp_card_id"),
             "note": _normalized_sequence_note(it.get("note")),
             "source_doc_id": it.get("source_doc_id"),
@@ -1931,7 +1938,8 @@ def get_workflow_sequence(doc_id: str) -> dict:
             "label": _safe_label(it["label"], it["type"]),
             "doc_class": it["doc_class"],
             "sort_order": it["sort_order"],
-            "status": it["status"],
+            "status": slot_status(it),
+            **completion_fields(it),
             # 0399 L0011 §2.1: the note and its origin come back for EVERY row, not
             # just the ones a plan poured. The save replaces the whole pending block,
             # so a note this read left behind is a note the next save deletes.
