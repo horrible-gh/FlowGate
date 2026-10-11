@@ -4189,15 +4189,21 @@ def _continuation_self_chain(
     #   3. an engine run drives this group — somebody has to launch the review hop. A
     #      copy-mention semi-manned chain has nobody, so it keeps today's behaviour instead
     #      of silently deciding to review and then never reviewing.
-    #   4. this slot's review count is not 0.
+    #   4. this slot's review count is not 0 -- or (0688 T#2) the hop submitting it still has
+    #      a question of its own open: a document resting on an unanswered assumption is not
+    #      approved on submission. The engine holds the chain on that question and, after
+    #      the answer, its gate approves the document or holds it for a human.
     # When it holds, the document is NOT auto-approved: it stays pending_review and the
     # engine's gate takes it from here. Invariant R1 lives on this branch.
     _review_counts, _reviewer_overrides = _ai_invoke.active_review_selection(chain_group)
     if (
         _ai_invoke.has_active_run(chain_group)
-        and _ai_invoke.resolve_review_count(
-            _review_counts, completed_seq, spine_doc_ref
-        ) != 0
+        and (
+            _ai_invoke.resolve_review_count(
+                _review_counts, completed_seq, spine_doc_ref
+            ) != 0
+            or _ai_invoke.hop_left_own_question_open(chain_group, token_rec.get("ai_run_id"))
+        )
     ):
         return _hand_off_to_engine(review_pending=True)
 

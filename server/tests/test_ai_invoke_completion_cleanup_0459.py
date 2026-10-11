@@ -300,6 +300,10 @@ def gate_world(monkeypatch):
                         lambda run, bundle, stop_code: spawned["parked"].append(stop_code))
     monkeypatch.setattr(svc, "_clear_handoff_row", lambda g, r: None)
     monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda g, r, **kw: True)
+    # 0688 T#2: the gate reads the slot's answered questions before approving, and a question
+    # record that cannot be read holds the slot. No hop here asks anything: no container.
+    from modules.flow_gate.db import questions as db_questions
+    monkeypatch.setattr(db_questions, "get_container_by_doc", lambda doc_id: None)
     return {"world": w, "store": store, "calls": calls, "spawned": spawned}
 
 

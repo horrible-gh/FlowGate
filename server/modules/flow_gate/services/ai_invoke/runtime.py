@@ -242,10 +242,15 @@ REVIEW_REJECT_DENIED_STOP_CODE = "review_reject_denied"  # issuer lacks document
 
 REVIEW_REJECT_FAILED_STOP_CODE = "review_reject_failed"  # the reject transition raised
 
+# 0688 T#2: a document submitted while a question of its own was open, whose answer has landed
+# since, but which no automatic review can check against that answer (the step is not reviewed,
+# or its one answer-check round is spent). Held for a human like a reviewer's 'hold'.
+QUESTION_ANSWER_UNVERIFIED_STOP_CODE = "question_answer_unverified"
+
 REVIEW_STOP_CODES = frozenset({
     REVIEW_EXHAUSTED_STOP_CODE, REVIEW_CAP_REACHED_STOP_CODE, REVIEW_VERDICT_HOLD_STOP_CODE,
     REVIEW_STALLED_STOP_CODE, REVIEW_NO_VERDICT_STOP_CODE, REVIEW_REJECT_DENIED_STOP_CODE,
-    REVIEW_REJECT_FAILED_STOP_CODE,
+    REVIEW_REJECT_FAILED_STOP_CODE, QUESTION_ANSWER_UNVERIFIED_STOP_CODE,
 })
 
 # L0007 §4.2 — one criterion: can re-running this hop still do the work? Human-triage stops

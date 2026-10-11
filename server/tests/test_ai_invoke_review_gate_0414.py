@@ -520,6 +520,14 @@ def world(monkeypatch):
                         lambda doc_id: dict(w.reviews[doc_id][0]) if w.reviews.get(doc_id) else None)
     monkeypatch.setattr(svc.ai_settings_service, "resolve_effective",
                         lambda pid: {"ok": True, "providers": list(PROVIDERS)})
+    # 0688 T#2: every approval reads the slot's answered questions first, and a question
+    # record that cannot be read holds the slot (review_history_unreadable). No hop in this
+    # World asks anything: no document has a question container.
+    # The hand-off's own-question probe lists the group's open containers first and parks
+    # the chain when it cannot read them: the group has none.
+    from modules.flow_gate.db import questions as db_questions
+    monkeypatch.setattr(db_questions, "get_container_by_doc", lambda doc_id: None)
+    monkeypatch.setattr(db_questions, "list_open_doc_ids_by_group", lambda group_id: [])
     return w
 
 

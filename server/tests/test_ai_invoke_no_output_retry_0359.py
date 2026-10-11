@@ -279,6 +279,13 @@ def env(monkeypatch, tmp_path):
     # the reanchored lookup is what actually gets queried, not the raw spine doc_ref.
     monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: doc_id)
     monkeypatch.setattr(svc.db_questions, "get_container_by_doc", lambda doc_id: None)
+    # 0688 T#2: the group's open containers, which the hand-off's own-question probe
+    # (finalize.open_questions_raised_by_run) lists first -- a probe that cannot read it
+    # parks the chain instead of handing off. Read off the container fake in force, so the
+    # tests that open a question on ANCHOR (`_open_question_of`) list it, and none else do.
+    monkeypatch.setattr(svc.db_questions, "list_open_doc_ids_by_group", lambda group_id: [
+        doc_id for doc_id in (DOC_REF, ANCHOR)
+        if (svc.db_questions.get_container_by_doc(doc_id) or {}).get("status") == "pending"])
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda d: {"id": 1})
     monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda s: {
         "item_seq": 1, "type": "N",

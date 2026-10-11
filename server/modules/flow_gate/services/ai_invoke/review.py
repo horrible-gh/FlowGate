@@ -31,6 +31,7 @@ from . import oracle
 from .runtime import (
     HOP_HANDOFF_FAILED_STOP_CODE,
     HOP_TIMEOUT_SEC,
+    QUESTION_ANSWER_UNVERIFIED_STOP_CODE,
     REVIEW_COUNT_DEFAULT,
     REVIEW_HOP_KIND,
     REVIEW_NO_VERDICT_STOP_CODE,
@@ -562,6 +563,24 @@ def _log_review_annotation_failure(kind: str, slot: dict, bundle: dict, error) -
 def resolve_review_gate(bundle: dict) -> dict:
     """What happens next for the slot this chain is standing on (L0008 §2.3).
 
+    `_derive_review_gate` is the gate as it always was. 0688 T#2: every approval it decides
+    -- a step that is not reviewed, a `pass`, a finite budget whose last rework landed --
+    goes through `_answer_check_gate` first, so a document is never approved while an answer
+    to a question about it is newer than every review it has had.
+    """
+    gate = _derive_review_gate(bundle)
+    if (
+        gate.get("stage") != WORK_HOP_KIND
+        or not gate.get("approve_first")
+        or gate.get("slot") is None
+    ):
+        return gate
+    return _answer_check_gate(gate, bundle)
+
+
+def _derive_review_gate(bundle: dict) -> dict:
+    """The review gate's own derivation (L0008 §2.3), before the 0688 T#2 answer check.
+
     Returns {stage: work|review|rework|stop, ...}. Every fact it reads is re-derived here
     and now — rounds used is `len(document_reviews)`, "a rework landed" is
     `document.revision_no > the last review's revision_no`, "already rejected" is
@@ -585,7 +604,7 @@ def resolve_review_gate(bundle: dict) -> dict:
         logger.warning("review gate could not read reviews for %s", slot["doc_id"],
                        exc_info=True)
         _svc()._log_review_annotation_failure("read", slot, bundle, exc)
-        return {"stage": "stop", "stop_code": "review_history_unreadable",
+        return {"stage": "stop", "stop_code": REVIEW_HISTORY_UNREADABLE_STOP_CODE,
                 "slot": slot, "count": count, "limit": limit, "detail": str(exc)}
     rounds_used = len(reviews)
     latest = reviews[0] if rounds_used else None
@@ -665,6 +684,454 @@ def resolve_review_gate(bundle: dict) -> dict:
     # review → rework → advance, and count=2 runs review → rework → review → rework → advance.
     return {"stage": REWORK_HOP_KIND, "round_no": rounds_used,
             "reject_first": reject_first, **common}
+
+
+# ── 0688 T#2: an answer that landed after the document it was asked about ────────────────
+#
+# 0688 T#1 holds a hop that submitted its document while a question of its own was open, and
+# the answer resumes the gate that hand-off held. The document, though, was written on the
+# assumption the question stated, and whether the answer contradicts it is a judgement. The
+# chain already has exactly one judge of a document -- the review hop: its `issues` becomes
+# the automatic rejection and the author's rework (L0008 §2.6), its `pass` approves and lets
+# the chain move on, its `hold` stops the chain for a human. So no new verdict is invented
+# here. The gate only refuses to APPROVE a slot while a question about it is open or its
+# answer has not been put in front of a review that then judged the slot
+# (`_answer_check_gate`), and the review / rework mentions carry the questions with their
+# answers (`_append_answered_questions`).
+#
+# "Put in front of a review" is never inferred from times. Every answer a review or rework
+# hop's mention carries is written to a durable ledger while that mention is built
+# (`ANSWER_DELIVERY_EVENT`, keyed by the hop's run and the answer ids); a review round
+# checked an answer only when ITS run's ledger entry names that answer id and the round's
+# verdict row exists. An answer that lands while a round is already running -- after its
+# mention was built, before its verdict -- is therefore not checked by that round, whatever
+# the verdict's time says. Everything is read from durable records -- question items,
+# answers, runs, review rows, the ledger -- so a restart, a cold resume and a warm hand-off
+# reach the same decision.
+
+# The gate's own "cannot read the records it decides from" stop (`_derive_review_gate`). The
+# answer check reuses it: a record it cannot read is never taken as checked, so the slot is
+# held instead of approved.
+REVIEW_HISTORY_UNREADABLE_STOP_CODE = "review_history_unreadable"
+
+# One review round beyond a finite budget checks answers no review has checked. Its findings
+# still get their rework (every `issues` does); a further answer after that is held for a
+# human rather than buying another round, so Q/rework cannot loop.
+ANSWER_CHECK_EXTRA_ROUNDS = 1
+
+# A question or answer quoted into a mention is clipped; the full text is one GET away.
+ANSWERED_QUESTION_TEXT_MAX = 1500
+
+
+class AnswerRecordsUnreadable(RuntimeError):
+    """The question / answer / run / ledger records an answer decision needs cannot be read,
+    or a hop's answer delivery cannot be recorded. Nothing is decided without them: the gate
+    holds on ``review_history_unreadable`` and a review / rework hop is not launched."""
+
+
+def _record_moment(value) -> Optional[datetime]:
+    """A stored timestamp as an aware datetime, or None when it cannot be read.
+
+    Rows are stamped by different writers -- `now_iso()` (JST with offset) and DB defaults
+    (UTC, sometimes with a trailing Z) -- so they are compared as instants, never as
+    strings. A naive value is UTC: `connection.to_now_iso_tz`'s rule.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def _asked_about_slot(asker: dict, slot_doc_id: Optional[str], slot_item_seq) -> bool:
+    """Was ``asker`` a hop OF this slot? Its review/rework hop works on the slot's document;
+    the chain's work hop for the slot's step is the continuous hop whose ``hop_item_seq`` it
+    is. A responder run never registers a question (q_tapi_routes.post_add_questions)."""
+    if not asker:
+        return False
+    if slot_doc_id and asker.get("doc_ref") == slot_doc_id:
+        return True
+    if asker.get("mode") != "continuous" or slot_item_seq is None:
+        return False
+    try:
+        return int(asker.get("hop_item_seq")) == int(slot_item_seq)
+    except (TypeError, ValueError):
+        return False
+
+
+def _asked_before_the_sequence(row: dict, sequence: Optional[dict]) -> bool:
+    """Does the item provably predate every hop of ``sequence``?
+
+    A hop of one of the sequence's slots runs only after the sequence exists, so an item
+    registered before the sequence row was created cannot be one of theirs -- even when its
+    run record is gone (ai_invoke_runs keeps 90 days). Both stamps must be readable; anything
+    less proves nothing.
+    """
+    if sequence is None:
+        return False
+    asked = _record_moment(row.get("created_at"))
+    started = _record_moment(sequence.get("created_at"))
+    return asked is not None and started is not None and asked < started
+
+
+def questions_on_slot(doc_ref: Optional[str], slot: dict) -> list[dict]:
+    """Every AI question a hop of ``slot`` raised, answered or not, oldest first (0688 T#2).
+
+    The asking hop is read off its durable run record (`_asked_about_slot`). The question
+    itself sits on whichever container `q_service.resolve_question_anchor` chose when it was
+    asked -- the spine or one of the sequence's result documents -- so those containers are
+    the ones read. Each row carries the item, the anchor document, whether the asking hop
+    completed (``asker_completed``: it submitted while the question was open), whether it is
+    answered, every answer id and the LATEST answer (id, body, author kind, ``answered_at``).
+
+    Raises on a read failure. Raises `AnswerRecordsUnreadable` when an AI item's asking run
+    has no record (purged after 90 days, or never persisted) and the item does not provably
+    predate the sequence (`_asked_before_the_sequence`): whether it was asked about this slot
+    cannot be told, so it is never taken as "not ours". The same for an answered item whose
+    answer rows are missing or carry no id. The caller decides what that means.
+    """
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
+    from modules.flow_gate.db import answers as db_answers
+    from modules.flow_gate.db import question_items as db_question_items
+    from modules.flow_gate.db import questions as db_questions
+
+    slot_doc_id = slot.get("doc_id")
+    containers: list[str] = []
+    sequence = db_wfseq.get_sequence_for_member_doc(doc_ref) if doc_ref else None
+    items = db_wfseq.get_sequence_items(sequence["id"]) if sequence is not None else []
+    ordered = sorted(items or (), key=lambda item: item.get("item_seq") or 0)
+    for candidate in (doc_ref, *(item.get("result_doc_id") for item in ordered), slot_doc_id):
+        if candidate and candidate not in containers:
+            containers.append(candidate)
+
+    askers: dict[str, Optional[dict]] = {}
+
+    def _asker(run_id: str) -> Optional[dict]:
+        if run_id not in askers:
+            record = db_runs.get(run_id)
+            if record is None:
+                record = _svc().get_run_record(run_id)
+            askers[run_id] = record or None
+        return askers[run_id]
+
+    found: list[dict] = []
+    for doc_id in containers:
+        container = db_questions.get_container_by_doc(doc_id)
+        if container is None:
+            continue
+        for row in db_question_items.list_by_question(container["id"]) or []:
+            run_id = row.get("asker_ai_run_id")
+            if (row.get("asker_kind") or "") != "ai" or not run_id:
+                continue
+            asker = _asker(run_id)
+            if asker is None:
+                if _asked_before_the_sequence(row, sequence):
+                    continue
+                raise AnswerRecordsUnreadable(
+                    f"question item {row.get('id')}: asking run {run_id} has no record")
+            if not _asked_about_slot(asker, slot_doc_id, slot.get("item_seq")):
+                continue
+            answered = int(row.get("answer_count") or 0) >= 1
+            answers = (db_answers.list_by_question_item(row["id"]) or []) if answered else []
+            if answered and (not answers or any(a.get("id") is None for a in answers)):
+                raise AnswerRecordsUnreadable(
+                    f"question item {row.get('id')}: answer rows missing or without an id")
+            latest = answers[-1] if answers else {}
+            found.append({
+                "id": row["id"],
+                "seq": row.get("seq"),
+                "title": row.get("title"),
+                "body": row.get("body"),
+                "anchor_doc_id": doc_id,
+                "asker_ai_run_id": run_id,
+                "asker_completed": asker.get("outcome") == "complete",
+                "answered": answered,
+                "answer_ids": [answer["id"] for answer in answers],
+                "answer_id": latest.get("id"),
+                "answer_body": latest.get("body"),
+                "answer_author_kind": latest.get("author_kind"),
+                "answered_at": latest.get("created_at"),
+            })
+    found.sort(key=lambda row: int(row.get("id") or 0))
+    return found
+
+
+def answered_questions_on_slot(doc_ref: Optional[str], slot: dict) -> list[dict]:
+    """The answered rows of `questions_on_slot` -- what a review / rework mention quotes."""
+    return [item for item in questions_on_slot(doc_ref, slot) if item["answered"]]
+
+
+def _questions_on_assumption(bundle: dict, slot: dict) -> list[dict]:
+    """The questions ``slot``'s document may rest on the wrong side of (0688 T#2).
+
+    Only a question whose asking hop COMPLETED counts: that hop submitted the document (or
+    its verdict) on the assumption the question stated. A Q-only hop stopped without
+    submitting, so the document after it was written with the answer.
+    """
+    return [item for item in questions_on_slot(bundle.get("doc_ref"), slot)
+            if item["asker_completed"]]
+
+
+def _answer_deliveries(slot: dict) -> dict[str, set]:
+    """The answer ids each hop's mention carried for the slot's document, by run id.
+
+    Read from the ledger `_record_answer_delivery` writes. A row for another document, or
+    one that cannot be decoded, proves nothing and is skipped. Raises when the ledger itself
+    cannot be read.
+    """
+    from modules.flow_gate.workflow import event_logger
+
+    delivered: dict[str, set] = {}
+    for meta in event_logger.list_answer_deliveries(slot["doc_id"]):
+        run_id = meta.get("run_id")
+        if meta.get("doc_id") != slot["doc_id"] or not run_id:
+            continue
+        ids = delivered.setdefault(str(run_id), set())
+        for entry in meta.get("items") or []:
+            if isinstance(entry, dict) and entry.get("answer_id") is not None:
+                ids.add(entry["answer_id"])
+    return delivered
+
+
+def _answers_checked_by_reviews(slot: dict, reviews: list[dict]) -> list[set]:
+    """Per review round of the slot (oldest first), the answer ids it was given to check.
+
+    A round checked an answer only when its verdict row names its run (``review_run_id``)
+    and that run's mention carried the answer (`_answer_deliveries`). A review with no run
+    -- a person's, a copied mention's -- or a run whose mention carried nothing checked no
+    answer: nothing proves it saw one.
+    """
+    delivered = _answer_deliveries(slot) if reviews else {}
+    return [set(delivered.get(str(row.get("review_run_id")), set()))
+            if row.get("review_run_id") else set()
+            for row in reversed(reviews)]
+
+
+def _answer_checks_spent(questions: list[dict], checked: list[set]) -> int:
+    """How many of the slot's review rounds were given an answer about it to check.
+
+    Any answer the slot's assumption questions ever had counts -- not only each item's
+    latest -- so a second answer to the same item cannot erase the round that checked the
+    first. Whatever the round's verdict, and whether the gate asked for it as an answer
+    check or it was the ordinary next round of a -1 loop.
+    """
+    every_answer = {answer_id for item in questions for answer_id in item["answer_ids"]}
+    return sum(1 for ids in checked if ids & every_answer)
+
+
+def _answer_check_gate(gate: dict, bundle: dict) -> dict:
+    """Refuse an approval while a question about the slot is open or its answer unchecked.
+
+    ``gate`` is an approval `_derive_review_gate` decided. For the questions a hop of this
+    slot raised before submitting (`_questions_on_assumption`):
+
+      * one is still unanswered: the document rests on an assumption nobody answered --
+        held on ``question_answer_unverified``. T#1 parks the hop that asked; this is the
+        approval-side guard for every other way of reaching the gate (a hand-off probe that
+        could not read the questions, a person's [이어서 진행] over an escalated item);
+      * an answer no review round was given to check (`_answers_checked_by_reviews`) and the
+        step is reviewed (count != 0) with its answer-check round still available:
+        ``ANSWER_CHECK_EXTRA_ROUNDS`` past a finite budget, and for -1 as long as fewer than
+        ``ANSWER_CHECK_EXTRA_ROUNDS`` of the slot's rounds were given an answer to check
+        (`_answer_checks_spent`) -- the -1 budget has no extra round to spend, so that count
+        is what keeps pass -> question -> answer -> check, with or without an `issues` ->
+        rework in between, from repeating forever. One more REVIEW round, flagged
+        ``answer_check``: its verdict is the comparison -- `pass` approves and the original
+        hand-off continues exactly once, `issues` is rejected and reworked through the
+        existing path, `hold` stops for a human;
+      * otherwise (count == 0, or that round is spent): nothing automatic can compare, so it
+        stops on ``question_answer_unverified`` -- the same human hold a reviewer's 'hold'
+        leaves -- instead of approving on an assumption.
+
+    No such question: ``gate`` unchanged. A record that cannot be read -- the reviews, the
+    questions, their runs or answers, the delivery ledger -- proves nothing was checked, so
+    it stops on ``review_history_unreadable`` like the gate's own unreadable history: never
+    an approval and never a next hop on records the gate could not see.
+    """
+    slot = gate["slot"]
+    count = int(gate.get("count") or 0)
+    limit = gate.get("limit")
+    if count != 0 and limit is None:
+        limit = resolve_round_limit(count)
+    base = {"slot": slot, "count": count}
+    if count != 0:
+        base["limit"] = limit
+    try:
+        reviews = db_reviews.list_by_doc(slot["doc_id"]) or []
+        questions = _questions_on_assumption(bundle, slot)
+        checked = _answers_checked_by_reviews(slot, reviews) if questions else []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("review gate answer check could not read its records for %s; held",
+                       slot.get("doc_id"), exc_info=True)
+        _svc()._log_review_annotation_failure("read", slot, bundle, exc)
+        return {"stage": "stop", "stop_code": REVIEW_HISTORY_UNREADABLE_STOP_CODE,
+                "detail": f"answer check records unreadable: {exc}", **base}
+    if not questions:
+        return gate
+    rounds_used = len(reviews)
+    unanswered = [item["id"] for item in questions if not item["answered"]]
+    if unanswered:
+        logger.info(
+            "review gate: %s revision %s rests on unanswered question(s) %s -- held for a "
+            "human", slot["doc_id"], slot.get("revision_no"), unanswered,
+        )
+        return {"stage": "stop", "stop_code": QUESTION_ANSWER_UNVERIFIED_STOP_CODE,
+                "detail": f"question item(s) {unanswered} still unanswered",
+                "answer_check_item_ids": unanswered, "rounds_used": rounds_used, **base}
+    seen = set().union(*checked)
+    unchecked = [item for item in questions if item["answer_id"] not in seen]
+    if not unchecked:
+        return gate
+    item_ids = [item["id"] for item in unchecked]
+    common = {**base, "rounds_used": rounds_used, "answer_check_item_ids": item_ids}
+    if count != 0:
+        if (
+            _answer_checks_spent(questions, checked) < ANSWER_CHECK_EXTRA_ROUNDS
+            if limit == REVIEW_ROUNDS_NO_LIMIT
+            else rounds_used < int(limit) + ANSWER_CHECK_EXTRA_ROUNDS
+        ):
+            logger.info(
+                "review gate: %s revision %s has answer(s) %s no review has checked -- "
+                "review round %s checks them before any approval",
+                slot["doc_id"], slot.get("revision_no"), item_ids, rounds_used + 1,
+            )
+            return {"stage": REVIEW_HOP_KIND, "round_no": rounds_used + 1,
+                    "answer_check": True, **common}
+    logger.info(
+        "review gate: %s revision %s has answer(s) %s no review can check (count %s, %s "
+        "round(s) used) -- held for a human", slot["doc_id"], slot.get("revision_no"),
+        item_ids, count, rounds_used,
+    )
+    return {"stage": "stop", "stop_code": QUESTION_ANSWER_UNVERIFIED_STOP_CODE,
+            "detail": f"unchecked answers to question item(s) {item_ids}", **common}
+
+
+def _clip_answered_text(value) -> str:
+    text = str(value or "").strip()
+    if len(text) > ANSWERED_QUESTION_TEXT_MAX:
+        return text[:ANSWERED_QUESTION_TEXT_MAX].rstrip() + " ..."
+    return text
+
+
+def _answered_questions_clause(items: list[dict], stage: str) -> str:
+    """The questions and answers a review hop checks / a rework hop applies (0688 T#2).
+
+    English, like the engine's other clauses (T0010 task 4). The review hop is told how its
+    verdict expresses the comparison; the rework hop is told to follow an answer over the
+    assumption it replaces. Each question names its item id so a finding -- and the automatic
+    rejection built from it -- traces back to the question it is about.
+    """
+    if not items:
+        return ""
+    intro = (
+        "The question(s) below were raised by the AI hops that produced or revised this "
+        "document, and have been answered since. A document submitted before its question was "
+        "answered rests on the assumption the question stated."
+    )
+    if stage == REVIEW_HOP_KIND:
+        lines = [
+            "## Answered questions to check", "---", intro,
+            "Check the document against every answer:",
+            "- it contradicts an answer: return 'issues', put the question (Q<seq>, item <id>) "
+            "in that finding's locus and say what has to change;",
+            "- it agrees with every answer: judge it on its other merits as usual -- do not ask "
+            "for a change no answer requires;",
+            "- reconciling them needs a human business decision the answers do not settle: "
+            "return 'hold'.",
+        ]
+    else:
+        lines = [
+            "## Answered questions to apply", "---", intro,
+            "Where the document follows an assumption an answer rules out, follow the answer; "
+            "leave what the answers do not touch as it is.",
+        ]
+    for item in items:
+        title = _normalize_ws(item.get("title"))
+        heading = f"### Q{item.get('seq')} (item {item.get('id')}, on {item.get('anchor_doc_id')})"
+        lines += ["", heading + (f" - {title}" if title else ""), "Question:"]
+        lines += [f"    {line}" for line in _clip_answered_text(item.get("body")).splitlines() or [""]]
+        stamp = item.get("answered_at")
+        lines.append(f"Answer ({item.get('answer_author_kind') or 'unknown'}"
+                     + (f", {stamp}" if stamp else "") + "):")
+        lines += [f"    {line}"
+                  for line in _clip_answered_text(item.get("answer_body")).splitlines() or [""]]
+    return "\n\n" + "\n".join(lines)
+
+
+def _record_answer_delivery(group_id: Optional[str], bundle: dict, slot: dict, stage: str,
+                            run_id: Optional[str], items: list[dict]) -> None:
+    """Write which answers ``run_id``'s mention carries to the durable ledger (0688 T#2).
+
+    The gate reads it back (`_answers_checked_by_reviews`): a review round checked an answer
+    only when its own run's entry names it. A rework hop's entry is the trace of what that
+    fix was told to follow (question, answer, revision, chain). Raises
+    `AnswerRecordsUnreadable` when it cannot be written: a hop whose delivery is not on
+    record is not launched.
+    """
+    from modules.flow_gate.workflow import event_logger
+
+    try:
+        event_logger.log_answer_delivery(
+            project_id=(str(group_id).split(".", 1)[0] if group_id else "__SYSTEM__"),
+            actor_user_id=bundle.get("issued_to") or "u-system",
+            group_id=group_id,
+            doc_id=slot["doc_id"],
+            revision_no=slot.get("revision_no"),
+            stage=stage,
+            run_id=run_id,
+            chain_id=bundle.get("chain_id"),
+            items=[{"item_id": item["id"], "answer_id": item["answer_id"],
+                    "anchor_doc_id": item.get("anchor_doc_id")} for item in items],
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise AnswerRecordsUnreadable(
+            f"answer delivery for {slot['doc_id']} not recorded: {exc}") from exc
+
+
+def _append_answered_questions(mention: str, bundle: dict, slot: dict, stage: str, *,
+                               group_id: Optional[str] = None,
+                               run_id: Optional[str] = None) -> str:
+    """Add the answered questions about ``slot`` to a review / rework hop's mention.
+
+    A review hop gets the answers no review round has been given to check yet -- the ones it
+    has to check. A rework hop gets every answer about the document, which it has to honour
+    while fixing it. What the mention carries is recorded under ``run_id`` before the hop is
+    launched (`_record_answer_delivery`).
+
+    Raises `AnswerRecordsUnreadable` when the questions, answers, runs or ledger cannot be
+    read or the delivery cannot be recorded: a hop meant to compare or apply an answer it was
+    never given would hand the gate a verdict or a fix that proves nothing, so it is not
+    launched (`run_review_gate` holds on ``review_history_unreadable``; a cold resume
+    restores its row).
+    """
+    if not mention:
+        return mention
+    try:
+        items = answered_questions_on_slot(bundle.get("doc_ref"), slot)
+        if stage == REVIEW_HOP_KIND and items:
+            reviews = db_reviews.list_by_doc(slot["doc_id"]) or []
+            seen = set().union(*_answers_checked_by_reviews(slot, reviews))
+            items = [item for item in items if item["answer_id"] not in seen]
+    except AnswerRecordsUnreadable:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("answered-question clause failed for %s", slot.get("doc_id"),
+                       exc_info=True)
+        raise AnswerRecordsUnreadable(
+            f"answered questions for {slot.get('doc_id')} unreadable: {exc}") from exc
+    if items:
+        _record_answer_delivery(group_id, bundle, slot, stage, run_id, items)
+    return mention + _answered_questions_clause(items, stage)
 
 
 # The automatic rejection text. English on purpose: T0010 작업 4 forbids new Korean literals
@@ -931,7 +1398,11 @@ def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
             "raw_token": issued["token"],
             "token_id": issued["token_id"],
             "scratch_dir": issued["scratch_dir"],
-            "mention": _append_engine_review_clause(mention, gate),
+            # 0688 T#2: the answers this round must check the document against, recorded
+            # under this run before it is launched (a failure raises: no hop).
+            "mention": _append_answered_questions(
+                _append_engine_review_clause(mention, gate), bundle, slot, REVIEW_HOP_KIND,
+                group_id=group_id, run_id=ai_run_id),
         }
 
     # flowgate.default.0466 T0007 §3.3.3: resume_chain's cold [이어서 진행] path spawns this
@@ -979,16 +1450,22 @@ def _append_engine_review_clause(mention: str, gate: dict) -> str:
     count = gate.get("count")
     round_no = gate.get("round_no")
     limit = gate.get("limit")
+    # 0688 T#2: the answer-check round past a finite budget (_answer_check_gate).
+    extra_round = (
+        count != -1 and isinstance(round_no, int) and isinstance(limit, int) and round_no > limit
+    )
     budget = (
         "until the document passes"
         if count == -1
+        else f"an extra answer-check round after the step's {limit} review round(s)"
+        if extra_round
         else f"round {round_no} of {limit}"
     )
     # 0414 M0020: every round's findings are reworked, the last round's included, so the
     # clause no longer says "when a round remains". What the LAST reviewer of a finite budget
     # does need to know is that nobody reviews the fix its findings produce — the chain moves
     # on with it — so that round is told to name everything that still has to change.
-    last_round = count != -1 and round_no == limit
+    last_round = count != -1 and (round_no == limit or extra_round)
     return mention + (
         "\n\n## Automated follow-up\n---\n"
         "This review runs inside an unmanned continuous chain, so no human reads your verdict "
@@ -1027,13 +1504,18 @@ def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     executor_id = resolve_step_executor(bundle, slot["item_seq"], project_id, bundle.get("doc_ref"))
 
     def _issue_rework(ai_run_id: Optional[str] = None) -> dict:
-        return invoke_mention_service.issue_rework_request(
+        issued = invoke_mention_service.issue_rework_request(
             doc_id=slot["doc_id"],
             issued_to=issued_to,
             api_base_url=api_base_url,
             locale=locale,
             ai_run_id=ai_run_id,
         )
+        # 0688 T#2: the answers about this document the fix has to follow, recorded under
+        # this run before it is launched (a failure raises: no hop).
+        return {**issued, "mention": _append_answered_questions(
+            issued.get("mention") or "", bundle, slot, REWORK_HOP_KIND,
+            group_id=group_id, run_id=ai_run_id)}
 
     return _svc().start_run(
         project_id=project_id,
@@ -1180,6 +1662,18 @@ def run_review_gate(group_id: str, bundle: dict, run: dict) -> bool:
                 _svc()._spawn_review_hop(group_id, queued, gate)
             else:
                 _svc()._spawn_rework_hop(group_id, queued, gate)
+        except AnswerRecordsUnreadable as exc:
+            # 0688 T#2: the hop could not be given the answers it exists to check / apply
+            # (or the delivery could not be recorded). Launching it anyway would hand the
+            # gate a verdict or a fix that proves nothing about them: held, like the gate's
+            # own unreadable history, and nothing was launched.
+            _svc().clear_auto_resume(group_id)
+            logger.warning("review gate held %s: %s", (slot or {}).get("doc_id"), exc)
+            if slot is not None:
+                _svc()._log_review_annotation_failure("read", slot, bundle, exc)
+            run["review_reject_detail"] = str(exc)
+            _svc()._park_handoff(run, bundle, REVIEW_HISTORY_UNREADABLE_STOP_CODE)
+            return False
         except Exception:
             _svc().clear_auto_resume(group_id)     # take the intent back out; the caller parks it
             raise
