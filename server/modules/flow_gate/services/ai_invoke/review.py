@@ -1327,6 +1327,11 @@ def _settle_gate_pass(group_id: str, slot: dict, bundle: dict, run: dict) -> str
             db_group_ai_leases.release(group_id, run["run_id"], reason="chain_completed")
         except Exception:  # noqa: BLE001
             logger.warning("review gate lease release failed for %s", group_id, exc_info=True)
+        # 0504 F4: nothing is left to hand off or park. Without this mark the worker's
+        # terminal abandon_handoff re-parked the run as hop_handoff_failed (a system row on a
+        # finished chain, and a failure on its record); chain._maybe_auto_resume_hop records
+        # it as chain_completed instead.
+        run["_chain_completed"] = True
         return outcome
     # user_paused keeps the human's own row (_write_handoff_row refuses to overwrite it);
     # approve_denied / approve_failed get a system row so the chain is pickable again.
@@ -1606,34 +1611,88 @@ def _materialize_work_plan_instruction_before_gate(bundle: dict) -> list[int]:
     ) or [])
 
 
+# The hop-scoped progress markers the queue carries for the slot the LAST hop worked on
+# (L0008 §2.3 `_check_expected_progress`). They describe that slot only: judging a slot that
+# appeared after it with them would read "the previous review left nothing" as this slot's
+# own "review_no_verdict".
+_SLOT_PROGRESS_KEYS = ("last_stage", "rounds_before", "revision_before", "last_stop_code")
+
+
+def _gate_after_settled_step(bundle: dict, settled_slot: dict) -> Optional[tuple[dict, dict]]:
+    """The gate for the slot the approval of ``settled_slot`` exposes (0504 NR0003 §8 F1).
+
+    `_materialize_work_plan_instruction_before_gate` runs before the gate, so it only sees an
+    N/T head that is ALREADY the head -- a step the inbox auto-approved (review_count 0). A
+    step approved INSIDE the gate (`pass`, or a finite budget's last rework) makes the next
+    WorkPlan N/T the head only after that settle, and a reviewed one is then created as
+    `pending_review` by the plain path's advance_workflow, which stops on its own
+    head_in_progress guard: the instruction's review hop was never decided.
+
+    So after a settle that continues, the same materializer runs once more and the gate is
+    derived again, cold (`_SLOT_PROGRESS_KEYS` belong to the settled slot). Returns
+    ``(bundle, gate)`` when a DIFFERENT slot is now waiting on the gate, else None -- nothing
+    new waits, and the caller's plain path is unchanged. Only a chain hand-off sets the
+    materialize flag, so a direct gate call keeps its single derivation.
+    """
+    if not bundle.get("materialize_instruction_before_gate"):
+        return None
+    fresh = {key: value for key, value in bundle.items() if key not in _SLOT_PROGRESS_KEYS}
+    _materialize_work_plan_instruction_before_gate(fresh)
+    gate = resolve_review_gate(fresh)
+    slot = gate.get("slot")
+    if slot is None or slot.get("doc_id") == (settled_slot or {}).get("doc_id"):
+        return None
+    logger.info(
+        "review gate: approving %s exposed %s (item_seq %s) to the gate as %s",
+        (settled_slot or {}).get("doc_id"), slot.get("doc_id"), slot.get("item_seq"),
+        gate.get("stage"),
+    )
+    return fresh, gate
+
+
 def run_review_gate(group_id: str, bundle: dict, run: dict) -> bool:
     """Derive the gate and act on it (L0008 §2.4). True when a next hop actually started.
 
     False means the chain was parked (a durable row + a released lease), so the caller must
     NOT clear the handoff row it wrote — that row is now the [이어서 진행] card.
+
+    0504 F1: a settle that continues derives the gate once more (`_gate_after_settled_step`),
+    so a reviewed WorkPlan N/T the approval made the head gets its own review hop instead of
+    stranding the plain path on head_in_progress. At most two passes: the second pass never
+    re-derives again.
     """
     _materialize_work_plan_instruction_before_gate(bundle)
     gate = resolve_review_gate(bundle)
-    slot = gate.get("slot")
+    rederived = False
+    while True:
+        slot = gate.get("slot")
 
-    # 10-1: the rejection happens first and independently of what comes next, so a
-    # "rounds exhausted" stop still leaves the reviewer's findings attached to the document.
-    if gate.get("reject_first") and slot is not None:
-        result = _svc()._auto_reject(slot, _latest_review_of(slot), bundle)
-        if not result.get("ok"):
-            run["review_reject_detail"] = result.get("detail")
-            _svc()._park_handoff(run, bundle, result["stop_code"])
+        # 10-1: the rejection happens first and independently of what comes next, so a
+        # "rounds exhausted" stop still leaves the reviewer's findings attached to the document.
+        if gate.get("reject_first") and slot is not None:
+            result = _svc()._auto_reject(slot, _latest_review_of(slot), bundle)
+            if not result.get("ok"):
+                run["review_reject_detail"] = result.get("detail")
+                _svc()._park_handoff(run, bundle, result["stop_code"])
+                return False
+
+        stage = gate.get("stage")
+        if stage == "stop":
+            _svc()._park_handoff(run, bundle, gate.get("stop_code") or HOP_HANDOFF_FAILED_STOP_CODE)
             return False
 
-    stage = gate.get("stage")
-    if stage == "stop":
-        _svc()._park_handoff(run, bundle, gate.get("stop_code") or HOP_HANDOFF_FAILED_STOP_CODE)
-        return False
-
-    if stage == WORK_HOP_KIND:
-        if gate.get("approve_first") and slot is not None:
+        if stage == WORK_HOP_KIND and gate.get("approve_first") and slot is not None:
             if _svc()._settle_gate_pass(group_id, slot, bundle, run) != "continue":
                 return False
+            if not rederived:
+                rederived = True
+                after = _gate_after_settled_step(bundle, slot)
+                if after is not None:
+                    bundle, gate = after
+                    continue
+        break
+
+    if stage == WORK_HOP_KIND:
         # 0684 T#3 (D#1 §3-9): a TSR head waits on its TS's server run -- no hop, no token.
         from .chain import park_for_server_test_run
         if park_for_server_test_run(group_id, bundle, run):

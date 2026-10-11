@@ -54,6 +54,32 @@ from modules.flow_gate.storage import paths as storage_paths
 # one logger rather than making its own.
 logger = logging.getLogger("modules.flow_gate.services.ai_invoke_service")
 
+
+class _AppFileLogForwarder(logging.Handler):
+    """Hand this channel's WARNING+ records to the app's file log (0504 NR0003 §8 F3).
+
+    ``config.py`` gives ``logger.json`` to LogAssist, which attaches its timed file handler
+    (``logs/default.log``) to ITS OWN logger, not to the root (route_logging.get_logger,
+    attachments/errors.py). This channel propagated to the root only, so its warnings and
+    exceptions -- the hand-off failure that stopped a chain among them -- reached the
+    console and never the file. The file handlers are looked up per record, so the order in
+    which this module and the LogAssist initialisation are imported does not matter, and
+    only FILE handlers are used: the console keeps the one copy it already had through
+    propagation (which also keeps pytest's ``caplog`` working).
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        for handler in logging.getLogger("LogAssist.log").handlers:
+            if isinstance(handler, logging.FileHandler) and record.levelno >= handler.level:
+                try:
+                    handler.handle(record)
+                except Exception:  # noqa: BLE001 -- logging must never break the engine
+                    self.handleError(record)
+
+
+if not any(isinstance(handler, _AppFileLogForwarder) for handler in logger.handlers):
+    logger.addHandler(_AppFileLogForwarder(level=logging.WARNING))
+
 # Request-local identity used by the compatibility rollback if admission fails unexpectedly.
 admission_run_id: ContextVar[str | None] = ContextVar("ai_admission_run_id", default=None)
 

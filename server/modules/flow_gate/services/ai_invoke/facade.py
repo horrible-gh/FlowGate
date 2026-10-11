@@ -314,6 +314,7 @@ from .chain import (
     rebase_active_to_end,
     resolve_continuation_target,
     resume_chain,
+    start_chain_at_instruction_review,
     startup_recover_handoffs,
 )
 
@@ -751,6 +752,7 @@ __all__ = [
     "run_review_gate",
     "shutil",
     "stamp_chain_stop",
+    "start_chain_at_instruction_review",
     "start_run",
     "startup_recover_handoffs",
     "startup_recover_leases",

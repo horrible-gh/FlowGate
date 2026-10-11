@@ -654,6 +654,8 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         return _standard_mention(raw_token, scratch_dir)
 
     issue_builder = None
+    # 0504 NR0003 §8 F2: set only on the continuous first-hop branch below.
+    continuous_first_hop = False
     # flowgate.default.0553 T0004 §3/§4: the rejected-state rework entry may now also carry
     # document_review_loop. It must reuse this SAME stage-aware issuer, not a second copy —
     # `loop_stage` (set below by admission.py from compute_review_baseline()) is what actually
@@ -861,6 +863,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "auto_handled_item_seqs": adv.get("auto_handled_item_seqs") or [],
             }
         issue_builder = _issue_first_hop
+        continuous_first_hop = True
 
     project_lease_owner = None
     if body.action_scope == "resolve_base_dirty":
@@ -883,6 +886,40 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             git_service.record_auto_authority(group_id, int(body.merge_id), bool(body.auto))
         except git_service.GitServiceError as exc:
             return JSONResponse(status_code=exc.status, content={"code": exc.code, "message": exc.message})
+
+    try:
+        result = None
+        if continuous_first_hop:
+            # 0504 NR0003 §8 F2: a head that is a reviewed WorkPlan N/T starts at its review
+            # hop. The ordinary first hop would materialize it as pending_review and then
+            # roll back on head_in_progress. None: nothing such waits -- start as before.
+            result = ai_invoke_service.start_chain_at_instruction_review(
+                project_id=body.project,
+                group_id=group_id,
+                doc_ref=body.doc_ref,
+                target_seq=body.continuation_target_seq,
+                issued_to=user_id,
+                api_base_url=_operator_facing_api_base(request),
+                locale=locale,
+                instruction_mode=body.continuation_instruction_mode,
+                auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+                review_count_overrides=continuation_review_count_overrides,
+                reviewer_overrides=continuation_reviewer_overrides,
+                provider_overrides=body.continuation_provider_overrides,
+                base_provider_id=body.provider_id,
+                provider_pinned=bool(body.provider_pinned),
+                note_overrides=body.continuation_note_overrides,
+                default_note=body.continuation_default_note,
+                step_timeout_sec=body.continuation_step_timeout_sec,
+                restart_max_attempts=body.continuation_restart_max_attempts,
+            )
+    except HTTPException as exc:
+        return _err(exc)
+    except ValueError as exc:
+        return JSONResponse(status_code=409, content={
+            "code": "workflow_decision_conflict", "message": str(exc)})
+    if result is not None:
+        return JSONResponse(status_code=200, content=result)
 
     try:
         result = ai_invoke_service.start_run(
