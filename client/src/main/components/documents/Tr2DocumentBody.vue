@@ -84,6 +84,10 @@
         </div>
       </section>
 
+      <Tr2SourceImport :key="tab.id" :doc-id="tab.id" :revision="view.document.revision_no"
+        :disabled="readOnly || !mutationAllowed || saving || batchLoading" :stale="stale || staleWhileEditing"
+        @editing="sourceEditing = $event" @busy="sourceBusy = $event" @changed="onRecovered" />
+
       <div class="tr2-split">
         <section class="tr2-section">
           <h3>{{ t('main.tr2_body.files.heading') }} <small>{{ t('main.tr2_body.files.counts', counts) }}</small></h3>
@@ -244,6 +248,7 @@ import { useI18n } from 'vue-i18n'
 import { deleteRequest, getRequest, postRequest, putRequest } from '@shared/api'
 import { resolveGitError } from '@shared/gitErrors'
 import type { Tab } from '../../stores/tabs'
+import Tr2SourceImport from './Tr2SourceImport.vue'
 import Tr2ItemEditor from './Tr2ItemEditor.vue'
 import Tr2RevisionPanel from './Tr2RevisionPanel.vue'
 import {
@@ -282,6 +287,8 @@ const loading = ref(false)
 const saving = ref(false)
 const retrying = ref(false)
 const confirming = ref<Pending | null>(null)
+const sourceEditing = ref(false)
+const sourceBusy = ref(false)
 const batchRows = ref<BatchRow[]>([])
 const batchRevision = ref<number | null>(null)
 const batchLoading = ref(false)
@@ -299,12 +306,12 @@ const tone = computed(() => (state.value ? tr2Tone(state.value) : 'live'))
 const latest = computed(() => view.value?.approval.latest_attempt ?? null)
 const retry = computed(() => view.value?.approval.retry ?? null)
 const mutationAllowed = computed(() => view.value?.mutation?.allowed ?? Boolean(view.value?.document.editable))
-const locked = computed(() => props.readOnly || !view.value || !mutationAllowed.value || saving.value || batchLoading.value)
+const locked = computed(() => props.readOnly || !view.value || !mutationAllowed.value || saving.value || batchLoading.value || sourceBusy.value)
 const gate = computed(() => (view.value ? gateResults(view.value) : null))
 const gateAdmission = computed(() => view.value?.gate_admission ?? null)
 const commandAdmissionFingerprint = computed(() => gateAdmission.value?.fingerprint ?? null)
 const hasShellComplexCandidate = computed(() => gateAdmission.value?.commands.some((item) => item.state === 'candidate' && item.shell_complex) === true)
-const editing = computed(() => wholeEditorOpen.value || itemEditor.value !== null || batchLoading.value || batchRows.value.length > 0)
+const editing = computed(() => sourceEditing.value || sourceBusy.value || wholeEditorOpen.value || itemEditor.value !== null || batchLoading.value || batchRows.value.length > 0)
 // Basis-vs-source only matters before approval: once applied, the source differs by design.
 const awaitingApproval = computed(() => view.value?.document.doc_review_status === 'pending_review')
 const notReadyReason = computed(() => (state.value === 'not_ready' ? readinessText(view.value?.readiness, t, te) : ''))

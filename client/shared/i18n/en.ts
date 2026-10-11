@@ -1687,6 +1687,7 @@ export default {
     },
     t2_note: 'Apply instruction — an apply proposal (TR2) is written before anything is applied. Approving this document does not change the work; approving the proposal does.',
     tr2_body: {
+      source: {"heading": "Compare source files", "hint": "Choose files or a folder, enter paths relative to the group source root, then compare. Review changes and save selected items into this proposal. Source files change only after approval. UTF-8 text only; existing file BOM and line endings are preserved.", "files": "Choose source files", "folder": "Choose folder", "path": "Target path relative to source root", "compare": "Compare with worktree", "save": "Save {count} changes to proposal", "limit": "Up to 200 files, 1 MiB per file and 10 MiB total.", "read_error": "Cannot read file or size limit exceeded.", "status": {"pending": "Awaiting comparison", "CREATE": "Create", "EDIT": "Edit", "unchanged": "No content change", "review_required": "Review required"}},
       batch: {
         upload: "Import item JSON files",
         heading: "JSON import preview",

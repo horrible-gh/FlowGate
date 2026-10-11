@@ -1687,6 +1687,7 @@ export default {
     },
     t2_note: '반영지시 — 실제 반영 전에 반영안(TR2)을 작성합니다. 이 문서를 승인해도 작업물은 바로 바뀌지 않으며, 반영안을 승인할 때 반영됩니다.',
     tr2_body: {
+      source: {"heading": "소스 파일 비교", "hint": "파일 또는 폴더를 선택하고 그룹 소스 루트 기준 경로를 입력한 뒤 비교하세요. 변경을 검토하고 선택한 항목을 현재 반영안에 저장합니다. 소스 파일은 승인 후 변경됩니다. UTF-8 텍스트만 지원하며 기존 파일의 BOM과 줄바꿈은 보존합니다.", "files": "소스 파일 선택", "folder": "폴더 선택", "path": "소스 루트 기준 대상 경로", "compare": "worktree와 비교", "save": "변경 {count}건 반영안에 저장", "limit": "최대 200파일, 파일당 1 MiB, 전체 10 MiB입니다.", "read_error": "파일을 읽을 수 없거나 크기 제한을 초과했습니다.", "status": {"pending": "비교 대기", "CREATE": "새 파일", "EDIT": "수정", "unchanged": "내용 변경 없음", "review_required": "검토 필요"}},
       batch: {
         upload: "항목 JSON 복수 가져오기",
         heading: "JSON 가져오기 미리보기",
