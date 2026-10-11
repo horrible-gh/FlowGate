@@ -7,17 +7,11 @@
           <strong data-testid="tr2-title">{{ title }}</strong>
           <span v-if="state" class="tr2-pill" :class="`tr2-tone-${tone}`" data-testid="tr2-state-pill">{{ reviewLabel }} · {{ t(`main.tr2_body.state.${state}`) }}</span>
         </div>
-        <small>{{ tab.id }}</small>
         <p class="tr2-apply-notice" data-testid="tr2-apply-notice">{{ t('main.tr2_body.apply_notice') }}</p>
       </div>
       <div class="tr2-actions">
         <button type="button" class="btn btn-outline btn-sm" :disabled="loading" @click="refresh">{{ t('main.tr2_body.actions.refresh') }}</button>
         <button type="button" class="btn btn-outline btn-sm" :disabled="loading || !view" @click="runDiagnostic">{{ t('main.tr2_body.actions.diagnostic') }}</button>
-        <button type="button" class="btn btn-outline btn-sm" :disabled="!view" data-testid="tr2-download" @click="downloadSpec">{{ t('main.tr2_body.actions.download') }}</button>
-        <label class="btn btn-outline btn-sm" :class="{ 'is-disabled': locked }" :aria-disabled="locked"><input type="file" accept="application/json,.json" data-testid="tr2-upload" :disabled="locked" @change="uploadSpec">{{ t('main.tr2_body.actions.upload') }}</label>
-        <button type="button" class="btn btn-outline btn-sm" :disabled="locked" data-testid="tr2-edit-whole" @click="openWholeEditor(false)">{{ t('main.tr2_body.actions.edit_whole') }}</button>
-        <button type="button" class="btn btn-outline btn-sm" :disabled="locked" data-testid="tr2-new-whole" @click="openWholeEditor(true)">{{ t('main.tr2_body.actions.new_whole') }}</button>
-        <button type="button" class="btn btn-outline btn-sm btn-danger-outline" :disabled="locked" data-testid="tr2-reset-whole" @click="ask({ kind: 'reset' })">{{ t('main.tr2_body.actions.reset_whole') }}</button>
       </div>
     </header>
 
@@ -38,14 +32,6 @@
     </div>
 
     <template v-if="view && state">
-      <div class="tr2-summary">
-        <div><span>{{ t('main.tr2_body.summary.review_status') }}</span><strong>{{ reviewLabel }}</strong></div>
-        <div><span>{{ t('main.tr2_body.summary.state') }}</span><strong>{{ t(`main.tr2_body.state.${state}`) }}</strong></div>
-        <div><span>{{ t('main.tr2_body.summary.history') }}</span><strong data-testid="tr2-history-state">{{ historyLabel }}</strong></div>
-        <div><span>{{ t('main.tr2_body.summary.revision') }}</span><strong data-testid="tr2-revision">{{ view.document.revision_no }}</strong></div>
-        <div><span>{{ t('main.tr2_body.summary.attempt') }}</span><strong>{{ latest ? attemptLabel(latest) : t('main.tr2_body.summary.no_attempt') }}</strong></div>
-      </div>
-
       <p v-if="awaitingApproval" class="tr2-diag-strip" data-testid="tr2-diag-strip">{{ t('main.tr2_body.diag.strip', { revision: view.document.revision_no, match: view.derived.live_precheck.source_available === false ? t('main.tr2_body.diag.unavailable') : view.derived.live_precheck.drift ? t('main.tr2_body.diag.mismatch') : t('main.tr2_body.diag.match') }) }}</p>
 
       <div class="tr2-strip" :class="`tr2-tone-${tone}`" data-testid="tr2-state-strip">
@@ -68,13 +54,26 @@
       </div>
       <p v-if="staleWhileEditing" class="tr2-error">{{ t('main.tr2_body.errors.stale_while_editing') }}</p>
 
+      <div class="tr2-summary tr2-review-summary" data-testid="tr2-review-summary">
+        <div><span>{{ t('main.tr2_body.workspace.total') }}</span><strong>{{ items.length }}</strong></div>
+        <div><span>{{ t('main.tr2_body.workspace.active') }}</span><strong>{{ counts.edit + counts.create }}</strong></div>
+        <div><span>{{ t('main.tr2_body.files.op_deferred') }}</span><strong>{{ counts.deferred }}</strong></div>
+      </div>
+
       <div class="tr2-split">
         <section class="tr2-section">
           <h3>{{ t('main.tr2_body.files.heading') }} <small>{{ t('main.tr2_body.files.counts', counts) }}</small></h3>
           <p v-if="!items.length">{{ t('main.tr2_body.files.none') }}</p>
-          <ul v-else class="tr2-files">
-            <li v-for="entry in items" :key="`${entry.collection}:${entry.item.id}`" :class="{ 'is-selected': selected?.item.id === entry.item.id }">
-              <button type="button" :data-testid="`tr2-item-${entry.item.id}`" @click="selectItem(entry)">
+          <div v-if="items.length" class="tr2-file-controls">
+            <input v-model="fileQuery" type="search" data-testid="tr2-file-search" :aria-label="t('main.tr2_body.workspace.search')" :placeholder="t('main.tr2_body.workspace.search')" />
+            <div class="tr2-filters" role="group" :aria-label="t('main.tr2_body.workspace.filter')">
+              <button v-for="op in filterOptions" :key="op" type="button" class="btn btn-outline btn-sm" :data-testid="`tr2-filter-${op}`" :aria-pressed="fileFilter === op" @click="fileFilter = op">{{ op === 'all' ? t('main.tr2_body.workspace.all') : opLabel(op) }}</button>
+            </div>
+            <p class="tr2-note" role="status" data-testid="tr2-visible-count">{{ t('main.tr2_body.workspace.visible', { total: items.length, count: visibleItems.length }) }}</p>
+          </div>
+          <ul v-if="items.length" ref="fileList" class="tr2-files" data-testid="tr2-file-list" :aria-label="t('main.tr2_body.files.heading')">
+            <li v-for="entry in visibleItems" :key="`${entry.collection}:${entry.item.id}`" :class="{ 'is-selected': selectedKey === `${entry.collection}:${entry.item.id}` }">
+              <button type="button" :data-testid="`tr2-item-${entry.item.id}`" :aria-pressed="selectedKey === `${entry.collection}:${entry.item.id}`" @click="selectItem(entry)">
                 <span class="tr2-op" :class="`tr2-op-${entry.op}`">{{ opLabel(entry.op) }}</span>
                 <span class="tr2-path">{{ entry.item.file ?? t('main.tr2_body.files.no_file') }}</span>
                 <small>{{ entry.item.id }}</small>
@@ -82,6 +81,8 @@
               </button>
             </li>
           </ul>
+          <p v-if="items.length && !visibleItems.length" class="tr2-note" data-testid="tr2-no-results">{{ t('main.tr2_body.workspace.no_results') }}</p>
+          <p class="tr2-note">{{ t('main.tr2_body.workspace.selection_hint') }}</p>
           <p v-if="counts.deferred" class="tr2-note">{{ t('main.tr2_body.files.deferred_note', { count: counts.deferred }) }}</p>
           <div class="tr2-actions">
             <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-add-item" :disabled="locked" @click="openItemEditor(null)">{{ t('main.tr2_body.actions.add_item') }}</button>
@@ -92,6 +93,7 @@
         <section class="tr2-section tr2-detail" data-testid="tr2-detail">
           <Tr2ItemEditor v-if="itemEditor" :key="itemEditor.key" :initial-op="itemEditor.op" :item="itemEditor.item" :disabled="locked || saving" @save="saveItem" @cancel="itemEditor = null" />
           <template v-else-if="selected">
+            <p v-if="selectedHidden" class="tr2-note" data-testid="tr2-selection-hidden">{{ t('main.tr2_body.workspace.hidden_selection') }} <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-clear-filters" @click="clearFilters">{{ t('main.tr2_body.workspace.clear') }}</button></p>
             <div class="tr2-actions">
               <h4>{{ opLabel(selected.op) }} · {{ selected.item.file ?? t('main.tr2_body.files.no_file') }}</h4>
               <div>
@@ -136,51 +138,78 @@
         </ul>
       </section>
 
-      <section class="tr2-section">
-        <h3>{{ t('main.tr2_body.diag.heading') }}</h3>
-        <p v-if="awaitingApproval && view.derived.live_precheck.drift" class="tr2-error">{{ t('main.tr2_body.diag.drift_banner') }}</p>
-        <p data-testid="tr2-diagnostic">{{ diagnostic ? (diagnostic.ready ? t('main.tr2_body.diag.ready') : t('main.tr2_body.diag.review_required')) : t('main.tr2_body.diag.not_run') }}<span v-if="diagnostic?.code"> · {{ diagnosticCodeText }}</span></p>
-        <details class="tr2-tech">
-          <summary>{{ t('main.tr2_body.diag.technical') }}</summary>
-          <p>{{ t('main.tr2_body.diag.baseline') }}: <code>{{ view.derived.live_precheck.baseline_fingerprint }}</code></p>
-          <p>{{ t('main.tr2_body.diag.live') }}: <code>{{ view.derived.live_precheck.live_fingerprint ?? t('main.tr2_body.diag.unavailable') }}</code></p>
-        </details>
-      </section>
-
-      <section class="tr2-section">
-        <h3>{{ t('main.tr2_body.attempts.heading') }}</h3>
-        <p v-if="!view.approval.attempts.length">{{ t('main.tr2_body.attempts.none') }}</p>
-        <ol v-else class="tr2-attempts" data-testid="tr2-attempts">
-          <li v-for="(attempt, index) in view.approval.attempts" :key="attempt.attempt_id ?? index" :class="`is-${attempt.state}`">
-            <span>{{ attemptLabel(attempt) }}</span>
-            <span>{{ attempt.finished_at ?? attempt.started_at ?? '' }}</span>
-            <span v-if="attempt.error_code">{{ attempt.error_code }}</span>
-            <span v-if="attempt.commit_sha">{{ t('main.tr2_body.attempts.commit', { sha: String(attempt.commit_sha).slice(0, 7) }) }}</span>
-            <em v-if="attempt.retryable === true">{{ t('main.tr2_body.attempts.retryable') }}</em>
-            <em v-else-if="attempt.retryable === false">{{ t('main.tr2_body.attempts.not_retryable') }}</em>
-          </li>
-        </ol>
-        <p>{{ t('main.tr2_body.attempts.ledger', { count: view.history?.ledger?.length ?? 0 }) }}</p>
-      </section>
-
-      <section class="tr2-section">
-        <details data-testid="tr2-history-toggle" :open="historyOpen" @toggle="historyOpen = ($event.target as HTMLDetailsElement).open">
-          <summary>{{ t('main.tr2_body.recovery.history_heading') }}</summary>
-          <Tr2RevisionPanel v-if="historyOpen" :key="`history-${view.document.revision_no}`" :doc-id="tab.id" mode="history" :read-only="readOnly || !mutationAllowed" @changed="onRecovered" />
-        </details>
-      </section>
-
-      <section v-if="wholeEditorOpen" class="tr2-section" data-testid="tr2-whole-editor">
-        <h3>{{ t('main.tr2_body.editor.whole_title') }}</h3>
-        <p class="tr2-note">{{ t('main.tr2_body.editor.whole_hint') }}</p>
-        <p class="tr2-note">{{ t('main.tr2_body.editor.legend_editable') }} / {{ t('main.tr2_body.editor.legend_locked') }}</p>
-        <textarea v-model="editorText" rows="18" :aria-label="t('main.tr2_body.editor.whole_title')" :disabled="locked || saving" />
-        <div class="tr2-actions">
-          <button type="button" class="btn btn-primary btn-sm" data-testid="tr2-save-whole" :disabled="locked || saving" @click="saveWhole">{{ t('main.tr2_body.actions.save') }}</button>
-          <button type="button" class="btn btn-outline btn-sm" @click="wholeEditorOpen = false">{{ t('main.tr2_body.actions.cancel') }}</button>
-        </div>
-      </section>
     </template>
+    <details class="tr2-advanced" data-testid="tr2-advanced" :open="advancedOpen" @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open">
+      <summary>{{ t('main.tr2_body.workspace.advanced') }}<small>{{ t('main.tr2_body.workspace.advanced_hint') }}</small></summary>
+      <div class="tr2-advanced-content">
+        <p class="tr2-note tr2-document-id">{{ tab.id }}</p>
+        <template v-if="view && state">
+          <div class="tr2-summary">
+            <div><span>{{ t('main.tr2_body.summary.review_status') }}</span><strong>{{ reviewLabel }}</strong></div>
+            <div><span>{{ t('main.tr2_body.summary.state') }}</span><strong>{{ t(`main.tr2_body.state.${state}`) }}</strong></div>
+            <div><span>{{ t('main.tr2_body.summary.history') }}</span><strong data-testid="tr2-history-state">{{ historyLabel }}</strong></div>
+            <div><span>{{ t('main.tr2_body.summary.revision') }}</span><strong data-testid="tr2-revision">{{ view.document.revision_no }}</strong></div>
+            <div><span>{{ t('main.tr2_body.summary.attempt') }}</span><strong>{{ latest ? attemptLabel(latest) : t('main.tr2_body.summary.no_attempt') }}</strong></div>
+          </div>
+          <section class="tr2-section">
+            <h3>{{ t('main.tr2_body.diag.heading') }}</h3>
+            <p v-if="awaitingApproval && view.derived.live_precheck.drift" class="tr2-error">{{ t('main.tr2_body.diag.drift_banner') }}</p>
+            <p data-testid="tr2-diagnostic">{{ diagnostic ? (diagnostic.ready ? t('main.tr2_body.diag.ready') : t('main.tr2_body.diag.review_required')) : t('main.tr2_body.diag.not_run') }}<span v-if="diagnostic?.code"> · {{ diagnosticCodeText }}</span></p>
+            <details class="tr2-tech">
+              <summary>{{ t('main.tr2_body.diag.technical') }}</summary>
+              <p>{{ t('main.tr2_body.diag.baseline') }}: <code>{{ view.derived.live_precheck.baseline_fingerprint }}</code></p>
+              <p>{{ t('main.tr2_body.diag.live') }}: <code>{{ view.derived.live_precheck.live_fingerprint ?? t('main.tr2_body.diag.unavailable') }}</code></p>
+            </details>
+          </section>
+
+          <section class="tr2-section">
+            <h3>{{ t('main.tr2_body.attempts.heading') }}</h3>
+            <p v-if="!view.approval.attempts.length">{{ t('main.tr2_body.attempts.none') }}</p>
+            <ol v-else class="tr2-attempts" data-testid="tr2-attempts">
+              <li v-for="(attempt, index) in view.approval.attempts" :key="attempt.attempt_id ?? index" :class="`is-${attempt.state}`">
+                <span>{{ attemptLabel(attempt) }}</span>
+                <span>{{ attempt.finished_at ?? attempt.started_at ?? '' }}</span>
+                <span v-if="attempt.error_code">{{ attempt.error_code }}</span>
+                <span v-if="attempt.commit_sha">{{ t('main.tr2_body.attempts.commit', { sha: String(attempt.commit_sha).slice(0, 7) }) }}</span>
+                <em v-if="attempt.retryable === true">{{ t('main.tr2_body.attempts.retryable') }}</em>
+                <em v-else-if="attempt.retryable === false">{{ t('main.tr2_body.attempts.not_retryable') }}</em>
+              </li>
+            </ol>
+            <p>{{ t('main.tr2_body.attempts.ledger', { count: view.history?.ledger?.length ?? 0 }) }}</p>
+          </section>
+
+          <section class="tr2-section">
+            <details data-testid="tr2-history-toggle" :open="historyOpen" @toggle="historyOpen = ($event.target as HTMLDetailsElement).open">
+              <summary>{{ t('main.tr2_body.recovery.history_heading') }}</summary>
+              <Tr2RevisionPanel v-if="historyOpen" :key="`history-${view.document.revision_no}`" :doc-id="tab.id" mode="history" :read-only="readOnly || !mutationAllowed" @changed="onRecovered" />
+            </details>
+          </section>
+
+        </template>
+        <section class="tr2-section" data-testid="tr2-management">
+          <h3>{{ t('main.tr2_body.workspace.manage') }}</h3>
+          <p class="tr2-note">{{ t('main.tr2_body.workspace.manage_hint') }}</p>
+          <div class="tr2-actions">
+            <button type="button" class="btn btn-outline btn-sm" :disabled="!view" data-testid="tr2-download" @click="downloadSpec">{{ t('main.tr2_body.actions.download') }}</button>
+            <label class="btn btn-outline btn-sm" :class="{ 'is-disabled': locked }" :aria-disabled="locked"><input type="file" accept="application/json,.json" data-testid="tr2-upload" :disabled="locked" @change="uploadSpec">{{ t('main.tr2_body.actions.upload') }}</label>
+            <button type="button" class="btn btn-outline btn-sm" :disabled="locked" data-testid="tr2-edit-whole" @click="openWholeEditor(false)">{{ t('main.tr2_body.actions.edit_whole') }}</button>
+            <button type="button" class="btn btn-outline btn-sm" :disabled="locked" data-testid="tr2-new-whole" @click="openWholeEditor(true)">{{ t('main.tr2_body.actions.new_whole') }}</button>
+            <button type="button" class="btn btn-outline btn-sm btn-danger-outline" :disabled="locked" data-testid="tr2-reset-whole" @click="ask({ kind: 'reset' })">{{ t('main.tr2_body.actions.reset_whole') }}</button>
+          </div>
+        </section>
+
+        <section v-if="view && state && wholeEditorOpen" class="tr2-section" data-testid="tr2-whole-editor">
+          <h3>{{ t('main.tr2_body.editor.whole_title') }}</h3>
+          <p class="tr2-note">{{ t('main.tr2_body.editor.whole_hint') }}</p>
+          <p class="tr2-note">{{ t('main.tr2_body.editor.legend_editable') }} / {{ t('main.tr2_body.editor.legend_locked') }}</p>
+          <textarea v-model="editorText" rows="18" :aria-label="t('main.tr2_body.editor.whole_title')" :disabled="locked || saving" />
+          <div class="tr2-actions">
+            <button type="button" class="btn btn-primary btn-sm" data-testid="tr2-save-whole" :disabled="locked || saving" @click="saveWhole">{{ t('main.tr2_body.actions.save') }}</button>
+            <button type="button" class="btn btn-outline btn-sm" @click="wholeEditorOpen = false">{{ t('main.tr2_body.actions.cancel') }}</button>
+          </div>
+        </section>
+      </div>
+    </details>
   </section>
 </template>
 
@@ -212,6 +241,11 @@ const selectedKey = ref<string | null>(null)
 const itemEditor = ref<{ key: number; op: ItemOp; item: Row | null } | null>(null)
 const wholeEditorOpen = ref(false)
 const historyOpen = ref(false)
+const advancedOpen = ref(false)
+const fileQuery = ref('')
+const fileFilter = ref<ItemOp | 'all'>('all')
+const filterOptions: Array<ItemOp | 'all'> = ['all', 'edit', 'create_file', 'deferred']
+const fileList = ref<HTMLUListElement | null>(null)
 const editorText = ref('')
 const error = ref('')
 const notice = ref('')
@@ -223,6 +257,7 @@ const retrying = ref(false)
 const confirming = ref<Pending | null>(null)
 let generation = 0
 let editorSeq = 0
+let fileGeneration = 0
 
 const base = computed(() => `/api/v1/documents/${encodeURIComponent(props.tab.id)}/tr2`)
 // The tree still embeds a legacy English "[Type]: " prefix in tab titles (see TabBar).
@@ -251,6 +286,14 @@ const items = computed<Entry[]>(() => {
   ]
 })
 const selected = computed(() => items.value.find((entry) => `${entry.collection}:${entry.item.id}` === selectedKey.value) ?? null)
+const visibleItems = computed(() => {
+  const query = fileQuery.value.trim().toLocaleLowerCase()
+  return items.value.filter((entry) => (fileFilter.value === 'all' || entry.op === fileFilter.value)
+    && `${entry.item.file ?? ''} ${entry.item.id}`.toLocaleLowerCase().includes(query))
+})
+const selectedHidden = computed(() => selected.value !== null && !visibleItems.value.some((entry) => `${entry.collection}:${entry.item.id}` === selectedKey.value))
+function clearFilters() { fileQuery.value = ''; fileFilter.value = 'all' }
+watch([fileQuery, fileFilter], () => { if (fileList.value) fileList.value.scrollTop = 0 })
 const counts = computed(() => ({
   edit: items.value.filter((entry) => entry.op === 'edit').length,
   create: items.value.filter((entry) => entry.op === 'create_file').length,
@@ -388,7 +431,8 @@ async function refresh() {
     error.value = ''
     stale.value = false
     staleWhileEditing.value = false
-    if (selectedKey.value && !selected.value) { selectedKey.value = null; fileDetail.value = null }
+    if (selectedKey.value && !selected.value) { selectedKey.value = null; fileDetail.value = null; fileGeneration++ }
+    else if (selected.value) await loadFileDetail(selected.value)
   } catch (exc) {
     if (current !== generation) return
     const info = describeTr2Error(exc, t, te)
@@ -411,15 +455,18 @@ async function reload() {
   await refresh()
 }
 async function runDiagnostic() {
+  advancedOpen.value = true
   try { diagnostic.value = (await postRequest<Row>(`${base.value}/precheck`, {})).data; error.value = '' }
   catch (exc) { diagnostic.value = null; error.value = describe(exc) }
 }
 async function loadFileDetail(entry: Entry | null) {
+  const current = ++fileGeneration
   fileDetail.value = null
   if (!entry || entry.op === 'deferred' || !entry.item.file) return
   try {
-    fileDetail.value = (await getRequest<Row>(`${base.value}/files/${String(entry.item.file).split('/').map(encodeURIComponent).join('/')}`)).data
-  } catch (exc) { error.value = describe(exc) }
+    const response = await getRequest<Row>(`${base.value}/files/${String(entry.item.file).split('/').map(encodeURIComponent).join('/')}`)
+    if (current === fileGeneration) fileDetail.value = response.data
+  } catch (exc) { if (current === fileGeneration) error.value = describe(exc) }
 }
 async function selectItem(entry: Entry) {
   selectedKey.value = `${entry.collection}:${entry.item.id}`
@@ -609,11 +656,16 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   generation++
+  fileGeneration++
   window.removeEventListener('fg:document_content_changed', onContentChanged)
   window.removeEventListener('fg:doc_review_status_changed', onReviewChanged)
   window.removeEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
 })
 watch(() => props.tab.id, () => {
+  fileGeneration++
+  fileDetail.value = null
+  clearFilters()
+  advancedOpen.value = false
   diagnostic.value = null
   selectedKey.value = null
   itemEditor.value = null
@@ -660,6 +712,19 @@ watch(() => props.tab.id, () => {
 .tr2-section h3 small { font-weight: normal; color: var(--text-m); }
 .tr2-section summary { cursor: pointer; font-weight: 600; }
 .tr2-files, .tr2-gate, .tr2-attempts { list-style: none; padding: 0; margin: 0 0 8px; }
+.tr2-review-summary strong { font-size: 1.3rem; }
+.tr2-file-controls { display: grid; gap: 8px; margin-bottom: 8px; }
+.tr2-file-controls input { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--border, #d9e1e8); border-radius: 6px; background: var(--bg, #f6f8fa); color: inherit; }
+.tr2-file-controls p { margin: 0; }
+.tr2-filters { display: flex; gap: 4px; flex-wrap: wrap; }
+.tr2-filters button[aria-pressed=true] { background: var(--primary-l, #eff6ff); border-color: var(--primary, #2563eb); }
+.tr2-files { height: 420px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.tr2-files button:focus-visible, .tr2-filters button:focus-visible, .tr2-file-controls input:focus-visible, .tr2-advanced > summary:focus-visible { outline: 2px solid var(--primary, #2563eb); outline-offset: 2px; }
+.tr2-advanced { border: 1px solid var(--border, #d9e1e8); border-radius: 8px; }
+.tr2-advanced > summary { padding: 12px; cursor: pointer; font-weight: 600; }
+.tr2-advanced > summary small { display: block; margin-top: 4px; color: var(--text-m); font-weight: normal; }
+.tr2-advanced-content { padding: 0 12px 12px; display: grid; gap: 16px; }
+.tr2-document-id { margin: 0; font-family: monospace; overflow-wrap: anywhere; }
 .tr2-files li button { display: flex; gap: 8px; align-items: center; width: 100%; border: 1px solid transparent; border-radius: 6px; background: none; padding: 6px 4px; cursor: pointer; text-align: left; }
 .tr2-files li.is-selected button { background: var(--primary-l, #eff6ff); border-color: var(--primary, #2563eb); }
 .tr2-path { overflow-wrap: anywhere; font-family: monospace; font-size: .8rem; flex: 1; }
