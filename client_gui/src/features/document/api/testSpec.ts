@@ -290,3 +290,145 @@ export function testSpecErrorOf(error: unknown): TestSpecError {
   else kind = 'other'
   return { kind, status, code: code || null }
 }
+
+// flowgate.v02.0053 T#4 — the document window's scenario / report views (the v0.1 TestDocumentBody's
+// TestSpecPanel and TestReportPanel, read only) need the Cases' written fields and the report rows of the
+// same `/test-document` answer. Same endpoint, same read; TestSpecView is left as it is.
+
+/** The written fields of a Case (null when empty). */
+export interface TestSpecCaseFields {
+  readonly requirement: string | null
+  readonly precondition: string | null
+  readonly input: string | null
+  readonly procedure: string | null
+  readonly expected: string | null
+  readonly checkPoints: string | null
+}
+
+/** A Case of a specification TS as the scenario view shows it. */
+export interface TestSpecCaseDetail extends TestSpecCase {
+  /** `normal` | `negative` | `boundary` | `regression` (open set). */
+  readonly category: string | null
+  readonly fields: TestSpecCaseFields
+}
+
+export interface TestSpecEvidence {
+  readonly kind: string | null
+  readonly value: string
+  readonly label: string | null
+}
+
+/** One Case of the result: the valid result on the live source first, else the stored record's row. */
+export interface TestSpecResultRow {
+  readonly caseId: string
+  readonly title: string | null
+  /** `PASS` | `FAIL` | `BLOCKED` | `NOT_RUN`. */
+  readonly status: string | null
+  readonly required: boolean
+  readonly executionMode: string | null
+  readonly expected: string | null
+  readonly actual: string | null
+  readonly evidence: readonly TestSpecEvidence[]
+  readonly defectRef: string | null
+}
+
+/** A row as the record holds it: also who checked the Case and when (the report text writes them, test_spec_service normalize_results: any text). */
+export interface TestSpecRecordRow extends TestSpecResultRow {
+  readonly checkedBy: string | null
+  readonly checkedAt: string | null
+}
+
+/** The TS / TSR as the document window shows it. */
+export interface TestSpecDocument {
+  readonly view: TestSpecView
+  /** The specification's own title and intro paragraph. */
+  readonly title: string | null
+  readonly intro: string | null
+  readonly cases: readonly TestSpecCaseDetail[]
+  readonly rows: readonly TestSpecRecordRow[]
+  /** The rows of the stored record itself (a TSR's report run, a TS's latest result), whatever the valid result is. */
+  readonly storedRows: readonly TestSpecRecordRow[]
+  /** Overall verdict of the result (valid result first, else the stored record). */
+  readonly overall: string | null
+  readonly counts: TestSpecCounts | null
+  readonly requiredCounts: TestSpecCounts | null
+  /** Cases the live run has not reported yet. */
+  readonly pendingCaseIds: readonly string[]
+  readonly unmapped: number
+  readonly conflicts: number
+}
+
+const written = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null)
+
+function toTestSpecEvidence(raw: unknown): TestSpecEvidence | null {
+  const row = record(raw)
+  const value = written(row.value)
+  return value === null ? null : { kind: text(row.kind), value, label: text(row.label) }
+}
+
+function toTestSpecCaseDetail(raw: unknown): TestSpecCaseDetail | null {
+  const base = toTestSpecCase(raw)
+  if (base === null) return null
+  const row = record(raw)
+  return {
+    ...base,
+    category: text(row.category),
+    fields: {
+      requirement: written(row.requirement),
+      precondition: written(row.precondition),
+      input: written(row.input),
+      procedure: written(row.procedure),
+      expected: written(row.expected),
+      checkPoints: written(row.check_points),
+    },
+  }
+}
+
+/** A row of `effective_result.cases` (case_id / status / expected) or of a stored record (case_no / case_status / expect). */
+function toTestSpecResultRow(raw: unknown): TestSpecRecordRow | null {
+  const row = record(raw)
+  const caseId = text(row.case_id) ?? text(row.case_no)
+  if (caseId === null) return null
+  return {
+    caseId,
+    title: text(row.title) ?? text(row.case_title),
+    status: text(row.status) ?? text(row.case_status),
+    required: row.required !== false,
+    executionMode: text(row.execution_mode),
+    expected: written(row.expected) ?? written(row.expect),
+    actual: written(row.actual),
+    evidence: list(row.evidence).flatMap((item) => toTestSpecEvidence(item) ?? []),
+    defectRef: text(row.defect_ref),
+    checkedBy: text(row.checked_by),
+    checkedAt: text(row.checked_at),
+  }
+}
+
+export function toTestSpecDocument(raw: unknown): TestSpecDocument {
+  const view = toTestSpecView(raw)
+  const data = record(raw)
+  const stored = record(view.kind === 'TSR' ? data.report : data.latest_result)
+  const effective = data.effective_result ? record(data.effective_result) : null
+  const summary = record(effective ? effective.summary : stored.summary)
+  const rows = list(effective ? effective.cases : stored.cases).flatMap((item) => toTestSpecResultRow(item) ?? [])
+  return {
+    view,
+    title: text(data.title) ?? text(data.doc_title),
+    intro: written(data.intro),
+    cases: list(data.cases).flatMap((item) => toTestSpecCaseDetail(item) ?? []),
+    rows,
+    storedRows: list(stored.cases).flatMap((item) => toTestSpecResultRow(item) ?? []),
+    overall: text(summary.overall) ?? text(stored.overall),
+    counts: toTestSpecCounts(summary.counts),
+    requiredCounts: toTestSpecCounts(summary.required_counts),
+    pendingCaseIds: data.active_run ? list(data.pending_case_ids).flatMap((id) => (text(id) ? [id as string] : [])) : [],
+    unmapped: list(stored.unmapped).length,
+    conflicts: list(stored.conflicts).length,
+  }
+}
+
+/** Reads a TS / TSR for the document window (`GET /documents/{doc_id}/test-document`, as testSpecRead). */
+export async function testSpecDocumentRead(docId: string): Promise<TestSpecDocument> {
+  const response = await getRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}/test-document`)
+  return toTestSpecDocument(response.data)
+}

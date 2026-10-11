@@ -22,8 +22,12 @@ describe('documentWindowModel (flowgate.v02.0053 T#3)', () => {
     expect(documentDot(null)).toEqual({ tone: 'neutral', key: 'unknown' })
   })
 
-  it('every document type goes to the MD Viewer for now (the special views come with the next task)', () => {
-    for (const type of ['TR', 'T', 'WP', 'TS', 'TSR', 'R', null]) expect(documentBodyView(type)).toBe('markdown')
+  it('a work plan gets its plan view, a test scenario / test report the test view, everything else the MD Viewer (T#4)', () => {
+    expect(documentBodyView('WP')).toBe('work_plan')
+    expect(documentBodyView('TS')).toBe('test')
+    expect(documentBodyView('TSR')).toBe('test')
+    expect(documentBodyView(' tsr ')).toBe('test')
+    for (const type of ['TR', 'T', 'R', 'D', 'NR', 'TR2', 'CH', 'Q', 'AC', '', null]) expect(documentBodyView(type)).toBe('markdown')
   })
 
   it('splits the frontmatter off for the editor and puts it back unchanged on save', () => {

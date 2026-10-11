@@ -1,6 +1,6 @@
 // flowgate.v02.0053 T#3 — what the document window decides without a screen or a server call: the
-// title line's state dot, which body view a document gets, the frontmatter kept aside while the
-// body is edited, and the short reason a failed read or save shows.
+// title line's state dot, which body view a document gets (T#4: the special views), the frontmatter
+// kept aside while the body is edited, and the short reason a failed read or save shows.
 import type { DocumentErrorKind, DocumentRecord } from '@/features/document'
 
 /** The state dot's color (the Inspector pill tones). */
@@ -32,13 +32,20 @@ export function documentDot(record: Pick<DocumentRecord, 'status' | 'docReviewSt
 }
 
 /**
- * The view the window body gives a document. Every document is the MD Viewer for now; the special
- * views (work plan, test scenario, test report) are routed here by the next task.
+ * The view the window body gives a document (T#4, the v0.1 DocumentBodyRouter's branches for the documents
+ * that have a view of their own): a work plan its plan table, a test scenario / test report its test view,
+ * every other document the MD Viewer.
  */
-export type DocumentBodyView = 'markdown'
+export type DocumentBodyView = 'markdown' | 'work_plan' | 'test'
 
-export function documentBodyView(_typeCode: string | null): DocumentBodyView {
-  return 'markdown'
+const SPECIAL_VIEWS: Readonly<Record<string, DocumentBodyView>> = {
+  WP: 'work_plan',
+  TS: 'test',
+  TSR: 'test',
+}
+
+export function documentBodyView(typeCode: string | null): DocumentBodyView {
+  return SPECIAL_VIEWS[(typeCode ?? '').trim().toUpperCase()] ?? 'markdown'
 }
 
 export interface DocumentSource {

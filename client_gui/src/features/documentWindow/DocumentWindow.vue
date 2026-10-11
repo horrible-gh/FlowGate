@@ -43,7 +43,9 @@
     <div class="document-window" data-test="document-window" :data-doc="win.docId" :data-shown="win.shown" :data-mode="win.mode">
       <div v-if="gone" class="document-window-note" data-test="document-window-gone">{{ t(k('error.gone')) }}</div>
 
-      <DocumentWindowBody v-else-if="!editing" ref="body" :doc-id="win.shown" :type-code="record?.typeCode ?? null" />
+      <!-- The body view depends on the document's type (T#4): it is chosen once the title line read answered. -->
+      <div v-else-if="!editing && !recordSettled" class="document-window-note" data-test="document-window-loading">{{ t(k('viewer.loading')) }}</div>
+      <DocumentWindowBody v-else-if="!editing" ref="body" :doc-id="win.shown" :type-code="record?.typeCode ?? null" :title="record?.title ?? null" />
 
       <div v-else class="document-window-editor" data-test="document-window-editor">
         <div v-if="editLoading" class="document-window-note" data-test="document-window-editor-loading">{{ t(k('viewer.loading')) }}</div>
@@ -99,7 +101,7 @@
 <script setup lang="ts">
 // flowgate.v02.0053 T#3 — one document's modeless window (ModelessShell, the Q&A window's look): the
 // title line is name · state dot · ✎ · minimize · close, the body is the document's view
-// (DocumentWindowBody → MD Viewer). ✎ turns the same window to a text editor of the body (the
+// (DocumentWindowBody → MD Viewer; T#4: a work plan / test scenario / test report its own view). ✎ turns the same window to a text editor of the body (the
 // frontmatter is kept aside and put back, as the v0.1 editor does); 저장 writes it with the v0.1
 // content save and goes back to the view, 취소 drops it. Unsaved text is asked about once — on 취소,
 // on close and on Esc. A document whose file is not written yet opens empty and edits the same way.
@@ -159,6 +161,8 @@ const body = ref<InstanceType<typeof DocumentWindowBody> | null>(null)
 /** The opened document and the documents its supersede chain reached (the last is the live one). */
 const chain = ref<DocumentRecord[]>([])
 const gone = ref(false)
+/** The first title line read answered (either way): the body can pick its view. */
+const recordSettled = ref(false)
 // Request order: only the latest read of the title line may set it.
 let recordSequence = 0
 
@@ -170,10 +174,12 @@ async function readRecord(): Promise<void> {
     if (seq !== recordSequence) return
     chain.value = read
     gone.value = false
+    recordSettled.value = true
   } catch (error) {
     if (seq !== recordSequence) return
     // Only a document that no longer exists replaces the body; any other failure keeps the window.
     gone.value = documentReadErrorKey(documentErrorOf(error).kind) === 'gone'
+    recordSettled.value = true
   }
 }
 
