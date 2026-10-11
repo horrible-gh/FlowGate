@@ -215,13 +215,25 @@ describe('테스트 card lines (testSpecModel, stage 2)', () => {
   })
 })
 
-describe('settings views with no server side yet', () => {
-  it('AI 위임 is OFF and not changeable; test settings lock while the run is live; check settings know nothing', () => {
-    expect(requirementSettingsView(REQ)).toMatchObject({ delegation: 'off', connected: false, locked: false })
-    expect(requirementSettingsView(REQ).limits.map((limit) => limit.key)).toEqual(['max_nodes', 'total_reviews', 'retries_per_card', 'replans'])
-    expect(testRunSettingsView(GRAPH_TS)).toMatchObject({ connected: false, locked: false, modes: { automated: null, manual: null, external: null } })
-    expect(testRunSettingsView({ ...GRAPH_TS, nodeRun: { status: 'running', openedAt: null, finishedAt: null, resultDocId: null } }).locked).toBe(true)
-    expect(checkSettingsView(V01_TR)).toEqual({ usage: null, scope: null, target: null, push: null, keepBranch: null, connected: false })
+// flowgate.v02.0053 T#7: a Graph card keeps these settings (connected, cardSettings.0053); a Node without a card
+// (a v0.1 / unassigned document Node) still draws them, off, with the reason as a tooltip.
+describe('settings views of a Node without a card', () => {
+  const NONE = { card: false, node: null, pending: {}, readOnly: null, placing: false, disposed: false, failure: null } as const
+  it('AI 위임 is OFF and not changeable; the test 실행 block knows no counts; check settings know nothing', () => {
+    expect(requirementSettingsView({ ...NONE, teams: [] })).toMatchObject({ delegation: 'off', connected: false, locked: false, reason: 'delegation.unconnected' })
+    expect(requirementSettingsView({ ...NONE, teams: [] }).limits.map((limit) => limit.key)).toEqual(['max_nodes', 'total_reviews', 'retries_per_card', 'replans'])
+    expect(testRunSettingsView(null)).toEqual({ modes: { automated: null, manual: null, external: null } })
+    expect(checkSettingsView({ ...NONE, branches: [] })).toEqual({
+      usage: null,
+      scope: null,
+      target: null,
+      targetOptions: [],
+      push: null,
+      keepBranch: null,
+      connected: false,
+      reason: 'git.unconnected',
+      failures: {},
+    })
   })
 })
 
@@ -319,18 +331,21 @@ describe('card header parts', () => {
 })
 
 describe('card settings parts', () => {
-  it('RequirementSettings: the OFF line, the switch disabled, the 미연결 tag; ON (fixture) draws 범위 · AI Team · 안전 한도', () => {
+  it('RequirementSettings (no card): the OFF line, the switch disabled, the 미연결 tag; ON (fixture) draws 범위 · AI Team · 안전 한도', () => {
     const w = mount(RequirementSettings, { props: { target: REQ }, global })
     expect(w.get('[data-test="inspector-requirement-settings"]').attributes('data-delegation')).toBe('off')
-    // flowgate.v02.0052 T#2: one short OFF line; the v7 explanation stays as its tooltip.
+    // flowgate.v02.0052 T#2: one short OFF line; the v7 explanation stays as its tooltip (flowgate.v02.0053 T#7: no code).
     const off = w.get('[data-test="requirement-delegation-off"]')
-    expect(off.text()).toBe('꺼짐 — 직접 구성하거나 작업계획(WP)으로 전개')
-    expect(off.attributes('title')).toContain('꺼져 있으면 직접 구성하거나')
-    for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeDefined()
+    expect(off.text()).toBe('꺼짐 — 직접 구성하거나 작업계획으로 전개')
+    expect(off.attributes('title')).toBe('전체 실행은 AI 위임과 무관 · 각 Node 설정으로 실행')
+    for (const option of w.findAll('[data-test="inspector-segment-option"]')) {
+      expect(option.attributes('disabled')).toBeDefined()
+      expect(option.attributes('title')).toBe('이 Flow에는 카드 설정이 없습니다')
+    }
     // "Not connected" is a tag beside the switch (reason in its tooltip), not a sentence in the body.
     const unconnected = w.get('[data-test="requirement-settings-unconnected"] [data-test="inspector-tbd"]')
     expect(unconnected.text()).toBe('미연결')
-    expect(unconnected.attributes('title')).toBe('AI 위임 API가 아직 없어 표시만 하며 바꿀 수 없습니다.')
+    expect(unconnected.attributes('title')).toBe('이 Flow에는 카드 설정이 없습니다')
     expect(w.get('[data-test="requirement-delegation"] .inspector-block-head').find('[data-test="requirement-settings-unconnected"]').exists()).toBe(true)
     expect(w.text()).not.toContain('0051-R')
     expect(w.find('[data-test="requirement-limits"]').exists()).toBe(false)
@@ -341,42 +356,69 @@ describe('card settings parts', () => {
       team: 'auth',
       teamOptions: [{ value: 'auth', label: '인증팀' }],
       limits: [
-        { key: 'max_nodes', value: 12, hot: false },
-        { key: 'total_reviews', value: 30, hot: true },
-        { key: 'retries_per_card', value: 2, hot: false },
-        { key: 'replans', value: 3, hot: false },
+        { key: 'max_nodes', value: 12, isDefault: false, hot: false },
+        { key: 'total_reviews', value: 30, isDefault: false, hot: true },
+        { key: 'retries_per_card', value: 2, isDefault: true, hot: false },
+        { key: 'replans', value: 3, isDefault: true, hot: false },
       ],
       locked: true,
       connected: true,
+      reason: 'reason.locked',
+      failures: {},
     }
     const fixture = mount(RequirementSettings, { props: { target: REQ, view: on }, global })
     expect(fixture.get('[data-test="inspector-requirement-settings"]').attributes('data-delegation')).toBe('on')
     expect(fixture.get('[data-test="inspector-lock-note"]').text()).toContain('위임 진행 중')
-    expect(fixture.findAll('[data-test^="requirement-limit-"]')).toHaveLength(4)
+    expect(fixture.findAll('input[data-test^="requirement-limit-"]')).toHaveLength(4)
     expect(fixture.get('[data-test="requirement-limits"] [data-test="inspector-status-chip"]').text()).toBe('총 검수 · 재작업 30/30')
     expect(fixture.find('[data-test="requirement-settings-unconnected"]').exists()).toBe(false)
+    // v7 `기본`: only on a limit with no value of its own; the Supervisor note is the AI Team label's tooltip.
+    expect(fixture.findAll('[data-test$="-default"]').map((mark) => mark.attributes('data-test'))).toEqual(['requirement-limit-retries_per_card-default', 'requirement-limit-replans-default'])
+    expect(fixture.text()).not.toContain('Supervisor 없는 팀을')
+    const teamRow = fixture.get('[data-test="requirement-delegation-team"]').element.closest('[data-test="inspector-control-row"]')!
+    expect(teamRow.querySelector('.inspector-control-label')!.getAttribute('title')).toBe('계획 · 질문 판단 · 진행 판단은 팀의 Supervisor')
   })
 
-  it('TestRunSettings: the three v7 blocks, counts "—", the controls disabled, the TBD tag; locked while running', () => {
-    const w = mount(TestRunSettings, { props: { target: GRAPH_TS }, global })
-    expect(w.get('[data-test="test-run-mode-automated"]').text()).toBe('automated —')
-    expect(w.get('[data-test="inspector-tbd"]').text()).toBe('manual · external 흐름 그리지 않음')
-    for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="test-run-settings-unconnected"]').text()).toBe('미연결 — Node에 저장되지 않아 바꿀 수 없습니다.')
-    expect(w.find('[data-test="inspector-lock-note"]').exists()).toBe(false)
-    const running = mount(TestRunSettings, { props: { target: { ...GRAPH_TS, nodeRun: { status: 'running', openedAt: null, finishedAt: null, resultDocId: null } } }, global })
-    expect(running.get('[data-test="inspector-lock-note"]').text()).toContain('실행 중')
+  // flowgate.v02.0053 T#7: the 실행 block only (지시서 · 검수 뒤 진행 · 시나리오 작성 are the settings feature's, in
+  // v7 order before it); no code on screen (TSC / TSR, automated / manual / external).
+  it('TestRunSettings: the 실행 block — 케이스별, the counts by mode ("—" while unknown), the TBD tag; no code, no control', () => {
+    const w = mount(TestRunSettings, { props: { target: { ...GRAPH_TS, docId: null, cardDocuments: [] } }, global })
+    expect(w.get('[data-test="inspector-block-title"]').text()).toBe('실행')
+    expect(w.find('[data-test="inspector-block-sub"]').exists()).toBe(false)
+    expect(w.get('[data-test="test-run-modes"]').text()).toContain('케이스별 — 시나리오에서 정함')
+    expect(w.findAll('[data-test^="test-run-mode-"]').map((mode) => mode.text())).toEqual(['자동 —', '수동 —', '외부 —'])
+    expect(w.get('[data-test="inspector-tbd"]').text()).toBe('수동 · 외부 흐름 그리지 않음')
+    expect(w.find('[data-test="inspector-segment-option"]').exists()).toBe(false)
+    expect(w.find('[data-test="test-run-settings-unconnected"]').exists()).toBe(false)
+    for (const code of ['TSC', 'TSR', 'automated', 'manual', 'external']) expect(w.text()).not.toContain(code)
+    const fixture = mount(TestRunSettings, { props: { target: GRAPH_TS, view: { modes: { automated: 49, manual: 6, external: 2 } } }, global })
+    expect(fixture.findAll('[data-test^="test-run-mode-"]').map((mode) => mode.text())).toEqual(['자동 49', '수동 6', '외부 2'])
   })
 
-  it('CheckSettings: 용도 "—" with the 토론 중 tag, the Git card disabled, the reason as the summary', () => {
+  it('CheckSettings (no card): 용도 with nothing chosen and the 토론 중 tag, the Git card off (reason a tooltip), the summary of nothing chosen', () => {
     const w = mount(CheckSettings, { props: { target: V01_TR }, global })
-    expect(w.get('[data-test="check-settings-usage-value"]').text()).toBe('—')
+    const usage = w.get('[data-test="check-settings-usage-value"]')
+    expect(usage.findAll('[data-test="inspector-segment-option"]').map((option) => [option.text(), option.attributes('aria-checked')])).toEqual([
+      ['중간 승인', 'false'],
+      ['그룹 종료', 'false'],
+    ])
     expect(w.get('[data-test="inspector-tbd"]').text()).toBe('토론 중')
-    for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="check-settings-summary"]').text()).toBe('미연결 — 반영 방식은 최종 확인 때 고릅니다.')
-    const fixture = mount(CheckSettings, { props: { target: V01_TR, view: { usage: 'end', scope: 'merge', target: 'main', push: true, keepBranch: false, connected: true } }, global })
-    expect(fixture.get('[data-test="check-settings-usage-value"]').text()).toBe('그룹 종료')
-    expect(fixture.get('[data-test="check-settings-summary"]').text()).toBe('작업 브랜치를 main에 병합하고 원격 반영')
+    for (const option of w.findAll('[data-test="inspector-segment-option"]')) {
+      expect(option.attributes('disabled')).toBeDefined()
+      expect(option.attributes('title')).toBe('이 Flow에는 카드 설정이 없습니다')
+    }
+    expect(w.get('[data-test="check-settings-summary"]').text()).toBe('반영 방식은 최종 확인 때 고름')
+    const view = { usage: 'end', scope: 'merge', target: 'main', targetOptions: ['main', 'release'], push: true, keepBranch: false, connected: true, reason: null, failures: {} } as const
+    const fixture = mount(CheckSettings, { props: { target: V01_TR, view }, global })
+    expect(fixture.get('[data-test="check-settings-usage-value"] [aria-checked="true"]').text()).toBe('그룹 종료')
+    // v7 scopeSummary / confirmSettings on a group-ending card: "→ 그룹 종료", and 보류 marked ⛔.
+    expect(fixture.get('[data-test="check-settings-summary"]').text()).toBe('작업 브랜치를 main에 병합하고 원격 반영 → 그룹 종료')
+    expect(fixture.get('[data-test="check-settings-scope"] [data-value="hold"]').text()).toBe('보류 ⛔')
+    expect(fixture.findAll('[data-test="check-settings-target"] option').map((option) => option.text())).toEqual(['—', 'main', 'release'])
+    expect(fixture.find('[data-test="check-settings-hold-block"]').exists()).toBe(false)
+    const hold = mount(CheckSettings, { props: { target: V01_TR, view: { ...view, scope: 'hold' } }, global })
+    expect(hold.get('[data-test="check-settings-summary"]').text()).toBe('그룹 종료 확인에서는 보류를 고를 수 없음')
+    expect(hold.get('[data-test="check-settings-hold-block"]').text()).toContain('⛔ 보류 + 그룹 종료는 함께 고를 수 없습니다')
   })
 
   it('follows the locale', () => {

@@ -66,6 +66,11 @@ export interface InspectorTarget {
   readonly cardDocuments: readonly InspectorCardDocument[]
   /** Graph definition node type (`document` | `gate` | `custom`), or null. */
   readonly nodeType: string | null
+  /**
+   * flowgate.v02.0053 T#7: the Graph card's own document type (its definition), whatever document its run bound
+   * (a 조사 card stays N with its NR result); null on a Node without a definition.
+   */
+  readonly cardDocType: string | null
   readonly rootBound: boolean
   readonly ownership: string | null
   readonly viewMode: string | null
@@ -87,6 +92,50 @@ export function inspectorReadOnly(ownership: string | null | undefined, viewMode
   if (ownership === 'conflict') return 'conflict'
   if (viewMode === 'revision') return 'revision'
   return null
+}
+
+/**
+ * flowgate.v02.0053 T#7 — what the settings tab holds for a Node, by the kinds the server keeps card settings
+ * by (T#2 `fields.card_kind`): run (조사 · 작업 · 설계 · Custom), test, requirement, check.
+ */
+export const INSPECTOR_SETTINGS_KINDS = ['run', 'test', 'requirement', 'check'] as const
+
+export type InspectorSettingsKind = (typeof INSPECTOR_SETTINGS_KINDS)[number]
+
+/** Document card types with run settings (T#2 `fields._RUN_DOC_TYPES`). */
+const SETTINGS_RUN_TYPES: readonly string[] = ['N', 'T', 'T2', 'D', 'P', 'L', 'DB']
+
+/**
+ * The settings kind of a Node, or null (no settings tab). A Graph card (a definition node) has the kind the
+ * server keeps its settings by: a Custom card runs, a gate is a check, a document card goes by its own
+ * (definition) type — not by the result its run bound (N → NR, T → TR), so a done card keeps its form.
+ * A Node without a definition (a v0.1 Flow's document Node) keeps what 0048 / 0051 gave it: a run or test
+ * card as a v0.1 sequence step (its slot), the requirement and check cards drawn without a store.
+ */
+export function inspectorSettingsKind(
+  target: Pick<InspectorTarget, 'nodeType' | 'cardDocType' | 'docType' | 'cardKind' | 'slot'>,
+): InspectorSettingsKind | null {
+  if (target.nodeType === 'custom') return 'run'
+  if (target.nodeType === 'gate') return 'check'
+  if (target.nodeType !== null) {
+    if (target.nodeType !== 'document') return null
+    const type = (target.cardDocType ?? target.docType)?.trim().toUpperCase() ?? ''
+    if (type === 'R' || type === 'B') return 'requirement'
+    if (type === 'TS') return 'test'
+    return SETTINGS_RUN_TYPES.includes(type) ? 'run' : null
+  }
+  if (target.cardKind === 'requirement' || target.cardKind === 'check') return target.cardKind
+  if (!target.slot) return null
+  if (target.cardKind === 'test') return 'test'
+  return target.cardKind === 'research' || target.cardKind === 'task' || target.cardKind === 'design' ? 'run' : null
+}
+
+/** The key a placed card keeps until its first draft save answers the stored one (the server knows it not). */
+export const INSPECTOR_CLIENT_KEY_PREFIX = 'tmp_'
+
+/** The node_key of the stored Graph card behind the target, or null: a Node without a definition or a `tmp_` card. */
+export function inspectorCardNodeKey(target: Pick<InspectorTarget, 'nodeType' | 'nodeId'> | null): string | null {
+  return target && target.nodeType !== null && !target.nodeId.startsWith(INSPECTOR_CLIENT_KEY_PREFIX) ? target.nodeId : null
 }
 
 /** Selection context -> InspectorTarget; null when nothing is selected. */
@@ -114,6 +163,7 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     nodeRun: node.nodeRun ?? null,
     cardDocuments: node.cardDocuments ?? [],
     nodeType: node.definition?.nodeType ?? null,
+    cardDocType: node.definition?.docType ?? null,
     rootBound: node.definition?.rootBound === true,
     ownership,
     viewMode,

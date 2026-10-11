@@ -1,8 +1,10 @@
 <template>
   <!-- flowgate.v02.0051 — one v7 setting row (0035 base `.control-row`): a label on the left (with
        an optional hover hint) and the control on the right. Display only; the control comes from the
-       caller (a Select, a segment, an input). -->
-  <div class="inspector-control-row" data-test="inspector-control-row" :data-label="label">
+       caller (a Select, a segment, an input).
+       flowgate.v02.0053 T#7 — `wrap`: the controls go on to a next line when they do not fit beside each other
+       (a choice with its status note, a branch with two switches) instead of running past the row. -->
+  <div class="inspector-control-row" :class="{ 'is-wrap': wrap }" data-test="inspector-control-row" :data-label="label">
     <span class="inspector-control-label" :title="hint ?? undefined">{{ label }}</span>
     <span class="inspector-control-value"><slot /></span>
   </div>
@@ -13,8 +15,10 @@ withDefaults(
   defineProps<{
     label: string
     hint?: string | null
+    /** The controls may take more than one line (each stays whole). */
+    wrap?: boolean
   }>(),
-  { hint: null },
+  { hint: null, wrap: false },
 )
 </script>
 
@@ -53,6 +57,11 @@ withDefaults(
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.inspector-control-row.is-wrap .inspector-control-value {
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 /* flowgate.v02.0052 T#2 — in a narrow block (the 264px Inspector) the label sits above its control,

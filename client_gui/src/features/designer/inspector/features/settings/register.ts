@@ -4,6 +4,9 @@
 // started has no document yet, and it is the only one whose settings can change, so the tab does not
 // require a document. It does require a sequence slot: a Node without a sequence row (a free document
 // on a v0.1 Flow) has no run settings, so it gets no tab (D#2 §2.4 rule 3, D#1 §5.3 rule 6).
+// flowgate.v02.0053 T#7 — every card with run or test settings (inspectorSettingsKind): a Graph card in any
+// ownership — 조사 · 작업 · 설계 · Custom · 테스트, just placed or done — and, as before, a v0.1 Flow's
+// sequence step. No document is required (a card just placed has its own, a step not started none).
 import type { InspectorRegistration } from '../../inspectorRegistry'
 import SettingsTab from './SettingsTab.vue'
 import messages from './messages'
@@ -11,10 +14,8 @@ import messages from './messages'
 const registration: InspectorRegistration = {
   key: 'settings',
   order: 900,
-  cardKinds: ['research', 'task', 'design', 'test'],
-  ownerships: ['v01'],
+  settingsKinds: ['run', 'test'],
   requiresDocument: false,
-  requiresSlot: true,
   tab: { key: 'settings', component: SettingsTab },
   messages,
 }

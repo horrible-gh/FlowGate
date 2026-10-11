@@ -17,23 +17,6 @@ export function inspectorTabsWith(contributed: Iterable<string>): readonly Inspe
   return INSPECTOR_TABS.filter((key) => keys.has(key))
 }
 
-/** Card kinds whose v0.1 sequence step carries run settings (the settings feature's cards). */
-const RUN_SETTINGS_CARD_KINDS: readonly string[] = ['research', 'task', 'design', 'test']
-
-/**
- * flowgate.v02.0052 T#2 — why the 설정 tab of a Node has no part (no registration contributes), as a
- * message key under `gui.designer.inspector.pane.`: a run card outside a v0.1 sequence step says which
- * fact keeps the run settings away (Graph Flow · ownership conflict · undecided Flow · no sequence slot);
- * any other card kind is no run settings target (the registry gives it none).
- */
-export function inspectorNoSettingsKey(target: { readonly cardKind: string; readonly ownership: string | null; readonly slot: unknown }): string {
-  if (!RUN_SETTINGS_CARD_KINDS.includes(target.cardKind)) return 'no_settings'
-  if (target.ownership === 'graph') return 'no_settings_for.graph'
-  if (target.ownership === 'conflict') return 'no_settings_for.conflict'
-  if (target.ownership !== 'v01') return 'no_settings_for.unassigned'
-  return target.slot ? 'no_settings' : 'no_settings_for.no_slot'
-}
-
 /**
  * The selected tab is kept while the user moves between Nodes (v7); when the new Node does
  * not have it, the selection goes to the first shown tab (usually 문서). With no tab shown the

@@ -68,6 +68,10 @@ beforeEach(() => {
     if (url === '/api/v1/flows/p.ui.legacy/canvas') return { data: legacy }
     if (url.endsWith('/git/status')) return { data: { ok: true, status: { enabled: false, slots: [] } } }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false } }
+    // flowgate.v02.0053 T#7: the gate card's own settings (T#2), as kept for a card nothing was chosen on.
+    if (url === '/api/v1/flows/p.ui.graph/nodes/gn_gate/settings') {
+      return { data: { ok: true, flow_id: 'p.ui.graph', node_key: 'gn_gate', card_kind: 'check', locked: false, fields: {} } }
+    }
     throw new Error(`unexpected request ${url}`)
   })
   const pinia = createPinia()
@@ -151,6 +155,8 @@ describe('Designer Shell x Inspector (T#2)', () => {
     await openFlow('Graph')
     await selectNode('gn_gate')
     expect(get('designer-inspector-body').attributes('data-tab')).toBe('settings')
-    expect(get('designer-inspector-body').text()).toContain('설정')
+    // flowgate.v02.0053 T#7: the Graph gate's settings tab holds its v7 확인 settings (용도 · Git 반영), read from the card.
+    expect(get('inspector-check-settings').text()).toContain('용도')
+    expect(get('inspector-check-settings').text()).toContain('Git 반영')
   })
 })

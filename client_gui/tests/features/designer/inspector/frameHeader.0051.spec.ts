@@ -199,8 +199,11 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     await clickTab(w, '첨부')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
     expect(get(w, 'designer-inspector-tab-state').text()).toBe('')
+    // flowgate.v02.0053 T#7: a Graph gate has the v7 확인 settings (용도 · Git 반영), not an empty state.
     await clickTab(w, '설정')
-    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
+    expect(sections(w)).toEqual(['checkSettings'])
+    expect(w.find('[data-test="designer-inspector-tab-state"]').exists()).toBe(false)
+    expect(get(w, 'inspector-check-settings').exists()).toBe(true)
   })
 
   it('shows only card slots and keeps the document open action reachable', async () => {
@@ -230,19 +233,32 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     closeAllDocumentWindows()
   })
 
-  it('shows unavailable settings for a Graph research card without a settings contribution', async () => {
-    const node = { ...UNASSIGNED_REQ_NODE, id: 'gn_n_layout', kind: 'research', docType: 'N', document: null }
+  // flowgate.v02.0053 T#7: a Graph card has its own settings (T#2) — the v7 form, not "not supported yet".
+  it('shows the settings form on a Graph research card', async () => {
+    const node = {
+      ...UNASSIGNED_REQ_NODE,
+      id: 'gn_n_layout',
+      kind: 'research',
+      docType: 'N',
+      document: null,
+      definition: { nodeType: 'document', docType: 'N', paletteItemId: 'doc_n', label: '조사', assignee: null, rootBound: false },
+    }
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'graph', nodes: [node] }, node.id))
     await clickTab(w, '설정')
-    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
-    // flowgate.v02.0052 T#2: it says why — a Graph Node's run settings are not supported in the Inspector yet.
-    expect(get(w, 'designer-inspector-tab-state').text()).toContain('Graph 플로우 Node의 실행 설정은 Inspector에서 아직 지원하지 않습니다.')
+    expect(sections(w)).toEqual(['settings'])
+    expect(w.find('[data-test="designer-inspector-tab-state"]').exists()).toBe(false)
+    expect(get(w, 'inspector-settings').attributes('data-source')).toBe('card')
+    expect(w.text()).not.toContain('아직 지원하지 않습니다')
   })
 
-  it('names why the settings tab is empty for an undecided Flow (flowgate.v02.0052 T#2)', async () => {
+  // flowgate.v02.0053 T#7 (0053 CH: no sentence on an empty screen): a Node with no settings (a document Node of
+  // an undecided Flow outside any card or sequence) has an empty settings area — the 0052 T#2 reason is gone.
+  it('keeps the settings tab of a Node without settings empty, without a reason line', async () => {
     const node = { ...UNASSIGNED_REQ_NODE, id: 'doc_n', kind: 'research', docType: 'N', document: null }
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'unassigned', nodes: [node] }, node.id))
     await clickTab(w, '설정')
-    expect(get(w, 'designer-inspector-tab-state').text()).toContain('실행 방식(v0.1 · Graph)이 정해지지 않은 플로우라 실행 설정이 없습니다.')
+    expect(sections(w)).toEqual([])
+    expect(get(w, 'designer-inspector-tab-state').text()).toBe('')
+    expect(w.text()).not.toContain('실행 설정이 없습니다')
   })
 })

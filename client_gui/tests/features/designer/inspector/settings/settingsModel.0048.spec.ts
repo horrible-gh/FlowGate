@@ -3,11 +3,12 @@
  * kinds, the read-only rows, row states (not started · protected pending report · started), AI running,
  * disposed, the guard refusals, a save in flight, the review count 0 (reviewer off), nothing changed; the
  * row a slot names, the choices of each field, the draft, and what a running hop took from the row.
+ * flowgate.v02.0053 T#7: the running hop is no longer drawn (v7 has no such block) and its view is gone; the
+ * v0.1 Node's rules stay, its strings at tooltip length. A Graph card's rules are cardSettingsModel.0053.
  */
 import { describe, expect, it } from 'vitest'
 import {
   SETTINGS_OPERATION_CLASS,
-  SETTINGS_STORED_SOURCE,
   settingsAvailability,
   settingsBlockedBy,
   settingsChanged,
@@ -15,14 +16,12 @@ import {
   settingsDraftWith,
   settingsErrorKey,
   settingsFailureKey,
-  settingsHopView,
   settingsProviderOptions,
   settingsReviewCountKey,
   settingsReviewCountOptions,
   settingsRowFor,
   settingsRowPhase,
   settingsRowState,
-  type SettingsHopFacts,
   type SettingsInput,
   type SettingsRowFacts,
 } from '@/features/designer/inspector/features/settings/settingsModel'
@@ -223,45 +222,6 @@ describe('settingsModel — draft and choices (flowgate.v02.0048 T#9)', () => {
   })
 })
 
-describe('settingsModel — what a running hop took from the row (flowgate.v02.0048 T#9, D#2 §2.1 / §4.1 ⑤)', () => {
-  const HOP: SettingsHopFacts = {
-    itemSeq: 6,
-    providerId: 'aip_haiku',
-    providerName: 'Claude Haiku',
-    providerSource: SETTINGS_STORED_SOURCE,
-    reviewCount: 2,
-    reviewerProviderId: 'aip_sonnet',
-    reviewerProviderName: 'Claude Sonnet',
-  }
-
-  it.each<[string, Partial<SettingsRowFacts>, Partial<SettingsHopFacts> | null, [string, string, string] | null]>([
-    ['start answer: stored_sequence, same count and reviewer', {}, {}, ['row', 'row', 'row']],
-    ['start answer: a request pick (selected_provider_source other)', {}, { providerSource: 'request_step', providerId: 'aip_opus' }, ['other', 'row', 'row']],
-    ['start answer: a request pick of the same AI is still the request’s', {}, { providerSource: 'request_step' }, ['other', 'row', 'row']],
-    ['start answer: the source decides over the AI id', {}, { providerId: 'aip_opus' }, ['row', 'row', 'row']],
-    ['start answer: review count differs (a request override)', {}, { reviewCount: 1 }, ['row', 'other', 'row']],
-    ['start answer: reviewer differs', {}, { reviewerProviderId: 'aip_opus' }, ['row', 'row', 'other']],
-    ['status (no source): same AI id', {}, { providerSource: null }, ['row', 'row', 'row']],
-    ['status (no source): another AI', {}, { providerSource: null, providerId: 'aip_opus' }, ['other', 'row', 'row']],
-    ['status (no source): row leaves the run AI to the default', { providerId: null }, { providerSource: null }, ['default', 'row', 'row']],
-    ['status (no source): no AI in the answer', {}, { providerSource: null, providerId: null }, ['unknown', 'row', 'row']],
-    ['row leaves the reviewer to the default', { reviewerProviderId: null }, {}, ['row', 'row', 'default']],
-    ['no review on both sides: reviewer as saved', { reviewCount: 0 }, { reviewCount: 0, reviewerProviderId: null }, ['row', 'row', 'row']],
-    ['hop without a count', {}, { reviewCount: null }, ['row', 'unknown', 'row']],
-    ['the hop of another row', {}, { itemSeq: 7 }, null],
-    ['a hop without item_seq', {}, { itemSeq: null }, null],
-    ['no hop', {}, null, null],
-  ])('%s', (_name, row, hop, expected) => {
-    const view = settingsHopView({ ...ROW, ...row }, hop === null ? null : { ...HOP, ...hop })
-    expect(view ? [view.provider, view.reviewCount, view.reviewer] : null).toEqual(expected)
-  })
-
-  it('names and count come from the hop', () => {
-    expect(settingsHopView(ROW, HOP)).toMatchObject({ providerName: 'Claude Haiku', count: 2, reviewerName: 'Claude Sonnet' })
-    expect(settingsHopView(ROW, { ...HOP, providerName: null, reviewerProviderName: null })).toMatchObject({ providerName: 'aip_haiku', reviewerName: 'aip_sonnet' })
-  })
-})
-
 describe('settingsModel — refusals and keys (flowgate.v02.0048 T#9)', () => {
   it.each<[string, 'disposed' | 'running' | null]>([
     ['disposed', 'disposed'],
@@ -296,7 +256,6 @@ describe('settingsModel — refusals and keys (flowgate.v02.0048 T#9)', () => {
       ...['disposed', 'running', 'owner', 'stale', 'not_decided', 'invalid', 'forbidden', 'not_found', 'network', 'other'].map((key) => `failure.${key}`),
       ...['not_decided', 'forbidden', 'not_found', 'network', 'other'].map((key) => `error.${key}`),
       'option.default', 'option.missing', 'count.until_pass', 'count.none', 'count.times', 'count.out_of_range',
-      ...['row', 'other', 'default', 'unknown'].map((key) => `hop.match.${key}`),
     ]
     for (const locale of ['ko', 'en', 'ja'] as const) {
       for (const key of keys) {
@@ -304,10 +263,10 @@ describe('settingsModel — refusals and keys (flowgate.v02.0048 T#9)', () => {
         expect(typeof value, `${locale} ${key}`).toBe('string')
       }
     }
-    // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): the v7 rows that are not stored on a Node (지시서 사용 /
-    // 생략 · 검수 뒤 진행) are worded and drawn inactive with their reason; restart / time limit / review criteria
-    // are the Frame's run settings strings, not this feature's.
-    for (const key of ['instruction.label', 'instruction.use', 'instruction.omit', 'policy.label', 'policy.follow', 'policy.human', 'unconnected']) {
+    // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): the v7 rows 지시서 사용 / 생략 · 검수 뒤 진행 are worded;
+    // restart / time limit / review criteria are the Frame's run settings strings, not this feature's.
+    // flowgate.v02.0053 T#7: 검수 뒤 진행 is `after_review` (the T#2 field), and a v0.1 step's off reason is no_place.
+    for (const key of ['instruction.label', 'instruction.use', 'instruction.omit', 'after_review.label', 'after_review.follow', 'after_review.human', 'reason.no_place']) {
       for (const locale of ['ko', 'en', 'ja'] as const) {
         const value = key.split('.').reduce<unknown>((node, part) => (node as Record<string, unknown> | undefined)?.[part], messages[locale])
         expect(typeof value, `${locale} ${key}`).toBe('string')
@@ -315,5 +274,9 @@ describe('settingsModel — refusals and keys (flowgate.v02.0048 T#9)', () => {
     }
     const text = JSON.stringify(messages.ko)
     for (const word of ['재시작', '제한 시간', '검수 기준']) expect(text).not.toContain(word)
+    // flowgate.v02.0053 T#7: no save button, saved line, row title or running hop wording is left.
+    for (const key of ['save', 'saved', 'hint', 'title', 'state', 'hop', 'no_slot', 'no_row', 'unconnected', 'policy']) {
+      for (const locale of ['ko', 'en', 'ja'] as const) expect(messages[locale], `${locale} ${key}`).not.toHaveProperty(key)
+    }
   })
 })

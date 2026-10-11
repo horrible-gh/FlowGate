@@ -307,13 +307,6 @@ export default {
       pane: {
         loading: '読み込み中…',
         empty: '表示する内容がありません。',
-        no_settings: 'このカードの種類は Inspector の実行設定の対象ではありません。',
-        no_settings_for: {
-          graph: 'Graph フローのノードの実行設定は Inspector ではまだサポートしていません。',
-          conflict: 'フローの所有が競合しているため、実行設定を表示しません。',
-          unassigned: '実行方式(v0.1 · Graph)が決まっていないフローのため、実行設定はありません。',
-          no_slot: 'v0.1 の段階に属さないノードのため、実行設定はありません。',
-        },
         error: '読み込めませんでした。',
         retry: '再試行',
         details: '詳細',
@@ -377,6 +370,10 @@ export default {
         review_count: 'レビュー回数',
         time_limit: '実行制限時間',
         review_basis: 'レビュー基準',
+        // flowgate.v02.0053 T#7 — the 테스트 card's 시나리오 작성 block and a refused change's icon name.
+        scenario_title: 'シナリオ作成',
+        writer_ai: '作成AI',
+        failed: '保存失敗',
       },
     },
     // flowgate.v02.0038 — Designer top band (Header / Menu Bar / Toolbar). No shortcut text on

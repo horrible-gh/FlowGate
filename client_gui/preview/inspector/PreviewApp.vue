@@ -258,21 +258,21 @@
 
     <!-- 11. Stage 2 — card settings -->
     <section v-if="shown('card-settings')" id="card-settings" class="preview-section">
-      <h2>2단계 · 카드별 설정 탭 부품 <small>RequirementSettings (AI 위임) · TestRunSettings (지시 TS · 검수 뒤 진행 · 실행) · CheckSettings (용도 · Git 반영)</small></h2>
+      <h2>2단계 · 카드별 설정 탭 부품 <small>RequirementSettings (AI 위임) · TestRunSettings (실행) · CheckSettings (용도 · Git 반영)</small></h2>
 
-      <p class="preview-caption">요구사항 · 실제 (AI 위임 OFF · 비활성 · 사유 표시)</p>
+      <p class="preview-caption">요구사항 · 실제 (서버 없이: 끄기 · 비활성 · 사유는 툴팁)</p>
       <div class="preview-frame preview-pad"><RequirementSettings :target="REQ_DRAFT" /></div>
-      <p class="preview-caption">요구사항 · AI 위임 ON (시안 모양, fixture — API 없음)</p>
+      <p class="preview-caption">요구사항 · AI 위임 ON (시안 값, fixture)</p>
       <div class="preview-frame preview-pad"><RequirementSettings :target="REQ_DRAFT" :view="REQ_SETTINGS_ON" /></div>
       <p class="preview-caption">요구사항 · AI 위임 한도 도달 · 🔒 위임 진행 중 (시안 모양, fixture)</p>
       <div class="preview-frame preview-pad"><RequirementSettings :target="REQ_DRAFT" :view="REQ_SETTINGS_LIMIT" /></div>
 
-      <p class="preview-caption">테스트 · 실제 (Node에 저장되지 않음 · 개수 ‘—’) — 실행 설정 블록(설정 feature)은 v01 Node에서만 위에 붙음</p>
+      <p class="preview-caption">테스트 · 실행 블록 · 실제 (서버 없이: 개수 ‘—’) — 지시서 · 검수 뒤 진행 · 시나리오 작성은 설정 feature가 위에 그림</p>
       <div class="preview-frame preview-pad"><TestRunSettings :target="TEST_TS_RUNNING" /></div>
-      <p class="preview-caption">테스트 · 시안 값 (fixture) · 🔒 실행 중 · 사람 확인 필요</p>
-      <div class="preview-frame preview-pad"><TestRunSettings :target="TEST_TS_RUNNING" :view="TEST_RUN_SETTINGS_LOCKED" /></div>
+      <p class="preview-caption">테스트 · 실행 블록 · 시안 값 (fixture: 자동 49 · 수동 6 · 외부 2)</p>
+      <div class="preview-frame preview-pad"><TestRunSettings :target="TEST_TS_RUNNING" :view="TEST_RUN_SETTINGS_SAMPLE" /></div>
 
-      <p class="preview-caption">확인 · 실제 (용도 — · 토론 중 · Git 반영 비활성 · 사유: 최종 확인 대화상자에서 고름)</p>
+      <p class="preview-caption">확인 · 실제 (서버 없이: 용도 — · 토론 중 · Git 반영 비활성 · 사유는 툴팁)</p>
       <div class="preview-frame preview-pad"><CheckSettings :target="CHECK_AC" /></div>
       <p class="preview-caption">확인 · 시안 값 (fixture) · 그룹 종료 · 병합 · main · 원격 반영</p>
       <div class="preview-frame preview-pad"><CheckSettings :target="CHECK_AC" :view="CHECK_SETTINGS_SAMPLE" /></div>
@@ -374,7 +374,7 @@ import {
   TASK_NO_DOCUMENT,
   TASK_REVIEW,
   TASK_T,
-  TEST_RUN_SETTINGS_LOCKED,
+  TEST_RUN_SETTINGS_SAMPLE,
   TEST_TS_RUNNING,
 } from './fixtures'
 import PreviewDocumentsTab from './PreviewDocumentsTab.vue'

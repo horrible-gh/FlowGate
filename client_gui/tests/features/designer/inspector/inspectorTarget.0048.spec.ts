@@ -86,6 +86,7 @@ describe('toInspectorTarget', () => {
       nodeRun: null,
       cardDocuments: [],
       nodeType: null,
+      cardDocType: null,
       rootBound: false,
       ownership: 'v01',
       viewMode: null,
@@ -102,6 +103,7 @@ describe('toInspectorTarget', () => {
       cardKind: 'test',
       docReviewStatus: 'approved',
       nodeType: 'document',
+      cardDocType: 'TS',
       ownership: 'graph',
       viewMode: 'draft',
       readOnly: null,
@@ -120,6 +122,16 @@ describe('toInspectorTarget', () => {
     // A definition doc type wins over the Node's own when no document is bound.
     const node = { ...V01_GRAPH.nodes[1], docType: 'R', definition: { nodeType: 'document', docType: 'WP', paletteItemId: null, label: 'WP', assignee: null } }
     expect(targetOf({ projectId: 'p', graph: V01_GRAPH, node }).cardKind).toBe('plan')
+  })
+
+  it('flowgate.v02.0053 T#7: a done Graph card keeps its own (definition) type beside the result its run bound', () => {
+    const node = {
+      ...SELECTIONS.graph.node,
+      docType: 'N',
+      definition: { ...SELECTIONS.graph.node.definition!, docType: 'N' },
+      document: { ...SELECTIONS.graph.node.document!, docId: 'flowgate.v02.0049.0008-NR', typeCode: 'NR' },
+    }
+    expect(targetOf({ ...SELECTIONS.graph, node })).toMatchObject({ docType: 'NR', cardDocType: 'N', cardKind: 'research', nodeType: 'document' })
   })
 
   it('a bound document type wins over the Node doc type (e.g. after a kind change)', () => {

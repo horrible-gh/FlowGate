@@ -313,14 +313,6 @@ export default {
       pane: {
         loading: '불러오는 중…',
         empty: '표시할 내용이 없습니다.',
-        // flowgate.v02.0052 T#2 — why the 설정 tab is empty (inspectorNoSettingsKey).
-        no_settings: '이 카드 종류는 Inspector 실행 설정 대상이 아닙니다.',
-        no_settings_for: {
-          graph: 'Graph 플로우 Node의 실행 설정은 Inspector에서 아직 지원하지 않습니다.',
-          conflict: '플로우 소유가 충돌해 실행 설정을 표시하지 않습니다.',
-          unassigned: '실행 방식(v0.1 · Graph)이 정해지지 않은 플로우라 실행 설정이 없습니다.',
-          no_slot: 'v0.1 단계에 속하지 않은 Node라 실행 설정이 없습니다.',
-        },
         error: '불러오지 못했습니다.',
         retry: '다시 시도',
         details: '상세 정보',
@@ -387,6 +379,10 @@ export default {
         review_count: '검수 횟수',
         time_limit: '실행 제한 시간',
         review_basis: '검수 기준',
+        // flowgate.v02.0053 T#7 — the 테스트 card's 시나리오 작성 block and a refused change's icon name.
+        scenario_title: '시나리오 작성',
+        writer_ai: '작성 AI',
+        failed: '저장 실패',
       },
     },
     // flowgate.v02.0038 — Designer top band (Header / Menu Bar / Toolbar). The Project / Group /

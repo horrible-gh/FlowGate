@@ -307,13 +307,6 @@ export default {
       pane: {
         loading: 'Loading…',
         empty: 'Nothing to show.',
-        no_settings: 'This card kind has no Inspector run settings.',
-        no_settings_for: {
-          graph: 'Run settings of a Graph Flow Node are not supported in the Inspector yet.',
-          conflict: 'The Flow ownership is in conflict, so no run settings are shown.',
-          unassigned: 'This Flow has no run model (v0.1 · Graph) yet, so it has no run settings.',
-          no_slot: 'This Node is not a v0.1 step, so it has no run settings.',
-        },
         error: 'Could not load.',
         retry: 'Retry',
         details: 'Details',
@@ -377,6 +370,10 @@ export default {
         review_count: 'Review rounds',
         time_limit: 'Run time limit',
         review_basis: 'Review basis',
+        // flowgate.v02.0053 T#7 — the 테스트 card's 시나리오 작성 block and a refused change's icon name.
+        scenario_title: 'Scenario writing',
+        writer_ai: 'Writer AI',
+        failed: 'Not saved',
       },
     },
     // flowgate.v02.0038 — Designer top band (Header / Menu Bar / Toolbar). No shortcut text on

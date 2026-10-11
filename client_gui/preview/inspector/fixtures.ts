@@ -301,20 +301,22 @@ const TEAM_OPTIONS = [
   { value: 'basic', label: '기본팀 · Supervisor 없음' },
 ]
 
-/** AI 위임 ON (v7 reqSettings, `F.plan === 'ai'`): the shape only — no delegation API exists. */
+/** AI 위임 ON (v7 reqSettings, `F.plan === 'ai'`): the example values of a requirement card's settings. */
 export const REQ_SETTINGS_ON: RequirementSettingsView = {
   delegation: 'on',
   scope: 'end',
   team: 'auth',
   teamOptions: TEAM_OPTIONS,
   limits: [
-    { key: 'max_nodes', value: 12, hot: false },
-    { key: 'total_reviews', value: 30, hot: false },
-    { key: 'retries_per_card', value: 2, hot: false },
-    { key: 'replans', value: 3, hot: false },
+    { key: 'max_nodes', value: 12, isDefault: true, hot: false },
+    { key: 'total_reviews', value: 30, isDefault: true, hot: false },
+    { key: 'retries_per_card', value: 2, isDefault: true, hot: false },
+    { key: 'replans', value: 3, isDefault: true, hot: false },
   ],
   locked: false,
   connected: true,
+  reason: null,
+  failures: {},
 }
 
 /** AI 위임 · 한도 도달 (v7 req.d.limit): the reached limit red, the settings locked. */
@@ -322,21 +324,26 @@ export const REQ_SETTINGS_LIMIT: RequirementSettingsView = {
   ...REQ_SETTINGS_ON,
   limits: REQ_SETTINGS_ON.limits.map((limit) => (limit.key === 'total_reviews' ? { ...limit, hot: true } : limit)),
   locked: true,
+  reason: 'reason.locked',
 }
 
-/** 테스트 설정 (v7 testSettings) with the example counts. */
+/** 테스트 설정 (v7 testSettings) — the 실행 block with the example counts. */
 export const TEST_RUN_SETTINGS_SAMPLE: TestRunSettingsView = {
-  instruction: 'use',
-  policy: 'follow',
   modes: { automated: 49, manual: 6, external: 2 },
-  locked: false,
-  connected: true,
 }
-
-export const TEST_RUN_SETTINGS_LOCKED: TestRunSettingsView = { ...TEST_RUN_SETTINGS_SAMPLE, policy: 'human', locked: true }
 
 /** 확인 설정 (v7 confirmSettings) with the example choice. */
-export const CHECK_SETTINGS_SAMPLE: CheckSettingsView = { usage: 'end', scope: 'merge', target: 'main', push: true, keepBranch: false, connected: true }
+export const CHECK_SETTINGS_SAMPLE: CheckSettingsView = {
+  usage: 'end',
+  scope: 'merge',
+  target: 'main',
+  targetOptions: ['main', 'release'],
+  push: true,
+  keepBranch: false,
+  connected: true,
+  reason: null,
+  failures: {},
+}
 
 // --- Stage 2: fixed v7 example lines of the cards whose real lines come from a server read ---------
 

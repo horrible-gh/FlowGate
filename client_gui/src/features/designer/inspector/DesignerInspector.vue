@@ -73,11 +73,7 @@
             data-test="designer-inspector-tab-state"
             :data-state="activeTab === 'settings' ? 'disabled' : 'empty'"
           >
-            <EmptyState v-if="activeTab !== 'settings' && emptyTabMessage" compact :title="emptyTabMessage" />
-            <p v-else-if="activeTab === 'settings'" class="designer-inspector-disabled" role="note" aria-disabled="true">
-              <span aria-hidden="true">⊘</span>
-              <span>{{ emptyTabMessage }}</span>
-            </p>
+            <EmptyState v-if="emptyTabMessage" compact :title="emptyTabMessage" />
           </div>
         </div>
       </template>
@@ -106,7 +102,6 @@ import {
   INSPECTOR_TAB_GAP,
   INSPECTOR_TAB_MIN_WIDTH,
   INSPECTOR_TAB_STRIP_PADDING_X,
-  inspectorNoSettingsKey,
    resolveInspectorTab,
   type InspectorTabKey,
 } from './inspectorTabs'
@@ -198,10 +193,11 @@ const emptyTabMessage = computed(() => {
   // flowgate.v02.0053 T#6 (0053 CH): Q&A and attachments of a Node without a document are an empty
   // area — no "no linked document" sentence.
   if (!target.value?.docId && (activeTab.value === 'qna' || activeTab.value === 'attachments')) return ''
-  // flowgate.v02.0052 T#2: the settings tab says why this card has none (not one blanket "not connected").
-  return activeTab.value === 'settings' && target.value
-    ? t(`gui.designer.inspector.pane.${inspectorNoSettingsKey(target.value)}`)
-    : t('gui.designer.inspector.pane.empty')
+  // flowgate.v02.0053 T#7 (0053 CH §4): every card with settings has its form now (a Graph card, just placed
+  // or done); a Node with none (a work plan card, a v0.1 document outside the sequence) keeps an empty
+  // settings area — no "why not" sentence (the 0052 T#2 reasons, "v0.1 단계에 속하지 않은 Node" among them).
+  if (activeTab.value === 'settings') return ''
+  return t('gui.designer.inspector.pane.empty')
 })
 
 // Strip geometry comes from the tab rules so the Shell's minimum Inspector width and the CSS agree.
@@ -296,19 +292,6 @@ function selectTab(key: string) {
   min-width: 0;
 }
 
-.designer-inspector-disabled {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin: 0;
-  padding: 12px 14px;
-  border: 1px dashed #2b4562;
-  border-radius: 8px;
-  color: #6f87a0;
-  font-size: 12px;
-  text-align: center;
-}
 
 .designer-inspector-body :deep(.inspector-work-plan-details),
 .designer-inspector-body :deep(.inspector-test-spec-details),

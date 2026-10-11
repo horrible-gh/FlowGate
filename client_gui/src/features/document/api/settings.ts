@@ -357,6 +357,72 @@ export function settingsInstructionOmitted(node: SettingsNode | null | undefined
   return node?.fields.instruction?.value === 'omit'
 }
 
+// flowgate.v02.0053 T#7 — the settings tab changes the card's settings one value at a time (no save button):
+//   change    PATCH /api/v1/flows/{flow_id}/nodes/{node_key}/settings { field, value } -> the card's settings
+//             as they are now (the GET shape). `value` null takes the default back. Refusals are the Graph
+//             envelope `{ ok: false, error: { code, message, params } }`: 409 node_settings_locked (the card
+//             runs) / flow_disposed / card_settings_unavailable, 422 invalid_request (params.errors[].reason),
+//             404 flow_not_found / node_not_found, 401 / 403.
+//   teams     GET   /api/v1/ai-groups -> { items: [{ ai_group_id, name, enabled, supervisor: { provider_name } | null }] }
+//             The AI Team choices of a requirement card (the server takes the ids of this table only).
+
+/** Changes one setting of a card; answers the card's settings after the change. */
+export async function settingsNodeWrite(flowId: string, nodeKey: string, field: string, value: unknown): Promise<SettingsNode> {
+  const response = await patchRequest<unknown>(`${API}/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/settings`, {
+    field,
+    value: value ?? null,
+  })
+  return toSettingsNode(response.data)
+}
+
+/**
+ * Why a card settings call was refused: locked = the card runs (its AI already took the settings);
+ * disposed = the Flow's group was disposed; unavailable = the server has no card settings yet; invalid =
+ * 400 / 422 (a value the card does not take); forbidden 401 / 403; not_found 404; network = no answer.
+ */
+export type SettingsNodeErrorKind = 'locked' | 'disposed' | 'unavailable' | 'invalid' | 'forbidden' | 'not_found' | 'network' | 'other'
+
+/** What a failed card settings call threw. Only the code and the status are read. */
+export function settingsNodeErrorOf(error: unknown): SettingsNodeErrorKind {
+  const normalized = normalizeApiError(error)
+  const code = normalized.code
+  const status = normalized.status
+  if (normalized.network) return 'network'
+  if (code === 'node_settings_locked') return 'locked'
+  if (code === 'flow_disposed' || code === 'group_disposed') return 'disposed'
+  if (code === 'card_settings_unavailable') return 'unavailable'
+  if (status === 400 || status === 422) return 'invalid'
+  if (status === 401 || status === 403) return 'forbidden'
+  if (status === 404) return 'not_found'
+  return 'other'
+}
+
+/** One AI Team a requirement card may name. */
+export interface SettingsTeam {
+  readonly id: string
+  readonly name: string
+  /** Its Supervisor's AI name, or null (a team without a Supervisor). */
+  readonly supervisorName: string | null
+  readonly enabled: boolean
+}
+
+/** The AI Team list -> SettingsTeam[] (rows without an id dropped). */
+export function toSettingsTeams(raw: unknown): SettingsTeam[] {
+  return list(record(raw).items).flatMap((entry) => {
+    const row = record(entry)
+    const id = text(row.ai_group_id)
+    if (id === null) return []
+    const supervisor = record(row.supervisor)
+    return [{ id, name: text(row.name) ?? id, supervisorName: text(supervisor.provider_name) ?? text(supervisor.provider_id), enabled: row.enabled !== false }]
+  })
+}
+
+/** Reads the AI Teams a requirement card may name. */
+export async function settingsTeamsRead(): Promise<SettingsTeam[]> {
+  const response = await getRequest<unknown>(`${API}/ai-groups`)
+  return toSettingsTeams(response.data)
+}
+
 /**
  * Why a settings call was refused:
  * disposed = the group was disposed; running = an AI run owns the group (423, or the policy's 409);
