@@ -576,18 +576,28 @@ def _responder_context_from_paused_row(row: dict, responder_run: dict) -> dict:
     restart between two questions loses nothing the first dispatch had (F2)."""
     requester_run_id = row.get("stop_run_id")
     base_provider_id = row.get("continuation_base_provider_id")
-    if not base_provider_id and requester_run_id:
+    requester: dict = {}
+    if requester_run_id:
         # The system row keeps the header pick only when it was pinned; the requester's
         # own durable run row still says which provider actually ran the hop.
         try:
             from modules.flow_gate.db import ai_invoke_runs as db_runs
 
-            base_provider_id = (db_runs.get(requester_run_id) or {}).get("provider_id")
+            requester = db_runs.get(requester_run_id) or {}
         except Exception:
             logger.warning("question responder: requester run lookup failed for %s",
                            requester_run_id, exc_info=True)
+    if not base_provider_id:
+        base_provider_id = requester.get("provider_id")
     return {
         "doc_ref": row.get("doc_ref") or responder_run.get("doc_ref"),
+        # 0688 T#1: the container the previous responder just answered in is searched
+        # first. A hop parked at its hand-off already moved the spine's anchor onto the
+        # document it submitted, while its remaining questions still sit beside Q1.
+        "anchors": [responder_run.get("doc_ref")] if responder_run.get("doc_ref") else [],
+        # ...and the step that ASKED keeps its own reviewer: once that hop filled its slot
+        # the spine's current hop is the next step, whose reviewer never saw the question.
+        "item_seq": _asking_item_seq(requester),
         "requester_run_id": requester_run_id,
         "reviewer_overrides": _json_map(row.get("continuation_reviewer_overrides")),
         "review_count_overrides": _json_map(row.get("continuation_review_count_overrides")),
@@ -621,21 +631,35 @@ def _dispatch_responder_for_chain(ctx: dict, *, trigger: str) -> Optional[dict]:
     from modules.flow_gate.db import question_items as db_question_items
     from modules.flow_gate.services import q_service, q_answer_invoke_service
 
-    anchor = q_service.resolve_question_anchor(doc_ref)
-    container = db_questions.get_container_by_doc(anchor)
-    if container is None or container.get("status") != "pending":
+    # 0688 T#1: explicit containers (``ctx["anchors"]``) first, then the spine's anchor. A
+    # Q-only park has only the latter; a hop parked at its hand-off registered its question
+    # before it submitted, so the spine's anchor has since moved onto that submission.
+    anchors: list[str] = []
+    for candidate_doc in (*(ctx.get("anchors") or ()), q_service.resolve_question_anchor(doc_ref)):
+        if candidate_doc and candidate_doc not in anchors:
+            anchors.append(candidate_doc)
+    anchor: Optional[str] = None
+    target: Optional[dict] = None
+    open_count = 0
+    for candidate_doc in anchors:
+        container = db_questions.get_container_by_doc(candidate_doc)
+        if container is None or container.get("status") != "pending":
+            continue
+        unanswered = db_question_items.list_unanswered(container["id"]) or []
+        open_count += len(unanswered)
+        candidates = _question_responder_candidates(unanswered, requester_run_id)
+        if candidates:
+            anchor = candidate_doc
+            target = min(candidates, key=lambda row: row.get("seq") or 0)
+            break
+    if anchor is None or target is None:
+        if open_count:
+            logger.info(
+                "question responder (%s): %d open item(s) on %s, none raised by run %s and "
+                "still untouched -- not dispatching", trigger, open_count, ", ".join(anchors),
+                requester_run_id,
+            )
         return None
-    unanswered = db_question_items.list_unanswered(container["id"])
-    if not unanswered:
-        return None
-    candidates = _question_responder_candidates(unanswered, requester_run_id)
-    if not candidates:
-        logger.info(
-            "question responder (%s): %d open item(s) on %s, none raised by run %s and still "
-            "untouched -- not dispatching", trigger, len(unanswered), anchor, requester_run_id,
-        )
-        return None
-    target = min(candidates, key=lambda row: row.get("seq") or 0)
 
     doc = db_docs.get_by_id(anchor)
     if doc is None:
@@ -643,11 +667,13 @@ def _dispatch_responder_for_chain(ctx: dict, *, trigger: str) -> Optional[dict]:
     doc = {**doc, "doc_id": anchor}
     item = q_answer_invoke_service.resolve_item(anchor, target["id"])
 
-    item_seq = admission.continuation_hop_item_seq(
-        doc_ref,
-        continuation_instruction_mode=ctx.get("instruction_mode"),
-        continuation_auto_approve_item_seqs=ctx.get("auto_approve_item_seqs"),
-    )
+    item_seq = ctx.get("item_seq")
+    if item_seq is None:
+        item_seq = admission.continuation_hop_item_seq(
+            doc_ref,
+            continuation_instruction_mode=ctx.get("instruction_mode"),
+            continuation_auto_approve_item_seqs=ctx.get("auto_approve_item_seqs"),
+        )
     provider_id, source = review.resolve_question_responder_with_source(
         ctx.get("reviewer_overrides"),
         item_seq,
@@ -687,6 +713,116 @@ def _dispatch_question_responder(run: dict) -> None:
         logger.warning(
             "question responder auto-dispatch failed for %s", doc_ref, exc_info=True,
         )
+
+
+# ── 0688 T#1: a question left open by a hop that DID produce its document ───────────────
+#
+# 0688 NR0003 §0: everything above starts from a hop that stopped WITHOUT its document
+# (`stop_code == "question_pending"`, set by worker._retry_eligible's `outcome != "complete"`
+# probe). A worker that followed the help text -- register the Q, state the assumption,
+# submit -- completed, handed off, and its question reached nobody but a person. The chain
+# side (chain._park_on_own_open_question) now parks such a hop at its hand-off; these two
+# helpers are its question half, built on the same boundaries 1-6 as the Q-only park.
+
+
+def _asking_item_seq(requester: Optional[dict]) -> Optional[int]:
+    """The workflow step that asked, when the asking hop had already filled it.
+
+    Only a hop that completed (a hand-off park) needs this: its slot is filled, so the
+    spine's current hop -- what ``admission.continuation_hop_item_seq`` reads -- is already
+    the NEXT step. A Q-only hop has not moved the spine, and keeps that reading unchanged.
+    """
+    if not requester or requester.get("outcome") != "complete":
+        return None
+    try:
+        if requester.get("hop_item_seq") is not None:
+            return int(requester["hop_item_seq"])
+    except (TypeError, ValueError):
+        return None
+    if requester.get("mode") != "single" or not requester.get("doc_ref"):
+        return None
+    # A gate-owned review/rework hop (single-mode: no hop_item_seq) asked about the slot
+    # whose document it worked on (0688 TR0006 review).
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(requester["doc_ref"])
+        items = db_wfseq.get_sequence_items(seq["id"]) if seq is not None else []
+    except Exception:  # noqa: BLE001 -- the spine's current step is the old fallback
+        logger.warning("question responder: asking-slot lookup failed for %s",
+                       requester.get("doc_ref"), exc_info=True)
+        return None
+    for item in items or ():
+        if item.get("result_doc_id") == requester["doc_ref"] and item.get("item_seq") is not None:
+            return int(item["item_seq"])
+    return None
+
+
+def open_questions_raised_by_run(group_id: Optional[str], run_id: Optional[str]) -> list[dict]:
+    """Every unanswered AI item ``run_id`` raised anywhere in ``group_id``, oldest first.
+
+    Keyed on ``asker_ai_run_id`` exactly like boundary 1, but group-wide instead of the
+    spine's current anchor: by the time a hop hands off, the anchor has moved onto the
+    document it submitted, while its question still sits on the container it was
+    registered against. Each row carries that container's document as ``anchor_doc_id``.
+    Raises on a read failure -- the caller decides what an unreadable probe means.
+    """
+    if not group_id or not run_id:
+        return []
+    from modules.flow_gate.db import questions as db_questions
+    from modules.flow_gate.db import question_items as db_question_items
+
+    found: list[dict] = []
+    for doc_id in db_questions.list_open_doc_ids_by_group(group_id) or []:
+        container = db_questions.get_container_by_doc(doc_id)
+        if container is None:
+            continue
+        for row in db_question_items.list_unanswered(container["id"]) or []:
+            if (row.get("asker_kind") or "") == "ai" and row.get("asker_ai_run_id") == run_id:
+                found.append({**row, "anchor_doc_id": doc_id})
+    found.sort(key=lambda row: int(row.get("id") or 0))
+    return found
+
+
+def dispatch_responder_for_open_questions(
+    run: dict, open_items: list[dict], *, item_seq: Optional[int] = None,
+    base_provider_id: Optional[str] = None, reviewer_overrides: Optional[dict] = None,
+    review_count_overrides: Optional[dict] = None,
+) -> Optional[dict]:
+    """Start ONE responder for a hop parked at its hand-off on its own open question.
+
+    The same dispatch the Q-only park uses (`_dispatch_responder_for_chain`: reviewer of
+    the asking step first, then the header pick, then the default chain), pointed at the
+    containers the run's questions actually live on and at the step that asked. The
+    following items are reached one by one from each responder's own finalization
+    (`_continue_question_responder_chain`), unchanged. Never raises: an admission refusal
+    is already recorded on the item by dispatch_answer_run (F3), and the chain stays
+    parked for a person exactly as a failed Q-only dispatch leaves it.
+
+    ``item_seq`` / ``base_provider_id`` / ``reviewer_overrides`` / ``review_count_overrides``
+    are given for a gate-owned review/rework hop (single-mode, so none of them is on the
+    run): the slot it worked on, the chain's header pick and the run's [검수] picks from the
+    queued bundle (chain._gate_hop_responder_scope). A work hop reads them off its own run.
+    """
+    anchors = list(dict.fromkeys(
+        item["anchor_doc_id"] for item in open_items or () if item.get("anchor_doc_id")
+    ))
+    ctx = {
+        **_responder_context_from_run(run),
+        "anchors": anchors,
+        "item_seq": item_seq if item_seq is not None else run.get("hop_item_seq"),
+    }
+    if base_provider_id is not None:
+        ctx["base_provider_id"] = base_provider_id
+    if reviewer_overrides is not None:
+        ctx["reviewer_overrides"] = reviewer_overrides
+    if review_count_overrides is not None:
+        ctx["review_count_overrides"] = review_count_overrides
+    try:
+        return _dispatch_responder_for_chain(ctx, trigger="question_pending_handoff")
+    except Exception:
+        logger.warning(
+            "question responder auto-dispatch failed for %s", run.get("doc_ref"), exc_info=True,
+        )
+        return None
 
 
 def responder_failure_of(run: dict) -> tuple[str, str]:
@@ -965,6 +1101,13 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
                 "The chain stopped without switching to another provider."
                 f"{blocked_text}")
     if stop_code == "question_pending":
+        if run.get("outcome") == "complete":
+            # 0688 T#1: parked at the hand-off (chain._park_on_own_open_question) -- the
+            # document is in; only the next step waits, and it waits on the responder.
+            return ("This hop submitted its document but left a query of its own open. "
+                    "The chain is held before the next step while the step's reviewer AI "
+                    "(else the selected/default AI) answers it, and resumes on its own once "
+                    "every query is answered.")
         return ("This hop registered a query and is waiting for a human answer. "
                 "The chain stopped and can be resumed once it is answered.")
     if stop_code == TEST_RUN_PENDING_STOP_CODE:

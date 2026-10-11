@@ -15,7 +15,7 @@ trigger), which is also where the existing tests patch them.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from fastapi import HTTPException
 from modules.flow_gate.db import documents as db_docs
@@ -32,6 +32,7 @@ from . import finalize
 from . import terminal
 from . import review
 from .runtime import (
+    CHAIN_MEMBER_HOP_KINDS,
     HOP_HANDOFF_FAILED_STOP_CODE,
     HOP_HANDOFF_GRACE_SEC,
     HOP_HANDOFF_INTERRUPTED_STOP_CODE,
@@ -42,6 +43,7 @@ from .runtime import (
     REVIEW_HOP_KIND,
     REVIEW_NO_VERDICT_STOP_CODE,
     REWORK_HOP_KIND,
+    WORK_HOP_KIND,
     _actual_work_executor_provider_id,
     _auto_resume_lock,
     _http_error,
@@ -636,7 +638,11 @@ def clear_auto_resume(group_id: Optional[str]) -> None:
         _svc()._auto_resume.pop(group_id, None)
 
 
-def park_for_server_test_run(group_id: str, pending: dict, run: dict) -> bool:
+def park_for_server_test_run(
+    group_id: str, pending: dict, run: dict, *,
+    park: Optional[Callable[[str], None]] = None,
+    defer: Optional[Callable[[Callable[[], None]], None]] = None,
+) -> bool:
     """0684 T#3 (D#1 §3-9): the next head is a TSR whose server run IS the next step.
 
     Approving a specification TS queued its run, so no hop starts and no hand-off token is
@@ -645,6 +651,11 @@ def park_for_server_test_run(group_id: str, pending: dict, run: dict) -> bool:
     a TS to the gate leaves. The run's outcome resumes the chain (PASS), sends it to
     failure-origin review (FAIL), resumes it for manual/external entry, or stops it for a
     human. True when the chain was parked here; False starts the ordinary hop.
+
+    ``park`` / ``defer`` are for `resume_chain` replaying a question park's gate (0688
+    TR0006 rev1 review): it has no live hop to park, so it puts the row it consumed back on
+    ``test_run_pending``, and it holds the group's resume lock, which the resume of a run
+    that already ended re-enters -- so that resume waits until the lock is released.
     """
     from modules.flow_gate.services import test_run_service
     from .runtime import TEST_RUN_PENDING_STOP_CODE
@@ -672,20 +683,138 @@ def park_for_server_test_run(group_id: str, pending: dict, run: dict) -> bool:
     if handed is None:
         return False
     run["test_gate_doc_id"] = handed["ts_doc_id"]
-    _svc()._park_handoff(run, pending, TEST_RUN_PENDING_STOP_CODE)
+    if park is None:
+        _svc()._park_handoff(run, pending, TEST_RUN_PENDING_STOP_CODE)
+    else:
+        park(TEST_RUN_PENDING_STOP_CODE)
     # This hop already finalized, so the finalize-side resume ran before the row existed.
     # A run that has ended by now (or ended while the chain was being bound) is answered here.
     from modules.flow_gate.db import test_runs as db_test_runs
     current = db_test_runs.get_run(handed["run_id"]) or {}
     if handed.get("finished") or current.get("status") not in ("running", "cancelling"):
-        try:
-            test_run_service.resume_test_gate_chain_for_hop(
-                handed["ts_doc_id"], api_base_url=pending.get("api_base_url"),
-                locale=pending.get("locale"),
-            )
-        except Exception:  # noqa: BLE001 -- the parked row stays resumable by hand
-            logger.warning("test-gate resume after hand-off failed for %s", group_id,
-                           exc_info=True)
+        def _resume_ended_run() -> None:
+            try:
+                test_run_service.resume_test_gate_chain_for_hop(
+                    handed["ts_doc_id"], api_base_url=pending.get("api_base_url"),
+                    locale=pending.get("locale"),
+                )
+            except Exception:  # noqa: BLE001 -- the parked row stays resumable by hand
+                logger.warning("test-gate resume after hand-off failed for %s", group_id,
+                               exc_info=True)
+
+        if defer is None:
+            _resume_ended_run()
+        else:
+            defer(_resume_ended_run)
+    return True
+
+
+QUESTION_PENDING_STOP_CODE = "question_pending"
+
+
+def _own_question_park_held(group_id: str, run_id: str) -> bool:
+    """Is the group's paused row the system question park THIS run just wrote?"""
+    try:
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+        row = db_paused.get_by_group(group_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("question park row lookup failed for %s", group_id, exc_info=True)
+        return False
+    return bool(
+        row is not None
+        and (row.get("stop_kind") or "user") == "system"
+        and row.get("stop_code") == QUESTION_PENDING_STOP_CODE
+        and row.get("stop_run_id") == run_id
+    )
+
+
+def _gate_hop_responder_scope(run: dict, pending: dict) -> dict:
+    """Responder routing for a review/rework hop's own question (0688 TR0006 review).
+
+    A gate-owned hop is single-mode, so it has no ``hop_item_seq`` and no header pin of its
+    own. The step that asked is the slot it worked on -- the gate's pending slot, whose
+    document is the hop's ``doc_ref`` -- and the header pick rides the queued bundle.
+    So do the run's [검수] picks: admission stores None for both maps on a single-mode run
+    (admission.start_run), so reading them off the run would hand the question to the
+    stored reviewer or the header pick instead of the reviewer named for THIS run, and
+    judge the step's review count without its override (0688 TR0006 rev1 review). The
+    bundle is also what the park row keeps, so the next question and a restart read the
+    same picks.
+    """
+    item_seq = None
+    try:
+        slot = review._pending_review_slot(pending.get("doc_ref"))
+        if slot is not None and slot.get("doc_id") == run.get("doc_ref"):
+            item_seq = slot.get("item_seq")
+    except Exception:  # noqa: BLE001 -- the spine's current step is the old fallback
+        logger.warning("gate-hop question slot lookup failed for %s", run.get("run_id"),
+                       exc_info=True)
+    return {
+        "item_seq": item_seq,
+        "base_provider_id": pending.get("base_provider_id"),
+        "reviewer_overrides": pending.get("reviewer_overrides"),
+        "review_count_overrides": pending.get("review_count_overrides"),
+    }
+
+
+def _park_on_own_open_question(run: dict, pending: dict) -> bool:
+    """Hold a finished work hop's hand-off while a question it raised is open (0688 T#1).
+
+    0688 NR0003 §0: the responder dispatch only ever saw a hop that stopped WITHOUT its
+    document -- `_retry_eligible`'s probe requires `outcome != "complete"` and sits below
+    the `peek_auto_resume` guard. A worker that followed the help text (register the Q,
+    state the assumption, submit) therefore handed off with its question unanswered and
+    the chain moved on. Such a hop is now parked on `question_pending` instead of reaching
+    the gate; the caller has already persisted and consumed the queued intent:
+
+      * the park row is the full hand-off bundle (`_park_handoff` → `_write_handoff_row`),
+        so `resume_chain` re-derives the SAME gate cold -- the review of the slot just
+        filled, or the next work hop -- and nothing queued is lost or launched twice;
+      * the park releases the lease, so the responder (the asking step's reviewer, else the
+        header pick, else the default chain) can be admitted; its answer resumes the chain
+        through the one CAS path, `q_service.auto_resume_answered_chain`, exactly once;
+      * a user pause row outranks the park: nothing is dispatched under it.
+
+    A continuous WORK hop qualifies, and so does a gate-owned review/rework hop of the same
+    chain (mode="single", hop_kind review/rework): its queued bundle IS the chain's hand-off,
+    and without the park a last-round rework that left its question open was approved and
+    moved past (0688 TR0006 review). `resume_chain` replays that hop's gate from the DB
+    (`_question_park_gate_progress` / `_settle_question_park_gate`). Only an unanswered AI
+    item THIS run raised (`asker_ai_run_id`) counts, never an older, foreign or human one. A
+    probe that cannot read the questions fails open: the hop hands off exactly as before.
+    Returns True when the chain was parked here.
+    """
+    gate_owned = run.get("hop_kind") in CHAIN_MEMBER_HOP_KINDS
+    if run.get("mode") != "continuous" and not gate_owned:
+        return False
+    group_id = run.get("group_id")
+    run_id = run.get("run_id")
+    if not group_id or not run_id:
+        return False
+    try:
+        open_items = finalize.open_questions_raised_by_run(group_id, run_id)
+    except Exception:  # noqa: BLE001 -- the probe is an aid; the old hand-off is the fallback
+        logger.warning("own-question probe failed for %s; handing off as before", run_id,
+                       exc_info=True)
+        return False
+    if not open_items:
+        return False
+    logger.info(
+        "ai-invoke %s: hop handed off with %d open question(s) of its own -- parking the "
+        "chain on %s before the next hop", run_id, len(open_items), QUESTION_PENDING_STOP_CODE,
+    )
+    _svc()._park_handoff(run, pending, QUESTION_PENDING_STOP_CODE)
+    if not _own_question_park_held(group_id, run_id):
+        # A person's pause row outranks the system park (its card is the resume point), or
+        # the row could not be written: no responder runs under either.
+        return True
+    finalize.dispatch_responder_for_open_questions(
+        run, open_items, **(_gate_hop_responder_scope(run, pending) if gate_owned else {}))
+    # An answer committed between the probe and the park found no question_pending row
+    # to resume. Ask once more now that the row exists; the paused-row CAS keeps this
+    # and the responder's own later resume from both starting the next hop.
+    finalize._auto_resume_answered_question_chain(run)
     return True
 
 
@@ -785,6 +914,10 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         return
     if run.get("_terminal_abandoned") or run.get("post_process_recovered"):
         _svc()._park_handoff(run, pending, HOP_HANDOFF_FAILED_STOP_CODE)
+        return
+    # 0688 T#1: the intent is persisted and consumed; a hop that left a question of its own
+    # open is held HERE, before the gate can launch its review or the next hop.
+    if _park_on_own_open_question(run, pending):
         return
     try:
         # 0414 L0008 §2.1 진입점 2: the gate decides what the next hop IS — review, rework,
@@ -1134,6 +1267,11 @@ def _system_pause_row_is_stale(row: dict, *, _read_context: Optional[dict] = Non
         # A single-hop stop with no completion evidence above: real outstanding work,
         # and nothing here can tell which slot it was. Missing evidence is not stale.
         return False
+    if row.get("stop_code") == QUESTION_PENDING_STOP_CODE and (stopped or {}).get("outcome") == "complete":
+        # 0688 T#1: parked at its hand-off (_park_on_own_open_question). That hop FILLED its
+        # slot, so the head standing past it is the park's own shape, not someone else
+        # having moved the chain on -- deleting the row here would strand the answer's resume.
+        return False
     try:
         return int(next_seq) != int(stopped_seq)
     except (TypeError, ValueError):
@@ -1165,6 +1303,178 @@ def _resumable_base_provider(project_id: str, provider_id: Optional[str]) -> Opt
         project_id, provider_id,
     )
     return None
+
+
+def _question_park_has_gate_work(row: dict, target_seq: int) -> bool:
+    """A hand-off question park whose resume is the review of the slot it filled (0688 T#1).
+
+    `docs_target` counts only UNFILLED worker slots. A hop parked at its hand-off on the
+    LAST reviewed step leaves none -- its document is in, still pending_review -- yet the
+    resume has real work: `resume_chain`'s cold gate reviews that slot and settles the
+    chain from the verdict. Only a question_pending row qualifies, and only while that
+    slot is at or below the target and its step is reviewed at all (count != 0).
+    """
+    if row.get("stop_code") != QUESTION_PENDING_STOP_CODE:
+        return False
+    try:
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+        slot = review._pending_review_slot(row.get("doc_ref"))
+        if slot is None or slot.get("item_seq") is None or int(slot["item_seq"]) > target_seq:
+            return False
+        count = review.resolve_review_count(
+            db_paused.load_json_map(row.get("continuation_review_count_overrides")),
+            slot["item_seq"], row.get("doc_ref"),
+        )
+    except Exception:  # noqa: BLE001 -- unreadable means "no evidence", the old refusal
+        logger.warning("question-park gate probe failed for %s", row.get("group_id"),
+                       exc_info=True)
+        return False
+    return count != 0
+
+
+def _question_handoff_requester(row: dict) -> Optional[dict]:
+    """The hop a ``question_pending`` row parked AT ITS HAND-OFF, else None (0688 T#1).
+
+    Its durable run record says so: that hop completed (``outcome == "complete"``). A
+    Q-only park, any other stop code or an unreadable record answers None, which keeps
+    `resume_chain` on the resume it always had.
+    """
+    if row.get("stop_code") != QUESTION_PENDING_STOP_CODE or not row.get("stop_run_id"):
+        return None
+    try:
+        from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+        requester = db_runs.get(row["stop_run_id"]) or {}
+    except Exception:  # noqa: BLE001
+        logger.warning("question-park requester lookup failed for %s", row.get("group_id"),
+                       exc_info=True)
+        return None
+    return requester if requester.get("outcome") == "complete" else None
+
+
+def _question_park_gate_progress(bundle: dict, requester: dict) -> dict:
+    """The gate progress a review/rework hop parked on its own question had queued.
+
+    ``last_stage`` / ``rounds_before`` / ``revision_before`` live only in the memory queue
+    (L0008 §2.9), so a cold resume would skip `_check_expected_progress` (no-verdict /
+    stalled) for the hop that just ran. Both are facts of the slot it worked on: a rework
+    is what moved the slot's revision past its latest review (that review's revision is the
+    baseline), a review is what added the latest review row (one row fewer is the
+    baseline). A continuous work hop, a slot that is not the hop's own document or an
+    unreadable history answers {} -- the cold derivation, as before.
+    """
+    if (requester.get("mode") or "") != "single":
+        return {}
+    try:
+        slot = review._pending_review_slot(bundle.get("doc_ref"))
+        if slot is None or slot.get("doc_id") != requester.get("doc_ref"):
+            return {}
+        reviews = review.db_reviews.list_by_doc(slot["doc_id"]) or []
+    except Exception:  # noqa: BLE001 -- resolve_review_gate reports an unreadable history
+        logger.warning("question-park gate progress lookup failed for %s",
+                       bundle.get("doc_ref"), exc_info=True)
+        return {}
+    if not reviews:
+        return {}
+    latest_revision = int(reviews[0].get("revision_no") or 0)
+    if int(slot.get("revision_no") or 0) > latest_revision:
+        return {"last_stage": REWORK_HOP_KIND, "revision_before": latest_revision}
+    return {"last_stage": REVIEW_HOP_KIND, "rounds_before": len(reviews) - 1}
+
+
+def _settle_question_park_gate(
+    group_id: str, gate: dict, bundle: dict, restore_row: Callable[..., None],
+) -> Optional[dict]:
+    """Act on the gate outcomes only `run_review_gate` used to take (0688 TR0006 review).
+
+    The hand-off a question park held was about to run `run_review_gate`; its resume has to
+    reach the same outcome. The review/rework spawn and the plain next work hop are already
+    `resume_chain`'s own paths, and None sends the resume on to them. Three are not:
+
+      * ``reject_first`` -- the same `_auto_reject`, before the rework hop is spawned;
+      * ``stop`` -- the chain re-parks on that stop code instead of the answered question;
+      * ``approve_first`` -- e.g. the LAST round of a finite review budget, whose rework
+        just landed -- the same `settle_completed_step` `_settle_gate_pass` calls. Without
+        it the slot stays unapproved and the plain path dies on ``head_in_progress``.
+        ``continue`` returns None (the caller then hands the chain to a waiting server test
+        run, `_park_question_resume_on_server_test`, or the plain path starts the next hop
+        on the approved slot); ``completed`` ends the chain here; anything else re-parks on
+        its stop code.
+
+    Runs after the paused-row CAS, so a second answer's resume never gets this far.
+    A stop raises 409 ``resume_gate_stopped`` with the row restored on that stop.
+    """
+    slot = gate.get("slot")
+
+    def _stopped(stop_code: str, message: Optional[str]) -> HTTPException:
+        restore_row(stop_code)
+        return _http_error(409, "resume_gate_stopped", message or stop_code,
+                           group_id=group_id, stop_code=stop_code, restored=True)
+
+    if gate.get("reject_first") and slot is not None:
+        result = review._auto_reject(slot, review._latest_review_of(slot), bundle)
+        if not result.get("ok"):
+            raise _stopped(result.get("stop_code") or HOP_HANDOFF_FAILED_STOP_CODE,
+                           result.get("detail"))
+    stage = gate.get("stage")
+    if stage == "stop":
+        raise _stopped(gate.get("stop_code") or HOP_HANDOFF_FAILED_STOP_CODE, gate.get("detail"))
+    if stage != WORK_HOP_KIND or not gate.get("approve_first") or slot is None:
+        return None
+
+    from modules.flow_gate.api import inbox_routes as _inbox
+
+    result = _inbox.settle_completed_step(
+        project=str(group_id).split(".", 1)[0],
+        group_id=group_id,
+        doc_id=slot["doc_id"],
+        doc_type=slot.get("doc_type") or "",
+        actor_user_id=bundle.get("issued_to"),
+        completed_seq=slot.get("item_seq"),
+        target_seq=bundle.get("target_seq"),
+        to_end=bool(bundle.get("to_end")),
+        user_paused_probe=lambda: review._user_pause_row_pending(group_id),
+    )
+    outcome = result.get("outcome")
+    if outcome == "continue":
+        return None
+    if outcome == "completed":
+        logger.info("question-park resume of %s approved %s and completed the chain",
+                    group_id, slot["doc_id"])
+        return {"ok": True, "status": "chain_completed", "run_id": None,
+                "group_id": group_id, "chain_id": bundle.get("chain_id"),
+                "approved_doc_id": slot["doc_id"]}
+    raise _stopped(result.get("stop_code") or "approve_failed",
+                   result.get("detail") or result.get("reason"))
+
+
+def _park_question_resume_on_server_test(
+    group_id: str, bundle: dict, row: dict, restore_row: Callable[..., None],
+    defer: Callable[[Callable[[], None]], None],
+) -> Optional[dict]:
+    """The server test hand-off `run_review_gate` takes on its work branch (0688 TR0006 rev1).
+
+    A question park's resume replays the gate its hand-off held. When that gate reaches a
+    work step whose head is a TSR waiting on its TS's server run -- e.g. a TS whose
+    rework just got approved -- the live gate binds the chain to that run and waits on
+    ``test_run_pending`` (`park_for_server_test_run`), starting no hop and issuing no
+    hand-off token. The resume does the same through the same function: the row the CAS
+    consumed goes back whole -- chain, provider picks, notes, budget, [검수] maps, the
+    asking hop as ``stop_run_id`` -- on ``test_run_pending``, so the run's outcome resumes
+    it exactly as it resumes a warm park (PASS, FAIL, manual/external entry). A run that
+    has already ended is answered once the resume lock is released (``defer``). None when
+    the head is not such a TSR: the plain path starts the next hop as before.
+    """
+    requester = {"run_id": row.get("stop_run_id"), "group_id": group_id}
+    if not park_for_server_test_run(
+            group_id, bundle, requester, park=restore_row, defer=defer):
+        return None
+    logger.info("question-park resume of %s handed the chain to the server test of %s",
+                group_id, requester.get("test_gate_doc_id"))
+    return {"ok": True, "status": "test_run_pending", "run_id": None,
+            "group_id": group_id, "chain_id": row.get("chain_id"),
+            "test_gate_doc_id": requester.get("test_gate_doc_id")}
 
 
 def _paused_row_resume_state(
@@ -1272,7 +1582,7 @@ def _paused_row_resume_state(
             f"continuous run requires a decided workflow sequence on {row['doc_ref']}",
             target_seq=int(target_seq),
         )
-    if docs_target <= 0:
+    if docs_target <= 0 and not _question_park_has_gate_work(row, int(target_seq)):
         return _state(
             False,
             "no_pending_worker_steps",
@@ -1321,6 +1631,28 @@ def _paused_row_resume_state(
 def resume_chain(
     *, group_id: str, user_id: str, api_base_url: str, locale: str = "ko",
     is_admin: bool = False,
+) -> dict:
+    """Resume a paused chain (see `_resume_chain_locked`), then run what had to wait for
+    the group's resume lock to be released.
+
+    The lock is not reentrant. A question park whose replayed gate hands the chain to a
+    server test run that has already ended resumes the chain again through this very
+    function (0688 TR0006 rev1 review), so that resume is deferred to here.
+    """
+    after_release: list[Callable[[], None]] = []
+    try:
+        return _resume_chain_locked(
+            group_id=group_id, user_id=user_id, api_base_url=api_base_url, locale=locale,
+            is_admin=is_admin, after_release=after_release,
+        )
+    finally:
+        for action in after_release:
+            action()
+
+
+def _resume_chain_locked(
+    *, group_id: str, user_id: str, api_base_url: str, locale: str = "ko",
+    is_admin: bool = False, after_release: list[Callable[[], None]],
 ) -> dict:
     """Resume a user-paused continuous chain from its next incomplete step (L0009 §2.4).
 
@@ -1392,10 +1724,14 @@ def resume_chain(
                               group_id=group_id)
         target_seq = preflight["_resume_target_seq"]
 
-        def _restore_row() -> None:
+        def _restore_row(stop_code: Optional[str] = None) -> None:
             # The resume did not happen — put the consumed row back so the paused
             # card survives and the user can retry (L0009 §5: row preservation).
+            # 0688 TR0006 review: ``stop_code`` re-parks it on the stop a replayed gate
+            # reached instead; a row written meanwhile (a user pause) outranks that.
             try:
+                if stop_code is not None and db_paused.get_by_group(group_id) is not None:
+                    return
                 db_paused.upsert(
                     group_id=row["group_id"],
                     doc_ref=row["doc_ref"],
@@ -1408,7 +1744,7 @@ def resume_chain(
                     chain_docs_target=row.get("chain_docs_target"),
                     chain_docs_reached=int(row.get("chain_docs_reached") or 0),
                     stop_kind=row.get("stop_kind") or "user",
-                    stop_code=row.get("stop_code"),
+                    stop_code=stop_code or row.get("stop_code"),
                     stop_run_id=row.get("stop_run_id"),
                     stop_last_message_excerpt=row.get("stop_last_message_excerpt"),
                     # Restoring the row means restoring it whole: a retry of this resume
@@ -1552,14 +1888,32 @@ def resume_chain(
             # head_in_progress on the very next hop.
             "materialize_instruction_before_gate": True,
         }
+        # 0688 TR0006 review: a chain parked at its hand-off on its own question resumes into
+        # the SAME gate that hand-off was about to run -- including a review/rework hop's
+        # progress (`_question_park_gate_progress`) and the approve / reject / stop outcomes
+        # the plain paths below cannot take (`_settle_question_park_gate`).
+        handoff_requester = _question_handoff_requester(row)
         try:
             review._materialize_work_plan_instruction_before_gate(gate_bundle)
-            gate = review.resolve_review_gate(gate_bundle)
+            gate_progress = (
+                _question_park_gate_progress(gate_bundle, handoff_requester)
+                if handoff_requester is not None else {}
+            )
+            gate = review.resolve_review_gate({**gate_bundle, **gate_progress})
         except Exception:
             _restore_row()
             logger.exception("ai-invoke resume gate lookup failed for %s", group_id)
             raise _http_error(500, "resume_lookup_failed",
                               "Could not read the review gate to resume. Retry later.")
+        if handoff_requester is not None:
+            settled = _settle_question_park_gate(group_id, gate, gate_bundle, _restore_row)
+            if settled is not None:
+                return settled
+            if gate.get("stage") == WORK_HOP_KIND:
+                waiting = _park_question_resume_on_server_test(
+                    group_id, gate_bundle, row, _restore_row, after_release.append)
+                if waiting is not None:
+                    return waiting
         if gate.get("stage") in (REVIEW_HOP_KIND, REWORK_HOP_KIND):
             queued = {**gate_bundle, "last_stage": gate["stage"]}
             if gate["stage"] == REVIEW_HOP_KIND:

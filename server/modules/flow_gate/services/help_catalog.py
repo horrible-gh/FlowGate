@@ -287,7 +287,7 @@ QUESTION_HELP_COPY: dict[str, dict] = {
             "R0001 본문이 한 줄이라 DS 설계 대상이 불명확합니다. 구체적 기능 범위와 인수 기준은 무엇입니까?",
             "멘트의 next_type 은 DS 인데 질의가 필요합니다. 질의를 먼저 등록할까요, 모호함을 가정하고 DS 를 작성할까요?",
         ),
-        "continue_note": "질의를 등록해도 작업은 멈추지 않습니다. 무인 연속 작업에서는 가정을 명시하고 계속 진행하세요.",
+        "continue_note": "질의를 등록해도 지금 하는 작업은 멈추지 않습니다. 무인 연속 작업에서는 가정을 명시하고 이번 단계의 산출물을 제출하세요. 이 실행이 등록한 질의가 열려 있으면 체인은 다음 단계(검수 포함)로 넘어가기 전에 보류되고, 해당 단계의 검수 AI(없으면 기본 AI)가 답한 뒤 자동으로 재개됩니다. 답변을 기다리거나 조회하며 대기하지 마세요.",
         "option_labels": ("<옵션1 — 선택 · 없으면 생략>", "<옵션2>"),
     },
     "en": {
@@ -297,7 +297,7 @@ QUESTION_HELP_COPY: dict[str, dict] = {
             "The R0001 body has only one line, so the DS design scope is unclear. What are the specific feature scope and acceptance criteria?",
             "The mention says next_type is DS, but clarification is needed. Should the query be registered first, or should DS be drafted with explicit assumptions?",
         ),
-        "continue_note": "Registering a query does not pause the work. In an unmanned chain, state your assumption and keep going.",
+        "continue_note": "Registering a query does not pause the work in progress. In an unmanned chain, state your assumption and submit this step's output. While a query this run registered is still open, the chain is held before the next step (review included); the step's reviewer AI (else the default AI) answers it and the chain then resumes on its own. Do not wait or poll for the answer.",
         "option_labels": ("<option 1 — optional, omit if not needed>", "<option 2>"),
     },
     "ja": {
@@ -307,7 +307,7 @@ QUESTION_HELP_COPY: dict[str, dict] = {
             "R0001の本文が1行だけなので、DS設計の対象が不明確です。具体的な機能範囲と受入基準は何ですか。",
             "メンションのnext_typeはDSですが、確認が必要です。先に質問を登録するべきですか、それとも前提を明記してDSを作成するべきですか。",
         ),
-        "continue_note": "質問を登録しても作業は止まりません。無人の連続作業では前提を明記して続行してください。",
+        "continue_note": "質問を登録しても進行中の作業は止まりません。無人の連続作業では前提を明記し、この段階の成果物を提出してください。この実行が登録した質問が未回答のままの間、チェーンは次の段階(レビューを含む)へ進む前に保留され、その段階のレビューAI(いなければ既定のAI)が回答した後に自動で再開されます。回答を待ったり照会し続けたりしないでください。",
         "option_labels": ("<選択肢1 — 任意・不要なら省略>", "<選択肢2>"),
     },
 }
