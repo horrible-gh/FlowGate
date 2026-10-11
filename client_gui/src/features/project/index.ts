@@ -18,6 +18,7 @@ export { useProjectStore } from './store'
 // the Designer Center saves through the store loaders.
 // flowgate.v02.0048 T#1 adds the Graph node run state the Inspector reads (FlowCanvasNodeRun).
 // flowgate.v02.0053 T#5 adds the card document lines of a Graph / draft node (FlowCanvasCardDocument).
+// flowgate.v02.0053 T#9 adds the Graph run of a Flow (FlowRun / FlowRunNode) the top band runs through the store.
 // flowgate.v02.0048 T#2 adds the subscription and frame shapes of the store's project event
 // subscription (subscribeProjectEvents, the hub the Canvas subscription also runs on).
 export type { FlowCanvasChangeHandlers } from './flowCanvasEvents'
@@ -65,6 +66,8 @@ export type {
   FlowGraphIssue,
   FlowGraphValidation,
   FlowRef,
+  FlowRun,
+  FlowRunNode,
   GroupTreeNode,
   GroupTreeNodeKind,
   MergeReviewFileDiff,

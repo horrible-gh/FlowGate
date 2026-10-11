@@ -811,9 +811,9 @@ describe('check card in the Frame (real registry)', () => {
     acs.get(AC_DOC)!.status = status
     const w = await mountFrame(acSelection({}, { ...AC_NODE, document: { ...AC_NODE.document!, docReviewStatus: status } }))
     const text = w.text()
-    // flowgate.v02.0051: the v7 header's ✎ 메모 is on every card as a disabled control (no memo API yet,
-    // 0051-R §2.3) — shown, never working; the undecided wording stays out of the check card itself.
+    // flowgate.v02.0051: the undecided wording stays out of the check card itself. flowgate.v02.0053 T#9: the
+    // v7 header's ✎ 메모 works on every card with a document (features/memo), so it is usable here.
     for (const word of ['게이트', 'gate', '위임', '전개', 'AI 전달', '재시도', '마지막 확인', '연동 전']) expect(text).not.toContain(word)
-    expect(w.get('[data-test="designer-inspector-memo"]').attributes('disabled')).toBeDefined()
+    expect(w.get('[data-test="designer-inspector-memo"]').attributes('disabled')).toBeUndefined()
   })
 })

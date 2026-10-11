@@ -20,7 +20,9 @@
        document tab; the card slot opens the existing document screen for full detail.
        flowgate.v02.0053 T#6: the body element is provided to the tab parts (INSPECTOR_BODY) so a part can
        take input over the whole tab (the attachments file drop); a `fill` tab's section takes the body's
-       free height. -->
+       free height.
+       flowgate.v02.0053 T#9: one more header place — the ✎ 메모 part (`headerMemo`, the first that applies);
+       without one the header keeps its dim, disabled ✎ 메모. -->
   <section
     class="designer-inspector"
     data-test="designer-inspector"
@@ -34,6 +36,9 @@
       <InspectorHeader :target="target">
         <template v-if="headerKind" #kind>
           <component :is="headerKind.headerKind" :key="headerKind.key" :target="target" />
+        </template>
+        <template v-if="headerMemo" #memo>
+          <component :is="headerMemo.headerMemo" :key="headerMemo.key" :target="target" />
         </template>
         <template v-if="headerMetas.length" #meta>
           <component :is="entry.headerMeta" v-for="entry in headerMetas" :key="entry.key" :target="target" />
@@ -153,6 +158,7 @@ const headerMetas = computed(() => contributions.value.filter((entry) => entry.h
 const headerActions = computed(() => contributions.value.filter((entry) => entry.headerAction))
 const headerKind = computed(() => contributions.value.find((entry) => entry.headerKind) ?? null)
 const headerMenus = computed(() => contributions.value.filter((entry) => entry.headerMenu))
+const headerMemo = computed(() => contributions.value.find((entry) => entry.headerMemo) ?? null)
 
 const tabs = computed(() => target.value && !props.unselected ? INSPECTOR_TABS : [])
 

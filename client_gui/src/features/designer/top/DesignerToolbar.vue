@@ -8,7 +8,10 @@
        on screen but dimmed and unavailable, as the confirmed initial-state design draws it.
        flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons (it checks what 실행
        would take); it is available while the open Flow's edited structure can be checked
-       (`canValidate`). -->
+       (`canValidate`).
+       flowgate.v02.0053 T#9: the run buttons drive the server run (the Shell sends the commands to the
+       Center session); `runMode` is the server's run as this tab knows it. Next to them one dot shows the
+       Flow's run — ● running, ❚❚ stopped, ✓ completed — its name in the tooltip only. -->
   <div
     class="designer-toolbar"
     :class="{ 'is-unavailable': disabled }"
@@ -64,6 +67,19 @@
         <svg v-else class="is-run" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 4l8 6-8 6zM10 4l8 6-8 6z" /></svg>
         <span>{{ runMode === run.mode ? t('gui.designer.top.tools.stop') : t(`gui.designer.top.tools.${run.label}`) }}</span>
       </button>
+      <span
+        v-if="shownRunStatus"
+        class="designer-run-dot"
+        :class="`is-${shownRunStatus}`"
+        role="img"
+        :aria-label="t(`gui.designer.top.run_status.${shownRunStatus}`)"
+        :title="t(`gui.designer.top.run_status.${shownRunStatus}`)"
+        data-test="designer-run-status"
+        :data-status="shownRunStatus"
+      >
+        <svg v-if="shownRunStatus === 'stopped'" viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.5v7M8.5 2.5v7" /></svg>
+        <svg v-else-if="shownRunStatus === 'completed'" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.3l2.4 2.4 4.6-5" /></svg>
+      </span>
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
@@ -103,10 +119,11 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { DESIGNER_DENSITIES, type DesignerDensity, type DesignerRunMode, type DesignerTopCommand } from './designerTop'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     runMode: DesignerRunMode
     density: DesignerDensity
@@ -116,8 +133,10 @@ withDefaults(
     disabled?: boolean
     /** flowgate.v02.0045 TR0020 rev2: the open Flow's edited structure can be checked now. */
     canValidate?: boolean
+    /** flowgate.v02.0053 T#9: the open Flow's server run status (`running` | `stopped` | `completed`), or null. */
+    runStatus?: string | null
   }>(),
-  { disabled: false, canValidate: false },
+  { disabled: false, canValidate: false, runStatus: null },
 )
 
 const emit = defineEmits<{
@@ -126,6 +145,10 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+/** Run states the dot shows; any other value (or none) shows no dot. */
+const RUN_DOT_STATES: readonly string[] = ['running', 'stopped', 'completed']
+const shownRunStatus = computed(() => (!props.disabled && props.runStatus && RUN_DOT_STATES.includes(props.runStatus) ? props.runStatus : null))
 
 const RUN_BUTTONS = [
   { mode: 'next', command: 'run.next', label: 'run_next' },
@@ -242,6 +265,41 @@ const RUN_BUTTONS = [
 
 .designer-toolbar.is-unavailable .designer-tool-density button {
   cursor: default;
+}
+
+.designer-run-dot {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  margin: 0 2px;
+  border-radius: 50%;
+}
+
+.designer-run-dot svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: #0d1b2e;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.designer-run-dot.is-running {
+  width: 10px;
+  height: 10px;
+  background: #2bddad;
+  box-shadow: 0 0 0 3px rgba(43, 221, 173, 0.22);
+}
+
+.designer-run-dot.is-stopped {
+  background: #f5a524;
+}
+
+.designer-run-dot.is-completed {
+  background: #58a6ff;
 }
 
 .designer-tool-zoom {

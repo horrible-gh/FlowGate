@@ -39,7 +39,8 @@ export class FlowGraphApiError extends Error {
   }
 }
 
-function toGraphError(error: unknown, fallback: string): FlowGraphApiError {
+/** A refused request -> FlowGraphApiError (the server's envelope code / params). Also the run transport's (flowRunApi.ts). */
+export function toGraphError(error: unknown, fallback: string): FlowGraphApiError {
   const response = (error as { response?: { status?: number; data?: Raw } } | null)?.response
   const envelope = response?.data?.error
   const code = envelope && typeof envelope.code === 'string' ? envelope.code : null

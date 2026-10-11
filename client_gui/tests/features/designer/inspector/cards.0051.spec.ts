@@ -16,7 +16,7 @@ import DesignSlots from '@/features/designer/inspector/features/designCard/Desig
 import { designCardSlots } from '@/features/designer/inspector/features/designCard/designCardModel'
 import GateActions from '@/features/designer/inspector/features/gateCard/GateActions.vue'
 import GateSlots from '@/features/designer/inspector/features/gateCard/GateSlots.vue'
-import { gateActions, gateCardShape, gateCardSlots } from '@/features/designer/inspector/features/gateCard/gateCardModel'
+import { gateActions, gateCardShape, gateCardSlots, gateFailureKey } from '@/features/designer/inspector/features/gateCard/gateCardModel'
 import RequirementSlots from '@/features/designer/inspector/features/requirementCard/RequirementSlots.vue'
 import { requirementCardSlots } from '@/features/designer/inspector/features/requirementCard/requirementCardModel'
 import RequirementSettings from '@/features/designer/inspector/features/requirementSettings/RequirementSettings.vue'
@@ -139,13 +139,37 @@ describe('요구사항 / 버그 card line (requirementCardModel)', () => {
 })
 
 describe('Graph gate (gateCardModel)', () => {
-  it('a gate: the 확인 결과 result line (no document) and two actions shown but never usable yet', () => {
+  it('a gate: the 확인 결과 result line (no document) and two actions shown, waiting for a running run', () => {
     expect(gateCardShape(GATE)).toBe('gate')
     expect(gateCardSlots(GATE)).toEqual([{ key: 'result', kind: 'result', id: null, empty: true, emptyKey: 'empty.before', state: null, focus: false, open: 'none' }])
     expect(gateActions(GATE)).toEqual({
-      confirm: { visible: true, enabled: false, reason: 'reason.unconnected' },
-      reject: { visible: true, enabled: false, reason: 'reason.unconnected' },
+      confirm: { visible: true, enabled: false, reason: 'reason.not_running' },
+      reject: { visible: true, enabled: false, reason: 'reason.not_running' },
     })
+  })
+
+  // flowgate.v02.0053 T#9: the gate decision of the Flow's run (P0008 S6-1).
+  it('a gate decides while it is open in a running run; a stopped run, another turn, a decision in flight or a conflict wait', () => {
+    const open = { status: 'running', nodes: [{ nodeKey: GATE.nodeId, status: 'open' }] }
+    expect(gateActions(GATE, open).confirm).toEqual({ visible: true, enabled: true, reason: null })
+    expect(gateActions(GATE, open).reject.enabled).toBe(true)
+    expect(gateActions(GATE, { ...open, status: 'stopped' }).confirm.reason).toBe('reason.not_running')
+    expect(gateActions(GATE, { status: 'running', nodes: [{ nodeKey: GATE.nodeId, status: 'pending' }] }).confirm.reason).toBe('reason.not_open')
+    expect(gateActions(GATE, { status: 'running', nodes: [] }).confirm.reason).toBe('reason.not_open')
+    expect(gateActions(GATE, open, true).confirm.reason).toBe('reason.busy')
+    expect(gateActions({ ...GATE, readOnly: 'conflict' }, open).confirm.reason).toBe('reason.read_only_conflict')
+    // The revision view a run shows does not stop the decision (it is the run's own view).
+    expect(gateActions({ ...GATE, readOnly: 'revision' }, open).confirm.enabled).toBe(true)
+  })
+
+  it('a refused gate decision names its reason by the server code, never the code itself', () => {
+    const of = (code: string | null, status: number | null = 409, kind = 'conflict') => gateFailureKey({ kind, status, code })
+    expect(of('run_not_running')).toBe('failure.not_running')
+    expect(of('node_not_open')).toBe('failure.not_open')
+    expect(of('run_policy_undecided')).toBe('failure.undecided')
+    expect(of(null, 403, 'forbidden')).toBe('failure.forbidden')
+    expect(of(null, null, 'network')).toBe('failure.network')
+    expect(of('internal_error', 500, 'other')).toBe('failure.other')
   })
 
   it('an `other` document Node: its one document line; a Node with nothing: no line, no action', () => {
@@ -280,7 +304,7 @@ describe('card documents tab parts', () => {
     expect(rows[1].classes()).toContain('is-danger')
   })
 
-  it('GateSlots / GateActions: the 확인 결과 line and the two disabled actions with the reason; nothing on a non-gate without a document', () => {
+  it('GateSlots / GateActions: the 확인 결과 line and the two actions disabled with the reason before a run; nothing on a non-gate without a document', () => {
     const slots = mount(GateSlots, { props: { target: GATE }, global })
     expect(slots.get('[data-test="inspector-slot-name"]').text()).toBe('확인 결과')
     expect(slots.get('[data-test="inspector-slot-state"]').attributes('title')).toBe('확인 전')
@@ -288,7 +312,7 @@ describe('card documents tab parts', () => {
     const confirm = actions.get('[data-test="gate-confirm"]')
     expect(confirm.text()).toBe('✓ 확인')
     expect(confirm.attributes('disabled')).toBeDefined()
-    expect(confirm.attributes('title')).toContain('아직 연결되지 않았습니다')
+    expect(confirm.attributes('title')).toBe('실행 중일 때 확인할 수 있습니다')
     expect(actions.get('[data-test="gate-reject"]').attributes('disabled')).toBeDefined()
     const none = facts(V01_TR, null, { ...NO_DOCUMENT, nodeType: null })
     expect(mount(GateSlots, { props: { target: none }, global }).find('[data-test="inspector-gate-card"]').exists()).toBe(false)

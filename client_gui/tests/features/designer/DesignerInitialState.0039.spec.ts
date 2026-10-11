@@ -30,11 +30,14 @@ import {
 } from '@/features/designer/top/designerTop'
 import { useProjectStore, type Project } from '@/features/project'
 import { answerFlowCanvas } from './flowCanvasResponse'
+import { createFlowRunServer, type FlowRunServer } from './flowRunServer'
 
 const getRequest = vi.hoisted(() => vi.fn())
+// flowgate.v02.0053 T#9: the run buttons start the server run (an in-memory run server answers).
+const postRequest = vi.hoisted(() => vi.fn())
 vi.mock('@shared/api', () => ({
   getRequest,
-  postRequest: vi.fn(),
+  postRequest,
   extractApiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }))
 
@@ -90,7 +93,16 @@ beforeEach(() => {
   localStorage.clear()
   i18n.global.locale.value = 'ko'
   getRequest.mockReset()
+  runServer = createFlowRunServer()
+  postRequest.mockReset()
+  postRequest.mockImplementation(async (url: string) => {
+    const answer = runServer.post(url)
+    if (answer) return answer
+    throw new Error(`unexpected request ${url}`)
+  })
   getRequest.mockImplementation(async (url: string, params: Record<string, unknown> = {}) => {
+    const run = runServer.get(url)
+    if (run) return run
     const tree = /^\/api\/v1\/projects\/([^/]+)\/groups\/tree$/.exec(url)
     if (tree) return { data: { data: { nodes: TREES[tree[1]] ?? [] } } }
     const git = /^\/api\/v1\/projects\/([^/]+)\/git\/status$/.exec(url)
@@ -106,6 +118,7 @@ beforeEach(() => {
 })
 
 let wrapper: VueWrapper<any> | null = null
+let runServer: FlowRunServer = createFlowRunServer()
 
 afterEach(() => {
   wrapper?.unmount()
@@ -313,7 +326,9 @@ describe('Designer initial state — no work target right after entry (0039 T#3)
   it('the unavailable run buttons do not start a run', async () => {
     const w = await mountShell()
     await w.get('[data-test="designer-tool-run"][data-run="next"]').trigger('click')
+    await settle()
     expect(w.get('[data-test="designer-tool-run"][data-run="next"]').attributes('aria-pressed')).toBe('false')
+    expect(runServer.calls).toEqual([])
   })
 })
 
@@ -379,6 +394,7 @@ describe('Designer initial state — only an open Flow continues into the Design
     await doubleClick(w, 'UI 개선')
     await doubleClick(w, 'Canvas')
     await w.get('[data-test="designer-tool-run"][data-run="all"]').trigger('click')
+    await settle()
     expect(w.get('[data-test="designer-tool-run"][data-run="all"]').attributes('aria-pressed')).toBe('true')
 
     await w.get('[data-test="designer-flow-tab"][data-flow-id="p.ui.0002"] [data-test="designer-flow-tab-close"]').trigger('click')
@@ -395,6 +411,7 @@ describe('Designer initial state — only an open Flow continues into the Design
     await doubleClick(w, 'UI 개선')
     await doubleClick(w, 'Canvas')
     await w.get('[data-test="designer-tool-run"][data-run="all"]').trigger('click')
+    await settle()
     expect(w.get('[data-test="designer-tool-run"][data-run="all"]').attributes('aria-pressed')).toBe('true')
 
     useProjectStore().setCurrentProject(project('q', 'Beta'))

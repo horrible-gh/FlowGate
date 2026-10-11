@@ -53,6 +53,8 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'edit/draftEditor.ts',
         'edit/draftModel.ts',
         'edit/graphEditCommands.ts',
+        // flowgate.v02.0053 T#9: the top band's run buttons on the server Graph run.
+        'run/flowRunControl.ts',
       ].sort(),
     )
   })

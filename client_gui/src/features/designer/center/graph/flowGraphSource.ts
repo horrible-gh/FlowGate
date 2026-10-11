@@ -77,6 +77,21 @@ export interface FlowDraftError extends Error {
   readonly issues?: readonly FlowDraftIssue[]
 }
 
+/**
+ * flowgate.v02.0053 T#9: a Flow's Graph run as the top band shows it (P0008 S5-4). `status` is the server's
+ * open key: `running` | `stopped` | `completed`.
+ */
+export interface FlowRunInfo {
+  readonly runId: string
+  readonly status: string
+  readonly openNodeKeys: readonly string[]
+}
+
+/** A refused run operation rejects with an Error carrying the server's `code` (e.g. `run_policy_undecided`). */
+export interface FlowRunError extends Error {
+  readonly code?: string | null
+}
+
 export interface FlowGraphSource {
   /** True for sample data: the Canvas then shows the "sample data" badge. */
   readonly isSample: boolean
@@ -101,4 +116,12 @@ export interface FlowGraphSource {
   confirmDraft?(projectId: string, flowId: string, version: number, baseRevisionNo: number | null): Promise<number>
   /** The latest revision's definition, to start a new draft from it (null = no revision). */
   loadRevision?(projectId: string, flowId: string): Promise<{ revisionNo: number; content: FlowDraftContent } | null>
+  /** flowgate.v02.0053 T#9: the Flow's running or stopped run, or null. Absent = the source runs nothing. */
+  loadRun?(projectId: string, flowId: string): Promise<FlowRunInfo | null>
+  /** Starts a run of the Flow's latest revision. */
+  startRun?(projectId: string, flowId: string): Promise<FlowRunInfo>
+  /** Stops a running run: open cards keep their work, nothing new opens. */
+  stopRun?(projectId: string, runId: string): Promise<FlowRunInfo>
+  /** Resumes a stopped run. */
+  resumeRun?(projectId: string, runId: string): Promise<FlowRunInfo>
 }

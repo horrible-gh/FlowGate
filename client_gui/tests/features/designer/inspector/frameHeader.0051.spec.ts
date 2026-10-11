@@ -79,7 +79,7 @@ describe('registry contract (flowgate.v02.0051)', () => {
 
   it('a registration contributing nothing names every place', () => {
     expect(registrationViolations(registrationModules([registration({ key: 'none', order: 1 })]))).toEqual([
-      'features/none: contributes no tab, header action, header meta, header kind or header menu',
+      'features/none: contributes no tab, header action, header meta, header kind, header menu or header memo',
     ])
   })
 })

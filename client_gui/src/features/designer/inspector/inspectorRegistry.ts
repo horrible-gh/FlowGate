@@ -79,6 +79,11 @@ export interface InspectorRegistration {
    * ↻ 재실행 …). Its inputs are `target` and `close` (closes the menu).
    */
   readonly headerMenu?: Component
+  /**
+   * flowgate.v02.0053 T#9 — the header ✎ 메모 part: replaces the Frame's dim, disabled ✎ 메모 (R0052 §2.6). The
+   * Frame lays out the first that applies; its one input is `target`.
+   */
+  readonly headerMemo?: Component
   readonly messages: InspectorMessages
 }
 
@@ -152,8 +157,8 @@ export function registrationViolations(modules: Readonly<Record<string, unknown>
         if (tab.fill !== undefined && typeof tab.fill !== 'boolean') out.push(`${label}: tab fill is not a boolean`)
       }
     }
-    if (!tab && !entry.headerAction && !entry.headerMeta && !entry.headerKind && !entry.headerMenu) {
-      out.push(`${label}: contributes no tab, header action, header meta, header kind or header menu`)
+    if (!tab && !entry.headerAction && !entry.headerMeta && !entry.headerKind && !entry.headerMenu && !entry.headerMemo) {
+      out.push(`${label}: contributes no tab, header action, header meta, header kind, header menu or header memo`)
     }
     const messages = entry.messages
     for (const locale of INSPECTOR_LOCALES) {

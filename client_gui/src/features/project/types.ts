@@ -544,3 +544,27 @@ export interface FlowGraphDefinition {
   latestRevision: { revisionNo: number; nodes: FlowGraphDefinitionNode[]; edges: FlowGraphDefinitionEdge[] } | null
   policies: Record<string, string>
 }
+
+// flowgate.v02.0053 T#9 — the Graph run of a Flow (P0008 §7 S5: start / current / stop / resume). The top
+// band's 다음 단계 · 전체 실행 · 중지 drive it; the Canvas shows the node states it causes.
+
+/** One node of a run (P0008 S5-4 `node_runs[]`). */
+export interface FlowRunNode {
+  nodeKey: string
+  /** `pending` | `open` | `review` | `done` | `rejected` … (open key, as sent). */
+  status: string
+  resultDocId: string | null
+}
+
+/** A Graph run (P0008 S5-4). */
+export interface FlowRun {
+  runId: string
+  flowId: string
+  revisionNo: number | null
+  /** `running` | `stopped` | `completed` (open key, as sent). */
+  status: string
+  openNodeKeys: string[]
+  /** Present when the server answered with the nodes (start / current / gate decision). */
+  nodeRuns: FlowRunNode[] | null
+  lastEventSeq: number
+}

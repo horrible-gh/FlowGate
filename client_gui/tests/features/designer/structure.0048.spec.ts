@@ -157,7 +157,9 @@ const WINDOW_OPEN = /\b(?:window|globalThis|self)\s*\.\s*open\s*\(/g
  * drawn — disabled, as the v7 screen shows it (0051-R §2.3) — but never operated: no feature file calls a
  * function, or wires a template handler, named after one. Comments are not source here.
  */
-const UNDECIDED_MARKER = /expand|delegat|memo|ai_delivery|tsc/i
+// flowgate.v02.0053 T#9: the header ✎ 메모 is decided (R0052 §2.6, 0053 T#9 — features/memo writes and opens the
+// card's memo), so `memo` is no longer an undecided marker.
+const UNDECIDED_MARKER = /expand|delegat|ai_delivery|tsc/i
 const UNDECIDED_CALL = /(?<!function\s)(?<!\.)\b([A-Za-z_$][\w$]*)\s*\(/g
 const UNDECIDED_HANDLER = /@(?:click|submit|change|input|keydown|keyup|update:[\w-]+)(?:\.[\w.]+)*="\s*([A-Za-z_$][\w$.]*)\s*"/g
 const COMMENTS = /\/\*[\s\S]*?\*\/|<!--[\s\S]*?-->|(^|[^:'"`])\/\/[^\n]*/g
@@ -510,7 +512,7 @@ describe('structure.0048 checks catch boundary violations (fixtures/structure004
 
   it('the registry fixture: a call or a template handler named after an undecided feature is a B14 violation; naming it is not', () => {
     expect(undecidedViolations(join(FIXTURES, 'registry')).sort()).toEqual([
-      "B14 features/one/useOne.ts: calls 'memoSave('",
+      "B14 features/one/useOne.ts: calls 'delegateSave('",
       "B14 features/tscRunner/TscRunnerTab.vue: handler 'startTsc'",
       "B14 features/tscRunner/useTscRunner.ts: calls 'tscRun('",
     ])

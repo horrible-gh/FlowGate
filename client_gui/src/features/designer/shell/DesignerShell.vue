@@ -23,6 +23,7 @@
       :targets="menuTargets"
       :recent="recent"
       :can-validate="center.activeCanValidate.value"
+      :run-status="runStatus"
       @command="onTopCommand"
       @toggle-panel="onTogglePanel"
       @show-tab="onShowTab"
@@ -102,6 +103,7 @@
       @close="dialog = null"
       @created="onFlowCreated"
     />
+    <ToastHost :toasts="toasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
   </div>
 </template>
 
@@ -160,9 +162,15 @@
 // Availability follows each command's precondition (designerTop.ts DesignerMenuTargets). Recent
 // Project / Group / Flow entries are recorded in the store when a Project is opened and when
 // this Shell opens a Group or Flow; the Group / Flow lists show the current Project's entries.
+//
+// flowgate.v02.0053 T#9 — the run buttons run the Flow on the server. 다음 단계 / 전체 실행 / 중지 go to
+// the Center session (center/run/flowRunControl.ts: start or resume, one step, stop); the buttons' state
+// (`top.runMode`) and the Toolbar's run dot follow the run the session read back, never the click alone.
+// A refused run shows one short toast (its reason in plain words, no code); nothing else is written.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useProjectStore, type CreatedGroup } from '@/features/project'
+import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
 import { createDesignerCenterSession, type CanvasNodeSpec } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
@@ -211,7 +219,7 @@ const emit = defineEmits<{
 }>()
 
 const projectStore = useProjectStore()
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 const layout = reactive(createDesignerLayout())
 
@@ -247,6 +255,46 @@ function onCanvasPlace(flowId: string, x: number, y: number) {
 }
 
 watch(() => center.state.activeFlowId, () => { selectedPalette.value = null })
+
+// flowgate.v02.0053 T#9: the run buttons follow the server run of the open Flow (the Center session's).
+// While 다음 단계 / 전체 실행 is answered its button shows the run going; a running run keeps the button
+// that started it (전체 실행 when it was started elsewhere); a stopped or finished run shows none.
+const serverRunMode = computed(() => {
+  const state = center.activeRun.value
+  if (!state) return null
+  if (state.action === 'next' || state.action === 'all') return state.action
+  return state.run?.status === 'running' ? state.mode ?? 'all' : null
+})
+const runStatus = computed(() => (hasWorkTarget.value ? center.activeRun.value?.run?.status ?? null : null))
+
+if (center.canRun) {
+  watch(serverRunMode, (mode) => {
+    top.runMode = mode
+  })
+}
+
+const toasts = ref<ToastHostItem[]>([])
+let toastSeq = 0
+
+function dismissToast(id: string | number) {
+  toasts.value = toasts.value.filter((item) => item.id !== id)
+}
+
+/** A refused run in plain words: the code's own sentence, else the common one. */
+function runErrorText(code: string | null): string {
+  const key = code ? `gui.designer.top.run_errors.${code}` : ''
+  return key && te(key) ? t(key) : t('gui.designer.top.run_errors.other')
+}
+
+watch(
+  () => center.activeRun.value?.error?.seq ?? 0,
+  (seq) => {
+    const error = center.activeRun.value?.error
+    if (!seq || !error) return
+    toastSeq += 1
+    toasts.value = [...toasts.value.slice(-2), { id: `run-${toastSeq}`, message: runErrorText(error.code), tone: 'danger', duration: 4000 }]
+  },
+)
 
 // The run buttons' UI state belongs to a target; it does not outlive it.
 watch(hasWorkTarget, (has) => {
@@ -505,12 +553,23 @@ function onTopCommand(command: DesignerTopCommand) {
     case 'run.all': {
       const flowId = center.state.activeFlowId
       if (flowId === null) return
+      // flowgate.v02.0053 T#9: the server run (the session confirms the draft first).
+      if (center.canRun) {
+        void center.runFlow(flowId, command === 'run.next' ? 'next' : 'all')
+        return
+      }
       const start = (go: boolean) => {
         if (go && top.runMode === null) top.runMode = nextRunMode(top.runMode, command)
       }
       const ready = center.prepareRun(flowId)
       if (typeof ready === 'boolean') start(ready)
       else void ready.then(start)
+      return
+    }
+    case 'run.stop': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null && center.canRun) void center.stopRun(flowId)
+      else top.runMode = nextRunMode(top.runMode, command)
       return
     }
     default:
