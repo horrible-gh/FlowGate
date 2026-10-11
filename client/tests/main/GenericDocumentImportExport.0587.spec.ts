@@ -3,7 +3,7 @@
 // Mirrors the completion criteria for GenericDocumentBody's new upload pairing: a selected
 // .md file is read, a leading UTF-8 BOM is stripped, the existing document-content PATCH
 // (the same path saveEditContent already uses) persists it, and only a successful save
-// refreshes the viewer / TR step-verification card. A cancelled pick, a read failure or a
+// refreshes the viewer. A cancelled pick, a read failure or a
 // PATCH failure (403/409/422/500) must never touch the screen already showing.
 import { defineComponent, h } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -93,17 +93,6 @@ function fakeMdViewer(loadContent = vi.fn()) {
     setup(_props, { expose }) {
       expose({ loadContent })
       return () => h('div', { class: 'md-viewer-fake' })
-    },
-  })
-}
-
-function fakeStepVerificationCard(fetchData = vi.fn()) {
-  return defineComponent({
-    name: 'StepVerificationCard',
-    props: { docId: { type: String, default: null } },
-    setup(_props, { expose }) {
-      expose({ fetchData })
-      return () => h('div', { class: 'step-verification-fake' })
     },
   })
 }
@@ -253,13 +242,13 @@ describe('0587: GenericDocumentBody Markdown upload', () => {
     expect(wrapper.find('.doc-markdown-upload').attributes('disabled')).toBeUndefined()
   })
 
-  it('refreshes the TR StepVerificationCard after a successful upload', async () => {
+  it('refreshes the ordinary TR preview after a successful upload', async () => {
     patchRequest.mockResolvedValue({ data: {} })
-    const fetchData = vi.fn()
+    const loadContent = vi.fn()
     const wrapper = await mountMainPanel({
       tabs: [TR_TAB],
       activeTabId: TR_TAB.id,
-      stubs: { DocHeader: fakeDocHeader(true), StepVerificationCard: fakeStepVerificationCard(fetchData) },
+      stubs: { DocHeader: fakeDocHeader(true), MdViewer: fakeMdViewer(loadContent) },
     })
     expectDocumentBranchMounted(wrapper)
 
@@ -269,7 +258,8 @@ describe('0587: GenericDocumentBody Markdown upload', () => {
     await flushAll()
 
     expect(patchRequest).toHaveBeenCalledTimes(1)
-    expect(fetchData).toHaveBeenCalled()
+    expect(loadContent).toHaveBeenCalled()
+    expect(wrapper.findComponent({ name: 'StepVerificationCard' }).exists()).toBe(false)
   })
 
   it('does not render the upload control when the document is not editable', async () => {

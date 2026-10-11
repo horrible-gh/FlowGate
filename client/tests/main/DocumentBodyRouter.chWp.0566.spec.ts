@@ -48,7 +48,6 @@ import WorkPlanEditor from '@main/components/WorkPlanEditor.vue'
 import ConversationDocumentView from '@main/components/documents/ConversationDocumentView.vue'
 import DocumentBodyRouter from '@main/components/documents/DocumentBodyRouter.vue'
 import GenericDocumentBody from '@main/components/documents/GenericDocumentBody.vue'
-import StepVerificationCard from '@main/components/StepVerificationCard.vue'
 import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
 import { mountMainPanel } from '../helpers/mountMainPanel'
 
@@ -558,7 +557,7 @@ describe('MainPanel template owns no document body (T0007 §5-6)', () => {
   })
 })
 
-describe('TR keeps its shell extension outside the generic body router (T0009 §3)', () => {
+describe('TR and other Markdown documents keep their generic body after card retirement', () => {
   const TR_TAB = {
     id: `${GROUP_ID}.0010-TR`,
     title: 'report',
@@ -576,23 +575,10 @@ describe('TR keeps its shell extension outside the generic body router (T0009 §
     return wrapper
   }
 
-  it('renders the TR verification card immediately before the ordinary markdown body', async () => {
-    const wrapper = await mountGeneric(TR_TAB)
-    const verification = wrapper.findComponent(StepVerificationCard)
-    const router = wrapper.findComponent(DocumentBodyRouter)
+  it.each([TR_TAB, T_TAB])('renders the ordinary Markdown body for $typeCode without the retired card', async (tab) => {
+    const wrapper = await mountGeneric(tab)
 
-    expect(verification.exists()).toBe(true)
-    expect(router.findComponent(GenericDocumentBody).exists()).toBe(true)
-    expect(
-      verification.element.compareDocumentPosition(router.element)
-        & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy()
-  })
-
-  it('does not widen the verification condition to another markdown document type', async () => {
-    const wrapper = await mountGeneric(T_TAB)
-
-    expect(wrapper.findComponent(StepVerificationCard).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'StepVerificationCard' }).exists()).toBe(false)
     expect(wrapper.findComponent(DocumentBodyRouter).findComponent(GenericDocumentBody).exists()).toBe(true)
   })
 })

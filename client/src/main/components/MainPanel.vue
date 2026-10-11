@@ -132,17 +132,6 @@
             :doc-id="tab.id"
             :read-only="aiRunDocumentLocked"
           />
-          <!-- 0467 R0001 — [단계별 확인]: sits between [첨부 파일] above and the [문서 내용
-               미리보기] chain below, the one gap the current card order actually has (see the
-               0060 comment above — attachments already sits above the preview chain, so this
-               is where "between" the two lands). TR-only: the section itself is TR-specific
-               (R0001's complaint was about work reports), and step_verification_service only
-               validates TR submissions. -->
-          <StepVerificationCard
-            v-if="tab.typeCode === 'TR'"
-            :doc-id="tab.id"
-            :ref="(el) => bindActiveRef(stepVerificationCardRefs, tab.id, el)"
-          />
           <!-- 0565 T0030: T2 asks for a proposal, not immediate application. -->
           <p v-if="tab.typeCode === 'T2'" class="doc-type-note" data-testid="t2-apply-note">{{ t('main.t2_note') }}</p>
           <!-- Every document body is chosen and wired by the documents router: AC/DC/generic
@@ -974,7 +963,6 @@ import TestRunStrip from './TestRunStrip.vue'
 import DocWorkflow from './DocWorkflow.vue'
 import GitFinalizePanel from './GitFinalizePanel.vue'
 import AttachmentCard from './AttachmentCard.vue'
-import StepVerificationCard from './StepVerificationCard.vue'
 import ReviewActionBar from './ReviewActionBar.vue'
 import ReviewRejectDialog from './ReviewRejectDialog.vue'
 import TimeMachineDialog from './TimeMachineDialog.vue'
@@ -1181,7 +1169,6 @@ function isTestGateBlocked(gate: { applies?: boolean; passed?: boolean } | null 
   return !!gate?.applies && gate.passed === false
 }
 const textViewerRefs = reactive<Record<string, any>>({})
-const stepVerificationCardRefs = reactive<Record<string, any>>({})
 const convViewRefs = reactive<Record<string, any>>({})
 const workPlanEditorRefs = reactive<Record<string, any>>({})
 const tr2BodyRefs = reactive<Record<string, any>>({})
@@ -4689,7 +4676,6 @@ async function saveEditContent() {
     }
     await mdViewerRefs[editTab.value.id]?.loadContent?.()
     await textViewerRefs[editTab.value.id]?.loadContent?.()
-    await stepVerificationCardRefs[editTab.value.id]?.fetchData?.()
     // 0177 NR0016 §1: a successful save always closes the modal — a source-file
     // save on the base checkout is dirty by definition, so the former keep-open
     // warning (0176 T0010 §a) held the dialog hostage on every save. The tree
@@ -4751,7 +4737,6 @@ async function uploadMarkdownContent(tabId: string, file: File) {
       return
     }
     await mdViewerRefs[tabId]?.loadContent?.()
-    await stepVerificationCardRefs[tabId]?.fetchData?.()
     showToast(t('main.document_preview.upload_success'), 'success')
   } finally {
     markdownUploadBusy[tabId] = false
