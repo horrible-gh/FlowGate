@@ -159,8 +159,10 @@ def test_self_loop_report_custom_condition_and_non_palette():
                GraphEdge("ge_3", "gn_2", "gn_3", {"when": "approved"}), GraphEdge("ge_4", "gn_3", "gn_4")),
     )
     found = codes(validate_graph(g, UNDECIDED))
-    for structure in ("report_pair", "cycle", "edge_condition", "custom_node", "non_palette_doc_type", "branch"):
+    for structure in ("report_pair", "cycle", "edge_condition", "non_palette_doc_type", "branch"):
         assert ("rule_undecided", structure) in found, structure
+    # flowgate.v02.0053 T#8: a Custom card is a plain document card, not an undecided structure
+    assert ("rule_undecided", "custom_node") not in found
 
 
 def test_multiple_start_is_one_issue_and_a_decided_policy_is_consulted():

@@ -133,7 +133,7 @@ export default {
       label: '팔레트',
       categories: {
         design: '설계',
-        workflow: '업무 플로우',
+        workflow: '업무',
         control: '제어',
       },
       items: {
@@ -147,9 +147,9 @@ export default {
         test: '테스트',
         confirm: '확인',
       },
-      add: '팔레트 종류 추가',
+      add: '카드 추가',
       add_dialog: {
-        title: '팔레트 종류 추가',
+        title: '카드 추가',
         close: '닫기',
         category: '분류',
         name: '이름',

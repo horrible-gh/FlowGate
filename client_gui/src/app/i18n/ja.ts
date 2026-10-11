@@ -130,7 +130,7 @@ export default {
       label: 'パレット',
       categories: {
         design: '設計',
-        workflow: '業務フロー',
+        workflow: '業務',
         control: '制御',
       },
       items: {
@@ -144,9 +144,9 @@ export default {
         test: 'テスト',
         confirm: '確認',
       },
-      add: 'パレットの種類を追加',
+      add: 'カードを追加',
       add_dialog: {
-        title: 'パレットの種類を追加',
+        title: 'カードを追加',
         close: '閉じる',
         category: '分類',
         name: '名前',

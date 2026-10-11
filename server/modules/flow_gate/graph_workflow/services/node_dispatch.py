@@ -1,9 +1,11 @@
 """Node executor registry and the document node executor (D0004 §2.2, L0009 §2.6.6 ``dispatch_node``).
 
-The registry maps a node type to its executor: ``document`` and ``gate``. A gate node hands no
-work out — no token, no mention, ``dispatch = null`` (P0008 §7.1, L0009 §2.6.6); a person decides
-it through the gate decision API (``gate_service``, P0008 S6-1). A ``custom`` node has no executor
-(Q-11). The document executor hands the work out through the existing token service — called,
+The registry maps a node type to its executor: ``document``, ``custom`` and ``gate``. A gate node hands
+no work out — no token, no mention, ``dispatch = null`` (P0008 §7.1, L0009 §2.6.6); a person decides
+it through the gate decision API (``gate_service``, P0008 S6-1). flowgate.v02.0053 T#8: a ``custom`` node
+(a Custom card) is a plain document card — handed out by the document executor as the document type its
+run writes (``graph_model.run_doc_type``: the work instruction T), whatever Palette category made it.
+The document executor hands the work out through the existing token service — called,
 never changed — with the v0.1 next-step token shape (``action_scope="new"``, ``doc_ref`` = the
 Flow's root document, here the bound root's live end), records token -> node run (the result
 binder's evidence) and, for an AI assignee, queues the AI start after the commit.
@@ -34,6 +36,7 @@ from contextlib import contextmanager
 from typing import Any, Callable, Optional
 
 from modules.flow_gate.db.connection import get_store
+from modules.flow_gate.graph_workflow.domain.graph_model import run_doc_type
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.services import token_service
 
@@ -108,12 +111,19 @@ def dispatch_document(ctx, row: dict) -> dict:
     return {"token_issued": True, "mention_id": None, "issued_to": shown}
 
 
+def dispatch_custom(ctx, row: dict) -> dict:
+    """Custom card executor (flowgate.v02.0053 T#8): the document executor, the node standing for its run type."""
+    return dispatch_document(ctx, {**row, "doc_type": run_doc_type(row.get("node_type"), row.get("doc_type"))})
+
+
 def dispatch_gate(_ctx, _row: dict) -> None:
     """Gate node executor: opening it is the confirmation request; nothing is issued."""
     return None
 
 
-_EXECUTORS: dict[str, Callable[[Any, dict], Optional[dict]]] = {"document": dispatch_document, "gate": dispatch_gate}
+_EXECUTORS: dict[str, Callable[[Any, dict], Optional[dict]]] = {
+    "document": dispatch_document, "custom": dispatch_custom, "gate": dispatch_gate,
+}
 
 
 def start_ai(job: dict) -> None:

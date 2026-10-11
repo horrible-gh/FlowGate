@@ -16,7 +16,8 @@ from typing import Any
 UNDECIDED = "undecided"
 UNDECIDED_IMPL_VERSION = "undecided.1"
 
-# L0009 §2.6.1 — the nine slot keys, in table order.
+# L0009 §2.6.1 — the nine slot keys, in table order. flowgate.v02.0053 T#8: ``custom_node`` stays a slot (a run
+# snapshots all nine) but no structure needs it: a Custom card is a plain document card.
 POLICY_KEYS = (
     "start_node", "edge_condition", "parallelism", "join", "report_pair",
     "rejection_path", "completion", "gate_node", "custom_node",

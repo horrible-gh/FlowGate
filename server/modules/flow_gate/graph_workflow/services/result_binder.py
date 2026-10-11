@@ -26,6 +26,7 @@ from typing import Optional
 
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.graph_workflow.domain.frontier import RunEvent, RunState, resolve
+from modules.flow_gate.graph_workflow.domain.graph_model import run_doc_type
 from modules.flow_gate.graph_workflow.domain.run_policies import policies_of
 from modules.flow_gate.graph_workflow.domain.supersede import live_end
 from modules.flow_gate.graph_workflow.projection.run_documents import document, registered_documents
@@ -123,8 +124,10 @@ def _type(value) -> str:
 
 
 def result_type(ctx: RunContext, node: dict) -> str:
-    """The type a result of ``node`` is: its card's (instruction omitted: the report), else its own."""
-    return _type(card_settings_ports.result_type(ctx.flow_id, node) or node.get("doc_type"))
+    """The type a result of ``node`` is: its card's (instruction omitted: the report), else its own — a Custom
+    card's being its work instruction (flowgate.v02.0053 T#8, ``graph_model.run_doc_type``)."""
+    return _type(card_settings_ports.result_type(ctx.flow_id, node)
+                 or run_doc_type(node.get("node_type"), node.get("doc_type")))
 
 
 def _next_in_chain(ctx: RunContext, doc_id: Optional[str]) -> Optional[str]:

@@ -130,7 +130,7 @@ export default {
       label: 'Palette',
       categories: {
         design: 'Design',
-        workflow: 'Workflow',
+        workflow: 'Work',
         control: 'Control',
       },
       items: {
@@ -144,9 +144,9 @@ export default {
         test: 'Test',
         confirm: 'Confirm',
       },
-      add: 'Add palette type',
+      add: 'Add card',
       add_dialog: {
-        title: 'Add palette type',
+        title: 'Add card',
         close: 'Close',
         category: 'Category',
         name: 'Name',

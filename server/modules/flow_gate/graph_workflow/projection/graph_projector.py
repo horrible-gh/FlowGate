@@ -12,6 +12,8 @@
   The canvas service hands each view the lines of the kind that view gives the node (a retyped draft
   node and its confirmed revision each show their own; ``card_document_ports.card_view``).
   The documents a card made are never drawn as free document nodes (``hidden_doc_ids``).
+- flowgate.v02.0053 T#8: a Custom card (``custom`` node) is titled with the name a person gave it (its
+  label), also once a run bound a result document to it — that name is all that tells one apart.
 Pure over its inputs; positions are placed by the canvas service.
 """
 from __future__ import annotations
@@ -57,7 +59,7 @@ def graph_node(row: dict, origin: str, ownership: str, document: Optional[dict],
         "origin": origin,
         "kind": node_kind(node, cm.kind_for_type),
         "doc_type": node.doc_type,
-        "title": (document or {}).get("title") or node.label,
+        "title": node.label if node.node_type == "custom" else (document or {}).get("title") or node.label,
         "state": (cm.document_state(document.get("doc_review_status"), document.get("type_code"))
                   if document else "draft"),
         "editable": cm.editable_for(ownership, origin),

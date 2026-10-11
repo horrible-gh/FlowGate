@@ -1,7 +1,9 @@
 <template>
-  <!-- flowgate.v02.0030 — "팔레트 종류 추가" dialog (03-designer-shell `.palette-modal`, R0001 §2.2):
+  <!-- flowgate.v02.0030 — the Palette's add dialog (03-designer-shell `.palette-modal`, R0001 §2.2):
        분류 / 이름 / 아이콘 / 색상. Backdrop, ESC and focus belong to ModalShell; this dialog only
-       builds the item and emits it — the Palette decides where it goes. -->
+       builds the item and emits it — the Palette decides where it goes.
+       flowgate.v02.0053 T#8 (0053 CH): titled "카드 추가" (was "팔레트 종류 추가"), as the [+] tooltip; the
+       dialog itself is unchanged. The card it adds is placed as a Custom card (paletteNodeSpec). -->
   <ModalShell :open="open" size="md" close-on-backdrop @close="emit('close')">
     <template #header="{ titleId }">
       <div class="palette-add-head">

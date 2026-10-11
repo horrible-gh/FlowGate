@@ -19,7 +19,8 @@ approval dialog that asks the Git choice.
 How a run applies them (``run_plan``, ``result_doc_type``, ``after_result``, ``review_loop``):
 
 - instruction omit: the AI writes the card's report instead of the instruction-led node's own type
-  (N -> NR, T -> TR, v0.1 AUTO_REPORT_MAP) and that report is the node's result. A design card
+  (N -> NR, T -> TR, v0.1 AUTO_REPORT_MAP) and that report is the node's result. A Custom card runs as a
+  work instruction (flowgate.v02.0053 T#8), so it folds like a work card: T -> TR. A design card
   (D / P / L / DB) already writes its own document after the DS instruction, a test card's TS never
   folds (its TSR is server-assembled, as in v0.1), and an apply card's report (TR2) names the T2 it
   applies (``source_t2_doc_id``) while omit leaves the card no instruction document (the v7 settings
@@ -38,6 +39,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Optional
+
+from flowgate.card_documents.slots import CUSTOM_DOC_TYPES
 
 RUN, TEST, REQUIREMENT, CHECK = "run", "test", "requirement", "check"
 CARD_KINDS = (RUN, TEST, REQUIREMENT, CHECK)
@@ -212,12 +215,13 @@ def view(kind: Optional[str], stored: dict, repeat_choices: Iterable[int]) -> di
 def result_doc_type(node_type: Optional[str], doc_type: Optional[str], stored: dict) -> Optional[str]:
     """The type the node's AI writes and the Graph binds when the card changes it, else None.
 
-    Only an instruction-led document card whose report stands alone (N / T) with its instruction
-    omitted writes another type: its report.
+    Only an instruction-led card whose report stands alone (N / T, and a Custom card, which runs as its
+    work instruction T) with its instruction omitted writes another type: its report.
     """
-    if stored.get("instruction") != "omit" or node_type != "document":
+    if stored.get("instruction") != "omit" or node_type not in ("document", "custom"):
         return None
-    return REPORT_TYPES.get(str(doc_type or "").strip().upper())
+    own = CUSTOM_DOC_TYPES[0] if node_type == "custom" else doc_type
+    return REPORT_TYPES.get(str(own or "").strip().upper())
 
 
 def _count(value: Any) -> Optional[int]:

@@ -152,7 +152,10 @@ def test_the_result_type_follows_the_card_only_for_instruction_led_ai_cards():
     assert [f.result_doc_type("document", t, omit) for t in ("N", "T", "T2", "D", "DB", "TS")] == [
         "NR", "TR", None, None, None, None]
     assert f.result_doc_type("document", "T", {"instruction": "use"}) is None
-    assert f.result_doc_type("document", "T", {}) is None and f.result_doc_type("custom", None, omit) is None
+    assert f.result_doc_type("document", "T", {}) is None and f.result_doc_type("custom", None, {}) is None
+    # flowgate.v02.0053 T#8: a Custom card runs as a work instruction, so it folds like a work card
+    assert f.result_doc_type("custom", None, omit) == "TR"
+    assert f.run_plan(f.RUN, omit, "custom", None) == {"settings": omit, "result_doc_type": "TR"}
     assert f.run_plan(f.RUN, omit, "document", "T") == {"settings": omit, "result_doc_type": "TR"}
     assert f.run_plan(f.RUN, omit, "document", "D") == {"settings": omit}
     assert f.run_plan(f.RUN, omit, "document", "T2") == {"settings": omit}
