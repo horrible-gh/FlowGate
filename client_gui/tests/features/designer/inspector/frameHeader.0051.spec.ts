@@ -194,9 +194,11 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     expect(get(w, 'inspector-gate-card').find('[data-test="inspector-slot-name"]').text()).toBe('확인 결과')
     await clickTab(w, 'Q&A')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
-    expect(get(w, 'designer-inspector-tab-state').text()).toContain('연결된 문서가 없습니다.')
+    // flowgate.v02.0053 T#6: no "no linked document" sentence on Q&A and attachments.
+    expect(get(w, 'designer-inspector-tab-state').text()).toBe('')
     await clickTab(w, '첨부')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
+    expect(get(w, 'designer-inspector-tab-state').text()).toBe('')
     await clickTab(w, '설정')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
   })

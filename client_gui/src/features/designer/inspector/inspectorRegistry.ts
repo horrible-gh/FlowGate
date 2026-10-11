@@ -34,6 +34,11 @@ export interface InspectorTabContribution {
   /** Tab Content part; its one input is `target`. */
   readonly component: Component
   readonly count?: InspectorTabCount
+  /**
+   * flowgate.v02.0053 T#6 — the Content part takes the tab body's free height (its box reaches the bottom
+   * of the tab even with little content), e.g. the attachments drop area highlighted as a whole.
+   */
+  readonly fill?: boolean
 }
 
 export interface InspectorRegistration {
@@ -135,6 +140,7 @@ export function registrationViolations(modules: Readonly<Record<string, unknown>
       } else {
         if (!tab.component) out.push(`${label}: tab has no component`)
         if (tab.count !== undefined && typeof tab.count !== 'function') out.push(`${label}: tab count is not a function`)
+        if (tab.fill !== undefined && typeof tab.fill !== 'boolean') out.push(`${label}: tab fill is not a boolean`)
       }
     }
     if (!tab && !entry.headerAction && !entry.headerMeta && !entry.headerKind && !entry.headerMenu) {

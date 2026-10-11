@@ -241,14 +241,16 @@ describe('attachments tab — reading (flowgate.v02.0048 T#8)', () => {
     expect(itemEl(w, '요구사항 (1).xlsx').find('[data-test="attachments-original"]').text()).toBe('올린 이름: 요구사항.xlsx')
     expect(itemEl(w, '요구사항.xlsx').find('[data-test="attachments-original"]').exists()).toBe(false)
     expect(isDisabled(addButton(w))).toBe(false)
-    expect(w.text()).toContain('파일당 최대 20MB')
+    // flowgate.v02.0053 T#6: the size limit is [+]'s tooltip, not a line of text.
+    expect(addButton(w).attributes('title')).toBe('파일 추가 · 파일당 최대 20MB')
+    expect(w.text()).not.toContain('파일당 최대')
     expect(w.find('[data-test="attachments-reason"]').exists()).toBe(false)
   })
 
   it('a document without attachments shows the empty state; adding is still offered', async () => {
     rows.set(V01_DOC, [])
     const w = await mountTab(v01Target())
-    expect(w.find('[data-test="inspector-pane-state"][data-state="empty"]').text()).toContain('이 문서에 첨부된 파일이 없습니다.')
+    expect(w.find('[data-test="inspector-pane-state"][data-state="empty"]').text()).toBe('첨부 없음')
     expect(isDisabled(addButton(w))).toBe(false)
   })
 

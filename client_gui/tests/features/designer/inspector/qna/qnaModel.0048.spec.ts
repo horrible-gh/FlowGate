@@ -134,7 +134,7 @@ describe('answering availability (flowgate.v02.0048 T#7)', () => {
   const base: QnaInput = { readOnly: null, groupDisposed: false, aiRunning: false, busy: false }
 
   it('reading is a query, answering a change (D#1 §8.3 rule 0)', () => {
-    expect(QNA_OPERATION_CLASS).toEqual({ read: 'query', answer: 'change' })
+    expect(QNA_OPERATION_CLASS).toEqual({ read: 'query', answer: 'change', ask: 'change' })
   })
 
   it.each([
@@ -155,6 +155,8 @@ describe('answering availability (flowgate.v02.0048 T#7)', () => {
     expect(qnaAvailability(input)).toEqual({
       read: { visible: true, enabled: true, reason: null },
       answer: { visible: true, enabled, reason },
+      // flowgate.v02.0053 T#6: asking closes on the same reasons (no question is on its way here).
+      ask: { visible: true, enabled, reason: reason === null ? null : reason.replace('reason.', 'ask_reason.') },
     })
   })
 
@@ -180,13 +182,13 @@ describe('answer readiness (flowgate.v02.0048 T#7)', () => {
 })
 
 describe('keys and wording (flowgate.v02.0048 T#7)', () => {
-  const kinds: QnaFailureKind[] = ['running', 'disposed', 'forbidden', 'not_found', 'invalid', 'network', 'other']
+  const kinds: QnaFailureKind[] = ['running', 'no_provider', 'disposed', 'forbidden', 'not_found', 'invalid', 'network', 'other']
   const lookup = (messages: Record<string, unknown>, key: string) =>
     key.split('.').reduce<unknown>((node, part) => (node && typeof node === 'object' ? (node as Record<string, unknown>)[part] : undefined), messages)
 
   it('failure and error keys', () => {
     expect(kinds.map(qnaFailureKey)).toEqual(kinds.map((kind) => `failure.${kind}`))
-    expect(kinds.map(qnaErrorKey)).toEqual(['error.other', 'error.other', 'error.forbidden', 'error.not_found', 'error.other', 'error.network', 'error.other'])
+    expect(kinds.map(qnaErrorKey)).toEqual(['error.other', 'error.other', 'error.other', 'error.forbidden', 'error.not_found', 'error.other', 'error.network', 'error.other'])
   })
 
   it.each(['ko', 'en', 'ja'] as const)('every key the rules produce has %s wording', (locale) => {

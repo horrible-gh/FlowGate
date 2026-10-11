@@ -91,7 +91,7 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     expect(Object.keys(inspector.tabs)).toEqual([...INSPECTOR_TABS])
     expect(Object.keys(inspector.review_status).sort()).toEqual(['approved', 'pending_review', 'rejected', 'revised', 'wf_done', 'wf_in_progress'])
     expect(Object.keys(inspector.run_status).sort()).toEqual(['completed', 'done', 'failed', 'open', 'pending', 'rejected', 'review', 'running', 'stopped'])
-    expect(Object.keys(inspector.pane).sort()).toEqual(['details', 'disabled', 'empty', 'error', 'loading', 'no_document', 'no_settings', 'no_settings_for', 'retry'])
+    expect(Object.keys(inspector.pane).sort()).toEqual(['details', 'disabled', 'empty', 'error', 'loading', 'no_settings', 'no_settings_for', 'retry'])
     // flowgate.v02.0052 T#2: why the 설정 tab is empty (inspectorNoSettingsKey).
     expect(Object.keys(inspector.pane.no_settings_for).sort()).toEqual(['conflict', 'graph', 'no_slot', 'unassigned'])
     expect(Object.keys(inspector.header).sort()).toEqual(['copied', 'copy_id', 'kind_bug', 'memo', 'memo_unavailable', 'more', 'read_only', 'read_only_conflict', 'read_only_revision', 'state_tip'])

@@ -350,10 +350,12 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
     })
   })
 
-  it('a document without questions shows the empty state', async () => {
+  it('a document without questions shows only the question line — no empty sentence (0053 T#6)', async () => {
     const w = await mountTab(v01Target({ docId: 'flowgate.v02.0048.0099-T' }))
-    expect(w.find('[data-test="inspector-pane-state"]').attributes('data-state')).toBe('empty')
-    expect(w.text()).toContain('이 문서에 등록된 질문이 없습니다.')
+    expect(w.find('[data-test="inspector-pane-state"]').exists()).toBe(false)
+    expect(w.find('[data-test="qna-ask"]').exists()).toBe(true)
+    expect(w.findAll('[data-test="qna-item"]')).toHaveLength(0)
+    expect(w.text()).toBe('')
   })
 
   it('a failed read shows the error with retry; retry reads again', async () => {

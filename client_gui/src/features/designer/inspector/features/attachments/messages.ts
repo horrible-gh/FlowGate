@@ -1,11 +1,13 @@
 // flowgate.v02.0048 T#8 — attachments tab strings, merged under `gui.inspector.attachments` (D#1 §5.5).
 // The three locales keep the same keys (structure.0048 B12). Reason keys use the shared names of D#1
 // §8.3 rule 6-2.
+// flowgate.v02.0053 T#6 — [+] is an icon: `add` is its name, `add_tip` its tooltip with the size limit
+// (the '＋ 추가' label and the 'per file' line are gone); `empty` is the v7 '첨부 없음'.
 export default {
   ko: {
-    empty: '이 문서에 첨부된 파일이 없습니다.',
-    add: '＋ 추가',
-    add_hint: '파일당 최대 {size}MB',
+    empty: '첨부 없음',
+    add: '파일 추가',
+    add_tip: '파일 추가 · 파일당 최대 {size}MB',
     open: '열기',
     delete: '삭제',
     delete_confirm: '{name} 파일을 삭제할까요?',
@@ -54,9 +56,9 @@ export default {
     },
   },
   en: {
-    empty: 'No files are attached to this document.',
-    add: '＋ Add',
-    add_hint: 'Up to {size}MB per file',
+    empty: 'No attachments',
+    add: 'Add files',
+    add_tip: 'Add files · up to {size}MB per file',
     open: 'Open',
     delete: 'Delete',
     delete_confirm: 'Delete {name}?',
@@ -105,9 +107,9 @@ export default {
     },
   },
   ja: {
-    empty: 'この文書に添付されたファイルはありません。',
-    add: '＋ 追加',
-    add_hint: 'ファイルあたり最大 {size}MB',
+    empty: '添付なし',
+    add: 'ファイルを追加',
+    add_tip: 'ファイルを追加 · ファイルあたり最大 {size}MB',
     open: '開く',
     delete: '削除',
     delete_confirm: '{name} を削除しますか?',

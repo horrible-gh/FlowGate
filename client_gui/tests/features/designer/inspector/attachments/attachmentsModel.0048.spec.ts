@@ -301,7 +301,7 @@ describe('keys and wording (flowgate.v02.0048 T#8)', () => {
       ...['bytes', 'kilobytes', 'megabytes'].map((unit) => `size.${unit}`),
       'empty',
       'add',
-      'add_hint',
+      'add_tip',
       'open',
       'delete',
       'delete_confirm',

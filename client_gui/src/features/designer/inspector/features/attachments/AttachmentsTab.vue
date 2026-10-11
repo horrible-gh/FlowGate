@@ -2,8 +2,22 @@
   <!-- flowgate.v02.0048 T#8 — attachments tab (D#1 §10.2 T#8 row): the attachments of the selected Node's
        document — open (download), ＋ add, delete with a confirm step — with the reason when a change is
        disabled and the refusal the server answered. A thin container: useAttachments reads and changes,
-       attachmentsModel decides the target document, the rows and availability. -->
-  <div class="inspector-attachments" data-test="inspector-attachments" :data-status="status">
+       attachmentsModel decides the target document, the rows and availability.
+       flowgate.v02.0053 T#6 (0053 CH §3) — [+] alone adds files (the size limit is its tooltip, no
+       '＋ 추가' / '파일당 최대 nMB' text), an empty document shows only '첨부 없음' (v7), and files dropped
+       anywhere on the tab are uploaded the same way as picked ones (same API, limits and refusals); the
+       tab is highlighted while files are dragged over it, only when adding is possible.
+       In the Frame the drop is taken on the whole tab Content (INSPECTOR_BODY) — the free space under a
+       short list and the body's padding too — and this box fills the body (`fill`), so the highlight
+       covers the tab. Outside the Frame the box itself is the drop area. -->
+  <div
+    ref="root"
+    class="inspector-attachments"
+    :class="{ 'is-dropping': dropping }"
+    data-test="inspector-attachments"
+    :data-status="status"
+    :data-drop="dropping ? 'active' : 'idle'"
+  >
     <div class="inspector-attachments-bar">
       <input
         ref="picker"
@@ -14,15 +28,14 @@
         data-test="attachments-picker"
         @change="onPick"
       />
-      <Button
-        size="sm"
-        variant="secondary"
+      <InspectorAddButton
+        :label="t(k('add'))"
+        :title="t(k('add_tip'), { size: limits.maxUploadMb })"
         :disabled="!availability.add.enabled"
-        :loading="busy?.operation === 'add'"
+        :data-busy="busy?.operation === 'add' ? 'true' : 'false'"
         data-test="attachments-add"
         @click="pickFiles"
-      >{{ t(k('add')) }}</Button>
-      <span class="inspector-attachments-sub">{{ t(k('add_hint'), { size: limits.maxUploadMb }) }}</span>
+      />
     </div>
     <div v-if="availability.add.reason" data-test="attachments-reason">
       <InspectorReason :text="t(k(availability.add.reason), { limit: limits.maxCount })" />
@@ -74,11 +87,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, inject, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../../components/ui/Button.vue'
+import InspectorAddButton from '../../parts/InspectorAddButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
+import { INSPECTOR_BODY } from '../../inspectorHost'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { useAttachments } from './useAttachments'
 
@@ -107,6 +122,7 @@ watch(
   () => props.target.docId,
   () => {
     confirming.value = null
+    endDrag()
   },
 )
 
@@ -125,6 +141,78 @@ async function confirmDelete(filename: string) {
   confirming.value = null
   await remove(filename)
 }
+
+// --- Drag and drop (0053 T#6) ----------------------------------------------------------------------
+
+/** Files are being dragged over the tab and adding is possible: the tab is highlighted. */
+const dropping = ref(false)
+// dragenter / dragleave fire for every child the pointer crosses; the tab is left when the count is 0.
+let dragDepth = 0
+
+/** The drag carries files (not text or a link dragged from the page). */
+function carriesFiles(event: DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes('Files')
+}
+
+function endDrag() {
+  dragDepth = 0
+  dropping.value = false
+}
+
+function onDragEnter(event: DragEvent) {
+  if (!carriesFiles(event)) return
+  event.preventDefault()
+  dragDepth += 1
+  dropping.value = availability.value.add.enabled
+}
+
+function onDragOver(event: DragEvent) {
+  if (!carriesFiles(event)) return
+  // Without preventDefault the browser would open the dropped file instead of handing it to the tab.
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = availability.value.add.enabled ? 'copy' : 'none'
+  dropping.value = availability.value.add.enabled
+}
+
+function onDragLeave(event: DragEvent) {
+  if (!carriesFiles(event)) return
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (dragDepth === 0) dropping.value = false
+}
+
+/** Dropped files go the same way as picked ones: the client limits, then the upload and the read again. */
+function onDrop(event: DragEvent) {
+  if (!carriesFiles(event)) return
+  event.preventDefault()
+  endDrag()
+  const files = Array.from(event.dataTransfer?.files ?? [])
+  if (files.length && availability.value.add.enabled) void add(files)
+}
+
+const root = ref<HTMLElement | null>(null)
+const body = inject(INSPECTOR_BODY, null)
+/** Where files are taken: the Frame's whole tab Content, or this box outside the Frame. */
+const dropZone = computed(() => body?.element.value ?? root.value)
+
+// The listeners follow the drop area and leave it when the tab goes (the body stays for the other tabs).
+watch(
+  dropZone,
+  (zone, _previous, onCleanup) => {
+    endDrag()
+    if (!zone) return
+    zone.addEventListener('dragenter', onDragEnter)
+    zone.addEventListener('dragover', onDragOver)
+    zone.addEventListener('dragleave', onDragLeave)
+    zone.addEventListener('drop', onDrop)
+    onCleanup(() => {
+      zone.removeEventListener('dragenter', onDragEnter)
+      zone.removeEventListener('dragover', onDragOver)
+      zone.removeEventListener('dragleave', onDragLeave)
+      zone.removeEventListener('drop', onDrop)
+    })
+  },
+  { immediate: true, flush: 'post' },
+)
 </script>
 
 <style scoped>
@@ -132,8 +220,22 @@ async function confirmDelete(filename: string) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  box-sizing: border-box;
   min-width: 0;
+  /* The drop area: the whole tab (it fills the Frame body), at least a few rows high even with no attachment. */
+  flex: 1 0 auto;
+  min-height: 96px;
+  padding: 4px;
+  border: 1px dashed transparent;
+  border-radius: 8px;
   font-size: 12px;
+  transition: border-color 0.12s, background-color 0.12s;
+}
+
+/* Files dragged over the tab (adding possible). */
+.inspector-attachments.is-dropping {
+  border-color: var(--fg2-focus, #4c9aff);
+  background: rgba(76, 154, 255, 0.08);
 }
 
 .inspector-attachments-bar,

@@ -17,7 +17,10 @@
        (`headerKind`, the first that applies) and the ⋯ menu items (`headerMenu`, in `order`).
        flowgate.v02.0051 stage 3: every selected Node keeps the four v7 tabs. Missing data
        receives an empty state and unconnected settings a disabled state. Card slots lead the
-       document tab; the card slot opens the existing document screen for full detail. -->
+       document tab; the card slot opens the existing document screen for full detail.
+       flowgate.v02.0053 T#6: the body element is provided to the tab parts (INSPECTOR_BODY) so a part can
+       take input over the whole tab (the attachments file drop); a `fill` tab's section takes the body's
+       free height. -->
   <section
     class="designer-inspector"
     data-test="designer-inspector"
@@ -52,13 +55,15 @@
           :aria-label="t('gui.designer.inspector.tabs_label')"
           @update:model-value="selectTab"
         />
-        <div class="designer-inspector-body" role="tabpanel" data-test="designer-inspector-body" :data-tab="activeTab">
+        <div ref="bodyElement" class="designer-inspector-body" role="tabpanel" data-test="designer-inspector-body" :data-tab="activeTab">
           <div
             v-for="entry in tabContent"
             :key="entry.key"
             class="designer-inspector-section"
+            :class="{ 'is-fill': entry.tab!.fill }"
             data-test="designer-inspector-section"
             :data-key="entry.key"
+            :data-fill="entry.tab!.fill ? 'true' : undefined"
           >
             <component :is="entry.tab!.component" :target="target" />
           </div>
@@ -68,8 +73,8 @@
             data-test="designer-inspector-tab-state"
             :data-state="activeTab === 'settings' ? 'disabled' : 'empty'"
           >
-            <EmptyState v-if="activeTab !== 'settings'" compact :title="emptyTabMessage" />
-            <p v-else class="designer-inspector-disabled" role="note" aria-disabled="true">
+            <EmptyState v-if="activeTab !== 'settings' && emptyTabMessage" compact :title="emptyTabMessage" />
+            <p v-else-if="activeTab === 'settings'" class="designer-inspector-disabled" role="note" aria-disabled="true">
               <span aria-hidden="true">⊘</span>
               <span>{{ emptyTabMessage }}</span>
             </p>
@@ -87,7 +92,7 @@ import EmptyState from '../../../components/ui/EmptyState.vue'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
 import type { FlowGraphSelection } from '../center/graph/flowGraph'
 import InspectorHeader from './InspectorHeader.vue'
-import { INSPECTOR_HOST, type InspectorHostIntent } from './inspectorHost'
+import { INSPECTOR_BODY, INSPECTOR_HOST, type InspectorHostIntent } from './inspectorHost'
 import {
   contributionsFor,
   inspectorRegistry,
@@ -131,6 +136,10 @@ const registry = toRaw(props.registry)
 installInspectorMessages(i18n, registry)
 
 provide(INSPECTOR_HOST, { request: (intent) => emit('host', intent) })
+
+// flowgate.v02.0053 T#6: the tab Content element, for parts that take input over the whole tab.
+const bodyElement = ref<HTMLElement | null>(null)
+provide(INSPECTOR_BODY, { element: bodyElement })
 
 const target = computed(() => toInspectorTarget(props.selection))
 
@@ -186,9 +195,9 @@ const tabContent = computed(() => {
     : entries
 })
 const emptyTabMessage = computed(() => {
-  if (!target.value?.docId && (activeTab.value === 'qna' || activeTab.value === 'attachments')) {
-    return t('gui.designer.inspector.pane.no_document')
-  }
+  // flowgate.v02.0053 T#6 (0053 CH): Q&A and attachments of a Node without a document are an empty
+  // area — no "no linked document" sentence.
+  if (!target.value?.docId && (activeTab.value === 'qna' || activeTab.value === 'attachments')) return ''
   // flowgate.v02.0052 T#2: the settings tab says why this card has none (not one blanket "not connected").
   return activeTab.value === 'settings' && target.value
     ? t(`gui.designer.inspector.pane.${inspectorNoSettingsKey(target.value)}`)
@@ -273,6 +282,14 @@ function selectTab(key: string) {
 
 .designer-inspector-section + .designer-inspector-section {
   margin-top: 12px;
+}
+
+/* A `fill` tab (the attachments drop area): its part grows to the bottom of the body's content box. */
+.designer-inspector-section.is-fill {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-height: 100%;
 }
 
 .designer-inspector-tab-state {

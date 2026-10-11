@@ -307,7 +307,6 @@ export default {
       pane: {
         loading: '読み込み中…',
         empty: '表示する内容がありません。',
-        no_document: '関連付けられた文書がありません。',
         no_settings: 'このカードの種類は Inspector の実行設定の対象ではありません。',
         no_settings_for: {
           graph: 'Graph フローのノードの実行設定は Inspector ではまだサポートしていません。',

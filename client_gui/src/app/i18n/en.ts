@@ -307,7 +307,6 @@ export default {
       pane: {
         loading: 'Loading…',
         empty: 'Nothing to show.',
-        no_document: 'No document is connected.',
         no_settings: 'This card kind has no Inspector run settings.',
         no_settings_for: {
           graph: 'Run settings of a Graph Flow Node are not supported in the Inspector yet.',

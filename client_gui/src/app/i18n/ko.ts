@@ -313,7 +313,6 @@ export default {
       pane: {
         loading: '불러오는 중…',
         empty: '표시할 내용이 없습니다.',
-        no_document: '연결된 문서가 없습니다.',
         // flowgate.v02.0052 T#2 — why the 설정 tab is empty (inspectorNoSettingsKey).
         no_settings: '이 카드 종류는 Inspector 실행 설정 대상이 아닙니다.',
         no_settings_for: {

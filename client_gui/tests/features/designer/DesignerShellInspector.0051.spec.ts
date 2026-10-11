@@ -130,7 +130,9 @@ describe('Designer Shell x Inspector (T#2)', () => {
     expect(get('designer-inspector-title').text()).toBe('확인')
     expect(wrapper!.find('[data-test="designer-inspector-doc-status"]').exists()).toBe(false)
     await tab('첨부')
-    expect(get('designer-inspector-body').text()).toContain('문서')
+    // flowgate.v02.0053 T#6: a Node without a document shows an empty attachments area, no sentence.
+    expect(get('designer-inspector-tab-state').attributes('data-state')).toBe('empty')
+    expect(get('designer-inspector-body').text()).toBe('')
     await wrapper!.get('.vue-flow__pane').trigger('click')
     await settle()
     expect(get('designer-inspector').attributes('data-selected')).toBe('false')

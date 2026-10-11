@@ -12,6 +12,11 @@
 // disabled with one reason — ownership conflict, revision view, disposed group, AI running (the
 // server refuses a person's write with 423 while an AI run owns the group), then an answer in flight.
 // Not offered (D#1 §8.4): team handling, resuming after an answer, the AI answer request.
+//
+// flowgate.v02.0053 T#6 (0053 CH §2) — a person asks too: the question line at the top of the tab
+// registers a question (asker 'human') and asks an AI to answer it at once. Asking is a change with the
+// same reasons as answering, then a question already on its way. AI-asked questions are answered by
+// the user as before.
 import type { InspectorReadOnly } from '../../inspectorTarget'
 
 /** The parts of a question the rules read (the `@/features/document` QaItem). */
@@ -39,12 +44,13 @@ export interface QnaProviderFacts {
   readonly providerName: string | null
 }
 
-export type QnaOperation = 'read' | 'answer'
+export type QnaOperation = 'read' | 'answer' | 'ask'
 
-/** Reading is a query; answering changes the server state (D#1 §8.3 rule 0). */
+/** Reading is a query; answering and asking change the server state (D#1 §8.3 rule 0). */
 export const QNA_OPERATION_CLASS: Readonly<Record<QnaOperation, 'change' | 'query'>> = {
   read: 'query',
   answer: 'change',
+  ask: 'change',
 }
 
 /** A question has an answer (the counter or the answers the server sent). */
@@ -162,6 +168,8 @@ export interface QnaInput {
   readonly aiRunning: boolean
   /** An answer is waiting for the server. */
   readonly busy: boolean
+  /** A question (and its AI answer request) is waiting for the server. */
+  readonly asking?: boolean
 }
 
 export interface QnaAvailabilityItem {
@@ -184,15 +192,33 @@ export function qnaDisabledReason(input: QnaInput): string | null {
 }
 
 /**
- * Reading is always possible; answering is offered in every ownership (a document feature, D#1 §8.3
- * rules 2-4) and disabled with the first reason that holds.
+ * Why asking is disabled, as a key under `ask_reason.` (worded for a question): the answering reasons
+ * up to the AI run, then a question on its way, then an answer on its way.
+ */
+export function qnaAskDisabledReason(input: QnaInput): string | null {
+  const reason = qnaDisabledReason({ ...input, busy: false })
+  if (reason !== null) return reason.replace(/^reason\./, 'ask_reason.')
+  if (input.asking) return 'ask_reason.asking'
+  return input.busy ? 'ask_reason.busy' : null
+}
+
+/**
+ * Reading is always possible; answering and asking are offered in every ownership (a document
+ * feature, D#1 §8.3 rules 2-4) and disabled with the first reason that holds.
  */
 export function qnaAvailability(input: QnaInput): QnaAvailability {
   const reason = qnaDisabledReason(input)
+  const ask = qnaAskDisabledReason(input)
   return {
     read: { visible: true, enabled: true, reason: null },
     answer: { visible: true, enabled: reason === null, reason },
+    ask: { visible: true, enabled: ask === null, reason: ask },
   }
+}
+
+/** A question may be sent: text that is not only blanks. */
+export function qnaAskReady(body: string): boolean {
+  return body.trim() !== ''
 }
 
 /**
@@ -206,11 +232,20 @@ export function qnaAnswerReady(item: Pick<QnaItemFacts, 'options'>, body: string
 }
 
 /** Kinds of a refused call or a failed read (the `@/features/document` qaErrorOf kinds). */
-export type QnaFailureKind = 'running' | 'disposed' | 'forbidden' | 'not_found' | 'invalid' | 'network' | 'other'
+export type QnaFailureKind = 'running' | 'no_provider' | 'disposed' | 'forbidden' | 'not_found' | 'invalid' | 'network' | 'other'
 
 /** Message key of a refused answer; the questions are read again after it is shown. */
 export function qnaFailureKey(kind: QnaFailureKind): string {
   return `failure.${kind}`
+}
+
+/**
+ * Message key of a refused question: `ask` when the question itself was refused (nothing stored), `ai`
+ * when the question is stored but the AI answer request was refused (it stays without an answer).
+ */
+export function qnaAskFailureKey(stage: 'ask' | 'ai', kind: QnaFailureKind): string {
+  if (stage === 'ask') return kind === 'no_provider' ? 'ask_failure.other' : `ask_failure.${kind}`
+  return kind === 'running' || kind === 'no_provider' || kind === 'network' ? `ai_failure.${kind}` : 'ai_failure.other'
 }
 
 /** Message key of a failed read of the questions. */
