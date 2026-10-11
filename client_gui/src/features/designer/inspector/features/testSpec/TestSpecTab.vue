@@ -8,7 +8,7 @@
        케이스 (TSC) · 결과 (TSR), built from the common slot list part out of the same test view; the 0048
        tally, buttons, reasons and history stay below as reused content. -->
   <section class="inspector-test-spec" data-test="inspector-test-spec" :data-status="status" :data-form="form">
-    <InspectorSlotList :slots="lines" @open="openLine" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="editLine" />
 
     <details :key="target.docId ?? undefined" class="inspector-test-spec-details" data-test="test-spec-details">
       <summary>{{ t('gui.designer.inspector.pane.details') }}</summary>
@@ -113,6 +113,7 @@ import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
+import { openDocument } from '../../openDocument'
 import { testSpecSlots, testSpecVerdictKey, type TestSpecSlot } from './testSpecModel'
 import { useTestSpec } from './useTestSpec'
 
@@ -179,6 +180,11 @@ const lines = computed<InspectorSlotView[]>(() =>
 
 function openLine(line: InspectorSlotView) {
   if (line.id) open(line.id)
+}
+
+/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
+function editLine(line: InspectorSlotView) {
+  if (line.id) openDocument(line.id, 'edit')
 }
 </script>
 

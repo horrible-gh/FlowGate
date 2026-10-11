@@ -2,7 +2,7 @@
   <!-- flowgate.v02.0048 T#5 — documents tab (D#1 §10.2): the selected Node's document as the v0.1
        API gives it — type · seq · title, review status, rejection reason and history, AI review
        existence, the documents it superseded — with the v0.1 sequence slot or the Graph node run
-       of the Node. ↗ 열기 opens a document in the v0.1 screen, where writing and editing happen.
+       of the Node. ↗ 열기 opens a document in its document window, where ✎ edits it.
        A thin container: useDocuments reads, documentsModel decides what is shown.
        flowgate.v02.0052 묶음 A — no prose line in the body: where writing and editing happen is the
        ↗ 열기 button's hover text (v7 keeps explanations in tooltips). -->

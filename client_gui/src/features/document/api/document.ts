@@ -10,12 +10,23 @@
 //              (`ai_review` / `ai_review_history` — existence only, never a count: D#1 §10.4)
 //   relations  the documents a document superseded (the Canvas `document.supersedes` ids), one
 //              read each; a failed one is answered as missing instead of failing the others
-// The body (`/content`) is not read: the Inspector keeps summaries and opens the v0.1 screen for
-// the document itself (D#1 §9, §10.2).
+// The body (`/content`) is not read by the Inspector: it keeps summaries and opens the document itself
+// in the document window (D#1 §9, §10.2; flowgate.v02.0053 T#3).
+//
+// flowgate.v02.0053 T#3 — the document window's body read and save, on the v0.1 endpoints the v0.1
+// main screen uses (MainPanel openEditModal / saveEditContent, MdViewer). No new server API.
+//   content read   GET   /api/v1/documents/content?doc_id=<doc_id>    (perm_document_read)
+//   content save   PATCH /api/v1/documents/content  { doc_id, content } (perm_document_update)
+// The body is the stored file as it is, frontmatter included. A document whose file is not written yet
+// (a report before its run) answers 404 on the read; that is read as an empty body, so the document
+// opens as an empty document and a save writes its file (the server creates it). Every other failure is
+// thrown as it is (see documentErrorOf): the save answers 422 when the document is not editable (final
+// approval, status) and 409 while the Flow's AI runs, for a TR2 or a migrated conversation.
 //
 // The response is the documents row plus workflow / review extras; only the fields below are
 // taken, snake_case -> camelCase. The v0.1 response shape is not changed.
-import { getRequest } from '@shared/api'
+import { getRequest, patchRequest } from '@shared/api'
+import { documentErrorOf } from '../documentError'
 
 const API = '/api/v1'
 
@@ -141,4 +152,30 @@ export async function documentRelationsRead(docIds: readonly string[]): Promise<
       ? { docId: ids[i], record: result.value, error: null }
       : { docId: ids[i], record: null, error: result.reason },
   )
+}
+
+/** A document's stored body (flowgate.v02.0053 T#3). */
+export interface DocumentContent {
+  readonly docId: string
+  /** The stored file as it is (frontmatter included); '' when the file is not written yet. */
+  readonly content: string
+  /** The file is not written yet (the read answered 404). */
+  readonly missing: boolean
+}
+
+/** Reads a document's body. A missing file is an empty body; other errors are thrown as they are. */
+export async function documentContentRead(docId: string): Promise<DocumentContent> {
+  try {
+    const response = await getRequest<unknown>(`${API}/documents/content?doc_id=${encodeURIComponent(docId)}`)
+    const data = response.data as { content?: unknown } | null
+    return { docId, content: typeof data?.content === 'string' ? data.content : '', missing: false }
+  } catch (error) {
+    if (documentErrorOf(error).kind === 'not_found') return { docId, content: '', missing: true }
+    throw error
+  }
+}
+
+/** Saves a document's whole body (frontmatter included). Errors are thrown as they are. */
+export async function documentContentSave(docId: string, content: string): Promise<void> {
+  await patchRequest<unknown>(`${API}/documents/content`, { doc_id: docId, content })
 }

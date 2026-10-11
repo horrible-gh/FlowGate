@@ -2,7 +2,7 @@
 // document with its review extras and the documents it superseded through `@/features/document`,
 // and reads them again when the server says the document changed: its review status, an AI
 // review result, or its documents (a new revision supersedes it). The tab changes nothing on the
-// server; ↗ 열기 hands the document to the v0.1 screen (openDocument, D#1 §9.2).
+// server; ↗ 열기 opens the document in its document window (openDocument, flowgate.v02.0053 T#3).
 import { computed, type ComputedRef, type Ref } from 'vue'
 import {
   documentDetailRead,
@@ -34,7 +34,7 @@ export interface DocumentsState {
   /** Message key of the failed read, or null. */
   readonly errorKey: ComputedRef<string | null>
   reload(): Promise<void>
-  /** ↗ 열기: the v0.1 document screen in a new tab. */
+  /** ↗ 열기: the document's window in this tab. */
   open(docId: string): void
 }
 

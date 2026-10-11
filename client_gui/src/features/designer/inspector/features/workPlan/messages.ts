@@ -12,7 +12,7 @@ export default {
       plan: '아직 없음',
       deploy: '전개 전',
     },
-    write_unconnected: '작성 — 아직 연결되지 않음 (v0.1 문서 화면에서 작성)',
+    write_unconnected: '작성 — 아직 연결되지 않음',
     steps_title: 'Step 요약',
     deploy: {
       label: '전개',
@@ -37,7 +37,7 @@ export default {
     provider_none: '공급자 미정',
     provider_server: '서버 구성',
     open: '↗ 열기',
-    open_hint: 'v0.1 문서 화면을 새 탭에서 엽니다(작업계획 편집기에서 Step을 고칩니다)',
+    open_hint: '문서 열기',
     edit: {
       open: 'Step 편집은 ↗ 열기의 작업계획 편집기에서 합니다.',
       final_approved: '최종 확인된 계획이라 편집할 수 없습니다.',
@@ -62,7 +62,7 @@ export default {
       plan: 'Not yet',
       deploy: 'Before deployment',
     },
-    write_unconnected: 'Write — not connected yet (written in the v0.1 document screen)',
+    write_unconnected: 'Write — not connected yet',
     steps_title: 'Step summary',
     deploy: {
       label: 'Deploy',
@@ -87,7 +87,7 @@ export default {
     provider_none: 'No provider',
     provider_server: 'Server-assembled',
     open: '↗ Open',
-    open_hint: 'Opens the v0.1 document screen in a new tab (Steps are edited in the work plan editor)',
+    open_hint: 'Open the document',
     edit: {
       open: 'Steps are edited in the work plan editor via ↗ Open.',
       final_approved: 'The plan is finally confirmed and can no longer be edited.',
@@ -112,7 +112,7 @@ export default {
       plan: 'まだなし',
       deploy: '展開前',
     },
-    write_unconnected: '作成 — まだ連携されていません（v0.1 の文書画面で作成）',
+    write_unconnected: '作成 — まだ連携されていません',
     steps_title: 'Step 要約',
     deploy: {
       label: '展開',
@@ -137,7 +137,7 @@ export default {
     provider_none: 'プロバイダー未定',
     provider_server: 'サーバー構成',
     open: '↗ 開く',
-    open_hint: 'v0.1の文書画面を新しいタブで開きます(作業計画エディターでStepを編集します)',
+    open_hint: '文書を開く',
     edit: {
       open: 'Stepの編集は↗ 開くの作業計画エディターで行います。',
       final_approved: '最終確認済みの計画のため編集できません。',

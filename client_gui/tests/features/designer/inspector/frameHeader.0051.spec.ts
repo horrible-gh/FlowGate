@@ -8,6 +8,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
+import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
 import { registrationViolations } from '@/features/designer/inspector/inspectorRegistry'
 import {
   fixtureRegistry,
@@ -209,14 +210,20 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     expect(get(w, 'designer-inspector-body').text()).not.toContain('현재 문서')
     expect(get(w, 'designer-inspector-body').text()).not.toContain('문서 상태 open rev 0')
     expect(get(w, 'designer-inspector-body').text()).not.toContain('문서 작성·편집은')
+    closeAllDocumentWindows()
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
-    // flowgate.v02.0052 T#3: the ↗ tooltip says it opens the v0.1 screen in a new tab that may sign in again.
-    expect(get(w, 'inspector-task-card').get('[data-test="inspector-slot-open"]').attributes('title')).toBe(
-      '새 탭에서 v0.1 문서 화면으로 엽니다. 새 탭에서는 다시 로그인해야 할 수 있습니다.',
-    )
+    // flowgate.v02.0053 T#3: ↗ says 열기 again and opens the document window in this tab — never a browser
+    // tab; ✎ opens the same window straight in its editor.
+    const docId = SELECTIONS.v01.node.document!.docId
+    expect(get(w, 'inspector-task-card').get('[data-test="inspector-slot-open"]').attributes('title')).toBe('열기')
     await get(w, 'inspector-task-card').get('[data-test="inspector-slot-open"]').trigger('click')
-    expect(open).toHaveBeenCalledWith(`/main/?doc=${encodeURIComponent(SELECTIONS.v01.node.document!.docId)}`, '_blank', 'noopener')
+    expect(open).not.toHaveBeenCalled()
+    expect(documentWindowList().map((win) => [win.docId, win.mode])).toEqual([[docId, 'view']])
+    expect(get(w, 'inspector-task-card').get('[data-test="inspector-slot-edit"]').attributes('title')).toBe('편집')
+    await get(w, 'inspector-task-card').get('[data-test="inspector-slot-edit"]').trigger('click')
+    expect(documentWindowList().map((win) => [win.docId, win.mode])).toEqual([[docId, 'edit']])
     open.mockRestore()
+    closeAllDocumentWindows()
   })
 
   it('shows unavailable settings for a Graph research card without a settings contribution', async () => {

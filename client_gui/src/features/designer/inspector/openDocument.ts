@@ -1,23 +1,16 @@
-// flowgate.v02.0048 T#4 — ↗ 열기 (D#1 §9.2, A안). The Inspector keeps summaries only; editing
-// reuses the v0.1 main document screen in a new browser tab (a temporary compatibility path while
-// v0.2 is being built). Every feature opens a document through this one function, so moving the
-// view inside v0.2 later changes only this file.
-//
-// - The URL carries the doc_id and nothing else: no token, session value or project id
-//   (D#1 §9.5). It is a relative path — v0.1 and v0.2 are served from the same origin.
-// - 'noopener' is required: the new tab gets no `window.opener` and starts with its own
-//   sessionStorage, so it never reuses this tab's refresh token (CH0005 seq 8 §1). The new tab
-//   signs in on its own: a remember-me login rotates once at boot, otherwise /login returns to
-//   the document through `next`.
-// - With 'noopener' the browser always returns null, so the return value is not a
-//   popup-blocked signal and is not read.
+// flowgate.v02.0048 T#4 — ↗ 열기 (D#1 §9.2). Every Inspector feature opens a document through this
+// one function, so where a document is shown is decided here only.
+// flowgate.v02.0053 T#3 — the document opens in this tab, in its own modeless document window (MD
+// Viewer, ✎ editing in the same window; features/documentWindow). The v0.1 new-tab path is gone: no
+// second tab, no second sign-in, no v0.1 screen. One window per document — opening it again brings
+// the open window back.
+// - `view` (↗): the document as it reads.
+// - `edit` (✎): straight to the window's text editor.
+import { openDocumentWindow, type DocumentWindowMode } from '@/features/documentWindow'
 
-/** The v0.1 main deep link for one document: `/main/?doc=<doc_id>`. */
-export function openDocumentUrl(docId: string): string {
-  return `/main/?doc=${encodeURIComponent(docId)}`
-}
+export type OpenDocumentMode = DocumentWindowMode
 
-/** Opens the document in the v0.1 main screen in a new tab. */
-export function openDocument(docId: string): void {
-  window.open(openDocumentUrl(docId), '_blank', 'noopener')
+/** Opens the document in its document window: `view` (default) or straight to the editor (`edit`). */
+export function openDocument(docId: string, mode: OpenDocumentMode = 'view'): void {
+  if (docId) openDocumentWindow(docId, mode)
 }

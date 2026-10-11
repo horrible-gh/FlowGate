@@ -1,7 +1,7 @@
 /**
  * flowgate.v02.0048 T#13 — the WP summary with `@/features/document` mocked as a small server that also refuses
  * (D#1 §12.1): the read view of a plan (WP rev, totals, progress, provider assignment, one row per card with
- * its started mark, where the plan is edited), ↗ 열기 into the v0.1 screen (new tab, noopener, doc_id only),
+ * its started mark, where the plan is edited), ↗ 열기 into the plan's document window (flowgate.v02.0053 T#3),
  * the refusals — 409 wp_unreadable (its revision, ↗ 열기 for the raw view), 403, 404, 422, 500, network — and
  * the retry, the plan's change events (a save / restore / fill of the plan: document_explorer_refresh /
  * group_view_refresh; a review: doc_review_status_changed; a document of the same Flow added or updated: a card
@@ -19,6 +19,7 @@ import WorkPlanTab from '@/features/designer/inspector/features/workPlan/WorkPla
 import { WORK_PLAN_EVENTS } from '@/features/designer/inspector/features/workPlan/useWorkPlan'
 import { createInspectorRegistry, inspectorRegistry } from '@/features/designer/inspector/inspectorRegistry'
 import type { InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
+import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
 import { INSPECTOR_REFRESH_COALESCE_MS } from '@/features/designer/inspector/useInspectorResource'
 import { V01_TASK_NODE, prepareInspectorI18n, registrationModules, selectionOf, targetOf } from '../support/inspectorSupport'
 import { installProjectEventStream, removeProjectEventStream, type ProjectEventStream } from '../support/projectEventStream'
@@ -148,7 +149,10 @@ const docRow = (docId: string) => ({
 let pinia: Pinia
 let stream: ProjectEventStream
 let wrapper: VueWrapper<any> | null = null
-let opened: unknown[][]
+// flowgate.v02.0053 T#3: ↗ 열기 opens the document window in this tab — `opened()` lists the windows as
+// [doc_id, mode]; a browser tab is never opened (`browserTabs` stays empty).
+let browserTabs: unknown[][]
+const opened = () => documentWindowList().map((win) => [win.docId, win.mode])
 
 beforeEach(() => {
   i18n.global.locale.value = 'ko'
@@ -160,9 +164,10 @@ beforeEach(() => {
   for (const mock of [planRead, activityRead, documentRead, detailRead, relationsRead, qaReadCall, attachmentsReadCall]) mock.mockReset()
   seed()
   serve()
-  opened = []
+  closeAllDocumentWindows()
+  browserTabs = []
   vi.spyOn(window, 'open').mockImplementation((...args: unknown[]) => {
-    opened.push(args)
+    browserTabs.push(args)
     return null
   })
 })
@@ -171,6 +176,8 @@ afterEach(() => {
   wrapper?.unmount()
   wrapper = null
   removeProjectEventStream()
+  expect(browserTabs).toEqual([])
+  closeAllDocumentWindows()
   vi.restoreAllMocks()
   vi.useRealTimers()
 })
@@ -230,10 +237,10 @@ describe('WP summary — reading (flowgate.v02.0048 T#13)', () => {
     expect(paneState(w).exists()).toBe(false)
   })
 
-  it('↗ 열기 opens the plan in the v0.1 screen in a new tab: noopener, doc_id only; nothing else is called', async () => {
+  it('↗ 열기 opens the plan in its document window in this tab; nothing else is called', async () => {
     const w = await mountTab(target())
     await click(w, 'work-plan-open')
-    expect(opened).toEqual([[`/main/?doc=${encodeURIComponent(WP_DOC)}`, '_blank', 'noopener']])
+    expect(opened()).toEqual([[WP_DOC, 'view']])
     expect(planRead).toHaveBeenCalledTimes(1)
   })
 
@@ -293,7 +300,7 @@ describe('WP summary — refusals (flowgate.v02.0048 T#13)', () => {
     expect(el(w, 'work-plan-card').exists()).toBe(false)
     expect(el(w, 'work-plan-edit').exists()).toBe(false)
     await click(w, 'work-plan-open')
-    expect(opened).toEqual([[`/main/?doc=${encodeURIComponent(WP_DOC)}`, '_blank', 'noopener']])
+    expect(opened()).toEqual([[WP_DOC, 'view']])
   })
 
   it.each<[string, unknown, string]>([
@@ -310,7 +317,7 @@ describe('WP summary — refusals (flowgate.v02.0048 T#13)', () => {
     expect(paneState(w).text()).toContain(message)
     expect(el(w, 'work-plan-rev').exists()).toBe(false)
     await click(w, 'work-plan-open')
-    expect(opened).toHaveLength(1)
+    expect(opened()).toHaveLength(1)
     await click(w, 'inspector-pane-retry')
     expect(planRead).toHaveBeenCalledTimes(2)
     expect(paneState(w).exists()).toBe(false)
@@ -428,7 +435,7 @@ describe('WP summary — read-only Flows (flowgate.v02.0048 T#13)', () => {
     expect(textOf(w, 'work-plan-rev')).toBe('WP rev 3')
     expect(el(w, 'work-plan-open').attributes('disabled')).toBeUndefined()
     await click(w, 'work-plan-open')
-    expect(opened).toHaveLength(1)
+    expect(opened()).toHaveLength(1)
   })
 })
 
@@ -448,7 +455,7 @@ describe('WP summary — Node change (flowgate.v02.0048 T#13)', () => {
     expect(textOf(w, 'work-plan-rev')).toBe('WP rev 0')
     expect(rows(w).map((row) => row.card)).toEqual(['D#1'])
     await click(w, 'work-plan-open')
-    expect(opened).toEqual([[`/main/?doc=${encodeURIComponent(OTHER_WP_DOC)}`, '_blank', 'noopener']])
+    expect(opened()).toEqual([[OTHER_WP_DOC, 'view']])
   })
 })
 
@@ -487,7 +494,7 @@ describe('WP summary in the Frame (real registry)', () => {
   it('↗ 열기 in the Frame opens the selected plan', async () => {
     const w = await mountFrame(planSelection('v01', WP_NODE))
     await click(w, 'work-plan-open')
-    expect(opened).toEqual([[`/main/?doc=${encodeURIComponent(WP_DOC)}`, '_blank', 'noopener']])
+    expect(opened()).toEqual([[WP_DOC, 'view']])
   })
 
   it('a TR card: no summary, no read; the tab row is the same as without the registration', async () => {
@@ -533,12 +540,13 @@ describe('WP summary in the Frame (real registry)', () => {
     expect(el(w2, 'inspector-work-plan').exists()).toBe(false)
   })
 
-  it('no Step editing in the WP summary; the only operations are ↗ 열기 (the slot line and the summary line)', async () => {
+  it('no Step editing in the WP summary; the only operations are ↗ 열기 / ✎ (the slot line) and ↗ 열기 (the summary line)', async () => {
     const w = await mountFrame(planSelection('v01', WP_NODE))
     const section = el(w, 'inspector-work-plan')
     for (const word of ['재계획', '⟳', '위임', '메모', 'AI 전달', '연동 전']) expect(section.text()).not.toContain(word)
     expect(section.findAll('input, select, textarea').length).toBe(0)
-    expect(section.findAll('button').map((button) => button.attributes('data-test'))).toEqual(['inspector-slot-open', 'work-plan-open'])
+    // flowgate.v02.0053 T#3: ✎ opens the plan's document window straight in its text editor (no Step editing here).
+    expect(section.findAll('button').map((button) => button.attributes('data-test'))).toEqual(['inspector-slot-open', 'inspector-slot-edit', 'work-plan-open'])
     // flowgate.v02.0051 stage 2: the v7 lines above the summary — the plan with its pill, the deploy result empty.
     expect(section.findAll('[data-test="inspector-slot-name"]').map((name) => name.text())).toEqual(['작업계획 (WP)', '전개'])
     expect(section.find('[data-test="inspector-slot-empty"]').text()).toBe('전개 전')

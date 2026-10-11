@@ -228,7 +228,8 @@ describe('card documents tab parts', () => {
     expect(rows.map((row) => row.get('[data-test="inspector-slot-empty"]').text())).toEqual(['아직 없음', '실행 후'])
     const write = rows[0].get('[data-test="inspector-slot-write"]')
     expect(write.attributes('disabled')).toBeDefined()
-    expect(write.attributes('title')).toBe('작성 — 아직 연결되지 않음 (v0.1 문서 화면에서 작성)')
+    // flowgate.v02.0053 T#3: no v0.1 screen in the reason any more.
+    expect(write.attributes('title')).toBe('작성 — 아직 연결되지 않음')
   })
 
   it('RequirementSlots: 요구사항 for R with the 작성 중 pill; 버그 리포트 for B', () => {

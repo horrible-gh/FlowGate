@@ -95,7 +95,7 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     // flowgate.v02.0052 T#2: why the 설정 tab is empty (inspectorNoSettingsKey).
     expect(Object.keys(inspector.pane.no_settings_for).sort()).toEqual(['conflict', 'graph', 'no_slot', 'unassigned'])
     expect(Object.keys(inspector.header).sort()).toEqual(['copied', 'copy_id', 'kind_bug', 'memo', 'memo_unavailable', 'more', 'read_only', 'read_only_conflict', 'read_only_revision', 'state_tip'])
-    expect(Object.keys(inspector.slot).sort()).toEqual(['empty', 'open', 'open_hint', 'progress', 'write'])
+    expect(Object.keys(inspector.slot).sort()).toEqual(['edit', 'empty', 'open', 'progress', 'write'])
     expect(Object.keys(inspector.slot_state).sort()).toEqual(['closed', 'in_progress', 'writing'])
     // flowgate.v02.0052 T#3: ■ 중단 / ↻ 재실행 belong to the top 실행 menu, the card keeps 실행 이력 only.
     expect(Object.keys(inspector.menu).sort()).toEqual(['history'])

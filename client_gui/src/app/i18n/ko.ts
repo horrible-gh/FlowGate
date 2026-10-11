@@ -348,7 +348,8 @@ export default {
         empty: '아직 없음',
         progress: '진행률',
         open: '열기',
-        open_hint: '새 탭에서 v0.1 문서 화면으로 엽니다. 새 탭에서는 다시 로그인해야 할 수 있습니다.',
+        // flowgate.v02.0053 T#3 — ✎ opens the document window straight in its editor.
+        edit: '편집',
         write: '작성',
       },
       review: {
@@ -791,6 +792,47 @@ export default {
     confirm: {
       ok: '확인',
       cancel: '취소',
+    },
+  },
+  // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.
+  document_window: {
+    untitled: '문서',
+    edit: '편집',
+    editor: '문서 본문',
+    save: '저장',
+    cancel: '취소',
+    discard: {
+      title: '저장하지 않은 내용을 버릴까요?',
+      confirm: '버리기',
+      keep: '계속 편집',
+    },
+    state: {
+      approved: '승인됨',
+      pending_review: '검토 중',
+      revised: '수정됨',
+      rejected: '반려됨',
+      closed: '완료',
+      open: '진행 중',
+      draft: '작성 중',
+      unknown: '상태 모름',
+    },
+    error: {
+      load: '불러오지 못했습니다',
+      gone: '문서를 찾을 수 없습니다',
+      forbidden: '권한이 없습니다',
+      network: '서버에 연결하지 못했습니다',
+      save: '저장하지 못했습니다',
+      locked: '지금은 수정할 수 없는 문서입니다',
+      busy: '지금은 저장할 수 없습니다',
+    },
+    viewer: {
+      loading: '불러오는 중...',
+      error: '불러오지 못했습니다',
+      retry: '다시 시도',
+      copy_md: 'Markdown 복사',
+      copy_md_with_header: '헤더 포함 복사',
+      copy_code: '코드 복사',
+      copy_failed: '복사하지 못했습니다',
     },
   },
   placeholder: {

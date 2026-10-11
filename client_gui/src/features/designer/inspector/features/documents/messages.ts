@@ -4,7 +4,7 @@ export default {
   ko: {
     current: '현재 문서',
     open: '↗ 열기',
-    open_hint: '문서 작성·편집은 v0.1 문서 화면에서 합니다 (새 탭에서 엽니다)',
+    open_hint: '문서 열기',
     revision: 'rev {n}',
     doc_status: '문서 상태 {status}',
     ai_reviewed: 'AI 검수 이력 있음',
@@ -49,7 +49,7 @@ export default {
   en: {
     current: 'Current document',
     open: '↗ Open',
-    open_hint: 'Write and edit the document in the v0.1 document screen (opens in a new tab)',
+    open_hint: 'Open the document',
     revision: 'rev {n}',
     doc_status: 'Document status {status}',
     ai_reviewed: 'Has AI review history',
@@ -94,7 +94,7 @@ export default {
   ja: {
     current: '現在の文書',
     open: '↗ 開く',
-    open_hint: '文書の作成・編集は v0.1 の文書画面で行います（新しいタブで開きます）',
+    open_hint: '文書を開く',
     revision: 'rev {n}',
     doc_status: '文書状態 {status}',
     ai_reviewed: 'AI レビュー履歴あり',

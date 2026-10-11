@@ -2,10 +2,10 @@
   <!-- flowgate.v02.0051 stage 2 — the 설계 card's documents tab body: the v7 "설명 대기" note (0035
        insp.js special 'tbd') above the one line of the bound document. Nothing here decides what the
        설계 card is (0051 turn 7). A thin container: designCardModel decides the line; ↗ opens the
-       document in the v0.1 screen. No server call. -->
+       document in its document window, ✎ straight in its editor. No server call. -->
   <section class="inspector-design-card" data-test="inspector-design-card" :data-doc-type="target.docType ?? ''">
     <InspectorTbdNote :title="t(k('tbd.title'))" :label="t(k('tbd.text'))" />
-    <InspectorSlotList :slots="lines" @open="open" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" />
   </section>
 </template>
 
@@ -52,6 +52,11 @@ const lines = computed(() => designCardSlots(props.target).map(lineOf))
 
 function open(line: InspectorSlotView) {
   if (line.id) openDocument(line.id)
+}
+
+/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
+function edit(line: InspectorSlotView) {
+  if (line.id) openDocument(line.id, 'edit')
 }
 </script>
 

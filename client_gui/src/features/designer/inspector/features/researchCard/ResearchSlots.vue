@@ -1,10 +1,10 @@
 <template>
   <!-- flowgate.v02.0051 stage 2 — the 조사 card's documents tab body (0035 v7 research.*): the 지시서 (N)
        and 레포트 (NR) slot lines, built from the common slot list part. A thin container: researchCardModel
-       decides the lines from the target; ↗ opens a known document in the v0.1 screen; ＋ (writing) is not
+       decides the lines from the target; ↗ opens a known document in its window (✎ in its editor); ＋ (writing) is not
        connected and shows so. No server call. -->
   <section class="inspector-research-card" data-test="inspector-research-card" :data-doc-type="target.docType ?? ''">
-    <InspectorSlotList :slots="lines" @open="open" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" />
   </section>
 </template>
 
@@ -52,6 +52,11 @@ const lines = computed(() => researchCardSlots(props.target).map(lineOf))
 
 function open(line: InspectorSlotView) {
   if (line.id) openDocument(line.id)
+}
+
+/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
+function edit(line: InspectorSlotView) {
+  if (line.id) openDocument(line.id, 'edit')
 }
 </script>
 

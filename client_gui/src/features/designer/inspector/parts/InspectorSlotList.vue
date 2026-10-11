@@ -6,9 +6,9 @@
        presses as events; a button whose operation is not connected is shown disabled with its reason
        (0051-R §2.3), never left out. A feature may hand its own test ids per line (`testIds`) and may
        render a line's summary itself through the `summary` scoped slot.
-       flowgate.v02.0052 T#3 — every ↗ opens the v0.1 document screen in a new tab (openDocument,
-       noopener): that tab starts without this tab's session and, unless the login was kept, goes
-       through the login screen (0048 D#1 §9.4). The enabled ↗ says so in its tooltip, so the login screen does not read as a failure. -->
+       flowgate.v02.0053 T#3 — ↗ opens the document in its document window in this tab (openDocument);
+       its tooltip is 열기 again. With `editable`, a line whose ↗ is usable also has ✎, which opens the
+       same window straight in its editor (an `edit` event). -->
   <div class="inspector-slot-list" data-test="inspector-slot-list">
     <InspectorSlotRow
       v-for="line in slots"
@@ -51,13 +51,22 @@
       <IconButton
         v-if="line.open && line.open !== 'none'"
         :label="t('gui.designer.inspector.slot.open')"
-        :title="line.open === 'disabled' ? (line.openReason ?? t('gui.designer.inspector.unconnected')) : t('gui.designer.inspector.slot.open_hint')"
+        :title="line.open === 'disabled' ? (line.openReason ?? t('gui.designer.inspector.unconnected')) : t('gui.designer.inspector.slot.open')"
         variant="secondary"
         size="sm"
         :disabled="line.open === 'disabled'"
         :data-test="line.testIds?.open ?? 'inspector-slot-open'"
         @click="emit('open', line)"
       >↗</IconButton>
+      <IconButton
+        v-if="editable && line.open === 'enabled'"
+        :label="t('gui.designer.inspector.slot.edit')"
+        :title="t('gui.designer.inspector.slot.edit')"
+        variant="secondary"
+        size="sm"
+        data-test="inspector-slot-edit"
+        @click="emit('edit', line)"
+      >✎</IconButton>
       <IconButton
         v-if="line.write && line.write !== 'none'"
         :label="t('gui.designer.inspector.slot.write')"
@@ -107,12 +116,18 @@ export interface InspectorSlotView {
   readonly testIds?: (InspectorSlotTestIds & { readonly nav?: string; readonly open?: string }) | null
 }
 
-defineProps<{
-  slots: readonly InspectorSlotView[]
-}>()
+withDefaults(
+  defineProps<{
+    slots: readonly InspectorSlotView[]
+    /** ✎ (open straight in the editor) on every line whose ↗ is usable. */
+    editable?: boolean
+  }>(),
+  { editable: false },
+)
 
 const emit = defineEmits<{
   open: [line: InspectorSlotView]
+  edit: [line: InspectorSlotView]
   write: [line: InspectorSlotView]
   review: [line: InspectorSlotView]
   nav: [line: InspectorSlotView]

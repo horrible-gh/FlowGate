@@ -21,6 +21,7 @@ import TestSpecTab from '@/features/designer/inspector/features/testSpec/TestSpe
 import { TEST_SPEC_EVENTS } from '@/features/designer/inspector/features/testSpec/useTestSpec'
 import { createInspectorRegistry, inspectorRegistry } from '@/features/designer/inspector/inspectorRegistry'
 import type { InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
+import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
 import { INSPECTOR_REFRESH_COALESCE_MS } from '@/features/designer/inspector/useInspectorResource'
 import { prepareInspectorI18n, registrationModules, targetOf } from '../support/inspectorSupport'
 import { installProjectEventStream, removeProjectEventStream, type ProjectEventStream } from '../support/projectEventStream'
@@ -216,7 +217,10 @@ const docRow = (docId: string) => ({
 let pinia: Pinia
 let stream: ProjectEventStream
 let wrapper: VueWrapper<any> | null = null
-let opened: unknown[][]
+// flowgate.v02.0053 T#3: ↗ 열기 opens the document window in this tab — `opened()` lists the windows as
+// [doc_id, mode]; a browser tab is never opened (`browserTabs` stays empty).
+let browserTabs: unknown[][]
+const opened = () => documentWindowList().map((win) => [win.docId, win.mode])
 
 beforeEach(() => {
   i18n.global.locale.value = 'ko'
@@ -232,9 +236,10 @@ beforeEach(() => {
   for (const mock of [viewRead, startCall, cancelCall, activityRead, documentRead, detailRead, relationsRead, qaReadCall, attachmentsReadCall]) mock.mockReset()
   seed()
   serve()
-  opened = []
+  closeAllDocumentWindows()
+  browserTabs = []
   vi.spyOn(window, 'open').mockImplementation((...args: unknown[]) => {
-    opened.push(args)
+    browserTabs.push(args)
     return null
   })
 })
@@ -243,6 +248,8 @@ afterEach(() => {
   wrapper?.unmount()
   wrapper = null
   removeProjectEventStream()
+  expect(browserTabs).toEqual([])
+  closeAllDocumentWindows()
   vi.restoreAllMocks()
   vi.useRealTimers()
 })
@@ -319,16 +326,16 @@ describe('test section — reading (flowgate.v02.0048 T#11)', () => {
     expect(el(w, 'test-spec-cancel').exists()).toBe(false)
     expect(el(w, 'test-spec-state').exists()).toBe(false)
     await click(w, 'test-spec-open')
-    expect(opened).toEqual([[`/main/?doc=${encodeURIComponent(LEGACY_TS_DOC)}`, '_blank', 'noopener']])
+    expect(opened()).toEqual([[LEGACY_TS_DOC, 'view']])
   })
 
-  it('↗ 열기 / ↗ 결과 보고서 open the v0.1 screen in a new tab: noopener, doc_id only', async () => {
+  it('↗ 열기 / ↗ 결과 보고서 open their document windows in this tab (flowgate.v02.0053 T#3)', async () => {
     const w = await mountTab(target())
     await click(w, 'test-spec-open')
     await click(w, 'test-spec-open-report')
-    expect(opened).toEqual([
-      [`/main/?doc=${encodeURIComponent(TS_DOC)}`, '_blank', 'noopener'],
-      [`/main/?doc=${encodeURIComponent(TSR_DOC)}`, '_blank', 'noopener'],
+    expect(opened()).toEqual([
+      [TS_DOC, 'view'],
+      [TSR_DOC, 'view'],
     ])
     expect(startCall).not.toHaveBeenCalled()
   })
@@ -475,7 +482,7 @@ describe('test section — ▶ 실행 and ■ 취소 (flowgate.v02.0048 T#11)', 
     expect(startCall).toHaveBeenCalledTimes(1)
     // Reading and opening are queries: still possible.
     await click(w, 'test-spec-open')
-    expect(opened).toHaveLength(1)
+    expect(opened()).toHaveLength(1)
   })
 
   it('403 holds for the document it was answered on: another TS offers ▶ 실행 again (and is refused again by the server)', async () => {
@@ -642,7 +649,7 @@ describe('test section — read-only Flows (flowgate.v02.0048 T#11)', () => {
     await click(w, 'test-spec-run')
     expect(startCall).not.toHaveBeenCalled()
     await click(w, 'test-spec-open')
-    expect(opened).toHaveLength(1)
+    expect(opened()).toHaveLength(1)
   })
 
   it('Graph draft view: enabled; ■ 취소 of a live run in revision view is disabled the same way', async () => {

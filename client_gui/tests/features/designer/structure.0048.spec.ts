@@ -31,6 +31,8 @@ function loadedRegistry(): RegistryModule {
 // files; its index is `export *` lines) — checked on src/features and on fixtures/structure0048/document.
 // flowgate.v02.0048 T#4: B15 (`window.open` only in openDocument.ts and only with 'noopener', D#1 §9.2 /
 // §9.5) — checked on the Inspector root and on fixtures/structure0048/open.
+// flowgate.v02.0053 T#3: B15 now says the Inspector opens no browser tab at all — a document opens in the
+// in-tab document window through openDocument.ts; the 'noopener' reading and its fixtures are gone.
 
 const SRC = resolve(__dirname, '../../../src')
 const FEATURES_ROOT = join(SRC, 'features')
@@ -145,16 +147,10 @@ const DOCUMENT_SHARED = /^@shared\/(api|apiErrors)$/
 /** B11 — the one line kind of features/document/index.ts (comments and blank lines aside). */
 const DOCUMENT_INDEX_LINE = /^export \* from '\.\/[A-Za-z/]+'$/
 
-/** B15 — the one Inspector file that may open a browser tab (D#1 §9.2). */
+/** B15 — the one Inspector file every document open goes through; it opens the in-tab document window. */
 const OPEN_DOCUMENT_FILE = 'openDocument.ts'
+const OPENS_DOCUMENT_WINDOW = /^\s*import\s[^'"]*from\s*'@\/features\/documentWindow'/m
 const WINDOW_OPEN = /\b(?:window|globalThis|self)\s*\.\s*open\s*\(/g
-/**
- * B15 — the features argument (the third) must be one plain string literal, so the rule can be read
- * from the source, holding a `noopener` feature that is on: the bare name, `yes`, `true` or a non-zero
- * integer (HTML window features). `noopener` in the URL or target, or `noopener=no`, does not count.
- */
-const FEATURES_LITERAL = /^'([^'\\]*)'$|^"([^"\\]*)"$|^`([^`\\$]*)`$/
-const NOOPENER_ON = /^noopener(?:=(?:yes|true|0*[1-9]\d*))?$/i
 
 /**
  * B14 — undecided features (D#1 §8.4). flowgate.v02.0051 (turn 7): an undecided item may be named and
@@ -312,53 +308,19 @@ function documentFeatureViolations(document: string): string[] {
 }
 
 /**
- * The top-level arguments of a call whose opening parenthesis ends just before `start`. Commas and
- * parentheses inside brackets or string literals do not split or close it.
+ * B15 (flowgate.v02.0053 T#3) — the Inspector opens no browser tab: `window.open` (or `globalThis.open` /
+ * `self.open`) nowhere under an Inspector root, openDocument.ts included; and openDocument.ts, when it is
+ * there, opens the in-tab document window (`@/features/documentWindow`).
  */
-function callArguments(src: string, start: number): string[] {
-  const args: string[] = []
-  let depth = 0
-  let quote = ''
-  let from = start
-  for (let i = start; i < src.length; i++) {
-    const c = src[i]
-    if (quote) {
-      if (c === '\\') i++
-      else if (c === quote) quote = ''
-    } else if (c === "'" || c === '"' || c === '`') quote = c
-    else if ('([{'.includes(c)) depth++
-    else if (')]}'.includes(c) && depth > 0) depth--
-    else if ((c === ',' || c === ')') && depth === 0) {
-      args.push(src.slice(from, i).trim())
-      if (c === ')') break
-      from = i + 1
-    }
-  }
-  return args.filter(Boolean)
-}
-
-/** B15 — the call's features argument turns noopener on. */
-function opensWithNoopener(args: string[]): boolean {
-  const literal = FEATURES_LITERAL.exec(args[2] ?? '')
-  if (!literal) return false
-  const features = literal[1] ?? literal[2] ?? literal[3]
-  return features
-    .replace(/\s*=\s*/g, '=')
-    .split(/[\s,]+/)
-    .some((feature) => NOOPENER_ON.test(feature))
-}
-
-/** B15 — `window.open` anywhere under an Inspector root: only in openDocument.ts, and always with 'noopener'. */
 function windowOpenViolations(root: string): string[] {
   const out = new Set<string>()
   for (const file of sourceFiles(root)) {
     const label = slashes(relative(root, file))
-    const src = read(file)
-    for (const call of src.matchAll(WINDOW_OPEN)) {
-      if (label !== OPEN_DOCUMENT_FILE) out.add(`B15 ${label}: window.open outside ${OPEN_DOCUMENT_FILE}`)
-      else if (!opensWithNoopener(callArguments(src, (call.index ?? 0) + call[0].length))) out.add(`B15 ${label}: window.open without 'noopener'`)
-    }
+    if (WINDOW_OPEN.test(read(file))) out.add(`B15 ${label}: opens a browser tab`)
+    WINDOW_OPEN.lastIndex = 0
   }
+  const opener = join(root, OPEN_DOCUMENT_FILE)
+  if (existsSync(opener) && !OPENS_DOCUMENT_WINDOW.test(read(opener))) out.add(`B15 ${OPEN_DOCUMENT_FILE}: does not open the document window`)
   return [...out]
 }
 
@@ -441,8 +403,9 @@ describe('features/designer/inspector structure (flowgate.v02.0048)', () => {
     expect(documentFeatureViolations(join(FEATURES_ROOT, 'document'))).toEqual([])
   })
 
-  it("B15: the Inspector opens a browser tab only in openDocument.ts, and only with 'noopener'", () => {
+  it('B15: the Inspector opens no browser tab; openDocument.ts opens the in-tab document window', () => {
     expect(windowOpenViolations(INSPECTOR)).toEqual([])
+    expect(existsSync(join(INSPECTOR, OPEN_DOCUMENT_FILE))).toBe(true)
   })
 
   it('B13: the module registry (import.meta.glob) holds exactly the feature folders with a register.ts', () => {
@@ -520,20 +483,14 @@ describe('structure.0048 checks catch boundary violations (fixtures/structure004
     ])
   })
 
-  it("the open fixtures: openDocument.ts with 'noopener' passes; a window.open elsewhere or without 'noopener' is named", () => {
+  it('the open fixtures: openDocument.ts opening the document window passes; any browser tab is named, openDocument.ts included', () => {
     expect(windowOpenViolations(join(FIXTURES, 'open/clean'))).toEqual([])
     expect(windowOpenViolations(join(FIXTURES, 'open/boundary')).sort()).toEqual([
-      'B15 features/omega/useOmega.ts: window.open outside openDocument.ts',
-      "B15 openDocument.ts: window.open without 'noopener'",
-      'B15 parts/LinkPart.vue: window.open outside openDocument.ts',
+      'B15 features/omega/useOmega.ts: opens a browser tab',
+      'B15 openDocument.ts: does not open the document window',
+      'B15 openDocument.ts: opens a browser tab',
+      'B15 parts/LinkPart.vue: opens a browser tab',
     ])
-  })
-
-  it("the open fixtures: only a features argument that turns noopener on counts as 'noopener'", () => {
-    expect(windowOpenViolations(join(FIXTURES, 'open/noopener-variants'))).toEqual([])
-    for (const root of ['noopener-in-url', 'noopener-as-target', 'noopener-no', 'noopener-zero', 'noopener-computed']) {
-      expect(windowOpenViolations(join(FIXTURES, 'open', root)), root).toEqual(["B15 openDocument.ts: window.open without 'noopener'"])
-    }
   })
 
   it('the registry fixture fails on key, order, value sets and locales — not on naming an undecided feature', () => {

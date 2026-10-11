@@ -340,7 +340,8 @@ export default {
         empty: 'None yet',
         progress: 'Progress',
         open: 'Open',
-        open_hint: 'Opens the v0.1 document screen in a new tab. The new tab may ask you to sign in again.',
+        // flowgate.v02.0053 T#3 — ✎ opens the document window straight in its editor.
+        edit: 'Edit',
         write: 'Write',
       },
       review: {
@@ -780,6 +781,47 @@ export default {
     confirm: {
       ok: 'OK',
       cancel: 'Cancel',
+    },
+  },
+  // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.
+  document_window: {
+    untitled: 'Document',
+    edit: 'Edit',
+    editor: 'Document body',
+    save: 'Save',
+    cancel: 'Cancel',
+    discard: {
+      title: 'Discard the unsaved changes?',
+      confirm: 'Discard',
+      keep: 'Keep editing',
+    },
+    state: {
+      approved: 'Approved',
+      pending_review: 'In review',
+      revised: 'Revised',
+      rejected: 'Rejected',
+      closed: 'Done',
+      open: 'In progress',
+      draft: 'Drafting',
+      unknown: 'Unknown state',
+    },
+    error: {
+      load: 'Could not load',
+      gone: 'Document not found',
+      forbidden: 'No permission',
+      network: 'Could not reach the server',
+      save: 'Could not save',
+      locked: 'This document cannot be edited now',
+      busy: 'Cannot save right now',
+    },
+    viewer: {
+      loading: 'Loading...',
+      error: 'Could not load',
+      retry: 'Retry',
+      copy_md: 'Copy Markdown',
+      copy_md_with_header: 'Copy with header',
+      copy_code: 'Copy code',
+      copy_failed: 'Could not copy',
     },
   },
   placeholder: {

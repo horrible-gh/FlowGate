@@ -15,6 +15,7 @@
           <slot name="header">{{ title }}</slot>
         </span>
         <span class="ui-modeless-titlebar-actions">
+          <slot name="actions" />
           <IconButton
             :label="isMinimized ? 'Restore' : 'Minimize'"
             variant="ghost"
@@ -251,6 +252,11 @@ onBeforeUnmount(() => {
   document.removeEventListener('mousemove', onResizeMove)
   document.removeEventListener('mouseup', onResizeEnd)
 })
+
+// flowgate.v02.0053 T#3: the optional `actions` slot puts a caller's own titlebar buttons right before
+// minimize / close (the document window's ✎), and `bringToFront()` lets a caller raise a panel that is
+// already open (a second request for the same document). Both stay domain-free.
+defineExpose({ bringToFront })
 </script>
 
 <style scoped>

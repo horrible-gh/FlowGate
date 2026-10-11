@@ -15,7 +15,7 @@ export default {
     summary: {
       not_read: '상태 미연결',
     },
-    write_unconnected: '작성 — 아직 연결되지 않음 (v0.1 문서 화면에서 작성)',
+    write_unconnected: '작성 — 아직 연결되지 않음',
   },
   en: {
     slot: {
@@ -30,7 +30,7 @@ export default {
     summary: {
       not_read: 'State not connected',
     },
-    write_unconnected: 'Write — not connected yet (written in the v0.1 document screen)',
+    write_unconnected: 'Write — not connected yet',
   },
   ja: {
     slot: {
@@ -45,6 +45,6 @@ export default {
     summary: {
       not_read: '状態は未連携',
     },
-    write_unconnected: '作成 — まだ連携されていません（v0.1 の文書画面で作成）',
+    write_unconnected: '作成 — まだ連携されていません',
   },
 }

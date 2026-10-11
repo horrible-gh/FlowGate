@@ -6,7 +6,7 @@
 // read the view and the guard again — success or refusal (D#1 §7.3, §8.1). Whether they are possible also
 // reads the Flow's AI activity and the group's disposal (`group_disposed` of the document read). There is
 // no permission list on the client (D#1 §8.2): a 403 of the server disables both with its reason for this
-// document until another document is selected. ↗ 열기 hands the detail to the v0.1 screen (openDocument).
+// document until another document is selected. ↗ 열기 opens the document in its window (openDocument).
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import {
   reviewActivityRead,
@@ -113,7 +113,7 @@ export interface TestSpecState {
   run(): Promise<boolean>
   /** Cancels the live run; nothing is sent when cancelling is disabled. */
   cancel(): Promise<boolean>
-  /** Opens a document (the target, its TS or its report) in the v0.1 screen. */
+  /** Opens a document (the target, its TS or its report) in its document window. */
   open(docId: string): void
   reload(): Promise<void>
 }

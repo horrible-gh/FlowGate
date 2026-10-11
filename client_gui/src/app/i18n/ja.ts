@@ -340,7 +340,8 @@ export default {
         empty: 'まだありません',
         progress: '進捗',
         open: '開く',
-        open_hint: '新しいタブで v0.1 の文書画面を開きます。新しいタブでは再ログインが必要な場合があります。',
+        // flowgate.v02.0053 T#3 — ✎ opens the document window straight in its editor.
+        edit: '編集',
         write: '作成',
       },
       review: {
@@ -780,6 +781,47 @@ export default {
     confirm: {
       ok: '確認',
       cancel: '取消',
+    },
+  },
+  // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.
+  document_window: {
+    untitled: '文書',
+    edit: '編集',
+    editor: '文書本文',
+    save: '保存',
+    cancel: 'キャンセル',
+    discard: {
+      title: '保存していない内容を破棄しますか？',
+      confirm: '破棄',
+      keep: '編集を続ける',
+    },
+    state: {
+      approved: '承認済み',
+      pending_review: 'レビュー中',
+      revised: '修正済み',
+      rejected: '差し戻し',
+      closed: '完了',
+      open: '進行中',
+      draft: '作成中',
+      unknown: '状態不明',
+    },
+    error: {
+      load: '読み込めませんでした',
+      gone: '文書が見つかりません',
+      forbidden: '権限がありません',
+      network: 'サーバーに接続できませんでした',
+      save: '保存できませんでした',
+      locked: '現在は編集できない文書です',
+      busy: '現在は保存できません',
+    },
+    viewer: {
+      loading: '読み込み中...',
+      error: '読み込めませんでした',
+      retry: '再試行',
+      copy_md: 'Markdown をコピー',
+      copy_md_with_header: 'ヘッダー付きでコピー',
+      copy_code: 'コードをコピー',
+      copy_failed: 'コピーできませんでした',
     },
   },
   placeholder: {

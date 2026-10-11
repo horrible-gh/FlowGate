@@ -2,9 +2,9 @@
   <!-- flowgate.v02.0051 stage 2 — the documents tab body of an `other` card kind Node: a Graph gate shows
        the v7 확인 결과 result line (empty, "확인 전": the gate result is not connected); a document Node of
        an open type shows its one document line; anything else draws nothing. A thin container:
-       gateCardModel decides; ↗ opens a document in the v0.1 screen. No server call. -->
+       gateCardModel decides; ↗ opens a document in its document window (✎ in its editor). No server call. -->
   <section v-if="lines.length" class="inspector-gate-card" data-test="inspector-gate-card" :data-shape="shape">
-    <InspectorSlotList :slots="lines" @open="open" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" />
   </section>
 </template>
 
@@ -50,6 +50,11 @@ const lines = computed(() => gateCardSlots(props.target).map(lineOf))
 
 function open(line: InspectorSlotView) {
   if (line.id) openDocument(line.id)
+}
+
+/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
+function edit(line: InspectorSlotView) {
+  if (line.id) openDocument(line.id, 'edit')
 }
 </script>
 

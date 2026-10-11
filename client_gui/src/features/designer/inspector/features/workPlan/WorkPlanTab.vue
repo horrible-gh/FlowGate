@@ -7,7 +7,7 @@
        the common slot list part; the 0048 Step summary stays below as reused content. A Node without a
        document shows the two lines empty and reads nothing. -->
   <section class="inspector-work-plan" data-test="inspector-work-plan" :data-status="status" :data-has-document="hasDocument ? 'true' : 'false'">
-    <InspectorSlotList :slots="lines" @open="open" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" />
 
     <details v-if="hasDocument" :key="target.docId ?? undefined" class="inspector-work-plan-details" data-test="work-plan-details">
       <summary>{{ t('gui.designer.inspector.pane.details') }}</summary>
@@ -74,6 +74,7 @@ import Button from '../../../../../components/ui/Button.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
+import { openDocument } from '../../openDocument'
 import { workPlanSlotFocus, workPlanSlotState, type WorkPlanCardRow } from './workPlanModel'
 import { useWorkPlan } from './useWorkPlan'
 
@@ -88,6 +89,11 @@ const k = (key: string) => `gui.inspector.workPlan.${key}`
 const { view, cards, progress, editKey, availability, status, errorKey, unreadableRevision, open, reload } = useWorkPlan(() => props.target)
 
 const hasDocument = computed(() => props.target.docId !== null)
+
+/** ✎: the plan's document window, straight in its editor (flowgate.v02.0053 T#3). */
+function edit(line: InspectorSlotView) {
+  if (line.id) openDocument(line.id, 'edit')
+}
 
 const assignmentList = computed(() =>
   (view.value?.assignments ?? []).map((entry) => t(k('assignment'), { name: entry.name, count: entry.stepCount })).join(' · '),

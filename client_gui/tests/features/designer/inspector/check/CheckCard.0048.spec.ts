@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import type { FlowGraphSelection } from '@/features/designer/center/graph/flowGraph'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
+import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
 import CheckAction from '@/features/designer/inspector/features/check/CheckAction.vue'
 import CheckTab from '@/features/designer/inspector/features/check/CheckTab.vue'
 import { CHECK_ACTIVITY_EVENTS, CHECK_DOCUMENT_EVENTS, CHECK_GIT_EVENTS, useCheck } from '@/features/designer/inspector/features/check/useCheck'
@@ -230,14 +231,17 @@ describe('check section — state shown (flowgate.v02.0048 T#12)', () => {
     expect(el(w, 'check-approve').exists()).toBe(false)
   })
 
-  it('Git 패널 열기 asks the Host for the Git tool; ↗ 열기 opens the AC in the v0.1 screen', async () => {
+  it('Git 패널 열기 asks the Host for the Git tool; ↗ 열기 opens the AC in its document window (flowgate.v02.0053 T#3)', async () => {
+    closeAllDocumentWindows()
     const open = vi.fn()
     vi.stubGlobal('open', open)
     const w = await mountPart(CheckTab)
     await click(w, 'check-open-git')
     expect(intents).toEqual([{ kind: 'show-tool', tool: 'git' }])
     await click(w, 'check-open')
-    expect(open).toHaveBeenCalledWith(`/main/?doc=${encodeURIComponent(AC_DOC)}`, '_blank', 'noopener')
+    expect(open).not.toHaveBeenCalled()
+    expect(documentWindowList().map((win) => [win.docId, win.mode])).toEqual([[AC_DOC, 'view']])
+    closeAllDocumentWindows()
     // Looking changes nothing on the server.
     expect(approveCall).not.toHaveBeenCalled()
   })

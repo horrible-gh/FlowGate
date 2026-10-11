@@ -79,7 +79,7 @@ export default {
     open_git: 'Git 패널 열기',
     open_git_hint: '오른쪽 Git 패널에서 이 흐름의 Git 반영을 자세히 보고 처리합니다',
     open: '↗ 열기',
-    open_hint: 'v0.1 문서 화면에서 엽니다. 되돌리기(반려)와 병합 대상 변경은 그 화면에서 합니다',
+    open_hint: '문서 열기',
     reason: {
       read_only_conflict: '소유 충돌 Flow라 확인할 수 없습니다.',
       read_only_revision: 'Graph revision 보기에서는 확인할 수 없습니다. draft 보기로 옮기세요.',
@@ -179,7 +179,7 @@ export default {
     open_git: 'Open Git panel',
     open_git_hint: 'See and handle this flow’s Git reflection in the right Git panel',
     open: '↗ Open',
-    open_hint: 'Opens in the v0.1 document screen; rewinding (reject) and the merge target are there',
+    open_hint: 'Open the document',
     reason: {
       read_only_conflict: 'This Flow has an ownership conflict and cannot be checked.',
       read_only_revision: 'A Graph revision view cannot be checked. Switch to the draft view.',
@@ -279,7 +279,7 @@ export default {
     open_git: 'Git パネルを開く',
     open_git_hint: '右の Git パネルでこのフローの Git 反映を詳しく見て処理します',
     open: '↗ 開く',
-    open_hint: 'v0.1 文書画面で開きます。巻き戻し(差し戻し)とマージ先の変更はその画面で行います',
+    open_hint: '文書を開く',
     reason: {
       read_only_conflict: '所有競合の Flow のため確認できません。',
       read_only_revision: 'Graph revision 表示では確認できません。draft 表示に切り替えてください。',

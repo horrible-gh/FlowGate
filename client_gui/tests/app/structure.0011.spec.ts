@@ -46,11 +46,14 @@ describe('v0.2 Dashboard / App Shell structure (T0011)', () => {
     }
   })
 
-  it('the App Shell only assembles layout: Topbar, Sidebar, RouterView and the Project Dialog mount (T0011 §5, T0010/T#3 §2)', () => {
+  // flowgate.v02.0053 T#3: plus the one mount of the document windows, through features/documentWindow's
+  // public surface (the in-tab modeless document windows opened from anywhere).
+  it('the App Shell only assembles layout: Topbar, Sidebar, RouterView, the Project Dialog and the document windows mounts (T0011 §5, T0010/T#3 §2)', () => {
     const imports = importsOf(read(join(SRC, 'app/App.vue')))
     expect(imports.sort()).toEqual([
       './components/Sidebar.vue',
       './components/Topbar.vue',
+      '@/features/documentWindow',
       '@/features/project',
       'vue-router',
     ].sort())

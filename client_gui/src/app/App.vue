@@ -11,6 +11,7 @@
     </div>
   </div>
   <ProjectDialog @opened="openDesigner" />
+  <DocumentWindows />
 </template>
 
 <script setup lang="ts">
@@ -33,7 +34,12 @@
 // flowgate.v02.0043: the Designer's File › Designer 닫기 leaves the Designer for the Dashboard.
 // The Designer Shell is router-free as well, so it emits `close-designer` and the move happens
 // here, on the routed screen.
+//
+// flowgate.v02.0053 T#3: the single mount of the document windows (features/documentWindow). They are
+// teleported modeless panels over whatever screen is shown; openers reach them through the feature's
+// public surface only.
 import { RouterView, useRoute, useRouter } from 'vue-router'
+import { DocumentWindows } from '@/features/documentWindow'
 import { ProjectDialog, useProjectStore } from '@/features/project'
 import Sidebar from './components/Sidebar.vue'
 import Topbar from './components/Topbar.vue'
