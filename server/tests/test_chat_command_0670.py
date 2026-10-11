@@ -28,6 +28,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from modules.flow_gate.db import connection  # noqa: E402
+from modules.flow_gate.db import tokens as db_tokens  # noqa: E402
 from modules.flow_gate.services import chat_command_policy as policy  # noqa: E402
 from modules.flow_gate.services import chat_command_service as svc  # noqa: E402
 from modules.flow_gate.services import chat_run_changes_service as changes  # noqa: E402
@@ -81,6 +82,7 @@ def store(migrated_sqlite_db, monkeypatch):
     for name in ("modules.flow_gate.db.connection", "modules.flow_gate.db.chat_command_requests",
                  "modules.flow_gate.db.user_chat_command_policy", "modules.flow_gate.db.ai_run_source_changes",
                  "modules.flow_gate.db.user_chat_settings", "modules.flow_gate.db.user_chat_source_access",
+                 "modules.flow_gate.db.tokens",
                  "modules.flow_gate.services.chat_settings_service"):
         monkeypatch.setattr(importlib.import_module(name), "get_store", lambda real=real: real)
     for user in (USER, OTHER):
@@ -89,6 +91,13 @@ def store(migrated_sqlite_db, monkeypatch):
             "VALUES (?, ?, ?, 'x', 1, '2026-10-05T00:00:00+09:00', '2026-10-05T00:00:00+09:00')",
             [user, user, f"{user}@example.com"],
         )
+    stamp = "2026-10-05T00:00:00+09:00"
+    real._execute(
+        "INSERT INTO projects (project_id, project_name, created_at, updated_at) "
+        "VALUES ('flowgate', 'FlowGate', ?, ?)", [stamp, stamp])
+    real._execute(
+        "INSERT INTO groups (group_id, project_id, module, title, created_at, updated_at) "
+        "VALUES ('flowgate.default.0670', 'flowgate', 'default', '0670 CH', ?, ?)", [stamp, stamp])
     return real
 
 
@@ -118,6 +127,14 @@ def _run(repo: Path, **extra) -> dict:
         "cancel_event": threading.Event(), "token_id": "tok_1",
     }
     run.update(extra)
+    run["token_id"] = f"tok_{run['run_id']}"
+    db_tokens.create({
+        "token_id": run["token_id"], "hash": f"hash_{run['run_id']}", "pepper_id": "v1",
+        "project": run["project_id"], "group_id": run["group_id"], "doc_ref": run["doc_ref"],
+        "action_scope": "chat", "issued_to": run["issued_to"],
+        "created_at": "2026-10-05T00:00:00+09:00", "expires_at": "2036-01-01T00:00:00+09:00",
+        "ai_run_id": run["run_id"], "source_access": "read_write",
+    })
     return run
 
 
@@ -436,8 +453,8 @@ class TestLifecycle:
         checked, release, order, at_spawn = threading.Event(), threading.Event(), [], []
         real_refusal = svc._live_refusal
 
-        def paused(run_id):
-            refusal = real_refusal(run_id)
+        def paused(run_id, token_id):
+            refusal = real_refusal(run_id, token_id)
             if refusal is None and threading.current_thread().name.startswith("chat-command-"):
                 checked.set()
                 assert release.wait(30)
@@ -552,9 +569,9 @@ class TestLifecycle:
             "chat_command_run_finished", "chat_command_run_cancelled")
         assert spawned == []
 
-    def test_cli_token_must_match_the_run(self, repo):
+    def test_cli_token_must_match_the_run(self, store, repo):
         run = _run(repo)
-        good = {"project_id": "flowgate", "group_id": run["group_id"], "ai_run_id": run["run_id"], "token_id": "tok_1"}
+        good = {"project_id": "flowgate", "group_id": run["group_id"], "ai_run_id": run["run_id"], "token_id": run["token_id"]}
         assert svc.authorize_token(good, run) is run
         for bad in ({**good, "group_id": "flowgate.default.0001"}, {**good, "token_id": "tok_2"}, {**good, "ai_run_id": None}):
             with pytest.raises(svc.ChatCommandError):
