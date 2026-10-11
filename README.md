@@ -219,8 +219,4 @@ FlowGate is **built as a working system**, not a throwaway prototype — it runs
 
 ## License
 
-FlowGate v0.2 and later releases distributed with this license are **source-available** under the [Functional Source License 1.1, ALv2 Future License (FSL-1.1-ALv2)](LICENSE) — © 2026 horrible-gh.
-
-Under FSL-1.1-ALv2, competing use is restricted. Each released version becomes available under the Apache License 2.0 on the second anniversary of the date that version was made available.
-
-FlowGate v0.1.x and earlier versions that were published under the MIT License remain available under the MIT License; this change does not revoke rights already granted for those versions.
+FlowGate v0.2 is available under the [MIT License](LICENSE) - Copyright (c) 2026 horrible-gh.
