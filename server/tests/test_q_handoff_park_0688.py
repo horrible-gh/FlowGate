@@ -19,7 +19,8 @@ _system_pause_row_is_stale). Two harnesses:
   * plain monkeypatched collaborators for the branch-by-branch cases.
 
   TestEndToEnd                 park → reviewer dispatch → answer → one resume (R1/R2/R4)
-  TestHandoffPark              which hops park, which hand off unchanged, user pause, fail-open,
+  TestHandoffPark              which hops park, which hand off unchanged, user pause, an
+                               unreadable probe (parked, not handed off),
                                a replayed terminal cleanup, answer race, dispatch failure
   TestOpenQuestionLookup       group-wide lookup by asker_ai_run_id, container/item_seq routing
   TestNextQuestion             Q2 of a hand-off park still reaches its own container
@@ -34,6 +35,13 @@ _system_pause_row_is_stale). Two harnesses:
   TestGateHopRuntimePicks      a rework hop admitted by the real admission (mode="single", so
                                its run holds no [검수] maps): the runtime reviewer and review
                                count still choose who answers Q1, Q2 and after a restart
+
+0688 T#2 added an answer check to the gate's approvals (review.resolve_review_gate). These
+cases replay the gate T#1 held, so the module's autouse `_t1_gate_without_answer_check` passes
+that check through (`review._answer_check_gate` returns the gate it was given).
+test_q_answer_check_0688.py drives the same harness with the real check -- the answer
+delivery ledger, the answer-check round, its holds and an unreadable record holding instead
+of approving.
 """
 from __future__ import annotations
 
@@ -53,6 +61,7 @@ sys.path.insert(0, str(_SERVER_DIR))
 
 from modules.flow_gate.db import ai_invoke_paused_chains as db_paused  # noqa: E402
 from modules.flow_gate.db import ai_invoke_runs as db_runs  # noqa: E402
+from modules.flow_gate.db import answers as db_answers  # noqa: E402
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases  # noqa: E402
 from modules.flow_gate.db import question_items as db_question_items  # noqa: E402
 from modules.flow_gate.db import test_runs as db_test_runs  # noqa: E402
@@ -92,7 +101,9 @@ class FakeQuestions:
     def __init__(self):
         self.items: dict[int, dict] = {}
         self.states: list[tuple] = []
+        self.answers: dict[int, list[dict]] = {}
         self._next = 500
+        self._next_answer = 9000
 
     def add(self, *, asker_run_id, doc=T_DOC, kind="ai", **extra) -> int:
         pk = self._next
@@ -105,8 +116,23 @@ class FakeQuestions:
         }
         return pk
 
-    def answer(self, pk):
-        self.items[pk]["answer_count"] = 1
+    def answer(self, pk, *, at=None, body="answered", author_kind="ai") -> int:
+        """Add an answer row (``at`` is its created_at) and return its id. The T#2 answer
+        check keys what a review was given to check on the answer id, never on ``at``
+        (test_q_answer_check_0688.py)."""
+        self._next_answer += 1
+        self.items[pk]["answer_count"] = len(self.answers.get(pk, [])) + 1
+        self.answers.setdefault(pk, []).append({
+            "id": self._next_answer, "question_item_id": pk, "body": body,
+            "author_kind": author_kind, "created_at": at})
+        return self._next_answer
+
+    def list_by_question(self, qpk):
+        return sorted((dict(r) for r in self.items.values() if r["question_id"] == qpk),
+                      key=lambda r: r["seq"])
+
+    def list_by_question_item(self, item_id):
+        return [dict(a) for a in self.answers.get(item_id, [])]
 
     def _open(self, doc):
         return [r for r in self.items.values() if r["doc"] == doc and not r["answer_count"]]
@@ -142,9 +168,17 @@ class FakeQuestions:
                             self.list_open_doc_ids_by_group)
         monkeypatch.setattr(db_questions, "get_container_by_doc", self.get_container_by_doc)
         for name in ("list_unanswered", "get_by_pk", "list_by_responder_run",
-                     "set_responder_state"):
+                     "set_responder_state", "list_by_question"):
             monkeypatch.setattr(db_question_items, name, getattr(self, name))
+        monkeypatch.setattr(db_answers, "list_by_question_item", self.list_by_question_item)
         return self
+
+
+@pytest.fixture(autouse=True)
+def _t1_gate_without_answer_check(monkeypatch):
+    """This module replays the gate T#1 held; the 0688 T#2 answer check on its approvals is
+    covered by test_q_answer_check_0688.py (see the module docstring)."""
+    monkeypatch.setattr(review, "_answer_check_gate", lambda gate, bundle: gate)
 
 
 @pytest.fixture
@@ -411,7 +445,9 @@ class TestHandoffPark:
         assert row["continuation_review_count_overrides"] == {"5": 1}
         assert run["stop_code"] == "question_pending"
 
-    def test_an_unreadable_probe_fails_open_to_the_old_hand_off(self, handoff):
+    def test_an_unreadable_probe_parks_instead_of_handing_off(self, handoff):
+        # 0688 T#2 (TR0008 rev1 review): whether the hop left a question open cannot be told,
+        # and the gate past the hand-off may approve -- parked on the gate's unreadable stop.
         def _probe(group_id, run_id):
             raise RuntimeError("questions table unavailable")
 
@@ -419,7 +455,14 @@ class TestHandoffPark:
         run = _run()
         _queue(run)
         svc._maybe_auto_resume_hop(run)
-        assert len(handoff["gate"]) == 1 and handoff["dispatched"] == []
+        assert handoff["gate"] == [] and handoff["dispatched"] == []
+        assert handoff["resumed"] == [] and svc.peek_auto_resume(GROUP) is None
+        row = handoff["paused"].rows[GROUP]
+        assert (row["stop_kind"], row["stop_code"], row["stop_run_id"]) == (
+            "system", review.REVIEW_HISTORY_UNREADABLE_STOP_CODE, HOP)
+        assert row["chain_id"] == "chain_0688" and row["continuation_target_seq"] == 6
+        assert "questions table unavailable" in run["review_reject_detail"]
+        assert not run.get("_handoff_succeeded")
 
     def test_a_user_pause_outranks_the_park_and_starts_no_responder(self, handoff):
         handoff["probe"] = lambda group_id, run_id: list(OWN_Q)
@@ -717,9 +760,18 @@ class TestResumeOfHandoffPark:
         state = chain_module._paused_row_resume_state("flowgate", _park_row())
         assert state["resume_available"] is True
 
+    def test_a_park_on_an_unreviewed_last_step_is_resumable_into_its_settlement(self,
+                                                                                last_step):
+        # 0688 T#2: the inbox keeps an unreviewed step's document unapproved while its hop's
+        # own question is open, so the answer's resume has that slot to settle (approve it,
+        # or hold it for a human when the answer cannot be checked automatically).
+        last_step["value"] = 0
+        state = chain_module._paused_row_resume_state("flowgate", _park_row())
+        assert state["resume_available"] is True
+
     @pytest.mark.parametrize(("row", "count"), [
         (_park_row(stop_code="no_output_exhausted"), 2),   # other stops: unchanged refusal
-        (_park_row(), 0),                                  # nobody reviews that step
+        (_park_row(stop_code="no_output_exhausted"), 0),
         (_park_row(continuation_target_seq=4), 2),         # the slot is past the target
     ])
     def test_everything_else_keeps_the_no_pending_refusal(self, last_step, row, count):

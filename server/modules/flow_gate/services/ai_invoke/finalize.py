@@ -40,6 +40,7 @@ from .runtime import (
     ENGINE_NOTIFY_STOP_CODES,
     INBOX_NOTIFY_STOP_CODES,
     NO_OUTPUT_MAX_ATTEMPTS,
+    QUESTION_ANSWER_UNVERIFIED_STOP_CODE,
     RESUMABLE_STOP_CODES,
     REVIEW_CAP_REACHED_STOP_CODE,
     REVIEW_EXHAUSTED_STOP_CODE,
@@ -1167,6 +1168,13 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
     if stop_code == REVIEW_VERDICT_HOLD_STOP_CODE:
         return ("The reviewer returned 'hold' — it could not judge this document. "
                 "A human must decide; the chain does not resume on its own.")
+    if stop_code == QUESTION_ANSWER_UNVERIFIED_STOP_CODE:
+        # 0688 T#2: review.resolve_review_gate's answer check found nothing that can compare.
+        return ("This step's document was submitted while a query of its own was open, and "
+                "the answer has landed since. No automatic review can check the document "
+                "against that answer (the step is not reviewed, or its answer-check round is "
+                "spent), so it is neither approved nor moved past. A human must decide: "
+                "approve it and resume, or reject it for rework.")
     if stop_code == REVIEW_STALLED_STOP_CODE:
         return ("The review loop stopped making progress: the rework hop raised no new "
                 "revision, or the same findings came back twice. A human must triage.")

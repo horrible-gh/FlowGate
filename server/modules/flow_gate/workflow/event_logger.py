@@ -85,6 +85,14 @@ EVT_CHANGE_SUMMARY_RECORDED = "change_summary_recorded"
 #   neither can flood.
 EVT_QNA_RESPONDER_FAILED = "qna_responder_failed"
 EVT_QNA_USER_DECISION_REQUIRED = "qna_user_decision_required"
+# EVT_QNA_ANSWERS_DELIVERED -- flowgate.default.0688 T#2. Which answers to an AI question a
+#   chain's review / rework hop was given in its mention, keyed by that hop's run and the
+#   answer ids. The review gate reads it back (review._answers_checked_by_reviews): a review
+#   round checked an answer only when its own run's row names it, so an answer that landed
+#   while the round was running is never taken as checked by it. At most one row per
+#   review/rework hop that carried answers; deliberately NOT on the notification feed -- it
+#   records normal behaviour, and is the trace of which question / answer a fix followed.
+EVT_QNA_ANSWERS_DELIVERED = "qna_answers_delivered"
 
 
 def log_event(
@@ -480,6 +488,49 @@ def log_review_annotation_failed(
             "error": str(error),
         },
     )
+
+
+def log_answer_delivery(
+    *, project_id: str, actor_user_id: str, group_id: str | None, doc_id: str,
+    revision_no: int | None, stage: str, run_id: str | None, chain_id: str | None,
+    items: list[dict],
+) -> dict:
+    """Record the answers a chain hop's mention carries (flowgate.default.0688 T#2).
+
+    Raises on a write failure: the caller does not launch a hop whose delivery is not on
+    record.
+    """
+    return log_event(
+        event_type=EVT_QNA_ANSWERS_DELIVERED, project_id=project_id,
+        actor_user_id=actor_user_id, group_id=group_id,
+        metadata={"doc_id": doc_id, "revision_no": revision_no, "stage": stage,
+                  "run_id": run_id, "chain_id": chain_id, "items": items},
+    )
+
+
+def list_answer_deliveries(doc_id: str) -> list[dict]:
+    """Every answer delivery recorded for ``doc_id``, oldest first, as metadata dicts.
+
+    Matched on the metadata's ``doc_id`` the way the other run-keyed lookups of this table
+    match theirs (``metadata LIKE``), then checked exactly: a row whose metadata cannot be
+    decoded, or names another document, is left out. Raises on a read failure.
+    """
+    from modules.flow_gate.db.connection import get_store
+
+    rows = get_store()._fetch_all(
+        "SELECT id, metadata FROM workflow_events WHERE event_type = ? AND metadata LIKE ? "
+        "ORDER BY id",
+        [EVT_QNA_ANSWERS_DELIVERED, f'%"doc_id": {json.dumps(doc_id, ensure_ascii=False)}%'],
+    )
+    found: list[dict] = []
+    for row in rows or []:
+        try:
+            meta = json.loads(row.get("metadata") or "")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(meta, dict) and meta.get("doc_id") == doc_id:
+            found.append(meta)
+    return found
 
 
 def count_review_annotation_failures(*, since: str | None = None) -> dict:

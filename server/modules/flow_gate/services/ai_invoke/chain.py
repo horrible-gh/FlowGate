@@ -40,6 +40,7 @@ from .runtime import (
     PARK_NOTIFY_STOP_CODES,
     PROVIDER_UNAVAILABLE_CODE,
     PROVIDER_UNAVAILABLE_MESSAGE,
+    QUESTION_ANSWER_UNVERIFIED_STOP_CODE,
     REVIEW_HOP_KIND,
     REVIEW_NO_VERDICT_STOP_CODE,
     REWORK_HOP_KIND,
@@ -758,6 +759,30 @@ def _gate_hop_responder_scope(run: dict, pending: dict) -> dict:
     }
 
 
+def hop_left_own_question_open(group_id: Optional[str], run_id: Optional[str]) -> bool:
+    """Does the hop submitting right now still have a question of its own open? (0688 T#2)
+
+    Asked by the inbox self-chain before it auto-approves an UNREVIEWED step: a document
+    submitted on an assumption its own open question states is not approved on submission.
+    It is handed to the engine unapproved instead, which parks it here on question_pending
+    (`_park_on_own_open_question`), and the answer's resume lets the gate settle it
+    (review.resolve_review_gate's answer check). A probe that cannot read the questions
+    answers True: the document is not approved on submission on records nobody could see.
+    The engine's hand-off probes again (`_park_on_own_open_question`): an open question of
+    its own parks it on question_pending, a probe that still cannot read parks it on
+    review_history_unreadable, and only a readable "none" reaches the gate -- whose answer
+    check in turn refuses to approve over an unanswered or unchecked question.
+    """
+    if not group_id or not run_id:
+        return False
+    try:
+        return bool(finalize.open_questions_raised_by_run(group_id, run_id))
+    except Exception:  # noqa: BLE001
+        logger.warning("own-question probe failed for %s at submission; the engine decides",
+                       run_id, exc_info=True)
+        return True
+
+
 def _park_on_own_open_question(run: dict, pending: dict) -> bool:
     """Hold a finished work hop's hand-off while a question it raised is open (0688 T#1).
 
@@ -781,9 +806,14 @@ def _park_on_own_open_question(run: dict, pending: dict) -> bool:
     and without the park a last-round rework that left its question open was approved and
     moved past (0688 TR0006 review). `resume_chain` replays that hop's gate from the DB
     (`_question_park_gate_progress` / `_settle_question_park_gate`). Only an unanswered AI
-    item THIS run raised (`asker_ai_run_id`) counts, never an older, foreign or human one. A
-    probe that cannot read the questions fails open: the hop hands off exactly as before.
-    Returns True when the chain was parked here.
+    item THIS run raised (`asker_ai_run_id`) counts, never an older, foreign or human one.
+
+    0688 T#2: a probe that cannot read the questions does NOT hand off. Whether the hop left
+    a question open -- and so whether its document rests on an unanswered assumption --
+    cannot be told, and the gate past this point may approve the slot. The chain is parked
+    on the gate's own unreadable-records stop (review_history_unreadable, a human's
+    [이어서 진행] re-reads everything), and no responder is dispatched for questions nobody
+    could list. Returns True when the chain was parked here.
     """
     gate_owned = run.get("hop_kind") in CHAIN_MEMBER_HOP_KINDS
     if run.get("mode") != "continuous" and not gate_owned:
@@ -794,10 +824,12 @@ def _park_on_own_open_question(run: dict, pending: dict) -> bool:
         return False
     try:
         open_items = finalize.open_questions_raised_by_run(group_id, run_id)
-    except Exception:  # noqa: BLE001 -- the probe is an aid; the old hand-off is the fallback
-        logger.warning("own-question probe failed for %s; handing off as before", run_id,
-                       exc_info=True)
-        return False
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("own-question probe failed for %s at its hand-off; parked on %s",
+                       run_id, review.REVIEW_HISTORY_UNREADABLE_STOP_CODE, exc_info=True)
+        run["review_reject_detail"] = f"own-question probe failed: {exc}"
+        _svc()._park_handoff(run, pending, review.REVIEW_HISTORY_UNREADABLE_STOP_CODE)
+        return True
     if not open_items:
         return False
     logger.info(
@@ -1306,31 +1338,29 @@ def _resumable_base_provider(project_id: str, provider_id: Optional[str]) -> Opt
 
 
 def _question_park_has_gate_work(row: dict, target_seq: int) -> bool:
-    """A hand-off question park whose resume is the review of the slot it filled (0688 T#1).
+    """A hand-off question park whose resume settles the slot it filled (0688 T#1/T#2).
 
     `docs_target` counts only UNFILLED worker slots. A hop parked at its hand-off on the
-    LAST reviewed step leaves none -- its document is in, still pending_review -- yet the
-    resume has real work: `resume_chain`'s cold gate reviews that slot and settles the
-    chain from the verdict. Only a question_pending row qualifies, and only while that
-    slot is at or below the target and its step is reviewed at all (count != 0).
+    LAST step leaves none -- its document is in, still unapproved -- yet the resume has real
+    work: `resume_chain`'s cold gate reviews that slot, or settles it. 0688 T#2: that holds
+    for an unreviewed step too (count 0) -- the inbox no longer approves a document whose
+    hop left its own question open (`hop_left_own_question_open`), so the gate's answer
+    check decides it after the answer. Only a question_pending row qualifies, and only while
+    that slot is at or below the target.
     """
     if row.get("stop_code") != QUESTION_PENDING_STOP_CODE:
         return False
     try:
-        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
-
         slot = review._pending_review_slot(row.get("doc_ref"))
-        if slot is None or slot.get("item_seq") is None or int(slot["item_seq"]) > target_seq:
-            return False
-        count = review.resolve_review_count(
-            db_paused.load_json_map(row.get("continuation_review_count_overrides")),
-            slot["item_seq"], row.get("doc_ref"),
-        )
     except Exception:  # noqa: BLE001 -- unreadable means "no evidence", the old refusal
         logger.warning("question-park gate probe failed for %s", row.get("group_id"),
                        exc_info=True)
         return False
-    return count != 0
+    return bool(
+        slot is not None
+        and slot.get("item_seq") is not None
+        and int(slot["item_seq"]) <= target_seq
+    )
 
 
 def _question_handoff_requester(row: dict) -> Optional[dict]:
@@ -1409,8 +1439,13 @@ def _settle_question_park_gate(
 
     def _stopped(stop_code: str, message: Optional[str]) -> HTTPException:
         restore_row(stop_code)
+        extra = (
+            # 0688 T#2: which answered questions held the slot, for the caller's trace.
+            {"answer_check_item_ids": gate["answer_check_item_ids"]}
+            if gate.get("answer_check_item_ids") else {}
+        )
         return _http_error(409, "resume_gate_stopped", message or stop_code,
-                           group_id=group_id, stop_code=stop_code, restored=True)
+                           group_id=group_id, stop_code=stop_code, restored=True, **extra)
 
     if gate.get("reject_first") and slot is not None:
         result = review._auto_reject(slot, review._latest_review_of(slot), bundle)
@@ -1923,7 +1958,11 @@ def _resume_chain_locked(
             review._queue_gate_bundle(group_id, queued)
             spawn = _svc()._spawn_review_hop if gate["stage"] == REVIEW_HOP_KIND else _svc()._spawn_rework_hop
             try:
-                return spawn(group_id, queued, gate)
+                started = spawn(group_id, queued, gate)
+                if gate.get("answer_check_item_ids") and isinstance(started, dict):
+                    # 0688 T#2: this review round checks these answers (question trace).
+                    started = {**started, "answer_check_item_ids": gate["answer_check_item_ids"]}
+                return started
             except HTTPException as exc:
                 _svc().clear_auto_resume(group_id)
                 _restore_row()
@@ -2287,6 +2326,10 @@ def _paused_row_stop_reason(row: dict) -> Optional[str]:
         logger.warning("paused-chain stop reason lookup failed for %s", run_id, exc_info=True)
         return None
     if (record.get("stop_code") or "") != (row.get("stop_code") or ""):
+        if row.get("stop_code") == QUESTION_ANSWER_UNVERIFIED_STOP_CODE:
+            # 0688 T#2: an answer's resume re-parks the row on this hold without rewriting
+            # the asking hop's record, and the hold needs no run detail to be explained.
+            return finalize.stop_reason_text(QUESTION_ANSWER_UNVERIFIED_STOP_CODE)
         return None
     return record.get("stop_reason")
 

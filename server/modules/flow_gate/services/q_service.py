@@ -392,6 +392,38 @@ def add_questions(
 
 # ── Last-answer → paused-chain continuation (flowgate.default.0551 T#2) ────────
 
+def _park_waits_on_open_question(row: dict, open_doc_ids: list[str]) -> bool:
+    """Does the parked chain still wait on one of the group's open questions? (0688 T#2)
+
+    A question_pending park waits on the questions ITS hop raised: both parks key on
+    ``asker_ai_run_id`` (the Q-only probe in worker._retry_eligible and the hand-off park,
+    0688 T#1), and ``stop_run_id`` is that hop. Any other open item in the group -- a
+    person's own question, another run's, an older one, on this container or another --
+    is not what the chain stopped for, yet the group-wide rule kept it parked until somebody
+    answered that too (0688 NR0003 §5). A row without a stop run, a container that cannot
+    be read, or an open document whose container is missing keep the group-wide rule.
+    """
+    requester_run_id = row.get("stop_run_id")
+    if not requester_run_id:
+        return True
+    try:
+        for doc_id in open_doc_ids:
+            container = db_questions.get_container_by_doc(doc_id)
+            if container is None:
+                return True
+            for item in db_question_items.list_unanswered(container["id"]) or []:
+                if (
+                    (item.get("asker_kind") or "") == "ai"
+                    and item.get("asker_ai_run_id") == requester_run_id
+                ):
+                    return True
+    except Exception:
+        logger.warning("question auto-resume: open-item lookup failed for %s",
+                       row.get("group_id"), exc_info=True)
+        return True
+    return False
+
+
 def auto_resume_answered_chain(
     *,
     doc_id: str,
@@ -399,7 +431,7 @@ def auto_resume_answered_chain(
     locale: str = "ko",
     responder_run: Optional[dict] = None,
 ) -> Optional[dict]:
-    """Resume the durable question_pending chain once the group has no open Q.
+    """Resume the durable question_pending chain once the questions it waits on are answered.
 
     This is orchestration only: ai_invoke_service.resume_chain remains the one
     resume engine and its group lock + paused-row compare-and-swap remain the one
@@ -429,8 +461,10 @@ def auto_resume_answered_chain(
         ):
             return None
         # A container can be done while another document in the same group still has
-        # an unanswered item. The group-wide query is the final gate.
-        if db_questions.list_open_doc_ids_by_group(group_id):
+        # an unanswered item, so the group's open containers are read -- but only the
+        # parked hop's OWN open items hold the chain (0688 T#2, _park_waits_on_open_question).
+        open_doc_ids = db_questions.list_open_doc_ids_by_group(group_id)
+        if open_doc_ids and _park_waits_on_open_question(row, open_doc_ids):
             return None
 
         requester_run_id = row.get("stop_run_id")
@@ -468,17 +502,23 @@ def auto_resume_answered_chain(
             detail = exc.detail if isinstance(exc.detail, dict) else {}
             logger.info(
                 "question auto-resume deferred group_id=%s code=%s "
-                "requester_run_id=%s responder_run_id=%s chain_id=%s",
+                "requester_run_id=%s responder_run_id=%s chain_id=%s stop_code=%s "
+                "answer_check_item_ids=%s",
                 group_id,
                 detail.get("code") or exc.status_code,
                 trace["requester_run_id"],
                 trace["responder_run_id"],
                 trace["paused_chain_id"],
+                detail.get("stop_code"),
+                detail.get("answer_check_item_ids"),
             )
             return None
 
         trace["resumed_run_id"] = resumed.get("run_id")
         trace["resumed_chain_id"] = resumed.get("chain_id")
+        if resumed.get("answer_check_item_ids"):
+            # 0688 T#2: the resumed review round checks the document against these answers.
+            trace["answer_check_item_ids"] = list(resumed["answer_check_item_ids"])
         resumed["question_resume_trace"] = trace
         # Keep the correlation on the live run too, so GET status exposes the same
         # evidence as the immediate answer response. The structured log remains the
@@ -682,7 +722,9 @@ def register_answer(
         "author_kind": author_kind,
         "status": q_status,
     }
-    if not unanswered and auto_resume_api_base_url:
+    # 0688 T#2: an AI-asked item can be the one a parked chain waits on even while other,
+    # unrelated items keep its container open; auto_resume_answered_chain decides that.
+    if auto_resume_api_base_url and (not unanswered or (item.get("asker_kind") or "") == "ai"):
         trace = auto_resume_answered_chain(
             doc_id=doc_id,
             api_base_url=auto_resume_api_base_url,
@@ -700,8 +742,8 @@ def register_answer(
 # (mark_responder_failed — the item stays open and can be re-dispatched from the panel),
 # and the responder's EXPLICIT hand-off to a person (escalate_to_user — nothing retries
 # it; a human answers). None of them touches the container status or the parked chain:
-# `auto_resume_answered_chain`'s group-wide open-Q gate keeps the original run parked
-# until the LAST item carries an answer.
+# `auto_resume_answered_chain`'s open-Q gate keeps the original run parked until the LAST
+# of its own hop's items carries an answer (0688 T#2: unrelated open items do not count).
 
 RESPONDER_ERROR_USER_DECISION = "user_decision_required"
 _RESPONDER_MESSAGE_MAX = 2000

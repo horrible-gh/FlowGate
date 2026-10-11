@@ -1145,11 +1145,13 @@ class TestQServiceGuards:
             "failed", "aiv_r2", "c")
 
     def test_escalation_does_not_resume_the_parked_chain(self, store, monkeypatch):
-        # The group-wide open-Q gate of auto_resume_answered_chain is what keeps the chain
-        # parked; an escalated item is still open, so resume_chain is never reached.
+        # The open-Q gate of auto_resume_answered_chain is what keeps the chain parked; an
+        # escalated item is still open, so resume_chain is never reached. 0688 T#2: the gate
+        # holds on the parked hop's OWN items, so the item is the requester's -- as it always
+        # is in production, a responder is only ever dispatched for those.
         from modules.flow_gate.services import ai_invoke_service
 
-        item_id = _ai_question()
+        item_id = _ai_question(asker_run=REQUESTER)
         db_question_items.claim_responder_dispatch(item_id, RESPONDER)
         q_service.escalate_to_user(SQL_DOC, item_id, "decide", writer_ai_run_id=RESPONDER)
         monkeypatch.setattr(db_paused, "get_by_group", lambda gid: _paused_row(group_id=SQL_GROUP))
