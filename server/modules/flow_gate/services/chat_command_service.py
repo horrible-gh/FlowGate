@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from datetime import datetime, timezone
 import shutil
 import tempfile
 import threading
@@ -37,6 +38,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from modules.flow_gate.db import chat_command_requests as db
+from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import chat_command_policy as policy
 from modules.flow_gate.services import chat_settings_service
@@ -176,7 +178,52 @@ def _notify(row: Optional[dict]) -> None:
     })
 
 
-def _authorize_run(run: Optional[dict]) -> dict:
+def _live_token_id(run: dict) -> str:
+    """The run's current token id: ``current_token_id`` first, else the admission ``token_id``."""
+    return str(run.get("current_token_id") or run.get("token_id") or "")
+
+
+def _forbidden(message: str) -> ChatCommandError:
+    return ChatCommandError(403, "chat_command_forbidden", message)
+
+
+def _require_read_write(run: dict, token_id: Optional[str]) -> None:
+    """Fixed issued-token capability (0180): only a live ``read_write`` CH token may run commands.
+
+    The authority is the persisted row of the run's current token -- never the run's own
+    ``source_access`` nor the user's current settings. ``token_id`` (the request's token) must
+    be that same live token, so a request can not outlive a replaced/revoked token. Anything
+    missing, null, legacy or corrupt fails closed, using the registry's own kind judgment.
+    """
+    from modules.flow_gate.services import tool_registry
+
+    live_id = _live_token_id(run)
+    if not live_id or str(token_id or "") != live_id:
+        raise _forbidden("AI token is not current for this run")
+    rec = db_tokens.get_by_id(live_id)
+    if not rec or rec.get("action_scope") != "chat":
+        raise _forbidden("a live AI chat run token is required")
+    axes = (
+        (rec.get("project"), run.get("project_id")), (rec.get("group_id"), run.get("group_id")),
+        (rec.get("ai_run_id"), run.get("run_id")), (rec.get("doc_ref"), run.get("doc_ref")),
+    )
+    if any(not left or str(left) != str(right or "") for left, right in axes):
+        raise _forbidden("AI run/token scope does not match")
+    try:
+        expires = datetime.fromisoformat(str(rec.get("expires_at")))
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        expired = expires < datetime.now(timezone.utc)
+    except ValueError:
+        expired = True
+    if rec.get("revoked_at") or rec.get("consumed_at") or expired:
+        raise _forbidden("AI token is no longer live")
+    if tool_registry.kind_for_token(rec)[0] != "read_write":
+        raise ChatCommandError(403, "chat_command_capability_required",
+                               "this AI chat run was issued without source write access")
+
+
+def _authorize_run(run: Optional[dict], token_id: Optional[str]) -> dict:
     if not run or run.get("action_scope") != "chat" or not run.get("doc_ref"):
         raise ChatCommandError(403, "chat_command_capability_required",
                                "command execution is only available inside a live chat AI run")
@@ -186,6 +233,7 @@ def _authorize_run(run: Optional[dict]) -> dict:
         raise ChatCommandError(409, "chat_command_run_cancelled", "this AI run is being cancelled")
     if _run_closed(run.get("run_id")):
         raise ChatCommandError(409, "chat_command_run_finished", "this AI run is finishing")
+    _require_read_write(run, token_id)
     return run
 
 
@@ -216,7 +264,7 @@ def _close_run(run_id: str, on_closed: Optional[Callable[[], None]] = None) -> N
             on_closed()
 
 
-def _live_refusal(run_id: Optional[str]) -> Optional[ChatCommandError]:
+def _live_refusal(run_id: Optional[str], token_id: Optional[str]) -> Optional[ChatCommandError]:
     """Why the run that asked for a command may no longer have it executed, if it may not.
 
     The same checks a new request gets (_authorize_run), re-applied at decision time and
@@ -227,7 +275,7 @@ def _live_refusal(run_id: Optional[str]) -> Optional[ChatCommandError]:
     if run is None:
         return ChatCommandError(409, "chat_command_run_finished", "this AI run has already finished")
     try:
-        _authorize_run(run)
+        _authorize_run(run, token_id)
     except ChatCommandError as exc:
         return exc
     return None
@@ -247,7 +295,7 @@ def authorize_token(token: dict, run: Optional[dict]) -> dict:
     current = str(run.get("current_token_id") or run.get("token_id") or "")
     if current and str(token.get("token_id") or "") != current:
         raise ChatCommandError(403, "chat_command_forbidden", "AI token is not current for this run")
-    return _authorize_run(run)
+    return _authorize_run(run, str(token.get("token_id") or ""))
 
 
 def worktree_root(project_id: str, group_id: str, expected: Optional[str] = None) -> Path:
@@ -344,7 +392,8 @@ def ai_result(row: dict) -> dict:
 
 def create_request(run: dict, payload: object, *, token_id: Optional[str] = None) -> dict:
     """Validate, bind to the worktree, apply the user's policy. Returns the stored row."""
-    _authorize_run(run)
+    token_id = token_id or _live_token_id(run)
+    _authorize_run(run, token_id)
     try:
         command = policy.validate_request(payload)
     except policy.ChatCommandPolicyError as exc:
@@ -359,7 +408,7 @@ def create_request(run: dict, payload: object, *, token_id: Optional[str] = None
     row = db.create(
         request_id=f"ccr_{uuid.uuid4().hex[:24]}", ai_run_id=run["run_id"], doc_id=run["doc_ref"],
         project_id=run["project_id"], group_id=run["group_id"],
-        token_id=token_id or run.get("current_token_id") or run.get("token_id"),
+        token_id=token_id,
         issued_to=run.get("issued_to"), provider_name=_provider_name(run),
         program=command.program, args=list(command.args), cwd_relative=command.cwd,
         timeout_seconds=command.timeout_seconds, category=command.category, policy=user_policy,
@@ -395,7 +444,7 @@ def decide(request_id: str, user: dict, decision: str) -> dict:
     if decision == "approve":
         # The same live-run checks as a new request: a run that finished, stopped, is being
         # cancelled or is finalizing never gets an approval (and so never a process).
-        refusal = _live_refusal(row["ai_run_id"])
+        refusal = _live_refusal(row["ai_run_id"], row["token_id"])
         if refusal is not None:
             updated = db.transition(request_id, ("pending_approval",), "cancelled",
                                     error_code=refusal.code, **fields)
@@ -589,7 +638,7 @@ def _execute_owned(request_id: str, expected_root: Optional[str]) -> None:
         # The check, the spawn and the control install happen under the run's launch gate,
         # so no cancellation can begin between the check and the spawn.
         with _launch_gate(row["ai_run_id"]):
-            refusal = _live_refusal(row["ai_run_id"])
+            refusal = _live_refusal(row["ai_run_id"], row["token_id"])
             with _lock:
                 if refusal is None and request_id in _cancel_requested:
                     refusal = ChatCommandError(409, "chat_command_cancelled")
