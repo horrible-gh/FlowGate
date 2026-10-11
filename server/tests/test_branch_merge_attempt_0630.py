@@ -103,8 +103,9 @@ class _MockDB:
 
 
 @pytest.fixture(scope="module")
-def storage_dir():
-    tmp = tempfile.mkdtemp(prefix="fg-bm0630-storage-")
+def storage_dir(tmp_path_factory):
+    # Honor pytest's configured scratch basetemp for this isolated storage fixture too.
+    tmp = str(tmp_path_factory.mktemp("fg-bm0630-storage"))
     previous = os.environ.get("FLOWGATE_STORAGE_DIR")
     os.environ["FLOWGATE_STORAGE_DIR"] = tmp
     yield Path(tmp)
@@ -1176,7 +1177,7 @@ def test_0683_approve_from_review_completes_and_releases_the_target(proj):
     assert result["status"] == "merged"
     assert _session(merge_id)["status"] == "done"
     assert p.sha("refs/heads/develop") != before
-    assert not p.workspace("develop").exists()
+    assert not (p.workspace("develop") / "tree").exists()
     assert _plan_finalize(p, "develop").target_branch == "develop"
 
 
@@ -1190,7 +1191,7 @@ def test_0683_abort_from_review_releases_the_target(proj):
     assert _session(merge_id)["status"] == "aborted"
     assert _ctx(merge_id)["attempt_state"] == "aborted"
     assert p.sha("refs/heads/develop") == before
-    assert not p.workspace("develop").exists()
+    assert not (p.workspace("develop") / "tree").exists()
     assert _plan_finalize(p, "develop").target_branch == "develop"
 
 
@@ -1281,7 +1282,7 @@ def test_0683_interrupted_attempt_is_reclaimed_at_plan_time(proj, monkeypatch):
     assert planned.target_branch == "develop"
     assert _session(session["merge_id"])["status"] == "aborted"
     assert _ctx(session["merge_id"])["attempt_state"] == "interrupted"
-    assert not p.workspace("develop").exists()
+    assert not (p.workspace("develop") / "tree").exists()
     assert _view(p, session["merge_id"])["state"] == "interrupted"
 
 
@@ -1320,3 +1321,42 @@ def test_0683_busy_lock_on_the_claim_skips_plan_time_recovery(proj, monkeypatch)
     exc = _busy(p)
     assert exc.details["merge_id"] == session["merge_id"]
     assert _session(session["merge_id"])["status"] == "open"
+
+
+# 0530 T0004: exercise the human HTTP approval boundary on real isolated git repos.
+@pytest.mark.parametrize("push", [False, True])
+@pytest.mark.parametrize("resolver", ["manual", "ai"])
+def test_0530_recovered_review_human_api_finishes_original_plan(proj, monkeypatch, push, resolver):
+    p = proj
+    out, before = p.conflict(push=push, publish=True)
+    merge_id = out["merge_id"]
+    run_id = "run-0530" if resolver == "ai" else None
+    resolved = _resolve_all(p, merge_id, run_id=run_id)
+    assert resolved["status"] == "resolved_pending_review"
+    client = _client(monkeypatch)
+    base = f"/api/v1/projects/{p.pid}/git/merge/{merge_id}"
+    # Re-entry reads stored state, then the candidate; neither read moves refs.
+    response = client.get(base)
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["state"] == "resolved_pending_review"
+    response = client.get(f"{base}/review")
+    assert response.status_code == 200, response.text
+    review = response.json()["result"]
+    assert review["can_approve"] is True
+    assert p.sha("refs/heads/develop") == before
+    fingerprint = review["review_fingerprint"]
+    stale = client.post(f"{base}/approve", json={
+        "attempt_id": str(uuid.uuid4()), "review_fingerprint": "stale-0530"})
+    assert stale.status_code == 409, stale.text
+    assert p.sha("refs/heads/develop") == before
+    response = client.post(f"{base}/approve", json={
+        "attempt_id": str(uuid.uuid4()), "review_fingerprint": fingerprint})
+    assert response.status_code == 200, response.text
+    result = response.json()["result"]
+    assert result["status"] == "merged" and result["pushed"] is push
+    view = client.get(base).json()["result"]
+    assert view["state"] == "completed"
+    assert view["source_branch"] == "feature" and view["target_branch"] == "develop"
+    assert view["push"] is push
+    assert _session(merge_id)["status"] == "done"
+    assert not (p.workspace("develop") / "tree").exists()
