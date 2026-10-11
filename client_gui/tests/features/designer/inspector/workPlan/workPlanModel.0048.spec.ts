@@ -168,7 +168,6 @@ describe('message keys (flowgate.v02.0048 T#13)', () => {
     'started',
     'provider_none',
     'provider_server',
-    'open',
     'open_hint',
     'edit.open',
     'edit.final_approved',

@@ -345,12 +345,13 @@ export default {
       // flowgate.v02.0051 — common display parts (parts/): slot line, 🛡 review badge, origin badge,
       // lock line, run settings block.
       slot: {
-        empty: '아직 없음',
         progress: '진행률',
+        // flowgate.v02.0053 T#5 — the document icon (and the line name) that opens the window.
         open: '열기',
         // flowgate.v02.0053 T#3 — ✎ opens the document window straight in its editor.
         edit: '편집',
-        write: '작성',
+        // flowgate.v02.0053 T#5 — the hollow state dot's tooltip on a line without a document.
+        none: '문서 없음',
       },
       review: {
         pass: 'AI 검수 {n}회 · 남은 지적 {remain}',

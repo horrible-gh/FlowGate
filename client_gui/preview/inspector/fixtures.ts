@@ -235,7 +235,6 @@ export interface SlotFixture {
   readonly kind?: 'document' | 'result'
   readonly name: string
   readonly id?: string
-  readonly form?: boolean
   readonly empty?: boolean
   readonly emptyText?: string
   readonly state?: InspectorSlotState
@@ -243,27 +242,25 @@ export interface SlotFixture {
   readonly progress?: number
   readonly focus?: boolean
   readonly danger?: boolean
-  /** Buttons on the right: review badge (count / state / remain), open, write, nav label. */
+  /** Buttons on the right: review badge (count / state / remain), nav label, open (document icon · ✎). */
   readonly review?: { count: number; state: 'pass' | 'warn' | 'run' | 'limit'; remain?: number }
   readonly open?: boolean
-  readonly write?: boolean
   readonly nav?: string
   readonly caption: string
 }
 
 export const SLOT_FIXTURES: readonly SlotFixture[] = [
-  { name: '지시서', id: '0008.0006-T', state: { label: '승인', tone: 'success' }, open: true, caption: '문서 슬롯 · 승인 · ↗' },
-  { name: '레포트', id: '0008.0007-TR', state: { label: '검수 대기', tone: 'warning' }, review: { count: 2, state: 'pass', remain: 0 }, open: true, focus: true, caption: '문서 슬롯 · 검수 대기 · 🛡 2 · ↗ · focus' },
+  { name: '지시서', id: '0008.0006-T', state: { label: '승인', tone: 'success' }, open: true, caption: '문서 슬롯 · 승인 · 문서 아이콘 · ✎' },
+  { name: '레포트', id: '0008.0007-TR', state: { label: '검수 대기', tone: 'warning' }, review: { count: 2, state: 'pass', remain: 0 }, open: true, focus: true, caption: '문서 슬롯 · 검수 대기 · 🛡 2 · focus' },
   { name: '레포트', id: '0008.0007-TR', state: { label: '반려됨', tone: 'danger' }, review: { count: 1, state: 'warn' }, open: true, focus: true, caption: '문서 슬롯 · 반려됨 · 🛡 1 (대응 필요)' },
   { name: '레포트', id: '0008.0007-TR', state: { label: '검수 한도 초과', tone: 'danger' }, review: { count: 2, state: 'limit', remain: 1 }, open: true, focus: true, caption: '문서 슬롯 · 검수 한도 초과 · 🛡 2 (빨강)' },
   { name: '레포트', id: '0008.0003-NR', state: { label: '생성 중', tone: 'running' }, review: { count: 1, state: 'run' }, open: true, caption: '문서 슬롯 · 생성 중 · 🛡 1 (보라)' },
-  { name: '레포트', empty: true, emptyText: '실행 후', caption: '빈 문서 슬롯 · 점선 · “실행 후”' },
-  { name: '지시 (TS)', empty: true, emptyText: '작성 필요', write: true, caption: '빈 문서 슬롯 · 작성 가능 · ＋' },
-  { name: '레포트', empty: true, emptyText: '실패 · 제한 시간 초과', danger: true, caption: '빈 문서 슬롯 · 실패 (danger)' },
-  { name: '케이스 (TSC)', id: '0008.0009-TSC', form: true, state: { label: '승인', tone: 'success' }, summary: '케이스 57 · automated 49 · manual 6 · external 2', open: true, caption: '폼 문서 슬롯 (🧪) · 요약 줄임' },
-  { name: '작업계획 (WP)', id: '0008.0004-WP', state: { label: '스냅샷', tone: 'neutral' }, summary: 'rev 1 · Step 4', open: true, caption: '문서 슬롯 · 스냅샷 (idle)' },
-  { kind: 'result', name: '결과 (TSR)', state: { label: '진행 중', tone: 'running' }, summary: 'automated 12/49', progress: 24, open: true, caption: '결과 슬롯 · 진행도' },
-  { kind: 'result', name: '결과 (TSR)', state: { label: '결함 3', tone: 'danger' }, summary: '통과 54 · 실패 3', open: true, focus: true, caption: '결과 슬롯 · 결함 (focus)' },
+  { name: '레포트', empty: true, emptyText: '실행 후', caption: '문서 없는 줄 · 점선 · 빈 점(툴팁 “실행 후”)' },
+  { name: '레포트', empty: true, emptyText: '실패 · 제한 시간 초과', danger: true, caption: '문서 없는 줄 · 실패 (danger)' },
+  { name: '시나리오', id: '0008.0008-TS', state: { label: '승인', tone: 'success' }, summary: '케이스 57 · automated 49 · manual 6 · external 2', open: true, caption: '문서 슬롯 · 요약 줄임' },
+  { name: '작업계획', id: '0008.0004-WP', state: { label: '스냅샷', tone: 'neutral' }, summary: 'rev 1 · Step 4', open: true, caption: '문서 슬롯 · 스냅샷 (idle)' },
+  { name: '레포트', id: '0008.0010-TSR', state: { label: '진행 중', tone: 'running' }, summary: 'automated 12/49', progress: 24, open: true, caption: '문서 슬롯 · 진행도' },
+  { name: '레포트', id: '0008.0010-TSR', state: { label: '결함 3', tone: 'danger' }, summary: '통과 54 · 실패 3', open: true, focus: true, caption: '문서 슬롯 · 결함 (focus)' },
   { kind: 'result', name: '확인 결과', state: { label: '보류', tone: 'hold' }, summary: '확인 완료 · Git 반영 보류', nav: 'Git 탭', open: true, caption: '결과 슬롯 · 보류 · 이동 버튼' },
   { kind: 'result', name: '전개', state: { label: '계획과 다름 1', tone: 'hold' }, summary: 'Node 4 · 작업: 검수 횟수 2→1', open: true, caption: '결과 슬롯 · 계획과 다름' },
   { kind: 'result', name: 'AI 위임', state: { label: '한도 도달', tone: 'danger' }, summary: '총 검수/재작업 30/30', progress: 50, open: true, focus: true, danger: true, caption: '결과 슬롯 · 한도 도달 (danger + 진행도)' },
@@ -352,31 +349,31 @@ export const CARD_SLOT_FIXTURES: readonly CardSlotFixture[] = [
   {
     caption: '작업계획 · 사람 WP · 작성 중 · 전개 전 (v7 plan.m.draft)',
     lines: [
-      { key: 'plan', name: '작업계획 (WP)', id: '0008.0004-WP', state: { label: '작성 중', tone: 'info' }, summary: 'rev 1 · Step 4', focus: true, open: 'enabled' },
+      { key: 'plan', name: '작업계획', id: '0008.0004-WP', state: { label: '작성 중', tone: 'info' }, summary: 'rev 1 · Step 4', focus: true, open: 'enabled' },
       { key: 'deploy', kind: 'result', name: '전개', empty: true, emptyText: '전개 전' },
     ],
   },
   {
     caption: '작업계획 · 전개됨 · 계획과 다름 (v7 plan.m.diff)',
     lines: [
-      { key: 'plan', name: '작업계획 (WP)', id: '0008.0004-WP', state: { label: '스냅샷', tone: 'neutral' }, summary: 'rev 1 · Step 4', open: 'enabled' },
+      { key: 'plan', name: '작업계획', id: '0008.0004-WP', state: { label: '스냅샷', tone: 'neutral' }, summary: 'rev 1 · Step 4', open: 'enabled' },
       { key: 'deploy', kind: 'result', name: '전개', state: { label: '계획과 다름 1', tone: 'hold' }, summary: 'Node 4 · 작업: 검수 횟수 2→1', open: 'enabled' },
     ],
   },
   {
     caption: '테스트 · 실행 중 12/57 (v7 test.run)',
     lines: [
-      { key: 'instruction', name: '지시 (TS)', id: '0008.0008-TS', state: { label: '승인', tone: 'success' }, open: 'enabled' },
-      { key: 'cases', name: '케이스 (TSC)', form: true, id: '0008.0009-TSC', state: { label: '승인', tone: 'success' }, summary: '케이스 57 · automated 49 · manual 6 · external 2', open: 'enabled' },
-      { key: 'result', kind: 'result', name: '결과 (TSR)', state: { label: '진행 중', tone: 'running' }, summary: 'automated 12/49', progress: 24, open: 'enabled' },
+      { key: 'instruction', name: '지시서', id: '0008.0008-TS', state: { label: '승인', tone: 'success' }, open: 'enabled' },
+      { key: 'scenario', name: '시나리오', id: '0008.0008-TS', state: { label: '승인', tone: 'success' }, summary: '케이스 57 · automated 49 · manual 6 · external 2', open: 'enabled' },
+      { key: 'report', name: '레포트', id: '0008.0010-TSR', state: { label: '진행 중', tone: 'running' }, summary: 'automated 12/49', progress: 24, open: 'enabled' },
     ],
   },
   {
     caption: '테스트 · 검수 대기 · 결함 3 (v7 test.wait)',
     lines: [
-      { key: 'instruction', name: '지시 (TS)', id: '0008.0008-TS', state: { label: '승인', tone: 'success' }, open: 'enabled' },
-      { key: 'cases', name: '케이스 (TSC)', form: true, id: '0008.0009-TSC', state: { label: '승인', tone: 'success' }, summary: '케이스 57 · automated 49 · manual 6 · external 2', open: 'enabled' },
-      { key: 'result', kind: 'result', name: '결과 (TSR)', state: { label: '결함 3', tone: 'danger' }, summary: '통과 54 · 실패 3', focus: true, open: 'enabled' },
+      { key: 'instruction', name: '지시서', id: '0008.0008-TS', state: { label: '승인', tone: 'success' }, open: 'enabled' },
+      { key: 'scenario', name: '시나리오', id: '0008.0008-TS', state: { label: '승인', tone: 'success' }, summary: '케이스 57 · automated 49 · manual 6 · external 2', open: 'enabled' },
+      { key: 'report', name: '레포트', id: '0008.0010-TSR', state: { label: '결함 3', tone: 'danger' }, summary: '통과 54 · 실패 3', focus: true, open: 'enabled' },
     ],
   },
   {

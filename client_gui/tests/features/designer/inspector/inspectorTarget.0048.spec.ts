@@ -84,6 +84,7 @@ describe('toInspectorTarget', () => {
         derivedStatus: 'in_progress', protected: false, sourceWpCardId: 'c_t1',
       },
       nodeRun: null,
+      cardDocuments: [],
       nodeType: null,
       rootBound: false,
       ownership: 'v01',
@@ -134,7 +135,16 @@ describe('toInspectorTarget', () => {
     const target = targetOf({ projectId: 'p', graph: { flowId: 'f', nodes: [], edges: [] }, node: { id: 'n', kind: 'task', title: 'T', x: 0, y: 0 } })
     expect(target).toMatchObject({
       docId: null, docType: null, cardKind: 'other', canvasState: null, slot: null, nodeRun: null,
-      nodeType: null, rootBound: false, ownership: null, viewMode: null, readOnly: null, supersedes: [],
+      nodeType: null, rootBound: false, ownership: null, viewMode: null, readOnly: null, supersedes: [], cardDocuments: [],
     })
+  })
+
+  it('flowgate.v02.0053 T#5: a Graph / draft node hands its card lines over as they are', () => {
+    const lines = [
+      { slot: 'instruction', docType: 'T', author: 'human', docId: 'f.0002-T', title: '구현 · 지시서', status: 'draft', docReviewStatus: null },
+      { slot: 'report', docType: 'TR', author: 'run', docId: 'f.0003-TR', title: '구현 · 레포트', status: 'draft', docReviewStatus: null },
+    ]
+    const node = { id: 'gn_t', kind: 'task', title: '구현', x: 0, y: 0, cardDocuments: lines }
+    expect(targetOf({ projectId: 'p', graph: { flowId: 'f', nodes: [node], edges: [] }, node }).cardDocuments).toEqual(lines)
   })
 })

@@ -15,10 +15,13 @@
 // TR0020 rev4: nothing about saving is shown. A save the server refuses (`conflict`: saved
 // elsewhere first; `error`) is answered the way the removed 다시 불러오기 button was: the Flow is
 // read again as stored, which drops the refused local edits (the editor is reset from the read).
+//
+// flowgate.v02.0053 T#5: a stored save's card lines (the documents the server made for a placed card,
+// T#1) go onto the shown Graph at once, so the Inspector's documents tab has them without a read.
 import type { FlowGraph } from '../graph/flowGraph'
-import type { FlowDraftCheck, FlowDraftError, FlowGraphSource } from '../graph/flowGraphSource'
+import type { FlowDraftCheck, FlowDraftError, FlowDraftSaveResult, FlowGraphSource } from '../graph/flowGraphSource'
 import { checkConnection, type ConnectionCheck } from './connectionRules'
-import { draftFromGraph, remapGraph, withDraft, type CanvasNodeSpec, type DraftModel } from './draftModel'
+import { draftFromGraph, remapGraph, withCardDocuments, withDraft, type CanvasNodeSpec, type DraftModel } from './draftModel'
 import { createDraftEditor, type DraftEditor, type DraftEditStatus } from './draftEditor'
 import type { EditCommand } from './graphEditCommands'
 
@@ -110,6 +113,12 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     }
   }
 
+  /** flowgate.v02.0053 T#5: the card lines a save answered, on the shown Graph (no read again). */
+  function showLines(flowId: string, lines: NonNullable<FlowDraftSaveResult['cardDocuments']>) {
+    const graph = host.graph(flowId)
+    if (graph) host.setGraph(flowId, withCardDocuments(graph, lines))
+  }
+
   function keepStoppedPositions(pid: string, flowId: string, editor: DraftEditor, keyMap: Readonly<Record<string, string>>) {
     const positions = stopped.get(editor)?.positions
     const kept = Object.entries(keyMap).flatMap(([tmp, nodeId]) => (positions?.has(tmp) ? [{ nodeId, ...positions.get(tmp)! }] : []))
@@ -122,6 +131,9 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
       onKeys: (keyMap) => {
         if (editors.get(flowId) === editor) onKeys(flowId, keyMap)
         else keepStoppedPositions(pid, flowId, editor, keyMap)
+      },
+      onSaved: (result) => {
+        if (editors.get(flowId) === editor && result.cardDocuments) showLines(flowId, result.cardDocuments)
       },
       onChange: () => {
         if (editors.get(flowId) === editor) mirror(flowId)

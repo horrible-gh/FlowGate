@@ -165,7 +165,9 @@ describe('the real registry on Nodes without a document', () => {
     await flushPromises()
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
     expect(sections(w)).toEqual(['requirementCard'])
-    expect(get(w, 'inspector-requirement-card').find('[data-test="inspector-slot-empty"]').text()).toBe('아직 없음')
+    // flowgate.v02.0053 T#5: a line without a document is a hollow dot saying so — no "아직 없음" text.
+    expect(get(w, 'inspector-requirement-card').get('[data-test="inspector-slot-state"]').attributes('title')).toBe('문서 없음')
+    expect(get(w, 'inspector-requirement-card').text()).not.toContain('아직 없음')
     expect(get(w, 'designer-inspector-kind').text()).toBe('요구사항')
     await clickTab(w, '설정')
     expect(sections(w)).toEqual(['requirementSettings'])

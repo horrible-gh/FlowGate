@@ -90,7 +90,7 @@
 
     <!-- 3. Slot lines -->
     <section v-if="shown('slots')" id="slots" class="preview-section">
-      <h2>문서 / 결과 슬롯 행 (InspectorSlotRow) <small>38px · 아이콘 · 이름 · 상태 pill + 요약 / 진행도 / 빈 문구 · 버튼</small></h2>
+      <h2>문서 / 결과 슬롯 행 (InspectorSlotRow) <small>38px · 이름 · 상태 점 + 요약 / 진행도 · 버튼(문서 아이콘 · ✎)</small></h2>
       <div class="preview-frame preview-pad">
         <div class="preview-slots">
           <template v-for="(slot, i) in SLOT_FIXTURES" :key="i">
@@ -99,7 +99,7 @@
               :kind="slot.kind ?? 'document'"
               :name="slot.name"
               :id="slot.id ?? null"
-              :form="slot.form ?? false"
+              :openable="slot.open ?? false"
               :empty="slot.empty ?? false"
               :empty-text="slot.emptyText ?? null"
               :state="slot.state ?? null"
@@ -110,8 +110,8 @@
             >
               <InspectorReviewBadge v-if="slot.review" :count="slot.review.count" :state="slot.review.state" :remain="slot.review.remain ?? null" />
               <Button v-if="slot.nav" size="sm" variant="secondary">{{ slot.nav }} ↗</Button>
-              <IconButton v-if="slot.open" label="열기" title="열기" variant="secondary" size="sm">↗</IconButton>
-              <IconButton v-if="slot.write" label="작성" title="작성" variant="secondary" size="sm">＋</IconButton>
+              <InspectorOpenButton v-if="slot.open" />
+              <IconButton v-if="slot.open" label="편집" title="편집" variant="secondary" size="sm">✎</IconButton>
             </InspectorSlotRow>
           </template>
         </div>
@@ -341,6 +341,7 @@ import InspectorRunMenu from '@/features/designer/inspector/parts/InspectorRunMe
 import InspectorRunSettings from '@/features/designer/inspector/parts/InspectorRunSettings.vue'
 import InspectorSegment from '@/features/designer/inspector/parts/InspectorSegment.vue'
 import InspectorSlotList from '@/features/designer/inspector/parts/InspectorSlotList.vue'
+import InspectorOpenButton from '@/features/designer/inspector/parts/InspectorOpenButton.vue'
 import InspectorSlotRow from '@/features/designer/inspector/parts/InspectorSlotRow.vue'
 import InspectorStatusChip, { type InspectorChipTone } from '@/features/designer/inspector/parts/InspectorStatusChip.vue'
 import InspectorTbdNote from '@/features/designer/inspector/parts/InspectorTbdNote.vue'
@@ -423,7 +424,7 @@ const CARD_SAMPLES = [
   { caption: '작업 · 지시서 (T) 승인 (v0.1)', component: TaskSlots, target: TASK_T },
   { caption: '작업 · 레포트 (TR) 검수 대기 (Graph · 실행 결과 = 자기 문서)', component: TaskSlots, target: TASK_REVIEW },
   { caption: '작업 (Graph Node · 문서 없음)', component: TaskSlots, target: TASK_NO_DOCUMENT },
-  { caption: '설계 · D 반려됨 (읽기 전용) — “설명 대기” 상자 + 문서 줄', component: DesignSlots, target: DESIGN_READ_ONLY },
+  { caption: '설계 · 반려됨 (읽기 전용) — 지시서 · 레포트 줄', component: DesignSlots, target: DESIGN_READ_ONLY },
   { caption: '설계 · P (Graph Node · 문서 없음)', component: DesignSlots, target: DESIGN_NO_DOCUMENT },
   { caption: '확인 (Graph gate · 문서 없음) — 확인 결과 줄 (확인 전)', component: GateSlots, target: GATE_NO_DOCUMENT },
 ] as const

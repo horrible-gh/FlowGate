@@ -5,9 +5,12 @@
        flowgate.v02.0051 stage 2 — the v7 작업계획 card (0035 plan.m.*) on top: the 작업계획 (WP) slot line
        (state pill · rev n · Step n · ↗) and the 전개 result line (empty "전개 전": no deploy API), built from
        the common slot list part; the 0048 Step summary stays below as reused content. A Node without a
-       document shows the two lines empty and reads nothing. -->
+       document shows the two lines empty and reads nothing.
+       flowgate.v02.0053 T#5 (0053 CH) — 작업계획 · 전개 are the card's documents (made when it was placed): both
+       open (document icon or name) and ✎; no type code in a name, no "not yet" text. The details' open
+       button is the same document icon. -->
   <section class="inspector-work-plan" data-test="inspector-work-plan" :data-status="status" :data-has-document="hasDocument ? 'true' : 'false'">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="edit" />
 
     <details v-if="hasDocument" :key="target.docId ?? undefined" class="inspector-work-plan-details" data-test="work-plan-details">
       <summary>{{ t('gui.designer.inspector.pane.details') }}</summary>
@@ -53,15 +56,13 @@
 
       <div class="inspector-work-plan-line">
         <span v-if="editKey" class="inspector-work-plan-sub" data-test="work-plan-edit">{{ t(k(editKey)) }}</span>
-        <Button
+        <InspectorOpenButton
           v-if="availability.open.visible"
-          size="sm"
-          variant="ghost"
           :disabled="!availability.open.enabled"
           :title="t(k('open_hint'))"
           data-test="work-plan-open"
           @click="open"
-        >{{ t(k('open')) }}</Button>
+        />
       </div>
     </details>
   </section>
@@ -70,7 +71,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Button from '../../../../../components/ui/Button.vue'
+import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
@@ -90,7 +91,12 @@ const { view, cards, progress, editKey, availability, status, errorKey, unreadab
 
 const hasDocument = computed(() => props.target.docId !== null)
 
-/** ✎: the plan's document window, straight in its editor (flowgate.v02.0053 T#3). */
+/** The document icon (or the name): the line's document window (flowgate.v02.0053 T#5). */
+function openLine(line: InspectorSlotView) {
+  if (line.id) openDocument(line.id)
+}
+
+/** ✎: the line's document window, straight in its editor (flowgate.v02.0053 T#3). */
 function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit')
 }
@@ -104,30 +110,53 @@ function providerText(card: WorkPlanCardRow): string {
   return t(k(card.locked ? 'provider_server' : 'provider_none'))
 }
 
-/** The v7 lines: the plan document and its deployment result. */
+function stateOf(reviewStatus: string | null, docStatus: string | null) {
+  const state = workPlanSlotState(reviewStatus, docStatus)
+  const stateKey = state ? `gui.designer.inspector.${state.key}` : ''
+  return { state, view: state ? { label: te(stateKey) ? t(stateKey) : state.raw, tone: state.tone } : null }
+}
+
+/**
+ * The v7 lines: the plan document and its deployment record — the card's documents (made when the card
+ * was placed, flowgate.v02.0053 T#5), else the bound plan; a line without a document is a hollow dot.
+ */
 const lines = computed<InspectorSlotView[]>(() => {
   const target = props.target
-  const state = workPlanSlotState(target.docReviewStatus, target.docStatus)
-  const stateKey = state ? `gui.designer.inspector.${state.key}` : ''
+  const ownPlan = target.cardDocuments.find((line) => line.slot === 'plan')
+  const planId = ownPlan ? ownPlan.docId : target.docId
+  const planState = ownPlan ? stateOf(ownPlan.docReviewStatus, ownPlan.status) : stateOf(target.docReviewStatus, target.docStatus)
   const revision = view.value?.revisionNo ?? unreadableRevision.value
   const plan: InspectorSlotView =
-    target.docId !== null
+    planId !== null
       ? {
           key: 'plan',
           name: t(k('slot.plan')),
-          id: target.docId,
-          state: state ? { label: te(stateKey) ? t(stateKey) : state.raw, tone: state.tone } : null,
-          summary: view.value
+          id: planId,
+          state: planState.view,
+          summary: view.value && planId === target.docId
             ? t(k('slot_summary'), { rev: view.value.revisionNo, steps: view.value.totals.steps })
-            : revision !== null
+            : revision !== null && planId === target.docId
               ? t(k('rev'), { rev: revision })
               : null,
-          focus: workPlanSlotFocus(state),
-          danger: state?.tone === 'danger',
-          open: availability.value.open.enabled ? 'enabled' : 'disabled',
+          focus: workPlanSlotFocus(planState.state),
+          danger: planState.state?.tone === 'danger',
+          open: availability.value.open.visible && !availability.value.open.enabled && planId === target.docId ? 'disabled' : 'enabled',
         }
-      : { key: 'plan', name: t(k('slot.plan')), empty: true, emptyText: t(k('slot_empty.plan')), write: 'disabled', writeReason: t(k('write_unconnected')) }
-  const deploy: InspectorSlotView = { key: 'deploy', kind: 'result', name: t(k('slot.deploy')), empty: true, emptyText: t(k('slot_empty.deploy')) }
+      : { key: 'plan', name: t(k('slot.plan')), empty: true }
+  const ownDeploy = target.cardDocuments.find((line) => line.slot === 'deploy')
+  const deployState = ownDeploy ? stateOf(ownDeploy.docReviewStatus, ownDeploy.status) : null
+  const deploy: InspectorSlotView = ownDeploy?.docId
+    ? {
+        key: 'deploy',
+        kind: 'result',
+        name: t(k('slot.deploy')),
+        id: ownDeploy.docId,
+        state: deployState?.view ?? null,
+        focus: workPlanSlotFocus(deployState?.state ?? null),
+        danger: deployState?.state?.tone === 'danger',
+        open: 'enabled',
+      }
+    : { key: 'deploy', kind: 'result', name: t(k('slot.deploy')), empty: true, emptyText: t(k('slot_empty.deploy')) }
   return [plan, deploy]
 })
 </script>

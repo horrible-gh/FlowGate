@@ -3,7 +3,6 @@
 export default {
   ko: {
     current: '현재 문서',
-    open: '↗ 열기',
     open_hint: '문서 열기',
     revision: 'rev {n}',
     doc_status: '문서 상태 {status}',
@@ -48,7 +47,6 @@ export default {
   },
   en: {
     current: 'Current document',
-    open: '↗ Open',
     open_hint: 'Open the document',
     revision: 'rev {n}',
     doc_status: 'Document status {status}',
@@ -93,7 +91,6 @@ export default {
   },
   ja: {
     current: '現在の文書',
-    open: '↗ 開く',
     open_hint: '文書を開く',
     revision: 'rev {n}',
     doc_status: '文書状態 {status}',

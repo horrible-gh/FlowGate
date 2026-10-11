@@ -64,15 +64,13 @@
                   </template>
                 </small>
               </div>
-              <IconButton
+              <!-- flowgate.v02.0053 T#5 (0053 CH): the same document icon as the document lines (tooltip 열기). -->
+              <InspectorOpenButton
                 class="inspector-qna-open"
-                :label="t(k('open'))"
                 :title="t(k('open'))"
-                variant="secondary"
-                size="sm"
                 data-test="qna-open"
                 @click="openWindow(item.id)"
-              >↗</IconButton>
+              />
             </div>
 
             <!-- v7 `.q-ans`: the short inline answer under a question without an answer. -->
@@ -215,9 +213,9 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../../components/ui/Button.vue'
-import IconButton from '../../../../../components/ui/IconButton.vue'
 import ModelessShell from '../../../../../components/ui/ModelessShell.vue'
 import Textarea from '../../../../../components/ui/Textarea.vue'
+import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorStatusChip, { type InspectorChipTone } from '../../parts/InspectorStatusChip.vue'

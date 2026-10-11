@@ -337,12 +337,13 @@ export default {
       // flowgate.v02.0051 — common display parts (parts/): slot line, 🛡 review badge, origin badge,
       // lock line, run settings block.
       slot: {
-        empty: 'None yet',
         progress: 'Progress',
+        // flowgate.v02.0053 T#5 — the document icon (and the line name) that opens the window.
         open: 'Open',
         // flowgate.v02.0053 T#3 — ✎ opens the document window straight in its editor.
         edit: 'Edit',
-        write: 'Write',
+        // flowgate.v02.0053 T#5 — the hollow state dot's tooltip on a line without a document.
+        none: 'No document',
       },
       review: {
         pass: 'AI review ×{n} · {remain} finding(s) left',

@@ -3,6 +3,7 @@
 // API, D#1 §8.4; the gate's role is under discussion, v7 §5). Registered for the `other` card kind — a
 // gate has no document type — in every ownership, without a document; the part draws nothing on an
 // `other` Node that is neither a gate nor a document Node.
+// flowgate.v02.0053 T#5 — a Custom card (Graph `custom` node, also `other`) gets its 지시서 · 레포트 lines here.
 import type { InspectorRegistration } from '../../inspectorRegistry'
 import GateActions from './GateActions.vue'
 import GateSlots from './GateSlots.vue'

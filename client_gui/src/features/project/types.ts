@@ -332,6 +332,24 @@ export interface FlowCanvasNode {
   graphNode?: FlowCanvasGraphNode | null
   /** flowgate.v02.0048 T#1: the run state of a Graph node (P0008 §2.6 `node_run`); absent elsewhere. */
   nodeRun?: FlowCanvasNodeRun | null
+  /** flowgate.v02.0053 T#5: the card's document lines (`card_documents`) of a Graph / draft node; absent elsewhere. */
+  cardDocuments?: FlowCanvasCardDocument[]
+}
+
+/**
+ * flowgate.v02.0053 T#1 `card_documents` line: one document a card holds (made when the card is placed).
+ * `slot` / `author` are open keys as the server sends them; `docId` is null when the line's document is gone.
+ */
+export interface FlowCanvasCardDocument {
+  /** requirement · delegation · plan · deploy · instruction · scenario · report. */
+  slot: string
+  docType: string | null
+  /** `human` (a person writes it) | `run` (a run fills it). */
+  author: string | null
+  docId: string | null
+  title: string | null
+  status: string | null
+  docReviewStatus: string | null
 }
 
 /** P0008 §2.6 `node_run`: what the Inspector shows of a Graph node's run (status kept as the server sends it). */
@@ -475,6 +493,8 @@ export interface FlowGraphDraftSaveResult {
   keyMap: Record<string, string>
   removedNodeKeys: string[]
   removedEdgeIds: string[]
+  /** flowgate.v02.0053 T#5: node key -> the saved draft node's card lines (`card_documents`), when answered. */
+  cardDocuments?: Record<string, FlowCanvasCardDocument[]>
 }
 
 /** P0008 S3-5 issue: `code` / `structure` are open keys, `message` is display text. */

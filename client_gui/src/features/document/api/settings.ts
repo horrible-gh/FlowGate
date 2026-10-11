@@ -305,6 +305,58 @@ export async function settingsRunRead(groupId: string): Promise<SettingsRun> {
   return toSettingsRun(response.data)
 }
 
+// flowgate.v02.0053 T#5 — the card (Node) settings T#2 stores (server/flowgate/card_settings), read by the
+// documents tab for the one value it shows: a card whose instruction is omitted has no 지시서 line (v7).
+//   node      GET   /api/v1/flows/{flow_id}/nodes/{node_key}/settings -> { ok, flow_id, node_key, card_kind,
+//             locked, fields: { <name>: { value, stored, default, choices } } } — `value` is the stored
+//             value, else the default; `card_kind` is null for a card without settings. 404 node_not_found
+//             for a node the server does not keep.
+
+/** One card setting as the server answers it. */
+export interface SettingsNodeField {
+  /** The stored value, else the default. */
+  readonly value: unknown
+  readonly stored: unknown
+  readonly default: unknown
+  /** The values to choose from; null for a free value (an AI, a branch, a number). */
+  readonly choices: readonly unknown[] | null
+}
+
+/** A card's settings (T#2). */
+export interface SettingsNode {
+  readonly cardKind: string | null
+  /** A running card: its settings cannot change now. */
+  readonly locked: boolean
+  readonly fields: Readonly<Record<string, SettingsNodeField>>
+}
+
+/** The card settings read -> SettingsNode (unknown field shapes dropped). */
+export function toSettingsNode(raw: unknown): SettingsNode {
+  const data = record(raw)
+  const fields: Record<string, SettingsNodeField> = {}
+  for (const [name, value] of Object.entries(record(data.fields))) {
+    const field = record(value)
+    fields[name] = {
+      value: field.value ?? null,
+      stored: field.stored ?? null,
+      default: field.default ?? null,
+      choices: Array.isArray(field.choices) ? [...field.choices] : null,
+    }
+  }
+  return { cardKind: text(data.card_kind), locked: data.locked === true, fields }
+}
+
+/** Reads a card's settings. */
+export async function settingsNodeRead(flowId: string, nodeKey: string): Promise<SettingsNode> {
+  const response = await getRequest<unknown>(`${API}/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/settings`)
+  return toSettingsNode(response.data)
+}
+
+/** Whether the card omits its instruction (`instruction` = omit): its 지시서 line is not shown. */
+export function settingsInstructionOmitted(node: SettingsNode | null | undefined): boolean {
+  return node?.fields.instruction?.value === 'omit'
+}
+
 /**
  * Why a settings call was refused:
  * disposed = the group was disposed; running = an AI run owns the group (423, or the policy's 409);

@@ -5,22 +5,21 @@
        of the Node. ↗ 열기 opens a document in its document window, where ✎ edits it.
        A thin container: useDocuments reads, documentsModel decides what is shown.
        flowgate.v02.0052 묶음 A — no prose line in the body: where writing and editing happen is the
-       ↗ 열기 button's hover text (v7 keeps explanations in tooltips). -->
+       ↗ 열기 button's hover text (v7 keeps explanations in tooltips).
+       flowgate.v02.0053 T#5 (0053 CH) — every open button is the document icon (tooltip: open_hint). -->
   <div v-if="view" class="inspector-documents" data-test="inspector-documents" :data-status="status">
     <section class="inspector-documents-current" data-test="documents-current" :data-doc="view.current.docId">
       <div class="inspector-documents-line">
         <span v-if="view.current.typeCode" class="inspector-documents-type" data-test="documents-current-type">{{ view.current.typeCode }}</span>
         <span v-if="view.current.seq !== null" class="inspector-documents-seq" data-test="documents-current-seq">#{{ view.current.seq }}</span>
         <span class="inspector-documents-title" :title="view.current.title" data-test="documents-current-title">{{ view.current.title }}</span>
-        <Button
+        <InspectorOpenButton
           v-if="availability.open.visible"
-          size="sm"
-          variant="secondary"
           :disabled="!availability.open.enabled"
           :title="t(k('open_hint'))"
           data-test="documents-open"
           @click="open(view.current.docId)"
-        >{{ t(k('open')) }}</Button>
+        />
       </div>
       <div class="inspector-documents-meta">
         <InspectorStatusChip
@@ -60,14 +59,12 @@
           <dd :data-test="`documents-run-${item.key}`">{{ item.value }}</dd>
         </template>
       </dl>
-      <Button
+      <InspectorOpenButton
         v-if="view.run.resultDocId"
-        size="sm"
-        variant="ghost"
         :title="t(k('open_hint'))"
         data-test="documents-run-open"
         @click="open(view.run.resultDocId)"
-      >{{ t(k('open')) }}</Button>
+      />
     </section>
 
     <section v-if="view.rejections.length" class="inspector-documents-section" data-test="documents-rejections">
@@ -90,15 +87,13 @@
             <span v-if="item.seq !== null" class="inspector-documents-seq">#{{ item.seq }}</span>
             <span class="inspector-documents-title" :title="item.title ?? item.docId">{{ item.title ?? item.docId }}</span>
             <InspectorStatusChip v-if="item.reviewStatus" :label="reviewText(item.reviewStatus)" :tone="item.reviewTone" />
-            <Button
+            <InspectorOpenButton
               v-if="availability.open.visible"
-              size="sm"
-              variant="ghost"
               :disabled="!availability.open.enabled"
               :title="t(k('open_hint'))"
               data-test="documents-previous-open"
               @click="open(item.docId)"
-            >{{ t(k('open')) }}</Button>
+            />
           </span>
           <span v-if="item.state === 'missing'" class="inspector-documents-sub" data-test="documents-previous-missing">{{ t(k('previous.missing')) }}</span>
         </li>
@@ -109,7 +104,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import Button from '../../../../../components/ui/Button.vue'
+import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorStatusChip from '../../parts/InspectorStatusChip.vue'

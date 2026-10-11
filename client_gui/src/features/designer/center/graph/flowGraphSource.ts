@@ -5,7 +5,7 @@
 // passes the server source (serverFlowGraphSource.ts, flowgate.v02.0045). A server source goes
 // through the features/project public surface (store loaders), never @shared/api or axios
 // directly (structure.0024).
-import type { FlowGraph, FlowGraphNodeDefinition, FlowGraphViewport } from './flowGraph'
+import type { FlowGraph, FlowGraphCardDocument, FlowGraphNodeDefinition, FlowGraphViewport } from './flowGraph'
 
 /** One batched layout change of a Flow: moved Node positions and / or the Viewport. */
 export interface FlowLayoutChange {
@@ -49,6 +49,8 @@ export interface FlowDraftSaveResult {
   readonly version: number
   /** `tmp_` key -> stored key, nodes and edges alike. */
   readonly keyMap: Readonly<Record<string, string>>
+  /** flowgate.v02.0053 T#5: stored node key -> the card's document lines the save made or kept. */
+  readonly cardDocuments?: Readonly<Record<string, readonly FlowGraphCardDocument[]>>
 }
 
 /** One structure / root binding problem (P0008 S3-5); ids are node / edge ids of the Graph. */

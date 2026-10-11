@@ -93,6 +93,7 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
       document: node.document,
       slot: node.slot,
       nodeRun: node.nodeRun ?? null,
+      ...(node.cardDocuments ? { cardDocuments: node.cardDocuments } : {}),
     })),
     edges: canvas.edges.map((edge) => ({
       id: edge.edgeId,
@@ -167,7 +168,11 @@ export function createServerFlowGraphSource(loaders: FlowCanvasLoaders): FlowGra
     saveDraft: graphLoaders
       ? async (_projectId, flowId, version, content) => {
           const result = await loaders.saveFlowGraphDraft!(flowId, toDraftInput(version, content))
-          return { version: result.draftVersion, keyMap: result.keyMap }
+          return {
+            version: result.draftVersion,
+            keyMap: result.keyMap,
+            ...(result.cardDocuments ? { cardDocuments: result.cardDocuments } : {}),
+          }
         }
       : undefined,
     validateDraft: graphLoaders

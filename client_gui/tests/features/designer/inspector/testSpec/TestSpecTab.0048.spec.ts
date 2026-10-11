@@ -321,7 +321,7 @@ describe('test section — reading (flowgate.v02.0048 T#11)', () => {
   it('a legacy executable TS: the v0.1 note and ↗ 열기 only, no run operation', async () => {
     const w = await mountTab(target('v01', LEGACY_TS_NODE))
     expect(el(w, 'inspector-test-spec').attributes('data-form')).toBe('legacy')
-    expect(textOf(w, 'test-spec-legacy')).toBe('실행형(이전 형식) 테스트 지시입니다. 실행과 결과는 ↗ 열기에서 봅니다.')
+    expect(textOf(w, 'test-spec-legacy')).toBe('실행형(이전 형식) 테스트 지시입니다. 실행과 결과는 문서 창에서 봅니다.')
     expect(el(w, 'test-spec-run').exists()).toBe(false)
     expect(el(w, 'test-spec-cancel').exists()).toBe(false)
     expect(el(w, 'test-spec-state').exists()).toBe(false)
@@ -425,7 +425,7 @@ describe('test section — ▶ 실행 and ■ 취소 (flowgate.v02.0048 T#11)', 
     ['409 run_in_progress (started elsewhere)', 'run_in_progress', '이미 실행 중이거나 AI 실행 중이라 거절되었습니다. 상태를 다시 읽었습니다.'],
     ['409 doc_not_approved (unapproved meanwhile)', 'doc_not_approved', '테스트 지시가 승인되지 않아 거절되었습니다. 상태를 다시 읽었습니다.'],
     ['409 tsr_already_approved', 'tsr_already_approved', '결과 보고서가 이미 승인되어 거절되었습니다.'],
-    ['409 failure_origin_pending', 'failure_origin_pending', 'FAIL 원인 검토가 남아 있어 거절되었습니다. ↗ 열기에서 처리합니다.'],
+    ['409 failure_origin_pending', 'failure_origin_pending', 'FAIL 원인 검토가 남아 있어 거절되었습니다. 문서 창에서 처리합니다.'],
     ['422 no_automated_bindings', 'no_automated_bindings', '서버가 실행할 수 있는 자동 케이스가 없어 거절되었습니다.'],
     ['423 (an AI run took the group)', 'locked', '이미 실행 중이거나 AI 실행 중이라 거절되었습니다. 상태를 다시 읽었습니다.'],
     ['409 another code', 'odd_state', '서버 상태가 바뀌어 실행이 거절되었습니다. 상태를 다시 읽었습니다.'],

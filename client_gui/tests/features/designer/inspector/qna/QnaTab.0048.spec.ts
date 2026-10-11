@@ -266,6 +266,15 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       return win
     }
 
+    // flowgate.v02.0053 T#5 (0053 CH): the button that opens a question's window is the same document icon as
+    // the document lines (tooltip 열기), not ↗.
+    it('the open button of a question is the document icon with the tooltip 열기', async () => {
+      const w = await mountTab(v01Target())
+      const button = itemEl(w, 10).get('[data-test="qna-open"]')
+      expect([button.attributes('data-icon'), button.attributes('title'), button.attributes('aria-label'), button.text()]).toEqual(['document', '열기', '열기', ''])
+      expect(w.text()).not.toContain('↗')
+    })
+
     it('shows the full question, its answers and the full form; no 편집 badge — answering is not editing', async () => {
       const w = await mountTab(v01Target())
       await open(w, 10)

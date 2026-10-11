@@ -1,13 +1,17 @@
 // flowgate.v02.0051 stage 2 — Graph gate strings, merged under `gui.inspector.gateCard`.
+// flowgate.v02.0053 T#5 — the Custom card's 지시서 · 레포트 lines.
 export default {
   ko: {
     label: '확인',
     slot: {
       result: '확인 결과',
       document: '문서',
+      instruction: '지시서',
+      report: '레포트',
     },
     empty: {
       before: '확인 전',
+      after_run: '실행 후',
     },
     confirm: '✓ 확인',
     reject: '✕ 반려',
@@ -20,9 +24,12 @@ export default {
     slot: {
       result: 'Check result',
       document: 'Document',
+      instruction: 'Instruction',
+      report: 'Report',
     },
     empty: {
       before: 'Before check',
+      after_run: 'After run',
     },
     confirm: '✓ Confirm',
     reject: '✕ Reject',
@@ -35,9 +42,12 @@ export default {
     slot: {
       result: '確認結果',
       document: '文書',
+      instruction: '指示書',
+      report: 'レポート',
     },
     empty: {
       before: '確認前',
+      after_run: '実行後',
     },
     confirm: '✓ 確認',
     reject: '✕ 差し戻し',

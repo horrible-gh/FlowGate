@@ -223,7 +223,11 @@ describe('documents tab — real-shaped data of the fixtures', () => {
   it('no pair slot, result slot or write line is drawn (D#1 §8.4)', async () => {
     const w = await mountTab(targetOf(SELECTIONS.v01))
     expect(w.text()).not.toMatch(/작성\s*$|결과 슬롯|지시서/)
-    expect(w.findAll('button').map((button) => button.text())).toEqual(['↗ 열기', '↗ 열기'])
+    // flowgate.v02.0053 T#5: every open button is the document icon (no ↗, its wording the tooltip).
+    expect(w.findAll('button').map((button) => [button.text(), button.attributes('data-icon'), button.attributes('title')])).toEqual([
+      ['', 'document', '문서 열기'],
+      ['', 'document', '문서 열기'],
+    ])
   })
 })
 
@@ -393,7 +397,7 @@ describe('documents tab in the Frame (real registry)', () => {
     expect(tabLabels(w)).toContain('문서')
     expect(w.find('[data-test="designer-inspector-section"][data-key="documents"]').exists()).toBe(false)
     expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
-    expect(w.findAll('[data-test="inspector-slot-name"]').map((name) => name.attributes('title'))).toContain(docId)
+    expect(w.findAll('[data-test="inspector-slot"]').map((line) => line.attributes('data-doc'))).toContain(docId)
     expect(w.text()).not.toContain('현재 문서')
     expect(w.text()).not.toContain('v0.1 문서 화면에서 합니다')
   })

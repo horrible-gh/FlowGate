@@ -10,6 +10,7 @@
 import { extractApiErrorMessage, getRequest, putRequest } from '@shared/api'
 import type {
   FlowCanvas,
+  FlowCanvasCardDocument,
   FlowCanvasDocument,
   FlowCanvasEdge,
   FlowCanvasExternalRelation,
@@ -88,6 +89,22 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
   return { status: str(raw.status), openedAt: str(raw.opened_at), finishedAt: str(raw.finished_at), resultDocId: str(raw.result_doc_id) }
 }
 
+// flowgate.v02.0053 T#5: the card's document lines (T#1 `card_documents`), in the server's order.
+export function toCardDocuments(raw: unknown): FlowCanvasCardDocument[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((line): line is Raw => !!line && typeof line === 'object' && typeof line.slot === 'string')
+    .map((line) => ({
+      slot: line.slot,
+      docType: str(line.doc_type),
+      author: str(line.author),
+      docId: str(line.doc_id),
+      title: str(line.title),
+      status: str(line.status),
+      docReviewStatus: str(line.doc_review_status),
+    }))
+}
+
 function toView(raw: Raw | null | undefined): FlowCanvasView | null {
   if (!raw || typeof raw.mode !== 'string') return null
   return { mode: raw.mode, revisionNo: num(raw.revision_no), draftVersion: num(raw.draft_version) }
@@ -132,6 +149,8 @@ function toNode(raw: Raw): FlowCanvasNode {
     graphNode: toGraphNode(raw.graph_node),
     // Only a Graph node with a run carries it (the field stays absent elsewhere, as before 0048).
     ...(nodeRun ? { nodeRun } : {}),
+    // Only a Graph / draft node carries its card lines (absent on document and sequence nodes).
+    ...(Array.isArray(raw.card_documents) ? { cardDocuments: toCardDocuments(raw.card_documents) } : {}),
   }
 }
 

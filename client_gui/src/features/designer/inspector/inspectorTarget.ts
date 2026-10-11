@@ -4,6 +4,7 @@
 // only. Every Inspector part reads this one shape, so the rules here (card kind, read only) are
 // decided once and never again per feature.
 import type {
+  FlowGraphCardDocument,
   FlowGraphNodeRun,
   FlowGraphNodeSlot,
   FlowGraphSelection,
@@ -31,6 +32,9 @@ export const INSPECTOR_DOC_TYPES: readonly string[] = Object.values(INSPECTOR_CA
 /** Flow ownership keys a registration's `ownerships` may name. */
 export const INSPECTOR_OWNERSHIPS = ['unassigned', 'v01', 'graph', 'conflict'] as const
 
+/** One document line of a card (FlowGraphCardDocument). */
+export type InspectorCardDocument = FlowGraphCardDocument
+
 /** Why the Inspector may not change anything: ownership conflict, or a Graph revision view. */
 export type InspectorReadOnly = 'conflict' | 'revision' | null
 
@@ -55,6 +59,11 @@ export interface InspectorTarget {
   readonly supersedes: readonly string[]
   readonly slot: FlowGraphNodeSlot | null
   readonly nodeRun: FlowGraphNodeRun | null
+  /**
+   * flowgate.v02.0053 T#5: the card's document lines as the server keeps them (T#1 — made when the card
+   * is placed), in its order; empty on a Node without them (a document / sequence Node).
+   */
+  readonly cardDocuments: readonly InspectorCardDocument[]
   /** Graph definition node type (`document` | `gate` | `custom`), or null. */
   readonly nodeType: string | null
   readonly rootBound: boolean
@@ -103,6 +112,7 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     supersedes: document?.supersedes ?? [],
     slot: node.slot ?? null,
     nodeRun: node.nodeRun ?? null,
+    cardDocuments: node.cardDocuments ?? [],
     nodeType: node.definition?.nodeType ?? null,
     rootBound: node.definition?.rootBound === true,
     ownership,

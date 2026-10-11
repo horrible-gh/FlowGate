@@ -8,7 +8,7 @@
 // `code` only (draft_version_conflict, graph_validation_failed, flow_owned_by_v01, ...).
 
 import { getRequest, postRequest, putRequest } from '@shared/api'
-import { canvasHeaders, num, str, toAssignee, toOwnership, wrapError, type Raw } from './flowCanvasApi'
+import { canvasHeaders, num, str, toAssignee, toCardDocuments, toOwnership, wrapError, type Raw } from './flowCanvasApi'
 import type {
   FlowGraphConfirmResult,
   FlowGraphDefinition,
@@ -130,11 +130,17 @@ export async function saveFlowGraphDraft(flowId: string, input: FlowGraphDraftIn
     const data = response.data ?? {}
     const keyMap: Record<string, string> = {}
     for (const [k, v] of Object.entries(data.key_map ?? {})) if (typeof v === 'string') keyMap[k] = v
+    // flowgate.v02.0053 T#5: the saved draft nodes' card lines (T#1), so a placed card shows them at once.
+    const lines = data.card_documents
+    const cardDocuments = lines && typeof lines === 'object' && !Array.isArray(lines)
+      ? Object.fromEntries(Object.entries(lines as Raw).map(([key, value]) => [key, toCardDocuments(value)]))
+      : null
     return {
       draftVersion: num(data.draft_version) ?? input.draftVersion + 1,
       keyMap,
       removedNodeKeys: strings(data.removed_node_keys),
       removedEdgeIds: strings(data.removed_edge_ids),
+      ...(cardDocuments ? { cardDocuments } : {}),
     }
   } catch (error) {
     throw toGraphError(error, 'Failed to save the flow graph draft.')
