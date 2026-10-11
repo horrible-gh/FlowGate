@@ -92,7 +92,7 @@ const RESOLVE_STATES = new Set(['conflict', 'ai_resolving', 'conflict_remaining'
 // 0683 T0004 §1 — states the server can still move on its own (the AI resolver finishing,
 // the attempt leaving `starting`); the host keeps reading them so a resolution that lands
 // while this dialog is open hands over to the review instead of sitting on the resolver.
-const LIVE_STATES = new Set(['ai_resolving', 'starting'])
+const LIVE_STATES = RESOLVE_STATES
 const POLL_MS = 3000
 
 const attempt = ref<BranchMergeAttempt | null>(null)
@@ -101,7 +101,8 @@ const loadStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const errorMessage = ref('')
 const busy = ref(false)
 const aiStarting = ref(false)
-const mode = ref<'resolve' | 'review' | null>(null)
+// Render the resolver's loading/error surface even when the first attempt read fails.
+const mode = ref<'resolve' | 'review' | null>('resolve')
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let disposed = false
 
@@ -137,14 +138,14 @@ const aiRunNotice = computed(() => {
 
 function aiFailureText(): string {
   const ai = attempt.value?.ai
-  if (ai?.status !== 'start_failed') return ''
-  return t('main.git_branch_manager.merge_conflict_ai.start_failed_reason', {
-    reason: ai.error?.message || ai.error?.code || '',
-  })
+  const reason = ai?.error?.message || ai?.error?.code || ''
+  if (ai?.status !== 'start_failed') return reason
+  return t('main.git_branch_manager.merge_conflict_ai.start_failed_reason', { reason })
 }
 
 async function loadAttempt(): Promise<BranchMergeAttempt | null> {
   const { data } = await getRequest<{ ok: boolean; result: BranchMergeAttempt }>(apiBase.value)
+  if (disposed) return null
   attempt.value = data?.result || null
   return attempt.value
 }
@@ -167,6 +168,7 @@ function settleMode(current: BranchMergeAttempt | null): boolean {
     return true
   }
   // completed / aborted / failed — nothing left to open.
+  mode.value = null
   showToast(t(`main.git_branch_manager.attempt_state.${current.state}`, current.state), 'success')
   emit('changed')
   emit('close')
@@ -178,7 +180,7 @@ async function reload() {
   errorMessage.value = ''
   try {
     const current = await loadAttempt()
-    if (!settleMode(current)) return
+    if (disposed || !settleMode(current)) return
     if (mode.value === 'resolve') await loadConflicts()
     loadStatus.value = 'ready'
     errorMessage.value = aiFailureText()
@@ -190,25 +192,26 @@ async function reload() {
   }
 }
 
-// While the server says the AI is resolving, re-read the attempt in the background —
-// the dialog stays mounted (no loading gate), and the conflict list is refreshed only
-// when the state actually moves.
+// Follow every unresolved attempt, including another tab's resolver or a late completion.
+// Preserve local edits while the state is unchanged; retry the first failed read too.
 function schedulePoll() {
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = null
-  if (disposed || !LIVE_STATES.has(attempt.value?.state || '')) return
+  if (disposed || (attempt.value && !LIVE_STATES.has(attempt.value.state))) return
   pollTimer = setTimeout(async () => {
     if (disposed) return
     const before = attempt.value?.state
     try {
       const current = await loadAttempt()
-      if (current && current.state !== before) {
+      if (disposed) return
+      if (current && (current.state !== before || loadStatus.value === 'error')) {
         if (!settleMode(current)) return
         if (mode.value === 'review') {
           // `resolved_pending_review` is not a finished merge: say the review is where it goes on.
           showToast(t('main.git_review.resolved_pending_opened'), 'success')
         }
         if (mode.value === 'resolve') await loadConflicts()
+        loadStatus.value = 'ready'
         errorMessage.value = aiFailureText()
         emit('changed')
       }
