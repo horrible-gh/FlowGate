@@ -28,7 +28,6 @@ from modules.flow_gate.documents.constants import WORK_PLAN_TYPE
 from modules.flow_gate.services import (
     engine_recipe_service,
     remote_tool_service,
-    step_verification_service,
     test_command_service,
     tool_registry,
     tr_scope_service,
@@ -61,7 +60,6 @@ CATALOG_ORDER: tuple[str, ...] = (
     "test_commands",
     "tr_self_check",
     "changed_files_format",
-    "step_verification_format",
 )
 
 ITEM_FORM: dict[str, str] = {
@@ -78,7 +76,6 @@ ITEM_FORM: dict[str, str] = {
     "test_commands": "content",
     "tr_self_check": "content",
     "changed_files_format": "content",
-    "step_verification_format": "content",
 }
 
 _CATALOG = frozenset(CATALOG_ORDER)
@@ -119,7 +116,6 @@ TITLES: dict[str, dict[str, str]] = {
         "test_commands": "검증된 테스트 명령",
         "tr_self_check": "TR Self-check 사용법",
         "changed_files_format": "변경 파일 보고 서식",
-        "step_verification_format": "단계별 확인 절 서식",
     },
     "en": {
         "notices": "Notices",
@@ -135,7 +131,6 @@ TITLES: dict[str, dict[str, str]] = {
         "test_commands": "Verified test commands",
         "tr_self_check": "TR Self-check guide",
         "changed_files_format": "Changed-files report format",
-        "step_verification_format": "Step-verification section format",
     },
     "ja": {
         "notices": "注意事項",
@@ -151,7 +146,6 @@ TITLES: dict[str, dict[str, str]] = {
         "test_commands": "検証済みテストコマンド",
         "tr_self_check": "TR Self-check の使い方",
         "changed_files_format": "変更ファイル報告フォーマット",
-        "step_verification_format": "段階別確認節フォーマット",
     },
 }
 
@@ -190,7 +184,6 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "test_commands": "이 프로젝트에 등록된, 실행이 확인된 테스트 명령.",
         "tr_self_check": "TR 작성(new)·수정(edit) 단계의 공식 검증 경로(run/read/cancel_self_check) 요청 서식·수명주기·오류 대응.",
         "changed_files_format": "제출 시 반드시 넣어야 하는 변경 파일 절의 서식.",
-        "step_verification_format": "TR 제출 시 반드시 넣어야 하는 단계별 확인 절의 서식.",
     },
     "en": {
         "notices": "What this step forbids and must not be skipped.",
@@ -206,7 +199,6 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "test_commands": "Test commands registered for this project and verified on this host.",
         "tr_self_check": "The TR new/edit verification path (run/read/cancel_self_check): request format, lifecycle and error handling.",
         "changed_files_format": "Format of the changed-files section your submission must carry.",
-        "step_verification_format": "Format of the step-verification section a TR submission must carry.",
     },
     "ja": {
         "notices": "この作業で必ず守るべき禁止事項。",
@@ -222,7 +214,6 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "test_commands": "このプロジェクトに登録され、実行が確認されたテストコマンド。",
         "tr_self_check": "TR作成(new)・修正(edit)段階の公式検証経路(run/read/cancel_self_check)のリクエスト形式・ライフサイクル・エラー対応。",
         "changed_files_format": "提出時に必ず入れる変更ファイル節のフォーマット。",
-        "step_verification_format": "TR提出時に必ず入れる段階別確認節のフォーマット。",
     },
 }
 
@@ -371,8 +362,6 @@ _TR_AUTHORING_GUIDE: dict[str, str] = {
         "3. 어떻게 확인했는가 — 실행한 테스트 명령과 그 결과. 돌리지 못했으면 그 사실을 적습니다.\n"
         "4. 남은 것 — 이번에 하지 않은 범위와 그 이유.\n"
         "5. 변경 파일 절 — 서식은 도움말 항목 changed_files_format 에 있습니다.\n"
-        "6. 단계별 확인 절 — 검수자가 그대로 따라 하면 되는 확인 절차. 서식은 도움말 항목\n"
-        "   step_verification_format 에 있습니다.\n"
         "\n"
         "확인을 사용자에게 넘기지 마십시오. 재현·수정·측정까지 마친 뒤 제출합니다.\n"
     ),
@@ -384,8 +373,6 @@ _TR_AUTHORING_GUIDE: dict[str, str] = {
         "3. How you verified it — the test commands you ran and their results. If you could not run them, say so.\n"
         "4. What is left — the scope you did not cover and why.\n"
         "5. The changed-files section — its format is in the changed_files_format help item.\n"
-        "6. The step-verification section — a procedure the reviewer can follow verbatim.\n"
-        "   Its format is in the step_verification_format help item.\n"
         "\n"
         "Do not hand verification back to the user. Reproduce, fix and measure before submitting.\n"
     ),
@@ -397,8 +384,6 @@ _TR_AUTHORING_GUIDE: dict[str, str] = {
         "3. どう確認したか — 実行したテストコマンドとその結果。実行できなかった場合はその事実。\n"
         "4. 残ったもの — 今回対応しなかった範囲とその理由。\n"
         "5. 変更ファイル節 — フォーマットはヘルプ項目 changed_files_format にあります。\n"
-        "6. 段階別確認節 — 検収者がそのまま従える確認手順。フォーマットはヘルプ項目\n"
-        "   step_verification_format にあります。\n"
         "\n"
         "確認をユーザーに委ねないでください。再現・修正・計測まで済ませてから提出します。\n"
     ),
@@ -590,11 +575,6 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
         if authoring and doc_type in MUTATING_TYPES:
             return VISIBLE
         return Decision(False, "not_mutating_type")
-
-    if name == "step_verification_format":
-        if authoring and doc_type == "TR":
-            return VISIBLE
-        return Decision(False, "not_tr_type")
 
     return Decision(False, "unknown_item")
 
@@ -1097,7 +1077,6 @@ def _content_submit(ctx: dict) -> dict:
         if str(doc_type).upper() in tool_registry.MUTATING_STEP_TYPES:
             body["content"] = "<Fill this in>\n\n" + tr_scope_service.tr_section_placeholder(ctx["locale"])
             if str(doc_type).upper() == "TR":
-                body["content"] += "\n" + step_verification_service.section_placeholder(ctx["locale"])
                 body["commit_message"] = (
                     "<This TR's own approval commit subject, used verbatim. Conventional "
                     "commit format: type(scope): summary — e.g. "
@@ -1132,8 +1111,6 @@ def _content_submit(ctx: dict) -> dict:
         }
     if str(doc_type).upper() in tool_registry.MUTATING_STEP_TYPES and scope != "edit":
         payload["changed_files_required"] = True
-    if str(doc_type).upper() == "TR" and scope != "edit":
-        payload["step_verification_required"] = True
     return payload
 
 
@@ -1174,46 +1151,6 @@ def _content_changed_files_format(ctx: dict) -> dict:
             "- server/modules/flow_gate/api/v1/help_routes.py\n"
         ),
         "empty_case": f"{heading}\n\n{tr_scope_service._spelling_none(locale)}\n",
-    }
-
-
-_STEP_VERIFICATION_RULE: dict[str, str] = {
-    "ko": "섹션 제목은 '### '(레벨 3)로 씁니다. 개요는 한 줄, 스텝은 하나 이상, 스텝마다 기대치가 하나 이상 있어야 합니다.",
-    "en": "Section titles use '### ' (level 3). One summary line, at least one step, and every step needs at least one Expected line.",
-    "ja": "セクション見出しは '### '(レベル3)で書きます。概要は1行、ステップは1つ以上、各ステップに期待値の行が1つ以上必要です。",
-}
-
-_STEP_VERIFICATION_EXAMPLE: dict[str, str] = {
-    "ko": (
-        "### 로그인 화면 확인\n"
-        "- 개요: 잘못된 비밀번호 입력 시 오류 문구가 뜬다\n"
-        "- 스텝: 임의의 비밀번호로 로그인 시도\n"
-        "  - 기대치: '비밀번호가 올바르지 않습니다' 문구가 화면에 표시된다\n"
-    ),
-    "en": (
-        "### Login screen check\n"
-        "- Summary: An error message appears on a wrong password\n"
-        "- Step: Attempt login with any wrong password\n"
-        "  - Expected: The message 'Incorrect password' is shown on screen\n"
-    ),
-}
-
-
-def _content_step_verification_format(ctx: dict) -> dict:
-    locale = ctx["locale"]
-    guide = step_verification_service.section_guide(locale)
-    placeholder = step_verification_service.section_placeholder(locale)
-    heading = placeholder.split("\n", 1)[0]
-    example_body = _STEP_VERIFICATION_EXAMPLE.get(locale, _STEP_VERIFICATION_EXAMPLE["ko"])
-    none_marker = step_verification_service._spelling_none(locale)
-    return {
-        "required": True,
-        "heading": heading,
-        "guide": guide,
-        "placeholder": placeholder,
-        "rule": _STEP_VERIFICATION_RULE.get(locale, _STEP_VERIFICATION_RULE["ko"]),
-        "example": f"{heading}\n\n{example_body}",
-        "empty_case": f"{heading}\n\n{none_marker}\n",
     }
 
 
@@ -1451,7 +1388,6 @@ _CONTENT_SUPPLIERS = {
     "test_commands": _content_test_commands,
     "tr_self_check": _content_tr_self_check,
     "changed_files_format": _content_changed_files_format,
-    "step_verification_format": _content_step_verification_format,
 }
 
 

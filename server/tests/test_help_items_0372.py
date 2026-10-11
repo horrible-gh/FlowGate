@@ -138,7 +138,6 @@ def test_index_for_a_design_token_lists_the_template_and_hides_the_task_items(mo
         "test_commands": "not_ts_type",
         "tr_self_check": "not_tr_edit",
         "changed_files_format": "not_mutating_type",
-        "step_verification_format": "not_tr_type",
     }
     assert body["context"] == {
         "doc_id": "flowgate.default.0372.0004-P",
@@ -175,7 +174,7 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     body = client.get("/api/v1/help").json()
 
     assert "changed_files_format" in _names(body)
-    assert "step_verification_format" in _names(body)
+    assert "step_verification_format" not in _names(body)
     assert "authoring_guide" in _names(body)
     # 0638 T#1: a TR(new) worker runs Self-check before its TR exists, so the item is listed.
     assert "tr_self_check" in _names(body)
@@ -795,3 +794,45 @@ def test_doc_type_item_matches_the_legacy_route_against_the_real_schema(monkeypa
     legacy = client.get("/api/v1/help/doc_type").json()
     item = client.get("/api/v1/help/items/doc_type").json()
     assert item["content"]["types"] == legacy
+
+
+@pytest.mark.parametrize("locale", ["ko", "en", "ja"])
+@pytest.mark.parametrize("scope", ["new", "edit", "review"])
+def test_retired_verification_help_item_is_unknown(monkeypatch, locale, scope):
+    client = _client(monkeypatch, _token(scope), step_type="TR")
+    index = client.get("/api/v1/help", headers={"X-Locale": locale}).json()
+    assert "step_verification_format" not in _names(index)
+    assert "step_verification_format" not in _hidden(index)
+    assert "step_verification_format" not in help_catalog.CATALOG_ORDER
+    response = client.get("/api/v1/help/items/step_verification_format", headers={"X-Locale": locale})
+    assert response.status_code == 404, response.text
+
+
+@pytest.mark.parametrize("locale", ["ko", "en", "ja"])
+@pytest.mark.parametrize("scope", ["new", "edit"])
+def test_submit_has_no_retired_required_flag_when_authoring_tr(monkeypatch, locale, scope):
+    client = _client(monkeypatch, _token(scope), step_type="TR")
+    response = client.get("/api/v1/help/items/submit", headers={"X-Locale": locale})
+    assert response.status_code == 200, response.text
+    content = response.json()["content"]
+    assert "step_verification_required" not in content
+    headings = [line.strip().casefold() for line in content["body"]["content"].splitlines() if line.startswith("## ")]
+    assert "## step verification" not in headings
+    assert "## \ub2e8\uacc4\ubcc4 \ud655\uc778" not in headings
+    if scope == "new":
+        assert content["changed_files_required"] is True
+
+
+@pytest.mark.parametrize("locale", ["ko", "en", "ja"])
+def test_tr_guide_and_bulk_help_keep_testing_and_scope_after_retirement(monkeypatch, locale):
+    client = _client(monkeypatch, _token(), step_type="TR")
+    guide = client.get("/api/v1/help/items/authoring_guide/TR", headers={"X-Locale": locale})
+    assert guide.status_code == 200, guide.text
+    text = json.dumps(guide.json(), ensure_ascii=False)
+    assert "step_verification_format" not in text
+    assert "changed_files_format" in text
+    bulk = client.get("/api/v1/help?detail=true", headers={"X-Locale": locale}).json()
+    items = {item["name"]: item for item in bulk["items"]}
+    assert "step_verification_format" not in items
+    assert "changed_files_format" in items
+    assert "tr_self_check" in items
