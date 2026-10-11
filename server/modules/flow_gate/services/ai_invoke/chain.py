@@ -14,6 +14,7 @@ trigger), which is also where the existing tests patch them.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -964,18 +965,83 @@ def _maybe_auto_resume_hop(run: dict) -> None:
     except HTTPException as exc:
         logger.warning("ai-invoke auto-resume rejected for %s: %s",
                        group_id, getattr(exc, "detail", exc))
+        run["handoff_failure_detail"] = _handoff_failure_detail(exc)
         _svc()._park_handoff(run, pending, HOP_HANDOFF_FAILED_STOP_CODE)
         return
-    except Exception:
+    except ValueError as exc:
+        # 0504 NR0003 §8 F3: advance_workflow refuses the next step with a ValueError
+        # (head_in_progress, sequence_exhausted, instruction_auto_complete_failed, ...). That
+        # is a blocked advance, not an unexplained hand-off failure: it parks on the code the
+        # inbox self-chain uses for the same refusal, with the refusal as its stop_reason.
+        logger.warning("ai-invoke auto-resume could not advance %s: %s", group_id, exc)
+        run["review_reject_detail"] = _handoff_failure_detail(exc)
+        _svc()._park_handoff(run, pending, ADVANCE_BLOCKED_STOP_CODE)
+        return
+    except Exception as exc:
         logger.exception("ai-invoke auto-resume failed for %s", group_id)
+        run["handoff_failure_detail"] = _handoff_failure_detail(exc)
         _svc()._park_handoff(run, pending, HOP_HANDOFF_FAILED_STOP_CODE)
         return
     if not started:
+        if run.get("_chain_completed"):
+            # 0504 F4: the gate approved the chain's last step and released the lease
+            # (_settle_gate_pass). That is the chain's normal end, not a failed hand-off.
+            _settle_chain_completed(run)
         return          # the gate parked the chain; its durable row IS the resume card
     run["_handoff_succeeded"] = True
     # The follow-up hop actually started. **Only now** is the intent cleared.
     terminal.attempt(run, "clear_handoff_row", lambda:
         _svc()._clear_handoff_row(group_id, run.get("run_id")))
+
+
+# 0504 F3: the code the inbox self-chain already parks a refused advance on, so the engine
+# hand-off and the inbox name the same stop the same way (finalize._stop_reason_text reads
+# its detail from `review_reject_detail`).
+ADVANCE_BLOCKED_STOP_CODE = "advance_blocked"
+CHAIN_COMPLETED_STOP_CODE = "chain_completed"
+_HANDOFF_FAILURE_DETAIL_MAX = 500
+
+
+def _handoff_failure_detail(exc: BaseException) -> str:
+    """What stopped the next hop, as one bounded line for the run's stop_reason (0504 F3).
+
+    An HTTPException carries its code/message in ``detail``; everything else is its own
+    message. Either way the stop no longer reaches the record as a bare code with a null
+    reason.
+    """
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if isinstance(detail, dict):
+            code = detail.get("code")
+            message = detail.get("message")
+            text = ": ".join(str(part) for part in (code, message) if part) or str(detail)
+        else:
+            text = str(detail)
+        text = f"HTTP {exc.status_code} {text}"
+    elif isinstance(exc, ValueError):
+        text = str(exc) or type(exc).__name__
+    else:
+        text = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+    text = " ".join(text.split())
+    if len(text) > _HANDOFF_FAILURE_DETAIL_MAX:
+        text = text[:_HANDOFF_FAILURE_DETAIL_MAX - 3] + "..."
+    return text
+
+
+def _settle_chain_completed(run: dict) -> None:
+    """Record a hop whose gate completed the chain as `chain_completed` (0504 F4).
+
+    `_settle_gate_pass` has already cleared the handoff row and released the lease, and
+    sets `_chain_completed`, which keeps the worker's terminal `abandon_handoff` from
+    re-parking the run as `hop_handoff_failed` (terminal.claim_abandon). Only the run's own
+    record still says `hop_handoff`; this corrects it.
+    """
+    if run.get("status") != "finished":
+        run["stop_code"] = CHAIN_COMPLETED_STOP_CODE
+        run["resumable"] = finalize.is_resumable(CHAIN_COMPLETED_STOP_CODE)
+        run["stop_reason"] = finalize._stop_reason_text(CHAIN_COMPLETED_STOP_CODE, run)
+        return
+    _resettle_stop_after_park(run, CHAIN_COMPLETED_STOP_CODE)
 
 
 def _spawn_auto_resume(group_id: str, pending: dict) -> None:
@@ -1069,6 +1135,231 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         continuation_review_count_overrides=review_count_overrides,
         continuation_reviewer_overrides=reviewer_overrides,
     )
+
+
+# A chain start's queued intent carries its own identity (0504 TR0005 rev1): the bundle is
+# copied into the queue, so "is it still mine" cannot be an object-identity check, and
+# equality is not ownership either (see _pop_auto_resume_if_same).
+START_INTENT_KEY = "start_intent_id"
+
+
+def _start_intent_row(group_id: str, queued: dict) -> Optional[dict]:
+    """The durable row request_auto_resume just wrote for a chain start's intent, or None.
+
+    A start queues before any run of its own exists, so that row's stop_run_id (and
+    chain_id) is NULL -- which neither _clear_handoff_row nor delete_system_stop will ever
+    match. A failed launch therefore takes it back by its exact identity instead
+    (_withdraw_start_intent). Read under the group lock right after the queue and before
+    the launch: only a system `hop_handoff` row for this chain's doc_ref and issuer with no
+    stop run is this start's own; anything else is left to whoever wrote it. Best effort,
+    like the write it reads back.
+    """
+    try:
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+        row = db_paused.get_by_group(group_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("ai-invoke chain-start intent row read failed for %s", group_id,
+                       exc_info=True)
+        return None
+    if (
+        row is None
+        or (row.get("stop_kind") or "user") != "system"
+        or row.get("stop_code") != HOP_HANDOFF_STOP_CODE
+        or row.get("stop_run_id") is not None
+        or row.get("doc_ref") != queued.get("doc_ref")
+        or row.get("paused_by") != queued.get("issued_to")
+    ):
+        return None
+    return row
+
+
+def _withdraw_start_intent(
+    group_id: str, intent_id: str, owned_row: Optional[dict],
+) -> None:
+    """Take back exactly what a failed chain start queued (0504 TR0005 rev1).
+
+    Memory: the queue entry is popped only while it still carries this start's intent id --
+    never a bare clear_auto_resume(group_id), which would also take a queue another owner
+    wrote meanwhile. Durable: release_owned compare-and-swaps on the snapshot
+    _start_intent_row read, so a newer row (a user pause, another owner's hand-off) is
+    ReleaseSuperseded and survives. Without this the NULL-stop_run_id row outlived the
+    failed launch, and every retry of the same start fell back on the paused-row probe to
+    the ordinary first hop, which dies on head_in_progress at the pending_review T.
+    """
+    with _auto_resume_lock:
+        current = _svc()._auto_resume.get(group_id)
+        if current is not None and current.get(START_INTENT_KEY) == intent_id:
+            _svc()._auto_resume.pop(group_id, None)
+    if owned_row is None:
+        return
+    try:
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+        released = db_paused.release_owned(
+            group_id,
+            paused_by=owned_row.get("paused_by"),
+            paused_at=owned_row.get("paused_at"),
+            stop_kind=owned_row.get("stop_kind"),
+            stop_run_id=owned_row.get("stop_run_id"),
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("ai-invoke chain-start intent row cleanup failed for %s", group_id,
+                       exc_info=True)
+        return
+    if isinstance(released, db_paused.ReleaseSuperseded):
+        logger.info("ai-invoke chain start on %s left a newer paused row in place", group_id)
+
+
+def start_chain_at_instruction_review(
+    *,
+    project_id: str,
+    group_id: str,
+    doc_ref: str,
+    target_seq: Optional[int],
+    issued_to: str,
+    api_base_url: str,
+    locale: str = "ko",
+    instruction_mode: Optional[str] = None,
+    auto_approve_item_seqs: Optional[list] = None,
+    review_count_overrides: Optional[dict] = None,
+    reviewer_overrides: Optional[dict] = None,
+    provider_overrides: Optional[dict] = None,
+    base_provider_id: Optional[str] = None,
+    provider_pinned: bool = False,
+    note_overrides: Optional[dict] = None,
+    default_note: Optional[str] = None,
+    step_timeout_sec: Optional[int] = None,
+    restart_max_attempts: Optional[int] = None,
+) -> Optional[dict]:
+    """Start a continuous chain whose head is a reviewed WorkPlan N/T at its review hop
+    (0504 NR0003 §8 F2).
+
+    The first hop of [연속 작업] goes through advance_workflow, which materializes a WorkPlan
+    N/T head and -- when the step has a review count -- leaves it `pending_review` for the
+    gate, then refuses to issue past it (head_in_progress): the start rolled back and the
+    instruction was never reviewed (S0/S1). A hand-off reaches that review through
+    run_review_gate; a start has no previous hop, so it derives the gate here, cold, the way
+    resume_chain does, and launches the same review/rework hop through the same queue-then-
+    launch order. Its verdict then continues the chain through the ordinary hand-off.
+
+    Returns the started hop's result, or None when there is no such instruction waiting --
+    then the caller starts the ordinary first hop exactly as before. A group with a live run,
+    a lease or a paused row is left to that ordinary path too, so nothing is materialized
+    behind another owner's back.
+    """
+    from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+    from modules.flow_gate.services import workflow_decision_service
+
+    if not doc_ref or not issued_to or target_seq is None or int(target_seq) < 1:
+        return None
+    # 0504 TR0005 rev1: probe -> queue -> launch is ONE critical section, under the same group
+    # lock resume_chain holds around its own queue-then-launch. Two starts that both passed a
+    # bare read-only probe each queued an intent for this group; admission's atomic lease let
+    # only one review hop start, and the refused start (run_in_progress) then took the
+    # WINNER's queue back with it -- the T's verdict found nothing to hand off to and the
+    # chain stopped again. Serialized, the second start probes after the first launched,
+    # sees its run (and its intent row) and is left to the ordinary path, which refuses it
+    # without touching the winner's intent.
+    with _group_resume_lock(group_id):
+        try:
+            # Read-only probes. Any doubt falls back to the ordinary first hop, which reports
+            # the same facts through its own admission checks.
+            seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+            head = db_wfseq.get_effective_head(seq["id"]) if seq is not None else None
+            if (
+                not head
+                or (head.get("type") or "").upper()
+                not in workflow_decision_service.INSTRUCTION_AUTO_TYPES
+                or (
+                    head.get("item_seq") is not None
+                    and int(head["item_seq"]) > int(target_seq)
+                )
+            ):
+                return None
+            if _svc()._active_run_for_group(group_id) is not None:
+                return None
+            if (
+                db_group_ai_leases.get_active(group_id)
+                or db_paused.get_by_group(group_id) is not None
+            ):
+                return None
+            chain_docs_target = admission._continuation_docs_target(
+                doc_ref, int(target_seq),
+                continuation_instruction_mode=instruction_mode,
+                continuation_auto_approve_item_seqs=auto_approve_item_seqs,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("ai-invoke chain-start instruction probe failed for %s", group_id,
+                           exc_info=True)
+            return None
+        if not chain_docs_target or chain_docs_target <= 0:
+            return None
+        bundle = {
+            "doc_ref": doc_ref,
+            "target_seq": int(target_seq),
+            "to_end": False,
+            "review_count_overrides": review_count_overrides,
+            "reviewer_overrides": reviewer_overrides,
+            "locale": locale,
+            "issued_to": issued_to,
+            "api_base_url": api_base_url,
+            "instruction_mode": (
+                workflow_decision_service.normalize_continuation_instruction_mode(
+                    instruction_mode)
+            ),
+            "auto_approve_item_seqs": auto_approve_item_seqs,
+            "chain_id": None,
+            "chain_docs_target": chain_docs_target,
+            "chain_docs_reached": 0,
+            "step_timeout_sec": step_timeout_sec,
+            "provider_overrides": provider_overrides,
+            "base_provider_id": base_provider_id,
+            "provider_pinned": bool(provider_pinned),
+            "note_overrides": note_overrides,
+            "default_note": default_note,
+            "restart_max_attempts": restart_max_attempts,
+            "materialize_instruction_before_gate": True,
+        }
+        review._materialize_work_plan_instruction_before_gate(bundle)
+        gate = review.resolve_review_gate(bundle)
+        stage = gate.get("stage")
+        slot = gate.get("slot") or {}
+        if (
+            stage not in (REVIEW_HOP_KIND, REWORK_HOP_KIND)
+            or (slot.get("doc_type") or "").upper()
+            not in workflow_decision_service.INSTRUCTION_AUTO_TYPES
+        ):
+            return None
+        if gate.get("reject_first"):
+            result = _svc()._auto_reject(slot, review._latest_review_of(slot), bundle)
+            if not result.get("ok"):
+                raise _http_error(409, result.get("stop_code") or "review_reject_failed",
+                                  result.get("detail") or "The automatic rejection failed.",
+                                  group_id=group_id, doc_id=slot.get("doc_id"))
+        queued = {**bundle, "last_stage": stage, START_INTENT_KEY: uuid.uuid4().hex}
+        if stage == REVIEW_HOP_KIND:
+            queued["rounds_before"] = int(gate.get("rounds_used") or 0)
+        else:
+            queued["revision_before"] = int(slot.get("revision_no") or 0)
+        logger.info(
+            "ai-invoke chain start on %s: head %s (item_seq %s) waits on its %s hop",
+            group_id, slot.get("doc_id"), slot.get("item_seq"), stage,
+        )
+        review._queue_gate_bundle(group_id, queued)
+        # The durable half of the intent, read back before the launch can overwrite it.
+        owned_row = _start_intent_row(group_id, queued)
+        spawn = (
+            _svc()._spawn_review_hop if stage == REVIEW_HOP_KIND else _svc()._spawn_rework_hop
+        )
+        try:
+            return spawn(group_id, queued, gate)
+        except Exception:
+            # The intent must not outlive the failed launch -- neither half of it, and only
+            # THIS start's: a retry must find no row in its way, and another owner keeps
+            # its own.
+            _withdraw_start_intent(group_id, queued[START_INTENT_KEY], owned_row)
+            raise
 
 
 def _resolve_continuation_target(
@@ -1482,6 +1773,36 @@ def _settle_question_park_gate(
                 "approved_doc_id": slot["doc_id"]}
     raise _stopped(result.get("stop_code") or "approve_failed",
                    result.get("detail") or result.get("reason"))
+
+
+def _question_park_gate_after_settle(
+    group_id: str, gate: dict, bundle: dict, restore_row: Callable[..., None],
+) -> tuple[dict, Optional[dict]]:
+    """The gate a question park's resume continues with after its settle (0504 F1).
+
+    `_settle_question_park_gate` returned None, so when the replayed gate approved its slot
+    the chain continues. That approval can make a reviewed WorkPlan N/T the head; the same
+    re-derivation `run_review_gate` makes (`review._gate_after_settled_step`) exposes it,
+    and its own reject / stop / approve outcomes settle through the same helper. Returns
+    ``(gate, settled)``: the gate the resume goes on with (the original one when nothing
+    new waits), and the resume's result when that second settle already ended it.
+    """
+    slot = gate.get("slot")
+    if gate.get("stage") != WORK_HOP_KIND or not gate.get("approve_first") or slot is None:
+        return gate, None
+    try:
+        after = review._gate_after_settled_step(bundle, slot)
+    except Exception:
+        restore_row()
+        logger.exception("ai-invoke resume gate re-derivation failed for %s", group_id)
+        raise _http_error(500, "resume_lookup_failed",
+                          "Could not read the review gate to resume. Retry later.")
+    if after is None:
+        return gate, None
+    _fresh, next_gate = after
+    # `bundle` (resume_chain's gate bundle) carries no hop progress keys, so it already is
+    # the cold bundle the re-derivation used.
+    return next_gate, _settle_question_park_gate(group_id, next_gate, bundle, restore_row)
 
 
 def _park_question_resume_on_server_test(
@@ -1942,6 +2263,14 @@ def _resume_chain_locked(
                               "Could not read the review gate to resume. Retry later.")
         if handoff_requester is not None:
             settled = _settle_question_park_gate(group_id, gate, gate_bundle, _restore_row)
+            if settled is not None:
+                return settled
+            # 0504 NR0003 §8 F1: an approval this replay just made can expose a reviewed
+            # WorkPlan N/T as the next head -- the same re-derivation run_review_gate does
+            # after its own settle, so the resume reaches that instruction's review hop
+            # instead of dying on head_in_progress in the plain path below.
+            gate, settled = _question_park_gate_after_settle(
+                group_id, gate, gate_bundle, _restore_row)
             if settled is not None:
                 return settled
             if gate.get("stage") == WORK_HOP_KIND:

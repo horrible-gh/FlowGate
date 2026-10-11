@@ -1084,10 +1084,17 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
     if stop_code is None:
         return None
     if stop_code == "chain_completed":
+        if run.get("continuation_target_seq") is None:
+            # 0504 F4: a review hop is single-mode and carries no target of its own.
+            return "The chain reached its target step; the chain is complete."
         return (f"Target step {run.get('continuation_target_seq')} reached; "
                 "the chain is complete.")
     if stop_code == "hop_handoff":
         return "This hop produced its document; the next hop starts in a new worker."
+    if stop_code == "hop_handoff_failed" and run.get("handoff_failure_detail"):
+        # 0504 F3: what stopped the next hop (chain._handoff_failure_detail), instead of a
+        # bare code with a null reason.
+        return f"The next hop could not be started: {run['handoff_failure_detail']}"
     if stop_code == "no_output_exhausted":
         provider_name = run.get("continuation_selected_provider_name") or run.get("continuation_selected_provider_id") or "Selected provider"
         # 0446 T0008 §3-6: `retry_block_reason` has no column in `ai_invoke_runs` and is not
