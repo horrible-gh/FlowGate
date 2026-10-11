@@ -14,7 +14,7 @@ trigger), which is also where the existing tests patch them.
 
 from __future__ import annotations
 
-from modules.flow_gate.services.workflow_completion_service import slot_completed
+from modules.flow_gate.services.workflow_completion_service import completion_reason, slot_completed
 
 import uuid
 from datetime import datetime, timezone
@@ -1895,6 +1895,20 @@ def _paused_row_resume_state(
             "sequence_unavailable",
             f"continuous run requires a decided workflow sequence on {row['doc_ref']}",
         )
+
+    # 0428 T#2: a completed unapproved report must not turn the ordinary
+    # resume surface into the future decision-dispatch consumer. Preserve the
+    # PASS/result-entry paths: only the latest registered TSR's valid unapproved
+    # completion on a system test stop is fenced here. User pauses and other
+    # system stops retain their existing admission rules.
+    if ((row.get("stop_kind") or "user") == "system"
+            and row.get("stop_code") in {"test_gate_blocked", "test_run_pending"}):
+        reports = sorted((item for item in items
+                          if item.get("type") == "TSR" and item.get("result_doc_id")),
+                         key=lambda item: item.get("sort_order") or 0)
+        if reports and completion_reason(reports[-1]) == "proceeded_unapproved":
+            return _state(False, "test_gate_decision_dispatch_required",
+                          "This unapproved test report requires its decision continuation dispatch.")
 
     stored_target_seq = row.get("continuation_target_seq")
     try:

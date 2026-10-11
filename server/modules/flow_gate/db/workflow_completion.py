@@ -7,6 +7,7 @@ never mutates document review status, and atomically stores continuation intent.
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from uuid import uuid4
 
 from .connection import FlowGateStore, get_store, now_iso
@@ -25,6 +26,15 @@ def _key(row):
     return tuple(row[name] for name in (
         "sequence_id", "slot_id", "slot_generation", "result_doc_id", "document_revision",
     ))
+
+
+@contextmanager
+def decision_transaction(sequence_id: int, slot_id: int):
+    """Serialize command admission and its audit with the decision's slot CAS."""
+    store = get_store()
+    with store.transaction():
+        store._execute(_sql(store, "serialize_slot"), [sequence_id, slot_id])
+        yield
 
 
 def get_decision(decision_id: str) -> dict | None:
