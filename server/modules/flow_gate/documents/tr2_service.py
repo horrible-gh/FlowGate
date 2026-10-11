@@ -998,6 +998,91 @@ def mutate(doc_id: str, operation: str, *, actor: str, expected_revision: int,
     return result
 
 
+# Batch import is append-only. Existing IDs are never silently overwritten;
+# intentional replacement remains the individual PUT contract.
+TR2_BATCH_MAX_ITEMS = 200
+
+
+def _batch_items(items) -> list:
+    if not isinstance(items, list) or not 1 <= len(items) <= TR2_BATCH_MAX_ITEMS:
+        _invalid("items", f"array of 1..{TR2_BATCH_MAX_ITEMS} items required")
+    return items
+
+
+def _batch_entry(entry, index: int) -> tuple[str, dict]:
+    loc = f"items[{index}]"
+    entry = _object(entry, loc, {"collection", "item"}, {"collection", "item"})
+    collection = _collection(entry["collection"], loc + ".collection")
+    if not isinstance(entry["item"], dict):
+        _invalid(loc + ".item", "object required")
+    return collection, dict(entry["item"])
+
+
+def _append_batch(current: dict, items: list) -> dict:
+    body = json.loads(_json(current))
+    for index, entry in enumerate(items):
+        collection, item = _batch_entry(entry, index)
+        body["edit_spec"][collection].append(item)
+    return body
+
+
+def preview_items(doc_id: str, items: list, *, expected_revision: int) -> dict:
+    """Validate files against one stored revision, without saving or applying source.
+
+    Invalid entries do not prevent independent valid entries from being selected.
+    All occurrences of an incoming duplicate ID are rejected. Target conflicts are
+    tested in file order against the stored proposal plus already valid entries.
+    """
+    from modules.flow_gate.documents.tr2_errors import error_payload
+    _batch_items(items)
+    with _lock(doc_id):
+        doc = db_docs.get_by_id(doc_id)
+        if not doc or doc.get("type_code") != TR2_TYPE_CODE:
+            raise Tr2ValidationError("tr2_workflow_conflict", "doc_id")
+        revision = doc.get("revision_no") or 0
+        if expected_revision != revision:
+            raise Tr2ValidationError("tr2_spec_changed", "expected_revision",
+                                     {"current_revision_no": revision})
+        _assert_mutable(doc)
+        body = load_current(doc)
+        id_counts = {}
+        for entry in items:
+            item = entry.get("item") if isinstance(entry, dict) else None
+            ident = item.get("id") if isinstance(item, dict) else None
+            if isinstance(ident, str):
+                id_counts[ident] = id_counts.get(ident, 0) + 1
+        results = []
+        for index, entry in enumerate(items):
+            try:
+                _collection_name, item = _batch_entry(entry, index)
+                ident = item.get("id")
+                if isinstance(ident, str) and id_counts.get(ident, 0) > 1:
+                    _invalid(f"items[{index}].item.id", "duplicate imported id")
+                candidate = _append_batch(body, [entry])
+                validated = validate(candidate, doc=doc)
+                body = validated
+                results.append({"index": index, "valid": True, "error": None})
+            except Tr2ValidationError as exc:
+                results.append({"index": index, "valid": False,
+                                "error": error_payload(exc.code, details=exc.details)})
+        return {"doc_id": doc_id, "revision_no": revision, "items": results}
+
+
+def import_items(doc_id: str, items: list, *, actor: str, expected_revision: int) -> dict:
+    """One canonical write/CAS/snapshot for every selected item, or no change."""
+    _batch_items(items)
+
+    def build(current):
+        if current is None:
+            raise Tr2ValidationError("tr2_workflow_conflict", "document")
+        return _append_batch(current, items)
+
+    result = _save(doc_id, build, actor=actor, expected_revision=expected_revision,
+                   operation="import_items")
+    result["imported_count"] = len(items)
+    return result
+
+
 # ── Proposal revision recovery (0565 T0030 §6) ─────────────────────────────────────
 # "반영안 복구" is about the TR2 document itself: its current canonical file went missing,
 # got damaged or no longer validates. It never touches an approval attempt, a rollback or

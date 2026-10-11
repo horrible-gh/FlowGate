@@ -60,6 +60,30 @@
         <div><span>{{ t('main.tr2_body.files.op_deferred') }}</span><strong>{{ counts.deferred }}</strong></div>
       </div>
 
+      <section v-if="batchRows.length || batchLoading" class="tr2-section tr2-batch" data-testid="tr2-batch-preview" :aria-busy="batchLoading">
+        <h3>{{ t('main.tr2_body.batch.heading') }}</h3>
+        <p class="tr2-note">{{ t('main.tr2_body.batch.hint') }}</p>
+        <p role="status" data-testid="tr2-batch-count">{{ t('main.tr2_body.batch.count', { total: batchRows.length, valid: batchRows.filter(row => row.valid).length, selected: batchSelected.length }) }}</p>
+        <p v-if="batchLoading">{{ t('main.tr2_body.batch.loading') }}</p>
+        <p v-if="batchRevision !== view.document.revision_no || staleWhileEditing || stale" class="tr2-error" data-testid="tr2-batch-stale">{{ t('main.tr2_body.batch.stale') }} <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-batch-reload" :disabled="saving" @click="reload">{{ t('main.tr2_body.actions.reload') }}</button></p>
+        <ul class="tr2-batch-list">
+          <li v-for="(row, index) in batchRows" :key="index" :data-testid="`tr2-batch-row-${index}`">
+            <label>
+              <input v-model="row.selected" type="checkbox" :disabled="!row.valid || locked || stale || staleWhileEditing" :data-testid="`tr2-batch-select-${index}`" />
+              <strong>{{ row.name }}</strong> · {{ row.item?.id ?? '—' }} · {{ row.item?.file ?? t('main.tr2_body.files.no_file') }}
+              <span v-if="row.item"> · {{ opLabel(itemOp(row.collection ?? 'edits', row.item)) }}</span>
+            </label>
+            <details v-if="row.item"><summary>{{ t('main.tr2_body.batch.details') }}</summary><pre>{{ JSON.stringify(row.item, null, 2) }}</pre></details>
+            <p v-if="row.problem" class="tr2-error">{{ row.problem }}</p>
+            <span v-else-if="row.valid">{{ t('main.tr2_body.batch.valid') }}</span>
+          </li>
+        </ul>
+        <div class="tr2-actions">
+          <button type="button" class="btn btn-primary btn-sm" data-testid="tr2-batch-import" :disabled="locked || batchLoading || !batchSelected.length || batchRevision !== view.document.revision_no || stale || staleWhileEditing" @click="importBatch">{{ t('main.tr2_body.batch.import', { count: batchSelected.length }) }}</button>
+          <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-batch-cancel" :disabled="saving" @click="closeBatch">{{ t('main.tr2_body.actions.cancel') }}</button>
+        </div>
+      </section>
+
       <div class="tr2-split">
         <section class="tr2-section">
           <h3>{{ t('main.tr2_body.files.heading') }} <small>{{ t('main.tr2_body.files.counts', counts) }}</small></h3>
@@ -87,6 +111,7 @@
           <div class="tr2-actions">
             <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-add-item" :disabled="locked" @click="openItemEditor(null)">{{ t('main.tr2_body.actions.add_item') }}</button>
             <label class="btn btn-outline btn-sm" :class="{ 'is-disabled': locked }" :aria-disabled="locked"><input type="file" accept="application/json,.json" data-testid="tr2-upload-new-item" :disabled="locked" @change="uploadItem($event, null)">{{ t('main.tr2_body.actions.item_upload') }}</label>
+            <label class="btn btn-outline btn-sm" :class="{ 'is-disabled': locked }" :aria-disabled="locked"><input type="file" multiple accept="application/json,.json" data-testid="tr2-upload-batch" :disabled="locked" @change="previewBatch">{{ t('main.tr2_body.batch.upload') }}</label>
           </div>
         </section>
 
@@ -229,6 +254,8 @@ import {
 interface Entry { collection: ItemCollection; op: ItemOp; item: Row }
 type Pending = { kind: 'reset' } | { kind: 'retry' } | { kind: 'delete'; id: string }
 
+interface BatchRow { name: string; collection: ItemCollection | null; item: Row | null; valid: boolean; selected: boolean; problem: string }
+
 const props = defineProps<{ tab: Tab; readOnly: boolean }>()
 const { t, te } = useI18n()
 
@@ -255,6 +282,11 @@ const loading = ref(false)
 const saving = ref(false)
 const retrying = ref(false)
 const confirming = ref<Pending | null>(null)
+const batchRows = ref<BatchRow[]>([])
+const batchRevision = ref<number | null>(null)
+const batchLoading = ref(false)
+const batchSelected = computed(() => batchRows.value.filter(row => row.valid && row.selected))
+let batchGeneration = 0
 let generation = 0
 let editorSeq = 0
 let fileGeneration = 0
@@ -267,12 +299,12 @@ const tone = computed(() => (state.value ? tr2Tone(state.value) : 'live'))
 const latest = computed(() => view.value?.approval.latest_attempt ?? null)
 const retry = computed(() => view.value?.approval.retry ?? null)
 const mutationAllowed = computed(() => view.value?.mutation?.allowed ?? Boolean(view.value?.document.editable))
-const locked = computed(() => props.readOnly || !view.value || !mutationAllowed.value || saving.value)
+const locked = computed(() => props.readOnly || !view.value || !mutationAllowed.value || saving.value || batchLoading.value)
 const gate = computed(() => (view.value ? gateResults(view.value) : null))
 const gateAdmission = computed(() => view.value?.gate_admission ?? null)
 const commandAdmissionFingerprint = computed(() => gateAdmission.value?.fingerprint ?? null)
 const hasShellComplexCandidate = computed(() => gateAdmission.value?.commands.some((item) => item.state === 'candidate' && item.shell_complex) === true)
-const editing = computed(() => wholeEditorOpen.value || itemEditor.value !== null)
+const editing = computed(() => wholeEditorOpen.value || itemEditor.value !== null || batchLoading.value || batchRows.value.length > 0)
 // Basis-vs-source only matters before approval: once applied, the source differs by design.
 const awaitingApproval = computed(() => view.value?.document.doc_review_status === 'pending_review')
 const notReadyReason = computed(() => (state.value === 'not_ready' ? readinessText(view.value?.readiness, t, te) : ''))
@@ -450,6 +482,7 @@ async function refresh() {
   }
 }
 async function reload() {
+  closeBatch()
   wholeEditorOpen.value = false
   itemEditor.value = null
   await refresh()
@@ -482,20 +515,22 @@ function announce(changed: boolean) {
 }
 
 /** Every mutation: server-side merge + validation + revision CAS; then re-read the model. */
-async function mutate(call: (revision: number) => Promise<{ data: any }>): Promise<boolean> {
+async function mutate(call: (revision: number) => Promise<{ data: any }>, expectedRevision?: number): Promise<boolean> {
   if (!view.value || locked.value) return false
+  const docId = props.tab.id
   saving.value = true
   error.value = ''
   notice.value = ''
   try {
-    const response = await call(view.value.document.revision_no)
+    const response = await call(expectedRevision ?? view.value.document.revision_no)
+    if (docId !== props.tab.id) return false
     diagnostic.value = null
     await refresh()
     notice.value = t('main.tr2_body.saved', { revision: response.data?.new_revision ?? view.value?.document.revision_no ?? '' })
     announce(true)
     return true
   } catch (exc) {
-    error.value = describe(exc)
+    if (docId === props.tab.id) error.value = describe(exc)
     return false
   } finally {
     saving.value = false
@@ -524,6 +559,7 @@ function jsonError(exc: any): string {
 
 function openWholeEditor(fresh: boolean) {
   if (!view.value || locked.value) return
+  closeBatch()
   const spec = fresh
     ? { termination: 'needs_more_work', edits: [], deferred: [], gate: { commands: [], apply: false } }
     : view.value.body.edit_spec
@@ -549,6 +585,75 @@ async function uploadSpec(event: Event) {
   // Only edit_spec travels: fingerprints, attempts and history in the file are ignored.
   await mutate((revision) => putRequest(base.value, { expected_revision: revision, body: specPayload(spec) }))
 }
+function closeBatch() {
+  batchGeneration++
+  batchRows.value = []
+  batchRevision.value = null
+  batchLoading.value = false
+}
+async function previewBatch(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (!files.length || locked.value || !view.value) return
+  closeBatch()
+  if (files.length > 200) { error.value = t('main.tr2_body.batch.limit'); return }
+  wholeEditorOpen.value = false
+  itemEditor.value = null
+  const current = batchGeneration
+  const url = `${base.value}/items/batch/preview`
+  const revision = view.value.document.revision_no
+  batchRevision.value = revision
+  batchLoading.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const rows = await Promise.all(files.map(async (file): Promise<BatchRow> => {
+      const row: BatchRow = { name: file.name, collection: null, item: null, valid: false, selected: false, problem: '' }
+      try {
+        const parsed = parseObject(await file.text())
+        row.item = parseObject(JSON.stringify(parsed.item ?? parsed))
+        const declared = parsed.item ? parsed.collection : undefined
+        if (declared !== undefined && declared !== 'edits' && declared !== 'deferred') throw new Error(t('main.tr2_body.batch.collection'))
+        row.collection = declared ?? (row.item.reason && !row.item.kind ? 'deferred' : 'edits')
+      } catch (exc) { row.problem = jsonError(exc) }
+      return row
+    }))
+    if (current !== batchGeneration) return
+    batchRows.value = rows
+    const candidates = rows.filter(row => row.item && row.collection && !row.problem)
+    if (!candidates.length) return
+    const response = await postRequest<{ items: Array<{ index: number; valid: boolean; error: Row | null }> }>(url, {
+      expected_revision: revision, items: candidates.map(row => ({ collection: row.collection, item: row.item })),
+    })
+    if (current !== batchGeneration) return
+    for (const result of response.data.items) {
+      const row = candidates[result.index]
+      if (!row) continue
+      row.valid = result.valid
+      row.selected = result.valid
+      if (result.error) row.problem = describeTr2Error({ response: { status: 422, data: result.error } }, t, te).text
+    }
+    // rows are also held by the asynchronous local array; replace it to notify Vue.
+    batchRows.value = rows.map(row => ({ ...row }))
+  } catch (exc) {
+    if (current === batchGeneration) error.value = describe(exc)
+  } finally {
+    if (current === batchGeneration) batchLoading.value = false
+  }
+}
+async function importBatch() {
+  if (locked.value || !batchSelected.value.length || batchRevision.value === null
+    || batchRevision.value !== view.value?.document.revision_no || stale.value || staleWhileEditing.value) return
+  const current = batchGeneration
+  const revision = batchRevision.value
+  const url = `${base.value}/items/batch`
+  const entries = batchSelected.value.map(row => ({ collection: row.collection, item: row.item }))
+  if (await mutate(() => postRequest(url, { expected_revision: revision, items: entries }), revision)) {
+    if (current === batchGeneration) closeBatch()
+  }
+}
+
 function downloadJson(name: string, value: unknown) {
   const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2) + '\n'], { type: 'application/json' }))
   const link = document.createElement('a')
@@ -566,6 +671,7 @@ function downloadItem(entry: Entry) {
 
 function openItemEditor(entry: Entry | null) {
   if (locked.value) return
+  closeBatch()
   wholeEditorOpen.value = false
   itemEditor.value = { key: ++editorSeq, op: entry?.op ?? 'edit', item: entry ? { ...entry.item } : null }
 }
@@ -655,6 +761,7 @@ onMounted(() => {
   window.addEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
 })
 onBeforeUnmount(() => {
+  closeBatch()
   generation++
   fileGeneration++
   window.removeEventListener('fg:document_content_changed', onContentChanged)
@@ -662,6 +769,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
 })
 watch(() => props.tab.id, () => {
+  closeBatch()
   fileGeneration++
   fileDetail.value = null
   clearFilters()
@@ -706,6 +814,10 @@ watch(() => props.tab.id, () => {
 .tr2-confirm { border: 1px solid var(--border, #d9e1e8); border-radius: 8px; padding: 8px 12px; }
 .tr2-error { color: var(--danger, #b91c1c); }
 .tr2-notice { color: var(--success, #15803d); }
+.tr2-batch-list { max-height: 360px; overflow-y: auto; list-style: none; padding: 0; }
+.tr2-batch-list li { padding: 8px 0; border-bottom: 1px solid var(--border, #d9e1e8); overflow-wrap: anywhere; }
+.tr2-batch-list pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tr2-batch-list input[type=checkbox] { margin-right: 8px; }
 .tr2-split { display: grid; grid-template-columns: minmax(220px, 1fr) 2fr; gap: 16px; }
 .tr2-section { border-top: 1px solid var(--border, #d9e1e8); padding-top: 12px; min-width: 0; }
 .tr2-section h3 { margin: 0 0 8px; font-size: 1rem; }

@@ -1687,6 +1687,19 @@ export default {
     },
     t2_note: '반영지시 — 실제 반영 전에 반영안(TR2)을 작성합니다. 이 문서를 승인해도 작업물은 바로 바뀌지 않으며, 반영안을 승인할 때 반영됩니다.',
     tr2_body: {
+      batch: {
+        upload: "항목 JSON 복수 가져오기",
+        heading: "JSON 가져오기 미리보기",
+        hint: "각 파일은 EDIT·CREATE·DEFERRED 항목 하나(항목 원본 또는 collection/item JSON)입니다. 선택한 정상 항목만 새 revision 하나로 추가합니다. 기존 ID는 유지하며 교체는 단건 업로드를 이용하세요. 소스와 승인 이력은 유지됩니다.",
+        count: "파일 {total}개 · 정상 {valid}개 · 선택 {selected}개",
+        loading: "파일을 읽고 검증하고 있습니다…",
+        valid: "추가 가능",
+        details: "가져올 내용 보기",
+        import: "선택 {count}개 가져오기",
+        stale: "반영안이 변경되었습니다. 최신 revision을 다시 불러온 뒤 파일을 다시 선택하세요.",
+        limit: "JSON 파일은 한 번에 최대 200개 선택하세요.",
+        collection: "collection은 edits 또는 deferred여야 합니다.",
+      },
       workspace: {
         advanced: "상세 이력 및 관리",
         advanced_hint: "승인 시도 · 진단 · Revision 이력 · 반영안 JSON",

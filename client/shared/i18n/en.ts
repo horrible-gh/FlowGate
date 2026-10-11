@@ -1687,6 +1687,19 @@ export default {
     },
     t2_note: 'Apply instruction — an apply proposal (TR2) is written before anything is applied. Approving this document does not change the work; approving the proposal does.',
     tr2_body: {
+      batch: {
+        upload: "Import item JSON files",
+        heading: "JSON import preview",
+        hint: "Each file contains one EDIT, CREATE or DEFERRED item (raw item or collection/item JSON). Only checked valid items are added in one new revision. Existing IDs are kept; use individual upload to replace an item. Source and approval history are preserved.",
+        count: "{total} files · {valid} valid · {selected} selected",
+        loading: "Reading and validating files…",
+        valid: "Ready to add",
+        details: "Show imported content",
+        import: "Import {count} selected items",
+        stale: "The proposal changed. Reload the latest revision and select the files again.",
+        limit: "Select at most 200 JSON files at a time.",
+        collection: "Collection must be edits or deferred.",
+      },
       workspace: {
         advanced: "History and management",
         advanced_hint: "Approval attempts, diagnostics, revisions and proposal JSON",

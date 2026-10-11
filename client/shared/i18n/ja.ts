@@ -1685,6 +1685,19 @@ export default {
     },
     t2_note: '反映指示 — 実際に反映する前に反映案(TR2)を作成します。この文書を承認しても作業物はすぐには変わらず、反映案を承認したときに反映されます。',
     tr2_body: {
+      batch: {
+        upload: "項目JSONを複数取り込み",
+        heading: "JSON取り込みプレビュー",
+        hint: "各ファイルはEDIT・CREATE・DEFERREDの1項目（項目単体またはcollection/item JSON）です。選択した有効な項目だけを1つの新しいrevisionとして追加します。既存IDは保持されます。置換は単件アップロードを使用してください。ソースと承認履歴は保持されます。",
+        count: "{total}ファイル · 有効{valid}件 · 選択{selected}件",
+        loading: "ファイルを読み込み検証しています…",
+        valid: "追加可能",
+        details: "取り込む内容を表示",
+        import: "選択した{count}件を取り込む",
+        stale: "反映案が変更されました。最新revisionを再読み込みしてファイルを再選択してください。",
+        limit: "JSONファイルは一度に最大200件選択してください。",
+        collection: "collectionはeditsまたはdeferredである必要があります。",
+      },
       workspace: {
         advanced: "詳細履歴と管理",
         advanced_hint: "承認試行 · 診断 · Revision履歴 · 反映案JSON",
