@@ -18,6 +18,12 @@ binder's evidence) and, for an AI assignee, queues the AI start after the commit
   ``mention_id`` stays null.
 - The AI start is ``ai_node_starter.start_ai_invoke`` (the existing AI invoke service, single mode,
   once per node — D0004 §3.4 / §3.5). ``set_ai_starter`` swaps it (tests; ``None`` = not wired).
+- flowgate.v02.0053 T#2: an AI node reads its card's run settings here, inside the run step's guard
+  (``card_settings_ports.run_settings``): the card's run AI replaces the assignee provider (token and
+  start), its time limit / restarts ride the job to the start, and with the instruction omitted the
+  AI writes the card's report instead of the node's own type (``result_doc_type``; the result binder
+  asks the same port which type it binds). With no setting (or no handler) every value is the one
+  used before.
   When the start raises, or nothing is wired, the open node records ``ai_invoke_failed`` in a new
   guard (L0009 E-23); the token stays valid for a person.
 """
@@ -30,6 +36,8 @@ from typing import Any, Callable, Optional
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.services import token_service
+
+from . import card_settings_ports
 
 _log = logging.getLogger(__name__)
 
@@ -72,7 +80,8 @@ def dispatch(ctx, node_key: str) -> Optional[dict]:
 
 def dispatch_document(ctx, row: dict) -> dict:
     ai = row.get("assignee_kind") == "ai"
-    provider = row.get("assignee_provider_id") if ai else None
+    plan = card_settings_ports.run_settings(ctx.flow_id, row) if ai else {}
+    provider = (plan.get("provider_id") or row.get("assignee_provider_id")) if ai else None
     user = row.get("assignee_user_id") if row.get("assignee_kind") == "human" else None
     issued_to = user or ctx.run.get("started_by") or ctx.actor or ""
     shown = provider if ai and provider else issued_to
@@ -91,7 +100,10 @@ def dispatch_document(ctx, row: dict) -> dict:
     if ai:
         job = {"flow_id": ctx.flow_id, "project_id": ctx.project_id, "run_id": ctx.run_id,
                "node_key": row["node_key"], "provider_id": provider, "token": token,
-               "issued_to": issued_to, "doc_ref": (root or {}).get("doc_id"), "doc_type": row.get("doc_type")}
+               "issued_to": issued_to, "doc_ref": (root or {}).get("doc_id"), "doc_type": row.get("doc_type"),
+               "result_doc_type": plan.get("result_doc_type") or row.get("doc_type"),
+               "step_timeout_sec": plan.get("step_timeout_sec"), "restart_max": plan.get("restart_max"),
+               "card_settings": plan.get("settings") or {}}
         ctx.jobs.append(lambda: start_ai(job))
     return {"token_issued": True, "mention_id": None, "issued_to": shown}
 

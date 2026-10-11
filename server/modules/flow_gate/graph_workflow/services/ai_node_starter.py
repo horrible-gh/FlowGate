@@ -13,6 +13,14 @@ document type).
   map_token"). The result binder accepts either token, first result only.
 - Any refusal (no root document to work from, no provider, a group AI run already in progress,
   the node no longer open) raises; ``node_dispatch.start_ai`` then records ``ai_invoke_failed``.
+- flowgate.v02.0053 T#2: the card's run settings ride the job (``node_dispatch``): its time limit is
+  the run's budget (``continuation_step_timeout_sec``, honoured by a single run since 0446 T0010) and
+  its restarts are the no-output retries on the same AI (``node_restart_max_attempts``). ``None`` keeps
+  the engine's own single-run default (the per-document budget, no restart). The mention asks for the
+  job's ``result_doc_type``: the node's own type, or the card's report when its instruction is omitted
+  (the result binder binds that same type, asking the card as the dispatch did).
+- The card's review (review AI / count / basis) and what follows it (after review) are not part of this
+  start: they begin when this run has ended and released the group lease (``ai_run_end_hooks``).
 """
 from __future__ import annotations
 
@@ -48,7 +56,8 @@ def _map_if_open(job: dict, token_id: str) -> None:
 
 
 def start_ai_invoke(job: dict) -> dict:
-    """Start the node's AI once (``job``: flow, run, node, provider, issued_to, doc_ref, doc_type)."""
+    """Start the node's AI once (``job``: flow, run, node, provider, issued_to, doc_ref, doc_type,
+    result_doc_type)."""
     doc_ref = job.get("doc_ref")
     parent = db_documents.get_by_id(doc_ref) if doc_ref else None
     if parent is None:
@@ -67,7 +76,7 @@ def start_ai_invoke(job: dict) -> dict:
             raise
         mention = mention_service.build_mention_from_token_rec(
             token_rec={"project": project_id, "group_id": flow_id, "scratch_dir": issue["scratch_dir"]},
-            head_type=job["doc_type"], head_status="pending", parent_doc=parent,
+            head_type=job.get("result_doc_type") or job["doc_type"], head_status="pending", parent_doc=parent,
             api_base_url=API_BASE_URL, raw_token=issue["raw_token"],
         )
         return {"raw_token": issue["raw_token"], "token_id": issue["token_id"],
@@ -79,4 +88,6 @@ def start_ai_invoke(job: dict) -> dict:
         continuation_instruction_mode=None, continuation_locale=None, issued_to=job["issued_to"],
         api_base_url=API_BASE_URL, mention_builder=lambda _raw, _scratch: None,
         provider_id=job.get("provider_id"), issue_builder=_issue,
+        continuation_step_timeout_sec=job.get("step_timeout_sec"),
+        node_restart_max_attempts=job.get("restart_max"),
     )

@@ -6,13 +6,18 @@ of the active run and turned into a node event for the resolver:
 
 - a document that ends the supersede chain of a node's result -> ``revised`` (one hop) or a
   reconciliation of that node (a gap in the chain);
-- a document registered with a node's token, same type, node open without result ->
-  ``result_submitted``; a token-less document is not bound (Q-12, L0009 E-25);
+- a document registered with a node's token, of the node's result type, node open without result ->
+  ``result_submitted``; a token-less document is not bound (Q-12, L0009 E-25). The result type is the
+  node's own type, or the card's report when the card omits its instruction (flowgate.v02.0053 T#2,
+  ``card_settings_ports.result_type``: the same port the dispatch asked, so the AI is told to write
+  exactly the type that is bound);
 - a review decision on a node's result document -> ``review_approved`` / ``review_rejected``.
 
 Anything else binds nothing and stays an unbound document node. A lost delegation (exception in
 the contact) is recovered by reconciliation from the v0.1 records (L0009 E-27): on resume, and
-before a run read when ``needs_reconcile`` says something is missing.
+before a run read when ``needs_reconcile`` says something is missing. While the card's AI review is
+still working on a result (``card_settings_ports.review_running``), the rejection it wrote on the way to
+a rework is not reconciled: the review ends in a pass, a decision or a stop, and that is what counts.
 """
 from __future__ import annotations
 
@@ -26,6 +31,7 @@ from modules.flow_gate.graph_workflow.domain.supersede import live_end
 from modules.flow_gate.graph_workflow.projection.run_documents import document, registered_documents
 from modules.flow_gate.graph_workflow.store import run_store
 
+from . import card_settings_ports
 from .engine_router import read_ownership
 from .flow_guard import with_flow_guard
 from .run_apply import RunContext, apply_decision, load_context, read_run_state
@@ -98,7 +104,7 @@ def locate(ctx: RunContext, kind: str, payload: dict) -> Optional[RunEvent]:
             return None
         node = ctx.node_rows.get(mapped["node_key"]) or {}        # 2) the node's token
         row = next((r for r in rows if r["node_key"] == mapped["node_key"]), None)
-        if _type(doc.get("type_code")) != _type(node.get("doc_type")) or row is None:
+        if _type(doc.get("type_code")) != result_type(ctx, node) or row is None:
             return None                                           # E-24: another type
         if row.get("result_doc_id") is None and row["status"] == "open":
             return RunEvent("result_submitted", row["node_key"], doc_id=doc["doc_id"])
@@ -114,6 +120,11 @@ def locate(ctx: RunContext, kind: str, payload: dict) -> Optional[RunEvent]:
 
 def _type(value) -> str:
     return str(value or "").strip().upper()
+
+
+def result_type(ctx: RunContext, node: dict) -> str:
+    """The type a result of ``node`` is: its card's (instruction omitted: the report), else its own."""
+    return _type(card_settings_ports.result_type(ctx.flow_id, node) or node.get("doc_type"))
 
 
 def _next_in_chain(ctx: RunContext, doc_id: Optional[str]) -> Optional[str]:
@@ -139,7 +150,7 @@ def next_missing_event(ctx: RunContext, s: RunState, key: str) -> Optional[RunEv
     if nr is None:
         return None
     if nr.result_doc_id is None:
-        want = _type((ctx.node_rows.get(key) or {}).get("doc_type"))
+        want = result_type(ctx, ctx.node_rows.get(key) or {})
         for doc in registered_documents(ctx.flow_id, run_store.token_ids(ctx.run_id, key)):
             if _type(doc.get("type_code")) == want and doc.get("status") != CANCELLED:
                 return RunEvent("result_submitted", key, doc_id=doc["doc_id"])
@@ -150,7 +161,8 @@ def next_missing_event(ctx: RunContext, s: RunState, key: str) -> Optional[RunEv
     if nr.status == "review":
         if cur.get("doc_review_status") in ("approved", "wf_done"):
             return RunEvent("review_approved", key, doc_id=cur["doc_id"])
-        if cur.get("doc_review_status") == "rejected":
+        if cur.get("doc_review_status") == "rejected" and not card_settings_ports.review_running(
+                ctx.flow_id, key, cur["doc_id"]):
             return RunEvent("review_rejected", key, doc_id=cur["doc_id"])
     if cur.get("superseded_by"):
         nxt = ctx.docs().get(cur["superseded_by"]) or document(cur["superseded_by"])

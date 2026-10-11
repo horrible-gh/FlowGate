@@ -25,6 +25,10 @@ removed only through the existing v0.1 services (``legacy_adapter``).
   while still a draft — deleting it.
 - A run result bound to a node takes the line of its type: the empty draft it replaces is
   superseded by the result, so the line, the Canvas and the supersede chain agree.
+- flowgate.v02.0053 T#2: a requirement card has its AI delegation line while the card's setting
+  ``delegation`` is on (``flowgate.card_settings``): turning it on makes the line's empty draft,
+  turning it off releases the line like a removed one (``set_delegation``), and a draft save keeps
+  or makes the line by the same setting.
 """
 from __future__ import annotations
 
@@ -33,6 +37,9 @@ from typing import Iterable, Optional
 from flowgate.card_documents import legacy_adapter as legacy
 from flowgate.card_documents import repository
 from flowgate.card_documents import slots as cs
+from flowgate.card_settings import repository as card_settings
+
+DELEGATION_SETTING = "delegation"
 
 
 # ── draft save ───────────────────────────────────────────────────────────────
@@ -53,11 +60,11 @@ def sync_draft(group: dict, user_id: Optional[str], nodes: list[dict], removed_k
     for node in nodes:
         if before.get(node["node_key"]) == _kind(node):
             continue                            # an unchanged card keeps its lines
-        wanted = {cs.slot_signature(s) for s in cs.card_slots(node["node_type"], node.get("doc_type"))}
+        wanted = {cs.slot_signature(s) for s in _slots(flow_id, node)}
         _dispose(flow_id, _released(flow_id, node["node_key"], by_node.get(node["node_key"], []), wanted), user_id)
     by_node = _rows_by_node(flow_id)            # every release is done before any line is filled
     for node in nodes:
-        spec = cs.card_slots(node["node_type"], node.get("doc_type"))
+        spec = _slots(flow_id, node)
         wanted = {cs.slot_signature(s) for s in spec}
         made = {r["slot"]: r["doc_id"] for r in by_node.get(node["node_key"], []) if _signature(r) in wanted}
         for ordinal, slot in enumerate(spec):
@@ -73,6 +80,13 @@ def sync_draft(group: dict, user_id: Optional[str], nodes: list[dict], removed_k
     out = {n["node_key"]: cs.lines_of(n["node_type"], n.get("doc_type"), stored.get(n["node_key"], []))
            for n in nodes}
     return {key: shown for key, shown in out.items() if shown}
+
+
+def _slots(flow_id: str, node: dict) -> tuple:
+    """The node's lines; a requirement card has its AI delegation line while that setting is on."""
+    delegation = (str(node.get("doc_type") or "").strip().upper() in cs.ROOT_TYPES
+                  and card_settings.values(flow_id, node["node_key"]).get(DELEGATION_SETTING) == "on")
+    return cs.card_slots(node["node_type"], node.get("doc_type"), ai_delegation=delegation)
 
 
 def _signature(row: dict) -> tuple:
@@ -139,6 +153,32 @@ def _dispose(flow_id: str, rows: list[dict], user_id: Optional[str]) -> None:
     for doc_id in dict.fromkeys(r["doc_id"] for r in rows if r["owned"]):
         if doc_id not in still_linked and cs.is_disposable_draft(legacy.document(doc_id)):
             legacy.delete_document(doc_id, user_id)
+
+
+# ── AI delegation setting (T#2) ──────────────────────────────────────────────
+
+def set_delegation(group: dict, node: dict, on: bool, user_id: Optional[str], registered: set[str]) -> None:
+    """The requirement card's AI delegation line follows its setting, inside the caller's Flow guard.
+
+    On: the line gets its empty draft (once). Off: the line is released like a removed card's —
+    unlinked, and its document deleted while it is still the card's own untouched draft.
+    """
+    flow_id = group["group_id"]
+    if not repository.available():
+        return
+    spec = cs.card_slots(node.get("node_type"), node.get("doc_type"), ai_delegation=True)
+    slot = next((s for s in spec if s.slot == cs.DELEGATION), None)
+    if slot is None:
+        return
+    rows = [r for r in repository.rows(flow_id, [node["node_key"]]) if r["slot"] == cs.DELEGATION]
+    if not on:
+        _dispose(flow_id, rows, user_id)
+        return
+    if any(_signature(r) == cs.slot_signature(slot) for r in rows):
+        return
+    doc_id, owned = _line_document(group, node, slot, {}, registered, user_id)
+    if doc_id is not None:
+        repository.insert(flow_id, node["node_key"], slot.slot, slot.doc_type, doc_id, owned, spec.index(slot), user_id)
 
 
 # ── R↔B root conversion ──────────────────────────────────────────────────────

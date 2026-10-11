@@ -47,6 +47,8 @@ from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import token_service
+# flowgate.v02.0053 T#2: the Designer card port of the step type judgement (stdlib only).
+from modules.flow_gate.services import worker_step_type_hooks
 from modules.flow_gate.storage.paths import src_root
 from modules.flow_gate import template_provision
 from modules.flow_gate.storage.safe_path import (
@@ -360,6 +362,13 @@ def _worker_token_step_type_result(token_rec: dict) -> tuple[Optional[str], bool
         own_type = str(doc["type_code"]) if doc and doc.get("type_code") else None
         if own_type in _SELF_SCOPED_WORK_TYPES:
             return own_type, False
+        # flowgate.v02.0053 T#2: a Designer card node's token names its Flow's root and that Flow
+        # has no v0.1 sequence. When the server recorded what the token's holder writes (the run
+        # node the token was mapped to, whose card omits its instruction: the card's report), that
+        # type is the step. None keeps the judgement below; a raising lookup is the `except` below.
+        recorded = worker_step_type_hooks.token_step_type(token_rec)
+        if recorded:
+            return str(recorded), False
         seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
         if seq is None:
             seq = db_wfseq.get_sequence_by_doc_id(doc_ref)
