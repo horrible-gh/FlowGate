@@ -10,6 +10,10 @@
 // flowgate.v02.0048 T#1: each Node also keeps its bound document, v0.1 slot and Graph node run.
 //
 // flowgate.v02.0053 T#9: the Flow's Graph run (P0008 §7 S5) — read the current one, start, stop, resume.
+//
+// flowgate.v02.0059 T#2: 자동 배치's input when the shown Graph is not the server's whole one — the same
+// Canvas read with nothing left out (no collapse) and, given the v0.1 document read, a document's
+// supersede link (the sequence root's chain).
 import type {
   FlowCanvas,
   FlowCanvasChangeHandlers,
@@ -25,6 +29,7 @@ import type {
 } from '@/features/project'
 import type { FlowGraph, FlowGraphDraftInfo } from './flowGraph'
 import type {
+  FlowDocumentLink,
   FlowDraftContent,
   FlowDraftIssue,
   FlowGraphSource,
@@ -119,6 +124,9 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
     viewMode: canvas.view?.mode ?? null,
     latestRevisionNo: canvas.graph?.latestRevisionNo ?? null,
     viewRevisionNo: canvas.view?.revisionNo ?? null,
+    projection: canvas.projection || null,
+    sequenceRootDocId: canvas.ownership.sequenceRootDocId ?? null,
+    hiddenNodeCount: Object.values(canvas.collapsed?.hiddenCounts ?? {}).reduce((sum, count) => sum + (Number(count) || 0), 0),
   }
 }
 
@@ -162,7 +170,14 @@ function asDraftError(error: unknown): unknown {
   return error
 }
 
-export function createServerFlowGraphSource(loaders: FlowCanvasLoaders): FlowGraphSource {
+/**
+ * `readDocument`: the v0.1 document read (`documentRead` of features/document fits); absent = no supersede
+ * link is read, so 자동 배치 cannot tell a v0.1 root that replaced an older root document.
+ */
+export function createServerFlowGraphSource(
+  loaders: FlowCanvasLoaders,
+  readDocument?: (docId: string) => Promise<FlowDocumentLink>,
+): FlowGraphSource {
   const graphLoaders = loaders.saveFlowGraphDraft && loaders.validateFlowGraphDraft && loaders.confirmFlowGraphRevision
   const runLoaders = loaders.loadFlowRun && loaders.startFlowRun && loaders.stopFlowRun && loaders.resumeFlowRun
   return {
@@ -227,5 +242,8 @@ export function createServerFlowGraphSource(loaders: FlowCanvasLoaders): FlowGra
     startRun: runLoaders ? async (_projectId, flowId) => toRunInfo(await loaders.startFlowRun!(flowId)) : undefined,
     stopRun: runLoaders ? async (_projectId, runId) => toRunInfo(await loaders.stopFlowRun!(runId)) : undefined,
     resumeRun: runLoaders ? async (_projectId, runId) => toRunInfo(await loaders.resumeFlowRun!(runId)) : undefined,
+    loadLayoutGraph: async (_projectId: string, flowId: string, view?: string) =>
+      toFlowGraph(await loaders.loadFlowCanvas(flowId, view)),
+    readDocumentLink: readDocument ? (_projectId, docId) => readDocument(docId) : undefined,
   }
 }

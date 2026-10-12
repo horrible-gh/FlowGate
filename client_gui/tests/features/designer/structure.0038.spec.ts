@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as DesignerFeature from '@/features/designer'
-import { DESIGNER_DENSITIES, DESIGNER_MENUS, DESIGNER_SEARCH_EXAMPLES, DESIGNER_SEARCH_SCOPES } from '@/features/designer/top/designerTop'
+import { DESIGNER_ARRANGE_GROUPS, DESIGNER_DENSITIES, DESIGNER_MENUS, DESIGNER_SEARCH_EXAMPLES, DESIGNER_SEARCH_SCOPES } from '@/features/designer/top/designerTop'
 
 // flowgate.v02.0038 — source-level guards for the Designer top band (0001-R rev2 §5.2 / §6,
 // 0007-T §8) that a DOM test cannot see: UI parts with event boundaries, no feature, API or
@@ -100,10 +100,12 @@ describe('features/designer/top structure (flowgate.v02.0038)', () => {
     expect(Object.keys(top.densities)).toEqual([...DESIGNER_DENSITIES])
     expect(Object.keys(top.menus)).toEqual(DESIGNER_MENUS.map((menu) => menu.key))
     for (const entry of DESIGNER_MENUS.flatMap((menu) => menu.entries)) {
-      if (entry.kind === 'command' || entry.kind === 'recent' || entry.kind === 'density') {
+      if (entry.kind === 'command' || entry.kind === 'recent' || entry.kind === 'density' || entry.kind === 'arrange') {
         expect(top.items, entry.label).toHaveProperty(entry.label)
       }
     }
+    // flowgate.v02.0059 T#2: every 정렬 / 분배 command has its label (the command after `edit.`).
+    expect(Object.keys(top.arrange)).toEqual(DESIGNER_ARRANGE_GROUPS.flat().map((command) => command.slice('edit.'.length)))
     expect(messages.designer.shell).not.toHaveProperty('top_label')
     expect(messages.designer.shell).not.toHaveProperty('top_parts')
   })

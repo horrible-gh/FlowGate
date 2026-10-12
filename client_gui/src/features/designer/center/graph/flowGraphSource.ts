@@ -87,6 +87,18 @@ export interface FlowRunInfo {
   readonly openNodeKeys: readonly string[]
 }
 
+/**
+ * flowgate.v02.0059 T#2: a document's supersede link as the v0.1 document read gives it — what the server's
+ * live_end follows to find the document a v0.1 sequence root shows.
+ */
+export interface FlowDocumentLink {
+  readonly docId: string
+  /** v0.1 group id = Flow id. */
+  readonly groupId: string | null
+  readonly status: string | null
+  readonly supersededBy: string | null
+}
+
 /** A refused run operation rejects with an Error carrying the server's `code` (e.g. `run_policy_undecided`). */
 export interface FlowRunError extends Error {
   readonly code?: string | null
@@ -124,4 +136,11 @@ export interface FlowGraphSource {
   stopRun?(projectId: string, runId: string): Promise<FlowRunInfo>
   /** Resumes a stopped run. */
   resumeRun?(projectId: string, runId: string): Promise<FlowRunInfo>
+  /**
+   * flowgate.v02.0059 T#2: the Graph as loadGraph reads it but with nothing left out (no collapse) — the
+   * input of 자동 배치 when the shown Graph left Nodes out. Absent = loadGraph leaves nothing out.
+   */
+  loadLayoutGraph?(projectId: string, flowId: string, view?: string): Promise<FlowGraph>
+  /** flowgate.v02.0059 T#2: one document's supersede link (a v0.1 sequence root's chain). Absent = none read. */
+  readDocumentLink?(projectId: string, docId: string): Promise<FlowDocumentLink>
 }

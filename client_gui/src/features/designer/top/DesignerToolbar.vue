@@ -14,7 +14,11 @@
        Flow's run — ● running, ❚❚ stopped, ✓ completed — its name in the tooltip only.
        flowgate.v02.0059 T#1 (0011-CH contract A): [선택] is back for multi-selection only (no add
        node / connect mode): a toggle whose ON / OFF (`selectMode`, the Center session's) shows on the
-       button; it emits `edit.select-mode` and the Shell switches the mode. -->
+       button; it emits `edit.select-mode` and the Shell switches the mode.
+       flowgate.v02.0059 T#2 (0011-CH contract D): 정렬 / 배치 ▾ opens a drop-down of the same commands as
+       the Edit menu's 정렬 / 배치 submenu — six 정렬 and two 균등 분배 of the selected cards, then 자동 배치 —
+       each unavailable while too few cards are selected (`targets`, the Menu Bar's). A choice, Escape or a
+       press outside closes it. -->
   <div
     class="designer-toolbar"
     :class="{ 'is-unavailable': disabled }"
@@ -49,10 +53,50 @@
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 3h4M3 3v4M17 3h-4M17 3v4M3 17h4M3 17v-4" /><path d="M10 9l7 3-3 1.2-1.2 3z" /></svg>
         <span>{{ t('gui.designer.top.tools.select_mode') }}</span>
       </button>
-      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.arrange" :disabled="disabled" @click="emit('command', 'edit.arrange')">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14M3 8h9M3 12h14M3 16h9" /></svg>
-        <span>{{ t('gui.designer.top.tools.arrange') }}</span>
-      </button>
+      <div ref="arrangeRoot" class="designer-tool-menu">
+        <button
+          ref="arrangeButton"
+          type="button"
+          class="designer-tool"
+          :class="{ 'is-open': arrangeOpen }"
+          data-test="designer-tool"
+          data-tool="arrange"
+          aria-haspopup="menu"
+          :aria-expanded="arrangeOpen ? 'true' : 'false'"
+          :disabled="disabled"
+          @click="toggleArrange"
+          @keydown.esc="arrangeOpen = false"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14M3 8h9M3 12h14M3 16h9" /></svg>
+          <span>{{ t('gui.designer.top.tools.arrange') }}</span>
+        </button>
+        <div
+          v-if="arrangeOpen && !disabled"
+          class="designer-tool-pop"
+          role="menu"
+          :aria-label="t('gui.designer.top.items.arrange')"
+          :style="arrangeStyle"
+          data-test="designer-arrange-menu"
+          @keydown.esc="closeArrange(true)"
+        >
+          <template v-for="(group, groupIndex) in ARRANGE_MENU" :key="`arrange-${groupIndex}`">
+            <div v-if="groupIndex > 0" class="designer-tool-pop-sep" role="separator" />
+            <button
+              v-for="command in group"
+              :key="command"
+              type="button"
+              role="menuitem"
+              class="designer-tool-pop-item"
+              :disabled="!isMenuCommandEnabled(command, runMode, targets)"
+              data-test="designer-arrange-item"
+              :data-arrange="command"
+              @click="chooseArrange(command)"
+            >
+              {{ command === 'edit.auto-layout' ? t('gui.designer.top.items.auto_layout') : t(`gui.designer.top.arrange.${command.slice(5)}`) }}
+            </button>
+          </template>
+        </div>
+      </div>
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
@@ -147,9 +191,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { DESIGNER_DENSITIES, type DesignerDensity, type DesignerRunMode, type DesignerTopCommand } from './designerTop'
+import {
+  ALL_MENU_TARGETS,
+  DESIGNER_ARRANGE_GROUPS,
+  DESIGNER_DENSITIES,
+  isMenuCommandEnabled,
+  type DesignerDensity,
+  type DesignerMenuTargets,
+  type DesignerRunMode,
+  type DesignerTopCommand,
+} from './designerTop'
 
 const props = withDefaults(
   defineProps<{
@@ -168,8 +221,10 @@ const props = withDefaults(
     runStatus?: string | null
     /** flowgate.v02.0059 T#1: the [선택] mode is on. */
     selectMode?: boolean
+    /** flowgate.v02.0059 T#2: what the 정렬 / 배치 ▾ commands act on (the Menu Bar's targets). */
+    targets?: DesignerMenuTargets
   }>(),
-  { disabled: false, canValidate: false, canUndo: true, canRedo: true, runStatus: null, selectMode: false },
+  { disabled: false, canValidate: false, canUndo: true, canRedo: true, runStatus: null, selectMode: false, targets: () => ALL_MENU_TARGETS },
 )
 
 const emit = defineEmits<{
@@ -195,6 +250,41 @@ const RUN_BUTTONS = [
   { mode: 'next', command: 'run.next', label: 'run_next' },
   { mode: 'all', command: 'run.all', label: 'run_all' },
 ] as const
+
+// flowgate.v02.0059 T#2: 정렬 / 배치 ▾ — the Edit menu's 정렬 / 배치 commands, then 자동 배치. The drop-down
+// is placed under its button in the viewport (fixed), so the Toolbar's own scrolling never clips it.
+const ARRANGE_MENU: readonly (readonly DesignerTopCommand[])[] = [...DESIGNER_ARRANGE_GROUPS, ['edit.auto-layout']]
+const arrangeOpen = ref(false)
+const arrangeRoot = ref<HTMLElement | null>(null)
+const arrangeButton = ref<HTMLButtonElement | null>(null)
+const arrangeStyle = ref<Record<string, string>>({})
+
+function toggleArrange() {
+  if (arrangeOpen.value) {
+    arrangeOpen.value = false
+    return
+  }
+  const rect = arrangeButton.value?.getBoundingClientRect()
+  arrangeStyle.value = rect ? { top: `${Math.round(rect.bottom + 4)}px`, left: `${Math.round(rect.left)}px` } : {}
+  arrangeOpen.value = true
+}
+
+function closeArrange(refocus = false) {
+  arrangeOpen.value = false
+  if (refocus) arrangeButton.value?.focus()
+}
+
+function chooseArrange(command: DesignerTopCommand) {
+  closeArrange()
+  emit('command', command)
+}
+
+function onDocumentPointerDown(event: Event) {
+  if (arrangeOpen.value && arrangeRoot.value && !arrangeRoot.value.contains(event.target as Node)) closeArrange()
+}
+
+onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown))
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPointerDown))
 </script>
 
 <style scoped>
@@ -272,6 +362,65 @@ const RUN_BUTTONS = [
   border-color: #244a79;
   background: #173157;
   color: #fff;
+}
+
+/* flowgate.v02.0059 T#2: 정렬 / 배치 ▾ and its drop-down (fixed under the button, over the work area). */
+.designer-tool-menu {
+  display: flex;
+}
+
+.designer-tool.is-open {
+  border-color: #244a79;
+  background: #173157;
+  color: #fff;
+}
+
+.designer-tool-pop {
+  position: fixed;
+  z-index: 30;
+  min-width: 190px;
+  padding: 6px;
+  box-sizing: border-box;
+  border: 1px solid #31516f;
+  border-radius: 8px;
+  background: #0c1a2b;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6);
+}
+
+.designer-tool-pop-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #b9c9d9;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.designer-tool-pop-item:hover:not(:disabled),
+.designer-tool-pop-item:focus-visible {
+  outline: 0;
+  background: #15304d;
+  color: #fff;
+}
+
+.designer-tool-pop-item:disabled {
+  color: #50677e;
+  cursor: default;
+  opacity: 0.72;
+}
+
+.designer-tool-pop-sep {
+  height: 1px;
+  margin: 5px 3px;
+  background: #20364e;
 }
 
 /* flowgate.v02.0059 T#1: [선택] ON stays lit until it is turned off. */

@@ -432,7 +432,7 @@ export default {
         copy: 'Copy',
         paste: 'Paste',
         delete: 'Delete',
-        arrange: 'Align / Arrange…',
+        arrange: 'Align / Arrange',
         auto_layout: 'Auto Layout',
         select_all: 'Select All',
         run_next: 'Run Next Step',
@@ -451,6 +451,17 @@ export default {
       },
       panels: { left: 'Left Panel', right: 'Right Tool Panel', inspector: 'Inspector', minimap: 'Minimap' },
       tabs: { project: 'Project Explorer', file: 'File Explorer', palette: 'Palette', conversation: 'Conversation', git: 'Git' },
+      // flowgate.v02.0059 T#2 — the Align / Arrange commands (Edit menu submenu and Toolbar ▾).
+      arrange: {
+        'align-left': 'Align Left',
+        'align-center': 'Align Center',
+        'align-right': 'Align Right',
+        'align-top': 'Align Top',
+        'align-middle': 'Align Middle',
+        'align-bottom': 'Align Bottom',
+        'distribute-horizontal': 'Distribute Horizontally',
+        'distribute-vertical': 'Distribute Vertically',
+      },
       densities: { 'very-wide': 'Very Wide', wide: 'Wide', normal: 'Normal', free: 'Freeform' },
       tools: {
         undo: 'Undo',

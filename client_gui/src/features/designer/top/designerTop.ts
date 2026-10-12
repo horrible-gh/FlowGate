@@ -7,6 +7,11 @@
 // (left / right panel display, panel tabs, run button state, density choice); every other
 // command is the event boundary a later Feature group wires (0001-R §8). No keyboard shortcut is
 // assigned or shown here — shortcuts are decided in a later step (0001-R §6.7, 0007-T §7).
+//
+// flowgate.v02.0059 T#2 (0011-CH contract D): 정렬 / 배치 is a submenu of the Edit menu and the Toolbar's
+// 정렬 / 배치 ▾ drop-down, both listing the same commands — six 정렬 and two 균등 분배 of the selected cards
+// (2 / 3 or more selected, `selectedCount`) and, in the Toolbar's, 자동 배치. The layout density is the
+// spacing scale of 자동 배치 (DENSITY_LAYOUT_SCALE, the one place its numbers live); 자율형 has none.
 
 /** Commands of the top band. Window panel / tab and density choices have their own events. */
 export type DesignerTopCommand =
@@ -26,7 +31,8 @@ export type DesignerTopCommand =
   | 'edit.copy'
   | 'edit.paste'
   | 'edit.delete'
-  | 'edit.arrange'
+  /** flowgate.v02.0059 T#2: 정렬 / 균등 분배 of the selected cards (DESIGNER_ARRANGE_GROUPS). */
+  | DesignerArrangeCommand
   | 'edit.auto-layout'
   | 'edit.select-all'
   /** flowgate.v02.0059 T#1: the Toolbar's [선택] toggle (area / click multi-selection on the Canvas). */
@@ -47,6 +53,30 @@ export type DesignerTopCommand =
   | 'header.ai'
   | 'header.settings'
   | 'header.user'
+
+/** flowgate.v02.0059 T#2: the 정렬 / 분배 commands (the Center's arrange kinds after `edit.`). */
+export type DesignerArrangeCommand =
+  | 'edit.align-left'
+  | 'edit.align-center'
+  | 'edit.align-right'
+  | 'edit.align-top'
+  | 'edit.align-middle'
+  | 'edit.align-bottom'
+  | 'edit.distribute-horizontal'
+  | 'edit.distribute-vertical'
+
+/** The 정렬 / 배치 submenu in display order, one group per separator: horizontal, vertical, 균등 분배. */
+export const DESIGNER_ARRANGE_GROUPS: readonly (readonly DesignerArrangeCommand[])[] = [
+  ['edit.align-left', 'edit.align-center', 'edit.align-right'],
+  ['edit.align-top', 'edit.align-middle', 'edit.align-bottom'],
+  ['edit.distribute-horizontal', 'edit.distribute-vertical'],
+]
+
+/** How many selected cards a 정렬 (2) / 균등 분배 (3) command needs. */
+export function arrangeSelectionMinimum(cmd: DesignerTopCommand): number | null {
+  if (cmd === 'edit.distribute-horizontal' || cmd === 'edit.distribute-vertical') return 3
+  return cmd.startsWith('edit.align-') ? 2 : null
+}
 
 /** File menu levels that carry a "recent" submenu. */
 export type DesignerRecentKind = 'project' | 'group' | 'flow'
@@ -70,6 +100,18 @@ export interface DesignerRecentRequest {
 export type DesignerDensity = 'very-wide' | 'wide' | 'normal' | 'free'
 
 export const DESIGNER_DENSITIES: readonly DesignerDensity[] = ['very-wide', 'wide', 'normal', 'free']
+
+/**
+ * flowgate.v02.0059 T#2 (0011-CH contract D): the spacing scale 자동 배치 uses at each density (1 = the
+ * server's auto_layout spacing). 자율형 (`null`) lays nothing out: cards stay where the user put them, and
+ * 자동 배치 chosen then uses 1. The numbers were proposed in 0011-CH and are tuned here only.
+ */
+export const DENSITY_LAYOUT_SCALE: Readonly<Record<DesignerDensity, number | null>> = Object.freeze({
+  'very-wide': 1.5,
+  wide: 1.25,
+  normal: 1,
+  free: null,
+})
 
 /** Independent display areas: shown / hidden, drawn as check items (0001-R §3.5). */
 export type DesignerWindowPanel = 'left' | 'right' | 'inspector' | 'minimap'
@@ -121,6 +163,8 @@ export type DesignerMenuEntry =
   | { kind: 'command'; command: DesignerTopCommand; label: string }
   | { kind: 'recent'; recent: DesignerRecentKind; label: string }
   | { kind: 'density'; label: string }
+  /** flowgate.v02.0059 T#2: the 정렬 / 배치 submenu (DESIGNER_ARRANGE_GROUPS). */
+  | { kind: 'arrange'; label: string }
   | { kind: 'panel'; panel: DesignerWindowPanel }
   | { kind: 'tab'; tab: DesignerWindowTab }
   | { kind: 'separator' }
@@ -167,7 +211,7 @@ export const DESIGNER_MENUS: readonly DesignerMenu[] = [
       item('edit.paste', 'paste'),
       item('edit.delete', 'delete'),
       separator,
-      item('edit.arrange', 'arrange'),
+      { kind: 'arrange', label: 'arrange' },
       item('edit.auto-layout', 'auto_layout'),
       separator,
       item('edit.select-all', 'select_all'),
@@ -260,6 +304,8 @@ export interface DesignerMenuTargets {
    */
   canUndo?: boolean
   canRedo?: boolean
+  /** flowgate.v02.0059 T#2: how many cards of the open Flow are selected (정렬 2+, 균등 분배 3+). */
+  selectedCount?: number
 }
 
 export const ALL_MENU_TARGETS: DesignerMenuTargets = Object.freeze({ project: true, group: true, flow: true })
@@ -310,6 +356,8 @@ export function isMenuCommandEnabled(
   if (!targets.flow) return false
   if (cmd === 'edit.undo') return targets.canUndo !== false
   if (cmd === 'edit.redo') return targets.canRedo !== false
+  const minimum = arrangeSelectionMinimum(cmd)
+  if (minimum !== null) return (targets.selectedCount ?? 0) >= minimum
   if (cmd === 'run.stop') return runMode !== null
   if (cmd === 'run.next' || cmd === 'run.all' || cmd === 'run.rerun') return runMode === null
   return true
@@ -317,10 +365,10 @@ export function isMenuCommandEnabled(
 
 /**
  * Whether a submenu entry can be opened: 최근 Project always, 최근 Group / Flow with the Project
- * context, the layout density with an open Flow.
+ * context, the layout density and 정렬 / 배치 with an open Flow.
  */
 export function isSubmenuEnabled(entry: DesignerMenuEntry, targets: DesignerMenuTargets = ALL_MENU_TARGETS): boolean {
-  if (entry.kind === 'density') return targets.flow
+  if (entry.kind === 'density' || entry.kind === 'arrange') return targets.flow
   if (entry.kind === 'recent') return entry.recent === 'project' || targets.project
   return true
 }

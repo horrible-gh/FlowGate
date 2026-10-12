@@ -442,7 +442,7 @@ export default {
         copy: '복사',
         paste: '붙여넣기',
         delete: '삭제',
-        arrange: '정렬 / 배치…',
+        arrange: '정렬 / 배치',
         auto_layout: '자동 배치',
         select_all: '전체 선택',
         run_next: '다음 단계 실행',
@@ -461,6 +461,17 @@ export default {
       },
       panels: { left: '좌측 패널', right: '우측 도구 패널', inspector: 'Inspector', minimap: '미니맵' },
       tabs: { project: '프로젝트 탐색기', file: '파일 탐색기', palette: '팔레트', conversation: '대화', git: 'Git' },
+      // flowgate.v02.0059 T#2 — the 정렬 / 배치 commands (Edit menu submenu and Toolbar ▾).
+      arrange: {
+        'align-left': '왼쪽 정렬',
+        'align-center': '가로 가운데 정렬',
+        'align-right': '오른쪽 정렬',
+        'align-top': '위쪽 정렬',
+        'align-middle': '세로 가운데 정렬',
+        'align-bottom': '아래쪽 정렬',
+        'distribute-horizontal': '가로 균등 분배',
+        'distribute-vertical': '세로 균등 분배',
+      },
       densities: { 'very-wide': '매우 넓게', wide: '넓게', normal: '보통', free: '자율형' },
       tools: {
         undo: '실행 취소',

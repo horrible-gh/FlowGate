@@ -57,6 +57,9 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       /^\.\.\/palette\/paletteCatalog$/,
       /^@\/features\/conversation$/,
       /^@\/features\/git$/,
+      // flowgate.v02.0059 T#2 — the v0.1 document read (features/document public surface) the Shell hands to the
+      // server Graph source, so 자동 배치 can follow a v0.1 sequence root's supersede chain.
+      /^@\/features\/document$/,
       // flowgate.v02.0038 — top band: the Header / Menu Bar / Toolbar parts and their model.
       /^\.\.\/top\/Designer(Header|MenuBar|Toolbar)\.vue$/,
       /^\.\.\/top\/designerTop$/,

@@ -28,7 +28,7 @@
       @command="onTopCommand"
       @toggle-panel="onTogglePanel"
       @show-tab="onShowTab"
-      @update:density="top.density = $event"
+      @update:density="onDensity"
       @update:zoom="onZoomSelect"
       @open-recent="onOpenRecent"
     />
@@ -169,11 +169,18 @@
 // the Center session (center/run/flowRunControl.ts: start or resume, one step, stop); the buttons' state
 // (`top.runMode`) and the Toolbar's run dot follow the run the session read back, never the click alone.
 // A refused run shows one short toast (its reason in plain words, no code); nothing else is written.
+//
+// flowgate.v02.0059 T#2 (0011-CH contracts C / D) — 정렬 / 배치 and the layout density act on the open Flow's
+// cards through the Center session: the six 정렬 / two 균등 분배 commands arrange its selected cards, 자동 배치
+// lays every movable card out by the server's auto placement rules at the density's spacing scale, and a
+// density of 매우 넓게 / 넓게 / 보통 lays them out again at once (자율형 leaves them where they are). Each is one
+// entry of the Flow's undo / redo, as a card drag is. The density stays one value on screen only (`top`).
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { documentRead } from '@/features/document'
 import { useProjectStore, type CreatedGroup } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
-import { createDesignerCenterSession, type CanvasNodeSpec } from '../center/designerCenterSession'
+import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
@@ -189,10 +196,13 @@ import {
   type ProjectExplorerFlowEvent,
 } from '../projectExplorer/projectExplorerTree'
 import {
+  DENSITY_LAYOUT_SCALE,
+  arrangeSelectionMinimum,
   createDesignerTopState,
   isMenuCommandEnabled,
   nextRunMode,
   zoomPercent,
+  type DesignerDensity,
   type DesignerMenuTargets,
   type DesignerRecentLists,
   type DesignerRecentRequest,
@@ -235,7 +245,8 @@ const projectId = computed<string | null>(() => projectStore.currentProjectId)
 // node of the Flow's Graph draft. The Shell is the only part that knows both: it tells the Center
 // session which node a drop means, so the Palette and the Canvas never know each other.
 const center = createDesignerCenterSession({
-  source: createServerFlowGraphSource(projectStore),
+  // flowgate.v02.0059 T#2: the document read lets 자동 배치 follow a v0.1 sequence root's supersede chain.
+  source: createServerFlowGraphSource(projectStore, documentRead),
   readDrop: (transfer) => {
     const definition = readPaletteDragData(transfer)
     return definition ? paletteNodeSpec(definition) : null
@@ -364,6 +375,8 @@ const menuTargets = computed<DesignerMenuTargets>(() => ({
   // flowgate.v02.0059 T#2: the open Flow's structure edit history (Toolbar buttons and Edit menu).
   canUndo: center.activeEdit.value?.canUndo === true,
   canRedo: center.activeEdit.value?.canRedo === true,
+  // flowgate.v02.0059 T#2: 정렬 (2+) / 균등 분배 (3+) need that many selected cards.
+  selectedCount: center.activeView.value?.selectedNodeIds.length ?? 0,
 }))
 
 // The recent lists the Menu Bar shows: every opened Project; the Groups / Flows of the current
@@ -511,9 +524,31 @@ function onZoomSelect(percent: number) {
   center.requestView(flowId, { kind: 'zoom-to', zoom: percent / 100 })
 }
 
+/** flowgate.v02.0059 T#2: 자동 배치 of the open Flow at a spacing scale (one undo entry). */
+function autoLayout(scale: number) {
+  const flowId = center.state.activeFlowId
+  if (flowId !== null && isMenuCommandEnabled('edit.auto-layout', top.runMode, menuTargets.value)) center.autoLayout(flowId, scale)
+}
+
+// flowgate.v02.0059 T#2: the Toolbar radios and the View menu choose the one density; a density with a
+// spacing scale lays the open Flow out again at it, 자율형 moves nothing. The density chosen last decides: a
+// 자동 배치 still reading the whole Flow (an earlier density) moves nothing when it answers.
+function onDensity(level: DesignerDensity) {
+  top.density = level
+  center.cancelAutoLayout()
+  const scale = DENSITY_LAYOUT_SCALE[level]
+  if (scale !== null) autoLayout(scale)
+}
+
 function onTopCommand(command: DesignerTopCommand) {
   // The parts disable what has no target; this is the same rule for a command that still arrives.
   if (!isMenuCommandEnabled(command, top.runMode, menuTargets.value)) return
+  // flowgate.v02.0059 T#2: 정렬 / 균등 분배 of the open Flow's selected cards (the command names the kind).
+  if (arrangeSelectionMinimum(command) !== null) {
+    const flowId = center.state.activeFlowId
+    if (flowId !== null) center.arrangeNodes(flowId, command.slice('edit.'.length) as ArrangeKind)
+    return
+  }
   switch (command) {
     case 'project.new':
       projectStore.openDialog({ create: true })
@@ -572,6 +607,10 @@ function onTopCommand(command: DesignerTopCommand) {
       if (flowId !== null) center.selectAll(flowId)
       return
     }
+    // flowgate.v02.0059 T#2: the density's spacing scale (자율형: the server's, 1).
+    case 'edit.auto-layout':
+      autoLayout(DENSITY_LAYOUT_SCALE[top.density] ?? 1)
+      return
     // flowgate.v02.0059 T#1: the Toolbar and the View menu emit the same command; the Canvas of the
     // open Flow does the fit / zoom and reports its Viewport, which the Toolbar's zoom value follows.
     case 'view.fit':

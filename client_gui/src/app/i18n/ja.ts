@@ -432,7 +432,7 @@ export default {
         copy: 'コピー',
         paste: '貼り付け',
         delete: '削除',
-        arrange: '整列 / 配置…',
+        arrange: '整列 / 配置',
         auto_layout: '自動配置',
         select_all: 'すべて選択',
         run_next: '次のステップを実行',
@@ -451,6 +451,17 @@ export default {
       },
       panels: { left: '左パネル', right: '右ツールパネル', inspector: 'インスペクター', minimap: 'ミニマップ' },
       tabs: { project: 'プロジェクトエクスプローラー', file: 'ファイルエクスプローラー', palette: 'パレット', conversation: '会話', git: 'Git' },
+      // flowgate.v02.0059 T#2 — 整列 / 配置 のコマンド（編集メニューのサブメニューとツールバー ▾）。
+      arrange: {
+        'align-left': '左揃え',
+        'align-center': '左右中央揃え',
+        'align-right': '右揃え',
+        'align-top': '上揃え',
+        'align-middle': '上下中央揃え',
+        'align-bottom': '下揃え',
+        'distribute-horizontal': '左右に均等配置',
+        'distribute-vertical': '上下に均等配置',
+      },
       densities: { 'very-wide': 'とても広く', wide: '広く', normal: '標準', free: '自由配置' },
       tools: {
         undo: '元に戻す',

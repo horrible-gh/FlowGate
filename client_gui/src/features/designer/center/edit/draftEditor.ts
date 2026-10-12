@@ -13,10 +13,16 @@
 //   so the Center can show the card lines the save made without reading the Flow again.
 // - flowgate.v02.0059 T#2: an undone entry waits in a redo stack (same renames as the undo stack);
 //   a new edit empties it, a fresh read of the Flow empties both.
+// - flowgate.v02.0059 T#2 (0011-CH contract C): card moves go on the same stacks (editHistory.ts
+//   `move` entries, `record`); stepping one hands its positions to `onMove` (the Center's move path and
+//   layout save) and saves no draft. `place` keeps the draft's own positions where the cards are, so a
+//   removed card comes back where it was. An editor without `save` edits nothing: it keeps the move
+//   history of a Flow whose Graph is no editable draft.
 // Pure TypeScript, no Vue: the Center session mirrors `status` into its reactive state.
 import type { FlowDraftError, FlowDraftSaveResult } from '../graph/flowGraphSource'
 import { CLIENT_KEY_PREFIX, draftContent, remapDraft, type DraftModel } from './draftModel'
-import { applyCommand, applyCommandsWithUndo, remapCommand, renameCommandKeys, reviveCommands, type EditCommand } from './graphEditCommands'
+import { createHistoryStacks, editEntry, moveEntry, movePlacements, remapEntry, renameEntry, type NodeMove, type NodePlacement } from './editHistory'
+import { applyCommand, applyCommandsWithUndo, reviveCommands, type EditCommand } from './graphEditCommands'
 
 export const DRAFT_SAVE_DELAY_MS = 400
 const UNDO_LIMIT = 100
@@ -25,13 +31,16 @@ const UNDO_LIMIT = 100
 export type DraftEditStatus = 'idle' | 'pending' | 'saving' | 'error' | 'conflict'
 
 export interface DraftEditorOptions {
-  save(version: number, content: ReturnType<typeof draftContent>): Promise<FlowDraftSaveResult>
+  /** Absent: a moves-only history (no structure edit applies). */
+  save?(version: number, content: ReturnType<typeof draftContent>): Promise<FlowDraftSaveResult>
   /** The draft (and undo) after a save renamed `tmp_` keys. */
   onKeys(keyMap: Readonly<Record<string, string>>): void
   /** flowgate.v02.0053 T#5: a save was stored (after `onKeys`); its answer carries the card lines. */
   onSaved?(result: FlowDraftSaveResult): void
   /** Status / model / undo availability changed. */
   onChange(): void
+  /** flowgate.v02.0059 T#2: puts the cards of a stepped move entry there; whether any card went. */
+  onMove?(placements: NodePlacement[]): boolean
   delayMs?: number
 }
 
@@ -49,6 +58,10 @@ export interface DraftEditor {
   apply(command: EditCommand, undoable?: boolean): boolean
   undo(): boolean
   redo(): boolean
+  /** flowgate.v02.0059 T#2: cards moved by one action — one undo entry (redo dropped). Whether it was kept. */
+  record(moves: readonly NodeMove[]): boolean
+  /** flowgate.v02.0059 T#2: the draft's nodes take these positions (no save, no history). */
+  place(placements: readonly NodePlacement[]): void
   /** Sends a waiting save now. */
   flush(): void
   /** Resolves when nothing waits or runs: true when the draft is saved, false when refused. */
@@ -79,8 +92,7 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
   let saved = version
   let status: DraftEditStatus = 'idle'
   let errorCode: string | null = null
-  let undoStack: EditCommand[][] = []
-  let redoStack: EditCommand[][] = []
+  const history = createHistoryStacks(UNDO_LIMIT)
   let timer: ReturnType<typeof setTimeout> | null = null
   let editSeq = 0
   let sentSeq = 0
@@ -114,7 +126,8 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
   }
 
   function send() {
-    if (inFlight || status === 'conflict' || editSeq === sentSeq) return
+    const save = options.save
+    if (!save || inFlight || status === 'conflict' || editSeq === sentSeq) return
     inFlight = true
     const seq = editSeq
     const sent = current
@@ -122,7 +135,7 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
     setStatus('saving')
     let request: Promise<FlowDraftSaveResult>
     try {
-      request = options.save(saved, draftContent(sent))
+      request = save(saved, draftContent(sent))
     } catch (error) {
       request = Promise.reject(error)
     }
@@ -134,8 +147,7 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
         errorCode = null
         if (Object.keys(result.keyMap).length) {
           current = remapDraft(current, result.keyMap)
-          undoStack = undoStack.map((entry) => entry.map((c) => remapCommand(c, result.keyMap)))
-          redoStack = redoStack.map((entry) => entry.map((c) => remapCommand(c, result.keyMap)))
+          history.map((entry) => remapEntry(entry, result.keyMap))
           options.onKeys(result.keyMap)
         }
         options.onSaved?.(result)
@@ -168,19 +180,12 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
     send()
   }
 
-  const pushed = (stack: EditCommand[][], entry: EditCommand[]) => [...stack.slice(-(UNDO_LIMIT - 1)), entry]
-
-  /** `history: 'new'` an edit of the user (redo is dropped), 'undo' / 'redo' a step through the history. */
-  function edit(next: DraftModel, history: 'new' | 'undo' | 'redo', entry: EditCommand[] | null = null) {
+  /** `made: 'new'` an edit of the user (redo is dropped), 'undo' / 'redo' a step through the history. */
+  function edit(next: DraftModel, made: 'new' | 'undo' | 'redo', entry: EditCommand[] | null = null) {
     current = next
-    if (history === 'new') {
-      if (entry) undoStack = pushed(undoStack, entry)
-      redoStack = []
-    } else if (history === 'undo') {
-      if (entry) redoStack = pushed(redoStack, entry)
-    } else if (entry) {
-      undoStack = pushed(undoStack, entry)
-    }
+    const item = entry ? editEntry(entry) : null
+    if (made === 'new') history.push(item)
+    else if (item) history.keep(made === 'undo' ? 'redo' : 'undo', item)
     editSeq += 1
     if (status === 'error') errorCode = null
     schedule()
@@ -189,37 +194,33 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
   /**
    * Takes the last entry of a stack and applies it. A saved node / edge the entry re-adds has no
    * stored key any more and comes back under a new one; the rest of the history follows the rename.
+   * A move entry puts its cards back / forward (`onMove`); one whose cards are all gone is dropped.
    */
   function step(from: 'undo' | 'redo'): boolean {
-    const stack = from === 'undo' ? undoStack : redoStack
-    if (status === 'conflict' || !stack.length) return false
-    const original = stack[stack.length - 1]
+    const original = history.top(from)
+    if (status === 'conflict' || !original) return false
+    history.take(from)
+    if (original.kind === 'move') {
+      const placed = options.onMove?.(movePlacements(original.moves, from)) === true
+      if (placed) history.keep(from === 'undo' ? 'redo' : 'undo', original)
+      options.onChange()
+      return placed
+    }
     // A save on the wire deletes every stored key its model lacks: those keys are gone for a revive.
     const serverKeys = sentModel ? new Set([...savedKeys].filter((k) => storedKeys(sentModel as DraftModel).has(k))) : savedKeys
-    const entry = reviveCommands(original, serverKeys, newClientKey)
-    const rest = stack.slice(0, -1)
+    const entry = reviveCommands(original.commands, serverKeys, newClientKey)
     const applied = applyCommandsWithUndo(current, entry)
     if (!applied) {
-      if (from === 'undo') undoStack = rest
-      else redoStack = rest
       options.onChange()
       return false
     }
     const renamed: Record<string, string> = {}
-    original.forEach((command, i) => {
+    original.commands.forEach((command, i) => {
       const was = addedKey(command)
       const now = addedKey(entry[i])
       if (was !== null && now !== null && was !== now) renamed[was] = now
     })
-    const follow = (entries: EditCommand[][]) =>
-      Object.keys(renamed).length ? entries.map((e) => e.map((c) => renameCommandKeys(c, renamed))) : entries
-    if (from === 'undo') {
-      undoStack = follow(rest)
-      redoStack = follow(redoStack)
-    } else {
-      redoStack = follow(rest)
-      undoStack = follow(undoStack)
-    }
+    if (Object.keys(renamed).length) history.map((e) => renameEntry(e, renamed))
     edit(applied.model, from, applied.undo)
     return true
   }
@@ -229,11 +230,11 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
     version: () => saved,
     status: () => status,
     errorCode: () => errorCode,
-    canUndo: () => undoStack.length > 0 && status !== 'conflict',
-    canRedo: () => redoStack.length > 0 && status !== 'conflict',
+    canUndo: () => history.size('undo') > 0 && status !== 'conflict',
+    canRedo: () => history.size('redo') > 0 && status !== 'conflict',
     busy,
     apply(command, undoable = true) {
-      if (status === 'conflict') return false
+      if (status === 'conflict' || !options.save) return false
       const applied = applyCommand(current, command)
       if (!applied) return false
       edit(applied.model, 'new', undoable ? [...applied.undo] : null)
@@ -241,6 +242,17 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
     },
     undo: () => step('undo'),
     redo: () => step('redo'),
+    record(moves) {
+      if (status === 'conflict' || !moves.length) return false
+      history.push(moveEntry([...moves]))
+      options.onChange()
+      return true
+    },
+    place(placements) {
+      const at = new Map(placements.map((p) => [p.nodeId, p] as const))
+      if (!current.nodes.some((n) => at.has(n.key))) return
+      current = { ...current, nodes: current.nodes.map((n) => (at.has(n.key) ? { ...n, x: at.get(n.key)!.x, y: at.get(n.key)!.y } : n)) }
+    },
     flush,
     settled() {
       if (!busy()) return Promise.resolve(status === 'idle')
@@ -254,8 +266,7 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
       timer = null
       current = model
       saved = version
-      undoStack = []
-      redoStack = []
+      history.clear()
       editSeq = sentSeq
       errorCode = null
       savedKeys = storedKeys(model)

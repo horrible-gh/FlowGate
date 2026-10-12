@@ -23,6 +23,10 @@
 //
 // flowgate.v02.0053 T#5: a Graph / draft node's card document lines (`cardDocuments`), for the
 // Inspector's documents tab; also a meaning field the Canvas card does not read.
+//
+// flowgate.v02.0059 T#2: the Canvas read's `projection` (layout field), so 자동 배치 follows the server's
+// auto placement of that projection; with it the v0.1 sequence root document and how many Nodes the read
+// left out (collapse), so 자동 배치 knows when the shown Graph is not the server's whole input.
 
 export interface FlowGraphNode {
   /** Unique within the Graph — the server node identity for a server Graph. */
@@ -159,6 +163,22 @@ export interface FlowGraph {
   readonly latestRevisionNo?: number | null
   /** Meaning: the revision shown in the revision view (a run may pin an older one), else null. */
   readonly viewRevisionNo?: number | null
+  /**
+   * Layout (flowgate.v02.0059 T#2): how the server laid the Nodes out — `documents` | `sequence` | `graph`
+   * (P0008 §3 `projection`, open key); 자동 배치 places them by the same rules. Absent: unknown.
+   */
+  readonly projection?: string | null
+  /**
+   * Meaning (flowgate.v02.0059 T#2): the v0.1 sequence root document (P0008 §2.1
+   * `ownership.sequence_root_doc_id`), or null / absent. The `sequence` projection draws the live end of
+   * its supersede chain first.
+   */
+  readonly sequenceRootDocId?: string | null
+  /**
+   * Layout (flowgate.v02.0059 T#2): how many Nodes the read left out (P0008 §2.5 collapse); the server laid
+   * them out with the others before leaving them out. Absent: none.
+   */
+  readonly hiddenNodeCount?: number
 }
 
 /** flowgate.v02.0048 T#1: the selected Node with the Flow and project it belongs to (Center session -> Inspector). */

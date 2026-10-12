@@ -18,11 +18,17 @@
 //
 // flowgate.v02.0053 T#5: a stored save's card lines (the documents the server made for a placed card,
 // T#1) go onto the shown Graph at once, so the Inspector's documents tab has them without a read.
+//
+// flowgate.v02.0059 T#2 (0011-CH contract C): card moves (`recordMove`) share the Flow's undo / redo with
+// the structure edits; a stepped move goes back through the host's `placeNodes` (Graph + layout save). A
+// Flow whose Graph is no editable draft keeps a moves-only history (an editor without save).
 import type { FlowGraph } from '../graph/flowGraph'
-import type { FlowDraftCheck, FlowDraftError, FlowDraftSaveResult, FlowGraphSource } from '../graph/flowGraphSource'
+import type { FlowDraftCheck, FlowDraftSaveResult, FlowGraphSource } from '../graph/flowGraphSource'
 import { checkConnection, type ConnectionCheck } from './connectionRules'
-import { draftFromGraph, remapGraph, withCardDocuments, withDraft, type CanvasNodeSpec, type DraftModel } from './draftModel'
+import { createDraftActions } from './draftActions'
+import { EMPTY_DRAFT, draftFromGraph, remapGraph, withCardDocuments, withDraft, type CanvasNodeSpec, type DraftModel } from './draftModel'
 import { createDraftEditor, type DraftEditor, type DraftEditStatus } from './draftEditor'
+import type { NodeMove, NodePlacement } from './editHistory'
 import type { EditCommand } from './graphEditCommands'
 
 export type DraftAction = 'validate' | 'confirm'
@@ -50,6 +56,8 @@ export interface DraftHost {
   /** Renames the selected node after a save issued its key. */
   renameSelection(flowId: string, keyMap: Readonly<Record<string, string>>): void
   queuePosition(flowId: string, nodeId: string, x: number, y: number): void
+  /** flowgate.v02.0059 T#2: puts cards where an undone / redone move has them; whether any card went. */
+  placeNodes(flowId: string, placements: readonly NodePlacement[]): boolean
   /** Stores positions of new nodes whose editor was stopped (the tab / project may be gone). */
   keepPositions?(projectId: string, flowId: string, positions: ReadonlyArray<{ nodeId: string; x: number; y: number }>): void
   /** Reads the Flow again once its saves settled (layout and draft). */
@@ -62,17 +70,11 @@ export interface DraftHost {
   delayMs?: number
 }
 
-const REREAD_CODES = new Set([
-  'flow_owned_by_v01', 'flow_ownership_conflict', 'revision_conflict', 'draft_not_found', 'draft_version_conflict',
-])
-
-const codeOf = (error: unknown) => {
-  const code = (error as FlowDraftError | null)?.code
-  return typeof code === 'string' && code ? code : 'request_failed'
-}
-
 export function createDraftController(host: DraftHost, edits: Record<string, DraftEditState>) {
   const editors = new Map<string, DraftEditor>()
+  // flowgate.v02.0059 T#2: the move history of each open Flow with no editable draft.
+  const moveOnly = new Map<string, DraftEditor>()
+  const historyOf = (flowId: string) => editors.get(flowId) ?? moveOnly.get(flowId)
   // Stopped editors whose save still runs: their Flow and the positions of their `tmp_` nodes.
   const stopped = new Map<DraftEditor, { flowId: string; positions: Map<string, { x: number; y: number }> }>()
 
@@ -89,8 +91,8 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     const before = state.status
     state.status = editor?.status() ?? 'idle'
     state.errorCode = editor?.errorCode() ?? null
-    state.canUndo = editor?.canUndo() ?? false
-    state.canRedo = editor?.canRedo() ?? false
+    state.canUndo = historyOf(flowId)?.canUndo() ?? false
+    state.canRedo = historyOf(flowId)?.canRedo() ?? false
     // A save just refused: read the Flow again as stored (no note, no button — TR0020 rev4).
     if (editor && refused(state.status) && !refused(before)) host.reread(flowId)
     if (editor && !editor.busy()) host.settled?.(flowId)
@@ -136,6 +138,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
       onSaved: (result) => {
         if (editors.get(flowId) === editor && result.cardDocuments) showLines(flowId, result.cardDocuments)
       },
+      onMove: (placements) => editors.get(flowId) === editor && host.placeNodes(flowId, placements),
       onChange: () => {
         if (editors.get(flowId) === editor) mirror(flowId)
         else if (!editor.busy() && stopped.delete(editor)) host.settled?.(flowId)
@@ -143,6 +146,17 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
       delayMs: host.delayMs,
     })
     return editor
+  }
+
+  function keepMoves(flowId: string) {
+    const kept = moveOnly.get(flowId)
+    if (kept) return kept.reset(EMPTY_DRAFT, 0)
+    const history: DraftEditor = createDraftEditor(EMPTY_DRAFT, 0, {
+      onKeys: () => {},
+      onChange: () => moveOnly.get(flowId) === history && mirror(flowId),
+      onMove: (placements) => moveOnly.get(flowId) === history && host.placeNodes(flowId, placements),
+    })
+    moveOnly.set(flowId, history)
   }
 
   /** Stops editing the Flow: what waits is sent, new nodes keep the positions shown now. */
@@ -169,9 +183,11 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     const existing = editors.get(flowId)
     if (!editable) {
       stop(flowId)
+      keepMoves(flowId)
       mirror(flowId)
       return
     }
+    moveOnly.delete(flowId)
     const model = draftFromGraph(graph)
     const version = graph.draft!.version
     if (existing) existing.reset(model, version)
@@ -213,62 +229,21 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
   }
 
   function stepHistory(flowId: string, move: 'undo' | 'redo'): boolean {
-    const editor = editors.get(flowId)
-    if (!editor || !editor[move]()) return false // undo / redo of the structure edits (v02.0059 T#2)
+    const editor = historyOf(flowId)
+    if (!editor || !editor[move]()) return false // undo / redo of the structure edits and moves (v02.0059 T#2)
     stateOf(flowId).check = null
-    show(flowId, editor)
+    if (editors.get(flowId) === editor) show(flowId, editor)
     mirror(flowId)
     return true
   }
 
-  async function act(flowId: string, action: DraftAction, body: (pid: string) => Promise<void>) {
-    const pid = host.projectId()
-    const state = stateOf(flowId)
-    if (pid === null || state.action) return
-    state.action = action
-    state.notice = null
-    try {
-      await body(pid)
-    } catch (error) {
-      const code = codeOf(error)
-      const issues = (error as FlowDraftError | null)?.issues
-      if (issues?.length) state.check = { confirmable: false, issues: [...issues] }
-      else state.notice = { kind: 'error', code }
-      if (REREAD_CODES.has(code)) host.reread(flowId)
-    } finally {
-      state.action = null
-    }
-  }
-
-  async function savedVersion(flowId: string): Promise<number> {
-    const editor = editors.get(flowId)
-    if (!editor) throw Object.assign(new Error('not editable'), { code: 'draft_not_editable' })
-    if (!(await editor.settled())) throw Object.assign(new Error('not saved'), { code: editor.errorCode() ?? 'save_failed' })
-    return editor.version()
-  }
-
-  const validate = (flowId: string) => act(flowId, 'validate', async (pid) => {
-    const version = await savedVersion(flowId)
-    if (version === 0 || !host.source.validateDraft) throw Object.assign(new Error('no draft'), { code: 'draft_not_found' })
-    stateOf(flowId).check = await host.source.validateDraft(pid, flowId, version)
-  })
-
-  const confirm = (flowId: string) => act(flowId, 'confirm', async (pid) => {
-    const version = await savedVersion(flowId)
-    if (version === 0 || !host.source.confirmDraft) throw Object.assign(new Error('no draft'), { code: 'draft_not_found' })
-    const base = host.graph(flowId)?.draft?.baseRevisionNo ?? null
-    const revisionNo = await host.source.confirmDraft(pid, flowId, version, base)
-    const state = stateOf(flowId)
-    state.check = null
-    state.notice = { kind: 'confirmed', revisionNo }
-    stop(flowId)
-    host.setView(flowId, null)
-    host.reread(flowId)
-  })
+  // The validate / confirm actions (draftActions.ts, flowgate.v02.0059 T#2: moved there as they were).
+  const { validate, confirm } = createDraftActions({ host, stateOf, editor: (flowId) => editors.get(flowId), stop })
 
   /** A tab closed / the project changed: send what waits, forget the Flow. */
   function close(flowId: string) {
     stop(flowId)
+    moveOnly.delete(flowId)
     delete edits[flowId]
   }
 
@@ -285,6 +260,9 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     /** TR0020 rev2: the Flow's editor has something saved or being saved (실행 confirms it first). */
     drawn: (flowId: string) => !!editors.get(flowId) && (editors.get(flowId)!.version() > 0 || editors.get(flowId)!.busy()),
     undo: (flowId: string) => stepHistory(flowId, 'undo'), redo: (flowId: string) => stepHistory(flowId, 'redo'),
+    /** flowgate.v02.0059 T#2: cards were moved by one action (one undo entry) / were put somewhere (no entry). */
+    recordMove: (flowId: string, moves: readonly NodeMove[]) => historyOf(flowId)?.record(moves) ?? false,
+    placed: (flowId: string, placements: readonly NodePlacement[]) => editors.get(flowId)?.place(placements),
     validate,
     confirm,
     /** Reads the Flow again (after a refused save: the stored draft replaces the local edits). */

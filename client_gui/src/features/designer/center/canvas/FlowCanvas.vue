@@ -114,7 +114,7 @@
 // Input: Flow id / name, FlowGraph, stored Viewport (may be none), selected Node id, sample
 // flag. Output: `select-node` (Node id or null), `viewport-change`, and (flowgate.v02.0045)
 // `viewport-commit` (a user pan / zoom ended — Vue Flow reports no end for a programmatic fit)
-// and `node-move` (a movable Node was dropped). Never calls an API, changes the session, edits
+// and `nodes-move` (movable Nodes were dropped — flowgate.v02.0059 T#2: one event per drop). Never calls an API, changes the session, edits
 // the Graph or handles tabs. flowgate.v02.0049: `canvas-resize` — the Canvas area size Vue Flow
 // measured (it watches the resize itself), when shown and on every change, for the MiniMap.
 //
@@ -143,6 +143,10 @@
 // toggle run; every selection change it reports is applied to the shown Selection and sent up as
 // `select-nodes` (all selected Node ids) — Vue Flow never decides the Selection by itself. A drop
 // reports each dragged Node's position once, the group clamped to the Canvas origin as a whole.
+//
+// flowgate.v02.0059 T#2 (0011-CH contract C): a drop is one `nodes-move` (every dragged Node's position) —
+// one move of the Flow's undo / redo, whether one card or the selection was dragged. Ctrl / Cmd + Z (`undo`)
+// works on every Flow, not only an editable draft: card moves are undone too.
 import '@vue-flow/core/dist/style.css'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -207,7 +211,8 @@ const emit = defineEmits<{
   'viewport-change': [viewport: CanvasViewport]
   'viewport-commit': [viewport: CanvasViewport]
   'canvas-resize': [size: CanvasSize]
-  'node-move': [move: { nodeId: string; x: number; y: number }]
+  /** flowgate.v02.0059 T#2: one drop — the position of every dropped Node (one undo entry). */
+  'nodes-move': [moves: { nodeId: string; x: number; y: number }[]]
   'canvas-drop': [drop: { transfer: DataTransfer; x: number; y: number }]
   'canvas-place': [point: { x: number; y: number }]
   'cancel-placement': []
@@ -406,8 +411,8 @@ function onNodeDragStop({ nodes: dragged }: NodeDragEvent) {
   for (const drop of drops) {
     const shown = flow.value?.findNode(drop.nodeId)
     if (shown && (shown.position.x !== drop.x || shown.position.y !== drop.y)) shown.position = { x: drop.x, y: drop.y }
-    emit('node-move', drop)
   }
+  if (drops.length) emit('nodes-move', drops)
 }
 
 // ── flowgate.v02.0045 S3: structure edits of an editable draft ─────────────────────────────
@@ -459,12 +464,13 @@ function onKeydown(event: KeyboardEvent) {
     removeEdge(edge.id)
     return
   }
-  if (!props.editable) return
+  // flowgate.v02.0059 T#2: card moves share the undo, so it is not bound to an editable draft any more.
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
     event.preventDefault()
     emit('undo')
     return
   }
+  if (!props.editable) return
   if ((event.key === 'Delete' || event.key === 'Backspace') && props.selectedNodeId) {
     const node = props.graph.nodes.find((n) => n.id === props.selectedNodeId)
     if (node?.structureEditable && node.definition) {
