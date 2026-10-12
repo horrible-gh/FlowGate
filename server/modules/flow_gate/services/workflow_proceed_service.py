@@ -144,6 +144,32 @@ def proceed_unapproved(*, doc_id: str, expected_revision: int, expected_slot_id:
     doc, item = _identity(doc_id, expected_revision, expected_slot_id, expected_slot_generation)
     with ExitStack() as stack:
         stack.enter_context(runtime.group_resume_lock(doc["group_id"]))
+        # A retransmission of the already-confirmed command is a read while its
+        # canonical worker owns the lease. It must not enter mutation admission,
+        # re-observe a changing worktree Basis or mint another token/worker.
+        fresh, current = _identity(doc_id, expected_revision, expected_slot_id, expected_slot_generation)
+        saved = db_completion.dispatch_for_decision(current.get("completion_decision_id")) if completion_reason(current) == "proceeded_unapproved" else None
+        if saved is not None and saved.get("run_id"):
+            from modules.flow_gate.db import group_ai_leases
+            active = runtime.active_run_for_group(doc["group_id"]) or group_ai_leases.get_active(doc["group_id"])
+            if active is not None and active.get("run_id") == saved["run_id"]:
+                if process_service.is_group_disposed(doc["group_id"]):
+                    _refuse("group_disposed")
+                bound = db_completion.decision_for_request(request_key)
+                if bound is not None and bound["decision_id"] != saved["decision_id"]:
+                    _refuse("completion_request_key_conflict")
+                try:
+                    decision = db_completion.record_decision(
+                        sequence_id=current["sequence_id"], slot_id=current["id"],
+                        slot_generation=expected_slot_generation, result_doc_id=doc_id,
+                        document_revision=expected_revision, actor_user_id=actor_user_id,
+                        request_key=request_key)
+                except db_completion.CompletionConflict as exc:
+                    raise MutationPolicyError(409, str(exc), str(exc)) from exc
+                from modules.flow_gate.services import workflow_completion_dispatch_service
+                response = _decision_response(decision, fresh, current, expected_slot_generation, expected_revision)
+                response.update(workflow_completion_dispatch_service.projection(saved))
+                return response
         # Same order as test admission (admission mutex before source G). It also
         # protects result entry while this command snapshots the current report.
         stack.enter_context(test_run_service._admission_lock)
@@ -204,13 +230,7 @@ def proceed_unapproved(*, doc_id: str, expected_revision: int, expected_slot_id:
                                 "decided_at": decision["decided_at"],
                                 "doc_review_status": fresh["doc_review_status"],
                                 "source_applied": False if fresh["type_code"] == "TR2" else None})
-        response = {"decision_id": decision["decision_id"], "slot_completed": True,
-                "completion_reason": "proceeded_unapproved", "doc_id": doc_id,
-                "doc_review_status": fresh["doc_review_status"],
-                "actor_user_id": decision["actor_user_id"], "decided_at": decision["decided_at"],
-                "sequence_id": item["sequence_id"], "slot_id": item["id"],
-                "slot_generation": expected_slot_generation, "document_revision": expected_revision,
-                "continuation_status": "not_started", "run_id": None}
+        response = _decision_response(decision, fresh, item, expected_slot_generation, expected_revision)
 
     # Commit the decision and intent, then release admission/source/resume locks
     # before the consumer takes the same locks in the established order.
@@ -218,3 +238,13 @@ def proceed_unapproved(*, doc_id: str, expected_revision: int, expected_slot_id:
     if dispatch is not None:
         response.update(dispatch_service.consume(dispatch["dispatch_id"]))
     return response
+
+
+def _decision_response(decision, fresh, item, expected_slot_generation, expected_revision):
+    return {"decision_id": decision["decision_id"], "slot_completed": True,
+                "completion_reason": "proceeded_unapproved", "doc_id": fresh["doc_id"],
+                "doc_review_status": fresh["doc_review_status"],
+                "actor_user_id": decision["actor_user_id"], "decided_at": decision["decided_at"],
+                "sequence_id": item["sequence_id"], "slot_id": item["id"],
+                "slot_generation": expected_slot_generation, "document_revision": expected_revision,
+                "continuation_status": "not_started", "run_id": None}

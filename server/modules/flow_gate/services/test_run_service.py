@@ -1629,7 +1629,7 @@ def _chain_api_base(run: Optional[dict], doc: dict) -> str:
     return f"http://127.0.0.1:{settings.FLOWGATE_PORT}{settings.CONTEXT.rstrip('/')}/api/v1"
 
 
-def continue_chain_after_test_gate(
+def _continue_chain_after_test_gate(
     doc: Optional[dict],
     run: Optional[dict] = None,
     *,
@@ -1672,6 +1672,11 @@ def continue_chain_after_test_gate(
             and row.get("stop_code") in (pending_code, blocked_code)
             else None
         )
+
+        from modules.flow_gate.services import workflow_completion_dispatch_service
+        continued = workflow_completion_dispatch_service.continue_for_test(doc)
+        if continued is not None:
+            return {"action": "decision_dispatch", **continued}
 
         latest = db_test_runs.latest_by_doc(doc["doc_id"])
         latest_status = (latest or {}).get("status")
@@ -4078,3 +4083,13 @@ def startup() -> None:
     except Exception:
         logger.warning("failed to recover test runs", exc_info=True)
     get_worker().start()
+
+
+def continue_chain_after_test_gate(doc, run=None, *, api_base_url=None, locale=None, log_end=True):
+    if not doc or not doc.get("group_id"):
+        return _continue_chain_after_test_gate(doc, run, api_base_url=api_base_url,
+                                              locale=locale, log_end=log_end)
+    from modules.flow_gate.services.ai_invoke import runtime
+    with runtime.group_resume_lock(doc["group_id"]):
+        return _continue_chain_after_test_gate(doc, run, api_base_url=api_base_url,
+                                              locale=locale, log_end=log_end)

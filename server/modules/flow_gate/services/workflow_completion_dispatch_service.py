@@ -1,12 +1,16 @@
-"""0428 T#4: continuation of an explicitly confirmed TSR system test stop.
+"""0428: durable, single-dispatch continuation of a confirmed TSR test stop.
 
-Decisions and execution outcomes are separate. No approval/result writer is called.
-T#5 supplies startup/late-finalizer scheduling and reserved execution identity recovery.
+Decisions and execution outcomes are separate. Uncertain launches require recovery.
 """
 from __future__ import annotations
 
 import json
+import logging
+import threading
 from contextlib import contextmanager, ExitStack
+from contextvars import ContextVar
+
+_launch_dispatch = ContextVar("completion_launch_dispatch", default=None)
 
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import workflow_sequences as db_seq
@@ -49,7 +53,28 @@ def _matches_report(doc, item, row):
 def intent_for_report(doc, item, *, api_base_url=None, locale="ko"):
     row = db_paused.get_by_group(doc["group_id"])
     if not _matches_report(doc, item, row):
-        return None
+        if row is not None:
+            return None
+        # A consumed continuation token and the original test-gate hop are the
+        # proof for a pending intent. Never invent a pause from another stop.
+        from modules.flow_gate.services import test_run_service
+        ts = db_docs.get_by_id(doc.get("target_id") or doc.get("triggered_by"))
+        token = test_run_service._continuation_token_for_doc(ts) if ts else None
+        origin = runtime.get_run_record((token or {}).get("ai_run_id")) if token else None
+        paired = db_seq.get_paired_instruction_item(doc["doc_id"], "TS")
+        if (not origin or not token or not paired or paired["sequence_id"] != item["sequence_id"]
+                or paired.get("result_doc_id") != ts["doc_id"]
+                or origin.get("group_id") != doc["group_id"]
+                or origin.get("test_gate_doc_id") != ts["doc_id"]
+                or origin.get("issued_to") != token.get("issued_to")
+                or origin.get("mode") != "continuous" or not origin.get("chain_id")
+                or origin.get("stop_code") not in {"test_run_pending", "test_gate_blocked"}):
+            return None
+        return {"chain_id": origin["chain_id"], "stop_run_id": token["ai_run_id"],
+                "stop_snapshot": {"row": None, "group_id": doc["group_id"],
+                    "paused_by": token["issued_to"], "ts_doc_id": ts["doc_id"],
+                    "api_base_url": test_run_service._chain_api_base(None, ts) or api_base_url,
+                    "locale": token.get("continuation_locale") or locale}}
     from modules.flow_gate.services import test_run_service
     ts = db_docs.get_by_id(doc.get("target_id") or doc.get("triggered_by"))
     token = test_run_service._continuation_token_for_doc(ts)
@@ -109,7 +134,11 @@ def launch_context(dispatch_id):
             raise ValueError("completion_stop_changed")
         if not command.lock_manager.still_held(ctx, key):
             raise ValueError("completion_source_locked")
-        yield dispatch
+        binding = _launch_dispatch.set(dispatch_id)
+        try:
+            yield dispatch
+        finally:
+            _launch_dispatch.reset(binding)
 
 
 def claim_stop(dispatch, row):
@@ -144,9 +173,46 @@ def finish_empty(dispatch, row, target_seq):
 def consume(dispatch_id):
     """Consume a durable intent. Uncertain launch errors are kept for recovery."""
     dispatch = db_completion.dispatch_by_id(dispatch_id)
+    snapshot = json.loads(dispatch["stop_snapshot_json"])
+    group_id = (snapshot.get("row") or snapshot)["group_id"]
+    with runtime.group_resume_lock(group_id):
+        return _consume_locked(dispatch_id)
+
+
+def _consume_locked(dispatch_id):
+    dispatch = db_completion.dispatch_by_id(dispatch_id)
+    if dispatch["state"] in {"running", "recovery_required"}:
+        return recover(dispatch)
     if dispatch["state"] not in {"pending", "retryable_failed"}:
         return projection(dispatch)
+    decision = db_completion.get_decision(dispatch["decision_id"])
+    current = next((i for i in db_seq.get_sequence_items(decision["sequence_id"])
+                    if i["id"] == decision["slot_id"]), None)
+    if (not current or current.get("completion_decision_id") != decision["decision_id"]
+            or completion_reason(current) != "proceeded_unapproved"):
+        _transition(dispatch, "cancelled", error_code="completion_invalidated")
+        return projection(db_completion.dispatch_by_id(dispatch_id))
     snapshot = json.loads(dispatch["stop_snapshot_json"])
+    if snapshot.get("row") is None:
+        row = db_paused.get_by_group(snapshot["group_id"])
+        if row is None:
+            return projection(dispatch)  # finalizer has not parked yet
+        decision = db_completion.get_decision(dispatch["decision_id"])
+        doc = db_docs.get_by_id(decision["result_doc_id"])
+        item = next((i for i in db_seq.get_sequence_items(decision["sequence_id"])
+                     if i["id"] == decision["slot_id"]), None)
+        if (not item or item.get("completion_decision_id") != decision["decision_id"]
+                or completion_reason(item) != "proceeded_unapproved"
+                or row.get("chain_id") != dispatch["chain_id"]
+                or row.get("stop_run_id") != dispatch["stop_run_id"]
+                or row.get("paused_by") != snapshot["paused_by"]
+                or not _matches_report(doc, item, row)):
+            _transition(dispatch, "recovery_required", error_code="completion_late_stop_changed")
+            return projection(db_completion.dispatch_by_id(dispatch_id))
+        snapshot["row"] = row
+        if not db_completion.attach_stop(dispatch, snapshot):
+            return projection(db_completion.dispatch_by_id(dispatch_id))
+        dispatch = db_completion.dispatch_by_id(dispatch_id)
     row = snapshot["row"]
     from modules.flow_gate.services.ai_invoke import chain
     try:
@@ -173,6 +239,11 @@ def consume(dispatch_id):
                 isinstance(detail, dict) and (detail.get("restored") or code in {
                     "no_enabled_provider", "provider_unavailable", "resume_advance_blocked",
                     "resume_advance_unavailable", "resume_lookup_failed"}))
+            # Once admission crossed its durable launch boundary even a known
+            # HTTP/ValueError may be a lost response from an existing worker.
+            crossed = fresh.get("error_code") == "completion_launch_attempted"
+            if fresh.get("token_id") or crossed:
+                known_failure = False
             state = "retryable_failed" if restored and known_failure else "recovery_required"
             if state != fresh["state"]:
                 _transition(fresh, state, error_code=code[:160])
@@ -180,8 +251,15 @@ def consume(dispatch_id):
 
 
 def consume_pending():
-    """Scheduling seam for T#5; only valid stored decisions enter the consumer."""
-    return [consume(d["dispatch_id"]) for d in db_completion.pending_dispatches()]
+    """Startup and finalizer replay; uncertain claims are reconciled, never relaunched."""
+    results = []
+    for dispatch in db_completion.unfinished_dispatches():
+        try:
+            results.append(consume(dispatch["dispatch_id"]))
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("completion dispatch sweep failed for %s", dispatch["dispatch_id"])
+    return results
 
 
 def same_stop(row, snapshot):
@@ -192,3 +270,154 @@ def same_stop(row, snapshot):
     ignored = {"id", "created_at", "updated_at"}
     return {k: v for k, v in row.items() if k not in ignored} == {
         k: v for k, v in snapshot.items() if k not in ignored}
+
+
+def reserve_run(run_id):
+    ident = _launch_dispatch.get()
+    if ident is None:
+        return run_id
+    dispatch = db_completion.dispatch_by_id(ident)
+    reserved = dispatch.get("run_id") or run_id
+    if not _transition(dispatch, "running", run_id=reserved):
+        raise ValueError("completion_dispatch_conflict")
+    return reserved
+
+
+def bind_token(run_id, token_id):
+    ident = _launch_dispatch.get()
+    if ident is not None:
+        dispatch = db_completion.dispatch_by_id(ident)
+        if not token_id or not _transition(dispatch, "running", run_id=run_id, token_id=token_id):
+            raise ValueError("completion_dispatch_conflict")
+
+
+def before_worker(run):
+    ident = _launch_dispatch.get()
+    if ident is not None:
+        dispatch = db_completion.dispatch_by_id(ident)
+        if (dispatch.get("run_id") != run["run_id"] or not dispatch.get("token_id")
+                or not _transition(dispatch, "running", error_code="completion_launch_attempted")):
+            raise ValueError("completion_dispatch_conflict")
+        run["completion_dispatch_id"] = ident
+
+
+def worker_started(run):
+    ident = _launch_dispatch.get()
+    if ident is not None:
+        run["completion_launch_confirmed"] = True
+        dispatch = db_completion.dispatch_by_id(ident)
+        if not _transition(dispatch, "completed", run_id=run["run_id"]):
+            raise ValueError("completion_dispatch_conflict")
+
+
+def recover(dispatch):
+    """The caller owns the group lock. Only affirmative run evidence settles a claim."""
+    from modules.flow_gate.db import ai_invoke_runs, group_ai_leases
+    from modules.flow_gate.db.connection import get_store
+    snapshot = json.loads(dispatch["stop_snapshot_json"])
+    row = snapshot.get("row")
+    run_id = dispatch.get("run_id")
+    live = runtime.get_run_record(run_id) if run_id else None
+    persisted = ai_invoke_runs.get(run_id) if run_id else None
+    confirmed = live if (live or {}).get("completion_launch_confirmed") else persisted
+    if (confirmed and row and confirmed.get("group_id") == row["group_id"]
+            and ((confirmed is live and confirmed.get("chain_id") == dispatch["chain_id"])
+                 or (confirmed is persisted and confirmed.get("doc_ref") == row["doc_ref"]))
+            and confirmed.get("issued_to") == row["paused_by"]
+            and confirmed.get("token_id") == dispatch.get("token_id")
+            and confirmed.get("end_reason") not in {"orphaned_by_restart", "lease_expired"}):
+        _transition(dispatch, "completed", run_id=run_id)
+    elif row and run_id and (group_ai_leases.get_active(row["group_id"]) or {}).get("run_id") == run_id:
+        return projection(dispatch)  # another server may still own admission/worker
+    elif (row and dispatch["state"] == "running" and not dispatch.get("token_id")
+          and dispatch.get("error_code") != "completion_launch_attempted"
+          and live is None and persisted is None
+          and runtime.active_run_for_group(row["group_id"]) is None
+          and group_ai_leases.get_active(row["group_id"]) is None):
+        # The source G lock spans claim through admission on every server.
+        # Absence of a token/lease alone is not proof that another process died:
+        # it may still be between stop consumption and run reservation.
+        _recover_prelaunch(dispatch, row)
+    elif dispatch["state"] == "running":
+        _transition(dispatch, "recovery_required", error_code="completion_launch_unconfirmed")
+    return projection(db_completion.dispatch_by_id(dispatch["dispatch_id"]))
+
+
+
+def _recover_prelaunch(dispatch, row):
+    from modules.flow_gate.services import workflow_proceed_service as command, test_run_service
+    from modules.flow_gate.db import ai_invoke_runs, group_ai_leases
+    from modules.flow_gate.db.connection import get_store
+    decision = db_completion.get_decision(dispatch["decision_id"])
+    doc = db_docs.get_by_id(decision["result_doc_id"])
+    with ExitStack() as stack:
+        stack.enter_context(test_run_service._admission_lock)
+        if command.lock_manager.current_context() is None:
+            bound = command.lock_manager.new_context("completion_recovery")
+            command.lock_manager.bind(bound)
+            stack.callback(command.lock_manager.unbind, bound)
+        try:
+            ctx, key = stack.enter_context(command._group_lock(doc))
+        except Exception:
+            return  # a live consumer may still be in admission
+        with db_completion.decision_transaction(decision["sequence_id"], decision["slot_id"]):
+            fresh = db_completion.dispatch_by_id(dispatch["dispatch_id"])
+            run_id = fresh.get("run_id")
+            if (fresh["state"] != "running" or fresh.get("token_id")
+                    or fresh.get("error_code") == "completion_launch_attempted"
+                    or (run_id and (runtime.get_run_record(run_id) or ai_invoke_runs.get(run_id)))
+                    or runtime.active_run_for_group(row["group_id"]) is not None
+                    or group_ai_leases.get_active(row["group_id"]) is not None
+                    or not command.lock_manager.still_held(ctx, key)):
+                return
+            existing = db_paused.get_by_group(row["group_id"])
+            if existing is None:
+                fields = {k: v for k, v in row.items()
+                          if k not in {"id", "mode", "created_at", "updated_at"}}
+                db_paused.upsert(**fields)
+                existing = db_paused.get_by_group(row["group_id"])
+            if same_stop(existing, row):
+                _transition(fresh, "retryable_failed", error_code="completion_prelaunch_recovered")
+            else:
+                _transition(fresh, "recovery_required", error_code="completion_stop_changed")
+
+def continue_for_test(doc):
+    """Return None for ordinary PASS; valid human decisions use one durable consumer."""
+    from modules.flow_gate.services import test_run_service
+    item = test_run_service._tsr_slot_item(doc, db_seq)
+    if not item or completion_reason(item) != "proceeded_unapproved":
+        return None
+    dispatch = db_completion.dispatch_for_decision(item["completion_decision_id"])
+    return consume(dispatch["dispatch_id"]) if dispatch else {"continuation_status":"not_started"}
+
+
+_consumer_lock = threading.Lock()
+_consumer_stop = threading.Event()
+_consumer_thread = None
+
+
+def start_consumer():
+    """One bounded poller per server instance; DB CAS arbitrates other instances."""
+    import threading
+    global _consumer_thread
+    with _consumer_lock:
+        if _consumer_thread is not None and _consumer_thread.is_alive():
+            return
+        _consumer_stop.clear()
+        def poll():
+            import logging
+            while not _consumer_stop.wait(5):
+                try:
+                    consume_pending()
+                except Exception:
+                    logging.getLogger(__name__).exception("completion dispatch recovery sweep failed")
+        _consumer_thread = threading.Thread(target=poll, name="workflow-completion-dispatch", daemon=True)
+        _consumer_thread.start()
+
+
+def stop_consumer():
+    with _consumer_lock:
+        _consumer_stop.set()
+        thread = _consumer_thread
+    if thread is not None:
+        thread.join(timeout=10)

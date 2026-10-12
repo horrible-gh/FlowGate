@@ -2119,6 +2119,10 @@ def _resume_chain_locked(
         target_seq = preflight["_resume_target_seq"]
 
         def _restore_row(stop_code: Optional[str] = None) -> None:
+            if completion_dispatch is not None:
+                latest = dispatch_service.db_completion.dispatch_by_id(completion_dispatch["dispatch_id"])
+                if latest["state"] == "completed" or latest.get("error_code") == "completion_launch_attempted":
+                    return  # a lost start response must not resurrect the consumed stop
             # The resume did not happen — put the consumed row back so the paused
             # card survives and the user can retry (L0009 §5: row preservation).
             # 0688 TR0006 review: ``stop_code`` re-parks it on the stop a replayed gate
@@ -2353,6 +2357,15 @@ def _resume_chain_locked(
             # Same advance_workflow path as the continuous first hop / every inbox
             # self-chain hop, so instruction heads (N/T) keep their server-side
             # auto-creation instead of being handed to the AI to write (0226 B0001 ④).
+            from modules.flow_gate.db.connection import get_store
+            if completion_dispatch is not None:
+                ai_run_id = dispatch_service.reserve_run(ai_run_id)
+            if completion_dispatch is None:
+                return _issue_resume_atomic(ai_run_id)
+            with get_store().transaction():
+                return _issue_resume_atomic(ai_run_id)
+
+        def _issue_resume_atomic(ai_run_id):
             adv = workflow_decision_service.advance_workflow(
                 doc_id=row["doc_ref"],
                 issued_to=user_id,
@@ -2365,6 +2378,8 @@ def _resume_chain_locked(
                 continuation_auto_approve_item_seqs=resume_auto_approve_item_seqs,
                 ai_run_id=ai_run_id,      # 0359 L0007 §2.9
             )
+            if completion_dispatch is not None:
+                dispatch_service.bind_token(ai_run_id, adv["token_id"])
             return {
                 "raw_token": adv["token"],
                 "token_id": adv["token_id"],

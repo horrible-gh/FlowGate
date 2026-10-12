@@ -83,6 +83,8 @@ limiter = Limiter(
 async def lifespan(app: FastAPI):
     """Lifespan handler executed on server startup/shutdown."""
     _bootstrap()          # console encoding + pre-build PercentileTable
+    from modules.flow_gate.services import workflow_completion_dispatch_service
+    workflow_completion_dispatch_service.start_consumer()
     # Cooperative-shutdown signal for long-lived SSE streams. Without this, an
     # open EventSource keeps its response generator running forever, and uvicorn
     # waits on that in-flight connection — so the server only exits once the
@@ -92,6 +94,7 @@ async def lifespan(app: FastAPI):
     app.state.shutdown_event = asyncio.Event()
     yield                  # ← server running
     app.state.shutdown_event.set()
+    workflow_completion_dispatch_service.stop_consumer()
     try:
         from modules.flow_gate.services import snapshot_materialization_service
         snapshot_materialization_service.shutdown()

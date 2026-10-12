@@ -128,7 +128,7 @@ def cas_dispatch(
     """
     transitions = {
         "pending": {"running", "cancelled", "recovery_required", "retryable_failed"},
-        "running": {"completed", "retryable_failed", "recovery_required"},
+        "running": {"running", "completed", "retryable_failed", "recovery_required"},
         "retryable_failed": {"pending", "running", "cancelled", "recovery_required"},
         "recovery_required": {"pending", "completed", "cancelled"},
     }
@@ -166,3 +166,33 @@ def dispatch_for_decision(decision_id: str) -> dict | None:
 def dispatch_by_id(dispatch_id: str) -> dict | None:
     return get_store()._fetch_one(
         "SELECT * FROM workflow_completion_dispatches WHERE dispatch_id = ?", [dispatch_id])
+
+
+def attach_stop(dispatch, snapshot):
+    """Bind a late stop once, retaining the confirmed chain/stop identity."""
+    return get_store()._execute_affected(
+        "UPDATE workflow_completion_dispatches SET stop_snapshot_json = ?, "
+        "state_version = state_version + 1, updated_at = ? "
+        "WHERE dispatch_id = ? AND state = 'pending' AND state_version = ?",
+        [json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")), now_iso(),
+         dispatch["dispatch_id"], dispatch["state_version"]]) == 1
+
+
+def unfinished_dispatches():
+    return get_store()._fetch_all(
+        "SELECT * FROM workflow_completion_dispatches WHERE state IN "
+        "('pending','retryable_failed','running','recovery_required') ORDER BY created_at, dispatch_id", [])
+
+
+def dispatch_for_stop(chain_id, stop_run_id, *, include_pending=False):
+    states = "('pending','retryable_failed','running','completed','recovery_required')" if include_pending else "('running','completed','recovery_required')"
+    return get_store()._fetch_one(
+        "SELECT * FROM workflow_completion_dispatches WHERE chain_id = ? AND stop_run_id = ? "
+        "AND state IN " + states + " ORDER BY created_at LIMIT 1",
+        [chain_id, stop_run_id])
+
+
+
+def decision_for_request(request_key):
+    store = get_store()
+    return store._fetch_one(_sql(store, "get_request"), [request_key])

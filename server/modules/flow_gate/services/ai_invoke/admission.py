@@ -1186,7 +1186,8 @@ def start_run(
 
     # Allocate and lease before token issuance/worker spawn. The DB primary key makes two
     # concurrent starts atomic across processes; an acquiring lease self-reclaims on expiry.
-    run_id = _svc()._next_run_id()
+    from modules.flow_gate.services import workflow_completion_dispatch_service as completion_dispatch
+    run_id = completion_dispatch.reserve_run(_svc()._next_run_id())
     lease_chain_id = chain_id or run_id
     lease = None
     if not project_scoped:
@@ -1289,7 +1290,13 @@ def start_run(
             # bridge from a dead hop's token back to the run that died. Builders that do not accept
             # the keyword (review / sequence_edit / test_run) keep being called with no arguments.
             try:
-                issue = _call_issue_builder(issue_builder, run_id)
+                if completion_dispatch._launch_dispatch.get() is None:
+                    issue = _call_issue_builder(issue_builder, run_id)
+                else:
+                    from modules.flow_gate.db.connection import get_store
+                    with get_store().transaction():
+                        issue = _call_issue_builder(issue_builder, run_id)
+                        completion_dispatch.bind_token(run_id, issue.get("token_id"))
             except work_plan_attachment_service.PreInstructionAttachmentError as exc:
                 # 0554 T0014 §5: a rework issue_builder (issue_rework_request) already revoked
                 # the token it minted before re-raising — this only has the group lease left to
@@ -1890,6 +1897,7 @@ def start_run(
         daemon=True,
         name=f"ai-invoke-{run_id}",
     )
+    completion_dispatch.before_worker(run)
     thread.start()
 
     # 0515 T0009 §10: claim 유무는 issue.one_shot_claimed 하나로만 분기한다 -- 워커를
@@ -1935,6 +1943,7 @@ def start_run(
             # PENDING -> ABORT and already ran abort_handoff itself.
             raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)
 
+    completion_dispatch.worker_started(run)
     return {
         "ok": True,
         "run_id": run_id,
