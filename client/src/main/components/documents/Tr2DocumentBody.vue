@@ -5,13 +5,13 @@
         <div class="tr2-title-row">
           <span class="doc-tag c-TR2 tr2-chip" data-testid="tr2-chip">TR2 · {{ t('main.tr2_body.chip') }}</span>
           <strong data-testid="tr2-title">{{ title }}</strong>
-          <span v-if="state" class="tr2-pill" :class="`tr2-tone-${tone}`" data-testid="tr2-state-pill">{{ reviewLabel }} · {{ t(`main.tr2_body.state.${state}`) }}</span>
+          <span v-if="state" class="tr2-pill" :class="`tr2-tone-${tone}`" data-testid="tr2-state-pill">● {{ t(`main.tr2_body.state.${state}`) }}</span>
         </div>
-        <p class="tr2-apply-notice" data-testid="tr2-apply-notice">{{ t('main.tr2_body.apply_notice') }}</p>
+        <p class="tr2-apply-notice" data-testid="tr2-apply-notice"><span class="tr2-heading-id">{{ tab.id }}</span> · {{ t('main.tr2_body.apply_notice') }}</p>
       </div>
       <div class="tr2-actions">
-        <button type="button" class="btn btn-outline btn-sm" :disabled="loading" @click="refresh">{{ t('main.tr2_body.actions.refresh') }}</button>
-        <button type="button" class="btn btn-outline btn-sm" :disabled="loading || !view" @click="runDiagnostic">{{ t('main.tr2_body.actions.diagnostic') }}</button>
+        <button type="button" class="btn btn-outline btn-sm" :disabled="loading" @click="refresh"><AppIcon name="arrow-clockwise" /> {{ t('main.tr2_body.actions.refresh') }}</button>
+        <button type="button" class="btn btn-outline btn-sm" :disabled="loading || !view" @click="runDiagnostic"><AppIcon name="shield" /> {{ t('main.tr2_body.actions.diagnostic') }}</button>
       </div>
     </header>
 
@@ -32,17 +32,16 @@
     </div>
 
     <template v-if="view && state">
-      <p v-if="awaitingApproval" class="tr2-diag-strip" data-testid="tr2-diag-strip">{{ t('main.tr2_body.diag.strip', { revision: view.document.revision_no, match: view.derived.live_precheck.source_available === false ? t('main.tr2_body.diag.unavailable') : view.derived.live_precheck.drift ? t('main.tr2_body.diag.mismatch') : t('main.tr2_body.diag.match') }) }}</p>
 
       <div class="tr2-strip" :class="`tr2-tone-${tone}`" data-testid="tr2-state-strip">
-        <strong>{{ t(`main.tr2_body.state.${state}`) }}</strong>
-        <span>{{ t(`main.tr2_body.state_desc.${state}`, { phase: phaseLabel(latest?.phase), code: latest?.error_code ?? '', reason: notReadyReason }) }}</span>
-        <span v-if="latest?.error_code && state !== 'ready' && state !== 'not_ready'" class="tr2-code">{{ latest.error_code }}
-          <em v-if="latest.retryable === true">{{ t('main.tr2_body.attempts.retryable') }}</em>
-          <em v-else-if="latest.retryable === false">{{ t('main.tr2_body.attempts.not_retryable') }}</em>
-        </span>
+        <span class="tr2-state-symbol" aria-hidden="true">{{ tone === 'safe' || tone === 'done' ? '✓' : '!' }}</span>
+        <div class="tr2-state-copy">
+          <strong>{{ te(`main.tr2_body.v4.status_${state}`) ? t(`main.tr2_body.v4.status_${state}`) : t(`main.tr2_body.state.${state}`) }}</strong>
+          <p>{{ t(`main.tr2_body.state_desc.${state}`, { phase: phaseLabel(latest?.phase), code: '', reason: notReadyReason }) }}</p>
+        </div>
+        <span class="tr2-revision-badge">Revision {{ view.document.revision_no }}</span>
         <div v-if="retry?.allowed" class="tr2-retry" data-testid="tr2-retry-block">
-          <span>{{ retry.mode === 'recover_stale' ? t('main.tr2_body.retry.stale') : t('main.tr2_body.retry.available') }}</span>
+          <span class="tr2-retry-copy">{{ retry.mode === 'recover_stale' ? t('main.tr2_body.retry.stale') : t('main.tr2_body.v4.retry_hint') }}</span>
           <button type="button" class="btn btn-primary btn-sm" data-testid="tr2-retry" :disabled="retrying || readOnly" @click="ask({ kind: 'retry' })">{{ retrying ? t('main.tr2_body.retry.running') : t('main.tr2_body.actions.retry') }}</button>
         </div>
         <span v-else-if="retryBlockedKey" class="tr2-note" data-testid="tr2-retry-blocked">{{ t(retryBlockedKey) }}</span>
@@ -55,14 +54,28 @@
       <p v-if="staleWhileEditing" class="tr2-error">{{ t('main.tr2_body.errors.stale_while_editing') }}</p>
 
       <div class="tr2-summary tr2-review-summary" data-testid="tr2-review-summary">
-        <div><span>{{ t('main.tr2_body.workspace.total') }}</span><strong>{{ items.length }}</strong></div>
-        <div><span>{{ t('main.tr2_body.workspace.active') }}</span><strong>{{ counts.edit + counts.create }}</strong></div>
-        <div><span>{{ t('main.tr2_body.files.op_deferred') }}</span><strong>{{ counts.deferred }}</strong></div>
+        <div><span class="tr2-stat-icon"><AppIcon name="file-text" /></span><span>{{ t('main.tr2_body.workspace.total') }}</span><strong>{{ items.length }}</strong></div>
+        <div><span class="tr2-stat-icon"><AppIcon name="pencil-simple" /></span><span>{{ t('main.tr2_body.workspace.active') }}</span><strong>{{ counts.edit + counts.create }}</strong></div>
+        <div><span class="tr2-stat-icon"><AppIcon name="clock" /></span><span>{{ t('main.tr2_body.workspace.excluded') }}</span><strong>{{ counts.deferred }}</strong></div>
       </div>
 
+      <Tr2ImportDialog :open="importOpen" :busy="saving || sourceSaving" :has-actions="importMode === 'json' ? batchRows.length > 0 || batchLoading : sourceEditing || sourceBusy" :title="t('main.tr2_body.import.heading')" @close="closeImport">
+        <p class="tr2-note">{{ t('main.tr2_body.import.hint') }}</p>
+        <div class="tr2-import-tabs" role="tablist" :aria-label="t('main.tr2_body.import.heading')">
+          <button type="button" role="tab" :aria-selected="importMode === 'source'" :disabled="saving || batchLoading || sourceBusy" data-testid="tr2-import-tab-source" @click="importMode = 'source'">{{ t('main.tr2_body.import.source') }}</button>
+          <button type="button" role="tab" :aria-selected="importMode === 'json'" :disabled="saving || batchLoading || sourceBusy" data-testid="tr2-import-tab-json" @click="importMode = 'json'">{{ t('main.tr2_body.import.json') }}</button>
+        </div>
+        <div v-show="importMode === 'json'" class="tr2-import-json">
+          <div class="tr2-dropzone" :class="{ 'is-dragging': jsonDragging }" data-testid="tr2-json-dropzone"
+            @dragover.prevent="jsonDragging = true" @dragleave.prevent="jsonDragging = false" @drop.prevent="dropBatch">
+            <strong>{{ t('main.tr2_body.import.drop') }}</strong>
+            <p class="tr2-note">{{ t('main.tr2_body.import.json_hint') }}</p>
+            <input ref="batchInput" type="file" multiple hidden accept="application/json,.json" data-testid="tr2-upload-batch" :disabled="locked" @change="previewBatch" />
+            <button type="button" class="btn btn-primary btn-sm" :disabled="locked" data-testid="tr2-choose-json" @click="batchInput?.click()">{{ t('main.tr2_body.batch.upload') }}</button>
+          </div>
       <section v-if="batchRows.length || batchLoading" class="tr2-section tr2-batch" data-testid="tr2-batch-preview" :aria-busy="batchLoading">
         <h3>{{ t('main.tr2_body.batch.heading') }}</h3>
-        <p class="tr2-note">{{ t('main.tr2_body.batch.hint') }}</p>
+        <details class="tr2-note"><summary>{{ t('main.tr2_body.diag.technical') }}</summary><p>{{ t('main.tr2_body.batch.hint') }}</p></details>
         <p role="status" data-testid="tr2-batch-count">{{ t('main.tr2_body.batch.count', { total: batchRows.length, valid: batchRows.filter(row => row.valid).length, selected: batchSelected.length }) }}</p>
         <p v-if="batchLoading">{{ t('main.tr2_body.batch.loading') }}</p>
         <p v-if="batchRevision !== view.document.revision_no || staleWhileEditing || stale" class="tr2-error" data-testid="tr2-batch-stale">{{ t('main.tr2_body.batch.stale') }} <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-batch-reload" :disabled="saving" @click="reload">{{ t('main.tr2_body.actions.reload') }}</button></p>
@@ -75,48 +88,54 @@
             </label>
             <details v-if="row.item"><summary>{{ t('main.tr2_body.batch.details') }}</summary><pre>{{ JSON.stringify(row.item, null, 2) }}</pre></details>
             <p v-if="row.problem" class="tr2-error">{{ row.problem }}</p>
+            <p v-if="row.valid && sharedBatchPath(row)" class="tr2-note">{{ t('main.tr2_body.import.shared_path') }}</p>
             <span v-else-if="row.valid">{{ t('main.tr2_body.batch.valid') }}</span>
           </li>
         </ul>
         <div class="tr2-actions">
           <button type="button" class="btn btn-primary btn-sm" data-testid="tr2-batch-import" :disabled="locked || batchLoading || !batchSelected.length || batchRevision !== view.document.revision_no || stale || staleWhileEditing" @click="importBatch">{{ t('main.tr2_body.batch.import', { count: batchSelected.length }) }}</button>
-          <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-batch-cancel" :disabled="saving" @click="closeBatch">{{ t('main.tr2_body.actions.cancel') }}</button>
+          <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-batch-cancel" :disabled="saving" @click="closeImport">{{ t('main.tr2_body.actions.cancel') }}</button>
         </div>
       </section>
+          <p v-if="error" class="tr2-error" role="alert">{{ error }}</p>
+        </div>
+        <Tr2SourceImport v-show="importMode === 'source'" ref="sourceImport" :key="tab.id" :doc-id="tab.id" :revision="view.document.revision_no"
+          :disabled="readOnly || !mutationAllowed || saving || batchLoading" :stale="stale || staleWhileEditing"
+          @editing="sourceEditing = $event" @busy="sourceBusy = $event" @saving="sourceSaving = $event" @changed="onSourcesSaved" @cancelled="closeImport" />
+      </Tr2ImportDialog>
 
-      <Tr2SourceImport :key="tab.id" :doc-id="tab.id" :revision="view.document.revision_no"
-        :disabled="readOnly || !mutationAllowed || saving || batchLoading" :stale="stale || staleWhileEditing"
-        @editing="sourceEditing = $event" @busy="sourceBusy = $event" @changed="onRecovered" />
+      <section class="tr2-review-card" data-testid="tr2-review-card">
+        <header class="tr2-review-head">
+          <div><h3>{{ t('main.tr2_body.files.heading') }}</h3><p class="tr2-note">{{ t('main.tr2_body.workspace.selection_hint') }}</p></div>
+          <div class="tr2-actions">
+            <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-add-item" :disabled="locked" @click="openItemEditor(null)"><AppIcon name="plus" /> {{ t('main.tr2_body.actions.add_item') }}</button>
 
+            <button type="button" class="btn btn-primary btn-sm" data-testid="tr2-open-import" :disabled="locked" @click="openImport"><AppIcon name="file-text" /> {{ t('main.tr2_body.import.heading') }}</button>
+          </div>
+        </header>
       <div class="tr2-split">
-        <section class="tr2-section">
-          <h3>{{ t('main.tr2_body.files.heading') }} <small>{{ t('main.tr2_body.files.counts', counts) }}</small></h3>
+        <section class="tr2-section tr2-file-column">
           <p v-if="!items.length">{{ t('main.tr2_body.files.none') }}</p>
           <div v-if="items.length" class="tr2-file-controls">
-            <input v-model="fileQuery" type="search" data-testid="tr2-file-search" :aria-label="t('main.tr2_body.workspace.search')" :placeholder="t('main.tr2_body.workspace.search')" />
+            <label class="tr2-search"><AppIcon name="magnifying-glass" /><input v-model="fileQuery" type="search" data-testid="tr2-file-search" :aria-label="t('main.tr2_body.workspace.search')" :placeholder="t('main.tr2_body.workspace.search')" /></label>
             <div class="tr2-filters" role="group" :aria-label="t('main.tr2_body.workspace.filter')">
-              <button v-for="op in filterOptions" :key="op" type="button" class="btn btn-outline btn-sm" :data-testid="`tr2-filter-${op}`" :aria-pressed="fileFilter === op" @click="fileFilter = op">{{ op === 'all' ? t('main.tr2_body.workspace.all') : opLabel(op) }}</button>
+              <button v-for="op in filterOptions" :key="op" type="button" class="btn btn-outline btn-sm" :data-testid="`tr2-filter-${op}`" :aria-pressed="fileFilter === op" @click="fileFilter = op">{{ op === 'all' ? t('main.tr2_body.workspace.all') : t(`main.tr2_body.workspace.kind_${op}`) }}</button>
             </div>
-            <p class="tr2-note" role="status" data-testid="tr2-visible-count">{{ t('main.tr2_body.workspace.visible', { total: items.length, count: visibleItems.length }) }}</p>
+
           </div>
           <ul v-if="items.length" ref="fileList" class="tr2-files" data-testid="tr2-file-list" :aria-label="t('main.tr2_body.files.heading')">
             <li v-for="entry in visibleItems" :key="`${entry.collection}:${entry.item.id}`" :class="{ 'is-selected': selectedKey === `${entry.collection}:${entry.item.id}` }">
               <button type="button" :data-testid="`tr2-item-${entry.item.id}`" :aria-pressed="selectedKey === `${entry.collection}:${entry.item.id}`" @click="selectItem(entry)">
+                <span class="tr2-file-symbol" aria-hidden="true"><AppIcon name="file-text" /></span>
+                <span class="tr2-file-name" :title="entry.item.file"><span class="tr2-path">{{ fileName(entry.item.file) }}</span><small>{{ fileDirectory(entry.item.file) }}</small></span>
                 <span class="tr2-op" :class="`tr2-op-${entry.op}`">{{ opLabel(entry.op) }}</span>
-                <span class="tr2-path">{{ entry.item.file ?? t('main.tr2_body.files.no_file') }}</span>
-                <small>{{ entry.item.id }}</small>
-                <span v-if="editStatus(entry)" class="tr2-edit-status" :class="`is-${editStatus(entry)}`" :title="editStatus(entry) ?? ''">{{ editStatus(entry) === 'applicable' ? '✓' : '!' }}</span>
+                <span class="tr2-file-arrow" aria-hidden="true">›</span>
+                <span v-if="editStatus(entry) && editStatus(entry) !== 'applicable'" class="tr2-edit-status" :class="`is-${editStatus(entry)}`" :title="editStatus(entry) ?? ''">{{ editStatus(entry) === 'applicable' ? '✓' : '!' }}</span>
               </button>
             </li>
           </ul>
           <p v-if="items.length && !visibleItems.length" class="tr2-note" data-testid="tr2-no-results">{{ t('main.tr2_body.workspace.no_results') }}</p>
-          <p class="tr2-note">{{ t('main.tr2_body.workspace.selection_hint') }}</p>
-          <p v-if="counts.deferred" class="tr2-note">{{ t('main.tr2_body.files.deferred_note', { count: counts.deferred }) }}</p>
-          <div class="tr2-actions">
-            <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-add-item" :disabled="locked" @click="openItemEditor(null)">{{ t('main.tr2_body.actions.add_item') }}</button>
-            <label class="btn btn-outline btn-sm" :class="{ 'is-disabled': locked }" :aria-disabled="locked"><input type="file" accept="application/json,.json" data-testid="tr2-upload-new-item" :disabled="locked" @change="uploadItem($event, null)">{{ t('main.tr2_body.actions.item_upload') }}</label>
-            <label class="btn btn-outline btn-sm" :class="{ 'is-disabled': locked }" :aria-disabled="locked"><input type="file" multiple accept="application/json,.json" data-testid="tr2-upload-batch" :disabled="locked" @change="previewBatch">{{ t('main.tr2_body.batch.upload') }}</label>
-          </div>
+          <div v-if="items.length" class="tr2-note tr2-file-bottom"><span>{{ t('main.tr2_body.files.selection_safe') }}</span><span role="status" data-testid="tr2-visible-count">{{ t('main.tr2_body.workspace.visible', { total: items.length, count: visibleItems.length }) }}</span></div>
         </section>
 
         <section class="tr2-section tr2-detail" data-testid="tr2-detail">
@@ -124,44 +143,43 @@
           <template v-else-if="selected">
             <p v-if="selectedHidden" class="tr2-note" data-testid="tr2-selection-hidden">{{ t('main.tr2_body.workspace.hidden_selection') }} <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-clear-filters" @click="clearFilters">{{ t('main.tr2_body.workspace.clear') }}</button></p>
             <div class="tr2-actions">
-              <h4>{{ opLabel(selected.op) }} · {{ selected.item.file ?? t('main.tr2_body.files.no_file') }}</h4>
+              <h4><span>{{ selected.item.file ?? t('main.tr2_body.files.no_file') }}</span> <span class="tr2-op" :class="`tr2-op-${selected.op}`">{{ opLabel(selected.op) }}</span></h4>
               <div>
-                <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-item-edit" :disabled="locked" @click="openItemEditor(selected)">{{ t('main.tr2_body.actions.item_edit') }}</button>
-                <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-item-download" @click="downloadItem(selected)">{{ t('main.tr2_body.actions.item_download') }}</button>
-                <label class="btn btn-outline btn-sm" :class="{ 'is-disabled': locked }" :aria-disabled="locked"><input type="file" accept="application/json,.json" data-testid="tr2-item-upload" :disabled="locked" @change="uploadItem($event, selected)">{{ t('main.tr2_body.actions.item_upload') }}</label>
-                <button type="button" class="btn btn-outline btn-sm btn-danger-outline" data-testid="tr2-item-delete" :disabled="locked" @click="ask({ kind: 'delete', id: selected.item.id })">{{ t('main.tr2_body.actions.item_delete') }}</button>
+                <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-item-edit" :disabled="locked" @click="openItemEditor(selected)"><AppIcon name="pencil-simple" /> {{ t('main.tr2_body.actions.item_edit') }}</button>
+                <button type="button" class="btn btn-outline btn-sm btn-danger-outline" data-testid="tr2-item-delete" :disabled="locked" :aria-label="t('main.tr2_body.actions.item_delete')" :title="t('main.tr2_body.actions.item_delete')" @click="ask({ kind: 'delete', id: selected.item.id })"><AppIcon name="trash" /></button>
               </div>
             </div>
+            <div class="tr2-detail-content">
             <template v-if="selected.op === 'deferred'">
               <p><b>{{ t('main.tr2_body.files.deferred_heading') }}</b>: {{ deferredReasonLabel(selected.item.reason) }} ({{ selected.item.reason }})</p>
               <p>{{ selected.item.rationale }}</p>
               <p class="tr2-note">{{ t('main.tr2_body.files.deferred_no_diff') }}</p>
             </template>
             <template v-else>
-              <p class="tr2-note">{{ t('main.tr2_body.files.item_meta', { id: selected.item.id, confidence: selected.item.confidence ?? '', rationale: selected.item.rationale ?? '' }) }}</p>
+              <p class="tr2-note">{{ t(selected.op === 'edit' ? 'main.tr2_body.files.diff_hint' : 'main.tr2_body.files.create_hint') }}</p>
               <p v-if="selectedStatusText" class="tr2-error" data-testid="tr2-item-status">{{ selectedStatusText }}</p>
-              <div v-if="selected.op === 'edit'" class="tr2-diff">
-                <div><b>{{ t('main.tr2_body.files.before') }}</b><pre>{{ selected.item.anchor_old }}</pre></div>
-                <div><b>{{ t('main.tr2_body.files.after') }}</b><pre>{{ selected.item.replacement_new }}</pre></div>
-              </div>
-              <div v-else class="tr2-diff tr2-diff--new"><div><b>{{ t('main.tr2_body.files.after_only') }}</b><pre>{{ selected.item.content }}</pre></div></div>
+              <div class="tr2-diff-container"><Tr2CodeDiff :before="selected.op === 'edit' ? selected.item.anchor_old : undefined" :after="selected.op === 'edit' ? selected.item.replacement_new : selected.item.content" /></div>
               <p v-if="fileDetail?.truncated" class="tr2-note">{{ t('main.tr2_body.files.truncated') }}</p>
               <details v-if="fileDetail?.before_text != null"><summary>{{ t('main.tr2_body.files.current_source') }}</summary><pre>{{ fileDetail.before_text }}</pre></details>
             </template>
+            <p class="tr2-note tr2-item-meta">{{ t('main.tr2_body.files.item_meta', { id: selected.item.id, confidence: selected.item.confidence ?? '', rationale: selected.item.rationale ?? '' }) }}</p>
+            </div>
           </template>
           <p v-else class="tr2-note">{{ t('main.tr2_body.files.select_hint') }}</p>
         </section>
       </div>
+      </section>
 
-      <section class="tr2-section">
-        <h3>{{ t('main.tr2_body.gate.heading') }} <small>{{ gate ? t('main.tr2_body.gate.from_attempt', { round: gate.round }) : t('main.tr2_body.gate.pending') }}</small></h3>
+      <section class="tr2-section tr2-checks">
+        <div class="tr2-checks-head"><div><h3>{{ t('main.tr2_body.v4.gate_heading') }}</h3><p>{{ t('main.tr2_body.v4.gate_hint') }}</p></div><span class="tr2-gate-summary">{{ t('main.tr2_body.v4.gate_summary', { count: view.body.edit_spec.gate.commands.length, status: gate ? t(gate.commands.some(command => command.timed_out || command.exit_code !== 0) ? 'main.tr2_body.v4.gate_failed' : 'main.tr2_body.v4.gate_completed') : t('main.tr2_body.v4.gate_waiting') }) }}</span></div>
         <p v-if="view.gate_admission?.all_candidate" class="tr2-gate-warning" data-testid="tr2-all-candidate-warning">{{ t('main.tr2_body.gate.all_candidate') }}</p>
         <p v-if="hasShellComplexCandidate" class="tr2-gate-warning" data-testid="tr2-shell-complex-warning">{{ t('main.tr2_body.gate.shell_complex') }}</p>
         <p v-if="!view.body.edit_spec.gate.commands.length">{{ t('main.tr2_body.gate.none') }}</p>
         <ul v-else class="tr2-gate">
           <li v-for="(_command, index) in view.body.edit_spec.gate.commands" :key="index" :class="`is-${gateStatus(index)}`">
-            <code>{{ admissionCommand(index) }}</code>
-            <span class="tr2-admission" :class="`is-${admissionState(index)}`" :data-testid="`tr2-admission-${index}`">{{ t(`main.tr2_body.gate.admission_${admissionState(index)}`) }}</span>
+            <span class="tr2-check-icon"><AppIcon name="code" /></span>
+            <div class="tr2-check-copy"><code>{{ admissionCommand(index) }}</code>
+            <span class="tr2-admission" :class="`is-${admissionState(index)}`" :data-testid="`tr2-admission-${index}`">{{ t(`main.tr2_body.gate.admission_${admissionState(index)}`) }}</span></div>
             <span class="tr2-runtime">{{ t(`main.tr2_body.gate.${gateStatus(index)}`) }}</span>
           </li>
         </ul>
@@ -169,32 +187,43 @@
 
     </template>
     <details class="tr2-advanced" data-testid="tr2-advanced" :open="advancedOpen" @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open">
-      <summary>{{ t('main.tr2_body.workspace.advanced') }}<small>{{ t('main.tr2_body.workspace.advanced_hint') }}</small></summary>
+      <summary><span class="tr2-advanced-symbol"><AppIcon name="dots-three" /></span><span>{{ t('main.tr2_body.workspace.advanced') }}<small>{{ t('main.tr2_body.workspace.advanced_hint') }}</small></span><AppIcon name="caret-down" /></summary>
       <div class="tr2-advanced-content">
-        <p class="tr2-note tr2-document-id">{{ tab.id }}</p>
+        <div class="tr2-advanced-tabs" role="tablist" :aria-label="t('main.tr2_body.workspace.advanced')">
+          <button v-for="tabKey in (['history', 'diagnostics', 'manage'] as const)" :key="tabKey" type="button" role="tab"
+            :id="`tr2-${tab.id}-${tabKey}-tab`" :aria-controls="`tr2-${tab.id}-${tabKey}-panel`" :aria-selected="advancedTab === tabKey"
+            :tabindex="advancedTab === tabKey ? 0 : -1" :data-testid="`tr2-advanced-tab-${tabKey}`"
+            @click="advancedTab = tabKey" @keydown="switchAdvancedTab($event, tabKey)">{{ t(`main.tr2_body.workspace.tab_${tabKey}`) }}</button>
+        </div>
+        <p v-show="advancedTab === 'diagnostics'" class="tr2-note tr2-document-id">{{ tab.id }}</p>
         <template v-if="view && state">
-          <div class="tr2-summary">
-            <div><span>{{ t('main.tr2_body.summary.review_status') }}</span><strong>{{ reviewLabel }}</strong></div>
-            <div><span>{{ t('main.tr2_body.summary.state') }}</span><strong>{{ t(`main.tr2_body.state.${state}`) }}</strong></div>
-            <div><span>{{ t('main.tr2_body.summary.history') }}</span><strong data-testid="tr2-history-state">{{ historyLabel }}</strong></div>
-            <div><span>{{ t('main.tr2_body.summary.revision') }}</span><strong data-testid="tr2-revision">{{ view.document.revision_no }}</strong></div>
-            <div><span>{{ t('main.tr2_body.summary.attempt') }}</span><strong>{{ latest ? attemptLabel(latest) : t('main.tr2_body.summary.no_attempt') }}</strong></div>
-          </div>
-          <section class="tr2-section">
-            <h3>{{ t('main.tr2_body.diag.heading') }}</h3>
+          <section v-show="advancedTab === 'diagnostics'" :id="`tr2-${tab.id}-diagnostics-panel`" data-testid="tr2-diagnostics-panel" role="tabpanel" :aria-labelledby="`tr2-${tab.id}-diagnostics-tab`" class="tr2-diagnostics-grid">
+            <div class="tr2-history-box"><h3>{{ t('main.tr2_body.diag.heading') }}</h3>
             <p v-if="awaitingApproval && view.derived.live_precheck.drift" class="tr2-error">{{ t('main.tr2_body.diag.drift_banner') }}</p>
             <p data-testid="tr2-diagnostic">{{ diagnostic ? (diagnostic.ready ? t('main.tr2_body.diag.ready') : t('main.tr2_body.diag.review_required')) : t('main.tr2_body.diag.not_run') }}<span v-if="diagnostic?.code"> · {{ diagnosticCodeText }}</span></p>
-            <details class="tr2-tech">
+            <p v-if="awaitingApproval" class="tr2-note" data-testid="tr2-diag-strip">{{ t('main.tr2_body.diag.strip', { revision: view.document.revision_no, match: view.derived.live_precheck.source_available === false ? t('main.tr2_body.diag.unavailable') : view.derived.live_precheck.drift ? t('main.tr2_body.diag.mismatch') : t('main.tr2_body.diag.match') }) }}</p>
+            <p v-if="retry?.allowed" class="tr2-note">{{ t('main.tr2_body.retry.available') }}</p>
+            <p v-if="latest?.error_code" class="tr2-code">{{ latest.error_code }}<em v-if="latest.retryable === true">{{ t('main.tr2_body.attempts.retryable') }}</em><em v-else-if="latest.retryable === false">{{ t('main.tr2_body.attempts.not_retryable') }}</em></p>
+            <button type="button" class="btn btn-outline btn-sm" :disabled="loading || !view" @click="runDiagnostic"><AppIcon name="arrow-clockwise" /> {{ t('main.tr2_body.actions.diagnostic') }}</button>
+            </div><div class="tr2-history-box"><h3>{{ t('main.tr2_body.diag.technical') }}</h3>
+            <details class="tr2-tech" open>
               <summary>{{ t('main.tr2_body.diag.technical') }}</summary>
               <p>{{ t('main.tr2_body.diag.baseline') }}: <code>{{ view.derived.live_precheck.baseline_fingerprint }}</code></p>
               <p>{{ t('main.tr2_body.diag.live') }}: <code>{{ view.derived.live_precheck.live_fingerprint ?? t('main.tr2_body.diag.unavailable') }}</code></p>
             </details>
+            </div>
           </section>
 
-          <section class="tr2-section">
-            <h3>{{ t('main.tr2_body.attempts.heading') }}</h3>
-            <p v-if="!view.approval.attempts.length">{{ t('main.tr2_body.attempts.none') }}</p>
-            <ol v-else class="tr2-attempts" data-testid="tr2-attempts">
+          <section v-show="advancedTab === 'history'" :id="`tr2-${tab.id}-history-panel`" data-testid="tr2-history-panel" role="tabpanel" :aria-labelledby="`tr2-${tab.id}-history-tab`" class="tr2-history-grid">
+            <div class="tr2-history-box">
+          <h3>{{ t('main.tr2_body.attempts.heading') }}</h3><span class="tr2-sr-only" data-testid="tr2-revision">{{ view.document.revision_no }}</span>
+          <div class="tr2-summary tr2-history-summary">
+            <div><span>{{ t('main.tr2_body.summary.attempt') }}</span><strong>{{ latest ? t('main.tr2_body.v4.latest_attempt', { round: latest.approval_round, state: te(`main.tr2_body.attempt_state.${latest.state}`) ? t(`main.tr2_body.attempt_state.${latest.state}`) : latest.state }) : t('main.tr2_body.summary.no_attempt') }}</strong></div>
+            <div><span>{{ t('main.tr2_body.summary.history') }}</span><strong data-testid="tr2-history-state">{{ historyLabel }}</strong></div>
+            <div><span>{{ t('main.tr2_body.v4.ledger') }}</span><strong>{{ t('main.tr2_body.v4.ledger_count', { count: view.history?.ledger?.length ?? 0 }) }}</strong></div>
+          </div>
+          <details v-if="view.approval.attempts.length" class="tr2-attempt-detail"><summary :aria-label="t('main.tr2_body.v4.attempt_details')" :title="t('main.tr2_body.v4.attempt_details')">···</summary>
+            <ol class="tr2-attempts" data-testid="tr2-attempts">
               <li v-for="(attempt, index) in view.approval.attempts" :key="attempt.attempt_id ?? index" :class="`is-${attempt.state}`">
                 <span>{{ attemptLabel(attempt) }}</span>
                 <span>{{ attempt.finished_at ?? attempt.started_at ?? '' }}</span>
@@ -204,18 +233,19 @@
                 <em v-else-if="attempt.retryable === false">{{ t('main.tr2_body.attempts.not_retryable') }}</em>
               </li>
             </ol>
-            <p>{{ t('main.tr2_body.attempts.ledger', { count: view.history?.ledger?.length ?? 0 }) }}</p>
-          </section>
-
-          <section class="tr2-section">
+            <p>{{ t('main.tr2_body.summary.review_status') }} · {{ reviewLabel }} · {{ t(`main.tr2_body.state.${state}`) }} · Revision {{ view.document.revision_no }}</p>
+          </details>
+            </div>
+            <div class="tr2-history-box">
             <details data-testid="tr2-history-toggle" :open="historyOpen" @toggle="historyOpen = ($event.target as HTMLDetailsElement).open">
               <summary>{{ t('main.tr2_body.recovery.history_heading') }}</summary>
-              <Tr2RevisionPanel v-if="historyOpen" :key="`history-${view.document.revision_no}`" :doc-id="tab.id" mode="history" :read-only="readOnly || !mutationAllowed" @changed="onRecovered" />
+              <Tr2RevisionPanel v-if="advancedOpen && historyOpen" :key="`history-${view.document.revision_no}`" :doc-id="tab.id" mode="history" compact :read-only="readOnly || !mutationAllowed" @changed="onRecovered" />
             </details>
+            </div>
           </section>
 
         </template>
-        <section class="tr2-section" data-testid="tr2-management">
+        <section v-show="advancedTab === 'manage'" :id="`tr2-${tab.id}-manage-panel`" role="tabpanel" :aria-labelledby="`tr2-${tab.id}-manage-tab`" class="tr2-section" data-testid="tr2-management">
           <h3>{{ t('main.tr2_body.workspace.manage') }}</h3>
           <p class="tr2-note">{{ t('main.tr2_body.workspace.manage_hint') }}</p>
           <div class="tr2-actions">
@@ -225,9 +255,17 @@
             <button type="button" class="btn btn-outline btn-sm" :disabled="locked" data-testid="tr2-new-whole" @click="openWholeEditor(true)">{{ t('main.tr2_body.actions.new_whole') }}</button>
             <button type="button" class="btn btn-outline btn-sm btn-danger-outline" :disabled="locked" data-testid="tr2-reset-whole" @click="ask({ kind: 'reset' })">{{ t('main.tr2_body.actions.reset_whole') }}</button>
           </div>
+          <details class="tr2-json-tools"><summary>{{ t('main.tr2_body.v4.item_json') }}</summary>
+            <div class="tr2-actions">
+            <label class="btn btn-outline btn-sm" :class="{ 'is-disabled': locked }" :aria-disabled="locked"><input type="file" hidden accept="application/json,.json" data-testid="tr2-upload-new-item" :disabled="locked" @change="uploadItem($event, null)">{{ t('main.tr2_body.actions.item_upload') }}</label>              <template v-if="selected">
+                <button type="button" class="btn btn-outline btn-sm" data-testid="tr2-item-download" :aria-label="t('main.tr2_body.actions.item_download')" :title="t('main.tr2_body.actions.item_download')" @click="downloadItem(selected)"><AppIcon name="download-simple" /></button>
+                <label class="btn btn-outline btn-sm tr2-icon-action" :class="{ 'is-disabled': locked }" :aria-disabled="locked" :aria-label="t('main.tr2_body.actions.item_upload')" :title="t('main.tr2_body.actions.item_upload')"><input type="file" accept="application/json,.json" data-testid="tr2-item-upload" :disabled="locked" @change="uploadItem($event, selected)"><AppIcon name="upload-simple" /></label>
+              </template>
+            </div>
+          </details>
         </section>
 
-        <section v-if="view && state && wholeEditorOpen" class="tr2-section" data-testid="tr2-whole-editor">
+        <section v-show="advancedTab === 'manage'" v-if="view && state && wholeEditorOpen" class="tr2-section" data-testid="tr2-whole-editor">
           <h3>{{ t('main.tr2_body.editor.whole_title') }}</h3>
           <p class="tr2-note">{{ t('main.tr2_body.editor.whole_hint') }}</p>
           <p class="tr2-note">{{ t('main.tr2_body.editor.legend_editable') }} / {{ t('main.tr2_body.editor.legend_locked') }}</p>
@@ -245,10 +283,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppIcon from '@shared/AppIcon.vue'
 import { deleteRequest, getRequest, postRequest, putRequest } from '@shared/api'
 import { resolveGitError } from '@shared/gitErrors'
 import type { Tab } from '../../stores/tabs'
 import Tr2SourceImport from './Tr2SourceImport.vue'
+import Tr2ImportDialog from './Tr2ImportDialog.vue'
+import Tr2CodeDiff from './Tr2CodeDiff.vue'
 import Tr2ItemEditor from './Tr2ItemEditor.vue'
 import Tr2RevisionPanel from './Tr2RevisionPanel.vue'
 import {
@@ -272,7 +313,8 @@ const fileDetail = ref<Row | null>(null)
 const selectedKey = ref<string | null>(null)
 const itemEditor = ref<{ key: number; op: ItemOp; item: Row | null } | null>(null)
 const wholeEditorOpen = ref(false)
-const historyOpen = ref(false)
+const historyOpen = ref(true)
+const advancedTab = ref<'history' | 'diagnostics' | 'manage'>('history')
 const advancedOpen = ref(false)
 const fileQuery = ref('')
 const fileFilter = ref<ItemOp | 'all'>('all')
@@ -294,6 +336,30 @@ const batchRevision = ref<number | null>(null)
 const batchLoading = ref(false)
 const batchSelected = computed(() => batchRows.value.filter(row => row.valid && row.selected))
 let batchGeneration = 0
+const importOpen = ref(false)
+const importMode = ref<'source' | 'json'>('source')
+const jsonDragging = ref(false)
+const batchInput = ref<HTMLInputElement | null>(null)
+const sourceSaving = ref(false)
+const sourceImport = ref<InstanceType<typeof Tr2SourceImport> | null>(null)
+function openImport() { if (!locked.value) { importMode.value = 'source'; importOpen.value = true } }
+function closeImport() {
+  if (saving.value || sourceSaving.value) return
+  closeBatch()
+  sourceImport.value?.reset()
+  importOpen.value = false
+  jsonDragging.value = false
+}
+async function onSourcesSaved(value: { revision: number; message: string }) { closeBatch(); importOpen.value = false; await onRecovered(value) }
+function sharedBatchPath(row: BatchRow): boolean {
+  const normalize = (file: unknown) => String(file ?? '').replace(/\\/g, '/').split('/').filter(p => p && p !== '.').join('/').toLocaleLowerCase()
+  const file = normalize(row.item?.file)
+  return Boolean(file) && [...items.value.map(entry => entry.item), ...batchRows.value.filter(r => r.valid).map(r => r.item)].filter(item => normalize(item?.file) === file).length > 1
+}
+function dropBatch(event: DragEvent) {
+  jsonDragging.value = false
+  if (event.dataTransfer) void readBatchFiles(Array.from(event.dataTransfer.files))
+}
 let generation = 0
 let editorSeq = 0
 let fileGeneration = 0
@@ -434,6 +500,8 @@ function attemptLabel(attempt: Row): string {
     round: attempt.approval_round ?? '', state: te(stateKey) ? t(stateKey) : attempt.state, phase: phaseLabel(attempt.phase),
   })
 }
+function fileName(file?: string): string { return file?.replace(/\\/g, '/').split('/').at(-1) || t('main.tr2_body.files.no_file') }
+function fileDirectory(file?: string): string { return file?.replace(/\\/g, '/').split('/').slice(0, -1).join('/') || '' }
 function opLabel(op: ItemOp): string {
   return t(op === 'edit' ? 'main.tr2_body.files.op_edit' : op === 'create_file' ? 'main.tr2_body.files.op_create' : 'main.tr2_body.files.op_deferred')
 }
@@ -471,7 +539,8 @@ async function refresh() {
     stale.value = false
     staleWhileEditing.value = false
     if (selectedKey.value && !selected.value) { selectedKey.value = null; fileDetail.value = null; fileGeneration++ }
-    else if (selected.value) await loadFileDetail(selected.value)
+    if (!selectedKey.value && items.value.length) selectedKey.value = `${items.value[0].collection}:${items.value[0].item.id}`
+    if (selected.value) await loadFileDetail(selected.value)
   } catch (exc) {
     if (current !== generation) return
     const info = describeTr2Error(exc, t, te)
@@ -496,6 +565,7 @@ async function reload() {
 }
 async function runDiagnostic() {
   advancedOpen.value = true
+  advancedTab.value = 'diagnostics'
   try { diagnostic.value = (await postRequest<Row>(`${base.value}/precheck`, {})).data; error.value = '' }
   catch (exc) { diagnostic.value = null; error.value = describe(exc) }
 }
@@ -602,9 +672,14 @@ async function previewBatch(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
   input.value = ''
+  await readBatchFiles(files)
+}
+async function readBatchFiles(files: File[]) {
   if (!files.length || locked.value || !view.value) return
   closeBatch()
-  if (files.length > 200) { error.value = t('main.tr2_body.batch.limit'); return }
+  importMode.value = 'json'
+  importOpen.value = true
+  if (files.length > 200 || files.reduce((sum, file) => sum + (file.size || 0), 0) > 10 * 1024 * 1024) { error.value = t('main.tr2_body.import.json_limit'); return }
   wholeEditorOpen.value = false
   itemEditor.value = null
   const current = batchGeneration
@@ -618,7 +693,10 @@ async function previewBatch(event: Event) {
     const rows = await Promise.all(files.map(async (file): Promise<BatchRow> => {
       const row: BatchRow = { name: file.name, collection: null, item: null, valid: false, selected: false, problem: '' }
       try {
-        const parsed = parseObject(await file.text())
+        if (file.size > 1024 * 1024) throw new Error(t('main.tr2_body.import.json_limit'))
+        const text = await file.text()
+        if (new TextEncoder().encode(text).length > 1024 * 1024) throw new Error(t('main.tr2_body.import.json_limit'))
+        const parsed = parseObject(text)
         row.item = parseObject(JSON.stringify(parsed.item ?? parsed))
         const declared = parsed.item ? parsed.collection : undefined
         if (declared !== undefined && declared !== 'edits' && declared !== 'deferred') throw new Error(t('main.tr2_body.batch.collection'))
@@ -657,7 +735,7 @@ async function importBatch() {
   const url = `${base.value}/items/batch`
   const entries = batchSelected.value.map(row => ({ collection: row.collection, item: row.item }))
   if (await mutate(() => postRequest(url, { expected_revision: revision, items: entries }), revision)) {
-    if (current === batchGeneration) closeBatch()
+    if (current === batchGeneration) { closeBatch(); sourceImport.value?.reset(); importOpen.value = false }
   }
 }
 
@@ -760,7 +838,25 @@ const onContentChanged = (event: Event) => { const detail = (event as CustomEven
 const onReviewChanged = (event: Event) => { const detail = (event as CustomEvent).detail; if (detail?.doc_id === props.tab.id) onServerChange({ doc_id: detail.doc_id }) }
 const onOpenDocsRefresh = (event: Event) => onServerChange({ ...((event as CustomEvent).detail ?? {}), revision_no: undefined })
 
-defineExpose({ commandAdmissionFingerprint, refresh })
+const reviewSummary = computed(() => ({
+  title: state.value === 'ready' ? t('main.tr2_body.v4.approval_ready') : state.value ? t(`main.tr2_body.state.${state.value}`) : t('main.tr2_body.loading'),
+  description: state.value === 'ready'
+    ? t('main.tr2_body.v4.approval_summary', { count: counts.value.edit + counts.value.create, excluded: counts.value.deferred })
+    : state.value ? t(`main.tr2_body.state_desc.${state.value}`, { phase: phaseLabel(latest.value?.phase), code: '', reason: notReadyReason.value }) : '',
+  ready: state.value === 'ready' && !props.readOnly && !locked.value && !editing.value && !stale.value && !staleWhileEditing.value,
+}))
+function switchAdvancedTab(event: KeyboardEvent, current: 'history' | 'diagnostics' | 'manage') {
+  const keys = ['history', 'diagnostics', 'manage'] as const
+  const index = keys.indexOf(current)
+  const next = event.key === 'ArrowRight' ? keys[(index + 1) % keys.length]
+    : event.key === 'ArrowLeft' ? keys[(index + keys.length - 1) % keys.length]
+    : event.key === 'Home' ? keys[0] : event.key === 'End' ? keys[2] : null
+  if (!next) return
+  event.preventDefault()
+  advancedTab.value = next
+  document.getElementById(`tr2-${props.tab.id}-${next}-tab`)?.focus()
+}
+defineExpose({ commandAdmissionFingerprint, reviewSummary, refresh })
 
 onMounted(() => {
   window.addEventListener('fg:document_content_changed', onContentChanged)
@@ -776,16 +872,19 @@ onBeforeUnmount(() => {
   window.removeEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
 })
 watch(() => props.tab.id, () => {
+  importOpen.value = false
+  importMode.value = 'source'
   closeBatch()
   fileGeneration++
   fileDetail.value = null
   clearFilters()
   advancedOpen.value = false
+  advancedTab.value = 'history'
   diagnostic.value = null
   selectedKey.value = null
   itemEditor.value = null
   wholeEditorOpen.value = false
-  historyOpen.value = false
+  historyOpen.value = true
   broken.value = null
   void refresh()
 }, { immediate: true })
@@ -870,4 +969,235 @@ watch(() => props.tab.id, () => {
 .tr2 pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg, #f6f8fa); padding: 10px; border-radius: 6px; max-height: 320px; overflow: auto; }
 .tr2 textarea { box-sizing: border-box; width: 100%; font-family: monospace; }
 @media (max-width: 900px) { .tr2-split, .tr2-diff { grid-template-columns: 1fr; } }
+
+/* 0640 reference: review card, compact metadata, 34% file rail and stacked diff. */
+.tr2 { background: var(--bg, #f5f7fb); border: 0; border-radius: 0; padding: 20px; gap: 18px; color: var(--text, #202b3a); }
+.tr2 .btn { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--border, #e3e9f1); border-radius: 8px; padding: 8px 12px; background: var(--surface, #fff); color: var(--text, #48586c); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.tr2 .btn-sm { padding: 6px 10px; font-size: 11px; }
+.tr2 .btn-primary { background: var(--primary, #356ae6); color: #fff; border-color: var(--primary, #356ae6); }
+.tr2 .btn-danger, .tr2 .btn-danger-outline { color: var(--danger, #b83b45); border-color: #f0c9ce; }
+.tr2 .btn-danger { background: var(--danger, #b83b45); color: #fff; }
+.tr2 .btn:hover:not(:disabled) { filter: brightness(.97); }
+.tr2 .btn:disabled { opacity: .45; cursor: not-allowed; }
+.tr2-header { align-items: flex-start; }
+.tr2-title-row strong { font-size: 21px; line-height: 1.35; letter-spacing: -.035em; }
+.tr2-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 16px 20px; border-radius: 10px; }
+.tr2-state-symbol { flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: #fff8; font-weight: 800; }
+.tr2-state-copy { flex: 1 1 240px; min-width: 0; }
+.tr2-strip .tr2-retry { flex: 1 1 100%; padding-left: 50px; }
+@media (max-width: 560px) { .tr2-strip .tr2-retry { padding-left: 0; } }
+.tr2-state-copy strong { font-size: 14px; }
+.tr2-state-copy p { margin: 3px 0 0; font-size: 12px; line-height: 1.6; }
+.tr2-revision-badge { flex: none; background: #fff8; border: 1px solid currentColor; border-radius: 7px; padding: 6px 10px; font-size: 11px; }
+.tr2-review-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.tr2-review-summary div { padding: 15px 17px; background: var(--surface, #fff); border-radius: 12px; display: grid; grid-template-columns: 34px 1fr; grid-template-areas: "icon number" "icon label"; gap: 2px 12px; align-items: center; }
+.tr2-review-summary div::before { content: "▤"; grid-area: icon; height: 34px; background: var(--bg, #f3f6fc); color: var(--text-m, #8493ae); border-radius: 9px; display: grid; place-items: center; }
+.tr2-review-summary span { grid-area: label; font-size: 11px; }
+.tr2-review-summary strong { grid-area: number; line-height: 1.1; }
+.tr2-review-summary strong { font-size: 20px; }
+.tr2-review-card, .tr2-checks, .tr2-advanced { background: var(--surface, #fff); border: 1px solid var(--border, #e3e9f1); border-radius: 12px; box-shadow: 0 7px 25px #1c2f4c0b; min-width: 0; }
+.tr2-review-card { overflow: hidden; }
+.tr2-review-head { padding: 18px 20px 15px; border-bottom: 1px solid var(--border, #e3e9f1); display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.tr2-review-head h3 { margin: 0; font-size: 15px; }
+.tr2-review-head p { margin: 3px 0 0; }
+.tr2-split { grid-template-columns: minmax(278px, 34%) minmax(0, 1fr); gap: 0; align-items: start; }
+.tr2-split > .tr2-section { border-top: 0; padding: 0; }
+.tr2-file-column { border-right: 1px solid var(--border, #e3e9f1); }
+.tr2-file-controls { padding: 12px 13px; margin: 0; border-bottom: 1px solid var(--border, #e3e9f1); }
+.tr2-file-controls input { background: var(--bg, #fafcff); font-size: 12px; border-radius: 8px; }
+.tr2-filters button { border-color: transparent !important; background: transparent !important; color: var(--text-m, #8592a5); }
+.tr2-filters button[aria-pressed=true] { background: var(--primary-l, #edf3ff) !important; color: var(--primary, #345fdb); }
+.tr2-files { height: auto; max-height: 420px; margin: 0; padding: 9px; overflow-x: hidden; }
+.tr2-files li button { padding: 12px; gap: 10px; box-sizing: border-box; margin-bottom: 4px; border-radius: 8px; color: inherit; }
+.tr2-files li button:hover { background: var(--bg, #f6f8fc); }
+.tr2-file-symbol { width: 31px; height: 34px; background: var(--bg, #f1f4f8); border-radius: 7px; color: var(--text-m, #8291a7); display: grid; place-items: center; flex: none; }
+.tr2-file-name { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.tr2-path { font-family: inherit; font-size: 12px; line-height: 1.5; font-weight: 650; overflow-wrap: anywhere; }
+.tr2-file-name small { font-size: 10.5px; color: var(--text-m, #96a2b2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr2-file-bottom, .tr2-file-column > p { margin: 0; padding: 13px 15px; border-top: 1px solid var(--border, #eef1f5); }
+.tr2-detail { min-width: 0; }
+.tr2-detail > .tr2-actions { padding: 16px 19px; border-bottom: 1px solid var(--border, #e3e9f1); gap: 10px; }
+.tr2-detail h4 { margin: 0; font-size: 12.5px; overflow-wrap: anywhere; }
+.tr2-detail > p, .tr2-detail > details { margin: 12px 19px; font-size: 12px; }
+.tr2-detail > .tr2-actions > div { display: flex; gap: 5px; flex-wrap: wrap; }
+.tr2-diff { display: block; margin: 16px 19px; }
+.tr2-checks { padding: 18px 20px; }
+.tr2-gate { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.tr2-gate li { border: 1px solid var(--border, #e7ecf3); border-radius: 9px; padding: 11px 13px; }
+.tr2-gate code { white-space: pre; overflow: auto; word-break: normal; overflow-wrap: normal; font-size: 11.5px; }
+.tr2 pre { white-space: pre; word-break: normal; overflow-wrap: normal; max-width: 100%; font: 12px/1.6 ui-monospace, Consolas, monospace; }
+.tr2-import-tabs { display: flex; gap: 6px; margin-bottom: 15px; border-bottom: 1px solid var(--border, #e3e9f1); padding-bottom: 10px; }
+.tr2-import-tabs button { border: 0; background: transparent; color: var(--text-m, #8190a2); padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 650; }
+.tr2-import-tabs button[aria-selected=true] { color: var(--primary, #356ae6); background: var(--primary-l, #eef4ff); }
+.tr2-dropzone { padding: 24px 18px; text-align: center; border: 1.5px dashed var(--border, #b8cbe8); border-radius: 11px; background: var(--bg, #f8fbff); }
+.tr2-dropzone.is-dragging { border-color: var(--primary, #356ae6); background: var(--primary-l, #eef4ff); }
+.tr2-dropzone input[type=file] { display: none; }
+.tr2-batch-list { display: grid; gap: 8px; }
+.tr2-batch-list li { padding: 12px; border: 1px solid var(--border, #e3e9f1); border-radius: 9px; }
+.tr2-batch-list pre { white-space: pre; overflow-wrap: normal; }
+.tr2-advanced > summary { padding: 18px 20px; }
+@media (max-width: 780px) { .tr2 { padding: 12px; gap: 12px; } .tr2-split { grid-template-columns: minmax(0, 1fr); } .tr2-file-column { border-right: 0; border-bottom: 1px solid var(--border, #e3e9f1); } .tr2-gate { grid-template-columns: minmax(0, 1fr); } .tr2-revision-badge { display: none; } }
+.tr2-advanced-tabs { display: flex; gap: 5px; border-bottom: 1px solid var(--border, #e3e9f1); padding: 12px 0 9px; }
+.tr2-advanced-tabs button { border: 0; background: transparent; border-radius: 7px; padding: 7px 11px; color: var(--text-m); cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; }
+.tr2-advanced-tabs button[aria-selected="true"] { background: #eef3ff; color: #3d65d4; }
+.tr2-advanced-tabs button:focus-visible { outline: 2px solid var(--primary, #356ae6); outline-offset: 2px; }
+
+/* v4: local palette and spacing, with existing actions and approval contracts. */
+.tr2 { --bg: #f5f7fb; --surface: #fff; --border: #e3e9f1; --text: #202b3a; --text-m: #718096; --primary: #356ae6; --primary-l: #eef4ff; --danger: #b83b45; font: 14px/1.55 system-ui, -apple-system, 'Segoe UI', 'Malgun Gothic', sans-serif; }
+.tr2-title-row .tr2-chip { flex-basis: 100%; background: transparent; color: #78869b; padding: 0; border-radius: 0; font-size: 11px; font-weight: 500; }
+.tr2-title-row { gap: 5px 10px; }
+.tr2-title-row strong { font-size: 23px; }
+.tr2-apply-notice { color: #8995a5; font-size: 12px; }
+.tr2-header > .tr2-actions { padding-top: 12px; }
+.tr2-pill { border-radius: 6px; }
+.tr2-tone-safe, .tr2-tone-done { background: #f2fbf6; border-color: #d4ebdd; color: #107d53; }
+.tr2-tone-safe .tr2-state-symbol, .tr2-tone-done .tr2-state-symbol { background: #d9f3e5; }
+.tr2-tone-safe .tr2-state-copy p, .tr2-tone-done .tr2-state-copy p { color: #5f7b6b; }
+.tr2-state-copy strong { font-size: 13.5px; }
+.tr2-review-summary strong { font-size: 18px; }
+.tr2-review-summary div::before { background: #f3f6fc; }
+.tr2-op-edit { background: #eef4ff; color: #356ae6; }
+.tr2-op-create_file { background: #e9f8ef; color: #107d53; }
+.tr2-op-deferred { background: #f0f3f7; color: #657185; border: 0; }
+.tr2-files li.is-selected button { background: #edf3ff; border-color: #c8d8ff; }
+.tr2-file-controls input { height: 34px; background: #fafcff; }
+.tr2-files { max-height: 475px; display: grid; gap: 4px; align-content: start; }
+.tr2-files li { margin: 0; padding: 0; display: contents; }
+.tr2-files li button { margin: 0; padding: 9px 12px; }
+.tr2-detail { display: flex; flex-direction: column; align-self: stretch; }
+.tr2-detail > .tr2-actions { align-items: flex-start; }
+.tr2-detail > .tr2-actions h4 { flex: 1 1 220px; }
+.tr2-diff-container { margin: 16px 19px; min-width: 0; }
+.tr2-detail > .tr2-item-meta { margin-top: auto; padding-top: 15px; }
+.tr2-advanced-content { padding: 0 20px 22px; gap: 15px; }
+.tr2-history-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.tr2-history-box { border: 1px solid var(--border); border-radius: 9px; padding: 15px; min-width: 0; }
+.tr2-history-summary { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 15px; }
+.tr2-history-summary div { border: 0; border-radius: 0; padding: 0; display: flex; justify-content: space-between; gap: 10px; }
+.tr2-history-summary strong { font-size: 12px; text-align: right; }
+.tr2-history-summary span { font-size: 12px; }
+.tr2-attempts li { border-top: 1px solid var(--border); padding: 10px 0; font-size: 11.5px; overflow-wrap: anywhere; }
+@media (max-width: 780px) { .tr2-history-grid { grid-template-columns: minmax(0, 1fr); } }
+
+.tr2-title { gap: 8px; }
+.tr2-files li button { padding: 8px 10px; min-height: 52px; }
+.tr2-file-symbol { height: 27px; width: 27px; }
+.tr2-path { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tr2-file-bottom { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 11px; }
+.tr2-file-bottom [data-testid="tr2-visible-count"] { white-space: nowrap; color: #4b66a4; font-weight: 700; }
+.tr2-detail [data-testid="tr2-item-download"], .tr2-detail [data-testid="tr2-item-delete"], .tr2-icon-action { width: 32px; height: 32px; padding: 6px; font-size: 16px; line-height: 1; }
+.tr2-history-box h3 { font-size: 12px; margin: 0 0 10px; }
+.tr2-history-box p { font-size: 11.5px; color: var(--text-m); }
+
+/* Match the confirmed v4's component metrics without changing server admission. */
+.tr2-title-row strong { letter-spacing: -.055em; }
+.tr2-heading-id { font: 12px/1.55 ui-monospace, 'Cascadia Code', Consolas, monospace; }
+.tr2 .app-icon { font-size: 16px; }
+.tr2-header .btn, .tr2-review-head .btn { padding: 9px 12px; font-size: 12px; }
+.tr2-title-row .tr2-pill { padding: 3px 9px; font-size: 11px; font-weight: 700; }
+.tr2-title-row .tr2-tone-safe, .tr2-title-row .tr2-tone-done { background: #e9f8ef; }
+.tr2-strip { flex-wrap: nowrap; }
+.tr2-state-copy { flex: 1; }
+.tr2-state-copy strong { color: #202b3a; letter-spacing: -.015em; }
+.tr2-state-copy p { margin-top: 2px; line-height: 1.55; }
+.tr2-tone-danger, .tr2-tone-blocked { background: #fff5f6; border-color: #f8dcdf; color: #8b3039; }
+.tr2-tone-danger .tr2-state-symbol, .tr2-tone-blocked .tr2-state-symbol { background: #ffe2e6; color: #ae3440; }
+.tr2-tone-danger .tr2-state-copy strong, .tr2-tone-blocked .tr2-state-copy strong { color: #8b3039; }
+.tr2-tone-danger .tr2-state-copy p, .tr2-tone-blocked .tr2-state-copy p { color: #a16e72; }
+.tr2-tone-warn { background: #fffaf0; border-color: #fae8c6; }
+.tr2-tone-warn .tr2-state-symbol { background: #fff0ce; color: #a9710f; }
+.tr2-tone-warn .tr2-state-copy strong { color: #805708; }
+.tr2-tone-warn .tr2-state-copy p { color: #9a7b4b; }
+.tr2-revision-badge { border-color: #cce8d9; background: #fff; color: #638773; }
+.tr2-strip:not(.tr2-tone-safe):not(.tr2-tone-done) .tr2-revision-badge { border-color: var(--border); color: #718096; }
+.tr2-strip .tr2-retry { flex: none; padding: 0; }
+.tr2-retry-copy { display: none; }
+.tr2-strip .tr2-note { font-size: 11px; max-width: 220px; }
+.tr2-review-summary div { column-gap: 12px; row-gap: 0; }
+.tr2-review-summary div::before { content: none; }
+.tr2-review-summary .tr2-stat-icon { grid-area: icon; width: 34px; height: 34px; border-radius: 9px; background: #f3f6fc; color: #8493ae; display: grid; place-items: center; }
+.tr2-review-summary strong { letter-spacing: -.035em; font-weight: 750; }
+.tr2-review-summary span:not(.tr2-stat-icon) { margin-top: 2px; color: #8693a6; }
+.tr2-review-head h3 { letter-spacing: -.025em; }
+.tr2-review-head p { font-size: 11px; color: #8b96a6; }
+.tr2-split { align-items: stretch; }
+.tr2-file-controls { gap: 0; }
+.tr2-search { height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid #e3e9f1; border-radius: 8px; background: #fafcff; color: #9cabbc; }
+.tr2-file-controls input { height: auto; padding: 0; border: 0; background: transparent; color: #314157; outline: 0; }
+.tr2-filters { gap: 5px; margin-top: 10px; }
+.tr2-filters .btn { padding: 5px 9px; border-radius: 7px; font-size: 11px; color: #8592a5; }
+.tr2-filters button[aria-pressed=true] { background: #edf3ff !important; color: #345fdb; }
+.tr2-files { height: 475px; max-height: 475px; min-height: 260px; }
+.tr2-path { line-height: 1.55; color: #344255; }
+.tr2-file-name { gap: 3px; }
+.tr2-file-name small { color: #96a2b2; line-height: 1.55; }
+.tr2-file-symbol { color: #8291a7; background: #f1f4f8; }
+.tr2-files li.is-selected .tr2-file-symbol { background: #dde9ff; color: #5376d2; }
+.tr2-file-arrow { color: #afbac8; font-size: 16px; margin-left: -3px; }
+.tr2-files li.is-selected .tr2-file-arrow { color: #6383cb; }
+.tr2-op { padding: 2px 7px; font-size: 10px; border-radius: 6px; white-space: nowrap; }
+.tr2-file-bottom { color: #93a0ae; border-color: #eef1f5; }
+.tr2-detail > .tr2-actions { align-items: center; gap: 12px; flex-wrap: nowrap; }
+.tr2-detail > .tr2-actions h4 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; flex: 1; min-width: 0; }
+.tr2-detail > .tr2-actions h4 > span:first-child { overflow-wrap: anywhere; font-size: 12.5px; }
+.tr2-detail > .tr2-actions > div { flex: none; gap: 5px; }
+.tr2-detail-content { padding: 19px; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 15px; }
+.tr2-detail-content > p, .tr2-detail-content > details { margin: 0; font-size: 12px; }
+.tr2-detail-content > .tr2-note { color: #718199; }
+.tr2-diff-container { margin: 0; }
+.tr2-detail-content > details { font-size: 11px; color: #8390a2; }
+.tr2-detail-content > .tr2-item-meta { margin-top: auto; padding-top: 0; font-size: 11px; color: #8390a2; }
+.tr2-checks-head { margin-bottom: 13px; }
+.tr2-checks-head h3 { margin: 0; font-size: 14px; }
+.tr2-checks-head p { margin: 3px 0 0; color: #94a0ae; font-size: 11px; }
+.tr2-gate { margin: 0; }
+.tr2-gate li { flex-wrap: nowrap; align-items: center; gap: 10px; border-color: #e7ecf3; }
+.tr2-check-icon { width: 28px; height: 28px; flex: none; display: grid; place-items: center; color: #7994bf; background: #f0f5fc; border-radius: 7px; }
+.tr2-check-copy { flex: 1; min-width: 0; }
+.tr2-check-copy code { display: block; }
+.tr2-admission { display: block; border-radius: 0; font-size: 10px; font-weight: 400; padding: 0; color: #9ca7b5; }
+.tr2-admission.is-registered { color: #9ca7b5; background: transparent; }
+.tr2-runtime { flex: none; background: #f0f3f7; color: #657185; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 6px; }
+.tr2-gate li.is-passed .tr2-runtime { color: #107d53; background: #e9f8ef; }
+.tr2-gate li.is-failed .tr2-runtime { color: #b83b45; background: #fff0f1; }
+.tr2-advanced > summary { list-style: none; display: flex; align-items: center; gap: 12px; }
+.tr2-advanced > summary::-webkit-details-marker { display: none; }
+.tr2-advanced > summary > .app-icon { margin-left: auto; color: #97a4b6; }
+.tr2-advanced[open] > summary > .app-icon { transform: rotate(180deg); }
+.tr2-advanced > summary small { margin-top: 3px; font-size: 11px; color: #94a0ae; }
+.tr2-advanced-content { border-top: 1px solid var(--border); padding-top: 17px; }
+.tr2-advanced-tabs { padding-top: 0; }
+.tr2-history-summary { margin-bottom: 0; }
+.tr2-history-summary strong { font-weight: 700; }
+.tr2-history-box > details > summary { font-size: 12px; margin-bottom: 10px; }
+.tr2-history-box > .tr2-attempt-detail > summary { margin: 10px 0 0; font-weight: 400; font-size: 11px; color: #8390a2; }
+.tr2-management, [data-testid=tr2-management] { border: 0; padding: 0; }
+[data-testid=tr2-management] h3 { display: none; }
+[data-testid=tr2-management] p { margin: 0 0 15px; font-size: 12px; }
+[data-testid=tr2-management] .tr2-actions { justify-content: flex-start; }
+@media(max-width:900px) { .tr2-files { height: 370px; max-height: 370px; } }
+@media(max-width:780px) { .tr2-detail > .tr2-actions { flex-wrap: wrap; } }
+@media(max-width:560px) { .tr2-files { height: 290px; max-height: 290px; } .tr2-strip { flex-wrap: wrap; } .tr2-strip .tr2-retry { margin-left: 50px; } .tr2-detail-content { padding: 13px; } }
+
+.tr2-title { gap: 7px; }
+.tr2-state-copy strong { display: block; }
+.tr2-check-copy code { display: inline; }
+.tr2-checks-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.tr2-gate-summary { color: #356ae6; background: #eef4ff; border-radius: 6px; padding: 3px 9px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.tr2-json-tools { margin-top: 15px; font-size: 11px; color: #8390a2; }
+.tr2-json-tools .tr2-actions { margin-top: 10px; }
+.tr2-history-box > details[data-testid=tr2-history-toggle] > summary { list-style: none; font-size: 12px; font-weight: 700; }
+.tr2-history-box > details[data-testid=tr2-history-toggle] > summary::-webkit-details-marker { display: none; }
+
+.tr2-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.tr2-diagnostics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.tr2-diagnostics-grid .tr2-history-box > p { margin: 0 0 12px; font-size: 11.5px; }
+.tr2-diagnostics-grid code { display: inline-block; max-width: 100%; white-space: nowrap; overflow-x: auto; vertical-align: middle; font-size: 11px; }
+@media(max-width:780px) { .tr2-diagnostics-grid { grid-template-columns: 1fr; } }
+
+.tr2-advanced-symbol { width: 31px; height: 31px; flex: none; display: grid; place-items: center; border-radius: 8px; background: #eef3fc; color: #5479bd; }
+.tr2-history-box { position: relative; }
+.tr2-history-box > .tr2-attempt-detail { margin: 0; }
+.tr2-history-box > .tr2-attempt-detail > summary { position: absolute; top: 12px; right: 15px; margin: 0; list-style: none; cursor: pointer; font-weight: 700; }
+.tr2-history-box > .tr2-attempt-detail > summary::-webkit-details-marker { display: none; }
 </style>

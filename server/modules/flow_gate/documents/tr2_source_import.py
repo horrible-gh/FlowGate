@@ -27,9 +27,14 @@ def _inputs(files):
     if not isinstance(files, list) or not 1 <= len(files) <= MAX_FILES:
         _invalid('file count must be 1..200')
     total = 0
+    decoded_upper_bound = 0
     for entry in files:
         if isinstance(entry, dict) and isinstance(entry.get('content_base64'), str):
-            total += len(entry['content_base64'])
+            encoded = entry['content_base64']
+            total += len(encoded)
+            decoded_upper_bound += max(0, len(encoded) // 4 * 3 - min(2, len(encoded) - len(encoded.rstrip('='))))
+    if decoded_upper_bound > MAX_TOTAL_BYTES:
+        _invalid('total upload exceeds 10 MiB')
     if total > 4 * ((MAX_TOTAL_BYTES + 2) // 3) + 4 * MAX_FILES:
         _invalid('total upload exceeds 10 MiB')
 
@@ -54,6 +59,14 @@ def _safe_path(root, path):
             raise tr2.Tr2ValidationError('tr2_path_unsafe', 'file')
     if not target.parent.is_dir():
         _invalid('target parent directory must exist')
+    if target.exists():
+        # Hard links and short-name aliases must not introduce a second name for
+        # an approval target (including a link to a file outside the root).
+        if not target.is_file() or target.stat().st_nlink != 1:
+            raise tr2.Tr2ValidationError('tr2_path_unsafe', 'file')
+        resolved = target.resolve().relative_to(Path(root).resolve()).as_posix()
+        if resolved.casefold() != path.casefold():
+            raise tr2.Tr2ValidationError('tr2_path_unsafe', 'file')
     return target
 
 
@@ -204,7 +217,7 @@ def save(doc_id, files, selected, preview_fingerprint, *, actor, expected_revisi
                 raise tr2.Tr2ValidationError('tr2_source_drift', 'preview_fingerprint')
             if current.get('baseline_fingerprint') != tr2.target_fingerprint(current['edit_spec'], locked.root):
                 raise tr2.Tr2ValidationError('tr2_source_drift', 'baseline_fingerprint')
-            rows = [result['files'][i] for i in selected]
+            rows = [result['files'][i] for i in sorted(selected)]
             if not all(row['valid'] for row in rows):
                 _invalid('selected file requires review')
             tr2_precheck.assert_source_lock(locked)

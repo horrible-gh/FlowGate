@@ -1018,8 +1018,40 @@ def _batch_entry(entry, index: int) -> tuple[str, dict]:
     return collection, dict(entry["item"])
 
 
+def _batch_path_conflicts(current: dict, items: list) -> dict[int, str]:
+    """Detect new CREATE collisions and aliases, retaining ordered same-path EDITs."""
+    paths = {}
+    for item in current["edit_spec"]["edits"]:
+        path = normalized_target_path(item)
+        paths.setdefault(path.casefold(), []).append((None, path, item.get("kind", "edit")))
+    for index, entry in enumerate(items):
+        try:
+            collection, item = _batch_entry(entry, index)
+            if collection != "edits":
+                continue
+            path = normalized_target_path(item)
+            paths.setdefault(path.casefold(), []).append((index, path, item.get("kind", "edit")))
+        except Tr2ValidationError:
+            continue  # The canonical validator reports shape/path errors per entry.
+    conflicts = {}
+    for group in paths.values():
+        if len(group) < 2:
+            continue
+        alias = len({path for _, path, _ in group}) > 1
+        create_collision = any(kind == "create_file" for _, _, kind in group)
+        if alias or create_collision:
+            for index, _, _ in group:
+                if index is not None:
+                    conflicts[index] = "target path alias" if alias else "duplicate CREATE target"
+    return conflicts
+
+
 def _append_batch(current: dict, items: list) -> dict:
     body = json.loads(_json(current))
+    conflicts = _batch_path_conflicts(current, items)
+    if conflicts:
+        index = min(conflicts)
+        _invalid(f"items[{index}].item.file", conflicts[index])
     for index, entry in enumerate(items):
         collection, item = _batch_entry(entry, index)
         body["edit_spec"][collection].append(item)
@@ -1052,9 +1084,12 @@ def preview_items(doc_id: str, items: list, *, expected_revision: int) -> dict:
             if isinstance(ident, str):
                 id_counts[ident] = id_counts.get(ident, 0) + 1
         results = []
+        path_conflicts = _batch_path_conflicts(body, items)
         for index, entry in enumerate(items):
             try:
                 _collection_name, item = _batch_entry(entry, index)
+                if index in path_conflicts:
+                    _invalid(f"items[{index}].item.file", path_conflicts[index])
                 ident = item.get("id")
                 if isinstance(ident, str) and id_counts.get(ident, 0) > 1:
                     _invalid(f"items[{index}].item.id", "duplicate imported id")

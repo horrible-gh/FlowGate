@@ -48,6 +48,19 @@ beforeEach(() => {
 afterEach(() => { mounted.forEach(w => w.unmount()); mounted.length = 0; i18n.global.locale.value = 'en' })
 
 describe('0640 — TR2 change review with 60 items', () => {
+  it('selects the first file on load without a mutation and retains item JSON actions in management', async () => {
+    const w = body(); await flushPromises()
+    expect(find(w, 'tr2-item-e1').attributes('aria-pressed')).toBe('true')
+    expect(find(w, 'tr2-detail').text()).toContain('after 1')
+    expect(getRequest).toHaveBeenCalledWith(`${base}/files/src/shared.ts`)
+    expect(postRequest).not.toHaveBeenCalled()
+    expect(putRequest).not.toHaveBeenCalled()
+    expect(deleteRequest).not.toHaveBeenCalled()
+    for (const id of ['tr2-item-download', 'tr2-item-upload', 'tr2-upload-new-item']) {
+      expect(find(w, 'tr2-management').element.contains(find(w, id).element)).toBe(true)
+    }
+  })
+
   it('prioritizes status and review and puts all proposal administration inside a collapsed disclosure', async () => {
     const w = body(); await flushPromises()
     expect(rows(w)).toHaveLength(60)
@@ -93,7 +106,7 @@ describe('0640 — TR2 change review with 60 items', () => {
     expect(deleteRequest).not.toHaveBeenCalled()
   })
 
-  it('retains the exact selected edit when filters hide it, across refresh, and clears it on deletion', async () => {
+  it('retains the selected edit through filters and refresh, and selects the first remaining file on deletion', async () => {
     const w = body(); await flushPromises()
     await find(w, 'tr2-item-e2').trigger('click'); await flushPromises()
     expect(find(w, 'tr2-detail').text()).toContain('after 2')
@@ -110,17 +123,18 @@ describe('0640 — TR2 change review with 60 items', () => {
     expect(find(w, 'tr2-item-e2').attributes('aria-pressed')).toBe('true')
     current = { ...current, document: { ...current.document, revision_no: 4 }, body: { ...current.body, edit_spec: { ...current.body.edit_spec, edits: current.body.edit_spec.edits.filter(item => item.id !== 'e2') } } }
     window.dispatchEvent(new CustomEvent('fg:document_content_changed', { detail: { doc_id: docId, revision_no: 4 } })); await flushPromises()
-    expect(find(w, 'tr2-detail').text()).toBe(en.main.tr2_body.files.select_hint)
+    expect(find(w, 'tr2-item-e1').attributes('aria-pressed')).toBe('true')
+    expect(find(w, 'tr2-detail').text()).toContain('after 1')
   })
 
   it('keeps CREATE after-only and DEFERRED no-diff semantics for the last items', async () => {
     const w = body(); await flushPromises()
     await find(w, 'tr2-item-c12').trigger('click'); await flushPromises()
     expect(find(w, 'tr2-detail').text()).toContain('new 12')
-    expect(find(w, 'tr2-detail').findAll('.tr2-diff > div')).toHaveLength(1)
+    expect(find(w, 'tr2-detail').findAll('.code-diff > div')).toHaveLength(1)
     getRequest.mockClear()
     await find(w, 'tr2-item-d8').trigger('click'); await flushPromises()
-    expect(find(w, 'tr2-detail').find('.tr2-diff').exists()).toBe(false)
+    expect(find(w, 'tr2-detail').find('.code-diff').exists()).toBe(false)
     expect(find(w, 'tr2-detail').text()).toContain(en.main.tr2_body.files.deferred_no_diff)
     expect(getRequest).not.toHaveBeenCalled()
   })
@@ -171,7 +185,8 @@ describe('0640 — TR2 change review with 60 items', () => {
     await w.setProps({ tab: { ...tab, id: 'flowgate.default.0640.0010-TR2' } }); await flushPromises()
     resolveOld({ data: { before_text: 'previous document source' } }); await flushPromises()
     expect((find(w, 'tr2-file-search').element as HTMLInputElement).value).toBe('')
-    expect(find(w, 'tr2-detail').text()).toBe(en.main.tr2_body.files.select_hint)
+    expect(find(w, 'tr2-item-e1').attributes('aria-pressed')).toBe('true')
+    expect(find(w, 'tr2-detail').text()).toContain('after 1')
     expect((find(w, 'tr2-advanced').element as HTMLDetailsElement).open).toBe(false)
   })
 

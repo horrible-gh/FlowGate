@@ -1685,6 +1685,8 @@ export default {
     },
     t2_note: '反映指示 — 実際に反映する前に反映案(TR2)を作成します。この文書を承認しても作業物はすぐには変わらず、反映案を承認したときに反映されます。',
     tr2_body: {
+      v4: {"latest_attempt": "#{round} · {state}", "revision_title": "Revision {revision}", "gate_heading": "承認時の検証コマンド", "gate_hint": "検証コマンドは承認時に実行されます。この画面から直接実行しません。", "gate_failed": "一部失敗", "gate_completed": "実行完了", "item_json": "項目JSONの取り込み・ダウンロード", "status_ready": "この反映案は承認できます", "status_validation_failed": "検証コマンドが失敗しました", "status_approved": "承認され反映されました", "retry_hint": "原因を確認して再試行してください。", "approval_ready": "反映準備完了", "approval_summary": "反映対象 {count}件 · 今回の承認対象外 {excluded}件 · 承認時にソースを変更", "gate_summary": "{count}件登録 · {status}", "gate_waiting": "実行待ち", "ledger": "Git台帳", "ledger_count": "{count}件", "attempt_details": "承認試行の詳細", "revision_details": "Revision詳細"},
+      import: {"heading": "複数ファイルを登録", "hint": "ソースファイルまたは項目JSONを選び、結果を確認して選択した変更を一括保存します。 ソースは承認後に変更されます。", "source": "ソースファイル登録", "json": "項目JSONの一括取込", "drop": "ファイルをドロップするか選択してください", "source_hint": "UTF-8テキストに対応します。比較前に対象パスを確認し、相対パスを保つ場合はフォルダー選択を使用してください。", "folder_drop": "フォルダーのパスを保つにはフォルダー選択を使用してください。ファイルは追加されていません。", "json_limit": "JSONは最大200ファイル、各1 MiB、合計10 MiBまでです。", "shared_path": "別の変更と同じパスです。項目の順序とBEFOREを確認してください。", "reason": {"duplicate": "同じ対象パスが複数あります。重複を削除するかパスを修正してください。", "path": "安全に使用できないパスです。グループソース内の通常ファイルのパスを入力してください。", "parent": "対象フォルダーがありません。既存のソースフォルダーを指定してください。", "encoding": "バイナリーを含まないUTF-8テキストファイルを使用してください。", "size": "ファイルが上限を超えています。小さいファイルを選択してください。", "occupied": "このファイルには保留中の変更があります。既存の項目エディターで確認してください。", "anchor": "一意のBEFOREを確認できません。項目エディターで変更を確認してください。", "review": "手動の確認が必要です。技術詳細を確認し、ファイルまたはパスを修正してください。"}, "json_hint": "各JSONファイルはEDIT・CREATE・DEFERREDの1項目です。有効な項目を選んで一括登録してください。"},
       source: {"heading": "ソースファイル比較", "hint": "ファイルまたはフォルダーを選び、グループのソースルートからのパスを入力して比較してください。変更を確認し、選択した項目を現在の反映案に保存します。ソースは承認後に変更されます。UTF-8テキストのみ対応し、既存ファイルのBOMと改行は保持します。", "files": "ソースファイル選択", "folder": "フォルダー選択", "path": "ソースルートからの対象パス", "compare": "worktreeと比較", "save": "変更{count}件を反映案に保存", "limit": "最大200ファイル、1ファイル1 MiB、合計10 MiBです。", "read_error": "ファイルを読み取れないかサイズ制限を超えています。", "status": {"pending": "比較待ち", "CREATE": "新規ファイル", "EDIT": "編集", "unchanged": "内容変更なし", "review_required": "確認が必要"}},
       batch: {
         upload: "項目JSONを複数取り込み",
@@ -1700,6 +1702,15 @@ export default {
         collection: "collectionはeditsまたはdeferredである必要があります。",
       },
       workspace: {
+        tab_history: "履歴",
+        tab_diagnostics: "診断",
+        tab_manage: "管理",
+        approval_summary: "変更 {count}件 · 承認すると実際の作業物に反映されます。",
+        approve_apply: "承認して反映",
+        kind_edit: "修正",
+        kind_create_file: "新規ファイル",
+        kind_deferred: "保留",
+        excluded: "今回の反映から除外",
         advanced: "詳細履歴と管理",
         advanced_hint: "承認試行 · 診断 · Revision履歴 · 反映案JSON",
         manage: "反映案の管理",
@@ -1767,7 +1778,7 @@ export default {
       state_desc: {
         ready: 'サーバーが承認前の条件をすべて確認しました。承認するとバックアップ、反映、検証コマンド、Gitコミット1件が順に実行されます。',
         not_ready: '今承認すると承認前の検証で止まります。{reason}',
-        needs_more_work: '反映案はまだ作業の補完が必要な状態です。項目を揃えて反映準備完了(ready_to_apply)として保存してから承認してください。',
+        needs_more_work: '反映案はまだ作業の補完が必要な状態です。項目を揃えて反映準備完了として保存してから承認してください。',
         drift: 'このリビジョンの保存後に対象ファイルが変わりました。基準を黙って上書きしません。BEFOREの内容を確認して新しいリビジョンとして保存してください。',
         applying: '承認試行が進行中です(段階: {phase})。終わるまで反映案は読み取り専用です。',
         rollback: '承認試行が失敗し、作業物を承認前の状態に戻しています。復旧が終わるまでお待ちください。',
@@ -1775,7 +1786,7 @@ export default {
         validation_failed: '検証コマンドが失敗しました。作業物は承認前の状態に復元されました。',
         apply_failed: '変更の反映に失敗しました。作業物は復元されたため、新しいリビジョンとして保存し直してください。',
         commit_failed: 'Gitコミットが作られる前に失敗しました。作業物は承認前の状態に復元されました。',
-        precheck_failed: '作業物を変更する前に承認試行が止まりました({code})。',
+        precheck_failed: '作業物を変更する前に承認試行が止まりました。',
         approved: '承認され、実際の作業物に反映されました。このリビジョンは読み取り専用です。',
         rejected: '差し戻されました。新しいリビジョンを保存して再作業してください。以前の承認試行の履歴は残ります。',
         restore_pending: 'Time Machineがこの反映案のコミットを取り消しました。再適用されるまで承認記録は保持されます。',
@@ -1894,6 +1905,9 @@ export default {
         deferred_no_diff: '保留項目は反映されないため、比較する内容がありません。',
         deferred_note: '保留(DEFERRED) {count}件は今回の承認で反映されず、理由とともに残ります。',
         item_meta: '{id} · {confidence} · {rationale}',
+        selection_safe: '選択だけではソースは変更されません。',
+        diff_hint: '対象ファイルの BEFORE を AFTER に置き換える反映案です。',
+        create_hint: '新しいファイルに記録する内容です。',
         select_hint: '左の一覧から項目を選ぶと詳細が表示されます。',
       },
       deferred_reason: {

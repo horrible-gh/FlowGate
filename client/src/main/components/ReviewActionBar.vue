@@ -1,10 +1,13 @@
 <template>
-  <div class="sticky-footer-bar">
+  <div class="sticky-footer-bar" :class="{ 'sfb-tr2': docType === 'TR2' }">
     <div class="sfb-inner">
       <!-- Labels section (1 row normally; 2 rows when viewing a past doc) -->
       <div class="sfb-labels">
+    <div v-if="docType === 'TR2' && tr2ReviewSummary && !isViewingPastDoc" class="sfb-tr2-summary" data-testid="tr2-approval-summary" role="status">
+      <strong>{{ tr2ReviewSummary.title }}</strong><span>{{ tr2ReviewSummary.description }}</span>
+    </div>
         <!-- Row 1 -->
-        <span class="sfb-label">
+        <span v-show="docType !== 'TR2' || !tr2ReviewSummary || isViewingPastDoc" class="sfb-label">
           <!-- Head-format label is an *orientation* cue shown only while viewing a PAST doc
                (the workflow head lives elsewhere). When viewing the head doc itself, fall
                through to the normal branch so the status pills (review pending / AI review arrived) render. -->
@@ -398,7 +401,7 @@
             @click="onApproveClick"
           >
             <!-- 0684 T#3 (D#1 §6-1): the click is visibly in progress until the server answers. -->
-            <AppIcon :name="approving ? 'spinner' : 'check'" :spin="approving" /> {{ t('main.review_action_bar.btn_approve') }}
+            <AppIcon :name="approving ? 'spinner' : 'check'" :spin="approving" /> {{ t(docType === 'TR2' ? 'main.tr2_body.workspace.approve_apply' : 'main.review_action_bar.btn_approve') }}
           </button>
           <!-- 0674 T0004 §2-3 (C1): a final approval whose Git post-step is queued or needs
                recovery is not a finished approval and not a failed one either. -->
@@ -417,7 +420,7 @@
           </span>
 
           <!-- Reject -->
-          <button class="btn btn-danger btn-sm" :disabled="approving || isActionBarBusy" @click="onRejectClick">
+          <button class="btn btn-danger btn-sm" data-test="ab-reject" :disabled="approving || isActionBarBusy" @click="onRejectClick">
             <AppIcon name="prohibit" /> {{ t('main.review_action_bar.btn_reject') }}
           </button>
 
@@ -691,6 +694,7 @@ const props = defineProps<{
   docType?: string
   /** 0642: TR2 gate admission fingerprint from the read model currently shown to the user. */
   commandAdmissionFingerprint?: string | null
+  tr2ReviewSummary?: { title: string; description: string; ready: boolean } | null
   /** D031: whether the "proceed to next step" action is available (false = show button disabled). */
   canNextAction?: boolean
   /** Latest test run status for TS -> TSR first-run action-bar mode. null means never run. */
@@ -1365,6 +1369,7 @@ const canApprove = computed(
     approvedDocId.value !== props.docId &&
     !approvalJob.value &&
     !props.testGateBlocked &&
+    (props.docType !== 'TR2' || !props.tr2ReviewSummary || props.tr2ReviewSummary.ready) &&
     ['pending_review', 'revised'].includes(normalizedStatus.value),
 )
 
@@ -1909,6 +1914,11 @@ async function doApprove() {
 
     gitSettling.value = false
     approving.value = false
+    if (props.docType === 'TR2' && generation === approveGeneration) {
+      window.dispatchEvent(new CustomEvent('fg:open_docs_refresh', {
+        detail: { project: props.projectId || null, doc_id: props.docId },
+      }))
+    }
   }
 }
 
@@ -2571,6 +2581,30 @@ onBeforeUnmount(() => {
 @media (max-width: 760px) {
   .ab-target-blocker { right: 12px; left: 12px; max-width: none; }
 }
+.sticky-footer-bar.sfb-tr2 { height: auto; min-height: 69px; background: var(--surface, #fff); border-top: 1px solid var(--border, #e1e7ef); box-shadow: 0 -9px 24px #27406409; }
+.sfb-tr2-summary { display: grid; gap: 3px; min-width: 0; }
+.sfb-tr2-summary strong { font-size: 12px; }
+.sfb-tr2-summary span { font-size: 11px; color: var(--text-m, #91a0ae); }
+.sfb-tr2 .sfb-actions [data-test="ab-reject"] { order: -1; background: var(--surface, #fff); border-color: var(--border, #e1e7ef); color: var(--text, #48586c); }
+.sfb-tr2 .sfb-actions [data-test="ab-approve"] { padding: 9px 14px; border-radius: 8px; }
+@media (max-width: 560px) { .sfb-tr2-summary span { display: none; } }
+
+.sfb-tr2 .sfb-actions [data-test="ab-approve"] { background: #176a4c; border-color: #176a4c; color: #fff; font-weight: 650; }
+.sfb-tr2 .sfb-actions [data-test="ab-approve"]:hover:not(:disabled) { background: #0f5a40; border-color: #0f5a40; }
+.sfb-tr2 .sfb-actions [data-test="ab-approve"]:disabled { opacity: .45; cursor: not-allowed; }
+
+.sfb-tr2 { --surface: #fff; --border: #e1e7ef; --text: #48586c; --text-m: #91a0ae; font: 14px/1.55 system-ui, -apple-system, 'Segoe UI', 'Malgun Gothic', sans-serif; }
+.sfb-tr2 .sfb-inner { padding: 10px 34px; gap: 13px; }
+.sfb-tr2-summary { gap: 0; }
+.sfb-tr2-summary strong { color: #202b3a; font-weight: 700; }
+.sfb-tr2 .sfb-actions { gap: 9px; }
+.sfb-tr2 .sfb-actions .btn { padding: 9px 12px; font-size: 12px; font-weight: 650; border-radius: 8px; }
+.sfb-tr2 .sfb-actions [data-test="ab-approve"] { padding: 9px 12px; }
+.sfb-tr2 .sfb-actions .app-icon { font-size: 16px; }
+@media(max-width:760px) { .sfb-tr2 .sfb-inner { flex-direction: row; align-items: center; } .sfb-tr2 .sfb-actions { width: auto; flex-wrap: wrap; overflow: visible; } }
+@media(max-width:560px) { .sfb-tr2 .sfb-inner { padding: 10px 15px; } }
+.sfb-tr2 .sfb-actions > .ab-split-wrap { order: -2; }
+.sfb-tr2 .sfb-actions [data-test="ab-reject"] > .app-icon { display: none; }
 </style>
 
 

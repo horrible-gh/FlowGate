@@ -303,3 +303,60 @@ describe('0640 T#2 JSON batch import', () => {
     expect(wrapper.text()).not.toContain('main.tr2_body.batch.')
   })
 })
+
+describe('0640 corrective import dialog and drop handling', () => {
+  it('opens the tabbed dialog and discards all pending files on Escape', async () => {
+    batchServer()
+    const wrapper = mountBody(); await flushPromises()
+    const backdrop = byTestId(wrapper, 'tr2-import-dialog')
+    expect(backdrop.attributes('style')).toContain('display: none')
+    await byTestId(wrapper, 'tr2-open-import').trigger('click'); await flushPromises()
+    expect(backdrop.attributes('style') ?? '').not.toContain('display: none')
+    expect(backdrop.find('[role="dialog"]').attributes('aria-modal')).toBe('true')
+    await byTestId(wrapper, 'tr2-import-tab-json').trigger('click')
+    await batchFiles(wrapper, [jsonFile('a.json', importedCreate)])
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(byTestId(wrapper, 'tr2-batch-preview').exists()).toBe(false)
+    expect(backdrop.attributes('style')).toContain('display: none')
+    expect(postRequest.mock.calls.filter(([url]) => String(url).endsWith('/batch'))).toHaveLength(0)
+  })
+
+  it('drops 50 JSON files, preserves valid file order, saves once and reloads the new revision', async () => {
+    batchServer([...Array(48).fill(true), false])
+    const wrapper = mountBody(); await flushPromises()
+    await byTestId(wrapper, 'tr2-open-import').trigger('click')
+    await byTestId(wrapper, 'tr2-import-tab-json').trigger('click')
+    const files = Array.from({ length: 50 }, (_, index) => jsonFile(`${index}.json`, { ...CREATE, id: `drop-${index}`, file: `src/drop-${index}.txt` }))
+    files[47] = { name: 'malformed.json', text: () => Promise.resolve('{invalid') }
+    const event = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'dataTransfer', { value: { files } })
+    byTestId(wrapper, 'tr2-json-dropzone').element.dispatchEvent(event); await flushPromises()
+    expect(byTestId(wrapper, 'tr2-batch-count').text()).toBe('50 files · 48 valid · 48 selected')
+    const selected = postRequest.mock.calls[0][1].items.filter((_item: unknown, index: number) => index < 48)
+    postRequest.mockImplementation(async () => {
+      current.document.revision_no = 3
+      current.body.edit_spec.edits.push(...selected.map((entry: any) => entry.item))
+      return { data: { new_revision: 3 } }
+    })
+    await byTestId(wrapper, 'tr2-batch-import').trigger('click'); await flushPromises()
+    expect(postRequest).toHaveBeenCalledTimes(2)
+    expect(postRequest.mock.calls[1]).toEqual([`${base}/items/batch`, { expected_revision: 2, items: selected }])
+    expect(byTestId(wrapper, 'tr2-file-list').findAll('li')).toHaveLength(51)
+    expect(byTestId(wrapper, 'tr2-revision').text()).toBe('3')
+    expect(byTestId(wrapper, 'tr2-import-dialog').attributes('style')).toContain('display: none')
+  })
+
+  it('rejects oversized dropped JSON before reading and ignores drops while read-only', async () => {
+    const text = vi.fn(() => Promise.resolve('{}'))
+    const wrapper = mountBody(); await flushPromises()
+    const event = () => { const e = new Event('drop', { bubbles: true, cancelable: true }); Object.defineProperty(e, 'dataTransfer', { value: { files: [{ name: 'large.json', size: 1024 * 1024 + 1, text }] } }); return e }
+    byTestId(wrapper, 'tr2-json-dropzone').element.dispatchEvent(event()); await flushPromises()
+    expect(text).not.toHaveBeenCalled()
+    expect(byTestId(wrapper, 'tr2-batch-row-0').text()).toContain('1 MiB')
+    expect(postRequest).not.toHaveBeenCalled()
+    await wrapper.setProps({ readOnly: true })
+    byTestId(wrapper, 'tr2-json-dropzone').element.dispatchEvent(event()); await flushPromises()
+    expect(text).not.toHaveBeenCalled(); expect(postRequest).not.toHaveBeenCalled()
+  })
+})
