@@ -823,6 +823,8 @@ def _parse_doc_workflow(doc: dict) -> dict:
                 self_idx = i
                 break
         out["workflow_self_index"] = self_idx
+        out["workflow_slot_completions"] = [completion_fields(it) for it in seq_items]
+        out["workflow_self_completion"] = completion_fields(seq_items[self_idx]) if self_idx is not None else None
         # next_step_exists = there IS a head step to advance to — NOT "a step after the
         # head". A present head_idx already means an advanceable step (the next doc to
         # create/approve, or the synthetic AC final-approval head whose head_idx is

@@ -117,6 +117,28 @@ def pending_dispatches() -> list[dict]:
     return store._fetch_all(_sql(store, "list_pending_dispatches"), [])
 
 
+def _notify_sequence(sequence_id, decision_id=None):
+    """After-commit refresh for invalidation and asynchronous dispatch recovery."""
+    from .connection import after_commit
+    def publish():
+        try:
+            root = get_store()._fetch_one(
+                "SELECT d.project_id, d.group_id FROM workflow_sequences ws "
+                "JOIN documents d ON d.doc_id = ws.doc_id WHERE ws.id = ?", [sequence_id])
+            if not root:
+                return
+            from modules.flow_gate.api.v1.events.event_types import EventType
+            from modules.flow_gate.api.v1.events.publisher import FlowEvent, broadcast_event_threadsafe
+            broadcast_event_threadsafe(FlowEvent(
+                event_type=EventType.WORKFLOW_COMPLETION_CHANGED, audience="*",
+                project=root["project_id"], group_id=root["group_id"],
+                payload={"sequence_id": sequence_id, "decision_id": decision_id}))
+        except Exception:
+            pass  # Refresh/focus re-reads the durable state.
+    if not after_commit(publish):
+        publish()
+
+
 def cas_dispatch(
     dispatch_id: str, *, expected_state: str, expected_version: int, state: str,
     run_id: str | None = None, token_id: str | None = None, error_code: str | None = None,
@@ -135,10 +157,16 @@ def cas_dispatch(
     if state not in transitions.get(expected_state, set()):
         raise ValueError("completion_dispatch_transition_invalid")
     store = get_store()
-    return store._execute_affected(_sql(store, "cas_dispatch"), [
+    changed = store._execute_affected(_sql(store, "cas_dispatch"), [
         state, run_id, token_id, error_code, now_iso(), dispatch_id, expected_state, expected_version,
         run_id, run_id, token_id, token_id, state,
     ]) == 1
+    if changed:
+        dispatch = dispatch_by_id(dispatch_id)
+        decision = get_decision(dispatch["decision_id"]) if dispatch else None
+        if decision:
+            _notify_sequence(decision["sequence_id"], decision["decision_id"])
+    return changed
 
 
 def invalidate_slot(
@@ -154,6 +182,7 @@ def invalidate_slot(
         timestamp = now_iso()
         store._execute(_sql(store, "invalidate_decisions"), [timestamp, reason, sequence_id, slot_id])
         store._execute(_sql(store, "cancel_dispatches"), [timestamp, sequence_id, slot_id])
+        _notify_sequence(sequence_id)
         return True
 
 
@@ -191,6 +220,16 @@ def dispatch_for_stop(chain_id, stop_run_id, *, include_pending=False):
         "AND state IN " + states + " ORDER BY created_at LIMIT 1",
         [chain_id, stop_run_id])
 
+
+
+def history_for_group(project_id, group_id):
+    return get_store()._fetch_all(
+        "SELECT cd.*, d.type_code FROM workflow_completion_decisions cd "
+        "JOIN workflow_sequences ws ON ws.id = cd.sequence_id "
+        "JOIN documents root ON root.doc_id = ws.doc_id "
+        "LEFT JOIN documents d ON d.doc_id = cd.result_doc_id "
+        "WHERE root.project_id = ? AND root.group_id = ? ORDER BY cd.decided_at, cd.decision_id",
+        [project_id, group_id])
 
 
 def decision_for_request(request_key):

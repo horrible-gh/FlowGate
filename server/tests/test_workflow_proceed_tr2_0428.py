@@ -71,8 +71,17 @@ def test_fully_rolled_back_validation_failure_can_proceed_without_new_apply(env,
     assert git_head(env['repo'])==original_head
     before=snapshot(env,doc_id)
     forbid_approval(monkeypatch)
+    preview=client.get('/api/v1/documents/'+doc_id+'/unapproved-progress')
+    assert preview.status_code==200 and preview.json()['allowed'] is True,preview.text
+    assert preview.json()['approval_attempt']['error_code']=='tr2_validation_failed'
+    assert snapshot(env,doc_id)==before
     response=proceed(client,doc_id)
     assert response.status_code==200,response.text
+    assert snapshot(env,doc_id)==before
+    history=client.get('/api/v1/groups/'+group['group_id']+'/unapproved-progress').json()['history']
+    assert len(history)==1 and history[0]['source_applied'] is False
+    assert history[0]['approval_attempt']['error_code']=='tr2_validation_failed'
+    assert history[0]['approval_attempt']['result_code']=='recovered_rollback'
     assert snapshot(env,doc_id)==before
 
 

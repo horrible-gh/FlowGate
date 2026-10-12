@@ -169,6 +169,7 @@
           >
             <AppIcon :name="s.iconClass" />
             <span class="s-lbl">{{ docTypeStore.getLabel(s.code) }}</span>
+            <span v-if="s.completionLabel === 'proceeded_unapproved'" class="wf-unapproved" data-test="wf-unapproved">{{ String(locale).startsWith('ko') ? '미승인 진행' : 'Without approval' }}</span>
             <!-- 0332 D0005 §6.1 — 칸의 모양(색·아이콘·클릭 동작)은 그대로 두고 표식 하나만
                  오른쪽 위에 얹는다. 커밋은 진행 상태가 아니라 그 칸에 딸린 부가 사실이라
                  진행을 나타내는 표현을 빼앗으면 안 되고, 칸 클릭은 이미 세 가지 뜻을
@@ -235,7 +236,7 @@ const props = withDefaults(defineProps<{
   readOnly: false,
 })
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const docTypeStore = useDocTypeStore()
 const isWorkflowRoot = computed(() => props.tab.typeCode === 'R' || props.tab.typeCode === 'B')
 
@@ -610,6 +611,7 @@ function toggleSequenceCollapsed() {
 </script>
 
 <style scoped>
+.wf-unapproved { font-size: .65rem; color: var(--warning, #92400e); background: var(--surface-h); padding: 2px 5px; border-radius: 4px; }
 /* 0332 D0005 §6.1 — 커밋 표식. 칸의 크기와 배치는 그대로 두고 오른쪽 위 모서리에만
    얹으므로 칸을 감싸는 relative 만 더한다. 표식은 클릭 대상이 아니다 — pointer-events 를
    꺼서 표식 위를 눌러도 칸 클릭(진행 / 되돌리기 / 복귀)이 그대로 간다. */

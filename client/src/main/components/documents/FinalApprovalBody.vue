@@ -17,6 +17,8 @@
         <p class="ac-fa-title">{{ t('main.final_approval.panel_title') }}</p>
         <p class="ac-fa-desc">{{ t('main.final_approval.panel_desc') }}</p>
       </template>
+      <UnapprovedHistory :entries="unapprovedState?.history ?? []" />
+      <p v-if="unapprovedUnavailable" class="ac-fa-desc" role="status">{{ String(locale).startsWith('ko') ? '미승인 이력을 불러오지 못했습니다. 새로고침해 주세요.' : 'Could not load progress history. Please refresh.' }}</p>
       <FinalApprovalGitStatus :group-id="groupId" :completed="completed" />
     </div>
   </div>
@@ -24,15 +26,20 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { computed } from 'vue'
+import UnapprovedHistory from '../UnapprovedHistory.vue'
+import { useUnapprovedProgress } from '../../workflow/unapprovedProgress'
 import AppIcon from '@shared/AppIcon.vue'
 import FinalApprovalGitStatus from './FinalApprovalGitStatus.vue'
 
-defineProps<{
+const props = defineProps<{
   completed: boolean
   groupId: string
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const progressUrl = computed(() => `/api/v1/groups/${encodeURIComponent(props.groupId)}/unapproved-progress`)
+const { state: unapprovedState, unavailable: unapprovedUnavailable } = useUnapprovedProgress(progressUrl)
 </script>
 
 <style scoped>

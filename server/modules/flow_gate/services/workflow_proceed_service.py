@@ -229,7 +229,9 @@ def proceed_unapproved(*, doc_id: str, expected_revision: int, expected_slot_id:
                                 "document_revision": expected_revision,
                                 "decided_at": decision["decided_at"],
                                 "doc_review_status": fresh["doc_review_status"],
-                                "source_applied": False if fresh["type_code"] == "TR2" else None})
+                                "source_applied": False if fresh["type_code"] == "TR2" else None,
+                                "test_gate": test_run_service.tsr_gate_state(fresh, memo=True) if fresh["type_code"] == "TSR" else None,
+                                "report_facts": report_facts(fresh)})
         response = _decision_response(decision, fresh, item, expected_slot_generation, expected_revision)
 
     # Commit the decision and intent, then release admission/source/resume locks
@@ -238,6 +240,112 @@ def proceed_unapproved(*, doc_id: str, expected_revision: int, expected_slot_id:
     if dispatch is not None:
         response.update(dispatch_service.consume(dispatch["dispatch_id"]))
     return response
+
+
+def report_facts(doc):
+    """Actual result and failed apply facts, distinct from a stale/readiness gate."""
+    if doc.get("type_code") == "TSR":
+        run = db_test_runs.latest_by_doc(doc.get("target_id") or doc.get("triggered_by"))
+        return {"actual_result": {k: run.get(k) for k in ("run_id", "overall", "status", "error")}} if run else {"actual_result": None}
+    if doc.get("type_code") == "TR2":
+        attempt = db_attempts.latest_by_doc(doc["doc_id"])
+        return {"approval_attempt": {
+            k: attempt.get(k) for k in ("attempt_id", "state", "result_code", "error_code", "validation_json")
+        } if attempt else None}
+    return {}
+
+
+def progress_history(project_id, group_id):
+    """Read-only audit and warnings. Validity uses the same full key as head SQL."""
+    from modules.flow_gate.db.connection import get_store
+    rows = db_completion.history_for_group(project_id, group_id)
+    events = get_store()._fetch_all(
+        "SELECT metadata FROM workflow_events WHERE project_id = ? AND group_id = ? "
+        "AND event_type = 'workflow_proceeded_unapproved'", [project_id, group_id])
+    import json
+    evidence = {}
+    for event in events:
+        try:
+            value = event.get("metadata") or {}
+            meta = value if isinstance(value, dict) else json.loads(value)
+            evidence[meta.get("decision_id")] = meta
+        except (ValueError, TypeError):
+            continue
+    # A deleted sequence/root must not hide its durable audit. The original
+    # group-scoped event is the authority when live sequence joins no longer exist.
+    seen = {row["decision_id"] for row in rows}
+    for decision_id, meta in evidence.items():
+        if decision_id and decision_id not in seen:
+            saved = db_completion.get_decision(decision_id)
+            if saved:
+                saved["type_code"] = str(meta.get("doc_id") or saved["result_doc_id"]).rsplit("-", 1)[-1]
+                rows.append(saved)
+    rows.sort(key=lambda row: (str(row["decided_at"]), row["decision_id"]))
+    result = []
+    for row in rows:
+        item = next((i for i in db_wfseq.get_sequence_items(row["sequence_id"])
+                     if i.get("id") == row["slot_id"]), None)
+        valid = bool(item and completion_reason(item) == "proceeded_unapproved"
+                     and item.get("completion_decision_id") == row["decision_id"])
+        doc = db_docs.get_by_id(row["result_doc_id"])
+        gate = evidence.get(row["decision_id"], {}).get("test_gate")
+        if gate is None and valid and doc and doc.get("type_code") == "TSR":
+            gate = test_run_service.tsr_gate_state(doc, memo=True)
+        dispatch = db_completion.dispatch_for_decision(row["decision_id"])
+        facts = evidence.get(row["decision_id"], {}).get("report_facts")
+        if facts is None:
+            facts = report_facts(doc) if doc and valid else {}
+        result.append({**row, **facts, "valid": valid, "test_gate": gate,
+                       "source_applied": False if row.get("type_code") == "TR2" else None,
+                       "continuation_status": dispatch["state"] if dispatch else "not_started",
+                       "run_id": dispatch.get("run_id") if dispatch else None,
+                       "continuation_error": dispatch.get("error_code") if dispatch else None})
+    return result
+
+
+def progress_state(doc_id, *, actor_user_id, user_permissions, principal):
+    """Server admission preview; never observes Basis or records decisions/dispatches."""
+    doc = db_docs.get_by_id(doc_id)
+    if not doc:
+        _refuse("completion_document_not_found", 404)
+    history = progress_history(doc["project_id"], doc["group_id"])
+    slot = db_wfseq.get_item_by_result_doc_id(doc_id)
+    state = {"allowed": False, "reason": None, "doc_id": doc_id,
+             "document_revision": int(doc.get("revision_no") or 0),
+             "slot_id": slot.get("id") if slot else None,
+             "slot_generation": slot.get("slot_generation") if slot else None,
+             "history": history, "test_gate": None, **report_facts(doc)}
+    if doc.get("type_code") == "TSR":
+        state["test_gate"] = test_run_service.tsr_gate_state(doc, memo=True)
+    try:
+        if principal is None or principal.kind != "human" or principal.user_id != actor_user_id:
+            _refuse("completion_human_confirmation_required", 403)
+        if not check_permission(user_permissions, ("document.approve",)):
+            _refuse("completion_permission_denied", 403)
+        if slot is None:
+            _refuse("completion_slot_missing")
+        fresh, item = _identity(doc_id, state["document_revision"], slot["id"], slot["slot_generation"])
+        if completion_reason(item) == "proceeded_unapproved":
+            _refuse("completion_already_completed")
+        # Same safety checks as POST. No Basis observation, apply, validation or commit.
+        with ExitStack() as stack:
+            stack.enter_context(runtime.group_resume_lock(doc["group_id"]))
+            stack.enter_context(test_run_service._admission_lock)
+            if doc["type_code"] == "TR2":
+                stack.enter_context(tr2_service._lock(doc_id))
+            ctx, key = stack.enter_context(_group_lock(doc))
+            _safety(fresh, principal)
+            pipeline_service._require_workflow_head_for_approval(fresh, "ko")
+            if doc["type_code"] == "TR2":
+                _tr2_baseline(fresh, ctx, key)
+        state["allowed"] = True
+    except MutationPolicyError as exc:
+        state["reason"] = exc.error["code"]
+    except pipeline_service.TransitionError as exc:
+        state["reason"] = getattr(exc, "code", "workflow_not_head")
+    except tr2_service.Tr2ValidationError as exc:
+        state["reason"] = exc.code
+    return state
 
 
 def _decision_response(decision, fresh, item, expected_slot_generation, expected_revision):

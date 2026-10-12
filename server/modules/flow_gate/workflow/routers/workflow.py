@@ -936,6 +936,38 @@ def recover_orphaned_workflow_document_endpoint(
     }
 
 
+@router.get("/documents/{doc_id}/unapproved-progress")
+async def document_unapproved_progress_endpoint(
+    doc_id: str, request: Request, current_user: dict = Depends(get_current_user),
+):
+    from modules.flow_gate.services import workflow_proceed_service
+    from modules.flow_gate.services.mutation_policy import principal_from_request
+    principal = principal_from_request(request)
+    if principal.kind == "human":
+        principal = human_principal(current_user)
+    try:
+        return await anyio.to_thread.run_sync(lambda: workflow_proceed_service.progress_state(
+            doc_id, actor_user_id=current_user["user_id"],
+            user_permissions=_get_user_permissions(current_user), principal=principal))
+    except MutationPolicyError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.body())
+
+
+@router.get("/groups/{group_id}/unapproved-progress")
+async def group_unapproved_progress_endpoint(
+    group_id: str, current_user: dict = Depends(get_current_user),
+):
+    from modules.flow_gate.services import workflow_proceed_service
+    # Resolve the authoritative group even when all member documents were deleted.
+    from modules.flow_gate.db.connection import get_store
+    def read_history():
+        root = get_store()._fetch_one("SELECT project_id FROM groups WHERE group_id = ?", [group_id])
+        if not root:
+            return {"history": []}
+        return {"history": workflow_proceed_service.progress_history(root["project_id"], group_id)}
+    return await anyio.to_thread.run_sync(read_history)
+
+
 @router.post("/documents/{doc_id}/proceed-unapproved")
 async def document_proceed_unapproved_endpoint(
     doc_id: str,
@@ -961,7 +993,17 @@ async def document_proceed_unapproved_endpoint(
             api_base_url=str(request.url).split("/documents/", 1)[0])
 
     try:
-        return await anyio.to_thread.run_sync(_proceed_sync)
+        result = await anyio.to_thread.run_sync(_proceed_sync)
+        try:
+            from modules.flow_gate.api.v1.events.publisher import broadcast_event, FlowEvent
+            from modules.flow_gate.api.v1.events.event_types import EventType
+            doc = await anyio.to_thread.run_sync(lambda: db_docs.get_by_id(doc_id))
+            await broadcast_event(FlowEvent(
+                event_type=EventType.WORKFLOW_COMPLETION_CHANGED, payload=result,
+                audience="*", doc_id=doc_id, project=doc.get("project_id") if doc else None))
+        except Exception:
+            pass  # Durable decision is reloaded on refresh/reconnect if delivery fails.
+        return result
     except MutationPolicyError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.body())
     except tr2_service.Tr2ValidationError as exc:

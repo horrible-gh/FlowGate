@@ -2589,6 +2589,8 @@ function getWorkflowViewInput(tabId: string): WorkflowViewInput {
   const rawHeadIndex = exposedValue<number | null>(h?.workflowHeadIndex)
   const headIndex = (rawHeadIndex != null && rawHeadIndex >= 0) ? rawHeadIndex + 1 : null
   return {
+    tabSlotCompleted: exposedValue<{ slot_completed?: boolean }>(h?.workflowSelfCompletion)?.slot_completed === true,
+    slotCompletions: [{}, ...(exposedValue<any[]>(h?.workflowSlotCompletions) ?? []), {}],
     tabTypeCode: getTabTypeCode(tabId),
     tabReviewStatus: override?.reviewStatus ?? exposedValue<string | null>(h?.docReviewStatus),
     workflowSteps,

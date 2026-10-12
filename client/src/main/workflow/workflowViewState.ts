@@ -22,6 +22,7 @@ export type StepVisual = 'done' | 'highlight' | 'rejected' | 'current' | 'future
 /** D031 §4.3 v2 — single workflow band cell state. */
 export interface StepState {
   code: string
+  completionLabel?: string
   visual: StepVisual
   /** Canonical CSS modifier classes emitted by the SSOT — T843.
    * Contains wf-* classes for DocWorkflow strip and dip-* classes for DocInfoPanel.
@@ -47,6 +48,8 @@ export interface StepState {
 /** D031 §3 — unified SSOT input. All fields are derived server-side; FE never re-derives raw columns. */
 export interface WorkflowViewInput {
   /** Current tab's document type code (documents.type_code). */
+  tabSlotCompleted?: boolean
+  slotCompletions?: { completion_reason?: string }[]
   tabTypeCode: string | null | undefined
   /** Current tab's review status — the single SSOT for workflow state (documents.doc_review_status). */
   tabReviewStatus: string | null | undefined
@@ -227,6 +230,15 @@ function nextAction(
 }
 
 export function resolveWorkflowViewState(input: WorkflowViewInput): WorkflowViewState {
+  const result = deriveWorkflowViewState(input)
+  result.stepStates = result.stepStates.map((step, index) =>
+    input.slotCompletions?.[index]?.completion_reason === 'proceeded_unapproved'
+      ? { ...step, completionLabel: 'proceeded_unapproved' } : step)
+
+  return result
+}
+
+function deriveWorkflowViewState(input: WorkflowViewInput): WorkflowViewState {
   const tabTypeCode = input.tabTypeCode ?? null
   const headType = input.headType ?? null
   const headDocId = input.headDocId ?? null
@@ -338,7 +350,7 @@ export function resolveWorkflowViewState(input: WorkflowViewInput): WorkflowView
   const reviewStatus = input.tabReviewStatus ?? null
 
   // D030 §4 #7: approved
-  if (reviewStatus === 'approved') {
+  if (reviewStatus === 'approved' || input.tabSlotCompleted === true) {
     if (input.nextStepExists) return nextAction(tabTypeCode, headType, headDocId, normalSS)
     return noAction('info', tabTypeCode, normalSS)
   }
