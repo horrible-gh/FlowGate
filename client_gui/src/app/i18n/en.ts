@@ -464,6 +464,7 @@ export default {
         zoom_out: 'Zoom Out',
         zoom_in: 'Zoom In',
         zoom_value: 'Zoom level',
+        zoom_preset: 'Choose zoom level',
         density: 'Canvas layout density',
       },
       // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.

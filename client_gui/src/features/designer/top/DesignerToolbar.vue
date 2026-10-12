@@ -96,6 +96,17 @@
         <span>{{ t('gui.designer.top.tools.zoom_in') }}</span>
       </button>
       <output class="designer-tool-zoom" :aria-label="t('gui.designer.top.tools.zoom_value')" data-test="designer-tool-zoom">{{ zoom }}%</output>
+      <select
+        class="designer-tool-zoom-select"
+        :value="zoom"
+        :disabled="disabled"
+        :aria-label="t('gui.designer.top.tools.zoom_preset')"
+        :title="t('gui.designer.top.tools.zoom_preset')"
+        data-test="designer-tool-zoom-select"
+        @change="emit('update:zoom', Number(($event.target as HTMLSelectElement).value))"
+      >
+        <option v-for="percent in zoomOptions" :key="percent" :value="percent">{{ percent }}%</option>
+      </select>
       <div class="designer-tool-density" role="radiogroup" :aria-label="t('gui.designer.top.tools.density')" :title="t('gui.designer.top.tools.density')" data-test="designer-tool-density">
         <button
           v-for="(level, index) in DESIGNER_DENSITIES"
@@ -142,7 +153,15 @@ const props = withDefaults(
 const emit = defineEmits<{
   command: [command: DesignerTopCommand]
   'update:density': [density: DesignerDensity]
+  /** A zoom preset was chosen, in percent. */
+  'update:zoom': [percent: number]
 }>()
+
+/** Zoom presets, in percent; the current value joins the list while it is none of them. */
+const ZOOM_PRESETS: readonly number[] = [25, 50, 75, 100, 150, 200]
+const zoomOptions = computed(() =>
+  ZOOM_PRESETS.includes(props.zoom) ? ZOOM_PRESETS : [...ZOOM_PRESETS, props.zoom].sort((a, b) => a - b),
+)
 
 const { t } = useI18n()
 
@@ -300,6 +319,21 @@ const RUN_BUTTONS = [
 
 .designer-run-dot.is-completed {
   background: #58a6ff;
+}
+
+.designer-tool-zoom-select {
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--fg2-border, rgba(154, 181, 210, 0.3));
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+}
+
+.designer-tool-zoom-select:disabled {
+  opacity: 0.45;
 }
 
 .designer-tool-zoom {

@@ -78,6 +78,20 @@ import { createFlowRunControl, type FlowRunMode, type FlowRunState } from './run
 
 export type { CanvasNodeSpec, FlowRunMode, FlowRunState }
 
+/**
+ * flowgate.v02.0059 T#1: a view operation the Toolbar / View menu asks of a Flow's Canvas. Fit and
+ * the zoom steps need what only the Canvas knows (measured Nodes, its area, the pan bound), so the
+ * Canvas performs them and reports the result as its Viewport; a new `seq` makes a repeated
+ * request count again.
+ */
+export type CanvasViewOperation =
+  | { kind: 'fit' }
+  | { kind: 'zoom-in' }
+  | { kind: 'zoom-out' }
+  | { kind: 'zoom-to'; zoom: number }
+
+export type CanvasViewRequest = CanvasViewOperation & { readonly flowId: string; readonly seq: number }
+
 /** Graph read state of one open Flow. */
 export type FlowGraphLoad =
   | { status: 'loading' }
@@ -154,6 +168,10 @@ export interface DesignerCenterSession {
   recordCanvasSize(size: CanvasSize): void
   /** flowgate.v02.0045: a user pan / zoom ended — record it and save it (per user, per Flow). */
   commitViewport(flowId: string, viewport: CanvasViewport): void
+  /** flowgate.v02.0059 T#1: the latest view operation asked of a Canvas (fit / zoom), or null. */
+  readonly viewRequest: ComputedRef<CanvasViewRequest | null>
+  /** Asks the open Flow's shown Canvas to fit / zoom; false when the Flow has no ready Graph. */
+  requestView(flowId: string, operation: CanvasViewOperation): boolean
   /** flowgate.v02.0045: a movable Node was dropped at (x, y) — move it and save its position. */
   moveNode(flowId: string, nodeId: string, x: number, y: number): void
   /** flowgate.v02.0045: the Shell is going away — send pending saves and stop change reports. */
@@ -509,6 +527,16 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     if (source.saveLayout) layoutQueue.queueViewport(flowId, viewport)
   }
 
+  const viewRequest = shallowRef<CanvasViewRequest | null>(null)
+  let viewRequestSeq = 0
+
+  function requestView(flowId: string, operation: CanvasViewOperation): boolean {
+    if (state.graphs[flowId]?.status !== 'ready') return false
+    viewRequestSeq += 1
+    viewRequest.value = { ...operation, flowId, seq: viewRequestSeq }
+    return true
+  }
+
   function moveNode(flowId: string, nodeId: string, x: number, y: number) {
     const load = state.graphs[flowId]
     if (load?.status !== 'ready' || !Number.isFinite(x) || !Number.isFinite(y)) return
@@ -592,6 +620,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     recordViewport,
     recordCanvasSize,
     commitViewport,
+    viewRequest: computed(() => viewRequest.value),
+    requestView,
     moveNode,
     dispose,
     activeEdit: computed(() => {

@@ -28,6 +28,7 @@
       @toggle-panel="onTogglePanel"
       @show-tab="onShowTab"
       @update:density="top.density = $event"
+      @update:zoom="onZoomSelect"
       @open-recent="onOpenRecent"
     />
     <DesignerBody
@@ -499,6 +500,13 @@ function onOpenRecent(request: DesignerRecentRequest) {
   if (entry) openFlow({ projectId: pid, groupId: entry.groupId, flowId: entry.id, flowName: entry.name }, true)
 }
 
+/** Toolbar zoom preset (percent) for the open Flow's Canvas. */
+function onZoomSelect(percent: number) {
+  const flowId = center.state.activeFlowId
+  if (flowId === null || !isMenuCommandEnabled('view.zoom-reset', top.runMode, menuTargets.value)) return
+  center.requestView(flowId, { kind: 'zoom-to', zoom: percent / 100 })
+}
+
 function onTopCommand(command: DesignerTopCommand) {
   // The parts disable what has no target; this is the same rule for a command that still arrives.
   if (!isMenuCommandEnabled(command, top.runMode, menuTargets.value)) return
@@ -542,6 +550,20 @@ function onTopCommand(command: DesignerTopCommand) {
     case 'edit.undo': {
       const flowId = center.state.activeFlowId
       if (flowId !== null) center.undoEdit(flowId)
+      return
+    }
+    // flowgate.v02.0059 T#1: the Toolbar and the View menu emit the same command; the Canvas of the
+    // open Flow does the fit / zoom and reports its Viewport, which the Toolbar's zoom value follows.
+    case 'view.fit':
+    case 'view.zoom-in':
+    case 'view.zoom-out':
+    case 'view.zoom-reset': {
+      const flowId = center.state.activeFlowId
+      if (flowId === null) return
+      if (command === 'view.fit') center.requestView(flowId, { kind: 'fit' })
+      else if (command === 'view.zoom-in') center.requestView(flowId, { kind: 'zoom-in' })
+      else if (command === 'view.zoom-out') center.requestView(flowId, { kind: 'zoom-out' })
+      else center.requestView(flowId, { kind: 'zoom-to', zoom: 1 })
       return
     }
     case 'run.validate': {

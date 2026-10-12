@@ -464,6 +464,7 @@ export default {
         zoom_out: '縮小',
         zoom_in: '拡大',
         zoom_value: 'ズーム率',
+        zoom_preset: 'ズーム率を選択',
         density: 'キャンバス配置密度',
       },
       // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.

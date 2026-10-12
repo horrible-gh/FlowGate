@@ -30,6 +30,7 @@
       :run-status="runStatus"
       @command="emit('command', $event)"
       @update:density="emit('update:density', $event)"
+      @update:zoom="emit('update:zoom', $event)"
     />
   </header>
 </template>
@@ -77,6 +78,8 @@ const emit = defineEmits<{
   'toggle-panel': [panel: DesignerWindowPanel]
   'show-tab': [tab: DesignerWindowTab]
   'update:density': [density: DesignerDensity]
+  /** A zoom preset of the Toolbar, in percent. */
+  'update:zoom': [percent: number]
   'open-recent': [request: DesignerRecentRequest]
 }>()
 </script>

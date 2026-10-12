@@ -148,10 +148,12 @@ import {
   CANVAS_MAX_ZOOM,
   CANVAS_MIN_ZOOM,
   DEFAULT_CANVAS_VIEWPORT,
+  clampCanvasZoom,
   sameViewport,
   type CanvasSize,
   type CanvasViewport,
 } from '../canvasView'
+import type { CanvasViewRequest } from '../designerCenterSession'
 import type { FlowGraph } from '../graph/flowGraph'
 import type { FlowDraftIssue } from '../graph/flowGraphSource'
 import FlowEdgePath from './FlowEdgePath.vue'
@@ -166,6 +168,8 @@ const props = withDefaults(
     viewport: CanvasViewport | null
     selectedNodeId: string | null
     sample: boolean
+    /** flowgate.v02.0059 T#1: the latest fit / zoom asked of this Canvas (Toolbar, View menu). */
+    viewRequest?: CanvasViewRequest | null
     /** flowgate.v02.0045 S3: the shown Graph is an editable draft. */
     editable?: boolean
     placing?: boolean
@@ -173,7 +177,7 @@ const props = withDefaults(
     canConnect?: ((source: string, target: string) => boolean) | null
     issues?: readonly FlowDraftIssue[]
   }>(),
-  { editable: false, placing: false, canConnect: null, issues: () => [] },
+  { viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [] },
 )
 
 const emit = defineEmits<{
@@ -194,6 +198,8 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const GRID_GAP = 22
+/** The first display and 화면 맞춤 fit the same way: never above 1x. */
+const FIT_OPTIONS = { padding: 0.12, minZoom: CANVAS_MIN_ZOOM, maxZoom: CANVAS_FIT_MAX_ZOOM }
 // The Graph origin bounds direct Canvas pan on the top/left; right and bottom stay open.
 /** flowgate.v02.0045 T0019: how near a handle a dragged connection snaps to it (Vue Flow: 20). */
 const CONNECTION_RADIUS = 36
@@ -255,7 +261,30 @@ function onNodesInitialized() {
 function fitOnFirstDisplay() {
   if (fitted || !nodesMeasured || !flow.value || props.graph.nodes.length === 0) return
   fitted = true
-  void flow.value.fitView({ padding: 0.12, minZoom: CANVAS_MIN_ZOOM, maxZoom: CANVAS_FIT_MAX_ZOOM })
+  void flow.value.fitView(FIT_OPTIONS)
+}
+
+// flowgate.v02.0059 T#1: fit / zoom asked from the Toolbar or the View menu. They run on the Vue
+// Flow instance, so zoom stays inside CANVAS_MIN_ZOOM..MAX_ZOOM, steps and presets zoom about the
+// Canvas centre and the pan bound (translateExtent) applies as for any other change. Vue Flow
+// reports no "end" for a programmatic change, so the result is committed here (stored per Flow).
+async function applyViewRequest(request: CanvasViewRequest) {
+  const instance = flow.value
+  if (!instance) return
+  fitted = true
+  if (request.kind === 'fit') {
+    // Nothing to fit on an empty Graph: show its default view.
+    if (props.graph.nodes.length === 0) await instance.setViewport({ ...DEFAULT_CANVAS_VIEWPORT })
+    else await instance.fitView(FIT_OPTIONS)
+  } else if (request.kind === 'zoom-in') {
+    await instance.zoomIn()
+  } else if (request.kind === 'zoom-out') {
+    await instance.zoomOut()
+  } else if (Number.isFinite(request.zoom)) {
+    await instance.zoomTo(clampCanvasZoom(request.zoom))
+  }
+  const { x, y, zoom } = liveViewport.value
+  emit('viewport-commit', { x, y, zoom })
 }
 
 function onNodeClick({ node }: NodeMouseEvent) {
@@ -390,6 +419,13 @@ watch(
   () => {
     const size = flow.value?.dimensions.value
     if (size && size.width > 0 && size.height > 0) emit('canvas-resize', { width: size.width, height: size.height })
+  },
+)
+
+watch(
+  () => props.viewRequest,
+  (request) => {
+    if (request) void applyViewRequest(request)
   },
 )
 

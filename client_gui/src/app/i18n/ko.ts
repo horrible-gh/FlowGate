@@ -474,6 +474,7 @@ export default {
         zoom_out: '축소',
         zoom_in: '확대',
         zoom_value: '확대/축소 비율',
+        zoom_preset: '확대/축소 비율 선택',
         density: '캔버스 배치 밀도',
       },
       // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.

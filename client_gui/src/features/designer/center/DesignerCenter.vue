@@ -43,6 +43,7 @@
           :graph="load.graph"
           :viewport="view?.viewport ?? null"
           :selected-node-id="view?.selectedNodeId ?? null"
+          :view-request="center.viewRequest.value?.flowId === activeTab.flowId ? center.viewRequest.value : null"
           :sample="center.isSampleSource"
           :placing="placing"
           @select-node="center.selectNode(activeTab.flowId, $event)"
