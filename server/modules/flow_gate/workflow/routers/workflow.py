@@ -957,7 +957,8 @@ async def document_proceed_unapproved_endpoint(
             expected_slot_generation=body.expected_slot_generation,
             request_key=body.request_key, actor_user_id=current_user["user_id"],
             user_permissions=_get_user_permissions(current_user), principal=principal,
-            locale=request.headers.get("x-locale") or "ko")
+            locale=request.headers.get("x-locale") or "ko",
+            api_base_url=str(request.url).split("/documents/", 1)[0])
 
     try:
         return await anyio.to_thread.run_sync(_proceed_sync)

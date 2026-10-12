@@ -213,6 +213,13 @@ class FakeDocs:
 
 @pytest.fixture
 def fake_env(monkeypatch, tmp_path):
+    # The isolated pause world has no branch-merge sessions (current admission contract).
+    monkeypatch.setattr(svc.db_git, "list_open_sessions", lambda: [])
+    from modules.flow_gate.db import operation_job
+    monkeypatch.setattr(operation_job, "get_group_freeze_claim", lambda group_id: None)
+    from modules.flow_gate.db import questions
+    monkeypatch.setattr(questions, "list_open_doc_ids_by_group", lambda group_id: [])
+    monkeypatch.setattr(svc.db_git, "get_config", lambda project_id: None)
     docs = FakeDocs()
     wfseq = FakeWfseq()
     paused = FakePausedStore()

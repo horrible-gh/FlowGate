@@ -1,7 +1,7 @@
 """0428 T#2: human-only TSR/TR2 slot completion without approval side effects.
 
-The explicit POST is the confirmation command. Dispatch consumption and unmanned
-resume are T#4/#5 work; this command neither releases a stop nor starts a worker.
+The explicit POST is the confirmation command. T#4 records the matching TSR
+continuation intent in its transaction and consumes it after committing.
 """
 from __future__ import annotations
 
@@ -129,7 +129,7 @@ def _tr2_baseline(doc, ctx, key):
 def proceed_unapproved(*, doc_id: str, expected_revision: int, expected_slot_id: int,
                        expected_slot_generation: int, request_key: str,
                        actor_user_id: str, user_permissions: set[str], principal,
-                       locale: str = "ko") -> dict:
+                       locale: str = "ko", api_base_url: str | None = None) -> dict:
     """Confirm exactly one current unapproved result, preserving its review/result."""
     if (principal is None or principal.kind != "human" or not actor_user_id
             or principal.user_id != actor_user_id):
@@ -180,12 +180,15 @@ def proceed_unapproved(*, doc_id: str, expected_revision: int, expected_slot_id:
             _tr2_baseline(fresh, ctx, key)
         if not lock_manager.still_held(ctx, key):
             _refuse("completion_source_locked")
+        from modules.flow_gate.services import workflow_completion_dispatch_service as dispatch_service
+        intent = dispatch_service.intent_for_report(fresh, item, api_base_url=api_base_url,
+                                                    locale=locale) if fresh["type_code"] == "TSR" and not replay else None
         try:
             decision = db_completion.record_decision(
                 sequence_id=item["sequence_id"], slot_id=item["id"],
                 slot_generation=expected_slot_generation, result_doc_id=doc_id,
                 document_revision=expected_revision, actor_user_id=actor_user_id,
-                request_key=request_key)
+                request_key=request_key, dispatch=intent)
         except db_completion.CompletionConflict as exc:
             raise MutationPolicyError(409, str(exc), str(exc)) from exc
         if decision.get("invalidated_at") is not None:
@@ -201,10 +204,17 @@ def proceed_unapproved(*, doc_id: str, expected_revision: int, expected_slot_id:
                                 "decided_at": decision["decided_at"],
                                 "doc_review_status": fresh["doc_review_status"],
                                 "source_applied": False if fresh["type_code"] == "TR2" else None})
-        return {"decision_id": decision["decision_id"], "slot_completed": True,
+        response = {"decision_id": decision["decision_id"], "slot_completed": True,
                 "completion_reason": "proceeded_unapproved", "doc_id": doc_id,
                 "doc_review_status": fresh["doc_review_status"],
                 "actor_user_id": decision["actor_user_id"], "decided_at": decision["decided_at"],
                 "sequence_id": item["sequence_id"], "slot_id": item["id"],
                 "slot_generation": expected_slot_generation, "document_revision": expected_revision,
                 "continuation_status": "not_started", "run_id": None}
+
+    # Commit the decision and intent, then release admission/source/resume locks
+    # before the consumer takes the same locks in the established order.
+    dispatch = db_completion.dispatch_for_decision(decision["decision_id"])
+    if dispatch is not None:
+        response.update(dispatch_service.consume(dispatch["dispatch_id"]))
+    return response

@@ -155,3 +155,14 @@ def invalidate_slot(
         store._execute(_sql(store, "invalidate_decisions"), [timestamp, reason, sequence_id, slot_id])
         store._execute(_sql(store, "cancel_dispatches"), [timestamp, sequence_id, slot_id])
         return True
+
+
+def dispatch_for_decision(decision_id: str) -> dict | None:
+    return get_store()._fetch_one(
+        "SELECT * FROM workflow_completion_dispatches WHERE decision_id = ? ORDER BY created_at, dispatch_id LIMIT 1",
+        [decision_id])
+
+
+def dispatch_by_id(dispatch_id: str) -> dict | None:
+    return get_store()._fetch_one(
+        "SELECT * FROM workflow_completion_dispatches WHERE dispatch_id = ?", [dispatch_id])

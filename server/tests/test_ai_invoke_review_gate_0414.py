@@ -503,6 +503,10 @@ class World:
 
 @pytest.fixture
 def world(monkeypatch):
+    # This review world has no branch-merge sessions; keep admission real.
+    monkeypatch.setattr(svc.db_git, "list_open_sessions", lambda: [])
+    from modules.flow_gate.db import operation_job
+    monkeypatch.setattr(operation_job, "get_group_freeze_claim", lambda group_id: None)
     w = World()
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda doc_id: {"id": 1})
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", lambda seq_id: list(w.items))

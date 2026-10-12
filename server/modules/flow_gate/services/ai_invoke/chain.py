@@ -17,6 +17,7 @@ from __future__ import annotations
 from modules.flow_gate.services.workflow_completion_service import completion_reason, slot_completed
 
 import uuid
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -1840,6 +1841,7 @@ def _paused_row_resume_state(
     *,
     include_target: bool = False,
     _read_context: Optional[dict] = None,
+    _decision_id: Optional[str] = None,
 ) -> dict:
     """Evaluate deterministic pause->resume admission without changing state.
 
@@ -1906,7 +1908,8 @@ def _paused_row_resume_state(
         reports = sorted((item for item in items
                           if item.get("type") == "TSR" and item.get("result_doc_id")),
                          key=lambda item: item.get("sort_order") or 0)
-        if reports and completion_reason(reports[-1]) == "proceeded_unapproved":
+        matching = next((i for i in reports if i.get("completion_decision_id") == _decision_id), None) if _decision_id else None
+        if reports and completion_reason(reports[-1]) == "proceeded_unapproved" and matching is None:
             return _state(False, "test_gate_decision_dispatch_required",
                           "This unapproved test report requires its decision continuation dispatch.")
 
@@ -2024,6 +2027,7 @@ def resume_chain(
 def _resume_chain_locked(
     *, group_id: str, user_id: str, api_base_url: str, locale: str = "ko",
     is_admin: bool = False, after_release: list[Callable[[], None]],
+    _completion_dispatch_id: Optional[str] = None,
 ) -> dict:
     """Resume a user-paused continuous chain from its next incomplete step (L0009 §2.4).
 
@@ -2044,7 +2048,13 @@ def _resume_chain_locked(
     from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
     from modules.flow_gate.services import workflow_decision_service
 
-    with _group_resume_lock(group_id):
+    with ExitStack() as resume_stack:
+        resume_stack.enter_context(_group_resume_lock(group_id))
+        completion_dispatch = None
+        if _completion_dispatch_id is not None:
+            from modules.flow_gate.services import workflow_completion_dispatch_service as dispatch_service
+            completion_dispatch = resume_stack.enter_context(
+                dispatch_service.launch_context(_completion_dispatch_id))
         active = _svc()._active_run_for_group(group_id)
         if active is not None:
             raise _http_error(409, "run_already_active",
@@ -2063,7 +2073,17 @@ def _resume_chain_locked(
                               "Only the user who paused this chain (or an admin) may "
                               "resume it.", group_id=group_id)
         project_id = group_id.split(".", 1)[0]
-        preflight = _svc()._paused_row_resume_state(project_id, pre_row, include_target=True)
+        if completion_dispatch is not None:
+            target = _resolve_continuation_target(pre_row["doc_ref"],
+                pre_row.get("continuation_target_seq"),
+                to_end=pre_row.get("continuation_target_seq") is None)
+            next_item = _svc()._next_incomplete_item_seq(pre_row["doc_ref"])
+            if next_item is None or int(next_item) > target:
+                return dispatch_service.finish_empty(completion_dispatch, pre_row, target)
+            preflight = _paused_row_resume_state(project_id, pre_row, include_target=True,
+                                                _decision_id=completion_dispatch["decision_id"])
+        else:
+            preflight = _svc()._paused_row_resume_state(project_id, pre_row, include_target=True)
         if not preflight["resume_available"]:
             raise _http_error(
                 422,
@@ -2078,13 +2098,16 @@ def _resume_chain_locked(
         # authorized. A row that changed identity (newer paused_by/paused_at/stop_kind/
         # stop_run_id) between the reads fails the predicate and falls through to
         # resume_conflict below, same as "nothing to consume".
-        row = db_paused.release_owned(
-            group_id,
-            paused_by=pre_row.get("paused_by"),
-            paused_at=pre_row.get("paused_at"),
-            stop_kind=pre_row.get("stop_kind"),
-            stop_run_id=pre_row.get("stop_run_id"),
-        )
+        if completion_dispatch is not None:
+            row = dispatch_service.claim_stop(completion_dispatch, pre_row)
+        else:
+            row = db_paused.release_owned(
+                group_id,
+                paused_by=pre_row.get("paused_by"),
+                paused_at=pre_row.get("paused_at"),
+                stop_kind=pre_row.get("stop_kind"),
+                stop_run_id=pre_row.get("stop_run_id"),
+            )
         # release_owned is tri-state (0459 TR0008 rev2): a bare None (nothing left to
         # consume) and a ReleaseSuperseded (a newer row replaced the one this call was
         # authorized against) both fall through to the SAME resume_conflict here --
@@ -2101,7 +2124,7 @@ def _resume_chain_locked(
             # 0688 TR0006 review: ``stop_code`` re-parks it on the stop a replayed gate
             # reached instead; a row written meanwhile (a user pause) outranks that.
             try:
-                if stop_code is not None and db_paused.get_by_group(group_id) is not None:
+                if (stop_code is not None or completion_dispatch is not None) and db_paused.get_by_group(group_id) is not None:
                     return
                 db_paused.upsert(
                     group_id=row["group_id"],
