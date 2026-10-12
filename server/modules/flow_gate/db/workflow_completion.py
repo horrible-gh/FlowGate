@@ -137,7 +137,7 @@ def cas_dispatch(
     store = get_store()
     return store._execute_affected(_sql(store, "cas_dispatch"), [
         state, run_id, token_id, error_code, now_iso(), dispatch_id, expected_state, expected_version,
-        run_id, run_id, token_id, token_id,
+        run_id, run_id, token_id, token_id, state,
     ]) == 1
 
 

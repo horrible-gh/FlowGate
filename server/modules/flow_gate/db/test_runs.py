@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from .workflow_invalidation import test_evidence_mutation
 from .connection import get_store, now_iso
 
 
@@ -54,6 +55,7 @@ def get_active_by_group(group_id: str) -> Optional[dict]:
     )
 
 
+@test_evidence_mutation('admission')
 def insert_run(
     *,
     doc_id: str,
@@ -112,6 +114,7 @@ def insert_run(
 _SPEC_RESULT_TO_LEGACY = {"PASS": "pass", "FAIL": "fail"}
 
 
+@test_evidence_mutation('admission')
 def insert_spec_run(
     *,
     doc_id: str,
@@ -229,12 +232,14 @@ def latest_by_tsr_doc(tsr_doc_id: str) -> Optional[dict]:
     )
 
 
+@test_evidence_mutation('run')
 def set_run_tsr_doc(run_id: str, tsr_doc_id: str) -> None:
     get_store()._execute(
         "UPDATE test_runs SET tsr_doc_id = ? WHERE run_id = ?", [tsr_doc_id, run_id]
     )
 
 
+@test_evidence_mutation('case')
 def set_execution_case_result(*, case_row_id: int, status: str, actual: Optional[str],
                               case_meta: str) -> None:
     """0684 T#1 (D#1 §3-4): one Case result of a live execution run, kept as it arrives.
@@ -249,6 +254,7 @@ def set_execution_case_result(*, case_row_id: int, status: str, actual: Optional
     )
 
 
+@test_evidence_mutation('run')
 def mark_spec_report_failed(run_id: str) -> None:
     """A specification result whose TSR could not be written is not a gate pass
     (0257 NR0003 §2 applied to 0549): terminal failed with a distinct error."""
@@ -259,6 +265,7 @@ def mark_spec_report_failed(run_id: str) -> None:
     )
 
 
+@test_evidence_mutation('run')
 def set_run_result_meta(run_id: str, result_meta: str) -> None:
     get_store()._execute(
         "UPDATE test_runs SET result_meta = ? WHERE run_id = ?", [result_meta, run_id]
@@ -357,6 +364,7 @@ def pick_next_running() -> Optional[dict]:
     return get_run(row["run_id"])
 
 
+@test_evidence_mutation('case')
 def mark_case_finished(
     *,
     case_id: int,
@@ -374,6 +382,7 @@ def mark_case_finished(
     )
 
 
+@test_evidence_mutation('case')
 def update_case_observation(
     *,
     case_id: int,
@@ -408,6 +417,7 @@ def set_run_source_root(run_id: str, source_root: str, source_root_kind: str) ->
     )
 
 
+@test_evidence_mutation('run')
 def finish_run(
     *,
     run_id: str,
@@ -437,6 +447,7 @@ def finish_run(
     )
 
 
+@test_evidence_mutation('run')
 def cas_running_to_cancelling(run_id: str) -> None:
     """Conditional 'running'→'cancelling' write. Caller must hold the per-run lock
     (test_run_service._get_run_lock) to use this as a true CAS — see finish_run."""
@@ -446,6 +457,7 @@ def cas_running_to_cancelling(run_id: str) -> None:
     )
 
 
+@test_evidence_mutation('run')
 def cas_cancelling_to_cancelled(run_id: str, *, error: str = "cancelled_by_user") -> None:
     """Conditional 'cancelling'→'cancelled' terminal write. Same locking caveat as
     cas_running_to_cancelling; safe to call twice (second call is a no-op)."""

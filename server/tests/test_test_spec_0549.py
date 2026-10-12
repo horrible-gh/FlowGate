@@ -340,6 +340,10 @@ def env(monkeypatch, tmp_path, migrated_sqlite_db):
 
     store = _Store(migrated_sqlite_db("spec_0549.db"))
     monkeypatch.setattr(db_test_runs, "get_store", lambda: store)
+    # 0428 T#3 run evidence uses the same migrated result database. The workflow
+    # rows in this harness are intentionally empty (documents/heads are dict stubs).
+    from modules.flow_gate.db import workflow_invalidation
+    monkeypatch.setattr(workflow_invalidation, "get_store", lambda: store)
     monkeypatch.setattr(db_events, "insert_event", lambda *args, **kwargs: 1)
     e = _Env()
     e.docs[TS_ID] = {

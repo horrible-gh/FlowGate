@@ -370,13 +370,15 @@ def general_source_mutation(
                     TR2_MANAGED_FILE, hit, details={"group_id": group_id, "requested_path": path,
                                                    "required_mutation": "TR2"}
                 )
-        yield GeneralSourceMutation(
-            project_id=project_id,
-            group_id=group_id,
-            root=root,
-            holder=holder,
-            exact_targets=exact_targets,
-            recursive_targets=recursive_targets,
-        )
+        from modules.flow_gate.db.workflow_invalidation import source_mutation
+        with source_mutation(project_id, group_id, root):
+            yield GeneralSourceMutation(
+                project_id=project_id,
+                group_id=group_id,
+                root=root,
+                holder=holder,
+                exact_targets=exact_targets,
+                recursive_targets=recursive_targets,
+            )
     finally:
         _release_group(lock)

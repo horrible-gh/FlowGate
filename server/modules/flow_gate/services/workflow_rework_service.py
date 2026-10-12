@@ -324,6 +324,10 @@ def _reopen_in_transaction(
         root_prev_status=root_prev_status,
     )
 
+    if root_doc is not None:
+        from modules.flow_gate.db.workflow_invalidation import reopen_sequence
+        reopen_sequence(root_doc['doc_id'], target_seq)
+
     reopened: list[str] = []
     # 0660 T0004 §4 (S2): every document this rewind removes, so a client can close its tab
     # whichever entry point (strip cell or AC tab) started the rewind.

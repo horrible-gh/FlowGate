@@ -116,3 +116,41 @@ def test_actual_apply_recovery_rows_and_revert_pending_are_not_skipped(env):
     assert response.status_code==409 and response.json()['error']['code']=='workflow_revert_pending',response.text
     assert snapshot(env,doc_id)==before
     assert env['store']._fetch_one('SELECT COUNT(*) AS n FROM workflow_completion_decisions',[])['n']==0
+
+
+
+@pytest.mark.parametrize('validation_passes',[False,True])
+def test_real_tr2_apply_invalidates_prior_tsr_even_after_rollback(env, validation_passes):
+    from modules.flow_gate.db import workflow_completion as decisions
+    from modules.flow_gate.services.workflow_completion_service import slot_completed
+    group,t2,doc_id=ready_tr2('0432')
+    client=api()
+    seq=seqdb.get_sequence_by_doc_id(group['root'])
+    ts=group['group_id']+'.0088-TS'
+    tsr=group['group_id']+'.0089-TSR'
+    for identity,kind,number,review in [(ts,'TS',88,'approved'),(tsr,'TSR',89,'rejected')]:
+        documents.create({'doc_id':identity,'project_id':PROJECT,'module':'default',
+                          'group_id':group['group_id'],'type_code':kind,'seq':number,
+                          'title':'prior test evidence','revision_no':0})
+        documents.update(identity,{'doc_review_status':review})
+    documents.update(tsr,{'target_id':ts})
+    seqdb.insert_sequence_item(seq['id'],-1,'TS','prior TS','doc',-2)
+    seqdb.insert_sequence_item(seq['id'],0,'TSR','prior TSR','doc',-1)
+    for row in seqdb.get_sequence_items(seq['id']):
+        if row['item_seq']==-1: seqdb.set_item_result_doc_id(row['id'],ts)
+        if row['item_seq']==0: seqdb.set_item_result_doc_id(row['id'],tsr)
+    response=proceed(client,tsr,request_key='confirmed:prior-tsr')
+    assert response.status_code==200,response.text
+    decision_id=response.json()['decision_id']
+    before=(env['repo']/'src'/'app.txt').read_bytes()
+    if validation_passes:
+        (env['repo']/'gate.ok').write_bytes(b'ok')
+    result=approve(client,doc_id,1,'actual-apply-with-prior-tsr')
+    assert result.status_code==(200 if validation_passes else 422),result.text
+    if not validation_passes:
+        assert (env['repo']/'src'/'app.txt').read_bytes()==before
+    old=decisions.get_decision(decision_id)
+    assert old['invalidated_at'] and old['invalidation_reason']=='tsr_source_basis_changed'
+    row=next(r for r in seqdb.get_sequence_items(seq['id']) if r['result_doc_id']==tsr)
+    assert row['slot_generation']>old['slot_generation'] and not slot_completed(row)
+    assert documents.get_by_id(tsr)['doc_review_status']=='rejected'

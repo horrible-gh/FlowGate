@@ -42,7 +42,7 @@ def client(prepared):
 
 
 def post(client, prepared, **over):
-    body = dict(expected_revision=7, expected_slot_id=prepared[2], expected_slot_generation=0,
+    body = dict(expected_revision=7, expected_slot_id=prepared[2], expected_slot_generation=seqdb.get_item_by_id(prepared[2])['slot_generation'],
                 request_key='confirmed-1')
     body.update(over)
     return client.post('/api/v1/documents/'+RESULT+'/proceed-unapproved', json=body)
@@ -56,7 +56,7 @@ def counts(db):
 
 def invoke(prepared, **over):
     kwargs = dict(doc_id=RESULT,expected_revision=7,expected_slot_id=prepared[2],
-                  expected_slot_generation=0,request_key='confirmed-1',actor_user_id='human-1',
+                  expected_slot_generation=seqdb.get_item_by_id(prepared[2])['slot_generation'],request_key='confirmed-1',actor_user_id='human-1',
                   user_permissions={'document.approve'},principal=human_principal({'user_id':'human-1'}))
     kwargs.update(over)
     return command.proceed_unapproved(**kwargs)

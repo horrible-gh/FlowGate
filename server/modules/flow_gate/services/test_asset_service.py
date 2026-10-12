@@ -164,6 +164,8 @@ def update(ts_id: str, path: str, *, expected_hash: str, content: str,
                 if not fresh or fresh.get("revision_no") != doc.get("revision_no"):
                     raise test_run_service._http_error(409, "ts_changed", doc_id=ts_id)
                 paired = _preconditions(ts_id, fresh)
+                from modules.flow_gate.db.workflow_invalidation import invalidate_test
+                invalidate_test(ts_id, 'tsr_test_asset_changed')
                 _replace_bytes(target, new)
                 db_events.insert_event(ts_id, "test_spec_asset_updated", note=json.dumps({
                     "actor": actor_id, "path": path, "old_hash": old_hash, "new_hash": new_hash,

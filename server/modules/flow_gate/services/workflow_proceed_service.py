@@ -150,6 +150,18 @@ def proceed_unapproved(*, doc_id: str, expected_revision: int, expected_slot_id:
         if doc["type_code"] == "TR2":
             stack.enter_context(tr2_service._lock(doc_id))
         ctx, key = stack.enter_context(_group_lock(doc))
+        # Validate the linked TS/group before any durable Basis observation.
+        _safety(doc, principal)
+        if doc['type_code'] == 'TSR':
+            from modules.flow_gate.services import test_basis_service
+            from modules.flow_gate.db.workflow_invalidation import observe_basis
+            ts_id = doc.get('target_id') or doc.get('triggered_by')
+            ts = db_docs.get_by_id(ts_id) if ts_id else None
+            state = test_basis_service.live_state(ts)
+            basis_token = ((state.get('live') or {}).get('basis_id')
+                           or 'unverifiable:' + str(state.get('state')))
+            if ts is not None:
+                observe_basis(ts['doc_id'], basis_token)
         stack.enter_context(db_completion.decision_transaction(item["sequence_id"], item["id"]))
         # Re-read after waiting and after the DB slot lock. Admission, audit and
         # decision CAS share this transaction; stale requests produce no decision.

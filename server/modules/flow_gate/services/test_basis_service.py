@@ -314,7 +314,11 @@ def resolve(doc: dict, cases: list[dict], *, memo: bool = False) -> dict:
     manifest = _manifest(_roles(cases), live["hashes"])
     identity = _identity(doc, policy=live["exclusion_policy_version"],
                          fingerprint=live["content_fingerprint"], manifest=manifest)
-    return {"basis_id": canonical_hash(identity), **identity, "manifest": manifest,
+    basis_id = canonical_hash(identity)
+    if not memo:
+        from modules.flow_gate.db.workflow_invalidation import observe_basis
+        observe_basis(doc['doc_id'], basis_id)
+    return {"basis_id": basis_id, **identity, "manifest": manifest,
             "probe": {"source_revision": live["source_revision"],
                       "source_dirty": live["source_dirty"]}}
 
