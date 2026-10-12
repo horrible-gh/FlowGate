@@ -4,6 +4,14 @@ Start, stop and resume each run in one Flow guard; the checks come first and wri
 order of L0009 §4.6 / §4.7 fixes which error wins). Policies come from the run's snapshot only.
 Until D0004 §8 is answered every policy is ``undecided``, so a start is refused with
 ``run_policy_undecided`` naming the policies this revision needs (P0008 S5-1).
+
+flowgate.v02.0056 T#1: a run read also tells the run band how many approved cards' propagations wait
+for the run to go on (``pending_propagation_count`` / ``pending_node_keys``: "멈춤 · 다음 카드 N개 대기")
+and each node run whether its card waits for a person's approval (``awaiting_approval``,
+``node_approval``). A root bound in the rejected state keeps the root bound start contract (L0009
+§2.6.5 step 2): it takes ``review_rejected`` at the run start, the card is rejected, its card approval is
+refused (409 ``node_not_in_review``) and nothing follows it — the one exception to "a person's rejection
+is no node event" (T0004 §5), as answered on this TR's question.
 """
 from __future__ import annotations
 
@@ -20,7 +28,7 @@ from modules.flow_gate.graph_workflow.domain.run_policies import (
 )
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
 
-from . import node_dispatch, result_binder
+from . import node_approval, node_dispatch, result_binder
 from .engine_router import Ownership, read_ownership
 from .errors import GraphApiError
 from .flow_guard import with_flow_guard
@@ -126,7 +134,11 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int]) -> dict:
 
 
 def _root_bound_start(ctx: RunContext, root: dict, policies: dict) -> None:
-    """L0009 §2.6.5 step 2: the bound node takes its root document's state; no token."""
+    """L0009 §2.6.5 step 2: the bound node takes its root document's state; no token.
+
+    flowgate.v02.0056 T#1: kept as it is for a rejected root (the answer to this TR's question) — the root
+    bound start's ``review_rejected`` is the one rejection that is still a node event; the card is rejected,
+    not awaiting approval, and nothing follows it until its root is revised."""
     key, doc_id = ctx.binding["node_key"], root["doc_id"]
     review = root.get("doc_review_status")
     to = "done" if review in ("approved", "wf_done") else "review"
@@ -220,22 +232,26 @@ def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
     if run is None:
         return None
     rows = run_store.node_runs(run_id)
+    pending = run_store.pending_propagations(run_id)
     out = {
         "run_id": run["run_id"], "flow_id": run["group_id"], "revision_no": run["revision_no"],
         "status": run["status"], "started_at": run["started_at"], "started_by": run.get("started_by"),
         "stopped_at": run.get("stopped_at"), "finished_at": run.get("finished_at"),
         "open_node_keys": [r["node_key"] for r in rows if r["status"] == "open"],
         "last_event_seq": run["last_event_seq"],
+        "pending_propagation_count": len(pending),
+        "pending_node_keys": sorted({p["node_key"] for p in pending}),
     }
     if with_nodes:
-        out["node_runs"] = [node_run_wire(r) for r in rows]
+        out["node_runs"] = [node_run_wire(r, run["group_id"]) for r in rows]
     return out
 
 
-def node_run_wire(row: dict) -> dict:
+def node_run_wire(row: dict, flow_id: str) -> dict:
     return {"node_key": row["node_key"], "status": row["status"], "opened_at": row.get("opened_at"),
             "finished_at": row.get("finished_at"), "result_doc_id": row.get("result_doc_id"),
-            "root_bound": bool(row.get("root_bound")), "dispatch": dispatch_block(row)}
+            "root_bound": bool(row.get("root_bound")), "dispatch": dispatch_block(row),
+            "awaiting_approval": node_approval.awaiting_approval(flow_id, row)}
 
 
 def current_run(group: dict) -> dict:

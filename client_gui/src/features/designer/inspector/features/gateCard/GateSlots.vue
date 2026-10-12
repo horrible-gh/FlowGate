@@ -7,14 +7,14 @@
        flowgate.v02.0053 T#5 (0053 CH) — a Custom card shows 지시서 · 레포트 like 조사 · 작업 (its 지시서 line hidden
        when its settings omit the instruction, useGateCard); a document line's name has no type code. -->
   <section v-if="lines.length" class="inspector-gate-card" data-test="inspector-gate-card" :data-shape="shape">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" />
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { openDocument } from '../../openDocument'
+import { openDocument, openDocumentHistory } from '../../openDocument'
 import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import { gateCardShape, gateCardSlots, type GateSlot } from './gateCardModel'
@@ -61,6 +61,11 @@ function open(line: InspectorSlotView) {
 /** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
 function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit')
+}
+
+/** The history button: the document's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+function history(line: InspectorSlotView) {
+  if (line.id) openDocumentHistory(line.id)
 }
 </script>
 

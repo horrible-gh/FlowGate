@@ -90,7 +90,8 @@ describe('조사 card lines (researchCardModel)', () => {
 
   it('the document state: review status first, else the document status, unknown values as sent', () => {
     expect(researchDocumentState(null, null)).toBeNull()
-    expect(researchDocumentState(null, 'draft')).toEqual({ key: 'slot_state.writing', raw: 'draft', tone: 'info' })
+    // flowgate.v02.0056 F1: a document being written is a neutral state (the line draws no badge for it).
+    expect(researchDocumentState(null, 'draft')).toEqual({ key: 'slot_state.writing', raw: 'draft', tone: 'neutral' })
     expect(researchDocumentState(null, 'closed')).toEqual({ key: 'slot_state.closed', raw: 'closed', tone: 'neutral' })
     expect(researchDocumentState('rejected', 'open')).toEqual({ key: 'review_status.rejected', raw: 'rejected', tone: 'danger' })
     expect(researchDocumentState('wf_done', 'open')).toEqual({ key: 'review_status.wf_done', raw: 'wf_done', tone: 'neutral' })
@@ -122,7 +123,7 @@ describe('설계 card lines (designCardModel)', () => {
 describe('요구사항 / 버그 card line (requirementCardModel)', () => {
   it('R is the 요구사항 line, B the 버그 리포트 line; without a document the line has none (no ＋)', () => {
     expect(requirementCardSlots(REQ)[0]).toMatchObject({ name: 'requirement', id: REQ.docId, open: 'enabled' })
-    expect(requirementCardSlots(REQ)[0].state).toEqual({ key: 'slot_state.writing', raw: 'draft', tone: 'info' })
+    expect(requirementCardSlots(REQ)[0].state).toEqual({ key: 'slot_state.writing', raw: 'draft', tone: 'neutral' })
     expect(requirementCardSlots(facts(REQ, 'B'))[0].name).toBe('bug')
     expect(requirementCardSlots(facts(REQ, 'R', NO_DOCUMENT))).toEqual([
       { key: 'document', kind: 'document', name: 'requirement', id: null, empty: true, emptyKey: null, state: null, focus: false, open: 'none' },
@@ -196,7 +197,7 @@ describe('작업계획 card (workPlanModel, stage 2)', () => {
     expect(actions.deploy).toEqual({ visible: true, enabled: false, reason: 'deploy.unconnected' })
     expect(actions.redeploy).toEqual({ visible: true, enabled: false, reason: 'deploy.unconnected' })
     expect(workPlanSlotState('approved', 'open')).toMatchObject({ raw: 'approved', tone: 'success' })
-    expect(workPlanSlotState(null, 'draft')).toMatchObject({ key: 'slot_state.writing', tone: 'info' })
+    expect(workPlanSlotState(null, 'draft')).toMatchObject({ key: 'slot_state.writing', tone: 'neutral' })
   })
 })
 
@@ -287,10 +288,10 @@ describe('card documents tab parts', () => {
     expect(w.text()).not.toContain('＋')
   })
 
-  it('RequirementSlots: 요구사항 for R with the 작성 중 dot; 버그 리포트 for B', () => {
+  it('RequirementSlots: 요구사항 for R, no badge while it is being written (0056 F1); 버그 리포트 for B', () => {
     const w = mount(RequirementSlots, { props: { target: REQ }, global })
     expect(w.get('[data-test="inspector-slot-name"]').text()).toBe('요구사항')
-    expect(w.get('[data-test="inspector-slot-state"]').attributes('title')).toBe('작성 중')
+    expect(w.find('[data-test="inspector-slot-state"]').exists()).toBe(false)
     expect(mount(RequirementSlots, { props: { target: facts(REQ, 'B') }, global }).get('[data-test="inspector-slot-name"]').text()).toBe('버그 리포트')
   })
 

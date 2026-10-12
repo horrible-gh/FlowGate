@@ -275,11 +275,17 @@ describe('check section — state shown (flowgate.v02.0048 T#12)', () => {
   it.each([
     ['approved', '확인됨'],
     ['rejected', '반려됨'],
-    ['draft', '상태: draft'],
   ])('AC %s -> %s', async (status, text) => {
     acs.get(AC_DOC)!.status = status
     const w = await mountPart(CheckTab)
     expect(el(w, 'check-review').attributes('title')).toBe(text)
+  })
+
+  // flowgate.v02.0056 F1: a state that asks nothing of the operator (a draft AC, neutral) draws no badge.
+  it('AC draft -> no state badge on the line', async () => {
+    acs.get(AC_DOC)!.status = 'draft'
+    const w = await mountPart(CheckTab)
+    expect(el(w, 'check-review').exists()).toBe(false)
   })
 
   it('a final approval job of this AC: queued line; a recovery one says so', async () => {

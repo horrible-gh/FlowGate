@@ -8,17 +8,20 @@ types. The review stage (``review_stage``) also takes from here: the Flow's engi
 node an AI run or a result document belongs to, the project default reviewer, the v0.1 document review
 loop (started as the AI invoke route starts it, its review hops told the card's review basis, and its
 state) and the v0.1 approval as the unmanned chain makes it, followed by the Graph contact a person's
-approval reaches. The source tools' step type judgement takes the open run node a token was mapped to.
+approval reaches, and whether the AI run of a node still holds the Flow's group AI lease (flowgate.v02.0056
+T#1). The source tools' step type judgement takes the open run node a token was mapped to.
 """
 from __future__ import annotations
 
 import hashlib
 import logging
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from modules.flow_gate.db import ai_groups as db_ai_groups
 from modules.flow_gate.db import ai_invoke_document_review_loops as db_review_loops
 from modules.flow_gate.db import ai_providers as db_ai_providers
+from modules.flow_gate.db import group_ai_leases as db_leases
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.graph_workflow.api import envelope, v01_contact
@@ -33,6 +36,7 @@ from modules.flow_gate.settings import ai_execution_policy_service
 __all__ = ["GraphApiError", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid",
            "run", "load_flow", "require_writable", "repeat_choices", "ai_exists", "team_exists",
            "node_running", "graph_owned", "project_of", "node_of_ai_run", "node_of_result", "open_node_of_token",
+           "node_ai_run_active",
            "default_reviewer", "last_rejection", "start_review_loop", "review_loop_row", "review_loop_active",
            "approve"]
 
@@ -144,6 +148,32 @@ def node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[dict, str]]:
         if found is not None:
             return found
     return None
+
+
+def _lease_held(lease: Optional[dict]) -> bool:
+    """An unexpired lease row (read only: the run reads that ask may sit inside a Flow guard, so the
+    expired row is left for the lease's own recovery instead of being reclaimed here)."""
+    if not lease or not lease.get("run_id") or not lease.get("expires_at"):
+        return False
+    try:
+        expires = datetime.fromisoformat(str(lease["expires_at"]))
+    except ValueError:
+        return False
+    return (expires if expires.tzinfo else expires.replace(tzinfo=timezone.utc)) > datetime.now(timezone.utc)
+
+
+def node_ai_run_active(flow_id: str, node_key: str) -> bool:
+    """The AI run that holds the Flow's group AI lease now is one of the node's (a token mapped to the
+    node in the Flow's active run carries its run id): the node's AI has not ended yet."""
+    lease = db_leases.get(flow_id)
+    run_row = run_store.active_run(flow_id) if _lease_held(lease) else None
+    if run_row is None:
+        return False
+    mapped = get_store()._fetch_one(
+        "SELECT m.node_key FROM graph_run_token_map m JOIN tokens t ON t.token_id = m.token_id "
+        "WHERE m.run_id = ? AND m.node_key = ? AND t.ai_run_id = ?",
+        [run_row["run_id"], node_key, lease["run_id"]])
+    return mapped is not None
 
 
 def node_of_result(flow_id: str, doc_id: Optional[str]) -> Optional[dict]:

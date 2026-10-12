@@ -2,10 +2,9 @@
 
 Pure. The 0053 CH agreement (§4 "settings as drawn") and the v7 settings blocks name the items:
 
-- run cards (research N, work T / T2, design D / P / L / DB, custom): instruction use / omit, after
-  review, run AI, restart, review AI, review count, and the advanced time limit and review basis;
-- test cards (TS): instruction, after review, and the scenario writing block (writer AI, review AI,
-  review count). The run block shows each case's mode, which lives on the case inside the TS
+- run cards (research N, work T / T2, design D / P / L / DB, custom): instruction use / omit, run AI,
+  restart, review AI, review count, and the advanced time limit and review basis;
+- test cards (TS): instruction and the scenario writing block (writer AI, review AI, review count). The run block shows each case's mode, which lives on the case inside the TS
   document (0549 contract 2), so the card stores nothing for it;
 - requirement cards (R / B): AI delegation off / on, its scope, AI Team and the safety limits —
   values only, no delegation engine (0053 CH: out of this scope);
@@ -29,8 +28,11 @@ How a run applies them (``run_plan``, ``result_doc_type``, ``after_result``, ``r
 - review count not 0: when the node's AI run has ended, the card's review AI reviews the result with
   the v0.1 document review loop (review count, review basis, rework by the run AI); every review hop
   is told the review basis (``review_basis_note``);
-- after review: follow approves the result when the review passed (or at once with no review),
-  human leaves it to a person, as before.
+- what follows the review is fixed (flowgate.v02.0056 T#1, 0002-CH turn 5~10: the after review setting
+  is gone): the result is approved when the review passed, or at once with no review; a review that
+  ends any other way (count spent, failure, stop) and a result a person wrote wait for a person's
+  approval of the card. A stored ``after_review`` value is not a field any more, so nothing reads it
+  (migration 147 deletes the rows).
 
 Value checks that need the server (the repeat count range, an AI or AI Team that exists) are passed in.
 """
@@ -83,20 +85,18 @@ class Field:
 
 
 _INSTRUCTION = Field("instruction", CHOICE, "use", ("use", "omit"))
-# Today a node's result waits in review for a person's decision.
-_AFTER_REVIEW = Field("after_review", CHOICE, "human", ("follow", "human"))
 _RUN_AI = Field("run_ai", AI)                    # None: the node's assignee AI
 _REVIEW_AI = Field("review_ai", AI)              # None: the project's default reviewer
 _REVIEW_COUNT = Field("review_count", REPEAT, 0)
 _FIELDS = {
     RUN: (
-        _INSTRUCTION, _AFTER_REVIEW, _RUN_AI,
+        _INSTRUCTION, _RUN_AI,
         Field("restart", REPEAT, 0),             # a single node run is one-shot today
         _REVIEW_AI, _REVIEW_COUNT,
         Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMIT_MINUTES),
         Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA)),
     ),
-    TEST: (_INSTRUCTION, _AFTER_REVIEW, _RUN_AI, _REVIEW_AI, _REVIEW_COUNT),
+    TEST: (_INSTRUCTION, _RUN_AI, _REVIEW_AI, _REVIEW_COUNT),
     REQUIREMENT: (
         Field("delegation", CHOICE, "off", ("off", "on")),
         Field("scope", CHOICE, "end", ("end", "confirm")),
@@ -229,13 +229,13 @@ def _count(value: Any) -> Optional[int]:
 
 
 def after_result(kind: Optional[str], stored: dict) -> Optional[str]:
-    """What follows a node's AI result: the card's AI review (``REVIEW``), an approval (``APPROVE``:
-    after review follow with no review), or None (a person decides, as before)."""
+    """What follows a node's AI result: the card's AI review (``REVIEW``: review count not 0), else an
+    approval at once (``APPROVE``: no review); None for a card kind without a run (a person decides)."""
     if kind not in (RUN, TEST):
         return None
     if _count(stored.get("review_count")) not in (None, 0):
         return REVIEW
-    return APPROVE if stored.get("after_review") == "follow" else None
+    return APPROVE
 
 
 def review_loop(stored: dict, *, reviewer: str, reworker: str) -> dict:

@@ -11,7 +11,8 @@ once with a new key) leaves it waiting too.
 
 The harness's ``store`` is taken over only to apply the migrations as ``test_fg_card_settings`` applies
 them: a statement an earlier migration already made (``idx_chat_cmd_run`` of 136, again in 137) must not
-stop the setup.
+stop the setup. Its token issue is taken over too (flowgate.v02.0056 T#1, ``token_scratch_in_storage``): the
+harness puts the token scratch outside the storage root, which the token scratch policy refuses.
 """
 from __future__ import annotations
 
@@ -20,11 +21,13 @@ import sqlite3
 
 import pytest
 
+from test_fg_card_approval_tr2_0056 import token_scratch_in_storage  # noqa: F401 — fixture used by name
 from test_tr2_connected_e2e_0565 import (  # noqa: F401 — fixtures used by name
     USER, _Db, _QUERIES, _SCHEMA_DIR, ai_direct_t2, api, env, git, git_head, make_group, repo, submit_tr2,
 )
 
-pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git binary unavailable")
+pytestmark = [pytest.mark.skipif(shutil.which("git") is None, reason="git binary unavailable"),
+              pytest.mark.usefixtures("token_scratch_in_storage")]
 
 
 @pytest.fixture

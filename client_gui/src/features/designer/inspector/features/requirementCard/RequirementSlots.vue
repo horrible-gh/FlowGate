@@ -4,14 +4,14 @@
        name) opens a document in its window, ✎ straight in its editor. No server call.
        flowgate.v02.0053 T#5 (0053 CH) — 요구사항 (버그 리포트 on a bug) · AI 위임 while AI 위임 is on. -->
   <section class="inspector-requirement-card" data-test="inspector-requirement-card" :data-doc-type="target.docType ?? ''">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" />
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { openDocument } from '../../openDocument'
+import { openDocument, openDocumentHistory } from '../../openDocument'
 import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import { requirementCardSlots, type RequirementSlot } from './requirementCardModel'
@@ -53,6 +53,11 @@ function open(line: InspectorSlotView) {
 /** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
 function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit')
+}
+
+/** The history button: the document's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+function history(line: InspectorSlotView) {
+  if (line.id) openDocumentHistory(line.id)
 }
 </script>
 

@@ -769,10 +769,11 @@ describe('Q&A tab in the Frame (real registry)', () => {
     expect(tabLabels(w).some((label) => label.startsWith('Q&A'))).toBe(true)
   })
 
-  it('no team handling, resume or AI answer request appears', async () => {
+  // flowgate.v02.0056 F1: the AI answer request is a per-question operation now ([AI 답변 요청], qnaAsk spec).
+  it('no team handling, resume or mention copy appears', async () => {
     const w = await mountFrame(SELECTIONS.v01)
     await openTab(w, 'Q&A')
     const text = w.text()
-    for (const word of ['팀 내 처리', '재개', 'AI 답변 요청', '멘트 복사', '위임']) expect(text).not.toContain(word)
+    for (const word of ['팀 내 처리', '재개', '멘트 복사', '위임']) expect(text).not.toContain(word)
   })
 })

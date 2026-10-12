@@ -6,14 +6,14 @@
        flowgate.v02.0053 T#5 (0053 CH) — the lines are the card's documents (made when it was placed); the
        지시서 line is hidden when the card's settings omit the instruction (useTaskCard). -->
   <section class="inspector-task-card" data-test="inspector-task-card" :data-doc-type="target.docType ?? ''">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" />
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { openDocument } from '../../openDocument'
+import { openDocument, openDocumentHistory } from '../../openDocument'
 import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import { taskCardSlots, type TaskSlot } from './taskCardModel'
@@ -59,6 +59,11 @@ function open(line: InspectorSlotView) {
 /** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
 function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit')
+}
+
+/** The history button: the document's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+function history(line: InspectorSlotView) {
+  if (line.id) openDocumentHistory(line.id)
 }
 </script>
 

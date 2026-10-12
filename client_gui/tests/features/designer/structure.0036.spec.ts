@@ -95,8 +95,9 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     // "v0.1 단계에 속하지 않은 Node" one among them).
     expect(Object.keys(inspector.pane).sort()).toEqual(['details', 'disabled', 'empty', 'error', 'loading', 'retry'])
     expect(Object.keys(inspector.header).sort()).toEqual(['copied', 'copy_id', 'kind_bug', 'memo', 'memo_unavailable', 'more', 'read_only', 'read_only_conflict', 'read_only_revision', 'state_tip'])
-    // flowgate.v02.0053 T#5: no "not yet" / write wording on a line; `none` is the hollow dot's tooltip.
-    expect(Object.keys(inspector.slot).sort()).toEqual(['edit', 'none', 'open', 'progress'])
+    // flowgate.v02.0053 T#5: no "not yet" / write wording on a line; `none` is the wording of a line without a
+    // document. flowgate.v02.0056 F1: the history button of a line (history / history_count).
+    expect(Object.keys(inspector.slot).sort()).toEqual(['edit', 'history', 'history_count', 'none', 'open', 'progress'])
     expect(Object.keys(inspector.slot_state).sort()).toEqual(['closed', 'in_progress', 'writing'])
     // flowgate.v02.0052 T#3: ■ 중단 / ↻ 재실행 belong to the top 실행 menu, the card keeps 실행 이력 only.
     expect(Object.keys(inspector.menu).sort()).toEqual(['history'])

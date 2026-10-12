@@ -6,8 +6,8 @@ placement (D0006 §2.4).
 
 On a real SQLite DB (all migrations, TestClient over the Graph routes and the card settings routes): a card
 placed in a draft and a card whose run is done both read and write their settings; every value is saved by
-its own PATCH; the items the v0.1 sequence row never stored (instruction use / omit, after review, restart,
-time limit, review basis) are stored; values outside a setting are refused; a running card is locked; and an
+its own PATCH; the items the v0.1 sequence row never stored (instruction use / omit, restart, time limit,
+review basis) are stored (after review is gone, flowgate.v02.0056 T#1: no setting, never read, migration 147); values outside a setting are refused; a running card is locked; and an
 AI node starts with its card's run AI, time limit and restarts (the AI invoke start receives them), or exactly
 as before when the card stores nothing. Auth, RBAC and SSE delivery are stubbed.
 """
@@ -36,8 +36,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 FA = "flowgate.v02.0091"      # unassigned, live root R (approved)
 FB = "flowgate.v02.0092"      # unassigned, no documents
 TEST_VALUE, TEST_VERSION = "card_settings_test", "1"
-RUN_FIELDS = ["instruction", "after_review", "run_ai", "restart", "review_ai", "review_count", "time_limit",
-              "review_basis"]
+RUN_FIELDS = ["instruction", "run_ai", "restart", "review_ai", "review_count", "time_limit", "review_basis"]
 
 
 @pytest.fixture()
@@ -73,8 +72,8 @@ def env(db_path, monkeypatch, tmp_path):
     from modules.flow_gate.db import _SqliteTxnAdapter
     from modules.flow_gate.graph_workflow.api import canvas_routes, envelope, graph_routes, run_routes
     from modules.flow_gate.graph_workflow.services import canvas_events, node_dispatch, run_events
-    from modules.flow_gate.services import token_service
 
+    from flowgate.card_approval import routes as card_approval_routes
     from flowgate.card_documents import integration as card_documents
     from flowgate.card_settings import integration, routes
 
@@ -92,14 +91,14 @@ def env(db_path, monkeypatch, tmp_path):
     monkeypatch.setattr(envelope, "has_permission", lambda u, p, perm: True)
     monkeypatch.setattr(canvas_events, "broadcast_event_threadsafe", lambda ev: state["events"].append(ev) or 1)
     monkeypatch.setattr(run_events, "broadcast_event_threadsafe", lambda ev: state["events"].append(ev) or 1)
-    monkeypatch.setattr(token_service, "_scratch_dir", lambda project, token_id: tmp_path / "work" / token_id)
+    # Token scratch stays where token_scratch.create requires it: <storage root>/work/<project>/<token>.
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", "settingstest")
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_settingstest", "card-settings-test-pepper")
     old_starter = node_dispatch.set_ai_starter(lambda job: state["jobs"].append(job))
     card_documents.register()
     integration.register()
     app = FastAPI()
-    for module in (canvas_routes, graph_routes, run_routes, routes):
+    for module in (canvas_routes, graph_routes, run_routes, routes, card_approval_routes):
         app.include_router(module.router)
     state["client"] = TestClient(app)
     _seed(db_path)
@@ -249,7 +248,7 @@ def test_card_kinds_and_their_settings_follow_the_v7_blocks():
     names = {kind: [x.name for x in f.fields_of(kind)] for kind in f.CARD_KINDS}
     assert names == {
         f.RUN: RUN_FIELDS,
-        f.TEST: ["instruction", "after_review", "run_ai", "review_ai", "review_count"],
+        f.TEST: ["instruction", "run_ai", "review_ai", "review_count"],
         f.REQUIREMENT: ["delegation", "scope", "team", "limit_max_nodes", "limit_total_reviews",
                         "limit_retries_per_card", "limit_replans"],
         f.CHECK: ["usage", "merge_mode", "merge_target", "push", "keep_branch"],
@@ -260,8 +259,9 @@ def test_the_run_plan_hands_on_only_what_the_card_stores():
     from flowgate.card_settings import fields as f
 
     assert f.run_plan(f.RUN, {}) == {"settings": {}}
+    # flowgate.v02.0056 T#1: a stored after review value is no setting any more, so it is not handed on
     plan = f.run_plan(f.RUN, {"run_ai": "aip_card", "time_limit": 120, "restart": 0, "after_review": "follow"})
-    assert plan == {"settings": {"run_ai": "aip_card", "time_limit": 120, "restart": 0, "after_review": "follow"},
+    assert plan == {"settings": {"run_ai": "aip_card", "time_limit": 120, "restart": 0},
                     "provider_id": "aip_card", "step_timeout_sec": 7200, "restart_max": 0}
     assert f.run_plan(f.TEST, {"run_ai": "aip_card", "review_count": 2}) == {
         "settings": {"run_ai": "aip_card", "review_count": 2}, "provider_id": "aip_card"}
@@ -286,7 +286,7 @@ def test_a_new_card_reads_its_defaults_and_saves_each_value_at_once(env):
     key = placed(env, FB, "T")
     body = get_settings(env, FB, key)
     assert (body["card_kind"], body["locked"], list(body["fields"])) == ("run", False, RUN_FIELDS)
-    assert shown(body) == {"instruction": "use", "after_review": "human", "run_ai": None, "restart": 0,
+    assert shown(body) == {"instruction": "use", "run_ai": None, "restart": 0,
                            "review_ai": None, "review_count": 0, "time_limit": 60, "review_basis": "type"}
     assert not any(f["stored"] for f in body["fields"].values())
     assert body["fields"]["time_limit"]["choices"] == [30, 45, 60, 90, 120, 180, 240]
@@ -308,15 +308,13 @@ def test_a_new_card_reads_its_defaults_and_saves_each_value_at_once(env):
 
 def test_the_items_the_sequence_row_never_stored_are_saved(env):
     key = placed(env, FB, "N")
-    for field, value in (("instruction", "omit"), ("after_review", "follow"), ("restart", 1),
-                         ("time_limit", 120), ("review_basis", "last")):
+    for field, value in (("instruction", "omit"), ("restart", 1), ("time_limit", 120), ("review_basis", "last")):
         setting(env, FB, key, field, value)
     body = get_settings(env, FB, key)
     assert {k: v for k, v in shown(body).items() if body["fields"][k]["stored"]} == {
-        "instruction": "omit", "after_review": "follow", "restart": 1, "time_limit": 120, "review_basis": "last"}
-    assert stored_rows(env, FB, key) == {(key, "after_review"): '"follow"', (key, "instruction"): '"omit"',
-                                         (key, "restart"): "1", (key, "review_basis"): '"last"',
-                                         (key, "time_limit"): "120"}
+        "instruction": "omit", "restart": 1, "time_limit": 120, "review_basis": "last"}
+    assert stored_rows(env, FB, key) == {(key, "instruction"): '"omit"', (key, "restart"): "1",
+                                         (key, "review_basis"): '"last"', (key, "time_limit"): "120"}
 
 
 def test_each_card_kind_keeps_its_own_settings(env):
@@ -353,7 +351,7 @@ def test_each_card_kind_keeps_its_own_settings(env):
 @pytest.mark.parametrize("field, value, reason", [
     ("restart", 99, "not_a_choice"), ("restart", "1", "not_a_choice"), ("restart", True, "not_a_choice"),
     ("review_count", -2, "not_a_choice"), ("time_limit", 61, "not_a_choice"), ("time_limit", 60.0, "not_a_choice"),
-    ("instruction", "skip", "not_a_choice"), ("after_review", None, None), ("run_ai", "", "not_a_text"),
+    ("instruction", "skip", "not_a_choice"), ("review_basis", None, None), ("run_ai", "", "not_a_text"),
     ("run_ai", "a" * 192, "invalid_text"), ("review_ai", 3, "not_a_text"), ("run_ai", "aip_missing", "unknown_ai"),
 ])
 def test_values_outside_a_run_setting_are_refused(env, field, value, reason):
@@ -462,15 +460,15 @@ def _start_job(env, monkeypatch, job):
 
 def test_an_ai_node_starts_with_its_card_run_ai_time_limit_and_restarts(env, decided, monkeypatch):
     key = _run_one_card(env, AI)
-    for field, value in (("run_ai", "aip_card"), ("time_limit", 120), ("restart", 2), ("after_review", "follow"),
-                         ("review_basis", "last"), ("instruction", "omit")):
+    for field, value in (("run_ai", "aip_card"), ("time_limit", 120), ("restart", 2), ("review_basis", "last"),
+                         ("instruction", "omit")):
         setting(env, FA, key, field, value)
     _start(env)
     [job] = env["jobs"]
     assert (job["node_key"], job["provider_id"], job["step_timeout_sec"], job["restart_max"]) == (
         key, "aip_card", 7200, 2)
-    assert job["card_settings"] == {"instruction": "omit", "after_review": "follow", "run_ai": "aip_card",
-                                    "restart": 2, "time_limit": 120, "review_basis": "last"}
+    assert job["card_settings"] == {"instruction": "omit", "run_ai": "aip_card", "restart": 2, "time_limit": 120,
+                                    "review_basis": "last"}
     token = _sql(env["db"], "SELECT provider_id FROM tokens WHERE token_id = ?", (job["token"]["token_id"],))[0]
     assert token["provider_id"] == "aip_card"                           # the node token names the card's AI
     call = _start_job(env, monkeypatch, job)
@@ -543,6 +541,48 @@ def test_turning_ai_delegation_on_and_off_adds_and_removes_its_line(env):
     assert db_documents.get_by_id(delegation_doc) is None                # its untouched draft goes with it
 
 
+# ── flowgate.v02.0056 T#1: after review is gone (migration 147) ─────────────
+
+def test_after_review_is_no_setting_and_a_stored_value_is_not_read(env):
+    from flowgate.card_settings import fields as f
+
+    key = placed(env, FB, "T")
+    refused = setting(env, FB, key, "after_review", "human", expect=422)
+    assert refused["error"]["params"]["errors"] == [
+        {"field": "field", "reason": "not_a_setting_of_this_card", "card_kind": "run"}]
+    _sql(env["db"], "INSERT INTO graph_node_settings (group_id, node_key, field, value_json, updated_at) "
+                    "VALUES (?, ?, 'after_review', '\"human\"', 't')", (FB, key))
+    body = get_settings(env, FB, key)                                     # a row left from before: not read
+    assert "after_review" not in body["fields"] and list(body["fields"]) == RUN_FIELDS
+    assert f.run_plan(f.RUN, {"after_review": "human"}) == {"settings": {}}
+    # what follows a result is the former follow, whatever was stored
+    assert [f.after_result(kind, {"after_review": "human"}) for kind in (f.RUN, f.TEST)] == [f.APPROVE, f.APPROVE]
+    assert all(f.field_of(kind, "after_review") is None for kind in f.CARD_KINDS)
+
+
+def test_migration_147_deletes_only_the_after_review_rows(env):
+    key = placed(env, FB, "T")
+    setting(env, FB, key, "restart", 1)
+    _sql(env["db"], "INSERT INTO graph_node_settings (group_id, node_key, field, value_json, updated_at) "
+                    "VALUES (?, ?, 'after_review', '\"human\"', 't')", (FB, key))
+    sql = (_MIGRATIONS_DIR / "147_graph_node_settings_after_review.sql").read_text(encoding="utf-8")
+    conn = sqlite3.connect(env["db"])
+    try:
+        conn.executescript(sql)
+    finally:
+        conn.close()
+    assert stored_rows(env, FB) == {(key, "restart"): "1"}
+
+
+def test_migration_147_is_the_same_delete_in_three_dialects():
+    for dialect in ("sqlite", "postgres", "mysql"):
+        sql = (_SERVER_DIR / "sql" / "migrations" / dialect / "147_graph_node_settings_after_review.sql").read_text(
+            encoding="utf-8")
+        statements = [line.strip() for line in sql.splitlines()
+                      if line.strip() and not line.startswith("--") and line.strip() not in ("BEGIN;", "COMMIT;")]
+        assert statements == ["DELETE FROM graph_node_settings WHERE field = 'after_review';"], dialect
+
+
 # ── migration 146, wiring and placement (D0006 §2.1 / §4.1) ──────────────────
 
 def test_migration_146_table_trigger_and_flow_delete_cleanup(env):
@@ -599,7 +639,7 @@ def test_the_feature_is_in_the_v02_package_and_the_graph_holds_only_the_port():
     graph = _SERVER_DIR / "modules" / "flow_gate" / "graph_workflow"
     callers = sorted(p.relative_to(graph).as_posix() for p in graph.rglob("*.py")
                      if "card_settings_ports" in p.read_text(encoding="utf-8") and p.name != "card_settings_ports.py")
-    assert callers == ["services/node_dispatch.py", "services/result_binder.py"]
+    assert callers == ["services/node_approval.py", "services/node_dispatch.py", "services/result_binder.py"]
     tree = ast.parse((graph / "services" / "card_settings_ports.py").read_text(encoding="utf-8"))
     imported = {(n.module or "").split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     imported |= {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}

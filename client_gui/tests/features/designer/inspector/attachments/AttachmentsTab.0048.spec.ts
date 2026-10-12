@@ -389,6 +389,19 @@ describe('attachments tab — open, add, delete (flowgate.v02.0048 T#8)', () => 
     expect(isDisabled(deleteButton(w, 'f0.txt'))).toBe(false)
   })
 
+  // flowgate.v02.0056 F1 (0056 CH §4): the delete button is the trash icon; its name is the tooltip.
+  it('the delete button is the trash icon named 삭제 (its tooltip), no text; the confirm step is unchanged', async () => {
+    const w = await mountTab(v01Target())
+    const button = deleteButton(w, '요구사항.xlsx')
+    expect([button.attributes('data-icon'), button.attributes('title'), button.text()]).toEqual(['trash', '삭제', ''])
+    expect(button.find('svg').exists()).toBe(true)
+    await button.trigger('click')
+    expect(itemEl(w, '요구사항.xlsx').find('[data-test="attachments-confirm"]').text()).toContain('요구사항.xlsx 파일을 삭제할까요?')
+    expect(itemEl(w, '요구사항.xlsx').find('[data-test="attachments-delete-yes"]').exists()).toBe(true)
+    expect(itemEl(w, '요구사항.xlsx').find('[data-test="attachments-delete-no"]').exists()).toBe(true)
+    expect(deleteCall).not.toHaveBeenCalled()
+  })
+
   it('delete asks first; cancel sends nothing', async () => {
     const w = await mountTab(v01Target())
     await deleteButton(w, '요구사항.xlsx').trigger('click')

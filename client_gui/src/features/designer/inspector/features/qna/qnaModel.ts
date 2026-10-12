@@ -14,9 +14,11 @@
 // Not offered (D#1 §8.4): team handling, resuming after an answer, the AI answer request.
 //
 // flowgate.v02.0053 T#6 (0053 CH §2) — a person asks too: the question line at the top of the tab
-// registers a question (asker 'human') and asks an AI to answer it at once. Asking is a change with the
-// same reasons as answering, then a question already on its way. AI-asked questions are answered by
-// the user as before.
+// registers a question (asker 'human'). Asking is a change with the same reasons as answering, then a
+// question already on its way. AI-asked questions are answered by the user as before.
+// flowgate.v02.0056 F1 (0056 CH §3) — registering and asking an AI are two steps: an open question's
+// [AI 답변 요청] asks the chosen AI to answer it (`ai_request`), a change with the same reasons, then a
+// request already on its way.
 import type { InspectorReadOnly } from '../../inspectorTarget'
 
 /** The parts of a question the rules read (the `@/features/document` QaItem). */
@@ -44,13 +46,14 @@ export interface QnaProviderFacts {
   readonly providerName: string | null
 }
 
-export type QnaOperation = 'read' | 'answer' | 'ask'
+export type QnaOperation = 'read' | 'answer' | 'ask' | 'ai_request'
 
-/** Reading is a query; answering and asking change the server state (D#1 §8.3 rule 0). */
+/** Reading is a query; answering, asking and asking an AI change the server state (D#1 §8.3 rule 0). */
 export const QNA_OPERATION_CLASS: Readonly<Record<QnaOperation, 'change' | 'query'>> = {
   read: 'query',
   answer: 'change',
   ask: 'change',
+  ai_request: 'change',
 }
 
 /** A question has an answer (the counter or the answers the server sent). */
@@ -168,8 +171,10 @@ export interface QnaInput {
   readonly aiRunning: boolean
   /** An answer is waiting for the server. */
   readonly busy: boolean
-  /** A question (and its AI answer request) is waiting for the server. */
+  /** A question is waiting for the server. */
   readonly asking?: boolean
+  /** An AI answer request is waiting for the server. */
+  readonly requesting?: boolean
 }
 
 export interface QnaAvailabilityItem {
@@ -203,16 +208,30 @@ export function qnaAskDisabledReason(input: QnaInput): string | null {
 }
 
 /**
- * Reading is always possible; answering and asking are offered in every ownership (a document
- * feature, D#1 §8.3 rules 2-4) and disabled with the first reason that holds.
+ * Why asking an AI to answer is disabled, as a key under `ai_reason.`: the answering reasons up to the
+ * AI run, then a request on its way, then a question on its way, then an answer on its way.
+ */
+export function qnaAiDisabledReason(input: QnaInput): string | null {
+  const reason = qnaDisabledReason({ ...input, busy: false })
+  if (reason !== null) return reason.replace(/^reason\./, 'ai_reason.')
+  if (input.requesting) return 'ai_reason.requesting'
+  if (input.asking) return 'ai_reason.asking'
+  return input.busy ? 'ai_reason.busy' : null
+}
+
+/**
+ * Reading is always possible; answering, asking and asking an AI are offered in every ownership (a
+ * document feature, D#1 §8.3 rules 2-4) and disabled with the first reason that holds.
  */
 export function qnaAvailability(input: QnaInput): QnaAvailability {
   const reason = qnaDisabledReason(input)
   const ask = qnaAskDisabledReason(input)
+  const ai = qnaAiDisabledReason(input)
   return {
     read: { visible: true, enabled: true, reason: null },
     answer: { visible: true, enabled: reason === null, reason },
     ask: { visible: true, enabled: ask === null, reason: ask },
+    ai_request: { visible: true, enabled: ai === null, reason: ai },
   }
 }
 
@@ -239,13 +258,14 @@ export function qnaFailureKey(kind: QnaFailureKind): string {
   return `failure.${kind}`
 }
 
-/**
- * Message key of a refused question: `ask` when the question itself was refused (nothing stored), `ai`
- * when the question is stored but the AI answer request was refused (it stays without an answer).
- */
-export function qnaAskFailureKey(stage: 'ask' | 'ai', kind: QnaFailureKind): string {
-  if (stage === 'ask') return kind === 'no_provider' ? 'ask_failure.other' : `ask_failure.${kind}`
-  return kind === 'running' || kind === 'no_provider' || kind === 'network' ? `ai_failure.${kind}` : 'ai_failure.other'
+/** Message key of a refused question (nothing stored). */
+export function qnaAskFailureKey(kind: QnaFailureKind): string {
+  return kind === 'no_provider' ? 'ask_failure.other' : `ask_failure.${kind}`
+}
+
+/** Message key of a refused AI answer request (the question stays without an answer). */
+export function qnaAiFailureKey(kind: QnaFailureKind): string {
+  return kind === 'invalid' || kind === 'other' ? 'ai_failure.other' : `ai_failure.${kind}`
 }
 
 /** Message key of a failed read of the questions. */

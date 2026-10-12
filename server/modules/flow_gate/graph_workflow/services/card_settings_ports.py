@@ -1,15 +1,17 @@
 """Card run settings ports (flowgate.v02.0053 T#2, D0006 §2.1 / §2.3 / §4.1).
 
 The settings every Designer card (Node) keeps are a v0.2 feature: they live in the application
-package ``flowgate.card_settings``. The Graph run reads them when it hands a node out and when it
-binds a node's result, and ``modules.flow_gate`` never imports ``flowgate``, so this module offers
+package ``flowgate.card_settings``. The Graph run reads them when it hands a node out, when it
+binds a node's result and when it tells whether a node awaits approval, and ``modules.flow_gate``
+never imports ``flowgate``, so this module offers
 named ports the Graph calls and the composition root (``startup.py``) registers the handlers.
 
     run_settings     node dispatch, inside its Flow guard: what the node's AI start takes from its card
     result_type      result binding / reconciliation, inside its Flow guard: the document type the
                      node's result is (instruction omitted: the card's report), or None (the node's own)
-    review_running   reconciliation, inside its Flow guard: the card's AI review is still working on
-                     the node's result, so its momentary rejection is not the review's outcome yet
+    ai_working       node approval state (``node_approval``): AI still works on a node in review —
+                     the node's own AI run has not ended, or the card's AI review works on its result —
+                     so the node is not waiting for a person's approval (flowgate.v02.0056 T#1)
 
 ``run_settings`` answers a dict; every key is optional and an absent key keeps the existing default:
 
@@ -20,8 +22,8 @@ named ports the Graph calls and the composition root (``startup.py``) registers 
     settings            every setting of the card as stored (carried on the job for the record)
 
 * With no handler registered ``run_settings`` answers ``{}``, ``result_type`` None and
-  ``review_running`` False, so a node starts and binds exactly as it did before.
-* A handler exception propagates: the callers run inside a run step's Flow guard.
+  ``ai_working`` False, so a node starts and binds exactly as it did before.
+* A handler exception propagates: the callers run inside a run step's Flow guard or a run read.
 * One handler per port. Registering again replaces it (startup may run more than once in a process).
 """
 from __future__ import annotations
@@ -31,8 +33,8 @@ from typing import Any, Callable, Optional
 
 RUN_SETTINGS = "run_settings"
 RESULT_TYPE = "result_type"
-REVIEW_RUNNING = "review_running"
-PORT_NAMES = (RUN_SETTINGS, RESULT_TYPE, REVIEW_RUNNING)
+AI_WORKING = "ai_working"
+PORT_NAMES = (RUN_SETTINGS, RESULT_TYPE, AI_WORKING)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -78,9 +80,9 @@ def result_type(flow_id: str, node: dict) -> Optional[str]:
     return handler(flow_id, node) or None
 
 
-def review_running(flow_id: str, node_key: str, doc_id: Optional[str]) -> bool:
-    """The card's AI review is working on ``doc_id`` (the node's result)."""
-    handler = _handler(REVIEW_RUNNING)
-    if handler is None or not doc_id:
+def ai_working(flow_id: str, node_key: str, doc_id: Optional[str]) -> bool:
+    """AI still works on the node whose result in review is ``doc_id``: its own run or the card's review."""
+    handler = _handler(AI_WORKING)
+    if handler is None:
         return False
     return bool(handler(flow_id, node_key, doc_id))

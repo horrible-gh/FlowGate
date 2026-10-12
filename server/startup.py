@@ -266,6 +266,19 @@ def start_card_settings_integration():
         logger.warning(f"[startup] card settings integration registration failed: {exc}")
 
 
+def start_card_approval_integration():
+    """flowgate.v02.0056 T#1 (D0006 §2.1, §2.3): composition root of the card approval. Connects
+    ``flowgate.card_approval`` to the Graph workflow's card approval port (result binding): a node is done
+    only when every document of its card is approved. Unregistered, a result's approval moves its node on
+    alone, as before."""
+    try:
+        from flowgate.card_approval import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] card approval integration registration failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
@@ -279,6 +292,7 @@ def run_all():
     start_conversation_integration()
     start_card_document_integration()
     start_card_settings_integration()
+    start_card_approval_integration()
     encrypt_ai_provider_keys()
     recover_ai_evaluations()
     start_snapshot_cleanup()

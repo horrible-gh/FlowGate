@@ -16,15 +16,6 @@
           data-test="md-viewer-copy"
           @click="copyMarkdown"
         >{{ copyGlyph(copyMdState, '⧉') }}</IconButton>
-        <IconButton
-          :label="t(k('copy_md_with_header'))"
-          :title="copyHeaderState === 'failed' ? t(k('copy_failed')) : t(k('copy_md_with_header'))"
-          variant="ghost"
-          size="sm"
-          :class="copyStateClass(copyHeaderState)"
-          data-test="md-viewer-copy-header"
-          @click="copyMarkdownWithHeader"
-        >{{ copyGlyph(copyHeaderState, '⎘') }}</IconButton>
       </div>
       <div class="md-viewer__content" data-test="md-viewer-content" v-html="renderedContent" @click.capture="handleContentClick" />
     </template>
@@ -44,9 +35,10 @@
 //   source-file and Git-branch blob modes stay in v0.1 (they need its explorer store).
 // - A document whose file is not written yet (a report before its run) is an empty document — no
 //   "no file" text and no regenerate button; saving it from the window's editor writes the file.
-// - Copy buttons are icons with tooltips (⧉ body, ⎘ with header); a failed copy marks the button
-//   instead of the v0.1 fallback modal. Strings live under `gui.document_window.viewer`; colors are
-//   the v0.2 dark theme.
+// - The copy button is an icon with a tooltip (⧉ the body without its frontmatter); a failed copy marks
+//   the button instead of the v0.1 fallback modal. Strings live under `gui.document_window.viewer`; colors
+//   are the v0.2 dark theme. flowgate.v02.0056 F1 (0056 CH §5): the v0.1 "copy with header" (⎘, the
+//   stored file with its frontmatter) is gone — the body copy is the one copy.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Marked } from 'marked'
@@ -72,7 +64,6 @@ const content = ref('')
 const loading = ref(false)
 const error = ref(false)
 const copyMdState = ref<CopyState>('idle')
-const copyHeaderState = ref<CopyState>('idle')
 // v0.1 rev4: rendered by the applyContent() call that set `content`, never by a computed over shared
 // refs, so one load's diagnostics cause can not attach to another load's parse.
 const renderedContent = ref('')
@@ -126,11 +117,6 @@ function flash(target: typeof copyMdState, state: CopyState): void {
 async function copyMarkdown() {
   if (copyMdState.value !== 'idle') return
   flash(copyMdState, (await copyToClipboard(stripFrontmatter(content.value))) ? 'done' : 'failed')
-}
-
-async function copyMarkdownWithHeader() {
-  if (copyHeaderState.value !== 'idle') return
-  flash(copyHeaderState, (await copyToClipboard(content.value)) ? 'done' : 'failed')
 }
 
 async function handleContentClick(e: MouseEvent) {

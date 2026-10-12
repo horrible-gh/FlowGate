@@ -90,7 +90,7 @@
 
     <!-- 3. Slot lines -->
     <section v-if="shown('slots')" id="slots" class="preview-section">
-      <h2>문서 / 결과 슬롯 행 (InspectorSlotRow) <small>38px · 이름 · 상태 점 + 요약 / 진행도 · 버튼(문서 아이콘 · ✎)</small></h2>
+      <h2>문서 / 결과 슬롯 행 (InspectorSlotRow) <small>38px · 이름 · 상태 배지(뜻이 있을 때만) + 요약 / 진행도 · 버튼(이력 · 문서 아이콘 · ✎)</small></h2>
       <div class="preview-frame preview-pad">
         <div class="preview-slots">
           <template v-for="(slot, i) in SLOT_FIXTURES" :key="i">

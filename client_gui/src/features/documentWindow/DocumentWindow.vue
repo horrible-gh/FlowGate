@@ -73,6 +73,9 @@
             data-test="document-window-save-error"
             :data-key="saveErrorKey"
           >{{ t(k(`error.${saveErrorKey}`)) }}</span>
+          <!-- flowgate.v02.0056 F1 — [닫기] closes the window from the editor (the same path as × / Esc: unsaved
+               text is asked about once); it sits apart from [취소] [저장], which belong to the edit itself. -->
+          <Button size="sm" variant="ghost" :disabled="saving" class="document-window-close" data-test="document-window-close" @click="requestClose">{{ t(k('close')) }}</Button>
           <Button size="sm" variant="ghost" :disabled="saving" data-test="document-window-cancel" @click="requestCancel">{{ t(k('cancel')) }}</Button>
           <Button
             size="sm"
@@ -104,7 +107,8 @@
 // (DocumentWindowBody → MD Viewer; T#4: a work plan / test scenario / test report its own view). ✎ turns the same window to a text editor of the body (the
 // frontmatter is kept aside and put back, as the v0.1 editor does); 저장 writes it with the v0.1
 // content save and goes back to the view, 취소 drops it. Unsaved text is asked about once — on 취소,
-// on close and on Esc. A document whose file is not written yet opens empty and edits the same way.
+// on close and on Esc. flowgate.v02.0056 F1: the editor bar also has [닫기] (0056 CH §5), the window's
+// close by button — the same path as × and Esc, so the same question about unsaved text. A document whose file is not written yet opens empty and edits the same way.
 // The window follows the server (T#3 rework): its document's events on the v0.2 project event hub
 // (useDocumentWindowEvents) read the body and the title line again, a reconnect reads both, and a second
 // open request (↗ / ✎ again) reads both as well; while open it also reads both on a bounded period, for
@@ -456,6 +460,11 @@ defineExpose({ dirty })
   justify-content: flex-end;
   gap: 8px;
   padding: 8px 12px;
+}
+
+/* [닫기] stands apart from the edit's own [취소] [저장]: it takes the left end of the bar. */
+.document-window-close {
+  margin-right: auto;
 }
 
 .document-window-save-error {

@@ -11,13 +11,22 @@ of the active run and turned into a node event for the resolver:
   node's own type, or the card's report when the card omits its instruction (flowgate.v02.0053 T#2,
   ``card_settings_ports.result_type``: the same port the dispatch asked, so the AI is told to write
   exactly the type that is bound);
-- a review decision on a node's result document -> ``review_approved`` / ``review_rejected``.
+- an approval of a node's result document -> ``review_approved`` — once every other document of the node's
+  card is approved too (``card_approval_ports.pending_documents``, flowgate.v02.0056 T#1: a card is approved
+  as a whole). A result approved while its card's instruction is not stays in review, awaiting the card's
+  approval; the approval of that last document — through the card approval or a person's v0.1 approval,
+  in either order — then brings the node in line (``_follow_card``, the reconciliation's own step).
+
+flowgate.v02.0056 T#1 (0002-CH turn 5~10): a rejection of a node's result — a person's (the v0.1
+``review_transitions/reject`` route, kept for v0.1) or the one the card's AI review writes on the way to
+a rework or when its count is spent — is not a node event of the v0.2 contract: the node stays in review
+and waits for the card's approval (``node_approval``). The one exception is a root bound in the rejected
+state at the run start: it keeps L0009 §2.6.5 (``run_service._root_bound_start`` applies ``review_rejected``),
+as answered on the T#1 TR's question. A gate's confirm / reject is its own event and does not change.
 
 Anything else binds nothing and stays an unbound document node. A lost delegation (exception in
 the contact) is recovered by reconciliation from the v0.1 records (L0009 E-27): on resume, and
-before a run read when ``needs_reconcile`` says something is missing. While the card's AI review is
-still working on a result (``card_settings_ports.review_running``), the rejection it wrote on the way to
-a rework is not reconciled: the review ends in a pass, a decision or a stop, and that is what counts.
+before a run read when ``needs_reconcile`` says something is missing.
 """
 from __future__ import annotations
 
@@ -32,7 +41,7 @@ from modules.flow_gate.graph_workflow.domain.supersede import live_end
 from modules.flow_gate.graph_workflow.projection.run_documents import document, registered_documents
 from modules.flow_gate.graph_workflow.store import run_store
 
-from . import card_settings_ports
+from . import card_approval_ports, card_settings_ports
 from .engine_router import read_ownership
 from .flow_guard import with_flow_guard
 from .run_apply import RunContext, apply_decision, load_context, read_run_state
@@ -41,8 +50,8 @@ _log = logging.getLogger(__name__)
 
 EVENT_KINDS = ("inbox_registered", "review_decided")
 RECONCILE_MAX_STEPS_PER_NODE = 64
-_DECISIONS = {"approve": "review_approved", "approved": "review_approved",
-              "reject": "review_rejected", "rejected": "review_rejected"}
+# Only an approval moves a node on; a rejection is no node event (flowgate.v02.0056 T#1).
+_DECISIONS = {"approve": "review_approved", "approved": "review_approved"}
 CANCELLED = "cancelled"
 
 
@@ -72,6 +81,8 @@ def on_document_event(kind: str, flow_id: str, payload: dict) -> None:
         ctx = load_context(run, _project_id(flow_id), None, jobs)
         found = locate(ctx, kind, payload)
         if found is None:
+            if kind == "review_decided" and _approval(payload):
+                _follow_card(ctx)                                # another document of a card approved
             return
         policies = policies_of(run_store.policy_entries(ctx.run_id))      # E-33 -> rollback
         if found.kind == "revised" and _next_in_chain(ctx, found.replaces) != found.doc_id:
@@ -112,11 +123,41 @@ def locate(ctx: RunContext, kind: str, payload: dict) -> Optional[RunEvent]:
         return None                                               # already has a result
     if kind == "review_decided":
         row = run_store.node_run_by_result(ctx.run_id, doc["doc_id"])
-        cause = _DECISIONS.get(str(payload.get("action") or payload.get("decision") or ""))
+        cause = _DECISIONS.get(_decision(payload))
         if row is None or cause is None:
             return None
+        if not card_complete(ctx, row["node_key"], doc["doc_id"]):
+            return None                                           # the card's other documents wait
         return RunEvent(cause, row["node_key"], doc_id=doc["doc_id"])
     return None
+
+
+def _decision(payload: dict) -> str:
+    return str(payload.get("action") or payload.get("decision") or "")
+
+
+def _approval(payload: dict) -> bool:
+    return _DECISIONS.get(_decision(payload)) == "review_approved"
+
+
+def card_complete(ctx: RunContext, key: str, result_doc_id: str) -> bool:
+    """No other document of the node's card waits for its approval (T0004 §4: the card is approved when all
+    of its documents are)."""
+    node = ctx.node_rows.get(key) or {"node_key": key}
+    return not card_approval_ports.pending_documents(ctx.flow_id, node, result_doc_id)
+
+
+def _follow_card(ctx: RunContext) -> None:
+    """Inside the guard: a document that is no node's result was approved — the last one a card in review
+    with an approved result waited for — so that node takes its missing ``review_approved``."""
+    s = read_run_state(ctx)
+    keys = [key for key in reconcile_targets(ctx, s)
+            if (event := next_missing_event(ctx, s, key)) is not None and event.kind == "review_approved"]
+    if not keys:
+        return
+    policies = policies_of(run_store.policy_entries(ctx.run_id))
+    for key in keys:
+        reconcile_node(ctx, key, policies)
 
 
 def _type(value) -> str:
@@ -161,16 +202,16 @@ def next_missing_event(ctx: RunContext, s: RunState, key: str) -> Optional[RunEv
     cur = ctx.docs().get(nr.result_doc_id) or document(nr.result_doc_id)
     if cur is None:
         return None                                               # E-10: no document row
-    if nr.status == "review":
-        if cur.get("doc_review_status") in ("approved", "wf_done"):
-            return RunEvent("review_approved", key, doc_id=cur["doc_id"])
-        if cur.get("doc_review_status") == "rejected" and not card_settings_ports.review_running(
-                ctx.flow_id, key, cur["doc_id"]):
-            return RunEvent("review_rejected", key, doc_id=cur["doc_id"])
     if cur.get("superseded_by"):
+        # A live replacement comes first, as on the contact (``locate`` 1): a result approved while its card
+        # waited for its other documents and then revised is followed, not held at its old approval.
         nxt = ctx.docs().get(cur["superseded_by"]) or document(cur["superseded_by"])
         if nxt is not None and nxt.get("status") != CANCELLED and nxt.get("group_id") == ctx.flow_id:
             return RunEvent("revised", key, doc_id=nxt["doc_id"], replaces=cur["doc_id"])
+    if nr.status == "review" and cur.get("doc_review_status") in ("approved", "wf_done"):
+        if not card_complete(ctx, key, cur["doc_id"]):
+            return None                                           # approved result, card not yet
+        return RunEvent("review_approved", key, doc_id=cur["doc_id"])
     return None
 
 

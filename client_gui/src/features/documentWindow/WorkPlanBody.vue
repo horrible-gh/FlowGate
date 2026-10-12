@@ -7,13 +7,8 @@
       <pre class="wp-raw" data-test="work-plan-raw">{{ raw }}</pre>
     </div>
     <div v-else-if="plan" class="wp-sheet" role="region" :aria-label="t(k('work_plan.label'))" data-test="work-plan-sheet">
-      <div class="wp-tiles" data-test="work-plan-totals">
-        <div v-for="tile in tiles" :key="tile.key" class="wp-tile" :data-test="`work-plan-total-${tile.key}`">
-          <span class="wp-tile-label">{{ tile.label }}</span>
-          <span class="wp-tile-value">{{ tile.value }}</span>
-        </div>
-      </div>
-
+      <!-- flowgate.v02.0056 F1 (0056 CH §5): the 0053 totals tiles (design sheets · work sets · Steps) said what the
+           quantity boxes under them already say, type by type — the boxes are the one count now. -->
       <section v-if="plan.quantities.length" class="wp-section">
         <h4 class="wp-heading">{{ t(k('work_plan.quantities')) }}</h4>
         <ul class="wp-quantities">
@@ -95,8 +90,9 @@
 
 <script setup lang="ts">
 // flowgate.v02.0053 T#4 — the work plan's view in the document window: the v0.1 WorkPlanEditor's table
-// (client/src/main/components/WorkPlanEditor.vue — the totals cards, ① the quantity boxes, ② one row per
-// Step grouped by card with its provider, review count, one-line note and pre-instruction), read only. The
+// (client/src/main/components/WorkPlanEditor.vue — ① the quantity boxes, ② one row per Step grouped by card
+// with its provider, review count, one-line note and pre-instruction), read only. flowgate.v02.0056 F1
+// (0056 CH §5): the totals cards over the boxes are gone — they repeated the boxes' counts. The
 // plan is changed with the window's ✎ text editor like every document, so none of the editor's controls
 // (steppers, provider pickers, drawers, card moves, AI fill, upload / download, raw-view dialog) came along.
 // Type codes, keys and explanation paragraphs are not shown: a type reads by its name, a state by a mark
@@ -152,15 +148,6 @@ async function reload(): Promise<void> {
 }
 
 const cards = computed(() => workPlanSheetCards(plan.value))
-
-const tiles = computed(() => {
-  const totals = plan.value?.view.totals ?? { designSheets: 0, workSets: 0, steps: 0 }
-  return [
-    { key: 'design', label: t(k('work_plan.design')), value: t(k('work_plan.total_design'), { n: totals.designSheets }) },
-    { key: 'work', label: t(k('work_plan.work')), value: t(k('work_plan.total_work'), { n: totals.workSets }) },
-    { key: 'steps', label: t(k('work_plan.steps')), value: t(k('work_plan.total_steps'), { n: totals.steps }) },
-  ]
-})
 
 watch(
   () => props.docId,
@@ -224,32 +211,6 @@ defineExpose({ reload })
   padding: 14px 18px;
   color: var(--fg2-text);
   font-size: 12.5px;
-}
-
-.wp-tiles {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.wp-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  border: 1px solid var(--fg2-line);
-  border-radius: var(--fg2-control-radius-sm);
-  background: var(--fg2-panel);
-}
-
-.wp-tile-label {
-  color: var(--fg2-muted);
-  font-size: 11px;
-}
-
-.wp-tile-value {
-  font-size: 16px;
-  font-weight: 600;
 }
 
 .wp-section {

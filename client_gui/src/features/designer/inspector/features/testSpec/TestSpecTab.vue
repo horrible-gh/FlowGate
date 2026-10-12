@@ -11,7 +11,7 @@
        so a test card without a bound document shows and opens them too; the 지시서 line is hidden when the
        card's settings omit the instruction (useTestCard). The details (and their reads) need a document. -->
   <section class="inspector-test-spec" data-test="inspector-test-spec" :data-status="status" :data-form="form">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="editLine" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="editLine" @history="historyLine" />
 
     <details v-if="target.docId" :key="target.docId" class="inspector-test-spec-details" data-test="test-spec-details">
       <summary>{{ t('gui.designer.inspector.pane.details') }}</summary>
@@ -117,7 +117,7 @@ import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { openDocument } from '../../openDocument'
+import { openDocument, openDocumentHistory } from '../../openDocument'
 import { testSpecSlots, testSpecVerdictKey, type TestSpecSlot } from './testSpecModel'
 import { useTestCard } from './useTestCard'
 import { useTestSpec } from './useTestSpec'
@@ -190,6 +190,11 @@ function openLine(line: InspectorSlotView) {
 /** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
 function editLine(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit')
+}
+
+/** The history button: the line's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+function historyLine(line: InspectorSlotView) {
+  if (line.id) openDocumentHistory(line.id)
 }
 </script>
 

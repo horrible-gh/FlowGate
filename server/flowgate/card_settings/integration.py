@@ -6,7 +6,7 @@ root (``startup.py``) calls :func:`register` once at startup.
 
     run_settings     node dispatch: what a node's AI start takes from its card (``settings.run_settings``)
     result_type      result binding: the type an AI node's result is (``settings.result_type``)
-    review_running   reconciliation: the card's AI review still works on a result (``review_stage``)
+    ai_working       node approval state: the node's AI run or the card's AI review still works (``review_stage``)
     on_run_ended     a run ended and released its lease: the card's review stage (``review_stage``)
     token_step_type  the source tools' step type of a node token (``settings.token_step_type``)
 """
@@ -21,7 +21,7 @@ from flowgate.card_settings import review_stage, settings
 def register() -> None:
     ports.register(ports.RUN_SETTINGS, settings.run_settings)
     ports.register(ports.RESULT_TYPE, settings.result_type)
-    ports.register(ports.REVIEW_RUNNING, review_stage.review_running)
+    ports.register(ports.AI_WORKING, review_stage.ai_working)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDED, review_stage.on_run_ended)
     worker_step_type_hooks.register(worker_step_type_hooks.TOKEN_STEP_TYPE, settings.token_step_type)
 

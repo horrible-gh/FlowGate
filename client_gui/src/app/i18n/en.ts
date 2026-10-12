@@ -334,8 +334,11 @@ export default {
         open: 'Open',
         // flowgate.v02.0053 T#3 — ✎ opens the document window straight in its editor.
         edit: 'Edit',
-        // flowgate.v02.0053 T#5 — the hollow state dot's tooltip on a line without a document.
+        // flowgate.v02.0053 T#5 — the wording of a line without a document (0056 F1: drawn in the line).
         none: 'No document',
+        // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
+        history: 'Review history',
+        history_count: 'Review history · {n}',
       },
       review: {
         pass: 'AI review ×{n} · {remain} finding(s) left',
@@ -804,6 +807,8 @@ export default {
     editor: 'Document body',
     save: 'Save',
     cancel: 'Cancel',
+    // flowgate.v02.0056 F1 — [Close] of the editor bar: the window closes (unsaved text is asked about first).
+    close: 'Close',
     discard: {
       title: 'Discard the unsaved changes?',
       confirm: 'Discard',
@@ -833,9 +838,36 @@ export default {
       error: 'Could not load',
       retry: 'Retry',
       copy_md: 'Copy Markdown',
-      copy_md_with_header: 'Copy with header',
       copy_code: 'Copy code',
       copy_failed: 'Could not copy',
+    },
+    // flowgate.v02.0056 F1 — the review history window (the v0.1 review / rejection dialog on ModelessShell).
+    history: {
+      title: 'Review history',
+      filter_label: 'Entry kind',
+      filter_all: 'All',
+      filter_reject: 'Rejections',
+      filter_ai_review: 'AI reviews',
+      empty: 'No history.',
+      tag_reject: 'Rejected',
+      tag_ai_review: 'AI review',
+      verdict: {
+        pass: 'Pass',
+        hold: 'Hold',
+        issues: '{n} finding(s)',
+      },
+      intent_normal: 'First review',
+      intent_rerun: 'Re-review',
+      rev: 'rev {n}',
+      reviewer: 'Reviewing AI: {name}',
+      requested: 'Requested AI: {name}',
+      supersedes: 'Replaces: {reference}',
+      by_user: 'User',
+      by_ai: 'AI · {name}',
+      ai_unknown: 'AI (run unknown)',
+      ai_response: 'AI response',
+      fold: 'Fold',
+      unfold: 'Unfold',
     },
     // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
     types: {
@@ -856,12 +888,7 @@ export default {
     },
     work_plan: {
       label: 'Work plan',
-      design: 'Design',
-      work: 'Work',
-      steps: 'Steps',
-      total_design: '{n} sheet(s)',
-      total_work: '{n} set(s)',
-      total_steps: '{n}',
+      // flowgate.v02.0056 F1 — the totals tiles (design · work · steps) are gone; the quantity boxes are the count.
       quantities: 'Quantities',
       assignments: 'Assignments',
       sets: {

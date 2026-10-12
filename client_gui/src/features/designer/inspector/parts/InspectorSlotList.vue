@@ -9,8 +9,11 @@
        flowgate.v02.0053 T#3 — opening shows the document in its document window in this tab
        (openDocument). With `editable`, a line that opens also has ✎, which opens the same window straight
        in its editor (an `edit` event).
-       flowgate.v02.0053 T#5 (0053 CH) — `name · state dot · [document icon] · ✎`: the document icon
-       (tooltip 열기) replaces ↗, and the line's name opens the document as well (both an `open` event). -->
+       flowgate.v02.0053 T#5 (0053 CH) — `name · state · [document icon] · ✎`: the document icon
+       (tooltip 열기) replaces ↗, and the line's name opens the document as well (both an `open` event).
+       flowgate.v02.0056 F1 (0056 CH §2) — a line that opens also has the history button (a clock, before
+       the document icon): the document's 검수·반려 이력 window (a `history` event). A line may leave it out
+       (`history: false`) or hand the number of entries it knows (`historyCount`). -->
   <div class="inspector-slot-list" data-test="inspector-slot-list">
     <InspectorSlotRow
       v-for="line in slots"
@@ -51,6 +54,12 @@
         :data-test="line.testIds?.nav ?? 'inspector-slot-nav'"
         @click="emit('nav', line)"
       >{{ line.nav.label }} ↗</Button>
+      <InspectorHistoryButton
+        v-if="line.open === 'enabled' && line.id && line.history !== false"
+        :count="line.historyCount ?? null"
+        data-test="inspector-slot-history"
+        @click="emit('history', line)"
+      />
       <InspectorOpenButton
         v-if="line.open && line.open !== 'none'"
         :title="line.open === 'disabled' ? (line.openReason ?? t('gui.designer.inspector.unconnected')) : null"
@@ -75,6 +84,7 @@
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../components/ui/Button.vue'
 import IconButton from '../../../../components/ui/IconButton.vue'
+import InspectorHistoryButton from './InspectorHistoryButton.vue'
 import InspectorOpenButton from './InspectorOpenButton.vue'
 import InspectorReviewBadge, { type InspectorReviewState } from './InspectorReviewBadge.vue'
 import InspectorSlotRow, { type InspectorSlotState, type InspectorSlotTestIds } from './InspectorSlotRow.vue'
@@ -89,19 +99,25 @@ export interface InspectorSlotView {
   readonly kind?: 'document' | 'result'
   readonly name: string
   readonly id?: string | null
-  /** No document behind the line (a hollow dot; `emptyText` is its tooltip). */
   readonly empty?: boolean
+  /** Why the line has no document (shown in the line); the common wording otherwise. */
   readonly emptyText?: string | null
   readonly state?: InspectorSlotState | null
   readonly summary?: string | null
   readonly progress?: number | null
   readonly focus?: boolean
   readonly danger?: boolean
+  /** 🛡 n: AI review rounds of the line's document. */
   readonly review?: { readonly count: number; readonly state: InspectorReviewState; readonly remain?: number | null; readonly disabled?: boolean } | null
+  /** "{label} ↗": go somewhere else (a Host intent). */
   readonly nav?: { readonly label: string; readonly disabled?: boolean; readonly title?: string | null } | null
   /** The document icon (and the name, when enabled): open the line's document. */
   readonly open?: InspectorSlotButton
   readonly openReason?: string | null
+  /** flowgate.v02.0056 F1 — the history button (default: on every line that opens); false leaves it out. */
+  readonly history?: boolean
+  /** Entries in the line's review history when the feature knows them (a number on the history button). */
+  readonly historyCount?: number | null
   /** The feature's own test ids for the line's state, summary, nav and open (its specs read them). */
   readonly testIds?: (InspectorSlotTestIds & { readonly nav?: string; readonly open?: string }) | null
 }
@@ -120,6 +136,7 @@ const emit = defineEmits<{
   edit: [line: InspectorSlotView]
   review: [line: InspectorSlotView]
   nav: [line: InspectorSlotView]
+  history: [line: InspectorSlotView]
 }>()
 
 const { t } = useI18n()

@@ -5,8 +5,9 @@
  *
  * - every card kind shows the lines of the table — 요구사항 · AI 위임 (only while on), 작업계획 · 전개,
  *   설계 (기본 · 프로토콜 · 로직 · DB) · 조사 · 작업 · Custom: 지시서 · 레포트, 테스트: 지시서 · 시나리오 · 레포트;
- * - each line is `name · state dot · [document icon] · ✎`: the name and the document icon (tooltip 열기)
- *   open the document window, ✎ opens it straight in the editor — the report too, before any run;
+ * - each line is `name · [state] · [history] · [document icon] · ✎`: the name and the document icon (tooltip
+ *   열기) open the document window, ✎ opens it straight in the editor — the report too, before any run; a
+ *   draft draws no state badge (flowgate.v02.0056 F1), and the history button opens the 검수·반려 이력 window;
  * - no type code in a name, no "아직 없음", no ↗ and no "설명 대기" note on the tab;
  * - a card whose settings omit the instruction has no 지시서 line (v7); a card not saved yet reads nothing.
  */
@@ -142,7 +143,7 @@ const windows = () => documentWindowList().map((win) => [win.docId, win.mode])
 const TYPE_CODE = /\b(?:R|B|M|WP|DS|D|P|L|DB|N|NR|T|TR|T2|TR2|TS|TSC|TSR|AC)\b/
 
 describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () => {
-  it.each(CARDS)('$card: the lines of the table, each with a state dot, the document icon and ✎', async ({ node, section, names }) => {
+  it.each(CARDS)('$card: the lines of the table, each without a badge while drafted, with the history button, the document icon and ✎', async ({ node, section, names }) => {
     const w = await mountFrame(node)
     expect(w.findAll('[data-test="designer-inspector-section"]').map((part) => part.attributes('data-key'))).toEqual([section])
     const shown = lines(w)
@@ -150,8 +151,10 @@ describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () =
     expect(shown.map((row) => row.attributes('data-doc'))).toEqual(node.cardDocuments!.map((own) => own.docId))
     for (const row of shown) {
       expect(row.attributes('data-empty')).toBe('false')
-      const dot = row.get('[data-test="inspector-slot-state"]')
-      expect([dot.attributes('data-tone'), dot.attributes('title')]).toEqual(['info', '작성 중'])
+      // flowgate.v02.0056 F1: a document being written asks nothing of the operator — no badge.
+      expect(row.find('[data-test="inspector-slot-state"]').exists()).toBe(false)
+      const history = row.get('[data-test="inspector-slot-history"]')
+      expect([history.attributes('data-icon'), history.attributes('title'), history.text()]).toEqual(['history', '검수·반려 이력', ''])
       const name = row.get('[data-test="inspector-slot-name"]')
       expect(name.element.tagName).toBe('BUTTON')
       expect(TYPE_CODE.test(name.text())).toBe(false)
@@ -198,13 +201,14 @@ describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () =
     expect(w.find('[data-test="test-spec-details"]').exists()).toBe(false)
   })
 
-  it('a line whose document is gone keeps its place as a hollow dot saying so, with nothing to open', async () => {
+  it('a line whose document is gone keeps its place saying so in the line, with nothing to open', async () => {
     const node = placed('gn_t', 'document', 'T', [line('instruction', 'T', doc('0009', 'T'), 'human'), { ...line('report', 'TR', doc('0010', 'TR'), 'run'), docId: null }])
     const w = await mountFrame(node)
     const report = lines(w)[1]
     expect(report.attributes('data-empty')).toBe('true')
-    expect(report.get('[data-test="inspector-slot-state"]').attributes('title')).toBe('문서 없음')
+    expect(report.get('[data-test="inspector-slot-state"]').text()).toBe('문서 없음')
     expect(report.find('[data-test="inspector-slot-open"]').exists()).toBe(false)
+    expect(report.find('[data-test="inspector-slot-history"]').exists()).toBe(false)
     expect(report.get('[data-test="inspector-slot-name"]').element.tagName).toBe('SPAN')
   })
 
@@ -215,8 +219,10 @@ describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () =
     ])
     const w = await mountFrame(node)
     const [instruction, report] = lines(w)
-    expect(instruction.get('[data-test="inspector-slot-state"]').attributes('title')).toBe('승인됨')
+    expect(instruction.get('[data-test="inspector-slot-state"]').text()).toBe('승인됨')
+    expect(instruction.get('[data-test="inspector-slot-state"]').classes()).toContain('is-quiet')
     expect(report.get('[data-test="inspector-slot-state"]').attributes('data-tone')).toBe('warning')
+    expect(report.get('[data-test="inspector-slot-state"]').text()).toBe('검수 대기')
     expect(report.classes()).toContain('is-focus')
   })
 })

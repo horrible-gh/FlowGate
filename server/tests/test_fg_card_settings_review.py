@@ -1,13 +1,15 @@
-"""flowgate.v02.0053 T#2 — the card settings a node's run applies after the start: instruction use / omit,
-the card's AI review (review AI, review count, review basis) and after review (follow / human).
+"""flowgate.v02.0053 T#2 — the card settings a node's run applies after the start: instruction use / omit and
+the card's AI review (review AI, review count, review basis). flowgate.v02.0056 T#1: after review is gone and
+what follows is always the former follow; a result that is not approved waits for the card's approval.
 
 On the same real SQLite DB and routes as ``test_fg_card_settings`` (its fixtures and helpers), from the
 result registration on: the AI of one card writes the node's own type with its instruction used and the
 card's report with it omitted, and only that type binds and fills its card line; when the node's AI run
 has ended (the AI invoke engine's run-end port, ``ai_run_end_hooks``) the card's review count starts the
-v0.1 document review loop with the card's review AI, count and basis, and after review decides whether a
-passed review (or no review) approves the result and moves the node on, or leaves it to a person. While
-the review works, its rejection on the way to a rework is not the node's outcome and the card is locked.
+v0.1 document review loop with the card's review AI, count and basis; a passed review (or no review)
+approves the result and moves the node on, any other end leaves it awaiting a person's approval. A rejection
+— the review's on the way to a rework or when its count is spent — is no node event, and the card is locked
+while the review works.
 The v0.1 AI invoke admission is replaced by a recorder (what it is asked to start); the approval, the
 review loop table and the Graph contacts are the real ones. The remote source tools grant a node's real
 tokens what the AI was told to write (an omitted instruction's TR: write), and every review hop's real
@@ -108,12 +110,14 @@ def _recorded_start_run(monkeypatch):
     return calls
 
 
-def _work_run_ended():
+def _work_run_ended(**ending):
+    """The node's AI run ended and released its lease — on its own unless ``ending`` says how it stopped
+    (the finalized record: ``end_reason`` from the worker, ``stop_code`` from finalization)."""
     from modules.flow_gate.services import ai_run_end_hooks
 
     ai_run_end_hooks.run_ended({"run_id": WORK_RUN, "group_id": FA, "doc_ref": f"{FA}.0001-R", "action_scope": "new",
                                 "mode": "single", "issued_to": "u_kim", "provider_id": "aip_assignee",
-                                "outcome": "complete"})
+                                "outcome": "complete", "end_reason": "exited", "stop_code": None, **ending})
 
 
 # ── instruction use / omit: what the AI writes and what the node binds ───────
@@ -249,23 +253,23 @@ def test_a_token_the_graph_never_mapped_is_judged_as_before(env, decided, monkey
     assert "write" not in _source_scopes(stray["raw_token"])               # the root R: read, as before
 
 
-# ── after review without a review: follow / human ────────────────────────────
+# ── without a review: approved at once (flowgate.v02.0056 T#1) ──────────────
 
-@pytest.mark.parametrize("after_review, status, review", [
-    ("follow", "done", "approved"), ("human", "review", "pending_review"), (None, "review", "pending_review")])
-def test_without_a_review_follow_approves_the_result_when_the_ai_run_ends(
-        env, decided, monkeypatch, after_review, status, review):
-    settings = (("after_review", after_review),) if after_review else ()
-    key, result, _token = _in_review(env, monkeypatch, settings)
+@pytest.mark.parametrize("stored_human", [False, True])
+def test_without_a_review_the_result_is_approved_when_the_ai_run_ends(env, decided, monkeypatch, stored_human):
+    key, result, _token = _in_review(env, monkeypatch)
+    if stored_human:                                                      # a card that stored human before 0056
+        _sql(env["db"], "INSERT INTO graph_node_settings (group_id, node_key, field, value_json, updated_at) "
+                        "VALUES (?, ?, 'after_review', '\"human\"', 't')", (FA, key))
     assert _review_status(result) == "pending_review"                     # nothing moves while the AI still runs
     calls = _recorded_start_run(monkeypatch)
     _work_run_ended()
     assert calls == []                                                    # no review: no review loop
-    assert (_node(env, key)[0], _review_status(result)) == (status, review)
+    assert (_node(env, key)[0], _review_status(result)) == ("done", "approved")
 
 
-def test_follow_approves_the_report_an_omitted_instruction_wrote(env, decided, monkeypatch):
-    key, result, _token = _in_review(env, monkeypatch, (("instruction", "omit"), ("after_review", "follow")), "TR")
+def test_the_report_an_omitted_instruction_wrote_is_approved(env, decided, monkeypatch):
+    key, result, _token = _in_review(env, monkeypatch, (("instruction", "omit"),), "TR")
     _work_run_ended()
     assert (_node(env, key), _review_status(result)) == (("done", result), "approved")
 
@@ -273,7 +277,7 @@ def test_follow_approves_the_report_an_omitted_instruction_wrote(env, decided, m
 def test_a_run_that_is_not_the_node_ai_changes_nothing(env, decided, monkeypatch):
     from modules.flow_gate.services import ai_run_end_hooks
 
-    key, result, _token = _in_review(env, monkeypatch, (("after_review", "follow"),))
+    key, result, _token = _in_review(env, monkeypatch)
     ai_run_end_hooks.run_ended({"run_id": "air_someone_else", "group_id": FA, "action_scope": "new",
                                 "mode": "single", "issued_to": "u_kim"})
     assert (_node(env, key)[0], _review_status(result)) == ("review", "pending_review")
@@ -291,8 +295,8 @@ def test_a_card_review_starts_the_review_loop_with_its_review_ai_count_and_basis
     _sql_provider = "INSERT OR IGNORE INTO ai_providers (provider_id, name, exec_type, kind, created_at, updated_at) " \
                     "VALUES ('aip_default', 'aip_default', 'cli', 'claude', 't', 't')"
     _sql(env["db"], _sql_provider)
-    settings = [("run_ai", "aip_card"), ("review_count", 2), ("review_basis", "last"), ("after_review", "follow"),
-                ("time_limit", 120), ("restart", 1)]
+    settings = [("run_ai", "aip_card"), ("review_count", 2), ("review_basis", "last"), ("time_limit", 120),
+                ("restart", 1)]
     if review_ai:
         settings.append(("review_ai", review_ai))
     key, result, _token = _in_review(env, monkeypatch, settings)
@@ -361,24 +365,25 @@ def test_the_review_loop_request_follows_the_card_within_the_loop_ranges():
         "failure_restart_max_attempts"] == 2
     assert f.review_loop({"review_count": 1, "restart": -1}, reviewer="r", reworker="w")[
         "failure_restart_max_attempts"] == -1
-    assert [f.after_result(f.RUN, s) for s in ({}, {"after_review": "follow"}, {"review_count": 1},
-                                              {"review_count": 0, "after_review": "follow"})] == [
-        None, f.APPROVE, f.REVIEW, f.APPROVE]
+    assert [f.after_result(f.RUN, s) for s in ({}, {"after_review": "human"}, {"review_count": 1},
+                                              {"review_count": 0}, {"review_count": -1})] == [
+        f.APPROVE, f.APPROVE, f.REVIEW, f.APPROVE, f.REVIEW]
+    assert f.after_result(f.TEST, {}) == f.APPROVE
     assert f.after_result(f.REQUIREMENT, {"review_count": 1}) is None
 
 
-@pytest.mark.parametrize("after_review, stop_reason, status, review", [
-    ("follow", "review_passed", "done", "approved"),
-    ("human", "review_passed", "review", "pending_review"),
-    ("follow", "review_count_exhausted", "review", "pending_review"),
-    ("follow", "review_verdict_hold", "review", "pending_review"),
+@pytest.mark.parametrize("stop_reason, status, review", [
+    ("review_passed", "done", "approved"),
+    ("review_count_exhausted", "review", "pending_review"),
+    ("review_verdict_hold", "review", "pending_review"),
+    ("review_stalled", "review", "pending_review"),
+    ("user_cancelled", "review", "pending_review"),
 ])
-def test_when_the_card_review_ends_follow_approves_only_a_passed_result(
-        env, decided, monkeypatch, after_review, stop_reason, status, review):
+def test_when_the_card_review_ends_only_a_passed_result_is_approved(
+        env, decided, monkeypatch, stop_reason, status, review):
     from modules.flow_gate.services import ai_run_end_hooks
 
-    key, result, _token = _in_review(env, monkeypatch, (("review_count", 2), ("review_ai", "aip_review"),
-                                                         ("after_review", after_review)))
+    key, result, _token = _in_review(env, monkeypatch, (("review_count", 2), ("review_ai", "aip_review")))
     ai_run_end_hooks.run_ended({"run_id": REVIEW_RUN, "group_id": FA, "doc_ref": result, "action_scope": "review",
                                 "mode": "single", "issued_to": "u_kim",
                                 "document_review_loop": {"current_stage": "stopped", "stop_reason": stop_reason}})
@@ -396,7 +401,7 @@ def _loop_row(result, stage):
                      "current_stage": stage})
 
 
-def test_while_the_card_review_works_its_rejection_is_not_the_outcome_and_the_card_is_locked(
+def test_a_card_review_rejection_is_no_node_event_and_the_card_is_locked_while_it_works(
         env, decided, monkeypatch):
     from modules.flow_gate.db import documents as db_documents
     from modules.flow_gate.graph_workflow.services import result_binder
@@ -408,19 +413,18 @@ def test_while_the_card_review_works_its_rejection_is_not_the_outcome_and_the_ca
     result_binder.reconcile_if_needed(FA, "flowgate")
     assert _node(env, key) == ("review", result)
     assert get_settings(env, FA, key)["locked"] is True
-    assert setting(env, FA, key, "after_review", "follow", expect=409)["error"]["code"] == "node_settings_locked"
+    assert setting(env, FA, key, "restart", 1, expect=409)["error"]["code"] == "node_settings_locked"
     _sql(env["db"], "UPDATE ai_invoke_document_review_loops SET current_stage = 'stopped', "
                     "stop_reason = 'review_count_exhausted', stop_detail = 'spent' WHERE run_id = ?", (REVIEW_RUN,))
-    result_binder.reconcile_if_needed(FA, "flowgate")                    # the review ended rejected
-    assert _node(env, key) == ("rejected", result)
+    result_binder.reconcile_if_needed(FA, "flowgate")                    # the review ended rejected:
+    assert _node(env, key) == ("review", result)                          # no node event (flowgate.v02.0056 T#1)
     assert get_settings(env, FA, key)["locked"] is False
 
 
 def test_the_review_loop_of_a_passed_result_is_read_from_its_row(env, decided, monkeypatch):
     from modules.flow_gate.services import ai_run_end_hooks
 
-    key, result, _token = _in_review(env, monkeypatch, (("review_count", 2), ("review_ai", "aip_review"),
-                                                         ("after_review", "follow")))
+    key, result, _token = _in_review(env, monkeypatch, (("review_count", 2), ("review_ai", "aip_review")))
     _loop_row(result, "review")
     _sql(env["db"], "UPDATE ai_invoke_document_review_loops SET current_stage = 'stopped', "
                     "stop_reason = 'review_passed' WHERE run_id = ?", (REVIEW_RUN,))

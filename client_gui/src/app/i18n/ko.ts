@@ -341,8 +341,11 @@ export default {
         open: '열기',
         // flowgate.v02.0053 T#3 — ✎ opens the document window straight in its editor.
         edit: '편집',
-        // flowgate.v02.0053 T#5 — the hollow state dot's tooltip on a line without a document.
+        // flowgate.v02.0053 T#5 — the wording of a line without a document (0056 F1: drawn in the line).
         none: '문서 없음',
+        // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
+        history: '검수·반려 이력',
+        history_count: '검수·반려 이력 {n}건',
       },
       review: {
         pass: 'AI 검수 {n}회 · 남은 지적 {remain}',
@@ -814,6 +817,8 @@ export default {
     editor: '문서 본문',
     save: '저장',
     cancel: '취소',
+    // flowgate.v02.0056 F1 — [닫기] of the editor bar: the window closes (unsaved text is asked about first).
+    close: '닫기',
     discard: {
       title: '저장하지 않은 내용을 버릴까요?',
       confirm: '버리기',
@@ -843,9 +848,36 @@ export default {
       error: '불러오지 못했습니다',
       retry: '다시 시도',
       copy_md: 'Markdown 복사',
-      copy_md_with_header: '헤더 포함 복사',
       copy_code: '코드 복사',
       copy_failed: '복사하지 못했습니다',
+    },
+    // flowgate.v02.0056 F1 — the 검수·반려 이력 window (the v0.1 '검수·반려 전체보기' dialog on ModelessShell).
+    history: {
+      title: '검수·반려 이력',
+      filter_label: '이력 종류',
+      filter_all: '전체',
+      filter_reject: '반려',
+      filter_ai_review: 'AI 검수',
+      empty: '이력이 없습니다.',
+      tag_reject: '반려',
+      tag_ai_review: 'AI 검수',
+      verdict: {
+        pass: '통과',
+        hold: '보류',
+        issues: '지적 {n}건',
+      },
+      intent_normal: '최초 검수',
+      intent_rerun: '재검수',
+      rev: 'rev {n}',
+      reviewer: '검수 AI: {name}',
+      requested: '요청한 AI: {name}',
+      supersedes: '대체 대상: {reference}',
+      by_user: '사용자',
+      by_ai: 'AI · {name}',
+      ai_unknown: 'AI (실행 정보 없음)',
+      ai_response: 'AI 대응',
+      fold: '접기',
+      unfold: '펼치기',
     },
     // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
     types: {
@@ -866,12 +898,7 @@ export default {
     },
     work_plan: {
       label: '작업계획',
-      design: '설계',
-      work: '작업',
-      steps: '단계',
-      total_design: '{n}장',
-      total_work: '{n}세트',
-      total_steps: '{n}개',
+      // flowgate.v02.0056 F1 — the totals tiles (design · work · steps) are gone; the quantity boxes are the count.
       quantities: '수량',
       assignments: '단계별 담당',
       sets: {

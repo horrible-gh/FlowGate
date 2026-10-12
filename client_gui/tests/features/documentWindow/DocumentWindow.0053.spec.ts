@@ -204,6 +204,40 @@ describe('document window — ✎ editing (flowgate.v02.0053 T#3)', () => {
     expect(files.get(REPORT)).toBe(`${FRONT}\n# 결과\n\n본문입니다.\n`)
   })
 
+  // flowgate.v02.0056 F1 (0056 CH §5): the editor bar has [닫기] as well — the window's close by button, apart
+  // from [취소] [저장]; it takes the × / Esc path, so unsaved text is asked about once.
+  it('[닫기] in the editor bar: the bar is 닫기 · 취소 · 저장; without changes the window closes at once', async () => {
+    const panel = await open(REPORT, 'edit')
+    const close = q(panel, 'document-window-close')!
+    expect(close.textContent?.trim()).toBe('닫기')
+    expect([...close.parentElement!.querySelectorAll('button')].map((button) => button.getAttribute('data-test'))).toEqual([
+      'document-window-close',
+      'document-window-cancel',
+      'document-window-save',
+    ])
+    await click(close)
+    expect(confirmTitle()).toBeNull()
+    expect(panels()).toHaveLength(0)
+    expect(windows()).toEqual([])
+    expect(contentSave).not.toHaveBeenCalled()
+  })
+
+  it('[닫기] with unsaved text asks once: 계속 편집 keeps the window and the text, 버리기 closes it without saving', async () => {
+    const panel = await open(REPORT, 'edit')
+    await type(q(panel, 'document-window-textarea'), '저장 안 한 글')
+    await click(q(panel, 'document-window-close'))
+    expect(confirmTitle()).toBe('저장하지 않은 내용을 버릴까요?')
+    await click(confirmButtons()[0])
+    expect(confirmTitle()).toBeNull()
+    expect(panels()).toHaveLength(1)
+    expect((q(panel, 'document-window-textarea') as HTMLTextAreaElement).value).toBe('저장 안 한 글')
+    await click(q(panel, 'document-window-close'))
+    await click(confirmButtons()[1])
+    expect(panels()).toHaveLength(0)
+    expect(contentSave).not.toHaveBeenCalled()
+    expect(files.get(REPORT)).toBe(`${FRONT}\n# 결과\n\n본문입니다.\n`)
+  })
+
   it('closing a window with unsaved text asks once; 버리기 closes it', async () => {
     const panel = await open(REPORT, 'edit')
     await type(q(panel, 'document-window-textarea'), '저장 안 한 글')

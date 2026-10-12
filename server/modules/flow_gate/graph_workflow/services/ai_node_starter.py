@@ -19,7 +19,7 @@ document type).
   the engine's own single-run default (the per-document budget, no restart). The mention asks for the
   job's ``result_doc_type``: the node's own type, or the card's report when its instruction is omitted
   (the result binder binds that same type, asking the card as the dispatch did).
-- The card's review (review AI / count / basis) and what follows it (after review) are not part of this
+- The card's review (review AI / count / basis) and what follows it (the approval) are not part of this
   start: they begin when this run has ended and released the group lease (``ai_run_end_hooks``).
 """
 from __future__ import annotations

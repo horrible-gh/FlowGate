@@ -334,8 +334,11 @@ export default {
         open: '開く',
         // flowgate.v02.0053 T#3 — ✎ opens the document window straight in its editor.
         edit: '編集',
-        // flowgate.v02.0053 T#5 — the hollow state dot's tooltip on a line without a document.
+        // flowgate.v02.0053 T#5 — the wording of a line without a document (0056 F1: drawn in the line).
         none: '文書なし',
+        // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
+        history: 'レビュー・差し戻し履歴',
+        history_count: 'レビュー・差し戻し履歴 {n}件',
       },
       review: {
         pass: 'AIレビュー {n}回 · 残り指摘 {remain}',
@@ -804,6 +807,8 @@ export default {
     editor: '文書本文',
     save: '保存',
     cancel: 'キャンセル',
+    // flowgate.v02.0056 F1 — エディターバーの[閉じる]: ウィンドウを閉じる（未保存の内容は先に確認する）。
+    close: '閉じる',
     discard: {
       title: '保存していない内容を破棄しますか？',
       confirm: '破棄',
@@ -833,9 +838,36 @@ export default {
       error: '読み込めませんでした',
       retry: '再試行',
       copy_md: 'Markdown をコピー',
-      copy_md_with_header: 'ヘッダー付きでコピー',
       copy_code: 'コードをコピー',
       copy_failed: 'コピーできませんでした',
+    },
+    // flowgate.v02.0056 F1 — レビュー・差し戻し履歴ウィンドウ（v0.1 のダイアログを ModelessShell に移したもの）。
+    history: {
+      title: 'レビュー・差し戻し履歴',
+      filter_label: '履歴の種類',
+      filter_all: '全体',
+      filter_reject: '差し戻し',
+      filter_ai_review: 'AI レビュー',
+      empty: '履歴がありません。',
+      tag_reject: '差し戻し',
+      tag_ai_review: 'AI レビュー',
+      verdict: {
+        pass: '合格',
+        hold: '保留',
+        issues: '指摘 {n}件',
+      },
+      intent_normal: '初回レビュー',
+      intent_rerun: '再レビュー',
+      rev: 'rev {n}',
+      reviewer: 'レビュー AI: {name}',
+      requested: '依頼した AI: {name}',
+      supersedes: '置き換え対象: {reference}',
+      by_user: 'ユーザー',
+      by_ai: 'AI · {name}',
+      ai_unknown: 'AI（実行情報なし）',
+      ai_response: 'AI 対応',
+      fold: '折りたたむ',
+      unfold: '展開する',
     },
     // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
     types: {
@@ -856,12 +888,7 @@ export default {
     },
     work_plan: {
       label: '作業計画',
-      design: '設計',
-      work: '作業',
-      steps: 'ステップ',
-      total_design: '{n}枚',
-      total_work: '{n}セット',
-      total_steps: '{n}件',
+      // flowgate.v02.0056 F1 — the totals tiles (design · work · steps) are gone; the quantity boxes are the count.
       quantities: '数量',
       assignments: 'ステップ別担当',
       sets: {

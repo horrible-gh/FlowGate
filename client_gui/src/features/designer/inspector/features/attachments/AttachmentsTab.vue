@@ -7,6 +7,8 @@
        '＋ 추가' / '파일당 최대 nMB' text), an empty document shows only '첨부 없음' (v7), and files dropped
        anywhere on the tab are uploaded the same way as picked ones (same API, limits and refusals); the
        tab is highlighted while files are dragged over it, only when adding is possible.
+       flowgate.v02.0056 F1 (0056 CH §4) — the delete button of a row is the trash icon (tooltip 삭제); the
+       confirm step is unchanged.
        In the Frame the drop is taken on the whole tab Content (INSPECTOR_BODY) — the free space under a
        short list and the body's padding too — and this box fills the body (`fill`), so the highlight
        covers the tab. Outside the Frame the box itself is the drop area. -->
@@ -61,15 +63,27 @@
               @click="open(row.filename)"
             >{{ row.filename }}</button>
             <span class="inspector-attachments-sub" data-test="attachments-size">{{ t(k(row.size.key), { value: row.size.value }) }}</span>
-            <Button
+            <!-- flowgate.v02.0056 F1 (0056 CH §4): the delete button is the trash icon, its name the tooltip; the
+                 inline confirm step under the row stays as it was. -->
+            <IconButton
               v-if="confirming !== row.filename"
-              size="sm"
+              :label="t(k('delete'))"
+              :title="t(k('delete'))"
               variant="ghost"
-              :disabled="!availability.delete.enabled"
-              :loading="busy?.operation === 'delete' && busy.filename === row.filename"
+              size="sm"
+              :disabled="!availability.delete.enabled || (busy?.operation === 'delete' && busy.filename === row.filename)"
+              :data-busy="busy?.operation === 'delete' && busy.filename === row.filename ? 'true' : 'false'"
+              data-icon="trash"
               data-test="attachments-delete"
               @click="confirming = row.filename"
-            >{{ t(k('delete')) }}</Button>
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M2.8 4.4h10.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+                <path d="M6 4.4V2.9h4v1.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+                <path d="M4.3 4.4l.7 8.7h6l.7-8.7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+                <path d="M6.7 7v4M9.3 7v4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+              </svg>
+            </IconButton>
           </div>
           <span v-if="row.originalFilename" class="inspector-attachments-sub" data-test="attachments-original">{{ t(k('original'), { name: row.originalFilename }) }}</span>
           <div v-if="confirming === row.filename" class="inspector-attachments-line" data-test="attachments-confirm">
@@ -90,6 +104,7 @@
 import { computed, inject, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../../components/ui/Button.vue'
+import IconButton from '../../../../../components/ui/IconButton.vue'
 import InspectorAddButton from '../../parts/InspectorAddButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'

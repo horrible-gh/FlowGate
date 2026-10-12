@@ -12,6 +12,11 @@ its place). The other modules create, bind and remove the documents; nothing her
 - test (TS): instruction · scenario · report — the scenario (cases) lives inside the TS document
   (0549 contract 2: no separate case document), so the scenario line shares the instruction document.
 - gate and unknown types: no lines.
+
+flowgate.v02.0056 T#1: the card approval approves the documents of a card's approval lines
+(``approval_slots``): the instruction then the report of a research / work / apply / design / custom /
+test card (N + NR, T + TR, T2 + TR2, DS + design, TS + TSR), the requirement of R / B and the plan of WP.
+The lines a run makes for the record (AI delegation, deploy) and the scenario sharing the TS are not.
 """
 from __future__ import annotations
 
@@ -77,6 +82,14 @@ def card_slots(node_type: Optional[str], doc_type: Optional[str], *, ai_delegati
         instruction, report = _PAIRS[t]
         return (CardSlot(INSTRUCTION, instruction, HUMAN), CardSlot(REPORT, report, RUN))
     return ()
+
+
+_APPROVAL_LINES = (REQUIREMENT, PLAN, INSTRUCTION, REPORT)
+
+
+def approval_slots(node_type: Optional[str], doc_type: Optional[str]) -> tuple:
+    """The lines whose documents a card approval approves, instruction first (tuple[CardSlot, ...])."""
+    return tuple(s for s in card_slots(node_type, doc_type) if s.slot in _APPROVAL_LINES and not s.shares)
 
 
 def slot_signature(slot: CardSlot) -> tuple:
