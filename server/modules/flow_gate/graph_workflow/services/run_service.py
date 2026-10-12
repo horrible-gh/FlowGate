@@ -12,6 +12,10 @@ and each node run whether its card waits for a person's approval (``awaiting_app
 §2.6.5 step 2): it takes ``review_rejected`` at the run start, the card is rejected, its card approval is
 refused (409 ``node_not_in_review``) and nothing follows it — the one exception to "a person's rejection
 is no node event" (T0004 §5), as answered on this TR's question.
+
+flowgate.v02.0056 T#2: each node run also tells the stage of its card run (``stage``: ``instruction`` while the
+card's instruction AI writes its instruction, ``result`` while its run AI writes the result) and the instruction
+the card run uses (``instruction_doc_id``).
 """
 from __future__ import annotations
 
@@ -248,10 +252,13 @@ def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
 
 
 def node_run_wire(row: dict, flow_id: str) -> dict:
+    """flowgate.v02.0056 T#2: ``stage`` (``instruction`` / ``result``, null for a node no AI starts) and the
+    card run's ``instruction_doc_id`` (null until known)."""
     return {"node_key": row["node_key"], "status": row["status"], "opened_at": row.get("opened_at"),
             "finished_at": row.get("finished_at"), "result_doc_id": row.get("result_doc_id"),
             "root_bound": bool(row.get("root_bound")), "dispatch": dispatch_block(row),
-            "awaiting_approval": node_approval.awaiting_approval(flow_id, row)}
+            "awaiting_approval": node_approval.awaiting_approval(flow_id, row),
+            "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id")}
 
 
 def current_run(group: dict) -> dict:

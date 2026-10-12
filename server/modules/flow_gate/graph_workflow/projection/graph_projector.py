@@ -28,6 +28,9 @@ from .legacy_projector import Projection, doc_node, doc_order, document_block, r
 
 VIEW_ORIGIN = {"draft": "draft_node", "revision": "graph_node"}
 EDGE_ORIGIN = {"draft": "draft", "revision": "graph"}
+# The card line authors (card_documents ``author``) a node without a document shows first: a person's line,
+# and an instruction its instruction AI or a person writes (flowgate.v02.0056 T#2).
+_WRITTEN_AUTHORS = ("human", "instruction_ai_or_human")
 
 
 @dataclass
@@ -75,9 +78,10 @@ def graph_node(row: dict, origin: str, ownership: str, document: Optional[dict],
 
 
 def first_line_document(lines: list, by_id: dict) -> Optional[dict]:
-    """The document a node without one shows: its first line a person writes, else its first line."""
+    """The document a node without one shows: its first line a person (or, for an instruction, the card's
+    instruction AI or a person — flowgate.v02.0056 T#2) writes, else its first line."""
     filled = [line for line in lines or [] if line.get("doc_id") in by_id]
-    human = [line for line in filled if line.get("author") == "human"]
+    human = [line for line in filled if line.get("author") in _WRITTEN_AUTHORS]
     pick = (human or filled or [None])[0]
     return by_id.get(pick["doc_id"]) if pick else None
 

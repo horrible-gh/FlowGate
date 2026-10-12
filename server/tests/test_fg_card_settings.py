@@ -36,7 +36,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 FA = "flowgate.v02.0091"      # unassigned, live root R (approved)
 FB = "flowgate.v02.0092"      # unassigned, no documents
 TEST_VALUE, TEST_VERSION = "card_settings_test", "1"
-RUN_FIELDS = ["instruction", "run_ai", "restart", "review_ai", "review_count", "time_limit", "review_basis"]
+# flowgate.v02.0056 T#2: the run cards' instruction AI comes right after the instruction it writes.
+RUN_FIELDS = ["instruction", "instruction_ai", "run_ai", "restart", "review_ai", "review_count", "time_limit",
+              "review_basis"]
 
 
 @pytest.fixture()
@@ -286,7 +288,7 @@ def test_a_new_card_reads_its_defaults_and_saves_each_value_at_once(env):
     key = placed(env, FB, "T")
     body = get_settings(env, FB, key)
     assert (body["card_kind"], body["locked"], list(body["fields"])) == ("run", False, RUN_FIELDS)
-    assert shown(body) == {"instruction": "use", "run_ai": None, "restart": 0,
+    assert shown(body) == {"instruction": "use", "instruction_ai": None, "run_ai": None, "restart": 0,
                            "review_ai": None, "review_count": 0, "time_limit": 60, "review_basis": "type"}
     assert not any(f["stored"] for f in body["fields"].values())
     assert body["fields"]["time_limit"]["choices"] == [30, 45, 60, 90, 120, 180, 240]

@@ -246,13 +246,16 @@ def test_card_slot_table_follows_the_0053_agreement():
     assert table("document", "b", ai_delegation=True) == [("requirement", "B", "human", None),
                                                           ("delegation", "M", "run", None)]
     assert table("document", "WP") == [("plan", "WP", "human", None), ("deploy", "M", "run", None)]
+    # flowgate.v02.0056 T#2: an instruction the card's instruction AI writes is "instruction AI or a person"
+    ai_or_human = "instruction_ai_or_human"
     for design in ("D", "P", "L", "DB"):
-        assert table("document", design) == [("instruction", "DS", "human", None), ("report", design, "run", None)]
-    assert table("document", "N") == [("instruction", "N", "human", None), ("report", "NR", "run", None)]
-    assert table("document", "T") == [("instruction", "T", "human", None), ("report", "TR", "run", None)]
+        assert table("document", design) == [("instruction", "DS", ai_or_human, None), ("report", design, "run", None)]
+    assert table("document", "N") == [("instruction", "N", ai_or_human, None), ("report", "NR", "run", None)]
+    assert table("document", "T") == [("instruction", "T", ai_or_human, None), ("report", "TR", "run", None)]
+    assert table("document", "T2") == [("instruction", "T2", ai_or_human, None), ("report", "TR2", "run", None)]
     assert table("document", "TS") == [("instruction", "TS", "human", None), ("scenario", "TS", "run", "instruction"),
-                                       ("report", "TSR", "run", None)]
-    assert table("custom", None) == [("instruction", "T", "human", None), ("report", "TR", "run", None)]
+                                       ("report", "TSR", "run", None)]       # a test card has no instruction AI
+    assert table("custom", None) == [("instruction", "T", ai_or_human, None), ("report", "TR", "run", None)]
     assert table("gate", None) == [] and table("document", "M") == []
     assert is_disposable_draft({"status": "draft"}) is True
     assert not is_disposable_draft({"status": "draft", "doc_review_status": "pending_review"})

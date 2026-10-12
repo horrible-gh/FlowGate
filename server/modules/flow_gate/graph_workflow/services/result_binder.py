@@ -24,6 +24,24 @@ and waits for the card's approval (``node_approval``). The one exception is a ro
 state at the run start: it keeps L0009 §2.6.5 (``run_service._root_bound_start`` applies ``review_rejected``),
 as answered on the T#1 TR's question. A gate's confirm / reject is its own event and does not change.
 
+flowgate.v02.0056 T#2: an AI card with its instruction used runs an instruction stage before its result stage
+(``node_dispatch``, the node run's ``stage``). Only the result stage's document is the node's result: while the
+node is in its instruction stage nothing it registers is ``result_submitted`` — the card's instruction,
+registered with the node's token, is recorded as the stage's instruction (``instruction_doc_id``) and fills
+the card's instruction line, with no node event; the node stays open. (Once that stage's AI failed —
+``ai_invoke_failed`` — the node's token is a person's again, L0009 E-23, and a result they register binds as
+before.) The instruction's automatic approval is no node event either: it is no node's result. The stage's end —
+the move to the result stage or its failure — records the node run's registration boundary
+(``result_event_floor``): what the node's tokens registered up to it (a report the instruction AI registered too
+early, say) is never the node's result afterwards, on a contact or a reconciliation; only a later registration is.
+The boundary sees only the registrations consumed by then, and the inbox contacts the Graph before it consumes the
+token, so a registration on its way when the stage ends is told by its token's stage (``graph_run_token_map.stage``):
+the instruction AI's token is mapped as the instruction stage's when its run starts, and the node's dispatch token is
+marked so when a contact with it arrives during the stage. What an instruction stage's token registered is never the
+node's result — the contact and the reconciliation judge it alike, whenever its consume or commit lands.
+A node run with no stage — an AI card run opened before migration 148 — keeps the one stage its AI was told then:
+its result type is the card's of that time (``result_type`` hands the stage on as ``run_stage``).
+
 Anything else binds nothing and stays an unbound document node. A lost delegation (exception in
 the contact) is recovered by reconciliation from the v0.1 records (L0009 E-27): on resume, and
 before a run read when ``needs_reconcile`` says something is missing.
@@ -44,11 +62,12 @@ from modules.flow_gate.graph_workflow.store import run_store
 from . import card_approval_ports, card_settings_ports
 from .engine_router import read_ownership
 from .flow_guard import with_flow_guard
-from .run_apply import RunContext, apply_decision, load_context, read_run_state
+from .run_apply import RunContext, apply_decision, fill_line, load_context, read_run_state
 
 _log = logging.getLogger(__name__)
 
 EVENT_KINDS = ("inbox_registered", "review_decided")
+INSTRUCTION_STAGE = "instruction"
 RECONCILE_MAX_STEPS_PER_NODE = 64
 # Only an approval moves a node on; a rejection is no node event (flowgate.v02.0056 T#1).
 _DECISIONS = {"approve": "review_approved", "approved": "review_approved"}
@@ -116,8 +135,17 @@ def locate(ctx: RunContext, kind: str, payload: dict) -> Optional[RunEvent]:
             return None
         node = ctx.node_rows.get(mapped["node_key"]) or {}        # 2) the node's token
         row = next((r for r in rows if r["node_key"] == mapped["node_key"]), None)
-        if _type(doc.get("type_code")) != result_type(ctx, node) or row is None:
+        if row is not None and in_instruction_stage(row):
+            if not mapped.get("stage"):                           # T#2: the dispatch token spent in this stage
+                run_store.mark_token_stage(payload["token_id"], INSTRUCTION_STAGE)
+            _take_instruction(ctx, node, row, doc)                # T#2: the instruction, no node event
+            return None
+        if mapped.get("stage") == INSTRUCTION_STAGE:
+            return None                                           # T#2: the instruction stage's token, never a result
+        if row is None or _type(doc.get("type_code")) != result_type(ctx, node, row):
             return None                                           # E-24: another type
+        if doc["doc_id"] in instruction_stage_documents(ctx, row):
+            return None                                           # T#2: registered before the result stage
         if row.get("result_doc_id") is None and row["status"] == "open":
             return RunEvent("result_submitted", row["node_key"], doc_id=doc["doc_id"])
         return None                                               # already has a result
@@ -130,6 +158,35 @@ def locate(ctx: RunContext, kind: str, payload: dict) -> Optional[RunEvent]:
             return None                                           # the card's other documents wait
         return RunEvent(cause, row["node_key"], doc_id=doc["doc_id"])
     return None
+
+
+def in_instruction_stage(row: dict) -> bool:
+    """The node run is in its card's instruction stage and its AI has not failed (flowgate.v02.0056 T#2)."""
+    return row.get("stage") == INSTRUCTION_STAGE and row["status"] == "open" and not row.get("dispatch_error_code")
+
+
+def instruction_stage_documents(ctx: RunContext, row: Optional[dict]) -> set[str]:
+    """The documents the node's tokens registered before its result stage (at or before the node run's
+    ``result_event_floor``): its instruction stage's, never its result (flowgate.v02.0056 T#2). A registration
+    consumed after the boundary is the instruction stage's by its token's stage instead (``locate``,
+    ``next_missing_event``)."""
+    floor = (row or {}).get("result_event_floor")
+    if floor is None:
+        return set()
+    tokens = run_store.token_ids(ctx.run_id, row["node_key"])
+    return {d["doc_id"] for d in registered_documents(ctx.flow_id, tokens, upto_event_id=int(floor))}
+
+
+def _take_instruction(ctx: RunContext, node: dict, row: dict, doc: dict) -> None:
+    """Inside the guard: the card's instruction registered with the node's token during its instruction stage
+    is the stage's instruction and takes the card's instruction line; anything else binds nothing."""
+    found = card_settings_ports.instruction_document(ctx.flow_id, node)
+    if not found.get("doc_type") or _type(doc.get("type_code")) != _type(found["doc_type"]):
+        return
+    if doc.get("status") == CANCELLED:
+        return
+    run_store.set_stage(ctx.run_id, row["node_key"], INSTRUCTION_STAGE, doc["doc_id"])
+    fill_line(ctx, row["node_key"], doc["doc_id"])              # the card's instruction line
 
 
 def _decision(payload: dict) -> str:
@@ -164,10 +221,13 @@ def _type(value) -> str:
     return str(value or "").strip().upper()
 
 
-def result_type(ctx: RunContext, node: dict) -> str:
+def result_type(ctx: RunContext, node: dict, row: Optional[dict] = None) -> str:
     """The type a result of ``node`` is: its card's (instruction omitted: the report), else its own — a Custom
-    card's being its work instruction (flowgate.v02.0053 T#8, ``graph_model.run_doc_type``)."""
-    return _type(card_settings_ports.result_type(ctx.flow_id, node)
+    card's being its work instruction (flowgate.v02.0053 T#8, ``graph_model.run_doc_type``). With its node run
+    ``row`` the card run's stage goes along as ``run_stage`` (flowgate.v02.0056 T#2): a node run with no stage,
+    opened before migration 148, keeps the type its AI was told then."""
+    asked = {**node, "run_stage": row.get("stage")} if row is not None else node
+    return _type(card_settings_ports.result_type(ctx.flow_id, asked)
                  or run_doc_type(node.get("node_type"), node.get("doc_type")))
 
 
@@ -194,8 +254,15 @@ def next_missing_event(ctx: RunContext, s: RunState, key: str) -> Optional[RunEv
     if nr is None:
         return None
     if nr.result_doc_id is None:
-        want = result_type(ctx, ctx.node_rows.get(key) or {})
-        for doc in registered_documents(ctx.flow_id, run_store.token_ids(ctx.run_id, key)):
+        row = next((r for r in run_store.node_runs(ctx.run_id) if r["node_key"] == key), None)
+        if row is not None and in_instruction_stage(row):
+            return None                                           # T#2: no result before the result stage
+        want = result_type(ctx, ctx.node_rows.get(key) or {}, row)
+        early = instruction_stage_documents(ctx, row)             # T#2: the instruction stage's registrations
+        tokens = run_store.token_ids(ctx.run_id, key, skip_stage=INSTRUCTION_STAGE)   # T#2: and its tokens'
+        for doc in registered_documents(ctx.flow_id, tokens):
+            if doc["doc_id"] in early:
+                continue
             if _type(doc.get("type_code")) == want and doc.get("status") != CANCELLED:
                 return RunEvent("result_submitted", key, doc_id=doc["doc_id"])
         return None

@@ -619,7 +619,8 @@ def test_canvas_shows_the_run(env, decided):
     assert nodes["gn_d"]["node_run"] == {"status": "review", "opened_at": nodes["gn_d"]["node_run"]["opened_at"],
                                          "finished_at": None, "result_doc_id": d,
                                          "dispatch": {"token_issued": True, "mention_id": None, "issued_to": "u_lee"},
-                                         "awaiting_approval": True}                       # a person's result
+                                         "awaiting_approval": True,                       # a person's result
+                                         "stage": None, "instruction_doc_id": None}       # no AI: no card run stage
     assert nodes["gn_p"]["state"] == "draft" and nodes["gn_p"]["node_run"]["status"] == "pending"
     assert f"doc:{d}" not in nodes and f"doc:{FG}.0001-R" not in nodes          # results are absorbed
 

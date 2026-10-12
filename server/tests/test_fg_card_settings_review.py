@@ -3,9 +3,10 @@ the card's AI review (review AI, review count, review basis). flowgate.v02.0056 
 what follows is always the former follow; a result that is not approved waits for the card's approval.
 
 On the same real SQLite DB and routes as ``test_fg_card_settings`` (its fixtures and helpers), from the
-result registration on: the AI of one card writes the node's own type with its instruction used and the
-card's report with it omitted, and only that type binds and fills its card line; when the node's AI run
-has ended (the AI invoke engine's run-end port, ``ai_run_end_hooks``) the card's review count starts the
+result registration on: the AI of one card writes the card's report as the node's result — with its instruction
+used after the instruction stage (flowgate.v02.0056 T#2: ``_in_review`` walks that stage the way the engine runs
+it, ``test_fg_instruction_stage_0056`` tests the stage itself), with it omitted at once — and only that type
+binds and fills its card line; when the node's AI run has ended (the AI invoke engine's run-end port, ``ai_run_end_hooks``) the card's review count starts the
 v0.1 document review loop with the card's review AI, count and basis; a passed review (or no review)
 approves the result and moves the node on, any other end leaves it awaiting a person's approval. A rejection
 — the review's on the way to a rework or when its count is spent — is no node event, and the card is locked
@@ -29,6 +30,7 @@ from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
 
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 WORK_RUN, REVIEW_RUN = "air_card_work", "air_card_review"
+INSTRUCTION_RUN = "air_card_instruction"
 
 
 def _admin_and_reviewer(env):
@@ -84,8 +86,43 @@ def _result(seq, typ):
     return doc_id
 
 
-def _in_review(env, monkeypatch, settings=(), written="T"):
-    """An AI card with ``settings`` runs; its AI registers a result: (node key, result, AI token)."""
+def _write_written(doc_id, body="## 작업\n\n지시 AI가 쓴 지시서 본문\n"):
+    """A card document gets a body after its front matter (what an edit submission writes)."""
+    from modules.flow_gate.db import documents as db_documents
+    from modules.flow_gate.storage.paths import get_storage_root
+
+    path = get_storage_root("flowgate", create=True) / "docs" / f"{doc_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"---\ntitle: {doc_id}\n---\n{body}", encoding="utf-8")
+    db_documents.update(doc_id, {"file_path": f"docs/{doc_id}.md"})
+
+
+def _run_ended(run_id, **fields):
+    """An AI run of the card ended on its own (unless ``fields`` say how) and released its lease."""
+    from modules.flow_gate.services import ai_run_end_hooks
+
+    ai_run_end_hooks.run_ended({"run_id": run_id, "group_id": FA, "doc_ref": f"{FA}.0001-R", "action_scope": "new",
+                                "mode": "single", "issued_to": "u_kim", "provider_id": "aip_assignee",
+                                "outcome": "complete", "end_reason": "exited", "stop_code": None, **fields})
+
+
+def _through_instruction(env, monkeypatch):
+    """The instruction stage of an AI card with its instruction used (flowgate.v02.0056 T#2), as the engine runs
+    it: its instruction AI writes the card's instruction into the line's empty document (an edit start) and its
+    run ends on its own; the instruction is approved and the result stage's start is queued. -> the instruction."""
+    [job] = env["jobs"]
+    assert (job["stage"], job["action_scope"]) == ("instruction", "edit")
+    _start_ai(monkeypatch, job, INSTRUCTION_RUN)
+    _write_written(job["target_doc_id"])
+    env["jobs"].clear()
+    _run_ended(INSTRUCTION_RUN, action_scope="edit", doc_ref=job["target_doc_id"])
+    assert _review_status(job["target_doc_id"]) == "approved"
+    return job["target_doc_id"]
+
+
+def _in_review(env, monkeypatch, settings=(), written="TR"):
+    """An AI card with ``settings`` runs (through its instruction stage when its instruction is used); its AI
+    registers a result: (node key, result, AI token)."""
     from modules.flow_gate.graph_workflow.api import v01_contact
 
     _admin_and_reviewer(env)
@@ -93,6 +130,8 @@ def _in_review(env, monkeypatch, settings=(), written="T"):
     for field, value in settings:
         setting(env, FA, key, field, value)
     _start(env)
+    if dict(settings).get("instruction") != "omit":
+        _through_instruction(env, monkeypatch)
     [job] = env["jobs"]
     _heads, token = _start_ai(monkeypatch, job)
     result = _result(81, written)
@@ -113,27 +152,28 @@ def _recorded_start_run(monkeypatch):
 def _work_run_ended(**ending):
     """The node's AI run ended and released its lease — on its own unless ``ending`` says how it stopped
     (the finalized record: ``end_reason`` from the worker, ``stop_code`` from finalization)."""
-    from modules.flow_gate.services import ai_run_end_hooks
-
-    ai_run_end_hooks.run_ended({"run_id": WORK_RUN, "group_id": FA, "doc_ref": f"{FA}.0001-R", "action_scope": "new",
-                                "mode": "single", "issued_to": "u_kim", "provider_id": "aip_assignee",
-                                "outcome": "complete", "end_reason": "exited", "stop_code": None, **ending})
+    _run_ended(WORK_RUN, **ending)
 
 
 # ── instruction use / omit: what the AI writes and what the node binds ───────
 
 @pytest.mark.parametrize("instruction, written, other, line", [
-    (None, "T", "TR", "instruction"), ("use", "T", "TR", "instruction"), ("omit", "TR", "T", "report")])
+    (None, "TR", "T", "report"), ("use", "TR", "T", "report"), ("omit", "TR", "T", "report")])
 def test_instruction_use_or_omit_decides_what_the_ai_writes_and_what_the_node_binds(
         env, decided, monkeypatch, instruction, written, other, line):
+    """flowgate.v02.0056 T#2: with its instruction used the card's report is the result too, written after the
+    instruction stage (walked here; ``test_fg_instruction_stage_0056`` tests the stage)."""
     from modules.flow_gate.graph_workflow.api import v01_contact
 
+    _admin_and_reviewer(env)
     key = _run_one_card(env, AI)
     if instruction:
         setting(env, FA, key, "instruction", instruction)
     _start(env)
+    if instruction != "omit":
+        _through_instruction(env, monkeypatch)
     [job] = env["jobs"]
-    assert (job["doc_type"], job["result_doc_type"]) == ("T", written)
+    assert (job["doc_type"], job["result_doc_type"], job["stage"]) == ("T", written, "result")
     heads, token = _start_ai(monkeypatch, job)
     assert heads == [written]                                            # the AI is asked for this type
     stray = _doc(FA, 80, other)
@@ -155,14 +195,22 @@ def test_the_result_type_follows_the_card_only_for_instruction_led_ai_cards():
     # T2 does not fold: its TR2 names the T2 it applies, and an omitted instruction leaves no T2
     assert [f.result_doc_type("document", t, omit) for t in ("N", "T", "T2", "D", "DB", "TS")] == [
         "NR", "TR", None, None, None, None]
-    assert f.result_doc_type("document", "T", {"instruction": "use"}) is None
-    assert f.result_doc_type("document", "T", {}) is None and f.result_doc_type("custom", None, {}) is None
+    # flowgate.v02.0056 T#2: instruction use (the default) -> the instruction stage, then the report is the result
+    for used in ({"instruction": "use"}, {}):
+        assert [f.result_doc_type("document", t, used) for t in ("N", "T", "T2", "D", "DB", "TS")] == [
+            "NR", "TR", "TR2", "D", "DB", None]
+        assert [f.instruction_stage("document", t, used) for t in ("N", "T", "T2", "D", "DB", "TS", "R", "WP")] == [
+            "N", "T", "T2", "DS", "DS", None, None, None]
+    assert f.result_doc_type("custom", None, {}) == "TR" and f.instruction_stage("custom", None, {}) == "T"
+    assert [f.instruction_stage("document", t, omit) for t in ("N", "T", "D")] == [None, None, None]
     # flowgate.v02.0053 T#8: a Custom card runs as a work instruction, so it folds like a work card
     assert f.result_doc_type("custom", None, omit) == "TR"
     assert f.run_plan(f.RUN, omit, "custom", None) == {"settings": omit, "result_doc_type": "TR"}
     assert f.run_plan(f.RUN, omit, "document", "T") == {"settings": omit, "result_doc_type": "TR"}
     assert f.run_plan(f.RUN, omit, "document", "D") == {"settings": omit}
     assert f.run_plan(f.RUN, omit, "document", "T2") == {"settings": omit}
+    assert f.run_plan(f.RUN, {}, "document", "T") == {
+        "settings": {}, "result_doc_type": "TR", "instruction": {"doc_type": "T", "provider_id": None}}
 
 
 def test_a_human_node_binds_its_own_type_whatever_its_card_says(env, decided):

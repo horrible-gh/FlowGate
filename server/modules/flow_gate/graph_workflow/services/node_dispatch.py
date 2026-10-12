@@ -28,6 +28,29 @@ binder's evidence) and, for an AI assignee, queues the AI start after the commit
   used before.
   When the start raises, or nothing is wired, the open node records ``ai_invoke_failed`` in a new
   guard (L0009 E-23); the token stays valid for a person.
+- flowgate.v02.0056 T#2 (0002-CH turn 5 / 6 §3 / 10 O2): an AI card with its instruction used runs in two
+  stages, each one single AI start through the same starter, with no new Graph policy (``report_pair`` is
+  untouched: the two calls live inside one card). The node run records its stage (``graph_node_runs.stage``).
+
+  1. instruction (``plan["instruction"]``): whether it runs is decided by the body of the card's instruction,
+     not by the document existing (``card_settings_ports.instruction_document``, the v0.2 body judgement):
+     no body -> the instruction AI (instruction AI, else run AI, else the assignee) writes the instruction
+     type once — into the line's empty document when there is one (``action_scope`` edit, no new document),
+     else as a new document; a body -> no AI, the instruction is approved and the result stage starts. Its
+     end (``card_settings`` on the AI run's end) approves the written instruction with no review and starts
+     the result stage (``start_result_stage``); a failed instruction stage records ``ai_invoke_failed`` on
+     the node as an AI start failure does and never reaches the result stage.
+  2. result: the node's result as before (the card's report), the instruction attached as a reference
+     document (``ref_doc_ids``). Its review and what follows are the card's, as before.
+
+  An instruction approval binds nothing (no node event, no propagation); the result binder takes only the
+  result stage's document as the node's result: the stage's end — the move to the result stage, or its failure —
+  records the node run's registration boundary (``run_store.mark_result_floor``), so a document the node's tokens
+  registered during the instruction stage never binds later, on a contact or a reconciliation; one whose consume
+  lands after that end is told by its token's stage (the instruction AI's token is mapped as that stage's by its
+  start, ``ai_node_starter``). A run stopped at the next step does not stop either stage
+  of a card it already opened. A node with no instruction stage (instruction omitted, a test card, no card
+  handler) runs only the result stage.
 """
 from __future__ import annotations
 
@@ -35,6 +58,7 @@ import logging
 from contextlib import contextmanager
 from typing import Any, Callable, Optional
 
+from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.graph_workflow.domain.graph_model import run_doc_type
 from modules.flow_gate.graph_workflow.store import run_store
@@ -43,6 +67,8 @@ from modules.flow_gate.services import token_service
 from . import card_settings_ports
 
 _log = logging.getLogger(__name__)
+
+INSTRUCTION_STAGE, RESULT_STAGE = "instruction", "result"
 
 
 def _start_with_ai_invoke(job: dict) -> Any:
@@ -101,14 +127,25 @@ def dispatch_document(ctx, row: dict) -> dict:
         return {"token_issued": False, "mention_id": None, "issued_to": shown, "error_code": "token_issue_failed"}
     run_store.map_token(token["token_id"], ctx.run_id, row["node_key"])
     if ai:
-        job = {"flow_id": ctx.flow_id, "project_id": ctx.project_id, "run_id": ctx.run_id,
-               "node_key": row["node_key"], "provider_id": provider, "token": token,
-               "issued_to": issued_to, "doc_ref": (root or {}).get("doc_id"), "doc_type": row.get("doc_type"),
-               "result_doc_type": plan.get("result_doc_type") or row.get("doc_type"),
-               "step_timeout_sec": plan.get("step_timeout_sec"), "restart_max": plan.get("restart_max"),
-               "card_settings": plan.get("settings") or {}}
+        stage = INSTRUCTION_STAGE if plan.get("instruction") else RESULT_STAGE
+        run_store.set_stage(ctx.run_id, row["node_key"], stage)
+        job = _ai_job(ctx, row, plan, provider, issued_to, token, stage)
         ctx.jobs.append(lambda: start_ai(job))
     return {"token_issued": True, "mention_id": None, "issued_to": shown}
+
+
+def _ai_job(ctx, row: dict, plan: dict, provider: Optional[str], issued_to: str, token: dict, stage: str,
+            ref_doc_ids: Optional[list] = None) -> dict:
+    """The AI start job of a node (``start_ai``): the node row, its card's run plan and the stage."""
+    root = ctx.root_document()
+    return {"flow_id": ctx.flow_id, "project_id": ctx.project_id, "run_id": ctx.run_id,
+            "node_key": row["node_key"], "node": dict(row), "provider_id": provider, "token": token,
+            "issued_to": issued_to, "doc_ref": (root or {}).get("doc_id"), "doc_type": row.get("doc_type"),
+            "result_doc_type": plan.get("result_doc_type") or row.get("doc_type"),
+            "step_timeout_sec": plan.get("step_timeout_sec"), "restart_max": plan.get("restart_max"),
+            "card_settings": plan.get("settings") or {}, "stage": stage,
+            "instruction": plan.get("instruction") if stage == INSTRUCTION_STAGE else None,
+            "action_scope": "new", "target_doc_id": None, "ref_doc_ids": ref_doc_ids}
 
 
 def dispatch_custom(ctx, row: dict) -> dict:
@@ -127,14 +164,118 @@ _EXECUTORS: dict[str, Callable[[Any, dict], Optional[dict]]] = {
 
 
 def start_ai(job: dict) -> None:
-    """Post-commit job (outside the guard): start the AI, or record the failure (L0009 E-23)."""
+    """Post-commit job (outside the guard): start the AI, or record the failure (L0009 E-23). An instruction
+    stage job first asks the card's instruction (``_instruction_job``): a written one is approved and the
+    result stage started instead."""
     try:
         if _ai_starter is None:
             raise RuntimeError("no AI starter wired for Graph nodes")
+        if job.get("stage") == INSTRUCTION_STAGE:
+            started = _instruction_job(job)
+            if started is None:
+                return                                      # written already: the result stage took over
+            job = started
         _ai_starter(job)
     except Exception as exc:  # noqa: BLE001
         _log.warning("graph AI start failed run=%s node=%s: %s", job["run_id"], job["node_key"], exc)
         record_ai_failure(job)
+
+
+def _instruction_job(job: dict) -> Optional[dict]:
+    """The instruction stage's start: the job that writes the card's instruction, or None when it has a body
+    already (approved without AI; the result stage is started)."""
+    found = card_settings_ports.instruction_document(job["flow_id"], job["node"])
+    if not found.get("doc_type"):                           # the card has no instruction stage any more
+        start_result_stage(job["flow_id"], job["run_id"], job["node_key"], None, job["issued_to"],
+                           job.get("project_id"))
+        return None
+    if found.get("written"):
+        if not card_settings_ports.approve_instruction(job["flow_id"], job["node"], found["doc_id"],
+                                                       job["issued_to"]):
+            _log.info("graph instruction left to the card approval run=%s node=%s doc=%s",
+                      job["run_id"], job["node_key"], found["doc_id"])
+        start_result_stage(job["flow_id"], job["run_id"], job["node_key"], found["doc_id"], job["issued_to"],
+                           job.get("project_id"))
+        return None
+    target = found.get("doc_id")
+    if target:
+        _record_instruction(job, target)
+    stage = job.get("instruction") or {}
+    return {**job, "provider_id": stage.get("provider_id") or job["provider_id"],
+            "result_doc_type": found["doc_type"], "action_scope": "edit" if target else "new",
+            "target_doc_id": target, "ref_doc_ids": [job["doc_ref"]] if target and job.get("doc_ref") else None}
+
+
+def _record_instruction(job: dict, doc_id: str) -> None:
+    """The instruction document the stage writes into (its line's empty document)."""
+    from .flow_guard import with_flow_guard                   # noqa: PLC0415
+
+    def body() -> None:
+        row = _open_row(job["run_id"], job["node_key"])
+        if row is not None and row.get("stage") == INSTRUCTION_STAGE:
+            run_store.set_stage(job["run_id"], job["node_key"], INSTRUCTION_STAGE, doc_id)
+
+    with_flow_guard(job["flow_id"], body)
+
+
+def _open_row(run_id: str, node_key: str) -> Optional[dict]:
+    """The node run, while its run goes on and the node is open (re-read inside the guard, L0009 §2.1.1)."""
+    run = run_store.run_by_id(run_id)
+    if run is None or run["status"] == "completed":
+        return None
+    row = next((r for r in run_store.node_runs(run_id) if r["node_key"] == node_key), None)
+    return row if row is not None and row["status"] == "open" else None
+
+
+def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc_id: Optional[str],
+                       issued_to: str, project_id: Optional[str] = None) -> None:
+    """flowgate.v02.0056 T#2: the node's instruction stage is over (its instruction written or found written,
+    and approved — or left to the card approval); its run AI writes the node's result now, the instruction
+    attached as a reference. Only a node still open in its instruction stage moves on (a repeated call is a
+    no-op), whether the run goes on or is stopped at the next step (a card already opened finishes both
+    stages). The start is a post-commit job like the dispatch's: a refused start records ``ai_invoke_failed``."""
+    from . import run_apply                                   # noqa: PLC0415 — run_apply imports this module
+    from .flow_guard import with_flow_guard                   # noqa: PLC0415
+
+    project = project_id or (db_groups.get_by_id(flow_id) or {}).get("project_id")
+    jobs: list = []
+
+    def body() -> None:
+        row = _open_row(run_id, node_key)
+        if row is None or row.get("stage") != INSTRUCTION_STAGE:
+            return
+        ctx = run_apply.load_context(run_store.run_by_id(run_id), project, None, [])
+        node = ctx.node_rows.get(node_key)
+        if node is None:
+            return
+        if node.get("node_type") == "custom":                 # handed out as ``dispatch_custom`` does
+            node = {**node, "doc_type": run_doc_type(node.get("node_type"), node.get("doc_type"))}
+        plan = card_settings_ports.run_settings(flow_id, node)
+        provider = plan.get("provider_id") or node.get("assignee_provider_id")
+        tokens = run_store.token_ids(run_id, node_key)
+        run_store.set_stage(run_id, node_key, RESULT_STAGE, instruction_doc_id)
+        run_store.mark_result_floor(run_id, node_key)          # the instruction stage's documents stay behind
+        if instruction_doc_id:
+            run_apply.fill_line(ctx, node_key, instruction_doc_id)   # its line, also after a lost contact
+        job = _ai_job(ctx, node, plan, provider, issued_to, {"token_id": tokens[0] if tokens else None},
+                      RESULT_STAGE, [instruction_doc_id] if instruction_doc_id else None)
+        jobs.append(lambda: start_ai(job))
+
+    with_flow_guard(flow_id, body)
+    for job in jobs:
+        job()
+
+
+def instruction_stage_failed(flow_id: str, run_id: str, node_key: str, project_id: Optional[str] = None) -> None:
+    """flowgate.v02.0056 T#2: the instruction stage's AI run failed (stopped, or ended without a written
+    instruction): the node records it as an AI start failure does (``ai_invoke_failed``, L0009 E-23) and
+    the result stage does not start. The node's token stays valid for a person; what the failed stage registered
+    stays behind the node run's registration boundary (``record_ai_failure``)."""
+    tokens = run_store.token_ids(run_id, node_key)
+    if not tokens:
+        return
+    record_ai_failure({"flow_id": flow_id, "run_id": run_id, "node_key": node_key, "token": {"token_id": tokens[0]},
+                       "project_id": project_id or (db_groups.get_by_id(flow_id) or {}).get("project_id")})
 
 
 def record_ai_failure(job: dict) -> None:
@@ -152,6 +293,8 @@ def record_ai_failure(job: dict) -> None:
             return
         dispatch = {**(run_apply.dispatch_block(row) or {}), "error_code": "ai_invoke_failed"}
         run_store.set_dispatch(run["run_id"], job["node_key"], dispatch)
+        if row.get("stage") == INSTRUCTION_STAGE:              # T#2: a person's result binds, not the stage's
+            run_store.mark_result_floor(run["run_id"], job["node_key"])
         ctx = run_apply.load_context(run, job.get("project_id"), None)
         run_apply.emit_node_state(ctx, job["node_key"], "open", "open", "dispatch_failed",
                                   row.get("result_doc_id"), dispatch)

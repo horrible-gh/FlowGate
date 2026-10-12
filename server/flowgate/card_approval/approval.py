@@ -4,8 +4,9 @@
 yet — its approval lines (``card_documents.slots.approval_slots``: N + NR, T / Custom + T + TR, T2 + TR2,
 DS + design document, TS + TSR, the R / B requirement, the WP plan), only the documents that really exist
 — a line document that was submitted, or one a person wrote in the editor and never submitted (it has a body
-after its front matter, by the v0.1 approval's own rule); only the card's untouched empty draft (its front
-matter alone) is no document and is skipped — through the v0.1 document approval, instruction first and the
+after its front matter: ``card_documents.lines.has_body``, the one body judgement of the v0.2 cards, by the
+v0.1 approval's own rule); only the card's untouched empty draft (its front matter alone) is no document and
+is skipped — through the v0.1 document approval, instruction first and the
 node's result last. A written, never submitted document and a rejected result are first put back in review
 by the card approval itself, under its own ``document.approve`` (``legacy_adapter._ready``). Each approval
 reaches the Graph contact a person's approval reaches, so only the last one — the node's result — is a node
@@ -104,13 +105,13 @@ def _card_lock(flow_id: str, locale: str) -> Iterator[None]:
 def card_lines_of(flow_id: str, node: dict) -> list[dict]:
     """The card's lines of the kind the run's revision gives the node, each with its live document; a line
     whose document was never submitted also tells whether a person wrote it (``written``: a body after the
-    front matter, ``legacy_adapter.has_body``)."""
+    front matter, ``card_documents.lines.has_body``)."""
     docs = {d["doc_id"]: d for d in card_docs.flow_documents(flow_id) if d.get("doc_id")}
     stored = card_lines.lines_by_node(flow_id, docs, [node["node_key"]]).get(node["node_key"], [])
     lines = slots.lines_of(node.get("node_type"), node.get("doc_type"), stored)
     for line in lines:
         if line.get("doc_id") and line.get("doc_review_status") not in SUBMITTED:
-            line["written"] = legacy.has_body(docs.get(line["doc_id"]) or legacy.document(line["doc_id"]))
+            line["written"] = card_lines.has_body(docs.get(line["doc_id"]) or legacy.document(line["doc_id"]))
     return lines
 
 

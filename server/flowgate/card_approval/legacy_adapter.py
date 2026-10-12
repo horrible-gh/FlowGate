@@ -4,10 +4,14 @@ Everything this package takes from ``modules.flow_gate`` goes through here, call
 the Graph API envelope (user JWT, RBAC, error shape, locale), the Flow load / disposal check, the run and
 its node runs, the run revision's nodes, the Flow's engine ownership (refused as the run's stop / resume /
 gate decision refuse it), the node approval state the run responses show (``node_approval``), the run read,
-the Flow's group AI lease, the approver's permissions as the approve button resolves them, whether a document
-has a body by the v0.1 approval's own rule (``has_body``), and the v0.1 document approval as the
-``review_transitions`` route makes it: the review transition, the TR approval hook every approval entry
-point calls and the Graph contact a person's approval reaches.
+the Flow's group AI lease, the approver's permissions as the approve button resolves them, and the v0.1
+document approval as the ``review_transitions`` route makes it: the review transition, the TR approval hook
+every approval entry point calls and the Graph contact a person's approval reaches. Whether a line document
+is written is the card documents' own judgement (``card_documents.lines.has_body``, flowgate.v02.0056 T#2).
+
+flowgate.v02.0056 T#2: the card run's automatic approval of its instruction (``card_settings``) approves one
+document through the same ``approve_document``, under the run issuer's authority as the Flow's server-owned
+completion context (``system=True``: the principal the unmanned approval passes) instead of a person's.
 
 A card document the v0.1 review rules cannot approve as it is — a result whose card review ended rejected
 (``rejected``), or a line document a person wrote in the editor and never submitted (no review status) — is
@@ -34,7 +38,7 @@ from modules.flow_gate.graph_workflow.store import definition_store, run_store
 
 __all__ = ["GraphApiError", "authenticate", "authorize", "invalid", "run", "client_id_of", "locale_of", "load_flow",
            "run_flow_id", "require_writable", "require_graph_owned", "run_by_id", "node_run", "revision_node",
-           "refusal", "run_payload", "group_ai_run", "permissions_of", "document", "has_body", "approve_document",
+           "refusal", "run_payload", "group_ai_run", "permissions_of", "document", "approve_document",
            "after_approved", "APPROVE_PERMISSION"]
 
 APPROVE_PERMISSION = "document.approve"
@@ -131,20 +135,6 @@ def document(doc_id: str) -> Optional[dict]:
     return db_documents.get_by_id(doc_id)
 
 
-def has_body(doc: Optional[dict]) -> bool:
-    """The document has a readable, non-blank body after its front matter — the v0.1 approval's own rule
-    (``_require_document_body_for_approval``), so a document judged written is never refused as empty."""
-    from modules.flow_gate.workflow import pipeline_service  # noqa: PLC0415
-
-    if not doc:
-        return False
-    try:
-        pipeline_service._require_document_body_for_approval(doc)
-    except pipeline_service.TransitionError:
-        return False
-    return True
-
-
 def _refused(doc_id: str, reason: str, detail: Optional[str] = None) -> GraphApiError:
     params = {"doc_id": doc_id, "reason": reason}
     if detail:
@@ -213,16 +203,22 @@ def tr2_request_key(doc: dict) -> str:
     return TR2_REQUEST_KEY_PREFIX + digest[:TR2_REQUEST_KEY_LEN]
 
 
-def _transition(doc: dict, user_id: str, permissions: set[str], locale: str) -> dict:
+def _principal(user_id: str, flow_id: str, system: bool):
+    """A person's approval (the card approval), or the Flow's server-owned completion context (an automatic
+    approval, as the unmanned approval and the card review's approval pass it)."""
+    from modules.flow_gate.services.mutation_policy import human_principal, system_principal  # noqa: PLC0415
+
+    return system_principal(user_id=user_id, group_id=flow_id) if system else human_principal({"user_id": user_id})
+
+
+def _transition(doc: dict, user_id: str, permissions: set[str], locale: str, principal) -> dict:
     """The v0.1 review transition to approved. A document the v0.1 rules cannot approve as it is (a
     rejected result, a written line document never submitted) is put back in review first (``_ready``) —
     in the same transaction, except for TR2, whose approval must open its own (``tr2_nested_transaction``):
     a refused TR2 then stays in review (pending_review), awaiting the next card approval."""
-    from modules.flow_gate.services.mutation_policy import human_principal  # noqa: PLC0415
     from modules.flow_gate.workflow.pipeline_service import transition_document_review  # noqa: PLC0415
 
     doc_id = doc["doc_id"]
-    principal = human_principal({"user_id": user_id})
     tr2 = str(doc.get("type_code") or "").upper() == "TR2"
 
     def approve(current: dict) -> dict:
@@ -248,9 +244,11 @@ def _transition(doc: dict, user_id: str, permissions: set[str], locale: str) -> 
         return approve(_ready(doc, user_id, permissions))
 
 
-def approve_document(flow_id: str, doc: dict, user_id: str, permissions: set[str], locale: str) -> None:
-    """Approve one document of the card as a person's approval does; a refusal raises a GraphApiError
-    (403 ``approval_forbidden``, 409 ``group_ai_running`` / ``document_approval_refused``)."""
+def approve_document(flow_id: str, doc: dict, user_id: str, permissions: set[str], locale: str, *,
+                     system: bool = False) -> None:
+    """Approve one document of the card as a person's approval does (``system``: as an automatic approval
+    under the Flow's completion context); a refusal raises a GraphApiError (403 ``approval_forbidden``,
+    409 ``group_ai_running`` / ``document_approval_refused``)."""
     from modules.flow_gate.documents import tr2_service  # noqa: PLC0415
     from modules.flow_gate.services import tr_commit_service  # noqa: PLC0415
     from modules.flow_gate.services.mutation_policy import MutationPolicyError  # noqa: PLC0415
@@ -258,7 +256,7 @@ def approve_document(flow_id: str, doc: dict, user_id: str, permissions: set[str
 
     doc_id = doc["doc_id"]
     try:
-        result = _transition(doc, user_id, permissions, locale)
+        result = _transition(doc, user_id, permissions, locale, _principal(user_id, flow_id, system))
     except pipeline_service.PermissionError as exc:
         raise GraphApiError(403, "approval_forbidden", {"doc_id": doc_id, "detail": str(exc)}) from exc
     except tr2_service.Tr2ValidationError as exc:

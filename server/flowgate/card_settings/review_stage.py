@@ -30,20 +30,39 @@ Only AI nodes read their card (as at dispatch). The card is locked while its rev
 ``ai_working`` is the judgement the Graph asks (``card_settings_ports.ai_working``) whether a node in
 review is still worked on by AI — its own AI run, or the card's review loop — and so not waiting for a
 person's approval (the node's ``awaiting_approval`` and the card approval API share it).
+
+flowgate.v02.0056 T#2 (0002-CH turn 5 / 10 O2): before its result, an AI card with its instruction used runs an
+instruction stage (``node_dispatch``). When the AI run of that stage ends (``_after_instruction``):
+
+- it ended on its own (``ended_cleanly``) and the card's instruction is written (``card_documents.lines.has_body``:
+  the stage's recorded instruction, its instruction line's document, or an instruction the node's tokens
+  registered) -> the instruction is approved at once, with no review — the card's review count is the
+  result's alone — and the Graph starts the result stage with that instruction attached;
+- otherwise (stopped, failed, nothing written) -> the stage failed: the node records it as an AI start
+  failure (``ai_invoke_failed``) and the result stage does not start.
+
+``approve_instruction`` is that automatic approval (also the Graph's ``card_settings_ports.approve_instruction``
+handler, for an instruction found written when the stage starts): the card approval's own document approval
+(``card_approval``: a written, never submitted instruction is submitted first), under the run issuer's
+authority as the Flow's completion context, binding nothing. A refusal leaves the instruction to the card
+approval; the result stage still starts.
 """
 from __future__ import annotations
 
 import logging
 from typing import Optional
 
+from flowgate.card_approval import legacy_adapter as approvals
+from flowgate.card_documents import lines as card_lines
 from flowgate.card_settings import fields
 from flowgate.card_settings import legacy_adapter as legacy
-from flowgate.card_settings import repository
+from flowgate.card_settings import repository, settings
 
 _log = logging.getLogger(__name__)
 
 PASSED = "review_passed"
 EXITED = "exited"
+APPROVED = ("approved", "wf_done")
 
 
 def ended_cleanly(run: dict) -> bool:
@@ -61,8 +80,70 @@ def on_run_ended(run: dict) -> None:
         return
     if run.get("document_review_loop"):
         _after_review(flow_id, run)
-    elif run.get("action_scope") == "new" and run.get("mode") == "single":
-        _after_work(flow_id, run)
+    elif run.get("mode") == "single" and run.get("action_scope") in ("new", "edit"):
+        stage = legacy.instruction_node_of_ai_run(flow_id, run["run_id"])
+        if stage is not None:
+            _after_instruction(flow_id, run, *stage)
+        elif run.get("action_scope") == "new":
+            _after_work(flow_id, run)
+
+
+def _after_instruction(flow_id: str, run: dict, node: dict, row: dict) -> None:
+    """The instruction stage's AI run ended: approve the written instruction and start the result stage, or
+    record the stage's failure (flowgate.v02.0056 T#2)."""
+    key, issuer = node["node_key"], run.get("issued_to") or ""
+    if not ended_cleanly(run):
+        _log.info("card instruction stage failed flow=%s node=%s run=%s: run ended %s/%s",
+                  flow_id, key, run.get("run_id"), run.get("end_reason"), run.get("stop_code"))
+        legacy.instruction_stage_failed(flow_id, row["run_id"], key)
+        return
+    doc_id = written_instruction(flow_id, node, row)
+    if doc_id is None:
+        _log.info("card instruction stage failed flow=%s node=%s run=%s: no instruction written",
+                  flow_id, key, run.get("run_id"))
+        legacy.instruction_stage_failed(flow_id, row["run_id"], key)
+        return
+    approve_instruction(flow_id, node, doc_id, issuer)
+    legacy.start_result_stage(flow_id, row["run_id"], key, doc_id, issuer)
+
+
+def written_instruction(flow_id: str, node: dict, row: dict) -> Optional[str]:
+    """The card's instruction the stage wrote, when it has a body: the one the stage recorded (the line's
+    document it wrote into, or the one its tokens registered), its instruction line's document, or — after a
+    lost registration contact — the latest instruction the node's tokens registered."""
+    found = settings.instruction_document(flow_id, node)
+    if not found.get("doc_type"):
+        return None
+    candidates = [row.get("instruction_doc_id"), found.get("doc_id")]
+    candidates += [d["doc_id"] for d in legacy.registered_instructions(flow_id, row["run_id"], node["node_key"],
+                                                                       found["doc_type"])]
+    for doc_id in dict.fromkeys(c for c in candidates if c):
+        if card_lines.has_body(approvals.document(doc_id)):
+            return doc_id
+    return None
+
+
+def approve_instruction(flow_id: str, node: dict, doc_id: str, actor_user_id: str) -> bool:
+    """Approve the card's instruction ``doc_id`` at once, with no review (``card_settings_ports.approve_instruction``):
+    True when it is approved. Without the issuer's ``document.approve``, or on any refusal, it is left to the
+    card approval (False)."""
+    permissions = approvals.permissions_of(actor_user_id)
+    if approvals.APPROVE_PERMISSION not in permissions:
+        _log.info("card instruction left to the card approval flow=%s node=%s doc=%s: the issuer lacks %s",
+                  flow_id, node.get("node_key"), doc_id, approvals.APPROVE_PERMISSION)
+        return False
+    doc = approvals.document(doc_id)
+    if doc is None:
+        return False
+    if doc.get("doc_review_status") in APPROVED:
+        return True
+    try:
+        approvals.approve_document(flow_id, doc, actor_user_id, permissions, legacy.LOCALE, system=True)
+    except Exception:  # noqa: BLE001 — the instruction waits for the card approval
+        _log.warning("card instruction approval refused flow=%s node=%s doc=%s", flow_id, node.get("node_key"),
+                     doc_id, exc_info=True)
+        return False
+    return True
 
 
 def _after_work(flow_id: str, run: dict) -> None:

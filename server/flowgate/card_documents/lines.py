@@ -29,6 +29,10 @@ removed only through the existing v0.1 services (``legacy_adapter``).
   ``delegation`` is on (``flowgate.card_settings``): turning it on makes the line's empty draft,
   turning it off releases the line like a removed one (``set_delegation``), and a draft save keeps
   or makes the line by the same setting.
+- flowgate.v02.0056 T#2: whether a card document is written is decided by its body, not by the document
+  existing (``has_body``: a non-blank body after the front matter, the v0.1 approval's own rule). It is the
+  one judgement of the v0.2 cards: the instruction stage of a card run (``card_settings``), the card
+  approval's targets (``card_approval``) and the card document read all ask it.
 """
 from __future__ import annotations
 
@@ -234,12 +238,32 @@ def lines_by_node(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[s
         end = legacy.live_end(flow_id, doc, docs_by_id)[0] if doc else None
         shown = end or (doc if doc and legacy.is_alive(doc, flow_id) else None)
         out.setdefault(row["node_key"], []).append({
-            "slot": row["slot"], "doc_type": row["doc_type"], "author": cs.author_of(row["slot"]),
+            "slot": row["slot"], "doc_type": row["doc_type"], "author": cs.author_of(row["slot"], row["doc_type"]),
             "doc_id": shown["doc_id"] if shown else None,
             "title": (shown or {}).get("title"), "status": (shown or {}).get("status"),
             "doc_review_status": (shown or {}).get("doc_review_status"),
         })
     return out
+
+
+def has_body(doc: Optional[dict]) -> bool:
+    """``doc`` (its ``documents`` row) is written: its file holds a non-blank body after the front matter.
+
+    A line's untouched draft (the front matter a card writes on placement) and a document without a readable
+    file are not. The rule is the v0.1 approval's own (``legacy_adapter.approvable_body``), so a document
+    judged written is never refused by an approval as empty."""
+    return bool(doc) and legacy.approvable_body(doc)
+
+
+def line_document(flow_id: str, node_key: str, slot: str, node_type: Optional[str],
+                  doc_type: Optional[str]) -> Optional[dict]:
+    """The node's ``slot`` line of the kind ``node_type`` / ``doc_type`` gives it, with its live document
+    (``doc_id`` and its row ``document``, both None when the line has none left), or None when the card has
+    no such line."""
+    docs = {d["doc_id"]: d for d in legacy.flow_documents(flow_id) if d.get("doc_id")}
+    stored = lines_by_node(flow_id, docs, [node_key]).get(node_key, [])
+    line = next((line for line in cs.lines_of(node_type, doc_type, stored) if line["slot"] == slot), None)
+    return {**line, "document": docs.get(line["doc_id"]) if line["doc_id"] else None} if line else None
 
 
 class CardView:

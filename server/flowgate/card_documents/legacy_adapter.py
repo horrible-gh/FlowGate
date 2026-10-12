@@ -3,8 +3,9 @@
 Everything this package takes from ``modules.flow_gate`` goes through here, called only — never
 changed: the v0.1 document rows, numbering (``reserve_document``), the document service
 (``create_document`` / ``delete_document``, with their ``doc_created`` / ``doc_deleted`` events),
-the document file path, the empty work plan body, and the Graph's document liveness / supersede
-rules (so a card shows a document exactly as the Canvas does).
+the document file path, the empty work plan body, the Graph's document liveness / supersede
+rules (so a card shows a document exactly as the Canvas does) and the v0.1 approval's empty body rule
+(``approvable_body``, the one judgement behind ``lines.has_body``, flowgate.v02.0056 T#2).
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ _log = logging.getLogger(__name__)
 TITLE_MAX_LEN = 100            # v0.1 related-document title limit
 
 __all__ = ["CANCELLED_STATUS", "is_alive", "live_end", "flow_documents", "document", "supersede",
-           "create_document", "delete_document"]
+           "create_document", "delete_document", "approvable_body"]
 
 
 def flow_documents(flow_id: str) -> list[dict]:
@@ -33,6 +34,18 @@ def flow_documents(flow_id: str) -> list[dict]:
 
 def document(doc_id: str) -> Optional[dict]:
     return db_documents.get_by_id(doc_id)
+
+
+def approvable_body(doc: dict) -> bool:
+    """The v0.1 approval would not refuse ``doc`` as empty (``_require_document_body_for_approval``): its
+    file is readable and holds a non-blank body after the front matter."""
+    from modules.flow_gate.workflow import pipeline_service   # noqa: PLC0415 — v0.1 stack on use
+
+    try:
+        pipeline_service._require_document_body_for_approval(doc)
+    except pipeline_service.TransitionError:
+        return False
+    return True
 
 
 def supersede(old_id: str, new_id: str) -> None:
