@@ -87,17 +87,24 @@ describe('0428 T#6 independent UI and audit', () => {
     preview.history = [decision('TSR', { continuation_status: 'recovery_required' })]; preview.allowed = false
     window.dispatchEvent(new CustomEvent('fg:workflow_completion_changed', { detail: { doc_id: DOC } })); await flushPromises()
     expect(w.find('[data-test="ab-proceed-unapproved"]').exists()).toBe(false)
-    expect(w.get('[data-test="unapproved-history"]').text()).toContain('Actual TSR verdict: FAIL')
-    expect(w.get('[data-test="continuation-state"]').text()).toContain('recovery required')
+    expect(w.find('[data-test="unapproved-history"]').exists()).toBe(false)
+    expect(w.find('[data-test="continuation-state"]').exists()).toBe(false)
     expect(w.emitted('approve')).toBeUndefined()
   })
-  it('next and final screens show original identity, failure/unapplied facts and historical decisions', async () => {
+  it('final screen shows original identity, failure/unapplied facts and historical decisions', async () => {
     preview.history = [decision(), decision('TR2', { decision_id:'wcd_tr2' }), decision('TSR', { decision_id:'wcd_old', valid:false })]
     const w = mount(FinalApprovalBody, { props: { groupId: 'flowgate.default.0428', completed:false }, global: { plugins:[i18n], stubs:{ FinalApprovalGitStatus:true } } }); wrappers.push(w)
     await flushPromises()
     expect(w.text()).toContain('Actual TSR verdict: FAIL'); expect(w.text()).toContain('was not applied to source')
     expect(w.text()).toContain('human-1'); expect(w.text()).toContain('wcd_original'); expect(w.text()).toContain('Historical decision')
     expect(w.find('input').exists()).toBe(false); expect(postRequest).not.toHaveBeenCalled()
+  })
+  it('the footer stays free of history cards with many unapproved decisions', async () => {
+    preview.history = Array.from({ length: 30 }, (_, index) => decision('TR2', { decision_id: `wcd_${index}` }))
+    const w = bar({ mode: 'next', docType: 'TR2' }); await flushPromises()
+    expect(w.findComponent(UnapprovedHistory).exists()).toBe(false)
+    expect(w.find('[data-test="unapproved-history"]').exists()).toBe(false)
+    expect(w.find('[data-test="unapplied-summary"]').exists()).toBe(false)
   })
   it('original document link opens the real document tab', async () => {
     const w = mount(UnapprovedHistory, { props: { entries:[decision()] }, global:{ plugins:[i18n] } }); wrappers.push(w)

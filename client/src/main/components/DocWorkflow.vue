@@ -160,16 +160,17 @@
             class="wf-step"
             :class="[
               s.className,
+              s.completionLabel === 'proceeded_unapproved' ? 'wf-unapproved-step' : '',
               !readOnly && (s.visual === 'highlight' || s.visual === 'current') && canNextAction ? 'wf-current-clickable' : '',
               !readOnly && s.visual === 'done' ? 'wf-done-clickable' : '',
               !readOnly && isReturnTarget(idx) ? 'wf-return-clickable' : '',
             ]"
             :title="stepHint(s, idx)"
+            :aria-label="s.completionLabel === 'proceeded_unapproved' ? `${docTypeStore.getLabel(s.code)} · ${unapprovedHint()}` : undefined"
             @click="onStepClick(s, idx)"
           >
             <AppIcon :name="s.iconClass" />
             <span class="s-lbl">{{ docTypeStore.getLabel(s.code) }}</span>
-            <span v-if="s.completionLabel === 'proceeded_unapproved'" class="wf-unapproved" data-test="wf-unapproved">{{ String(locale).startsWith('ko') ? '미승인 진행' : 'Without approval' }}</span>
             <!-- 0332 D0005 §6.1 — 칸의 모양(색·아이콘·클릭 동작)은 그대로 두고 표식 하나만
                  오른쪽 위에 얹는다. 커밋은 진행 상태가 아니라 그 칸에 딸린 부가 사실이라
                  진행을 나타내는 표현을 빼앗으면 안 되고, 칸 클릭은 이미 세 가지 뜻을
@@ -282,8 +283,13 @@ function commitOf(idx: number): SlotCommitMark | null {
 // the head hints "roll back here". (A cell is only ever one of the two.)
 // 0332 D0005 §6.1: 커밋이 달린 칸은 여기에 한 줄이 더 붙는다 — 짧은 해시와 상태. 읽기
 // 전용이라 되돌리기 힌트가 없는 칸에서도 이 줄은 보인다(사실을 말할 뿐 동작이 아니다).
+function unapprovedHint(): string {
+  return String(locale.value).startsWith('ko') ? '미승인 진행' : 'Without approval'
+}
+
 function stepHint(s: StepState, idx: number): string | undefined {
   const lines: string[] = []
+  if (s.completionLabel === 'proceeded_unapproved') lines.push(unapprovedHint())
   if (!props.readOnly) {
     if (isReturnTarget(idx)) lines.push(t('main.doc_workflow.time_machine_return_hint'))
     else if (s.visual === 'done') lines.push(t('main.doc_workflow.time_machine_hint'))
@@ -611,7 +617,6 @@ function toggleSequenceCollapsed() {
 </script>
 
 <style scoped>
-.wf-unapproved { font-size: .65rem; color: var(--warning, #92400e); background: var(--surface-h); padding: 2px 5px; border-radius: 4px; }
 /* 0332 D0005 §6.1 — 커밋 표식. 칸의 크기와 배치는 그대로 두고 오른쪽 위 모서리에만
    얹으므로 칸을 감싸는 relative 만 더한다. 표식은 클릭 대상이 아니다 — pointer-events 를
    꺼서 표식 위를 눌러도 칸 클릭(진행 / 되돌리기 / 복귀)이 그대로 간다. */
@@ -711,6 +716,19 @@ function toggleSequenceCollapsed() {
 .wf-step.wf-return-clickable:hover {
   background: var(--success-l, #f0fdf4);
   box-shadow: 0 0 0 3px rgba(22, 163, 74, .3);
+}
+
+/* T0018: distinguish unapproved completion without widening the workflow cells. */
+.wf-step.wf-unapproved-step {
+  border-color: var(--border-d, #cbd5e1);
+  background: var(--surface-h, #f1f5f9);
+  color: var(--text-m, #64748b);
+}
+.wf-step.wf-unapproved-step > i {
+  color: var(--text-m, #64748b);
+}
+.wf-step.wf-unapproved-step.wf-return-clickable:hover {
+  background: var(--surface-h, #f1f5f9);
 }
 
 /* ── 0399 [작업계획 적용] button and the two-branch list (mockup fgh29xnk v3 · screen 1) ──

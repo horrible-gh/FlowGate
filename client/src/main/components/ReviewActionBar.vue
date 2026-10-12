@@ -1,6 +1,5 @@
 <template>
   <div class="sticky-footer-bar">
-    <UnapprovedHistory :entries="unapprovedState?.history ?? []" />
     <p v-if="unapprovedUnavailable" role="status" class="ab-gate-hint">{{ unapprovedKo ? '미승인 이력을 불러오지 못했습니다. 새로고침해 주세요.' : 'Could not load progress history. Please refresh.' }}</p>
     <div class="sfb-inner">
       <div v-if="showUnapprovedAction" class="sfb-actions" data-test="unapproved-actions">
@@ -657,7 +656,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import ConfirmModal from './ConfirmModal.vue'
-import UnapprovedHistory from './UnapprovedHistory.vue'
 import { useUnapprovedProgress, progressReason } from '../workflow/unapprovedProgress'
 import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
