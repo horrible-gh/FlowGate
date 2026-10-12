@@ -282,7 +282,14 @@ describe('Designer top band — Menu Bar', () => {
     await openPop(w).get('[data-command="project.open"]').trigger('keydown', { key: 'ArrowRight' })
     await flushPromises()
     expect(openPop(w).attributes('data-menu')).toBe('edit')
-    expect(document.activeElement?.getAttribute('data-command')).toBe('edit.undo')
+    // flowgate.v02.0059 T#2: no edit history yet, so Undo / Redo are disabled and the focus lands on
+    // the first enabled item of the Edit menu.
+    const items = openPop(w).findAll('[data-command]')
+    const enabled = items.filter((el) => el.attributes('disabled') === undefined && el.attributes('aria-disabled') !== 'true')
+    expect(items.find((el) => el.attributes('data-command') === 'edit.undo')!.attributes('aria-disabled') === 'true'
+      || items.find((el) => el.attributes('data-command') === 'edit.undo')!.attributes('disabled') !== undefined).toBe(true)
+    expect(document.activeElement).toBe(enabled[0].element)
+    expect(document.activeElement?.getAttribute('data-command')).not.toMatch(/^edit\.(undo|redo)$/)
   })
 })
 

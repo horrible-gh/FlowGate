@@ -360,6 +360,9 @@ const menuTargets = computed<DesignerMenuTargets>(() => ({
   project: projectId.value !== null,
   group: explorerSelection.value?.kind === 'group',
   flow: hasWorkTarget.value,
+  // flowgate.v02.0059 T#2: the open Flow's structure edit history (Toolbar buttons and Edit menu).
+  canUndo: center.activeEdit.value?.canUndo === true,
+  canRedo: center.activeEdit.value?.canRedo === true,
 }))
 
 // The recent lists the Menu Bar shows: every opened Project; the Groups / Flows of the current
@@ -550,6 +553,12 @@ function onTopCommand(command: DesignerTopCommand) {
     case 'edit.undo': {
       const flowId = center.state.activeFlowId
       if (flowId !== null) center.undoEdit(flowId)
+      return
+    }
+    // flowgate.v02.0059 T#2: 다시 실행 (Redo of an undone edit) — not the Run menu's 재실행 (run.rerun).
+    case 'edit.redo': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null) center.redoEdit(flowId)
       return
     }
     // flowgate.v02.0059 T#1: the Toolbar and the View menu emit the same command; the Canvas of the

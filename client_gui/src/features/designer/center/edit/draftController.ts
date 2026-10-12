@@ -31,7 +31,7 @@ export type DraftAction = 'validate' | 'confirm'
 export interface DraftEditState {
   status: DraftEditStatus
   errorCode: string | null
-  canUndo: boolean
+  canUndo: boolean; canRedo: boolean
   /** The action running now, if any. */
   action: DraftAction | null
   /** The last validation (or refused confirmation) of the draft; cleared by the next edit. */
@@ -77,7 +77,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
   const stopped = new Map<DraftEditor, { flowId: string; positions: Map<string, { x: number; y: number }> }>()
 
   function stateOf(flowId: string): DraftEditState {
-    if (!edits[flowId]) edits[flowId] = { status: 'idle', errorCode: null, canUndo: false, action: null, check: null, notice: null }
+    if (!edits[flowId]) edits[flowId] = { status: 'idle', errorCode: null, canUndo: false, canRedo: false, action: null, check: null, notice: null }
     return edits[flowId]
   }
 
@@ -90,6 +90,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     state.status = editor?.status() ?? 'idle'
     state.errorCode = editor?.errorCode() ?? null
     state.canUndo = editor?.canUndo() ?? false
+    state.canRedo = editor?.canRedo() ?? false
     // A save just refused: read the Flow again as stored (no note, no button — TR0020 rev4).
     if (editor && refused(state.status) && !refused(before)) host.reread(flowId)
     if (editor && !editor.busy()) host.settled?.(flowId)
@@ -211,9 +212,9 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     return run(flowId, { type: 'connect', edge: { key: editor.newKey(), isNew: true, source, target } })
   }
 
-  function undo(flowId: string): boolean {
+  function stepHistory(flowId: string, move: 'undo' | 'redo'): boolean {
     const editor = editors.get(flowId)
-    if (!editor || !editor.undo()) return false
+    if (!editor || !editor[move]()) return false // undo / redo of the structure edits (v02.0059 T#2)
     stateOf(flowId).check = null
     show(flowId, editor)
     mirror(flowId)
@@ -283,7 +284,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     seed: (flowId: string, spec: CanvasNodeSpec) => addNode(flowId, spec, 0, 0, false),
     /** TR0020 rev2: the Flow's editor has something saved or being saved (실행 confirms it first). */
     drawn: (flowId: string) => !!editors.get(flowId) && (editors.get(flowId)!.version() > 0 || editors.get(flowId)!.busy()),
-    undo,
+    undo: (flowId: string) => stepHistory(flowId, 'undo'), redo: (flowId: string) => stepHistory(flowId, 'redo'),
     validate,
     confirm,
     /** Reads the Flow again (after a refused save: the stored draft replaces the local edits). */

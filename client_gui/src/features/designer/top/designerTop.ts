@@ -252,6 +252,12 @@ export interface DesignerMenuTargets {
   project: boolean
   group: boolean
   flow: boolean
+  /**
+   * flowgate.v02.0059 T#2: whether the open Flow's structure edits can be undone / redone. Left out
+   * (undefined) the command follows the open Flow alone; the Shell states both explicitly.
+   */
+  canUndo?: boolean
+  canRedo?: boolean
 }
 
 export const ALL_MENU_TARGETS: DesignerMenuTargets = Object.freeze({ project: true, group: true, flow: true })
@@ -300,6 +306,8 @@ export function isMenuCommandEnabled(
   if (cmd === 'group.close') return targets.group
   if (cmd === 'flow.close') return targets.flow
   if (!targets.flow) return false
+  if (cmd === 'edit.undo') return targets.canUndo !== false
+  if (cmd === 'edit.redo') return targets.canRedo !== false
   if (cmd === 'run.stop') return runMode !== null
   if (cmd === 'run.next' || cmd === 'run.all' || cmd === 'run.rerun') return runMode === null
   return true

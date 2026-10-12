@@ -187,6 +187,8 @@ export interface DesignerCenterSession {
   removeNode(flowId: string, nodeId: string): boolean
   removeEdge(flowId: string, edgeId: string): boolean
   undoEdit(flowId: string): boolean
+  /** flowgate.v02.0059 T#2: takes back the last undo of the Flow's structure edits. */
+  redoEdit(flowId: string): boolean
   validateDraft(flowId: string): Promise<void>
   confirmDraft(flowId: string): Promise<void>
   /**
@@ -637,6 +639,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       return !(graph && isEdgeProgressed(graph, edgeId)) && drafts.removeEdge(flowId, edgeId)
     },
     undoEdit: drafts.undo,
+    redoEdit: drafts.redo,
     validateDraft: drafts.validate,
     confirmDraft: drafts.confirm,
     prepareRun,

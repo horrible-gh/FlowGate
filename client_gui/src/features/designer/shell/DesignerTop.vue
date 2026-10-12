@@ -27,6 +27,8 @@
       :zoom="zoom"
       :disabled="!targets.flow"
       :can-validate="canValidate"
+      :can-undo="targets.canUndo !== false"
+      :can-redo="targets.canRedo !== false"
       :run-status="runStatus"
       @command="emit('command', $event)"
       @update:density="emit('update:density', $event)"

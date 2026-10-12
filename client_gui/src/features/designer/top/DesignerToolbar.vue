@@ -21,11 +21,11 @@
     data-test="designer-toolbar"
   >
     <div class="designer-tool-group" data-test="designer-tool-group">
-      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.undo" :disabled="disabled" @click="emit('command', 'edit.undo')">
+      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.undo" :disabled="disabled || !canUndo" @click="emit('command', 'edit.undo')">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5L3 9l4 4" /><path d="M3 9h9a5 5 0 0 1 0 10h-2" /></svg>
         <span>{{ t('gui.designer.top.tools.undo') }}</span>
       </button>
-      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.redo" :disabled="disabled" @click="emit('command', 'edit.redo')">
+      <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.redo" :disabled="disabled || !canRedo" @click="emit('command', 'edit.redo')">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13 5l4 4-4 4" /><path d="M17 9H8a5 5 0 0 0 0 10h2" /></svg>
         <span>{{ t('gui.designer.top.tools.redo') }}</span>
       </button>
@@ -144,10 +144,13 @@ const props = withDefaults(
     disabled?: boolean
     /** flowgate.v02.0045 TR0020 rev2: the open Flow's edited structure can be checked now. */
     canValidate?: boolean
+    /** flowgate.v02.0059 T#2: the open Flow's structure edits can be undone / redone (Edit menu follows the same). */
+    canUndo?: boolean
+    canRedo?: boolean
     /** flowgate.v02.0053 T#9: the open Flow's server run status (`running` | `stopped` | `completed`), or null. */
     runStatus?: string | null
   }>(),
-  { disabled: false, canValidate: false, runStatus: null },
+  { disabled: false, canValidate: false, canUndo: true, canRedo: true, runStatus: null },
 )
 
 const emit = defineEmits<{
