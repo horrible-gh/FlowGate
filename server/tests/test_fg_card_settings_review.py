@@ -122,8 +122,10 @@ def _through_instruction(env, monkeypatch):
 
 def _in_review(env, monkeypatch, settings=(), written="TR"):
     """An AI card with ``settings`` runs (through its instruction stage when its instruction is used); its AI
-    registers a result: (node key, result, AI token)."""
+    registers a result as the inbox does (the Graph contact, then its token's consume): (node key, result, AI
+    token). flowgate.v02.0056 T#3: the run's end reviews or approves only a result its own tokens registered."""
     from modules.flow_gate.graph_workflow.api import v01_contact
+    from modules.flow_gate.services import token_service
 
     _admin_and_reviewer(env)
     key = _run_one_card(env, AI)
@@ -136,6 +138,7 @@ def _in_review(env, monkeypatch, settings=(), written="TR"):
     _heads, token = _start_ai(monkeypatch, job)
     result = _result(81, written)
     v01_contact.after_inbox_registered(FA, result, written, token)
+    token_service.consume(token, "flowgate", result)
     assert _node(env, key) == ("review", result)
     return key, result, token
 

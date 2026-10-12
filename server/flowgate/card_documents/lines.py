@@ -33,6 +33,12 @@ removed only through the existing v0.1 services (``legacy_adapter``).
   existing (``has_body``: a non-blank body after the front matter, the v0.1 approval's own rule). It is the
   one judgement of the v0.2 cards: the instruction stage of a card run (``card_settings``), the card
   approval's targets (``card_approval``) and the card document read all ask it.
+- flowgate.v02.0056 T#3: every line read (draft save, Canvas) carries whether its document is written
+  (``has_body``, that same judgement) and the count of its document's review history as the v0.1 document read
+  shows it — its AI reviews (``review_count``), its rejections (``rejection_count``) and both
+  (``history_count``). ``node_keys_showing`` names the cards whose lines show a document (the card memos an AI
+  working on that document reads). A person writes a line that has no document (``compose``; a node's result
+  is registered through its dispatch token, so the result binder takes it).
 """
 from __future__ import annotations
 
@@ -231,19 +237,44 @@ def adopt_result(flow_id: str, node_key: str, doc_id: Optional[str]) -> None:
 # ── reads ────────────────────────────────────────────────────────────────────
 
 def lines_by_node(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[str]] = None) -> dict[str, list[dict]]:
-    """``node_key -> [line]`` with each line's live document (the end of its supersede chain)."""
-    out: dict[str, list[dict]] = {}
+    """``node_key -> [line]`` with each line's live document (the end of its supersede chain), whether it is
+    written (``has_body``) and its review history counts (flowgate.v02.0056 T#3; 0 without a document)."""
+    shown_rows = []
     for row in repository.rows(flow_id, node_keys):
         doc = docs_by_id.get(row["doc_id"])
         end = legacy.live_end(flow_id, doc, docs_by_id)[0] if doc else None
-        shown = end or (doc if doc and legacy.is_alive(doc, flow_id) else None)
+        shown_rows.append((row, end or (doc if doc and legacy.is_alive(doc, flow_id) else None)))
+    reviews = legacy.review_counts([shown["doc_id"] for _row, shown in shown_rows if shown])
+    out: dict[str, list[dict]] = {}
+    for row, shown in shown_rows:
+        review_count = reviews.get(shown["doc_id"], 0) if shown else 0
+        rejection_count = legacy.rejection_count(shown)
         out.setdefault(row["node_key"], []).append({
             "slot": row["slot"], "doc_type": row["doc_type"], "author": cs.author_of(row["slot"], row["doc_type"]),
             "doc_id": shown["doc_id"] if shown else None,
             "title": (shown or {}).get("title"), "status": (shown or {}).get("status"),
             "doc_review_status": (shown or {}).get("doc_review_status"),
+            "has_body": has_body(shown),
+            "review_count": review_count, "rejection_count": rejection_count,
+            "history_count": review_count + rejection_count,
         })
     return out
+
+
+def node_keys_showing(flow_id: str, doc_id: Optional[str]) -> list[str]:
+    """The cards (node keys) whose lines hold ``doc_id`` or show it as their live document."""
+    if not doc_id or not repository.available():
+        return []
+    rows = repository.rows(flow_id)
+    keys = [r["node_key"] for r in rows if r["doc_id"] == doc_id]
+    if any(r["doc_id"] != doc_id for r in rows):
+        docs = {d["doc_id"]: d for d in legacy.flow_documents(flow_id) if d.get("doc_id")}
+        for row in rows:
+            doc = docs.get(row["doc_id"])
+            end = legacy.live_end(flow_id, doc, docs)[0] if doc else None
+            if end is not None and end["doc_id"] == doc_id:
+                keys.append(row["node_key"])
+    return list(dict.fromkeys(keys))
 
 
 def has_body(doc: Optional[dict]) -> bool:

@@ -1,0 +1,5 @@
+-- 150_graph_node_memos_body_mediumtext.sql  (postgres — intentional no-op)
+-- flowgate.v02.0056 T#3: the MySQL counterpart widens graph_node_memos.body to MEDIUMTEXT so a memo body of
+-- 20,000 characters (up to 80,000 bytes in utf8mb4) fits; TEXT holds 65,535 bytes there.
+-- PostgreSQL TEXT has no length ceiling, so nothing changes here. This file keeps the
+-- three dialect directories on identical migration filenames.

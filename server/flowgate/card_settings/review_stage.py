@@ -46,6 +46,14 @@ handler, for an instruction found written when the stage starts): the card appro
 (``card_approval``: a written, never submitted instruction is submitted first), under the run issuer's
 authority as the Flow's completion context, binding nothing. A refusal leaves the instruction to the card
 approval; the result stage still starts.
+
+flowgate.v02.0056 T#3: the card's review and rework hops open with the card's memos turned on for AI reading, as
+its instruction and result stages do (``legacy_adapter.start_review_loop``, ``card_memo_hooks``). A single
+per-document AI run (``action_scope`` edit, no review loop) on a card's document is no stage of the card: its end
+starts no review and approves nothing (``on_run_ended`` follows only a node's instruction stage, a node's ``new``
+run and a review loop). A node's ``new`` run reviews or approves only the result it registered itself
+(``legacy.node_of_ai_run``): a result a person registered on the node while the run went on (the card line write)
+is never reviewed or approved by the run's end; it waits for the card approval.
 """
 from __future__ import annotations
 
@@ -150,7 +158,7 @@ def _after_work(flow_id: str, run: dict) -> None:
     """The node's AI run ended: start the card's review, or approve at once."""
     found = legacy.node_of_ai_run(flow_id, run["run_id"])
     if found is None:
-        return                                  # not a node's AI run, or no result bound
+        return                                  # not a node's AI run, or no result of its own bound
     node, doc_id = found
     if not ended_cleanly(run):
         _log.info("card review stage skipped flow=%s node=%s run=%s: run ended %s/%s, awaiting approval",
@@ -169,7 +177,7 @@ def _after_work(flow_id: str, run: dict) -> None:
         loop = fields.review_loop(stored, reviewer=reviewer, reworker=reworker)
         criteria = loop["review_criteria"]
         legacy.start_review_loop(project_id, flow_id, doc_id, run.get("issued_to") or "", loop,
-                                 lambda last: fields.review_basis_note(criteria, last))
+                                 lambda last: fields.review_basis_note(criteria, last), node["node_key"])
     elif step == fields.APPROVE:
         legacy.approve(flow_id, doc_id, run.get("issued_to") or "")
 

@@ -43,7 +43,7 @@ from fastapi import HTTPException
 from modules.flow_gate.db import answers as db_answers
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import question_items as db_question_items
-from modules.flow_gate.services import ai_invoke_service, q_service, token_service
+from modules.flow_gate.services import ai_invoke_service, card_memo_hooks, q_service, token_service
 
 logger = logging.getLogger(__name__)
 
@@ -333,12 +333,18 @@ def issue_answer_token(
         "token_id": issued["token_id"],
         "scratch_dir": issued["scratch_dir"],
         "expires_at": issued.get("expires_at"),
-        "mention": build_answer_mention(
-            doc=doc,
-            item=item,
-            raw_token=issued["raw_token"],
-            scratch_dir=issued["scratch_dir"],
-            api_base_url=api_base_url,
+        # flowgate.v02.0056 T#3: a question on a Designer card's document is answered with that card's memos
+        # turned on for AI reading in front (card_memo_hooks; none, or no handler: the mention as before).
+        "mention": card_memo_hooks.prepend_memo_section(
+            build_answer_mention(
+                doc=doc,
+                item=item,
+                raw_token=issued["raw_token"],
+                scratch_dir=issued["scratch_dir"],
+                api_base_url=api_base_url,
+            ),
+            doc.get("group_id"),
+            doc_id=doc.get("doc_id"),
         ),
     }
 

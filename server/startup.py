@@ -279,6 +279,18 @@ def start_card_approval_integration():
         logger.warning(f"[startup] card approval integration registration failed: {exc}")
 
 
+def start_card_memo_integration():
+    """flowgate.v02.0056 T#3 (D0006 §2.1, §2.3): composition root of the card memos. Connects
+    ``flowgate.card_memos`` to the AI mention builders' card memo port (a card's AI runs, the per-document AI
+    invoke, the Q&A answer). Unregistered, every mention is what it was before the memos."""
+    try:
+        from flowgate.card_memos import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] card memo integration registration failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
@@ -293,6 +305,7 @@ def run_all():
     start_card_document_integration()
     start_card_settings_integration()
     start_card_approval_integration()
+    start_card_memo_integration()
     encrypt_ai_provider_keys()
     recover_ai_evaluations()
     start_snapshot_cleanup()

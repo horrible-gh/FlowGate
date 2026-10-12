@@ -10,6 +10,8 @@ loop (started as the AI invoke route starts it, its review hops told the card's 
 state) and the v0.1 approval as the unmanned chain makes it, followed by the Graph contact a person's
 approval reaches, and whether the AI run of a node still holds the Flow's group AI lease (flowgate.v02.0056
 T#1). The source tools' step type judgement takes the open run node a token was mapped to.
+flowgate.v02.0056 T#3: an AI run's node result is the one registered with that run's own tokens
+(``node_of_ai_run``), so the review stage never takes a result someone else registered as the run's.
 
 flowgate.v02.0056 T#2 (the instruction stage of a card run): which open node in its instruction stage an AI
 run worked for, the card instruction documents that node's tokens registered, and the Graph's own two steps
@@ -143,18 +145,31 @@ def _ai_node_in_review(run_row: dict, node_key: str) -> Optional[tuple[dict, str
 
 def node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[dict, str]]:
     """The AI node of the Flow's active run that this AI run wrote the result of (its tokens carry the
-    run id and were mapped to the node), when that node is in review: (node row, result doc id)."""
+    run id and were mapped to the node), when that node is in review: (node row, result doc id).
+
+    flowgate.v02.0056 T#3: the result must be the run's own — registered with one of those tokens, as their
+    ``token_consumed`` records show (the evidence the run reconciliation binds from). A result someone else
+    registered while the run went on (a person's, with the node's dispatch token) is not this run's to review
+    or approve: None, and it waits for the card approval."""
     run_row = run_store.active_run(flow_id)
     if run_row is None or not ai_run_id:
         return None
     mapped = get_store()._fetch_all(
-        "SELECT m.node_key FROM graph_run_token_map m JOIN tokens t ON t.token_id = m.token_id "
+        "SELECT m.node_key, m.token_id FROM graph_run_token_map m JOIN tokens t ON t.token_id = m.token_id "
         "WHERE m.run_id = ? AND t.ai_run_id = ?", [run_row["run_id"], ai_run_id])
-    for key in dict.fromkeys(r["node_key"] for r in mapped or []):
+    tokens: dict[str, list[str]] = {}
+    for r in mapped or []:
+        tokens.setdefault(r["node_key"], []).append(r["token_id"])
+    for key, token_ids in tokens.items():
         found = _ai_node_in_review(run_row, key)
-        if found is not None:
+        if found is not None and _registered_with(flow_id, found[1], token_ids):
             return found
     return None
+
+
+def _registered_with(flow_id: str, doc_id: str, token_ids: list[str]) -> bool:
+    """``doc_id`` was registered with one of ``token_ids`` (their ``token_consumed`` records)."""
+    return any(d["doc_id"] == doc_id for d in registered_documents(flow_id, token_ids))
 
 
 def _lease_held(lease: Optional[dict]) -> bool:
@@ -271,7 +286,8 @@ def last_rejection(doc_id: str) -> Optional[str]:
 
 
 def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issued_to: str,
-                      loop: dict, basis_note: Callable[[Optional[str]], str]) -> Optional[dict]:
+                      loop: dict, basis_note: Callable[[Optional[str]], str],
+                      node_key: Optional[str] = None) -> Optional[dict]:
     """Start the v0.1 document review loop on ``doc_id`` as the AI invoke route starts it (single
     run, ``action_scope`` review, its stage-aware issuer: a review token, an edit token for a
     rework hop). A refusal is logged and the result left to a person (returns None).
@@ -279,19 +295,25 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
     Every review hop's mention -- the first one, a retry's reissue and the review after a rework all
     come from this issuer -- opens with ``basis_note(the document's last rejection)``: the review
     basis the card chose, said with the last rejection as it is when the hop is issued. The engine
-    adds its own one-line criteria name only when it switches stages, never to the first hop."""
-    from modules.flow_gate.services import ai_invoke_service, invoke_mention_service  # noqa: PLC0415
+    adds its own one-line criteria name only when it switches stages, never to the first hop.
+
+    flowgate.v02.0056 T#3: every hop, review and rework, also carries the memos of the card ``node_key`` turned
+    on for AI reading (``card_memo_hooks``), read when the hop is issued."""
+    from modules.flow_gate.services import ai_invoke_service, card_memo_hooks, invoke_mention_service  # noqa: PLC0415
     from modules.flow_gate.services import workflow_decision_service  # noqa: PLC0415
 
     def _issue(ai_run_id: Optional[str] = None) -> dict:
         if getattr(_issue, "loop_stage", None) == ai_invoke_service.REWORK_HOP_KIND:
-            return invoke_mention_service.issue_rework_request(
+            issued = invoke_mention_service.issue_rework_request(
                 doc_id=doc_id, issued_to=issued_to, api_base_url=API_BASE_URL, locale=LOCALE, ai_run_id=ai_run_id)
+            return {**issued, "mention": card_memo_hooks.prepend_memo_section(
+                issued.get("mention") or "", flow_id, node_key=node_key)}
         issued = workflow_decision_service.request_review(
             doc_id=doc_id, issued_to=issued_to, api_base_url=API_BASE_URL, ref_doc_ids=None, locale=LOCALE,
             ai_run_id=ai_run_id)
         mention = issued.get("mention") or ""
         if mention:
+            mention = card_memo_hooks.prepend_memo_section(mention, flow_id, node_key=node_key)
             mention = invoke_mention_service.prepend_messages_section(
                 mention, [basis_note(last_rejection(doc_id))], LOCALE)
         return {"raw_token": issued["token"], "token_id": issued["token_id"],

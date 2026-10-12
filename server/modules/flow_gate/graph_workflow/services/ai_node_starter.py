@@ -29,6 +29,15 @@ document type).
   attached as a reference document (``ref_doc_ids``: the mention's reference section, as v0.1 hands a next
   step its instruction). The run's token is mapped with the stage it was started for (``map_token``'s ``stage``):
   what the instruction AI registers with it is never the node's result, however late its registration lands.
+- flowgate.v02.0056 T#3: the card's memos turned on for AI reading open the mention of both stages (and of every
+  reissue of the run's token) as one "User memos" section (``card_memo_hooks``); none, or no handler: unchanged.
+- flowgate.v02.0056 T#3: a person may register the node's result with its dispatch token (the card line write) once
+  the AI start holds the group lease but before its token is mapped. The mapping guard then finds that result
+  registered (its consume is committed before the Graph is told) and refuses the start, as for a node no longer
+  open: the token is revoked and the AI never runs on a node a person already answered. The judgement is the run
+  reconciliation's own (``result_binder.next_missing_event``), so it sees what the contact or a reconciliation
+  binds next, whoever registered it. The line write refuses in turn once an AI token is mapped while its run
+  holds the lease (``node_ai_working``): under the Flow guard, whichever comes first wins.
 """
 from __future__ import annotations
 
@@ -36,7 +45,7 @@ from typing import Optional
 
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.graph_workflow.store import run_store
-from modules.flow_gate.services import ai_invoke_service, mention_service, token_service
+from modules.flow_gate.services import ai_invoke_service, card_memo_hooks, mention_service, token_service
 
 from .flow_guard import with_flow_guard
 
@@ -58,9 +67,22 @@ def _map_if_open(job: dict, token_id: str) -> None:
         row = next((r for r in run_store.node_runs(job["run_id"]) if r["node_key"] == job["node_key"]), None)
         if run is None or run["status"] == "completed" or row is None or row["status"] != "open":
             raise NodeNotStartable(f"node {job['node_key']} is no longer open")
+        if _result_registered(run, job):
+            raise NodeNotStartable(f"node {job['node_key']} already has a registered result")
         run_store.map_token(token_id, job["run_id"], job["node_key"], job.get("stage"))
 
     with_flow_guard(job["flow_id"], body)
+
+
+def _result_registered(run: dict, job: dict) -> bool:
+    """Inside the mapping guard: a result of the node is registered but not bound yet (the next event the run
+    reconciliation would apply to the node is ``result_submitted``)."""
+    from . import result_binder                                   # noqa: PLC0415 - the run engine, on use
+    from .run_apply import load_context, read_run_state           # noqa: PLC0415
+
+    ctx = load_context(run, job.get("project_id"), None, [])
+    event = result_binder.next_missing_event(ctx, read_run_state(ctx), job["node_key"])
+    return event is not None and event.kind == "result_submitted"
 
 
 def start_ai_invoke(job: dict) -> dict:
@@ -95,6 +117,7 @@ def start_ai_invoke(job: dict) -> dict:
             head_type=job.get("result_doc_type") or job["doc_type"], head_status="pending", parent_doc=parent,
             api_base_url=API_BASE_URL, raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,
         )
+        mention = card_memo_hooks.prepend_memo_section(mention or "", flow_id, node_key=job["node_key"])
         return {"raw_token": issue["raw_token"], "token_id": issue["token_id"],
                 "scratch_dir": issue["scratch_dir"], "mention": mention or ""}
 

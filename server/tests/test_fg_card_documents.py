@@ -675,7 +675,8 @@ def test_startup_registers_the_card_document_ports():
 def test_the_feature_code_is_in_the_v02_package_and_the_graph_holds_only_ports():
     pkg = _SERVER_DIR / "flowgate" / "card_documents"
     assert {p.stem for p in pkg.glob("*.py")} == {
-        "__init__", "slots", "lines", "repository", "legacy_adapter", "integration"}
+        "__init__", "slots", "lines", "repository", "legacy_adapter", "integration",
+        "compose", "routes"}                     # flowgate.v02.0056 T#3: a person's line write and its route
     graph = _SERVER_DIR / "modules" / "flow_gate" / "graph_workflow"
     for gone in ("domain/card_slots.py", "store/node_document_store.py", "services/card_documents.py"):
         assert not (graph / gone).exists(), gone
