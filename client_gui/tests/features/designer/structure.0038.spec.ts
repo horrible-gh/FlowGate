@@ -57,14 +57,16 @@ describe('features/designer/top structure (flowgate.v02.0038)', () => {
     }
   })
 
-  it('has no AI menu, no Save item and no select / add node / connect tool', () => {
+  it('has no AI menu, no Save item and no add node / connect tool ([선택] for multi-selection only)', () => {
     expect(DESIGNER_MENUS.map((menu) => menu.key)).toEqual(['file', 'edit', 'run', 'view', 'window', 'help'])
     const commands = DESIGNER_MENUS.flatMap((menu) => menu.entries).flatMap((entry) => (entry.kind === 'command' ? [entry.command] : []))
     expect(commands.filter((command) => /save|^ai\./.test(command))).toEqual([])
-    // Every Toolbar label comes from `top.tools`, which has no select / add node / connect entry.
+    // Every Toolbar label comes from `top.tools`, which has no add node / connect entry; the only
+    // select entries are the flowgate.v02.0059 T#1 [선택] multi-selection toggle's.
     const toolbar = read(join(TOP, 'DesignerToolbar.vue'))
     const toolKeys = [...toolbar.matchAll(/gui\.designer\.top\.tools\.(\w+)/g)].map((m) => m[1])
-    expect(toolKeys.filter((key) => /select|node|connect/.test(key))).toEqual([])
+    expect(toolKeys.filter((key) => /node|connect/.test(key))).toEqual([])
+    expect([...new Set(toolKeys.filter((key) => /select/.test(key)))].sort()).toEqual(['select_mode', 'select_mode_off', 'select_mode_on'])
     // flowgate.v02.0045 TR0020 rev2: 검증 (run.validate) is a Toolbar tool next to the run buttons.
     expect(toolbar).not.toMatch(/data-command="(?!edit\.|view\.|run\.validate")/)
   })

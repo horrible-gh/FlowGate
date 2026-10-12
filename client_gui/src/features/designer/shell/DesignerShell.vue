@@ -24,6 +24,7 @@
       :recent="recent"
       :can-validate="center.activeCanValidate.value"
       :run-status="runStatus"
+      :select-mode="center.selectMode.value"
       @command="onTopCommand"
       @toggle-panel="onTogglePanel"
       @show-tab="onShowTab"
@@ -559,6 +560,16 @@ function onTopCommand(command: DesignerTopCommand) {
     case 'edit.redo': {
       const flowId = center.state.activeFlowId
       if (flowId !== null) center.redoEdit(flowId)
+      return
+    }
+    // flowgate.v02.0059 T#1 (0011-CH contract A): [선택] toggles the Center session's selection mode;
+    // the Edit menu's 전체 선택 selects every card of the open Flow in that mode (same Selection).
+    case 'edit.select-mode':
+      center.setSelectMode(!center.selectMode.value)
+      return
+    case 'edit.select-all': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null) center.selectAll(flowId)
       return
     }
     // flowgate.v02.0059 T#1: the Toolbar and the View menu emit the same command; the Canvas of the

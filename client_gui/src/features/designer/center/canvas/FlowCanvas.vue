@@ -11,16 +11,22 @@
        flowgate.v02.0045 TR0020 rev2: while a connection is dragged (`is-connecting`) every
        connectable card is a drop area as a whole (FlowNodeCard). TR0020 rev4: nothing is laid
        over the Canvas (no edit note); an Edge gets its two Nodes so it attaches to the facing
-       sides (FlowEdgePath); the last validation's problems only mark their cards / lines. -->
+       sides (FlowEdgePath); the last validation's problems only mark their cards / lines.
+       flowgate.v02.0059 T#1 (0011-CH contract A / B): in the Toolbar's [선택] mode (`select-mode`) a
+       drag on the empty Canvas selects the cards in its rectangle, a card click adds / removes it,
+       the wheel (and the MiniMap) pans, and dragging a selected card moves the selection together.
+       Out of the mode every Vue Flow setting is the one it had before. -->
   <div
     ref="canvasEl"
     class="flow-canvas"
-    :class="{ 'is-connecting': connecting, 'is-placing': placing }"
+    :class="{ 'is-connecting': connecting, 'is-placing': placing, 'is-select-mode': selectMode }"
     role="region"
     :aria-label="t('gui.designer.center.canvas_label', { name: flowName })"
     data-test="designer-canvas"
     :data-flow-id="flowId"
     :data-selected-node-id="selectedNodeId ?? ''"
+    :data-selected-node-ids="selection.join(' ')"
+    :data-select-mode="selectMode ? 'true' : 'false'"
     :data-selected-edge-id="selectedEdge?.id ?? ''"
     :data-zoom="String(liveViewport.zoom)"
     :data-editable="editable ? 'true' : 'false'"
@@ -44,22 +50,24 @@
       :nodes-connectable="editable"
       :is-valid-connection="isValidConnection"
       :edges-updatable="false"
-      :elements-selectable="false"
+      :elements-selectable="selectMode"
       :nodes-focusable="false"
       :edges-focusable="false"
       :connect-on-click="false"
       :connection-radius="CONNECTION_RADIUS"
       :delete-key-code="null"
-      :selection-key-code="null"
-      :multi-selection-key-code="null"
+      :selection-key-code="selectMode ? true : null"
+      :multi-selection-key-code="selectMode ? true : null"
+      :select-nodes-on-drag="!selectMode"
       :zoom-on-double-click="false"
       :disable-keyboard-a11y="true"
-      :pan-on-drag="true"
-      :pan-on-scroll="false"
+      :pan-on-drag="!selectMode"
+      :pan-on-scroll="selectMode"
       :zoom-on-scroll="true"
       :zoom-on-pinch="true"
       @init="onInit"
       @nodes-initialized="onNodesInitialized"
+      @nodes-change="onNodesChange"
       @node-click="onNodeClick"
       @pane-click="onPaneClick"
       @viewport-change="onViewportChange"
@@ -129,6 +137,12 @@
 // with a selected Node): a click on an Edge selects it, a click on a Node or the pane clears it.
 // Selecting is allowed for every Edge; removing (`edge-remove`) only for a deletable one — an
 // editable draft Edge the work has not gone through (vueFlowMapping `deletable`).
+//
+// flowgate.v02.0059 T#1 — Selection: `selectedNodeIds` (or the single `selectedNodeId` alone) is
+// what is drawn selected. In [선택] mode (`selectMode`) Vue Flow's own area selection and click
+// toggle run; every selection change it reports is applied to the shown Selection and sent up as
+// `select-nodes` (all selected Node ids) — Vue Flow never decides the Selection by itself. A drop
+// reports each dragged Node's position once, the group clamped to the Canvas origin as a whole.
 import '@vue-flow/core/dist/style.css'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -137,6 +151,7 @@ import {
   type Connection,
   type CoordinateExtent,
   type EdgeMouseEvent,
+  type NodeChange,
   type NodeDragEvent,
   type NodeMouseEvent,
   type ViewportTransform,
@@ -149,6 +164,7 @@ import {
   CANVAS_MIN_ZOOM,
   DEFAULT_CANVAS_VIEWPORT,
   clampCanvasZoom,
+  clampGroupToCanvas,
   sameViewport,
   type CanvasSize,
   type CanvasViewport,
@@ -168,6 +184,10 @@ const props = withDefaults(
     viewport: CanvasViewport | null
     selectedNodeId: string | null
     sample: boolean
+    /** flowgate.v02.0059 T#1: every selected Node (empty = `selectedNodeId` alone is shown selected). */
+    selectedNodeIds?: readonly string[]
+    /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode — area / click multi-selection. */
+    selectMode?: boolean
     /** flowgate.v02.0059 T#1: the latest fit / zoom asked of this Canvas (Toolbar, View menu). */
     viewRequest?: CanvasViewRequest | null
     /** flowgate.v02.0045 S3: the shown Graph is an editable draft. */
@@ -177,11 +197,13 @@ const props = withDefaults(
     canConnect?: ((source: string, target: string) => boolean) | null
     issues?: readonly FlowDraftIssue[]
   }>(),
-  { viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [] },
+  { selectedNodeIds: () => [], selectMode: false, viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [] },
 )
 
 const emit = defineEmits<{
   'select-node': [nodeId: string | null]
+  /** flowgate.v02.0059 T#1: [선택] mode — the Selection is now these Nodes. */
+  'select-nodes': [nodeIds: string[]]
   'viewport-change': [viewport: CanvasViewport]
   'viewport-commit': [viewport: CanvasViewport]
   'canvas-resize': [size: CanvasSize]
@@ -218,7 +240,11 @@ const issueMap = computed(() => {
   }
   return map
 })
-const nodes = computed(() => toVueFlowNodes(props.graph, props.selectedNodeId, issueMap.value))
+/** The selected Node ids drawn as selected. */
+const selection = computed<readonly string[]>(() =>
+  props.selectedNodeIds.length > 0 ? props.selectedNodeIds : props.selectedNodeId === null ? [] : [props.selectedNodeId],
+)
+const nodes = computed(() => toVueFlowNodes(props.graph, selection.value, issueMap.value, { selectMode: props.selectMode }))
 const edges = computed(() => toVueFlowEdges(props.graph, issueMap.value, selectedEdgeId.value))
 /** The selected Edge as drawn, or null (also when it left the Graph). */
 const selectedEdge = computed(() => edges.value.find((edge) => edge.id === selectedEdgeId.value) ?? null)
@@ -250,7 +276,15 @@ const gridStyle = computed(() => {
 // once both have happened, whichever comes last.
 function onInit(instance: VueFlowStore) {
   flow.value = instance
+  syncMultiSelection()
   fitOnFirstDisplay()
+}
+
+// flowgate.v02.0059 T#1: in [선택] mode a card click adds / removes it. Vue Flow turns its
+// multi-selection on only when the key state changes, which never happens for a Canvas shown while
+// the mode is already on (another tab), so the Canvas sets it from the mode itself.
+function syncMultiSelection() {
+  if (flow.value) flow.value.multiSelectionActive.value = props.selectMode
 }
 
 function onNodesInitialized() {
@@ -289,7 +323,35 @@ async function applyViewRequest(request: CanvasViewRequest) {
 
 function onNodeClick({ node }: NodeMouseEvent) {
   selectedEdgeId.value = null
+  // [선택] mode: the click toggled the Node in Vue Flow's selection (onNodesChange sent it up).
+  if (props.selectMode) return
   emit('select-node', node.id)
+}
+
+// flowgate.v02.0059 T#1: the Selection as last sent up — Vue Flow may report several changes before
+// the session's answer comes back as props, and each builds on the one before.
+let reportedSelection: readonly string[] | null = null
+watch(selection, () => {
+  reportedSelection = null
+})
+
+function onNodesChange(changes: NodeChange[]) {
+  if (!props.selectMode) return
+  const before = reportedSelection ?? selection.value
+  const next = new Set(before)
+  let reported = false
+  for (const change of changes) {
+    if (change.type !== 'select') continue
+    reported = true
+    if (change.selected) next.add(change.id)
+    else next.delete(change.id)
+  }
+  if (!reported) return
+  const ids = props.graph.nodes.filter((node) => next.has(node.id)).map((node) => node.id)
+  if (ids.length === before.length && ids.every((id) => before.includes(id))) return
+  reportedSelection = ids
+  selectedEdgeId.value = null
+  emit('select-nodes', ids)
 }
 
 function onPaneClick(event: MouseEvent) {
@@ -306,7 +368,8 @@ function onPaneClick(event: MouseEvent) {
 
 function onEdgeClick({ edge }: EdgeMouseEvent) {
   selectedEdgeId.value = edge.id
-  if (props.selectedNodeId !== null) emit('select-node', null)
+  // The whole Node selection ends, one Node or a [선택] group (selectedNodeId is null for a group).
+  if (selection.value.length > 0) emit('select-node', null)
   // Delete / Backspace reach the Canvas only while it has the focus.
   canvasEl.value?.focus({ preventScroll: true })
 }
@@ -333,9 +396,17 @@ function onViewportChangeEnd({ x, y, zoom }: ViewportTransform) {
   emit('viewport-commit', { x, y, zoom })
 }
 
+// flowgate.v02.0059 T#1 (contract B): one drop of one Node or of the dragged selection — the group
+// is kept inside the Canvas origin as a whole, so the Nodes keep their relative layout. Vue Flow
+// already shows each dragged card where the pointer left it; the clamped position is put back on
+// the card itself, because a group clamped back onto the place it started from leaves the Graph
+// unchanged (moveNode keeps it) and then no redraw from the Graph would follow.
 function onNodeDragStop({ nodes: dragged }: NodeDragEvent) {
-  for (const node of dragged) {
-    emit('node-move', { nodeId: node.id, x: Math.max(0, node.position.x), y: Math.max(0, node.position.y) })
+  const drops = clampGroupToCanvas(dragged.map((node) => ({ nodeId: node.id, x: node.position.x, y: node.position.y })))
+  for (const drop of drops) {
+    const shown = flow.value?.findNode(drop.nodeId)
+    if (shown && (shown.position.x !== drop.x || shown.position.y !== drop.y)) shown.position = { x: drop.x, y: drop.y }
+    emit('node-move', drop)
   }
 }
 
@@ -403,13 +474,11 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
-// A Node selected from anywhere (Canvas, Inspector, ...) ends the Edge selection.
-watch(
-  () => props.selectedNodeId,
-  (nodeId) => {
-    if (nodeId !== null) selectedEdgeId.value = null
-  },
-)
+// A Node selected from anywhere (Canvas, Inspector, 전체 선택, ...) ends the Edge selection — one
+// Node or several (flowgate.v02.0059 T#1: Vue Flow never clears it, its Edges are not selectable).
+watch(selection, (nodeIds) => {
+  if (nodeIds.length > 0) selectedEdgeId.value = null
+})
 
 watch(
   () => {
@@ -421,6 +490,8 @@ watch(
     if (size && size.width > 0 && size.height > 0) emit('canvas-resize', { width: size.width, height: size.height })
   },
 )
+
+watch(() => props.selectMode, syncMultiSelection, { flush: 'post' })
 
 watch(
   () => props.viewRequest,
@@ -479,6 +550,22 @@ watch(
 
 .flow-canvas.is-placing :deep(.vue-flow__pane) {
   cursor: crosshair;
+}
+
+/* flowgate.v02.0059 T#1: [선택] mode — a drag on the empty Canvas draws the selection rectangle. */
+.flow-canvas.is-select-mode :deep(.vue-flow__pane) {
+  cursor: crosshair;
+}
+
+.flow-canvas-flow :deep(.vue-flow__selection) {
+  border: 1px dashed rgba(88, 166, 255, 0.85);
+  background: rgba(88, 166, 255, 0.1);
+}
+
+/* Vue Flow's own box around the selected cards is not used: the cards stay clickable (add /
+   remove) and a selection is dragged by any of its cards, through the usual Node drop. */
+.flow-canvas-flow :deep(.vue-flow__nodesselection) {
+  display: none;
 }
 
 /* flowgate.v02.0045 TR0020 rev2: while a connection is dragged, a connectable card takes the

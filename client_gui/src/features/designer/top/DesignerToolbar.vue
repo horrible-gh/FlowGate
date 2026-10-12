@@ -11,7 +11,10 @@
        (`canValidate`).
        flowgate.v02.0053 T#9: the run buttons drive the server run (the Shell sends the commands to the
        Center session); `runMode` is the server's run as this tab knows it. Next to them one dot shows the
-       Flow's run — ● running, ❚❚ stopped, ✓ completed — its name in the tooltip only. -->
+       Flow's run — ● running, ❚❚ stopped, ✓ completed — its name in the tooltip only.
+       flowgate.v02.0059 T#1 (0011-CH contract A): [선택] is back for multi-selection only (no add
+       node / connect mode): a toggle whose ON / OFF (`selectMode`, the Center session's) shows on the
+       button; it emits `edit.select-mode` and the Shell switches the mode. -->
   <div
     class="designer-toolbar"
     :class="{ 'is-unavailable': disabled }"
@@ -32,6 +35,20 @@
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
+      <button
+        type="button"
+        class="designer-tool"
+        :class="{ 'is-on': selectMode && !disabled }"
+        data-test="designer-tool"
+        data-command="edit.select-mode"
+        :disabled="disabled"
+        :aria-pressed="selectMode && !disabled ? 'true' : 'false'"
+        :title="t(selectMode && !disabled ? 'gui.designer.top.tools.select_mode_on' : 'gui.designer.top.tools.select_mode_off')"
+        @click="emit('command', 'edit.select-mode')"
+      >
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 3h4M3 3v4M17 3h-4M17 3v4M3 17h4M3 17v-4" /><path d="M10 9l7 3-3 1.2-1.2 3z" /></svg>
+        <span>{{ t('gui.designer.top.tools.select_mode') }}</span>
+      </button>
       <button type="button" class="designer-tool" data-test="designer-tool" data-command="edit.arrange" :disabled="disabled" @click="emit('command', 'edit.arrange')">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14M3 8h9M3 12h14M3 16h9" /></svg>
         <span>{{ t('gui.designer.top.tools.arrange') }}</span>
@@ -149,8 +166,10 @@ const props = withDefaults(
     canRedo?: boolean
     /** flowgate.v02.0053 T#9: the open Flow's server run status (`running` | `stopped` | `completed`), or null. */
     runStatus?: string | null
+    /** flowgate.v02.0059 T#1: the [선택] mode is on. */
+    selectMode?: boolean
   }>(),
-  { disabled: false, canValidate: false, canUndo: true, canRedo: true, runStatus: null },
+  { disabled: false, canValidate: false, canUndo: true, canRedo: true, runStatus: null, selectMode: false },
 )
 
 const emit = defineEmits<{
@@ -253,6 +272,18 @@ const RUN_BUTTONS = [
   border-color: #244a79;
   background: #173157;
   color: #fff;
+}
+
+/* flowgate.v02.0059 T#1: [선택] ON stays lit until it is turned off. */
+.designer-tool.is-on,
+.designer-tool.is-on:hover:not(:disabled) {
+  border-color: #58a6ff;
+  background: #18437b;
+  color: #fff;
+}
+
+.designer-tool.is-on svg {
+  stroke: #58a6ff;
 }
 
 .designer-tool:disabled {

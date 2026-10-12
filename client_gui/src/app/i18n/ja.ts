@@ -455,6 +455,9 @@ export default {
       tools: {
         undo: '元に戻す',
         redo: 'やり直し',
+        select_mode: '選択',
+        select_mode_on: '選択モード オン — 空き領域をドラッグして複数カードを選択、カードのクリックで追加 / 解除、ホイールで移動',
+        select_mode_off: '選択モード オフ — オンにすると複数のカードを選択できます',
         arrange: '整列 / 配置 ▾',
         run_next: '次のステップ',
         run_all: 'すべて実行',

@@ -227,8 +227,8 @@ function expectUnselectedState(w: VueWrapper<any>) {
   expect(toolbar.attributes('aria-disabled')).toBe('true')
   expect(toolbar.classes()).toContain('is-unavailable')
   const buttons = toolbar.findAll('button')
-  // flowgate.v02.0045 TR0020 rev2: + 검증 before the run buttons.
-  expect(buttons.length).toBe(13)
+  // flowgate.v02.0045 TR0020 rev2: + 검증 before the run buttons. flowgate.v02.0059 T#1: + [선택].
+  expect(buttons.length).toBe(14)
   expect(buttons.every(isDisabled)).toBe(true)
 }
 

@@ -8,7 +8,9 @@
        편집 / 편집 마치기 — a Flow that already ran is edited right on the Canvas (the session picks
        what it shows). TR0020 rev4: nothing is laid over the Canvas — no saving / refused-save /
        검증 note (the edit note is gone); a refused save reads the Flow again by itself, and the
-       problems a 검증 or a refused 실행 reported only mark their cards / lines on the Canvas. -->
+       problems a 검증 or a refused 실행 reported only mark their cards / lines on the Canvas.
+       flowgate.v02.0059 T#1: the session's [선택] mode and the Flow's whole Selection go to the
+       Canvas, and the Selection it reports in that mode comes back to the session. -->
   <div class="designer-center" data-test="designer-center">
     <FlowTabStrip
       :tabs="center.state.tabs"
@@ -43,10 +45,13 @@
           :graph="load.graph"
           :viewport="view?.viewport ?? null"
           :selected-node-id="view?.selectedNodeId ?? null"
+          :selected-node-ids="view?.selectedNodeIds ?? []"
+          :select-mode="center.selectMode.value"
           :view-request="center.viewRequest.value?.flowId === activeTab.flowId ? center.viewRequest.value : null"
           :sample="center.isSampleSource"
           :placing="placing"
           @select-node="center.selectNode(activeTab.flowId, $event)"
+          @select-nodes="center.selectNodes(activeTab.flowId, $event)"
           @viewport-change="center.recordViewport(activeTab.flowId, $event)"
           @viewport-commit="center.commitViewport(activeTab.flowId, $event)"
           @canvas-resize="center.recordCanvasSize($event)"

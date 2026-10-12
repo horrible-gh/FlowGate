@@ -45,7 +45,7 @@ export interface DraftHost {
   projectId(): string | null
   /** The ready Graph of an open Flow, else null. */
   graph(flowId: string): FlowGraph | null
-  /** Shows an edited Graph (the Graph stays the session's). */
+  /** Shows an edited Graph (the Graph stays the session's; its Selection keeps only Nodes it holds). */
   setGraph(flowId: string, graph: FlowGraph): void
   /** Renames the selected node after a save issued its key. */
   renameSelection(flowId: string, keyMap: Readonly<Record<string, string>>): void
@@ -105,8 +105,8 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     const graph = host.graph(flowId)
     if (!graph) return
     const renamed = remapGraph(graph, keyMap)
+    host.renameSelection(flowId, keyMap) // first: the renamed Graph shown next keeps only the Nodes it holds
     host.setGraph(flowId, renamed)
-    host.renameSelection(flowId, keyMap)
     // A new node's position is stored once it has its key (a `tmp_` key is unknown to the server).
     for (const key of Object.values(keyMap)) {
       const node = renamed.nodes.find((n) => n.id === key)

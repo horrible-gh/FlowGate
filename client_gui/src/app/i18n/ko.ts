@@ -465,6 +465,9 @@ export default {
       tools: {
         undo: '실행 취소',
         redo: '다시 실행',
+        select_mode: '선택',
+        select_mode_on: '선택 모드 켜짐 — 빈 곳을 끌어 여러 카드 선택, 카드를 눌러 추가 / 제외, 휠로 이동',
+        select_mode_off: '선택 모드 꺼짐 — 누르면 여러 카드를 선택할 수 있습니다',
         arrange: '정렬 / 배치 ▾',
         run_next: '다음 단계',
         run_all: '전체 실행',

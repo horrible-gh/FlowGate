@@ -29,6 +29,8 @@ export type DesignerTopCommand =
   | 'edit.arrange'
   | 'edit.auto-layout'
   | 'edit.select-all'
+  /** flowgate.v02.0059 T#1: the Toolbar's [선택] toggle (area / click multi-selection on the Canvas). */
+  | 'edit.select-mode'
   | 'run.next'
   | 'run.all'
   | 'run.stop'

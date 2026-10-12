@@ -30,6 +30,7 @@
       :can-undo="targets.canUndo !== false"
       :can-redo="targets.canRedo !== false"
       :run-status="runStatus"
+      :select-mode="selectMode"
       @command="emit('command', $event)"
       @update:density="emit('update:density', $event)"
       @update:zoom="emit('update:zoom', $event)"
@@ -70,8 +71,10 @@ withDefaults(
     canValidate?: boolean
     /** flowgate.v02.0053 T#9: the open Flow's server run status, or null. */
     runStatus?: string | null
+    /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode is on (the Center session's). */
+    selectMode?: boolean
   }>(),
-  { recent: () => EMPTY_RECENT_LISTS, canValidate: false, runStatus: null },
+  { recent: () => EMPTY_RECENT_LISTS, canValidate: false, runStatus: null, selectMode: false },
 )
 
 const emit = defineEmits<{

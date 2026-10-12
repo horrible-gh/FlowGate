@@ -455,6 +455,9 @@ export default {
       tools: {
         undo: 'Undo',
         redo: 'Redo',
+        select_mode: 'Select',
+        select_mode_on: 'Select mode on — drag on empty space to select cards, click a card to add / remove it, scroll to pan',
+        select_mode_off: 'Select mode off — turn on to select several cards',
         arrange: 'Align / Arrange ▾',
         run_next: 'Next Step',
         run_all: 'Run All',

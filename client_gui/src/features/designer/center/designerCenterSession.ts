@@ -47,12 +47,19 @@
 // (run/flowRunControl.ts). Each open Flow keeps its run state next to its Graph; the run is read with
 // every Graph read (a run event reads the Canvas again, flowCanvasEvents), so the buttons, the run dot and
 // the cards' colour dots show the server's run.
+//
+// flowgate.v02.0059 T#1 (0011-CH contract A): the Toolbar's [선택] mode (`selectMode`, one for the
+// Shell) lets a Flow's Selection hold several Nodes — the Canvas reports them (`selectNodes`) and
+// 전체 선택 (`selectAll`) takes every Node of the Flow and turns the mode on. Turning it off only drops
+// such multi-Node Selections; nothing else (Graph, draft, saved layout) changes. A Selection keeps its
+// Nodes across a `tmp_` key rename and loses the ones a re-read, an edit or its undo / redo took away.
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
 import {
   createCanvasViewState,
   sameCanvasSize,
   sameViewport,
+  setViewSelection,
   type CanvasSize,
   type CanvasViewState,
   type CanvasViewport,
@@ -162,6 +169,14 @@ export interface DesignerCenterSession {
   refreshFlow(flowId: string): void
   /** Single selection of one Node, or none. */
   selectNode(flowId: string, nodeId: string | null): void
+  /** flowgate.v02.0059 T#1: the Selection becomes these Nodes of the Flow (the Canvas in 선택 mode). */
+  selectNodes(flowId: string, nodeIds: readonly string[]): void
+  /** flowgate.v02.0059 T#1: 전체 선택 — every Node of the Flow's ready Graph, in 선택 mode. Whether it ran. */
+  selectAll(flowId: string): boolean
+  /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode is on (area / click multi-selection). */
+  readonly selectMode: ComputedRef<boolean>
+  /** Turns [선택] mode on / off; off drops every Selection of more than one Node (and nothing else). */
+  setSelectMode(on: boolean): void
   /** Records the Viewport the Canvas (or the Minimap / a later Toolbar) reports. */
   recordViewport(flowId: string, viewport: CanvasViewport): void
   /** flowgate.v02.0049: the shown Canvas reports its area size (when shown and on every resize). */
@@ -310,11 +325,14 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     projectId: () => state.projectId,
     graph: readyGraph,
     setGraph: (flowId, graph) => {
-      if (state.graphs[flowId]) state.graphs[flowId] = { status: 'ready', graph: markRaw(graph) }
+      if (!state.graphs[flowId]) return
+      state.graphs[flowId] = { status: 'ready', graph: markRaw(graph) }
+      // An edit, its undo or its redo may take selected Nodes away (flowgate.v02.0059 T#1).
+      keepShownSelection(flowId, graph)
     },
     renameSelection: (flowId, keyMap) => {
       const view = state.views[flowId]
-      if (view?.selectedNodeId && keyMap[view.selectedNodeId]) view.selectedNodeId = keyMap[view.selectedNodeId]
+      if (view) setViewSelection(view, view.selectedNodeIds.map((id) => keyMap[id] ?? id))
     },
     queuePosition: (flowId, nodeId, x, y) => {
       if (source.saveLayout) layoutQueue.queuePosition(flowId, nodeId, x, y)
@@ -378,6 +396,14 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   // `background`: a refresh — a ready Graph stays on screen until the new one arrives, and a
   // failed refresh keeps it (the next change report or retry reads again).
+  /** flowgate.v02.0059 T#1: the Flow's Selection keeps only Nodes of the Graph now shown. */
+  function keepShownSelection(flowId: string, graph: FlowGraph) {
+    const view = state.views[flowId]
+    if (!view || view.selectedNodeIds.length === 0) return
+    const shown = new Set(graph.nodes.map((node) => node.id))
+    setViewSelection(view, view.selectedNodeIds.filter((id) => shown.has(id)))
+  }
+
   function readGraph(flowId: string, background = false) {
     const projectId = state.projectId
     if (projectId === null) return
@@ -431,9 +457,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
         if (view && view.viewport === null && graph.viewport) {
           view.viewport = { x: graph.viewport.x, y: graph.viewport.y, zoom: graph.viewport.zoom }
         }
-        if (view?.selectedNodeId && !graph.nodes.some((node) => node.id === view.selectedNodeId)) {
-          view.selectedNodeId = null
-        }
+        keepShownSelection(flowId, graph)
         if (outdated) readWhenSaved(flowId)
       },
       (error: unknown) => {
@@ -507,7 +531,35 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   function selectNode(flowId: string, nodeId: string | null) {
     const view = state.views[flowId]
-    if (view && view.selectedNodeId !== nodeId) view.selectedNodeId = nodeId
+    if (view) setViewSelection(view, nodeId === null ? [] : [nodeId])
+  }
+
+  const selectMode = shallowRef(false)
+
+  function selectNodes(flowId: string, nodeIds: readonly string[]) {
+    const view = state.views[flowId]
+    if (!view) return
+    const graph = readyGraph(flowId)
+    const shown = graph ? new Set(graph.nodes.map((node) => node.id)) : null
+    setViewSelection(view, shown ? nodeIds.filter((id) => shown.has(id)) : nodeIds)
+  }
+
+  function selectAll(flowId: string): boolean {
+    const graph = readyGraph(flowId)
+    const view = state.views[flowId]
+    if (!graph || !view) return false
+    selectMode.value = true
+    setViewSelection(view, graph.nodes.map((node) => node.id))
+    return true
+  }
+
+  function setSelectMode(on: boolean) {
+    if (selectMode.value === on) return
+    selectMode.value = on
+    if (on) return
+    for (const view of Object.values(state.views)) {
+      if (view.selectedNodeIds.length > 1) setViewSelection(view, [])
+    }
   }
 
   function recordViewport(flowId: string, viewport: CanvasViewport) {
@@ -619,6 +671,10 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     retryGraph,
     refreshFlow,
     selectNode,
+    selectNodes,
+    selectAll,
+    selectMode: computed(() => selectMode.value),
+    setSelectMode,
     recordViewport,
     recordCanvasSize,
     commitViewport,
