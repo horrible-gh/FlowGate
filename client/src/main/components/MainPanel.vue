@@ -621,6 +621,7 @@
       :has-ai-provider="activeProjectHasAiProvider"
       :doc-type="getTabTypeCode(activeTabId) ?? undefined"
       :command-admission-fingerprint="exposedValue(tr2BodyRefs[activeTabId]?.commandAdmissionFingerprint) ?? null"
+      :tr2-review-summary="getTabTypeCode(activeTabId) === 'TR2' ? exposedValue(tr2BodyRefs[activeTabId]?.reviewSummary) ?? { title: '', description: '', ready: false } : null"
       :next-step-label="getNextStepLabel(activeTabId)"
       :next-step-code="getWorkflowViewState(activeTabId).nextStepCode ?? undefined"
       :review-request-label="getReviewRequestLabel(activeTabId)"

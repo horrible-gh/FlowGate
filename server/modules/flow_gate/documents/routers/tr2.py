@@ -34,6 +34,21 @@ class Tr2ItemWrite(BaseModel):
     item: dict
 
 
+class Tr2BatchWrite(BaseModel):
+    expected_revision: int
+    items: list[dict]
+
+
+class Tr2SourcePreview(BaseModel):
+    expected_revision: int
+    files: list[dict]
+
+
+class Tr2SourceWrite(Tr2SourcePreview):
+    selected: list[int]
+    preview_fingerprint: str
+
+
 class Tr2Restore(BaseModel):
     expected_revision: int
     revision_no: int
@@ -136,6 +151,47 @@ def post_tr2_item(doc_id: str, body: Tr2ItemWrite,
                   current_user: dict = Depends(get_current_user)):
     return _mutate(doc_id, "add_item", current_user, expected_revision=body.expected_revision,
                    collection=body.collection, item=body.item)
+
+
+@router.post("/{doc_id}/tr2/sources/preview")
+@require_permission("perm_document_update")
+def post_tr2_source_preview(doc_id: str, body: Tr2SourcePreview,
+                            current_user: dict = Depends(get_current_user)):
+    from modules.flow_gate.documents import tr2_source_import
+    _writable_doc(doc_id)
+    return _run(doc_id, lambda: tr2_source_import.preview(
+        doc_id, body.files, expected_revision=body.expected_revision))
+
+
+@router.post("/{doc_id}/tr2/sources")
+@require_permission("perm_document_update")
+def post_tr2_sources(doc_id: str, body: Tr2SourceWrite,
+                     current_user: dict = Depends(get_current_user)):
+    from modules.flow_gate.documents import tr2_source_import
+    _writable_doc(doc_id)
+    return _run(doc_id, lambda: tr2_source_import.save(
+        doc_id, body.files, body.selected, body.preview_fingerprint,
+        actor=current_user["user_id"], expected_revision=body.expected_revision))
+
+
+# Register static batch routes before the catch-all item ID route.
+@router.post("/{doc_id}/tr2/items/batch/preview")
+@require_permission("perm_document_update")
+def post_tr2_batch_preview(doc_id: str, body: Tr2BatchWrite,
+                           current_user: dict = Depends(get_current_user)):
+    _writable_doc(doc_id)
+    return _run(doc_id, lambda: tr2.preview_items(
+        doc_id, body.items, expected_revision=body.expected_revision))
+
+
+@router.post("/{doc_id}/tr2/items/batch")
+@require_permission("perm_document_update")
+def post_tr2_batch(doc_id: str, body: Tr2BatchWrite,
+                   current_user: dict = Depends(get_current_user)):
+    _writable_doc(doc_id)
+    return _run(doc_id, lambda: tr2.import_items(
+        doc_id, body.items, actor=current_user["user_id"],
+        expected_revision=body.expected_revision))
 
 
 @router.get("/{doc_id}/tr2/items/{item_id:path}")

@@ -598,6 +598,9 @@ describe('T0030 — 반영안 복구 (proposal recovery), apart from the apply r
     const wrapper = mountBody(); await flushPromises()
     getRequest.mockImplementation((url: string) => Promise.resolve({ data: url === `${base}/recovery` ? recoveryState({ state: 'ok', error: null, revision_no: 2,
       revisions: recoveryState().revisions.slice(1).map((r) => ({ ...r, is_current: r.revision_no === 2 })) }) : current }))
+    const advanced = byTestId(wrapper, 'tr2-advanced')
+    ;(advanced.element as HTMLDetailsElement).open = true
+    await advanced.trigger('toggle'); await flushPromises()
     const toggle = byTestId(wrapper, 'tr2-history-toggle')
     ;(toggle.element as HTMLDetailsElement).open = true
     await toggle.trigger('toggle'); await flushPromises()
@@ -612,7 +615,8 @@ describe('T0030 — terms', () => {
     i18n.global.locale.value = locale
     const wrapper = mountBody(); await flushPromises()
     expect(byTestId(wrapper, 'tr2-chip').text()).toBe(`TR2 · ${name}`)
-    expect(byTestId(wrapper, 'tr2-apply-notice').text()).toBe((messages as any).main.tr2_body.apply_notice)
+    expect(byTestId(wrapper, 'tr2-apply-notice').text()).toContain((messages as any).main.tr2_body.apply_notice)
+    expect(byTestId(wrapper, 'tr2-apply-notice').text()).toContain(docId)
     expect(wrapper.text()).not.toMatch(/edit-spec|edit spec|변경제안|変更提案|Change Proposal/)
   })
 

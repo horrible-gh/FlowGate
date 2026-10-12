@@ -1,5 +1,5 @@
 <template>
-  <section class="tr2rp" :class="`tr2rp--${mode}`" :data-testid="mode === 'recovery' ? 'tr2-recovery' : 'tr2-revision-history'">
+  <section class="tr2rp" :class="[`tr2rp--${mode}`, { 'tr2rp--compact': compact }]" :data-testid="mode === 'recovery' ? 'tr2-recovery' : 'tr2-revision-history'">
     <template v-if="mode === 'recovery'">
       <div class="tr2rp-state" role="alert" data-testid="tr2-recovery-state">
         <strong>{{ t('main.tr2_body.recovery.heading') }} · {{ stateTitle }}</strong>
@@ -11,7 +11,7 @@
         {{ state.recoverable ? t('main.tr2_body.recovery.recoverable') : t('main.tr2_body.recovery.unrecoverable') }}
       </p>
     </template>
-    <p v-else class="tr2rp-note">{{ t('main.tr2_body.recovery.history_hint') }}</p>
+    <p v-else class="tr2rp-note" :class="{ 'tr2rp-sr-only': compact }">{{ t('main.tr2_body.recovery.history_hint') }}</p>
 
     <p v-if="error" class="tr2rp-error" role="alert">{{ error }}</p>
     <p v-if="loading && !state">{{ t('main.tr2_body.recovery.loading') }}</p>
@@ -26,6 +26,22 @@
       <p v-if="!state.revisions.length">{{ t('main.tr2_body.recovery.empty') }}</p>
       <ol v-else class="tr2rp-list">
         <li v-for="item in state.revisions" :key="item.revision_no" :class="{ 'is-unusable': !item.usable }" :data-testid="`tr2-revision-${item.revision_no}`">
+          <template v-if="compact">
+            <div class="tr2rp-compact-row">
+              <span>{{ t('main.tr2_body.v4.revision_title', { revision: item.revision_no }) }} · {{ item.is_current ? t('main.tr2_body.recovery.current') : t('main.tr2_body.recovery.origin_' + (item.origin === 'ai' ? 'ai' : 'human')) }}</span>
+              <button v-if="item.is_current" type="button" class="btn btn-outline btn-sm" :data-testid="`tr2-revision-download-${item.revision_no}`" @click="downloadRevision(item.revision_no)">{{ t('main.tr2_body.recovery.download') }}</button>
+              <button v-else type="button" class="btn btn-outline btn-sm" :data-testid="`tr2-revision-restore-${item.revision_no}`" :disabled="!canRestore(item)" @click="confirming = { kind: 'restore', revision: item.revision_no }">{{ t('main.tr2_body.recovery.restore') }}</button>
+            </div>
+            <details class="tr2rp-extra"><summary :aria-label="t('main.tr2_body.v4.revision_details')" :title="t('main.tr2_body.v4.revision_details')">···</summary>
+              <p>{{ formatTime(item.created_at) }} · {{ item.origin === 'ai' ? t('main.tr2_body.recovery.origin_ai') : t('main.tr2_body.recovery.origin_human') }} · {{ item.usable ? t('main.tr2_body.recovery.usable') : t('main.tr2_body.recovery.unusable', { problem: problemLabel(item.problem) }) }}<template v-if="item.size != null"> · {{ t('main.tr2_body.recovery.size', { size: item.size }) }}</template></p>
+              <div class="tr2rp-actions">
+                <button type="button" class="btn btn-outline btn-sm" :data-testid="`tr2-revision-view-${item.revision_no}`" @click="toggleView(item.revision_no)">{{ opened === item.revision_no ? t('main.tr2_body.recovery.hide') : t('main.tr2_body.recovery.view') }}</button>
+                <button v-if="!item.is_current" type="button" class="btn btn-outline btn-sm" :data-testid="`tr2-revision-download-${item.revision_no}`" @click="downloadRevision(item.revision_no)">{{ t('main.tr2_body.recovery.download') }}</button>
+                <button v-else type="button" class="btn btn-outline btn-sm" :data-testid="`tr2-revision-restore-${item.revision_no}`" :disabled="!canRestore(item)" @click="confirming = { kind: 'restore', revision: item.revision_no }">{{ t('main.tr2_body.recovery.restore') }}</button>
+              </div>
+            </details>
+          </template>
+          <template v-else>
           <div class="tr2rp-row">
             <strong>{{ t('main.tr2_body.recovery.revision', { revision: item.revision_no }) }}</strong>
             <span v-if="item.is_current" class="tr2rp-badge">{{ t('main.tr2_body.recovery.current') }}</span>
@@ -38,6 +54,7 @@
             <button type="button" class="btn btn-outline btn-sm" :data-testid="`tr2-revision-download-${item.revision_no}`" @click="downloadRevision(item.revision_no)">{{ t('main.tr2_body.recovery.download') }}</button>
             <button type="button" class="btn btn-primary btn-sm" :data-testid="`tr2-revision-restore-${item.revision_no}`" :disabled="!canRestore(item)" @click="confirming = { kind: 'restore', revision: item.revision_no }">{{ t('main.tr2_body.recovery.restore') }}</button>
           </div>
+          </template>
           <pre v-if="opened === item.revision_no && openedContent != null" class="tr2rp-pre" :data-testid="`tr2-revision-content-${item.revision_no}`">{{ openedContent }}</pre>
         </li>
       </ol>
@@ -76,7 +93,7 @@ interface RecoveryState {
 }
 type Pending = { kind: 'restore'; revision: number } | { kind: 'new' }
 
-const props = defineProps<{ docId: string; mode: 'recovery' | 'history'; readOnly: boolean }>()
+const props = defineProps<{ docId: string; mode: 'recovery' | 'history'; readOnly: boolean; compact?: boolean }>()
 const emit = defineEmits<{ (e: 'changed', value: { revision: number; message: string }): void }>()
 const { t, te } = useI18n()
 
@@ -216,4 +233,18 @@ defineExpose({ load })
 .tr2rp-ok { color: #15803d; font-size: .78rem; }
 .tr2rp-bad { color: #b91c1c; font-size: .78rem; }
 .tr2rp-pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg, #f6f8fa); padding: 10px; border-radius: 6px; max-height: 320px; overflow: auto; margin: 0; }
+
+.tr2rp--compact .tr2rp-list { gap: 10px; }
+.tr2rp--compact .tr2rp-list li { border: 0; border-radius: 0; padding: 0; gap: 5px; }
+.tr2rp-compact-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; }
+.tr2rp-compact-row > span { color: #78869b; }
+.tr2rp--compact .btn { padding: 6px 10px; font-size: 11px; border: 1px solid var(--border, #e3e9f1); border-radius: 8px; color: #48586c; background: #fff; font-weight: 650; }
+.tr2rp-extra { font-size: 11px; color: #8390a2; }
+.tr2rp-extra summary { cursor: pointer; }
+.tr2rp-extra p { margin: 8px 0; }
+.tr2rp-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+.tr2rp--compact .tr2rp-list li { position: relative; gap: 0; padding-right: 18px; }
+.tr2rp--compact .tr2rp-extra > summary { position: absolute; right: 0; top: 5px; list-style: none; font-weight: 700; }
+.tr2rp--compact .tr2rp-extra > summary::-webkit-details-marker { display: none; }
 </style>
