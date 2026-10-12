@@ -18,6 +18,8 @@
        status · ● Canvas state) sit in one pill group, the v7 single status pill; and the line never
        spills: it clips at its own edge, the actions scroll sideways when the Inspector is at its
        264px minimum, and the ✎ 메모 label folds to its glyph below 420px.
+       flowgate.v02.0053 T#9 — the ✎ 메모 is the `memo` slot: a feature part (features/memo) writes and opens
+       the card's memo; with none (a Node without a document) the dim, disabled ✎ 메모 stays.
        flowgate.v02.0052 묶음 A — the v7 single status pill (0035 insp.js render `● {st} · {sub}`,
        stTip): one user-facing label — the Canvas state, else the document review status, else the
        run status — and a `· sub` only for a server state that says something else than the label
@@ -63,13 +65,15 @@
       >{{ t('gui.designer.inspector.header.read_only') }}</span>
       <span class="inspector-header-gap" />
       <span v-if="$slots.meta" class="inspector-header-meta" data-test="designer-inspector-meta"><slot name="meta" /></span>
-      <button
-        type="button"
-        class="inspector-header-memo"
-        disabled
-        :title="t('gui.designer.inspector.header.memo_unavailable')"
-        data-test="designer-inspector-memo"
-      >✎ <span class="inspector-header-memo-label">{{ t('gui.designer.inspector.header.memo') }}</span></button>
+      <slot name="memo">
+        <button
+          type="button"
+          class="inspector-header-memo"
+          disabled
+          :title="t('gui.designer.inspector.header.memo_unavailable')"
+          data-test="designer-inspector-memo"
+        >✎ <span class="inspector-header-memo-label">{{ t('gui.designer.inspector.header.memo') }}</span></button>
+      </slot>
       <span
         v-if="pill"
         class="inspector-header-pill"
@@ -396,7 +400,8 @@ onScopeDispose(() => {
   overflow: hidden;
 }
 
-/* v7 `.hd-memo.none`: the memo button with no memo — dim; disabled until a memo API exists. */
+/* v7 `.hd-memo.none`: the memo button with no memo — dim; disabled on a Node without a document (a card's
+   own ✎ 메모 is the features/memo part, drawn the same). */
 .inspector-header-memo {
   flex: 0 0 auto;
   height: 26px;

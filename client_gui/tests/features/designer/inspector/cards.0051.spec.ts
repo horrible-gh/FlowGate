@@ -4,6 +4,9 @@
  * names, pills and buttons; the disabled header actions and menu items with their reason; the settings
  * blocks drawn inactive with the reason. None of these parts reaches the server; a Node without a
  * document still shows the card's structure.
+ * flowgate.v02.0053 T#5: the lines are `name · state dot · [document icon] · ✎` with no type code, no
+ * "아직 없음" and no ＋; the 설계 card is 지시서 · 레포트 without the "설명 대기" note; a Custom card is 지시서 ·
+ * 레포트. The cards built from card lines are checked in cardLines.0053.spec.ts.
  */
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -13,7 +16,7 @@ import DesignSlots from '@/features/designer/inspector/features/designCard/Desig
 import { designCardSlots } from '@/features/designer/inspector/features/designCard/designCardModel'
 import GateActions from '@/features/designer/inspector/features/gateCard/GateActions.vue'
 import GateSlots from '@/features/designer/inspector/features/gateCard/GateSlots.vue'
-import { gateActions, gateCardShape, gateCardSlots } from '@/features/designer/inspector/features/gateCard/gateCardModel'
+import { gateActions, gateCardShape, gateCardSlots, gateFailureKey } from '@/features/designer/inspector/features/gateCard/gateCardModel'
 import RequirementSlots from '@/features/designer/inspector/features/requirementCard/RequirementSlots.vue'
 import { requirementCardSlots } from '@/features/designer/inspector/features/requirementCard/requirementCardModel'
 import RequirementSettings from '@/features/designer/inspector/features/requirementSettings/RequirementSettings.vue'
@@ -59,7 +62,7 @@ const slotRows = (w: ReturnType<typeof mount>) => w.findAll('[data-test="inspect
 // --- Rules ---------------------------------------------------------------------------------------------
 
 describe('조사 card lines (researchCardModel)', () => {
-  it('a bound N: the instruction line with its pill, the report "실행 후"', () => {
+  it('a bound N: the instruction line with its state, the report "실행 후"', () => {
     const [instruction, report] = researchCardSlots(facts(V01_TR, 'N', { docReviewStatus: 'approved', docStatus: 'closed' }))
     expect(instruction).toMatchObject({ key: 'instruction', id: V01_TR.docId, empty: false, open: 'enabled', focus: false })
     expect(instruction.state).toEqual({ key: 'review_status.approved', raw: 'approved', tone: 'success' })
@@ -68,23 +71,24 @@ describe('조사 card lines (researchCardModel)', () => {
 
   it('a bound NR under review: the report line is the one to look at; the instruction is not linked', () => {
     const [instruction, report] = researchCardSlots(facts(V01_TR, 'NR'))
-    expect(instruction).toMatchObject({ empty: true, emptyKey: 'empty.unconnected', open: 'none', write: 'none' })
+    expect(instruction).toMatchObject({ empty: true, emptyKey: 'empty.unconnected', open: 'none' })
     expect(report).toMatchObject({ id: V01_TR.docId, focus: true, open: 'enabled' })
     expect(report.state).toMatchObject({ raw: 'pending_review', tone: 'warning' })
   })
 
   it('a Graph N whose run produced a result: the report line names the result document, state not read', () => {
     const [, report] = researchCardSlots(facts(GRAPH_TS, 'N', { nodeRun: { status: 'completed', openedAt: null, finishedAt: null, resultDocId: 'flowgate.v02.0049.0008-NR' } }))
-    expect(report).toMatchObject({ id: 'flowgate.v02.0049.0008-NR', empty: false, state: null, summaryKey: 'summary.not_read', open: 'enabled' })
+    expect(report).toMatchObject({ id: 'flowgate.v02.0049.0008-NR', empty: false, state: null, open: 'enabled' })
   })
 
-  it('a Node without a document keeps both lines: the instruction waits to be written (＋ disabled)', () => {
+  it('a Node without a document or card lines keeps both lines without a document, never "아직 없음" or ＋', () => {
     const [instruction, report] = researchCardSlots(facts(V01_TR, 'N', NO_DOCUMENT))
-    expect(instruction).toMatchObject({ empty: true, emptyKey: 'empty.not_yet', write: 'disabled', open: 'none' })
+    expect(instruction).toMatchObject({ empty: true, emptyKey: null, open: 'none' })
     expect(report).toMatchObject({ empty: true, emptyKey: 'empty.after_run' })
+    expect(instruction).not.toHaveProperty('write')
   })
 
-  it('the document pill: review status first, else the document status, unknown values as sent', () => {
+  it('the document state: review status first, else the document status, unknown values as sent', () => {
     expect(researchDocumentState(null, null)).toBeNull()
     expect(researchDocumentState(null, 'draft')).toEqual({ key: 'slot_state.writing', raw: 'draft', tone: 'info' })
     expect(researchDocumentState(null, 'closed')).toEqual({ key: 'slot_state.closed', raw: 'closed', tone: 'neutral' })
@@ -101,55 +105,93 @@ describe('작업 card lines (taskCardModel)', () => {
   })
 })
 
-describe('설계 card line (designCardModel)', () => {
-  it('the bound document with its type; a Node without one gets the empty line with ＋ disabled', () => {
-    expect(designCardSlots(DESIGN_CONFLICT)[0]).toMatchObject({ type: 'D', id: DESIGN_CONFLICT.docId, focus: true, open: 'enabled' })
-    expect(designCardSlots(DESIGN_CONFLICT)[0].state).toMatchObject({ raw: 'rejected', tone: 'danger' })
-    expect(designCardSlots(DESIGN_NO_DOCUMENT)[0]).toMatchObject({ type: 'D', empty: true, emptyKey: 'empty.not_yet', write: 'disabled' })
-    expect(designCardSlots(facts(DESIGN_CONFLICT, 'X'))[0].type).toBeNull()
+describe('설계 card lines (designCardModel)', () => {
+  it('지시서 · 레포트 like 조사 · 작업: a bound D fills the report line; the DS instruction is not linked', () => {
+    const [instruction, report] = designCardSlots(DESIGN_CONFLICT)
+    expect(instruction).toMatchObject({ key: 'instruction', empty: true, emptyKey: 'empty.unconnected', open: 'none' })
+    expect(report).toMatchObject({ key: 'report', id: DESIGN_CONFLICT.docId, focus: true, open: 'enabled' })
+    expect(report.state).toMatchObject({ raw: 'rejected', tone: 'danger' })
+    expect(designCardSlots(facts(DESIGN_CONFLICT, 'DS'))[0]).toMatchObject({ key: 'instruction', id: DESIGN_CONFLICT.docId })
+    expect(designCardSlots(DESIGN_NO_DOCUMENT)).toEqual([
+      { key: 'instruction', kind: 'document', id: null, empty: true, emptyKey: null, state: null, focus: false, open: 'none' },
+      { key: 'report', kind: 'document', id: null, empty: true, emptyKey: 'empty.after_run', state: null, focus: false, open: 'none' },
+    ])
   })
 })
 
 describe('요구사항 / 버그 card line (requirementCardModel)', () => {
-  it('R is the 요구사항 line, B the 버그 리포트 line; without a document the line is empty', () => {
+  it('R is the 요구사항 line, B the 버그 리포트 line; without a document the line has none (no ＋)', () => {
     expect(requirementCardSlots(REQ)[0]).toMatchObject({ name: 'requirement', id: REQ.docId, open: 'enabled' })
     expect(requirementCardSlots(REQ)[0].state).toEqual({ key: 'slot_state.writing', raw: 'draft', tone: 'info' })
     expect(requirementCardSlots(facts(REQ, 'B'))[0].name).toBe('bug')
-    expect(requirementCardSlots(facts(REQ, 'R', NO_DOCUMENT))[0]).toMatchObject({ empty: true, write: 'disabled' })
+    expect(requirementCardSlots(facts(REQ, 'R', NO_DOCUMENT))).toEqual([
+      { key: 'document', kind: 'document', name: 'requirement', id: null, empty: true, emptyKey: null, state: null, focus: false, open: 'none' },
+    ])
   })
 
   it('a root in its workflow shows the plain wording, never wf_in_progress / wf_done (0052)', () => {
     expect(requirementCardSlots(facts(REQ, 'R', { docReviewStatus: 'wf_in_progress', docStatus: 'open' }))[0].state).toEqual({ key: 'slot_state.in_progress', raw: 'wf_in_progress', tone: 'running' })
     expect(requirementCardSlots(facts(REQ, 'R', { docReviewStatus: 'wf_done', docStatus: 'open' }))[0].state).toEqual({ key: 'slot_state.closed', raw: 'wf_done', tone: 'success' })
     const w = mount(RequirementSlots, { props: { target: facts(REQ, 'R', { docReviewStatus: 'wf_in_progress', docStatus: 'open' }) }, global })
-    expect(w.text()).toContain('진행 중')
-    expect(w.text()).not.toContain('wf_in_progress')
+    expect(w.get('[data-test="inspector-slot-state"]').attributes('title')).toBe('진행 중')
+    expect(w.html()).not.toContain('wf_in_progress')
   })
 })
 
 describe('Graph gate (gateCardModel)', () => {
-  it('a gate: the 확인 결과 result line (empty) and two actions shown but never usable yet', () => {
+  it('a gate: the 확인 결과 result line (no document) and two actions shown, waiting for a running run', () => {
     expect(gateCardShape(GATE)).toBe('gate')
-    expect(gateCardSlots(GATE)).toEqual([{ key: 'result', kind: 'result', type: null, id: null, empty: true, emptyKey: 'empty.before', state: null, focus: false, open: 'none' }])
+    expect(gateCardSlots(GATE)).toEqual([{ key: 'result', kind: 'result', id: null, empty: true, emptyKey: 'empty.before', state: null, focus: false, open: 'none' }])
     expect(gateActions(GATE)).toEqual({
-      confirm: { visible: true, enabled: false, reason: 'reason.unconnected' },
-      reject: { visible: true, enabled: false, reason: 'reason.unconnected' },
+      confirm: { visible: true, enabled: false, reason: 'reason.not_running' },
+      reject: { visible: true, enabled: false, reason: 'reason.not_running' },
     })
+  })
+
+  // flowgate.v02.0053 T#9: the gate decision of the Flow's run (P0008 S6-1).
+  it('a gate decides while it is open in a running run; a stopped run, another turn, a decision in flight or a conflict wait', () => {
+    const open = { status: 'running', nodes: [{ nodeKey: GATE.nodeId, status: 'open' }] }
+    expect(gateActions(GATE, open).confirm).toEqual({ visible: true, enabled: true, reason: null })
+    expect(gateActions(GATE, open).reject.enabled).toBe(true)
+    expect(gateActions(GATE, { ...open, status: 'stopped' }).confirm.reason).toBe('reason.not_running')
+    expect(gateActions(GATE, { status: 'running', nodes: [{ nodeKey: GATE.nodeId, status: 'pending' }] }).confirm.reason).toBe('reason.not_open')
+    expect(gateActions(GATE, { status: 'running', nodes: [] }).confirm.reason).toBe('reason.not_open')
+    expect(gateActions(GATE, open, true).confirm.reason).toBe('reason.busy')
+    expect(gateActions({ ...GATE, readOnly: 'conflict' }, open).confirm.reason).toBe('reason.read_only_conflict')
+    // The revision view a run shows does not stop the decision (it is the run's own view).
+    expect(gateActions({ ...GATE, readOnly: 'revision' }, open).confirm.enabled).toBe(true)
+  })
+
+  it('a refused gate decision names its reason by the server code, never the code itself', () => {
+    const of = (code: string | null, status: number | null = 409, kind = 'conflict') => gateFailureKey({ kind, status, code })
+    expect(of('run_not_running')).toBe('failure.not_running')
+    expect(of('node_not_open')).toBe('failure.not_open')
+    expect(of('run_policy_undecided')).toBe('failure.undecided')
+    expect(of(null, 403, 'forbidden')).toBe('failure.forbidden')
+    expect(of(null, null, 'network')).toBe('failure.network')
+    expect(of('internal_error', 500, 'other')).toBe('failure.other')
   })
 
   it('an `other` document Node: its one document line; a Node with nothing: no line, no action', () => {
     const other = facts(V01_TR, 'XX', { nodeType: null })
     expect(gateCardShape(other)).toBe('document')
-    expect(gateCardSlots(other)[0]).toMatchObject({ key: 'document', type: 'XX', id: V01_TR.docId, open: 'enabled' })
-    const none = facts(V01_TR, null, { ...NO_DOCUMENT, nodeType: 'custom' })
+    expect(gateCardSlots(other)[0]).toMatchObject({ key: 'document', id: V01_TR.docId, open: 'enabled' })
+    const none = facts(V01_TR, null, { ...NO_DOCUMENT, nodeType: null })
     expect(gateCardShape(none)).toBe('none')
     expect(gateCardSlots(none)).toEqual([])
     expect(gateActions(none).confirm.visible).toBe(false)
   })
+
+  it('a Custom card (Graph `custom` node): 지시서 · 레포트 even before its documents are known', () => {
+    const custom = facts(V01_TR, null, { ...NO_DOCUMENT, nodeType: 'custom' })
+    expect(gateCardShape(custom)).toBe('custom')
+    expect(gateCardSlots(custom).map((line) => [line.key, line.empty, line.emptyKey])).toEqual([['instruction', true, null], ['report', true, 'empty.after_run']])
+    expect(gateActions(custom).confirm.visible).toBe(false)
+  })
 })
 
 describe('작업계획 card (workPlanModel, stage 2)', () => {
-  it('⇉ 전개 · ⇉ 재전개 ▾ are drawn and disabled with the reason; the plan pill follows the document', () => {
+  it('⇉ 전개 · ⇉ 재전개 ▾ are drawn and disabled with the reason; the plan state follows the document', () => {
     const actions = workPlanDeployActions({ hasDocument: true })
     expect(actions.deploy).toEqual({ visible: true, enabled: false, reason: 'deploy.unconnected' })
     expect(actions.redeploy).toEqual({ visible: true, enabled: false, reason: 'deploy.unconnected' })
@@ -180,85 +222,107 @@ describe('테스트 card lines (testSpecModel, stage 2)', () => {
     gate: null,
   }
 
-  it('a TS view: the instruction with its pill, the Cases with the tally, the result "실행 후"', () => {
-    const [instruction, cases, result] = testSpecSlots(view, GRAPH_TS)
+  it('a TS view: 지시서 with its state, 시나리오 (the same TS) with the tally, 레포트 "실행 후"', () => {
+    const [instruction, scenario, report] = testSpecSlots(view, GRAPH_TS)
     expect(instruction).toMatchObject({ key: 'instruction', id: GRAPH_TS.docId, open: 'enabled' })
     expect(instruction.state).toMatchObject({ raw: 'approved', tone: 'success' })
-    expect(cases).toMatchObject({ key: 'cases', form: true, empty: false, summary: 'tally', open: 'none' })
-    expect(result).toMatchObject({ key: 'result', kind: 'result', empty: true, emptyKey: 'empty.after_run' })
+    expect(scenario).toMatchObject({ key: 'scenario', id: GRAPH_TS.docId, empty: false, summary: 'tally', open: 'enabled' })
+    expect(report).toMatchObject({ key: 'report', kind: 'document', empty: true, emptyKey: 'empty.after_run' })
   })
 
-  it('no view yet: the selected TSR fills the result line, the instruction waits to be written', () => {
-    const [instruction, cases, result] = testSpecSlots(null, facts(V01_TR, 'TSR'))
-    expect(instruction).toMatchObject({ empty: true, emptyKey: 'empty.write', write: 'disabled' })
-    expect(cases).toMatchObject({ empty: true, emptyKey: 'empty.after_run' })
-    expect(result).toMatchObject({ id: V01_TR.docId, empty: false, state: null, open: 'enabled' })
+  it('no view yet: the selected TSR fills the report line; 지시서 and 시나리오 have no document', () => {
+    const [instruction, scenario, report] = testSpecSlots(null, facts(V01_TR, 'TSR'))
+    expect(instruction).toMatchObject({ empty: true, emptyKey: null, open: 'none' })
+    expect(scenario).toMatchObject({ empty: true, emptyKey: 'empty.after_run' })
+    expect(report).toMatchObject({ id: V01_TR.docId, empty: false, open: 'enabled' })
+    expect(report.state).toMatchObject({ raw: 'pending_review', tone: 'warning' })
   })
 })
 
-describe('settings views with no server side yet', () => {
-  it('AI 위임 is OFF and not changeable; test settings lock while the run is live; check settings know nothing', () => {
-    expect(requirementSettingsView(REQ)).toMatchObject({ delegation: 'off', connected: false, locked: false })
-    expect(requirementSettingsView(REQ).limits.map((limit) => limit.key)).toEqual(['max_nodes', 'total_reviews', 'retries_per_card', 'replans'])
-    expect(testRunSettingsView(GRAPH_TS)).toMatchObject({ connected: false, locked: false, modes: { automated: null, manual: null, external: null } })
-    expect(testRunSettingsView({ ...GRAPH_TS, nodeRun: { status: 'running', openedAt: null, finishedAt: null, resultDocId: null } }).locked).toBe(true)
-    expect(checkSettingsView(V01_TR)).toEqual({ usage: null, scope: null, target: null, push: null, keepBranch: null, connected: false })
+// flowgate.v02.0053 T#7: a Graph card keeps these settings (connected, cardSettings.0053); a Node without a card
+// (a v0.1 / unassigned document Node) still draws them, off, with the reason as a tooltip.
+describe('settings views of a Node without a card', () => {
+  const NONE = { card: false, node: null, pending: {}, readOnly: null, placing: false, disposed: false, failure: null } as const
+  it('AI 위임 is OFF and not changeable; the test 실행 block knows no counts; check settings know nothing', () => {
+    expect(requirementSettingsView({ ...NONE, teams: [] })).toMatchObject({ delegation: 'off', connected: false, locked: false, reason: 'delegation.unconnected' })
+    expect(requirementSettingsView({ ...NONE, teams: [] }).limits.map((limit) => limit.key)).toEqual(['max_nodes', 'total_reviews', 'retries_per_card', 'replans'])
+    expect(testRunSettingsView(null)).toEqual({ modes: { automated: null, manual: null, external: null } })
+    expect(checkSettingsView({ ...NONE, branches: [] })).toEqual({
+      usage: null,
+      scope: null,
+      target: null,
+      targetOptions: [],
+      push: null,
+      keepBranch: null,
+      connected: false,
+      reason: 'git.unconnected',
+      failures: {},
+    })
   })
 })
 
 // --- What the parts draw -------------------------------------------------------------------------------
 
 describe('card documents tab parts', () => {
-  it('ResearchSlots: two lines — 지시서 "연결 전", 레포트 with the 검수 대기 pill and ↗', () => {
+  it('ResearchSlots: two lines — 지시서 (hollow dot "연결 전"), 레포트 with the 검수 대기 dot, the document icon and ✎', () => {
     const w = mount(ResearchSlots, { props: { target: facts(V01_TR, 'NR') }, global })
     const rows = slotRows(w)
     expect(rows).toHaveLength(2)
     expect(rows[0].get('[data-test="inspector-slot-name"]').text()).toBe('지시서')
-    expect(rows[0].get('[data-test="inspector-slot-empty"]').text()).toBe('연결 전')
+    expect(rows[0].get('[data-test="inspector-slot-state"]').attributes('title')).toBe('연결 전')
     expect(rows[1].get('[data-test="inspector-slot-name"]').text()).toBe('레포트')
-    expect(rows[1].get('[data-test="inspector-status-chip"]').text()).toBe('검수 대기')
+    expect(rows[1].get('[data-test="inspector-slot-state"]').attributes('title')).toBe('검수 대기')
     expect(rows[1].classes()).toContain('is-focus')
-    expect(rows[1].find('[data-test="inspector-slot-open"]').exists()).toBe(true)
+    expect(rows[1].get('[data-test="inspector-slot-open"]').attributes('data-icon')).toBe('document')
+    expect(rows[1].find('[data-test="inspector-slot-edit"]').exists()).toBe(true)
     expect(rows[0].find('[data-test="inspector-slot-open"]').exists()).toBe(false)
   })
 
-  it('TaskSlots on a Node without a document: both lines empty, ＋ shown disabled with its reason', () => {
+  it('TaskSlots on a Node without a document: both lines without a document, no "아직 없음", no ＋', () => {
     const w = mount(TaskSlots, { props: { target: facts(V01_TR, 'T', NO_DOCUMENT) }, global })
     const rows = slotRows(w)
-    expect(rows.map((row) => row.get('[data-test="inspector-slot-empty"]').text())).toEqual(['아직 없음', '실행 후'])
-    const write = rows[0].get('[data-test="inspector-slot-write"]')
-    expect(write.attributes('disabled')).toBeDefined()
-    expect(write.attributes('title')).toBe('작성 — 아직 연결되지 않음 (v0.1 문서 화면에서 작성)')
+    expect(rows.map((row) => row.get('[data-test="inspector-slot-state"]').attributes('title'))).toEqual(['문서 없음', '실행 후'])
+    expect(w.text()).not.toContain('아직 없음')
+    expect(w.find('[data-test="inspector-slot-write"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('＋')
   })
 
-  it('RequirementSlots: 요구사항 for R with the 작성 중 pill; 버그 리포트 for B', () => {
+  it('RequirementSlots: 요구사항 for R with the 작성 중 dot; 버그 리포트 for B', () => {
     const w = mount(RequirementSlots, { props: { target: REQ }, global })
     expect(w.get('[data-test="inspector-slot-name"]').text()).toBe('요구사항')
-    expect(w.get('[data-test="inspector-status-chip"]').text()).toBe('작성 중')
+    expect(w.get('[data-test="inspector-slot-state"]').attributes('title')).toBe('작성 중')
     expect(mount(RequirementSlots, { props: { target: facts(REQ, 'B') }, global }).get('[data-test="inspector-slot-name"]').text()).toBe('버그 리포트')
   })
 
-  it('DesignSlots: the "설명 대기" note and the typed document line', () => {
+  it('DesignSlots: no "설명 대기" note; 지시서 · 레포트 with the rejected report in red', () => {
     const w = mount(DesignSlots, { props: { target: DESIGN_CONFLICT }, global })
-    expect(w.get('[data-test="inspector-tbd"]').text()).toContain('설계 카드는 아직 비워 두었습니다.')
-    expect(w.get('[data-test="inspector-slot-name"]').text()).toBe('기본 설계')
-    expect(w.get('[data-test="inspector-status-chip"]').text()).toBe('반려됨')
-    expect(w.get('[data-test="inspector-slot"]').classes()).toContain('is-danger')
+    expect(w.find('[data-test="inspector-tbd"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('설계 카드는 아직 비워 두었습니다.')
+    const rows = slotRows(w)
+    expect(rows.map((row) => row.get('[data-test="inspector-slot-name"]').text())).toEqual(['지시서', '레포트'])
+    expect(rows[1].get('[data-test="inspector-slot-state"]').attributes('title')).toBe('반려됨')
+    expect(rows[1].classes()).toContain('is-danger')
   })
 
-  it('GateSlots / GateActions: the 확인 결과 line and the two disabled actions with the reason; nothing on a non-gate without a document', () => {
+  it('GateSlots / GateActions: the 확인 결과 line and the two actions disabled with the reason before a run; nothing on a non-gate without a document', () => {
     const slots = mount(GateSlots, { props: { target: GATE }, global })
     expect(slots.get('[data-test="inspector-slot-name"]').text()).toBe('확인 결과')
-    expect(slots.get('[data-test="inspector-slot-empty"]').text()).toBe('확인 전')
+    expect(slots.get('[data-test="inspector-slot-state"]').attributes('title')).toBe('확인 전')
     const actions = mount(GateActions, { props: { target: GATE }, global })
     const confirm = actions.get('[data-test="gate-confirm"]')
     expect(confirm.text()).toBe('✓ 확인')
     expect(confirm.attributes('disabled')).toBeDefined()
-    expect(confirm.attributes('title')).toContain('아직 연결되지 않았습니다')
+    expect(confirm.attributes('title')).toBe('실행 중일 때 확인할 수 있습니다')
     expect(actions.get('[data-test="gate-reject"]').attributes('disabled')).toBeDefined()
-    const none = facts(V01_TR, null, { ...NO_DOCUMENT, nodeType: 'custom' })
+    const none = facts(V01_TR, null, { ...NO_DOCUMENT, nodeType: null })
     expect(mount(GateSlots, { props: { target: none }, global }).find('[data-test="inspector-gate-card"]').exists()).toBe(false)
     expect(mount(GateActions, { props: { target: none }, global }).find('[data-test="inspector-gate-actions"]').exists()).toBe(false)
+  })
+
+  it('GateSlots on an open-type document Node: the 문서 line has no type code', () => {
+    const w = mount(GateSlots, { props: { target: facts(V01_TR, 'XX', { nodeType: null }) }, global })
+    expect(w.get('[data-test="inspector-slot-name"]').text()).toBe('문서')
+    expect(w.text()).not.toContain('XX')
   })
 })
 
@@ -291,18 +355,21 @@ describe('card header parts', () => {
 })
 
 describe('card settings parts', () => {
-  it('RequirementSettings: the OFF line, the switch disabled, the 미연결 tag; ON (fixture) draws 범위 · AI Team · 안전 한도', () => {
+  it('RequirementSettings (no card): the OFF line, the switch disabled, the 미연결 tag; ON (fixture) draws 범위 · AI Team · 안전 한도', () => {
     const w = mount(RequirementSettings, { props: { target: REQ }, global })
     expect(w.get('[data-test="inspector-requirement-settings"]').attributes('data-delegation')).toBe('off')
-    // flowgate.v02.0052 T#2: one short OFF line; the v7 explanation stays as its tooltip.
+    // flowgate.v02.0052 T#2: one short OFF line; the v7 explanation stays as its tooltip (flowgate.v02.0053 T#7: no code).
     const off = w.get('[data-test="requirement-delegation-off"]')
-    expect(off.text()).toBe('꺼짐 — 직접 구성하거나 작업계획(WP)으로 전개')
-    expect(off.attributes('title')).toContain('꺼져 있으면 직접 구성하거나')
-    for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeDefined()
+    expect(off.text()).toBe('꺼짐 — 직접 구성하거나 작업계획으로 전개')
+    expect(off.attributes('title')).toBe('전체 실행은 AI 위임과 무관 · 각 Node 설정으로 실행')
+    for (const option of w.findAll('[data-test="inspector-segment-option"]')) {
+      expect(option.attributes('disabled')).toBeDefined()
+      expect(option.attributes('title')).toBe('이 Flow에는 카드 설정이 없습니다')
+    }
     // "Not connected" is a tag beside the switch (reason in its tooltip), not a sentence in the body.
     const unconnected = w.get('[data-test="requirement-settings-unconnected"] [data-test="inspector-tbd"]')
     expect(unconnected.text()).toBe('미연결')
-    expect(unconnected.attributes('title')).toBe('AI 위임 API가 아직 없어 표시만 하며 바꿀 수 없습니다.')
+    expect(unconnected.attributes('title')).toBe('이 Flow에는 카드 설정이 없습니다')
     expect(w.get('[data-test="requirement-delegation"] .inspector-block-head').find('[data-test="requirement-settings-unconnected"]').exists()).toBe(true)
     expect(w.text()).not.toContain('0051-R')
     expect(w.find('[data-test="requirement-limits"]').exists()).toBe(false)
@@ -313,42 +380,69 @@ describe('card settings parts', () => {
       team: 'auth',
       teamOptions: [{ value: 'auth', label: '인증팀' }],
       limits: [
-        { key: 'max_nodes', value: 12, hot: false },
-        { key: 'total_reviews', value: 30, hot: true },
-        { key: 'retries_per_card', value: 2, hot: false },
-        { key: 'replans', value: 3, hot: false },
+        { key: 'max_nodes', value: 12, isDefault: false, hot: false },
+        { key: 'total_reviews', value: 30, isDefault: false, hot: true },
+        { key: 'retries_per_card', value: 2, isDefault: true, hot: false },
+        { key: 'replans', value: 3, isDefault: true, hot: false },
       ],
       locked: true,
       connected: true,
+      reason: 'reason.locked',
+      failures: {},
     }
     const fixture = mount(RequirementSettings, { props: { target: REQ, view: on }, global })
     expect(fixture.get('[data-test="inspector-requirement-settings"]').attributes('data-delegation')).toBe('on')
     expect(fixture.get('[data-test="inspector-lock-note"]').text()).toContain('위임 진행 중')
-    expect(fixture.findAll('[data-test^="requirement-limit-"]')).toHaveLength(4)
+    expect(fixture.findAll('input[data-test^="requirement-limit-"]')).toHaveLength(4)
     expect(fixture.get('[data-test="requirement-limits"] [data-test="inspector-status-chip"]').text()).toBe('총 검수 · 재작업 30/30')
     expect(fixture.find('[data-test="requirement-settings-unconnected"]').exists()).toBe(false)
+    // v7 `기본`: only on a limit with no value of its own; the Supervisor note is the AI Team label's tooltip.
+    expect(fixture.findAll('[data-test$="-default"]').map((mark) => mark.attributes('data-test'))).toEqual(['requirement-limit-retries_per_card-default', 'requirement-limit-replans-default'])
+    expect(fixture.text()).not.toContain('Supervisor 없는 팀을')
+    const teamRow = fixture.get('[data-test="requirement-delegation-team"]').element.closest('[data-test="inspector-control-row"]')!
+    expect(teamRow.querySelector('.inspector-control-label')!.getAttribute('title')).toBe('계획 · 질문 판단 · 진행 판단은 팀의 Supervisor')
   })
 
-  it('TestRunSettings: the three v7 blocks, counts "—", the controls disabled, the TBD tag; locked while running', () => {
-    const w = mount(TestRunSettings, { props: { target: GRAPH_TS }, global })
-    expect(w.get('[data-test="test-run-mode-automated"]').text()).toBe('automated —')
-    expect(w.get('[data-test="inspector-tbd"]').text()).toBe('manual · external 흐름 그리지 않음')
-    for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="test-run-settings-unconnected"]').text()).toBe('미연결 — Node에 저장되지 않아 바꿀 수 없습니다.')
-    expect(w.find('[data-test="inspector-lock-note"]').exists()).toBe(false)
-    const running = mount(TestRunSettings, { props: { target: { ...GRAPH_TS, nodeRun: { status: 'running', openedAt: null, finishedAt: null, resultDocId: null } } }, global })
-    expect(running.get('[data-test="inspector-lock-note"]').text()).toContain('실행 중')
+  // flowgate.v02.0053 T#7: the 실행 block only (지시서 · 검수 뒤 진행 · 시나리오 작성 are the settings feature's, in
+  // v7 order before it); no code on screen (TSC / TSR, automated / manual / external).
+  it('TestRunSettings: the 실행 block — 케이스별, the counts by mode ("—" while unknown), the TBD tag; no code, no control', () => {
+    const w = mount(TestRunSettings, { props: { target: { ...GRAPH_TS, docId: null, cardDocuments: [] } }, global })
+    expect(w.get('[data-test="inspector-block-title"]').text()).toBe('실행')
+    expect(w.find('[data-test="inspector-block-sub"]').exists()).toBe(false)
+    expect(w.get('[data-test="test-run-modes"]').text()).toContain('케이스별 — 시나리오에서 정함')
+    expect(w.findAll('[data-test^="test-run-mode-"]').map((mode) => mode.text())).toEqual(['자동 —', '수동 —', '외부 —'])
+    expect(w.get('[data-test="inspector-tbd"]').text()).toBe('수동 · 외부 흐름 그리지 않음')
+    expect(w.find('[data-test="inspector-segment-option"]').exists()).toBe(false)
+    expect(w.find('[data-test="test-run-settings-unconnected"]').exists()).toBe(false)
+    for (const code of ['TSC', 'TSR', 'automated', 'manual', 'external']) expect(w.text()).not.toContain(code)
+    const fixture = mount(TestRunSettings, { props: { target: GRAPH_TS, view: { modes: { automated: 49, manual: 6, external: 2 } } }, global })
+    expect(fixture.findAll('[data-test^="test-run-mode-"]').map((mode) => mode.text())).toEqual(['자동 49', '수동 6', '외부 2'])
   })
 
-  it('CheckSettings: 용도 "—" with the 토론 중 tag, the Git card disabled, the reason as the summary', () => {
+  it('CheckSettings (no card): 용도 with nothing chosen and the 토론 중 tag, the Git card off (reason a tooltip), the summary of nothing chosen', () => {
     const w = mount(CheckSettings, { props: { target: V01_TR }, global })
-    expect(w.get('[data-test="check-settings-usage-value"]').text()).toBe('—')
+    const usage = w.get('[data-test="check-settings-usage-value"]')
+    expect(usage.findAll('[data-test="inspector-segment-option"]').map((option) => [option.text(), option.attributes('aria-checked')])).toEqual([
+      ['중간 승인', 'false'],
+      ['그룹 종료', 'false'],
+    ])
     expect(w.get('[data-test="inspector-tbd"]').text()).toBe('토론 중')
-    for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="check-settings-summary"]').text()).toBe('미연결 — 반영 방식은 최종 확인 때 고릅니다.')
-    const fixture = mount(CheckSettings, { props: { target: V01_TR, view: { usage: 'end', scope: 'merge', target: 'main', push: true, keepBranch: false, connected: true } }, global })
-    expect(fixture.get('[data-test="check-settings-usage-value"]').text()).toBe('그룹 종료')
-    expect(fixture.get('[data-test="check-settings-summary"]').text()).toBe('작업 브랜치를 main에 병합하고 원격 반영')
+    for (const option of w.findAll('[data-test="inspector-segment-option"]')) {
+      expect(option.attributes('disabled')).toBeDefined()
+      expect(option.attributes('title')).toBe('이 Flow에는 카드 설정이 없습니다')
+    }
+    expect(w.get('[data-test="check-settings-summary"]').text()).toBe('반영 방식은 최종 확인 때 고름')
+    const view = { usage: 'end', scope: 'merge', target: 'main', targetOptions: ['main', 'release'], push: true, keepBranch: false, connected: true, reason: null, failures: {} } as const
+    const fixture = mount(CheckSettings, { props: { target: V01_TR, view }, global })
+    expect(fixture.get('[data-test="check-settings-usage-value"] [aria-checked="true"]').text()).toBe('그룹 종료')
+    // v7 scopeSummary / confirmSettings on a group-ending card: "→ 그룹 종료", and 보류 marked ⛔.
+    expect(fixture.get('[data-test="check-settings-summary"]').text()).toBe('작업 브랜치를 main에 병합하고 원격 반영 → 그룹 종료')
+    expect(fixture.get('[data-test="check-settings-scope"] [data-value="hold"]').text()).toBe('보류 ⛔')
+    expect(fixture.findAll('[data-test="check-settings-target"] option').map((option) => option.text())).toEqual(['—', 'main', 'release'])
+    expect(fixture.find('[data-test="check-settings-hold-block"]').exists()).toBe(false)
+    const hold = mount(CheckSettings, { props: { target: V01_TR, view: { ...view, scope: 'hold' } }, global })
+    expect(hold.get('[data-test="check-settings-summary"]').text()).toBe('그룹 종료 확인에서는 보류를 고를 수 없음')
+    expect(hold.get('[data-test="check-settings-hold-block"]').text()).toContain('⛔ 보류 + 그룹 종료는 함께 고를 수 없습니다')
   })
 
   it('follows the locale', () => {

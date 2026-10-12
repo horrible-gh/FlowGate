@@ -45,6 +45,7 @@ import type {
   FlowGraphDraftInput,
   FlowGraphDraftSaveResult,
   FlowGraphValidation,
+  FlowRun,
   MergeReviewFileDiff,
   Project,
   ProjectGitStatus,
@@ -74,6 +75,7 @@ import {
   saveFlowGraphDraft as saveFlowGraphDraftApi,
   validateFlowGraphDraft as validateFlowGraphDraftApi,
 } from './flowGraphApi'
+import { fetchCurrentFlowRun, resumeFlowRun as resumeFlowRunApi, startFlowRun as startFlowRunApi, stopFlowRun as stopFlowRunApi } from './flowRunApi'
 import { subscribeFlowCanvasChanges as subscribeFlowCanvasChangesApi, type FlowCanvasChangeHandlers } from './flowCanvasEvents'
 import { subscribeProjectEvents as subscribeProjectEventsApi, type ProjectEventSubscription } from './projectEvents'
 import { clearStoredCurrentProjectId, writeStoredCurrentProjectId } from './currentProjectStorage'
@@ -429,6 +431,24 @@ export const useProjectStore = defineStore('project', () => {
     return confirmFlowGraphRevisionApi(flowId, draftVersion, baseRevisionNo)
   }
 
+  // flowgate.v02.0053 T#9: the Graph run of a Flow (P0008 §7 S5). Stateless like the loaders above: which
+  // run the top band shows, and the 다음 단계 / 전체 실행 / 중지 sequences, belong to the Center session.
+  function loadFlowRun(flowId: string): Promise<FlowRun | null> {
+    return fetchCurrentFlowRun(flowId)
+  }
+
+  function startFlowRun(flowId: string): Promise<FlowRun> {
+    return startFlowRunApi(flowId)
+  }
+
+  function stopFlowRun(runId: string): Promise<FlowRun> {
+    return stopFlowRunApi(runId)
+  }
+
+  function resumeFlowRun(runId: string): Promise<FlowRun> {
+    return resumeFlowRunApi(runId)
+  }
+
   // Other tabs' / devices' Canvas changes of one project (P0008 §8). Returns the unsubscribe.
   function subscribeFlowCanvasChanges(projectId: string, handlers: FlowCanvasChangeHandlers): () => void {
     return subscribeFlowCanvasChangesApi(projectId, handlers)
@@ -510,6 +530,10 @@ export const useProjectStore = defineStore('project', () => {
     saveFlowGraphDraft,
     validateFlowGraphDraft,
     confirmFlowGraphRevision,
+    loadFlowRun,
+    startFlowRun,
+    stopFlowRun,
+    resumeFlowRun,
     subscribeFlowCanvasChanges,
     subscribeProjectEvents,
   }

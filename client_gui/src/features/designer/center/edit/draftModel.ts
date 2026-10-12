@@ -5,7 +5,16 @@
 // flowgate.v02.0045 TR0020 rev3: a Graph Flow's latest revision shown with no draft is offered for
 // editing as is (`editableRevision`) — its first edit saves a new draft (version 0, the revision's
 // nodes and edges with their keys), so 편집 needs no button and the revision itself never changes.
-import type { FlowGraph, FlowGraphEdge, FlowGraphNode, FlowGraphNodeDefinition } from '../graph/flowGraph'
+// flowgate.v02.0053 T#5: the shown Graph keeps a draft node's documents while its kind stays, and takes
+// the card lines a save answered (withCardDocuments).
+import type {
+  FlowGraph,
+  FlowGraphCardDocument,
+  FlowGraphEdge,
+  FlowGraphNode,
+  FlowGraphNodeDefinition,
+  FlowGraphNodeDocument,
+} from '../graph/flowGraph'
 import type { FlowDraftContent } from '../graph/flowGraphSource'
 
 export const CLIENT_KEY_PREFIX = 'tmp_'
@@ -135,6 +144,9 @@ export function withDraft(graph: FlowGraph, model: DraftModel): FlowGraph {
         nodeType: n.nodeType, docType: n.docType, paletteItemId: n.paletteItemId, label: n.label,
         assignee: n.assignee, rootBound: before?.definition?.rootBound ?? false,
       },
+      // flowgate.v02.0053 T#5: a node keeps its documents while it keeps its kind (an edit elsewhere, a
+      // move); a retyped node shows none until its save answers the new card lines (withCardDocuments).
+      ...(sameKind(before, n) ? keptDocuments(before!) : {}),
     }
   })
   // Draft edges are exactly the editable ones; reference edges to a removed node are skipped
@@ -144,6 +156,48 @@ export function withDraft(graph: FlowGraph, model: DraftModel): FlowGraph {
     id: e.key, source: e.source, target: e.target, edgeClass: 'execution', editable: true,
   }))
   return { ...graph, nodes: [...kept, ...nodes], edges: [...keptEdges, ...edges] }
+}
+
+const sameKind = (before: FlowGraphNode | undefined, node: DraftNode) =>
+  !!before?.definition && before.definition.nodeType === node.nodeType && before.definition.docType === node.docType
+
+const keptDocuments = (node: FlowGraphNode): Pick<FlowGraphNode, 'document' | 'cardDocuments'> => ({
+  ...(node.document ? { document: node.document } : {}),
+  ...(node.cardDocuments ? { cardDocuments: node.cardDocuments } : {}),
+})
+
+/**
+ * flowgate.v02.0053 T#5 — the shown Graph after a draft save answered the card lines (stored node key ->
+ * lines, T#1 `card_documents`): each draft node takes its lines (none when the answer has none for it). A
+ * draft node without a document shows its first line's document — a line a person writes first — as the
+ * Canvas read does (graph_projector.first_line_document), so the placed card's Q&A and attachments work
+ * before the Flow is read again.
+ */
+export function withCardDocuments(graph: FlowGraph, lines: Readonly<Record<string, readonly FlowGraphCardDocument[]>>): FlowGraph {
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) => {
+      if (!isDraftNode(node)) return node
+      const own = lines[node.id] ?? []
+      const document = node.document ?? lineDocument(own)
+      return { ...node, cardDocuments: own, ...(document ? { document } : {}) }
+    }),
+  }
+}
+
+function lineDocument(lines: readonly FlowGraphCardDocument[]): FlowGraphNodeDocument | null {
+  const filled = lines.filter((line) => line.docId !== null)
+  const line = filled.find((candidate) => candidate.author === 'human') ?? filled[0]
+  if (!line?.docId) return null
+  return {
+    docId: line.docId,
+    typeCode: line.docType,
+    seq: null,
+    title: line.title,
+    docReviewStatus: line.docReviewStatus,
+    status: line.status,
+    supersedes: [],
+  }
 }
 
 /** `graph` with node / edge ids renamed after a save (selection and positions follow the node). */

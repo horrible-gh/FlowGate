@@ -1,8 +1,10 @@
-// flowgate.v02.0051 stage 2 — the 설계 card's own lines. The 0035 v7 mockup left the 설계 card empty
-// ("설명 대기": the result may be several sheets — D · L · P · DB — so whether one WP Step is one Node is
-// not decided), and 0051 turn 7 says not to decide it here. So the card shows only what is not a
-// decision: the v7 "not decided" note and the one document bound to the Node as a slot line. Pure
-// functions over the target; nothing reads the server.
+// flowgate.v02.0051 stage 2 — the 설계 card's own lines. Pure functions over the target; nothing reads
+// the server.
+// flowgate.v02.0053 T#5 (0053 CH) — the 설계 card (기본 · 프로토콜 · 로직 · DB) is shaped like 조사 · 작업:
+// 지시서 · 레포트, and the v7 "설명 대기" note is gone. The lines are the documents the server made when the
+// card was placed (T#1 card lines: 지시서 DS, 레포트 D / P / L / DB). A Node without card lines (a design
+// document Node) shows its own document on its line and a run's result on the report line. The 지시서
+// line is hidden when the card's settings omit the instruction (v7).
 import type { InspectorTarget } from '../../inspectorTarget'
 
 export type DesignSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
@@ -14,22 +16,21 @@ export interface DesignSlotState {
 }
 
 export interface DesignSlot {
-  readonly key: 'document'
+  readonly key: 'instruction' | 'report'
   readonly kind: 'document'
-  /** Document type of the line (DS / D / P / L / DB), for its name. */
-  readonly type: string | null
   readonly id: string | null
   readonly empty: boolean
+  /** Message key (under `gui.inspector.designCard.`) of why the line has no document, or null. */
   readonly emptyKey: string | null
   readonly state: DesignSlotState | null
   readonly focus: boolean
   readonly open: 'enabled' | 'none'
-  readonly write: 'disabled' | 'none'
 }
 
-export type DesignCardFacts = Pick<InspectorTarget, 'docId' | 'docType' | 'docReviewStatus' | 'docStatus'>
+export type DesignCardFacts = Pick<InspectorTarget, 'docId' | 'docType' | 'docReviewStatus' | 'docStatus' | 'nodeRun' | 'cardDocuments'>
 
-export const DESIGN_DOC_TYPES: readonly string[] = ['DS', 'D', 'P', 'L', 'DB']
+export const DESIGN_INSTRUCTION_TYPES: readonly string[] = ['DS']
+export const DESIGN_REPORT_TYPES: readonly string[] = ['D', 'P', 'L', 'DB']
 
 const REVIEW_TONES: Readonly<Record<string, DesignSlotTone>> = {
   pending_review: 'warning',
@@ -38,7 +39,7 @@ const REVIEW_TONES: Readonly<Record<string, DesignSlotTone>> = {
   revised: 'info',
 }
 
-/** The pill of a bound document: its review status, else its document status (draft / open / closed). */
+/** The state of a document: its review status, else its document status (draft / open / closed). */
 export function designDocumentState(reviewStatus: string | null, docStatus: string | null): DesignSlotState | null {
   const review = reviewStatus?.trim() ?? ''
   if (review) return { key: `review_status.${review}`, raw: review, tone: REVIEW_TONES[review] ?? 'neutral' }
@@ -53,13 +54,28 @@ export function designSlotFocus(state: DesignSlotState | null): boolean {
   return state !== null && (state.raw === 'pending_review' || state.raw === 'rejected')
 }
 
-/** The one line: the bound design document, or the empty line of a Node without one. */
-export function designCardSlots(facts: DesignCardFacts): readonly DesignSlot[] {
+function filled(key: DesignSlot['key'], id: string, reviewStatus: string | null, docStatus: string | null): DesignSlot {
+  const state = designDocumentState(reviewStatus, docStatus)
+  return { key, kind: 'document', id, empty: false, emptyKey: null, state, focus: designSlotFocus(state), open: 'enabled' }
+}
+
+function emptyLine(key: DesignSlot['key'], emptyKey: string | null): DesignSlot {
+  return { key, kind: 'document', id: null, empty: true, emptyKey, state: null, focus: false, open: 'none' }
+}
+
+/** One line: its card line's document; without card lines, the bound document of its type or the run result. */
+function designLine(key: DesignSlot['key'], types: readonly string[], facts: DesignCardFacts): DesignSlot {
+  const own = facts.cardDocuments.find((line) => line.slot === key)
+  if (own) return own.docId ? filled(key, own.docId, own.docReviewStatus, own.status) : emptyLine(key, null)
   const type = facts.docType?.trim().toUpperCase() ?? ''
-  const known = DESIGN_DOC_TYPES.includes(type) ? type : null
-  if (facts.docId === null) {
-    return [{ key: 'document', kind: 'document', type: known, id: null, empty: true, emptyKey: 'empty.not_yet', state: null, focus: false, open: 'none', write: 'disabled' }]
-  }
-  const state = designDocumentState(facts.docReviewStatus, facts.docStatus)
-  return [{ key: 'document', kind: 'document', type: known, id: facts.docId, empty: false, emptyKey: null, state, focus: designSlotFocus(state), open: 'enabled', write: 'none' }]
+  if (facts.docId !== null && types.includes(type)) return filled(key, facts.docId, facts.docReviewStatus, facts.docStatus)
+  const result = key === 'report' ? (facts.nodeRun?.resultDocId ?? null) : null
+  if (result !== null && result !== facts.docId) return { ...filled(key, result, null, null), state: null }
+  return emptyLine(key, key === 'report' ? 'empty.after_run' : facts.docId !== null ? 'empty.unconnected' : null)
+}
+
+/** The card's lines: 지시서 (unless the settings omit it) · 레포트. */
+export function designCardSlots(facts: DesignCardFacts, instructionOmitted = false): readonly DesignSlot[] {
+  const report = designLine('report', DESIGN_REPORT_TYPES, facts)
+  return instructionOmitted ? [report] : [designLine('instruction', DESIGN_INSTRUCTION_TYPES, facts), report]
 }

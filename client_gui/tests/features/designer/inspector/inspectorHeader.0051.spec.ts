@@ -47,12 +47,14 @@ async function openMenu(w: VueWrapper<any>) {
 }
 
 describe('InspectorHeader (flowgate.v02.0051)', () => {
-  it('shows ✎ 메모 disabled with its reason, and the ⋯ button, on a card with a document', () => {
+  // flowgate.v02.0053 T#9: the header alone (no memo part in its `memo` slot) keeps the dim, disabled ✎ 메모 —
+  // what a Node without a document shows; a card's working ✎ 메모 is features/memo (memo.0053).
+  it('shows ✎ 메모 disabled with its reason when no memo part fills it, and the ⋯ button', () => {
     const w = mountHeader(SELECTIONS.v01)
     const memo = get(w, 'designer-inspector-memo')
     expect(memo.text()).toBe('✎ 메모')
     expect(memo.attributes('disabled')).toBeDefined()
-    expect(memo.attributes('title')).toBe('메모 — 아직 연결되지 않음')
+    expect(memo.attributes('title')).toBe('문서가 있는 카드에 메모를 남길 수 있습니다')
     expect(get(w, 'designer-inspector-more').attributes('aria-label')).toBe('더보기')
     expect(w.find('[data-test="designer-inspector-read-only"]').exists()).toBe(false)
     expect(get(w, 'designer-inspector-header').attributes('data-read-only')).toBe('')

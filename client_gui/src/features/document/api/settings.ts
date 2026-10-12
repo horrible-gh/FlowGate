@@ -305,6 +305,124 @@ export async function settingsRunRead(groupId: string): Promise<SettingsRun> {
   return toSettingsRun(response.data)
 }
 
+// flowgate.v02.0053 T#5 — the card (Node) settings T#2 stores (server/flowgate/card_settings), read by the
+// documents tab for the one value it shows: a card whose instruction is omitted has no 지시서 line (v7).
+//   node      GET   /api/v1/flows/{flow_id}/nodes/{node_key}/settings -> { ok, flow_id, node_key, card_kind,
+//             locked, fields: { <name>: { value, stored, default, choices } } } — `value` is the stored
+//             value, else the default; `card_kind` is null for a card without settings. 404 node_not_found
+//             for a node the server does not keep.
+
+/** One card setting as the server answers it. */
+export interface SettingsNodeField {
+  /** The stored value, else the default. */
+  readonly value: unknown
+  readonly stored: unknown
+  readonly default: unknown
+  /** The values to choose from; null for a free value (an AI, a branch, a number). */
+  readonly choices: readonly unknown[] | null
+}
+
+/** A card's settings (T#2). */
+export interface SettingsNode {
+  readonly cardKind: string | null
+  /** A running card: its settings cannot change now. */
+  readonly locked: boolean
+  readonly fields: Readonly<Record<string, SettingsNodeField>>
+}
+
+/** The card settings read -> SettingsNode (unknown field shapes dropped). */
+export function toSettingsNode(raw: unknown): SettingsNode {
+  const data = record(raw)
+  const fields: Record<string, SettingsNodeField> = {}
+  for (const [name, value] of Object.entries(record(data.fields))) {
+    const field = record(value)
+    fields[name] = {
+      value: field.value ?? null,
+      stored: field.stored ?? null,
+      default: field.default ?? null,
+      choices: Array.isArray(field.choices) ? [...field.choices] : null,
+    }
+  }
+  return { cardKind: text(data.card_kind), locked: data.locked === true, fields }
+}
+
+/** Reads a card's settings. */
+export async function settingsNodeRead(flowId: string, nodeKey: string): Promise<SettingsNode> {
+  const response = await getRequest<unknown>(`${API}/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/settings`)
+  return toSettingsNode(response.data)
+}
+
+/** Whether the card omits its instruction (`instruction` = omit): its 지시서 line is not shown. */
+export function settingsInstructionOmitted(node: SettingsNode | null | undefined): boolean {
+  return node?.fields.instruction?.value === 'omit'
+}
+
+// flowgate.v02.0053 T#7 — the settings tab changes the card's settings one value at a time (no save button):
+//   change    PATCH /api/v1/flows/{flow_id}/nodes/{node_key}/settings { field, value } -> the card's settings
+//             as they are now (the GET shape). `value` null takes the default back. Refusals are the Graph
+//             envelope `{ ok: false, error: { code, message, params } }`: 409 node_settings_locked (the card
+//             runs) / flow_disposed / card_settings_unavailable, 422 invalid_request (params.errors[].reason),
+//             404 flow_not_found / node_not_found, 401 / 403.
+//   teams     GET   /api/v1/ai-groups -> { items: [{ ai_group_id, name, enabled, supervisor: { provider_name } | null }] }
+//             The AI Team choices of a requirement card (the server takes the ids of this table only).
+
+/** Changes one setting of a card; answers the card's settings after the change. */
+export async function settingsNodeWrite(flowId: string, nodeKey: string, field: string, value: unknown): Promise<SettingsNode> {
+  const response = await patchRequest<unknown>(`${API}/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/settings`, {
+    field,
+    value: value ?? null,
+  })
+  return toSettingsNode(response.data)
+}
+
+/**
+ * Why a card settings call was refused: locked = the card runs (its AI already took the settings);
+ * disposed = the Flow's group was disposed; unavailable = the server has no card settings yet; invalid =
+ * 400 / 422 (a value the card does not take); forbidden 401 / 403; not_found 404; network = no answer.
+ */
+export type SettingsNodeErrorKind = 'locked' | 'disposed' | 'unavailable' | 'invalid' | 'forbidden' | 'not_found' | 'network' | 'other'
+
+/** What a failed card settings call threw. Only the code and the status are read. */
+export function settingsNodeErrorOf(error: unknown): SettingsNodeErrorKind {
+  const normalized = normalizeApiError(error)
+  const code = normalized.code
+  const status = normalized.status
+  if (normalized.network) return 'network'
+  if (code === 'node_settings_locked') return 'locked'
+  if (code === 'flow_disposed' || code === 'group_disposed') return 'disposed'
+  if (code === 'card_settings_unavailable') return 'unavailable'
+  if (status === 400 || status === 422) return 'invalid'
+  if (status === 401 || status === 403) return 'forbidden'
+  if (status === 404) return 'not_found'
+  return 'other'
+}
+
+/** One AI Team a requirement card may name. */
+export interface SettingsTeam {
+  readonly id: string
+  readonly name: string
+  /** Its Supervisor's AI name, or null (a team without a Supervisor). */
+  readonly supervisorName: string | null
+  readonly enabled: boolean
+}
+
+/** The AI Team list -> SettingsTeam[] (rows without an id dropped). */
+export function toSettingsTeams(raw: unknown): SettingsTeam[] {
+  return list(record(raw).items).flatMap((entry) => {
+    const row = record(entry)
+    const id = text(row.ai_group_id)
+    if (id === null) return []
+    const supervisor = record(row.supervisor)
+    return [{ id, name: text(row.name) ?? id, supervisorName: text(supervisor.provider_name) ?? text(supervisor.provider_id), enabled: row.enabled !== false }]
+  })
+}
+
+/** Reads the AI Teams a requirement card may name. */
+export async function settingsTeamsRead(): Promise<SettingsTeam[]> {
+  const response = await getRequest<unknown>(`${API}/ai-groups`)
+  return toSettingsTeams(response.data)
+}
+
 /**
  * Why a settings call was refused:
  * disposed = the group was disposed; running = an AI run owns the group (423, or the policy's 409);

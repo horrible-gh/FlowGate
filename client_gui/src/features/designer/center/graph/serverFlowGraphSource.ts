@@ -8,6 +8,8 @@
 // the draft operations (save, validate, confirm, start from the latest revision) of P0008 §5 / §6.
 //
 // flowgate.v02.0048 T#1: each Node also keeps its bound document, v0.1 slot and Graph node run.
+//
+// flowgate.v02.0053 T#9: the Flow's Graph run (P0008 §7 S5) — read the current one, start, stop, resume.
 import type {
   FlowCanvas,
   FlowCanvasChangeHandlers,
@@ -19,6 +21,7 @@ import type {
   FlowGraphDraftSaveResult,
   FlowGraphIssue,
   FlowGraphValidation,
+  FlowRun,
 } from '@/features/project'
 import type { FlowGraph, FlowGraphDraftInfo } from './flowGraph'
 import type {
@@ -27,6 +30,7 @@ import type {
   FlowGraphSource,
   FlowLayoutChange,
   FlowLayoutSaveResult,
+  FlowRunInfo,
 } from './flowGraphSource'
 
 /** The project store loaders this source needs (`useProjectStore()` satisfies it). */
@@ -40,7 +44,14 @@ export interface FlowCanvasLoaders {
   saveFlowGraphDraft?(flowId: string, input: FlowGraphDraftInput): Promise<FlowGraphDraftSaveResult>
   validateFlowGraphDraft?(flowId: string, draftVersion: number): Promise<FlowGraphValidation>
   confirmFlowGraphRevision?(flowId: string, draftVersion: number, baseRevisionNo: number | null): Promise<FlowGraphConfirmResult>
+  /** flowgate.v02.0053 T#9: the Graph run (P0008 §7 S5); absent = the Designer runs nothing. */
+  loadFlowRun?(flowId: string): Promise<FlowRun | null>
+  startFlowRun?(flowId: string): Promise<FlowRun>
+  stopFlowRun?(runId: string): Promise<FlowRun>
+  resumeFlowRun?(runId: string): Promise<FlowRun>
 }
+
+const toRunInfo = (run: FlowRun): FlowRunInfo => ({ runId: run.runId, status: run.status, openNodeKeys: run.openNodeKeys })
 
 /**
  * flowgate.v02.0045 TR0020 rev5: conversations (CH, and the Q / A of the same server collapse group,
@@ -93,6 +104,7 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
       document: node.document,
       slot: node.slot,
       nodeRun: node.nodeRun ?? null,
+      ...(node.cardDocuments ? { cardDocuments: node.cardDocuments } : {}),
     })),
     edges: canvas.edges.map((edge) => ({
       id: edge.edgeId,
@@ -152,6 +164,7 @@ function asDraftError(error: unknown): unknown {
 
 export function createServerFlowGraphSource(loaders: FlowCanvasLoaders): FlowGraphSource {
   const graphLoaders = loaders.saveFlowGraphDraft && loaders.validateFlowGraphDraft && loaders.confirmFlowGraphRevision
+  const runLoaders = loaders.loadFlowRun && loaders.startFlowRun && loaders.stopFlowRun && loaders.resumeFlowRun
   return {
     isSample: false,
     // The Flow id is the global v0.1 group id; the project id is not part of the address.
@@ -167,7 +180,11 @@ export function createServerFlowGraphSource(loaders: FlowCanvasLoaders): FlowGra
     saveDraft: graphLoaders
       ? async (_projectId, flowId, version, content) => {
           const result = await loaders.saveFlowGraphDraft!(flowId, toDraftInput(version, content))
-          return { version: result.draftVersion, keyMap: result.keyMap }
+          return {
+            version: result.draftVersion,
+            keyMap: result.keyMap,
+            ...(result.cardDocuments ? { cardDocuments: result.cardDocuments } : {}),
+          }
         }
       : undefined,
     validateDraft: graphLoaders
@@ -201,5 +218,14 @@ export function createServerFlowGraphSource(loaders: FlowCanvasLoaders): FlowGra
           }
         }
       : undefined,
+    loadRun: runLoaders
+      ? async (_projectId, flowId) => {
+          const run = await loaders.loadFlowRun!(flowId)
+          return run ? toRunInfo(run) : null
+        }
+      : undefined,
+    startRun: runLoaders ? async (_projectId, flowId) => toRunInfo(await loaders.startFlowRun!(flowId)) : undefined,
+    stopRun: runLoaders ? async (_projectId, runId) => toRunInfo(await loaders.stopFlowRun!(runId)) : undefined,
+    resumeRun: runLoaders ? async (_projectId, runId) => toRunInfo(await loaders.resumeFlowRun!(runId)) : undefined,
   }
 }

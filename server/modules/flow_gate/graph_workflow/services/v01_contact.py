@@ -10,6 +10,8 @@ engine moves it.
 - advance (``progress_refusal``): read-only judgement.
 - inbox registration / review decision (``after_document_event``): after v0.1 committed; a Graph
   Flow hands the event to the result binder, never changing the v0.1 response.
+- R↔B root conversion (``follow_root_conversion``): runs inside the guard of ``guarded_v01_assignment``
+  after the converter, so a card line holding the root follows its new id (flowgate.v02.0053 T#1).
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ from typing import Any, Callable, Optional
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.graph_workflow.store import definition_store
 
-from . import result_binder
+from . import card_document_ports, result_binder
 from .canvas_events import publish_ownership_changed
 from .engine_router import Ownership, read_ownership
 from .flow_guard import with_flow_guard
@@ -83,6 +85,15 @@ def guarded_v01_assignment(doc: Optional[dict], call: Callable[[], Any], actor: 
         return result
 
     return with_flow_guard(flow_id, body)
+
+
+def follow_root_conversion(doc: Optional[dict], converted: Any) -> Any:
+    """After the R↔B converter, in its transaction: the card lines holding the converted root take
+    its new id and kind. Returns the converter's result unchanged (same-type no-op: nothing moves)."""
+    flow_id = (doc or {}).get("group_id")
+    if flow_id and isinstance(converted, dict) and converted.get("doc_id") not in (None, doc.get("doc_id")):
+        card_document_ports.root_converted(flow_id, doc["doc_id"], converted)
+    return converted
 
 
 def progress_refusal(doc: Optional[dict]) -> Optional[V01Rejection]:

@@ -213,6 +213,9 @@ FILE_LINE_CAPS: dict[str, int] = {
     "modules/flow_gate/template_provision.py": 23,
     "modules/flow_gate/workflow/pipeline_service.py": 2,
     "modules/flow_gate/workflow/prompt_copy_service.py": 4,
+    # New file (flowgate.v02.0053 T#1): SLOT_TITLES["ko"], the title suffix of the documents a
+    # Designer card creates. Locale-dictionary (A) Korean next to its en table, not a comment.
+    "flowgate/card_documents/slots.py": 2,
 }
 
 

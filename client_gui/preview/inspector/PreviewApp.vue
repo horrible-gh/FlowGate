@@ -90,7 +90,7 @@
 
     <!-- 3. Slot lines -->
     <section v-if="shown('slots')" id="slots" class="preview-section">
-      <h2>문서 / 결과 슬롯 행 (InspectorSlotRow) <small>38px · 아이콘 · 이름 · 상태 pill + 요약 / 진행도 / 빈 문구 · 버튼</small></h2>
+      <h2>문서 / 결과 슬롯 행 (InspectorSlotRow) <small>38px · 이름 · 상태 점 + 요약 / 진행도 · 버튼(문서 아이콘 · ✎)</small></h2>
       <div class="preview-frame preview-pad">
         <div class="preview-slots">
           <template v-for="(slot, i) in SLOT_FIXTURES" :key="i">
@@ -99,7 +99,7 @@
               :kind="slot.kind ?? 'document'"
               :name="slot.name"
               :id="slot.id ?? null"
-              :form="slot.form ?? false"
+              :openable="slot.open ?? false"
               :empty="slot.empty ?? false"
               :empty-text="slot.emptyText ?? null"
               :state="slot.state ?? null"
@@ -110,8 +110,8 @@
             >
               <InspectorReviewBadge v-if="slot.review" :count="slot.review.count" :state="slot.review.state" :remain="slot.review.remain ?? null" />
               <Button v-if="slot.nav" size="sm" variant="secondary">{{ slot.nav }} ↗</Button>
-              <IconButton v-if="slot.open" label="열기" title="열기" variant="secondary" size="sm">↗</IconButton>
-              <IconButton v-if="slot.write" label="작성" title="작성" variant="secondary" size="sm">＋</IconButton>
+              <InspectorOpenButton v-if="slot.open" />
+              <IconButton v-if="slot.open" label="편집" title="편집" variant="secondary" size="sm">✎</IconButton>
             </InspectorSlotRow>
           </template>
         </div>
@@ -258,21 +258,21 @@
 
     <!-- 11. Stage 2 — card settings -->
     <section v-if="shown('card-settings')" id="card-settings" class="preview-section">
-      <h2>2단계 · 카드별 설정 탭 부품 <small>RequirementSettings (AI 위임) · TestRunSettings (지시 TS · 검수 뒤 진행 · 실행) · CheckSettings (용도 · Git 반영)</small></h2>
+      <h2>2단계 · 카드별 설정 탭 부품 <small>RequirementSettings (AI 위임) · TestRunSettings (실행) · CheckSettings (용도 · Git 반영)</small></h2>
 
-      <p class="preview-caption">요구사항 · 실제 (AI 위임 OFF · 비활성 · 사유 표시)</p>
+      <p class="preview-caption">요구사항 · 실제 (서버 없이: 끄기 · 비활성 · 사유는 툴팁)</p>
       <div class="preview-frame preview-pad"><RequirementSettings :target="REQ_DRAFT" /></div>
-      <p class="preview-caption">요구사항 · AI 위임 ON (시안 모양, fixture — API 없음)</p>
+      <p class="preview-caption">요구사항 · AI 위임 ON (시안 값, fixture)</p>
       <div class="preview-frame preview-pad"><RequirementSettings :target="REQ_DRAFT" :view="REQ_SETTINGS_ON" /></div>
       <p class="preview-caption">요구사항 · AI 위임 한도 도달 · 🔒 위임 진행 중 (시안 모양, fixture)</p>
       <div class="preview-frame preview-pad"><RequirementSettings :target="REQ_DRAFT" :view="REQ_SETTINGS_LIMIT" /></div>
 
-      <p class="preview-caption">테스트 · 실제 (Node에 저장되지 않음 · 개수 ‘—’) — 실행 설정 블록(설정 feature)은 v01 Node에서만 위에 붙음</p>
+      <p class="preview-caption">테스트 · 실행 블록 · 실제 (서버 없이: 개수 ‘—’) — 지시서 · 검수 뒤 진행 · 시나리오 작성은 설정 feature가 위에 그림</p>
       <div class="preview-frame preview-pad"><TestRunSettings :target="TEST_TS_RUNNING" /></div>
-      <p class="preview-caption">테스트 · 시안 값 (fixture) · 🔒 실행 중 · 사람 확인 필요</p>
-      <div class="preview-frame preview-pad"><TestRunSettings :target="TEST_TS_RUNNING" :view="TEST_RUN_SETTINGS_LOCKED" /></div>
+      <p class="preview-caption">테스트 · 실행 블록 · 시안 값 (fixture: 자동 49 · 수동 6 · 외부 2)</p>
+      <div class="preview-frame preview-pad"><TestRunSettings :target="TEST_TS_RUNNING" :view="TEST_RUN_SETTINGS_SAMPLE" /></div>
 
-      <p class="preview-caption">확인 · 실제 (용도 — · 토론 중 · Git 반영 비활성 · 사유: 최종 확인 대화상자에서 고름)</p>
+      <p class="preview-caption">확인 · 실제 (서버 없이: 용도 — · 토론 중 · Git 반영 비활성 · 사유는 툴팁)</p>
       <div class="preview-frame preview-pad"><CheckSettings :target="CHECK_AC" /></div>
       <p class="preview-caption">확인 · 시안 값 (fixture) · 그룹 종료 · 병합 · main · 원격 반영</p>
       <div class="preview-frame preview-pad"><CheckSettings :target="CHECK_AC" :view="CHECK_SETTINGS_SAMPLE" /></div>
@@ -341,6 +341,7 @@ import InspectorRunMenu from '@/features/designer/inspector/parts/InspectorRunMe
 import InspectorRunSettings from '@/features/designer/inspector/parts/InspectorRunSettings.vue'
 import InspectorSegment from '@/features/designer/inspector/parts/InspectorSegment.vue'
 import InspectorSlotList from '@/features/designer/inspector/parts/InspectorSlotList.vue'
+import InspectorOpenButton from '@/features/designer/inspector/parts/InspectorOpenButton.vue'
 import InspectorSlotRow from '@/features/designer/inspector/parts/InspectorSlotRow.vue'
 import InspectorStatusChip, { type InspectorChipTone } from '@/features/designer/inspector/parts/InspectorStatusChip.vue'
 import InspectorTbdNote from '@/features/designer/inspector/parts/InspectorTbdNote.vue'
@@ -373,7 +374,7 @@ import {
   TASK_NO_DOCUMENT,
   TASK_REVIEW,
   TASK_T,
-  TEST_RUN_SETTINGS_LOCKED,
+  TEST_RUN_SETTINGS_SAMPLE,
   TEST_TS_RUNNING,
 } from './fixtures'
 import PreviewDocumentsTab from './PreviewDocumentsTab.vue'
@@ -423,7 +424,7 @@ const CARD_SAMPLES = [
   { caption: '작업 · 지시서 (T) 승인 (v0.1)', component: TaskSlots, target: TASK_T },
   { caption: '작업 · 레포트 (TR) 검수 대기 (Graph · 실행 결과 = 자기 문서)', component: TaskSlots, target: TASK_REVIEW },
   { caption: '작업 (Graph Node · 문서 없음)', component: TaskSlots, target: TASK_NO_DOCUMENT },
-  { caption: '설계 · D 반려됨 (읽기 전용) — “설명 대기” 상자 + 문서 줄', component: DesignSlots, target: DESIGN_READ_ONLY },
+  { caption: '설계 · 반려됨 (읽기 전용) — 지시서 · 레포트 줄', component: DesignSlots, target: DESIGN_READ_ONLY },
   { caption: '설계 · P (Graph Node · 문서 없음)', component: DesignSlots, target: DESIGN_NO_DOCUMENT },
   { caption: '확인 (Graph gate · 문서 없음) — 확인 결과 줄 (확인 전)', component: GateSlots, target: GATE_NO_DOCUMENT },
 ] as const

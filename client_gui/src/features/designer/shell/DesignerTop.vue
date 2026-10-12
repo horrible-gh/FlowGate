@@ -5,7 +5,8 @@
        to the Shell — this container handles none of them itself. flowgate.v02.0039 T#3 /
        v02.0043: the Shell's menu targets go to the Menu Bar (item availability) and the open
        Flow among them to the Toolbar (dimmed and unavailable without one); the recent Project /
-       Group / Flow lists go to the Menu Bar's recent submenus. -->
+       Group / Flow lists go to the Menu Bar's recent submenus. flowgate.v02.0053 T#9: the open Flow's
+       server run status goes to the Toolbar's run dot. -->
   <header class="designer-top" data-test="designer-top">
     <DesignerHeader @command="emit('command', $event)" @search="emit('search', $event)" />
     <DesignerMenuBar
@@ -26,6 +27,7 @@
       :zoom="zoom"
       :disabled="!targets.flow"
       :can-validate="canValidate"
+      :run-status="runStatus"
       @command="emit('command', $event)"
       @update:density="emit('update:density', $event)"
     />
@@ -63,8 +65,10 @@ withDefaults(
     recent?: DesignerRecentLists
     /** flowgate.v02.0045 TR0020 rev2: the Toolbar's 검증 is available. */
     canValidate?: boolean
+    /** flowgate.v02.0053 T#9: the open Flow's server run status, or null. */
+    runStatus?: string | null
   }>(),
-  { recent: () => EMPTY_RECENT_LISTS, canValidate: false },
+  { recent: () => EMPTY_RECENT_LISTS, canValidate: false, runStatus: null },
 )
 
 const emit = defineEmits<{

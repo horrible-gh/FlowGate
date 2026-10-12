@@ -1,10 +1,10 @@
 <template>
   <!-- flowgate.v02.0051 stage 2 — the 요구사항 / 버그 card's documents tab body (0035 v7 req.draft /
-       req.ok): the one document line, 요구사항 or 버그 리포트. A thin container: requirementCardModel
-       decides the line; ↗ opens the document in the v0.1 screen; ＋ (writing) is not connected and shows
-       so. No server call. -->
+       req.ok). A thin container: requirementCardModel decides the lines; the document icon (or the line's
+       name) opens a document in its window, ✎ straight in its editor. No server call.
+       flowgate.v02.0053 T#5 (0053 CH) — 요구사항 (버그 리포트 on a bug) · AI 위임 while AI 위임 is on. -->
   <section class="inspector-requirement-card" data-test="inspector-requirement-card" :data-doc-type="target.docType ?? ''">
-    <InspectorSlotList :slots="lines" @open="open" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" />
   </section>
 </template>
 
@@ -41,8 +41,6 @@ function lineOf(slot: RequirementSlot): InspectorSlotView {
     focus: slot.focus,
     danger: slot.state?.tone === 'danger',
     open: slot.open,
-    write: slot.write,
-    writeReason: slot.write === 'disabled' ? t(k('write_unconnected')) : null,
   }
 }
 
@@ -50,6 +48,11 @@ const lines = computed(() => requirementCardSlots(props.target).map(lineOf))
 
 function open(line: InspectorSlotView) {
   if (line.id) openDocument(line.id)
+}
+
+/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
+function edit(line: InspectorSlotView) {
+  if (line.id) openDocument(line.id, 'edit')
 }
 </script>
 

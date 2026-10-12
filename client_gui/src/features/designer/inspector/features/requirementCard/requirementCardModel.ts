@@ -1,7 +1,8 @@
 // flowgate.v02.0051 stage 2 — the 요구사항 / 버그 card's own lines (0035 v7 req.*): one document slot,
-// 요구사항 or 버그 리포트 by the document type. The AI 위임 result line exists in v7 only while AI
-// delegation is ON, and delegation has no API yet (0051-R §3.3), so the card draws the OFF shape: the
-// one document line. Pure functions over the target; nothing reads the server.
+// 요구사항 or 버그 리포트 by the document type. Pure functions over the target; nothing reads the server.
+// flowgate.v02.0053 T#5 (0053 CH) — 요구사항 · AI 위임 (only while AI 위임 is on): the lines are the card's
+// documents the server keeps (T#1 / T#2 card lines). The AI 위임 engine is not in this range — its line is
+// the empty record document the setting made, opened like any other.
 import type { InspectorTarget } from '../../inspectorTarget'
 
 export type RequirementSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
@@ -13,20 +14,21 @@ export interface RequirementSlotState {
 }
 
 export interface RequirementSlot {
-  readonly key: 'document'
-  readonly kind: 'document'
-  /** Which name the line carries: the requirement or the bug report. */
-  readonly name: 'requirement' | 'bug'
+  /** `document`: the root document line (요구사항 / 버그 리포트); `delegation`: the AI 위임 line. */
+  readonly key: 'document' | 'delegation'
+  readonly kind: 'document' | 'result'
+  /** Which name the line carries. */
+  readonly name: 'requirement' | 'bug' | 'delegation'
   readonly id: string | null
   readonly empty: boolean
+  /** Message key (under `gui.inspector.requirementCard.`) of why the line has no document, or null. */
   readonly emptyKey: string | null
   readonly state: RequirementSlotState | null
   readonly focus: boolean
   readonly open: 'enabled' | 'none'
-  readonly write: 'disabled' | 'none'
 }
 
-export type RequirementCardFacts = Pick<InspectorTarget, 'docId' | 'docType' | 'docReviewStatus' | 'docStatus'>
+export type RequirementCardFacts = Pick<InspectorTarget, 'docId' | 'docType' | 'docReviewStatus' | 'docStatus' | 'cardDocuments'>
 
 const REVIEW_TONES: Readonly<Record<string, RequirementSlotTone>> = {
   pending_review: 'warning',
@@ -64,12 +66,25 @@ export function requirementSlotName(docType: string | null | undefined): Require
   return docType?.trim().toUpperCase() === 'B' ? 'bug' : 'requirement'
 }
 
-/** The one line: the bound root document, or the empty line of a Node without one. */
+function filled(key: RequirementSlot['key'], name: RequirementSlot['name'], id: string, reviewStatus: string | null, docStatus: string | null): RequirementSlot {
+  const state = requirementDocumentState(reviewStatus, docStatus)
+  return { key, kind: key === 'document' ? 'document' : 'result', name, id, empty: false, emptyKey: null, state, focus: requirementSlotFocus(state), open: 'enabled' }
+}
+
+/**
+ * The card's lines: the root document (its card line, else the bound document), and the AI 위임 line
+ * while the card has one — the server keeps it only while AI 위임 is on (T#2), so it is never drawn empty.
+ * A requirement card whose Flow root is held by another card has no document on its line (T#1).
+ */
 export function requirementCardSlots(facts: RequirementCardFacts): readonly RequirementSlot[] {
-  const name = requirementSlotName(facts.docType)
-  if (facts.docId === null) {
-    return [{ key: 'document', kind: 'document', name, id: null, empty: true, emptyKey: 'empty.not_yet', state: null, focus: false, open: 'none', write: 'disabled' }]
-  }
-  const state = requirementDocumentState(facts.docReviewStatus, facts.docStatus)
-  return [{ key: 'document', kind: 'document', name, id: facts.docId, empty: false, emptyKey: null, state, focus: requirementSlotFocus(state), open: 'enabled', write: 'none' }]
+  const own = facts.cardDocuments.find((line) => line.slot === 'requirement')
+  const name = requirementSlotName(own?.docType ?? facts.docType)
+  const id = own ? own.docId : facts.docId
+  const root: RequirementSlot = id
+    ? own
+      ? filled('document', name, id, own.docReviewStatus, own.status)
+      : filled('document', name, id, facts.docReviewStatus, facts.docStatus)
+    : { key: 'document', kind: 'document', name, id: null, empty: true, emptyKey: null, state: null, focus: false, open: 'none' }
+  const extra = facts.cardDocuments.find((line) => line.slot === 'delegation' && line.docId !== null)
+  return extra?.docId ? [root, filled('delegation', 'delegation', extra.docId, extra.docReviewStatus, extra.status)] : [root]
 }

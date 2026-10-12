@@ -332,6 +332,24 @@ export interface FlowCanvasNode {
   graphNode?: FlowCanvasGraphNode | null
   /** flowgate.v02.0048 T#1: the run state of a Graph node (P0008 §2.6 `node_run`); absent elsewhere. */
   nodeRun?: FlowCanvasNodeRun | null
+  /** flowgate.v02.0053 T#5: the card's document lines (`card_documents`) of a Graph / draft node; absent elsewhere. */
+  cardDocuments?: FlowCanvasCardDocument[]
+}
+
+/**
+ * flowgate.v02.0053 T#1 `card_documents` line: one document a card holds (made when the card is placed).
+ * `slot` / `author` are open keys as the server sends them; `docId` is null when the line's document is gone.
+ */
+export interface FlowCanvasCardDocument {
+  /** requirement · delegation · plan · deploy · instruction · scenario · report. */
+  slot: string
+  docType: string | null
+  /** `human` (a person writes it) | `run` (a run fills it). */
+  author: string | null
+  docId: string | null
+  title: string | null
+  status: string | null
+  docReviewStatus: string | null
 }
 
 /** P0008 §2.6 `node_run`: what the Inspector shows of a Graph node's run (status kept as the server sends it). */
@@ -475,6 +493,8 @@ export interface FlowGraphDraftSaveResult {
   keyMap: Record<string, string>
   removedNodeKeys: string[]
   removedEdgeIds: string[]
+  /** flowgate.v02.0053 T#5: node key -> the saved draft node's card lines (`card_documents`), when answered. */
+  cardDocuments?: Record<string, FlowCanvasCardDocument[]>
 }
 
 /** P0008 S3-5 issue: `code` / `structure` are open keys, `message` is display text. */
@@ -523,4 +543,28 @@ export interface FlowGraphDefinition {
   draft: { draftVersion: number; nodes: FlowGraphDefinitionNode[]; edges: FlowGraphDefinitionEdge[] } | null
   latestRevision: { revisionNo: number; nodes: FlowGraphDefinitionNode[]; edges: FlowGraphDefinitionEdge[] } | null
   policies: Record<string, string>
+}
+
+// flowgate.v02.0053 T#9 — the Graph run of a Flow (P0008 §7 S5: start / current / stop / resume). The top
+// band's 다음 단계 · 전체 실행 · 중지 drive it; the Canvas shows the node states it causes.
+
+/** One node of a run (P0008 S5-4 `node_runs[]`). */
+export interface FlowRunNode {
+  nodeKey: string
+  /** `pending` | `open` | `review` | `done` | `rejected` … (open key, as sent). */
+  status: string
+  resultDocId: string | null
+}
+
+/** A Graph run (P0008 S5-4). */
+export interface FlowRun {
+  runId: string
+  flowId: string
+  revisionNo: number | null
+  /** `running` | `stopped` | `completed` (open key, as sent). */
+  status: string
+  openNodeKeys: string[]
+  /** Present when the server answered with the nodes (start / current / gate decision). */
+  nodeRuns: FlowRunNode[] | null
+  lastEventSeq: number
 }

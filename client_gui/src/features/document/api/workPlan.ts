@@ -179,3 +179,64 @@ export function workPlanErrorOf(error: unknown): WorkPlanError {
   else kind = 'other'
   return { kind, status, code: code || null, revisionNo: kind === 'unreadable' ? whole(data.revision_no) : null }
 }
+
+// flowgate.v02.0053 T#4 — the document window's work plan view (the v0.1 WorkPlanEditor's table, read only)
+// needs more of the same answer than the Inspector summary: the quantity boxes and each Step's one-line note
+// and whether it carries a pre-instruction. Same endpoint, same read; WorkPlanView is left as it is.
+
+/** One quantity box of the plan (`body.quantities[type]`), in `body.counted_types` order. */
+export interface WorkPlanQuantity {
+  readonly type: string
+  readonly count: number
+  /** `sheet` (design sheets) | `set` (instruction / result sets) | null when the plan does not say. */
+  readonly unit: 'sheet' | 'set' | null
+}
+
+/** What a Step carries beyond the summary row. */
+export interface WorkPlanStepDetail {
+  readonly note: string | null
+  /** 0 none, n times, -1 until approved (the summary row reads -1 as 0). */
+  readonly reviewCount: number
+  /** A pre-instruction text or attachment is set. */
+  readonly hasInstruction: boolean
+}
+
+/** The work plan as the document window shows it: the summary view plus quantities and Step details. */
+export interface WorkPlanDocument {
+  readonly view: WorkPlanView
+  readonly quantities: readonly WorkPlanQuantity[]
+  /** Step key -> its details. */
+  readonly details: Readonly<Record<string, WorkPlanStepDetail>>
+}
+
+export function toWorkPlanDocument(raw: unknown): WorkPlanDocument {
+  const body = record(record(raw).body)
+  const quantities = record(body.quantities)
+  const order = list(body.counted_types).flatMap((code) => (text(code) ? [code as string] : []))
+  for (const code of Object.keys(quantities)) if (!order.includes(code)) order.push(code)
+  const boxes: WorkPlanQuantity[] = order.map((type) => {
+    const box = record(quantities[type])
+    const unit = box.unit === 'sheet' || box.unit === 'set' ? box.unit : null
+    return { type, count: whole(box.count) ?? 0, unit }
+  })
+  const details: Record<string, WorkPlanStepDetail> = {}
+  for (const entry of list(body.steps)) {
+    const row = record(entry)
+    const key = text(row.key)
+    if (key === null) continue
+    const instruction = typeof row.pre_instruction_text === 'string' ? row.pre_instruction_text.trim() : ''
+    const review = row.review_count
+    details[key] = {
+      note: text(typeof row.note === 'string' ? row.note.trim() : null),
+      reviewCount: typeof review === 'number' && Number.isInteger(review) && review >= -1 ? review : 0,
+      hasInstruction: instruction !== '' || Object.keys(record(row.pre_instruction_attachment)).length > 0,
+    }
+  }
+  return { view: toWorkPlanView(raw), quantities: boxes, details }
+}
+
+/** Reads a work plan for the document window (`GET /documents/{doc_id}/work-plan`, as workPlanRead). */
+export async function workPlanDocumentRead(docId: string): Promise<WorkPlanDocument> {
+  const response = await getRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}/work-plan`)
+  return toWorkPlanDocument(response.data)
+}

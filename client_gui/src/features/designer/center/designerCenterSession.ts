@@ -42,6 +42,11 @@
 // run view) is shown editable as is (draftModel `editableRevision`) and its first edit saves a new
 // draft from it. 실행 confirms the draft as the next revision and the Flow shows its run again.
 // Revisions and runs are never changed by editing (the server keeps them apart from the draft).
+//
+// flowgate.v02.0053 T#9: the top band's 다음 단계 / 전체 실행 / 중지 run the Flow on the server
+// (run/flowRunControl.ts). Each open Flow keeps its run state next to its Graph; the run is read with
+// every Graph read (a run event reads the Canvas again, flowCanvasEvents), so the buttons, the run dot and
+// the cards' colour dots show the server's run.
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
 import {
@@ -69,8 +74,9 @@ import { isEdgeProgressed } from './graph/edgeProgress'
 import type { FlowGraph, FlowGraphNode, FlowGraphSelection } from './graph/flowGraph'
 import type { FlowGraphSource, FlowLayoutChange } from './graph/flowGraphSource'
 import { createLayoutSaveQueue } from './layoutSaveQueue'
+import { createFlowRunControl, type FlowRunMode, type FlowRunState } from './run/flowRunControl'
 
-export type { CanvasNodeSpec }
+export type { CanvasNodeSpec, FlowRunMode, FlowRunState }
 
 /** Graph read state of one open Flow. */
 export type FlowGraphLoad =
@@ -95,6 +101,8 @@ export interface DesignerCenterState {
   views: Record<string, CanvasViewState>
   /** flowgate.v02.0045 S3: draft editing state per open Flow with an editable / existing draft. */
   edits: Record<string, DraftEditState>
+  /** flowgate.v02.0053 T#9: the server run per open Flow whose run was read or acted on. */
+  runs: Record<string, FlowRunState>
 }
 
 export interface DesignerCenterSession {
@@ -173,6 +181,16 @@ export interface DesignerCenterSession {
   readonly activeCanValidate: ComputedRef<boolean>
   /** Read the Flow again, dropping local draft edits a refused save left. */
   reloadDraft(flowId: string): void
+
+  // flowgate.v02.0053 T#9 — the Flow's server run (run/flowRunControl.ts).
+  /** The source can run Flows (the sample source cannot). */
+  readonly canRun: boolean
+  /** The active Flow's run state, or null (none read yet). */
+  readonly activeRun: ComputedRef<DeepReadonly<FlowRunState> | null>
+  /** 다음 단계 (`next`) / 전체 실행 (`all`): confirms the draft, then starts or resumes. Whether it went. */
+  runFlow(flowId: string, mode: FlowRunMode): Promise<boolean>
+  /** 중지: stops the Flow's running run. Whether it stopped. */
+  stopRun(flowId: string): Promise<boolean>
 }
 
 export interface DesignerCenterSessionOptions {
@@ -196,6 +214,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     graphs: {},
     views: {},
     edits: {},
+    runs: {},
   })
 
   // Latest read token per Flow id; a result whose token is no longer the latest is dropped.
@@ -307,6 +326,14 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     delayMs: options.draftSaveDelayMs,
   }, state.edits)
 
+  const runControl = createFlowRunControl({
+    source,
+    projectId: () => state.projectId,
+    isOpen,
+    prepare: (flowId) => prepareRun(flowId),
+    refresh: (flowId) => refreshFlow(flowId),
+  }, state.runs)
+
   function changedElsewhere(projectId: string, flowId: string) {
     if (isOpen(projectId, flowId)) readWhenSaved(flowId)
   }
@@ -370,6 +397,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
         const shown = source.saveDraft ? editableRevision(graph) ?? graph : graph
         state.graphs[flowId] = { status: 'ready', graph: markRaw(shown) }
         drafts.graphLoaded(flowId, shown)
+        // flowgate.v02.0053 T#9: the run goes with the Graph it moves (a run event reads both again).
+        runControl.read(flowId)
         const seed = seeds.get(flowId)
         if (seed) {
           seeds.delete(flowId)
@@ -411,6 +440,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     moveCounts.clear()
     graphViews.clear()
     seeds.clear()
+    runControl.clear()
     state.projectId = projectId
     watchProject(projectId)
     applyTabs(EMPTY_FLOW_TABS)
@@ -441,6 +471,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     moveCounts.delete(flowId)
     graphViews.delete(flowId)
     seeds.delete(flowId)
+    runControl.forget(flowId)
     delete state.graphs[flowId]
     delete state.views[flowId]
   }
@@ -587,6 +618,13 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       return !!draft?.editable && !edit?.action && status !== 'conflict' && (draft.version > 0 || status !== 'idle')
     }),
     reloadDraft: drafts.reload,
+    canRun: runControl.available,
+    activeRun: computed(() => {
+      const id = exposed.activeFlowId
+      return id === null ? null : exposed.runs[id] ?? null
+    }),
+    runFlow: runControl.run,
+    stopRun: runControl.stop,
   }
 }
 

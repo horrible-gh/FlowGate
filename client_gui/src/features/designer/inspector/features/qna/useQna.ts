@@ -6,11 +6,18 @@
 // Answering calls the existing v0.1 API, then reads its own resources again — success or refusal
 // (D#1 §7.3, §8.1). Whether answering is possible also reads the Flow's AI activity and the group's
 // disposal (`group_disposed` of the document read), the facts the server refuses on.
+// flowgate.v02.0053 T#6 (0053 CH §2) — asking: the question line registers a person's question on the
+// document (v0.1 POST /q/{doc_id}/questions, asker 'human'), then asks an AI to answer it (v0.1 POST
+// /q/{doc_id}/items/{id}/answers/ai-request), then reads its own resources again. The AI run posts its
+// answer on that question; it arrives with `qna_answer_registered` and shows under the question like
+// any answer.
 import { computed, reactive, ref, watch, type ComputedRef, type Ref } from 'vue'
 import {
   qaAnswer,
+  qaAsk,
   qaErrorOf,
   qaRead,
+  qaRequestAiAnswer,
   reviewActivityRead,
   reviewDocumentRead,
   type QaThread,
@@ -19,6 +26,8 @@ import type { InspectorTarget } from '../../inspectorTarget'
 import { useInspectorResource, type InspectorEventMatch, type InspectorResourceStatus } from '../../useInspectorResource'
 import {
   qnaAnswerReady,
+  qnaAskFailureKey,
+  qnaAskReady,
   qnaAvailability,
   qnaErrorKey,
   qnaFailureKey,
@@ -47,6 +56,12 @@ export interface QnaFailure {
   readonly key: string
 }
 
+export interface QnaAskFailure {
+  /** `ask`: the question was refused; `ai`: it is stored, the AI answer request was refused. */
+  readonly stage: 'ask' | 'ai'
+  readonly key: string
+}
+
 export interface QnaState {
   readonly items: ComputedRef<readonly QnaItemView[] | null>
   readonly availability: ComputedRef<QnaAvailability>
@@ -62,6 +77,15 @@ export interface QnaState {
   ready(itemId: number, body: string, picked: readonly string[]): boolean
   /** Answers one question (prose trimmed); nothing is sent when it is not ready or not enabled. */
   answer(itemId: number, body: string, picked: readonly string[]): Promise<boolean>
+  /** A question is waiting for the server (registering it or asking the AI to answer it). */
+  readonly asking: Readonly<Ref<boolean>>
+  /** The last refused question of this document, or null. */
+  readonly askFailure: Readonly<Ref<QnaAskFailure | null>>
+  /**
+   * Registers a person's question (trimmed) and asks an AI to answer it; true when the question is
+   * stored (even if the AI request was refused). Nothing is sent when it is blank or not enabled.
+   */
+  ask(body: string): Promise<boolean>
   reload(): Promise<void>
 }
 
@@ -81,6 +105,8 @@ export function useQna(target: () => InspectorTarget | null): QnaState {
 
   const busy = ref<number | null>(null)
   const failure = ref<QnaFailure | null>(null)
+  const asking = ref(false)
+  const askFailure = ref<QnaAskFailure | null>(null)
   // Questions of this document answered from here. The server adds an answer on every POST, so such a
   // question is not sent again even while the questions shown are still a read from before the answer
   // (the read after it superseded, failed or not back yet).
@@ -91,6 +117,7 @@ export function useQna(target: () => InspectorTarget | null): QnaState {
     () => target()?.docId ?? null,
     () => {
       failure.value = null
+      askFailure.value = null
       sent.clear()
     },
   )
@@ -110,6 +137,7 @@ export function useQna(target: () => InspectorTarget | null): QnaState {
       groupDisposed: guard.data.value?.groupDisposed === true,
       aiRunning: guard.data.value?.aiRunning === true,
       busy: busy.value !== null,
+      asking: asking.value,
     }),
   )
 
@@ -144,6 +172,40 @@ export function useQna(target: () => InspectorTarget | null): QnaState {
     return ok
   }
 
+  async function ask(body: string): Promise<boolean> {
+    const current = target()
+    const question = body.trim()
+    if (!current?.docId || !availability.value.ask.enabled || !qnaAskReady(question)) return false
+    const docId = current.docId
+    asking.value = true
+    askFailure.value = null
+    let stored = false
+    try {
+      let itemIds: readonly number[] = []
+      try {
+        itemIds = (await qaAsk({ docId, body: question })).itemIds
+        stored = true
+      } catch (error) {
+        if (target()?.docId === docId) askFailure.value = { stage: 'ask', key: qnaAskFailureKey('ask', qaErrorOf(error).kind) }
+      }
+      // The stored question goes to an AI at once; a refusal leaves it on the list without an answer.
+      for (const itemId of itemIds) {
+        try {
+          await qaRequestAiAnswer(docId, itemId)
+        } catch (error) {
+          if (target()?.docId === docId) askFailure.value = { stage: 'ai', key: qnaAskFailureKey('ai', qaErrorOf(error).kind) }
+          break
+        }
+      }
+      // Success or refusal, the questions and the guard (the AI run just started) are read again;
+      // asking stays closed until that read is back.
+      await Promise.all([thread.reload(), guard.reload()])
+    } finally {
+      asking.value = false
+    }
+    return stored
+  }
+
   return {
     items,
     availability,
@@ -154,6 +216,9 @@ export function useQna(target: () => InspectorTarget | null): QnaState {
     failure,
     ready,
     answer,
+    asking,
+    askFailure,
+    ask,
     reload: async () => {
       await Promise.all([thread.reload(), guard.reload()])
     },

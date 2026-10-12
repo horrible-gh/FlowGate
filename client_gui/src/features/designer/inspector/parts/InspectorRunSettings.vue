@@ -4,16 +4,26 @@
        재시작 | 검수 AI · 검수 횟수 — and a "고급 ▾" fold with 실행 제한 시간 · 검수 기준. Display only:
        each field comes in as its value, choices and whether it may change (the feature decides from
        the server; a field with no connection yet is disabled with an empty list and shows `—`), and a
-       change leaves as `update:field`. `locked` is the running card (v7 `.set-locked`). -->
-  <InspectorBlock :title="t(k('title'))" :locked="locked" class="inspector-run-settings" data-test="inspector-run-settings" :data-advanced="advancedOpen ? 'open' : 'closed'">
-    <template #head>
+       change leaves as `update:field`. `locked` is the running card (v7 `.set-locked`).
+       flowgate.v02.0053 T#7 — `layout="scenario"` is the 테스트 card's 시나리오 작성 block (v7 testSettings
+       "케이스 작성", its TSC mark left out): 작성 AI | 검수 AI · 검수 횟수, no fold. A field whose change the
+       server refused carries its reason: a red ! icon beside the control, the reason its tooltip. -->
+  <InspectorBlock
+    :title="t(k(layout === 'scenario' ? 'scenario_title' : 'title'))"
+    :locked="locked"
+    class="inspector-run-settings"
+    data-test="inspector-run-settings"
+    :data-layout="layout"
+    :data-advanced="advancedOpen ? 'open' : 'closed'"
+  >
+    <template v-if="layout === 'run'" #head>
       <Button size="sm" variant="secondary" :disabled="locked" :aria-expanded="advancedOpen" data-test="inspector-run-settings-advanced" @click="emit('update:advancedOpen', !advancedOpen)">
         {{ t(k('advanced')) }} {{ advancedOpen ? '▴' : '▾' }}
       </Button>
     </template>
     <div class="inspector-run-settings-grid">
-      <div>
-        <InspectorControlRow v-for="name in LEFT" :key="name" :label="t(k(name))" :hint="fields[name]?.reason ?? null">
+      <div v-for="(column, index) in columns" :key="index">
+        <InspectorControlRow v-for="name in column" :key="name" :label="labelOf(name)" :hint="fields[name]?.reason ?? null">
           <Select
             :model-value="fields[name]?.value ?? ''"
             :options="optionsOf(name)"
@@ -22,24 +32,13 @@
             :data-test="`inspector-run-settings-${name}`"
             @update:model-value="(value: string) => emit('update:field', name, value)"
           />
-        </InspectorControlRow>
-      </div>
-      <div>
-        <InspectorControlRow v-for="name in RIGHT" :key="name" :label="t(k(name))" :hint="fields[name]?.reason ?? null">
-          <Select
-            :model-value="fields[name]?.value ?? ''"
-            :options="optionsOf(name)"
-            :placeholder="placeholderOf(name)"
-            :disabled="locked || !fields[name] || fields[name]!.disabled === true"
-            :data-test="`inspector-run-settings-${name}`"
-            @update:model-value="(value: string) => emit('update:field', name, value)"
-          />
+          <InspectorFailureIcon v-if="fields[name]?.failure" :name="t(k('failed'))" :reason="fields[name]!.failure!" :data-field="name" />
         </InspectorControlRow>
       </div>
     </div>
-    <div v-if="advancedOpen" class="inspector-run-settings-advanced" data-test="inspector-run-settings-advanced-panel">
+    <div v-if="layout === 'run' && advancedOpen" class="inspector-run-settings-advanced" data-test="inspector-run-settings-advanced-panel">
       <div v-for="name in ADVANCED" :key="name" class="inspector-run-settings-card">
-        <InspectorControlRow :label="t(k(name))" :hint="fields[name]?.reason ?? null">
+        <InspectorControlRow :label="labelOf(name)" :hint="fields[name]?.reason ?? null">
           <Select
             :model-value="fields[name]?.value ?? ''"
             :options="optionsOf(name)"
@@ -48,6 +47,7 @@
             :data-test="`inspector-run-settings-${name}`"
             @update:model-value="(value: string) => emit('update:field', name, value)"
           />
+          <InspectorFailureIcon v-if="fields[name]?.failure" :name="t(k('failed'))" :reason="fields[name]!.failure!" :data-field="name" />
         </InspectorControlRow>
       </div>
     </div>
@@ -55,11 +55,13 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../components/ui/Button.vue'
 import Select, { type SelectOption } from '../../../../components/ui/Select.vue'
 import InspectorBlock from './InspectorBlock.vue'
 import InspectorControlRow from './InspectorControlRow.vue'
+import InspectorFailureIcon from './InspectorFailureIcon.vue'
 
 export type InspectorRunSettingsField = 'run_ai' | 'restart' | 'review_ai' | 'review_count' | 'time_limit' | 'review_basis'
 
@@ -71,13 +73,20 @@ export interface InspectorRunSettingsValue {
   readonly disabled?: boolean
   /** Why it may not change (hover hint on the label). */
   readonly reason?: string | null
+  /** Why the server refused the last change of the field (the tooltip of the ! icon), or null. */
+  readonly failure?: string | null
 }
 
 /** A field absent from `fields` is shown disabled and empty (the v7 item stays on screen). */
 export type InspectorRunSettingsFields = Partial<Readonly<Record<InspectorRunSettingsField, InspectorRunSettingsValue>>>
 
-const LEFT: readonly InspectorRunSettingsField[] = ['run_ai', 'restart']
-const RIGHT: readonly InspectorRunSettingsField[] = ['review_ai', 'review_count']
+/** v7 execSettings: 실행 AI · 재시작 | 검수 AI · 검수 횟수. */
+const RUN_COLUMNS: readonly (readonly InspectorRunSettingsField[])[] = [
+  ['run_ai', 'restart'],
+  ['review_ai', 'review_count'],
+]
+/** v7 testSettings: 작성 AI | 검수 AI · 검수 횟수. */
+const SCENARIO_COLUMNS: readonly (readonly InspectorRunSettingsField[])[] = [['run_ai'], ['review_ai', 'review_count']]
 const ADVANCED: readonly InspectorRunSettingsField[] = ['time_limit', 'review_basis']
 
 const props = withDefaults(
@@ -85,8 +94,9 @@ const props = withDefaults(
     fields: InspectorRunSettingsFields
     locked?: boolean
     advancedOpen?: boolean
+    layout?: 'run' | 'scenario'
   }>(),
-  { locked: false, advancedOpen: false },
+  { locked: false, advancedOpen: false, layout: 'run' },
 )
 
 const emit = defineEmits<{ 'update:field': [field: InspectorRunSettingsField, value: string]; 'update:advancedOpen': [open: boolean] }>()
@@ -95,14 +105,25 @@ const { t } = useI18n()
 
 const k = (key: string) => `gui.designer.inspector.run_settings.${key}`
 
+const columns = computed(() => (props.layout === 'scenario' ? SCENARIO_COLUMNS : RUN_COLUMNS))
+
+/** The scenario block's AI writes the scenario (작성 AI). */
+function labelOf(name: InspectorRunSettingsField): string {
+  return t(k(props.layout === 'scenario' && name === 'run_ai' ? 'writer_ai' : name))
+}
+
 function optionsOf(name: InspectorRunSettingsField): SelectOption[] {
   return [...(props.fields[name]?.options ?? [])]
 }
 
-/** A field without a value shows `—`: the item is there, nothing is chosen (or connected) yet. */
+/**
+ * A field without a value shows `—`: the item is there, nothing is chosen (or connected) yet. A field whose
+ * '' is a choice of its own (an AI's 담당 AI / 기본 검수 AI) shows that choice instead.
+ */
 function placeholderOf(name: InspectorRunSettingsField): string | undefined {
   const field = props.fields[name]
-  return !field || field.value === '' ? '—' : undefined
+  if (!field) return '—'
+  return field.value === '' && !field.options.some((option) => option.value === '') ? '—' : undefined
 }
 </script>
 

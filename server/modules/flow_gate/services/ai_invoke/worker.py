@@ -645,7 +645,9 @@ def _retry_eligible(run: dict) -> bool:
     it is a completed attempt with nothing to show, and it needs an edge of its own.
     """
     scope_retry = oracle_module._scope_oracle_retry_run(run)
-    if run.get("mode") != "continuous" and not scope_retry:
+    # flowgate.v02.0053 T#2: a Graph node's single 'new' run whose card picked restarts
+    # (admission `node_restart_open`) retries like a continuous hop; other single runs do not.
+    if run.get("mode") != "continuous" and not scope_retry and not run.get("node_restart_open"):
         return False
     cancel_event = run.get("cancel_event")
     if cancel_event is not None and cancel_event.is_set():

@@ -3,7 +3,7 @@
 // and calls `request`. The intent travels Frame -> Bottom Dock -> Center column (-> Shell), so no
 // feature ever touches the Shell or the Center session itself. New intents are not added by a
 // feature set (D#1 §5.7 last rule).
-import type { InjectionKey } from 'vue'
+import type { InjectionKey, Ref } from 'vue'
 
 export type InspectorHostIntent =
   /** Select another Node of the same Flow ("→ 해당 카드"). */
@@ -22,3 +22,14 @@ export interface InspectorHost {
 }
 
 export const INSPECTOR_HOST: InjectionKey<InspectorHost> = Symbol('flowgate.inspectorHost')
+
+// flowgate.v02.0053 T#6 — the tab Content element: the Frame also provides the element that shows the
+// active tab's Content (the scrolling body, role=tabpanel), so a part that takes input over its whole tab —
+// the attachments file drop — listens there and not only on its own box: the free space under a short
+// list and the body's padding belong to the tab as well. A part mounted outside the Frame gets none.
+export interface InspectorBody {
+  /** The tab Content element while tabs are shown, null before it is mounted. */
+  readonly element: Readonly<Ref<HTMLElement | null>>
+}
+
+export const INSPECTOR_BODY: InjectionKey<InspectorBody> = Symbol('flowgate.inspectorBody')

@@ -56,54 +56,92 @@ describe('InspectorPaneState — disabled', () => {
   })
 })
 
+// flowgate.v02.0053 T#5 (0053 CH): the line is `name · state dot · [document icon] · ✎` — the state is a
+// coloured dot whose wording is its tooltip, the name opens the document (underlined on hover), and a line
+// without a document is a hollow dot saying why (no "not yet" text, no icon box).
 describe('InspectorSlotRow', () => {
-  it('a document line: name, state pill, summary and the buttons slot', () => {
+  it('a document line: the name, the state dot with its wording as the tooltip, the summary and the buttons slot', () => {
     const w = mount(InspectorSlotRow, {
       props: { name: '레포트', id: '0008.0007-TR', state: { label: '검수 대기', tone: 'warning' }, summary: '검수 2회', focus: true },
-      slots: { default: () => h('button', { 'data-test': 'open' }, '↗') },
+      slots: { default: () => h('button', { 'data-test': 'open' }, 'open') },
       global,
     })
     const line = w.get('[data-test="inspector-slot"]')
     expect(line.attributes('data-kind')).toBe('document')
     expect(line.attributes('data-empty')).toBe('false')
+    expect(line.attributes('data-doc')).toBe('0008.0007-TR')
     expect(line.classes()).toContain('is-focus')
-    expect(w.get('[data-test="inspector-slot-name"]').text()).toBe('레포트')
-    expect(w.get('[data-test="inspector-slot-name"]').attributes('title')).toBe('0008.0007-TR')
-    expect(w.get('[data-test="inspector-status-chip"]').attributes('data-tone')).toBe('warning')
+    const name = w.get('[data-test="inspector-slot-name"]')
+    expect(name.text()).toBe('레포트')
+    expect(name.attributes('title')).toBe('레포트')
+    expect(name.element.tagName).toBe('SPAN')
+    const dot = w.get('[data-test="inspector-slot-state"]')
+    expect(dot.attributes('data-tone')).toBe('warning')
+    expect(dot.attributes('title')).toBe('검수 대기')
+    expect(dot.attributes('aria-label')).toBe('검수 대기')
+    expect(dot.text()).toBe('')
+    expect(w.find('[data-test="inspector-status-chip"]').exists()).toBe(false)
     expect(w.get('[data-test="inspector-slot-summary"]').text()).toBe('검수 2회')
     expect(w.get('[data-test="inspector-slot-buttons"] [data-test="open"]').exists()).toBe(true)
     expect(w.find('[data-test="inspector-slot-progress"]').exists()).toBe(false)
+    // No icon box (📝 / ▤ / 🧪) before the name.
+    expect(w.text()).not.toMatch(/📝|▤|🧪/)
   })
 
-  it('an empty line: dashed, the empty text (two words from the caller, else the common one), no pill', () => {
+  it('openable: the name is a button that opens the document (an open event)', async () => {
+    const w = mount(InspectorSlotRow, { props: { name: '지시서', id: 'doc-t', openable: true, state: { label: '작성 중', tone: 'info' } }, global })
+    const name = w.get('[data-test="inspector-slot-name"]')
+    expect(name.element.tagName).toBe('BUTTON')
+    expect(name.classes()).toContain('is-link')
+    await name.trigger('click')
+    expect(w.emitted('open')).toHaveLength(1)
+  })
+
+  it('the dot tooltip adds the sub text and the title of the state', () => {
+    const w = mount(InspectorSlotRow, { props: { name: '확인 결과', state: { label: '보류', tone: 'hold', sub: '2/4', title: '확인 완료' } }, global })
+    expect(w.get('[data-test="inspector-slot-state"]').attributes('title')).toBe('보류 · 2/4 · 확인 완료')
+  })
+
+  it('a line without a document: dashed, a hollow dot whose tooltip says why (the caller words, else 문서 없음), no text', () => {
     const w = mount(InspectorSlotRow, { props: { name: '레포트', empty: true, emptyText: '실행 후' }, global })
-    expect(w.get('[data-test="inspector-slot"]').attributes('data-empty')).toBe('true')
-    expect(w.get('[data-test="inspector-slot"]').classes()).toContain('is-empty')
-    expect(w.get('[data-test="inspector-slot-empty"]').text()).toBe('실행 후')
-    expect(w.find('[data-test="inspector-status-chip"]').exists()).toBe(false)
-    expect(mount(InspectorSlotRow, { props: { name: '지시서', empty: true }, global }).get('[data-test="inspector-slot-empty"]').text()).toBe('아직 없음')
+    const line = w.get('[data-test="inspector-slot"]')
+    expect(line.attributes('data-empty')).toBe('true')
+    expect(line.classes()).toContain('is-empty')
+    const dot = w.get('[data-test="inspector-slot-state"]')
+    expect(dot.attributes('data-tone')).toBe('none')
+    expect(dot.attributes('title')).toBe('실행 후')
+    expect(line.text()).not.toContain('실행 후')
+    const plain = mount(InspectorSlotRow, { props: { name: '지시서', empty: true }, global })
+    expect(plain.get('[data-test="inspector-slot-state"]').attributes('title')).toBe('문서 없음')
+    expect(plain.text()).not.toContain('아직 없음')
   })
 
-  it('a result line: ▤ icon, the progress bar clamped to 0..100, the danger bar', () => {
-    const w = mount(InspectorSlotRow, { props: { kind: 'result', name: '결과 (TSR)', state: { label: '진행 중', tone: 'running' }, summary: 'automated 12/49', progress: 124 }, global })
+  it('a document whose state is not known: a plain neutral dot without a tooltip', () => {
+    const w = mount(InspectorSlotRow, { props: { name: '레포트', id: 'doc-tr' }, global })
+    const dot = w.get('[data-test="inspector-slot-state"]')
+    expect(dot.attributes('data-tone')).toBe('neutral')
+    expect(dot.attributes('title')).toBeUndefined()
+    expect(dot.attributes('aria-hidden')).toBe('true')
+  })
+
+  it('a result line: the progress bar clamped to 0..100, the danger bar', () => {
+    const w = mount(InspectorSlotRow, { props: { kind: 'result', name: '레포트', state: { label: '진행 중', tone: 'running' }, summary: 'automated 12/49', progress: 124 }, global })
     expect(w.get('[data-test="inspector-slot"]').attributes('data-kind')).toBe('result')
-    expect(w.text()).toContain('▤')
+    expect(w.get('[data-test="inspector-slot-state"]').attributes('data-tone')).toBe('running')
     const bar = w.get('[data-test="inspector-slot-progress"]')
     expect(bar.attributes('aria-valuenow')).toBe('100')
     expect((bar.element.firstElementChild as HTMLElement).style.width).toBe('100%')
     const failed = mount(InspectorSlotRow, { props: { name: '레포트', empty: true, emptyText: '실패 · 제한 시간 초과', danger: true }, global })
     expect(failed.get('[data-test="inspector-slot"]').classes()).toContain('is-danger')
   })
-
-  it('a form document (케이스 (TSC)) takes the 🧪 icon', () => {
-    expect(mount(InspectorSlotRow, { props: { name: '케이스 (TSC)', form: true, empty: true }, global }).text()).toContain('🧪')
-  })
 })
 
 // flowgate.v02.0052 T#4: on the 264px Inspector the "{nav} ↗" label is the part that gives way, so the
-// ↗ open after it stays in the line (the 확인 card's Git 패널 열기 ↗ used to push it out).
-describe('InspectorSlotList — nav before ↗', () => {
-  it('the nav button carries the shrinking class and comes before the ↗ open; both still emit', async () => {
+// open button after it stays in the line (the 확인 card's Git 패널 열기 ↗ used to push it out).
+// flowgate.v02.0053 T#5: the nav button keeps its ↗ (it goes to another screen); the open button is the
+// document icon.
+describe('InspectorSlotList — nav before the document icon', () => {
+  it('the nav button carries the shrinking class and comes before the document icon; both still emit', async () => {
     const line = { name: '확인 결과', kind: 'result' as const, nav: { label: 'Git 패널 열기' }, open: 'enabled' as const }
     const w = mount(InspectorSlotList, { props: { slots: [line] }, global })
     const buttons = w.get('[data-test="inspector-slot-buttons"]')

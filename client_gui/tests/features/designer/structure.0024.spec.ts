@@ -33,10 +33,12 @@ describe('features/designer structure (0024 T0005)', () => {
   // their public surfaces only (each part owns its own API; the Designer still owns none).
   // flowgate.v02.0048 T#3 (D#1 §2.3, F5): the Inspector features call the document API through
   // the features/document public surface.
+  // flowgate.v02.0053 T#3: the Inspector's openDocument.ts opens the in-tab document window through the
+  // features/documentWindow public surface.
   it('owns no API/transport/store of its own: data comes only through the features/project public surface', () => {
     for (const file of FILES) {
       for (const spec of importsOf(read(file))) {
-        expect(spec, rel(file)).not.toMatch(/^@shared\/|^axios$|^pinia$|^vue-router$|^@\/features\/(?!(project|conversation|git|document)$)/)
+        expect(spec, rel(file)).not.toMatch(/^@shared\/|^axios$|^pinia$|^vue-router$|^@\/features\/(?!(project|conversation|git|document|documentWindow)$)/)
         expect(spec, rel(file)).not.toMatch(/features\/project\/(api|store|types)/)
       }
     }

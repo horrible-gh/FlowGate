@@ -18,6 +18,16 @@
 // The AI answer hand-off (`answers/ai-request`, `answers/ai-mention`) and adding a question are not
 // wrapped (D#1 §10.2 T#7 row).
 //
+// flowgate.v02.0053 T#6 (0053 CH §2) — a person asks on the Q&A tab and an AI answers, so two more
+// existing v0.1 endpoints are wrapped (still no new server API):
+//   ask      POST /api/v1/q/{doc_id}/questions { asker_kind: 'human', questions: [{ body }] }
+//            -> { ok, doc_id, added_item_ids: [id] }
+//   ai       POST /api/v1/q/{doc_id}/items/{item_id}/answers/ai-request {} -> { ok, doc_id, item_id,
+//            run_id, status, provider }; the AI run posts its answer on the same question
+//            (author_kind 'ai'), which arrives as `qna_answer_registered`. Its admission refusals keep
+//            the ai-invoke envelope: a flat `code` (409 run_in_progress, no_enabled_provider …).
+//   `answers/ai-mention` (copy a mention for one's own worker) stays unwrapped.
+//
 // Refusals keep the server's shape and are thrown as they are; qaErrorOf reads them. The q routes
 // answer `{ ok: false, http_status, error_message }` (409 = the group was disposed, 403, 404, 400);
 // the group mutation policy answers 423 `{ error: { code: 'GROUP_AI_RUN_LOCKED' } }` while an AI run
@@ -179,13 +189,68 @@ export async function qaAnswer(request: QaAnswerRequest): Promise<QaAnswerResult
   return toQaAnswerResult(response.data)
 }
 
+export interface QaAskRequest {
+  readonly docId: string
+  /** The question as written (sent trimmed by the caller); its first line is the list title. */
+  readonly body: string
+}
+
+export interface QaAskResult {
+  readonly docId: string | null
+  /** The ids of the questions the server added (one per question sent). */
+  readonly itemIds: readonly number[]
+}
+
+/** The add-questions response -> QaAskResult. */
+export function toQaAskResult(raw: unknown): QaAskResult {
+  const row = record(raw)
+  return { docId: text(row.doc_id), itemIds: list(row.added_item_ids).flatMap((id) => integer(id) ?? []) }
+}
+
+/** Registers one question on the document as the signed-in person (asker_kind 'human'). */
+export async function qaAsk(request: QaAskRequest): Promise<QaAskResult> {
+  const response = await postRequest<unknown>(`${API}/q/${encodeURIComponent(request.docId)}/questions`, {
+    asker_kind: 'human',
+    questions: [{ body: request.body }],
+  })
+  return toQaAskResult(response.data)
+}
+
+export interface QaAiRequestResult {
+  readonly docId: string | null
+  readonly itemId: number | null
+  /** The AI run that will answer, when the server started one. */
+  readonly runId: string | null
+  readonly status: string | null
+}
+
+/** The ai-request response -> QaAiRequestResult. */
+export function toQaAiRequestResult(raw: unknown): QaAiRequestResult {
+  const row = record(raw)
+  return { docId: text(row.doc_id), itemId: integer(row.item_id), runId: text(row.run_id), status: text(row.status) }
+}
+
+/** Asks an AI to answer one question (the project's provider chain; the answer lands on the question). */
+export async function qaRequestAiAnswer(docId: string, itemId: number): Promise<QaAiRequestResult> {
+  const response = await postRequest<unknown>(
+    `${API}/q/${encodeURIComponent(docId)}/items/${encodeURIComponent(String(itemId))}/answers/ai-request`,
+    {},
+  )
+  return toQaAiRequestResult(response.data)
+}
+
 /**
  * Why a Q&A call was refused:
- * running = an AI run owns the group (423 GROUP_AI_RUN_LOCKED); disposed = the group was disposed
- * (409, the only 409 of the q routes); forbidden 403; not_found 404 (the document or the question is
- * gone); invalid 400 / 422; network = no answer.
+ * running = an AI run owns the group (423 GROUP_AI_RUN_LOCKED, or the ai-request admission's 409
+ * run_in_progress / run_still_live); no_provider = no AI provider can take the ai-request
+ * (no_enabled_provider, no_provider_registered, provider_unavailable / disabled); disposed = the
+ * group was disposed (a 409 without a code, the only one of the q routes); forbidden 403; not_found
+ * 404 (the document or the question is gone); invalid 400 / 422; network = no answer.
  */
-export type QaErrorKind = 'running' | 'disposed' | 'forbidden' | 'not_found' | 'invalid' | 'network' | 'other'
+export type QaErrorKind = 'running' | 'no_provider' | 'disposed' | 'forbidden' | 'not_found' | 'invalid' | 'network' | 'other'
+
+const QA_RUNNING_CODES = new Set(['GROUP_AI_RUN_LOCKED', 'run_in_progress', 'run_still_live'])
+const QA_PROVIDER_CODES = new Set(['no_enabled_provider', 'no_provider_registered', 'provider_unavailable', 'provider_disabled'])
 
 export interface QaError {
   readonly kind: QaErrorKind
@@ -197,12 +262,15 @@ export interface QaError {
 export function qaErrorOf(error: unknown): QaError {
   const normalized = normalizeApiError(error)
   // The q routes put the status in the body as `http_status`, the transport on the response.
-  const status = normalized.status ?? integer(record(record(record(error).response).data).http_status)
-  const code = normalized.code
+  const data = record(record(record(error).response).data)
+  const status = normalized.status ?? integer(data.http_status)
+  // The ai-request admission answers a flat `{ code }` beside `http_status` (the ai-invoke envelope).
+  const code = normalized.code ?? text(data.code)
   let kind: QaErrorKind
   if (normalized.network) kind = 'network'
-  else if (status === 423 || code === 'GROUP_AI_RUN_LOCKED') kind = 'running'
-  else if (status === 409) kind = 'disposed'
+  else if (status === 423 || (code !== null && QA_RUNNING_CODES.has(code))) kind = 'running'
+  else if (code !== null && QA_PROVIDER_CODES.has(code)) kind = 'no_provider'
+  else if (status === 409) kind = code === null || code === 'group_disposed' ? 'disposed' : 'other'
   else if (status === 403) kind = 'forbidden'
   else if (status === 404) kind = 'not_found'
   else if (status === 400 || status === 422) kind = 'invalid'

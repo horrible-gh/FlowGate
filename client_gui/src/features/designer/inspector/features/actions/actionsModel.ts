@@ -13,8 +13,10 @@
 //                     §8.4), while the document is neither approved nor rejected.
 //   rework            v0.1 rework (ai-invoke rework) of a rejected document, v01 only, the same
 //                     cards. "Reject, then run again" is these two steps; there is no combined button.
-// Not offered at all (D#1 §8.4): Graph Node run / re-run / retry, gate decisions, WP expansion, AI
-// delegation — no disabled place-holder either.
+// Not offered at all (D#1 §8.4): Graph Node run / re-run / retry, WP expansion, AI delegation — no disabled
+// place-holder either. flowgate.v02.0053 T#9: the Graph run itself is the top band's (다음 단계 · 전체 실행 ·
+// 중지, center/run/flowRunControl.ts), and the gate decision is the 확인 card's own ✓ 확인 · ✕ 반려 (a gate
+// has no document, so it is not a card of this feature: gateCard/useGateDecision.ts).
 //
 // Permissions are the server's (403 is shown as a reason); no operation here is admin only.
 import type { InspectorCardKind, InspectorReadOnly } from '../../inspectorTarget'

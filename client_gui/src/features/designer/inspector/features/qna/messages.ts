@@ -6,10 +6,14 @@
 // flowgate.v02.0052 T#1 — two chips only, the ones the response proves: 미답변 (no answer, whoever
 // asked — it does not say whether an AI is answering, who reviews it or whether it was handed to the
 // user) and 완료. The window has no 편집 badge (answering is not editing the question).
+// flowgate.v02.0053 T#6 — the question line (ask / ask_placeholder, [+]'s tooltip and why it is closed)
+// and the refusals of a question; no empty-list sentence (the line alone shows). A refusal shows as an
+// icon on the line: `ask_failed.*` is its short name, `ask_failure.*` / `ai_failure.*` its tooltip.
 export default {
   ko: {
-    empty: '이 문서에 등록된 질문이 없습니다.',
     question: 'Q{seq}',
+    ask: '질문 등록',
+    ask_placeholder: '질문 입력',
     state: {
       unanswered: '미답변',
       answered: '완료',
@@ -42,8 +46,36 @@ export default {
       ai_running: 'AI 실행 중이라 답변할 수 없습니다.',
       busy: '답변을 보내는 중입니다.',
     },
+    ask_reason: {
+      read_only_conflict: 'Flow 소유가 충돌해 읽기 전용입니다.',
+      read_only_revision: '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 질문합니다.',
+      disposed: '폐기된 그룹이라 질문할 수 없습니다.',
+      ai_running: 'AI 실행 중이라 질문할 수 없습니다.',
+      asking: '질문을 보내는 중입니다.',
+      busy: '답변을 보내는 중입니다.',
+    },
+    ask_failure: {
+      running: 'AI 실행 중이라 질문이 거절되었습니다.',
+      disposed: '폐기된 그룹이라 질문이 거절되었습니다.',
+      forbidden: '질문할 권한이 없어 거절되었습니다.',
+      not_found: '문서를 찾을 수 없어 질문이 거절되었습니다.',
+      invalid: '질문 내용이 올바르지 않아 거절되었습니다.',
+      network: '서버에 연결하지 못했습니다.',
+      other: '질문을 등록하지 못했습니다.',
+    },
+    ai_failure: {
+      running: '질문은 등록했습니다. 다른 AI 실행 중이라 AI 답변 요청이 거절되었습니다.',
+      no_provider: '질문은 등록했습니다. 쓸 수 있는 AI가 없어 AI 답변을 요청하지 못했습니다.',
+      network: '질문은 등록했습니다. 서버에 연결하지 못해 AI 답변을 요청하지 못했습니다.',
+      other: '질문은 등록했습니다. AI 답변을 요청하지 못했습니다.',
+    },
+    ask_failed: {
+      ask: '질문 등록 실패',
+      ai: 'AI 답변 요청 실패',
+    },
     failure: {
       running: 'AI 실행 중이라 거절되었습니다. 질문을 다시 읽었습니다.',
+      no_provider: '쓸 수 있는 AI가 없어 거절되었습니다.',
       disposed: '폐기된 그룹이라 거절되었습니다. 질문을 다시 읽었습니다.',
       forbidden: '답변할 권한이 없어 거절되었습니다.',
       not_found: '질문을 찾을 수 없어 거절되었습니다. 질문을 다시 읽었습니다.',
@@ -59,8 +91,9 @@ export default {
     },
   },
   en: {
-    empty: 'No questions are registered on this document.',
     question: 'Q{seq}',
+    ask: 'Ask',
+    ask_placeholder: 'Ask a question',
     state: {
       unanswered: 'Unanswered',
       answered: 'Done',
@@ -93,8 +126,36 @@ export default {
       ai_running: 'An AI run is in progress; answering is not possible.',
       busy: 'Sending the answer.',
     },
+    ask_reason: {
+      read_only_conflict: 'Read only: the Flow ownership is in conflict.',
+      read_only_revision: 'Read only: this is a confirmed Graph revision view. Ask in the draft view.',
+      disposed: 'The group was disposed; asking is not possible.',
+      ai_running: 'An AI run is in progress; asking is not possible.',
+      asking: 'Sending the question.',
+      busy: 'Sending the answer.',
+    },
+    ask_failure: {
+      running: 'The question was refused because an AI run is in progress.',
+      disposed: 'The question was refused because the group was disposed.',
+      forbidden: 'Refused: you do not have permission to ask.',
+      not_found: 'The question was refused: the document was not found.',
+      invalid: 'Refused: the question is not valid.',
+      network: 'Could not reach the server.',
+      other: 'Could not register the question.',
+    },
+    ai_failure: {
+      running: 'The question was registered. The AI answer request was refused: another AI run is in progress.',
+      no_provider: 'The question was registered. No AI is available to answer it.',
+      network: 'The question was registered. Could not reach the server to ask an AI.',
+      other: 'The question was registered. Could not ask an AI to answer it.',
+    },
+    ask_failed: {
+      ask: 'Question not registered',
+      ai: 'AI answer not requested',
+    },
     failure: {
       running: 'Refused because an AI run is in progress. The questions were read again.',
+      no_provider: 'Refused: no AI is available.',
       disposed: 'Refused because the group was disposed. The questions were read again.',
       forbidden: 'Refused: you do not have permission to answer.',
       not_found: 'Refused: the question was not found. The questions were read again.',
@@ -110,8 +171,9 @@ export default {
     },
   },
   ja: {
-    empty: 'この文書に登録された質問はありません。',
     question: 'Q{seq}',
+    ask: '質問を登録',
+    ask_placeholder: '質問を入力',
     state: {
       unanswered: '未回答',
       answered: '完了',
@@ -144,8 +206,36 @@ export default {
       ai_running: 'AI 実行中のため回答できません。',
       busy: '回答を送信しています。',
     },
+    ask_reason: {
+      read_only_conflict: 'フローの所有が競合しているため読み取り専用です。',
+      read_only_revision: '確定した Graph revision の表示のため読み取り専用です。draft 表示で質問します。',
+      disposed: '破棄されたグループのため質問できません。',
+      ai_running: 'AI 実行中のため質問できません。',
+      asking: '質問を送信しています。',
+      busy: '回答を送信しています。',
+    },
+    ask_failure: {
+      running: 'AI 実行中のため質問が拒否されました。',
+      disposed: '破棄されたグループのため質問が拒否されました。',
+      forbidden: '質問する権限がないため拒否されました。',
+      not_found: '文書が見つからないため質問が拒否されました。',
+      invalid: '質問の内容が正しくないため拒否されました。',
+      network: 'サーバーに接続できませんでした。',
+      other: '質問を登録できませんでした。',
+    },
+    ai_failure: {
+      running: '質問は登録しました。別の AI 実行中のため AI 回答の依頼が拒否されました。',
+      no_provider: '質問は登録しました。使える AI がないため AI 回答を依頼できませんでした。',
+      network: '質問は登録しました。サーバーに接続できず AI 回答を依頼できませんでした。',
+      other: '質問は登録しました。AI 回答を依頼できませんでした。',
+    },
+    ask_failed: {
+      ask: '質問の登録に失敗',
+      ai: 'AI 回答の依頼に失敗',
+    },
     failure: {
       running: 'AI 実行中のため拒否されました。質問を読み直しました。',
+      no_provider: '使える AI がないため拒否されました。',
       disposed: '破棄されたグループのため拒否されました。質問を読み直しました。',
       forbidden: '回答する権限がないため拒否されました。',
       not_found: '質問が見つからないため拒否されました。質問を読み直しました。',

@@ -1,7 +1,7 @@
 /**
  * flowgate.v02.0048 T#5 — the documents tab with `@/features/document` mocked (D#1 §12.1): the
  * v01 and graph fixtures show their real-shaped data (the server answers go through the real
- * normalizer), ↗ 열기 calls openDocument (new tab, noopener, doc_id only), failed reads (404 /
+ * normalizer), ↗ 열기 opens the document window in this tab (flowgate.v02.0053 T#3), failed reads (404 /
  * 403 / 409 / network) show their reason and a retry, a failed superseded document stays listed,
  * a document event reads again, and a slow answer of the previous Node never covers the new one.
  * Last, the real registry puts the tab on document Nodes only, in every ownership.
@@ -14,6 +14,7 @@ import DesignerInspector from '@/features/designer/inspector/DesignerInspector.v
 import DocumentsTab from '@/features/designer/inspector/features/documents/DocumentsTab.vue'
 import { DOCUMENTS_EVENTS } from '@/features/designer/inspector/features/documents/useDocuments'
 import type { InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
+import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
 import { INSPECTOR_REFRESH_COALESCE_MS } from '@/features/designer/inspector/useInspectorResource'
 import { SELECTIONS, prepareInspectorI18n, targetOf } from '../support/inspectorSupport'
 import { installProjectEventStream, removeProjectEventStream, type ProjectEventStream } from '../support/projectEventStream'
@@ -124,13 +125,18 @@ beforeEach(() => {
   relationsRead.mockReset()
   serveDocuments()
   windowOpen = vi.spyOn(window, 'open').mockReturnValue(null)
+  closeAllDocumentWindows()
 })
+
+/** The open document windows as [doc_id, mode]. */
+const opened = () => documentWindowList().map((win) => [win.docId, win.mode])
 
 afterEach(() => {
   wrapper?.unmount()
   wrapper = null
   removeProjectEventStream()
   windowOpen.mockRestore()
+  closeAllDocumentWindows()
   vi.useRealTimers()
 })
 
@@ -180,7 +186,8 @@ describe('documents tab — real-shaped data of the fixtures', () => {
     expect(paneState(w).exists()).toBe(false)
     // flowgate.v02.0052 묶음 A: no prose line; where editing happens is the ↗ 열기 hover text.
     expect(find(w, 'documents-edit-hint').exists()).toBe(false)
-    expect(find(w, 'documents-open').attributes('title')).toBe('문서 작성·편집은 v0.1 문서 화면에서 합니다 (새 탭에서 엽니다)')
+    // flowgate.v02.0053 T#3: the document opens in its window in this tab; the hover text says only that.
+    expect(find(w, 'documents-open').attributes('title')).toBe('문서 열기')
   })
 
   it('graph: the read document and the Graph node run; no slot, no rejection, no previous document', async () => {
@@ -216,18 +223,25 @@ describe('documents tab — real-shaped data of the fixtures', () => {
   it('no pair slot, result slot or write line is drawn (D#1 §8.4)', async () => {
     const w = await mountTab(targetOf(SELECTIONS.v01))
     expect(w.text()).not.toMatch(/작성\s*$|결과 슬롯|지시서/)
-    expect(w.findAll('button').map((button) => button.text())).toEqual(['↗ 열기', '↗ 열기'])
+    // flowgate.v02.0053 T#5: every open button is the document icon (no ↗, its wording the tooltip).
+    expect(w.findAll('button').map((button) => [button.text(), button.attributes('data-icon'), button.attributes('title')])).toEqual([
+      ['', 'document', '문서 열기'],
+      ['', 'document', '문서 열기'],
+    ])
   })
 })
 
 describe('documents tab — ↗ 열기', () => {
-  it('opens the current and a previous document through openDocument: new tab, noopener, doc_id only', async () => {
+  it('opens the current and a previous document through openDocument: one document window each, no browser tab', async () => {
     const w = await mountTab(targetOf(SELECTIONS.v01))
     await find(w, 'documents-open').trigger('click')
-    expect(windowOpen).toHaveBeenLastCalledWith(`/main/?doc=${encodeURIComponent(V01_DOC)}`, '_blank', 'noopener')
+    expect(opened()).toEqual([[V01_DOC, 'view']])
     await find(w, 'documents-previous-open').trigger('click')
-    expect(windowOpen).toHaveBeenLastCalledWith(`/main/?doc=${encodeURIComponent(V01_PREVIOUS)}`, '_blank', 'noopener')
-    expect(windowOpen).toHaveBeenCalledTimes(2)
+    expect(opened()).toEqual([[V01_DOC, 'view'], [V01_PREVIOUS, 'view']])
+    // Opening the same document again brings its window back instead of a second one.
+    await find(w, 'documents-open').trigger('click')
+    expect(opened()).toEqual([[V01_DOC, 'view'], [V01_PREVIOUS, 'view']])
+    expect(windowOpen).not.toHaveBeenCalled()
   })
 
   it('a Graph run result other than the bound document can be opened too', async () => {
@@ -237,7 +251,8 @@ describe('documents tab — ↗ 열기', () => {
     }
     const w = await mountTab(targetOf(selection))
     await find(w, 'documents-run-open').trigger('click')
-    expect(windowOpen).toHaveBeenLastCalledWith('/main/?doc=flowgate.v02.0049.0008-TSR', '_blank', 'noopener')
+    expect(opened()).toEqual([['flowgate.v02.0049.0008-TSR', 'view']])
+    expect(windowOpen).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -249,7 +264,8 @@ describe('documents tab — ↗ 열기', () => {
     const button = find(w, 'documents-open')
     expect(button.attributes('disabled')).toBeUndefined()
     await button.trigger('click')
-    expect(windowOpen).toHaveBeenCalledWith(`/main/?doc=${encodeURIComponent(targetOf(selection).docId!)}`, '_blank', 'noopener')
+    expect(opened()).toEqual([[targetOf(selection).docId!, 'view']])
+    expect(windowOpen).not.toHaveBeenCalled()
   })
 })
 
@@ -381,7 +397,7 @@ describe('documents tab in the Frame (real registry)', () => {
     expect(tabLabels(w)).toContain('문서')
     expect(w.find('[data-test="designer-inspector-section"][data-key="documents"]').exists()).toBe(false)
     expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
-    expect(w.findAll('[data-test="inspector-slot-name"]').map((name) => name.attributes('title'))).toContain(docId)
+    expect(w.findAll('[data-test="inspector-slot"]').map((line) => line.attributes('data-doc'))).toContain(docId)
     expect(w.text()).not.toContain('현재 문서')
     expect(w.text()).not.toContain('v0.1 문서 화면에서 합니다')
   })

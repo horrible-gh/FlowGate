@@ -16,9 +16,9 @@
 // run (read on a TS only: a TSR's view carries no Cases), a run in flight, a call in flight. Cancelling is offered while a run is live and is disabled by the
 // read-only views, the permission refusal, a cancel already accepted and a call in flight; the server does
 // not refuse a cancel for a disposed group or an AI run, so neither blocks reclaiming a runaway run.
-// Not offered (D#1 §8.4, §10.2): a single Case's run, result entry, the Case editor (all ↗ 열기), the
+// Not offered (D#1 §8.4, §10.2): a single Case's run, result entry, the Case editor (all in the document window), the
 // Graph TS Node run (Graph 실행 연동) and the separate Case document kind.
-import type { InspectorCardKind, InspectorReadOnly } from '../../inspectorTarget'
+import type { InspectorCardDocument, InspectorCardKind, InspectorReadOnly } from '../../inspectorTarget'
 
 /** The parts of the target the section reads. */
 export interface TestSpecTargetFacts {
@@ -357,7 +357,12 @@ export function testSpecErrorKey(kind: TestSpecFailureKind): string {
   return kind === 'forbidden' || kind === 'not_found' || kind === 'network' ? `error.${kind}` : 'error.other'
 }
 
-// --- flowgate.v02.0051 stage 2 — the v7 테스트 card lines (0035 test.*: 지시 (TS) · 케이스 (TSC) · 결과 (TSR)) ---
+// --- flowgate.v02.0051 stage 2 — the v7 테스트 card lines ---
+// flowgate.v02.0053 T#5 (0053 CH) — 지시서 · 시나리오 · 레포트 (케이스 → 시나리오, 결과 → 레포트, no type code in a
+// name). The lines are the card's documents the server made when it was placed (T#1: 지시서 TS, 시나리오 the
+// same TS — the cases live in it, contract 2 — and 레포트 TSR), so a test card without a bound document still
+// shows and opens them. Without card lines (a TS / TSR document Node) the test view and the bound document
+// fill them as before. The 지시서 line is hidden when the card's settings omit the instruction (v7).
 
 export type TestSpecSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
 
@@ -369,19 +374,25 @@ export interface TestSpecSlotState {
 }
 
 export interface TestSpecSlot {
-  readonly key: 'instruction' | 'cases' | 'result'
-  readonly kind: 'document' | 'result'
-  readonly form: boolean
+  readonly key: 'instruction' | 'scenario' | 'report'
+  readonly kind: 'document'
   readonly id: string | null
   readonly empty: boolean
+  /** Message key (under `gui.inspector.testSpec.`) of why the line has no document, or null. */
   readonly emptyKey: string | null
   readonly state: TestSpecSlotState | null
-  /** Which summary the line shows: the Case tally, the result counts, or the run progress. */
+  /** Which summary the line shows: the case tally, the result counts, or the run progress. */
   readonly summary: 'tally' | 'counts' | 'progress' | null
   readonly progress: number | null
   readonly focus: boolean
   readonly open: 'enabled' | 'none'
-  readonly write: 'disabled' | 'none'
+}
+
+/** The parts of the target the lines read. */
+export interface TestSpecLineFacts extends TestSpecTargetFacts {
+  readonly docReviewStatus: string | null
+  readonly docStatus: string | null
+  readonly cardDocuments: readonly InspectorCardDocument[]
 }
 
 const REVIEW_TONES: Readonly<Record<string, TestSpecSlotTone>> = {
@@ -396,50 +407,93 @@ function reviewState(status: string | null): TestSpecSlotState | null {
   return review ? { key: `review_status.${review}`, raw: review, tone: REVIEW_TONES[review] ?? 'neutral' } : null
 }
 
+/** The state of a document: its review status, else its document status (draft / open / closed). */
+export function testSpecDocumentState(reviewStatus: string | null, docStatus: string | null): TestSpecSlotState | null {
+  const review = reviewState(reviewStatus)
+  if (review) return review
+  const status = docStatus?.trim() ?? ''
+  if (!status) return null
+  if (status === 'closed') return { key: 'slot_state.closed', raw: status, tone: 'neutral' }
+  return { key: 'slot_state.writing', raw: status, tone: 'info' }
+}
+
 const RUN_TONES: Readonly<Record<TestSpecTone, TestSpecSlotTone>> = { info: 'running', success: 'success', danger: 'danger', warning: 'warning', neutral: 'neutral' }
 
+const waiting = (state: TestSpecSlotState | null) => state?.raw === 'pending_review' || state?.raw === 'rejected'
+
+function emptyLine(key: TestSpecSlot['key'], emptyKey: string | null): TestSpecSlot {
+  return { key, kind: 'document', id: null, empty: true, emptyKey, state: null, summary: null, progress: null, focus: false, open: 'none' }
+}
+
 /**
- * The three v7 lines from the test view and the target. Without a view yet, the selected Node's own
- * document fills its line and the others wait; the Case line stands for the Cases inside the TS
- * (contract 2 — a separate Case document does not exist in 0048) and carries the tally only.
+ * The three lines from the card's documents, the test view and the target. A document's state is the
+ * test view's review status when the view read that document, else the card line's (or the bound
+ * document's) state; the 레포트 line shows a live or finished run's state and progress first.
  */
-export function testSpecSlots(view: TestSpecViewFacts | null, target: TestSpecTargetFacts): readonly TestSpecSlot[] {
+export function testSpecSlots(view: TestSpecViewFacts | null, target: TestSpecLineFacts, instructionOmitted = false): readonly TestSpecSlot[] {
   const type = target.docType?.trim().toUpperCase() ?? ''
-  const tsId = view ? (view.kind === 'TS' ? view.docId : view.tsDocId) : type === 'TS' ? target.docId : null
-  const tsrId = view ? (view.kind === 'TSR' ? view.docId : view.tsrDocId) : type === 'TSR' ? target.docId : null
-  const tsState = view ? reviewState(view.tsReviewStatus) : null
-  const form = testSpecForm(view)
+  const own = (slot: TestSpecSlot['key']) => target.cardDocuments.find((line) => line.slot === slot) ?? null
+  const bound = (kind: string) => (target.docId !== null && type === kind ? target.docId : null)
+  const viewTs = view ? (view.kind === 'TS' ? view.docId : view.tsDocId) : null
+  const viewTsr = view ? (view.kind === 'TSR' ? view.docId : view.tsrDocId) : null
+
+  const stateOf = (id: string, slot: TestSpecSlot['key'], viewId: string | null, viewReview: string | null) => {
+    const fromView = view && id === viewId ? reviewState(viewReview) : null
+    if (fromView) return fromView
+    const line = own(slot)
+    if (line?.docId === id) return testSpecDocumentState(line.docReviewStatus, line.status)
+    return id === target.docId ? testSpecDocumentState(target.docReviewStatus, target.docStatus) : null
+  }
+
+  const ownInstruction = own('instruction')
+  const tsId = ownInstruction ? ownInstruction.docId : (viewTs ?? bound('TS'))
+  const tsState = tsId ? stateOf(tsId, 'instruction', viewTs, view?.tsReviewStatus ?? null) : null
+  const instruction: TestSpecSlot = tsId
+    ? { key: 'instruction', kind: 'document', id: tsId, empty: false, emptyKey: null, state: tsState, summary: null, progress: null, focus: waiting(tsState), open: 'enabled' }
+    : emptyLine('instruction', null)
+
+  const ownScenario = own('scenario')
+  const scenarioId = ownScenario ? ownScenario.docId : tsId
+  const scenario: TestSpecSlot = scenarioId
+    ? {
+        key: 'scenario',
+        kind: 'document',
+        id: scenarioId,
+        empty: false,
+        emptyKey: null,
+        state: stateOf(scenarioId, 'scenario', viewTs, view?.tsReviewStatus ?? null),
+        summary: testSpecForm(view) === 'spec' && scenarioId === viewTs ? 'tally' : null,
+        progress: null,
+        focus: false,
+        open: 'enabled',
+      }
+    : emptyLine('scenario', 'empty.after_run')
+
   const run = testSpecRunState(view)
   const live = run.active && !!run.total
-
-  const instruction: TestSpecSlot = tsId
-    ? { key: 'instruction', kind: 'document', form: false, id: tsId, empty: false, emptyKey: null, state: tsState, summary: null, progress: null, focus: tsState?.raw === 'pending_review' || tsState?.raw === 'rejected', open: 'enabled', write: 'none' }
-    : { key: 'instruction', kind: 'document', form: false, id: null, empty: true, emptyKey: 'empty.write', state: null, summary: null, progress: null, focus: false, open: 'none', write: 'disabled' }
-
-  const cases: TestSpecSlot =
-    form === 'spec'
-      ? { key: 'cases', kind: 'document', form: true, id: null, empty: false, emptyKey: null, state: null, summary: 'tally', progress: null, focus: false, open: 'none', write: 'none' }
-      : { key: 'cases', kind: 'document', form: true, id: null, empty: true, emptyKey: form === 'legacy' ? 'empty.legacy' : 'empty.after_run', state: null, summary: null, progress: null, focus: false, open: 'none', write: 'none' }
-
-  const resultState: TestSpecSlotState | null =
-    view && run.key !== 'none' ? { key: `state.${run.key}`, raw: run.key, tone: RUN_TONES[run.tone] } : view ? reviewState(view.tsrReviewStatus) : null
-  const hasResult = tsrId !== null || (view !== null && run.key !== 'none')
-  const result: TestSpecSlot = hasResult
+  const ownReport = own('report')
+  const tsrId = ownReport ? ownReport.docId : (viewTsr ?? bound('TSR'))
+  const reportState: TestSpecSlotState | null =
+    view && run.key !== 'none'
+      ? { key: `state.${run.key}`, raw: run.key, tone: RUN_TONES[run.tone] }
+      : tsrId
+        ? stateOf(tsrId, 'report', viewTsr, view?.tsrReviewStatus ?? null)
+        : null
+  const hasReport = tsrId !== null || (view !== null && run.key !== 'none')
+  const report: TestSpecSlot = hasReport
     ? {
-        key: 'result',
-        kind: 'result',
-        form: false,
+        key: 'report',
+        kind: 'document',
         id: tsrId,
         empty: false,
         emptyKey: null,
-        state: resultState,
+        state: reportState,
         summary: live ? 'progress' : testSpecCounts(view) ? 'counts' : null,
         progress: live ? Math.round((run.done / run.total) * 100) : null,
-        focus: run.overall === 'fail' || view?.tsrReviewStatus === 'pending_review' || view?.tsrReviewStatus === 'rejected',
+        focus: run.overall === 'fail' || waiting(reportState),
         open: tsrId ? 'enabled' : 'none',
-        write: 'none',
       }
-    : { key: 'result', kind: 'result', form: false, id: null, empty: true, emptyKey: 'empty.after_run', state: null, summary: null, progress: null, focus: false, open: 'none', write: 'none' }
+    : emptyLine('report', 'empty.after_run')
 
-  return [instruction, cases, result]
+  return instructionOmitted ? [scenario, report] : [instruction, scenario, report]
 }

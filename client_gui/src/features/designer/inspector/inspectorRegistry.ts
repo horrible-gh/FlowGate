@@ -14,7 +14,10 @@ import {
   INSPECTOR_CARD_KINDS,
   INSPECTOR_DOC_TYPES,
   INSPECTOR_OWNERSHIPS,
+  INSPECTOR_SETTINGS_KINDS,
+  inspectorSettingsKind,
   type InspectorCardKind,
+  type InspectorSettingsKind,
   type InspectorTarget,
 } from './inspectorTarget'
 
@@ -34,6 +37,11 @@ export interface InspectorTabContribution {
   /** Tab Content part; its one input is `target`. */
   readonly component: Component
   readonly count?: InspectorTabCount
+  /**
+   * flowgate.v02.0053 T#6 — the Content part takes the tab body's free height (its box reaches the bottom
+   * of the tab even with little content), e.g. the attachments drop area highlighted as a whole.
+   */
+  readonly fill?: boolean
 }
 
 export interface InspectorRegistration {
@@ -51,6 +59,11 @@ export interface InspectorRegistration {
   readonly requiresDocument: boolean
   /** The feature needs a v0.1 sequence slot on the Node (a sequence row); absent = no. */
   readonly requiresSlot?: boolean
+  /**
+   * flowgate.v02.0053 T#7 — settings kinds (inspectorSettingsKind) the feature applies to; empty or absent =
+   * every Node. A settings tab part names the card settings it shows (a Graph card's T#2 kind).
+   */
+  readonly settingsKinds?: readonly InspectorSettingsKind[]
   readonly tab?: InspectorTabContribution
   /** Header action part (right of the state chip); its one input is `target`. */
   readonly headerAction?: Component
@@ -66,6 +79,11 @@ export interface InspectorRegistration {
    * ↻ 재실행 …). Its inputs are `target` and `close` (closes the menu).
    */
   readonly headerMenu?: Component
+  /**
+   * flowgate.v02.0053 T#9 — the header ✎ 메모 part: replaces the Frame's dim, disabled ✎ 메모 (R0052 §2.6). The
+   * Frame lays out the first that applies; its one input is `target`.
+   */
+  readonly headerMemo?: Component
   readonly messages: InspectorMessages
 }
 
@@ -115,6 +133,7 @@ export function registrationViolations(modules: Readonly<Record<string, unknown>
     }
     out.push(...listViolations(label, 'cardKinds', entry.cardKinds, INSPECTOR_CARD_KINDS))
     out.push(...listViolations(label, 'ownerships', entry.ownerships, INSPECTOR_OWNERSHIPS))
+    out.push(...listViolations(label, 'settingsKinds', entry.settingsKinds, INSPECTOR_SETTINGS_KINDS))
     const cardKinds = Array.isArray(entry.cardKinds) ? (entry.cardKinds as string[]) : []
     const ownTypes = cardKinds.length
       ? cardKinds.flatMap((kind) => INSPECTOR_CARD_DOC_TYPES[kind as keyof typeof INSPECTOR_CARD_DOC_TYPES] ?? [])
@@ -135,10 +154,11 @@ export function registrationViolations(modules: Readonly<Record<string, unknown>
       } else {
         if (!tab.component) out.push(`${label}: tab has no component`)
         if (tab.count !== undefined && typeof tab.count !== 'function') out.push(`${label}: tab count is not a function`)
+        if (tab.fill !== undefined && typeof tab.fill !== 'boolean') out.push(`${label}: tab fill is not a boolean`)
       }
     }
-    if (!tab && !entry.headerAction && !entry.headerMeta && !entry.headerKind && !entry.headerMenu) {
-      out.push(`${label}: contributes no tab, header action, header meta, header kind or header menu`)
+    if (!tab && !entry.headerAction && !entry.headerMeta && !entry.headerKind && !entry.headerMenu && !entry.headerMemo) {
+      out.push(`${label}: contributes no tab, header action, header meta, header kind, header menu or header memo`)
     }
     const messages = entry.messages
     for (const locale of INSPECTOR_LOCALES) {
@@ -171,6 +191,10 @@ export function registrationApplies(entry: InspectorRegistration, target: Inspec
   const docType = target.docType?.trim().toUpperCase() ?? null
   if (entry.docTypes?.length && !(docType && entry.docTypes.includes(docType))) return false
   if (entry.ownerships?.length && !(target.ownership && entry.ownerships.includes(target.ownership))) return false
+  if (entry.settingsKinds?.length) {
+    const kind = inspectorSettingsKind(target)
+    if (!(kind && entry.settingsKinds.includes(kind))) return false
+  }
   return true
 }
 

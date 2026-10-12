@@ -14,6 +14,10 @@ PALETTE_DOC_TYPES = frozenset({"D", "P", "L", "DB", "N", "WP", "T", "TS"})
 ROOT_DOC_TYPES = frozenset({"R", "B"})
 # L0009 §2.0 보고 타입 (AUTO_REPORT_MAP values).
 REPORT_DOC_TYPES = frozenset({"NR", "TR", "TR2", "TSR"})
+# flowgate.v02.0053 T#8: a Custom card (palette [+], whatever Palette category it was added to) is a plain
+# document card like 조사 · 작업 — its lines are a work instruction and its report (card_documents.slots
+# CUSTOM_DOC_TYPES T / TR), so its run hands it out and binds its result as the work instruction (T).
+CUSTOM_RUN_DOC_TYPE = "T"
 
 NODE_KEY_PREFIX = "gn_"
 EDGE_ID_PREFIX = "ge_"
@@ -93,6 +97,14 @@ class Graph:
         """Nodes with no incoming edge (L0009 §2.0 시작 노드), in stored order."""
         deg = self.in_degree()
         return [n.key for n in self.nodes if deg[n.key] == 0]
+
+
+def run_doc_type(node_type: Optional[str], doc_type: Optional[str]) -> Optional[str]:
+    """The document type a node's run writes and binds: a document node's own, a Custom card's work
+    instruction (flowgate.v02.0053 T#8), else None (a gate hands nothing out)."""
+    if node_type == "custom":
+        return CUSTOM_RUN_DOC_TYPE
+    return doc_type if node_type == "document" else None
 
 
 def node_kind(node: GraphNode, kind_for_type) -> str:

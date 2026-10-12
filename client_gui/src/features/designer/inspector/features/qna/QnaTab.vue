@@ -13,12 +13,59 @@
        it and an answered one 완료 (0052 T#1) — the asker kind is never read as a hand-off.
        The window's title line keeps its badge and buttons in view: the title shrinks with an
        ellipsis, the badge does not. Answering is not editing the question, so there is no 편집
-       badge; 읽기 전용 shows only when the Flow is read only (ownership conflict / revision view). -->
+       badge; 읽기 전용 shows only when the Flow is read only (ownership conflict / revision view).
+       flowgate.v02.0053 T#6 (0053 CH §2) — the question line at the top: a person writes a question
+       and [+] (or Enter) registers it and asks an AI to answer; the answer shows under it like any
+       answer. The line is always there, and a document without questions shows only the line — no
+       "no questions" sentence. Why [+] is closed is its tooltip. A refusal is an icon on the line —
+       red ! when the question was not stored, amber △ when it was stored but no AI was asked — whose
+       name says which and whose tooltip (its accessible description) says why. -->
   <div class="inspector-qna" data-test="inspector-qna" :data-status="status">
+    <div class="inspector-qna-ask" data-test="qna-ask">
+      <Input
+        class="inspector-qna-ask-field"
+        :model-value="askBody"
+        :placeholder="t(k('ask_placeholder'))"
+        :aria-label="t(k('ask'))"
+        :disabled="!availability.ask.enabled"
+        data-test="qna-ask-input"
+        @update:model-value="(value: string) => (askBody = value)"
+        @keydown.enter="onAskEnter"
+      />
+      <InspectorAddButton
+        :label="t(k('ask'))"
+        :title="askTitle"
+        :disabled="!availability.ask.enabled || !askReady"
+        :data-busy="asking ? 'true' : 'false'"
+        data-test="qna-ask-submit"
+        @click="submitAsk"
+      />
+      <span
+        v-if="askFailure"
+        class="inspector-qna-ask-failure"
+        role="img"
+        tabindex="0"
+        :aria-label="t(k(`ask_failed.${askFailure.stage}`))"
+        :title="t(k(askFailure.key))"
+        data-test="qna-ask-failure"
+        :data-stage="askFailure.stage"
+        :data-tone="askFailure.stage === 'ask' ? 'danger' : 'warning'"
+      >
+        <svg v-if="askFailure.stage === 'ask'" viewBox="0 0 16 16" aria-hidden="true" focusable="false" data-icon="error">
+          <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.5" />
+          <path d="M8 4.6v4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          <circle cx="8" cy="11.3" r="0.95" fill="currentColor" />
+        </svg>
+        <svg v-else viewBox="0 0 16 16" aria-hidden="true" focusable="false" data-icon="warning">
+          <path d="M8 2.2 14.3 13.4H1.7Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+          <path d="M8 6.4v3.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          <circle cx="8" cy="11.6" r="0.85" fill="currentColor" />
+        </svg>
+      </span>
+    </div>
     <InspectorPaneState v-if="status === 'loading' && !items" state="loading" />
     <InspectorPaneState v-else-if="errorKey && !items" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
     <template v-else-if="items">
-      <InspectorPaneState v-if="!items.length" state="empty" :message="t(k('empty'))" />
       <InspectorPaneState v-if="errorKey" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
       <ul v-if="items.length" class="inspector-qna-list">
         <template v-for="(item, index) in items" :key="item.id">
@@ -64,15 +111,13 @@
                   </template>
                 </small>
               </div>
-              <IconButton
+              <!-- flowgate.v02.0053 T#5 (0053 CH): the same document icon as the document lines (tooltip 열기). -->
+              <InspectorOpenButton
                 class="inspector-qna-open"
-                :label="t(k('open'))"
                 :title="t(k('open'))"
-                variant="secondary"
-                size="sm"
                 data-test="qna-open"
                 @click="openWindow(item.id)"
-              >↗</IconButton>
+              />
             </div>
 
             <!-- v7 `.q-ans`: the short inline answer under a question without an answer. -->
@@ -215,14 +260,16 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../../components/ui/Button.vue'
-import IconButton from '../../../../../components/ui/IconButton.vue'
+import Input from '../../../../../components/ui/Input.vue'
 import ModelessShell from '../../../../../components/ui/ModelessShell.vue'
 import Textarea from '../../../../../components/ui/Textarea.vue'
+import InspectorAddButton from '../../parts/InspectorAddButton.vue'
+import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorStatusChip, { type InspectorChipTone } from '../../parts/InspectorStatusChip.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import type { QnaAnswerView, QnaItemState, QnaItemView, QnaSide } from './qnaModel'
+import { qnaAskReady, type QnaAnswerView, type QnaItemState, type QnaItemView, type QnaSide } from './qnaModel'
 import { useQna } from './useQna'
 
 const props = defineProps<{
@@ -233,7 +280,30 @@ const { t } = useI18n()
 
 const k = (key: string) => `gui.inspector.qna.${key}`
 
-const { items, availability, status, errorKey, busy, failure, ready, answer, reload } = useQna(() => props.target)
+const { items, availability, status, errorKey, busy, failure, ready, answer, asking, askFailure, ask, reload } = useQna(() => props.target)
+
+// --- The question line (0053 T#6) ------------------------------------------------------------------
+
+/** The question being written; it belongs to the shown document and clears once it is stored. */
+const askBody = ref('')
+const askReady = computed(() => qnaAskReady(askBody.value))
+
+/** [+]'s tooltip: what it does, or why it is closed. */
+const askTitle = computed(() => (availability.value.ask.reason ? t(k(availability.value.ask.reason)) : t(k('ask'))))
+
+async function submitAsk() {
+  const docId = props.target.docId
+  if (await ask(askBody.value)) {
+    if (props.target.docId === docId) askBody.value = ''
+  }
+}
+
+/** Enter registers the question; Enter that ends an IME composition (Korean / Japanese input) does not. */
+function onAskEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  if (availability.value.ask.enabled && askReady.value) void submitAsk()
+}
 
 // --- The folded "완료" group (v7 qaPane: open when nothing is pending) ------------------------------
 
@@ -299,6 +369,7 @@ watch(
   () => {
     for (const id of Object.keys(drafts)) delete drafts[Number(id)]
     windows.value = []
+    askBody.value = ''
   },
 )
 
@@ -373,6 +444,51 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   gap: 8px;
   min-width: 0;
   font-size: 12px;
+}
+
+/* The question line: a field and [+] in one row, always at the top. */
+.inspector-qna-ask {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.inspector-qna-ask-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  font-size: 12px;
+}
+
+/* A refused question (red) or a stored question whose AI request was refused (amber); why is the tooltip. */
+.inspector-qna-ask-failure {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  cursor: help;
+}
+
+.inspector-qna-ask-failure svg {
+  width: 16px;
+  height: 16px;
+}
+
+.inspector-qna-ask-failure[data-tone='danger'] {
+  color: var(--fg2-status-danger-fg);
+}
+
+.inspector-qna-ask-failure[data-tone='warning'] {
+  color: var(--fg2-status-warning-fg);
+}
+
+.inspector-qna-ask-failure:focus-visible {
+  outline: 2px solid var(--fg2-focus, #4c9aff);
+  outline-offset: 1px;
 }
 
 .inspector-qna-list,

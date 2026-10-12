@@ -21,6 +21,7 @@ import TestSpecTab from '@/features/designer/inspector/features/testSpec/TestSpe
 import { TEST_SPEC_EVENTS } from '@/features/designer/inspector/features/testSpec/useTestSpec'
 import { createInspectorRegistry, inspectorRegistry } from '@/features/designer/inspector/inspectorRegistry'
 import type { InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
+import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
 import { INSPECTOR_REFRESH_COALESCE_MS } from '@/features/designer/inspector/useInspectorResource'
 import { prepareInspectorI18n, registrationModules, targetOf } from '../support/inspectorSupport'
 import { installProjectEventStream, removeProjectEventStream, type ProjectEventStream } from '../support/projectEventStream'
@@ -216,7 +217,10 @@ const docRow = (docId: string) => ({
 let pinia: Pinia
 let stream: ProjectEventStream
 let wrapper: VueWrapper<any> | null = null
-let opened: unknown[][]
+// flowgate.v02.0053 T#3: ↗ 열기 opens the document window in this tab — `opened()` lists the windows as
+// [doc_id, mode]; a browser tab is never opened (`browserTabs` stays empty).
+let browserTabs: unknown[][]
+const opened = () => documentWindowList().map((win) => [win.docId, win.mode])
 
 beforeEach(() => {
   i18n.global.locale.value = 'ko'
@@ -232,9 +236,10 @@ beforeEach(() => {
   for (const mock of [viewRead, startCall, cancelCall, activityRead, documentRead, detailRead, relationsRead, qaReadCall, attachmentsReadCall]) mock.mockReset()
   seed()
   serve()
-  opened = []
+  closeAllDocumentWindows()
+  browserTabs = []
   vi.spyOn(window, 'open').mockImplementation((...args: unknown[]) => {
-    opened.push(args)
+    browserTabs.push(args)
     return null
   })
 })
@@ -243,6 +248,8 @@ afterEach(() => {
   wrapper?.unmount()
   wrapper = null
   removeProjectEventStream()
+  expect(browserTabs).toEqual([])
+  closeAllDocumentWindows()
   vi.restoreAllMocks()
   vi.useRealTimers()
 })
@@ -314,21 +321,21 @@ describe('test section — reading (flowgate.v02.0048 T#11)', () => {
   it('a legacy executable TS: the v0.1 note and ↗ 열기 only, no run operation', async () => {
     const w = await mountTab(target('v01', LEGACY_TS_NODE))
     expect(el(w, 'inspector-test-spec').attributes('data-form')).toBe('legacy')
-    expect(textOf(w, 'test-spec-legacy')).toBe('실행형(이전 형식) 테스트 지시입니다. 실행과 결과는 ↗ 열기에서 봅니다.')
+    expect(textOf(w, 'test-spec-legacy')).toBe('실행형(이전 형식) 테스트 지시입니다. 실행과 결과는 문서 창에서 봅니다.')
     expect(el(w, 'test-spec-run').exists()).toBe(false)
     expect(el(w, 'test-spec-cancel').exists()).toBe(false)
     expect(el(w, 'test-spec-state').exists()).toBe(false)
     await click(w, 'test-spec-open')
-    expect(opened).toEqual([[`/main/?doc=${encodeURIComponent(LEGACY_TS_DOC)}`, '_blank', 'noopener']])
+    expect(opened()).toEqual([[LEGACY_TS_DOC, 'view']])
   })
 
-  it('↗ 열기 / ↗ 결과 보고서 open the v0.1 screen in a new tab: noopener, doc_id only', async () => {
+  it('↗ 열기 / ↗ 결과 보고서 open their document windows in this tab (flowgate.v02.0053 T#3)', async () => {
     const w = await mountTab(target())
     await click(w, 'test-spec-open')
     await click(w, 'test-spec-open-report')
-    expect(opened).toEqual([
-      [`/main/?doc=${encodeURIComponent(TS_DOC)}`, '_blank', 'noopener'],
-      [`/main/?doc=${encodeURIComponent(TSR_DOC)}`, '_blank', 'noopener'],
+    expect(opened()).toEqual([
+      [TS_DOC, 'view'],
+      [TSR_DOC, 'view'],
     ])
     expect(startCall).not.toHaveBeenCalled()
   })
@@ -418,7 +425,7 @@ describe('test section — ▶ 실행 and ■ 취소 (flowgate.v02.0048 T#11)', 
     ['409 run_in_progress (started elsewhere)', 'run_in_progress', '이미 실행 중이거나 AI 실행 중이라 거절되었습니다. 상태를 다시 읽었습니다.'],
     ['409 doc_not_approved (unapproved meanwhile)', 'doc_not_approved', '테스트 지시가 승인되지 않아 거절되었습니다. 상태를 다시 읽었습니다.'],
     ['409 tsr_already_approved', 'tsr_already_approved', '결과 보고서가 이미 승인되어 거절되었습니다.'],
-    ['409 failure_origin_pending', 'failure_origin_pending', 'FAIL 원인 검토가 남아 있어 거절되었습니다. ↗ 열기에서 처리합니다.'],
+    ['409 failure_origin_pending', 'failure_origin_pending', 'FAIL 원인 검토가 남아 있어 거절되었습니다. 문서 창에서 처리합니다.'],
     ['422 no_automated_bindings', 'no_automated_bindings', '서버가 실행할 수 있는 자동 케이스가 없어 거절되었습니다.'],
     ['423 (an AI run took the group)', 'locked', '이미 실행 중이거나 AI 실행 중이라 거절되었습니다. 상태를 다시 읽었습니다.'],
     ['409 another code', 'odd_state', '서버 상태가 바뀌어 실행이 거절되었습니다. 상태를 다시 읽었습니다.'],
@@ -475,7 +482,7 @@ describe('test section — ▶ 실행 and ■ 취소 (flowgate.v02.0048 T#11)', 
     expect(startCall).toHaveBeenCalledTimes(1)
     // Reading and opening are queries: still possible.
     await click(w, 'test-spec-open')
-    expect(opened).toHaveLength(1)
+    expect(opened()).toHaveLength(1)
   })
 
   it('403 holds for the document it was answered on: another TS offers ▶ 실행 again (and is refused again by the server)', async () => {
@@ -642,7 +649,7 @@ describe('test section — read-only Flows (flowgate.v02.0048 T#11)', () => {
     await click(w, 'test-spec-run')
     expect(startCall).not.toHaveBeenCalled()
     await click(w, 'test-spec-open')
-    expect(opened).toHaveLength(1)
+    expect(opened()).toHaveLength(1)
   })
 
   it('Graph draft view: enabled; ■ 취소 of a live run in revision view is disabled the same way', async () => {

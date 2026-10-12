@@ -61,7 +61,7 @@ FlowGate 전용 `FlowNodeCard`/`FlowEdgePath`이고 라이브러리 기본 테�
 
 flowgate.v02.0030에서 `designer/palette/`에 Designer 우측 Palette 부품(`PalettePanel`, 카드
 `PaletteCard`, 종류 추가 다이얼로그 `PaletteAddDialog`, 순수 모델 `paletteCatalog.ts`, 글리프 표
-`paletteIcons.ts`)을 추가했습니다. 기본 항목(설계 / 업무 플로우 / 제어)은 시안 03 기준이며, 항목의
+`paletteIcons.ts`)을 추가했습니다. 기본 항목(설계 / 업무 / 제어 — flowgate.v02.0053 T#8에서 '업무 플로우'를 '업무'로)은 시안 03 기준이며, 항목의
 `nodeKind`는 Canvas Graph Model의 Node kind 키(`center/canvas/flowNodeKinds.ts`)를, `docType`은
 FlowGate 문서 타입 코드를 재사용합니다. Palette는 항목 선택(`select`)과 drag 시작(`drag-start`,
 DataTransfer `application/x-flowgate-palette-item`) 의도만 내보내고 Canvas drop·노드 생성은 하지

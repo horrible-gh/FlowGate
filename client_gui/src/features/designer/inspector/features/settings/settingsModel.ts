@@ -1,7 +1,7 @@
 // flowgate.v02.0048 T#9 — the settings tab's rules (D#1 §8, §10.2 T#9 row; D#2 §2.2 / §2.4). Pure functions
 // over the target, the Flow's v0.1 sequence rows (`GET /workflow/sequence`, normalized by
 // `@/features/document`) and the choices: which row the Node is, whether it can still be set, the
-// choices of each field, whether anything changed, and what a running hop took from the row.
+// choices of each field and whether anything changed.
 //
 // Fields (D#2 §2.2): the run AI, the review count and the reviewer — the three settings the sequence row
 // stores and a continuous hop reads. Restart, step time limit and review criteria have no row to store
@@ -16,6 +16,10 @@
 // one reason — ownership conflict, revision view, disposed, AI running, then this feature's own: the row
 // started, the row not in the sequence read, a save in flight; the reviewer also when the review count is
 // 0, and saving when nothing changed.
+//
+// flowgate.v02.0053 T#7 — these are the rules of a v0.1 Flow's Node only (a sequence step without a Graph
+// card). A change is saved at once (no save button, v7); a Graph card's settings follow cardSettingsModel.
+// What a running hop took from the row is no longer drawn (v7 has no such block).
 import type { InspectorReadOnly } from '../../inspectorTarget'
 
 /** The parts of a sequence row the rules read (the `@/features/document` SettingsRow). */
@@ -233,65 +237,6 @@ export function settingsAvailability(input: SettingsInput): SettingsAvailability
     reviewCount: item(common),
     reviewer: item(common ?? (input.reviewCount === 0 ? 'reason.review_off' : null)),
     save: item(common ?? (input.changed ? null : 'reason.unchanged')),
-  }
-}
-
-/** What a continuous hop runs with (the `@/features/document` SettingsHop). */
-export interface SettingsHopFacts {
-  readonly itemSeq: number | null
-  readonly providerId: string | null
-  readonly providerName: string | null
-  readonly providerSource: string | null
-  readonly reviewCount: number | null
-  readonly reviewerProviderId: string | null
-  readonly reviewerProviderName: string | null
-}
-
-/** The server's `selected_provider_source` when the hop took the row's run AI. */
-export const SETTINGS_STORED_SOURCE = 'stored_sequence'
-
-/**
- * Whether a hop took a setting from the row: `row` = it did, `other` = it runs with something else (a
- * request pick, a fallback), `default` = the row leaves it to the project default, `unknown` = the answer
- * does not tell.
- */
-export type SettingsHopMatch = 'row' | 'other' | 'default' | 'unknown'
-
-export interface SettingsHopView {
-  readonly provider: SettingsHopMatch
-  readonly providerName: string | null
-  readonly reviewCount: SettingsHopMatch
-  readonly count: number | null
-  readonly reviewer: SettingsHopMatch
-  readonly reviewerName: string | null
-}
-
-/**
- * What a running hop of this row took from it (D#2 §2.1 "실행 전달"), or null when the hop is another
- * row's. Run AI: the start answer says `selected_provider_source` (stored_sequence = the row's); a run
- * status does not, so the AI ids are compared. Review count: the hop's count against the row's. Reviewer:
- * compared when the row names one (none = the project default reviewer).
- */
-export function settingsHopView(row: SettingsRowFacts, hop: SettingsHopFacts | null): SettingsHopView | null {
-  if (!hop || hop.itemSeq === null || hop.itemSeq !== row.itemSeq) return null
-  let provider: SettingsHopMatch
-  if (hop.providerSource !== null) provider = hop.providerSource === SETTINGS_STORED_SOURCE ? 'row' : 'other'
-  else if (row.providerId === null) provider = 'default'
-  else if (hop.providerId === null) provider = 'unknown'
-  else provider = hop.providerId === row.providerId ? 'row' : 'other'
-  const reviewCount: SettingsHopMatch = hop.reviewCount === null ? 'unknown' : hop.reviewCount === row.reviewCount ? 'row' : 'other'
-  let reviewer: SettingsHopMatch
-  if (row.reviewCount === 0 && hop.reviewCount === 0) reviewer = 'row'
-  else if (row.reviewerProviderId === null) reviewer = 'default'
-  else if (hop.reviewerProviderId === null) reviewer = 'unknown'
-  else reviewer = hop.reviewerProviderId === row.reviewerProviderId ? 'row' : 'other'
-  return {
-    provider,
-    providerName: hop.providerName ?? hop.providerId,
-    reviewCount,
-    count: hop.reviewCount,
-    reviewer,
-    reviewerName: hop.reviewerProviderName ?? hop.reviewerProviderId,
   }
 }
 

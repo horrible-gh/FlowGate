@@ -101,7 +101,9 @@ def project(
     row_keys: Mapping[int, tuple[str, str]],
     protected: set[int],
     lookup: Callable[[list[str]], dict[str, dict]] = lambda _ids: {},
+    hidden: frozenset = frozenset(),
 ) -> Projection:
+    """``hidden``: documents drawn inside a Graph draft card instead (flowgate.v02.0053 T#1)."""
     by_id = {d["doc_id"]: d for d in documents if d.get("doc_id")}
     supersedes = supersedes_map(documents)
     alive = sorted((d for d in documents if cm.is_alive(d, flow_id)), key=doc_order)
@@ -153,7 +155,7 @@ def project(
             out.edges.append(_execution_edge(a, b))
 
     for doc in alive:
-        if doc["doc_id"] in drawn:
+        if doc["doc_id"] in drawn or doc["doc_id"] in hidden:
             continue
         node = doc_node(doc, ownership, supersedes)
         out.nodes.append(node)

@@ -125,7 +125,9 @@ def test_required_policies_by_structure():
     conditioned = graph([doc_node("a", "D"), doc_node("b", "P")], [("a", "b", {"on": "approved"})])
     assert {"edge_condition", "parallelism"} <= rp.required_policies(conditioned)
     special = graph([doc_node("a", "D"), doc_node("g", None, "gate"), doc_node("c", None, "custom")], [])
-    assert {"gate_node", "custom_node"} <= rp.required_policies(special)
+    assert "gate_node" in rp.required_policies(special)
+    # flowgate.v02.0053 T#8: a Custom card runs as a work instruction (report_pair), never on custom_node
+    assert "custom_node" not in rp.required_policies(special) and "report_pair" in rp.required_policies(special)
 
 
 def test_every_system_default_policy_is_undecided_until_section_8_is_answered():

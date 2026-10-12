@@ -17,7 +17,12 @@
        (`headerKind`, the first that applies) and the ⋯ menu items (`headerMenu`, in `order`).
        flowgate.v02.0051 stage 3: every selected Node keeps the four v7 tabs. Missing data
        receives an empty state and unconnected settings a disabled state. Card slots lead the
-       document tab; the card slot opens the existing document screen for full detail. -->
+       document tab; the card slot opens the existing document screen for full detail.
+       flowgate.v02.0053 T#6: the body element is provided to the tab parts (INSPECTOR_BODY) so a part can
+       take input over the whole tab (the attachments file drop); a `fill` tab's section takes the body's
+       free height.
+       flowgate.v02.0053 T#9: one more header place — the ✎ 메모 part (`headerMemo`, the first that applies);
+       without one the header keeps its dim, disabled ✎ 메모. -->
   <section
     class="designer-inspector"
     data-test="designer-inspector"
@@ -31,6 +36,9 @@
       <InspectorHeader :target="target">
         <template v-if="headerKind" #kind>
           <component :is="headerKind.headerKind" :key="headerKind.key" :target="target" />
+        </template>
+        <template v-if="headerMemo" #memo>
+          <component :is="headerMemo.headerMemo" :key="headerMemo.key" :target="target" />
         </template>
         <template v-if="headerMetas.length" #meta>
           <component :is="entry.headerMeta" v-for="entry in headerMetas" :key="entry.key" :target="target" />
@@ -52,13 +60,15 @@
           :aria-label="t('gui.designer.inspector.tabs_label')"
           @update:model-value="selectTab"
         />
-        <div class="designer-inspector-body" role="tabpanel" data-test="designer-inspector-body" :data-tab="activeTab">
+        <div ref="bodyElement" class="designer-inspector-body" role="tabpanel" data-test="designer-inspector-body" :data-tab="activeTab">
           <div
             v-for="entry in tabContent"
             :key="entry.key"
             class="designer-inspector-section"
+            :class="{ 'is-fill': entry.tab!.fill }"
             data-test="designer-inspector-section"
             :data-key="entry.key"
+            :data-fill="entry.tab!.fill ? 'true' : undefined"
           >
             <component :is="entry.tab!.component" :target="target" />
           </div>
@@ -68,11 +78,7 @@
             data-test="designer-inspector-tab-state"
             :data-state="activeTab === 'settings' ? 'disabled' : 'empty'"
           >
-            <EmptyState v-if="activeTab !== 'settings'" compact :title="emptyTabMessage" />
-            <p v-else class="designer-inspector-disabled" role="note" aria-disabled="true">
-              <span aria-hidden="true">⊘</span>
-              <span>{{ emptyTabMessage }}</span>
-            </p>
+            <EmptyState v-if="emptyTabMessage" compact :title="emptyTabMessage" />
           </div>
         </div>
       </template>
@@ -87,7 +93,7 @@ import EmptyState from '../../../components/ui/EmptyState.vue'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
 import type { FlowGraphSelection } from '../center/graph/flowGraph'
 import InspectorHeader from './InspectorHeader.vue'
-import { INSPECTOR_HOST, type InspectorHostIntent } from './inspectorHost'
+import { INSPECTOR_BODY, INSPECTOR_HOST, type InspectorHostIntent } from './inspectorHost'
 import {
   contributionsFor,
   inspectorRegistry,
@@ -101,7 +107,6 @@ import {
   INSPECTOR_TAB_GAP,
   INSPECTOR_TAB_MIN_WIDTH,
   INSPECTOR_TAB_STRIP_PADDING_X,
-  inspectorNoSettingsKey,
    resolveInspectorTab,
   type InspectorTabKey,
 } from './inspectorTabs'
@@ -132,6 +137,10 @@ installInspectorMessages(i18n, registry)
 
 provide(INSPECTOR_HOST, { request: (intent) => emit('host', intent) })
 
+// flowgate.v02.0053 T#6: the tab Content element, for parts that take input over the whole tab.
+const bodyElement = ref<HTMLElement | null>(null)
+provide(INSPECTOR_BODY, { element: bodyElement })
+
 const target = computed(() => toInspectorTarget(props.selection))
 
 /** Server events after which the header (the selected Flow's Canvas read) may be out of date. */
@@ -149,6 +158,7 @@ const headerMetas = computed(() => contributions.value.filter((entry) => entry.h
 const headerActions = computed(() => contributions.value.filter((entry) => entry.headerAction))
 const headerKind = computed(() => contributions.value.find((entry) => entry.headerKind) ?? null)
 const headerMenus = computed(() => contributions.value.filter((entry) => entry.headerMenu))
+const headerMemo = computed(() => contributions.value.find((entry) => entry.headerMemo) ?? null)
 
 const tabs = computed(() => target.value && !props.unselected ? INSPECTOR_TABS : [])
 
@@ -186,13 +196,14 @@ const tabContent = computed(() => {
     : entries
 })
 const emptyTabMessage = computed(() => {
-  if (!target.value?.docId && (activeTab.value === 'qna' || activeTab.value === 'attachments')) {
-    return t('gui.designer.inspector.pane.no_document')
-  }
-  // flowgate.v02.0052 T#2: the settings tab says why this card has none (not one blanket "not connected").
-  return activeTab.value === 'settings' && target.value
-    ? t(`gui.designer.inspector.pane.${inspectorNoSettingsKey(target.value)}`)
-    : t('gui.designer.inspector.pane.empty')
+  // flowgate.v02.0053 T#6 (0053 CH): Q&A and attachments of a Node without a document are an empty
+  // area — no "no linked document" sentence.
+  if (!target.value?.docId && (activeTab.value === 'qna' || activeTab.value === 'attachments')) return ''
+  // flowgate.v02.0053 T#7 (0053 CH §4): every card with settings has its form now (a Graph card, just placed
+  // or done); a Node with none (a work plan card, a v0.1 document outside the sequence) keeps an empty
+  // settings area — no "why not" sentence (the 0052 T#2 reasons, "v0.1 단계에 속하지 않은 Node" among them).
+  if (activeTab.value === 'settings') return ''
+  return t('gui.designer.inspector.pane.empty')
 })
 
 // Strip geometry comes from the tab rules so the Shell's minimum Inspector width and the CSS agree.
@@ -275,23 +286,18 @@ function selectTab(key: string) {
   margin-top: 12px;
 }
 
+/* A `fill` tab (the attachments drop area): its part grows to the bottom of the body's content box. */
+.designer-inspector-section.is-fill {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-height: 100%;
+}
+
 .designer-inspector-tab-state {
   min-width: 0;
 }
 
-.designer-inspector-disabled {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin: 0;
-  padding: 12px 14px;
-  border: 1px dashed #2b4562;
-  border-radius: 8px;
-  color: #6f87a0;
-  font-size: 12px;
-  text-align: center;
-}
 
 .designer-inspector-body :deep(.inspector-work-plan-details),
 .designer-inspector-body :deep(.inspector-test-spec-details),

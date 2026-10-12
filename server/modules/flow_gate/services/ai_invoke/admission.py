@@ -853,6 +853,10 @@ def start_run(
     # Session-scoped like the fields above; None or an unrecognized value falls back to
     # RESTART_MAX_ATTEMPTS_DEFAULT.
     continuation_restart_max_attempts: Optional[int] = None,
+    # flowgate.v02.0053 T#2: a Graph node's card setting (restarts) for its single 'new' run --
+    # the no-output restarts on the SAME provider, resolved exactly like the continuous pick
+    # above. None (every other caller) keeps a single run one-shot, as before.
+    node_restart_max_attempts: Optional[int] = None,
     # 0414 P0007: the [검수] tab's two session-scoped maps — mode-aware worker item_seq ->
     # review count, and -> reviewer provider_id. They ride the RUN (never a token), exactly
     # like the provider/note maps, and are snapshotted into the paused row so a resume or a
@@ -1560,6 +1564,11 @@ def start_run(
         timeout_sec = _resolve_timeout_sec(
             mode, docs_target, target_to_end, continuation_step_timeout_sec, hop_kind
         )
+    # flowgate.v02.0053 T#2: only a Graph node's own single 'new' run opens the no-output retry
+    # path with its card's restart pick; every other single run stays one-shot.
+    node_restart_open = (
+        mode == "single" and action_scope == "new" and node_restart_max_attempts is not None
+    )
     run = {
         "run_id": run_id,
         "status": "running",
@@ -1746,6 +1755,7 @@ def start_run(
                 mode == "continuous"
                 or oracle._scope_oracle_retry_open(mode, action_scope, scope_oracle_run)
                 or oracle._review_hop_recovery_open(mode, action_scope, scope_oracle_run, hop_kind)
+                or node_restart_open
             )
             else None
         ),
@@ -1755,6 +1765,7 @@ def start_run(
                 mode == "continuous"
                 or oracle._scope_oracle_retry_open(mode, action_scope, scope_oracle_run)
                 or oracle._review_hop_recovery_open(mode, action_scope, scope_oracle_run, hop_kind)
+                or node_restart_open
             )
             else None
         ),
@@ -1851,13 +1862,16 @@ def start_run(
         # preserving 0466 T0007's first-attempt-plus-one-retry default. A pick of -1 remains
         # bounded by the retry budget/recheck guards; a pick of 0 makes the hop one-shot.
         "attempts_max": (
-            _resolve_restart_max_attempts(continuation_restart_max_attempts)
+            _resolve_restart_max_attempts(node_restart_max_attempts) if node_restart_open
+            else _resolve_restart_max_attempts(continuation_restart_max_attempts)
             if mode == "continuous"
             or oracle._scope_oracle_retry_open(mode, action_scope, scope_oracle_run)
             or oracle._review_hop_recovery_open(mode, action_scope, scope_oracle_run, hop_kind)
             else 1
         ),
         "retry_block_reason": None,
+        # flowgate.v02.0053 T#2: read by worker._retry_eligible (a Graph node's restart pick).
+        "node_restart_open": node_restart_open,
         "last_message_seen": None,
         "stop_code": None,
         "stop_reason": None,

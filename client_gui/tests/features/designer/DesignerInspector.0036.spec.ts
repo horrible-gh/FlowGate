@@ -216,13 +216,14 @@ describe('DesignerInspector — Node selected', () => {
     expect(get(w, 'injected-qna').text()).toBe('토큰 갱신 로직 수정')
   })
 
-  it('keeps four tabs on a Node without a document and explains the empty tabs', async () => {
+  it('keeps four tabs on a Node without a document; Q&A is an empty area without a sentence (0053 T#6)', async () => {
     const w = mountInspector({ selection: sel(ODD) })
     expect(get(w, 'designer-inspector-title').text()).toBe('새 종류')
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
     await clickTab(w, 'Q&A')
-    expect(get(w, 'designer-inspector-tab-state').text()).toContain('연결된 문서가 없습니다.')
+    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
+    expect(get(w, 'designer-inspector-tab-state').text()).toBe('')
     await clickTab(w, '설정')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
   })

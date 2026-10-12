@@ -242,6 +242,30 @@ def start_conversation_integration():
         logger.warning(f"[startup] conversation recovery failed: {exc}")
 
 
+def start_card_document_integration():
+    """flowgate.v02.0053 T#1 (D0006 §2.1, §2.3): composition root of the card documents. Connects
+    ``flowgate.card_documents`` to the Graph workflow's card document ports (draft save, Canvas
+    read, run step, R↔B root conversion). Unregistered, a card simply has no document lines."""
+    try:
+        from flowgate.card_documents import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] card document integration registration failed: {exc}")
+
+
+def start_card_settings_integration():
+    """flowgate.v02.0053 T#2 (D0006 §2.1, §2.3): composition root of the card run settings. Connects
+    ``flowgate.card_settings`` to the Graph workflow's card settings port (node dispatch).
+    Unregistered, a node starts with its assignee AI and the engine defaults, as before."""
+    try:
+        from flowgate.card_settings import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] card settings integration registration failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
@@ -253,6 +277,8 @@ def run_all():
     register_server_instance()
     recover_git_sessions()
     start_conversation_integration()
+    start_card_document_integration()
+    start_card_settings_integration()
     encrypt_ai_provider_keys()
     recover_ai_evaluations()
     start_snapshot_cleanup()

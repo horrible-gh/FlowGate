@@ -29,6 +29,13 @@ def guarded_assignment(doc: Optional[dict], call: Callable[[], Any], actor: Opti
     return outcome
 
 
+def guarded_root_conversion(doc: Optional[dict], call: Callable[[], Any], actor: Optional[str] = None) -> Any:
+    """R↔B root-type conversion of ``doc``: guarded like a sequence save (``guarded_assignment``,
+    flowgate.v02.0048); inside that guard a card line holding the root follows the converted
+    document (flowgate.v02.0053 T#1)."""
+    return guarded_assignment(doc, lambda: _contact.follow_root_conversion(doc, call()), actor)
+
+
 def progress_refusal(doc: Optional[dict]) -> Optional[tuple[str, dict]]:
     """advance: ``(code, flat body)`` to answer with 409, or None to continue as v0.1."""
     refused = _contact.progress_refusal(doc)

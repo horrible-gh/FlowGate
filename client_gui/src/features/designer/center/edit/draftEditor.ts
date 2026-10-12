@@ -9,6 +9,8 @@
 //   status becomes `conflict` and edits are kept on screen until the Graph is read again.
 // - `dispose` (tab closed) sends what waits; edits made while a save ran still go out right after
 //   it, and that save's `onKeys` still reports the renames (the owner stores the new positions).
+// - flowgate.v02.0053 T#5: every stored save is reported (`onSaved`) with what the server answered,
+//   so the Center can show the card lines the save made without reading the Flow again.
 // Pure TypeScript, no Vue: the Center session mirrors `status` into its reactive state.
 import type { FlowDraftError, FlowDraftSaveResult } from '../graph/flowGraphSource'
 import { CLIENT_KEY_PREFIX, draftContent, remapDraft, type DraftModel } from './draftModel'
@@ -24,6 +26,8 @@ export interface DraftEditorOptions {
   save(version: number, content: ReturnType<typeof draftContent>): Promise<FlowDraftSaveResult>
   /** The draft (and undo) after a save renamed `tmp_` keys. */
   onKeys(keyMap: Readonly<Record<string, string>>): void
+  /** flowgate.v02.0053 T#5: a save was stored (after `onKeys`); its answer carries the card lines. */
+  onSaved?(result: FlowDraftSaveResult): void
   /** Status / model / undo availability changed. */
   onChange(): void
   delayMs?: number
@@ -121,6 +125,7 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
           undoStack = undoStack.map((entry) => entry.map((c) => remapCommand(c, result.keyMap)))
           options.onKeys(result.keyMap)
         }
+        options.onSaved?.(result)
         savedKeys = storedKeys(current)
         if (editSeq !== sentSeq) {
           send()

@@ -91,15 +91,19 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     expect(Object.keys(inspector.tabs)).toEqual([...INSPECTOR_TABS])
     expect(Object.keys(inspector.review_status).sort()).toEqual(['approved', 'pending_review', 'rejected', 'revised', 'wf_done', 'wf_in_progress'])
     expect(Object.keys(inspector.run_status).sort()).toEqual(['completed', 'done', 'failed', 'open', 'pending', 'rejected', 'review', 'running', 'stopped'])
-    expect(Object.keys(inspector.pane).sort()).toEqual(['details', 'disabled', 'empty', 'error', 'loading', 'no_document', 'no_settings', 'no_settings_for', 'retry'])
-    // flowgate.v02.0052 T#2: why the 설정 tab is empty (inspectorNoSettingsKey).
-    expect(Object.keys(inspector.pane.no_settings_for).sort()).toEqual(['conflict', 'graph', 'no_slot', 'unassigned'])
+    // flowgate.v02.0053 T#7: an empty 설정 tab says nothing (the 0052 T#2 "why not" strings are gone, the
+    // "v0.1 단계에 속하지 않은 Node" one among them).
+    expect(Object.keys(inspector.pane).sort()).toEqual(['details', 'disabled', 'empty', 'error', 'loading', 'retry'])
     expect(Object.keys(inspector.header).sort()).toEqual(['copied', 'copy_id', 'kind_bug', 'memo', 'memo_unavailable', 'more', 'read_only', 'read_only_conflict', 'read_only_revision', 'state_tip'])
-    expect(Object.keys(inspector.slot).sort()).toEqual(['empty', 'open', 'open_hint', 'progress', 'write'])
+    // flowgate.v02.0053 T#5: no "not yet" / write wording on a line; `none` is the hollow dot's tooltip.
+    expect(Object.keys(inspector.slot).sort()).toEqual(['edit', 'none', 'open', 'progress'])
     expect(Object.keys(inspector.slot_state).sort()).toEqual(['closed', 'in_progress', 'writing'])
     // flowgate.v02.0052 T#3: ■ 중단 / ↻ 재실행 belong to the top 실행 menu, the card keeps 실행 이력 only.
     expect(Object.keys(inspector.menu).sort()).toEqual(['history'])
-    expect(Object.keys(inspector.run_settings).sort()).toEqual(['advanced', 'restart', 'review_ai', 'review_basis', 'review_count', 'run_ai', 'time_limit', 'title'])
+    // flowgate.v02.0053 T#7: the 테스트 card's 시나리오 작성 block (its 작성 AI) and a refused change's icon name.
+    expect(Object.keys(inspector.run_settings).sort()).toEqual(
+      ['advanced', 'failed', 'restart', 'review_ai', 'review_basis', 'review_count', 'run_ai', 'scenario_title', 'time_limit', 'title', 'writer_ai'].sort(),
+    )
     expect(messages.designer.shell).not.toHaveProperty('bottom_label')
     expect(messages.designer.shell).not.toHaveProperty('bottom_parts')
     expect(messages.designer.shell.minimap_label).toBe('MINIMAP')

@@ -4,6 +4,10 @@ Every problem is reported at once, ordered by L0009 §2.5.2. A structure whose e
 still undecided (D0004 §8) is neither allowed nor forbidden: it is reported as ``rule_undecided``
 with the question it waits on, which only blocks confirmation. Messages are added by the API
 layer (locale); issues here carry codes and keys only.
+
+flowgate.v02.0053 T#8: a Custom card (``custom`` node) is a plain document card like 조사 · 작업, not a
+structure with an undecided rule: it is checked like any document node and never reported as
+``rule_undecided/custom_node``. A gate keeps waiting on Q-11.
 """
 from __future__ import annotations
 
@@ -16,7 +20,7 @@ _CODE_RANK = [
     "empty_graph", "dangling_edge", "duplicate_edge", "unreachable_node",
     "rule_undecided/multiple_start", "rule_undecided/branch", "rule_undecided/edge_condition",
     "rule_undecided/join", "rule_undecided/report_pair", "rule_undecided/cycle",
-    "rule_undecided/gate_node", "rule_undecided/custom_node", "rule_undecided/non_palette_doc_type",
+    "rule_undecided/gate_node", "rule_undecided/non_palette_doc_type",
 ]
 
 
@@ -126,9 +130,8 @@ def _structural(g: Graph, policies: Mapping[str, Any]) -> list[dict]:
         if len(comp) >= 2 or inside:
             occurrences.append(("cycle", "Q-6", "rejection_path", comp, inside))
     for n in g.nodes:
-        if n.node_type in ("gate", "custom"):
-            structure = "gate_node" if n.node_type == "gate" else "custom_node"
-            occurrences.append((structure, "Q-11", structure, [n.key], []))
+        if n.node_type == "gate":
+            occurrences.append(("gate_node", "Q-11", "gate_node", [n.key], []))
     issues: list[dict] = []
     for structure, ref, policy_key, node_keys, edge_ids in occurrences:
         policy = policies.get(policy_key, UNDECIDED)

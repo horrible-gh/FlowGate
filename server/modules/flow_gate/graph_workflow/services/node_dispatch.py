@@ -1,9 +1,11 @@
 """Node executor registry and the document node executor (D0004 §2.2, L0009 §2.6.6 ``dispatch_node``).
 
-The registry maps a node type to its executor: ``document`` and ``gate``. A gate node hands no
-work out — no token, no mention, ``dispatch = null`` (P0008 §7.1, L0009 §2.6.6); a person decides
-it through the gate decision API (``gate_service``, P0008 S6-1). A ``custom`` node has no executor
-(Q-11). The document executor hands the work out through the existing token service — called,
+The registry maps a node type to its executor: ``document``, ``custom`` and ``gate``. A gate node hands
+no work out — no token, no mention, ``dispatch = null`` (P0008 §7.1, L0009 §2.6.6); a person decides
+it through the gate decision API (``gate_service``, P0008 S6-1). flowgate.v02.0053 T#8: a ``custom`` node
+(a Custom card) is a plain document card — handed out by the document executor as the document type its
+run writes (``graph_model.run_doc_type``: the work instruction T), whatever Palette category made it.
+The document executor hands the work out through the existing token service — called,
 never changed — with the v0.1 next-step token shape (``action_scope="new"``, ``doc_ref`` = the
 Flow's root document, here the bound root's live end), records token -> node run (the result
 binder's evidence) and, for an AI assignee, queues the AI start after the commit.
@@ -18,6 +20,12 @@ binder's evidence) and, for an AI assignee, queues the AI start after the commit
   ``mention_id`` stays null.
 - The AI start is ``ai_node_starter.start_ai_invoke`` (the existing AI invoke service, single mode,
   once per node — D0004 §3.4 / §3.5). ``set_ai_starter`` swaps it (tests; ``None`` = not wired).
+- flowgate.v02.0053 T#2: an AI node reads its card's run settings here, inside the run step's guard
+  (``card_settings_ports.run_settings``): the card's run AI replaces the assignee provider (token and
+  start), its time limit / restarts ride the job to the start, and with the instruction omitted the
+  AI writes the card's report instead of the node's own type (``result_doc_type``; the result binder
+  asks the same port which type it binds). With no setting (or no handler) every value is the one
+  used before.
   When the start raises, or nothing is wired, the open node records ``ai_invoke_failed`` in a new
   guard (L0009 E-23); the token stays valid for a person.
 """
@@ -28,8 +36,11 @@ from contextlib import contextmanager
 from typing import Any, Callable, Optional
 
 from modules.flow_gate.db.connection import get_store
+from modules.flow_gate.graph_workflow.domain.graph_model import run_doc_type
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.services import token_service
+
+from . import card_settings_ports
 
 _log = logging.getLogger(__name__)
 
@@ -72,7 +83,8 @@ def dispatch(ctx, node_key: str) -> Optional[dict]:
 
 def dispatch_document(ctx, row: dict) -> dict:
     ai = row.get("assignee_kind") == "ai"
-    provider = row.get("assignee_provider_id") if ai else None
+    plan = card_settings_ports.run_settings(ctx.flow_id, row) if ai else {}
+    provider = (plan.get("provider_id") or row.get("assignee_provider_id")) if ai else None
     user = row.get("assignee_user_id") if row.get("assignee_kind") == "human" else None
     issued_to = user or ctx.run.get("started_by") or ctx.actor or ""
     shown = provider if ai and provider else issued_to
@@ -91,9 +103,17 @@ def dispatch_document(ctx, row: dict) -> dict:
     if ai:
         job = {"flow_id": ctx.flow_id, "project_id": ctx.project_id, "run_id": ctx.run_id,
                "node_key": row["node_key"], "provider_id": provider, "token": token,
-               "issued_to": issued_to, "doc_ref": (root or {}).get("doc_id"), "doc_type": row.get("doc_type")}
+               "issued_to": issued_to, "doc_ref": (root or {}).get("doc_id"), "doc_type": row.get("doc_type"),
+               "result_doc_type": plan.get("result_doc_type") or row.get("doc_type"),
+               "step_timeout_sec": plan.get("step_timeout_sec"), "restart_max": plan.get("restart_max"),
+               "card_settings": plan.get("settings") or {}}
         ctx.jobs.append(lambda: start_ai(job))
     return {"token_issued": True, "mention_id": None, "issued_to": shown}
+
+
+def dispatch_custom(ctx, row: dict) -> dict:
+    """Custom card executor (flowgate.v02.0053 T#8): the document executor, the node standing for its run type."""
+    return dispatch_document(ctx, {**row, "doc_type": run_doc_type(row.get("node_type"), row.get("doc_type"))})
 
 
 def dispatch_gate(_ctx, _row: dict) -> None:
@@ -101,7 +121,9 @@ def dispatch_gate(_ctx, _row: dict) -> None:
     return None
 
 
-_EXECUTORS: dict[str, Callable[[Any, dict], Optional[dict]]] = {"document": dispatch_document, "gate": dispatch_gate}
+_EXECUTORS: dict[str, Callable[[Any, dict], Optional[dict]]] = {
+    "document": dispatch_document, "custom": dispatch_custom, "gate": dispatch_gate,
+}
 
 
 def start_ai(job: dict) -> None:

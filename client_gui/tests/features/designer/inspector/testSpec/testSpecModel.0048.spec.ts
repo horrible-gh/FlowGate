@@ -387,7 +387,6 @@ describe('wording', () => {
     'run',
     'run_hint',
     'cancel',
-    'open',
     'open_hint',
     'open_spec',
     'open_report',

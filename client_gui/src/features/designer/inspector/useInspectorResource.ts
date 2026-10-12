@@ -12,6 +12,9 @@
 // - A new target document drops the previous one's data, and a read answered after the target
 //   changed (or after a newer read started) is thrown away: results are applied by request order.
 // - Leaving (component unmount / scope dispose) unsubscribes and drops a pending read again.
+// flowgate.v02.0053 T#7 — a resource whose server answers a change with the whole resource (the card
+// settings, one value per request, no save button) takes that answer as its data (`replace`), and
+// useInspectorFieldWrite sends the changes: one at a time, the value sent shown until it is answered.
 import { getCurrentInstance, onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
 import { useProjectStore, type ProjectEventFrame, type ProjectEventSubscription } from '@/features/project'
 import type { InspectorTarget } from './inspectorTarget'
@@ -123,6 +126,8 @@ export interface InspectorResource<T> {
   readonly stale: Readonly<Ref<boolean>>
   /** Reads the current target document again (after the caller's own change, or a retry). */
   reload(): Promise<void>
+  /** Takes `value` as the current target's data (a change's answer); a read running now is thrown away. */
+  replace(value: T): void
 }
 
 export function useInspectorResource<T>(options: InspectorResourceOptions<T>): InspectorResource<T> {
@@ -172,11 +177,121 @@ export function useInspectorResource<T>(options: InspectorResourceOptions<T>): I
     { immediate: true },
   )
 
+  function replace(value: T): void {
+    if (docId() === null) return
+    latest++
+    data.value = value
+    error.value = null
+    stale.value = false
+    status.value = 'ready'
+  }
+
   useInspectorEvents(options.target, { events: options.events, matches: options.matches, changed: () => void reload() })
 
   onScopeDispose(() => {
     latest++
   })
 
-  return { data, status, error, stale, reload }
+  return { data, status, error, stale, reload, replace }
+}
+
+export interface InspectorFieldWriteOptions<T> {
+  /** The target the writes belong to; its docId is the resource key the write is sent for. */
+  target: () => InspectorEventScope | null
+  /** The resource a write's answer replaces. */
+  resource: InspectorResource<T>
+  /** Changes one value of the resource — a `@/features/document` call answering the whole resource. */
+  write: (docId: string, field: string, value: unknown) => Promise<T>
+}
+
+export interface InspectorFieldWrite {
+  /** Values sent and not answered yet, by field: shown instead of the read until the answer comes. */
+  readonly pending: Readonly<Ref<Readonly<Record<string, unknown>>>>
+  /** A write is waiting for the server. */
+  readonly busy: Readonly<Ref<boolean>>
+  /**
+   * The last refused write of the target (its field and what it threw); cleared by a new write of that field
+   * and by the field's latest change being taken. A refusal of a change made earlier than the field's latest is
+   * not kept (that value is no longer the one wanted).
+   */
+  readonly failure: Readonly<Ref<{ readonly field: string; readonly error: unknown } | null>>
+  /** Sends one value; true when the server took it. Writes go one after another, in the order made. */
+  write(field: string, value: unknown): Promise<boolean>
+}
+
+/**
+ * The common write of one value (flowgate.v02.0053 T#7). Each change is sent at once; while it waits its
+ * value is pending (shown), the next change waits for it, and the answer replaces the resource. A refusal
+ * keeps the field's failure and reads the resource again. A new target drops the pending values and the
+ * failure; an answer for an earlier target is not applied.
+ * Each change has a number; a field remembers its latest. Only the answer to a field's latest change settles
+ * its pending value or its failure — an earlier answer (the same field changed again before it came, e.g.
+ * on → off → on) neither drops the newer pending value nor sets or keeps a failure over it.
+ */
+export function useInspectorFieldWrite<T>(options: InspectorFieldWriteOptions<T>): InspectorFieldWrite {
+  const pending = shallowRef<Readonly<Record<string, unknown>>>({})
+  const busy = ref(false)
+  const failure = shallowRef<{ readonly field: string; readonly error: unknown } | null>(null)
+  let queue: Promise<unknown> = Promise.resolve()
+  let waiting = 0
+  let ticket = 0
+  // Change numbers: `latestChange[field]` is the field's latest change of the current target.
+  let changes = 0
+  let latestChange: Record<string, number> = {}
+
+  const key = () => options.target()?.docId ?? null
+
+  watch(key, () => {
+    ticket++
+    pending.value = {}
+    failure.value = null
+    latestChange = {}
+  })
+
+  /** Drops the field's pending value when `change` is its latest change; false for an earlier change. */
+  function settle(field: string, change: number): boolean {
+    if (latestChange[field] !== change) return false
+    delete latestChange[field]
+    const rest: Record<string, unknown> = { ...pending.value }
+    delete rest[field]
+    pending.value = rest
+    return true
+  }
+
+  function write(field: string, value: unknown): Promise<boolean> {
+    const id = key()
+    if (id === null) return Promise.resolve(false)
+    const own = ticket
+    const change = ++changes
+    latestChange[field] = change
+    pending.value = { ...pending.value, [field]: value }
+    if (failure.value?.field === field) failure.value = null
+    waiting++
+    busy.value = true
+    const run = queue.then(async () => {
+      try {
+        const answer = await options.write(id, field, value)
+        if (own !== ticket) return false
+        options.resource.replace(answer)
+        if (settle(field, change) && failure.value?.field === field) failure.value = null
+        return true
+      } catch (error) {
+        if (own !== ticket) return false
+        if (settle(field, change)) failure.value = { field, error }
+        await options.resource.reload()
+        return false
+      } finally {
+        waiting--
+        if (waiting === 0) busy.value = false
+      }
+    })
+    queue = run.catch(() => false)
+    return run
+  }
+
+  onScopeDispose(() => {
+    ticket++
+  })
+
+  return { pending, busy, failure, write }
 }

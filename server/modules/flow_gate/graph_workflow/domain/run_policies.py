@@ -16,12 +16,16 @@ The ``undecided`` implementation of every key is always registered: any call rai
 - ``completion.is_complete(revision, state) -> bool``
 - ``gate_node.judge(node_key, decision, comment) -> "confirmed" | "rejected"`` (S6 gate decision)
 - ``report_pair`` / ``custom_node``: slots only (Q-5 / Q-11)
+
+flowgate.v02.0053 T#8: no revision needs ``custom_node`` any more. A Custom card runs as a plain document
+card — a work instruction (``graph_model.run_doc_type``) — so it needs what an instruction card needs
+(``report_pair``). The slot stays one of the nine a run snapshots (stored runs keep their entries).
 """
 from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
-from .graph_model import Graph
+from .graph_model import Graph, run_doc_type
 from .policies import POLICY_KEYS, UNDECIDED, UNDECIDED_IMPL_VERSION
 
 # L0009 §2.6.3 RULE_REF — the D0004 §8 question each slot waits on.
@@ -106,8 +110,7 @@ def required_policies(revision: Graph, bound_node_key: Optional[str] = None,
     bound_done = bound_review_status in DONE_REVIEW_STATUSES
     if any(not (n.key == bound_node_key and bound_done) for n in revision.nodes):
         req.add("rejection_path")
-    if any(n.node_type == "document" and (n.doc_type or "").upper() in INSTRUCTION_DOC_TYPES
-           for n in revision.nodes):
+    if any((run_doc_type(n.node_type, n.doc_type) or "").upper() in INSTRUCTION_DOC_TYPES for n in revision.nodes):
         req.add("report_pair")
     live = revision.live_edges()
     out_degree: dict[str, int] = {}
@@ -119,8 +122,6 @@ def required_policies(revision: Graph, bound_node_key: Optional[str] = None,
         req.add("join")
     if any(n.node_type == "gate" for n in revision.nodes):
         req.add("gate_node")
-    if any(n.node_type == "custom" for n in revision.nodes):
-        req.add("custom_node")
     return req
 
 

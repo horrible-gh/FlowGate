@@ -93,7 +93,7 @@ export interface CheckState {
   approve(choice: CheckGitChoice | null): Promise<boolean>
   /** Opens the right Tool Panel on Git. */
   openGit(): void
-  /** ↗ 열기: the AC in the v0.1 document screen. */
+  /** ↗ 열기: the AC in its document window. */
   open(): void
   /** Reads the review and Git state again. */
   reload(): Promise<void>

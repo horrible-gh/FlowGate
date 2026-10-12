@@ -8,6 +8,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
+import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
 import { registrationViolations } from '@/features/designer/inspector/inspectorRegistry'
 import {
   fixtureRegistry,
@@ -78,7 +79,7 @@ describe('registry contract (flowgate.v02.0051)', () => {
 
   it('a registration contributing nothing names every place', () => {
     expect(registrationViolations(registrationModules([registration({ key: 'none', order: 1 })]))).toEqual([
-      'features/none: contributes no tab, header action, header meta, header kind or header menu',
+      'features/none: contributes no tab, header action, header meta, header kind, header menu or header memo',
     ])
   })
 })
@@ -164,7 +165,9 @@ describe('the real registry on Nodes without a document', () => {
     await flushPromises()
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
     expect(sections(w)).toEqual(['requirementCard'])
-    expect(get(w, 'inspector-requirement-card').find('[data-test="inspector-slot-empty"]').text()).toBe('아직 없음')
+    // flowgate.v02.0053 T#5: a line without a document is a hollow dot saying so — no "아직 없음" text.
+    expect(get(w, 'inspector-requirement-card').get('[data-test="inspector-slot-state"]').attributes('title')).toBe('문서 없음')
+    expect(get(w, 'inspector-requirement-card').text()).not.toContain('아직 없음')
     expect(get(w, 'designer-inspector-kind').text()).toBe('요구사항')
     await clickTab(w, '설정')
     expect(sections(w)).toEqual(['requirementSettings'])
@@ -191,11 +194,16 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     expect(get(w, 'inspector-gate-card').find('[data-test="inspector-slot-name"]').text()).toBe('확인 결과')
     await clickTab(w, 'Q&A')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
-    expect(get(w, 'designer-inspector-tab-state').text()).toContain('연결된 문서가 없습니다.')
+    // flowgate.v02.0053 T#6: no "no linked document" sentence on Q&A and attachments.
+    expect(get(w, 'designer-inspector-tab-state').text()).toBe('')
     await clickTab(w, '첨부')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
+    expect(get(w, 'designer-inspector-tab-state').text()).toBe('')
+    // flowgate.v02.0053 T#7: a Graph gate has the v7 확인 settings (용도 · Git 반영), not an empty state.
     await clickTab(w, '설정')
-    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
+    expect(sections(w)).toEqual(['checkSettings'])
+    expect(w.find('[data-test="designer-inspector-tab-state"]').exists()).toBe(false)
+    expect(get(w, 'inspector-check-settings').exists()).toBe(true)
   })
 
   it('shows only card slots and keeps the document open action reachable', async () => {
@@ -209,29 +217,48 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     expect(get(w, 'designer-inspector-body').text()).not.toContain('현재 문서')
     expect(get(w, 'designer-inspector-body').text()).not.toContain('문서 상태 open rev 0')
     expect(get(w, 'designer-inspector-body').text()).not.toContain('문서 작성·편집은')
+    closeAllDocumentWindows()
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
-    // flowgate.v02.0052 T#3: the ↗ tooltip says it opens the v0.1 screen in a new tab that may sign in again.
-    expect(get(w, 'inspector-task-card').get('[data-test="inspector-slot-open"]').attributes('title')).toBe(
-      '새 탭에서 v0.1 문서 화면으로 엽니다. 새 탭에서는 다시 로그인해야 할 수 있습니다.',
-    )
+    // flowgate.v02.0053 T#3: ↗ says 열기 again and opens the document window in this tab — never a browser
+    // tab; ✎ opens the same window straight in its editor.
+    const docId = SELECTIONS.v01.node.document!.docId
+    expect(get(w, 'inspector-task-card').get('[data-test="inspector-slot-open"]').attributes('title')).toBe('열기')
     await get(w, 'inspector-task-card').get('[data-test="inspector-slot-open"]').trigger('click')
-    expect(open).toHaveBeenCalledWith(`/main/?doc=${encodeURIComponent(SELECTIONS.v01.node.document!.docId)}`, '_blank', 'noopener')
+    expect(open).not.toHaveBeenCalled()
+    expect(documentWindowList().map((win) => [win.docId, win.mode])).toEqual([[docId, 'view']])
+    expect(get(w, 'inspector-task-card').get('[data-test="inspector-slot-edit"]').attributes('title')).toBe('편집')
+    await get(w, 'inspector-task-card').get('[data-test="inspector-slot-edit"]').trigger('click')
+    expect(documentWindowList().map((win) => [win.docId, win.mode])).toEqual([[docId, 'edit']])
     open.mockRestore()
+    closeAllDocumentWindows()
   })
 
-  it('shows unavailable settings for a Graph research card without a settings contribution', async () => {
-    const node = { ...UNASSIGNED_REQ_NODE, id: 'gn_n_layout', kind: 'research', docType: 'N', document: null }
+  // flowgate.v02.0053 T#7: a Graph card has its own settings (T#2) — the v7 form, not "not supported yet".
+  it('shows the settings form on a Graph research card', async () => {
+    const node = {
+      ...UNASSIGNED_REQ_NODE,
+      id: 'gn_n_layout',
+      kind: 'research',
+      docType: 'N',
+      document: null,
+      definition: { nodeType: 'document', docType: 'N', paletteItemId: 'doc_n', label: '조사', assignee: null, rootBound: false },
+    }
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'graph', nodes: [node] }, node.id))
     await clickTab(w, '설정')
-    expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
-    // flowgate.v02.0052 T#2: it says why — a Graph Node's run settings are not supported in the Inspector yet.
-    expect(get(w, 'designer-inspector-tab-state').text()).toContain('Graph 플로우 Node의 실행 설정은 Inspector에서 아직 지원하지 않습니다.')
+    expect(sections(w)).toEqual(['settings'])
+    expect(w.find('[data-test="designer-inspector-tab-state"]').exists()).toBe(false)
+    expect(get(w, 'inspector-settings').attributes('data-source')).toBe('card')
+    expect(w.text()).not.toContain('아직 지원하지 않습니다')
   })
 
-  it('names why the settings tab is empty for an undecided Flow (flowgate.v02.0052 T#2)', async () => {
+  // flowgate.v02.0053 T#7 (0053 CH: no sentence on an empty screen): a Node with no settings (a document Node of
+  // an undecided Flow outside any card or sequence) has an empty settings area — the 0052 T#2 reason is gone.
+  it('keeps the settings tab of a Node without settings empty, without a reason line', async () => {
     const node = { ...UNASSIGNED_REQ_NODE, id: 'doc_n', kind: 'research', docType: 'N', document: null }
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'unassigned', nodes: [node] }, node.id))
     await clickTab(w, '설정')
-    expect(get(w, 'designer-inspector-tab-state').text()).toContain('실행 방식(v0.1 · Graph)이 정해지지 않은 플로우라 실행 설정이 없습니다.')
+    expect(sections(w)).toEqual([])
+    expect(get(w, 'designer-inspector-tab-state').text()).toBe('')
+    expect(w.text()).not.toContain('실행 설정이 없습니다')
   })
 })

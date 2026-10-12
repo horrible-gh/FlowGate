@@ -12,6 +12,9 @@
 // node_key while its slot takes the new id. A refusal of the group guard (disposed, AI run) keeps the
 // fields disabled until the Node changes or the state is read again; a stale screen (the rows moved)
 // reads the Canvas again as well.
+// flowgate.v02.0053 T#7 — the v0.1 Flow's Node only (a Graph card's settings are useCardSettings'). A change
+// is saved at once (`change`: no save button, no "saved" line — v7), and while the rows written again wait
+// for the Canvas to give the Node its row's new id, the row last shown stays drawn (off) instead of a line.
 import { computed, inject, ref, watch, type ComputedRef, type Ref } from 'vue'
 import {
   reviewDocumentRead,
@@ -42,7 +45,6 @@ import {
   settingsDraftWith,
   settingsErrorKey,
   settingsFailureKey,
-  settingsHopView,
   settingsProviderOptions,
   settingsReviewCountOptions,
   settingsRowFor,
@@ -51,7 +53,6 @@ import {
   type SettingsBlocked,
   type SettingsDraft,
   type SettingsField,
-  type SettingsHopView,
   type SettingsOption,
 } from './settingsModel'
 
@@ -99,6 +100,8 @@ function choicesScopeOf(target: InspectorTarget | null): InspectorEventScope | n
 
 export interface SettingsFailure {
   readonly key: string
+  /** The field whose change was refused. */
+  readonly field: SettingsField
 }
 
 export interface SettingsFieldView {
@@ -107,25 +110,28 @@ export interface SettingsFieldView {
 }
 
 export interface SettingsTabState {
-  /** The Node's row, or null (no slot, not read yet, or not in the read). */
+  /**
+   * The Node's row, or null (no slot, not read yet). While the rows written again by a save wait for the
+   * Canvas (the Node's slot still names the old id), the row last shown on this Node.
+   */
   readonly row: ComputedRef<SettingsRow | null>
+  /** The read holds the Node's row (false while the shown row is the last one, waiting for the Canvas). */
+  readonly found: ComputedRef<boolean>
   /** The Node has no v0.1 sequence slot: there is nothing to set. */
   readonly noSlot: ComputedRef<boolean>
   readonly fields: ComputedRef<Readonly<Record<SettingsField, SettingsFieldView>> | null>
   readonly availability: ComputedRef<SettingsAvailability>
-  /** What the running hop of this row took from it, or null. */
-  readonly hop: ComputedRef<SettingsHopView | null>
   readonly status: Readonly<Ref<InspectorResourceStatus>>
   /** Message key of the failed read, or null. */
   readonly errorKey: ComputedRef<string | null>
   readonly busy: Readonly<Ref<boolean>>
   /** The last refused save of this Node, or null. */
   readonly failure: Readonly<Ref<SettingsFailure | null>>
-  /** The last save of this Node went through (until the next change). */
-  readonly saved: Readonly<Ref<boolean>>
   set(field: SettingsField, value: string): void
   /** Saves the Node's row; nothing is sent when saving is disabled or nothing changed. */
   save(): Promise<boolean>
+  /** Sets one field and saves it at once (v7: no save button). */
+  change(field: SettingsField, value: string): Promise<boolean>
   reload(): Promise<void>
 }
 
@@ -147,8 +153,12 @@ export function useSettings(target: () => InspectorTarget | null): SettingsTabSt
   const draft = ref<SettingsDraft | null>(null)
   const busy = ref(false)
   const failure = ref<SettingsFailure | null>(null)
-  const saved = ref(false)
   const blocked = ref<SettingsBlocked>(null)
+  const lastRow = ref<SettingsRow | null>(null)
+  const lastField = ref<SettingsField | null>(null)
+  // A save went through and its row (written again under a new id) waits for the Canvas: the saved values
+  // stay shown until the Node finds its row again.
+  let awaitingRow = false
 
   // The Node keeps its node_key when a save writes its row again under a new id, so the key is the Node's.
   const nodeKey = () => {
@@ -159,8 +169,9 @@ export function useSettings(target: () => InspectorTarget | null): SettingsTabSt
   watch(nodeKey, () => {
     draft.value = null
     failure.value = null
-    saved.value = false
     blocked.value = null
+    lastRow.value = null
+    awaitingRow = false
   })
 
   // A guard event may lift what a refusal blocked: let the read decide again.
@@ -176,7 +187,18 @@ export function useSettings(target: () => InspectorTarget | null): SettingsTabSt
   const readState = computed(() => state.data.value)
 
   const noSlot = computed(() => !target()?.slot)
-  const row = computed(() => settingsRowFor(readState.value?.sequence.items ?? null, target()?.slot ?? null))
+  const readRow = computed(() => settingsRowFor(readState.value?.sequence.items ?? null, target()?.slot ?? null))
+  watch(readRow, (now) => {
+    if (now) lastRow.value = now
+  })
+  const found = computed(() => readRow.value !== null)
+  watch(found, (now) => {
+    if (now && awaitingRow) {
+      awaitingRow = false
+      draft.value = null
+    }
+  })
+  const row = computed(() => readRow.value ?? (noSlot.value ? null : lastRow.value))
   // flowgate.v02.0052 T#2 rework: only a row not started yet takes a draft. A started row (in progress or
   // done) is history and shows what the server holds; a draft left from before it started (an event read
   // the row again on the same Node) is dropped, so it never shows nor comes back.
@@ -199,7 +221,7 @@ export function useSettings(target: () => InspectorTarget | null): SettingsTabSt
   watch(
     () => {
       const current = target()
-      if (!current?.slot || !readState.value || row.value || busy.value) return null
+      if (!current?.slot || !readState.value || found.value || busy.value) return null
       return slotKey(current, current.slot.itemId)
     },
     (key) => {
@@ -216,7 +238,7 @@ export function useSettings(target: () => InspectorTarget | null): SettingsTabSt
       groupDisposed: readState.value?.groupDisposed === true,
       aiRunning: readState.value?.run.active === true,
       blocked: blocked.value,
-      row: rowState.value,
+      row: found.value ? rowState.value : null,
       reviewCount: shown.value?.reviewCount ?? 0,
       changed: changed.value,
       busy: busy.value,
@@ -241,15 +263,13 @@ export function useSettings(target: () => InspectorTarget | null): SettingsTabSt
     }
   })
 
-  const hop = computed(() => (row.value ? settingsHopView(row.value, readState.value?.run.hop ?? null) : null))
-
   const errorKey = computed(() => (state.status.value === 'error' ? settingsErrorKey(settingsErrorOf(state.error.value).kind) : null))
 
   function set(field: SettingsField, value: string): void {
     const current = shown.value
     if (!current || !availability.value[field].enabled) return
     draft.value = settingsDraftWith(current, field, value, choices.data.value?.providers ?? [])
-    saved.value = false
+    lastField.value = field
     failure.value = null
   }
 
@@ -259,9 +279,9 @@ export function useSettings(target: () => InspectorTarget | null): SettingsTabSt
     const itemId = row.value?.itemId
     if (!current || !values || itemId === undefined || !availability.value.save.enabled) return false
     const key = nodeKey()
+    const field = lastField.value ?? 'provider'
     busy.value = true
     failure.value = null
-    saved.value = false
     let ok = false
     try {
       try {
@@ -274,38 +294,48 @@ export function useSettings(target: () => InspectorTarget | null): SettingsTabSt
       } catch (error) {
         if (nodeKey() === key) {
           const kind = settingsErrorOf(error).kind
-          failure.value = { key: settingsFailureKey(kind) }
+          // Saved at once: a refused change is not kept (the field shows what the server holds, and why not).
+          draft.value = null
+          failure.value = { key: settingsFailureKey(kind), field }
           blocked.value = settingsBlockedBy(kind) ?? blocked.value
           if (kind === 'stale') host?.request({ kind: 'refresh-flow' })
         }
       }
       if (ok && nodeKey() === key) {
-        draft.value = null
-        saved.value = true
         // The rows written again carry new ids: the Canvas reads them and keeps each slot's node_key.
         asked.add(slotKey(current, itemId))
         host?.request({ kind: 'refresh-flow' })
       }
       await state.reload()
+      if (ok && nodeKey() === key) {
+        // A row saved in place is found at once; a row written again waits for the Canvas (shown as saved).
+        if (found.value) draft.value = null
+        else awaitingRow = true
+      }
     } finally {
       busy.value = false
     }
     return ok
   }
 
+  async function change(field: SettingsField, value: string): Promise<boolean> {
+    set(field, value)
+    return save()
+  }
+
   return {
     row,
+    found,
     noSlot,
     fields,
     availability,
-    hop,
     status: state.status,
     errorKey,
     busy,
     failure,
-    saved,
     set,
     save,
+    change,
     reload: async () => {
       blocked.value = null
       await Promise.all([state.reload(), choices.reload()])

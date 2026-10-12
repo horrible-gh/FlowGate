@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import type { FlowGraphSelection } from '@/features/designer/center/graph/flowGraph'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
+import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
 import CheckAction from '@/features/designer/inspector/features/check/CheckAction.vue'
 import CheckTab from '@/features/designer/inspector/features/check/CheckTab.vue'
 import { CHECK_ACTIVITY_EVENTS, CHECK_DOCUMENT_EVENTS, CHECK_GIT_EVENTS, useCheck } from '@/features/designer/inspector/features/check/useCheck'
@@ -214,14 +215,18 @@ async function settle(ms = INSPECTOR_REFRESH_COALESCE_MS) {
 describe('check section — state shown (flowgate.v02.0048 T#12)', () => {
   it('a waiting AC of a Git active Flow: check state, Git state, branch, ahead / behind, the Git panel and ↗ 열기', async () => {
     const w = await mountPart(CheckTab)
-    expect(el(w, 'check-review').text()).toBe('확인 대기')
+    expect(el(w, 'check-review').attributes('title')).toBe('확인 대기')
     expect(el(w, 'check-git').text()).toBe('반영 방식 선택 대기')
     expect(el(w, 'check-git').attributes('data-tone')).toBe('warning')
     expect(el(w, 'check-git-branch').text()).toBe('브랜치 test2_default_0034')
     expect(w.findAll('[data-test="check-git-note"]').map((note) => note.text())).toEqual(['본 브랜치보다 2커밋 앞서고 0커밋 뒤처져 있습니다'])
-    // flowgate.v02.0051 stage 2: both are the 확인 결과 slot line's buttons (v7 "{nav} ↗" and ↗).
+    // flowgate.v02.0051 stage 2: both are the 확인 결과 slot line's buttons. flowgate.v02.0053 T#5: the Git panel
+    // (another screen) keeps its ↗; the open button is the document icon (tooltip 열기) and the check state
+    // is the line's dot (its wording the tooltip).
     expect(el(w, 'check-open-git').text()).toBe('Git 패널 열기 ↗')
-    expect(el(w, 'check-open').text()).toBe('↗')
+    expect(el(w, 'check-open').attributes('data-icon')).toBe('document')
+    expect(el(w, 'check-open').attributes('title')).toBe('열기')
+    expect(el(w, 'check-open').text()).toBe('')
     expect(documentRead).toHaveBeenCalledWith(AC_DOC)
     expect(gitRead).toHaveBeenCalledWith(FLOW)
     expect(activityRead).toHaveBeenCalledWith(FLOW)
@@ -230,14 +235,17 @@ describe('check section — state shown (flowgate.v02.0048 T#12)', () => {
     expect(el(w, 'check-approve').exists()).toBe(false)
   })
 
-  it('Git 패널 열기 asks the Host for the Git tool; ↗ 열기 opens the AC in the v0.1 screen', async () => {
+  it('Git 패널 열기 asks the Host for the Git tool; ↗ 열기 opens the AC in its document window (flowgate.v02.0053 T#3)', async () => {
+    closeAllDocumentWindows()
     const open = vi.fn()
     vi.stubGlobal('open', open)
     const w = await mountPart(CheckTab)
     await click(w, 'check-open-git')
     expect(intents).toEqual([{ kind: 'show-tool', tool: 'git' }])
     await click(w, 'check-open')
-    expect(open).toHaveBeenCalledWith(`/main/?doc=${encodeURIComponent(AC_DOC)}`, '_blank', 'noopener')
+    expect(open).not.toHaveBeenCalled()
+    expect(documentWindowList().map((win) => [win.docId, win.mode])).toEqual([[AC_DOC, 'view']])
+    closeAllDocumentWindows()
     // Looking changes nothing on the server.
     expect(approveCall).not.toHaveBeenCalled()
   })
@@ -271,7 +279,7 @@ describe('check section — state shown (flowgate.v02.0048 T#12)', () => {
   ])('AC %s -> %s', async (status, text) => {
     acs.get(AC_DOC)!.status = status
     const w = await mountPart(CheckTab)
-    expect(el(w, 'check-review').text()).toBe(text)
+    expect(el(w, 'check-review').attributes('title')).toBe(text)
   })
 
   it('a final approval job of this AC: queued line; a recovery one says so', async () => {
@@ -293,7 +301,7 @@ describe('check section — state shown (flowgate.v02.0048 T#12)', () => {
     const w = await mountPart(CheckTab)
     expect(el(w, 'check-git-error').text()).toBe(text)
     expect(el(w, 'check-git').exists()).toBe(false)
-    expect(el(w, 'check-review').text()).toBe('확인 대기')
+    expect(el(w, 'check-review').attributes('title')).toBe('확인 대기')
     expect(isDisabled(w, 'check-open-git')).toBe(false)
   })
 
@@ -342,7 +350,7 @@ describe('check section — server events read again (D#1 §7.4)', () => {
     stream.emit('git_finalize_done', { groupId: FLOW, payload: { group_id: FLOW, status: 'merged' } })
     await settle()
     expect(documentRead).toHaveBeenCalledTimes(2)
-    expect(el(w, 'check-review').text()).toBe('확인됨')
+    expect(el(w, 'check-review').attributes('title')).toBe('확인됨')
     stream.emit('git_approval_job_changed', { groupId: FLOW, payload: { status: 'succeeded' } })
     await settle()
     expect(documentRead).toHaveBeenCalledTimes(3)
@@ -364,7 +372,7 @@ describe('check section — server events read again (D#1 §7.4)', () => {
     stream.emit('doc_review_status_changed', { docId: AC_DOC, groupId: FLOW, payload: { prev_status: 'pending_review', next_status: 'approved' } })
     await settle()
     expect(documentRead).toHaveBeenCalledTimes(2)
-    expect(el(w, 'check-review').text()).toBe('확인됨')
+    expect(el(w, 'check-review').attributes('title')).toBe('확인됨')
     // Another document's change reads nothing.
     stream.emit('doc_review_status_changed', { docId: OTHER_AC_DOC, groupId: 'test2.default.0016' })
     await settle()
@@ -803,9 +811,9 @@ describe('check card in the Frame (real registry)', () => {
     acs.get(AC_DOC)!.status = status
     const w = await mountFrame(acSelection({}, { ...AC_NODE, document: { ...AC_NODE.document!, docReviewStatus: status } }))
     const text = w.text()
-    // flowgate.v02.0051: the v7 header's ✎ 메모 is on every card as a disabled control (no memo API yet,
-    // 0051-R §2.3) — shown, never working; the undecided wording stays out of the check card itself.
+    // flowgate.v02.0051: the undecided wording stays out of the check card itself. flowgate.v02.0053 T#9: the
+    // v7 header's ✎ 메모 works on every card with a document (features/memo), so it is usable here.
     for (const word of ['게이트', 'gate', '위임', '전개', 'AI 전달', '재시도', '마지막 확인', '연동 전']) expect(text).not.toContain(word)
-    expect(w.get('[data-test="designer-inspector-memo"]').attributes('disabled')).toBeDefined()
+    expect(w.get('[data-test="designer-inspector-memo"]').attributes('disabled')).toBeUndefined()
   })
 })

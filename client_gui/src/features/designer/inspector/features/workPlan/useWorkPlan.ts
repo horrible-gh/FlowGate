@@ -4,7 +4,7 @@
 // of the plan sends document_explorer_refresh / group_view_refresh for the WP (`documents/routers/
 // work_plan.py` _emit), a review sends doc_review_status_changed — when a document of the same Flow is added
 // or updated (a card of the plan may have started), and on a reconnect. Nothing here changes the server:
-// editing is the v0.1 WorkPlanEditor's, opened by ↗ 열기 (openDocument).
+// the plan opens in its document window by ↗ 열기 (openDocument).
 import { computed, type ComputedRef, type Ref } from 'vue'
 import { workPlanErrorOf, workPlanRead, type WorkPlanView } from '@/features/document'
 import { openDocument } from '../../openDocument'
@@ -45,7 +45,7 @@ export interface WorkPlanState {
   readonly errorKey: ComputedRef<string | null>
   /** The revision an unreadable plan answered with, or null. */
   readonly unreadableRevision: ComputedRef<number | null>
-  /** Opens the plan in the v0.1 screen (its WorkPlanEditor) in a new tab. */
+  /** Opens the plan in its document window in this tab. */
   open(): void
   reload(): Promise<void>
 }

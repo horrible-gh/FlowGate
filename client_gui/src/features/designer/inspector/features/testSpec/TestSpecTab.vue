@@ -4,13 +4,16 @@
        the recent runs, ▶ 실행 / ■ 취소 with the reason when disabled and the refusal the server answered,
        and ↗ 열기 for everything in detail. A thin container: useTestSpec reads and calls, testSpecModel
        decides the form, the state and availability.
-       flowgate.v02.0051 stage 2 — the v7 테스트 card (0035 test.*) on top: the three slot lines 지시 (TS) ·
-       케이스 (TSC) · 결과 (TSR), built from the common slot list part out of the same test view; the 0048
-       tally, buttons, reasons and history stay below as reused content. -->
+       flowgate.v02.0051 stage 2 — the v7 테스트 card (0035 test.*) on top: the three slot lines, built from the
+       common slot list part out of the same test view; the 0048 tally, buttons, reasons and history stay
+       below as reused content.
+       flowgate.v02.0053 T#5 (0053 CH) — 지시서 · 시나리오 · 레포트: the card's documents (made when it was placed),
+       so a test card without a bound document shows and opens them too; the 지시서 line is hidden when the
+       card's settings omit the instruction (useTestCard). The details (and their reads) need a document. -->
   <section class="inspector-test-spec" data-test="inspector-test-spec" :data-status="status" :data-form="form">
-    <InspectorSlotList :slots="lines" @open="openLine" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="editLine" />
 
-    <details :key="target.docId ?? undefined" class="inspector-test-spec-details" data-test="test-spec-details">
+    <details v-if="target.docId" :key="target.docId" class="inspector-test-spec-details" data-test="test-spec-details">
       <summary>{{ t('gui.designer.inspector.pane.details') }}</summary>
     <div class="inspector-test-spec-line">
       <h4 class="inspector-test-spec-heading">{{ t(k('title')) }}</h4>
@@ -63,7 +66,7 @@
           data-test="test-spec-cancel"
           @click="cancel"
         >{{ t(k('cancel')) }}</Button>
-        <Button size="sm" variant="ghost" :title="t(k('open_hint'))" data-test="test-spec-open" @click="open(view.docId)">{{ t(k('open')) }}</Button>
+        <InspectorOpenButton :title="t(k('open_hint'))" data-test="test-spec-open" @click="open(view.docId)" />
         <Button
           v-if="view.kind === 'TSR' && view.tsDocId"
           size="sm"
@@ -109,11 +112,14 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../../components/ui/Button.vue'
+import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
+import { openDocument } from '../../openDocument'
 import { testSpecSlots, testSpecVerdictKey, type TestSpecSlot } from './testSpecModel'
+import { useTestCard } from './useTestCard'
 import { useTestSpec } from './useTestSpec'
 
 const props = defineProps<{
@@ -127,6 +133,8 @@ const k = (key: string) => `gui.inspector.testSpec.${key}`
 const { view, form, tally, runState, counts, history, availability, status, errorKey, busy, failure, run, cancel, open, reload } = useTestSpec(
   () => props.target,
 )
+
+const { instructionOmitted } = useTestCard(() => props.target)
 
 const verdictKey = computed(() => testSpecVerdictKey(runState.value.overall))
 
@@ -158,10 +166,9 @@ function summaryOf(slot: TestSpecSlot): string | null {
 }
 
 const lines = computed<InspectorSlotView[]>(() =>
-  testSpecSlots(view.value, props.target).map((slot) => ({
+  testSpecSlots(view.value, props.target, instructionOmitted.value).map((slot) => ({
     key: slot.key,
     kind: slot.kind,
-    form: slot.form,
     name: t(k(`slot.${slot.key}`)),
     id: slot.id,
     empty: slot.empty,
@@ -172,13 +179,17 @@ const lines = computed<InspectorSlotView[]>(() =>
     focus: slot.focus,
     danger: slot.state?.tone === 'danger',
     open: slot.open,
-    write: slot.write,
-    writeReason: slot.write === 'disabled' ? t(k('write_unconnected')) : null,
   })),
 )
 
+/** The document icon (or the name): the line's document window. */
 function openLine(line: InspectorSlotView) {
   if (line.id) open(line.id)
+}
+
+/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
+function editLine(line: InspectorSlotView) {
+  if (line.id) openDocument(line.id, 'edit')
 }
 </script>
 

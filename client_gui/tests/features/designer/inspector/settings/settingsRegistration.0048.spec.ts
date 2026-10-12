@@ -1,6 +1,8 @@
 // flowgate.v02.0048 T#9 — the settings tab's declared conditions (D#2 §2.4 rule 3, D#1 §5.3 rules 1·6):
 // the tab exists only on a Node that has a v0.1 sequence slot. A free document on a v0.1 Flow has no
 // sequence row and therefore no tab — decided by the declared `requiresSlot`, not by the tab's content.
+// flowgate.v02.0053 T#7: on a v0.1 Flow that is still so, now through the declared `settingsKinds` (a v0.1
+// Node has run / test settings only as a sequence step); the `requiresSlot` condition itself is unchanged.
 import { describe, expect, it } from 'vitest'
 import settingsRegistration from '@/features/designer/inspector/features/settings/register'
 import {
@@ -24,9 +26,12 @@ const freeDoc = (docType: string, cardKind: InspectorTarget['cardKind']): Inspec
 })
 
 describe('requiresSlot (registry condition)', () => {
-  it('is declared by the settings registration', () => {
-    expect(settingsRegistration.requiresSlot).toBe(true)
-    expect(inspectorRegistry.entries.find((entry) => entry.key === 'settings')?.requiresSlot).toBe(true)
+  // flowgate.v02.0053 T#7: the settings tab follows the Node's settings kind (a Graph card has its own settings,
+  // a v0.1 Node keeps them as a sequence step), see settingsKinds.0053; the slot rule stays inside it.
+  it('the settings registration declares settings kinds instead', () => {
+    expect(settingsRegistration.requiresSlot).toBeUndefined()
+    expect(settingsRegistration.settingsKinds).toEqual(['run', 'test'])
+    expect(inspectorRegistry.entries.find((entry) => entry.key === 'settings')?.settingsKinds).toEqual(['run', 'test'])
   })
 
   it('a registration with requiresSlot applies only to a target with a slot', () => {

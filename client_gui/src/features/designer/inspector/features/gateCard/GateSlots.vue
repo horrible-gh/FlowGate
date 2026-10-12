@@ -2,9 +2,12 @@
   <!-- flowgate.v02.0051 stage 2 — the documents tab body of an `other` card kind Node: a Graph gate shows
        the v7 확인 결과 result line (empty, "확인 전": the gate result is not connected); a document Node of
        an open type shows its one document line; anything else draws nothing. A thin container:
-       gateCardModel decides; ↗ opens a document in the v0.1 screen. No server call. -->
+       gateCardModel decides; the document icon (or the name) opens a document in its document window, ✎ in its
+       editor. No server call of its own.
+       flowgate.v02.0053 T#5 (0053 CH) — a Custom card shows 지시서 · 레포트 like 조사 · 작업 (its 지시서 line hidden
+       when its settings omit the instruction, useGateCard); a document line's name has no type code. -->
   <section v-if="lines.length" class="inspector-gate-card" data-test="inspector-gate-card" :data-shape="shape">
-    <InspectorSlotList :slots="lines" @open="open" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" />
   </section>
 </template>
 
@@ -15,6 +18,7 @@ import { openDocument } from '../../openDocument'
 import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import { gateCardShape, gateCardSlots, type GateSlot } from './gateCardModel'
+import { useGateCard } from './useGateCard'
 
 const props = defineProps<{
   target: InspectorTarget
@@ -26,6 +30,8 @@ const k = (key: string) => `gui.inspector.gateCard.${key}`
 
 const shape = computed(() => gateCardShape(props.target))
 
+const { instructionOmitted } = useGateCard(() => (shape.value === 'custom' ? props.target : null))
+
 function stateLabel(state: NonNullable<GateSlot['state']>): string {
   const key = `gui.designer.inspector.${state.key}`
   return te(key) ? t(key) : state.raw
@@ -35,7 +41,7 @@ function lineOf(slot: GateSlot): InspectorSlotView {
   return {
     key: slot.key,
     kind: slot.kind,
-    name: slot.key === 'document' && slot.type ? `${t(k('slot.document'))} (${slot.type})` : t(k(`slot.${slot.key}`)),
+    name: t(k(`slot.${slot.key}`)),
     id: slot.id,
     empty: slot.empty,
     emptyText: slot.emptyKey ? t(k(slot.emptyKey)) : null,
@@ -46,10 +52,15 @@ function lineOf(slot: GateSlot): InspectorSlotView {
   }
 }
 
-const lines = computed(() => gateCardSlots(props.target).map(lineOf))
+const lines = computed(() => gateCardSlots(props.target, instructionOmitted.value).map(lineOf))
 
 function open(line: InspectorSlotView) {
   if (line.id) openDocument(line.id)
+}
+
+/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
+function edit(line: InspectorSlotView) {
+  if (line.id) openDocument(line.id, 'edit')
 }
 </script>
 

@@ -23,6 +23,7 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
+from modules.flow_gate.services import ai_run_end_hooks
 from modules.flow_gate.services import chat_run_hooks
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services.git_service import GitServiceError
@@ -357,6 +358,10 @@ def _finalize_run(run: dict) -> None:
     # strictly after the release directly above, never before it.
     if run.get("stop_code") == "question_pending":
         _dispatch_question_responder(run)
+    # flowgate.v02.0053 T#2: the run-end port (a Graph card's review stage starts here). Like
+    # the resumes above it may admit a new run for this group, so it too runs strictly after
+    # the release. No handler registered: nothing happens.
+    ai_run_end_hooks.run_ended(run)
 
 
 def _auto_resume_test_gate_chain(run: dict) -> None:

@@ -84,7 +84,7 @@ describe('PalettePanel (flowgate.v02.0030)', () => {
     ])
     expect(w.findAll('[data-test="designer-palette-section-title"]').map((t) => t.text())).toEqual([
       '📐 설계',
-      '⚡ 업무 플로우',
+      '⚡ 업무',
       '⚙ 제어',
     ])
   })
@@ -104,7 +104,9 @@ describe('PalettePanel (flowgate.v02.0030)', () => {
     expect(w.find('[role="tab"]').exists()).toBe(false)
     expect(w.text()).not.toMatch(/대화|Git/)
     expect(w.findAll('[data-test="designer-palette-add"]')).toHaveLength(1)
-    expect(w.get('[data-test="designer-palette-add"]').attributes('aria-label')).toBe('팔레트 종류 추가')
+    expect(w.get('[data-test="designer-palette-add"]').attributes('aria-label')).toBe('카드 추가')
+    // flowgate.v02.0053 T#8: the [+] tooltip names it the same way
+    expect(w.get('[data-test="designer-palette-add"]').attributes('title')).toBe('카드 추가')
   })
 
   it('emits a select intent with the item definition and marks the item selected', async () => {
@@ -142,6 +144,13 @@ describe('PalettePanel (flowgate.v02.0030)', () => {
     expect(q('[data-test="designer-palette-add-form"]')).not.toBeNull()
     expect(document.activeElement).toBe(q('[data-test="designer-palette-add-name"]'))
     expect(q('[data-test="designer-palette-add-icons"]')!.querySelectorAll('[role="radio"]')).toHaveLength(34)
+    // flowgate.v02.0053 T#8: the dialog is "카드 추가" and its categories are 설계 · 업무 · 제어
+    expect(q('.palette-add-title')!.textContent).toBe('카드 추가')
+    expect([...q('[data-test="designer-palette-add-category"]')!.querySelectorAll('option')].map((o) => o.textContent)).toEqual([
+      '설계',
+      '업무',
+      '제어',
+    ])
 
     await setSelect('designer-palette-add-category', 'control')
     await setName('  API 설계 ')

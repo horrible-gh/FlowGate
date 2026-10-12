@@ -20,6 +20,9 @@
 // document, the v0.1 sequence slot and the Graph node run — as optional meaning fields, plus the
 // selection context (FlowGraphSelection) the Center session hands to the bottom Inspector. The
 // Canvas card does not read them, so the Canvas look does not change.
+//
+// flowgate.v02.0053 T#5: a Graph / draft node's card document lines (`cardDocuments`), for the
+// Inspector's documents tab; also a meaning field the Canvas card does not read.
 
 export interface FlowGraphNode {
   /** Unique within the Graph — the server node identity for a server Graph. */
@@ -48,6 +51,22 @@ export interface FlowGraphNode {
   readonly slot?: FlowGraphNodeSlot | null
   /** Meaning (0048): the Graph node run state (Graph Flows only). */
   readonly nodeRun?: FlowGraphNodeRun | null
+  /** Meaning (flowgate.v02.0053 T#5): the card's document lines (Graph / draft nodes only). */
+  readonly cardDocuments?: readonly FlowGraphCardDocument[] | null
+}
+
+/** One document line of a card (the server makes them when the card is placed, flowgate.v02.0053 T#1). */
+export interface FlowGraphCardDocument {
+  /** requirement · delegation · plan · deploy · instruction · scenario · report (open key). */
+  readonly slot: string
+  readonly docType: string | null
+  /** `human` | `run`. */
+  readonly author: string | null
+  /** null when the line's document is gone. */
+  readonly docId: string | null
+  readonly title: string | null
+  readonly status: string | null
+  readonly docReviewStatus: string | null
 }
 
 export interface FlowGraphNodeDocument {

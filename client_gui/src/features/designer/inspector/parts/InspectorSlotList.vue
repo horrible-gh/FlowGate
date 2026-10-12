@@ -1,14 +1,16 @@
 <template>
   <!-- flowgate.v02.0051 — the v7 documents tab body of a card (0035 insp.js docPane): the card's slot
-       lines, one InspectorSlotRow each, with the v7 buttons on the right — 🛡 n (review rounds),
-       "{nav} ↗" (go somewhere else), ↗ (open) and ＋ (write). Display only: the card feature builds
-       the lines (which slots the card has, what each shows, which buttons are usable) and hears the
-       presses as events; a button whose operation is not connected is shown disabled with its reason
-       (0051-R §2.3), never left out. A feature may hand its own test ids per line (`testIds`) and may
-       render a line's summary itself through the `summary` scoped slot.
-       flowgate.v02.0052 T#3 — every ↗ opens the v0.1 document screen in a new tab (openDocument,
-       noopener): that tab starts without this tab's session and, unless the login was kept, goes
-       through the login screen (0048 D#1 §9.4). The enabled ↗ says so in its tooltip, so the login screen does not read as a failure. -->
+       lines, one InspectorSlotRow each, with the buttons on the right — 🛡 n (review rounds) and
+       "{nav} ↗" (go somewhere else). Display only: the card feature builds the lines (which slots the
+       card has, what each shows, which buttons are usable) and hears the presses as events; a button
+       whose operation is not connected is shown disabled with its reason (0051-R §2.3), never left out.
+       A feature may hand its own test ids per line (`testIds`) and may render a line's summary itself
+       through the `summary` scoped slot.
+       flowgate.v02.0053 T#3 — opening shows the document in its document window in this tab
+       (openDocument). With `editable`, a line that opens also has ✎, which opens the same window straight
+       in its editor (an `edit` event).
+       flowgate.v02.0053 T#5 (0053 CH) — `name · state dot · [document icon] · ✎`: the document icon
+       (tooltip 열기) replaces ↗, and the line's name opens the document as well (both an `open` event). -->
   <div class="inspector-slot-list" data-test="inspector-slot-list">
     <InspectorSlotRow
       v-for="line in slots"
@@ -16,7 +18,7 @@
       :kind="line.kind ?? 'document'"
       :name="line.name"
       :id="line.id ?? null"
-      :form="line.form ?? false"
+      :openable="line.open === 'enabled'"
       :empty="line.empty ?? false"
       :empty-text="line.emptyText ?? null"
       :state="line.state ?? null"
@@ -26,6 +28,7 @@
       :danger="line.danger ?? false"
       :test-ids="line.testIds ?? null"
       :data-slot="line.key ?? line.name"
+      @open="emit('open', line)"
     >
       <template v-if="$slots.summary" #summary>
         <slot name="summary" :line="line" />
@@ -48,26 +51,22 @@
         :data-test="line.testIds?.nav ?? 'inspector-slot-nav'"
         @click="emit('nav', line)"
       >{{ line.nav.label }} ↗</Button>
-      <IconButton
+      <InspectorOpenButton
         v-if="line.open && line.open !== 'none'"
-        :label="t('gui.designer.inspector.slot.open')"
-        :title="line.open === 'disabled' ? (line.openReason ?? t('gui.designer.inspector.unconnected')) : t('gui.designer.inspector.slot.open_hint')"
-        variant="secondary"
-        size="sm"
+        :title="line.open === 'disabled' ? (line.openReason ?? t('gui.designer.inspector.unconnected')) : null"
         :disabled="line.open === 'disabled'"
         :data-test="line.testIds?.open ?? 'inspector-slot-open'"
         @click="emit('open', line)"
-      >↗</IconButton>
+      />
       <IconButton
-        v-if="line.write && line.write !== 'none'"
-        :label="t('gui.designer.inspector.slot.write')"
-        :title="line.write === 'disabled' ? (line.writeReason ?? t('gui.designer.inspector.unconnected')) : t('gui.designer.inspector.slot.write')"
+        v-if="editable && line.open === 'enabled'"
+        :label="t('gui.designer.inspector.slot.edit')"
+        :title="t('gui.designer.inspector.slot.edit')"
         variant="secondary"
         size="sm"
-        :disabled="line.write === 'disabled'"
-        data-test="inspector-slot-write"
-        @click="emit('write', line)"
-      >＋</IconButton>
+        data-test="inspector-slot-edit"
+        @click="emit('edit', line)"
+      >✎</IconButton>
     </InspectorSlotRow>
   </div>
 </template>
@@ -76,6 +75,7 @@
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../components/ui/Button.vue'
 import IconButton from '../../../../components/ui/IconButton.vue'
+import InspectorOpenButton from './InspectorOpenButton.vue'
 import InspectorReviewBadge, { type InspectorReviewState } from './InspectorReviewBadge.vue'
 import InspectorSlotRow, { type InspectorSlotState, type InspectorSlotTestIds } from './InspectorSlotRow.vue'
 
@@ -89,7 +89,7 @@ export interface InspectorSlotView {
   readonly kind?: 'document' | 'result'
   readonly name: string
   readonly id?: string | null
-  readonly form?: boolean
+  /** No document behind the line (a hollow dot; `emptyText` is its tooltip). */
   readonly empty?: boolean
   readonly emptyText?: string | null
   readonly state?: InspectorSlotState | null
@@ -99,21 +99,25 @@ export interface InspectorSlotView {
   readonly danger?: boolean
   readonly review?: { readonly count: number; readonly state: InspectorReviewState; readonly remain?: number | null; readonly disabled?: boolean } | null
   readonly nav?: { readonly label: string; readonly disabled?: boolean; readonly title?: string | null } | null
+  /** The document icon (and the name, when enabled): open the line's document. */
   readonly open?: InspectorSlotButton
   readonly openReason?: string | null
-  readonly write?: InspectorSlotButton
-  readonly writeReason?: string | null
   /** The feature's own test ids for the line's state, summary, nav and open (its specs read them). */
   readonly testIds?: (InspectorSlotTestIds & { readonly nav?: string; readonly open?: string }) | null
 }
 
-defineProps<{
-  slots: readonly InspectorSlotView[]
-}>()
+withDefaults(
+  defineProps<{
+    slots: readonly InspectorSlotView[]
+    /** ✎ (open straight in the editor) on every line that opens. */
+    editable?: boolean
+  }>(),
+  { editable: false },
+)
 
 const emit = defineEmits<{
   open: [line: InspectorSlotView]
-  write: [line: InspectorSlotView]
+  edit: [line: InspectorSlotView]
   review: [line: InspectorSlotView]
   nav: [line: InspectorSlotView]
 }>()
@@ -131,7 +135,7 @@ const { t } = useI18n()
 }
 
 /* flowgate.v02.0052 T#4 — on a narrow line (264px Inspector) the "{nav} ↗" label gives way first
-   (ellipsis), so the ↗ open and ＋ write buttons after it stay in the line. */
+   (ellipsis), so the document icon and ✎ after it stay in the line. */
 .inspector-slot-nav {
   flex: 0 1 auto;
   min-width: 0;
