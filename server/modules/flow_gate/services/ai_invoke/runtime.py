@@ -1247,7 +1247,7 @@ def group_resume_lock(group_id: str) -> threading.Lock:
     with svc._group_resume_locks_guard:
         lock = svc._group_resume_locks.get(group_id)
         if lock is None:
-            lock = svc._group_resume_locks[group_id] = threading.Lock()
+            lock = svc._group_resume_locks[group_id] = threading.RLock()
         return lock
 
 

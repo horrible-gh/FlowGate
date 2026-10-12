@@ -306,7 +306,9 @@ def delete_pending_items(sequence_id: int) -> None:
     """
     store = get_store()
     sql = _sql(store, "workflow_sequences.delete_pending_items")
-    store._execute(sql, [sequence_id])
+    from .workflow_invalidation import pending_slot_deletion
+    with pending_slot_deletion(sequence_id):
+        store._execute(sql, [sequence_id])
 
 
 def delete_unprotected_pending_items(sequence_id: int, keep_ids: Iterable[int]) -> None:
@@ -319,7 +321,9 @@ def delete_unprotected_pending_items(sequence_id: int, keep_ids: Iterable[int]) 
     sql = _sql(store, "workflow_sequences.delete_unprotected_pending_items").format(
         keep_ids=", ".join("?" for _ in keep),
     )
-    store._execute(sql, [sequence_id, *keep])
+    from .workflow_invalidation import pending_slot_deletion
+    with pending_slot_deletion(sequence_id, keep):
+        store._execute(sql, [sequence_id, *keep])
 
 
 # ── Started / protected rows (0649 T#1, NR0003 §3.6 / O1) ─────────────────────
@@ -600,7 +604,16 @@ def set_item_result_doc_id(item_id: int, result_doc_id: Optional[str]) -> None:
     """
     store = get_store()
     sql = _sql(store, "workflow_sequences.set_item_result_doc_id")
-    store._execute(sql, [result_doc_id, item_id])
+    from .workflow_invalidation import lock_slots, invalidate_rows
+    with store.transaction():
+        row = get_item_by_id(item_id)
+        rows = lock_slots([row]) if row else []
+        if rows and rows[0]['result_doc_id'] != result_doc_id:
+            # First registration has no prior evidence; a clear/replacement always
+            # advances the existing identity, including A -> B -> A.
+            if rows[0]['result_doc_id'] is not None or rows[0]['slot_decision_id'] is not None:
+                invalidate_rows(rows, 'slot_result_changed')
+        store._execute(sql, [result_doc_id, item_id])
 
 
 def get_predecessor_result_doc_id(

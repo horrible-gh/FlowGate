@@ -5920,13 +5920,14 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if wp_plan is not None:
         update_fields.extend(["title = ?", "meta = ?"])
         update_values.extend([wp_derived_title, wp_meta_value])
-    store._execute(
+    from modules.flow_gate.db.workflow_invalidation import apply_document_update
+    _edit_affected = apply_document_update(doc_id, {"revision_no": current_revision_no + 1},
         f"UPDATE documents SET {', '.join(update_fields)} "
         "WHERE doc_id = ? AND revision_no = ?",
         [*update_values, doc_id, current_revision_no],
     )
     refreshed = db_docs.get_by_id(doc_id)
-    if refreshed is None or refreshed.get("revision_no") != current_revision_no + 1:
+    if _edit_affected != 1 or refreshed is None or refreshed.get("revision_no") != current_revision_no + 1:
         # CAS conflict → rollback
         if backup_path_str:
             try:

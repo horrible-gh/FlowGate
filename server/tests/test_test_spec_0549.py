@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 
@@ -278,21 +279,29 @@ class _Store:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = OFF")
+        # The hand-off race suites share this connection across the UI and run
+        # threads. check_same_thread=False permits sharing, but does not serialize
+        # execute/fetch/commit; protect each complete DB operation and tx scope.
+        self._lock = threading.RLock()
 
     def _execute(self, sql, params=None):
-        self._conn.execute(sql, params or [])
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(sql, params or [])
+            self._conn.commit()
 
     def _fetch_one(self, sql, params=None):
-        row = self._conn.execute(sql, params or []).fetchone()
-        return dict(row) if row else None
+        with self._lock:
+            row = self._conn.execute(sql, params or []).fetchone()
+            return dict(row) if row else None
 
     def _fetch_all(self, sql, params=None):
-        return [dict(r) for r in self._conn.execute(sql, params or []).fetchall()]
+        with self._lock:
+            return [dict(r) for r in self._conn.execute(sql, params or []).fetchall()]
 
     @contextmanager
     def transaction(self):
-        yield self
+        with self._lock:
+            yield self
 
 
 class _Env:
@@ -331,6 +340,10 @@ def env(monkeypatch, tmp_path, migrated_sqlite_db):
 
     store = _Store(migrated_sqlite_db("spec_0549.db"))
     monkeypatch.setattr(db_test_runs, "get_store", lambda: store)
+    # 0428 T#3 run evidence uses the same migrated result database. The workflow
+    # rows in this harness are intentionally empty (documents/heads are dict stubs).
+    from modules.flow_gate.db import workflow_invalidation
+    monkeypatch.setattr(workflow_invalidation, "get_store", lambda: store)
     monkeypatch.setattr(db_events, "insert_event", lambda *args, **kwargs: 1)
     e = _Env()
     e.docs[TS_ID] = {
@@ -658,6 +671,9 @@ def test_tr_approval_does_not_require_test_pass_or_snapshot(monkeypatch):
            "doc_review_status": "pending_review", "revision_no": 1, "meta": "{}"}
     monkeypatch.setattr(pipeline.db_docs, "get_by_id", lambda _id: doc)
     monkeypatch.setattr(pipeline.db_docs, "update", lambda _id, values: {**doc, **values})
+    # This fixture is an ordinary non-slot TR; keep the real head guard and give
+    # its authoritative slot lookup the same explicit identity as the fixture.
+    monkeypatch.setattr(pipeline.db_wfseq, "get_item_by_result_doc_id", lambda _id: None)
     monkeypatch.setattr(pipeline, "_require_document_body_for_approval", lambda *a: None)
     monkeypatch.setattr(pipeline, "log_state_changed", lambda **kw: None)
     monkeypatch.setattr(workflow_rework_service, "clear_return_point_if_complete", lambda *a: None)

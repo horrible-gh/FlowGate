@@ -55,6 +55,7 @@ class _MockTxn:
 
     def execute(self, sql: str, params=None):
         self._last_cursor = self._conn.execute(sql, params or [])
+        return self._last_cursor
 
     def fetch_one(self) -> dict | None:
         if self._last_cursor is None:

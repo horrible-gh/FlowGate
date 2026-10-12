@@ -831,6 +831,15 @@ export function useFlowGateSse(refreshAll: (epoch: number | null) => void) {
       } catch { /* ignore parse errors */ }
     })
 
+    on('workflow_completion_changed', (e: Event) => {
+      try {
+        const data = JSON.parse((e as MessageEvent).data)
+        window.dispatchEvent(new CustomEvent('fg:workflow_completion_changed', { detail: data.payload ?? {} }))
+        // Refresh every sibling: head/next/AC warnings all changed, review status did not.
+        invalidateAndRefresh(data.project)
+      } catch { /* ignore parse errors */ }
+    })
+
     on('doc_review_status_changed', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)

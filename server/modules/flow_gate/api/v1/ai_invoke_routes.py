@@ -11,6 +11,8 @@ the browser (P0005, notation rules).
 """
 from __future__ import annotations
 
+from modules.flow_gate.services.workflow_completion_service import slot_completed
+
 from typing import Optional
 import uuid
 
@@ -250,7 +252,7 @@ def _continuation_target_error(doc_ref: str, target_seq: int) -> Optional[dict]:
                 "msg": f"step {target_seq} does not exist in this workflow sequence"}
     # Slot status per D030 §2 SSOT (mirrors workflow_head_routes._derive_status): a slot is
     # done once its result document exists AND is approved.
-    if match.get("result_doc_id") is not None and match.get("result_doc_review_status") == "approved":
+    if slot_completed(match):
         return {"loc": "continuation_target_seq",
                 "msg": f"step {target_seq} is already complete — pick a remaining step"}
     return None

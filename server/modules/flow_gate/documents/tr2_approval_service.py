@@ -392,7 +392,9 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
             bundle = adapter.create_backup(spec, locked.root, _backup_root(doc), baseline=baseline)
             db_attempts.update(attempt_id, backup_bundle_id=bundle, phase="apply")
             mutated = True
-            applied = adapter.apply_all(spec, locked.root, _backup_root(doc), bundle)
+            from modules.flow_gate.db.workflow_invalidation import source_mutation
+            with source_mutation(doc['project_id'], doc['group_id'], locked.root):
+                applied = adapter.apply_all(spec, locked.root, _backup_root(doc), bundle)
             db_attempts.update(attempt_id, phase="validation", apply_json=applied)
             validation = _run_validation(locked.root, commands, attempt_id)
             db_attempts.update(attempt_id, validation_json=validation)

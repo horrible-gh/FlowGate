@@ -21,6 +21,7 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
@@ -78,6 +79,25 @@ def _patch_store(_db):
 
         def fetch_all(self, sql, params=None):
             return [dict(r) for r in self._conn.execute(sql, params or []).fetchall()]
+
+        @contextmanager
+        def begin_transaction(self):
+            conn = self._conn
+            class Tx:
+                def execute(self, sql, params=None):
+                    self.cursor = conn.execute(sql, params or [])
+                    return self.cursor
+                def fetchone(self):
+                    return self.cursor.fetchone()
+                def fetchall(self):
+                    return self.cursor.fetchall()
+            conn.execute('BEGIN')
+            try:
+                yield Tx()
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
 
     class _PatchedStore(conn_mod.FlowGateStore):
         def __init__(self):

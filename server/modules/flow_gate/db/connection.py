@@ -323,6 +323,9 @@ class FlowGateStore:
             f"UPDATE {table} SET {set_parts} "
             f"WHERE {expected_col} = ? AND {id_col} = ?"
         )
+        if table == "documents" and id_col == "doc_id":
+            from .workflow_invalidation import apply_document_update
+            return apply_document_update(row_id, updates, sql, vals) == 1
         txn = getattr(_tx_local, "txn", None)
         if txn:
             txn.execute(sql, vals)

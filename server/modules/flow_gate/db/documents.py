@@ -124,7 +124,8 @@ def update(doc_id: str, updates: dict[str, Any]) -> Optional[dict]:
         updates["filename"] = os.path.basename(fp) if fp else None
     updates["updated_at"] = now_iso()
     set_clause = ", ".join(f"{k} = ?" for k in updates)
-    store._execute(
+    from .workflow_invalidation import apply_document_update
+    apply_document_update(doc_id, updates,
         f"UPDATE documents SET {set_clause} WHERE doc_id = ?",
         [*updates.values(), doc_id],
     )
@@ -143,7 +144,8 @@ def update_review_status_cas(
     committed transition from a concurrent no-op inside one transaction.
     """
     store = get_store()
-    affected = store._execute_affected(
+    from .workflow_invalidation import apply_document_update
+    affected = apply_document_update(doc_id, {"doc_review_status": next_status},
         "UPDATE documents SET doc_review_status = ?, updated_at = ? "
         "WHERE doc_id = ? AND doc_review_status = ?",
         [next_status, now_iso(), doc_id, expected_status],
@@ -159,7 +161,8 @@ def update_review_cas(doc_id: str, expected_revision: int,
     fields = dict(updates)
     fields.setdefault("updated_at", now_iso())
     clause = ", ".join(f"{key} = ?" for key in fields)
-    return get_store()._execute_affected(
+    from .workflow_invalidation import apply_document_update
+    return apply_document_update(doc_id, fields,
         f"UPDATE documents SET {clause} WHERE doc_id = ? "
         "AND revision_no = ? AND doc_review_status = ?",
         [*fields.values(), doc_id, expected_revision, expected_review_status],
@@ -176,7 +179,8 @@ def delete(doc_id: str) -> None:
     # (NR0122 §5 / B0001 rec #3). transaction() is reentrant, so callers that already
     # opened a transaction (e.g. document_service.delete_document) pass straight
     # through without nesting.
-    with store.transaction():
+    from .workflow_invalidation import document_deletion
+    with document_deletion(doc_id):
         if doc is not None:
             # Preserve workflow history while releasing the FK to documents.id. This
             # mirrors document_service.delete_document and protects internal cleanup
@@ -636,7 +640,8 @@ def insert_document(
 
 def update_document_status(doc_id: str, new_status: str) -> bool:
     now = datetime.now().isoformat()
-    get_store()._execute(
+    from .workflow_invalidation import apply_document_update
+    apply_document_update(doc_id, {'status': new_status},
         "UPDATE documents SET status = ?, updated_at = ? WHERE doc_id = ?",
         [new_status, now, doc_id],
     )
@@ -704,7 +709,8 @@ def update_document_fields(doc_id: str, **fields) -> None:
     sets.append("updated_at = ?")
     params.append(now)
     params.append(doc_id)
-    get_store()._execute(
+    from .workflow_invalidation import apply_document_update
+    apply_document_update(doc_id, {k: v for k, v in fields.items() if k in allowed},
         f"UPDATE documents SET {', '.join(sets)} WHERE doc_id = ?", params
     )
 

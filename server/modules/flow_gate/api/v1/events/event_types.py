@@ -14,6 +14,7 @@ class EventType(str, Enum):
     # panel re-reads the item's `responder` block rather than trusting the payload.
     QNA_RESPONDER_STATE_CHANGED           = "qna_responder_state_changed"
     DOC_REVIEW_STATUS_CHANGED             = "doc_review_status_changed"  # M026 §8-1 Phase 5 added
+    WORKFLOW_COMPLETION_CHANGED           = "workflow_completion_changed"
     AI_REVIEW_ARRIVED                     = "ai_review_arrived"  # inbox action:review push — notify reviewers a verdict landed
     TEST_RUN_STARTED                      = "test_run_started"
     TEST_STAGE_FINISHED                   = "test_stage_finished"

@@ -224,3 +224,8 @@ def run_all():
     start_snapshot_cleanup()
     remove_retired_source_bundle_storage()
     recover_chat_commands()
+    try:
+        from modules.flow_gate.services import workflow_completion_dispatch_service
+        workflow_completion_dispatch_service.consume_pending()
+    except Exception as exc:
+        logger.warning(f"[startup] workflow completion recovery failed: {exc}")

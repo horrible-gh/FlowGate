@@ -58,6 +58,14 @@ def recovery_required(doc_id: str) -> dict | None:
         "AND state = 'recovery_required' ORDER BY id DESC LIMIT 1", [doc_id])
 
 
+def blocking_by_group(group_id: str) -> dict | None:
+    """A live or unresolved apply anywhere in the group blocks slot progression."""
+    return get_store()._fetch_one(
+        "SELECT * FROM tr2_approval_attempts WHERE group_id = ? "
+        "AND state IN ('in_progress', 'recovery_required') ORDER BY id DESC LIMIT 1",
+        [group_id])
+
+
 def successful_root(ledger_row_id: int) -> dict | None:
     return get_store()._fetch_one(
         "SELECT * FROM tr2_approval_attempts WHERE ledger_row_id = ? "

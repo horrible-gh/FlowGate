@@ -478,3 +478,27 @@ def list_by_user(user_id: str) -> list[dict]:
         "SELECT * FROM ai_invoke_paused_chains WHERE paused_by = ? ORDER BY paused_at DESC",
         [user_id],
     )
+
+
+def release_system_test_snapshot(snapshot: dict):
+    """Consume only the full inspected test stop, including chain and settings."""
+    if (snapshot.get("stop_kind") != "system"
+            or snapshot.get("stop_code") not in {"test_gate_blocked", "test_run_pending"}
+            or not snapshot.get("stop_run_id") or not snapshot.get("chain_id")):
+        raise ValueError("completion_stop_identity_invalid")
+    store = get_store()
+    clauses, params = [], []
+    # Columns come from the DB row, never from a client request.
+    for column, value in snapshot.items():
+        if not column.replace("_", "").isalnum():
+            raise ValueError("completion_stop_column_invalid")
+        clauses.append(column + (" IS NULL" if value is None else " = ?"))
+        if value is not None:
+            params.append(value)
+    with store.transaction():
+        affected = store._execute_affected(
+            "DELETE FROM ai_invoke_paused_chains WHERE " + " AND ".join(clauses), params)
+        if affected == 1:
+            return dict(snapshot)
+        row = get_by_group(snapshot["group_id"])
+        return ReleaseSuperseded(row) if row else None

@@ -1279,6 +1279,8 @@ const docLoaded = computed(() => doc.value != null)
 // TR0079.0003: the doc belongs to a discarded group. Exposed so MainPanel can gate
 // the action bar — a disposed group is terminal and must offer no document actions.
 const groupDisposed = computed(() => doc.value?.group_disposed === true)
+const workflowSelfCompletion = computed(() => (doc.value as any)?.workflow_self_completion ?? null)
+const workflowSlotCompletions = computed(() => (doc.value as any)?.workflow_slot_completions ?? [])
 const docReviewStatus = computed(() => doc.value?.doc_review_status ?? null)
 const rejectionReason = computed(() => doc.value?.rejection_reason ?? null)
 const rejectionHistory = computed(() => doc.value?.rejection_history ?? [])
@@ -1407,6 +1409,8 @@ defineExpose({
   docLoaded,
   groupDisposed,
   docReviewStatus,
+  workflowSelfCompletion,
+  workflowSlotCompletions,
   rejectionReason,
   rejectionHistory,
   aiReview,

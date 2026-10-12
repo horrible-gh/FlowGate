@@ -97,6 +97,12 @@ class BasisEnv:
         from modules.flow_gate.services import test_basis_service as basis
         from modules.flow_gate.services import test_run_service as runner
 
+        # This harness intentionally has no workflow/decision tables. Completion
+        # observation is covered with migrated SQL in test_workflow_invalidation_0428.
+        from modules.flow_gate.db import workflow_invalidation
+        monkeypatch.setattr(workflow_invalidation, 'observe_basis', lambda *a, **kw: None)
+        monkeypatch.setattr(workflow_invalidation, 'invalidate_test', lambda *a, **kw: None)
+
         self.tmp_path = tmp_path
         self.store = BasisStore()
         self.roots: dict[str, Path] = {}

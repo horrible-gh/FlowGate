@@ -20,7 +20,7 @@ import anyio.to_thread
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, conint, constr
 
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.db import documents as db_docs
@@ -164,6 +164,15 @@ class DocumentTransitionRequest(BaseModel):
     expected_revision: Optional[int] = None
     request_key: Optional[str] = None
     expected_command_admission_fingerprint: Optional[str] = None
+
+
+class ProceedUnapprovedRequest(BaseModel):
+    expected_revision: conint(strict=True, ge=0)
+    expected_slot_id: conint(strict=True, ge=1)
+    expected_slot_generation: conint(strict=True, ge=0)
+    request_key: constr(strict=True, min_length=1, max_length=128)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class RejectionReasonRequest(BaseModel):
@@ -925,6 +934,81 @@ def recover_orphaned_workflow_document_endpoint(
         "item_seq": target.get("item_seq"),
         "recovered": True,
     }
+
+
+@router.get("/documents/{doc_id}/unapproved-progress")
+async def document_unapproved_progress_endpoint(
+    doc_id: str, request: Request, current_user: dict = Depends(get_current_user),
+):
+    from modules.flow_gate.services import workflow_proceed_service
+    from modules.flow_gate.services.mutation_policy import principal_from_request
+    principal = principal_from_request(request)
+    if principal.kind == "human":
+        principal = human_principal(current_user)
+    try:
+        return await anyio.to_thread.run_sync(lambda: workflow_proceed_service.progress_state(
+            doc_id, actor_user_id=current_user["user_id"],
+            user_permissions=_get_user_permissions(current_user), principal=principal))
+    except MutationPolicyError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.body())
+
+
+@router.get("/groups/{group_id}/unapproved-progress")
+async def group_unapproved_progress_endpoint(
+    group_id: str, current_user: dict = Depends(get_current_user),
+):
+    from modules.flow_gate.services import workflow_proceed_service
+    # Resolve the authoritative group even when all member documents were deleted.
+    from modules.flow_gate.db.connection import get_store
+    def read_history():
+        root = get_store()._fetch_one("SELECT project_id FROM groups WHERE group_id = ?", [group_id])
+        if not root:
+            return {"history": []}
+        return {"history": workflow_proceed_service.progress_history(root["project_id"], group_id)}
+    return await anyio.to_thread.run_sync(read_history)
+
+
+@router.post("/documents/{doc_id}/proceed-unapproved")
+async def document_proceed_unapproved_endpoint(
+    doc_id: str,
+    body: ProceedUnapprovedRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """Explicit human confirmation; independent of review approve/reject actions."""
+    from modules.flow_gate.services import workflow_proceed_service
+    from modules.flow_gate.services.mutation_policy import principal_from_request
+
+    def _proceed_sync():
+        principal = principal_from_request(request)
+        if principal.kind == "human":
+            principal = human_principal(current_user)
+        return workflow_proceed_service.proceed_unapproved(
+            doc_id=doc_id, expected_revision=body.expected_revision,
+            expected_slot_id=body.expected_slot_id,
+            expected_slot_generation=body.expected_slot_generation,
+            request_key=body.request_key, actor_user_id=current_user["user_id"],
+            user_permissions=_get_user_permissions(current_user), principal=principal,
+            locale=request.headers.get("x-locale") or "ko",
+            api_base_url=str(request.url).split("/documents/", 1)[0])
+
+    try:
+        result = await anyio.to_thread.run_sync(_proceed_sync)
+        try:
+            from modules.flow_gate.api.v1.events.publisher import broadcast_event, FlowEvent
+            from modules.flow_gate.api.v1.events.event_types import EventType
+            doc = await anyio.to_thread.run_sync(lambda: db_docs.get_by_id(doc_id))
+            await broadcast_event(FlowEvent(
+                event_type=EventType.WORKFLOW_COMPLETION_CHANGED, payload=result,
+                audience="*", doc_id=doc_id, project=doc.get("project_id") if doc else None))
+        except Exception:
+            pass  # Durable decision is reloaded on refresh/reconnect if delivery fails.
+        return result
+    except MutationPolicyError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.body())
+    except tr2_service.Tr2ValidationError as exc:
+        return JSONResponse(status_code=TR2_ERRORS[exc.code].http_status,
+                            content=error_payload(exc.code, details=exc.details))
 
 
 @router.post("/documents/{doc_id}/review_transitions/{action}")

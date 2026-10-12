@@ -471,6 +471,9 @@ def _pending_review_slot(doc_ref: Optional[str]) -> Optional[dict]:
         result_doc_id = item.get("result_doc_id")
         if not result_doc_id:
             continue
+        from modules.flow_gate.services.workflow_completion_service import slot_completed
+        if slot_completed(item):
+            return None
         doc = db_docs.get_by_id(result_doc_id) or {}
         status = doc.get("doc_review_status") or ""
         if status not in REVIEW_PENDING_DOC_STATUSES:

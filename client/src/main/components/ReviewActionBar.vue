@@ -1,6 +1,18 @@
 <template>
   <div class="sticky-footer-bar" :class="{ 'sfb-tr2': docType === 'TR2' }">
+    <p v-if="unapprovedUnavailable" role="status" class="ab-gate-hint">{{ unapprovedKo ? '미승인 이력을 불러오지 못했습니다. 새로고침해 주세요.' : 'Could not load progress history. Please refresh.' }}</p>
     <div class="sfb-inner">
+      <div v-if="showUnapprovedAction" class="sfb-actions" data-test="unapproved-actions">
+        <button type="button" class="btn btn-warning btn-sm" data-test="ab-proceed-unapproved"
+          :disabled="!canProceedUnapproved" :aria-busy="proceedingUnapproved"
+          @click="showUnapprovedConfirm = true">{{ unapprovedKo ? '미승인 진행' : 'Proceed without approval' }}</button>
+        <span v-if="!unapprovedState?.allowed" class="ab-gate-hint" data-test="unapproved-disabled-reason">{{ unapprovedDisabledReason }}</span>
+        <span v-if="unapprovedState?.test_gate?.applies !== false && docType === 'TSR' && unapprovedState?.test_gate" class="ab-gate-hint" data-test="unapproved-actual-verdict">
+          {{ unapprovedKo ? 'TSR 실제 판정: ' : 'Actual TSR verdict: ' }}{{ unapprovedState.actual_result?.overall || unapprovedState.test_gate.overall || 'NOT_RUN' }}
+        </span>
+        <span v-if="unapprovedState?.approval_attempt?.error_code" class="ab-gate-hint">{{ unapprovedKo ? '기존 반영 실패: ' : 'Previous apply failure: ' }}{{ unapprovedState.approval_attempt.error_code }}</span>
+        <span v-if="docType === 'TR2'" class="ab-gate-hint">{{ unapprovedKo ? '반영안은 소스에 적용되지 않습니다.' : 'The proposal will not be applied to source.' }}</span>
+      </div>
       <!-- Labels section (1 row normally; 2 rows when viewing a past doc) -->
       <div class="sfb-labels">
     <div v-if="docType === 'TR2' && tr2ReviewSummary && !isViewingPastDoc" class="sfb-tr2-summary" data-testid="tr2-approval-summary" role="status">
@@ -494,6 +506,10 @@
       </details>
     </div>
 
+    <ConfirmModal v-model:visible="showUnapprovedConfirm"
+      :title="unapprovedKo ? '미승인 진행' : 'Proceed without approval'"
+      :message="unapprovedConfirmMessage" :confirm-label="unapprovedKo ? '예' : 'YES'" :cancel-label="unapprovedKo ? '아니오' : 'NO'"
+      :confirm-disabled="!canProceedUnapproved" @confirm="doProceedUnapproved" />
     <!-- Approve confirm dialog. flowgate.default.0162 §3.1 "본선": when this approval
          completes a git-active group's workflow (an AC doc with a finalizable slot),
          the git finalize choice rides inside the same dialog and is applied right
@@ -643,6 +659,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import ConfirmModal from './ConfirmModal.vue'
+import { useUnapprovedProgress, progressReason } from '../workflow/unapprovedProgress'
 import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
 import {
@@ -752,7 +769,45 @@ const emit = defineEmits<{
   'open-test-scenario': [payload: { docId: string; projectId: string; groupId: string }]
 }>()
 
-const { t, te } = useI18n()
+const { t, te, locale: unapprovedLocale } = useI18n()
+const unapprovedKo = computed(() => String(unapprovedLocale.value).startsWith('ko'))
+const unapprovedUrl = computed(() => `/api/v1/documents/${encodeURIComponent(props.docId)}/unapproved-progress`)
+const { state: unapprovedState, unavailable: unapprovedUnavailable, refresh: refreshUnapproved } = useUnapprovedProgress(unapprovedUrl)
+const showUnapprovedConfirm = ref(false)
+const proceedingUnapproved = ref(false)
+const showUnapprovedAction = computed(() => ['TSR', 'TR2'].includes(props.docType ?? '') && props.reviewStatus !== 'approved' && !unapprovedState.value?.history?.some(e => e.valid && e.result_doc_id === props.docId))
+const canProceedUnapproved = computed(() => unapprovedState.value?.allowed === true && !isActionBarBusy.value && !approving.value && !proceedingUnapproved.value)
+const unapprovedDisabledReason = computed(() => progressReason(unapprovedState.value?.reason, unapprovedKo.value))
+const unapprovedConfirmMessage = computed(() => (unapprovedKo.value
+  ? '승인하지 않고 다음 단계로 진행합니다. 계속하시겠습니까?'
+  : 'Proceed to the next step without approval. Continue?') + (props.docType === 'TR2'
+    ? (unapprovedKo.value ? ' 반영안은 소스에 적용되지 않습니다.' : ' The proposal will not be applied to source.') : ''))
+let unapprovedRequestKey: string | null = null
+watch(() => [props.docId, unapprovedState.value?.document_revision, unapprovedState.value?.slot_id,
+  unapprovedState.value?.slot_generation].join(':'), () => { unapprovedRequestKey = null })
+watch(() => props.docId, () => { showUnapprovedConfirm.value = false; unapprovedRequestKey = null })
+async function doProceedUnapproved() {
+  if (!canProceedUnapproved.value || !unapprovedState.value) return
+  const docId = props.docId
+  const projectId = props.projectId
+  const state = unapprovedState.value
+  proceedingUnapproved.value = true
+  unapprovedRequestKey ??= globalThis.crypto?.randomUUID?.() ?? `progress-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  try {
+    await postRequest(`/api/v1/documents/${encodeURIComponent(docId)}/proceed-unapproved`, {
+      expected_revision: state.document_revision, expected_slot_id: state.slot_id,
+      expected_slot_generation: state.slot_generation, request_key: unapprovedRequestKey,
+    })
+    // Reload authoritative head and audit; no optimistic review-status flip.
+    window.dispatchEvent(new CustomEvent('fg:open_docs_refresh', { detail: { project: projectId } }))
+    window.dispatchEvent(new CustomEvent('fg:workflow_completion_changed', { detail: { doc_id: docId } }))
+  } catch (error: any) {
+    showToast(progressReason(error?.response?.data?.error?.code, unapprovedKo.value), 'danger')
+  } finally {
+    proceedingUnapproved.value = false
+    if (props.docId === docId) await refreshUnapproved()
+  }
+}
 const approving = ref(false)
 const showApproveConfirm = ref(false)
 const markRevising = ref(false)
@@ -1219,7 +1274,8 @@ const isTestRunActive = computed(
 // are OR-ed: the per-document status is the fresher of the two on the running tab itself.
 const isAnyTestRunActive = computed(() => isTestRunActive.value || props.groupTestRunActive === true)
 
-const isActionBarBusy = computed(() => isGroupBusy.value || isAnyTestRunActive.value)
+const isActionBarBusy = computed(() => isGroupBusy.value || isAnyTestRunActive.value || proceedingUnapproved.value)
+watch([() => props.reviewStatus, () => props.groupTestRunActive, isGroupBusy], () => { void refreshUnapproved() })
 
 const testRunStatusLabel = computed(() =>
   props.testRunStatus === 'cancelling'
@@ -2087,6 +2143,9 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.sfb-inner { flex-wrap: wrap; }
+.sfb-inner > [data-test="unapproved-actions"] { order: 2; flex-wrap: wrap; max-width: 100%; }
+
 /* T813: two-line layout (head + viewed doc) */
 .sfb--two-line {
   height: auto;

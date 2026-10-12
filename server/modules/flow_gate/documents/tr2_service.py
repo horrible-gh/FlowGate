@@ -778,7 +778,8 @@ def _cas_bump(store, doc_id: str, current: int, now: str, rel: str, filename: st
     Re-reading the row afterwards cannot tell our bump from a concurrent writer's
     ``N+1``, so the count reported by the driver is the only authority.
     """
-    affected = store._execute_affected(
+    from modules.flow_gate.db.workflow_invalidation import apply_document_update
+    affected = apply_document_update(doc_id, {"revision_no": current + 1},
         "UPDATE documents SET revision_no = revision_no + 1, "
         "updated_at = ?, file_path = ?, filename = ? "
         "WHERE doc_id = ? AND revision_no = ?",

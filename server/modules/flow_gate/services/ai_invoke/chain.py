@@ -14,7 +14,10 @@ trigger), which is also where the existing tests patch them.
 
 from __future__ import annotations
 
+from modules.flow_gate.services.workflow_completion_service import completion_reason, slot_completed
+
 import uuid
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -1394,8 +1397,7 @@ def _resolve_continuation_target(
         head = next((
             item.get("item_seq")
             for item in sorted(items, key=lambda candidate: candidate.get("item_seq") or 0)
-            if item.get("result_doc_id") is None
-            or item.get("result_doc_review_status") != "approved"
+            if not slot_completed(item)
         ), None)
     if head is not None and resolved < head:
         raise HTTPException(status_code=409, detail={
@@ -1476,15 +1478,15 @@ def _sequence_completion_state(
     if not items:
         return False, None          # a sequence with no slots proves nothing was finished
     for item in sorted(items, key=lambda i: i.get("item_seq") or 0):
-        if item.get("result_doc_id") is None or item.get("result_doc_review_status") != "approved":
+        if not slot_completed(item):
             return True, item.get("item_seq")
     return True, None
 
 
 def _next_incomplete_item_seq(doc_ref: str) -> Optional[int]:
     """First workflow slot that is not complete (L0009 §2.3). Completion uses the
-    existing slot definition — result document exists AND is approved — exactly as
-    ai_invoke_routes._continuation_target_error judges it."""
+    shared approved/automatic/valid-decision contract, also used by SQL/head and
+    ai_invoke_routes._continuation_target_error."""
     return _sequence_completion_state(doc_ref)[1]
 
 
@@ -1839,6 +1841,7 @@ def _paused_row_resume_state(
     *,
     include_target: bool = False,
     _read_context: Optional[dict] = None,
+    _decision_id: Optional[str] = None,
 ) -> dict:
     """Evaluate deterministic pause->resume admission without changing state.
 
@@ -1894,6 +1897,21 @@ def _paused_row_resume_state(
             "sequence_unavailable",
             f"continuous run requires a decided workflow sequence on {row['doc_ref']}",
         )
+
+    # 0428 T#2: a completed unapproved report must not turn the ordinary
+    # resume surface into the future decision-dispatch consumer. Preserve the
+    # PASS/result-entry paths: only the latest registered TSR's valid unapproved
+    # completion on a system test stop is fenced here. User pauses and other
+    # system stops retain their existing admission rules.
+    if ((row.get("stop_kind") or "user") == "system"
+            and row.get("stop_code") in {"test_gate_blocked", "test_run_pending"}):
+        reports = sorted((item for item in items
+                          if item.get("type") == "TSR" and item.get("result_doc_id")),
+                         key=lambda item: item.get("sort_order") or 0)
+        matching = next((i for i in reports if i.get("completion_decision_id") == _decision_id), None) if _decision_id else None
+        if reports and completion_reason(reports[-1]) == "proceeded_unapproved" and matching is None:
+            return _state(False, "test_gate_decision_dispatch_required",
+                          "This unapproved test report requires its decision continuation dispatch.")
 
     stored_target_seq = row.get("continuation_target_seq")
     try:
@@ -2009,6 +2027,7 @@ def resume_chain(
 def _resume_chain_locked(
     *, group_id: str, user_id: str, api_base_url: str, locale: str = "ko",
     is_admin: bool = False, after_release: list[Callable[[], None]],
+    _completion_dispatch_id: Optional[str] = None,
 ) -> dict:
     """Resume a user-paused continuous chain from its next incomplete step (L0009 §2.4).
 
@@ -2029,7 +2048,13 @@ def _resume_chain_locked(
     from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
     from modules.flow_gate.services import workflow_decision_service
 
-    with _group_resume_lock(group_id):
+    with ExitStack() as resume_stack:
+        resume_stack.enter_context(_group_resume_lock(group_id))
+        completion_dispatch = None
+        if _completion_dispatch_id is not None:
+            from modules.flow_gate.services import workflow_completion_dispatch_service as dispatch_service
+            completion_dispatch = resume_stack.enter_context(
+                dispatch_service.launch_context(_completion_dispatch_id))
         active = _svc()._active_run_for_group(group_id)
         if active is not None:
             raise _http_error(409, "run_already_active",
@@ -2048,7 +2073,17 @@ def _resume_chain_locked(
                               "Only the user who paused this chain (or an admin) may "
                               "resume it.", group_id=group_id)
         project_id = group_id.split(".", 1)[0]
-        preflight = _svc()._paused_row_resume_state(project_id, pre_row, include_target=True)
+        if completion_dispatch is not None:
+            target = _resolve_continuation_target(pre_row["doc_ref"],
+                pre_row.get("continuation_target_seq"),
+                to_end=pre_row.get("continuation_target_seq") is None)
+            next_item = _svc()._next_incomplete_item_seq(pre_row["doc_ref"])
+            if next_item is None or int(next_item) > target:
+                return dispatch_service.finish_empty(completion_dispatch, pre_row, target)
+            preflight = _paused_row_resume_state(project_id, pre_row, include_target=True,
+                                                _decision_id=completion_dispatch["decision_id"])
+        else:
+            preflight = _svc()._paused_row_resume_state(project_id, pre_row, include_target=True)
         if not preflight["resume_available"]:
             raise _http_error(
                 422,
@@ -2063,13 +2098,16 @@ def _resume_chain_locked(
         # authorized. A row that changed identity (newer paused_by/paused_at/stop_kind/
         # stop_run_id) between the reads fails the predicate and falls through to
         # resume_conflict below, same as "nothing to consume".
-        row = db_paused.release_owned(
-            group_id,
-            paused_by=pre_row.get("paused_by"),
-            paused_at=pre_row.get("paused_at"),
-            stop_kind=pre_row.get("stop_kind"),
-            stop_run_id=pre_row.get("stop_run_id"),
-        )
+        if completion_dispatch is not None:
+            row = dispatch_service.claim_stop(completion_dispatch, pre_row)
+        else:
+            row = db_paused.release_owned(
+                group_id,
+                paused_by=pre_row.get("paused_by"),
+                paused_at=pre_row.get("paused_at"),
+                stop_kind=pre_row.get("stop_kind"),
+                stop_run_id=pre_row.get("stop_run_id"),
+            )
         # release_owned is tri-state (0459 TR0008 rev2): a bare None (nothing left to
         # consume) and a ReleaseSuperseded (a newer row replaced the one this call was
         # authorized against) both fall through to the SAME resume_conflict here --
@@ -2081,12 +2119,16 @@ def _resume_chain_locked(
         target_seq = preflight["_resume_target_seq"]
 
         def _restore_row(stop_code: Optional[str] = None) -> None:
+            if completion_dispatch is not None:
+                latest = dispatch_service.db_completion.dispatch_by_id(completion_dispatch["dispatch_id"])
+                if latest["state"] == "completed" or latest.get("error_code") == "completion_launch_attempted":
+                    return  # a lost start response must not resurrect the consumed stop
             # The resume did not happen — put the consumed row back so the paused
             # card survives and the user can retry (L0009 §5: row preservation).
             # 0688 TR0006 review: ``stop_code`` re-parks it on the stop a replayed gate
             # reached instead; a row written meanwhile (a user pause) outranks that.
             try:
-                if stop_code is not None and db_paused.get_by_group(group_id) is not None:
+                if (stop_code is not None or completion_dispatch is not None) and db_paused.get_by_group(group_id) is not None:
                     return
                 db_paused.upsert(
                     group_id=row["group_id"],
@@ -2315,6 +2357,15 @@ def _resume_chain_locked(
             # Same advance_workflow path as the continuous first hop / every inbox
             # self-chain hop, so instruction heads (N/T) keep their server-side
             # auto-creation instead of being handed to the AI to write (0226 B0001 ④).
+            from modules.flow_gate.db.connection import get_store
+            if completion_dispatch is not None:
+                ai_run_id = dispatch_service.reserve_run(ai_run_id)
+            if completion_dispatch is None:
+                return _issue_resume_atomic(ai_run_id)
+            with get_store().transaction():
+                return _issue_resume_atomic(ai_run_id)
+
+        def _issue_resume_atomic(ai_run_id):
             adv = workflow_decision_service.advance_workflow(
                 doc_id=row["doc_ref"],
                 issued_to=user_id,
@@ -2327,6 +2378,8 @@ def _resume_chain_locked(
                 continuation_auto_approve_item_seqs=resume_auto_approve_item_seqs,
                 ai_run_id=ai_run_id,      # 0359 L0007 §2.9
             )
+            if completion_dispatch is not None:
+                dispatch_service.bind_token(ai_run_id, adv["token_id"])
             return {
                 "raw_token": adv["token"],
                 "token_id": adv["token_id"],

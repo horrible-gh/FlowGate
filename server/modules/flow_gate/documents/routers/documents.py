@@ -14,6 +14,8 @@ RBAC: assumes rbac.decorators.require_permission.
 """
 from __future__ import annotations
 
+from modules.flow_gate.services.workflow_completion_service import completion_fields, completion_reason, slot_completed
+
 import json as _json
 import logging as _logging
 import re as _re
@@ -646,6 +648,19 @@ def _parse_doc_workflow(doc: dict) -> dict:
         except Exception:
             pass
 
+    # 0428 T#1: retain documents.seq group-head ordering while excluding only
+    # results whose independent completion decision is valid in this snapshot.
+    # Reuse the existing sequence read; never substitute a sequence-walk head.
+    completed_unapproved_ids = {
+        item.get("result_doc_id") for item in seq_items
+        if completion_reason(item) == "proceeded_unapproved"
+    }
+    in_progress = [c for c in in_progress if c.get("doc_id") not in completed_unapproved_ids]
+    group_head = in_progress[0] if in_progress else None
+    own_slot = next((item for item in seq_items if item.get("result_doc_id") == doc.get("doc_id")), None)
+    if own_slot is not None:
+        out["workflow_completion"] = completion_fields(own_slot)
+
     def _effective_head_from_seq_items(items: list[dict]) -> dict | None:
         review_by_doc_id = {
             c.get("doc_id"): c.get("doc_review_status")
@@ -673,7 +688,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
                 result_review = item.get("result_doc_review_status")
                 if result_review is None:
                     result_review = review_by_doc_id.get(result_doc_id)
-                if item_type not in NON_HEAD_TYPES and result_review not in APPROVED_STATUSES:
+                if item_type not in NON_HEAD_TYPES and result_review not in APPROVED_STATUSES and not slot_completed(item):
                     linked.append((item, index))
             elif item_type not in pending_non_head:
                 pending.append((item, index))
@@ -808,6 +823,8 @@ def _parse_doc_workflow(doc: dict) -> dict:
                 self_idx = i
                 break
         out["workflow_self_index"] = self_idx
+        out["workflow_slot_completions"] = [completion_fields(it) for it in seq_items]
+        out["workflow_self_completion"] = completion_fields(seq_items[self_idx]) if self_idx is not None else None
         # next_step_exists = there IS a head step to advance to — NOT "a step after the
         # head". A present head_idx already means an advanceable step (the next doc to
         # create/approve, or the synthetic AC final-approval head whose head_idx is
@@ -1170,7 +1187,7 @@ def create_next_empty_document(
         )
     result_doc_id = head.get("result_doc_id")
     result_review = head.get("result_doc_review_status")
-    if result_doc_id is not None and result_review != "approved":
+    if result_doc_id is not None and not slot_completed(head):
         raise HTTPException(
             status_code=409,
             detail="Workflow step has already been created.",
@@ -1832,7 +1849,7 @@ def create_next_approved_core(
         raise NextApprovedError(409, f"Current next step is {head_type}. Requested type: {type_code}")
     result_doc_id = head.get("result_doc_id")
     result_review = head.get("result_doc_review_status")
-    if result_doc_id is not None and result_review != "approved":
+    if result_doc_id is not None and not slot_completed(head):
         raise NextApprovedError(409, "Workflow step has already been created.")
 
     # Every creation entry point (managed /next-approved and unmanned continuation) reads

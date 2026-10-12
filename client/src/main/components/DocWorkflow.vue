@@ -160,11 +160,13 @@
             class="wf-step"
             :class="[
               s.className,
+              s.completionLabel === 'proceeded_unapproved' ? 'wf-unapproved-step' : '',
               !readOnly && (s.visual === 'highlight' || s.visual === 'current') && canNextAction ? 'wf-current-clickable' : '',
               !readOnly && s.visual === 'done' ? 'wf-done-clickable' : '',
               !readOnly && isReturnTarget(idx) ? 'wf-return-clickable' : '',
             ]"
             :title="stepHint(s, idx)"
+            :aria-label="s.completionLabel === 'proceeded_unapproved' ? `${docTypeStore.getLabel(s.code)} · ${unapprovedHint()}` : undefined"
             @click="onStepClick(s, idx)"
           >
             <AppIcon :name="s.iconClass" />
@@ -235,7 +237,7 @@ const props = withDefaults(defineProps<{
   readOnly: false,
 })
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const docTypeStore = useDocTypeStore()
 const isWorkflowRoot = computed(() => props.tab.typeCode === 'R' || props.tab.typeCode === 'B')
 
@@ -281,8 +283,13 @@ function commitOf(idx: number): SlotCommitMark | null {
 // the head hints "roll back here". (A cell is only ever one of the two.)
 // 0332 D0005 §6.1: 커밋이 달린 칸은 여기에 한 줄이 더 붙는다 — 짧은 해시와 상태. 읽기
 // 전용이라 되돌리기 힌트가 없는 칸에서도 이 줄은 보인다(사실을 말할 뿐 동작이 아니다).
+function unapprovedHint(): string {
+  return String(locale.value).startsWith('ko') ? '미승인 진행' : 'Without approval'
+}
+
 function stepHint(s: StepState, idx: number): string | undefined {
   const lines: string[] = []
+  if (s.completionLabel === 'proceeded_unapproved') lines.push(unapprovedHint())
   if (!props.readOnly) {
     if (isReturnTarget(idx)) lines.push(t('main.doc_workflow.time_machine_return_hint'))
     else if (s.visual === 'done') lines.push(t('main.doc_workflow.time_machine_hint'))
@@ -709,6 +716,19 @@ function toggleSequenceCollapsed() {
 .wf-step.wf-return-clickable:hover {
   background: var(--success-l, #f0fdf4);
   box-shadow: 0 0 0 3px rgba(22, 163, 74, .3);
+}
+
+/* T0018: distinguish unapproved completion without widening the workflow cells. */
+.wf-step.wf-unapproved-step {
+  border-color: var(--border-d, #cbd5e1);
+  background: var(--surface-h, #f1f5f9);
+  color: var(--text-m, #64748b);
+}
+.wf-step.wf-unapproved-step > i {
+  color: var(--text-m, #64748b);
+}
+.wf-step.wf-unapproved-step.wf-return-clickable:hover {
+  background: var(--surface-h, #f1f5f9);
 }
 
 /* ── 0399 [작업계획 적용] button and the two-branch list (mockup fgh29xnk v3 · screen 1) ──

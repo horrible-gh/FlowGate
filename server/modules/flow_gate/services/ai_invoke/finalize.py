@@ -1395,10 +1395,32 @@ def stamp_chain_stop(
 # Stops that are not a new chain: the paused row keeps the chain identity and lifetime
 # counters so the automatic resume continues the SAME chain (question answered, T#2; test gate
 # passed, 0549 T0008).
-_CHAIN_KEEPING_STOPS = ("question_pending", TEST_RUN_PENDING_STOP_CODE)
+_CHAIN_KEEPING_STOPS = ("question_pending", TEST_RUN_PENDING_STOP_CODE, TEST_GATE_BLOCKED_STOP_CODE)
 
 
 def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
+    from modules.flow_gate.services import workflow_completion_dispatch_service as completion_dispatch
+    from modules.flow_gate.db import workflow_completion as completion_db
+    if run.get("stop_code") in {"test_run_pending", "test_gate_blocked"}:
+        with completion_dispatch.runtime.group_resume_lock(run["group_id"]):
+            intent = completion_db.dispatch_for_stop(run.get("chain_id"), run.get("run_id"), include_pending=True)
+            if intent is None:
+                return _apply_stop_row_unclaimed(run, respawn_pending)
+            decision = completion_db.get_decision(intent["decision_id"])
+            # Serialize finalizer parking with the consumer's claim on every DB.
+            with completion_db.decision_transaction(decision["sequence_id"], decision["slot_id"]):
+                if completion_db.dispatch_for_stop(run.get("chain_id"), run.get("run_id")) is not None:
+                    return
+                # A late finalizer cannot overwrite a newer stop or its settings.
+                # The consumer either binds this exact existing row or fails closed.
+                from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+                if db_paused.get_by_group(run["group_id"]) is not None:
+                    return
+                return _apply_stop_row_unclaimed(run, respawn_pending)
+    return _apply_stop_row_unclaimed(run, respawn_pending)
+
+
+def _apply_stop_row_unclaimed(run: dict, respawn_pending: bool) -> None:
     """Maintain the miniplayer's [resume] card (L0007 §2.8 / §4.5).
 
     Before 0359 this deleted the row for EVERY end_reason other than "user_paused", which is
