@@ -371,6 +371,33 @@ def mark_token_stage(token_id: str, stage: str) -> int:
     return _affected("UPDATE graph_run_token_map SET stage = ? WHERE token_id = ? AND stage IS NULL", [stage, token_id])
 
 
+def registered_document_attempt(group_id: str, doc_id: str) -> Optional[dict]:
+    """0061 T#8: durable authorship, never inferred from the current node/run.
+
+    Keep ended/invalidated token mappings: approving history must not commit the
+    group's unrelated work. Parse metadata in Python for all three SQL dialects.
+    New/edit registrations share token_consumed; the latest mapped registration wins.
+    """
+    if not get_store().table_exists("graph_node_attempts"):
+        return None
+    mapped = {r["token_id"]: r for r in _all(
+        "SELECT m.token_id, m.attempt_id, m.node_key, m.run_id FROM graph_run_token_map m "
+        "JOIN graph_runs r ON r.run_id = m.run_id JOIN tokens t ON t.token_id = m.token_id "
+        "WHERE r.group_id = ? AND m.attempt_id IS NOT NULL "
+        "AND t.action_scope IN ('new', 'edit')", [group_id])}
+    if not mapped:
+        return None
+    for event in _all("SELECT metadata FROM workflow_events WHERE group_id = ? "
+                      "AND event_type = 'token_consumed' ORDER BY id DESC", [group_id]):
+        try:
+            data = json.loads(event.get("metadata") or "{}")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("doc_id") == doc_id and data.get("token_id") in mapped:
+            return mapped[data["token_id"]]
+    return None
+
+
 def node_run_by_token(token_id: str) -> Optional[dict]:
     """Q-R11 (with the token's ``stage``)."""
     if not available():

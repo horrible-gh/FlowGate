@@ -39,7 +39,8 @@ def request(attempt_id, run_id, kind, payload):
     count = run_store._affected(
         "INSERT INTO graph_attempt_runs (exec_id, attempt_id, run_id, kind, status, created_at, request_json) "
         "SELECT ?, ?, ?, ?, 'requested', ?, ? WHERE EXISTS "
-        "(SELECT 1 FROM graph_node_attempts WHERE attempt_id = ? AND run_id = ? AND status = 'active')",
+        "(SELECT 1 FROM graph_node_attempts WHERE attempt_id = ? AND run_id = ? AND status = 'active' "
+        "AND COALESCE(result_commit, '') = '' AND COALESCE(integration_status, 'none') IN ('', 'none'))",
         [exec_id, attempt_id, run_id, kind, now(), json.dumps(payload, ensure_ascii=False), attempt_id, run_id])
     if count != 1:
         raise LeaseLost("attempt is not active")

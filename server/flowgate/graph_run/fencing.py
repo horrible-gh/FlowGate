@@ -140,7 +140,8 @@ def exclusive(flow_id: str, *, own_ok: bool = False):
             gate.cond.wait(left)
         gate.closing = True
         try:
-            while gate.readers > own:
+            # readers counts threads, while own counts this thread's nesting depth.
+            while gate.readers > (1 if own else 0):
                 left = deadline - time.monotonic()
                 if left <= 0:
                     raise FlowLockTimeout(flow_id)
@@ -243,6 +244,14 @@ def human_registration(token: Optional[dict], operation: str) -> bool:
 def _token_reason(token: dict, attempt_id: str, report: bool, operation: str = "") -> tuple[Optional[str], dict]:
     statuses = REPORTING if report else (IDLE_EXCEPTED if human_registration(token, operation) else WRITABLE)
     why = reason(attempt_row(attempt_id), statuses)
+    if why is None:
+        # T#8: the result reservation outlives a failed Git/DB attempt. Once frozen,
+        # token writes may not change the result being recovered on a retry.
+        result = run_store._one("SELECT result_commit, integration_status FROM graph_node_attempts "
+                                "WHERE attempt_id = ?", [attempt_id]) or {}
+        if result.get("result_commit") or result.get("integration_status") in (
+                "pending", "integrating", "integrated", "conflict", "failed"):
+            return "attempt_result_frozen", {}
     if why is None and report and token.get("ai_run_id"):
         why = _execution_reason(str(token["ai_run_id"]), attempt_id)
         return why, {"ai_run_id": token.get("ai_run_id")}

@@ -343,6 +343,16 @@ def on_document_approved(doc_id: str, document: Optional[dict] = None) -> Option
                 quiet=_is_quiet_skip("git_inactive", doc),
             )
 
+        # 0061 T#8: approval defers Graph history to the attempt's result commit.
+        # Do this before every Git/group/ledger gate, including historical attempts.
+        from modules.flow_gate.graph_workflow.store import run_store
+        if run_store.registered_document_attempt(group_id, doc_id):
+            return _payload(
+                committed=False, commit=None, subject=None,
+                skipped_reason="graph_attempt_deferred", artifacts=[],
+                reported_diff={"unreported": [], "missing": []}, quiet=True,
+            )
+
         # A Time Machine reopen preserves the original logical TR message as durable
         # ledger metadata, whether it uncommitted the prior round (a plain live rewind)
         # or left it in place because it is merged/pushed history (flowgate.default.0532

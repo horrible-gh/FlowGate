@@ -38,6 +38,13 @@ def get_by_id(row_id: int) -> Optional[dict]:
     )
 
 
+def by_attempt(attempt_id: str) -> Optional[dict]:
+    """0061 T#8: the durable result, including the no-change case."""
+    return get_store()._fetch_one(
+        "SELECT * FROM tr_commit_ledger WHERE attempt_id = ?", [attempt_id]
+    )
+
+
 def _latest_for_doc(doc_id: str) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM tr_commit_ledger WHERE doc_id = ? ORDER BY id DESC", [doc_id]
@@ -65,16 +72,17 @@ def ownership_rows(group_id: str) -> list[dict[str, Any]]:
 # ── writes (DB0008 §4.1) ──────────────────────────────────────────────────────
 
 def record_commit(
-    *, group_id: str, doc_id: str, commit_sha: str, commit_subject: str
+    *, group_id: str, doc_id: str, commit_sha: str, commit_subject: str,
+    attempt_id: Optional[str] = None, node_key: Optional[str] = None,
 ) -> Optional[dict]:
     """The approval made a commit — one ``live`` row (DB0008 §4-1 first form)."""
     now = now_iso()
     get_store()._execute(
         "INSERT INTO tr_commit_ledger "
         "(group_id, doc_id, state, commit_sha, commit_subject, cancel_attempt_log, "
-        " created_at, updated_at) "
-        "VALUES (?, ?, 'live', ?, ?, '[]', ?, ?)",
-        [group_id, doc_id, commit_sha, commit_subject, now, now],
+        " created_at, updated_at, attempt_id, node_key) "
+        "VALUES (?, ?, 'live', ?, ?, '[]', ?, ?, ?, ?)",
+        [group_id, doc_id, commit_sha, commit_subject, now, now, attempt_id, node_key],
     )
     return _latest_for_doc(doc_id)
 
@@ -107,7 +115,8 @@ def record_reapply(
 
 
 def record_no_commit(
-    *, group_id: str, doc_id: str, skip_reason: str
+    *, group_id: str, doc_id: str, skip_reason: str,
+    attempt_id: Optional[str] = None, node_key: Optional[str] = None,
 ) -> Optional[dict]:
     """The approval made no commit — one ``no_commit`` row carrying why.
 
@@ -118,9 +127,9 @@ def record_no_commit(
     now = now_iso()
     get_store()._execute(
         "INSERT INTO tr_commit_ledger "
-        "(group_id, doc_id, state, skip_reason, cancel_attempt_log, created_at, updated_at) "
-        "VALUES (?, ?, 'no_commit', ?, '[]', ?, ?)",
-        [group_id, doc_id, skip_reason, now, now],
+        "(group_id, doc_id, state, skip_reason, cancel_attempt_log, created_at, updated_at, attempt_id, node_key) "
+        "VALUES (?, ?, 'no_commit', ?, '[]', ?, ?, ?, ?)",
+        [group_id, doc_id, skip_reason, now, now, attempt_id, node_key],
     )
     return _latest_for_doc(doc_id)
 

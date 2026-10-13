@@ -286,8 +286,10 @@ def prepare(exec_id, project_id, group_id):
             if not current or current["status"] != "active" or not ledger.eligible(ledger.get(exec_id)):
                 raise ledger.LeaseLost("attempt ended while workspace was being prepared")
             if not _mode(current):
-                run_store._affected("UPDATE graph_node_attempts SET input_commit = ? "
-                                    "WHERE attempt_id = ? AND status = 'active'", [sha, row["attempt_id"]])
+                run_store._affected("UPDATE graph_node_attempts SET input_commit = ?, input_source = ?, "
+                                    "input_attempt_ids = ? WHERE attempt_id = ? AND status = 'active'",
+                                    [sha, "document_only" if mode == "document_only" else "integration_head",
+                                     "[]", row["attempt_id"]])
                 _event(current, mode, input_commit=sha)
         with_flow_guard(group_id, record_ready)
         return source_root(row["attempt_id"], project_id=project_id, group_id=group_id, document_ok=True)

@@ -415,46 +415,125 @@ def create_tr_commit(group_id: str, subject: str) -> dict:
         if not wt_path.is_dir():
             return skip("no_worktree")
 
-        artifacts, has_staged = _stage_worker_edits(wt_path)
-        if not has_staged:
-            # D0005 K3 / P0006 §1-5: "changed nothing" and "changed only debris" are
-            # two different sentences on screen, so they stay two different codes.
-            return skip("artifacts_only" if artifacts else "no_changes", artifacts)
-
-        # -z keeps paths raw: git quotes non-ASCII names in the plain form, and a
-        # quoted path would never match the document's reported list.
-        listing = _gs._run_git(
-            ["diff", "--cached", "--name-only", "-z"], cwd=wt_path,
-            timeout=_gs.GIT_READ_TIMEOUT_SEC,
-        )
-        committed_paths = sorted(p for p in (listing.stdout or "").split("\0") if p)
-
-        proc = _gs._run_git(
-            [*_gs._GIT_IDENT, "commit", "-m", subject], cwd=wt_path,
-            author_env=_author_env_from_cfg(cfg),
-        )
-        if proc.returncode != 0:
-            _log.warning(
-                "tr commit failed for %s: %s", group_id, _gs._last_line(proc.stderr)
-            )
-            return skip("commit_failed", artifacts)
-
-        head = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC)
-        full = (head.stdout or "").strip() or None
-        return {
-            "committed": True,
-            "commit": full[:7] if full else None,
-            "commit_sha": full,
-            "subject": subject,
-            "skipped_reason": None,
-            "excluded_artifacts": list(artifacts),
-            "committed_paths": committed_paths,
-        }
+        return _commit_worktree(wt_path, subject, cfg, group_id)
     except Exception:
         _log.warning("tr commit point failed for group %s", group_id, exc_info=True)
         return skip("commit_failed")
     finally:
         _release_group_lock(lock)
+
+
+def _commit_worktree(wt_path: Path, subject: str, cfg: dict, owner: str, *,
+                     body: Optional[str] = None, expected_parent: Optional[str] = None) -> dict:
+    """Shared staging/exclusions/commit/HEAD flow. The caller owns its G or W lock."""
+    from modules.flow_gate.services import git_service as _gs
+    def skip(reason, artifacts=None):
+        return _attempt_skip(reason, artifacts)
+
+    artifacts, has_staged = _stage_worker_edits(wt_path)
+    if not has_staged:
+        # D0005 K3 / P0006 §1-5: "changed nothing" and "changed only debris" are
+        # two different sentences on screen, so they stay two different codes.
+        return skip("artifacts_only" if artifacts else "no_changes", artifacts)
+
+    # -z keeps paths raw: git quotes non-ASCII names in the plain form, and a
+    # quoted path would never match the document's reported list.
+    listing = _gs._run_git(
+        ["diff", "--cached", "--name-only", "-z"], cwd=wt_path,
+        timeout=_gs.GIT_READ_TIMEOUT_SEC,
+    )
+    if expected_parent is not None and listing.returncode:
+        return skip("commit_failed", artifacts)
+    committed_paths = sorted(p for p in (listing.stdout or "").split("\0") if p)
+
+    proc = _gs._run_git(
+        [*_gs._GIT_IDENT, "commit", "-m", subject, *(["-m", body] if body else [])], cwd=wt_path,
+        author_env=_author_env_from_cfg(cfg),
+    )
+    if proc.returncode != 0:
+        _log.warning(
+            "tr commit failed for %s: %s", owner, _gs._last_line(proc.stderr)
+        )
+        return skip("commit_failed", artifacts)
+
+    head = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+    full = (head.stdout or "").strip() or None
+    if expected_parent is not None:
+        parent = _gs._rev_parse(wt_path, "HEAD^")
+        if head.returncode or not full or parent != expected_parent:
+            return skip("head_verification_failed", artifacts)
+    return {
+        "committed": True,
+        "commit": full[:7] if full else None,
+        "commit_sha": full,
+        "subject": subject,
+        "skipped_reason": None,
+        "excluded_artifacts": list(artifacts),
+        "committed_paths": committed_paths,
+    }
+
+
+def _attempt_skip(reason: str, artifacts=None) -> dict:
+    return {"committed": False, "commit": None, "commit_sha": None, "subject": None,
+            "skipped_reason": reason, "excluded_artifacts": list(artifacts or []), "committed_paths": []}
+
+
+def create_attempt_commit(project_id: str, wt_path: Path, branch: str, input_commit: str,
+                          attempt_id: str, doc_id: str, subject: str) -> dict:
+    """0061 T#8: only the supplied attempt worktree; W, never the group's G.
+
+    The Graph caller freezes execution requests and token writes before entering.
+    A commit trailer recovers the Git-before-DB crash window without another commit.
+    Unexpected history is refused rather than attributed to this attempt.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    from . import lock_manager
+    ctx, key = lock_manager.new_context("req"), None
+    try:
+        cfg = _gs.db_git.get_config(project_id)
+        if not cfg or not cfg.get("enabled") or not _gs.git_available():
+            return _attempt_skip("git_inactive")
+        outcome = lock_manager.acquire(
+            "W", project_id, target_key=branch, holder_kind="attempt_commit",
+            mode=lock_manager.NO_WAIT, ctx=ctx)
+        if not outcome.ok:
+            return _attempt_skip("git_busy")
+        key = outcome.lock_key
+        if not wt_path.is_dir() or not _gs._worktree_link_ok(wt_path):
+            return _attempt_skip("no_worktree")
+        actual = _gs._run_git(["symbolic-ref", "--short", "HEAD"], cwd=wt_path)
+        if actual.returncode or actual.stdout.strip() != branch:
+            return _attempt_skip("attempt_branch_mismatch")
+        # Input must be the exact pinned commit, not a caller-supplied moving ref.
+        if not re.fullmatch(r"[0-9a-f]{40,64}", input_commit or ""):
+            return _attempt_skip("attempt_input_invalid")
+        head = _gs._rev_parse(wt_path, "HEAD")
+        if not head:
+            return _attempt_skip("head_verification_failed")
+        trailer = (f"FlowGate-Attempt: {attempt_id}\n"
+                   f"FlowGate-Input: {input_commit}\n"
+                   f"FlowGate-Document: {doc_id}")
+        if head != input_commit:
+            message = _gs._run_git(["show", "-s", "--format=%B", head], cwd=wt_path)
+            parent = _gs._rev_parse(wt_path, "HEAD^")
+            if message.returncode or parent != input_commit or not all(
+                    line in message.stdout.splitlines() for line in trailer.splitlines()):
+                return _attempt_skip("attempt_head_mismatch")
+            listing = _gs._run_git(["diff", "--name-only", "-z", input_commit, head], cwd=wt_path)
+            if listing.returncode:
+                return _attempt_skip("head_verification_failed")
+            return {"committed": True, "commit": head[:7], "commit_sha": head,
+                    "subject": message.stdout.splitlines()[0], "skipped_reason": None,
+                    "excluded_artifacts": [], "committed_paths": sorted(filter(None, listing.stdout.split("\0"))),
+                    "recovered": True}
+        return _commit_worktree(wt_path, subject, cfg, attempt_id,
+                                body=trailer, expected_parent=input_commit)
+    except Exception:
+        _log.warning("attempt commit failed for %s", attempt_id, exc_info=True)
+        return _attempt_skip("commit_failed")
+    finally:
+        if key:
+            lock_manager.release(ctx, key)
 
 
 def _acquire_group_lock(project_id: str, group_id: str, holder_kind: str, *,
