@@ -15,7 +15,11 @@
        flowgate.v02.0059 T#1 (0011-CH contract A / B): in the Toolbar's [선택] mode (`select-mode`) a
        drag on the empty Canvas selects the cards in its rectangle, a card click adds / removes it,
        the wheel (and the MiniMap) pans, and dragging a selected card moves the selection together.
-       Out of the mode every Vue Flow setting is the one it had before. -->
+       Out of the mode every Vue Flow setting is the one it had before.
+       flowgate.v02.0059 0017-T: a dragged card (or the dragged selection) moves in whole steps of
+       `move-step` (the density's) while it is dragged and where it is dropped; none = 자율형.
+       0018-TR rework: the dot grid is that step's lattice (a dot on every whole-step Graph point, following
+       pan / zoom), and a dragged card lands on one of its dots; 자율형 has no lattice and shows no grid. -->
   <div
     ref="canvasEl"
     class="flow-canvas"
@@ -29,14 +33,25 @@
     :data-select-mode="selectMode ? 'true' : 'false'"
     :data-selected-edge-id="selectedEdge?.id ?? ''"
     :data-zoom="String(liveViewport.zoom)"
+    :data-move-step="moveStep ?? ''"
     :data-editable="editable ? 'true' : 'false'"
     tabindex="-1"
     @dragover="onDragOver"
     @drop="onDrop"
     @keydown="onKeydown"
   >
-    <!-- Dot grid drawn here (no extra Vue Flow package); it follows pan / zoom. -->
-    <div class="flow-canvas-grid" :style="gridStyle" aria-hidden="true" />
+    <!-- Dot grid drawn here (no extra Vue Flow package); it follows pan / zoom. 0018-TR rework: its dots are
+         the move step's lattice points (canvasView.ts canvasDotGrid). -->
+    <div
+      v-if="grid"
+      class="flow-canvas-grid"
+      :style="gridStyle"
+      aria-hidden="true"
+      data-test="designer-canvas-grid"
+      :data-grid-gap="String(grid.gap)"
+      :data-grid-size="String(grid.size)"
+      :data-grid-origin="`${grid.x} ${grid.y}`"
+    />
     <VueFlow
       :id="`designer-canvas:${flowId}`"
       class="flow-canvas-flow"
@@ -72,6 +87,8 @@
       @pane-click="onPaneClick"
       @viewport-change="onViewportChange"
       @viewport-change-end="onViewportChangeEnd"
+      @node-drag-start="onNodeDragStart"
+      @node-drag="onNodeDrag"
       @node-drag-stop="onNodeDragStop"
       @connect="onConnect"
       @connect-start="connecting = true"
@@ -147,6 +164,17 @@
 // flowgate.v02.0059 T#2 (0011-CH contract C): a drop is one `nodes-move` (every dragged Node's position) —
 // one move of the Flow's undo / redo, whether one card or the selection was dragged. Ctrl / Cmd + Z (`undo`)
 // works on every Flow, not only an editable draft: card moves are undone too.
+//
+// flowgate.v02.0059 0017-T — move step: `moveStep` (the Toolbar / View menu density's,
+// top/designerTop.ts DENSITY_MOVE_STEP) is how far apart the places a drag can leave cards are. While
+// cards are dragged they are shown in whole steps from where the drag started, the same offset for each
+// (canvasView.ts stepGroupMove), so the Edges follow the stepped cards and a selection keeps its layout; the
+// drop reports the stepped positions.
+// No step (자율형) leaves the drag as Vue Flow makes it. A new step moves no card.
+//
+// 0018-TR rework — the step is a lattice: the card under the pointer lands on the whole-step Graph point nearest
+// to the pointer (the others keep their offset to it), a drop pushed back inside the origin moves in whole steps,
+// and the dot grid draws exactly those points (canvasView.ts canvasDotGrid) — a new step redraws the grid only.
 import '@vue-flow/core/dist/style.css'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -155,6 +183,7 @@ import {
   type Connection,
   type CoordinateExtent,
   type EdgeMouseEvent,
+  type GraphNode,
   type NodeChange,
   type NodeDragEvent,
   type NodeMouseEvent,
@@ -167,9 +196,11 @@ import {
   CANVAS_MAX_ZOOM,
   CANVAS_MIN_ZOOM,
   DEFAULT_CANVAS_VIEWPORT,
+  canvasDotGrid,
   clampCanvasZoom,
   clampGroupToCanvas,
   sameViewport,
+  stepGroupMove,
   type CanvasSize,
   type CanvasViewport,
 } from '../canvasView'
@@ -200,8 +231,10 @@ const props = withDefaults(
     /** Connection pre-check (edit/connectionRules.ts through the session). */
     canConnect?: ((source: string, target: string) => boolean) | null
     issues?: readonly FlowDraftIssue[]
+    /** flowgate.v02.0059 0017-T: the step a card drag moves in (Graph units); null = 자율형 (none). */
+    moveStep?: number | null
   }>(),
-  { selectedNodeIds: () => [], selectMode: false, viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [] },
+  { selectedNodeIds: () => [], selectMode: false, viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [], moveStep: null },
 )
 
 const emit = defineEmits<{
@@ -224,7 +257,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const GRID_GAP = 22
 /** The first display and 화면 맞춤 fit the same way: never above 1x. */
 const FIT_OPTIONS = { padding: 0.12, minZoom: CANVAS_MIN_ZOOM, maxZoom: CANVAS_FIT_MAX_ZOOM }
 // The Graph origin bounds direct Canvas pan on the top/left; right and bottom stay open.
@@ -271,10 +303,18 @@ const flow = shallowRef<VueFlowStore | null>(null)
 let fitted = props.viewport !== null
 let nodesMeasured = false
 
+/**
+ * 0018-TR rework: the move step's dot grid on the Viewport Vue Flow draws the cards with (its own transform, which
+ * also holds a first view it constrained without reporting it); none for 자율형.
+ */
+const grid = computed(() => canvasDotGrid(flow.value?.viewport.value ?? liveViewport.value, props.moveStep))
+// Each dot is drawn in the middle of its background tile, so the tiles start half a tile before the Graph origin:
+// the dots fall on the origin and every whole gap from it.
 const gridStyle = computed(() => {
-  const { x, y, zoom } = liveViewport.value
-  const gap = GRID_GAP * zoom
-  return { backgroundSize: `${gap}px ${gap}px`, backgroundPosition: `${x}px ${y}px` }
+  const value = grid.value
+  if (!value) return {}
+  const { size, x, y } = value
+  return { backgroundSize: `${size}px ${size}px`, backgroundPosition: `${x - size / 2}px ${y - size / 2}px` }
 })
 
 // Vue Flow may report the measured Nodes before or after the instance is ready; the fit runs
@@ -406,13 +446,43 @@ function onViewportChangeEnd({ x, y, zoom }: ViewportTransform) {
 // already shows each dragged card where the pointer left it; the clamped position is put back on
 // the card itself, because a group clamped back onto the place it started from leaves the Graph
 // unchanged (moveNode keeps it) and then no redraw from the Graph would follow.
-function onNodeDragStop({ nodes: dragged }: NodeDragEvent) {
-  const drops = clampGroupToCanvas(dragged.map((node) => ({ nodeId: node.id, x: node.position.x, y: node.position.y })))
+function onNodeDragStop({ node, nodes: dragged }: NodeDragEvent) {
+  const drops = clampGroupToCanvas(steppedPositions(dragged, node?.id), props.moveStep)
+  dragStarts = new Map()
   for (const drop of drops) {
     const shown = flow.value?.findNode(drop.nodeId)
     if (shown && (shown.position.x !== drop.x || shown.position.y !== drop.y)) shown.position = { x: drop.x, y: drop.y }
   }
   if (drops.length) emit('nodes-move', drops)
+}
+
+// flowgate.v02.0059 0017-T: where each dragged card was shown when its drag started. A drop seen without
+// its start takes the card's Graph position, which is where it was shown (the Graph changes on a drop only).
+let dragStarts = new Map<string, { x: number; y: number }>()
+
+function onNodeDragStart({ nodes: dragged }: NodeDragEvent) {
+  dragStarts = new Map(dragged.map((node) => [node.id, { x: node.position.x, y: node.position.y }]))
+}
+
+/** The card under the pointer on its nearest step point, the others at its offset; without a step, where Vue Flow put them. */
+function steppedPositions(dragged: readonly GraphNode[], anchorId?: string | null) {
+  return stepGroupMove(
+    dragged.map((node) => ({ nodeId: node.id, x: node.position.x, y: node.position.y })),
+    (nodeId) => dragStarts.get(nodeId) ?? props.graph.nodes.find((node) => node.id === nodeId) ?? null,
+    props.moveStep,
+    anchorId,
+  )
+}
+
+// Vue Flow moves every dragged card to the pointer on each move and then reports the drag; the cards are put
+// on their steps right then, before anything is drawn. Each gets a new position object: the one Vue Flow set
+// is its own drag state, which it keeps following the pointer from.
+function onNodeDrag({ node, nodes: dragged }: NodeDragEvent) {
+  if (!props.moveStep) return
+  for (const place of steppedPositions(dragged, node?.id)) {
+    const shown = dragged.find((candidate) => candidate.id === place.nodeId)
+    if (shown && (shown.position.x !== place.x || shown.position.y !== place.y)) shown.position = { x: place.x, y: place.y }
+  }
 }
 
 // ── flowgate.v02.0045 S3: structure edits of an editable draft ─────────────────────────────

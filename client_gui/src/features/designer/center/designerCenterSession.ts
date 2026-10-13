@@ -62,7 +62,7 @@
 // 자동 배치 takes the server's layout input: when the shown Graph leaves part of it out (documents the read
 // collapsed, a v0.1 root only its supersede chain tells — arrange/autoLayout.ts), the Flow is read whole
 // first and the cards move once that answers; only the Flow's latest 자동 배치 moves them, and none does
-// when the read fails. Nor does one whose answer comes after `cancelAutoLayout` (the Shell's 자율형), after the
+// when the read fails. Nor does one whose answer comes after `cancelAutoLayout`, after the
 // session was disposed, or after a read replaced the Graph it was asked for (a retry, a change elsewhere, the
 // re-read of an ignored / failed save, a reset) — the cards stay where they are shown.
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
@@ -213,7 +213,7 @@ export interface DesignerCenterSession {
   arrangeNodes(flowId: string, kind: ArrangeKind): boolean
   /**
    * flowgate.v02.0059 T#2: 자동 배치 — the server's auto placement rules (auto_layout.py) with their spacing
-   * times `scale` (the layout density), for every movable Node (one undo entry). Whether any Node moved —
+   * times `scale` (1 = the server's), for every movable Node (one undo entry). Whether any Node moved —
    * at once, or once the Flow read whole answers when the shown Graph leaves part of the input out.
    */
   autoLayout(flowId: string, scale?: number): boolean | Promise<boolean>

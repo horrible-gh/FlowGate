@@ -486,7 +486,7 @@ describe('자동 배치 on the real Canvas read path gives the server coordinate
     expect(positions()).not.toEqual(server)
   })
 
-  it('the reviewer case in numbers: R (0, 0) and D (520, 0) beside the hidden CH, at 보통 and at 매우 넓게', async () => {
+  it('the reviewer case in numbers: R (0, 0) and D (520, 0) beside the hidden CH, at scale 1 and at 1.5', async () => {
     const { center, positions, scatter } = await openSession('p.ui.0013')
     scatter()
     await center.autoLayout('p.ui.0013')

@@ -1,9 +1,10 @@
 // flowgate.v02.0059 T#2 (0011-CH contract D) — 자동 배치: the server's auto placement
 // (server/modules/flow_gate/graph_workflow/domain/auto_layout.py, L0009 §1.3 / §2.7) ported as it is —
 // the same constants, layering by depth, collision rule and projections — so the same input gives the
-// same coordinates. No new rule: the one addition is `scale` (the layout density, 1 = the server's
-// spacing), which multiplies every spacing — column step, stack step, row offsets and collision step;
-// the collision box is the card's footprint and stays.
+// same coordinates. No new rule: the one addition is `scale` (1 = the server's spacing), which multiplies
+// every spacing — column step, stack step, row offsets and collision step; the collision box is the card's
+// footprint and stays. flowgate.v02.0059 0017-T: the Designer's 자동 배치 uses 1 — the density is a drag
+// step (top/designerTop.ts DENSITY_MOVE_STEP), not this scale.
 //
 // For a shown Graph (`autoLayoutPlacements`) the input is what the server's projection holds: Graph /
 // draft nodes (those with a definition) laid out in layers along the execution edges, the other cards

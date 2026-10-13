@@ -1,10 +1,12 @@
 /**
- * flowgate.v02.0059 T#2 (0016-TR rev2) — on the real Shell (project store, Center session, server Graph source,
- * real Vue Flow Canvas; only `@shared/api` is mocked, lateLayoutServer.ts): a density whose 자동 배치 is still
- * reading (the whole Flow of a Flow with a hidden conversation, or the root document of a replaced v0.1 root)
- * and then 자율형 — from the Toolbar radios or from the View menu — leaves the cards where 자율형 found them when
- * the read answers: no card moves, no layout save goes out, no 실행 취소 appears. 자동 배치 chosen afterwards (Toolbar
- * ▾ / Edit menu) still lays the cards out at the server's spacing (자율형 = scale 1).
+ * flowgate.v02.0059 0017-T (was 0016-TR rev2) — on the real Shell (project store, Center session, server Graph
+ * source, real Vue Flow Canvas; only `@shared/api` is mocked, lateLayoutServer.ts): the density is the card drag
+ * step and has no part in 자동 배치.
+ * - choosing any density — from the Toolbar radios or from the View menu — on a Flow whose 자동 배치 would read
+ *   (the whole Flow of a Flow with a hidden conversation, or the root document of a replaced v0.1 root) starts no
+ *   read, moves no card, saves nothing and adds no 실행 취소;
+ * - a 자동 배치 (Toolbar ▾ / Edit menu) still reading is neither cancelled nor rescaled by densities chosen
+ *   meanwhile: when the read answers the cards are laid out at the server's spacing, one 실행 취소.
  * jsdom setup as DesignerShellArrange.0059.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -199,47 +201,48 @@ const CASES = [
   ['menu', 'the root document read', 'Legacy', 'document', LEGACY, [[2000, 1500], [2300, 1540], [2600, 1580]], [[0, 0], [260, 180], [520, 180]]],
 ] as const
 
-describe('Designer Shell — 자율형 while a density is still reading leaves the cards (flowgate.v02.0059 T#2)', () => {
-  it.each(CASES)('%s: 매우 넓게 waiting on %s (%s), then 자율형', async (from, _read, label, held, ids, left, laidOut) => {
+describe('Designer Shell — the density never starts, cancels or rescales 자동 배치 (flowgate.v02.0059 0017-T)', () => {
+  it.each(CASES)('%s: every density on a Flow 자동 배치 would read (%s) reads and moves nothing', async (from, _read, label, held, ids, left) => {
     const w = await mountShell()
     await openFlow(w, label)
     expect(cardsAt(w, ids)).toEqual(left)
     server.hold[held] = true
-    await chooseDensity(w, 'very-wide', from)
+    for (const level of ['wide', 'normal', 'free', 'narrow'] as const) {
+      await chooseDensity(w, level, from)
+      expect(await shownDensity(w)).toEqual([level, level])
+      expect(server.heldCount()).toBe(0)
+      expect(cardsAt(w, ids)).toEqual(left)
+      expect(disabled(tool(w, 'edit.undo'))).toBe(true)
+    }
+    server.release()
+    await settle()
+    expect(cardsAt(w, ids)).toEqual(left)
+    await waitSaves()
+    expect(server.saves).toEqual([])
+  })
+
+  it.each(CASES)('%s: 자동 배치 waiting on %s (%s) is laid out at the server spacing whatever density comes meanwhile', async (from, _read, label, held, ids, left, laidOut) => {
+    const w = await mountShell()
+    await openFlow(w, label)
+    server.hold[held] = true
+    await autoLayoutCommand(w, from)
     expect(server.heldCount()).toBe(1)
     expect(cardsAt(w, ids)).toEqual(left)
     await chooseDensity(w, 'free', from)
-    expect(await shownDensity(w)).toEqual(['free', 'free'])
+    await chooseDensity(w, 'wide', from === 'toolbar' ? 'menu' : 'toolbar')
+    expect(server.heldCount()).toBe(1)
+    expect(cardsAt(w, ids)).toEqual(left)
 
     server.release()
     await settle()
-    expect(cardsAt(w, ids)).toEqual(left)
-    expect(disabled(tool(w, 'edit.undo'))).toBe(true)
-    await waitSaves()
-    expect(server.saves).toEqual([])
-
-    // 자동 배치 chosen under 자율형 lays the cards out at the server's spacing, one 실행 취소.
-    await autoLayoutCommand(w, from)
     expect(cardsAt(w, ids)).toEqual(laidOut)
+    expect(await shownDensity(w)).toEqual(['wide', 'wide'])
     expect(disabled(tool(w, 'edit.undo'))).toBe(false)
+    await waitSaves()
+    const saved = Object.fromEntries(server.saves.flatMap((save) => save.positions.map((p) => [p.node_key, [p.x, p.y]])))
+    expect(Object.fromEntries(ids.map((id) => [id, saved[id]]))).toEqual(Object.fromEntries(ids.map((id, index) => [id, laidOut[index]])))
     await tool(w, 'edit.undo').trigger('click')
     await settle()
     expect(cardsAt(w, ids)).toEqual(left)
-  })
-
-  it('a later density wins over one still reading: 매우 넓게 then 보통 lays the cards out at 보통 only', async () => {
-    const w = await mountShell()
-    await openFlow(w, 'Docs')
-    server.hold.whole = true
-    await chooseDensity(w, 'very-wide', 'toolbar')
-    await chooseDensity(w, 'normal', 'menu')
-    expect(server.heldCount()).toBe(2)
-    server.release()
-    await settle()
-    expect(cardsAt(w, [DOCS.R, DOCS.D])).toEqual([[0, 0], [520, 0]])
-    await tool(w, 'edit.undo').trigger('click')
-    await settle()
-    expect(cardsAt(w, [DOCS.R, DOCS.D])).toEqual([[2000, 1500], [2300, 1540]])
-    expect(disabled(tool(w, 'edit.undo'))).toBe(true)
   })
 })

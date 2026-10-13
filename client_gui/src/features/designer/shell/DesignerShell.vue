@@ -61,6 +61,7 @@
           :center="center"
           :bottom-height="layout.bottomHeight"
           :placing="selectedPalette !== null"
+          :move-step="moveStep"
           @canvas-place="onCanvasPlace"
           @cancel-placement="selectedPalette = null"
           :unselected="!hasWorkTarget"
@@ -170,11 +171,16 @@
 // (`top.runMode`) and the Toolbar's run dot follow the run the session read back, never the click alone.
 // A refused run shows one short toast (its reason in plain words, no code); nothing else is written.
 //
-// flowgate.v02.0059 T#2 (0011-CH contracts C / D) — 정렬 / 배치 and the layout density act on the open Flow's
-// cards through the Center session: the six 정렬 / two 균등 분배 commands arrange its selected cards, 자동 배치
-// lays every movable card out by the server's auto placement rules at the density's spacing scale, and a
-// density of 매우 넓게 / 넓게 / 보통 lays them out again at once (자율형 leaves them where they are). Each is one
-// entry of the Flow's undo / redo, as a card drag is. The density stays one value on screen only (`top`).
+// flowgate.v02.0059 T#2 (0011-CH contracts C / D) — 정렬 / 배치 acts on the open Flow's cards through the
+// Center session: the six 정렬 / two 균등 분배 commands arrange its selected cards and 자동 배치 lays every
+// movable card out by the server's auto placement rules, only when that command is chosen. Each is one entry
+// of the Flow's undo / redo, as a card drag is.
+//
+// flowgate.v02.0059 0017-T — the density (넓게 / 보통 / 좁게 / 자율형) is how finely a card drag moves: the
+// Toolbar radios and the View menu set the one value (`top.density`, screen state only), and its move step
+// (DENSITY_MOVE_STEP) goes to the Canvas, which applies it to the drags that follow — one card or the dragged
+// selection alike. Choosing a density moves no card, saves nothing, adds no undo entry, changes no zoom and
+// neither starts nor stops 자동 배치.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { documentRead } from '@/features/document'
@@ -196,7 +202,7 @@ import {
   type ProjectExplorerFlowEvent,
 } from '../projectExplorer/projectExplorerTree'
 import {
-  DENSITY_LAYOUT_SCALE,
+  DENSITY_MOVE_STEP,
   arrangeSelectionMinimum,
   createDesignerTopState,
   isMenuCommandEnabled,
@@ -524,21 +530,14 @@ function onZoomSelect(percent: number) {
   center.requestView(flowId, { kind: 'zoom-to', zoom: percent / 100 })
 }
 
-/** flowgate.v02.0059 T#2: 자동 배치 of the open Flow at a spacing scale (one undo entry). */
-function autoLayout(scale: number) {
-  const flowId = center.state.activeFlowId
-  if (flowId !== null && isMenuCommandEnabled('edit.auto-layout', top.runMode, menuTargets.value)) center.autoLayout(flowId, scale)
-}
-
-// flowgate.v02.0059 T#2: the Toolbar radios and the View menu choose the one density; a density with a
-// spacing scale lays the open Flow out again at it, 자율형 moves nothing. The density chosen last decides: a
-// 자동 배치 still reading the whole Flow (an earlier density) moves nothing when it answers.
+// flowgate.v02.0059 0017-T: the Toolbar radios and the View menu choose the one density. It only sets the step
+// later card drags move in; nothing on the Canvas changes when it is chosen.
 function onDensity(level: DesignerDensity) {
   top.density = level
-  center.cancelAutoLayout()
-  const scale = DENSITY_LAYOUT_SCALE[level]
-  if (scale !== null) autoLayout(scale)
 }
+
+/** flowgate.v02.0059 0017-T: the step a card drag moves in at the chosen density (null = 자율형, none). */
+const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
 
 function onTopCommand(command: DesignerTopCommand) {
   // The parts disable what has no target; this is the same rule for a command that still arrives.
@@ -607,10 +606,13 @@ function onTopCommand(command: DesignerTopCommand) {
       if (flowId !== null) center.selectAll(flowId)
       return
     }
-    // flowgate.v02.0059 T#2: the density's spacing scale (자율형: the server's, 1).
-    case 'edit.auto-layout':
-      autoLayout(DENSITY_LAYOUT_SCALE[top.density] ?? 1)
+    // flowgate.v02.0059 T#2: 자동 배치 of the open Flow by the server's rules and spacing (one undo entry).
+    // 0017-T: the density has no part in it.
+    case 'edit.auto-layout': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null) center.autoLayout(flowId)
       return
+    }
     // flowgate.v02.0059 T#1: the Toolbar and the View menu emit the same command; the Canvas of the
     // open Flow does the fit / zoom and reports its Viewport, which the Toolbar's zoom value follows.
     case 'view.fit':

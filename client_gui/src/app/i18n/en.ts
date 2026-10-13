@@ -462,7 +462,7 @@ export default {
         'distribute-horizontal': 'Distribute Horizontally',
         'distribute-vertical': 'Distribute Vertically',
       },
-      densities: { 'very-wide': 'Very Wide', wide: 'Wide', normal: 'Normal', free: 'Freeform' },
+      densities: { wide: 'Wide', normal: 'Normal', narrow: 'Narrow', free: 'Freeform' },
       tools: {
         undo: 'Undo',
         redo: 'Redo',
@@ -479,7 +479,7 @@ export default {
         zoom_in: 'Zoom In',
         zoom_value: 'Zoom level',
         zoom_preset: 'Choose zoom level',
-        density: 'Canvas layout density',
+        density: 'Layout density — the step a dragged card moves in (Freeform: none)',
       },
       // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.
       run_status: { running: 'Running', stopped: 'Stopped', completed: 'Completed' },

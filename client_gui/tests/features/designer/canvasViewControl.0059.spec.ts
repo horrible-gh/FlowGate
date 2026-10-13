@@ -7,6 +7,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { useVueFlow } from '@vue-flow/core'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import DesignerCenter from '@/features/designer/center/DesignerCenter.vue'
@@ -164,19 +165,43 @@ describe('Canvas view requests (flowgate.v02.0059 T#1)', () => {
   })
 })
 
-describe('Toolbar zoom select (flowgate.v02.0059 T#1)', () => {
-  it('offers the presets, adds the current zoom, and emits the chosen percent', async () => {
+// flowgate.v02.0059 0017-T: the zoom value and the zoom select are one control.
+describe('Toolbar zoom control (flowgate.v02.0059 T#1, 0017-T)', () => {
+  const shownZoom = (select: { element: Element }) => (select.element as HTMLSelectElement).selectedOptions[0]?.text
+
+  it('shows the current zoom once, also one that is no preset, and offers the presets', async () => {
+    const toolbar = mount(DesignerToolbar, { props: { runMode: null, density: 'normal', zoom: 115 }, global: { plugins: [i18n] } })
+    const zoomParts = toolbar.findAll('[data-test^="designer-tool-zoom"]')
+    expect(zoomParts).toHaveLength(1)
+    expect(toolbar.findAll('output')).toHaveLength(0)
+    const select = zoomParts[0]
+    expect(select.element.tagName).toBe('SELECT')
+    expect(select.findAll('option').map((o) => o.text())).toEqual(['25%', '50%', '75%', '100%', '115%', '150%', '200%'])
+    expect(shownZoom(select)).toBe('115%')
+    expect((select.element as HTMLSelectElement).value).toBe('115')
+    // Nothing else in the Toolbar shows a percent.
+    const outside = toolbar.text().replace(select.text(), '')
+    expect(outside).not.toMatch(/%/)
+
+    await toolbar.setProps({ zoom: 75 })
+    expect(select.findAll('option').map((o) => o.text())).toEqual(['25%', '50%', '75%', '100%', '150%', '200%'])
+    expect(shownZoom(select)).toBe('75%')
+  })
+
+  it('emits the chosen percent and then shows the zoom the Canvas reports, not the bare choice', async () => {
     const toolbar = mount(DesignerToolbar, { props: { runMode: null, density: 'normal', zoom: 130 }, global: { plugins: [i18n] } })
-    const select = toolbar.get('[data-test="designer-tool-zoom-select"]')
-    expect(select.findAll('option').map((o) => o.text())).toEqual(['25%', '50%', '75%', '100%', '130%', '150%', '200%'])
-    expect((select.element as HTMLSelectElement).value).toBe('130')
+    const select = toolbar.get('[data-test="designer-tool-zoom"]')
     await select.setValue('50')
     expect(toolbar.emitted('update:zoom')).toEqual([[50]])
-    expect(toolbar.get('[data-test="designer-tool-zoom"]').text()).toBe('130%')
+    // The Canvas has not reported a new zoom: the control keeps showing the real one.
+    await nextTick()
+    expect(shownZoom(select)).toBe('130%')
+    await toolbar.setProps({ zoom: 50 })
+    expect(shownZoom(select)).toBe('50%')
   })
 
   it('is unavailable without a work target', () => {
     const toolbar = mount(DesignerToolbar, { props: { runMode: null, density: 'normal', zoom: 100, disabled: true }, global: { plugins: [i18n] } })
-    expect(toolbar.get('[data-test="designer-tool-zoom-select"]').attributes('disabled')).toBeDefined()
+    expect(toolbar.get('[data-test="designer-tool-zoom"]').attributes('disabled')).toBeDefined()
   })
 })

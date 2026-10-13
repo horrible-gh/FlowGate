@@ -2,9 +2,9 @@
  * flowgate.v02.0059 T#2 (0011-CH contracts C / D) — on the real Shell (project store, Center session, server
  * Graph source, real Vue Flow Canvas; only `@shared/api` is mocked, as DesignerShellSelection.0059):
  * - 정렬 / 배치 ▾ (Toolbar) and 편집 › 정렬 / 배치 move the selected cards on the Canvas; items wait for enough
- *   selected cards; 자동 배치 lays the cards out by the server rules at the density's scale.
- * - 배치 밀도: 매우 넓게 / 넓게 / 보통 lay the cards out again (visibly wider / narrower), 자율형 moves nothing;
- *   the Toolbar radios and the View menu show one value.
+ *   selected cards; 자동 배치 lays the cards out by the server rules and spacing, whatever the density.
+ * - 배치 밀도 (flowgate.v02.0059 0017-T: the card drag step, moveDensity.0059): choosing one moves no card and
+ *   starts no 자동 배치; the Toolbar radios and the View menu show one value.
  * - every such action, a card drop of several cards included, is one 실행 취소 (Toolbar, Edit menu, Ctrl+Z —
  *   also on a Flow with no editable draft), and the cards' saved positions follow.
  * jsdom replays no d3 drag: a drop is the Vue Flow `nodeDragStop` event, as FlowCanvasLayout.0045 does.
@@ -280,52 +280,46 @@ describe('Designer Shell — 정렬 / 배치, 배치 밀도 and their 실행 취
     expect(cardsAt(w)).toEqual([[0, 0], [300, 120], [90, 400]])
   })
 
-  it('배치 밀도 lays the cards out at its spacing (매우 넓게 1.5, 넓게 1.25, 보통 1); 자율형 moves nothing', async () => {
+  // flowgate.v02.0059 0017-T: the density is the step a card drag moves in (moveDensity.0059); choosing it lays
+  // nothing out.
+  it('배치 밀도 moves no card: no 자동 배치, no save, no 실행 취소, no zoom change; Toolbar and View menu show one value', async () => {
     const w = await mountShell()
     await openFlow(w, 'Canvas')
+    const left = [[0, 0], [300, 120], [90, 400]]
+    const canvasReads = () => getRequest.mock.calls.filter(([url]) => /\/canvas$/.test(String(url))).length
+    const reads = canvasReads()
+    const zoom = w.get('[data-test="designer-tool-zoom"]').attributes('data-zoom')
     expect(await shownDensity(w)).toEqual(['normal', 'normal'])
-    await chooseDensity(w, 'free', 'toolbar')
-    expect(cardsAt(w)).toEqual([[0, 0], [300, 120], [90, 400]])
-    expect(await shownDensity(w)).toEqual(['free', 'free'])
-    expect(disabled(tool(w, 'edit.undo'))).toBe(true)
-
-    await chooseDensity(w, 'very-wide', 'toolbar')
-    expect(cardsAt(w)).toEqual([[0, 0], [390, 0], [780, 0]])
-    expect(await shownDensity(w)).toEqual(['very-wide', 'very-wide'])
-    await chooseDensity(w, 'normal', 'menu')
-    expect(cardsAt(w)).toEqual([[0, 0], [260, 0], [520, 0]])
-    expect(await shownDensity(w)).toEqual(['normal', 'normal'])
-    await chooseDensity(w, 'wide', 'menu')
-    expect(cardsAt(w)).toEqual([[0, 0], [325, 0], [650, 0]])
-
-    // Each density change is one 실행 취소.
-    await tool(w, 'edit.undo').trigger('click')
-    await settle()
-    expect(cardsAt(w)).toEqual([[0, 0], [260, 0], [520, 0]])
-    await tool(w, 'edit.undo').trigger('click')
-    await settle()
-    expect(cardsAt(w)).toEqual([[0, 0], [390, 0], [780, 0]])
-    await tool(w, 'edit.undo').trigger('click')
-    await settle()
-    expect(cardsAt(w)).toEqual([[0, 0], [300, 120], [90, 400]])
+    for (const [level, from] of [
+      ['wide', 'toolbar'], ['normal', 'menu'], ['free', 'toolbar'], ['narrow', 'menu'], ['wide', 'menu'], ['free', 'menu'],
+    ] as const) {
+      await chooseDensity(w, level, from)
+      expect(cardsAt(w)).toEqual(left)
+      expect(await shownDensity(w)).toEqual([level, level])
+      expect(disabled(tool(w, 'edit.undo'))).toBe(true)
+      expect(w.get('[data-test="designer-tool-zoom"]').attributes('data-zoom')).toBe(zoom)
+    }
+    expect(canvasReads()).toBe(reads)
+    await waitSaves()
+    expect(storedPositions()).toEqual({})
   })
 
-  it('자동 배치 (Toolbar ▾ and Edit menu) uses the density scale, 1 under 자율형', async () => {
+  it('자동 배치 (Toolbar ▾ and Edit menu) lays the cards out at the server spacing whatever the density', async () => {
     const w = await mountShell()
     await openFlow(w, 'Canvas')
-    await chooseDensity(w, 'free', 'menu')
-    await editCommand(w, 'edit.auto-layout')
-    expect(cardsAt(w)).toEqual([[0, 0], [260, 0], [520, 0]])
-    await tool(w, 'edit.undo').trigger('click')
-    await settle()
-    await chooseDensity(w, 'free', 'toolbar')
-    expect(cardsAt(w)).toEqual([[0, 0], [300, 120], [90, 400]])
-    await chooseDensity(w, 'wide', 'toolbar')
-    await tool(w, 'edit.undo').trigger('click')
-    await settle()
-    await (await openArrange(w)).get('[data-arrange="edit.auto-layout"]').trigger('click')
-    await settle()
-    expect(cardsAt(w)).toEqual([[0, 0], [325, 0], [650, 0]])
+    for (const [level, from] of [['wide', 'menu'], ['free', 'toolbar'], ['normal', 'menu'], ['narrow', 'toolbar']] as const) {
+      await chooseDensity(w, level, from === 'menu' ? 'toolbar' : 'menu')
+      if (from === 'menu') await editCommand(w, 'edit.auto-layout')
+      else {
+        await (await openArrange(w)).get('[data-arrange="edit.auto-layout"]').trigger('click')
+        await settle()
+      }
+      expect(cardsAt(w)).toEqual([[0, 0], [260, 0], [520, 0]])
+      expect(await shownDensity(w)).toEqual([level, level])
+      await tool(w, 'edit.undo').trigger('click')
+      await settle()
+      expect(cardsAt(w)).toEqual([[0, 0], [300, 120], [90, 400]])
+    }
   })
 
   it('a drop of several cards is one 실행 취소, also by Ctrl+Z on a Flow with no editable draft', async () => {
@@ -334,22 +328,23 @@ describe('Designer Shell — 정렬 / 배치, 배치 밀도 and their 실행 취
     const ids = ['doc:p.ui.0003.0001-R', 'doc:p.ui.0003.0002-N', 'doc:p.ui.0003.0003-D']
     expect(get(w).attributes('data-editable')).toBe('false')
     const flow = useVueFlow('designer-canvas:p.ui.0003')
+    // Dropped by (100, 60): whole steps of the default density 보통 (20, 0018-TR rev2), so the drop lands as dragged.
     const dropped = ids.slice(0, 2).map((id) => {
       const node = flow.findNode(id)!
-      return { ...node, position: { x: node.position.x + 100, y: node.position.y + 50 } } as GraphNode
+      return { ...node, position: { x: node.position.x + 100, y: node.position.y + 60 } } as GraphNode
     })
     flow.emits.nodeDragStop({ event: new MouseEvent('mouseup'), node: dropped[0], nodes: dropped, intersections: undefined } as never)
     await settle()
-    expect(cardsAt(w, ids)).toEqual([[100, 50], [400, 170], [90, 400]])
+    expect(cardsAt(w, ids)).toEqual([[100, 60], [400, 180], [90, 400]])
     expect(disabled(tool(w, 'edit.undo'))).toBe(false)
     await get(w).trigger('keydown', { key: 'z', ctrlKey: true })
     await settle()
     expect(cardsAt(w, ids)).toEqual([[0, 0], [300, 120], [90, 400]])
     expect(disabled(tool(w, 'edit.undo'))).toBe(true)
     await editCommand(w, 'edit.redo')
-    expect(cardsAt(w, ids)).toEqual([[100, 50], [400, 170], [90, 400]])
+    expect(cardsAt(w, ids)).toEqual([[100, 60], [400, 180], [90, 400]])
     await waitSaves()
-    expect(storedPositions()).toEqual({ [ids[0]]: [100, 50], [ids[1]]: [400, 170] })
+    expect(storedPositions()).toEqual({ [ids[0]]: [100, 60], [ids[1]]: [400, 180] })
   })
 })
 

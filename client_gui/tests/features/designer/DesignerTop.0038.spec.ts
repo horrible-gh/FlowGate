@@ -356,9 +356,11 @@ describe('Designer top band — Toolbar', () => {
     // [선택] (multi-selection toggle) is back next to 정렬 / 배치 ▾.
     expect(toolTexts(w)).toEqual(['실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '다음 단계', '전체 실행', '화면 맞춤', '축소', '확대'])
     expect(get(w, 'designer-toolbar').text()).not.toMatch(/노드 추가|연결/)
-    expect(get(w, 'designer-tool-zoom').text()).toBe('100%')
+    // flowgate.v02.0059 0017-T: the zoom is one control showing the current zoom.
+    expect((get(w, 'designer-tool-zoom').element as HTMLSelectElement).selectedOptions[0]?.text).toBe('100%')
+    expect(get(w, 'designer-toolbar').findAll('output')).toHaveLength(0)
     expect(get(w, 'designer-tool-density').findAll('[role="radio"]').map((b) => b.attributes('aria-label'))).toEqual([
-      '매우 넓게', '넓게', '보통', '자율형',
+      '넓게', '보통', '좁게', '자율형',
     ])
   })
 
@@ -482,7 +484,7 @@ describe('Designer top band — Toolbar', () => {
     await pop.get('[data-test="designer-menu-sub"][data-sub="density"]').trigger('click')
     const sub = w.get('[data-test="designer-menu-subpop"][data-sub="density"]')
     expect(sub.get('[aria-checked="true"]').attributes('data-density')).toBe('wide')
-    expect(itemTexts(sub)).toEqual(['매우 넓게', '넓게', '보통', '자율형'])
+    expect(itemTexts(sub)).toEqual(['넓게', '보통', '좁게', '자율형'])
 
     await sub.get('[data-density="free"]').trigger('click')
     expect(openPop(w).exists()).toBe(false)
@@ -595,12 +597,12 @@ describe('Designer top band — part events', () => {
     await menubar.get('[data-tab="conversation"]').trigger('click')
     await menubar.get('[data-menu="view"]').trigger('click')
     await menubar.get('[data-sub="density"]').trigger('click')
-    await menubar.get('[data-density="very-wide"]').trigger('click')
+    await menubar.get('[data-density="wide"]').trigger('click')
 
     expect(menubar.emitted('command')).toEqual([['flow.open']])
     expect(menubar.emitted('toggle-panel')).toEqual([['minimap']])
     expect(menubar.emitted('show-tab')).toEqual([['conversation']])
-    expect(menubar.emitted('update:density')).toEqual([['very-wide']])
+    expect(menubar.emitted('update:density')).toEqual([['wide']])
     menubar.unmount()
   })
 

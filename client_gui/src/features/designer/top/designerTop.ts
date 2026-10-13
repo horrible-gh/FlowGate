@@ -10,8 +10,10 @@
 //
 // flowgate.v02.0059 T#2 (0011-CH contract D): 정렬 / 배치 is a submenu of the Edit menu and the Toolbar's
 // 정렬 / 배치 ▾ drop-down, both listing the same commands — six 정렬 and two 균등 분배 of the selected cards
-// (2 / 3 or more selected, `selectedCount`) and, in the Toolbar's, 자동 배치. The layout density is the
-// spacing scale of 자동 배치 (DENSITY_LAYOUT_SCALE, the one place its numbers live); 자율형 has none.
+// (2 / 3 or more selected, `selectedCount`) and, in the Toolbar's, 자동 배치.
+//
+// flowgate.v02.0059 0017-T: the density is the step a card drag moves in (DENSITY_MOVE_STEP, the one place
+// its numbers live); 자율형 forces none. It never lays cards out and never starts or stops 자동 배치.
 
 /** Commands of the top band. Window panel / tab and density choices have their own events. */
 export type DesignerTopCommand =
@@ -96,20 +98,31 @@ export interface DesignerRecentRequest {
   id: string
 }
 
-/** Canvas layout density, widest first (0001-R §3.4). */
-export type DesignerDensity = 'very-wide' | 'wide' | 'normal' | 'free'
+/**
+ * Canvas layout density, widest first (0001-R §3.4): 넓게 / 보통 / 좁게 / 자율형. flowgate.v02.0059 0018-TR rev2
+ * (rejection: the terms are 넓게, 보통, 좁게): the three stepped densities were renamed — the steps stay 40 / 20 / 10.
+ */
+export type DesignerDensity = 'wide' | 'normal' | 'narrow' | 'free'
 
-export const DESIGNER_DENSITIES: readonly DesignerDensity[] = ['very-wide', 'wide', 'normal', 'free']
+export const DESIGNER_DENSITIES: readonly DesignerDensity[] = ['wide', 'normal', 'narrow', 'free']
 
 /**
- * flowgate.v02.0059 T#2 (0011-CH contract D): the spacing scale 자동 배치 uses at each density (1 = the
- * server's auto_layout spacing). 자율형 (`null`) lays nothing out: cards stay where the user put them, and
- * 자동 배치 chosen then uses 1. The numbers were proposed in 0011-CH and are tuned here only.
+ * flowgate.v02.0059 0017-T: the step, in Canvas (Graph) units, a card drag moves in at each density — widest
+ * first, coarse to fine. 0018-TR rework: the step is a lattice — the dragged card lands on the nearest Graph
+ * point whose x and y are whole steps, the other dragged cards keep their offset to it (canvasView.ts
+ * stepGroupMove), so a dragged selection keeps its relative layout — and the Canvas dot grid draws exactly that
+ * lattice (canvasView.ts canvasDotGrid), so a density shows its own dot spacing. 자율형 (`null`) forces no step
+ * and shows no grid: a card stays exactly where it is dropped. Choosing a density moves nothing by itself.
+ *
+ * Unit: the server's auto placement (auto_layout.py) puts every card on a 20 lattice — its column step 260,
+ * stack step 140, row offsets 180 / 320 / 200 and collision step 120 are all multiples of 20 — so a placed card is
+ * on the 20 and 10 lattices (40: every second one). Vue Flow's own snap (`snapToGrid`) stays off: it rounds every
+ * dragged card to the grid by itself and would break a group's layout.
  */
-export const DENSITY_LAYOUT_SCALE: Readonly<Record<DesignerDensity, number | null>> = Object.freeze({
-  'very-wide': 1.5,
-  wide: 1.25,
-  normal: 1,
+export const DENSITY_MOVE_STEP: Readonly<Record<DesignerDensity, number | null>> = Object.freeze({
+  wide: 40,
+  normal: 20,
+  narrow: 10,
   free: null,
 })
 
@@ -261,7 +274,10 @@ export const DESIGNER_MENUS: readonly DesignerMenu[] = [
 /** Which run button started the current run, or null when nothing runs. */
 export type DesignerRunMode = 'next' | 'all' | null
 
-/** Screen state of the top band, owned by one DesignerShell like its layout. Never persisted. */
+/**
+ * Screen state of the top band, owned by one DesignerShell like its layout. Never persisted, so every Designer —
+ * a newly created Project's too — starts at the density 보통 (flowgate.v02.0059 0018-TR rev2).
+ */
 export interface DesignerTopState {
   runMode: DesignerRunMode
   density: DesignerDensity

@@ -18,7 +18,10 @@
        flowgate.v02.0059 T#2 (0011-CH contract D): 정렬 / 배치 ▾ opens a drop-down of the same commands as
        the Edit menu's 정렬 / 배치 submenu — six 정렬 and two 균등 분배 of the selected cards, then 자동 배치 —
        each unavailable while too few cards are selected (`targets`, the Menu Bar's). A choice, Escape or a
-       press outside closes it. -->
+       press outside closes it.
+       flowgate.v02.0059 0017-T: the zoom is one control — it shows the Canvas zoom (also one that is no
+       preset, e.g. 115%) and chooses a preset; the zoom is never shown twice. The density radios set the
+       step a card drag moves in. -->
   <div
     class="designer-toolbar"
     :class="{ 'is-unavailable': disabled }"
@@ -156,17 +159,17 @@
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="M7 10h6M10 7v6" /></svg>
         <span>{{ t('gui.designer.top.tools.zoom_in') }}</span>
       </button>
-      <output class="designer-tool-zoom" :aria-label="t('gui.designer.top.tools.zoom_value')" data-test="designer-tool-zoom">{{ zoom }}%</output>
       <select
-        class="designer-tool-zoom-select"
-        :value="zoom"
+        class="designer-tool-zoom"
+        :value="String(zoom)"
         :disabled="disabled"
-        :aria-label="t('gui.designer.top.tools.zoom_preset')"
+        :aria-label="t('gui.designer.top.tools.zoom_value')"
         :title="t('gui.designer.top.tools.zoom_preset')"
-        data-test="designer-tool-zoom-select"
-        @change="emit('update:zoom', Number(($event.target as HTMLSelectElement).value))"
+        data-test="designer-tool-zoom"
+        :data-zoom="zoom"
+        @change="chooseZoom"
       >
-        <option v-for="percent in zoomOptions" :key="percent" :value="percent">{{ percent }}%</option>
+        <option v-for="percent in zoomOptions" :key="percent" :value="String(percent)" :selected="percent === zoom">{{ percent }}%</option>
       </select>
       <div class="designer-tool-density" role="radiogroup" :aria-label="t('gui.designer.top.tools.density')" :title="t('gui.designer.top.tools.density')" data-test="designer-tool-density">
         <button
@@ -191,7 +194,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ALL_MENU_TARGETS,
@@ -208,7 +211,7 @@ const props = withDefaults(
   defineProps<{
     runMode: DesignerRunMode
     density: DesignerDensity
-    /** Zoom value shown next to the zoom buttons, in percent. */
+    /** The Canvas zoom, in percent: what the zoom control shows. */
     zoom: number
     /** True while the Designer has no work target (0039 T#3): every tool is unavailable. */
     disabled?: boolean
@@ -239,6 +242,16 @@ const ZOOM_PRESETS: readonly number[] = [25, 50, 75, 100, 150, 200]
 const zoomOptions = computed(() =>
   ZOOM_PRESETS.includes(props.zoom) ? ZOOM_PRESETS : [...ZOOM_PRESETS, props.zoom].sort((a, b) => a - b),
 )
+
+// flowgate.v02.0059 0017-T: a chosen preset goes to the Canvas; the control then shows the zoom the Canvas
+// reports back (`zoom`), so it never keeps showing a choice the Canvas did not take.
+function chooseZoom(event: Event) {
+  const select = event.target as HTMLSelectElement
+  emit('update:zoom', Number(select.value))
+  void nextTick(() => {
+    select.value = String(props.zoom)
+  })
+}
 
 const { t } = useI18n()
 
@@ -504,34 +517,39 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
   background: #58a6ff;
 }
 
-.designer-tool-zoom-select {
-  height: 26px;
-  padding: 0 4px;
-  border: 1px solid var(--fg2-border, rgba(154, 181, 210, 0.3));
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 12px;
-}
-
-.designer-tool-zoom-select:disabled {
-  opacity: 0.45;
-}
-
+/* flowgate.v02.0059 0017-T: the one zoom control — the current zoom in a box, presets on opening it. */
 .designer-tool-zoom {
-  display: flex;
-  align-items: center;
   height: 36px;
   margin: auto 2px;
-  padding: 0 10px;
+  padding: 0 6px 0 10px;
   box-sizing: border-box;
   border: 1px solid var(--fg2-line-strong);
   border-radius: 6px;
   background: #102139;
   color: var(--fg2-text);
+  font: inherit;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.designer-tool-zoom option {
+  background: #0c1a2b;
+  color: var(--fg2-text);
+}
+
+.designer-tool-zoom:hover:not(:disabled) {
+  border-color: #244a79;
+  background: #173157;
+}
+
+.designer-tool-zoom:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: 1px;
+}
+
+.designer-tool-zoom:disabled {
+  cursor: default;
 }
 
 .designer-tool-density {

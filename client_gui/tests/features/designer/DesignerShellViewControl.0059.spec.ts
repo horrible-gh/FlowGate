@@ -150,7 +150,8 @@ async function openFlow(w: VueWrapper<any>, label: string) {
 }
 
 const tool = (w: VueWrapper<any>, command: string) => w.get(`[data-test="designer-tool"][data-command="${command}"]`)
-const toolbarZoom = (w: VueWrapper<any>) => get(w, 'designer-tool-zoom').text()
+// flowgate.v02.0059 0017-T: the one zoom control shows the zoom as its chosen entry.
+const toolbarZoom = (w: VueWrapper<any>) => (get(w, 'designer-tool-zoom').element as HTMLSelectElement).selectedOptions[0]?.text
 const canvasZoom = (w: VueWrapper<any>) => Number(get(w, 'designer-canvas').attributes('data-zoom'))
 
 async function menuCommand(w: VueWrapper<any>, command: string) {
@@ -189,17 +190,50 @@ describe('Designer Shell — Canvas view controls (flowgate.v02.0059 T#1)', () =
   it('the Toolbar zoom select sets the Canvas zoom', async () => {
     const w = await mountShell()
     await openFlow(w, 'Canvas')
-    await get(w, 'designer-tool-zoom-select').setValue('50')
+    await get(w, 'designer-tool-zoom').setValue('50')
     await settle()
     expect(canvasZoom(w)).toBe(0.5)
     expect(toolbarZoom(w)).toBe('50%')
-    expect((get(w, 'designer-tool-zoom-select').element as HTMLSelectElement).value).toBe('50')
+    expect((get(w, 'designer-tool-zoom').element as HTMLSelectElement).value).toBe('50')
+  })
+
+  // flowgate.v02.0059 0017-T: 115% (no preset) is shown once and stays one with zoom in / out, presets and 100%.
+  it('a zoom that is no preset (115%) is shown once and follows zoom in / out, a preset and 100%', async () => {
+    const w = await mountShell()
+    await openFlow(w, 'Canvas')
+    const flow = useVueFlow('designer-canvas:p.ui.0002')
+    await flow.setViewport({ x: 0, y: 0, zoom: 1.15 })
+    await settle()
+    expect(w.findAll('[data-test^="designer-tool-zoom"]')).toHaveLength(1)
+    expect(w.get('[data-test="designer-toolbar"]').findAll('output')).toHaveLength(0)
+    expect(toolbarZoom(w)).toBe('115%')
+    const options = () => get(w, 'designer-tool-zoom').findAll('option').map((o) => o.text())
+    expect(options().filter((text) => text === '115%')).toHaveLength(1)
+
+    await tool(w, 'view.zoom-in').trigger('click')
+    await settle()
+    expect(toolbarZoom(w)).toBe(`${Math.round(canvasZoom(w) * 100)}%`)
+    expect(canvasZoom(w)).toBeGreaterThan(1.15)
+    expect(options()).not.toContain('115%')
+
+    await menuCommand(w, 'view.zoom-out')
+    expect(canvasZoom(w)).toBeCloseTo(1.15, 5)
+    expect(toolbarZoom(w)).toBe('115%')
+
+    await get(w, 'designer-tool-zoom').setValue('75')
+    await settle()
+    expect(canvasZoom(w)).toBe(0.75)
+    expect(toolbarZoom(w)).toBe('75%')
+
+    await menuCommand(w, 'view.zoom-reset')
+    expect(canvasZoom(w)).toBe(1)
+    expect(toolbarZoom(w)).toBe('100%')
   })
 
   it('fit from the Toolbar and from the menu keeps the zoom inside the range', async () => {
     const w = await mountShell()
     await openFlow(w, 'Canvas')
-    await get(w, 'designer-tool-zoom-select').setValue('200')
+    await get(w, 'designer-tool-zoom').setValue('200')
     await settle()
     await tool(w, 'view.fit').trigger('click')
     await settle()

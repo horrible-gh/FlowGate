@@ -472,7 +472,7 @@ export default {
         'distribute-horizontal': '가로 균등 분배',
         'distribute-vertical': '세로 균등 분배',
       },
-      densities: { 'very-wide': '매우 넓게', wide: '넓게', normal: '보통', free: '자율형' },
+      densities: { wide: '넓게', normal: '보통', narrow: '좁게', free: '자율형' },
       tools: {
         undo: '실행 취소',
         redo: '다시 실행',
@@ -489,7 +489,7 @@ export default {
         zoom_in: '확대',
         zoom_value: '확대/축소 비율',
         zoom_preset: '확대/축소 비율 선택',
-        density: '캔버스 배치 밀도',
+        density: '배치 밀도 — 카드를 끌어 옮기는 간격 (자율형: 간격 없음)',
       },
       // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.
       run_status: { running: '실행 중', stopped: '멈춤', completed: '완료' },

@@ -11,7 +11,8 @@
        problems a 검증 or a refused 실행 reported only mark their cards / lines on the Canvas.
        flowgate.v02.0059 T#1: the session's [선택] mode and the Flow's whole Selection go to the
        Canvas, and the Selection it reports in that mode comes back to the session. flowgate.v02.0059 T#2: a
-       drop of one card or of the selection goes to the session as one move (one undo entry). -->
+       drop of one card or of the selection goes to the session as one move (one undo entry).
+       flowgate.v02.0059 0017-T: the density's move step (`move-step`, the Shell's) goes to the Canvas. -->
   <div class="designer-center" data-test="designer-center">
     <FlowTabStrip
       :tabs="center.state.tabs"
@@ -51,6 +52,7 @@
           :view-request="center.viewRequest.value?.flowId === activeTab.flowId ? center.viewRequest.value : null"
           :sample="center.isSampleSource"
           :placing="placing"
+          :move-step="moveStep"
           @select-node="center.selectNode(activeTab.flowId, $event)"
           @select-nodes="center.selectNodes(activeTab.flowId, $event)"
           @viewport-change="center.recordViewport(activeTab.flowId, $event)"
@@ -85,7 +87,9 @@ import FlowTabStrip from './FlowTabStrip.vue'
 const props = withDefaults(defineProps<{
   center: DesignerCenterSession
   placing?: boolean
-}>(), { placing: false })
+  /** flowgate.v02.0059 0017-T: the step a card drag moves in; null = 자율형. */
+  moveStep?: number | null
+}>(), { placing: false, moveStep: null })
 
 const emit = defineEmits<{
   'canvas-place': [flowId: string, x: number, y: number]

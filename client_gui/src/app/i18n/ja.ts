@@ -462,7 +462,7 @@ export default {
         'distribute-horizontal': '左右に均等配置',
         'distribute-vertical': '上下に均等配置',
       },
-      densities: { 'very-wide': 'とても広く', wide: '広く', normal: '標準', free: '自由配置' },
+      densities: { wide: '広く', normal: '標準', narrow: '狭く', free: '自由配置' },
       tools: {
         undo: '元に戻す',
         redo: 'やり直し',
@@ -479,7 +479,7 @@ export default {
         zoom_in: '拡大',
         zoom_value: 'ズーム率',
         zoom_preset: 'ズーム率を選択',
-        density: 'キャンバス配置密度',
+        density: '配置密度 — カードをドラッグで動かす間隔（自由配置: 間隔なし）',
       },
       // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.
       run_status: { running: '実行中', stopped: '停止中', completed: '完了' },

@@ -4,7 +4,8 @@
  *   same coordinates. SERVER_CASES were made by running the server's own `layout()` / `layered_depths()` on
  *   these inputs (Python, the server file unchanged) and are compared value for value.
  * - the input a shown Graph gives (projection, Graph nodes, free documents, the sequence chain, cards that
- *   cannot move kept as saved) and the resulting card positions; the density's spacing scale.
+ *   cannot move kept as saved) and the resulting card positions; the spacing scale (1 = the server's).
+ *   flowgate.v02.0059 0017-T: the density is not this scale any more (it is the drag step, moveDensity.0059).
  * - (0016-TR rework) the sequence chain by the server's roles — the root node and the slot nodes, a lone root or
  *   a lone slot included, the root found through its document's supersede chain when only that tells — and the
  *   documents the Canvas read left out (collapse) keeping their place (FlowLayoutBasis).
@@ -25,9 +26,7 @@ import {
 import type { FlowGraph, FlowGraphNode } from '@/features/designer/center/graph/flowGraph'
 import {
   ALL_MENU_TARGETS,
-  DENSITY_LAYOUT_SCALE,
   DESIGNER_ARRANGE_GROUPS,
-  DESIGNER_DENSITIES,
   isMenuCommandEnabled,
 } from '@/features/designer/top/designerTop'
 
@@ -215,7 +214,7 @@ describe('자동 배치 of a shown Graph', () => {
     expect(Object.fromEntries(autoLayoutPlacements(graph).map((p) => [p.nodeId, [p.x, p.y, 'auto']]))).toEqual(c.placed)
   })
 
-  it('every position is inside the Canvas origin and a wider density spreads the cards further', () => {
+  it('every position is inside the Canvas origin and a larger spacing scale spreads the cards further', () => {
     const graph: FlowGraph = {
       flowId: 'f1',
       projection: 'graph',
@@ -223,9 +222,9 @@ describe('자동 배치 of a shown Graph', () => {
       edges: [exec('gn_a', 'gn_b'), exec('gn_a', 'gn_c')],
     }
     const at = (scale: number) => Object.fromEntries(autoLayoutPlacements(graph, scale).map((p) => [p.nodeId, [p.x, p.y]]))
-    expect(at(DENSITY_LAYOUT_SCALE.normal!)).toEqual({ gn_a: [0, 0], gn_b: [260, 0], gn_c: [260, 140] })
-    expect(at(DENSITY_LAYOUT_SCALE.wide!)).toEqual({ gn_a: [0, 0], gn_b: [325, 0], gn_c: [325, 175] })
-    expect(at(DENSITY_LAYOUT_SCALE['very-wide']!)).toEqual({ gn_a: [0, 0], gn_b: [390, 0], gn_c: [390, 210] })
+    expect(at(1)).toEqual({ gn_a: [0, 0], gn_b: [260, 0], gn_c: [260, 140] })
+    expect(at(1.25)).toEqual({ gn_a: [0, 0], gn_b: [325, 0], gn_c: [325, 175] })
+    expect(at(1.5)).toEqual({ gn_a: [0, 0], gn_b: [390, 0], gn_c: [390, 210] })
     for (const scale of [1, 1.25, 1.5]) {
       expect(autoLayoutPlacements(graph, scale).every((p) => p.x >= 0 && p.y >= 0)).toBe(true)
     }
@@ -329,13 +328,6 @@ describe('the sequence chain by the server roles, and the documents the read lef
     const fixedCh = { ...whole, nodes: [whole.nodes[0], { ...whole.nodes[1], x: 520, y: 0, movable: false }, whole.nodes[2]] }
     expect(autoLayoutPlacements(shown, 1, { whole: fixedCh, sequenceRoot: null }).map((p) => [p.nodeId, p.x, p.y]))
       .toEqual([['doc:R', 0, 0], ['doc:D', 520, 120]])
-  })
-})
-
-describe('배치 밀도 (layout density) scale', () => {
-  it('is 1.5 / 1.25 / 1 for 매우 넓게 / 넓게 / 보통 and none for 자율형, in one constant', () => {
-    expect(Object.keys(DENSITY_LAYOUT_SCALE)).toEqual([...DESIGNER_DENSITIES])
-    expect(DENSITY_LAYOUT_SCALE).toEqual({ 'very-wide': 1.5, wide: 1.25, normal: 1, free: null })
   })
 })
 
