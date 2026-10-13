@@ -74,9 +74,16 @@
             :data-key="saveErrorKey"
           >{{ t(k(`error.${saveErrorKey}`)) }}</span>
           <!-- flowgate.v02.0056 F1 — [닫기] closes the window from the editor (the same path as × / Esc: unsaved
-               text is asked about once); it sits apart from [취소] [저장], which belong to the edit itself. -->
-          <Button size="sm" variant="ghost" :disabled="saving" class="document-window-close" data-test="document-window-close" @click="requestClose">{{ t(k('close')) }}</Button>
-          <Button size="sm" variant="ghost" :disabled="saving" data-test="document-window-cancel" @click="requestCancel">{{ t(k('cancel')) }}</Button>
+               text is asked about once). 0017-CH: [취소] · [저장] · [닫기] at the right end, the card memo window's
+               buttons (bordered [취소] / [닫기], blue [저장]); [취소] takes a soft amber tone (it drops the edit). -->
+          <Button
+            class="document-window-cancel"
+            size="sm"
+            variant="secondary"
+            :disabled="saving"
+            data-test="document-window-cancel"
+            @click="requestCancel"
+          >{{ t(k('cancel')) }}</Button>
           <Button
             size="sm"
             variant="primary"
@@ -85,6 +92,7 @@
             data-test="document-window-save"
             @click="save"
           >{{ t(k('save')) }}</Button>
+          <Button size="sm" variant="secondary" :disabled="saving" data-test="document-window-close" @click="requestClose">{{ t(k('close')) }}</Button>
         </div>
       </div>
     </div>
@@ -403,11 +411,13 @@ defineExpose({ dirty })
   background: var(--fg2-status-danger-fg);
 }
 
-/* The shell body pads and scrolls; the window fills it so the viewer and the editor own their scroll. */
+/* The shell body pads and scrolls; the window fills it so the viewer and the editor own their scroll.
+   The height adds back the body's 12px top and bottom padding the margins cancel, so the window ends at
+   the shell's bottom edge (the editor bar's space below the buttons equals the space above them). */
 .document-window {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: calc(100% + 24px);
   min-height: 0;
   margin: -12px -14px;
 }
@@ -459,12 +469,18 @@ defineExpose({ dirty })
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 10px 12px;
 }
 
-/* [닫기] stands apart from the edit's own [취소] [저장]: it takes the left end of the bar. */
-.document-window-close {
-  margin-right: auto;
+.document-window-editor-bar .document-window-cancel {
+  border-color: var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
+}
+
+.document-window-editor-bar .document-window-cancel:hover:not(:disabled) {
+  border-color: var(--fg2-status-warning-fg);
+  color: var(--fg2-status-warning-fg);
 }
 
 .document-window-save-error {

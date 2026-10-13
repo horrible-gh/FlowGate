@@ -2,7 +2,8 @@
  * flowgate.v02.0056 F2-2 — the three states of a card line and its row actions (O3 0009-TR §4-1 · §4-2 · §4-3), on
  * the real Frame and registry with the document windows mounted and `@shared/api` mocked:
  * - slotStateView / slotFill / slotLineCard decide once: no document → "문서 없음" + [작성]; a document without a body
- *   → "비어 있음" (opened straight in its editor); else a usual line. M and WP lines are never "비어 있음";
+ *   → "비어 있음" (no words since 0017-CH: a dashed line with a hollow document icon, "비어 있음" its hover text;
+ *   opened straight in its editor); else a usual line. M and WP lines are never "비어 있음";
  * - the history button carries `history_count`, its hover text the AI review / rejection split;
  * - [작성] opens the line's write window and nothing is made until [저장]: the 201 line stands for the row at once,
  *   the Canvas is read again (refresh-flow), a result bound to the running card is the F2-1 승인 대기 after it;
@@ -113,7 +114,8 @@ async function reselect(node: FlowGraphNode) {
 
 const rows = () => frame!.findAll('[data-test="designer-inspector-body"] [data-test="inspector-slot"]')
 const row = (slot: string) => frame!.get(`[data-test="designer-inspector-body"] [data-test="inspector-slot"][data-slot="${slot}"]`)
-const actions = (slot: string) => row(slot).findAll('[data-test="inspector-slot-action"]').map((button) => [button.attributes('data-action'), button.text()])
+// 0017-CH: [AI 호출] is an icon button — its words are its tooltip.
+const actions = (slot: string) => row(slot).findAll('[data-test="inspector-slot-action"]').map((button) => [button.attributes('data-action'), button.text() || button.attributes('title')])
 const hostIntents = () => (frame!.emitted('host') ?? []).map(([intent]) => intent)
 const body = (selector: string) => document.body.querySelector<HTMLElement>(selector)
 const text = (node: Element | null | undefined) => node?.textContent?.replace(/\s+/g, ' ').trim() ?? null
@@ -172,20 +174,23 @@ describe('the slot rules (parts/slotStateView, flowgate.v02.0056 F2-2)', () => {
     expect(slotLineCard({ id: 'd', empty: false }, undefined, changeable)).toEqual({ cardSlot: null, blank: false, historyCount: null, historyDetail: null, actions: [] })
   })
 
-  it('slotStateView: a blank line says so in plain words whatever its state; an empty line still wins', () => {
-    expect(slotStateView({ label: '검수 대기', tone: 'warning' }, false, null, '비어 있음')).toEqual({ kind: 'blank', tone: 'none', text: '비어 있음', title: '비어 있음', quiet: false })
+  it('slotStateView: a blank line draws no badge and no words (its hover text says it); an empty line still wins', () => {
+    expect(slotStateView({ label: '검수 대기', tone: 'warning' }, false, null, '비어 있음')).toEqual({ kind: 'blank', tone: 'none', text: '', title: '비어 있음', quiet: false })
     expect(slotStateView(null, true, '문서 없음', '비어 있음')).toMatchObject({ kind: 'empty', text: '문서 없음' })
     expect(slotStateView({ label: '검수 대기', tone: 'warning' }, false, null, null)).toMatchObject({ kind: 'badge' })
   })
 })
 
 describe('the three states on the documents tab (flowgate.v02.0056 F2-2)', () => {
-  it('비어 있음: muted words in the state place; the name and the document icon open the editor', async () => {
+  it('비어 있음: no words — a dashed line, the hollow document icon, the hover text; the name and the icon open the editor', async () => {
     await mountFrame(TASK)
     const instruction = row('instruction')
     expect(instruction.attributes('data-blank')).toBe('true')
-    expect(instruction.get('[data-test="inspector-slot-state"]').attributes('data-kind')).toBe('blank')
-    expect(instruction.get('[data-test="inspector-slot-state"]').text()).toBe('비어 있음')
+    expect(instruction.classes()).toContain('is-blank')
+    expect(instruction.attributes('title')).toBe('비어 있음')
+    expect(instruction.find('[data-test="inspector-slot-state"]').exists()).toBe(false)
+    expect(instruction.text()).not.toContain('비어 있음')
+    expect(instruction.get('[data-test="inspector-slot-open"]').attributes('data-icon')).toBe('document-blank')
     await instruction.get('[data-test="inspector-slot-name"]').trigger('click')
     expect(documentWindowList().map((win) => [win.docId, win.mode])).toEqual([[doc('0011', 'T'), 'edit']])
     closeAllDocumentWindows()
@@ -377,6 +382,8 @@ describe('[AI 호출] on a document line (flowgate.v02.0056 F2-2, O3 §4-3)', ()
     })
     await mountFrame(card('gn_t', 'T', [line('instruction', 'T', doc('0011', 'T'), { hasBody: true }), line('report', 'TR', null)]))
     expect(actions('instruction')).toEqual([['ai_invoke', 'AI 호출']])
+    expect(row('instruction').get('[data-action="ai_invoke"]').attributes('data-icon')).toBe('robot')
+    expect(row('instruction').get('[data-action="ai_invoke"]').attributes('aria-label')).toBe('AI 호출')
     await row('instruction').get('[data-test="inspector-slot-action"][data-action="ai_invoke"]').trigger('click')
     await flushPromises()
     expect(documentAiWindowList().map((win) => [win.docId, win.request.groupId, win.request.name])).toEqual([[doc('0011', 'T'), FLOW, '지시서']])

@@ -5,17 +5,21 @@
  *   only, [AI가 참조] OFF by default, every refusal sorted by error.code / the 422 field and worded in ko · en · ja;
  *   lengths in Unicode code points as the server counts them (emoji at and over the limits; a change checks only
  *   the fields it sends, so an ai_ref change of a stored memo is never refused before sending);
- * - the section: the list in written order with the AI 참조 chip, a new memo, view · edit · delete windows on
- *   ModelessShell, the list read again after every write (no server event), the [AI가 참조] hint;
+ * - the lines (0017-CH): each memo one card line like the document lines (메모 · AI 참조 · title), no section head;
+ *   the header ✎ 메모 opens a new memo; a memo line has the document line's buttons — 열기 reads the memo ([삭제] ·
+ *   [편집] · [닫기]), ✎ opens its form (title · body · [AI가 참조], [삭제] · [저장] · [닫기], no hint) — and the trash
+ *   icon, which deletes after one confirm; the list read again after every write (no server event);
  * - the refusals: 422 under its field with the server message, 404 memo_not_found (gone, read again), 409
  *   flow_disposed · card_memos_unavailable, 403 flow_access_denied;
- * - a read-only view lists without changing; a Node without a stored card draws nothing; the real registry puts
- *   the section between the card lines and the approval bar.
+ * - a read-only view lists without changing; a Node without a stored card draws nothing.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { defineComponent, h } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FlowGraph, FlowGraphNode } from '@/features/designer/center/graph/flowGraph'
+import CardMemoButton from '@/features/designer/inspector/features/cardMemo/CardMemoButton.vue'
 import CardMemoSection from '@/features/designer/inspector/features/cardMemo/CardMemoSection.vue'
+import { closeAllCardMemoWindows } from '@/features/designer/inspector/features/cardMemo/useCardMemoWindows'
 import messages from '@/features/designer/inspector/features/cardMemo/messages'
 import {
   CARD_MEMO_BODY_MAX,
@@ -79,6 +83,7 @@ beforeEach(() => {
 afterEach(() => {
   wrapper?.unmount()
   wrapper = null
+  closeAllCardMemoWindows()
   document.body.innerHTML = ''
 })
 
@@ -102,8 +107,14 @@ function targetOf(viewMode = 'draft', id = 'gn_t') {
   return toInspectorTarget(selectionOf(graph, id))!
 }
 
+/** The header ✎ 메모 (with the memo windows) and the documents tab lines of one card, as the Frame lays them out. */
+const Harness = defineComponent({
+  props: { target: { type: Object, required: true } },
+  setup: (props) => () => h('div', [h(CardMemoButton, { target: props.target as never }), h(CardMemoSection, { target: props.target as never })]),
+})
+
 async function mountSection(viewMode = 'draft', id = 'gn_t') {
-  wrapper = mount(CardMemoSection, { attachTo: document.body, props: { target: targetOf(viewMode, id) }, global: { plugins: [i18n] } })
+  wrapper = mount(Harness, { attachTo: document.body, props: { target: targetOf(viewMode, id) }, global: { plugins: [i18n] } })
   await flushPromises()
   return wrapper
 }
@@ -178,30 +189,42 @@ describe('the card memo rules (cardMemoModel, flowgate.v02.0056 F2-2)', () => {
     expect(cardMemoLockedReason({ readOnly: null })).toBeNull()
   })
 
-  it.each(['ko', 'en', 'ja'] as const)('every failure key and the hint have %s words', (locale) => {
+  it.each(['ko', 'en', 'ja'] as const)('every failure key has %s words; the [AI가 참조] hint is gone (0017-CH)', (locale) => {
     for (const key of CARD_MEMO_FAILURE_KEYS) expect(i18n.global.te(`gui.inspector.cardMemo.failure.${key}`, locale), key).toBe(true)
-    expect(messages[locale].ai_ref_hint).toMatch(/8000/)
+    expect('ai_ref_hint' in messages[locale]).toBe(false)
+    expect('ai_ref_off' in messages[locale]).toBe(false)
   })
 })
 
-describe('the card memo section (flowgate.v02.0056 F2-2)', () => {
-  it('lists the memos in written order with the AI 참조 chip; [+] and the hint', async () => {
+describe('the card memo lines and windows (flowgate.v02.0056 F2-2 · 0017-CH)', () => {
+  it('lists the memos in written order as card lines (메모 · AI 참조 · title); no section head, count or [+]', async () => {
     await mountSection()
     expect(api.getRequest).toHaveBeenCalledWith(PATH)
-    expect(qa('card-memo-item').map((item) => [item.getAttribute('data-memo'), text(q('card-memo-open', item)), !!q('card-memo-ai-ref', item)])).toEqual([
+    expect(qa('card-memo-item').map((item) => [item.getAttribute('data-memo'), text(q('card-memo-title', item)), !!q('card-memo-ai-ref', item)])).toEqual([
       ['m1', '배경', true],
       ['m2', '주의', false],
     ])
-    expect(text(q('card-memo-count'))).toBe('2')
-    expect((q('card-memo-add') as HTMLButtonElement).disabled).toBe(false)
+    expect(qa('card-memo-item').map((item) => text(q('inspector-slot-name', item)))).toEqual(['메모', '메모'])
+    expect(q('card-memo-count')).toBeNull()
+    expect(q('card-memo-add')).toBeNull()
+    expect(document.body.textContent).not.toContain('8000')
   })
 
-  it('a new memo: [AI가 참조] OFF by default, a missing title is refused before sending; [저장] posts and reads the list again', async () => {
+  it('no memo: nothing is drawn in the documents tab', async () => {
+    stored = []
     await mountSection()
-    await click(q('card-memo-add'))
-    expect(memoWindows().map((win) => win.getAttribute('data-mode'))).toEqual(['edit'])
+    expect(q('card-memo')).toBeNull()
+    expect((q('designer-inspector-memo') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('the header ✎ 메모 opens a new memo: [AI가 참조] OFF, a missing title is refused before sending; [저장] posts and the list follows', async () => {
+    await mountSection()
+    await click(q('designer-inspector-memo'))
+    expect(memoWindows()).toHaveLength(1)
+    expect(text(q('card-memo-window-sub'))).toBe('새 메모')
     expect(q('card-memo-ai-ref-toggle')!.getAttribute('aria-checked')).toBe('false')
-    expect(text(q('card-memo-ai-ref-hint'))).toContain('8000자')
+    expect(q('card-memo-delete')).toBeNull()
+    expect(qa('card-memo-close')).toHaveLength(1)
     await click(q('card-memo-save'))
     expect(api.postRequest).not.toHaveBeenCalled()
     expect(text(q('card-memo-title-error'))).toBe('제목을 입력하세요.')
@@ -217,16 +240,78 @@ describe('the card memo section (flowgate.v02.0056 F2-2)', () => {
     await click(q('card-memo-save'))
     expect(api.postRequest).toHaveBeenCalledWith(PATH, { title: '결정 사항', body: '세부 내용', ai_ref: false })
     expect(api.getRequest.mock.calls.length).toBe(reads + 1)
-    expect(memoWindows().map((win) => [win.getAttribute('data-memo'), win.getAttribute('data-mode')])).toEqual([['m3', 'view']])
+    expect(memoWindows().map((win) => win.getAttribute('data-memo'))).toEqual(['m3'])
+    expect(text(q('card-memo-window-sub'))).toBe('결정 사항')
+    expect(q('card-memo-delete')).not.toBeNull()
     expect(qa('card-memo-item').map((item) => item.getAttribute('data-memo'))).toEqual(['m1', 'm2', 'm3'])
   })
 
-  it('view → edit: turning [AI가 참조] on sends ai_ref only', async () => {
+  it('열기 reads a memo — its body, [삭제] · [편집] · [닫기]; [편집] turns it into the form', async () => {
+    await mountSection()
+    await click(q('card-memo-open', qa('card-memo-item')[0]))
+    const win = memoWindows()[0]
+    expect(text(q('card-memo-window-sub'))).toBe('배경')
+    expect(q('card-memo-window-ai-ref')).not.toBeNull()
+    expect(text(q('card-memo-read'))).toBe('배경 본문')
+    expect(q('card-memo-title-input')).toBeNull()
+    const bar = win.querySelector('.card-memo-window-bar')!
+    expect([...bar.querySelectorAll('[data-test]')].map((button) => button.getAttribute('data-test'))).toEqual(['card-memo-delete', 'card-memo-window-edit', 'card-memo-close'])
+    await click(q('card-memo-window-edit'))
+    expect(q('card-memo-read')).toBeNull()
+    expect((q('card-memo-title-input') as HTMLInputElement).value).toBe('배경')
+    await click(q('card-memo-close'))
+    expect(memoWindows()).toEqual([])
+  })
+
+  it('✎ opens the memo as one form — no title line, no "AI 참조 안 함" line, no hint — with [삭제] · [저장] · [닫기] in that order', async () => {
+    await mountSection()
+    await click(q('card-memo-edit', qa('card-memo-item')[0]))
+    const win = memoWindows()[0]
+    expect(text(q('card-memo-window-sub'))).toBe('배경')
+    expect(q('card-memo-window-ai-ref')).not.toBeNull()
+    expect((q('card-memo-title-input') as HTMLInputElement).value).toBe('배경')
+    expect((q('card-memo-body-input') as HTMLTextAreaElement).value).toBe('배경 본문')
+    expect(win.textContent).not.toContain('AI 참조 안 함')
+    expect(win.textContent).not.toContain('8000')
+    const bar = win.querySelector('.card-memo-window-bar')!
+    expect([...bar.querySelectorAll('[data-test]')].map((button) => button.getAttribute('data-test'))).toEqual(['card-memo-delete', 'card-memo-save', 'card-memo-close'])
+    expect((q('card-memo-save') as HTMLButtonElement).disabled).toBe(true)
+    await click(q('card-memo-close'))
+    expect(memoWindows()).toEqual([])
+  })
+
+  it('a memo window open to read turns to its form from the line ✎ (one window per memo)', async () => {
     await mountSection()
     await click(q('card-memo-open', qa('card-memo-item')[1]))
-    expect(text(q('card-memo-view-title'))).toBe('주의')
-    expect(text(q('card-memo-view-ai-ref'))).toBe('AI 참조 안 함')
-    await click(q('card-memo-edit'))
+    expect(q('card-memo-read')).not.toBeNull()
+    await click(q('card-memo-edit', qa('card-memo-item')[1]))
+    expect(memoWindows()).toHaveLength(1)
+    expect((q('card-memo-title-input') as HTMLInputElement).value).toBe('주의')
+  })
+
+  it('the line trash icon asks first, then DELETE; the list follows and an open window of the memo closes', async () => {
+    await mountSection()
+    await click(q('card-memo-open', qa('card-memo-item')[0]))
+    await click(q('card-memo-remove', qa('card-memo-item')[0]))
+    const dialog = document.body.querySelector('.ui-modal-surface')!
+    expect(text(dialog)).toContain('이 메모를 삭제할까요?')
+    expect(text(dialog)).toContain('배경')
+    expect(api.deleteRequest).not.toHaveBeenCalled()
+    api.deleteRequest.mockImplementation(async () => {
+      stored = stored.slice(1)
+      return { data: { ok: true, memo_id: 'm1', deleted: true } }
+    })
+    const buttons = [...dialog.querySelectorAll<HTMLElement>('.ui-confirm-actions button')]
+    await click(buttons[buttons.length - 1])
+    expect(api.deleteRequest).toHaveBeenCalledWith(`${PATH}/m1`)
+    expect(memoWindows()).toEqual([])
+    expect(qa('card-memo-item').map((item) => item.getAttribute('data-memo'))).toEqual(['m2'])
+  })
+
+  it('turning [AI가 참조] on sends ai_ref only; the header chip and the list follow', async () => {
+    await mountSection()
+    await click(q('card-memo-edit', qa('card-memo-item')[1]))
+    expect(q('card-memo-window-ai-ref')).toBeNull()
     api.patchRequest.mockImplementation(async () => {
       stored = [stored[0], { ...stored[1], ai_ref: true }]
       return { data: { ok: true, memo: stored[1] } }
@@ -234,13 +319,13 @@ describe('the card memo section (flowgate.v02.0056 F2-2)', () => {
     await click(q('card-memo-ai-ref-toggle'))
     await click(q('card-memo-save'))
     expect(api.patchRequest).toHaveBeenCalledWith(`${PATH}/m2`, { ai_ref: true })
-    expect(text(q('card-memo-view-ai-ref'))).toBe('AI 참조')
+    expect(q('card-memo-window-ai-ref')).not.toBeNull()
     expect(qa('card-memo-item').map((item) => !!q('card-memo-ai-ref', item))).toEqual([true, true])
   })
 
   it('a title and a body of emoji at the server limits are sent; the counter counts code points; one more is refused', async () => {
     await mountSection()
-    await click(q('card-memo-add'))
+    await click(q('designer-inspector-memo'))
     await type('card-memo-title-input', EMOJI.repeat(201))
     expect(text(q('card-memo-title-error'))).toBe('제목은 200자까지 쓸 수 있습니다.')
     await type('card-memo-body-input', EMOJI.repeat(20001))
@@ -266,8 +351,7 @@ describe('the card memo section (flowgate.v02.0056 F2-2)', () => {
   it('a stored memo with a long emoji title and body: turning [AI가 참조] on sends ai_ref only, nothing is refused', async () => {
     stored = [memo('m1', EMOJI.repeat(200), { body: EMOJI.repeat(20000) }), memo('m2', '주의')]
     await mountSection()
-    await click(q('card-memo-open', qa('card-memo-item')[0]))
-    await click(q('card-memo-edit'))
+    await click(q('card-memo-edit', qa('card-memo-item')[0]))
     expect(text(q('card-memo-body-length'))).toBe('20000/20000자')
     api.patchRequest.mockImplementation(async () => {
       stored = [{ ...stored[0], ai_ref: true }, stored[1]]
@@ -278,14 +362,13 @@ describe('the card memo section (flowgate.v02.0056 F2-2)', () => {
     expect(q('card-memo-title-error')).toBeNull()
     expect(q('card-memo-body-error')).toBeNull()
     expect(api.patchRequest).toHaveBeenCalledWith(`${PATH}/m1`, { ai_ref: true })
-    expect(text(q('card-memo-view-ai-ref'))).toBe('AI 참조')
+    expect(q('card-memo-window-ai-ref')).not.toBeNull()
   })
 
-  it('a change checks only the fields it sends: a stored body the editor would refuse does not stop an ai_ref change', async () => {
+  it('a change checks only the fields it sends: a stored body the form would refuse does not stop an ai_ref change', async () => {
     stored = [memo('m1', '배경', { body: 'a'.repeat(20001) }), memo('m2', '주의')]
     await mountSection()
-    await click(q('card-memo-open', qa('card-memo-item')[0]))
-    await click(q('card-memo-edit'))
+    await click(q('card-memo-edit', qa('card-memo-item')[0]))
     api.patchRequest.mockImplementation(async () => {
       stored = [{ ...stored[0], ai_ref: true }, stored[1]]
       return { data: { ok: true, memo: stored[0] } }
@@ -293,16 +376,16 @@ describe('the card memo section (flowgate.v02.0056 F2-2)', () => {
     await click(q('card-memo-ai-ref-toggle'))
     await click(q('card-memo-save'))
     expect(api.patchRequest).toHaveBeenCalledWith(`${PATH}/m1`, { ai_ref: true })
-    expect(memoWindows()[0].getAttribute('data-mode')).toBe('view')
+    expect((q('card-memo-save') as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('nothing changed: no request, back to the view', async () => {
+  it('nothing changed: [저장] stays disabled and sends nothing', async () => {
     await mountSection()
-    await click(q('card-memo-open', qa('card-memo-item')[0]))
-    await click(q('card-memo-edit'))
+    await click(q('card-memo-edit', qa('card-memo-item')[0]))
     await click(q('card-memo-save'))
     expect(api.patchRequest).not.toHaveBeenCalled()
-    expect(memoWindows()[0].getAttribute('data-mode')).toBe('view')
+    await type('card-memo-body-input', '바뀐 본문')
+    expect((q('card-memo-save') as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('delete asks first, then DELETE closes the window and the list follows', async () => {
@@ -323,7 +406,7 @@ describe('the card memo section (flowgate.v02.0056 F2-2)', () => {
 
   it('422 under its field with the server message', async () => {
     await mountSection()
-    await click(q('card-memo-add'))
+    await click(q('designer-inspector-memo'))
     await type('card-memo-title-input', '제목')
     api.postRequest.mockRejectedValue(refusal(422, 'invalid_request', '본문이 깁니다', { errors: [{ field: 'body', reason: 'too_long', max: 20000 }] }))
     await click(q('card-memo-save'))
@@ -332,8 +415,7 @@ describe('the card memo section (flowgate.v02.0056 F2-2)', () => {
 
   it('404 memo_not_found on a change: the memo is gone, the list is read again', async () => {
     await mountSection()
-    await click(q('card-memo-open', qa('card-memo-item')[1]))
-    await click(q('card-memo-edit'))
+    await click(q('card-memo-edit', qa('card-memo-item')[1]))
     await type('card-memo-title-input', '바뀐 제목')
     api.patchRequest.mockImplementation(async () => {
       stored = stored.slice(0, 1)
@@ -352,12 +434,12 @@ describe('the card memo section (flowgate.v02.0056 F2-2)', () => {
     [403, 'flow_access_denied', '메모를 다룰 권한이 없습니다.'],
   ])('%s %s: told in the window with the server message', async (status, code, words) => {
     await mountSection()
-    await click(q('card-memo-add'))
+    await click(q('designer-inspector-memo'))
     await type('card-memo-title-input', '제목')
     api.postRequest.mockRejectedValue(refusal(status, code, '서버 안내'))
     await click(q('card-memo-save'))
     expect(text(q('card-memo-failure'))).toBe(`${words} — 서버 안내`)
-    expect(memoWindows()[0].getAttribute('data-mode')).toBe('edit')
+    expect(memoWindows().map((win) => win.getAttribute('data-memo'))).toEqual([''])
   })
 
   it('a failed list read says why and retries', async () => {
@@ -371,16 +453,22 @@ describe('the card memo section (flowgate.v02.0056 F2-2)', () => {
   it('a read-only view lists the memos but changes nothing', async () => {
     await mountSection('revision')
     expect(qa('card-memo-item')).toHaveLength(2)
-    expect((q('card-memo-add') as HTMLButtonElement).disabled).toBe(true)
-    expect(q('card-memo-add')!.getAttribute('title')).toBe('확정본 보기에서는 메모를 바꿀 수 없습니다')
-    await click(q('card-memo-open', qa('card-memo-item')[0]))
-    expect((q('card-memo-edit') as HTMLButtonElement).disabled).toBe(true)
+    expect((q('designer-inspector-memo') as HTMLButtonElement).disabled).toBe(true)
+    expect(q('designer-inspector-memo')!.getAttribute('title')).toBe('확정본 보기에서는 메모를 바꿀 수 없습니다')
+    const line = qa('card-memo-item')[0]
+    expect((q('card-memo-edit', line) as HTMLButtonElement).disabled).toBe(true)
+    expect((q('card-memo-remove', line) as HTMLButtonElement).disabled).toBe(true)
+    await click(q('card-memo-open', line))
+    expect(text(q('card-memo-read'))).toBe('배경 본문')
+    expect((q('card-memo-window-edit') as HTMLButtonElement).disabled).toBe(true)
     expect((q('card-memo-delete') as HTMLButtonElement).disabled).toBe(true)
+    expect((q('card-memo-close') as HTMLButtonElement).disabled).toBe(false)
   })
 
-  it('a card not saved yet draws nothing and reads nothing', async () => {
+  it('a card not saved yet draws nothing, reads nothing, and its ✎ 메모 is disabled', async () => {
     await mountSection('draft', 'tmp_new')
     expect(q('card-memo')).toBeNull()
     expect(api.getRequest).not.toHaveBeenCalled()
+    expect((q('designer-inspector-memo') as HTMLButtonElement).disabled).toBe(true)
   })
 })

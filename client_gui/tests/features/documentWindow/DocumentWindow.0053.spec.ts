@@ -204,16 +204,16 @@ describe('document window — ✎ editing (flowgate.v02.0053 T#3)', () => {
     expect(files.get(REPORT)).toBe(`${FRONT}\n# 결과\n\n본문입니다.\n`)
   })
 
-  // flowgate.v02.0056 F1 (0056 CH §5): the editor bar has [닫기] as well — the window's close by button, apart
-  // from [취소] [저장]; it takes the × / Esc path, so unsaved text is asked about once.
-  it('[닫기] in the editor bar: the bar is 닫기 · 취소 · 저장; without changes the window closes at once', async () => {
+  // flowgate.v02.0056 F1 (0056 CH §5): the editor bar has [닫기] as well — the window's close by button; it takes
+  // the × / Esc path, so unsaved text is asked about once. 0017-CH: the bar is [취소] · [저장] · [닫기].
+  it('[닫기] in the editor bar: the bar is 취소 · 저장 · 닫기; without changes the window closes at once', async () => {
     const panel = await open(REPORT, 'edit')
     const close = q(panel, 'document-window-close')!
     expect(close.textContent?.trim()).toBe('닫기')
     expect([...close.parentElement!.querySelectorAll('button')].map((button) => button.getAttribute('data-test'))).toEqual([
-      'document-window-close',
       'document-window-cancel',
       'document-window-save',
+      'document-window-close',
     ])
     await click(close)
     expect(confirmTitle()).toBeNull()

@@ -2,6 +2,8 @@
 // when a stored card is the target (a `tmp_` card and a Node without a definition have none). No server event
 // announces a memo change, so every write follows its own answer at once and reads the list again.
 // A write keeps the card it was made for: a window may outlive the selection of its card.
+// flowgate.v02.0056 (0017-CH) — the memo windows belong to the header [메모] (useCardMemoWindows), the list to the
+// documents tab: a write from either is announced (`lastWrite`) and every list of that card follows it.
 import { computed, ref, shallowRef, watch, type ComputedRef, type Ref } from 'vue'
 import {
   cardMemoCreate,
@@ -39,14 +41,61 @@ export interface CardMemoState {
   remove(card: CardMemoCard, memoId: string): Promise<CardMemoWrite<string>>
 }
 
-const sameCard = (a: CardMemoCard | null, b: CardMemoCard | null) => !!a && !!b && a.flowId === b.flowId && a.nodeKey === b.nodeKey
+export const sameCard = (a: CardMemoCard | null, b: CardMemoCard | null) => !!a && !!b && a.flowId === b.flowId && a.nodeKey === b.nodeKey
+
+/** The stored card of a target, or null (a `tmp_` card, a Node without a definition). */
+export function cardMemoCardOf(target: InspectorTarget | null): CardMemoCard | null {
+  const nodeKey = inspectorCardNodeKey(target)
+  return target && nodeKey ? { flowId: target.flowId, nodeKey } : null
+}
+
+interface CardMemoWritten {
+  readonly card: CardMemoCard
+  readonly change: (list: readonly CardMemo[]) => readonly CardMemo[]
+}
+
+/** The last answered write, from any window or list: every list of its card shows it and reads again. */
+const lastWrite = shallowRef<CardMemoWritten | null>(null)
+
+/** A refused call, as shown. A refusal that asks the list to be read again is announced as a write without change. */
+function refused(card: CardMemoCard, error: unknown): CardMemoWrite<never> {
+  const failure = cardMemoFailure(cardMemoErrorOf(error))
+  if (failure.reread) lastWrite.value = { card, change: (list) => list }
+  return { ok: false, failure }
+}
+
+export async function cardMemoWriteCreate(card: CardMemoCard, input: CardMemoInput): Promise<CardMemoWrite<CardMemo>> {
+  try {
+    const memo = await cardMemoCreate(card.flowId, card.nodeKey, input)
+    lastWrite.value = { card, change: (list) => [...list.filter((item) => item.memoId !== memo.memoId), memo] }
+    return { ok: true, value: memo }
+  } catch (error) {
+    return refused(card, error)
+  }
+}
+
+export async function cardMemoWriteUpdate(card: CardMemoCard, memoId: string, input: CardMemoInput): Promise<CardMemoWrite<CardMemo>> {
+  try {
+    const memo = await cardMemoUpdate(card.flowId, card.nodeKey, memoId, input)
+    lastWrite.value = { card, change: (list) => list.map((item) => (item.memoId === memo.memoId ? memo : item)) }
+    return { ok: true, value: memo }
+  } catch (error) {
+    return refused(card, error)
+  }
+}
+
+export async function cardMemoWriteRemove(card: CardMemoCard, memoId: string): Promise<CardMemoWrite<string>> {
+  try {
+    await cardMemoDelete(card.flowId, card.nodeKey, memoId)
+    lastWrite.value = { card, change: (list) => list.filter((item) => item.memoId !== memoId) }
+    return { ok: true, value: memoId }
+  } catch (error) {
+    return refused(card, error)
+  }
+}
 
 export function useCardMemo(target: () => InspectorTarget | null): CardMemoState {
-  const card = computed<CardMemoCard | null>(() => {
-    const current = target()
-    const nodeKey = inspectorCardNodeKey(current)
-    return current && nodeKey ? { flowId: current.flowId, nodeKey } : null
-  })
+  const card = computed<CardMemoCard | null>(() => cardMemoCardOf(target()))
   const memos = shallowRef<readonly CardMemo[]>([])
   const status = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const readFailure = shallowRef<CardMemoFailure | null>(null)
@@ -89,48 +138,22 @@ export function useCardMemo(target: () => InspectorTarget | null): CardMemoState
     { immediate: true },
   )
 
-  /** After a write: the answer is shown at once on the card it was for, and the list is read again. */
-  function follow(written: CardMemoCard, change: (list: readonly CardMemo[]) => readonly CardMemo[]): void {
-    if (!sameCard(written, card.value)) return
-    memos.value = change(memos.value)
+  // After a write: the answer is shown at once on the card it was for, and the list is read again.
+  watch(lastWrite, (written) => {
+    if (!written || !sameCard(written.card, card.value)) return
+    memos.value = written.change(memos.value)
     void reload()
-  }
+  })
 
-  function refused(written: CardMemoCard, error: unknown): CardMemoWrite<never> {
-    const failure = cardMemoFailure(cardMemoErrorOf(error))
-    if (failure.reread && sameCard(written, card.value)) void reload()
-    return { ok: false, failure }
+  return {
+    card,
+    memos,
+    status,
+    readFailure,
+    lockedReason,
+    reload,
+    create: cardMemoWriteCreate,
+    update: cardMemoWriteUpdate,
+    remove: cardMemoWriteRemove,
   }
-
-  async function create(written: CardMemoCard, input: CardMemoInput): Promise<CardMemoWrite<CardMemo>> {
-    try {
-      const memo = await cardMemoCreate(written.flowId, written.nodeKey, input)
-      follow(written, (list) => [...list.filter((item) => item.memoId !== memo.memoId), memo])
-      return { ok: true, value: memo }
-    } catch (error) {
-      return refused(written, error)
-    }
-  }
-
-  async function update(written: CardMemoCard, memoId: string, input: CardMemoInput): Promise<CardMemoWrite<CardMemo>> {
-    try {
-      const memo = await cardMemoUpdate(written.flowId, written.nodeKey, memoId, input)
-      follow(written, (list) => list.map((item) => (item.memoId === memo.memoId ? memo : item)))
-      return { ok: true, value: memo }
-    } catch (error) {
-      return refused(written, error)
-    }
-  }
-
-  async function remove(written: CardMemoCard, memoId: string): Promise<CardMemoWrite<string>> {
-    try {
-      await cardMemoDelete(written.flowId, written.nodeKey, memoId)
-      follow(written, (list) => list.filter((item) => item.memoId !== memoId))
-      return { ok: true, value: memoId }
-    } catch (error) {
-      return refused(written, error)
-    }
-  }
-
-  return { card, memos, status, readFailure, lockedReason, reload, create, update, remove }
 }

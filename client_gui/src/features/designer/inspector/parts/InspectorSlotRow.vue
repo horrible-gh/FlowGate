@@ -14,11 +14,13 @@
        flowgate.v02.0056 F2-1 — a line may name who writes it (`author`, O2 0007-TR §4-3): the instruction line
        of a run card says "지시 AI 또는 사람" in muted words before its state (slotAuthorKey; other authors draw
        nothing).
-       flowgate.v02.0056 F2-2 — a line whose document has no body yet (`blank`, O3 0009-TR §4-1 has_body) says
-       "비어 있음" in the same muted words as a line without a document (slotStateView). -->
+       flowgate.v02.0056 F2-2 — a line whose document has no body yet (`blank`, O3 0009-TR §4-1 has_body).
+       flowgate.v02.0056 (0017-CH) — no author words, and a blank line has no words either: a dashed frame and a
+       dim name (the list draws its hollow document icon); "비어 있음" is the line's hover text. -->
   <div
     class="inspector-slot"
     :class="[`inspector-slot--${kind}`, { 'is-empty': empty, 'is-blank': blank && !empty, 'is-focus': focus, 'is-danger': danger }]"
+    :title="view.kind === 'blank' ? view.title : undefined"
     data-test="inspector-slot"
     :data-kind="kind"
     :data-empty="empty ? 'true' : 'false'"
@@ -38,7 +40,7 @@
     <span class="inspector-slot-value">
       <span v-if="authorKey" class="inspector-slot-author" :title="t(authorKey)" data-test="inspector-slot-author" :data-author="author">{{ t(authorKey) }}</span>
       <span
-        v-if="view.kind !== 'none'"
+        v-if="view.kind !== 'none' && view.text"
         class="inspector-slot-state"
         :class="[`is-${view.tone}`, { 'is-quiet': view.quiet, 'is-empty-text': view.kind === 'empty' || view.kind === 'blank' }]"
         :title="view.title"
@@ -316,6 +318,18 @@ const authorKey = computed(() => slotAuthorKey(props.author))
 
 .inspector-slot.is-empty .inspector-slot-name {
   color: #9cb1c7;
+}
+
+/* 0017-CH: a document without a body — told by its shape, not by words. */
+.inspector-slot.is-blank {
+  border-style: dashed;
+  border-color: #33506e;
+  background: transparent;
+}
+
+.inspector-slot.is-blank .inspector-slot-name {
+  color: #7f97b0;
+  font-weight: 600;
 }
 
 .inspector-slot.is-focus {

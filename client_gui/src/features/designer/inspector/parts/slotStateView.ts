@@ -20,7 +20,7 @@ export interface SlotStateInput {
 export interface SlotStateView {
   /**
    * badge: a text badge; empty: why the line has no document; blank (flowgate.v02.0056 F2-2): the line's document
-   * has no body yet ("비어 있음"); none: nothing is drawn.
+   * has no body yet (no text — the row's shape says it; "비어 있음" the hover text); none: nothing is drawn.
    */
   readonly kind: 'badge' | 'empty' | 'blank' | 'none'
   readonly tone: SlotStateTone | 'none'
@@ -47,8 +47,10 @@ export function slotStateTitle(state: SlotStateInput): string {
  * What the line draws for its state. `empty` wins: a line without a document shows `emptyText` (the common
  * wording when the caller gives none) as plain muted text. A state of a shown tone is a badge; `neutral`
  * and no state draw nothing.
- * flowgate.v02.0056 F2-2: a line whose document has no body (`blankText` given: "비어 있음") says so in the same
- * plain muted words, whatever its state — an empty document asks to be written before anything else.
+ * flowgate.v02.0056 F2-2: a line whose document has no body (`blankText` given: "비어 있음") draws no badge, whatever
+ * its state — an empty document asks to be written before anything else.
+ * flowgate.v02.0056 (0017-CH) — and no words either: the row shows it by its shape (dashed frame, dim name, hollow
+ * document icon); "비어 있음" is only the hover text.
  */
 export function slotStateView(
   state: SlotStateInput | null | undefined,
@@ -60,18 +62,17 @@ export function slotStateView(
     const text = emptyText ?? ''
     return { kind: 'empty', tone: 'none', text, title: text || undefined, quiet: false }
   }
-  if (blankText) return { kind: 'blank', tone: 'none', text: blankText, title: blankText, quiet: false }
+  if (blankText) return { kind: 'blank', tone: 'none', text: '', title: blankText, quiet: false }
   if (!state || !SLOT_STATE_SHOWN_TONES.includes(state.tone)) return NONE
   return { kind: 'badge', tone: state.tone, text: state.label, title: slotStateTitle(state), quiet: state.tone === 'success' }
 }
 
 /**
- * flowgate.v02.0056 F2-1 (O2 0007-TR §4-3) — who writes a card line, when it is worth saying: a run card's
- * instruction line is `instruction_ai_or_human` (its instruction AI or a person — "지시 AI 또는 사람"). The other
- * authors (`human` requirement / plan lines, `run` results) are told by the line's name, so nothing is drawn.
- * Answers the message key (under `gui.designer.inspector.slot.author.`) or null.
+ * flowgate.v02.0056 F2-1 (O2 0007-TR §4-3) — who writes a card line, when it is worth saying. Answers the message
+ * key (under `gui.designer.inspector.slot.author.`) or null.
+ * flowgate.v02.0056 (0017-CH) — no author is drawn: "지시 AI 또는 사람" was words the line does not need.
  */
-export const SLOT_AUTHORS_SHOWN: readonly string[] = ['instruction_ai_or_human']
+export const SLOT_AUTHORS_SHOWN: readonly string[] = []
 
 export function slotAuthorKey(author: string | null | undefined): string | null {
   return author && SLOT_AUTHORS_SHOWN.includes(author) ? `gui.designer.inspector.slot.author.${author}` : null

@@ -7,7 +7,7 @@
     class="inspector-history-button"
     :label="label"
     :title="title ?? label"
-    variant="ghost"
+    variant="secondary"
     size="sm"
     :disabled="disabled"
     data-icon="history"
@@ -52,11 +52,6 @@ const label = computed(() =>
 <style scoped>
 .inspector-history-button {
   position: relative;
-  color: #8ea4bb;
-}
-
-.inspector-history-button:hover:not(:disabled) {
-  color: #dbe7f2;
 }
 
 .inspector-history-count {

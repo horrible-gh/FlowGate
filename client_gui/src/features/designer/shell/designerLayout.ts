@@ -11,6 +11,8 @@
 // (leftWidth / rightWidth / bottomHeight) within the bounds below.
 // flowgate.v02.0036: the bottom Dock grew from 200 to 300px so the Inspector (0035 v7: 72px
 // header + tabs above its content) keeps a usable Content area next to the Canvas.
+// flowgate.v02.0056 (0017-CH): 300 -> 320px, so the empty attachments tab (illustration, two lines and
+// [+ 파일 추가], about 223px) fits the Content area (dock - 1px line - 72px header/tabs - 24px padding) unscrolled.
 // flowgate.v02.0037: the right Dock became the Tool Panel; which tool it shows is layout state
 // too, so the choice survives a collapse the same way the left Explorer mode does.
 
@@ -60,7 +62,7 @@ export const DESIGNER_LAYOUT_DEFAULTS: Readonly<DesignerLayoutState> = Object.fr
   activeRightTool: 'palette',
   rightCollapsed: false,
   rightWidth: 300,
-  bottomHeight: 300,
+  bottomHeight: 320,
 })
 
 export function createDesignerLayout(): DesignerLayoutState {

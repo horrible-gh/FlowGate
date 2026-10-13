@@ -3,13 +3,18 @@
 // §8.3 rule 6-2.
 // flowgate.v02.0053 T#6 — [+] is an icon: `add` is its name, `add_tip` its tooltip with the size limit
 // (the '＋ 추가' label and the 'per file' line are gone); `empty` is the v7 '첨부 없음'.
+// flowgate.v02.0056 (0017-CH) — the 시안 wording: `empty` · `empty_hint` (no attachment), `drop` (files dragged over
+// the tab), `remove` ([제거] of a file line); `add` is the blue [+ 파일 추가].
 export default {
   ko: {
-    empty: '첨부 없음',
+    empty: '첨부된 파일이 없습니다',
+    empty_hint: '파일을 추가해 주세요.',
+    drop: '여기에 파일을 놓으세요',
     add: '파일 추가',
     add_tip: '파일 추가 · 파일당 최대 {size}MB',
     open: '열기',
     delete: '삭제',
+    remove: '제거',
     delete_confirm: '{name} 파일을 삭제할까요?',
     delete_yes: '삭제',
     delete_no: '취소',
@@ -56,11 +61,14 @@ export default {
     },
   },
   en: {
-    empty: 'No attachments',
+    empty: 'No files attached',
+    empty_hint: 'Add a file.',
+    drop: 'Drop files here',
     add: 'Add files',
     add_tip: 'Add files · up to {size}MB per file',
     open: 'Open',
     delete: 'Delete',
+    remove: 'Remove',
     delete_confirm: 'Delete {name}?',
     delete_yes: 'Delete',
     delete_no: 'Cancel',
@@ -107,11 +115,14 @@ export default {
     },
   },
   ja: {
-    empty: '添付なし',
+    empty: '添付ファイルはありません',
+    empty_hint: 'ファイルを追加してください。',
+    drop: 'ここにファイルをドロップ',
     add: 'ファイルを追加',
     add_tip: 'ファイルを追加 · ファイルあたり最大 {size}MB',
     open: '開く',
     delete: '削除',
+    remove: '削除',
     delete_confirm: '{name} を削除しますか?',
     delete_yes: '削除',
     delete_no: 'キャンセル',

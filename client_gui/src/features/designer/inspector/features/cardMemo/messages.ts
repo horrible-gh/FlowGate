@@ -1,24 +1,20 @@
-// flowgate.v02.0056 F2-2 — card memo strings, merged under `gui.inspector.cardMemo`. The [AI가 참조] hint tells where
-// a memo with it on goes (O3 0009-TR §4-5: the card's instruction · run · review · rework, a single AI call on its
-// documents and the Q&A AI answers of them; the memo section is 8000 characters at most, titles first beyond it).
+// flowgate.v02.0056 F2-2 — card memo strings, merged under `gui.inspector.cardMemo`.
+// flowgate.v02.0056 (0017-CH) — no [AI가 참조] hint, no section head or empty line; `unsaved` is why the header
+// ✎ 메모 cannot write on a card not stored yet. A memo opened to read has [편집] (`edit`) where the form has [저장].
 export default {
   ko: {
     label: '메모',
     add: '메모 추가',
-    loading: '메모를 불러오는 중...',
-    empty: '메모가 없습니다.',
+    unsaved: '저장된 카드에서 메모를 쓸 수 있습니다',
     retry: '다시 시도',
     ai_ref: 'AI가 참조',
     ai_ref_on: 'AI 참조',
-    ai_ref_off: 'AI 참조 안 함',
-    ai_ref_hint: '켜면 이 카드의 지시·실행·검수·대응, 문서별 AI 호출, Q&A AI 답변에 이 메모가 전달됩니다. 메모는 모두 합쳐 8000자까지 전달되며, 넘치면 제목 위주로 전달됩니다.',
     length: '{n}/{max}자',
     field: {
       title: '제목',
       body: '본문',
     },
     window: {
-      title: '메모',
       new: '새 메모',
     },
     edit: '편집',
@@ -61,20 +57,16 @@ export default {
   en: {
     label: 'Memos',
     add: 'Add a memo',
-    loading: 'Loading the memos...',
-    empty: 'No memos.',
+    unsaved: 'Memos are written on a stored card',
     retry: 'Retry',
     ai_ref: 'AI refers',
     ai_ref_on: 'AI refers',
-    ai_ref_off: 'AI does not refer',
-    ai_ref_hint: 'When on, this memo goes to the card instruction, run, review and rework, a single AI call on its documents and the Q&A AI answers. The memos go up to 8000 characters in all; beyond that mostly their titles.',
     length: '{n}/{max} characters',
     field: {
       title: 'Title',
       body: 'Body',
     },
     window: {
-      title: 'Memo',
       new: 'New memo',
     },
     edit: 'Edit',
@@ -117,20 +109,16 @@ export default {
   ja: {
     label: 'メモ',
     add: 'メモを追加',
-    loading: 'メモを読み込んでいます...',
-    empty: 'メモはありません。',
+    unsaved: '保存済みのカードでメモを書けます',
     retry: '再試行',
     ai_ref: 'AI が参照',
     ai_ref_on: 'AI 参照',
-    ai_ref_off: 'AI 参照なし',
-    ai_ref_hint: 'オンにすると、このカードの指示・実行・レビュー・対応、文書ごとの AI 呼び出し、Q&A の AI 回答にこのメモが渡されます。メモは合計 8000 文字まで渡され、超える場合はタイトル中心に渡されます。',
     length: '{n}/{max} 文字',
     field: {
       title: 'タイトル',
       body: '本文',
     },
     window: {
-      title: 'メモ',
       new: '新しいメモ',
     },
     edit: '編集',

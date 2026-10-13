@@ -349,10 +349,11 @@ describe('the card approval bar in the Frame (real registry)', () => {
     expect(header.findAll('button').map((button) => button.text())).not.toContain('반려')
   })
 
-  it('the instruction line says who writes it: 지시 AI 또는 사람; each line keeps its own review state', async () => {
+  it('no line names who writes it (0017-CH: no "지시 AI 또는 사람"); each line keeps its own review state', async () => {
     const w = await mountFrame(taskCard(AWAITING))
     const instruction = w.findAll('[data-test="inspector-slot"]').find((slot) => slot.attributes('data-doc') === T)!
-    expect(instruction.get('[data-test="inspector-slot-author"]').text()).toBe('지시 AI 또는 사람')
+    expect(instruction.find('[data-test="inspector-slot-author"]').exists()).toBe(false)
+    expect(instruction.text()).not.toContain('지시 AI 또는 사람')
     const report = w.findAll('[data-test="inspector-slot"]').find((slot) => slot.attributes('data-doc') === TR)!
     expect(report.find('[data-test="inspector-slot-author"]').exists()).toBe(false)
     // The result was approved already; the card still waits (its instruction is left).
@@ -370,24 +371,12 @@ describe('the card approval bar in the Frame (real registry)', () => {
 // --- The author of a card line (O2 4-3) -------------------------------------------------------------
 
 describe('the card line author (instruction_ai_or_human)', () => {
-  it('only the instruction line’s author is named', () => {
-    expect(slotAuthorKey('instruction_ai_or_human')).toBe('gui.designer.inspector.slot.author.instruction_ai_or_human')
-    for (const author of ['human', 'run', null, undefined, 'other']) expect(slotAuthorKey(author)).toBeNull()
+  it('no author is named (0017-CH)', () => {
+    for (const author of ['instruction_ai_or_human', 'human', 'run', null, undefined, 'other']) expect(slotAuthorKey(author)).toBeNull()
   })
 
-  it.each([
-    ['ko', '지시 AI 또는 사람'],
-    ['en', 'Instruction AI or person'],
-    ['ja', '指示AIまたは人'],
-  ])('%s: %s', (locale, text) => {
-    i18n.global.locale.value = locale as 'ko'
-    wrapper = mount(InspectorSlotRow, { props: { name: '지시서', id: T, openable: true, author: 'instruction_ai_or_human' }, global: { plugins: [i18n] } })
-    expect(wrapper.get('[data-test="inspector-slot-author"]').text()).toBe(text)
-    expect(wrapper.get('[data-test="inspector-slot-author"]').attributes('data-author')).toBe('instruction_ai_or_human')
-  })
-
-  it('a human / run line draws no author', () => {
-    for (const author of ['human', 'run']) {
+  it('no line draws an author', () => {
+    for (const author of ['instruction_ai_or_human', 'human', 'run']) {
       const w = mount(InspectorSlotRow, { props: { name: '레포트', id: TR, author }, global: { plugins: [i18n] } })
       expect(w.find('[data-test="inspector-slot-author"]').exists()).toBe(false)
       w.unmount()
