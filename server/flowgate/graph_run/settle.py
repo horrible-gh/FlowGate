@@ -1,9 +1,8 @@
 """Whether a Graph run goes on (flowgate.v02.0061 T#2, 0002-CH turn 29 / 31 / 33).
 
-After a step (``run_state_ports.settle``) a running run stays running while any work goes on — an open node handed
-out (an AI or a person writes), a node in review whose AI run or card review still works, or whose card stage is
-about to follow its AI run (``card_settings_ports.ai_working``) — otherwise it opens the candidates its command may
-still open, and with none it goes idle with a reason (``idle_reason``):
+After a step (``run_state_ports.settle``) a running run stays running while a requested or running AI execution
+exists (0061 T#4). Otherwise it opens the candidates its command may still open, and with none it goes idle with
+a reason (``idle_reason``). An active node attempt alone, including a person's approval wait, is not ongoing AI work:
 
     completed         the completion policy (0061 T#1) judges the run complete
     no_targets        no run target, or nothing left for the command (a step whose targets ended)
@@ -29,8 +28,6 @@ IDLE_COMPLETED, IDLE_NO_TARGETS = "completed", "no_targets"
 IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR = "waiting_approval", "blocked_rejected", "error"
 IDLE_REASONS = (IDLE_COMPLETED, IDLE_NO_TARGETS, IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR)
 CAUSE_COMPLETED, CAUSE_IDLE, CAUSE_WORK_RESUMED = "completed", "run_idle", "work_resumed"
-# A review card's refusal while its work still goes on (node_approval).
-_WORKING_REFUSALS = (engine.AI_RUNNING, engine.NO_RESULT)
 
 
 def _node_type(ctx, key: str) -> Optional[str]:
@@ -52,15 +49,9 @@ def _failed(ctx, row: dict) -> bool:
 
 
 def working(ctx, rows: list[dict]) -> bool:
-    """Work still goes on in the run: an open node handed out (its AI or a person writes) or a review card whose AI
-    run or card review still works (or its card stage is about to follow its AI run)."""
-    for row in rows:
-        if row["status"] == "open" and not _waits_on_person(ctx, row) and not _failed(ctx, row):
-            return True
-        if row["status"] == "review" and engine.refusal(
-                ctx.flow_id, row, _node_type(ctx, row["node_key"])) in _WORKING_REFUSALS:
-            return True
-    return False
+    """Only requested/running AI executions count; a person's approval wait does not."""
+    from flowgate.graph_run.execution_store import working as executions_working
+    return executions_working(ctx.run_id)
 
 
 def _completion(ctx, state) -> tuple[bool, Optional[str]]:

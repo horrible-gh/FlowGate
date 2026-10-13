@@ -70,7 +70,7 @@ class RunState:
     node_runs: dict[str, NodeRun] = field(default_factory=dict)
     pending: list[PendingPropagation] = field(default_factory=list)
     open_decided: frozenset = frozenset()
-    has_active_attempts: bool = False  # supplied by the caller: the run has an active node attempt (0061 T#2)
+    has_active_attempts: bool = False  # compatibility name: requested/running AI executions (0061 T#4)
     mode: str = MODE_FULL              # the command the run goes on with (0061 T#2)
     step_targets: Optional[frozenset] = None   # a step's targets; None: a full command or a step not begun yet
 

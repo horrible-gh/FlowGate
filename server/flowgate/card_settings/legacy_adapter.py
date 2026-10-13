@@ -290,7 +290,7 @@ def last_rejection(doc_id: str) -> Optional[str]:
 
 def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issued_to: str,
                       loop: dict, basis_note: Callable[[Optional[str]], str],
-                      node_key: Optional[str] = None) -> Optional[dict]:
+                      node_key: Optional[str] = None, graph_exec_id: Optional[str] = None) -> Optional[dict]:
     """Start the v0.1 document review loop on ``doc_id`` as the AI invoke route starts it (single
     run, ``action_scope`` review, its stage-aware issuer: a review token, an edit token for a
     rework hop). A refusal is logged and the result left to a person (returns None).
@@ -309,11 +309,17 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
         if getattr(_issue, "loop_stage", None) == ai_invoke_service.REWORK_HOP_KIND:
             issued = invoke_mention_service.issue_rework_request(
                 doc_id=doc_id, issued_to=issued_to, api_base_url=API_BASE_URL, locale=LOCALE, ai_run_id=ai_run_id)
+            from modules.flow_gate.services import graph_execution_hooks
+            live = ai_invoke_service.get_run_record(ai_run_id) if ai_run_id else None
+            graph_execution_hooks.call("map_token", (live or {}).get("graph_exec_id") or graph_exec_id, issued["token_id"])
             return {**issued, "mention": card_memo_hooks.prepend_memo_section(
                 issued.get("mention") or "", flow_id, node_key=node_key)}
         issued = workflow_decision_service.request_review(
             doc_id=doc_id, issued_to=issued_to, api_base_url=API_BASE_URL, ref_doc_ids=None, locale=LOCALE,
             ai_run_id=ai_run_id)
+        from modules.flow_gate.services import graph_execution_hooks
+        live = ai_invoke_service.get_run_record(ai_run_id) if ai_run_id else None
+        graph_execution_hooks.call("map_token", (live or {}).get("graph_exec_id") or graph_exec_id, issued["token_id"])
         mention = issued.get("mention") or ""
         if mention:
             mention = card_memo_hooks.prepend_memo_section(mention, flow_id, node_key=node_key)
@@ -322,15 +328,20 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
         return {"raw_token": issued["token"], "token_id": issued["token_id"],
                 "scratch_dir": issued["scratch_dir"], "mention": mention}
 
+    from flowgate.graph_run import execution
     try:
+        graph_exec_id = execution.request_loop(project_id, flow_id, doc_id, issued_to, loop,
+                                                basis_note(last_rejection(doc_id)), node_key, graph_exec_id)
         return ai_invoke_service.start_run(
+            graph_exec_id=graph_exec_id,
             project_id=project_id or "", module=_module_of(flow_id), group_id=flow_id, doc_ref=doc_id,
             action_scope="review", mode="single", continuation_target_seq=None, continuation_review_mode=False,
             continuation_instruction_mode=None, continuation_locale=None, issued_to=issued_to,
             api_base_url=API_BASE_URL, mention_builder=lambda _raw, _scratch: None, issue_builder=_issue,
             document_review_loop=dict(loop),
         )
-    except Exception:  # noqa: BLE001 — the result stays in review for a person
+    except Exception as exc:  # noqa: BLE001 -- the result stays in review for a person
+        execution.start_failed(graph_exec_id, exc)
         _log.warning("card review loop start failed flow=%s doc=%s", flow_id, doc_id, exc_info=True)
         return None
 

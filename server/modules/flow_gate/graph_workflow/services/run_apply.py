@@ -23,6 +23,7 @@ from modules.flow_gate.graph_workflow.projection.run_documents import flow_docum
 from modules.flow_gate.graph_workflow.store import assignment_store, definition_store, run_store
 
 from . import node_dispatch, run_events, run_state_ports
+from modules.flow_gate.services import graph_execution_hooks
 from .card_document_ports import result_bound
 
 DISPATCH_FIELDS = ("token_issued", "mention_id", "issued_to", "error_code")
@@ -82,7 +83,7 @@ def read_run_state(ctx: RunContext) -> RunState:
     pending = [PendingPropagation(p["node_key"], p["outcome"], int(p["source_event_seq"]))
                for p in run_store.pending_propagations(ctx.run_id)]
     step = ctx.run.get("step_node_keys")
-    return RunState(ctx.run["status"], nodes, pending, has_active_attempts=run_store.has_active_attempts(ctx.run_id),
+    return RunState(ctx.run["status"], nodes, pending, has_active_attempts=bool(graph_execution_hooks.call("working", ctx.run_id)),
                     mode=ctx.run.get("run_mode") or "full",
                     step_targets=frozenset(step) if step is not None else None)
 

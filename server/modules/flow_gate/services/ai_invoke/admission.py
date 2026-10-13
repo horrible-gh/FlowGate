@@ -857,6 +857,7 @@ def start_run(
     # the no-output restarts on the SAME provider, resolved exactly like the continuous pick
     # above. None (every other caller) keeps a single run one-shot, as before.
     node_restart_max_attempts: Optional[int] = None,
+    graph_exec_id: Optional[str] = None,
     # 0414 P0007: the [검수] tab's two session-scoped maps — mode-aware worker item_seq ->
     # review count, and -> reviewer provider_id. They ride the RUN (never a token), exactly
     # like the provider/note maps, and are snapshotted into the paused row so a resume or a
@@ -927,12 +928,19 @@ def start_run(
     requested_continuation_instruction_mode = continuation_instruction_mode
     # 0417 D0007/P0008: stage selection precedes provider-chain selection. In particular,
     # an unaddressed rejection starts with the fixed rework provider, never the reviewer.
+    graph_loop_state = None
     if document_review_loop is not None:
-        document_review_loop = dict(document_review_loop)
-        document_review_loop.update(_svc().compute_review_baseline(doc_ref))
-        initial_stage = (
-            REWORK_HOP_KIND if document_review_loop["starts_with_rework"] else REVIEW_HOP_KIND
-        )
+        from modules.flow_gate.services import graph_execution_hooks
+        graph_loop_state = graph_execution_hooks.call("loop_state", graph_exec_id) if graph_exec_id else None
+        if graph_loop_state:
+            document_review_loop = dict(graph_loop_state["loop"])
+            initial_stage = document_review_loop["current_stage"]
+        else:
+            document_review_loop = dict(document_review_loop)
+            document_review_loop.update(_svc().compute_review_baseline(doc_ref))
+            initial_stage = (
+                REWORK_HOP_KIND if document_review_loop["starts_with_rework"] else REVIEW_HOP_KIND
+            )
         provider_id = review.resolve_loop_provider(document_review_loop, initial_stage)
         provider_pinned = True
     continuation_instruction_mode = normalize_continuation_instruction_mode(
@@ -1543,15 +1551,16 @@ def start_run(
         if hop_review_count else None
     )
     if document_review_loop is not None:
-        document_review_loop.update({
-            "round_no": 1,
-            "current_stage": (REWORK_HOP_KIND if document_review_loop["starts_with_rework"] else REVIEW_HOP_KIND),
-            "stop_reason": None,
-            "stop_detail": None,
-            "attempts_used": 0,
-            "started_at": started_at,
-            "deadline_at": _deadline_iso(started_at, int(document_review_loop["total_timeout_sec"])),
-        })
+        if not (graph_loop_state and document_review_loop.get("deadline_at")):
+            document_review_loop.update({
+                "round_no": 1,
+                "current_stage": initial_stage,
+                "stop_reason": None,
+                "stop_detail": None,
+                "attempts_used": 0,
+                "started_at": started_at,
+                "deadline_at": _deadline_iso(started_at, int(document_review_loop["total_timeout_sec"])),
+            })
         # T0011 §4 / 0486 NR0010 Finding 3: the loop's own per-stage budget (rework's
         # user-picked `rework_timeout_sec`, clamped to the loop's total deadline) replaces
         # the generic per-hop formula for this run's FIRST hop. The in-process stage
@@ -1570,6 +1579,8 @@ def start_run(
         mode == "single" and action_scope == "new" and node_restart_max_attempts is not None
     )
     run = {
+        "graph_exec_id": graph_exec_id,
+        "graph_review_run_ids": (graph_loop_state or {}).get("review_run_ids") or [],
         "run_id": run_id,
         "status": "running",
         "mode": mode,

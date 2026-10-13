@@ -338,7 +338,9 @@ def _finalize_run(run: dict) -> None:
             break
         terminal.attempt(run, "prepare_" + name, action)
     # flowgate.v02.0061 T#2: the run-end port's mark, before the release (see ``run_ended`` below).
-    ai_run_end_hooks.run_ending(run)
+    from modules.flow_gate.services import graph_execution_hooks
+    if not run.get("graph_lease_lost"):
+        ai_run_end_hooks.run_ending(run)
     terminal.cleanup(run, handoff=respawn_pending, reason="normal_finish")
     # T#2: an AI responder POSTs while it still owns this lease, so the answer-path
     # attempt necessarily defers. Retry after finalization/release; human answers and
@@ -363,7 +365,11 @@ def _finalize_run(run: dict) -> None:
     # flowgate.v02.0053 T#2: the run-end port (a Graph card's review stage starts here). Like
     # the resumes above it may admit a new run for this group, so it too runs strictly after
     # the release. No handler registered: nothing happens.
-    ai_run_end_hooks.run_ended(run)
+    if not run.get("graph_lease_lost") and (
+            not run.get("graph_exec_id") or run.get("graph_execution_finished")):
+        ai_run_end_hooks.run_ended(run)
+    if run.get("graph_exec_id"):
+        graph_execution_hooks.call("settle", run.get("group_id"))
 
 
 def _auto_resume_test_gate_chain(run: dict) -> None:

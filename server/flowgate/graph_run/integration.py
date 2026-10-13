@@ -17,6 +17,8 @@ from flowgate.graph_run import command, settle, editing, revision
 
 
 def register() -> None:
+    from flowgate.graph_run import execution
+    execution.register()
     ports.register(ports.REQUIRE_EDITABLE, editing.require_editable)
     ports.register(ports.PROTECT_DEFINITION, editing.protect_definition)
     ports.register(ports.ADOPT_REVISION, revision.adopt_revision)
@@ -28,5 +30,7 @@ def register() -> None:
 
 
 def unregister() -> None:
+    from modules.flow_gate.services import graph_execution_hooks
+    graph_execution_hooks.unregister()
     for name in ports.PORT_NAMES:
         ports.unregister(name)

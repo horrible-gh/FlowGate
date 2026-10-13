@@ -147,6 +147,14 @@ def assert_group_mutation_allowed(
             operation=operation,
         )
     db_leases.heartbeat(group_id, str(lease["run_id"]))
+    from modules.flow_gate.services import graph_execution_hooks
+    try:
+        graph_execution_hooks.call("heartbeat", str(lease["run_id"]))
+    except graph_execution_hooks.ExecutionLeaseLost as exc:
+        raise MutationPolicyError(
+            403, "GRAPH_EXECUTION_LEASE_LOST", "This worker no longer owns its Graph execution.",
+            group_id=group_id, run_id=lease["run_id"], operation=operation,
+        ) from exc
     return lease
 
 

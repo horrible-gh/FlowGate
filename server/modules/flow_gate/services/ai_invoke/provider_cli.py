@@ -511,6 +511,9 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         _audit_cli_launch(blocked)
         return "spawn_failed", f"CLI launch blocked: {reason}"
     eff_cmd = decision.pop("effective_command")
+    from modules.flow_gate.services import graph_execution_hooks
+    if graph_execution_hooks.call("launch", run) is False:
+        return "spawn_failed", "Graph execution lease refused"
     cli = _CliProcess(run.get("run_id"))
     watchdog_stop = watchdog_thread = None
     try:

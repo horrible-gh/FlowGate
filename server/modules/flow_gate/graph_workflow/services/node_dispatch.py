@@ -66,6 +66,7 @@ from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.services import token_service
 
 from . import card_settings_ports
+from modules.flow_gate.services import graph_execution_hooks
 
 _log = logging.getLogger(__name__)
 
@@ -131,6 +132,7 @@ def dispatch_document(ctx, row: dict) -> dict:
         stage = INSTRUCTION_STAGE if plan.get("instruction") else RESULT_STAGE
         run_store.set_stage(ctx.run_id, row["node_key"], stage)
         job = _ai_job(ctx, row, plan, provider, issued_to, token, stage)
+        graph_execution_hooks.call("request_write", job)
         ctx.jobs.append(lambda: start_ai(job))
     return {"token_issued": True, "mention_id": None, "issued_to": shown}
 
@@ -179,7 +181,8 @@ def start_ai(job: dict) -> None:
         _ai_starter(job)
     except Exception as exc:  # noqa: BLE001
         _log.warning("graph AI start failed run=%s node=%s: %s", job["run_id"], job["node_key"], exc)
-        record_ai_failure(job)
+        if not graph_execution_hooks.call("start_failed", job.get("graph_exec_id"), exc):
+            record_ai_failure(job)
 
 
 def _instruction_job(job: dict) -> Optional[dict]:
@@ -260,6 +263,7 @@ def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc
             run_apply.fill_line(ctx, node_key, instruction_doc_id)   # its line, also after a lost contact
         job = _ai_job(ctx, node, plan, provider, issued_to, {"token_id": tokens[0] if tokens else None},
                       RESULT_STAGE, [instruction_doc_id] if instruction_doc_id else None)
+        graph_execution_hooks.call("request_write", job)
         jobs.append(lambda: start_ai(job))
 
     with_flow_guard(flow_id, body)

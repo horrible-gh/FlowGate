@@ -67,6 +67,8 @@ def _map_if_open(job: dict, token_id: str) -> None:
         row = next((r for r in run_store.node_runs(job["run_id"]) if r["node_key"] == job["node_key"]), None)
         if run is None or run_store.completed(run) or row is None or row["status"] != "open":
             raise NodeNotStartable(f"node {job['node_key']} is no longer open")
+        from modules.flow_gate.services import graph_execution_hooks
+        graph_execution_hooks.call("validate_write", job)
         if _result_registered(run, job):
             raise NodeNotStartable(f"node {job['node_key']} already has a registered result")
         run_store.map_token(token_id, job["run_id"], job["node_key"], job.get("stage"))
@@ -129,4 +131,5 @@ def start_ai_invoke(job: dict) -> dict:
         provider_id=job.get("provider_id"), issue_builder=_issue,
         continuation_step_timeout_sec=job.get("step_timeout_sec"),
         node_restart_max_attempts=job.get("restart_max"),
+        graph_exec_id=job.get("graph_exec_id"),
     )
