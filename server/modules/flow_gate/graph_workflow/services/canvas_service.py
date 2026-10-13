@@ -116,12 +116,15 @@ def _pick_mode(flow_id: str, state: str, view: Optional[str], d: _Definition) ->
 
 
 def _flow_run(flow_id: str, latest_no: Optional[int]) -> Optional[dict]:
-    """The run the Canvas shows (P0008 S1-3 ``run``): the running / stopped one on whatever revision
+    """The run the Canvas shows (P0008 S1-3 ``run``): the running / paused one on whatever revision
     it pinned, else the latest run when it ran the latest revision (a finished run of an older
-    revision is not laid over a newer one)."""
+    revision is not laid over a newer one). flowgate.v02.0061 T#2: an idle run is shown as a finished one
+    (it keeps its Flow, and moves to a newer revision on its next command in T#3)."""
     from .run_service import run_payload                     # noqa: PLC0415 — run_service -> graph_service -> here
 
     run = run_store.active_run(flow_id)
+    if run is not None and run["status"] == run_store.IDLE and int(run["revision_no"]) != latest_no:
+        run = None
     if run is None:
         latest, _total = run_store.list_runs(flow_id, 1, 0)
         run = latest[0] if latest and int(latest[0]["revision_no"]) == latest_no else None

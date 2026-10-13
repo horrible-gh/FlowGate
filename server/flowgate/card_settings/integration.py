@@ -11,6 +11,8 @@ root (``startup.py``) calls :func:`register` once at startup.
                      (``settings.instruction_document``, flowgate.v02.0056 T#2)
     approve_instruction    the instruction stage: the instruction's automatic approval (``review_stage``)
     on_run_ended     a run ended and released its lease: the card's instruction / review stage (``review_stage``)
+    on_run_ending    a run is about to release its lease: the node this stage will follow stays worked on
+                     (``review_stage``, flowgate.v02.0061 T#2)
     token_step_type  the source tools' step type of a node token (``settings.token_step_type``)
 """
 from __future__ import annotations
@@ -28,6 +30,7 @@ def register() -> None:
     ports.register(ports.INSTRUCTION_DOCUMENT, settings.instruction_document)
     ports.register(ports.APPROVE_INSTRUCTION, review_stage.approve_instruction)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDED, review_stage.on_run_ended)
+    ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDING, review_stage.on_run_ending)
     worker_step_type_hooks.register(worker_step_type_hooks.TOKEN_STEP_TYPE, settings.token_step_type)
 
 
@@ -35,4 +38,5 @@ def unregister() -> None:
     for name in ports.PORT_NAMES:
         ports.unregister(name)
     ai_run_end_hooks.unregister(ai_run_end_hooks.ON_RUN_ENDED)
+    ai_run_end_hooks.unregister(ai_run_end_hooks.ON_RUN_ENDING)
     worker_step_type_hooks.unregister(worker_step_type_hooks.TOKEN_STEP_TYPE)

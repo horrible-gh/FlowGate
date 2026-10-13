@@ -14,10 +14,19 @@ records the stage it belongs to (``graph_run_token_map.stage``): an AI start's t
 the dispatch token (NULL when mapped) the instruction stage once a registration with it reached the result binder during
 that stage (``mark_token_stage``). What an instruction token registered is never the node's result, whenever the
 registration is consumed (the inbox contacts the Graph before it consumes the token) or committed.
+
+flowgate.v02.0061 T#2 (migration 151_graph_run_state_attempts.sql): a run is ``running``, ``paused`` or ``idle``
+(``idle_reason``) and keeps its Flow (``active_group_id``) when it goes idle; it goes on with the next step / full
+command (``run_mode``, a step's targets in ``step_node_keys``). Rows written before are read as their new state
+(``_normalize``: completed -> idle (completed), stopped -> paused) and a conditional status update matches the old
+stored value as well; a legacy completed row gave its Flow up and takes it back only through ``claim_flow``. Every
+opening of a node is an attempt (``graph_node_attempts``, one active per node) and a node token is mapped to the
+attempt it was issued for (``graph_run_token_map.attempt_id``).
 """
 from __future__ import annotations
 
 import json
+import secrets
 from typing import Optional
 
 from ..domain.graph_model import Graph
@@ -29,9 +38,19 @@ from .layout_store import utc_now_ms
 
 RUN_TABLE = "graph_runs"
 
+RUNNING, PAUSED, IDLE = "running", "paused", "idle"
+MODE_STEP, MODE_FULL = "step", "full"
+IDLE_COMPLETED = "completed"
+# The stored values a status stands for: rows before migration 151 keep their old status.
+_STORED_STATUS = {RUNNING: (RUNNING,), PAUSED: (PAUSED, "stopped"), IDLE: (IDLE, "completed")}
+_LEGACY_STATUS = {"stopped": (PAUSED, None), "completed": (IDLE, IDLE_COMPLETED)}
+ATTEMPT_ACTIVE, ATTEMPT_ENDED = "active", "ended"
+ATTEMPT_ID_PREFIX = "att_"
+
 _RUN_COLUMNS = (
     "run_id, group_id, revision_no, status, active_group_id, started_at, started_by, stopped_at, "
-    "finished_at, last_event_seq, policy_source, policy_set_id, policy_set_version, policy_digest, updated_at"
+    "finished_at, last_event_seq, policy_source, policy_set_id, policy_set_version, policy_digest, updated_at, "
+    "run_mode, idle_reason, step_node_keys"
 )
 _NODE_RUN_COLUMNS = (
     "run_id, node_key, status, result_doc_id, root_bound, opened_at, finished_at, dispatch_token_issued, "
@@ -57,20 +76,40 @@ def _affected(sql: str, params: list) -> int:
     return get_store()._execute_affected(sql, params)
 
 
+def _normalize(row: Optional[dict]) -> Optional[dict]:
+    """0061 T#2: a run row as its state now reads — a legacy status as its new one, no mode as ``full`` and the step
+    targets as a list (None for a full command)."""
+    if row is None:
+        return None
+    if row.get("status") in _LEGACY_STATUS:
+        status, reason = _LEGACY_STATUS[row["status"]]
+        row["status"] = status
+        row["idle_reason"] = row.get("idle_reason") or reason
+    row["run_mode"] = row.get("run_mode") or MODE_FULL
+    raw = row.get("step_node_keys")
+    row["step_node_keys"] = [str(k) for k in json.loads(raw)] if raw else None
+    return row
+
+
+def completed(run: Optional[dict]) -> bool:
+    """The run's targets are all done (idle with the reason ``completed``; a legacy ``completed`` row reads so)."""
+    return bool(run) and run.get("status") == IDLE and run.get("idle_reason") == IDLE_COMPLETED
+
+
 # ── Runs (T15) / policy snapshot (T16) ───────────────────────────────────────
 
 def active_run(flow_id: str) -> Optional[dict]:
-    """Q-R8: the running or stopped run of the Flow."""
+    """Q-R8: the run of the Flow — running, paused or idle (0061 T#2: an idle run keeps its Flow)."""
     if not available():
         return None
-    return _one(f"SELECT {_RUN_COLUMNS} FROM graph_runs WHERE active_group_id = ?", [flow_id])
+    return _normalize(_one(f"SELECT {_RUN_COLUMNS} FROM graph_runs WHERE active_group_id = ?", [flow_id]))
 
 
 def run_by_id(run_id: str) -> Optional[dict]:
     """Q-R15."""
     if not available():
         return None
-    return _one(f"SELECT {_RUN_COLUMNS} FROM graph_runs WHERE run_id = ?", [run_id])
+    return _normalize(_one(f"SELECT {_RUN_COLUMNS} FROM graph_runs WHERE run_id = ?", [run_id]))
 
 
 def list_runs(flow_id: str, limit: int, offset: int) -> tuple[list[dict], int]:
@@ -80,7 +119,7 @@ def list_runs(flow_id: str, limit: int, offset: int) -> tuple[list[dict], int]:
     rows = _all(f"SELECT {_RUN_COLUMNS} FROM graph_runs WHERE group_id = ? "
                 "ORDER BY started_at DESC, run_id DESC LIMIT ? OFFSET ?", [flow_id, limit, offset])
     total = _one("SELECT COUNT(*) AS n FROM graph_runs WHERE group_id = ?", [flow_id]) or {}
-    return rows, int(total.get("n") or 0)
+    return [_normalize(r) for r in rows], int(total.get("n") or 0)
 
 
 def policy_entries(run_id: str) -> dict[str, dict]:
@@ -91,7 +130,7 @@ def policy_entries(run_id: str) -> dict[str, dict]:
 
 
 def active_policy_triples() -> list[dict]:
-    """Q-R7: implementations named by running / stopped runs (start-up restore check)."""
+    """Q-R7: implementations named by the Flows' runs — running, paused or idle (start-up restore check)."""
     if not available():
         return []
     return _all("SELECT DISTINCT e.policy_key, e.policy_value, e.impl_version FROM graph_run_policy_entries e "
@@ -99,11 +138,12 @@ def active_policy_triples() -> list[dict]:
 
 
 def create_run(run_id: str, flow_id: str, revision_no: int, by: Optional[str], snapshot: dict,
-               revision: Graph) -> dict:
+               revision: Graph, mode: str = MODE_FULL) -> dict:
     """Q-W10: run, snapshot and pending rows for run_scope targets only.
 
     Excluded cards remain in the revision/projection without a node_run. Existing
     runs are not rewritten; completion independently ignores their excluded rows.
+    0061 T#2: the run starts running with the command ``mode``; a step's targets are set by its command.
     """
     targets = run_scope(revision).targets
     node_keys = [key for key in revision.node_keys() if key in targets]
@@ -111,10 +151,10 @@ def create_run(run_id: str, flow_id: str, revision_no: int, by: Optional[str], s
     now = utc_now_ms()
     store._execute(
         "INSERT INTO graph_runs (run_id, group_id, revision_no, status, active_group_id, started_at, started_by, "
-        "last_event_seq, policy_source, policy_set_id, policy_set_version, policy_digest, updated_at) "
-        "VALUES (?, ?, ?, 'running', ?, ?, ?, 0, ?, ?, ?, ?, ?)",
+        "last_event_seq, policy_source, policy_set_id, policy_set_version, policy_digest, updated_at, run_mode) "
+        "VALUES (?, ?, ?, 'running', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
         [run_id, flow_id, revision_no, flow_id, now, by, snapshot["source"], snapshot["set_id"],
-         snapshot["set_version"], snapshot["digest"], now],
+         snapshot["set_version"], snapshot["digest"], now, mode],
     )
     for key, entry in snapshot["entries"].items():
         store._execute(
@@ -129,19 +169,50 @@ def create_run(run_id: str, flow_id: str, revision_no: int, by: Optional[str], s
     return run_by_id(run_id) or {}
 
 
-def set_run_status(run_id: str, expected: str, status: str) -> int:
-    """Q-W17: stop (running -> stopped), resume (stopped -> running), complete (running -> completed)."""
+def _expected(expected: str) -> tuple[str, list]:
+    stored = _STORED_STATUS.get(expected, (expected,))
+    return "status IN (" + ", ".join("?" for _ in stored) + ")", list(stored)
+
+
+def set_run_status(run_id: str, expected: str, status: str, idle_reason: Optional[str] = None) -> int:
+    """Q-W17 (0061 T#2): pause (running -> paused), go on (paused / idle -> running), go idle (running -> idle with
+    ``idle_reason``). An idle run keeps its Flow (``active_group_id``); ``finished_at`` is when it went idle."""
     now = utc_now_ms()
-    if status == "stopped":
-        return _affected("UPDATE graph_runs SET status = 'stopped', stopped_at = ?, updated_at = ? "
-                         "WHERE run_id = ? AND status = ?", [now, now, run_id, expected])
-    if status == "running":
-        return _affected("UPDATE graph_runs SET status = 'running', stopped_at = NULL, updated_at = ? "
-                         "WHERE run_id = ? AND status = ?", [now, run_id, expected])
-    if status == "completed":
-        return _affected("UPDATE graph_runs SET status = 'completed', finished_at = ?, active_group_id = NULL, "
-                         "updated_at = ? WHERE run_id = ? AND status = ?", [now, now, run_id, expected])
+    cond, stored = _expected(expected)
+    if status == PAUSED:
+        return _affected(f"UPDATE graph_runs SET status = 'paused', stopped_at = ?, updated_at = ? "
+                         f"WHERE run_id = ? AND {cond}", [now, now, run_id, *stored])
+    if status == RUNNING:
+        return _affected(f"UPDATE graph_runs SET status = 'running', stopped_at = NULL, finished_at = NULL, "
+                         f"idle_reason = NULL, updated_at = ? WHERE run_id = ? AND {cond}", [now, run_id, *stored])
+    if status == IDLE:
+        if not idle_reason:
+            raise ValueError("an idle run needs its reason")
+        return _affected(f"UPDATE graph_runs SET status = 'idle', idle_reason = ?, finished_at = ?, updated_at = ? "
+                         f"WHERE run_id = ? AND {cond}", [idle_reason, now, now, run_id, *stored])
     raise ValueError(status)
+
+
+def set_idle_reason(run_id: str, idle_reason: str) -> int:
+    """0061 T#2: an idle run's reason after a node event while idle (an approval, a gate decision)."""
+    return _affected("UPDATE graph_runs SET idle_reason = ?, updated_at = ? WHERE run_id = ? AND status = 'idle'",
+                     [idle_reason, utc_now_ms(), run_id])
+
+
+def set_run_command(run_id: str, mode: str, step_node_keys: Optional[list[str]]) -> int:
+    """0061 T#2: the command a running run goes on with — ``mode`` and a step's targets (None: no step targets
+    yet / a full command)."""
+    keys = json.dumps(list(step_node_keys)) if step_node_keys is not None else None
+    return _affected("UPDATE graph_runs SET run_mode = ?, step_node_keys = ?, updated_at = ? "
+                     "WHERE run_id = ? AND status = 'running'", [mode, keys, utc_now_ms(), run_id])
+
+
+def claim_flow(run_id: str, flow_id: str) -> int:
+    """0061 T#2: a run written before migration 151 that completed gave its Flow up (``active_group_id`` NULL); going
+    on, it takes the Flow back — this run only; the unique ``idx_graph_runs_active`` keeps one run per Flow."""
+    return _affected("UPDATE graph_runs SET active_group_id = ?, updated_at = ? "
+                     "WHERE run_id = ? AND group_id = ? AND active_group_id IS NULL",
+                     [flow_id, utc_now_ms(), run_id, flow_id])
 
 
 # ── Node runs (T17) ──────────────────────────────────────────────────────────
@@ -234,14 +305,63 @@ def _flag(dispatch: Optional[dict]) -> Optional[int]:
     return None if dispatch is None else (1 if dispatch.get("token_issued") else 0)
 
 
+# ── Node attempts (0061 T#2) ─────────────────────────────────────────────────
+
+def open_attempt(run_id: str, node_key: str, revision_no: int) -> str:
+    """A node is opened: its new active attempt. A second active attempt of the node breaks the unique
+    ``(run_id, active_node_key)`` index (the step rolls back)."""
+    attempt_id = ATTEMPT_ID_PREFIX + secrets.token_hex(12)
+    get_store()._execute(
+        "INSERT INTO graph_node_attempts (attempt_id, run_id, node_key, revision_no, status, active_node_key, "
+        "created_at) VALUES (?, ?, ?, ?, 'active', ?, ?)",
+        [attempt_id, run_id, node_key, revision_no, node_key, utc_now_ms()],
+    )
+    return attempt_id
+
+
+def end_attempt(run_id: str, node_key: str) -> int:
+    """The node's active attempt ends (the node is done). 0 when it has none (opened before migration 151)."""
+    now = utc_now_ms()
+    return _affected("UPDATE graph_node_attempts SET status = 'ended', active_node_key = NULL, ended_at = ? "
+                     "WHERE run_id = ? AND node_key = ? AND status = 'active'", [now, run_id, node_key])
+
+
+def active_attempt_id(run_id: str, node_key: str) -> Optional[str]:
+    row = _one("SELECT attempt_id FROM graph_node_attempts WHERE run_id = ? AND node_key = ? AND status = 'active'",
+               [run_id, node_key])
+    return row["attempt_id"] if row else None
+
+
+def has_active_attempts(run_id: str) -> bool:
+    row = _one("SELECT COUNT(*) AS n FROM graph_node_attempts WHERE run_id = ? AND status = 'active'", [run_id]) or {}
+    return int(row.get("n") or 0) > 0
+
+
+def current_attempts(run_id: str) -> dict[str, str]:
+    """``{node_key: attempt_id}``: the node's active attempt, else its last ended one (none: not opened since 151)."""
+    rows = _all("SELECT attempt_id, node_key, status FROM graph_node_attempts WHERE run_id = ? "
+                "AND status IN ('active', 'ended') ORDER BY created_at, attempt_id", [run_id])
+    out: dict[str, str] = {}
+    active: set[str] = set()
+    for r in rows:
+        if r["node_key"] in active:
+            continue
+        out[r["node_key"]] = r["attempt_id"]
+        if r["status"] == ATTEMPT_ACTIVE:
+            active.add(r["node_key"])
+    return out
+
+
 # ── Token map (T18) ──────────────────────────────────────────────────────────
 
 def map_token(token_id: str, run_id: str, node_key: str, stage: Optional[str] = None) -> None:
     """Q-W13 — after a successful issue, outside the dispatch savepoint. ``stage``: the card run stage an AI start's
-    token is minted for (flowgate.v02.0056 T#2); None for the node's dispatch token."""
+    token is minted for (flowgate.v02.0056 T#2); None for the node's dispatch token. 0061 T#2: the token is mapped
+    to the node's active attempt (NULL for a node opened before migration 151)."""
     get_store()._execute(
-        "INSERT INTO graph_run_token_map (token_id, run_id, node_key, stage, mapped_at) VALUES (?, ?, ?, ?, ?)",
-        [token_id, run_id, node_key, stage, utc_now_ms()],
+        "INSERT INTO graph_run_token_map (token_id, run_id, node_key, stage, attempt_id, mapped_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [token_id, run_id, node_key, stage, active_attempt_id(run_id, node_key), utc_now_ms()],
     )
 
 

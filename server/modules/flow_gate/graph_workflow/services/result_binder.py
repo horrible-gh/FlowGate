@@ -62,7 +62,7 @@ from modules.flow_gate.graph_workflow.store import run_store
 from . import card_approval_ports, card_settings_ports
 from .engine_router import read_ownership
 from .flow_guard import with_flow_guard
-from .run_apply import RunContext, apply_decision, fill_line, load_context, read_run_state
+from .run_apply import RunContext, apply_decision, fill_line, load_context, read_run_state, settle_run
 
 _log = logging.getLogger(__name__)
 
@@ -102,6 +102,7 @@ def on_document_event(kind: str, flow_id: str, payload: dict) -> None:
         if found is None:
             if kind == "review_decided" and _approval(payload):
                 _follow_card(ctx)                                # another document of a card approved
+            settle_run(ctx)                                      # 0061 T#2: a review ended with no node event
             return
         policies = policies_of(run_store.policy_entries(ctx.run_id))      # E-33 -> rollback
         if found.kind == "revised" and _next_in_chain(ctx, found.replaces) != found.doc_id:

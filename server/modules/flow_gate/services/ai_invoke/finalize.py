@@ -337,6 +337,8 @@ def _finalize_run(run: dict) -> None:
         if run.get("post_process_recovered"):
             break
         terminal.attempt(run, "prepare_" + name, action)
+    # flowgate.v02.0061 T#2: the run-end port's mark, before the release (see ``run_ended`` below).
+    ai_run_end_hooks.run_ending(run)
     terminal.cleanup(run, handoff=respawn_pending, reason="normal_finish")
     # T#2: an AI responder POSTs while it still owns this lease, so the answer-path
     # attempt necessarily defers. Retry after finalization/release; human answers and

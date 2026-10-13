@@ -323,6 +323,20 @@ def start_graph_validation_integration():
         logger.warning(f"[startup] graph validation integration registration failed: {exc}")
 
 
+def start_graph_run_integration():
+    """flowgate.v02.0061 T#2 (0002-CH turn 29 / 31 / 33; D0006 §2.1, §2.3): composition root of the Graph run state.
+    Registers ``flowgate.graph_run`` at the Graph workflow's run state ports (``run_state_ports``): after a step a
+    running run with no work going on opens what its step / full command may still open, else goes idle with its
+    reason, and an idle run whose existing work goes on again is running again; the command a paused / idle run goes
+    on with and a step's targets. Unregistered, the ports fail closed: a run step rolls back."""
+    try:
+        from flowgate.graph_run import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] graph run integration registration failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
@@ -340,6 +354,7 @@ def run_all():
     start_card_memo_integration()
     start_graph_policy_integration()
     start_graph_validation_integration()
+    start_graph_run_integration()
     encrypt_ai_provider_keys()
     recover_ai_evaluations()
     start_snapshot_cleanup()

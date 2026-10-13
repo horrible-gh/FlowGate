@@ -16,13 +16,24 @@ is no node event" (T0004 §5), as answered on this TR's question.
 flowgate.v02.0056 T#2: each node run also tells the stage of its card run (``stage``: ``instruction`` while the
 card's instruction AI writes its instruction, ``result`` while its run AI writes the result) and the instruction
 the card run uses (``instruction_doc_id``).
+
+flowgate.v02.0061 T#2: a Flow keeps one run — ``running``, ``paused`` or ``idle`` (``idle_reason``) — and a finished
+run stays idle (completed) and goes on with the next command. A command is ``step`` (open the run candidates of the
+moment; what they make runnable waits for the next command) or ``full`` (go on opening until no candidate is left):
+``POST /flows/{flow_id}/runs`` and ``POST /runs/{run_id}/resume`` take it as ``mode``. ``POST /runs/{run_id}/stop``
+is Pause in this set (running -> paused, open nodes keep their tokens and their work, the Flow stays locked); the
+Stop that ends a run is T#7. A run read tells the command (``mode``), the idle reason and each node's attempt.
+Which command a run goes on with, what it records and whether a run goes on after a step are ``flowgate.graph_run``'s
+(``run_state_ports``); this module keeps the order of the steps. The run that goes on must hold its Flow (one run per
+Flow): a run written before migration 151 that completed gave the Flow up and takes it back only when no other run
+holds or follows it.
 """
 from __future__ import annotations
 
 import logging
 from typing import Optional
 
-from modules.flow_gate.graph_workflow.domain.frontier import RunEvent, resolve, resolve_node_event
+from modules.flow_gate.graph_workflow.domain.frontier import MODE_FULL, RunEvent, resolve, resolve_node_event
 from modules.flow_gate.graph_workflow.domain.run_policies import (
     PolicyUndecided,
     RULE_REF,
@@ -33,14 +44,14 @@ from modules.flow_gate.graph_workflow.domain.run_policies import (
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
 from modules.flow_gate.graph_workflow.domain.run_scope_ports import run_scope
 
-from . import node_approval, node_dispatch, result_binder
+from . import node_approval, node_dispatch, result_binder, run_state_ports
 from .engine_router import Ownership, read_ownership
 from .errors import GraphApiError
 from .flow_guard import with_flow_guard
 from .graph_service import new_key, require_writable
 from .policy_snapshot import check_active_runs, policy_set_for_run
 from .run_apply import RunContext, apply_decision, dispatch_block, emit_node_state, emit_run_status, load_context
-from .run_apply import read_run_state
+from .run_apply import read_run_state, settle_run
 
 _log = logging.getLogger(__name__)
 RUN_ID_PREFIX = "run_"
@@ -92,8 +103,13 @@ def _missing(ctx: RunContext, entries: dict, extra: frozenset = frozenset()) -> 
     return undecided_for(required | set(extra), entries)
 
 
-def start_run(group: dict, user_id: str, revision_no: Optional[int]) -> dict:
-    """``POST /flows/{flow_id}/runs`` -> 201 ``{"run": …}`` (P0008 S5-1~S5-3, L0009 §2.6.5)."""
+def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optional[str] = None) -> dict:
+    """``POST /flows/{flow_id}/runs`` -> 201 ``{"run": …}`` (P0008 S5-1~S5-3, L0009 §2.6.5).
+
+    0061 T#2: the step / full command (``mode``; a new run: ``full`` when not given). The Flow's paused or idle run
+    goes on with the command instead of a second run (as ``resume`` with a mode; with no mode, its own command). A
+    running run, or a ``revision_no`` other than the run's, stays 409 ``run_already_active`` (moving a run to a newer
+    revision is T#3)."""
     flow_id, project_id = group["group_id"], group.get("project_id")
     require_writable(flow_id)
     _restore_check_once()
@@ -105,8 +121,12 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int]) -> dict:
             raise _ownership_error(flow_id, own)
         active = run_store.active_run(flow_id)                                    # 4 진행 중 실행
         if active is not None:
-            raise GraphApiError(409, "run_already_active",
-                                {"flow_id": flow_id, "run_id": active["run_id"], "status": active["status"]})
+            if active["status"] == run_store.RUNNING or (
+                    revision_no is not None and revision_no != int(active["revision_no"])):
+                raise GraphApiError(409, "run_already_active",
+                                    {"flow_id": flow_id, "run_id": active["run_id"], "status": active["status"]})
+            _go_on(group, active, user_id, mode, "user_command", None, jobs)
+            return {"run": run_payload(active["run_id"], with_nodes=True)}
         number = revision_no if revision_no is not None else definition_store.latest_revision_no(flow_id)
         if number is None or definition_store.revision(flow_id, number) is None:  # 5 개정
             raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": revision_no})
@@ -121,14 +141,17 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int]) -> dict:
         if probe.binding and (root is None or probe.binding["node_key"] not in run_scope(probe.revision).starts):
             raise GraphApiError(409, "root_binding_lost", {"flow_id": flow_id, "node_key": probe.binding["node_key"],
                                                            "doc_id": probe.binding["doc_id"]})
+        command = mode or MODE_FULL
         run = run_store.create_run(new_key(RUN_ID_PREFIX, set()), flow_id, number, user_id, snapshot,
-                                   probe.revision)
+                                   probe.revision, command)
         ctx = load_context(run, project_id, user_id, jobs)
         emit_run_status(ctx, None, "running", "user_start")
         try:
             if ctx.binding is not None:
                 _root_bound_start(ctx, root, policies)
-            apply_decision(ctx, resolve(ctx.revision, read_run_state(ctx), RunEvent("start"), policies))
+            d = resolve(ctx.revision, read_run_state(ctx), RunEvent("start"), policies)
+            run_state_ports.record_step_targets(ctx, command, d)
+            apply_decision(ctx, d)
         except PolicyUndecided as exc:                                            # E-21 (defence)
             raise _undecided(flow_id, number, [{"policy": exc.key, "rule_ref": RULE_REF[exc.key]}])
         return {"run": run_payload(ctx.run_id, with_nodes=True)}
@@ -136,6 +159,64 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int]) -> dict:
     result = with_flow_guard(flow_id, body)
     run_jobs(jobs)
     return result
+
+
+def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str, reason: Optional[str],
+           jobs: list) -> None:
+    """A paused or idle run goes on (L0009 §2.6.7, 0061 T#2): reconcile -> running (its new command recorded first,
+    so the run status event tells it) -> re-dispatch -> drain -> run candidates. The command is
+    ``run_state_ports.command_of``'s: a new one (``mode`` given, or an idle run) or, for a paused run with no mode,
+    its own (a step keeps its targets). Inside the run's Flow guard; ownership and the Flow checked by the caller."""
+    run_id, from_status = run["run_id"], run["status"]
+    entries = run_store.policy_entries(run_id)
+    policies = policies_of(entries)                                              # 3 (E-33 -> 500)
+    ctx = load_context(run, group.get("project_id"), user_id, jobs)
+    missing = _missing(ctx, entries)                                             # 4 (defence)
+    if missing:
+        raise _undecided(run["group_id"], int(run["revision_no"]), missing)
+    command = run_state_ports.command_of(run, mode)                              # None: the paused command goes on
+    try:
+        result_binder.reconcile_links(ctx, policies)                             # 5-1 while paused / idle
+        if run_store.set_run_status(run_id, from_status, run_store.RUNNING) != 1:
+            raise AssertionError("resume missed its run")
+        ctx.run["idle_reason"] = None
+        if command is not None:
+            run_state_ports.record_command(ctx, command)
+        emit_run_status(ctx, from_status, run_store.RUNNING, cause, reason)
+        for row in run_store.node_runs(run_id):                                  # 5-3 re-dispatch
+            if row["status"] == "open" and row.get("dispatch_token_issued") == 0:
+                dispatch = node_dispatch.dispatch(ctx, row["node_key"])
+                run_store.set_dispatch(run_id, row["node_key"], dispatch)
+                emit_node_state(ctx, row["node_key"], "open", "open", "redispatched",
+                                row.get("result_doc_id"), dispatch)
+        event = RunEvent("resume" if command is None else "command")
+        d = resolve(ctx.revision, read_run_state(ctx), event, policies)
+        if command is not None:
+            run_state_ports.record_step_targets(ctx, command, d)
+        apply_decision(ctx, d)
+    except PolicyUndecided as exc:                                                # E-21 (defence)
+        raise _undecided(run["group_id"], int(run["revision_no"]),
+                         [{"policy": exc.key, "rule_ref": RULE_REF[exc.key]}])
+
+
+def _hold_flow(run: dict) -> None:
+    """0061 T#2, one run per Flow: the run that goes on holds its Flow (``active_group_id``). A run written before
+    migration 151 that completed gave the Flow up (NULL); it takes the Flow back — this run only, under the unique
+    ``idx_graph_runs_active`` — when no run holds the Flow and no later run of the Flow follows it. Any other is
+    refused as a start is (409 ``run_already_active``, naming the run that holds or follows). Inside the Flow guard."""
+    flow_id = run["group_id"]
+    if run.get("active_group_id") == flow_id:
+        return
+    holder = run_store.active_run(flow_id)
+    if holder is None:
+        latest, _total = run_store.list_runs(flow_id, 1, 0)
+        holder = latest[0] if latest and latest[0]["run_id"] != run["run_id"] else None
+    if holder is not None:
+        raise GraphApiError(409, "run_already_active",
+                            {"flow_id": flow_id, "run_id": holder["run_id"], "status": holder["status"]})
+    if run_store.claim_flow(run["run_id"], flow_id) != 1:
+        raise AssertionError("resume missed its Flow")
+    run["active_group_id"] = flow_id
 
 
 def _root_bound_start(ctx: RunContext, root: dict, policies: dict) -> None:
@@ -154,7 +235,8 @@ def _root_bound_start(ctx: RunContext, root: dict, policies: dict) -> None:
         run_store.insert_propagation(ctx.run_id, seq, key, "approved", "pending")
     if review == "rejected":
         event = RunEvent("review_rejected", key, doc_id=doc_id)
-        apply_decision(ctx, resolve_node_event(ctx.revision, read_run_state(ctx), event, policies, defer=True))
+        apply_decision(ctx, resolve_node_event(ctx.revision, read_run_state(ctx), event, policies, defer=True),
+                       settle=False)                                  # 0061 T#2: the start's command follows
 
 
 def _guarded_run(run_id: str, body_of) -> dict:
@@ -178,53 +260,39 @@ def _guarded_run(run_id: str, body_of) -> dict:
 
 
 def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:
-    """``POST /runs/{run_id}/stop`` (P0008 S5-5, L0009 §2.6.7). Open nodes keep their tokens."""
+    """``POST /runs/{run_id}/stop`` (P0008 S5-5, L0009 §2.6.7) — 0061 T#2: Pause (running -> paused). Nothing new
+    opens and every propagation waits; open nodes keep their tokens and their work goes on; the run keeps its Flow
+    (locked). Resume recomputes the candidates. The route moves to /pause and /stop becomes Stop in T#7."""
     require_writable(group["group_id"])
 
     def body_of(run: dict, jobs: list) -> dict:
-        if run["status"] != "running":
+        if run["status"] != run_store.RUNNING:
             raise GraphApiError(409, "run_not_running", {"run_id": run_id, "status": run["status"]})
-        if run_store.set_run_status(run_id, "running", "stopped") != 1:
-            raise AssertionError("stop missed its run")
+        if run_store.set_run_status(run_id, run_store.RUNNING, run_store.PAUSED) != 1:
+            raise AssertionError("pause missed its run")
         ctx = load_context(run, group.get("project_id"), user_id, jobs)
-        emit_run_status(ctx, "running", "stopped", "user_stop", reason)
+        emit_run_status(ctx, run_store.RUNNING, run_store.PAUSED, "user_pause", reason)
         return {"run": run_payload(run_id, with_nodes=False)}
 
     return _guarded_run(run_id, body_of)
 
 
-def resume_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:
-    """``POST /runs/{run_id}/resume``: reconcile -> running -> re-dispatch -> drain (L0009 §2.6.7)."""
+def resume_run(group: dict, run_id: str, reason: Optional[str], user_id: str, mode: Optional[str] = None) -> dict:
+    """``POST /runs/{run_id}/resume``: a paused or idle run goes on (``_go_on``) — with ``mode`` a new step / full
+    command, without it a paused run's own command (an idle run: its last command). A running run is 409
+    ``run_not_stopped`` (the code kept for the existing clients); a run that does not hold its Flow and may not take
+    it back is 409 ``run_already_active`` (``_hold_flow``)."""
     require_writable(group["group_id"])
     _restore_check_once()
 
     def body_of(run: dict, jobs: list) -> dict:
-        if run["status"] != "stopped":                                           # 1
+        if run["status"] not in (run_store.PAUSED, run_store.IDLE):              # 1
             raise GraphApiError(409, "run_not_stopped", {"run_id": run_id, "status": run["status"]})
         own = read_ownership(run["group_id"])                                     # 2
         if own.state != "graph":
             raise _ownership_error(run["group_id"], own)
-        entries = run_store.policy_entries(run_id)
-        policies = policies_of(entries)                                          # 3 (E-33 -> 500)
-        ctx = load_context(run, group.get("project_id"), user_id, jobs)
-        missing = _missing(ctx, entries)                                         # 4 (defence)
-        if missing:
-            raise _undecided(run["group_id"], int(run["revision_no"]), missing)
-        try:
-            result_binder.reconcile_links(ctx, policies)                         # 5-1 while stopped
-            if run_store.set_run_status(run_id, "stopped", "running") != 1:
-                raise AssertionError("resume missed its run")
-            emit_run_status(ctx, "stopped", "running", "user_resume", reason)
-            for row in run_store.node_runs(run_id):                              # 5-3 re-dispatch
-                if row["status"] == "open" and row.get("dispatch_token_issued") == 0:
-                    dispatch = node_dispatch.dispatch(ctx, row["node_key"])
-                    run_store.set_dispatch(run_id, row["node_key"], dispatch)
-                    emit_node_state(ctx, row["node_key"], "open", "open", "redispatched",
-                                    row.get("result_doc_id"), dispatch)
-            apply_decision(ctx, resolve(ctx.revision, read_run_state(ctx), RunEvent("resume"), policies))
-        except PolicyUndecided as exc:                                            # E-21 (defence)
-            raise _undecided(run["group_id"], int(run["revision_no"]),
-                             [{"policy": exc.key, "rule_ref": RULE_REF[exc.key]}])
+        _hold_flow(run)                                                           # 0061 T#2: one run per Flow
+        _go_on(group, run, user_id, mode, "user_resume", reason, jobs)            # 3~5
         return {"run": run_payload(run_id, with_nodes=False)}
 
     return _guarded_run(run_id, body_of)
@@ -246,25 +314,61 @@ def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
         "last_event_seq": run["last_event_seq"],
         "pending_propagation_count": len(pending),
         "pending_node_keys": sorted({p["node_key"] for p in pending}),
+        "mode": run.get("run_mode") or MODE_FULL, "idle_reason": run.get("idle_reason"),       # 0061 T#2
     }
     if with_nodes:
-        out["node_runs"] = [node_run_wire(r, run["group_id"]) for r in rows]
+        attempts = run_store.current_attempts(run_id)
+        out["node_runs"] = [node_run_wire(r, run["group_id"], attempts.get(r["node_key"])) for r in rows]
     return out
 
 
-def node_run_wire(row: dict, flow_id: str) -> dict:
+def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None) -> dict:
     """flowgate.v02.0056 T#2: ``stage`` (``instruction`` / ``result``, null for a node no AI starts) and the
-    card run's ``instruction_doc_id`` (null until known)."""
+    card run's ``instruction_doc_id`` (null until known). 0061 T#2: the node's current ``attempt_id`` (its active
+    attempt, else its last ended one; null for a node not opened since migration 151)."""
     return {"node_key": row["node_key"], "status": row["status"], "opened_at": row.get("opened_at"),
             "finished_at": row.get("finished_at"), "result_doc_id": row.get("result_doc_id"),
             "root_bound": bool(row.get("root_bound")), "dispatch": dispatch_block(row),
             "awaiting_approval": node_approval.awaiting_approval(flow_id, row),
-            "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id")}
+            "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id"),
+            "attempt_id": attempt_id}
+
+
+def settle_if_needed(flow_id: str, project_id: Optional[str]) -> None:
+    """0061 T#2, before a run read and after a card stage followed a node's AI run: a running run whose work ended with
+    no node event to judge it (a card review that ended without passing) goes idle or opens what its command may, an
+    idle run whose existing work goes on again (a card review started) is running again, and an idle run's reason
+    follows its nodes (``run_state_ports.settle``). A failure only skips it; the read goes on."""
+    run = run_store.active_run(flow_id)
+    if run is None:
+        return
+    try:
+        if run_state_ports.settle_plan(load_context(run, project_id, None)) is None:
+            return
+    except Exception:  # noqa: BLE001 — as below: the read goes on
+        _log.exception("graph run settle check failed flow=%s", flow_id)
+        return
+    jobs: list = []
+
+    def body() -> None:
+        if read_ownership(flow_id).state != "graph":
+            return
+        again = run_store.active_run(flow_id)
+        if again is not None:
+            settle_run(load_context(again, project_id, None, jobs))
+
+    try:
+        with_flow_guard(flow_id, body)
+    except Exception:  # noqa: BLE001 — as reconcile_if_needed: roll the step back, answer the read
+        _log.exception("graph run settle failed flow=%s", flow_id)
+        return
+    run_jobs(jobs)
 
 
 def current_run(group: dict) -> dict:
     flow_id = group["group_id"]
     result_binder.reconcile_if_needed(flow_id, group.get("project_id"))
+    settle_if_needed(flow_id, group.get("project_id"))
     run = run_store.active_run(flow_id)
     return {"run": run_payload(run["run_id"], with_nodes=True) if run else None}
 

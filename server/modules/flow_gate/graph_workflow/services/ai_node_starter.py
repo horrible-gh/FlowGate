@@ -65,7 +65,7 @@ def _map_if_open(job: dict, token_id: str) -> None:
     def body() -> None:
         run = run_store.run_by_id(job["run_id"])                   # re-read inside the guard (L0009 §2.1.1)
         row = next((r for r in run_store.node_runs(job["run_id"]) if r["node_key"] == job["node_key"]), None)
-        if run is None or run["status"] == "completed" or row is None or row["status"] != "open":
+        if run is None or run_store.completed(run) or row is None or row["status"] != "open":
             raise NodeNotStartable(f"node {job['node_key']} is no longer open")
         if _result_registered(run, job):
             raise NodeNotStartable(f"node {job['node_key']} already has a registered result")

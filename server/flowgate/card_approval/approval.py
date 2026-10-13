@@ -42,7 +42,8 @@ from flowgate.card_documents import legacy_adapter as card_docs
 from flowgate.card_documents import lines as card_lines
 from flowgate.card_documents import slots
 
-ACTIVE_RUN_STATUSES = ("running", "stopped")
+# flowgate.v02.0061 T#2: a Flow's run is running, paused or idle (an idle run's waiting_approval is this approval).
+ACTIVE_RUN_STATUSES = ("running", "paused", "idle")
 APPROVED = ("approved", "wf_done")
 # A submitted document of a line (an empty draft the card made has no review status yet).
 SUBMITTED = ("pending_review", "revised", "rejected") + APPROVED
@@ -152,7 +153,7 @@ def approve(group: dict, run_id: str, node_key: str, expected_result: Optional[s
 
     Order of the checks (all before any write):
 
-    1. run missing -> 404 run_not_found; not running / stopped -> 409 run_not_active
+    1. run missing -> 404 run_not_found; not running / paused / idle -> 409 run_not_active
     2. ownership not graph -> 409 (as stop / resume / gate decision)
     3. node not in the run -> 404 node_not_found
     4. not awaiting approval -> 409 node_is_gate / node_not_started / no_result / ai_running /

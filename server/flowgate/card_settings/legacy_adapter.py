@@ -17,6 +17,9 @@ flowgate.v02.0056 T#2 (the instruction stage of a card run): which open node in 
 run worked for, the card instruction documents that node's tokens registered, and the Graph's own two steps
 that follow the stage — the result stage's start (``node_dispatch.start_result_stage``) and the stage's
 failure record (``node_dispatch.instruction_stage_failed``, the AI start failure path).
+
+flowgate.v02.0061 T#2: after the review stage followed a node's AI run, the Graph run is judged again
+(``run_service.settle_if_needed``, as before a run read).
 """
 from __future__ import annotations
 
@@ -47,7 +50,7 @@ __all__ = ["GraphApiError", "with_flow_guard", "registered_doc_types", "authenti
            "node_ai_run_active", "instruction_node_of_ai_run", "registered_instructions", "start_result_stage",
            "instruction_stage_failed",
            "default_reviewer", "last_rejection", "start_review_loop", "review_loop_row", "review_loop_active",
-           "approve"]
+           "approve", "settle_graph_run"]
 
 _log = logging.getLogger(__name__)
 
@@ -402,3 +405,14 @@ def approve(flow_id: str, doc_id: str, actor_user_id: str) -> bool:
     tr_commit_service.on_document_approved(doc_id, result)
     v01_contact.after_review_decided(flow_id, doc_id, "approve")
     return True
+
+
+def settle_graph_run(flow_id: str) -> None:
+    """The Flow's Graph run is judged again (flowgate.v02.0061 T#2): running while the review its card stage started
+    works, idle when nothing works any more. Never raises (a failure only skips it, as before a run read)."""
+    from modules.flow_gate.graph_workflow.services import run_service  # noqa: PLC0415 — the run stack on use
+
+    try:
+        run_service.settle_if_needed(flow_id, project_of(flow_id))
+    except Exception:  # noqa: BLE001 — the stage's own end is not failed by the run's judgement
+        _log.warning("graph run settle after the card stage failed flow=%s", flow_id, exc_info=True)

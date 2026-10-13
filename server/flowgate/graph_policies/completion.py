@@ -1,7 +1,7 @@
 """Completion = all run targets done, with no active attempt (0061 T#1).
 
 Candidate exhaustion is never success: join/approval/rejection waits stay incomplete.
-Attempt persistence is T#2; the caller supplies has_active_attempts in RunState.
+The caller supplies has_active_attempts in RunState (T#2: run_apply.read_run_state reads graph_node_attempts).
 Pure judgement, including a separate no_targets reason for an empty scope.
 """
 from __future__ import annotations

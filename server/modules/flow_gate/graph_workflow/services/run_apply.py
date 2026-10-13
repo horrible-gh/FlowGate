@@ -3,6 +3,11 @@
 Always inside a Flow guard: one ``apply_decision`` call is one part of the guard transaction, so a
 node transition, its ``result_doc_id``, its event and its propagation record commit together or
 not at all. Conditional updates that miss their row raise (rollback, L0009 E-35 / E-36).
+
+flowgate.v02.0061 T#2: opening a node starts its attempt (``run_store.open_attempt``, before the dispatch so the
+node's token is mapped to it) and its approval (``done``) ends it. After a decision, ``settle_run`` asks whether the
+run goes on (``run_state_ports.settle``): the running / idle judgement, the idle reason and the candidates a command
+may still open are v0.2 rules in ``flowgate.graph_run``; this module only writes what a step decides.
 """
 from __future__ import annotations
 
@@ -17,7 +22,7 @@ from modules.flow_gate.graph_workflow.projection.graph_projector import to_graph
 from modules.flow_gate.graph_workflow.projection.run_documents import flow_documents
 from modules.flow_gate.graph_workflow.store import assignment_store, definition_store, run_store
 
-from . import node_dispatch, run_events
+from . import node_dispatch, run_events, run_state_ports
 from .card_document_ports import result_bound
 
 DISPATCH_FIELDS = ("token_issued", "mention_id", "issued_to", "error_code")
@@ -76,7 +81,10 @@ def read_run_state(ctx: RunContext) -> RunState:
              for r in run_store.node_runs(ctx.run_id)}
     pending = [PendingPropagation(p["node_key"], p["outcome"], int(p["source_event_seq"]))
                for p in run_store.pending_propagations(ctx.run_id)]
-    return RunState(ctx.run["status"], nodes, pending)
+    step = ctx.run.get("step_node_keys")
+    return RunState(ctx.run["status"], nodes, pending, has_active_attempts=run_store.has_active_attempts(ctx.run_id),
+                    mode=ctx.run.get("run_mode") or "full",
+                    step_targets=frozenset(step) if step is not None else None)
 
 
 def canvas_state_of(ctx: RunContext, node_key: str, status: str) -> Optional[str]:
@@ -95,7 +103,7 @@ def _is_root_bound(ctx: RunContext, node_key: str) -> bool:
 def emit_run_status(ctx: RunContext, from_status: Optional[str], to_status: str, cause: str,
                     reason: Optional[str] = None) -> int:
     seq = int(ctx.run["last_event_seq"]) + 1
-    actor = ctx.actor if cause != "completed" else None
+    actor = ctx.actor if cause not in run_events.AUTO_CAUSES else None
     payload = run_events.run_status_payload(ctx.run, seq, from_status, to_status, cause, actor, reason)
     run_store.append_event(ctx.run_id, seq, run_events.RUN_STATUS, payload, node_key=None,
                            from_status=from_status, to_status=to_status, cause=cause, result_doc_id=None,
@@ -128,8 +136,9 @@ def _assert_one(affected: int, what: str) -> None:
         raise AssertionError(f"graph run write missed its row: {what}")
 
 
-def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None) -> None:
-    """L0009 §2.6.6 ``apply_decision`` — transitions, propagation records, close, open, completion.
+def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, settle: bool = True) -> None:
+    """L0009 §2.6.6 ``apply_decision`` — transitions, propagation records, close, open, then whether the run goes
+    on (``settle_run``, 0061 T#2; ``settle=False`` for a step that applies its command afterwards).
 
     ``note`` (who decided, the comment) goes with the node transitions of the deciding event (gate).
     """
@@ -137,6 +146,8 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None) ->
         _assert_one(run_store.transition_node_run(
             ctx.run_id, t.node, t.from_status, t.expected_doc_id, t.to_status, t.result_doc_id,
             finished=t.to_status in ("done", "rejected")), f"transition {t.node} {t.cause}")
+        if t.to_status == "done":
+            run_store.end_attempt(ctx.run_id, t.node)                  # 0061 T#2: the node's attempt ends
         seq = emit_node_state(ctx, t.node, t.from_status, t.to_status, t.cause, t.result_doc_id, note=note)
         if t.result_doc_id and t.result_doc_id != t.expected_doc_id:
             result_bound(ctx.flow_id, t.node, t.result_doc_id)        # flowgate.v02.0053 T#1: fills the line
@@ -150,12 +161,17 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None) ->
         # for it yet; refusing (rollback) is safer than inventing a status.
         raise NotImplementedError("closed node status is undecided (L0009 D-03)")
     for key in sorted(dict.fromkeys(d.open)):
+        run_store.open_attempt(ctx.run_id, key, int(ctx.run["revision_no"]))   # 0061 T#2: one active per node
         dispatch = node_dispatch.dispatch(ctx, key)
         _assert_one(run_store.open_node_run(ctx.run_id, key, dispatch), f"open {key}")
         emit_node_state(ctx, key, "pending", "open", "opened", None, dispatch)
-    if d.run_transition == "completed":
-        _assert_one(run_store.set_run_status(ctx.run_id, "running", "completed"), "complete")
-        emit_run_status(ctx, "running", "completed", "completed")
+    if settle:
+        settle_run(ctx)
+
+
+def settle_run(ctx: RunContext) -> None:
+    """0061 T#2, inside the step's guard after its decision: whether the run goes on (``run_state_ports.settle``)."""
+    run_state_ports.settle(ctx)
 
 
 def fill_line(ctx: RunContext, node_key: str, doc_id: str) -> None:

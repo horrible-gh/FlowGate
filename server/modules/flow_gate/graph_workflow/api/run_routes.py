@@ -6,7 +6,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, Request
 
 from modules.flow_gate.graph_workflow.domain.run_request import (
-    parse_gate_decision, parse_page, parse_reason, parse_start,
+    parse_gate_decision, parse_mode, parse_page, parse_reason, parse_start,
 )
 from modules.flow_gate.graph_workflow.services import canvas_service, gate_service, run_service
 
@@ -21,11 +21,13 @@ def post_flow_run(flow_id: str, request: Request, body: Any = Body(default=None)
         user_id = envelope.authenticate(request)
         envelope.client_id_of(request)
         revision_no, errors = parse_start(body)
+        mode, mode_errors = parse_mode(body)                    # flowgate.v02.0061 T#2: step / full
+        errors = errors or mode_errors
         if errors:
             raise envelope.invalid(request, errors)
         group = canvas_service.load_flow(flow_id)
         envelope.authorize(user_id, group, "write")
-        return run_service.start_run(group, user_id, revision_no)
+        return run_service.start_run(group, user_id, revision_no, mode)
 
     return envelope.run(request, handle, status=201)
 
@@ -69,25 +71,31 @@ def get_run(run_id: str, request: Request):
     return envelope.run(request, handle)
 
 
-def _control(request: Request, run_id: str, body: Any, action) -> dict:
+def _control(request: Request, run_id: str, body: Any, action, with_mode: bool = False) -> dict:
     user_id = envelope.authenticate(request)
     envelope.client_id_of(request)
     reason, errors = parse_reason(body)
+    mode, mode_errors = parse_mode(body) if with_mode else (None, [])
+    errors = errors or mode_errors
     if errors:
         raise envelope.invalid(request, errors)
     group = canvas_service.load_flow(run_service.run_flow_id(run_id))
     envelope.authorize(user_id, group, "write")
+    if with_mode:
+        return action(group, run_id, reason, user_id, mode)
     return action(group, run_id, reason, user_id)
 
 
 @router.post("/runs/{run_id}/stop")
 def post_run_stop(run_id: str, request: Request, body: Any = Body(default=None)):
+    """flowgate.v02.0061 T#2: Pause (running -> paused) until T#7 moves it to /pause."""
     return envelope.run(request, lambda: _control(request, run_id, body, run_service.stop_run))
 
 
 @router.post("/runs/{run_id}/resume")
 def post_run_resume(run_id: str, request: Request, body: Any = Body(default=None)):
-    return envelope.run(request, lambda: _control(request, run_id, body, run_service.resume_run))
+    """flowgate.v02.0061 T#2: a paused / idle run goes on; ``mode`` (step / full) makes it a new command."""
+    return envelope.run(request, lambda: _control(request, run_id, body, run_service.resume_run, with_mode=True))
 
 
 @router.post("/runs/{run_id}/nodes/{node_key}/gate-decision")

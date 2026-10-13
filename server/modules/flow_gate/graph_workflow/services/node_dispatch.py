@@ -222,7 +222,7 @@ def _record_instruction(job: dict, doc_id: str) -> None:
 def _open_row(run_id: str, node_key: str) -> Optional[dict]:
     """The node run, while its run goes on and the node is open (re-read inside the guard, L0009 §2.1.1)."""
     run = run_store.run_by_id(run_id)
-    if run is None or run["status"] == "completed":
+    if run is None or run_store.completed(run):
         return None
     row = next((r for r in run_store.node_runs(run_id) if r["node_key"] == node_key), None)
     return row if row is not None and row["status"] == "open" else None
@@ -283,9 +283,11 @@ def record_ai_failure(job: dict) -> None:
     from . import run_apply                                   # noqa: PLC0415 — run_apply imports this module
     from .flow_guard import with_flow_guard                   # noqa: PLC0415
 
+    jobs: list = []
+
     def body() -> None:
         run = run_store.run_by_id(job["run_id"])              # re-read inside the guard (L0009 §2.1.1)
-        if run is None or run["status"] == "completed":
+        if run is None or run_store.completed(run):
             return
         row = next((r for r in run_store.node_runs(run["run_id"]) if r["node_key"] == job["node_key"]), None)
         if row is None or row["status"] != "open":
@@ -296,11 +298,18 @@ def record_ai_failure(job: dict) -> None:
         run_store.set_dispatch(run["run_id"], job["node_key"], dispatch)
         if row.get("stage") == INSTRUCTION_STAGE:              # T#2: a person's result binds, not the stage's
             run_store.mark_result_floor(run["run_id"], job["node_key"])
-        ctx = run_apply.load_context(run, job.get("project_id"), None)
+        ctx = run_apply.load_context(run, job.get("project_id"), None, jobs)
         run_apply.emit_node_state(ctx, job["node_key"], "open", "open", "dispatch_failed",
                                   row.get("result_doc_id"), dispatch)
+        run_apply.settle_run(ctx)                             # 0061 T#2: nothing else works -> idle (error)
 
     try:
         with_flow_guard(job["flow_id"], body)
     except Exception:  # noqa: BLE001 — a post-commit job never fails the request that queued it
         _log.exception("graph AI failure record failed run=%s node=%s", job["run_id"], job["node_key"])
+        return
+    for queued in jobs:                                       # what the settle opened (post-commit)
+        try:
+            queued()
+        except Exception:  # noqa: BLE001
+            _log.exception("graph run post-commit job failed run=%s", job["run_id"])
