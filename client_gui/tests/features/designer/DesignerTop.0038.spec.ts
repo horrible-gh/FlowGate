@@ -21,7 +21,9 @@ import DesignerHeader from '@/features/designer/top/DesignerHeader.vue'
 import DesignerMenuBar from '@/features/designer/top/DesignerMenuBar.vue'
 import DesignerToolbar from '@/features/designer/top/DesignerToolbar.vue'
 import {
+  ALL_MENU_TARGETS,
   createDesignerTopState,
+  DESIGNER_ARRANGE_GROUPS,
   DESIGNER_MENUS,
   isMenuCommandEnabled,
   nextRunMode,
@@ -219,8 +221,9 @@ describe('Designer top band — Menu Bar', () => {
 
   it('Edit, Run, View and Help hold the confirmed items', async () => {
     const w = await mountShell()
-    expect(itemTexts(await openMenu(w, 'edit'))).toEqual([
-      '실행 취소', '다시 실행', '잘라내기', '복사', '붙여넣기', '삭제', '정렬 / 배치…', '자동 배치', '전체 선택',
+    // flowgate.v02.0059 T#2: 정렬 / 배치 is a submenu (›) of the 정렬 / 분배 commands.
+    expect(itemTexts(await openMenu(w, 'edit')).map((text) => text.replace('›', '').trim())).toEqual([
+      '실행 취소', '다시 실행', '잘라내기', '복사', '붙여넣기', '삭제', '정렬 / 배치', '자동 배치', '전체 선택',
     ])
     expect(itemTexts(await openMenu(w, 'run'))).toEqual(['다음 단계 실행', '전체 실행', '실행 중지', '재실행', 'Flow 검증'])
     expect(itemTexts(await openMenu(w, 'view')).map((text) => text.replace('›', '').trim())).toEqual([
@@ -282,7 +285,14 @@ describe('Designer top band — Menu Bar', () => {
     await openPop(w).get('[data-command="project.open"]').trigger('keydown', { key: 'ArrowRight' })
     await flushPromises()
     expect(openPop(w).attributes('data-menu')).toBe('edit')
-    expect(document.activeElement?.getAttribute('data-command')).toBe('edit.undo')
+    // flowgate.v02.0059 T#2: no edit history yet, so Undo / Redo are disabled and the focus lands on
+    // the first enabled item of the Edit menu.
+    const items = openPop(w).findAll('[data-command]')
+    const enabled = items.filter((el) => el.attributes('disabled') === undefined && el.attributes('aria-disabled') !== 'true')
+    expect(items.find((el) => el.attributes('data-command') === 'edit.undo')!.attributes('aria-disabled') === 'true'
+      || items.find((el) => el.attributes('data-command') === 'edit.undo')!.attributes('disabled') !== undefined).toBe(true)
+    expect(document.activeElement).toBe(enabled[0].element)
+    expect(document.activeElement?.getAttribute('data-command')).not.toMatch(/^edit\.(undo|redo)$/)
   })
 })
 
@@ -340,14 +350,17 @@ describe('Designer top band — Window menu', () => {
 })
 
 describe('Designer top band — Toolbar', () => {
-  it('keeps the confirmed tools only: no select / add node / connect, with 정렬 / 배치 ▾', async () => {
+  it('keeps the confirmed tools only: [선택] for multi-selection, no add node / connect, with 정렬 / 배치 ▾', async () => {
     const w = await mountShell()
-    // flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons.
-    expect(toolTexts(w)).toEqual(['실행 취소', '다시 실행', '정렬 / 배치 ▾', '검증', '다음 단계', '전체 실행', '화면 맞춤', '축소', '확대'])
-    expect(get(w, 'designer-toolbar').text()).not.toMatch(/선택|노드 추가|연결/)
-    expect(get(w, 'designer-tool-zoom').text()).toBe('100%')
+    // flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons. flowgate.v02.0059 T#1:
+    // [선택] (multi-selection toggle) is back next to 정렬 / 배치 ▾.
+    expect(toolTexts(w)).toEqual(['실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '다음 단계', '전체 실행', '화면 맞춤', '축소', '확대'])
+    expect(get(w, 'designer-toolbar').text()).not.toMatch(/노드 추가|연결/)
+    // flowgate.v02.0059 0017-T: the zoom is one control showing the current zoom.
+    expect((get(w, 'designer-tool-zoom').element as HTMLSelectElement).selectedOptions[0]?.text).toBe('100%')
+    expect(get(w, 'designer-toolbar').findAll('output')).toHaveLength(0)
     expect(get(w, 'designer-tool-density').findAll('[role="radio"]').map((b) => b.attributes('aria-label'))).toEqual([
-      '매우 넓게', '넓게', '보통', '자율형',
+      '넓게', '보통', '좁게', '자율형',
     ])
   })
 
@@ -471,7 +484,7 @@ describe('Designer top band — Toolbar', () => {
     await pop.get('[data-test="designer-menu-sub"][data-sub="density"]').trigger('click')
     const sub = w.get('[data-test="designer-menu-subpop"][data-sub="density"]')
     expect(sub.get('[aria-checked="true"]').attributes('data-density')).toBe('wide')
-    expect(itemTexts(sub)).toEqual(['매우 넓게', '넓게', '보통', '자율형'])
+    expect(itemTexts(sub)).toEqual(['넓게', '보통', '좁게', '자율형'])
 
     await sub.get('[data-density="free"]').trigger('click')
     expect(openPop(w).exists()).toBe(false)
@@ -534,19 +547,38 @@ describe('Designer top band — part events', () => {
     activeTabs: ['project', 'palette'],
   }
 
-  it('the Toolbar 정렬 / 배치 ▾ and the Edit menu 정렬 / 배치… are the same entry', async () => {
-    const toolbar = mount(DesignerToolbar, { props: { runMode: null, density: 'normal', zoom: 100 }, global: { plugins: [i18n] } })
-    await toolbar.get('[data-command="edit.arrange"]').trigger('click')
-    expect(toolbar.emitted('command')).toEqual([['edit.arrange']])
+  // flowgate.v02.0059 T#2 (0011-CH contract D): the same 정렬 / 분배 commands in the Toolbar drop-down (with
+  // 자동 배치 after them) and in the Edit menu's 정렬 / 배치 submenu, emitted as they are.
+  it('the Toolbar 정렬 / 배치 ▾ and the Edit menu 정렬 / 배치 list and emit the same commands', async () => {
+    const targets = { ...ALL_MENU_TARGETS, selectedCount: 3 }
+    const toolbar = mount(DesignerToolbar, {
+      props: { runMode: null, density: 'normal', zoom: 100, targets },
+      attachTo: document.body,
+      global: { plugins: [i18n] },
+    })
+    expect(toolbar.find('[data-test="designer-arrange-menu"]').exists()).toBe(false)
+    await toolbar.get('[data-tool="arrange"]').trigger('click')
+    expect(toolbar.get('[data-tool="arrange"]').attributes('aria-expanded')).toBe('true')
+    const toolbarItems = toolbar.findAll('[data-test="designer-arrange-item"]')
+    expect(toolbarItems.map((el) => el.attributes('data-arrange'))).toEqual([...DESIGNER_ARRANGE_GROUPS.flat(), 'edit.auto-layout'])
+    expect(toolbarItems.map((el) => el.text())).toEqual([
+      '왼쪽 정렬', '가로 가운데 정렬', '오른쪽 정렬', '위쪽 정렬', '세로 가운데 정렬', '아래쪽 정렬', '가로 균등 분배', '세로 균등 분배', '자동 배치',
+    ])
+    await toolbar.get('[data-arrange="edit.align-left"]').trigger('click')
+    expect(toolbar.emitted('command')).toEqual([['edit.align-left']])
+    expect(toolbar.find('[data-test="designer-arrange-menu"]').exists()).toBe(false)
 
     const menubar = mount(DesignerMenuBar, {
-      props: { runMode: null, density: 'normal', windowState: WINDOW },
+      props: { runMode: null, density: 'normal', windowState: WINDOW, targets },
       attachTo: document.body,
       global: { plugins: [i18n] },
     })
     await menubar.get('[data-menu="edit"]').trigger('click')
-    await menubar.get('[data-command="edit.arrange"]').trigger('click')
-    expect(menubar.emitted('command')).toEqual([['edit.arrange']])
+    await menubar.get('[data-sub="arrange"]').trigger('click')
+    const sub = menubar.get('[data-test="designer-menu-subpop"][data-sub="arrange"]')
+    expect(sub.findAll('[data-command]').map((el) => el.attributes('data-command'))).toEqual(DESIGNER_ARRANGE_GROUPS.flat())
+    await sub.get('[data-command="edit.align-left"]').trigger('click')
+    expect(menubar.emitted('command')).toEqual([['edit.align-left']])
     toolbar.unmount()
     menubar.unmount()
   })
@@ -565,12 +597,12 @@ describe('Designer top band — part events', () => {
     await menubar.get('[data-tab="conversation"]').trigger('click')
     await menubar.get('[data-menu="view"]').trigger('click')
     await menubar.get('[data-sub="density"]').trigger('click')
-    await menubar.get('[data-density="very-wide"]').trigger('click')
+    await menubar.get('[data-density="wide"]').trigger('click')
 
     expect(menubar.emitted('command')).toEqual([['flow.open']])
     expect(menubar.emitted('toggle-panel')).toEqual([['minimap']])
     expect(menubar.emitted('show-tab')).toEqual([['conversation']])
-    expect(menubar.emitted('update:density')).toEqual([['very-wide']])
+    expect(menubar.emitted('update:density')).toEqual([['wide']])
     menubar.unmount()
   })
 

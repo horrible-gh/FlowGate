@@ -7,6 +7,13 @@
 // (left / right panel display, panel tabs, run button state, density choice); every other
 // command is the event boundary a later Feature group wires (0001-R §8). No keyboard shortcut is
 // assigned or shown here — shortcuts are decided in a later step (0001-R §6.7, 0007-T §7).
+//
+// flowgate.v02.0059 T#2 (0011-CH contract D): 정렬 / 배치 is a submenu of the Edit menu and the Toolbar's
+// 정렬 / 배치 ▾ drop-down, both listing the same commands — six 정렬 and two 균등 분배 of the selected cards
+// (2 / 3 or more selected, `selectedCount`) and, in the Toolbar's, 자동 배치.
+//
+// flowgate.v02.0059 0017-T: the density is the step a card drag moves in (DENSITY_MOVE_STEP, the one place
+// its numbers live); 자율형 forces none. It never lays cards out and never starts or stops 자동 배치.
 
 /** Commands of the top band. Window panel / tab and density choices have their own events. */
 export type DesignerTopCommand =
@@ -26,9 +33,12 @@ export type DesignerTopCommand =
   | 'edit.copy'
   | 'edit.paste'
   | 'edit.delete'
-  | 'edit.arrange'
+  /** flowgate.v02.0059 T#2: 정렬 / 균등 분배 of the selected cards (DESIGNER_ARRANGE_GROUPS). */
+  | DesignerArrangeCommand
   | 'edit.auto-layout'
   | 'edit.select-all'
+  /** flowgate.v02.0059 T#1: the Toolbar's [선택] toggle (area / click multi-selection on the Canvas). */
+  | 'edit.select-mode'
   | 'run.next'
   | 'run.all'
   | 'run.stop'
@@ -45,6 +55,30 @@ export type DesignerTopCommand =
   | 'header.ai'
   | 'header.settings'
   | 'header.user'
+
+/** flowgate.v02.0059 T#2: the 정렬 / 분배 commands (the Center's arrange kinds after `edit.`). */
+export type DesignerArrangeCommand =
+  | 'edit.align-left'
+  | 'edit.align-center'
+  | 'edit.align-right'
+  | 'edit.align-top'
+  | 'edit.align-middle'
+  | 'edit.align-bottom'
+  | 'edit.distribute-horizontal'
+  | 'edit.distribute-vertical'
+
+/** The 정렬 / 배치 submenu in display order, one group per separator: horizontal, vertical, 균등 분배. */
+export const DESIGNER_ARRANGE_GROUPS: readonly (readonly DesignerArrangeCommand[])[] = [
+  ['edit.align-left', 'edit.align-center', 'edit.align-right'],
+  ['edit.align-top', 'edit.align-middle', 'edit.align-bottom'],
+  ['edit.distribute-horizontal', 'edit.distribute-vertical'],
+]
+
+/** How many selected cards a 정렬 (2) / 균등 분배 (3) command needs. */
+export function arrangeSelectionMinimum(cmd: DesignerTopCommand): number | null {
+  if (cmd === 'edit.distribute-horizontal' || cmd === 'edit.distribute-vertical') return 3
+  return cmd.startsWith('edit.align-') ? 2 : null
+}
 
 /** File menu levels that carry a "recent" submenu. */
 export type DesignerRecentKind = 'project' | 'group' | 'flow'
@@ -64,10 +98,33 @@ export interface DesignerRecentRequest {
   id: string
 }
 
-/** Canvas layout density, widest first (0001-R §3.4). */
-export type DesignerDensity = 'very-wide' | 'wide' | 'normal' | 'free'
+/**
+ * Canvas layout density, widest first (0001-R §3.4): 넓게 / 보통 / 좁게 / 자율형. flowgate.v02.0059 0018-TR rev2
+ * (rejection: the terms are 넓게, 보통, 좁게): the three stepped densities were renamed — the steps stay 40 / 20 / 10.
+ */
+export type DesignerDensity = 'wide' | 'normal' | 'narrow' | 'free'
 
-export const DESIGNER_DENSITIES: readonly DesignerDensity[] = ['very-wide', 'wide', 'normal', 'free']
+export const DESIGNER_DENSITIES: readonly DesignerDensity[] = ['wide', 'normal', 'narrow', 'free']
+
+/**
+ * flowgate.v02.0059 0017-T: the step, in Canvas (Graph) units, a card drag moves in at each density — widest
+ * first, coarse to fine. 0018-TR rework: the step is a lattice — the dragged card lands on the nearest Graph
+ * point whose x and y are whole steps, the other dragged cards keep their offset to it (canvasView.ts
+ * stepGroupMove), so a dragged selection keeps its relative layout — and the Canvas dot grid draws exactly that
+ * lattice (canvasView.ts canvasDotGrid), so a density shows its own dot spacing. 자율형 (`null`) forces no step
+ * and shows no grid: a card stays exactly where it is dropped. Choosing a density moves nothing by itself.
+ *
+ * Unit: the server's auto placement (auto_layout.py) puts every card on a 20 lattice — its column step 260,
+ * stack step 140, row offsets 180 / 320 / 200 and collision step 120 are all multiples of 20 — so a placed card is
+ * on the 20 and 10 lattices (40: every second one). Vue Flow's own snap (`snapToGrid`) stays off: it rounds every
+ * dragged card to the grid by itself and would break a group's layout.
+ */
+export const DENSITY_MOVE_STEP: Readonly<Record<DesignerDensity, number | null>> = Object.freeze({
+  wide: 40,
+  normal: 20,
+  narrow: 10,
+  free: null,
+})
 
 /** Independent display areas: shown / hidden, drawn as check items (0001-R §3.5). */
 export type DesignerWindowPanel = 'left' | 'right' | 'inspector' | 'minimap'
@@ -119,6 +176,8 @@ export type DesignerMenuEntry =
   | { kind: 'command'; command: DesignerTopCommand; label: string }
   | { kind: 'recent'; recent: DesignerRecentKind; label: string }
   | { kind: 'density'; label: string }
+  /** flowgate.v02.0059 T#2: the 정렬 / 배치 submenu (DESIGNER_ARRANGE_GROUPS). */
+  | { kind: 'arrange'; label: string }
   | { kind: 'panel'; panel: DesignerWindowPanel }
   | { kind: 'tab'; tab: DesignerWindowTab }
   | { kind: 'separator' }
@@ -165,7 +224,7 @@ export const DESIGNER_MENUS: readonly DesignerMenu[] = [
       item('edit.paste', 'paste'),
       item('edit.delete', 'delete'),
       separator,
-      item('edit.arrange', 'arrange'),
+      { kind: 'arrange', label: 'arrange' },
       item('edit.auto-layout', 'auto_layout'),
       separator,
       item('edit.select-all', 'select_all'),
@@ -215,7 +274,10 @@ export const DESIGNER_MENUS: readonly DesignerMenu[] = [
 /** Which run button started the current run, or null when nothing runs. */
 export type DesignerRunMode = 'next' | 'all' | null
 
-/** Screen state of the top band, owned by one DesignerShell like its layout. Never persisted. */
+/**
+ * Screen state of the top band, owned by one DesignerShell like its layout. Never persisted, so every Designer —
+ * a newly created Project's too — starts at the density 보통 (flowgate.v02.0059 0018-TR rev2).
+ */
 export interface DesignerTopState {
   runMode: DesignerRunMode
   density: DesignerDensity
@@ -252,6 +314,14 @@ export interface DesignerMenuTargets {
   project: boolean
   group: boolean
   flow: boolean
+  /**
+   * flowgate.v02.0059 T#2: whether the open Flow's structure edits can be undone / redone. Left out
+   * (undefined) the command follows the open Flow alone; the Shell states both explicitly.
+   */
+  canUndo?: boolean
+  canRedo?: boolean
+  /** flowgate.v02.0059 T#2: how many cards of the open Flow are selected (정렬 2+, 균등 분배 3+). */
+  selectedCount?: number
 }
 
 export const ALL_MENU_TARGETS: DesignerMenuTargets = Object.freeze({ project: true, group: true, flow: true })
@@ -300,6 +370,10 @@ export function isMenuCommandEnabled(
   if (cmd === 'group.close') return targets.group
   if (cmd === 'flow.close') return targets.flow
   if (!targets.flow) return false
+  if (cmd === 'edit.undo') return targets.canUndo !== false
+  if (cmd === 'edit.redo') return targets.canRedo !== false
+  const minimum = arrangeSelectionMinimum(cmd)
+  if (minimum !== null) return (targets.selectedCount ?? 0) >= minimum
   if (cmd === 'run.stop') return runMode !== null
   if (cmd === 'run.next' || cmd === 'run.all' || cmd === 'run.rerun') return runMode === null
   return true
@@ -307,10 +381,10 @@ export function isMenuCommandEnabled(
 
 /**
  * Whether a submenu entry can be opened: 최근 Project always, 최근 Group / Flow with the Project
- * context, the layout density with an open Flow.
+ * context, the layout density and 정렬 / 배치 with an open Flow.
  */
 export function isSubmenuEnabled(entry: DesignerMenuEntry, targets: DesignerMenuTargets = ALL_MENU_TARGETS): boolean {
-  if (entry.kind === 'density') return targets.flow
+  if (entry.kind === 'density' || entry.kind === 'arrange') return targets.flow
   if (entry.kind === 'recent') return entry.recent === 'project' || targets.project
   return true
 }

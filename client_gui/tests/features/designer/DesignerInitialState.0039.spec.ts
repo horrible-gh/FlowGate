@@ -227,8 +227,8 @@ function expectUnselectedState(w: VueWrapper<any>) {
   expect(toolbar.attributes('aria-disabled')).toBe('true')
   expect(toolbar.classes()).toContain('is-unavailable')
   const buttons = toolbar.findAll('button')
-  // flowgate.v02.0045 TR0020 rev2: + 검증 before the run buttons.
-  expect(buttons.length).toBe(13)
+  // flowgate.v02.0045 TR0020 rev2: + 검증 before the run buttons. flowgate.v02.0059 T#1: + [선택].
+  expect(buttons.length).toBe(14)
   expect(buttons.every(isDisabled)).toBe(true)
 }
 
@@ -380,7 +380,11 @@ describe('Designer initial state — only an open Flow continues into the Design
     expect(isDisabled(get(w, 'project-explorer-search'))).toBe(false)
     expect(get(w, 'designer-toolbar').attributes('aria-disabled')).toBeUndefined()
     // flowgate.v02.0045 TR0020 rev2: 검증 waits for an edited structure (none on this Flow).
-    expect(get(w, 'designer-toolbar').findAll('button:not([data-command="run.validate"])').some(isDisabled)).toBe(false)
+    // flowgate.v02.0059 T#2: Undo / Redo wait for an edit history (none on this Flow).
+    const toolbarButtons = get(w, 'designer-toolbar').findAll('button')
+    const waiting = ['run.validate', 'edit.undo', 'edit.redo']
+    expect(toolbarButtons.filter((b) => waiting.includes(b.attributes('data-command') ?? '')).every(isDisabled)).toBe(true)
+    expect(toolbarButtons.filter((b) => !waiting.includes(b.attributes('data-command') ?? '')).some(isDisabled)).toBe(false)
 
     const file = await openMenu(w, 'file')
     // The chosen row is the Flow, not a Group: only Group 닫기 has nothing to act on.

@@ -8,7 +8,11 @@
        편집 / 편집 마치기 — a Flow that already ran is edited right on the Canvas (the session picks
        what it shows). TR0020 rev4: nothing is laid over the Canvas — no saving / refused-save /
        검증 note (the edit note is gone); a refused save reads the Flow again by itself, and the
-       problems a 검증 or a refused 실행 reported only mark their cards / lines on the Canvas. -->
+       problems a 검증 or a refused 실행 reported only mark their cards / lines on the Canvas.
+       flowgate.v02.0059 T#1: the session's [선택] mode and the Flow's whole Selection go to the
+       Canvas, and the Selection it reports in that mode comes back to the session. flowgate.v02.0059 T#2: a
+       drop of one card or of the selection goes to the session as one move (one undo entry).
+       flowgate.v02.0059 0017-T: the density's move step (`move-step`, the Shell's) goes to the Canvas. -->
   <div class="designer-center" data-test="designer-center">
     <FlowTabStrip
       :tabs="center.state.tabs"
@@ -43,13 +47,18 @@
           :graph="load.graph"
           :viewport="view?.viewport ?? null"
           :selected-node-id="view?.selectedNodeId ?? null"
+          :selected-node-ids="view?.selectedNodeIds ?? []"
+          :select-mode="center.selectMode.value"
+          :view-request="center.viewRequest.value?.flowId === activeTab.flowId ? center.viewRequest.value : null"
           :sample="center.isSampleSource"
           :placing="placing"
+          :move-step="moveStep"
           @select-node="center.selectNode(activeTab.flowId, $event)"
+          @select-nodes="center.selectNodes(activeTab.flowId, $event)"
           @viewport-change="center.recordViewport(activeTab.flowId, $event)"
           @viewport-commit="center.commitViewport(activeTab.flowId, $event)"
           @canvas-resize="center.recordCanvasSize($event)"
-          @node-move="center.moveNode(activeTab.flowId, $event.nodeId, $event.x, $event.y)"
+          @nodes-move="center.moveNodes(activeTab.flowId, $event)"
           :editable="load.graph.draft?.editable === true"
           :can-connect="(source: string, target: string) => center.checkConnection(activeTab!.flowId, source, target).ok"
           :issues="edit?.check?.issues ?? []"
@@ -78,7 +87,9 @@ import FlowTabStrip from './FlowTabStrip.vue'
 const props = withDefaults(defineProps<{
   center: DesignerCenterSession
   placing?: boolean
-}>(), { placing: false })
+  /** flowgate.v02.0059 0017-T: the step a card drag moves in; null = 자율형. */
+  moveStep?: number | null
+}>(), { placing: false, moveStep: null })
 
 const emit = defineEmits<{
   'canvas-place': [flowId: string, x: number, y: number]

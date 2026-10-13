@@ -55,6 +55,12 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'edit/graphEditCommands.ts',
         // flowgate.v02.0053 T#9: the top band's run buttons on the server Graph run.
         'run/flowRunControl.ts',
+        // flowgate.v02.0059 T#2: one undo / redo of structure edits and card moves, the draft actions
+        // moved out of the controller, and 정렬 / 분배 / 자동 배치 (the server's auto_layout ported).
+        'edit/editHistory.ts',
+        'edit/draftActions.ts',
+        'arrange/arrangeNodes.ts',
+        'arrange/autoLayout.ts',
       ].sort(),
     )
   })

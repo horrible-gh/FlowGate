@@ -18,6 +18,14 @@
 // triggered_by / target document relations the server also sends) is left out, so a 요구사항
 // card no longer fans out dashed lines to every document it triggered. `issues`: the nodes / edges
 // the last validation reported, with the text shown on hover.
+//
+// flowgate.v02.0059 T#1 (0011-CH contract A / B): the Selection may hold several Nodes. In the
+// Toolbar's [선택] mode (`selectMode`) Nodes are selectable for the library — its area selection and
+// click toggle report what changed, FlowGate keeps the Selection — and carry Vue Flow's `selected`,
+// so dragging a selected Node moves every selected movable Node together. Only a selected Node can be
+// dragged then (a click selects it first); a Node the Graph does not mark `movable` never moves. Out
+// of the mode Nodes are mapped as before and are never `selected` for the library (it keeps a Node's
+// earlier fields on a redraw, so a selection left from the mode is cleared explicitly).
 import type { Edge, Node } from '@vue-flow/core'
 import { progressedEdgeIds } from '../graph/edgeProgress'
 import type { FlowGraph } from '../graph/flowGraph'
@@ -41,7 +49,8 @@ export interface FlowGateNodeData {
   issueText?: string
 }
 
-export type FlowGateVueFlowNode = Node<FlowGateNodeData>
+/** `selected` is Vue Flow's own flag (its drag moves every selected Node); FlowGate always sets it. */
+export type FlowGateVueFlowNode = Node<FlowGateNodeData> & { selected?: boolean }
 
 /** flowgate.v02.0045: the meaning class of an Edge, drawn as a solid or a dashed line. */
 export interface FlowGateEdgeData {
@@ -58,21 +67,29 @@ export interface FlowGateEdgeData {
   deletable: boolean
 }
 
+export interface VueFlowNodeOptions {
+  /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode is on. */
+  selectMode?: boolean
+}
+
 export function toVueFlowNodes(
   graph: FlowGraph,
-  selectedNodeId: string | null,
+  selection: string | null | readonly string[],
   issues: ReadonlyMap<string, string> = new Map(),
+  options: VueFlowNodeOptions = {},
 ): FlowGateVueFlowNode[] {
+  const selectedIds = new Set<string>(selection === null ? [] : typeof selection === 'string' ? [selection] : selection)
   return graph.nodes.map((node) => {
     const connectable = node.structureEditable === true && !!node.definition
-    const data: FlowGateNodeData = { kind: node.kind, title: node.title, state: node.state ?? null, selected: node.id === selectedNodeId }
+    const selected = selectedIds.has(node.id)
+    const data: FlowGateNodeData = { kind: node.kind, title: node.title, state: node.state ?? null, selected }
     if (node.docType) data.docType = node.docType
     if (connectable) data.connectable = true
     if (issues.has(node.id)) {
       data.issue = true
       data.issueText = issues.get(node.id)
     }
-    return {
+    const mapped: FlowGateVueFlowNode = {
       id: node.id,
       type: FLOWGATE_NODE_TYPE,
       position: { x: node.x, y: node.y },
@@ -80,9 +97,16 @@ export function toVueFlowNodes(
       draggable: node.movable === true,
       connectable,
       selectable: false,
+      selected: false,
       focusable: false,
       deletable: false,
     }
+    if (options.selectMode) {
+      mapped.selectable = true
+      mapped.selected = selected
+      mapped.draggable = node.movable === true && selected
+    }
+    return mapped
   })
 }
 

@@ -6,7 +6,7 @@
        lives in the Shell, so nothing is lost while the frame is shown. -->
   <section class="designer-workspace" data-test="designer-workspace">
     <div v-if="unselected" class="designer-workspace-frame" data-test="designer-center-unselected" />
-    <DesignerCenter v-else :center="center" :placing="placing" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" />
+    <DesignerCenter v-else :center="center" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" />
   </section>
 </template>
 
@@ -20,8 +20,10 @@ withDefaults(
     placing?: boolean
     /** No work target yet (0039 T#3): show the empty frame instead of the Designer Center. */
     unselected?: boolean
+    /** flowgate.v02.0059 0017-T: the density's card drag step, passed to the Canvas; null = 자율형. */
+    moveStep?: number | null
   }>(),
-  { unselected: false, placing: false },
+  { unselected: false, placing: false, moveStep: null },
 )
 
 const emit = defineEmits<{

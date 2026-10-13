@@ -6,7 +6,8 @@
        v02.0043: the Shell's menu targets go to the Menu Bar (item availability) and the open
        Flow among them to the Toolbar (dimmed and unavailable without one); the recent Project /
        Group / Flow lists go to the Menu Bar's recent submenus. flowgate.v02.0053 T#9: the open Flow's
-       server run status goes to the Toolbar's run dot. -->
+       server run status goes to the Toolbar's run dot. flowgate.v02.0059 T#2: the menu targets also go to
+       the Toolbar's 정렬 / 배치 ▾ (the same availability as the Edit menu's 정렬 / 배치). -->
   <header class="designer-top" data-test="designer-top">
     <DesignerHeader @command="emit('command', $event)" @search="emit('search', $event)" />
     <DesignerMenuBar
@@ -27,9 +28,14 @@
       :zoom="zoom"
       :disabled="!targets.flow"
       :can-validate="canValidate"
+      :can-undo="targets.canUndo !== false"
+      :can-redo="targets.canRedo !== false"
       :run-status="runStatus"
+      :select-mode="selectMode"
+      :targets="targets"
       @command="emit('command', $event)"
       @update:density="emit('update:density', $event)"
+      @update:zoom="emit('update:zoom', $event)"
     />
   </header>
 </template>
@@ -67,8 +73,10 @@ withDefaults(
     canValidate?: boolean
     /** flowgate.v02.0053 T#9: the open Flow's server run status, or null. */
     runStatus?: string | null
+    /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode is on (the Center session's). */
+    selectMode?: boolean
   }>(),
-  { recent: () => EMPTY_RECENT_LISTS, canValidate: false, runStatus: null },
+  { recent: () => EMPTY_RECENT_LISTS, canValidate: false, runStatus: null, selectMode: false },
 )
 
 const emit = defineEmits<{
@@ -77,6 +85,8 @@ const emit = defineEmits<{
   'toggle-panel': [panel: DesignerWindowPanel]
   'show-tab': [tab: DesignerWindowTab]
   'update:density': [density: DesignerDensity]
+  /** A zoom preset of the Toolbar, in percent. */
+  'update:zoom': [percent: number]
   'open-recent': [request: DesignerRecentRequest]
 }>()
 </script>

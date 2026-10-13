@@ -47,12 +47,31 @@
 // (run/flowRunControl.ts). Each open Flow keeps its run state next to its Graph; the run is read with
 // every Graph read (a run event reads the Canvas again, flowCanvasEvents), so the buttons, the run dot and
 // the cards' colour dots show the server's run.
+//
+// flowgate.v02.0059 T#1 (0011-CH contract A): the Toolbar's [선택] mode (`selectMode`, one for the
+// Shell) lets a Flow's Selection hold several Nodes — the Canvas reports them (`selectNodes`) and
+// 전체 선택 (`selectAll`) takes every Node of the Flow and turns the mode on. Turning it off only drops
+// such multi-Node Selections; nothing else (Graph, draft, saved layout) changes. A Selection keeps its
+// Nodes across a `tmp_` key rename and loses the ones a re-read, an edit or its undo / redo took away.
+//
+// flowgate.v02.0059 T#2 (0011-CH contracts C / D): every action that moves cards — a drop of one card or of
+// the dragged selection (`moveNodes`), 정렬 / 분배 of the selected cards (`arrangeNodes`), 자동 배치 at a
+// spacing scale (`autoLayout`, the server's auto_layout rules) — puts the movable cards through one path
+// (Graph, layout save queue) and is one entry of the Flow's undo / redo, next to its structure edits. An
+// undone / redone move entry comes back through the same path; the draft is never saved for a move.
+// 자동 배치 takes the server's layout input: when the shown Graph leaves part of it out (documents the read
+// collapsed, a v0.1 root only its supersede chain tells — arrange/autoLayout.ts), the Flow is read whole
+// first and the cards move once that answers; only the Flow's latest 자동 배치 moves them, and none does
+// when the read fails. Nor does one whose answer comes after `cancelAutoLayout`, after the
+// session was disposed, or after a read replaced the Graph it was asked for (a retry, a change elsewhere, the
+// re-read of an ignored / failed save, a reset) — the cards stay where they are shown.
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
 import {
   createCanvasViewState,
   sameCanvasSize,
   sameViewport,
+  setViewSelection,
   type CanvasSize,
   type CanvasViewState,
   type CanvasViewport,
@@ -66,9 +85,12 @@ import {
   type FlowTab,
   type FlowTabsState,
 } from './flowTabs'
+import { arrangeSelection, type ArrangeKind } from './arrange/arrangeNodes'
+import { autoLayoutPlacements, loadLayoutBasis, needsLayoutBasis, type FlowLayoutBasis } from './arrange/autoLayout'
 import type { ConnectionCheck } from './edit/connectionRules'
 import { createDraftController, type DraftEditState } from './edit/draftController'
 import { CLIENT_KEY_PREFIX, editableRevision, type CanvasNodeSpec } from './edit/draftModel'
+import type { NodeMove, NodePlacement } from './edit/editHistory'
 import { fixtureFlowGraphSource } from './graph/fixtureFlowGraphSource'
 import { isEdgeProgressed } from './graph/edgeProgress'
 import type { FlowGraph, FlowGraphNode, FlowGraphSelection } from './graph/flowGraph'
@@ -76,7 +98,21 @@ import type { FlowGraphSource, FlowLayoutChange } from './graph/flowGraphSource'
 import { createLayoutSaveQueue } from './layoutSaveQueue'
 import { createFlowRunControl, type FlowRunMode, type FlowRunState } from './run/flowRunControl'
 
-export type { CanvasNodeSpec, FlowRunMode, FlowRunState }
+export type { ArrangeKind, CanvasNodeSpec, FlowRunMode, FlowRunState, NodePlacement }
+
+/**
+ * flowgate.v02.0059 T#1: a view operation the Toolbar / View menu asks of a Flow's Canvas. Fit and
+ * the zoom steps need what only the Canvas knows (measured Nodes, its area, the pan bound), so the
+ * Canvas performs them and reports the result as its Viewport; a new `seq` makes a repeated
+ * request count again.
+ */
+export type CanvasViewOperation =
+  | { kind: 'fit' }
+  | { kind: 'zoom-in' }
+  | { kind: 'zoom-out' }
+  | { kind: 'zoom-to'; zoom: number }
+
+export type CanvasViewRequest = CanvasViewOperation & { readonly flowId: string; readonly seq: number }
 
 /** Graph read state of one open Flow. */
 export type FlowGraphLoad =
@@ -148,14 +184,41 @@ export interface DesignerCenterSession {
   refreshFlow(flowId: string): void
   /** Single selection of one Node, or none. */
   selectNode(flowId: string, nodeId: string | null): void
+  /** flowgate.v02.0059 T#1: the Selection becomes these Nodes of the Flow (the Canvas in 선택 mode). */
+  selectNodes(flowId: string, nodeIds: readonly string[]): void
+  /** flowgate.v02.0059 T#1: 전체 선택 — every Node of the Flow's ready Graph, in 선택 mode. Whether it ran. */
+  selectAll(flowId: string): boolean
+  /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode is on (area / click multi-selection). */
+  readonly selectMode: ComputedRef<boolean>
+  /** Turns [선택] mode on / off; off drops every Selection of more than one Node (and nothing else). */
+  setSelectMode(on: boolean): void
   /** Records the Viewport the Canvas (or the Minimap / a later Toolbar) reports. */
   recordViewport(flowId: string, viewport: CanvasViewport): void
   /** flowgate.v02.0049: the shown Canvas reports its area size (when shown and on every resize). */
   recordCanvasSize(size: CanvasSize): void
   /** flowgate.v02.0045: a user pan / zoom ended — record it and save it (per user, per Flow). */
   commitViewport(flowId: string, viewport: CanvasViewport): void
+  /** flowgate.v02.0059 T#1: the latest view operation asked of a Canvas (fit / zoom), or null. */
+  readonly viewRequest: ComputedRef<CanvasViewRequest | null>
+  /** Asks the open Flow's shown Canvas to fit / zoom; false when the Flow has no ready Graph. */
+  requestView(flowId: string, operation: CanvasViewOperation): boolean
   /** flowgate.v02.0045: a movable Node was dropped at (x, y) — move it and save its position. */
   moveNode(flowId: string, nodeId: string, x: number, y: number): void
+  /**
+   * flowgate.v02.0059 T#2: movable Nodes moved by one action (a drop of the dragged selection) — moved and
+   * saved like moveNode, one undo entry for all of them. Whether any Node moved.
+   */
+  moveNodes(flowId: string, placements: readonly NodePlacement[]): boolean
+  /** flowgate.v02.0059 T#2: 정렬 / 분배 of the Flow's selected Nodes (one undo entry). Whether any Node moved. */
+  arrangeNodes(flowId: string, kind: ArrangeKind): boolean
+  /**
+   * flowgate.v02.0059 T#2: 자동 배치 — the server's auto placement rules (auto_layout.py) with their spacing
+   * times `scale` (1 = the server's), for every movable Node (one undo entry). Whether any Node moved —
+   * at once, or once the Flow read whole answers when the shown Graph leaves part of the input out.
+   */
+  autoLayout(flowId: string, scale?: number): boolean | Promise<boolean>
+  /** flowgate.v02.0059 T#2: every 자동 배치 still reading the whole Flow moves nothing when it answers. */
+  cancelAutoLayout(): void
   /** flowgate.v02.0045: the Shell is going away — send pending saves and stop change reports. */
   dispose(): void
 
@@ -168,7 +231,10 @@ export interface DesignerCenterSession {
   connectNodes(flowId: string, source: string, target: string): boolean
   removeNode(flowId: string, nodeId: string): boolean
   removeEdge(flowId: string, edgeId: string): boolean
+  /** Takes back the Flow's last structure edit or card move (flowgate.v02.0059 T#2: one history). */
   undoEdit(flowId: string): boolean
+  /** flowgate.v02.0059 T#2: takes back the last undo of the Flow's structure edits / card moves. */
+  redoEdit(flowId: string): boolean
   validateDraft(flowId: string): Promise<void>
   confirmDraft(flowId: string): Promise<void>
   /**
@@ -228,6 +294,19 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   const staleFlows = new Set<string>()
   // Node moves per Flow; a read compares it to tell whether a move happened meanwhile.
   const moveCounts = new Map<string, number>()
+  // flowgate.v02.0059 T#2: the latest 자동 배치 asked per Flow; an earlier one still reading the whole Flow
+  // moves nothing.
+  const layoutRuns = new Map<string, number>()
+  let layoutRunSeq = 0
+  // flowgate.v02.0059 T#2: a new mark per Flow each time a read puts a Graph on screen (or its loading /
+  // error); a 자동 배치 whose input was read for an earlier one moves nothing.
+  const shownReads = new Map<string, number>()
+  let shownReadSeq = 0
+  function setShownLoad(flowId: string, load: FlowGraphLoad) {
+    shownReadSeq += 1
+    shownReads.set(flowId, shownReadSeq)
+    state.graphs[flowId] = load
+  }
   // flowgate.v02.0045 S3: the Graph definition a Graph Flow shows ('draft' | 'revision'), if chosen
   // (TR0020 rev3: chosen by readGraph itself, never by a button).
   const graphViews = new Map<string, string>()
@@ -290,15 +369,19 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     projectId: () => state.projectId,
     graph: readyGraph,
     setGraph: (flowId, graph) => {
-      if (state.graphs[flowId]) state.graphs[flowId] = { status: 'ready', graph: markRaw(graph) }
+      if (!state.graphs[flowId]) return
+      state.graphs[flowId] = { status: 'ready', graph: markRaw(graph) }
+      // An edit, its undo or its redo may take selected Nodes away (flowgate.v02.0059 T#1).
+      keepShownSelection(flowId, graph)
     },
     renameSelection: (flowId, keyMap) => {
       const view = state.views[flowId]
-      if (view?.selectedNodeId && keyMap[view.selectedNodeId]) view.selectedNodeId = keyMap[view.selectedNodeId]
+      if (view) setViewSelection(view, view.selectedNodeIds.map((id) => keyMap[id] ?? id))
     },
     queuePosition: (flowId, nodeId, x, y) => {
       if (source.saveLayout) layoutQueue.queuePosition(flowId, nodeId, x, y)
     },
+    placeNodes: (flowId, placements) => placeNodes(flowId, placements).length > 0,
     keepPositions: (projectId, flowId, positions) => {
       if (!source.saveLayout) return
       if (projectId !== state.projectId) {
@@ -358,6 +441,14 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   // `background`: a refresh — a ready Graph stays on screen until the new one arrives, and a
   // failed refresh keeps it (the next change report or retry reads again).
+  /** flowgate.v02.0059 T#1: the Flow's Selection keeps only Nodes of the Graph now shown. */
+  function keepShownSelection(flowId: string, graph: FlowGraph) {
+    const view = state.views[flowId]
+    if (!view || view.selectedNodeIds.length === 0) return
+    const shown = new Set(graph.nodes.map((node) => node.id))
+    setViewSelection(view, view.selectedNodeIds.filter((id) => shown.has(id)))
+  }
+
   function readGraph(flowId: string, background = false) {
     const projectId = state.projectId
     if (projectId === null) return
@@ -365,7 +456,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     const token = readSeq
     pendingReads.set(flowId, token)
     const keepShown = background && state.graphs[flowId]?.status === 'ready'
-    if (!keepShown) state.graphs[flowId] = { status: 'loading' }
+    if (!keepShown) setShownLoad(flowId, { status: 'loading' })
     const isCurrent = () => pendingReads.get(flowId) === token && state.projectId === projectId
     const movesAtStart = moveCounts.get(flowId) ?? 0
     const view = graphViews.get(flowId)
@@ -395,7 +486,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
           return
         }
         const shown = source.saveDraft ? editableRevision(graph) ?? graph : graph
-        state.graphs[flowId] = { status: 'ready', graph: markRaw(shown) }
+        setShownLoad(flowId, { status: 'ready', graph: markRaw(shown) })
         drafts.graphLoaded(flowId, shown)
         // flowgate.v02.0053 T#9: the run goes with the Graph it moves (a run event reads both again).
         runControl.read(flowId)
@@ -411,9 +502,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
         if (view && view.viewport === null && graph.viewport) {
           view.viewport = { x: graph.viewport.x, y: graph.viewport.y, zoom: graph.viewport.zoom }
         }
-        if (view?.selectedNodeId && !graph.nodes.some((node) => node.id === view.selectedNodeId)) {
-          view.selectedNodeId = null
-        }
+        keepShownSelection(flowId, graph)
         if (outdated) readWhenSaved(flowId)
       },
       (error: unknown) => {
@@ -426,7 +515,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
           return
         }
         if (keepShown && state.graphs[flowId]?.status === 'ready') return
-        state.graphs[flowId] = { status: 'error', message: error instanceof Error ? error.message : '' }
+        setShownLoad(flowId, { status: 'error', message: error instanceof Error ? error.message : '' })
       },
     )
   }
@@ -438,6 +527,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     layoutQueue = createQueue(projectId)
     pendingReads.clear()
     moveCounts.clear()
+    layoutRuns.clear()
+    shownReads.clear()
     graphViews.clear()
     seeds.clear()
     runControl.clear()
@@ -469,6 +560,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     applyTabs(closeFlowTab(tabsState(), flowId))
     pendingReads.delete(flowId)
     moveCounts.delete(flowId)
+    layoutRuns.delete(flowId)
+    shownReads.delete(flowId)
     graphViews.delete(flowId)
     seeds.delete(flowId)
     runControl.forget(flowId)
@@ -487,7 +580,35 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   function selectNode(flowId: string, nodeId: string | null) {
     const view = state.views[flowId]
-    if (view && view.selectedNodeId !== nodeId) view.selectedNodeId = nodeId
+    if (view) setViewSelection(view, nodeId === null ? [] : [nodeId])
+  }
+
+  const selectMode = shallowRef(false)
+
+  function selectNodes(flowId: string, nodeIds: readonly string[]) {
+    const view = state.views[flowId]
+    if (!view) return
+    const graph = readyGraph(flowId)
+    const shown = graph ? new Set(graph.nodes.map((node) => node.id)) : null
+    setViewSelection(view, shown ? nodeIds.filter((id) => shown.has(id)) : nodeIds)
+  }
+
+  function selectAll(flowId: string): boolean {
+    const graph = readyGraph(flowId)
+    const view = state.views[flowId]
+    if (!graph || !view) return false
+    selectMode.value = true
+    setViewSelection(view, graph.nodes.map((node) => node.id))
+    return true
+  }
+
+  function setSelectMode(on: boolean) {
+    if (selectMode.value === on) return
+    selectMode.value = on
+    if (on) return
+    for (const view of Object.values(state.views)) {
+      if (view.selectedNodeIds.length > 1) setViewSelection(view, [])
+    }
   }
 
   function recordViewport(flowId: string, viewport: CanvasViewport) {
@@ -509,22 +630,91 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     if (source.saveLayout) layoutQueue.queueViewport(flowId, viewport)
   }
 
-  function moveNode(flowId: string, nodeId: string, x: number, y: number) {
+  const viewRequest = shallowRef<CanvasViewRequest | null>(null)
+  let viewRequestSeq = 0
+
+  function requestView(flowId: string, operation: CanvasViewOperation): boolean {
+    if (state.graphs[flowId]?.status !== 'ready') return false
+    viewRequestSeq += 1
+    viewRequest.value = { ...operation, flowId, seq: viewRequestSeq }
+    return true
+  }
+
+  /**
+   * Puts movable Nodes of a ready Graph at new positions and saves them (a Node not movable, unknown or
+   * already there stays). flowgate.v02.0059 T#2: the one path of every move — a drop, 정렬 / 분배,
+   * 자동 배치, and an undone / redone move. The draft keeps the same positions. The moves made.
+   */
+  function placeNodes(flowId: string, placements: readonly NodePlacement[]): NodeMove[] {
     const load = state.graphs[flowId]
-    if (load?.status !== 'ready' || !Number.isFinite(x) || !Number.isFinite(y)) return
-    const node = load.graph.nodes.find((candidate) => candidate.id === nodeId)
-    if (!node || node.movable !== true || (node.x === x && node.y === y)) return
-    const nodes = load.graph.nodes.map((candidate) =>
-      candidate.id === nodeId ? { ...candidate, x, y, positionSource: 'saved' } : candidate,
-    )
+    if (load?.status !== 'ready') return []
+    const at = new Map(placements.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y)).map((p) => [p.nodeId, p] as const))
+    const moves: NodeMove[] = []
+    const nodes = load.graph.nodes.map((node) => {
+      const to = at.get(node.id)
+      if (!to || node.movable !== true || (node.x === to.x && node.y === to.y)) return node
+      moves.push({ nodeId: node.id, from: { x: node.x, y: node.y }, to: { x: to.x, y: to.y } })
+      return { ...node, x: to.x, y: to.y, positionSource: 'saved' }
+    })
+    if (moves.length === 0) return moves
     state.graphs[flowId] = { status: 'ready', graph: markRaw({ ...load.graph, nodes }) }
     moveCounts.set(flowId, (moveCounts.get(flowId) ?? 0) + 1)
-    // A node created here is stored with its position once its draft save answers its key.
-    if (source.saveLayout && !nodeId.startsWith(CLIENT_KEY_PREFIX)) layoutQueue.queuePosition(flowId, nodeId, x, y)
+    for (const { nodeId, to } of moves) {
+      // A node created here is stored with its position once its draft save answers its key.
+      if (source.saveLayout && !nodeId.startsWith(CLIENT_KEY_PREFIX)) layoutQueue.queuePosition(flowId, nodeId, to.x, to.y)
+    }
+    drafts.placed(flowId, moves.map(({ nodeId, to }) => ({ nodeId, ...to })))
+    return moves
+  }
+
+  /** flowgate.v02.0059 T#2: one action's moves — placed, and one entry of the Flow's undo / redo. */
+  function moveNodes(flowId: string, placements: readonly NodePlacement[]): boolean {
+    const moves = placeNodes(flowId, placements)
+    if (moves.length > 0) drafts.recordMove(flowId, moves)
+    return moves.length > 0
+  }
+
+  function arrangeNodes(flowId: string, kind: ArrangeKind): boolean {
+    const graph = readyGraph(flowId)
+    const view = state.views[flowId]
+    return !!graph && !!view && moveNodes(flowId, arrangeSelection(graph.nodes, view.selectedNodeIds, kind))
+  }
+
+  function layOut(flowId: string, scale: number, basis?: FlowLayoutBasis): boolean {
+    const graph = readyGraph(flowId)
+    return !!graph && moveNodes(flowId, autoLayoutPlacements(graph, scale, basis))
+  }
+
+  function autoLayout(flowId: string, scale = 1): boolean | Promise<boolean> {
+    const graph = readyGraph(flowId)
+    const projectId = state.projectId
+    if (disposed || !graph || projectId === null) return false
+    layoutRunSeq += 1
+    const run = layoutRunSeq
+    layoutRuns.set(flowId, run)
+    if (!needsLayoutBasis(graph) || !source.loadLayoutGraph) return layOut(flowId, scale)
+    const view = graphViews.get(flowId)
+    const shownAt = shownReads.get(flowId)
+    const readDocument = source.readDocumentLink
+      ? (docId: string) => source.readDocumentLink!(projectId, docId)
+      : undefined
+    // The answer belongs to the Graph shown when it was asked: not cancelled, the session alive, the tab open,
+    // and no read put another Graph (or its loading) on screen meanwhile.
+    const current = () =>
+      !disposed && layoutRuns.get(flowId) === run && shownReads.get(flowId) === shownAt && isOpen(projectId, flowId)
+    return loadLayoutBasis(() => source.loadLayoutGraph!(projectId, flowId, view), readDocument).then(
+      (basis) => current() && layOut(flowId, scale, basis),
+      () => false,
+    )
+  }
+
+  function cancelAutoLayout() {
+    layoutRuns.clear()
   }
 
   function dispose() {
     disposed = true
+    layoutRuns.clear()
     drafts.closeAll()
     layoutQueue.flushAll()
     stopWatching?.()
@@ -589,10 +779,22 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     retryGraph,
     refreshFlow,
     selectNode,
+    selectNodes,
+    selectAll,
+    selectMode: computed(() => selectMode.value),
+    setSelectMode,
     recordViewport,
     recordCanvasSize,
     commitViewport,
-    moveNode,
+    viewRequest: computed(() => viewRequest.value),
+    requestView,
+    moveNode: (flowId, nodeId, x, y) => {
+      moveNodes(flowId, [{ nodeId, x, y }])
+    },
+    moveNodes,
+    arrangeNodes,
+    autoLayout,
+    cancelAutoLayout,
     dispose,
     activeEdit: computed(() => {
       const id = exposed.activeFlowId
@@ -607,6 +809,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       return !(graph && isEdgeProgressed(graph, edgeId)) && drafts.removeEdge(flowId, edgeId)
     },
     undoEdit: drafts.undo,
+    redoEdit: drafts.redo,
     validateDraft: drafts.validate,
     confirmDraft: drafts.confirm,
     prepareRun,

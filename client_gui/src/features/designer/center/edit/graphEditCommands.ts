@@ -57,6 +57,25 @@ export function applyCommands(model: DraftModel, commands: readonly EditCommand[
   return current
 }
 
+/**
+ * Applies a batch and answers the commands that restore the model it started from (the undo of
+ * each command, last first) — an undo entry taken, its redo; a redo entry taken, its undo.
+ */
+export function applyCommandsWithUndo(
+  model: DraftModel,
+  commands: readonly EditCommand[],
+): { model: DraftModel; undo: EditCommand[] } | null {
+  let current = model
+  const undo: EditCommand[] = []
+  for (const command of commands) {
+    const applied = applyCommand(current, command)
+    if (!applied) return null
+    current = applied.model
+    undo.unshift(...applied.undo)
+  }
+  return { model: current, undo }
+}
+
 const map = (key: string, keyMap: Readonly<Record<string, string>>) => keyMap[key] ?? key
 
 /** The command with the keys a save issued (a `tmp_` key becomes the stored one). */
@@ -76,6 +95,21 @@ export function remapCommand(command: EditCommand, keyMap: Readonly<Record<strin
           source: map(edge.source, keyMap), target: map(edge.target, keyMap),
         },
       }
+    }
+  }
+}
+
+/** The command with some keys renamed (an entry revived under new keys; the other history follows). */
+export function renameCommandKeys(command: EditCommand, renamed: Readonly<Record<string, string>>): EditCommand {
+  switch (command.type) {
+    case 'add_node':
+      return { ...command, node: { ...command.node, key: map(command.node.key, renamed) } }
+    case 'remove_node':
+    case 'disconnect':
+      return { ...command, key: map(command.key, renamed) }
+    case 'connect': {
+      const { edge } = command
+      return { ...command, edge: { ...edge, key: map(edge.key, renamed), source: map(edge.source, renamed), target: map(edge.target, renamed) } }
     }
   }
 }

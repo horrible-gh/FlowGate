@@ -24,10 +24,12 @@
       :recent="recent"
       :can-validate="center.activeCanValidate.value"
       :run-status="runStatus"
+      :select-mode="center.selectMode.value"
       @command="onTopCommand"
       @toggle-panel="onTogglePanel"
       @show-tab="onShowTab"
-      @update:density="top.density = $event"
+      @update:density="onDensity"
+      @update:zoom="onZoomSelect"
       @open-recent="onOpenRecent"
     />
     <DesignerBody
@@ -59,6 +61,7 @@
           :center="center"
           :bottom-height="layout.bottomHeight"
           :placing="selectedPalette !== null"
+          :move-step="moveStep"
           @canvas-place="onCanvasPlace"
           @cancel-placement="selectedPalette = null"
           :unselected="!hasWorkTarget"
@@ -167,11 +170,23 @@
 // the Center session (center/run/flowRunControl.ts: start or resume, one step, stop); the buttons' state
 // (`top.runMode`) and the Toolbar's run dot follow the run the session read back, never the click alone.
 // A refused run shows one short toast (its reason in plain words, no code); nothing else is written.
+//
+// flowgate.v02.0059 T#2 (0011-CH contracts C / D) — 정렬 / 배치 acts on the open Flow's cards through the
+// Center session: the six 정렬 / two 균등 분배 commands arrange its selected cards and 자동 배치 lays every
+// movable card out by the server's auto placement rules, only when that command is chosen. Each is one entry
+// of the Flow's undo / redo, as a card drag is.
+//
+// flowgate.v02.0059 0017-T — the density (넓게 / 보통 / 좁게 / 자율형) is how finely a card drag moves: the
+// Toolbar radios and the View menu set the one value (`top.density`, screen state only), and its move step
+// (DENSITY_MOVE_STEP) goes to the Canvas, which applies it to the drags that follow — one card or the dragged
+// selection alike. Choosing a density moves no card, saves nothing, adds no undo entry, changes no zoom and
+// neither starts nor stops 자동 배치.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { documentRead } from '@/features/document'
 import { useProjectStore, type CreatedGroup } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
-import { createDesignerCenterSession, type CanvasNodeSpec } from '../center/designerCenterSession'
+import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
@@ -187,10 +202,13 @@ import {
   type ProjectExplorerFlowEvent,
 } from '../projectExplorer/projectExplorerTree'
 import {
+  DENSITY_MOVE_STEP,
+  arrangeSelectionMinimum,
   createDesignerTopState,
   isMenuCommandEnabled,
   nextRunMode,
   zoomPercent,
+  type DesignerDensity,
   type DesignerMenuTargets,
   type DesignerRecentLists,
   type DesignerRecentRequest,
@@ -233,7 +251,8 @@ const projectId = computed<string | null>(() => projectStore.currentProjectId)
 // node of the Flow's Graph draft. The Shell is the only part that knows both: it tells the Center
 // session which node a drop means, so the Palette and the Canvas never know each other.
 const center = createDesignerCenterSession({
-  source: createServerFlowGraphSource(projectStore),
+  // flowgate.v02.0059 T#2: the document read lets 자동 배치 follow a v0.1 sequence root's supersede chain.
+  source: createServerFlowGraphSource(projectStore, documentRead),
   readDrop: (transfer) => {
     const definition = readPaletteDragData(transfer)
     return definition ? paletteNodeSpec(definition) : null
@@ -359,6 +378,11 @@ const menuTargets = computed<DesignerMenuTargets>(() => ({
   project: projectId.value !== null,
   group: explorerSelection.value?.kind === 'group',
   flow: hasWorkTarget.value,
+  // flowgate.v02.0059 T#2: the open Flow's structure edit history (Toolbar buttons and Edit menu).
+  canUndo: center.activeEdit.value?.canUndo === true,
+  canRedo: center.activeEdit.value?.canRedo === true,
+  // flowgate.v02.0059 T#2: 정렬 (2+) / 균등 분배 (3+) need that many selected cards.
+  selectedCount: center.activeView.value?.selectedNodeIds.length ?? 0,
 }))
 
 // The recent lists the Menu Bar shows: every opened Project; the Groups / Flows of the current
@@ -499,9 +523,31 @@ function onOpenRecent(request: DesignerRecentRequest) {
   if (entry) openFlow({ projectId: pid, groupId: entry.groupId, flowId: entry.id, flowName: entry.name }, true)
 }
 
+/** Toolbar zoom preset (percent) for the open Flow's Canvas. */
+function onZoomSelect(percent: number) {
+  const flowId = center.state.activeFlowId
+  if (flowId === null || !isMenuCommandEnabled('view.zoom-reset', top.runMode, menuTargets.value)) return
+  center.requestView(flowId, { kind: 'zoom-to', zoom: percent / 100 })
+}
+
+// flowgate.v02.0059 0017-T: the Toolbar radios and the View menu choose the one density. It only sets the step
+// later card drags move in; nothing on the Canvas changes when it is chosen.
+function onDensity(level: DesignerDensity) {
+  top.density = level
+}
+
+/** flowgate.v02.0059 0017-T: the step a card drag moves in at the chosen density (null = 자율형, none). */
+const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
+
 function onTopCommand(command: DesignerTopCommand) {
   // The parts disable what has no target; this is the same rule for a command that still arrives.
   if (!isMenuCommandEnabled(command, top.runMode, menuTargets.value)) return
+  // flowgate.v02.0059 T#2: 정렬 / 균등 분배 of the open Flow's selected cards (the command names the kind).
+  if (arrangeSelectionMinimum(command) !== null) {
+    const flowId = center.state.activeFlowId
+    if (flowId !== null) center.arrangeNodes(flowId, command.slice('edit.'.length) as ArrangeKind)
+    return
+  }
   switch (command) {
     case 'project.new':
       projectStore.openDialog({ create: true })
@@ -542,6 +588,43 @@ function onTopCommand(command: DesignerTopCommand) {
     case 'edit.undo': {
       const flowId = center.state.activeFlowId
       if (flowId !== null) center.undoEdit(flowId)
+      return
+    }
+    // flowgate.v02.0059 T#2: 다시 실행 (Redo of an undone edit) — not the Run menu's 재실행 (run.rerun).
+    case 'edit.redo': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null) center.redoEdit(flowId)
+      return
+    }
+    // flowgate.v02.0059 T#1 (0011-CH contract A): [선택] toggles the Center session's selection mode;
+    // the Edit menu's 전체 선택 selects every card of the open Flow in that mode (same Selection).
+    case 'edit.select-mode':
+      center.setSelectMode(!center.selectMode.value)
+      return
+    case 'edit.select-all': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null) center.selectAll(flowId)
+      return
+    }
+    // flowgate.v02.0059 T#2: 자동 배치 of the open Flow by the server's rules and spacing (one undo entry).
+    // 0017-T: the density has no part in it.
+    case 'edit.auto-layout': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null) center.autoLayout(flowId)
+      return
+    }
+    // flowgate.v02.0059 T#1: the Toolbar and the View menu emit the same command; the Canvas of the
+    // open Flow does the fit / zoom and reports its Viewport, which the Toolbar's zoom value follows.
+    case 'view.fit':
+    case 'view.zoom-in':
+    case 'view.zoom-out':
+    case 'view.zoom-reset': {
+      const flowId = center.state.activeFlowId
+      if (flowId === null) return
+      if (command === 'view.fit') center.requestView(flowId, { kind: 'fit' })
+      else if (command === 'view.zoom-in') center.requestView(flowId, { kind: 'zoom-in' })
+      else if (command === 'view.zoom-out') center.requestView(flowId, { kind: 'zoom-out' })
+      else center.requestView(flowId, { kind: 'zoom-to', zoom: 1 })
       return
     }
     case 'run.validate': {
