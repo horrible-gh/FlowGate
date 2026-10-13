@@ -153,7 +153,9 @@ describe('the real registry on Nodes without a document', () => {
     const w = mountFrame(SELECTIONS.graphGate)
     await flushPromises()
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
-    expect(sections(w)).toEqual(['gateCard'])
+    // flowgate.v02.0056 F2-1: the card approval bar is a part of a Graph Flow's documents tab; a gate draws none.
+    expect(sections(w)).toEqual(['gateCard', 'cardApproval'])
+    expect(w.find('[data-test="inspector-card-approval"]').exists()).toBe(false)
     expect(get(w, 'inspector-gate-card').find('[data-test="inspector-slot-name"]').text()).toBe('확인 결과')
     const confirm = get(w, 'designer-inspector-actions').get('[data-test="gate-confirm"]')
     expect(confirm.attributes('disabled')).toBeDefined()
@@ -164,7 +166,9 @@ describe('the real registry on Nodes without a document', () => {
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'graph', nodes: [node] }, node.id))
     await flushPromises()
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
-    expect(sections(w)).toEqual(['requirementCard'])
+    // flowgate.v02.0056 F2-1: the card approval bar draws nothing on a card without a run.
+    expect(sections(w)).toEqual(['requirementCard', 'cardApproval'])
+    expect(w.find('[data-test="inspector-card-approval"]').exists()).toBe(false)
     // flowgate.v02.0053 T#5: a line without a document is a hollow dot saying so — no "아직 없음" text.
     expect(get(w, 'inspector-requirement-card').get('[data-test="inspector-slot-state"]').attributes('title')).toBe('문서 없음')
     expect(get(w, 'inspector-requirement-card').text()).not.toContain('아직 없음')
@@ -179,7 +183,8 @@ describe('the real registry on Nodes without a document', () => {
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'graph', nodes: [node] }, node.id))
     await flushPromises()
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
-    expect(sections(w)).toEqual(['researchCard'])
+    expect(sections(w)).toEqual(['researchCard', 'cardApproval'])
+    expect(w.find('[data-test="inspector-card-approval"]').exists()).toBe(false)
     const items = await openMenu(w)
     expect(items.map((item) => item.textContent?.trim())).toEqual(['ID 복사', '실행 이력'])
     expect(items.slice(1).every((item) => (item as HTMLButtonElement).disabled)).toBe(true)

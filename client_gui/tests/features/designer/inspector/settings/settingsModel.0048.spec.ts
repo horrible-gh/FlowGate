@@ -263,10 +263,11 @@ describe('settingsModel — refusals and keys (flowgate.v02.0048 T#9)', () => {
         expect(typeof value, `${locale} ${key}`).toBe('string')
       }
     }
-    // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): the v7 rows 지시서 사용 / 생략 · 검수 뒤 진행 are worded;
+    // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): the v7 row 지시서 사용 / 생략 is worded;
     // restart / time limit / review criteria are the Frame's run settings strings, not this feature's.
-    // flowgate.v02.0053 T#7: 검수 뒤 진행 is `after_review` (the T#2 field), and a v0.1 step's off reason is no_place.
-    for (const key of ['instruction.label', 'instruction.use', 'instruction.omit', 'after_review.label', 'after_review.follow', 'after_review.human', 'reason.no_place']) {
+    // flowgate.v02.0053 T#7: a v0.1 step's off reason is no_place. flowgate.v02.0056 F2-1: the progress-after-review
+    // row and its strings are removed (O1 0005-TR §4-3); the RUN card's 지시 AI row is worded.
+    for (const key of ['instruction.label', 'instruction.use', 'instruction.omit', 'instruction_ai.label', 'instruction_ai.hint', 'reason.no_place']) {
       for (const locale of ['ko', 'en', 'ja'] as const) {
         const value = key.split('.').reduce<unknown>((node, part) => (node as Record<string, unknown> | undefined)?.[part], messages[locale])
         expect(typeof value, `${locale} ${key}`).toBe('string')

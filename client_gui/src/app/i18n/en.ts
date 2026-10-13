@@ -124,6 +124,44 @@ export default {
         done: 'Done',
         blocked: 'On hold',
       },
+      // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
+      // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
+      card_states: {
+        writing_instruction: 'Writing instruction',
+        writing_result: 'Writing result',
+        working: 'Working',
+        awaiting_approval: 'Awaiting approval',
+        approved: 'Approved',
+        rejected: 'Rejected',
+        pending: 'Waiting',
+        closed: 'Closed',
+      },
+      // flowgate.v02.0056 F2-1 — a card's [승인] (O1 0005-TR §4-1) and why it was refused, by the server's code.
+      approval: {
+        approve: 'Approve',
+        hint: 'Approves this card\'s instruction and result',
+        done: 'The card was approved',
+        failure: {
+          result_changed: 'The result document changed. The card was read again; check it and approve again.',
+          group_ai_running: 'Another AI is running in this group. Approve again when it ends.',
+          card_approval_busy: 'Another card is being approved. Approve again in a moment.',
+          ai_running: 'An AI is still working on this card. Approve again when it ends.',
+          already_approved: 'The card is already approved.',
+          node_not_in_review: 'The card cannot be approved in its state.',
+          no_result: 'There is no result yet.',
+          node_not_started: 'The card has not started yet.',
+          document_approval_refused: 'A document approval was refused.',
+          approval_forbidden: 'You do not have the approval permission.',
+          forbidden: 'You may not approve this card.',
+          inactive: 'This card cannot be approved now.',
+          network: 'Could not reach the server.',
+          other: 'The card was not approved.',
+        },
+        refused_document: 'Refused document: {doc}',
+        refused_reason: 'Reason: {reason}',
+        approved_documents: '{n} document(s) approved before',
+        approved_documents_named: 'Approved before: {docs}',
+      },
     },
     // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
     palette: {
@@ -336,6 +374,11 @@ export default {
         edit: 'Edit',
         // flowgate.v02.0053 T#5 — the wording of a line without a document (0056 F1: drawn in the line).
         none: 'No document',
+        // flowgate.v02.0056 F2-1 — who writes a card line (O2 0007-TR §4-3 `author`); only the instruction line's
+        // instruction_ai_or_human is drawn.
+        author: {
+          instruction_ai_or_human: 'Instruction AI or person',
+        },
         // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
         history: 'Review history',
         history_count: 'Review history · {n}',
@@ -471,6 +514,9 @@ export default {
       },
       // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.
       run_status: { running: 'Running', stopped: 'Stopped', completed: 'Completed' },
+      // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
+      run_pending: 'Stopped · {n} next card(s) waiting',
+      run_pending_keys: 'Cards to go on from: {keys}',
       run_errors: {
         run_policy_undecided: 'The run rules are not decided yet, so it cannot run.',
         run_already_active: 'It is already running.',

@@ -3,11 +3,11 @@
 // × group disposed × an action in flight -> per operation visible / enabled / reason, and a
 // refused call -> the reason shown before the state is read again.
 //
+// flowgate.v02.0056 F2-1: the document approve / reject operations are gone from the header. A v0.2 card is
+// approved as a whole with its own [승인] (cardApproval, the Canvas card — O1 0005-TR §4-1) and has no user
+// [반려]; the gate's ✓ 확인 · ✕ 반려 stay the gate card's. AC is the check card's own final approval (T#12).
+//
 // Operations (all change operations, D#1 §8.3 rule 0):
-//   approve / reject  a document under review (pending_review · revised: the only states the server
-//                     moves on approve / reject), every ownership, cards R/B · N/NR · T/TR/T2/TR2 ·
-//                     DS/D/P/L/DB · TS/TSR/V · WP. AC is the check card's own final approval (T#12);
-//                     other kinds have no review action.
 //   run               v0.1 single run (ai-invoke edit): the AI works on this card's document again.
 //                     v01 only (rules 2-4), work cards N/NR · T… · DS… (R/B ▶ is AI delegation,
 //                     §8.4), while the document is neither approved nor rejected.
@@ -21,26 +21,18 @@
 // Permissions are the server's (403 is shown as a reason); no operation here is admin only.
 import type { InspectorCardKind, InspectorReadOnly } from '../../inspectorTarget'
 
-export type ActionsOperation = 'approve' | 'reject' | 'run' | 'rework'
+export type ActionsOperation = 'run' | 'rework'
 
-export const ACTIONS_OPERATIONS: readonly ActionsOperation[] = ['approve', 'reject', 'run', 'rework']
+export const ACTIONS_OPERATIONS: readonly ActionsOperation[] = ['run', 'rework']
 
 /** Every operation changes the server state (D#1 §8.3 rule 0). */
 export const ACTIONS_OPERATION_CLASS: Readonly<Record<ActionsOperation, 'change' | 'query'>> = {
-  approve: 'change',
-  reject: 'change',
   run: 'change',
   rework: 'change',
 }
 
-/** Cards with a review decision in the header (D#1 §10.1). */
-export const ACTIONS_REVIEW_CARDS: readonly InspectorCardKind[] = ['requirement', 'research', 'task', 'design', 'test', 'plan']
-
 /** Cards a v0.1 single run / rework is offered on (D#1 §10.1 "실행·재작업 v01"). */
 export const ACTIONS_RUN_CARDS: readonly InspectorCardKind[] = ['research', 'task', 'design']
-
-/** Review statuses the server approves or rejects from (DOC_REVIEW_TRANSITIONS). */
-export const ACTIONS_UNDER_REVIEW: readonly string[] = ['pending_review', 'revised']
 
 /** Review statuses a run does not apply to: approved (done) and rejected (rework instead). */
 const RUN_CLOSED: readonly string[] = ['approved', 'wf_done', 'rejected']
@@ -72,9 +64,6 @@ const HIDDEN: ActionsAvailabilityItem = { visible: false, enabled: false, reason
 function visibleOf(operation: ActionsOperation, input: ActionsInput): boolean {
   const status = input.docReviewStatus ?? ''
   switch (operation) {
-    case 'approve':
-    case 'reject':
-      return ACTIONS_REVIEW_CARDS.includes(input.cardKind) && ACTIONS_UNDER_REVIEW.includes(status)
     case 'run':
       return input.ownership === 'v01' && ACTIONS_RUN_CARDS.includes(input.cardKind) && !RUN_CLOSED.includes(status)
     case 'rework':
@@ -100,7 +89,7 @@ export function actionsAvailability(input: ActionsInput): ActionsAvailability {
   const reason = actionsDisabledReason(input)
   const item = (operation: ActionsOperation): ActionsAvailabilityItem =>
     visibleOf(operation, input) ? { visible: true, enabled: reason === null, reason } : HIDDEN
-  return { approve: item('approve'), reject: item('reject'), run: item('run'), rework: item('rework') }
+  return { run: item('run'), rework: item('rework') }
 }
 
 /** The review status the rules read: the read document's when it is the target's, else the Canvas one. */
@@ -117,15 +106,4 @@ export type ActionsFailureKind = 'running' | 'disposed' | 'conflict' | 'forbidde
 /** Message key of a refused call; the state is read again after it is shown. */
 export function actionsFailureKey(kind: ActionsFailureKind): string {
   return `failure.${kind}`
-}
-
-/** The TR commit line after a TR approval, or null (the server's answer, shown as sent). */
-export function actionsTrCommitLine(
-  trCommit: { readonly committed: boolean; readonly commit: string | null; readonly subject: string | null; readonly skippedReason: string | null } | null,
-): { readonly key: string; readonly params: Readonly<Record<string, string>> } | null {
-  if (!trCommit) return null
-  if (trCommit.committed) {
-    return { key: 'tr_commit.committed', params: { commit: (trCommit.commit ?? '').slice(0, 8), subject: trCommit.subject ?? '' } }
-  }
-  return { key: 'tr_commit.skipped', params: { reason: trCommit.skippedReason ?? '' } }
 }

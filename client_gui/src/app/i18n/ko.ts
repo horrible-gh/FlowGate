@@ -127,6 +127,44 @@ export default {
         done: '완료',
         blocked: '보류',
       },
+      // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
+      // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
+      card_states: {
+        writing_instruction: '지시서 작성 중',
+        writing_result: '결과 작성 중',
+        working: '작업 중',
+        awaiting_approval: '승인 대기',
+        approved: '승인됨',
+        rejected: '반려됨',
+        pending: '대기',
+        closed: '닫힘',
+      },
+      // flowgate.v02.0056 F2-1 — a card's [승인] (O1 0005-TR §4-1) and why it was refused, by the server's code.
+      approval: {
+        approve: '승인',
+        hint: '이 카드의 지시서와 결과를 승인합니다',
+        done: '카드를 승인했습니다',
+        failure: {
+          result_changed: '결과 문서가 바뀌었습니다. 카드를 다시 읽었으니 확인한 뒤 다시 승인하세요.',
+          group_ai_running: '이 그룹에서 다른 AI가 실행 중입니다. 끝난 뒤 다시 승인하세요.',
+          card_approval_busy: '다른 카드를 승인하는 중입니다. 잠시 뒤 다시 승인하세요.',
+          ai_running: 'AI가 아직 이 카드를 작업하고 있습니다. 끝난 뒤 다시 승인하세요.',
+          already_approved: '이미 승인된 카드입니다.',
+          node_not_in_review: '승인할 수 있는 상태가 아닙니다.',
+          no_result: '아직 결과가 없습니다.',
+          node_not_started: '아직 시작하지 않은 카드입니다.',
+          document_approval_refused: '문서 승인이 거절되었습니다.',
+          approval_forbidden: '승인 권한이 없습니다.',
+          forbidden: '이 카드를 승인할 권한이 없습니다.',
+          inactive: '지금은 이 카드를 승인할 수 없습니다.',
+          network: '서버에 연결하지 못했습니다.',
+          other: '카드를 승인하지 못했습니다.',
+        },
+        refused_document: '거절된 문서: {doc}',
+        refused_reason: '사유: {reason}',
+        approved_documents: '앞서 승인된 문서 {n}개',
+        approved_documents_named: '앞서 승인된 문서: {docs}',
+      },
     },
     // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
     palette: {
@@ -343,6 +381,11 @@ export default {
         edit: '편집',
         // flowgate.v02.0053 T#5 — the wording of a line without a document (0056 F1: drawn in the line).
         none: '문서 없음',
+        // flowgate.v02.0056 F2-1 — who writes a card line (O2 0007-TR §4-3 `author`); only the instruction line's
+        // instruction_ai_or_human is drawn.
+        author: {
+          instruction_ai_or_human: '지시 AI 또는 사람',
+        },
         // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
         history: '검수·반려 이력',
         history_count: '검수·반려 이력 {n}건',
@@ -481,6 +524,9 @@ export default {
       },
       // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.
       run_status: { running: '실행 중', stopped: '멈춤', completed: '완료' },
+      // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
+      run_pending: '멈춤 · 다음 카드 {n}개 대기',
+      run_pending_keys: '다음으로 넘어갈 카드: {keys}',
       run_errors: {
         run_policy_undecided: '실행 규칙이 아직 정해지지 않아 실행할 수 없습니다.',
         run_already_active: '이미 실행 중입니다.',

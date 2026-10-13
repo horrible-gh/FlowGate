@@ -47,7 +47,13 @@ function lineOf(slot: ResearchSlot): InspectorSlotView {
     focus: slot.focus,
     danger: slot.state?.tone === 'danger',
     open: slot.open,
+    author: authorOf(slot.key),
   }
+}
+
+/** flowgate.v02.0056 F2-1: the card line's author (the instruction line: 지시 AI 또는 사람), as the server sent it. */
+function authorOf(key: string): string | null {
+  return props.target.cardDocuments.find((line) => line.slot === key)?.author ?? null
 }
 
 const lines = computed(() => researchCardSlots(props.target, instructionOmitted.value).map(lineOf))

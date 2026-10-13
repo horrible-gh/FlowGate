@@ -6,7 +6,7 @@
        v02.0043: the Shell's menu targets go to the Menu Bar (item availability) and the open
        Flow among them to the Toolbar (dimmed and unavailable without one); the recent Project /
        Group / Flow lists go to the Menu Bar's recent submenus. flowgate.v02.0053 T#9: the open Flow's
-       server run status goes to the Toolbar's run dot. -->
+       server run status goes to the Toolbar's run dot (flowgate.v02.0056 F2-1: with its waiting cards). -->
   <header class="designer-top" data-test="designer-top">
     <DesignerHeader @command="emit('command', $event)" @search="emit('search', $event)" />
     <DesignerMenuBar
@@ -28,6 +28,7 @@
       :disabled="!targets.flow"
       :can-validate="canValidate"
       :run-status="runStatus"
+      :run-pending="runPending"
       @command="emit('command', $event)"
       @update:density="emit('update:density', $event)"
     />
@@ -45,6 +46,7 @@ import {
   type DesignerRecentLists,
   type DesignerRecentRequest,
   type DesignerRunMode,
+  type DesignerRunPending,
   type DesignerSearchRequest,
   type DesignerTopCommand,
   type DesignerWindowPanel,
@@ -67,8 +69,10 @@ withDefaults(
     canValidate?: boolean
     /** flowgate.v02.0053 T#9: the open Flow's server run status, or null. */
     runStatus?: string | null
+    /** flowgate.v02.0056 F2-1: "멈춤 · 다음 카드 N개 대기" of the open Flow's stopped run, or null. */
+    runPending?: DesignerRunPending | null
   }>(),
-  { recent: () => EMPTY_RECENT_LISTS, canValidate: false, runStatus: null },
+  { recent: () => EMPTY_RECENT_LISTS, canValidate: false, runStatus: null, runPending: null },
 )
 
 const emit = defineEmits<{

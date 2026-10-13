@@ -8,18 +8,30 @@
 //   current  GET  /api/v1/flows/{flow_id}/runs/current                 -> { run | null } (running / stopped)
 //   stop     POST /api/v1/runs/{run_id}/stop   { reason? }              -> { run }
 //   resume   POST /api/v1/runs/{run_id}/resume { reason? }              -> { run }
+//   approve  POST /api/v1/runs/{run_id}/nodes/{node_key}/approval { result_doc_id } -> { run, approval }
+//            (flowgate.v02.0056 F2-1, O1 0005-TR §4-1: the card's [승인] — its documents not approved yet, the
+//            result last; refusals are 409 / 403 / 404 / 422 codes, see center/graph/cardStateView.ts)
+//
+// flowgate.v02.0056 F2-1: a run also carries `pending_propagation_count` / `pending_node_keys` (cards approved
+// while it was stopped, their successors waiting) and each node `awaiting_approval` / `stage` (O1 / O2 §4-2).
 //
 // The run events (P0008 §8.2 `graph_run_status_changed` / `graph_node_state_changed`) are refresh
 // signals of the Canvas (flowCanvasEvents.ts), never state.
 import { getRequest, postRequest } from '@shared/api'
 import { canvasHeaders, num, str, type Raw } from './flowCanvasApi'
 import { toGraphError } from './flowGraphApi'
-import type { FlowRun, FlowRunNode } from './types'
+import type { FlowRun, FlowRunApproval, FlowRunNode } from './types'
 
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [])
 
 function toRunNode(raw: Raw): FlowRunNode {
-  return { nodeKey: String(raw.node_key ?? ''), status: String(raw.status ?? ''), resultDocId: str(raw.result_doc_id) }
+  return {
+    nodeKey: String(raw.node_key ?? ''),
+    status: String(raw.status ?? ''),
+    resultDocId: str(raw.result_doc_id),
+    ...(typeof raw.awaiting_approval === 'boolean' ? { awaitingApproval: raw.awaiting_approval } : {}),
+    ...('stage' in raw ? { stage: str(raw.stage) } : {}),
+  }
 }
 
 /** The server's `run` object -> FlowRun, or null (no run). */
@@ -36,6 +48,8 @@ export function toFlowRun(raw: unknown): FlowRun | null {
     openNodeKeys: strings(run.open_node_keys),
     nodeRuns: Array.isArray(run.node_runs) ? run.node_runs.filter((n: unknown) => n && typeof n === 'object').map(toRunNode) : null,
     lastEventSeq: num(run.last_event_seq) ?? 0,
+    pendingPropagationCount: Math.max(0, num(run.pending_propagation_count) ?? 0),
+    pendingNodeKeys: strings(run.pending_node_keys),
   }
 }
 
@@ -85,5 +99,34 @@ export async function resumeFlowRun(runId: string, reason?: string): Promise<Flo
     return runOf(response.data, 'The run did not resume.')
   } catch (error) {
     throw toGraphError(error, 'Failed to resume the flow run.')
+  }
+}
+
+/** The server's `approval` object -> FlowRunApproval. */
+function toApproval(raw: unknown, nodeKey: string): FlowRunApproval {
+  const approval = raw && typeof raw === 'object' ? (raw as Raw) : {}
+  return {
+    nodeKey: str(approval.node_key) ?? nodeKey,
+    targetDocIds: strings(approval.target_doc_ids),
+    approvedDocIds: strings(approval.approved_doc_ids),
+  }
+}
+
+/**
+ * flowgate.v02.0056 F2-1 — POST /api/v1/runs/{runId}/nodes/{nodeKey}/approval: approves the card (O1 0005-TR
+ * §4-1). `resultDocId` is the result the screen showed (null: the server's current one); the server refuses
+ * with 409 `result_changed` when the node's result moved meanwhile. Answers the run after it and what it
+ * approved. A refusal rejects with a FlowGraphApiError carrying the server's code / params / message.
+ */
+export async function approveFlowRunNode(runId: string, nodeKey: string, resultDocId: string | null): Promise<{ run: FlowRun; approval: FlowRunApproval }> {
+  try {
+    const response = await postRequest<Raw>(
+      `${runPath(runId)}/nodes/${encodeURIComponent(nodeKey)}/approval`,
+      { result_doc_id: resultDocId },
+      canvasHeaders(),
+    )
+    return { run: runOf(response.data, 'The card was not approved.'), approval: toApproval(response.data?.approval, nodeKey) }
+  } catch (error) {
+    throw toGraphError(error, 'Failed to approve the card.')
   }
 }

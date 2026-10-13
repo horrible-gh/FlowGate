@@ -253,9 +253,9 @@ describe('InspectorBlock / InspectorControlRow / InspectorLockNote', () => {
   })
 
   it('a control row shows the label with its hint and the control', () => {
-    const w = mount(InspectorControlRow, { props: { label: '검수 뒤 진행', hint: '실행 방식이 기본 정책' }, slots: { default: () => h('select', { 'data-test': 'ctl' }) }, global })
-    expect(w.get('[data-test="inspector-control-row"]').attributes('data-label')).toBe('검수 뒤 진행')
-    expect(w.get('.inspector-control-label').attributes('title')).toBe('실행 방식이 기본 정책')
+    const w = mount(InspectorControlRow, { props: { label: '지시 AI', hint: '지시서를 쓰는 AI' }, slots: { default: () => h('select', { 'data-test': 'ctl' }) }, global })
+    expect(w.get('[data-test="inspector-control-row"]').attributes('data-label')).toBe('지시 AI')
+    expect(w.get('.inspector-control-label').attributes('title')).toBe('지시서를 쓰는 AI')
     expect(w.get('[data-test="ctl"]').exists()).toBe(true)
   })
 

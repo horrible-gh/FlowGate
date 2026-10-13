@@ -10,6 +10,7 @@
 // flowgate.v02.0048 T#1: each Node also keeps its bound document, v0.1 slot and Graph node run.
 //
 // flowgate.v02.0053 T#9: the Flow's Graph run (P0008 §7 S5) — read the current one, start, stop, resume.
+// flowgate.v02.0056 F2-1: approve a card of it (O1 0005-TR §4-1); a run carries its pending propagation.
 import type {
   FlowCanvas,
   FlowCanvasChangeHandlers,
@@ -49,9 +50,18 @@ export interface FlowCanvasLoaders {
   startFlowRun?(flowId: string): Promise<FlowRun>
   stopFlowRun?(runId: string): Promise<FlowRun>
   resumeFlowRun?(runId: string): Promise<FlowRun>
+  /** flowgate.v02.0056 F2-1: a card's [승인] (O1 0005-TR §4-1); absent = the Canvas approves nothing. */
+  approveFlowRunNode?(runId: string, nodeKey: string, resultDocId: string | null): Promise<{ run: FlowRun }>
 }
 
-const toRunInfo = (run: FlowRun): FlowRunInfo => ({ runId: run.runId, status: run.status, openNodeKeys: run.openNodeKeys })
+const toRunInfo = (run: FlowRun): FlowRunInfo => ({
+  runId: run.runId,
+  status: run.status,
+  openNodeKeys: run.openNodeKeys,
+  // flowgate.v02.0056 F2-1: the run band's "멈춤 · 다음 카드 N개 대기".
+  pendingPropagationCount: run.pendingPropagationCount ?? 0,
+  pendingNodeKeys: run.pendingNodeKeys ?? [],
+})
 
 /**
  * flowgate.v02.0045 TR0020 rev5: conversations (CH, and the Q / A of the same server collapse group,
@@ -227,5 +237,9 @@ export function createServerFlowGraphSource(loaders: FlowCanvasLoaders): FlowGra
     startRun: runLoaders ? async (_projectId, flowId) => toRunInfo(await loaders.startFlowRun!(flowId)) : undefined,
     stopRun: runLoaders ? async (_projectId, runId) => toRunInfo(await loaders.stopFlowRun!(runId)) : undefined,
     resumeRun: runLoaders ? async (_projectId, runId) => toRunInfo(await loaders.resumeFlowRun!(runId)) : undefined,
+    approveNode:
+      runLoaders && loaders.approveFlowRunNode
+        ? async (_projectId, runId, nodeKey, resultDocId) => toRunInfo((await loaders.approveFlowRunNode!(runId, nodeKey, resultDocId)).run)
+        : undefined,
   }
 }

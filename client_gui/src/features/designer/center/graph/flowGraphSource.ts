@@ -85,11 +85,20 @@ export interface FlowRunInfo {
   readonly runId: string
   readonly status: string
   readonly openNodeKeys: readonly string[]
+  /**
+   * flowgate.v02.0056 F2-1 (O1 0005-TR §4-2): cards approved while the run was stopped whose successors wait
+   * ("멈춤 · 다음 카드 N개 대기"), and their node keys. Absent = none (a source that does not know them).
+   */
+  readonly pendingPropagationCount?: number
+  readonly pendingNodeKeys?: readonly string[]
 }
 
 /** A refused run operation rejects with an Error carrying the server's `code` (e.g. `run_policy_undecided`). */
 export interface FlowRunError extends Error {
   readonly code?: string | null
+  /** flowgate.v02.0056 F2-1: the HTTP status and the server's params (a refused approval names its document). */
+  readonly status?: number | null
+  readonly params?: Readonly<Record<string, unknown>>
 }
 
 export interface FlowGraphSource {
@@ -124,4 +133,10 @@ export interface FlowGraphSource {
   stopRun?(projectId: string, runId: string): Promise<FlowRunInfo>
   /** Resumes a stopped run. */
   resumeRun?(projectId: string, runId: string): Promise<FlowRunInfo>
+  /**
+   * flowgate.v02.0056 F2-1: approves a card waiting for its approval (O1 0005-TR §4-1), `resultDocId` the result
+   * the Canvas showed. Answers the run after it; a refusal rejects with a FlowRunError (the server's code).
+   * Absent = the source approves nothing.
+   */
+  approveNode?(projectId: string, runId: string, nodeKey: string, resultDocId: string | null): Promise<FlowRunInfo>
 }

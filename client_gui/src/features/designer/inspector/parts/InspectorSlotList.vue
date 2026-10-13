@@ -13,7 +13,8 @@
        (tooltip 열기) replaces ↗, and the line's name opens the document as well (both an `open` event).
        flowgate.v02.0056 F1 (0056 CH §2) — a line that opens also has the history button (a clock, before
        the document icon): the document's 검수·반려 이력 window (a `history` event). A line may leave it out
-       (`history: false`) or hand the number of entries it knows (`historyCount`). -->
+       (`history: false`) or hand the number of entries it knows (`historyCount`).
+       flowgate.v02.0056 F2-1 — a line may carry its `author` (the row names the instruction line's). -->
   <div class="inspector-slot-list" data-test="inspector-slot-list">
     <InspectorSlotRow
       v-for="line in slots"
@@ -30,6 +31,7 @@
       :focus="line.focus ?? false"
       :danger="line.danger ?? false"
       :test-ids="line.testIds ?? null"
+      :author="line.author ?? null"
       :data-slot="line.key ?? line.name"
       @open="emit('open', line)"
     >
@@ -118,6 +120,8 @@ export interface InspectorSlotView {
   readonly history?: boolean
   /** Entries in the line's review history when the feature knows them (a number on the history button). */
   readonly historyCount?: number | null
+  /** flowgate.v02.0056 F2-1: who writes the line (the card line's `author`, as sent); the row names some. */
+  readonly author?: string | null
   /** The feature's own test ids for the line's state, summary, nav and open (its specs read them). */
   readonly testIds?: (InspectorSlotTestIds & { readonly nav?: string; readonly open?: string }) | null
 }

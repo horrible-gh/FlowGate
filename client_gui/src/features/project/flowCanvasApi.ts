@@ -84,9 +84,18 @@ function toGraphNode(raw: Raw | null | undefined): FlowCanvasGraphNode | null {
 }
 
 // flowgate.v02.0048 T#1: kept for the Inspector; the top-level `run` and edge `condition` stay dropped.
+// flowgate.v02.0056 F2-1: `awaiting_approval` (O1) and `stage` / `instruction_doc_id` (O2), kept only when sent.
 function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
   if (!raw || typeof raw !== 'object') return null
-  return { status: str(raw.status), openedAt: str(raw.opened_at), finishedAt: str(raw.finished_at), resultDocId: str(raw.result_doc_id) }
+  return {
+    status: str(raw.status),
+    openedAt: str(raw.opened_at),
+    finishedAt: str(raw.finished_at),
+    resultDocId: str(raw.result_doc_id),
+    ...(typeof raw.awaiting_approval === 'boolean' ? { awaitingApproval: raw.awaiting_approval } : {}),
+    ...('stage' in raw ? { stage: str(raw.stage) } : {}),
+    ...('instruction_doc_id' in raw ? { instructionDocId: str(raw.instruction_doc_id) } : {}),
+  }
 }
 
 // flowgate.v02.0053 T#5: the card's document lines (T#1 `card_documents`), in the server's order.

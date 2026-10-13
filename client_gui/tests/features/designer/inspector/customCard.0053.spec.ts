@@ -49,10 +49,13 @@ const i18n = prepareInspectorI18n()
 const FLOW = 'flowgate.v02.0060'
 const NAME = 'API 오류 코드 설계'
 
-/** The run card fields of the server (T#2 fields.py), nothing stored: the server keeps both cards as run cards. */
+/**
+ * The run card fields of the server (T#2 fields.py), nothing stored: the server keeps both cards as run cards.
+ * flowgate.v02.0056 F2-1: the progress-after-review field is gone (O1 0005-TR §4-3), the 지시 AI is added (O2 §4-1).
+ */
 const RUN_FIELDS: readonly [string, unknown, readonly unknown[] | null][] = [
   ['instruction', 'use', ['use', 'omit']],
-  ['after_review', 'human', ['follow', 'human']],
+  ['instruction_ai', null, null],
   ['run_ai', null, null],
   ['restart', 0, [-1, 0, 1, 2, 3]],
   ['review_ai', null, null],
@@ -198,7 +201,7 @@ describe('a Custom card placed from the Palette [+] (flowgate.v02.0053 T#8)', ()
       ['레포트', '열기', '편집'],
     ])
     expect(research.ask && research.add).toBe(true)
-    expect(research.settings).toEqual(['지시서', '검수 뒤 진행', '실행 AI', '재시작', '검수 AI', '검수 횟수'])
+    expect(research.settings).toEqual(['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수'])
     expect({ ...custom, title: null, text: null }).toEqual({ ...research, title: null, text: null })
     // both cards read their own card settings (the server keeps a Custom card as a run card)
     expect(nodeRead.mock.calls.map(([, key]) => key)).toEqual(expect.arrayContaining(['gn_n', 'gn_c']))

@@ -397,6 +397,30 @@ export function settingsNodeErrorOf(error: unknown): SettingsNodeErrorKind {
   return 'other'
 }
 
+/**
+ * flowgate.v02.0056 F2-1 — the reason a 422 card settings change names (`error.params.errors[0].reason`: unknown_ai,
+ * not_a_text, invalid_text, not_a_setting_of_this_card …), or null.
+ */
+export function settingsNodeErrorReason(error: unknown): string | null {
+  const normalized = normalizeApiError(error)
+  if (normalized.status !== 422 && normalized.status !== 400) return null
+  const params = normalized.source.params
+  const errors = params && typeof params === 'object' ? (params as Record<string, unknown>).errors : undefined
+  const first = Array.isArray(errors) ? errors.find((entry) => entry && typeof entry === 'object') : undefined
+  const reason = first ? (first as Record<string, unknown>).reason : undefined
+  return typeof reason === 'string' && reason ? reason : null
+}
+
+/**
+ * flowgate.v02.0056 F2-1 — the server's own message of a refused card settings change, as it sent it (x-locale),
+ * or null (no answer, no message, or only the code repeated).
+ */
+export function settingsNodeErrorMessage(error: unknown): string | null {
+  const normalized = normalizeApiError(error)
+  const message = typeof normalized.source.message === 'string' ? normalized.source.message.trim() : ''
+  return message && message !== normalized.code ? message : null
+}
+
 /** One AI Team a requirement card may name. */
 export interface SettingsTeam {
   readonly id: string

@@ -67,6 +67,7 @@ export type {
   FlowGraphValidation,
   FlowRef,
   FlowRun,
+  FlowRunApproval,
   FlowRunNode,
   GroupTreeNode,
   GroupTreeNodeKind,

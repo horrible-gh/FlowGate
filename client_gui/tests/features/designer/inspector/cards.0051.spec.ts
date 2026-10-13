@@ -404,7 +404,7 @@ describe('card settings parts', () => {
     expect(teamRow.querySelector('.inspector-control-label')!.getAttribute('title')).toBe('계획 · 질문 판단 · 진행 판단은 팀의 Supervisor')
   })
 
-  // flowgate.v02.0053 T#7: the 실행 block only (지시서 · 검수 뒤 진행 · 시나리오 작성 are the settings feature's, in
+  // flowgate.v02.0053 T#7: the 실행 block only (지시서 · 시나리오 작성 are the settings feature's, in
   // v7 order before it); no code on screen (TSC / TSR, automated / manual / external).
   it('TestRunSettings: the 실행 block — 케이스별, the counts by mode ("—" while unknown), the TBD tag; no code, no control', () => {
     const w = mount(TestRunSettings, { props: { target: { ...GRAPH_TS, docId: null, cardDocuments: [] } }, global })

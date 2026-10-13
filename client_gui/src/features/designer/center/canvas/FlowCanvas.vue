@@ -72,7 +72,7 @@
       @edge-double-click="onEdgeDoubleClick"
     >
       <template #node-flowgate="nodeProps">
-        <FlowNodeCard :id="nodeProps.id" :data="nodeProps.data" />
+        <FlowNodeCard :id="nodeProps.id" :data="nodeProps.data" @approve="emit('node-approve', $event)" />
       </template>
       <template #edge-flowgate="edgeProps">
         <FlowEdgePath
@@ -172,8 +172,12 @@ const props = withDefaults(
     /** Connection pre-check (edit/connectionRules.ts through the session). */
     canConnect?: ((source: string, target: string) => boolean) | null
     issues?: readonly FlowDraftIssue[]
+    /** flowgate.v02.0056 F2-1: a card waiting for its approval offers [승인] (a `node-approve` event). */
+    canApprove?: boolean
+    /** flowgate.v02.0056 F2-1: the card whose [승인] is being answered, or null. */
+    approvingNodeId?: string | null
   }>(),
-  { editable: false, placing: false, canConnect: null, issues: () => [] },
+  { editable: false, placing: false, canConnect: null, issues: () => [], canApprove: false, approvingNodeId: null },
 )
 
 const emit = defineEmits<{
@@ -189,6 +193,8 @@ const emit = defineEmits<{
   'node-remove': [nodeId: string]
   'edge-remove': [edgeId: string]
   undo: []
+  /** flowgate.v02.0056 F2-1: a card's [승인]. */
+  'node-approve': [nodeId: string]
 }>()
 
 const { t } = useI18n()
@@ -212,7 +218,9 @@ const issueMap = computed(() => {
   }
   return map
 })
-const nodes = computed(() => toVueFlowNodes(props.graph, props.selectedNodeId, issueMap.value))
+const nodes = computed(() =>
+  toVueFlowNodes(props.graph, props.selectedNodeId, issueMap.value, { canApprove: props.canApprove, approvingNodeId: props.approvingNodeId }),
+)
 const edges = computed(() => toVueFlowEdges(props.graph, issueMap.value, selectedEdgeId.value))
 /** The selected Edge as drawn, or null (also when it left the Graph). */
 const selectedEdge = computed(() => edges.value.find((edge) => edge.id === selectedEdgeId.value) ?? null)

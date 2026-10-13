@@ -12,7 +12,11 @@
        document type's glyph. TR0020 rev4 (rejection item 3): a connection starts from any side —
        four start strips run along the card's top, right, bottom and left edges (one source handle
        each); the Edge itself is drawn between the facing sides (FlowEdgePath / edgeGeometry.ts).
-       A card the last validation reported names the problem on hover (`data.issueText`). -->
+       A card the last validation reported names the problem on hover (`data.issueText`).
+       flowgate.v02.0056 F2-1: a Graph card with a run shows its card state in the chip (cardStateView: 지시서
+       작성 중 · 결과 작성 중 · 작업 중 · 승인 대기 · 승인됨 …) instead of the Canvas state, and a card waiting for
+       its approval offers [승인] under its title (`data.approvable`; an `approve` event, never the selection or a
+       drag). A done card stays 승인됨 while the run is stopped: the waiting successors are the run band's. -->
   <div
     class="flow-node-card"
     :class="{ 'is-selected': data.selected, 'is-unknown': kind.key === 'unknown', 'has-issue': data.issue === true }"
@@ -39,7 +43,15 @@
       </span>
       <span class="flow-node-kind" data-test="designer-canvas-node-kind">{{ t(kindLabelKey) }}</span>
       <span
-        v-if="state"
+        v-if="data.cardState"
+        class="flow-node-state is-card"
+        :class="`flow-node-state--${data.cardState.tone}`"
+        data-test="designer-canvas-node-card-state"
+        :data-state="data.cardState.key"
+        :data-phase="data.cardState.phase"
+      >{{ t(data.cardState.labelKey) }}</span>
+      <span
+        v-else-if="state"
         class="flow-node-state"
         :class="`flow-node-state--${state.tone}`"
         data-test="designer-canvas-node-state"
@@ -47,6 +59,18 @@
     </div>
     <div class="flow-node-body">
       <p class="flow-node-title" :title="data.title" data-test="designer-canvas-node-title">{{ data.title }}</p>
+      <button
+        v-if="data.approvable"
+        type="button"
+        class="flow-node-approve nodrag nopan"
+        :disabled="data.approving === true"
+        :aria-busy="data.approving === true ? 'true' : undefined"
+        :title="t('gui.designer.center.approval.hint')"
+        data-test="designer-canvas-node-approve"
+        @pointerdown.stop
+        @mousedown.stop
+        @click.stop="emit('approve', id)"
+      >{{ t('gui.designer.center.approval.approve') }}</button>
     </div>
     <Handle
       v-for="side in LINK_SIDES"
@@ -72,6 +96,8 @@ const props = defineProps<{
   id: string
   data: FlowGateNodeData
 }>()
+
+const emit = defineEmits<{ approve: [nodeId: string] }>()
 
 /** The four start strips of a connectable card, one source handle per side. */
 const LINK_SIDES = [
@@ -174,7 +200,64 @@ const state = computed(() => flowNodeStateDisplay(props.data.state))
 }
 
 .flow-node-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
   padding: 8px 11px;
+}
+
+.flow-node-title {
+  align-self: stretch;
+}
+
+/* flowgate.v02.0056 F2-1: the card state colours are the status tokens (승인 대기 stands out, 승인됨 is quiet). */
+.flow-node-state.is-card.flow-node-state--info {
+  color: var(--fg2-status-info-fg);
+}
+
+.flow-node-state.is-card.flow-node-state--warning {
+  color: var(--fg2-status-warning-fg);
+  font-weight: 700;
+}
+
+.flow-node-state.is-card.flow-node-state--success {
+  color: var(--fg2-status-success-fg);
+  opacity: 0.8;
+}
+
+.flow-node-state.is-card.flow-node-state--danger {
+  color: var(--fg2-status-danger-fg);
+}
+
+/* Above the connection strips (z-index 2) so a press reaches it. */
+.flow-node-approve {
+  position: relative;
+  z-index: 4;
+  height: 20px;
+  padding: 0 9px;
+  border: 1px solid var(--fg2-status-warning-border);
+  border-radius: 5px;
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.flow-node-approve:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+
+.flow-node-approve:disabled {
+  cursor: progress;
+  opacity: var(--fg2-control-disabled-opacity);
+}
+
+.flow-node-approve:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: 1px;
 }
 
 .flow-node-title {

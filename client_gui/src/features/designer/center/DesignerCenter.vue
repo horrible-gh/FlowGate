@@ -8,7 +8,8 @@
        편집 / 편집 마치기 — a Flow that already ran is edited right on the Canvas (the session picks
        what it shows). TR0020 rev4: nothing is laid over the Canvas — no saving / refused-save /
        검증 note (the edit note is gone); a refused save reads the Flow again by itself, and the
-       problems a 검증 or a refused 실행 reported only mark their cards / lines on the Canvas. -->
+       problems a 검증 or a refused 실행 reported only mark their cards / lines on the Canvas.
+       flowgate.v02.0056 F2-1: a card's [승인] goes to the session (approveNode); its refusal is the run band's toast. -->
   <div class="designer-center" data-test="designer-center">
     <FlowTabStrip
       :tabs="center.state.tabs"
@@ -60,6 +61,9 @@
           @node-remove="center.removeNode(activeTab.flowId, $event)"
           @edge-remove="center.removeEdge(activeTab.flowId, $event)"
           @undo="center.undoEdit(activeTab.flowId)"
+          :can-approve="center.canApprove"
+          :approving-node-id="center.activeRun.value?.approving ?? null"
+          @node-approve="center.approveNode(activeTab.flowId, $event)"
         />
       </template>
     </div>

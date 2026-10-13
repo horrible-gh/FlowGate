@@ -10,9 +10,11 @@
  * from the saved row). Last, the real registry: the settings tab on v0.1 step Nodes only.
  * flowgate.v02.0053 T#7 — the same v0.1 Node, drawn as v7 draws it: no row title / state line, no save button
  * and no "saved" line (a change is saved at once), no running-hop block, a done step in the same form (off),
- * the v7 items a sequence row cannot hold (지시서 · 검수 뒤 진행 · 재시작 · 실행 제한 시간 · 검수 기준) drawn off
+ * the v7 items a sequence row cannot hold (지시서 · 재시작 · 실행 제한 시간 · 검수 기준) drawn off
  * with their reason as a tooltip, and a refusal as a red ! beside the field. A Graph card's settings are
  * cardSettings.0053.
+ * flowgate.v02.0056 F2-1: the progress-after-review row is removed with its setting (O1 0005-TR §4-3); a v0.1
+ * step has no 지시 AI row (a Graph RUN card's, O2 0007-TR §4-1).
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -359,12 +361,10 @@ describe('settings tab on a v0.1 step — reading (flowgate.v02.0048 T#9, v7 for
     expect(w.text()).not.toContain('6단계')
     expect(w.text()).not.toContain('시작 전')
     expect(w.text()).not.toContain('저장')
-    // v7 execSettings order: 지시서 · 검수 뒤 진행 · 실행 설정.
-    expect(w.findAll('[data-test="inspector-run-settings"], [data-test="settings-instruction"], [data-test="settings-policy"]').map((el) => el.attributes('data-test'))).toEqual([
-      'settings-instruction',
-      'settings-policy',
-      'inspector-run-settings',
-    ])
+    // v7 execSettings order: 지시서 · 실행 설정 (flowgate.v02.0056 F2-1: no progress-after-review row, no 지시 AI on a v0.1 step).
+    expect(
+      w.findAll('[data-test="inspector-run-settings"], [data-test="settings-instruction"], [data-test="settings-policy"], [data-test="settings-instruction-ai"]').map((el) => el.attributes('data-test')),
+    ).toEqual(['settings-instruction', 'inspector-run-settings'])
     expect(valueOf(w, 'provider')).toBe('aip_haiku')
     expect(valueOf(w, 'reviewCount')).toBe('2')
     expect(valueOf(w, 'reviewer')).toBe('aip_sonnet')
@@ -382,7 +382,7 @@ describe('settings tab on a v0.1 step — reading (flowgate.v02.0048 T#9, v7 for
       expect(isDisabled(runSelect(w, field))).toBe(true)
       expect(hintOf(runSelect(w, field))).toBe('이 단계에는 저장되지 않음')
     }
-    for (const test of ['settings-instruction-switch', 'settings-policy-switch']) {
+    for (const test of ['settings-instruction-switch']) {
       for (const option of w.get(`[data-test="${test}"]`).findAll('[data-test="inspector-segment-option"]')) {
         expect(option.attributes('disabled')).toBeDefined()
         expect(option.attributes('title')).toBe('이 단계에는 저장되지 않음')

@@ -10,7 +10,10 @@
        summary · buttons`. The state is a short text badge drawn only when it says something (a decision
        waits, something runs, the document was revised, or it is settled — dim); a neutral state ('작성 중',
        '완료') draws nothing (slotStateView). A line without a document (`empty`) says why in plain muted
-       words where the badge would be. -->
+       words where the badge would be.
+       flowgate.v02.0056 F2-1 — a line may name who writes it (`author`, O2 0007-TR §4-3): the instruction line
+       of a run card says "지시 AI 또는 사람" in muted words before its state (slotAuthorKey; other authors draw
+       nothing). -->
   <div
     class="inspector-slot"
     :class="[`inspector-slot--${kind}`, { 'is-empty': empty, 'is-focus': focus, 'is-danger': danger }]"
@@ -30,6 +33,7 @@
     >{{ name }}</button>
     <span v-else class="inspector-slot-name" :title="name" data-test="inspector-slot-name">{{ name }}</span>
     <span class="inspector-slot-value">
+      <span v-if="authorKey" class="inspector-slot-author" :title="t(authorKey)" data-test="inspector-slot-author" :data-author="author">{{ t(authorKey) }}</span>
       <span
         v-if="view.kind !== 'none'"
         class="inspector-slot-state"
@@ -64,7 +68,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { slotStateView, type SlotStateInput } from './slotStateView'
+import { slotAuthorKey, slotStateView, type SlotStateInput } from './slotStateView'
 
 export type InspectorSlotState = SlotStateInput
 
@@ -94,8 +98,10 @@ const props = withDefaults(
     focus?: boolean
     danger?: boolean
     testIds?: InspectorSlotTestIds | null
+    /** flowgate.v02.0056 F2-1: the line's author as the server sends it (`instruction_ai_or_human` is named). */
+    author?: string | null
   }>(),
-  { kind: 'document', id: null, openable: false, empty: false, emptyText: null, state: null, summary: null, progress: null, focus: false, danger: false, testIds: null },
+  { kind: 'document', id: null, openable: false, empty: false, emptyText: null, state: null, summary: null, progress: null, focus: false, danger: false, testIds: null, author: null },
 )
 
 const emit = defineEmits<{ open: [] }>()
@@ -106,6 +112,9 @@ const { t } = useI18n()
 const view = computed(() => slotStateView(props.state, props.empty, props.empty ? (props.emptyText ?? t('gui.designer.inspector.slot.none')) : null))
 
 const clamped = computed(() => Math.max(0, Math.min(100, Math.round(props.progress ?? 0))))
+
+/** The author's wording key, or null (nothing drawn). */
+const authorKey = computed(() => slotAuthorKey(props.author))
 </script>
 
 <style scoped>
@@ -291,5 +300,16 @@ const clamped = computed(() => Math.max(0, Math.min(100, Math.round(props.progre
 .inspector-slot.is-danger {
   border-color: #6e2c38;
   box-shadow: inset 3px 0 0 #ef4444;
+}
+
+/* flowgate.v02.0056 F2-1: who writes the line — muted, before the state; it gives way first when narrow. */
+.inspector-slot-author {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg2-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

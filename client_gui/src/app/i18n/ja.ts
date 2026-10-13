@@ -124,6 +124,44 @@ export default {
         done: '完了',
         blocked: '保留',
       },
+      // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
+      // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
+      card_states: {
+        writing_instruction: '指示書作成中',
+        writing_result: '結果作成中',
+        working: '作業中',
+        awaiting_approval: '承認待ち',
+        approved: '承認済み',
+        rejected: '差し戻し',
+        pending: '待機',
+        closed: 'クローズ',
+      },
+      // flowgate.v02.0056 F2-1 — a card's [승인] (O1 0005-TR §4-1) and why it was refused, by the server's code.
+      approval: {
+        approve: '承認',
+        hint: 'このカードの指示書と結果を承認します',
+        done: 'カードを承認しました',
+        failure: {
+          result_changed: '結果文書が変わりました。カードを読み直したので、確認してから再度承認してください。',
+          group_ai_running: 'このグループで別の AI が実行中です。終わってから再度承認してください。',
+          card_approval_busy: '別のカードを承認中です。しばらくしてから再度承認してください。',
+          ai_running: 'AI がまだこのカードを作業しています。終わってから再度承認してください。',
+          already_approved: 'すでに承認されたカードです。',
+          node_not_in_review: '承認できる状態ではありません。',
+          no_result: 'まだ結果がありません。',
+          node_not_started: 'まだ開始していないカードです。',
+          document_approval_refused: '文書の承認が拒否されました。',
+          approval_forbidden: '承認権限がありません。',
+          forbidden: 'このカードを承認する権限がありません。',
+          inactive: '今はこのカードを承認できません。',
+          network: 'サーバーに接続できませんでした。',
+          other: 'カードを承認できませんでした。',
+        },
+        refused_document: '拒否された文書: {doc}',
+        refused_reason: '理由: {reason}',
+        approved_documents: '先に承認された文書 {n} 件',
+        approved_documents_named: '先に承認された文書: {docs}',
+      },
     },
     // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
     palette: {
@@ -336,6 +374,11 @@ export default {
         edit: '編集',
         // flowgate.v02.0053 T#5 — the wording of a line without a document (0056 F1: drawn in the line).
         none: '文書なし',
+        // flowgate.v02.0056 F2-1 — who writes a card line (O2 0007-TR §4-3 `author`); only the instruction line's
+        // instruction_ai_or_human is drawn.
+        author: {
+          instruction_ai_or_human: '指示AIまたは人',
+        },
         // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
         history: 'レビュー・差し戻し履歴',
         history_count: 'レビュー・差し戻し履歴 {n}件',
@@ -471,6 +514,9 @@ export default {
       },
       // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.
       run_status: { running: '実行中', stopped: '停止中', completed: '完了' },
+      // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
+      run_pending: '停止中 · 次のカード {n} 件待ち',
+      run_pending_keys: '次に進むカード: {keys}',
       run_errors: {
         run_policy_undecided: '実行ルールがまだ決まっていないため実行できません。',
         run_already_active: 'すでに実行中です。',

@@ -3,12 +3,15 @@
 // document bound to the selected Node, its card kind, its states and whether the Flow is read
 // only. Every Inspector part reads this one shape, so the rules here (card kind, read only) are
 // decided once and never again per feature.
+import { cardApprovalFailureView, cardStateView, type CardApprovalFailureView, type CardStateView } from '../center/graph/cardStateView'
 import type {
   FlowGraphCardDocument,
   FlowGraphNodeRun,
   FlowGraphNodeSlot,
   FlowGraphSelection,
 } from '../center/graph/flowGraph'
+
+export type { CardApprovalFailureView, CardStateView }
 
 /** Inspector card kinds (D#1 §4.3) — the one value set registrations may name. */
 export const INSPECTOR_CARD_KINDS = ['requirement', 'research', 'task', 'design', 'test', 'check', 'plan', 'other'] as const
@@ -169,4 +172,19 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     viewMode,
     readOnly: inspectorReadOnly(ownership, viewMode),
   }
+}
+
+/**
+ * flowgate.v02.0056 F2-1 — the card state of a Graph card with a run (작업 중 · 승인 대기 · 승인됨 …), decided by the
+ * one rule the Canvas card uses too (center/graph/cardStateView.ts); null on a gate (✓ 확인 · ✕ 반려 is its own),
+ * a card not saved yet, a Node without a definition or without a run.
+ */
+export function inspectorCardState(target: Pick<InspectorTarget, 'nodeType' | 'nodeId' | 'nodeRun'> | null): CardStateView | null {
+  if (!target || target.nodeType === 'gate' || inspectorCardNodeKey(target) === null) return null
+  return cardStateView(target.nodeRun)
+}
+
+/** flowgate.v02.0056 F2-1 — how a refused [승인] is worded and handled (the Canvas' grouping, cardStateView.ts). */
+export function inspectorApprovalFailure(code: string | null, status: number | null, network: boolean): CardApprovalFailureView {
+  return cardApprovalFailureView(code, status, network)
 }

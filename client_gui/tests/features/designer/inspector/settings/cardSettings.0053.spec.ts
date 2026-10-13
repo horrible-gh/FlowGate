@@ -3,10 +3,10 @@
  * (T#2 `GET / PATCH /flows/{flow_id}/nodes/{node_key}/settings`, one value per change, no save button).
  * `@/features/document` is mocked as a small card settings server with the T#2 fields, defaults and choices:
  *
- * - every card kind's blocks, items and order as v7 (run: 지시서 · 검수 뒤 진행 · 실행 설정 + 고급 ▾; test:
- *   지시서 · 검수 뒤 진행 · 시나리오 작성 · 실행; requirement: AI 위임 · 범위 · AI Team · 안전 한도; check: 용도 ·
+ * - every card kind's blocks, items and order as v7 (run: 지시서 · 지시 AI · 실행 설정 + 고급 ▾; test:
+ *   지시서 · 시나리오 작성 · 실행; requirement: AI 위임 · 범위 · AI Team · 안전 한도; check: 용도 ·
  *   반영 방식 · 병합 대상 · 원격 반영 · 브랜치 보관) — on a card just placed and on a done card alike;
- * - the items v0.2 had "미연결" (지시서 사용 / 생략, 검수 뒤 진행, 재시작, 실행 제한 시간, 검수 기준) are saved;
+ * - the items v0.2 had "미연결" (지시서 사용 / 생략, 재시작, 실행 제한 시간, 검수 기준) are saved;
  * - a change is one PATCH of one value at once, shown while it waits, answered by the card's settings;
  * - a running card is 🔒 and off; a refusal is a red ! beside its control (the reason its tooltip); a card not
  *   saved yet is drawn off; no sentence, no type code on screen;
@@ -14,6 +14,13 @@
  *   the same card recovers by it; the check summary names the merge target and push shown (or not set).
  * Last, the real Frame and registry on a card just placed (T#1 card documents) and on done cards whose run
  * bound its result (N → NR, T → TR, TS → TSR — the card keeps its form).
+ * flowgate.v02.0056 F2-1: the progress-after-review row is removed with its field (O1 0005-TR §4-3: a PATCH of it
+ * is 422 not_a_setting_of_this_card); a RUN card has the 지시 AI row (`instruction_ai`, O2 0007-TR §4-1) right
+ * under 지시서, only while the instruction is used — none is the run AI, then the assigned AI — saved as one
+ * value (null for none), with its refusals (422 unknown_ai · not_a_text · invalid_text ·
+ * not_a_setting_of_this_card, 409 node_settings_locked · card_settings_unavailable) as the ! beside it — the code's
+ * sentence, then the server's own message as sent (x-locale) when it says more (ko / en / ja); the 0053 fields keep
+ * their sentence alone.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -71,7 +78,7 @@ type FieldDef = readonly [name: string, defaultValue: unknown, choices: readonly
 const FIELDS: Record<string, readonly FieldDef[]> = {
   run: [
     ['instruction', 'use', ['use', 'omit']],
-    ['after_review', 'human', ['follow', 'human']],
+    ['instruction_ai', null, null],
     ['run_ai', null, null],
     ['restart', 0, REPEAT],
     ['review_ai', null, null],
@@ -81,7 +88,6 @@ const FIELDS: Record<string, readonly FieldDef[]> = {
   ],
   test: [
     ['instruction', 'use', ['use', 'omit']],
-    ['after_review', 'human', ['follow', 'human']],
     ['run_ai', null, null],
     ['review_ai', null, null],
     ['review_count', 0, REPEAT],
@@ -117,6 +123,13 @@ let refusal: unknown = null
 const writes: [string, string, string, unknown][] = []
 
 const axiosError = (status: number, code: string) => ({ isAxiosError: true, response: { status, data: { ok: false, error: { code, message: code, params: {} } } } })
+/** flowgate.v02.0056 F2-1: a 422 refusal naming its reason (O2 0007-TR §4-1 `errors[{field, reason}]`). */
+const invalidValue = (reason: string, field = 'value', message = '저장할 수 없는 값') => ({
+  isAxiosError: true,
+  response: { status: 422, data: { ok: false, error: { code: 'invalid_request', message, params: { errors: [{ field, reason }] } } } },
+})
+/** flowgate.v02.0056 F2-1: a refusal whose message (x-locale) is not its code. */
+const refusedWith = (status: number, code: string, message: string) => ({ isAxiosError: true, response: { status, data: { ok: false, error: { code, message, params: {} } } } })
 
 function answer(nodeKey: string) {
   const card = cards.get(nodeKey)!
@@ -142,7 +155,7 @@ function serve() {
     if (!card) throw axiosError(404, 'node_not_found')
     if (card.locked) throw axiosError(409, 'node_settings_locked')
     const def = FIELDS[card.kind].find(([name]) => name === field)
-    if (!def) throw axiosError(422, 'invalid_request')
+    if (!def) throw invalidValue('not_a_setting_of_this_card', 'field')
     if (field.startsWith('limit_') && value !== null && !(Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 999)) throw axiosError(422, 'invalid_request')
     if (value === null) delete card.stored[field]
     else card.stored[field] = value
@@ -297,7 +310,9 @@ async function mountPart(component: unknown, target: InspectorTarget) {
   return wrapper
 }
 
-const runSelect = (w: VueWrapper<any>, field: string) => w.find(`select[data-test="inspector-run-settings-${field}"]`)
+// flowgate.v02.0056 F2-1: the 지시 AI is its own row's select (under 지시서), the rest the run settings block's.
+const runSelect = (w: VueWrapper<any>, field: string) =>
+  w.find(field === 'instruction_ai' ? 'select[data-test="settings-instruction-ai-select"]' : `select[data-test="inspector-run-settings-${field}"]`)
 const valueOf = (w: VueWrapper<any>, field: string) => (runSelect(w, field).element as HTMLSelectElement).value
 const labelsOf = (w: VueWrapper<any>, field: string) => runSelect(w, field).findAll('option').map((option) => option.text())
 const shownOf = (w: VueWrapper<any>, field: string) => runSelect(w, field).findAll('option').find((option) => (option.element as HTMLOptionElement).selected)?.text()
@@ -350,16 +365,17 @@ describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 
     expect(choicesRead).toHaveBeenCalledWith(PROJECT)
     expect(w.get('[data-test="inspector-settings"]').attributes('data-source')).toBe('card')
     expect(w.find('[data-test="inspector-lock-note"]').exists()).toBe(false)
-    expect(w.findAll('[data-test="settings-instruction"], [data-test="settings-policy"], [data-test="inspector-run-settings"]').map((el) => el.attributes('data-test'))).toEqual([
-      'settings-instruction',
-      'settings-policy',
-      'inspector-run-settings',
-    ])
+    expect(
+      w.findAll('[data-test="settings-instruction"], [data-test="settings-policy"], [data-test="settings-instruction-ai"], [data-test="inspector-run-settings"]').map((el) => el.attributes('data-test')),
+    ).toEqual(['settings-instruction', 'settings-instruction-ai', 'inspector-run-settings'])
     expect(w.get('[data-test="inspector-run-settings"] [data-test="inspector-block-title"]').text()).toBe('실행 설정')
-    expect(rowLabels(w)).toEqual(['지시서', '검수 뒤 진행', '실행 AI', '재시작', '검수 AI', '검수 횟수'])
+    expect(rowLabels(w)).toEqual(['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수'])
     expect(segmentOn(w, 'settings-instruction-switch')).toBe('use')
-    expect(segmentOn(w, 'settings-policy-switch')).toBe('human')
-    expect(w.get('[data-test="settings-policy-note"]').text()).toBe('여기서 멈춤 · 사람이 승인')
+    expect(w.find('[data-test="settings-policy-note"]').exists()).toBe(false)
+    // flowgate.v02.0056 F2-1: the 지시 AI — none follows the run AI (then the assigned AI).
+    expect(shownOf(w, 'instruction_ai')).toBe('실행 AI 따름')
+    expect(labelsOf(w, 'instruction_ai')).toEqual(['실행 AI 따름', 'Claude Opus 5', 'GPT-5.6 Sol'])
+    expect(hintOf(runSelect(w, 'instruction_ai'))).toBe('지시서를 쓰는 AI · 비우면 실행 AI, 그다음 담당 AI가 씁니다')
     expect(shownOf(w, 'run_ai')).toBe('담당 AI')
     expect(labelsOf(w, 'run_ai')).toEqual(['담당 AI', 'Claude Opus 5', 'GPT-5.6 Sol'])
     expect(labelsOf(w, 'restart')).toEqual(['끝날 때까지', '안 함', '1회', '2회', '3회'])
@@ -375,7 +391,7 @@ describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 
     expect(shownOf(w, 'time_limit')).toBe('60분')
     expect(labelsOf(w, 'review_basis')).toEqual(['문서 타입 기본', '직전 반려 사유만'])
     // Every item can change (the "미연결" ones included); nothing of 0048/0052 is left.
-    for (const field of ['run_ai', 'restart', 'review_count', 'time_limit', 'review_basis']) expect(isDisabled(runSelect(w, field)), field).toBe(false)
+    for (const field of ['instruction_ai', 'run_ai', 'restart', 'review_count', 'time_limit', 'review_basis']) expect(isDisabled(runSelect(w, field)), field).toBe(false)
     for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeUndefined()
     // With no review the review AI is off, its reason a tooltip.
     expect(isDisabled(runSelect(w, 'review_ai'))).toBe(true)
@@ -386,7 +402,7 @@ describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 
 
   it.each([
     ['지시서 생략', 'instruction', 'omit', 'segment'],
-    ['검수 뒤 진행 · 실행 방식 따름', 'after_review', 'follow', 'segment'],
+    ['지시 AI', 'instruction_ai', 'aip_sol', 'select'],
     ['실행 AI', 'run_ai', 'aip_opus', 'select'],
     ['재시작 2회', 'restart', 2, 'select'],
     ['재시작 끝날 때까지', 'restart', -1, 'select'],
@@ -396,32 +412,34 @@ describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 
   ] as const)('%s is saved at once: one PATCH of that one value, the answer shown', async (_name, field, value, kind) => {
     const w = await mountPart(SettingsTab, targetFor(TASK))
     if (field === 'time_limit' || field === 'review_basis') await openAdvanced(w)
-    if (kind === 'segment') await segmentPick(w, field === 'instruction' ? 'settings-instruction-switch' : 'settings-policy-switch', String(value))
+    if (kind === 'segment') await segmentPick(w, 'settings-instruction-switch', String(value))
     else await pick(w, field, String(value))
     expect(writes).toEqual([[FLOW, 'gn_task', field, value]])
     expect(cards.get('gn_task')!.stored).toEqual({ [field]: value })
-    if (kind === 'segment') expect(segmentOn(w, field === 'instruction' ? 'settings-instruction-switch' : 'settings-policy-switch')).toBe(value)
+    if (kind === 'segment') expect(segmentOn(w, 'settings-instruction-switch')).toBe(value)
     else expect(valueOf(w, field)).toBe(String(value))
     expect(failureOf(w, field)).toBeNull()
   })
 
-  it('the policy note follows the value; a review count turns the review AI on; the default AI is sent as null', async () => {
+  it('a review count turns the review AI on; the default AI is sent as null (the 지시 AI too)', async () => {
     const w = await mountPart(SettingsTab, targetFor(TASK))
-    await segmentPick(w, 'settings-policy-switch', 'follow')
-    expect(w.get('[data-test="settings-policy-note"]').text()).toBe('검수 통과면 자동 진행')
+    await pick(w, 'instruction_ai', 'aip_opus')
+    await pick(w, 'instruction_ai', '')
+    expect(shownOf(w, 'instruction_ai')).toBe('실행 AI 따름')
     await pick(w, 'review_count', '2')
     expect(isDisabled(runSelect(w, 'review_ai'))).toBe(false)
     await pick(w, 'review_ai', 'aip_sol')
     await pick(w, 'run_ai', 'aip_opus')
     await pick(w, 'run_ai', '')
     expect(writes.map(([, , field, value]) => [field, value])).toEqual([
-      ['after_review', 'follow'],
+      ['instruction_ai', 'aip_opus'],
+      ['instruction_ai', null],
       ['review_count', 2],
       ['review_ai', 'aip_sol'],
       ['run_ai', 'aip_opus'],
       ['run_ai', null],
     ])
-    expect(cards.get('gn_task')!.stored).toEqual({ after_review: 'follow', review_count: 2, review_ai: 'aip_sol' })
+    expect(cards.get('gn_task')!.stored).toEqual({ review_count: 2, review_ai: 'aip_sol' })
     expect(shownOf(w, 'run_ai')).toBe('담당 AI')
   })
 
@@ -465,7 +483,7 @@ describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 
     expect(shownOf(w, 'run_ai')).toBe('GPT-5.6 Sol')
     expect(shownOf(w, 'review_count')).toBe('2회')
     expect(shownOf(w, 'review_ai')).toBe('Claude Opus 5')
-    expect(rowLabels(w)).toEqual(['지시서', '검수 뒤 진행', '실행 AI', '재시작', '검수 AI', '검수 횟수'])
+    expect(rowLabels(w)).toEqual(['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수'])
     await pick(w, 'restart', '1')
     expect(writes).toEqual([[FLOW, 'gn_done', 'restart', 1]])
   })
@@ -533,7 +551,7 @@ describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 
   it('a card just placed (its key not the server’s yet): the form drawn off, nothing read; the stored key reads it', async () => {
     const w = await mountPart(SettingsTab, targetFor(PLACING))
     expect(nodeRead).not.toHaveBeenCalled()
-    expect(rowLabels(w)).toEqual(['지시서', '검수 뒤 진행', '실행 AI', '재시작', '검수 AI', '검수 횟수'])
+    expect(rowLabels(w)).toEqual(['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수'])
     expect(isDisabled(runSelect(w, 'run_ai'))).toBe(true)
     expect(hintOf(runSelect(w, 'run_ai'))).toBe('카드를 저장하는 중')
     expect(w.find('[data-test="inspector-pane-state"]').exists()).toBe(false)
@@ -587,7 +605,7 @@ describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 
 
   it('a Custom card has the same form (the server keeps it as a run card)', async () => {
     const w = await mountPart(SettingsTab, targetFor(CUSTOM))
-    expect(rowLabels(w)).toEqual(['지시서', '검수 뒤 진행', '실행 AI', '재시작', '검수 AI', '검수 횟수'])
+    expect(rowLabels(w)).toEqual(['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수'])
     await segmentPick(w, 'settings-instruction-switch', 'omit')
     expect(writes).toEqual([[FLOW, 'gn_custom', 'instruction', 'omit']])
   })
@@ -595,26 +613,116 @@ describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 
   it('follows the locale (en / ja)', async () => {
     i18n.global.locale.value = 'en'
     let w = await mountPart(SettingsTab, targetFor(TASK))
-    expect(rowLabels(w)).toEqual(['Instruction', 'After review', 'Run AI', 'Restart', 'Review AI', 'Review rounds'])
+    expect(rowLabels(w)).toEqual(['Instruction', 'Instruction AI', 'Run AI', 'Restart', 'Review AI', 'Review rounds'])
     expect(shownOf(w, 'run_ai')).toBe('Assigned AI')
     wrapper!.unmount()
     i18n.global.locale.value = 'ja'
     w = await mountPart(SettingsTab, targetFor(TASK))
-    expect(rowLabels(w)).toEqual(['指示書', 'レビュー後の進行', '実行AI', '再開', 'レビューAI', 'レビュー回数'])
+    expect(rowLabels(w)).toEqual(['指示書', '指示AI', '実行AI', '再開', 'レビューAI', 'レビュー回数'])
+  })
+})
+
+// --- The 지시 AI (flowgate.v02.0056 F2-1, O2 0007-TR §4-1) ---------------------------------------------------
+
+describe('a run card’s 지시 AI (instruction_ai) — shown while the instruction is used, saved as one value', () => {
+  it('omitting the instruction takes the 지시 AI row away (the server does not read it); using it again brings it back', async () => {
+    const w = await mountPart(SettingsTab, targetFor(TASK))
+    expect(w.find('[data-test="settings-instruction-ai"]').exists()).toBe(true)
+    await segmentPick(w, 'settings-instruction-switch', 'omit')
+    expect(w.find('[data-test="settings-instruction-ai"]').exists()).toBe(false)
+    expect(rowLabels(w)).toEqual(['지시서', '실행 AI', '재시작', '검수 AI', '검수 횟수'])
+    await segmentPick(w, 'settings-instruction-switch', 'use')
+    expect(w.find('[data-test="settings-instruction-ai"]').exists()).toBe(true)
+    expect(writes.map(([, , field, value]) => [field, value])).toEqual([
+      ['instruction', 'omit'],
+      ['instruction', 'use'],
+    ])
+  })
+
+  it('a stored 지시 AI is shown; none is sent as null (back to the run AI)', async () => {
+    cards.get('gn_task')!.stored = { instruction_ai: 'aip_sol' }
+    const w = await mountPart(SettingsTab, targetFor(TASK))
+    expect(valueOf(w, 'instruction_ai')).toBe('aip_sol')
+    expect(shownOf(w, 'instruction_ai')).toBe('GPT-5.6 Sol')
+    await pick(w, 'instruction_ai', '')
+    expect(writes).toEqual([[FLOW, 'gn_task', 'instruction_ai', null]])
+    expect(cards.get('gn_task')!.stored).toEqual({})
+  })
+
+  it('a stored AI no longer offered stays shown, marked', async () => {
+    cards.get('gn_task')!.stored = { instruction_ai: 'aip_gone' }
+    const w = await mountPart(SettingsTab, targetFor(TASK))
+    expect(valueOf(w, 'instruction_ai')).toBe('aip_gone')
+    expect(labelsOf(w, 'instruction_ai').at(-1)).toBe('aip_gone (없는 AI)')
+  })
+
+  it.each([
+    // The server's message follows the code's sentence; a message that only repeats the code is not shown.
+    ['422 unknown_ai', invalidValue('unknown_ai'), '없는 AI 연결입니다 — 저장할 수 없는 값'],
+    ['422 not_a_text', invalidValue('not_a_text'), '값이 비어 있거나 글자가 아닙니다 — 저장할 수 없는 값'],
+    ['422 invalid_text', invalidValue('invalid_text'), '값이 너무 길거나 쓸 수 없는 글자가 있습니다 — 저장할 수 없는 값'],
+    ['422 not_a_setting_of_this_card', invalidValue('not_a_setting_of_this_card', 'field'), '이 카드에는 없는 설정입니다 — 저장할 수 없는 값'],
+    ['422 without a reason', axiosError(422, 'invalid_request'), '저장할 수 없는 값입니다'],
+    ['409 node_settings_locked', axiosError(409, 'node_settings_locked'), '실행 중이라 바꿀 수 없습니다'],
+    ['409 card_settings_unavailable', axiosError(409, 'card_settings_unavailable'), '서버에 카드 설정이 없습니다'],
+  ])('a refused 지시 AI (%s): the ! beside it says why, the value back to the server’s', async (_name, refused, text) => {
+    const w = await mountPart(SettingsTab, targetFor(TASK))
+    refusal = refused
+    await pick(w, 'instruction_ai', 'aip_opus')
+    expect(failureOf(w, 'instruction_ai')).toBe(text)
+    expect(failureOf(w, 'run_ai')).toBeNull()
+    expect(valueOf(w, 'instruction_ai')).toBe('')
+  })
+
+  it.each([
+    ['ko', invalidValue('unknown_ai', 'value', '프로젝트에 등록된 AI가 아닙니다: aip_opus'), '없는 AI 연결입니다 — 프로젝트에 등록된 AI가 아닙니다: aip_opus'],
+    ['ko', refusedWith(409, 'node_settings_locked', '카드가 실행 중이라 설정이 잠겨 있습니다'), '실행 중이라 바꿀 수 없습니다 — 카드가 실행 중이라 설정이 잠겨 있습니다'],
+    ['en', invalidValue('unknown_ai', 'value', 'aip_opus is not an AI of this project'), 'No such AI connection — aip_opus is not an AI of this project'],
+    ['en', refusedWith(409, 'node_settings_locked', 'The card is running, so its settings are locked'), 'Running: it cannot change now — The card is running, so its settings are locked'],
+    ['ja', invalidValue('unknown_ai', 'value', 'aip_opus はこのプロジェクトの AI ではありません'), '存在しない AI 接続です — aip_opus はこのプロジェクトの AI ではありません'],
+    ['ja', refusedWith(409, 'node_settings_locked', 'カードが実行中のため設定はロックされています'), '実行中のため変更できません — カードが実行中のため設定はロックされています'],
+  ])('a refused 지시 AI shows the server’s own message (%s, x-locale) after the code’s sentence', async (locale, refused, text) => {
+    i18n.global.locale.value = locale
+    const w = await mountPart(SettingsTab, targetFor(TASK))
+    refusal = refused
+    await pick(w, 'instruction_ai', 'aip_opus')
+    expect(failureOf(w, 'instruction_ai')).toBe(text)
+  })
+
+  it('the 0053 fields keep their sentence alone (the server’s message is the 지시 AI’s only)', async () => {
+    const w = await mountPart(SettingsTab, targetFor(TASK))
+    refusal = invalidValue('unknown_ai', 'value', '프로젝트에 등록된 AI가 아닙니다: aip_opus')
+    await pick(w, 'run_ai', 'aip_opus')
+    expect(failureOf(w, 'run_ai')).toBe('없는 AI 연결입니다')
+  })
+
+  it('a running card: the 지시 AI drawn locked, nothing sent', async () => {
+    cards.get('gn_task')!.locked = true
+    const w = await mountPart(SettingsTab, targetFor(TASK))
+    expect(isDisabled(runSelect(w, 'instruction_ai'))).toBe(true)
+    expect(hintOf(runSelect(w, 'instruction_ai'))).toBe('실행 중')
+    expect(w.get('[data-test="settings-instruction-ai"]').classes()).toContain('is-locked')
+  })
+
+  it('the server takes no progress-after-review value from a run card (422 not_a_setting_of_this_card)', async () => {
+    const field = ['after', 'review'].join('_')
+    await expect(nodeWrite(FLOW, 'gn_task', field, 'follow')).rejects.toMatchObject({ response: { status: 422 } })
+    expect(cards.get('gn_task')!.stored).toEqual({})
   })
 })
 
 // --- Test cards ---------------------------------------------------------------------------------------
 
 describe('a test card’s settings — v7 testSettings', () => {
-  it('지시서 · 검수 뒤 진행 · 시나리오 작성 (작성 AI | 검수 AI · 검수 횟수), then 실행 (케이스별), no code on screen', async () => {
+  it('지시서 · 시나리오 작성 (작성 AI | 검수 AI · 검수 횟수), then 실행 (케이스별), no code on screen; no 지시 AI on a test card', async () => {
     const w = await mountPart(SettingsTab, targetFor(TEST))
     expect(w.get('[data-test="inspector-run-settings"]').attributes('data-layout')).toBe('scenario')
     expect(w.get('[data-test="inspector-run-settings"] [data-test="inspector-block-title"]').text()).toBe('시나리오 작성')
     expect(w.find('[data-test="inspector-run-settings"] [data-test="inspector-block-sub"]').exists()).toBe(false)
     expect(w.find('[data-test="inspector-run-settings-advanced"]').exists()).toBe(false)
-    expect(rowLabels(w)).toEqual(['지시서', '검수 뒤 진행', '작성 AI', '검수 AI', '검수 횟수'])
+    expect(rowLabels(w)).toEqual(['지시서', '작성 AI', '검수 AI', '검수 횟수'])
     expect(runSelect(w, 'restart').exists()).toBe(false)
+    expect(w.find('[data-test="settings-instruction-ai"]').exists()).toBe(false)
     await pick(w, 'run_ai', 'aip_sol')
     await pick(w, 'review_count', '1')
     await segmentPick(w, 'settings-instruction-switch', 'omit')
@@ -929,9 +1037,9 @@ describe('the settings tab of a card just placed and of a done card, in the real
   const sections = (w: VueWrapper<any>) => w.findAll('[data-test="designer-inspector-section"]').map((section) => section.attributes('data-key'))
 
   it.each([
-    [TASK, ['settings'], ['지시서', '검수 뒤 진행', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
-    [CUSTOM, ['settings'], ['지시서', '검수 뒤 진행', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
-    [TEST, ['settings', 'testRunSettings'], ['지시서', '검수 뒤 진행', '작성 AI', '검수 AI', '검수 횟수', '실행 방식']],
+    [TASK, ['settings'], ['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
+    [CUSTOM, ['settings'], ['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
+    [TEST, ['settings', 'testRunSettings'], ['지시서', '작성 AI', '검수 AI', '검수 횟수', '실행 방식']],
     [REQ, ['requirementSettings'], []],
     [GATE, ['checkSettings'], ['반영 방식', '병합 대상 · 원격']],
   ] as const)('a %s card: its settings form, no "v0.1 단계" line', async (card, parts, labels) => {
@@ -946,9 +1054,9 @@ describe('the settings tab of a card just placed and of a done card, in the real
   // The Canvas hands a done card its run's result as the document (N → NR, T → TR, TS → TSR); the settings
   // stay the card's (T#2 keeps them by the card definition).
   it.each([
-    [DONE_RESEARCH, 'NR', ['settings'], ['지시서', '검수 뒤 진행', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
-    [DONE_TASK, 'TR', ['settings'], ['지시서', '검수 뒤 진행', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
-    [DONE_TEST, 'TSR', ['settings', 'testRunSettings'], ['지시서', '검수 뒤 진행', '작성 AI', '검수 AI', '검수 횟수', '실행 방식']],
+    [DONE_RESEARCH, 'NR', ['settings'], ['지시서', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
+    [DONE_TASK, 'TR', ['settings'], ['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
+    [DONE_TEST, 'TSR', ['settings', 'testRunSettings'], ['지시서', '작성 AI', '검수 AI', '검수 횟수', '실행 방식']],
   ] as const)('a done card bound to its result (%#) keeps the same form', async (card, result, parts, labels) => {
     expect(targetFor(card)).toMatchObject({ docType: result, cardDocType: card.definition!.docType })
     const w = await mountFrame(card)

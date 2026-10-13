@@ -11,7 +11,10 @@
        (`canValidate`).
        flowgate.v02.0053 T#9: the run buttons drive the server run (the Shell sends the commands to the
        Center session); `runMode` is the server's run as this tab knows it. Next to them one dot shows the
-       Flow's run — ● running, ❚❚ stopped, ✓ completed — its name in the tooltip only. -->
+       Flow's run — ● running, ❚❚ stopped, ✓ completed — its name in the tooltip only.
+       flowgate.v02.0056 F2-1: a stopped run with cards approved meanwhile says so beside the dot — "멈춤 · 다음
+       카드 N개 대기" (the waiting cards' keys in its tooltip). That is the run's stop, not a card waiting for
+       approval: the Canvas keeps those cards 승인됨. -->
   <div
     class="designer-toolbar"
     :class="{ 'is-unavailable': disabled }"
@@ -80,6 +83,13 @@
         <svg v-if="shownRunStatus === 'stopped'" viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.5v7M8.5 2.5v7" /></svg>
         <svg v-else-if="shownRunStatus === 'completed'" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.3l2.4 2.4 4.6-5" /></svg>
       </span>
+      <span
+        v-if="shownPending"
+        class="designer-run-pending"
+        :title="shownPending.nodeKeys.length ? t('gui.designer.top.run_pending_keys', { keys: shownPending.nodeKeys.join(', ') }) : undefined"
+        data-test="designer-run-pending"
+        :data-count="shownPending.count"
+      >{{ t('gui.designer.top.run_pending', { n: shownPending.count }) }}</span>
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
@@ -121,7 +131,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { DESIGNER_DENSITIES, type DesignerDensity, type DesignerRunMode, type DesignerTopCommand } from './designerTop'
+import { DESIGNER_DENSITIES, type DesignerDensity, type DesignerRunMode, type DesignerRunPending, type DesignerTopCommand } from './designerTop'
 
 const props = withDefaults(
   defineProps<{
@@ -135,8 +145,10 @@ const props = withDefaults(
     canValidate?: boolean
     /** flowgate.v02.0053 T#9: the open Flow's server run status (`running` | `stopped` | `completed`), or null. */
     runStatus?: string | null
+    /** flowgate.v02.0056 F2-1: cards approved while the run was stopped (runPendingView), or null. */
+    runPending?: DesignerRunPending | null
   }>(),
-  { disabled: false, canValidate: false, runStatus: null },
+  { disabled: false, canValidate: false, runStatus: null, runPending: null },
 )
 
 const emit = defineEmits<{
@@ -149,6 +161,8 @@ const { t } = useI18n()
 /** Run states the dot shows; any other value (or none) shows no dot. */
 const RUN_DOT_STATES: readonly string[] = ['running', 'stopped', 'completed']
 const shownRunStatus = computed(() => (!props.disabled && props.runStatus && RUN_DOT_STATES.includes(props.runStatus) ? props.runStatus : null))
+/** The pending line goes with the stopped dot only. */
+const shownPending = computed(() => (shownRunStatus.value === 'stopped' && props.runPending && props.runPending.count > 0 ? props.runPending : null))
 
 const RUN_BUTTONS = [
   { mode: 'next', command: 'run.next', label: 'run_next' },
@@ -300,6 +314,17 @@ const RUN_BUTTONS = [
 
 .designer-run-dot.is-completed {
   background: #58a6ff;
+}
+
+/* flowgate.v02.0056 F2-1: the stop with waiting cards — the stopped dot's colour, in words. */
+.designer-run-pending {
+  flex: none;
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--fg2-status-warning-fg);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .designer-tool-zoom {

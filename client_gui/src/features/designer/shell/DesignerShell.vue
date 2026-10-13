@@ -24,6 +24,7 @@
       :recent="recent"
       :can-validate="center.activeCanValidate.value"
       :run-status="runStatus"
+      :run-pending="runPending"
       @command="onTopCommand"
       @toggle-panel="onTogglePanel"
       @show-tab="onShowTab"
@@ -167,11 +168,14 @@
 // the Center session (center/run/flowRunControl.ts: start or resume, one step, stop); the buttons' state
 // (`top.runMode`) and the Toolbar's run dot follow the run the session read back, never the click alone.
 // A refused run shows one short toast (its reason in plain words, no code); nothing else is written.
+// flowgate.v02.0056 F2-1: a refused Canvas [승인] is a toast as well (its code's sentence and the server's message;
+// a refused document is named with why and the documents approved before it, and that toast stays until closed);
+// a stopped run with cards approved meanwhile shows "멈춤 · 다음 카드 N개 대기" in the band.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useProjectStore, type CreatedGroup } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
-import { createDesignerCenterSession, type CanvasNodeSpec } from '../center/designerCenterSession'
+import { createDesignerCenterSession, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
@@ -190,6 +194,7 @@ import {
   createDesignerTopState,
   isMenuCommandEnabled,
   nextRunMode,
+  runPendingView,
   zoomPercent,
   type DesignerMenuTargets,
   type DesignerRecentLists,
@@ -266,6 +271,8 @@ const serverRunMode = computed(() => {
   return state.run?.status === 'running' ? state.mode ?? 'all' : null
 })
 const runStatus = computed(() => (hasWorkTarget.value ? center.activeRun.value?.run?.status ?? null : null))
+// flowgate.v02.0056 F2-1: "멈춤 · 다음 카드 N개 대기" — the stopped run's cards approved meanwhile (O1 §4-2).
+const runPending = computed(() => (hasWorkTarget.value ? runPendingView(center.activeRun.value?.run ?? null) : null))
 
 if (center.canRun) {
   watch(serverRunMode, (mode) => {
@@ -286,13 +293,33 @@ function runErrorText(code: string | null): string {
   return key && te(key) ? t(key) : t('gui.designer.top.run_errors.other')
 }
 
+/**
+ * flowgate.v02.0056 F2-1: a refused Canvas [승인] — the code's sentence (cardStateView grouping), then the
+ * server's own message as it sent it (x-locale) when it says more, then what the refusal names: the refused
+ * document, why, and the documents approved before it (document_approval_refused, O1 4-1).
+ */
+function approvalErrorText(error: FlowRunFailure): string {
+  const head = t(error.approval?.labelKey ?? 'gui.designer.center.approval.failure.other')
+  const message = error.message.trim()
+  const parts = [message && message !== error.code && message !== head ? `${head} — ${message}` : head]
+  const refusal = error.refusal
+  if (refusal?.docId) parts.push(t('gui.designer.center.approval.refused_document', { doc: refusal.docId }))
+  if (refusal?.reason) parts.push(t('gui.designer.center.approval.refused_reason', { reason: refusal.reason }))
+  if (refusal?.approvedDocIds.length) parts.push(t('gui.designer.center.approval.approved_documents_named', { docs: refusal.approvedDocIds.join(', ') }))
+  return parts.join(' · ')
+}
+
 watch(
   () => center.activeRun.value?.error?.seq ?? 0,
   (seq) => {
     const error = center.activeRun.value?.error
     if (!seq || !error) return
     toastSeq += 1
-    toasts.value = [...toasts.value.slice(-2), { id: `run-${toastSeq}`, message: runErrorText(error.code), tone: 'danger', duration: 4000 }]
+    const message = error.kind === 'approval' ? approvalErrorText(error) : runErrorText(error.code)
+    const tone = error.kind === 'approval' && error.approval?.keepButton ? 'warning' : 'danger'
+    // A refused document is read, not glanced at: that toast stays until it is closed.
+    const duration = error.kind === 'approval' && error.approval?.kind === 'refused' ? null : 4000
+    toasts.value = [...toasts.value.slice(-2), { id: `run-${toastSeq}`, message, tone, duration }]
   },
 )
 

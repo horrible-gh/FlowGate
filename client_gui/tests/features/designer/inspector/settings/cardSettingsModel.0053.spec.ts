@@ -2,6 +2,9 @@
  * flowgate.v02.0053 T#7 — cardSettingsModel as tables: a Graph card's run / test settings (T#2) — the fields
  * of each kind in v7 order, the value shown (pending over read), the value a choice stands for, the options of
  * each field (AI, repeat counts, minutes, choices), why nothing can change, and the refusal keys.
+ * flowgate.v02.0056 F2-1: the progress-after-review field is gone (O1 0005-TR §4-3) and the RUN card has the
+ * 지시 AI (`instruction_ai`, O2 0007-TR §4-1): its place, its options (none = the run AI), when it is shown
+ * (a run card whose instruction is used) and the reasons a refused value names.
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -13,6 +16,8 @@ import {
   cardSettingsDisabledReason,
   cardSettingsErrorKey,
   cardSettingsFailureKey,
+  cardSettingsInstructionAiShown,
+  cardSettingsIsAiField,
   cardSettingsReviewOff,
   cardSettingsText,
   cardSettingsValue,
@@ -34,8 +39,25 @@ const NODE: CardSettingsFacts = {
 
 describe('cardSettingsModel — fields and values (flowgate.v02.0053 T#7)', () => {
   it('the fields of each kind follow v7 (T#2 fields._FIELDS)', () => {
-    expect(CARD_SETTINGS_FIELDS.run).toEqual(['instruction', 'after_review', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis'])
-    expect(CARD_SETTINGS_FIELDS.test).toEqual(['instruction', 'after_review', 'run_ai', 'review_ai', 'review_count'])
+    expect(CARD_SETTINGS_FIELDS.run).toEqual(['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis'])
+    expect(CARD_SETTINGS_FIELDS.test).toEqual(['instruction', 'run_ai', 'review_ai', 'review_count'])
+  })
+
+  it('flowgate.v02.0056 F2-1: the progress-after-review field is in no kind and has no string (removed, not hidden)', () => {
+    const gone = ['after', 'review'].join('_')
+    for (const kind of ['run', 'test'] as const) expect(CARD_SETTINGS_FIELDS[kind] as readonly string[]).not.toContain(gone)
+    for (const locale of ['ko', 'en', 'ja'] as const) expect(Object.keys(messages[locale])).not.toContain(gone)
+  })
+
+  it('flowgate.v02.0056 F2-1: the 지시 AI is a run card’s, shown only while the instruction is used', () => {
+    expect(cardSettingsInstructionAiShown('run', 'use')).toBe(true)
+    expect(cardSettingsInstructionAiShown('run', 'omit')).toBe(false)
+    // Not read yet: drawn with the rest of the form (off); the server default is `use`.
+    expect(cardSettingsInstructionAiShown('run', null)).toBe(true)
+    expect(cardSettingsInstructionAiShown('test', 'use')).toBe(false)
+    expect(cardSettingsIsAiField('instruction_ai')).toBe(true)
+    expect(cardSettingsIsAiField('run_ai')).toBe(true)
+    expect(cardSettingsIsAiField('instruction')).toBe(false)
   })
 
   it('the shown value: the one sent and not answered yet, else the read (stored, else default), else none', () => {
@@ -68,7 +90,8 @@ describe('cardSettingsModel — fields and values (flowgate.v02.0053 T#7)', () =
     ['time_limit', '', undefined],
     ['restart', 'x', undefined],
     ['instruction', 'omit', 'omit'],
-    ['after_review', 'follow', 'follow'],
+    ['instruction_ai', '', null],
+    ['instruction_ai', 'aip_sol', 'aip_sol'],
     ['review_basis', 'last', 'last'],
     ['instruction', '', undefined],
   ] as const)('%s choice %o stands for %o', (field, text, value) => {
@@ -90,6 +113,15 @@ describe('cardSettingsModel — options (flowgate.v02.0053 T#7)', () => {
     ])
     expect(cardSettingsAiOptions('review_ai', providers, 'aip_sol')[0].key).toBe('option.review_default')
     expect(cardSettingsAiOptions('review_ai', providers, 'aip_gone').at(-1)).toEqual({ value: 'aip_gone', key: 'option.missing', params: { name: 'aip_gone' }, label: null })
+  })
+
+  it('flowgate.v02.0056 F2-1: the 지시 AI options — none first is the run AI (then the assigned AI), then the project’s AI', () => {
+    expect(cardSettingsAiOptions('instruction_ai', providers, null)).toEqual([
+      { value: '', key: 'option.instruction_default', params: {}, label: null },
+      { value: 'aip_opus', key: null, params: {}, label: 'Claude Opus 5' },
+      { value: 'aip_sol', key: null, params: {}, label: 'GPT-5.6 Sol' },
+    ])
+    expect(cardSettingsAiOptions('instruction_ai', providers, 'aip_gone').at(-1)?.key).toBe('option.missing')
   })
 
   it('repeat counts: the server’s choices; restart -1 runs until done, review -1 until it passes', () => {
@@ -143,14 +175,27 @@ describe('cardSettingsModel — availability and refusals (flowgate.v02.0053 T#7
     expect(cardSettingsErrorKey(kind)).toBe(['forbidden', 'not_found', 'network', 'unavailable'].includes(kind) ? `card_error.${kind}` : 'card_error.other')
   })
 
+  it.each([
+    ['invalid', 'unknown_ai', 'card_failure.invalid_reason.unknown_ai'],
+    ['invalid', 'not_a_text', 'card_failure.invalid_reason.not_a_text'],
+    ['invalid', 'invalid_text', 'card_failure.invalid_reason.invalid_text'],
+    ['invalid', 'not_a_setting_of_this_card', 'card_failure.invalid_reason.not_a_setting_of_this_card'],
+    ['invalid', 'something_else', 'card_failure.invalid'],
+    ['invalid', null, 'card_failure.invalid'],
+    ['locked', 'unknown_ai', 'card_failure.locked'],
+  ] as const)('flowgate.v02.0056 F2-1: refusal %s with reason %o -> %s', (kind, reason, key) => {
+    expect(cardSettingsFailureKey(kind, reason)).toBe(key)
+  })
+
   it('every key the rules produce has a ko / en / ja string', () => {
     const keys = [
       ...['read_only_conflict', 'read_only_revision', 'disposed', 'placing', 'locked', 'not_read', 'review_off', 'no_place', 'done'].map((key) => `reason.${key}`),
       ...['locked', 'disposed', 'unavailable', 'invalid', 'forbidden', 'not_found', 'network', 'other'].map((key) => `card_failure.${key}`),
       ...['unavailable', 'forbidden', 'not_found', 'network', 'other'].map((key) => `card_error.${key}`),
+      ...['unknown_ai', 'not_a_text', 'invalid_text', 'not_a_setting_of_this_card'].map((key) => `card_failure.invalid_reason.${key}`),
+      'option.instruction_default', 'instruction_ai.label', 'instruction_ai.hint',
       'option.run_default', 'option.review_default', 'option.missing', 'option.minutes', 'count.until_done', 'count.until_pass', 'count.none', 'count.times',
       'instruction.use', 'instruction.omit', 'instruction.label', 'instruction.hint',
-      'after_review.follow', 'after_review.human', 'after_review.label', 'after_review.hint', 'after_review.note_follow', 'after_review.note_human',
       'review_basis.type', 'review_basis.last', 'failed',
     ]
     for (const locale of ['ko', 'en', 'ja'] as const) {

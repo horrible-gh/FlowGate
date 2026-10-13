@@ -238,6 +238,25 @@ export function nextRunMode(current: DesignerRunMode, cmd: DesignerTopCommand): 
   return current
 }
 
+/**
+ * flowgate.v02.0056 F2-1 (O1 0005-TR §4-2) — the run band's "멈춤 · 다음 카드 N개 대기": cards approved while the
+ * run was stopped whose successors wait for 다음 단계 / 전체 실행. Shown only on a stopped run with such cards.
+ * A stop is not a card state: those cards are done (승인됨) on the Canvas; only this line tells they wait.
+ */
+export interface DesignerRunPending {
+  readonly count: number
+  /** The waiting cards' node keys (the tooltip). */
+  readonly nodeKeys: readonly string[]
+}
+
+export function runPendingView(
+  run: { readonly status: string; readonly pendingPropagationCount?: number; readonly pendingNodeKeys?: readonly string[] } | null | undefined,
+): DesignerRunPending | null {
+  const count = run?.pendingPropagationCount ?? 0
+  if (!run || run.status !== 'stopped' || !(count > 0)) return null
+  return { count, nodeKeys: [...(run.pendingNodeKeys ?? [])] }
+}
+
 // --- menu targets (flowgate.v02.0039 T#3 / v02.0042 / v02.0043) ---------------------------------
 
 /**

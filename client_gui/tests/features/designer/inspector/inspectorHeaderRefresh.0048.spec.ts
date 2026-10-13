@@ -4,6 +4,10 @@
  * the target document (or its Flow, with no doc_id) makes the Frame ask for `refresh-flow`; the
  * Center session reads the Flow's Canvas again quietly and the header shows the new state. The
  * Frame keeps no server state of its own. The real hub runs on the support module's fake stream.
+ * flowgate.v02.0056 F2-1: the Canvas reads its Flow again on a burst of card step frames too (a document review
+ * change, an AI run starting or ending — a card's 지시서 / 결과 step and its wait for approval move without a node
+ * event, flowCanvasEvents CANVAS_CARD_STEP_EVENTS), once per burst; so a review change of the target is two reads
+ * again (the Canvas' own and the Frame's request), and another document of the same Flow is one (the Canvas').
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -128,26 +132,29 @@ describe('header state after a document change event (through the Center session
     expect(get('designer-inspector-doc-status').text()).toBe('검수 대기')
     await passWindow()
 
-    expect(loadFlowCanvas).toHaveBeenCalledTimes(2)
+    // The Frame's refresh-flow and the Canvas' own card step read (flowgate.v02.0056 F2-1).
+    expect(loadFlowCanvas).toHaveBeenCalledTimes(3)
     const status = get('designer-inspector-doc-status')
     expect(status.text()).toBe('승인됨')
     expect(status.attributes('data-value')).toBe('approved')
     expect(get('designer-inspector-state').text()).toBe('완료')
   })
 
-  it('a burst of events is one read again; an event of another document is none', async () => {
+  it('a burst of events is one read again each (the Frame’s, the Canvas’); another document asks the Frame nothing', async () => {
     const { server, loadFlowCanvas } = await selectTask()
     stream.emit('doc_review_status_changed', { docId: ROOT, groupId: FLOW })
     stream.emit('doc_review_status_changed', { docId: 'flowgate.v02.0049.0004-TR', groupId: 'flowgate.v02.0049' })
     await passWindow()
-    expect(loadFlowCanvas).toHaveBeenCalledTimes(1)
+    // Another document of the Flow: the Canvas' card step read only (another Flow's: none).
+    expect(loadFlowCanvas).toHaveBeenCalledTimes(2)
 
     server.raw = v01Raw('rejected')
     stream.emit('ai_invoke_finished', { groupId: FLOW })
     stream.emit('document_explorer_refresh', { docId: TR, groupId: FLOW })
     stream.emit('doc_review_status_changed', { docId: TR, groupId: FLOW })
     await passWindow()
-    expect(loadFlowCanvas).toHaveBeenCalledTimes(2)
+    // One for the Frame's burst, one for the Canvas' burst.
+    expect(loadFlowCanvas).toHaveBeenCalledTimes(4)
     expect(get('designer-inspector-doc-status').text()).toBe('반려됨')
   })
 

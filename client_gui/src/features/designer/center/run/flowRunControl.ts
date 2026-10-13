@@ -15,14 +15,31 @@
 // the Flow's Canvas is read again (`refresh`): the cards' colour dots are the server's node states. A
 // refusal is kept as `error` (the server's code; the Shell turns it into a short toast) and the run is
 // read again, so the buttons always show the server's run. No AI delegation engine here (0053 CH).
+//
+// flowgate.v02.0056 F2-1 — a card's [승인] on the Canvas (O1 0005-TR §4-1) goes through here too: it approves
+// the card of the Flow's run (read first when this tab does not know it), keeps the run it answers (the band's
+// "멈춤 · 다음 카드 N개 대기" follows it) and reads the Canvas again. One approval per Flow at a time
+// (`approving`, the card's key); it never touches `action`, so the run buttons stay as they are. A refusal is
+// kept as `error` with kind `approval` (the Shell words it by cardStateView's grouping, with the server's own
+// message) and the run is read again. What the refusal names in its params (the refused document, why, the
+// documents approved before it) is kept with it (`refusal`), so the Shell's toast can say it too.
+import { cardApprovalFailureView, cardApprovalRefusalOf, type CardApprovalFailureView, type CardApprovalRefusal } from '../graph/cardStateView'
 import type { FlowGraphSource, FlowRunError, FlowRunInfo } from '../graph/flowGraphSource'
 
 export type FlowRunMode = 'next' | 'all'
 
 export interface FlowRunFailure {
+  /** What was refused: a run button (`run`) or a card's [승인] (`approval`, flowgate.v02.0056 F2-1). */
+  readonly kind: 'run' | 'approval'
   /** The server's error code, or null (transport / unknown failure). */
   readonly code: string | null
+  /** The HTTP status, or null (no answer). */
+  readonly status: number | null
   readonly message: string
+  /** flowgate.v02.0056 F2-1: how a refused [승인] is worded and handled (cardStateView), else null. */
+  readonly approval: CardApprovalFailureView | null
+  /** flowgate.v02.0056 F2-1: what a refused [승인] names in its params (cardApprovalRefusalOf), else null. */
+  readonly refusal: CardApprovalRefusal | null
   /** Grows with every refusal, so the same refusal twice is still told apart. */
   readonly seq: number
 }
@@ -34,6 +51,8 @@ export interface FlowRunState {
   action: FlowRunMode | 'stop' | null
   /** The button that set the run going (`all` once 전체 실행 started it; null = not known here). */
   mode: FlowRunMode | null
+  /** flowgate.v02.0056 F2-1: the card whose [승인] is being answered (its node key), or null. */
+  approving: string | null
   error: FlowRunFailure | null
 }
 
@@ -51,6 +70,8 @@ export interface FlowRunControlDeps {
 export interface FlowRunControl {
   /** The source can run Flows (a sample source cannot). */
   readonly available: boolean
+  /** flowgate.v02.0056 F2-1: the source can also approve a card of a run. */
+  readonly canApprove: boolean
   /** Reads the Flow's current run (after a Canvas read, on a run event). A failed read changes nothing. */
   read(flowId: string): void
   /** 다음 단계 / 전체 실행. Resolves whether the run went. */
@@ -60,11 +81,32 @@ export interface FlowRunControl {
    * resolves once that answer is in: whether the run is stopped (or was never started / resumed).
    */
   stop(flowId: string): Promise<boolean>
+  /**
+   * flowgate.v02.0056 F2-1: approves the card `nodeKey` of the Flow's run; `resultDocId` is the result the Canvas
+   * showed. Resolves whether it was approved. Ignored while another approval of the Flow is answered.
+   */
+  approve(flowId: string, nodeKey: string, resultDocId: string | null): Promise<boolean>
   forget(flowId: string): void
   clear(): void
 }
 
-export const createFlowRunState = (): FlowRunState => ({ run: null, action: null, mode: null, error: null })
+export const createFlowRunState = (): FlowRunState => ({ run: null, action: null, mode: null, approving: null, error: null })
+
+/** A refused request as the state keeps it (the server's code and status, its message as sent, its params' names). */
+function failureOf(kind: FlowRunFailure['kind'], error: unknown, seq: number): FlowRunFailure {
+  const refused = error as FlowRunError | null
+  const code = typeof refused?.code === 'string' ? refused.code : null
+  const status = typeof refused?.status === 'number' ? refused.status : null
+  return {
+    kind,
+    code,
+    status,
+    message: error instanceof Error ? error.message : '',
+    approval: kind === 'approval' ? cardApprovalFailureView(code, status, code === null && status === null) : null,
+    refusal: kind === 'approval' ? cardApprovalRefusalOf(refused?.params) : null,
+    seq,
+  }
+}
 
 export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<string, FlowRunState>): FlowRunControl {
   const { source } = deps
@@ -117,10 +159,7 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     try {
       ok = await body(projectId, state)
     } catch (error) {
-      if (deps.isOpen(projectId, flowId)) {
-        const code = (error as FlowRunError | null)?.code ?? null
-        state.error = { code: typeof code === 'string' ? code : null, message: error instanceof Error ? error.message : '', seq: ++failures }
-      }
+      if (deps.isOpen(projectId, flowId)) state.error = failureOf('run', error, ++failures)
     } finally {
       state.action = null
       stopWanted.delete(flowId)
@@ -188,11 +227,41 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     })
   }
 
+  async function approve(flowId: string, nodeKey: string, resultDocId: string | null): Promise<boolean> {
+    const projectId = deps.projectId()
+    if (!available || !source.approveNode || projectId === null) return false
+    const state = stateOf(flowId)
+    if (state.approving !== null) return false
+    state.approving = nodeKey
+    state.error = null
+    reads.delete(flowId)
+    let ok = false
+    try {
+      // The run the card belongs to: the Flow's running or stopped run (read when this tab does not know it).
+      const known = state.run && (state.run.status === 'running' || state.run.status === 'stopped') ? state.run : null
+      const runId = known?.runId ?? (await source.loadRun!(projectId, flowId))?.runId ?? null
+      if (runId === null) throw Object.assign(new Error(''), { code: 'run_not_active' })
+      const next = await source.approveNode(projectId, runId, nodeKey, resultDocId)
+      if (deps.isOpen(projectId, flowId) && !state.action) state.run = next
+      ok = true
+    } catch (error) {
+      if (deps.isOpen(projectId, flowId)) state.error = failureOf('approval', error, ++failures)
+    } finally {
+      state.approving = null
+    }
+    if (!deps.isOpen(projectId, flowId)) return false
+    if (!ok) read(flowId)
+    deps.refresh(flowId)
+    return ok
+  }
+
   return {
     available,
+    canApprove: available && !!source.approveNode,
     read,
     run,
     stop,
+    approve,
     forget: (flowId) => {
       reads.delete(flowId)
       going.delete(flowId)

@@ -53,3 +53,15 @@ export function slotStateView(state: SlotStateInput | null | undefined, empty: b
   if (!state || !SLOT_STATE_SHOWN_TONES.includes(state.tone)) return NONE
   return { kind: 'badge', tone: state.tone, text: state.label, title: slotStateTitle(state), quiet: state.tone === 'success' }
 }
+
+/**
+ * flowgate.v02.0056 F2-1 (O2 0007-TR §4-3) — who writes a card line, when it is worth saying: a run card's
+ * instruction line is `instruction_ai_or_human` (its instruction AI or a person — "지시 AI 또는 사람"). The other
+ * authors (`human` requirement / plan lines, `run` results) are told by the line's name, so nothing is drawn.
+ * Answers the message key (under `gui.designer.inspector.slot.author.`) or null.
+ */
+export const SLOT_AUTHORS_SHOWN: readonly string[] = ['instruction_ai_or_human']
+
+export function slotAuthorKey(author: string | null | undefined): string | null {
+  return author && SLOT_AUTHORS_SHOWN.includes(author) ? `gui.designer.inspector.slot.author.${author}` : null
+}

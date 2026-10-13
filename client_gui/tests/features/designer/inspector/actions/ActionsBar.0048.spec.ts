@@ -6,6 +6,9 @@
  * and document events read again through the real hub, read-only Flows, an action in flight and a
  * Node change. Last, the real registry puts the bar in the Frame header of review cards only, and
  * no Graph run / retry / gate / expansion / delegation button exists anywhere.
+ * flowgate.v02.0056 F2-1: the header's document 승인 / 반려 (with the reason dialog and the TR commit line) are
+ * removed — a card is approved with its own [승인] — so the bar holds the v0.1 run / rework of a v0.1 Flow's work
+ * cards only; the approve / reject mocks stay to pin that nothing calls them, and the gate keeps ✓ 확인 · ✕ 반려.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -146,23 +149,35 @@ const shown = (w: VueWrapper<any>) => ['approve', 'reject', 'run', 'rework'].fil
 const disabled = (w: VueWrapper<any>, name: string) => button(w, name).attributes('disabled') !== undefined
 const line = (w: VueWrapper<any>) => w.find('[data-test="actions-line"]')
 
-const body = () => document.body
-const dialog = () => body().querySelector('[data-test="actions-reject-dialog"]')
-const dialogButton = (name: string) => body().querySelector<HTMLButtonElement>(`[data-test="actions-reject-${name}"]`)
+// --- No approve / reject (flowgate.v02.0056 F2-1) ----------------------------------------------------
 
-async function typeReason(text: string) {
-  const area = body().querySelector<HTMLTextAreaElement>('[data-test="actions-reject-reason"] textarea, textarea[data-test="actions-reject-reason"]')!
-  area.value = text
-  area.dispatchEvent(new Event('input'))
-  await flushPromises()
-}
+describe('header actions — the document 승인 / 반려 are gone (flowgate.v02.0056 F2-1)', () => {
+  it.each(['pending_review', 'revised', 'rejected', null])('a v0.1 TR (%s): no 승인 / 반려 button, no reason dialog, no TR commit line', async (status) => {
+    docs.get(V01_DOC)!.status = status
+    const w = await mountBar(v01Target({ docReviewStatus: status }))
+    expect(button(w, 'approve').exists()).toBe(false)
+    expect(button(w, 'reject').exists()).toBe(false)
+    expect(document.body.querySelector('[data-test="actions-reject-dialog"]')).toBeNull()
+    expect(w.text()).not.toMatch(/승인|반려|TR 커밋/)
+  })
+
+  it('nothing in the bar calls the v0.1 approve / reject', async () => {
+    const w = await mountBar(v01Target())
+    for (const name of ['run']) {
+      await button(w, name).trigger('click')
+      await flushPromises()
+    }
+    expect(approveCall).not.toHaveBeenCalled()
+    expect(rejectCall).not.toHaveBeenCalled()
+  })
+})
 
 // --- Calls -----------------------------------------------------------------------------------------
 
 describe('header actions — calls and state read again (flowgate.v02.0048 T#6)', () => {
-  it('a v0.1 TR under review shows approve · reject · ▶ run, read once each', async () => {
+  it('a v0.1 TR under review shows ▶ run only, read once each', async () => {
     const w = await mountBar(v01Target())
-    expect(shown(w)).toEqual(['approve', 'reject', 'run'])
+    expect(shown(w)).toEqual(['run'])
     expect(documentRead).toHaveBeenCalledTimes(1)
     expect(documentRead).toHaveBeenCalledWith(V01_DOC)
     expect(activityRead).toHaveBeenCalledTimes(1)
@@ -170,59 +185,15 @@ describe('header actions — calls and state read again (flowgate.v02.0048 T#6)'
     expect(line(w).exists()).toBe(false)
   })
 
-  it('approve calls the API, reads again, and the new state hides the decision; the TR commit is shown', async () => {
-    const w = await mountBar(v01Target())
-    await button(w, 'approve').trigger('click')
-    await flushPromises()
-    expect(approveCall).toHaveBeenCalledWith(V01_DOC)
-    expect(documentRead).toHaveBeenCalledTimes(2)
-    expect(activityRead).toHaveBeenCalledTimes(2)
-    expect(shown(w)).toEqual([])
-    expect(line(w).attributes('data-kind')).toBe('notice')
-    expect(line(w).text()).toBe('TR 커밋 abcdef01 feat(inspector): header actions')
-  })
-
-  it('reject opens the reason dialog; an empty reason is not sent; the reason is sent and the dialog closes', async () => {
-    const w = await mountBar(v01Target())
-    await button(w, 'reject').trigger('click')
-    await flushPromises()
-    expect(dialog()).not.toBeNull()
-    expect(dialogButton('submit')!.disabled).toBe(true)
-    await typeReason('   ')
-    expect(dialogButton('submit')!.disabled).toBe(true)
-    await typeReason('  근거 문서 링크 누락 ')
-    expect(dialogButton('submit')!.disabled).toBe(false)
-    dialogButton('submit')!.click()
-    await flushPromises()
-    expect(rejectCall).toHaveBeenCalledWith(V01_DOC, '근거 문서 링크 누락')
-    expect(dialog()).toBeNull()
-    expect(documentRead).toHaveBeenCalledTimes(2)
-    // Rejected: the decision is gone and the rework of the rejected document appears.
+  it('a rejected document shows ↻ rework (action_scope rework); the run then owns the group', async () => {
+    docs.get(V01_DOC)!.status = 'rejected'
+    const w = await mountBar(v01Target({ docReviewStatus: 'rejected' }))
     expect(shown(w)).toEqual(['rework'])
-  })
-
-  it('cancel closes the dialog without a call', async () => {
-    const w = await mountBar(v01Target())
-    await button(w, 'reject').trigger('click')
-    await flushPromises()
-    dialogButton('cancel')!.click()
-    await flushPromises()
-    expect(dialog()).toBeNull()
-    expect(rejectCall).not.toHaveBeenCalled()
-  })
-
-  it('"reject, then run again" is two steps: reject, then ↻ rework (action_scope rework)', async () => {
-    const w = await mountBar(v01Target())
-    await button(w, 'reject').trigger('click')
-    await flushPromises()
-    await typeReason('테스트 누락')
-    dialogButton('submit')!.click()
-    await flushPromises()
     await button(w, 'rework').trigger('click')
     await flushPromises()
     expect(runStart).toHaveBeenCalledWith({ groupId: V01_FLOW, docId: V01_DOC, scope: 'rework' })
     // The run now owns the group: read again, every operation waits.
-    expect(activityRead).toHaveBeenCalledTimes(3)
+    expect(activityRead).toHaveBeenCalledTimes(2)
     expect(disabled(w, 'rework')).toBe(true)
     expect(line(w).text()).toBe('AI 실행 중이라 바꿀 수 없습니다.')
   })
@@ -232,24 +203,23 @@ describe('header actions — calls and state read again (flowgate.v02.0048 T#6)'
     await button(w, 'run').trigger('click')
     await flushPromises()
     expect(runStart).toHaveBeenCalledWith({ groupId: V01_FLOW, docId: V01_DOC, scope: 'edit' })
-    expect(['approve', 'reject', 'run'].every((name) => disabled(w, name))).toBe(true)
+    expect(documentRead).toHaveBeenCalledTimes(2)
+    expect(disabled(w, 'run')).toBe(true)
   })
 
-  it('while a call waits every operation is disabled and a second click sends nothing', async () => {
+  it('while a call waits the button is disabled and a second click sends nothing', async () => {
     let answer: (value: unknown) => void = () => {}
-    approveCall.mockImplementation(() => new Promise((resolve) => (answer = resolve)))
+    runStart.mockImplementation(() => new Promise((resolve) => (answer = resolve)))
     const w = await mountBar(v01Target())
-    await button(w, 'approve').trigger('click')
-    await flushPromises()
-    expect(w.get('[data-test="inspector-actions"]').attributes('data-busy')).toBe('approve')
-    expect(['approve', 'reject', 'run'].every((name) => disabled(w, name))).toBe(true)
     await button(w, 'run').trigger('click')
-    expect(runStart).not.toHaveBeenCalled()
-    docs.get(V01_DOC)!.status = 'approved'
-    answer(toReviewTransitionResult({ document: rowOf(V01_DOC) }))
     await flushPromises()
-    expect(approveCall).toHaveBeenCalledTimes(1)
-    expect(shown(w)).toEqual([])
+    expect(w.get('[data-test="inspector-actions"]').attributes('data-busy')).toBe('run')
+    expect(disabled(w, 'run')).toBe(true)
+    await button(w, 'run').trigger('click')
+    running = true
+    answer({ runId: 'run_1', status: 'running' })
+    await flushPromises()
+    expect(runStart).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -258,10 +228,10 @@ describe('header actions — calls and state read again (flowgate.v02.0048 T#6)'
 describe('header actions — refusals are shown and the state is read again', () => {
   it('409 state contention: reason shown, read again, the server state wins', async () => {
     const w = await mountBar(v01Target())
-    // Someone else decided first: the server already holds approved.
-    refusals.set('approve', axiosError(409, { detail: "Invalid review transition: doc_review_status='approved' + action='approve'" }))
+    // The document was approved meanwhile: the server refuses the run and holds approved.
+    refusals.set('run', axiosError(409, { detail: "Invalid review transition: doc_review_status='approved'" }))
     docs.get(V01_DOC)!.status = 'approved'
-    await button(w, 'approve').trigger('click')
+    await button(w, 'run').trigger('click')
     await flushPromises()
     expect(line(w).attributes('data-kind')).toBe('failure')
     expect(line(w).text()).toBe('지금 상태에서는 처리할 수 없어 거절되었습니다. 상태를 다시 읽었습니다.')
@@ -269,24 +239,15 @@ describe('header actions — refusals are shown and the state is read again', ()
     expect(shown(w)).toEqual([])
   })
 
-  it('409 of a server gate (empty body, not the workflow head): reason shown, the buttons stay usable', async () => {
+  it('423 GROUP_AI_RUN_LOCKED: "AI running" reason, activity read again, the run disabled', async () => {
     const w = await mountBar(v01Target())
-    refusals.set('approve', axiosError(409, { detail: '본문이 비어 있어 승인할 수 없습니다. 문서 내용을 채운 뒤 다시 승인하십시오.' }))
-    await button(w, 'approve').trigger('click')
-    await flushPromises()
-    expect(line(w).text()).toBe('지금 상태에서는 처리할 수 없어 거절되었습니다. 상태를 다시 읽었습니다.')
-    expect(disabled(w, 'approve')).toBe(false)
-  })
-
-  it('423 GROUP_AI_RUN_LOCKED: "AI running" reason, activity read again, every operation disabled', async () => {
-    const w = await mountBar(v01Target())
-    refusals.set('approve', axiosError(423, { error: { code: 'GROUP_AI_RUN_LOCKED', message: 'x', run_live: true } }))
+    refusals.set('run', axiosError(423, { error: { code: 'GROUP_AI_RUN_LOCKED', message: 'x', run_live: true } }))
     running = true
-    await button(w, 'approve').trigger('click')
+    await button(w, 'run').trigger('click')
     await flushPromises()
     expect(line(w).text()).toBe('AI 실행 중이라 거절되었습니다. 상태를 다시 읽었습니다.')
     expect(activityRead).toHaveBeenCalledTimes(2)
-    expect(['approve', 'reject', 'run'].every((name) => disabled(w, name))).toBe(true)
+    expect(disabled(w, 'run')).toBe(true)
   })
 
   it('409 run_in_progress on ▶ run: "AI running" reason', async () => {
@@ -301,31 +262,12 @@ describe('header actions — refusals are shown and the state is read again', ()
 
   it('409 group_disposed: "disposed" reason; the read again knows the group is disposed', async () => {
     const w = await mountBar(v01Target())
-    refusals.set('approve', axiosError(409, { detail: `group_disposed: ${V01_DOC} belongs to a disposed group` }))
+    refusals.set('run', axiosError(409, { detail: `group_disposed: ${V01_DOC} belongs to a disposed group` }))
     docs.get(V01_DOC)!.disposed = true
-    await button(w, 'approve').trigger('click')
+    await button(w, 'run').trigger('click')
     await flushPromises()
     expect(line(w).text()).toBe('폐기된 그룹이라 거절되었습니다. 상태를 다시 읽었습니다.')
-    expect(['approve', 'reject', 'run'].every((name) => disabled(w, name))).toBe(true)
-  })
-
-  it('a refused reject keeps the dialog open with its reason', async () => {
-    const w = await mountBar(v01Target())
-    await button(w, 'reject').trigger('click')
-    await flushPromises()
-    await typeReason('사유')
-    refusals.set('reject', axiosError(409, { detail: 'Invalid review transition' }))
-    dialogButton('submit')!.click()
-    await flushPromises()
-    expect(dialog()).not.toBeNull()
-    expect(body().querySelector('[data-test="actions-reject-failure"]')!.textContent).toBe('지금 상태에서는 처리할 수 없어 거절되었습니다. 상태를 다시 읽었습니다.')
-    expect(documentRead).toHaveBeenCalledTimes(2)
-    // Opening it again starts clean.
-    dialogButton('cancel')!.click()
-    await flushPromises()
-    await button(w, 'reject').trigger('click')
-    await flushPromises()
-    expect(body().querySelector('[data-test="actions-reject-failure"]')).toBeNull()
+    expect(disabled(w, 'run')).toBe(true)
   })
 
   it.each([
@@ -334,46 +276,46 @@ describe('header actions — refusals are shown and the state is read again', ()
     ['500', axiosError(500, {}), '조작을 마치지 못했습니다.'],
   ])('%s: reason shown, nothing stays blocked', async (_label, refusal, text) => {
     const w = await mountBar(v01Target())
-    refusals.set('approve', refusal)
-    await button(w, 'approve').trigger('click')
+    refusals.set('run', refusal)
+    await button(w, 'run').trigger('click')
     await flushPromises()
     expect(line(w).text()).toBe(text)
     expect(documentRead).toHaveBeenCalledTimes(2)
-    expect(disabled(w, 'approve')).toBe(false)
+    expect(disabled(w, 'run')).toBe(false)
   })
 
-  it("a refusal answered after the Node changed is not shown on the new Node", async () => {
+  it('a refusal answered after the Node changed is not shown on the new Node', async () => {
     let fail: (error: unknown) => void = () => {}
-    approveCall.mockImplementation(() => new Promise((_resolve, reject) => (fail = reject)))
+    runStart.mockImplementation(() => new Promise((_resolve, reject) => (fail = reject)))
     const other = 'flowgate.v02.0048.0013-TR'
     docs.set(other, { status: 'pending_review', typeCode: 'TR', disposed: false })
     const w = await mountBar(v01Target())
-    await button(w, 'approve').trigger('click')
+    await button(w, 'run').trigger('click')
     await w.setProps({ target: v01Target({ docId: other, nodeId: `doc:${other}` }) })
     fail(axiosError(409, { detail: 'x' }))
     await flushPromises()
     expect(line(w).exists()).toBe(false)
-    expect(shown(w)).toEqual(['approve', 'reject', 'run'])
+    expect(shown(w)).toEqual(['run'])
   })
 })
 
 // --- Availability inputs ---------------------------------------------------------------------------
 
 describe('header actions — AI activity, disposed, read only', () => {
-  it('an AI run of the group disables every operation with its reason', async () => {
+  it('an AI run of the group disables the run with its reason', async () => {
     running = true
     const w = await mountBar(v01Target())
-    expect(['approve', 'reject', 'run'].every((name) => disabled(w, name))).toBe(true)
+    expect(disabled(w, 'run')).toBe(true)
     expect(line(w).attributes('data-kind')).toBe('reason')
     expect(line(w).text()).toBe('AI 실행 중이라 바꿀 수 없습니다.')
-    await button(w, 'approve').trigger('click')
-    expect(approveCall).not.toHaveBeenCalled()
+    await button(w, 'run').trigger('click')
+    expect(runStart).not.toHaveBeenCalled()
   })
 
-  it('a disposed group disables every operation', async () => {
+  it('a disposed group disables the run', async () => {
     docs.get(V01_DOC)!.disposed = true
     const w = await mountBar(v01Target())
-    expect(['approve', 'reject', 'run'].every((name) => disabled(w, name))).toBe(true)
+    expect(disabled(w, 'run')).toBe(true)
     expect(line(w).text()).toBe('폐기된 그룹이라 바꿀 수 없습니다.')
   })
 
@@ -383,24 +325,18 @@ describe('header actions — AI activity, disposed, read only', () => {
     expect(shown(w)).toEqual(['rework'])
   })
 
-  it('a Graph revision view: the decision is shown disabled with the read-only reason, no run', async () => {
-    const w = await mountBar(v01Target({ ownership: 'graph', viewMode: 'revision', readOnly: 'revision' }))
-    expect(shown(w)).toEqual(['approve', 'reject'])
-    expect(disabled(w, 'approve') && disabled(w, 'reject')).toBe(true)
-    expect(line(w).text()).toBe('Graph revision 보기에서는 바꿀 수 없습니다. draft 보기로 옮기세요.')
-    await button(w, 'approve').trigger('click')
-    expect(approveCall).not.toHaveBeenCalled()
+  it.each([
+    ['a Graph revision view', { ownership: 'graph', viewMode: 'revision', readOnly: 'revision' as const }],
+    ['a Graph draft view', { ownership: 'graph', viewMode: 'draft', readOnly: null }],
+    ['an unassigned Flow', { ownership: 'unassigned', viewMode: 'draft', readOnly: null }],
+  ])('%s: nothing (the v0.1 run is a v0.1 Flow\'s; a Graph card is approved with its own [승인])', async (_label, fields) => {
+    const w = await mountBar(v01Target(fields))
+    expect(w.find('[data-test="inspector-actions"]').exists()).toBe(false)
   })
 
-  it('the same Node in the draft view: the decision is usable', async () => {
-    const w = await mountBar(v01Target({ ownership: 'graph', viewMode: 'draft', readOnly: null }))
-    expect(shown(w)).toEqual(['approve', 'reject'])
-    expect(disabled(w, 'approve')).toBe(false)
-  })
-
-  it('an ownership conflict: disabled with the conflict reason', async () => {
-    const w = await mountBar(v01Target({ ownership: 'conflict', viewMode: 'revision', readOnly: 'conflict' }))
-    expect(shown(w)).toEqual(['approve', 'reject'])
+  it('an ownership conflict on a v0.1 Flow: the run disabled with the conflict reason', async () => {
+    const w = await mountBar(v01Target({ readOnly: 'conflict' }))
+    expect(shown(w)).toEqual(['run'])
     expect(line(w).text()).toBe('소유 충돌 Flow라 바꿀 수 없습니다.')
   })
 
@@ -446,13 +382,13 @@ describe('header actions — server events read again (D#1 §7.4)', () => {
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
     await flushPromises()
     expect(activityRead).toHaveBeenCalledTimes(2)
-    expect(disabled(w, 'approve')).toBe(true)
+    expect(disabled(w, 'run')).toBe(true)
     running = false
     stream.emit('ai_invoke_finished', { groupId: V01_FLOW, docId: 'flowgate.v02.0048.0013-TR' })
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
     await flushPromises()
     expect(activityRead).toHaveBeenCalledTimes(3)
-    expect(disabled(w, 'approve')).toBe(false)
+    expect(disabled(w, 'run')).toBe(false)
     // Another Flow's run changes nothing here.
     stream.emit('ai_invoke_started', { groupId: 'flowgate.v02.0049', docId: 'flowgate.v02.0049.0007-TS' })
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
@@ -474,18 +410,24 @@ describe('header actions in the Frame (real registry)', () => {
     return selectionOf({ ...V01_GRAPH, nodes: [node] }, node.id)
   }
 
-  it('a v0.1 document under review: the bar sits in the header actions', async () => {
+  it('a v0.1 document under review: the header holds ▶ 실행 only — no 승인 / 반려 (flowgate.v02.0056 F2-1)', async () => {
     const w = await mountFrame(SELECTIONS.v01)
     const actions = w.get('[data-test="designer-inspector-actions"]')
     expect(actions.find('[data-test="inspector-actions"]').exists()).toBe(true)
-    expect(actions.findAll('button').map((b) => b.text())).toEqual(['승인', '반려', '▶ 실행'])
+    expect(actions.findAll('button').map((b) => b.text())).toEqual(['▶ 실행'])
   })
 
-  it.each([
-    ['v01 slot without a document', SELECTIONS.v01NoDocument],
-    ['graph gate', SELECTIONS.graphGate],
-  ])('%s: no header actions (D#1 §4.4)', async (_label, selection) => {
-    const w = await mountFrame(selection)
+  it('the gate keeps its ✓ 확인 · ✕ 반려 in the header; there are no document actions there', async () => {
+    const w = await mountFrame(SELECTIONS.graphGate)
+    const actions = w.get('[data-test="designer-inspector-actions"]')
+    expect(actions.find('[data-test="inspector-actions"]').exists()).toBe(false)
+    expect(actions.find('[data-test="gate-confirm"]').text()).toBe('✓ 확인')
+    expect(actions.find('[data-test="gate-reject"]').text()).toBe('✕ 반려 ▾')
+    expect(documentRead).not.toHaveBeenCalled()
+  })
+
+  it('v01 slot without a document: no header actions (D#1 §4.4)', async () => {
+    const w = await mountFrame(SELECTIONS.v01NoDocument)
     expect(w.find('[data-test="inspector-actions"]').exists()).toBe(false)
     expect(documentRead).not.toHaveBeenCalled()
   })
@@ -493,6 +435,8 @@ describe('header actions in the Frame (real registry)', () => {
   it.each([
     ['AC (check card: T#12)', 'AC'],
     ['M (other)', 'M'],
+    ['R (requirement)', 'R'],
+    ['WP (plan)', 'WP'],
   ])('%s: not registered', async (_label, typeCode) => {
     docs.set(V01_DOC, { status: 'pending_review', typeCode, disposed: false })
     const w = await mountFrame(withNode({ docType: typeCode }, { typeCode }))
@@ -500,20 +444,24 @@ describe('header actions in the Frame (real registry)', () => {
     expect(documentRead).not.toHaveBeenCalled()
   })
 
-  it.each(['R', 'B', 'N', 'NR', 'T', 'TR', 'T2', 'TR2', 'DS', 'D', 'P', 'L', 'DB', 'TS', 'TSR', 'V', 'WP'])('%s under review: approve and reject', async (typeCode) => {
+  it.each(['TS', 'TSR', 'V'])('%s (test) under review on a v0.1 Flow: no header document actions', async (typeCode) => {
     docs.set(V01_DOC, { status: 'pending_review', typeCode, disposed: false })
     const w = await mountFrame(withNode({ docType: typeCode }, { typeCode }))
-    const labels = w.findAll('[data-test="inspector-actions"] button').map((b) => b.text())
-    expect(labels.slice(0, 2)).toEqual(['승인', '반려'])
-    expect(labels.includes('▶ 실행')).toBe(['N', 'NR', 'T', 'TR', 'T2', 'TR2', 'DS', 'D', 'P', 'L', 'DB'].includes(typeCode))
+    expect(w.find('[data-test="inspector-actions"]').exists()).toBe(false)
   })
 
-  it('a graph document Node under review: decision only, no Graph run / retry / gate button', async () => {
+  it.each(['N', 'NR', 'T', 'TR', 'T2', 'TR2', 'DS', 'D', 'P', 'L', 'DB'])('%s under review on a v0.1 Flow: ▶ 실행 only', async (typeCode) => {
+    docs.set(V01_DOC, { status: 'pending_review', typeCode, disposed: false })
+    const w = await mountFrame(withNode({ docType: typeCode }, { typeCode }))
+    expect(w.findAll('[data-test="inspector-actions"] button').map((b) => b.text())).toEqual(['▶ 실행'])
+  })
+
+  it('a graph document Node under review: no header document actions', async () => {
     const graph = SELECTIONS.graph
     const node: FlowGraphNode = { ...graph.node, document: { ...graph.node.document!, docReviewStatus: 'pending_review' } }
     docs.set(node.document!.docId, { status: 'pending_review', typeCode: 'TS', disposed: false })
     const w = await mountFrame({ ...graph, node })
-    expect(w.findAll('[data-test="inspector-actions"] button').map((b) => b.text())).toEqual(['승인', '반려'])
+    expect(w.find('[data-test="inspector-actions"]').exists()).toBe(false)
   })
 
   it.each([

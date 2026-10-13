@@ -344,7 +344,10 @@ export interface FlowCanvasCardDocument {
   /** requirement · delegation · plan · deploy · instruction · scenario · report. */
   slot: string
   docType: string | null
-  /** `human` (a person writes it) | `run` (a run fills it). */
+  /**
+   * `human` (a person writes it) | `run` (a run fills it) | `instruction_ai_or_human` (flowgate.v02.0056 O2: a
+   * run card's instruction line — its instruction AI or a person writes it).
+   */
   author: string | null
   docId: string | null
   title: string | null
@@ -358,6 +361,12 @@ export interface FlowCanvasNodeRun {
   openedAt: string | null
   finishedAt: string | null
   resultDocId: string | null
+  /** flowgate.v02.0056 F2-1 (O1 0005-TR §4-2): the card waits for its approval; absent when not sent. */
+  awaitingApproval?: boolean
+  /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): `instruction` | `result` | null; absent when not sent. */
+  stage?: string | null
+  /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): the card run's instruction document; absent when not sent. */
+  instructionDocId?: string | null
 }
 
 /** P0008 §2.6 `graph_node`: what a Graph node is, besides where it is drawn. */
@@ -554,6 +563,10 @@ export interface FlowRunNode {
   /** `pending` | `open` | `review` | `done` | `rejected` … (open key, as sent). */
   status: string
   resultDocId: string | null
+  /** flowgate.v02.0056 F2-1 (O1 0005-TR §4-2): the card waits for its approval; absent when not sent. */
+  awaitingApproval?: boolean
+  /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): `instruction` | `result` | null; absent when not sent. */
+  stage?: string | null
 }
 
 /** A Graph run (P0008 S5-4). */
@@ -567,4 +580,19 @@ export interface FlowRun {
   /** Present when the server answered with the nodes (start / current / gate decision). */
   nodeRuns: FlowRunNode[] | null
   lastEventSeq: number
+  /**
+   * flowgate.v02.0056 F2-1 (O1 0005-TR §4-2): cards approved while the run was stopped whose successors wait for
+   * the run to go on ("멈춤 · 다음 카드 N개 대기"), and their node keys (sorted). 0 / [] when not sent.
+   */
+  pendingPropagationCount: number
+  pendingNodeKeys: string[]
+}
+
+/** flowgate.v02.0056 F2-1 (O1 0005-TR §4-1): what a card approval did. */
+export interface FlowRunApproval {
+  nodeKey: string
+  /** The card's documents in the order they are approved (instruction first, the result last). */
+  targetDocIds: string[]
+  /** The documents this approval approved. */
+  approvedDocIds: string[]
 }
