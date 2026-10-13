@@ -31,6 +31,14 @@ _FIXED = {
                        "同じ二つのノードを結ぶエッジが複数あります。"),
     "unreachable_node": ("시작 노드에서 도달할 수 없는 노드입니다.", "The node cannot be reached from a start node.",
                          "開始ノードから到達できないノードです。"),
+    # flowgate.v02.0061 pre-run validation (``flowgate.graph_validation``, 0002-CH turn 13 rules 3 / 4)
+    "excluded_path_join": (
+        "실행 대상이 아닌 경로가 실행 경로에 합류합니다. 요구사항·버그 노드에서 시작하지 않는 경로는 실행 경로에 연결할 수 없습니다.",
+        "A path that is not run (it does not start from a requirement / bug node) joins the run path.",
+        "実行対象ではない経路（要求・バグノードから始まらない経路）が実行経路に合流しています。",
+    ),
+    "cycle": ("순환 연결은 허용하지 않습니다.", "A cycle (an edge going back) is not allowed.",
+              "循環（戻るエッジ）は許可されません。"),
     "non_palette_doc_type": (
         "Palette 기본 문서 타입이 아닌 노드를 허용할지 아직 정해지지 않았습니다.",
         "Whether a node of a non-Palette document type is allowed has not been decided yet.",

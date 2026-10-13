@@ -8,6 +8,10 @@ nothing here decides whether they are allowed. A slot is filled by registering a
 The run side (L0009 §2.6.2) keeps the system default policy set: per key the policy value and
 the implementation version a run snapshots at start. Both stay ``undecided`` until §8 answers;
 ``set_system_default`` is the registration point for a decided value.
+
+flowgate.v02.0061: ``register`` fills a slot for the validator side (``_registered``);
+``flowgate.graph_policies.integration.register`` (startup) is what uses it, with the decided rules of
+``start_node`` (the start), ``edge_condition`` / ``parallelism`` (a branch) and ``join`` (a join).
 """
 from __future__ import annotations
 
@@ -32,6 +36,18 @@ SYSTEM_SET_VERSION = "1"
 
 _registered: dict[str, Any] = {}
 _system_default: dict[str, tuple[str, str]] = {key: (UNDECIDED, UNDECIDED_IMPL_VERSION) for key in POLICY_KEYS}
+
+
+def register(key: str, implementation: Any) -> None:
+    """Fill a slot for the validator: ``implementation.validate(graph, occurrence) -> issues`` decides the
+    structures the slot governs, and its ``key`` attribute is what ``policy_states`` reports. Registering the
+    same object again is a no-op; a different object is refused (a change is a new slot value)."""
+    if key not in POLICY_KEYS:
+        raise KeyError(key)
+    taken = _registered.get(key)
+    if taken is not None and taken is not implementation:
+        raise ValueError(f"policy already registered for slot {key}")
+    _registered[key] = implementation
 
 
 def current() -> dict[str, Any]:

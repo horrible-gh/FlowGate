@@ -291,6 +291,38 @@ def start_card_memo_integration():
         logger.warning(f"[startup] card memo integration registration failed: {exc}")
 
 
+def start_graph_policy_integration():
+    """flowgate.v02.0061 (R §2.1 시작점, §2.4 분기, §2.5 합류; D0006 §2.1, §2.3): composition root of the Graph
+    execution policies. Registers ``flowgate.graph_policies`` as the decided rules of the Graph workflow's slots:
+    ``start_node`` = ``root_start`` (a run opens the requirement / bug nodes with no incoming and an outgoing edge;
+    an isolated node and a path they do not reach are left out), ``edge_condition`` / ``parallelism`` =
+    ``fork_all`` / ``unbounded`` (every outgoing edge is followed, every reached node admitted) and ``join`` =
+    ``and_all`` (a node with several incoming edges opens once, after every predecessor is approved).
+    Unregistered, the four slots stay ``undecided``: a branch or a join is refused at confirmation and every run
+    at start, as before. The other slots a run needs (``completion``, ...) are not decided here."""
+    try:
+        from flowgate.graph_policies import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] graph policy integration registration failed: {exc}")
+
+
+def start_graph_validation_integration():
+    """flowgate.v02.0061 (0002-CH turn 13; D0006 §2.1, §2.3): composition root of the Graph pre-run validation.
+    Registers ``flowgate.graph_validation`` at the Graph workflow's validation port (``graph_service.check_draft``:
+    draft validation and confirmation): an isolated node and a path not starting from a requirement / bug node
+    are left out of a run (no issue), a left-out path joining the run path and a cycle are refused, a branch and
+    an AND join are allowed with the policies above. Unregistered, the Graph workflow's own validator runs as
+    before."""
+    try:
+        from flowgate.graph_validation import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] graph validation integration registration failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
@@ -306,6 +338,8 @@ def run_all():
     start_card_settings_integration()
     start_card_approval_integration()
     start_card_memo_integration()
+    start_graph_policy_integration()
+    start_graph_validation_integration()
     encrypt_ai_provider_keys()
     recover_ai_evaluations()
     start_snapshot_cleanup()

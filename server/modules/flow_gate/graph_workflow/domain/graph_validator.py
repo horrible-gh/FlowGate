@@ -8,6 +8,13 @@ layer (locale); issues here carry codes and keys only.
 flowgate.v02.0053 T#8: a Custom card (``custom`` node) is a plain document card like 조사 · 작업, not a
 structure with an undecided rule: it is checked like any document node and never reported as
 ``rule_undecided/custom_node``. A gate keeps waiting on Q-11.
+
+flowgate.v02.0061: the pre-run validation decided there (``flowgate.graph_validation``: an isolated node and a
+path not starting from a root node are no error but left out of a run, a left-out path joining the run path and
+a cycle are refused) composes the pieces of this module — ``well_formed_issues``, ``reachable``,
+``strongly_connected``, ``structural_issues`` with its own start nodes and without the cycle occurrence,
+``order`` — and runs in place of ``validate_graph`` through ``services.graph_validation_ports``.
+``validate_graph`` here is unchanged: what a draft got before 0061, and what it gets with nothing registered.
 """
 from __future__ import annotations
 
@@ -17,7 +24,7 @@ from .graph_model import PALETTE_DOC_TYPES, REPORT_DOC_TYPES, ROOT_DOC_TYPES, Gr
 from .policies import UNDECIDED
 
 _CODE_RANK = [
-    "empty_graph", "dangling_edge", "duplicate_edge", "unreachable_node",
+    "empty_graph", "dangling_edge", "duplicate_edge", "unreachable_node", "excluded_path_join", "cycle",
     "rule_undecided/multiple_start", "rule_undecided/branch", "rule_undecided/edge_condition",
     "rule_undecided/join", "rule_undecided/report_pair", "rule_undecided/cycle",
     "rule_undecided/gate_node", "rule_undecided/non_palette_doc_type",
@@ -46,7 +53,8 @@ def order(issues: list[dict]) -> list[dict]:
     return with_nodes + edge_only
 
 
-def _reachable(starts: list[str], adjacency: Mapping[str, list[str]]) -> set[str]:
+def reachable(starts: list[str], adjacency: Mapping[str, list[str]]) -> set[str]:
+    """The nodes reachable from ``starts`` along ``adjacency`` (``source -> [target]``), ``starts`` included."""
     seen = set(starts)
     stack = list(starts)
     while stack:
@@ -100,14 +108,22 @@ def strongly_connected(keys: list[str], adjacency: Mapping[str, list[str]]) -> l
     return out
 
 
-def _structural(g: Graph, policies: Mapping[str, Any]) -> list[dict]:
+def structural_issues(g: Graph, policies: Mapping[str, Any], starts: Optional[list[str]] = None,
+                      cycle: bool = True) -> list[dict]:
+    """The structures a policy slot governs, each put to its slot (``rule_undecided`` while the slot is), and the
+    non-Palette document types.
+
+    ``starts``: the start nodes the ``multiple_start`` occurrence counts (default: every node without an incoming
+    edge, L0009 §2.0). ``cycle``: whether a cycle is an occurrence of ``rejection_path`` (Q-6); a caller that
+    refuses cycles on its own passes False.
+    """
     edges = g.live_edges()
     out_edges: dict[str, list] = {k: [] for k in g.node_keys()}
     in_edges: dict[str, list] = {k: [] for k in g.node_keys()}
     for e in edges:
         out_edges[e.source].append(e)
         in_edges[e.target].append(e)
-    starts = g.start_keys()
+    starts = g.start_keys() if starts is None else list(starts)
     occurrences: list[tuple[str, str, str, list[str], list[str]]] = []
     if len(starts) >= 2:
         occurrences.append(("multiple_start", "Q-1", "start_node", sorted(starts), []))
@@ -123,12 +139,13 @@ def _structural(g: Graph, policies: Mapping[str, Any]) -> list[dict]:
     for n in g.nodes:
         if n.node_type == "document" and n.doc_type in REPORT_DOC_TYPES:
             occurrences.append(("report_pair", "Q-5", "report_pair", [n.key], []))
-    adjacency = {k: [e.target for e in out_edges[k]] for k in g.node_keys()}
-    for comp in strongly_connected(g.node_keys(), adjacency):
-        members = set(comp)
-        inside = sorted(e.edge_id for e in edges if e.source in members and e.target in members)
-        if len(comp) >= 2 or inside:
-            occurrences.append(("cycle", "Q-6", "rejection_path", comp, inside))
+    if cycle:
+        adjacency = {k: [e.target for e in out_edges[k]] for k in g.node_keys()}
+        for comp in strongly_connected(g.node_keys(), adjacency):
+            members = set(comp)
+            inside = sorted(e.edge_id for e in edges if e.source in members and e.target in members)
+            if len(comp) >= 2 or inside:
+                occurrences.append(("cycle", "Q-6", "rejection_path", comp, inside))
     for n in g.nodes:
         if n.node_type == "gate":
             occurrences.append(("gate_node", "Q-11", "gate_node", [n.key], []))
@@ -146,28 +163,33 @@ def _structural(g: Graph, policies: Mapping[str, Any]) -> list[dict]:
     return issues
 
 
-def validate_graph(g: Graph, policies: Mapping[str, Any]) -> list[dict]:
-    """L0009 §2.5.1. Root binding issues are appended by the caller after ``order``."""
-    if not g.nodes:
-        return [issue("empty_graph")]
+def well_formed_issues(g: Graph) -> list[dict]:
+    """L0009 §2.5.1 ``E``: an edge with an end that is no node of the graph, two edges between the same two nodes."""
     issues: list[dict] = []
     keys = set(g.node_keys())
     for e in g.edges:
         if e.source not in keys or e.target not in keys:
             issues.append(issue("dangling_edge", [], [e.edge_id]))
-    edges = g.live_edges()
     pairs: dict[tuple[str, str], list[str]] = {}
-    for e in edges:
+    for e in g.live_edges():
         pairs.setdefault((e.source, e.target), []).append(e.edge_id)
     for (s, t), ids in pairs.items():
         if len(ids) >= 2:
             issues.append(issue("duplicate_edge", sorted({s, t}), sorted(ids)))
+    return issues
+
+
+def validate_graph(g: Graph, policies: Mapping[str, Any]) -> list[dict]:
+    """L0009 §2.5.1. Root binding issues are appended by the caller after ``order``."""
+    if not g.nodes:
+        return [issue("empty_graph")]
+    issues = well_formed_issues(g)
     adjacency: dict[str, list[str]] = {}
-    for e in edges:
+    for e in g.live_edges():
         adjacency.setdefault(e.source, []).append(e.target)
-    reach = _reachable(g.start_keys(), adjacency)
+    reach = reachable(g.start_keys(), adjacency)
     for n in g.nodes:
         if n.key not in reach:
             issues.append(issue("unreachable_node", [n.key], []))
-    issues.extend(_structural(g, policies))
+    issues.extend(structural_issues(g, policies))
     return order(issues)

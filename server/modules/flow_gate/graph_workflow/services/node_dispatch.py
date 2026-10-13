@@ -29,8 +29,9 @@ binder's evidence) and, for an AI assignee, queues the AI start after the commit
   When the start raises, or nothing is wired, the open node records ``ai_invoke_failed`` in a new
   guard (L0009 E-23); the token stays valid for a person.
 - flowgate.v02.0056 T#2 (0002-CH turn 5 / 6 §3 / 10 O2): an AI card with its instruction used runs in two
-  stages, each one single AI start through the same starter, with no new Graph policy (``report_pair`` is
-  untouched: the two calls live inside one card). The node run records its stage (``graph_node_runs.stage``).
+  stages, each one single AI start through the same starter, inside one card. The 0061 ``report_pair``
+  policy names this existing instruction_result contract; it adds no executor. The node run records its
+  stage (``graph_node_runs.stage``).
 
   1. instruction (``plan["instruction"]``): whether it runs is decided by the body of the card's instruction,
      not by the document existing (``card_settings_ports.instruction_document``, the v0.2 body judgement):

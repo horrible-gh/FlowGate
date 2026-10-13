@@ -21,7 +21,6 @@ from modules.flow_gate.graph_workflow.domain.graph_model import (
     Graph,
     GraphEdge,
 )
-from modules.flow_gate.graph_workflow.domain.graph_validator import validate_graph
 from modules.flow_gate.graph_workflow.domain.root_binding import BindingCheck, check_root_binding
 from modules.flow_gate.graph_workflow.projection.flow_snapshot import (
     alive_documents,
@@ -33,7 +32,7 @@ from modules.flow_gate.graph_workflow.store import assignment_store, definition_
 
 from .canvas_events import publish_canvas_changed
 from .canvas_service import follow_supersede
-from . import card_document_ports
+from . import card_document_ports, graph_validation_ports
 from .engine_router import Ownership, block, confirm_block_reason, read_ownership, require_graph_editable
 from .errors import GraphApiError
 from .flow_guard import with_flow_guard
@@ -128,9 +127,10 @@ def version_conflict(flow_id: str, expected: int, current: Optional[dict]) -> Gr
 
 
 def check_draft(flow_id: str, own: Ownership, draft: dict) -> tuple[list[dict], BindingCheck]:
-    """Structure issues + root binding (L0009 §2.4.2 / §2.5): binding issues come last."""
+    """Structure issues + root binding (L0009 §2.4.2 / §2.5): binding issues come last. The structure is
+    validated through ``graph_validation_ports`` (the flowgate.v02.0061 pre-run rules when registered)."""
     graph = as_graph(draft)
-    issues = validate_graph(graph, policies.current())
+    issues = graph_validation_ports.validate(graph, policies.current())
     snap = read_snapshot(flow_id)
     binding = check_root_binding(
         graph, own.state, alive_documents(snap), assignment_store.root_binding(flow_id),

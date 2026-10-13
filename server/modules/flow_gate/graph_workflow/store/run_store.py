@@ -18,7 +18,10 @@ registration is consumed (the inbox contacts the Graph before it consumes the to
 from __future__ import annotations
 
 import json
-from typing import Iterable, Optional
+from typing import Optional
+
+from ..domain.graph_model import Graph
+from ..domain.run_scope_ports import run_scope
 
 from modules.flow_gate.db.connection import get_store
 
@@ -96,8 +99,14 @@ def active_policy_triples() -> list[dict]:
 
 
 def create_run(run_id: str, flow_id: str, revision_no: int, by: Optional[str], snapshot: dict,
-               node_keys: Iterable[str]) -> dict:
-    """Q-W10: the run (running, active), its nine policy entries and one pending node run per node."""
+               revision: Graph) -> dict:
+    """Q-W10: run, snapshot and pending rows for run_scope targets only.
+
+    Excluded cards remain in the revision/projection without a node_run. Existing
+    runs are not rewritten; completion independently ignores their excluded rows.
+    """
+    targets = run_scope(revision).targets
+    node_keys = [key for key in revision.node_keys() if key in targets]
     store = get_store()
     now = utc_now_ms()
     store._execute(

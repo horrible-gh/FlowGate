@@ -31,6 +31,7 @@ from modules.flow_gate.graph_workflow.domain.run_policies import (
     undecided_for,
 )
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
+from modules.flow_gate.graph_workflow.domain.run_scope_ports import run_scope
 
 from . import node_approval, node_dispatch, result_binder
 from .engine_router import Ownership, read_ownership
@@ -117,11 +118,11 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int]) -> dict:
         if missing:
             raise _undecided(flow_id, number, missing)
         root = probe.root_document() if probe.binding else None                 # 7 결합 문서
-        if probe.binding and root is None:
+        if probe.binding and (root is None or probe.binding["node_key"] not in run_scope(probe.revision).starts):
             raise GraphApiError(409, "root_binding_lost", {"flow_id": flow_id, "node_key": probe.binding["node_key"],
                                                            "doc_id": probe.binding["doc_id"]})
         run = run_store.create_run(new_key(RUN_ID_PREFIX, set()), flow_id, number, user_id, snapshot,
-                                   list(probe.node_rows))
+                                   probe.revision)
         ctx = load_context(run, project_id, user_id, jobs)
         emit_run_status(ctx, None, "running", "user_start")
         try:

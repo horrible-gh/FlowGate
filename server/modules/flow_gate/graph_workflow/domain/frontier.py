@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Optional
 
-from .graph_model import Graph, GraphEdge
+from .graph_model import ROOT_DOC_TYPES, Graph, GraphEdge
 from .run_policies import required_policies
 
 NODE_EVENTS = ("result_submitted", "revised", "review_approved", "review_rejected", "gate_confirmed", "gate_rejected")
@@ -61,6 +61,7 @@ class RunState:
     node_runs: dict[str, NodeRun] = field(default_factory=dict)
     pending: list[PendingPropagation] = field(default_factory=list)
     open_decided: frozenset = frozenset()
+    has_active_attempts: bool = False  # supplied by caller; attempt persistence belongs to T#2
 
     def node(self, key: str) -> Optional[NodeRun]:
         return self.node_runs.get(key)
@@ -133,7 +134,8 @@ def virtual(s: RunState, d: Decision) -> RunState:
             nodes[key] = replace(nodes[key], status="closed")
     done = set(d.propagation_done)
     status = "completed" if d.run_transition == "completed" else s.status
-    return RunState(status, nodes, [p for p in s.pending if p not in done], s.open_decided | frozenset(d.open))
+    return RunState(status, nodes, [p for p in s.pending if p not in done],
+                    s.open_decided | frozenset(d.open), s.has_active_attempts)
 
 
 def transition_doc(s: RunState, nr: NodeRun, event: RunEvent) -> Any:
@@ -244,6 +246,10 @@ def propagate(revision: Graph, s: RunState, node: str, outcome: str, policies: M
             candidates = list(policies["parallelism"].admit(candidates, s.open_nodes()))
         d.open += openable_only(s, candidates)
     elif outcome == "rejected":
+        rejected = revision.node(node)
+        if rejected is None or not (rejected.node_type == "gate" or
+                                    (rejected.node_type == "document" and rejected.doc_type in ROOT_DOC_TYPES)):
+            return d  # ordinary card rejection never routes to another node
         to_open, to_close = policies["rejection_path"].route(node, revision, s)
         d.open += openable_only(s, list(to_open))
         d.close += list(to_close)
