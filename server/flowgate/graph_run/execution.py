@@ -10,7 +10,7 @@ from modules.flow_gate.db import groups as db_groups, ai_invoke_runs
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 from modules.flow_gate.services import graph_execution_hooks
-from flowgate.graph_run import execution_store as ledger, workspace
+from flowgate.graph_run import execution_store as ledger, workspace, scheduling
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ def request_write(job):
     attempt = run_store.active_attempt_id(job["run_id"], job["node_key"])
     if not attempt:
         raise ledger.LeaseLost("write has no active attempt")
+    job["graph_attempt_id"] = attempt
     payload = dict(job)
     payload.pop("graph_exec_id", None)
     # A dispatch token's raw bearer is never persisted in the execution journal.
@@ -150,7 +151,16 @@ def launch(run):
             if run.get("graph_lease_token"):
                 ledger.renew(exec_id, run["graph_lease_token"])
             else:
-                run["graph_lease_token"] = ledger.acquire(exec_id, run["run_id"])
+                # Capacity waits keep the durable request and hold no Flow/DB lock.
+                while not run["cancel_event"].is_set():
+                    token = scheduling.acquire(exec_id, run["run_id"])
+                    if token:
+                        run["graph_lease_token"] = token
+                        break
+                    run["cancel_event"].wait(0.1)
+                if not run.get("graph_lease_token"):
+                    raise ledger.LeaseLost("execution cancelled while waiting for capacity")
+                workspace.verify_execution(exec_id)
             return True
         except (ledger.LeaseLost, workspace.port.GraphSourceError):
             run["graph_lease_lost"] = True
@@ -186,6 +196,8 @@ def finish(run):
     with _lock(run):
         if not run.get("graph_execution_finished"):
             run["graph_execution_finished"] = _finish_owned(run)
+    if run.get("graph_execution_finished"):
+        settle(run["group_id"])
 
 
 def transition(run, loop):
@@ -204,13 +216,18 @@ def transition(run, loop):
             _finish_owned(run)
             payload["loop"] = dict(loop)
             payload["review_run_ids"] = sorted(set(payload.get("review_run_ids") or []) | {run["run_id"]})
-            return ledger.request(row["attempt_id"], row["run_id"], loop["current_stage"], payload)
+            successor = ledger.request(row["attempt_id"], row["run_id"], loop["current_stage"], payload)
+            run_store._affected("UPDATE graph_attempt_runs SET ai_run_id = ? WHERE exec_id = ?",
+                                [run["run_id"], successor])
+            return successor
         successor = with_flow_guard(run["group_id"], body)
         # Publish the successor only after both ledger writes have committed.
         if successor:
             run["graph_exec_id"] = successor
             run.pop("graph_lease_token", None)
             run.pop("graph_execution_finished", None)
+    if successor:
+        settle(run["group_id"])
 
 
 def heartbeat(ai_run_id):
@@ -285,6 +302,11 @@ def recover():
                 return
             if row["status"] == "requested":
                 if ledger.eligible(row):
+                    live = ai_invoke_service.get_run_record(row.get("ai_run_id")) if row.get("ai_run_id") else None
+                    if live and live.get("status") != "finished":
+                        return
+                    run_store._affected("UPDATE graph_attempt_runs SET ai_run_id = NULL WHERE exec_id = ? "
+                                        "AND status = 'requested'", [row["exec_id"]])
                     jobs.append(lambda: replay(row))
                 else:
                     ledger.cancel(row["exec_id"], None, "requested")
@@ -372,6 +394,8 @@ def settle(flow_id):
 
 
 _ACTIONS = {
+    "admission": scheduling.admission, "admit": scheduling.admit, "legacy_acquire": scheduling.legacy_acquire,
+    "execution_wire": scheduling.wire, "opening": scheduling.opening, "can_open": scheduling.can_open,
     "prepare_workspace": workspace.prepare,
     "map_token": map_token, "validate_write": validate_write, "loop_state": loop_state,
     "settle": settle, "request_write": request_write, "request_hop": request_hop, "request_loop": request_loop,

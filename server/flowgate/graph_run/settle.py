@@ -1,28 +1,22 @@
-"""Whether a Graph run goes on (flowgate.v02.0061 T#2, 0002-CH turn 29 / 31 / 33).
+"""0061 settlement and capacity refill (T#2/T#6).
 
-After a step (``run_state_ports.settle``) a running run stays running while a requested or running AI execution
-exists (0061 T#4). Otherwise it opens the candidates its command may still open, and with none it goes idle with
-a reason (``idle_reason``). An active node attempt alone, including a person's approval wait, is not ongoing AI work:
+Running runs launch old requested executions first, then open candidates while
+running + requested is below the Flow limit. A step can refill only its saved
+command targets. Scheduling order is defined in scheduling.py. Paused runs may
+launch existing requests but never open nodes. Idle/stopping never launch work;
+an explicit review request may promote idle to running before its admission.
 
-    completed         the completion policy (0061 T#1) judges the run complete
-    no_targets        no run target, or nothing left for the command (a step whose targets ended)
-    waiting_approval  a card awaiting a person's approval, or an open gate
-    error             an open node whose hand-out or AI start failed
-    blocked_rejected  a rejected root / gate
-
-A person's approval wait is an idle reason only when nothing else works (turn 29). A paused run is never judged.
-
-An idle run keeps its Flow. A node event while idle changes no state, only the reason (its propagation waits for the
-next command). An idle run whose existing work goes on again — a card's review started on a result after the run
-went idle — is running again (cause ``work_resumed``): only the state follows the work; nothing is drained or
-opened by it, and a candidate behind a propagation that waits (a result decided while the run was idle) keeps
-waiting for the next command, which drains it. A paused run never goes on by itself.
+Only requested/running executions keep a run working; an active attempt awaiting
+a person does not occupy a slot. With no work or command candidate left, the run
+becomes idle with completed/no_targets/waiting_approval/error/blocked_rejected.
+Deferred propagation remains deferred until the next explicit command.
 """
 from __future__ import annotations
 
 from typing import Optional
 
 from flowgate.graph_run import legacy_adapter as engine
+from flowgate.graph_run import scheduling
 
 IDLE_COMPLETED, IDLE_NO_TARGETS = "completed", "no_targets"
 IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR = "waiting_approval", "blocked_rejected", "error"
@@ -101,17 +95,24 @@ def settle_plan(ctx) -> Optional[tuple[str, object]]:
     None)`` for an idle run whose existing work goes on again, ``("reason", reason)`` for an idle run whose reason
     changed, or None."""
     status = ctx.run.get("status")
-    if status not in (engine.RUNNING, engine.IDLE):
-        return None                                   # paused: nothing opens and it stays paused
+    if status not in (engine.RUNNING, engine.PAUSED, engine.IDLE):
+        return None
     rows = engine.node_runs(ctx.run_id)
-    if working(ctx, rows):
-        return ("running", None) if status == engine.IDLE else None
+    if status in (engine.RUNNING, engine.PAUSED):
+        if scheduling.requests(ctx.run_id) and scheduling.available(ctx.run_id, ctx.flow_id):
+            return ("refill", None)
+        if status == engine.PAUSED:
+            return None
     state = engine.read_run_state(ctx)
     if status == engine.RUNNING:
         more = _candidates(ctx, state)
-        if more:
+        if more and scheduling.can_open(ctx):
             return ("open", more)
+        if working(ctx, rows):
+            return None
         return ("idle", idle_reason(ctx, rows, state))
+    if working(ctx, rows):
+        return ("running", None)
     reason = idle_reason(ctx, rows, state)
     return ("reason", reason) if reason != ctx.run.get("idle_reason") else None
 
@@ -127,7 +128,13 @@ def settle_run(ctx) -> None:
     if plan is None:
         return
     action, value = plan
-    if action == "open":
+    if action == "refill":
+        scheduling.queue_requests(ctx)
+        if ctx.run["status"] == engine.RUNNING and scheduling.can_open(ctx):
+            more = _candidates(ctx, engine.read_run_state(ctx))
+            if more:
+                engine.apply_decision(ctx, engine.Decision(open=more), settle=False)
+    elif action == "open":
         engine.apply_decision(ctx, engine.Decision(open=list(value)))
     elif action == "idle":
         _assert_one(engine.set_run_status(ctx.run_id, engine.RUNNING, engine.IDLE, str(value)), "idle")

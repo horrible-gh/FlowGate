@@ -132,4 +132,5 @@ def start_ai_invoke(job: dict) -> dict:
         continuation_step_timeout_sec=job.get("step_timeout_sec"),
         node_restart_max_attempts=job.get("restart_max"),
         graph_exec_id=job.get("graph_exec_id"),
+        graph_attempt_id=job.get("graph_attempt_id"),
     )

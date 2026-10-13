@@ -161,7 +161,9 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
         # L0009 D-03: the status a closed node takes waits on Q-4 / Q-6. No decided policy can ask
         # for it yet; refusing (rollback) is safer than inventing a status.
         raise NotImplementedError("closed node status is undecided (L0009 D-03)")
-    for key in sorted(dict.fromkeys(d.open)):
+    for key in graph_execution_hooks.call("opening", ctx, d.open):
+        if not graph_execution_hooks.call("can_open", ctx):
+            break
         run_store.open_attempt(ctx.run_id, key, int(ctx.run["revision_no"]))   # 0061 T#2: one active per node
         dispatch = node_dispatch.dispatch(ctx, key)
         _assert_one(run_store.open_node_run(ctx.run_id, key, dispatch), f"open {key}")

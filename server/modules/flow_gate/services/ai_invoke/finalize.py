@@ -368,7 +368,7 @@ def _finalize_run(run: dict) -> None:
     if not run.get("graph_lease_lost") and (
             not run.get("graph_exec_id") or run.get("graph_execution_finished")):
         ai_run_end_hooks.run_ended(run)
-    if run.get("graph_exec_id"):
+    if run.get("group_id"):
         graph_execution_hooks.call("settle", run.get("group_id"))
 
 

@@ -20,7 +20,7 @@ import anyio.to_thread
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.db import documents as db_docs
@@ -150,6 +150,7 @@ class GroupCreateRequest(BaseModel):
 
 
 class GroupUpdateRequest(BaseModel):
+    graph_execution_limit: Optional[int] = Field(default=None, strict=True, gt=0)
     title: Optional[str] = None
     priority: Optional[str] = None
     module: Optional[str] = None
@@ -299,12 +300,14 @@ def update_group_endpoint(
         title=body.title,
         priority=body.priority,
         module=body.module,
+        graph_execution_limit=body.graph_execution_limit,
     )
     if result.get("status") == "error":
         message = result.get("message", "")
         status_code = 404 if "not found" in message else 400
         raise HTTPException(status_code=status_code, detail=message)
-    return {"group_id": result["group_id"], "updated_at": result["updated_at"]}
+    return {"group_id": result["group_id"], "updated_at": result["updated_at"],
+            "graph_execution_limit": result["graph_execution_limit"]}
 
 
 @router.post("/groups/{gid}/transitions/{action}")

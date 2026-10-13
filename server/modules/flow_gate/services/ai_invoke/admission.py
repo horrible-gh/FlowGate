@@ -37,7 +37,7 @@ from modules.flow_gate.services import token_service
 from modules.flow_gate.services import work_plan_attachment_service
 from modules.flow_gate.settings import ai_execution_policy_service
 from modules.flow_gate.settings import ai_settings_service
-from modules.flow_gate.services import chat_run_hooks
+from modules.flow_gate.services import chat_run_hooks, graph_execution_hooks
 from modules.flow_gate.storage import paths as storage_paths
 
 # Neither `chain` nor `worker` is imported as a sibling module here (both are also
@@ -798,6 +798,7 @@ def _refuse_frozen_group(group_id: str) -> None:
                           retryable=False)
 
 
+@graph_execution_hooks.admission
 def start_run(
     *,
     project_id: str,
@@ -862,6 +863,7 @@ def start_run(
     # above. None (every other caller) keeps a single run one-shot, as before.
     node_restart_max_attempts: Optional[int] = None,
     graph_exec_id: Optional[str] = None,
+    graph_attempt_id: Optional[str] = None,
     # 0414 P0007: the [검수] tab's two session-scoped maps — mode-aware worker item_seq ->
     # review count, and -> reviewer provider_id. They ride the RUN (never a token), exactly
     # like the provider/note maps, and are snapshotted into the paused row so a resume or a
@@ -934,7 +936,6 @@ def start_run(
     # an unaddressed rejection starts with the fixed rework provider, never the reviewer.
     graph_loop_state = None
     if document_review_loop is not None:
-        from modules.flow_gate.services import graph_execution_hooks
         graph_loop_state = graph_execution_hooks.call("loop_state", graph_exec_id) if graph_exec_id else None
         if graph_loop_state:
             document_review_loop = dict(graph_loop_state["loop"])
@@ -1116,6 +1117,7 @@ def start_run(
     active = None if project_scoped else db_group_ai_leases.get_active(group_id)
     handoff_allowed = bool(
         active
+        and not graph_exec_id
         and active.get("state") == "releasing"
         and chain_id
         and active.get("chain_id") == chain_id
@@ -1212,9 +1214,9 @@ def start_run(
     run_id = _svc()._next_run_id()
     lease_chain_id = chain_id or run_id
     lease = None
-    if not project_scoped:
+    if not project_scoped and not graph_exec_id:
         try:
-            lease = db_group_ai_leases.acquire(
+            lease = graph_execution_hooks.call("legacy_acquire", db_group_ai_leases.acquire,
                 group_id=group_id,
                 project_id=project_id,
                 run_id=run_id,
@@ -1231,7 +1233,7 @@ def start_run(
             run_id = _svc()._next_run_id()
             lease_chain_id = chain_id or run_id
             try:
-                lease = db_group_ai_leases.acquire(
+                lease = graph_execution_hooks.call("legacy_acquire", db_group_ai_leases.acquire,
                     group_id=group_id,
                     project_id=project_id,
                     run_id=run_id,
@@ -1262,13 +1264,15 @@ def start_run(
             raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
                               run_id=active.get("run_id"))
 
-    if not project_scoped:
+    if not project_scoped and not graph_exec_id:
         admission_run_id.set(run_id)
 
     # The group lease is the serialization point: this check runs only after this request
     # owns it and before token issuance. Thus two concurrent normal starts cannot both
     # observe NONE, while reruns remain possible without a UNIQUE(doc_id, revision_no).
     issue = None
+    if graph_exec_id:
+        graph_attempt_id = graph_execution_hooks.call("admit", graph_exec_id, run_id, group_id, graph_attempt_id)
     try:
         review_admission_superseded_review_id: Optional[int] = None
         if action_scope == "review" and review_intent is not None:
@@ -1276,7 +1280,7 @@ def start_run(
             revision_no = int(doc.get("revision_no") or 0)
             completed = db_document_reviews.get_latest_for_revision(doc_ref, revision_no)
             if completed is not None and review_intent == "normal":
-                if not project_scoped:
+                if not project_scoped and not graph_exec_id:
                     db_group_ai_leases.release(
                         group_id, run_id, reason="review_admission_completed"
                     )
@@ -1290,7 +1294,7 @@ def start_run(
                 # registration time would let a concurrent append change what this rerun means.
                 review_admission_superseded_review_id = int(completed["id"])
             if completed is None and review_intent == "rerun":
-                if not project_scoped:
+                if not project_scoped and not graph_exec_id:
                     db_group_ai_leases.release(
                         group_id, run_id, reason="review_admission_no_completed_review"
                     )
@@ -1317,7 +1321,7 @@ def start_run(
                 # 0554 T0014 §5: a rework issue_builder (issue_rework_request) already revoked
                 # the token it minted before re-raising — this only has the group lease left to
                 # give back, mirroring the mention_unavailable/run_lease_lost cleanups below.
-                if not project_scoped:
+                if not project_scoped and not graph_exec_id:
                     db_group_ai_leases.release(
                         group_id, run_id, reason="admission_rollback_pre_instruction_attachment_invalid"
                     )
@@ -1331,7 +1335,7 @@ def start_run(
                 # run before minting anything — the Q responder builder does when its durable
                 # item claim fails (a person answered first). Nothing was issued, so only the
                 # group lease acquired above has to be given back before the refusal surfaces.
-                if not project_scoped:
+                if not project_scoped and not graph_exec_id:
                     db_group_ai_leases.release(
                         group_id, run_id, reason="admission_rollback_issue_builder_refused"
                     )
@@ -1376,7 +1380,7 @@ def start_run(
                 token_service.revoke(issue["token_id"], reason="ai_invoke_mention_unavailable")
             except Exception:
                 logger.warning("token revoke failed after mention_unavailable", exc_info=True)
-            if not project_scoped:
+            if not project_scoped and not graph_exec_id:
                 db_group_ai_leases.release(group_id, run_id, reason="admission_rollback_mention_unavailable")
             raise _http_error(409, "mention_unavailable",
                               "Could not build a worker mention for this document.")
@@ -1391,7 +1395,7 @@ def start_run(
                     token_service.revoke(issue["token_id"], reason="ai_invoke_conflict_prompt_too_large")
                 except Exception:
                     logger.warning("token revoke failed after conflict_prompt_too_large", exc_info=True)
-                if not project_scoped:
+                if not project_scoped and not graph_exec_id:
                     db_group_ai_leases.release(
                         group_id, run_id, reason="admission_rollback_conflict_prompt_too_large"
                     )
@@ -1407,9 +1411,9 @@ def start_run(
                 group_id, run_id, issue.get("token_id"), action_scope, issued_to,
                 _svc().RUN_TIMEOUT_CAP_SEC,
             )
-            if not project_scoped else None
+            if not project_scoped and not graph_exec_id else None
         )
-        if not project_scoped and lease is None:
+        if not project_scoped and not graph_exec_id and lease is None:
             try:
                 token_service.revoke(issue["token_id"], reason="ai_invoke_lease_lost")
             except Exception:
@@ -1419,7 +1423,7 @@ def start_run(
         # Only this request's still-acquiring lease may be released. Named failure paths
         # can have already revoked/released it; repeating those operations is harmless.
         current = None
-        if not project_scoped:
+        if not project_scoped and not graph_exec_id:
             try:
                 current = db_group_ai_leases.get_active(group_id)
             except Exception:
@@ -1427,7 +1431,7 @@ def start_run(
                                run_id, group_id, exc_info=True)
         owns_acquiring = bool(current and current.get("run_id") == run_id
                               and current.get("state") == "acquiring")
-        if project_scoped or owns_acquiring:
+        if project_scoped or graph_exec_id or owns_acquiring:
             if isinstance(issue, dict) and issue.get("token_id"):
                 try:
                     token_service.revoke(issue["token_id"], reason="ai_invoke_admission_rollback")
@@ -1482,7 +1486,7 @@ def start_run(
                 logger.warning(
                     "token revoke failed after pre_instruction_attachment_invalid", exc_info=True
                 )
-            if not project_scoped:
+            if not project_scoped and not graph_exec_id:
                 db_group_ai_leases.release(
                     group_id, run_id, reason="admission_rollback_pre_instruction_attachment_invalid"
                 )
@@ -1586,6 +1590,7 @@ def start_run(
     )
     run = {
         "graph_exec_id": graph_exec_id,
+        "graph_attempt_id": graph_attempt_id,
         "graph_review_run_ids": (graph_loop_state or {}).get("review_run_ids") or [],
         "run_id": run_id,
         "status": "running",

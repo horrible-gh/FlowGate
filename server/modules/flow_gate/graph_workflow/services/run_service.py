@@ -320,6 +320,8 @@ def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
         "pending_node_keys": sorted({p["node_key"] for p in pending}),
         "mode": run.get("run_mode") or MODE_FULL, "idle_reason": run.get("idle_reason"),       # 0061 T#2
     }
+    from modules.flow_gate.services import graph_execution_hooks
+    out.update(graph_execution_hooks.call("execution_wire", run_id, run["group_id"]))
     if with_nodes:
         attempts = run_store.current_attempts(run_id)
         out["node_runs"] = [node_run_wire(r, run["group_id"], attempts.get(r["node_key"])) for r in rows]
@@ -330,7 +332,9 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None) -> 
     """flowgate.v02.0056 T#2: ``stage`` (``instruction`` / ``result``, null for a node no AI starts) and the
     card run's ``instruction_doc_id`` (null until known). 0061 T#2: the node's current ``attempt_id`` (its active
     attempt, else its last ended one; null for a node not opened since migration 151)."""
-    return {"node_key": row["node_key"], "status": row["status"], "opened_at": row.get("opened_at"),
+    from modules.flow_gate.services import graph_execution_hooks
+    return {**graph_execution_hooks.call("execution_wire", row["run_id"], flow_id, attempt_id or ""),
+            "node_key": row["node_key"], "status": row["status"], "opened_at": row.get("opened_at"),
             "finished_at": row.get("finished_at"), "result_doc_id": row.get("result_doc_id"),
             "root_bound": bool(row.get("root_bound")), "dispatch": dispatch_block(row),
             "awaiting_approval": node_approval.awaiting_approval(flow_id, row),
