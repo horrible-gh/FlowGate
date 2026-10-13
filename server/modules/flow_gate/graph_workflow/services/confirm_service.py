@@ -13,6 +13,7 @@ from modules.flow_gate.graph_workflow.domain.root_binding import doc_key
 from modules.flow_gate.graph_workflow.store import assignment_store, definition_store, layout_store
 
 from .canvas_events import publish_canvas_changed, publish_ownership_changed
+from . import run_state_ports
 from .engine_router import read_ownership, require_graph_editable
 from .errors import GraphApiError
 from .flow_guard import with_flow_guard
@@ -38,6 +39,7 @@ def confirm_revision(group: dict, user_id: str, draft_version: int, base_revisio
     def body() -> dict:
         own = read_ownership(flow_id)                                            # 1 담당
         require_graph_editable(flow_id, own)
+        run_state_ports.require_editable(flow_id)
         latest = definition_store.latest_revision_no(flow_id)                    # 2 기준 개정
         if base_revision_no != latest:
             raise GraphApiError(409, "revision_conflict", {
@@ -48,6 +50,7 @@ def confirm_revision(group: dict, user_id: str, draft_version: int, base_revisio
             raise GraphApiError(404, "draft_not_found", {"flow_id": flow_id})
         if draft["draft_version"] != draft_version:
             raise version_conflict(flow_id, draft_version, draft)
+        run_state_ports.protect_definition(flow_id, draft["nodes"], draft["edges"])
         issues, binding = check_draft(flow_id, own, draft)                       # 4 구조·결합
         if issues:
             raise GraphApiError(422, "graph_validation_failed",

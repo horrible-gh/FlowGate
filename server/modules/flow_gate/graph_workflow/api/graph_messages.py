@@ -5,6 +5,29 @@ Keys the domain attaches for wording (``_`` prefix) are used here and never sent
 """
 from __future__ import annotations
 
+RUN_EDIT_MESSAGES = {
+    "graph_run_locked": {
+        "ko": "실행 중이거나 일시정지된 Flow는 편집할 수 없습니다.",
+        "en": "A running or paused flow cannot be edited.",
+        "ja": "実行中または一時停止中のフローは編集できません。",
+    },
+    "graph_node_protected": {
+        "ko": "완료·개방·리뷰 노드와 그 입력선은 변경할 수 없습니다.",
+        "en": "Done, open and review nodes and their incoming edges cannot be changed.",
+        "ja": "完了・開放・レビューノードとその入力エッジは変更できません。",
+    },
+    "graph_node_key_reused": {
+        "ko": "삭제한 노드의 키를 다시 사용할 수 없습니다.",
+        "en": "A deleted node key cannot be reused.",
+        "ja": "削除したノードのキーは再利用できません。",
+    },
+    "graph_revision_migration_blocked": {
+        "ko": "진행 중 attempt가 있어 최신 개정으로 이관할 수 없습니다.",
+        "en": "The run cannot adopt the latest revision while an attempt is active.",
+        "ja": "進行中の attempt があるため最新リビジョンへ移行できません。",
+    },
+}
+
 _RULE = {
     "multiple_start": ("시작 노드가 여러 개인 그래프", "a graph with several start nodes", "開始ノードが複数あるグラフ"),
     "branch": ("분기(나가는 엣지 여러 개)", "a branch (several outgoing edges)", "分岐（出ていくエッジが複数）"),

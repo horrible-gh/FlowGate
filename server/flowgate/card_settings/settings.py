@@ -6,9 +6,9 @@ answer what a node's AI start takes from its card.
   kind (``fields.card_kind``) follows the draft node, else the latest revision node.
 - One request changes one value, saved at once (no save button): ``value`` null takes the default
   back. The write runs inside the Flow guard, so it orders with draft saves and run steps.
-- While the node is open in the Flow's active run its AI already started with the settings it read,
-  and while the card's AI review works on the node's result that review follows them, so the card is
-  locked (409 ``node_settings_locked``); before and after that it can be changed.
+- 0061 T#3: running/paused flows lock every card setting (409 ``graph_run_locked``).
+  Done/open/review nodes remain protected while idle (409 ``graph_node_protected``), including
+  instruction use and AI settings. The earlier node_settings_locked check remains as a fallback.
 - The requirement card's AI delegation on / off adds / removes the card's AI delegation document
   line (``card_documents.lines.set_delegation``), in the same guard.
 - ``run_settings`` is the Graph's ``card_settings_ports.run_settings`` handler: only stored values are
@@ -32,6 +32,7 @@ from flowgate.card_documents import slots as card_slots
 from flowgate.card_settings import fields
 from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import repository
+from flowgate.graph_run import editing
 
 DELEGATION_FIELD = "delegation"
 
@@ -47,7 +48,7 @@ def _card(flow_id: str, node_key: str) -> dict:
 def _payload(flow_id: str, node: dict, stored: dict) -> dict:
     kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
     return {"flow_id": flow_id, "node_key": node["node_key"], "card_kind": kind,
-            "locked": legacy.node_running(flow_id, node["node_key"]),
+            "locked": editing.settings_locked(flow_id, node["node_key"]) or legacy.node_running(flow_id, node["node_key"]),
             "fields": fields.view(kind, stored, legacy.repeat_choices())}
 
 
@@ -68,6 +69,7 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
     registered = legacy.registered_doc_types(group.get("project_id"))
 
     def body() -> dict:
+        editing.require_editable(flow_id, node_key)
         node = _card(flow_id, node_key)
         kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
         field = fields.field_of(kind, name)

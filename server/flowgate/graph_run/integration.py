@@ -13,10 +13,13 @@ from __future__ import annotations
 
 from modules.flow_gate.graph_workflow.services import run_state_ports as ports
 
-from flowgate.graph_run import command, settle
+from flowgate.graph_run import command, settle, editing, revision
 
 
 def register() -> None:
+    ports.register(ports.REQUIRE_EDITABLE, editing.require_editable)
+    ports.register(ports.PROTECT_DEFINITION, editing.protect_definition)
+    ports.register(ports.ADOPT_REVISION, revision.adopt_revision)
     ports.register(ports.SETTLE, settle.settle_run)
     ports.register(ports.SETTLE_PLAN, settle.settle_plan)
     ports.register(ports.COMMAND_OF, command.command_of)

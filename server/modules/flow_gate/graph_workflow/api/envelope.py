@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from modules.flow_gate.graph_workflow.services.errors import FlowLockTimeout, GraphApiError
 
-from .graph_messages import fill_issue_messages
+from .graph_messages import fill_issue_messages, RUN_EDIT_MESSAGES
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services.auth_outbound import verify_bearer
 
@@ -132,7 +132,7 @@ def locale_of(request: Optional[Request]) -> str:
 
 
 def message(code: str, request: Optional[Request]) -> str:
-    table = _MESSAGES.get(code) or _MESSAGES["internal_error"]
+    table = RUN_EDIT_MESSAGES.get(code) or _MESSAGES.get(code) or _MESSAGES["internal_error"]
     return table[locale_of(request)]
 
 

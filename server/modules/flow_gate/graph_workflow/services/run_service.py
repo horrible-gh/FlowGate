@@ -108,8 +108,8 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
 
     0061 T#2: the step / full command (``mode``; a new run: ``full`` when not given). The Flow's paused or idle run
     goes on with the command instead of a second run (as ``resume`` with a mode; with no mode, its own command). A
-    running run, or a ``revision_no`` other than the run's, stays 409 ``run_already_active`` (moving a run to a newer
-    revision is T#3)."""
+    running run, or a requested revision other than the run's or latest, stays 409 ``run_already_active``.
+    T#3: the guarded command adopts the latest confirmed revision only when no attempt is active."""
     flow_id, project_id = group["group_id"], group.get("project_id")
     require_writable(flow_id)
     _restore_check_once()
@@ -121,8 +121,9 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
             raise _ownership_error(flow_id, own)
         active = run_store.active_run(flow_id)                                    # 4 진행 중 실행
         if active is not None:
-            if active["status"] == run_store.RUNNING or (
-                    revision_no is not None and revision_no != int(active["revision_no"])):
+            if active["status"] not in (run_store.PAUSED, run_store.IDLE) or (
+                    revision_no is not None and revision_no not in (
+                        int(active["revision_no"]), definition_store.latest_revision_no(flow_id))):
                 raise GraphApiError(409, "run_already_active",
                                     {"flow_id": flow_id, "run_id": active["run_id"], "status": active["status"]})
             _go_on(group, active, user_id, mode, "user_command", None, jobs)
@@ -168,6 +169,7 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
     ``run_state_ports.command_of``'s: a new one (``mode`` given, or an idle run) or, for a paused run with no mode,
     its own (a step keeps its targets). Inside the run's Flow guard; ownership and the Flow checked by the caller."""
     run_id, from_status = run["run_id"], run["status"]
+    adopted = run_state_ports.adopt_revision(group, run, user_id, jobs)
     entries = run_store.policy_entries(run_id)
     policies = policies_of(entries)                                              # 3 (E-33 -> 500)
     ctx = load_context(run, group.get("project_id"), user_id, jobs)
@@ -175,6 +177,8 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
     if missing:
         raise _undecided(run["group_id"], int(run["revision_no"]), missing)
     command = run_state_ports.command_of(run, mode)                              # None: the paused command goes on
+    if adopted and command is None:
+        command = run.get("run_mode") or MODE_FULL
     try:
         result_binder.reconcile_links(ctx, policies)                             # 5-1 while paused / idle
         if run_store.set_run_status(run_id, from_status, run_store.RUNNING) != 1:

@@ -31,7 +31,11 @@ SETTLE_PLAN = "settle_plan"
 COMMAND_OF = "command_of"
 RECORD_COMMAND = "record_command"
 RECORD_STEP_TARGETS = "record_step_targets"
-PORT_NAMES = (SETTLE, SETTLE_PLAN, COMMAND_OF, RECORD_COMMAND, RECORD_STEP_TARGETS)
+REQUIRE_EDITABLE = "require_editable"
+PROTECT_DEFINITION = "protect_definition"
+ADOPT_REVISION = "adopt_revision"
+PORT_NAMES = (SETTLE, SETTLE_PLAN, COMMAND_OF, RECORD_COMMAND, RECORD_STEP_TARGETS,
+              REQUIRE_EDITABLE, PROTECT_DEFINITION, ADOPT_REVISION)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -62,6 +66,18 @@ def _handler(name: str) -> Callable[..., Any]:
     if handler is None:
         raise RuntimeError(f"Graph run state port {name} is not registered")
     return handler
+
+
+def require_editable(flow_id: str) -> None:
+    _handler(REQUIRE_EDITABLE)(flow_id)
+
+
+def protect_definition(flow_id: str, nodes: list, edges: list) -> None:
+    _handler(PROTECT_DEFINITION)(flow_id, nodes, edges)
+
+
+def adopt_revision(group: dict, run: dict, actor: str, jobs: list) -> bool:
+    return _handler(ADOPT_REVISION)(group, run, actor, jobs)
 
 
 def settle(ctx: Any) -> None:

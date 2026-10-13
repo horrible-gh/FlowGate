@@ -32,7 +32,7 @@ from modules.flow_gate.graph_workflow.store import assignment_store, definition_
 
 from .canvas_events import publish_canvas_changed
 from .canvas_service import follow_supersede
-from . import card_document_ports, graph_validation_ports
+from . import card_document_ports, graph_validation_ports, run_state_ports
 from .engine_router import Ownership, block, confirm_block_reason, read_ownership, require_graph_editable
 from .errors import GraphApiError
 from .flow_guard import with_flow_guard
@@ -168,6 +168,7 @@ def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optio
     def body() -> dict:
         own = read_ownership(flow_id)
         require_graph_editable(flow_id, own)
+        run_state_ports.require_editable(flow_id)
         current = definition_store.draft(flow_id)
         if (current["draft_version"] if current else 0) != req.draft_version:
             raise version_conflict(flow_id, req.draft_version, current)
@@ -180,6 +181,7 @@ def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optio
             raise GraphApiError(422, "invalid_request", {"errors": dr.sort_errors(errors)})
         taken = known_nodes | known_edges | layout_store.retired_keys(flow_id) | set(layout_store.positions(flow_id))
         nodes, edges, key_map = _resolve(req, taken)
+        run_state_ports.protect_definition(flow_id, nodes, edges)
         if req.draft_version == 0:
             base = latest_no if own.state == "graph" else None
             written = definition_store.create_draft(flow_id, base, user_id)
