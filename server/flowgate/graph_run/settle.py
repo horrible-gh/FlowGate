@@ -10,6 +10,11 @@ Only requested/running executions keep a run working; an active attempt awaiting
 a person does not occupy a slot. With no work or command candidate left, the run
 becomes idle with completed/no_targets/waiting_approval/error/blocked_rejected.
 Deferred propagation remains deferred until the next explicit command.
+
+T#7: a Stop leaves the run idle with the reason ``stopped`` (``stop``); it stays so until the next command — a run read
+does not judge a stopped run's reason again. A stopping run settles nothing (``stop`` finishes it). An execution's
+run-end hand-off in flight keeps a running run working (``working``), so the instruction -> result and result ->
+review / approval hand-offs of its last execution find it running, not idle.
 """
 from __future__ import annotations
 
@@ -20,7 +25,9 @@ from flowgate.graph_run import scheduling
 
 IDLE_COMPLETED, IDLE_NO_TARGETS = "completed", "no_targets"
 IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR = "waiting_approval", "blocked_rejected", "error"
-IDLE_REASONS = (IDLE_COMPLETED, IDLE_NO_TARGETS, IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR)
+IDLE_STOPPED = "stopped"                                     # T#7: set by a Stop only
+IDLE_REASONS = (IDLE_COMPLETED, IDLE_NO_TARGETS, IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR,
+                IDLE_STOPPED)
 CAUSE_COMPLETED, CAUSE_IDLE, CAUSE_WORK_RESUMED = "completed", "run_idle", "work_resumed"
 
 
@@ -43,9 +50,14 @@ def _failed(ctx, row: dict) -> bool:
 
 
 def working(ctx, rows: list[dict]) -> bool:
-    """Only requested/running AI executions count; a person's approval wait does not."""
-    from flowgate.graph_run.execution_store import working as executions_working
-    return executions_working(ctx.run_id)
+    """Only requested/running AI executions count; a person's approval wait does not. T#7: so does an execution's
+    run-end hand-off in flight on a running / paused run (``execution_store.handing_off``) — between an execution's
+    ledger end and the stage that follows it (the result stage after its instruction, the result's review or approval)
+    the run is not idle. It never wakes an idle run."""
+    from flowgate.graph_run import execution_store
+    if execution_store.working(ctx.run_id):
+        return True
+    return ctx.run.get("status") in (engine.RUNNING, engine.PAUSED) and execution_store.handing_off(ctx.run_id)
 
 
 def _completion(ctx, state) -> tuple[bool, Optional[str]]:
@@ -103,6 +115,8 @@ def settle_plan(ctx) -> Optional[tuple[str, object]]:
             return ("refill", None)
         if status == engine.PAUSED:
             return None
+    elif ctx.run.get("idle_reason") == IDLE_STOPPED and not working(ctx, rows):
+        return None                                          # T#7: stopped until the next command
     state = engine.read_run_state(ctx)
     if status == engine.RUNNING:
         more = _candidates(ctx, state)

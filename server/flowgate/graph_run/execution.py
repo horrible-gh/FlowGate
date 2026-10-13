@@ -10,7 +10,7 @@ from modules.flow_gate.db import groups as db_groups, ai_invoke_runs
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 from modules.flow_gate.services import graph_execution_hooks
-from flowgate.graph_run import execution_store as ledger, workspace, scheduling
+from flowgate.graph_run import execution_store as ledger, workspace, scheduling, fencing, stop
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 def register():
     graph_execution_hooks.register(lambda action, *args, **kwargs: _ACTIONS[action](*args, **kwargs))
     from modules.flow_gate.services import graph_source_hooks
-    graph_source_hooks.register(workspace.source_root, workspace.mutation)
+    graph_source_hooks.register(workspace.source_root, workspace.mutation, fencing.require_token)
 
 
 def request_write(job):
@@ -26,6 +26,9 @@ def request_write(job):
     attempt = run_store.active_attempt_id(job["run_id"], job["node_key"])
     if not attempt:
         raise ledger.LeaseLost("write has no active attempt")
+    # T#7: a stopping run requests nothing (inside the guard). The engine's own opening of a node (a person's approval
+    # on an idle run opens the next one) is no attempt token's write: idle opens, the acquire needs running / paused.
+    fencing.check(attempt, "request_write", statuses=fencing.OPENING)
     job["graph_attempt_id"] = attempt
     payload = dict(job)
     payload.pop("graph_exec_id", None)
@@ -60,16 +63,29 @@ def _attempt_for_document(flow_id, doc_id):
         [flow_id, doc_id, doc_id])
 
 
-def _request_document(flow_id, doc_id, kind, payload, existing=None):
+def _request_document(flow_id, doc_id, kind, payload, existing=None, attempt_id=None):
     attempt = _attempt_for_document(flow_id, doc_id)
     if not attempt:
         if existing:
             raise ledger.LeaseLost("recovered attempt is no longer active")
         return None
+    operation = "hop_" + kind
+    # T#7: a review / rework hop of an attempt that may not write any more (its run not running or paused, the attempt
+    # not active) is refused (and recorded) before its guard, and judged again inside it (a refusal there is recorded
+    # after the rollback, ``fencing.guarded``). Q439: the hop of a person's explicit review request is also taken
+    # on an idle run (and takes it back to running below); an automatic hop is not. ``attempt_id``: the attempt the
+    # run-end stage asking for the hop was made for — a node opened again since is not its to review.
+    statuses = fencing.IDLE_EXCEPTED if graph_execution_hooks.explicit() and not existing else fencing.WRITABLE
+    if attempt_id and attempt["attempt_id"] != attempt_id:
+        raise fencing.refuse(attempt_id, operation, "attempt_superseded", active_attempt_id=attempt["attempt_id"])
+    fencing.require(attempt["attempt_id"], operation, statuses=statuses)
     def body():
         attempt = _attempt_for_document(flow_id, doc_id)
-        if not attempt or attempt["status"] != "active":
-            raise ledger.LeaseLost("document has no active Graph attempt")
+        if not attempt:
+            raise ledger.LeaseLost("document has no Graph attempt")
+        if attempt_id and attempt["attempt_id"] != attempt_id:
+            raise fencing.refuse(attempt_id, operation, "attempt_superseded", active_attempt_id=attempt["attempt_id"])
+        fencing.check(attempt["attempt_id"], operation, statuses=statuses)
         if existing:
             row = ledger.get(existing)
             if not row or row["attempt_id"] != attempt["attempt_id"] or row["status"] != "requested":
@@ -83,7 +99,7 @@ def _request_document(flow_id, doc_id, kind, payload, existing=None):
             ctx = run_apply.load_context(run, (db_groups.get_by_id(flow_id) or {}).get("project_id"), None)
             run_apply.settle_run(ctx)
         return result
-    return with_flow_guard(flow_id, body)
+    return fencing.guarded(flow_id, body)
 
 
 def request_hop(flow_id, bundle, gate, kind):
@@ -93,14 +109,14 @@ def request_hop(flow_id, bundle, gate, kind):
                              bundle.get("_graph_exec_id"))
 
 
-def request_loop(project_id, flow_id, doc_id, issued_to, loop, basis, node_key, existing=None):
+def request_loop(project_id, flow_id, doc_id, issued_to, loop, basis, node_key, existing=None, attempt_id=None):
     from modules.flow_gate.services.ai_invoke import review
     baseline = review.compute_review_baseline(doc_id)
     kind = "rework" if baseline.get("starts_with_rework") else "review"
     return _request_document(flow_id, doc_id, kind, {
         "type": "loop", "project_id": project_id, "flow_id": flow_id, "doc_id": doc_id,
         "issued_to": issued_to, "loop": {**loop, **baseline, "current_stage": kind},
-        "basis": basis, "node_key": node_key}, existing)
+        "basis": basis, "node_key": node_key}, existing, attempt_id)
 
 
 def loop_state(exec_id):
@@ -121,9 +137,17 @@ def validate_write(job):
     if not exec_id:
         raise ledger.LeaseLost("Graph write has no durable execution")
     row = ledger.get(exec_id)
-    if not row or row["run_id"] != job["run_id"] or row["status"] not in ("requested", "running") \
-            or row["attempt_id"] != run_store.active_attempt_id(job["run_id"], job["node_key"]):
+    if not row or row["run_id"] != job["run_id"]:
         raise ledger.LeaseLost("Graph write no longer belongs to the open attempt")
+    # T#7: no token for a stopping run's write, nor for an execution or attempt that no longer owns the node. Inside
+    # the mapping guard: the refusal is recorded once it rolled back (``start_failed``).
+    if row["status"] not in ("requested", "running"):
+        raise fencing.refuse(row["attempt_id"], "validate_write", "execution_" + str(row["status"]), exec_id=exec_id)
+    active = run_store.active_attempt_id(job["run_id"], job["node_key"])
+    if row["attempt_id"] != active:
+        raise fencing.refuse(row["attempt_id"], "validate_write", "attempt_superseded", exec_id=exec_id,
+                             active_attempt_id=active)
+    fencing.check(row["attempt_id"], "validate_write")
 
 
 def _lock(run):
@@ -180,6 +204,11 @@ def _finish_owned(run):
     row = ledger.get(run["graph_exec_id"])
     if not row:
         raise ledger.LeaseLost("execution disappeared")
+    if token and row["status"] in ("cancelled", "lost") and row.get("lease_token") == token:
+        # T#7: a Stop (or the recovery) settled this execution after its process ended; this late end changes
+        # neither a node nor the run candidates.
+        run["graph_report_late"] = True
+        return True
     if token:
         status = "cancelled" if run["cancel_event"].is_set() else "ended"
         ledger.finish(row["exec_id"], token, status)
@@ -191,13 +220,49 @@ def _finish_owned(run):
 
 
 def finish(run):
+    """The execution's ledger end (``terminal.cleanup``). T#7: only an end owned to its close — the launcher held the
+    lease (or cancelled its own request), the ledger took the end, the attempt is not invalidated, the run is not
+    stopping and no Stop / recovery settled the execution first — is marked ``graph_end_owned``; the finalize hands
+    nothing else on and settles nothing after it (``finalize._finalize_run``). An owned end the finalize hands on to
+    its run-end stage (``graph_run_end_pending``) keeps the run working until that stage is over (``handoff_end``);
+    any other owned end settles here, as before."""
     if not run.get("graph_exec_id"):
         return
     with _lock(run):
         if not run.get("graph_execution_finished"):
             run["graph_execution_finished"] = _finish_owned(run)
-    if run.get("graph_execution_finished"):
-        settle(run["group_id"])
+    if not run.get("graph_execution_finished") or run.get("graph_end_judged"):
+        return
+    run["graph_end_judged"] = True
+    row = ledger.get(run["graph_exec_id"]) or {}
+    graph = run_store.run_by_id(row["run_id"]) if row.get("run_id") else None
+    if graph is not None and graph["status"] == stop.STOPPING:
+        run["graph_settle_skipped"] = True
+        stop.on_execution_finished(run["group_id"], graph["run_id"])     # T#7: a Stop waiting for this end
+        return
+    attempt = fencing.attempt_row(row["attempt_id"]) if row.get("attempt_id") else None
+    if run.get("graph_report_late") or (attempt and attempt["attempt_status"] == "invalidated"):
+        # T#7: an invalidated attempt's or a settled execution's end settles nothing — nor does the finalize's last
+        # settle after it (``graph_settle_skipped``).
+        run["graph_settle_skipped"] = True
+        return
+    run["graph_end_owned"] = True
+    if run.get("graph_run_end_pending") and graph is not None:
+        ledger.begin_handoff(run["graph_exec_id"], graph["run_id"])      # T#7: settled after the run-end stage
+        return
+    settle(run["group_id"])
+
+
+def handoff_end(run):
+    """T#7, the finalize after its run-end stage (whatever happened there): the run is no longer kept working by this
+    execution's hand-off. The finalize's own settle follows for an owned end."""
+    if run.get("graph_exec_id"):
+        ledger.end_handoff(run["graph_exec_id"])
+
+
+def node_hold(run_id, node_key, attempt_id, operation):
+    """``graph_execution_hooks`` ``node_hold``: ``fencing.node_hold``."""
+    return fencing.node_hold(run_id, node_key, attempt_id, operation)
 
 
 def transition(run, loop):
@@ -206,10 +271,25 @@ def transition(run, loop):
     with _lock(run):
         if run.get("graph_lease_lost") or run["cancel_event"].is_set():
             raise ledger.LeaseLost("cancelled execution cannot advance a review loop")
+        current = ledger.get(run["graph_exec_id"])
+        if current:
+            # T#7: a review verdict reaches its next hop only while the run and attempt may take it (recorded here).
+            fencing.require(current["attempt_id"], "review_transition", statuses=fencing.REPORTING)
         def body():
             row = ledger.get(run["graph_exec_id"])
-            if not row or row["status"] != "running":
-                raise ledger.LeaseLost("review execution is no longer running")
+            if not row:
+                raise ledger.LeaseLost("review execution disappeared")
+            # T#7: judged again inside the guard; a refusal is recorded once the guard rolled back (``guarded``).
+            if row["status"] != "running":
+                raise fencing.refuse(row["attempt_id"], "review_transition", "execution_" + str(row["status"]),
+                                     exec_id=row["exec_id"])
+            fencing.check(row["attempt_id"], "review_transition", statuses=fencing.REPORTING)
+            if row.get("cancel_requested_at"):
+                raise fencing.refuse(row["attempt_id"], "review_transition", "execution_cancel_requested",
+                                     exec_id=row["exec_id"])
+            if row["lease_token"] != run.get("graph_lease_token"):
+                raise fencing.refuse(row["attempt_id"], "review_transition", "lease_token_stale",
+                                     exec_id=row["exec_id"])
             if row["kind"] == loop["current_stage"] and loop.get("last_hop_outcome") == "failed":
                 return None  # A no-output/provider retry renews the same execution.
             payload = json.loads(row["request_json"])
@@ -220,7 +300,7 @@ def transition(run, loop):
             run_store._affected("UPDATE graph_attempt_runs SET ai_run_id = ? WHERE exec_id = ?",
                                 [run["run_id"], successor])
             return successor
-        successor = with_flow_guard(run["group_id"], body)
+        successor = fencing.guarded(run["group_id"], body)
         # Publish the successor only after both ledger writes have committed.
         if successor:
             run["graph_exec_id"] = successor
@@ -247,9 +327,11 @@ def heartbeat(ai_run_id):
 
 
 def start_failed(exec_id, error=None):
+    if error is not None:
+        fencing.recorded(error)          # T#7: a refusal judged inside the start's guard, recorded after its rollback
     if not exec_id:
         return False
-    if isinstance(error, ledger.LeaseLost):
+    if isinstance(error, graph_execution_hooks.ExecutionLeaseLost):   # T#7: a fence refusal too
         ledger.cancel_ineligible(exec_id)
         return True
     detail = getattr(error, "detail", None)
@@ -291,9 +373,10 @@ def recover():
     from modules.flow_gate.graph_workflow.services import run_apply
     if not get_store().table_exists("graph_attempt_runs"):
         return
+    stop.recover()          # T#7: a stopping run goes on with its stop, never with a replay or a lease loss
     rows = run_store._all("SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN graph_runs r "
                          "ON r.run_id = e.run_id WHERE e.status IN ('requested', 'running') "
-                         "ORDER BY e.created_at, e.exec_id", [])
+                         "AND r.status <> 'stopping' ORDER BY e.created_at, e.exec_id", [])
     for snapshot in rows:
         jobs = []
         def body():
@@ -344,7 +427,10 @@ def recover():
             run_apply.emit_node_state(ctx, attempt["node_key"], node["status"], "pending", "lease_expired", None)
             run_apply.settle_run(ctx)  # T#2 command candidates preserve the step target set.
         try:
-            with_flow_guard(snapshot["group_id"], body)
+            # T#7: a lease-expired attempt is invalidated under the Stop gate's exclusive hold, as a Stop and a failed
+            # worktree are (no side effect of its token runs across the commit).
+            with fencing.exclusive(snapshot["group_id"], own_ok=True):
+                with_flow_guard(snapshot["group_id"], body)
         except Exception:
             log.exception("Graph execution recovery failed for %s", snapshot["exec_id"])
             continue  # A failed transaction never dispatches its jobs.
@@ -372,17 +458,20 @@ def map_token(exec_id, token_id):
         run = run_store.run_by_id(row["run_id"])
         def body():
             current = ledger.get(exec_id)
+            if not current or current["status"] not in ("requested", "running"):
+                raise fencing.refuse(row["attempt_id"], "map_token",
+                                     "execution_" + str((current or {}).get("status") or "missing"), exec_id=exec_id)
+            # T#7: a stopping run or an invalidated attempt maps no new token (recorded after the rollback).
+            fencing.check(row["attempt_id"], "map_token")
             attempt = run_store._one("SELECT * FROM graph_node_attempts WHERE attempt_id = ? AND status = 'active'",
                                      [row["attempt_id"]])
-            if not attempt or not current or current["status"] not in ("requested", "running"):
-                raise ledger.LeaseLost("attempt invalidated before token mapping")
             payload = json.loads(current["request_json"])
             doc_id = (payload.get("gate", {}).get("slot", {}).get("doc_id") or payload.get("doc_id"))
             node = next(n for n in run_store.node_runs(row["run_id"]) if n["node_key"] == attempt["node_key"])
             stage = "instruction" if doc_id and doc_id == node.get("instruction_doc_id") else "result"
             if not run_store.node_run_by_token(token_id):
                 run_store.map_token(token_id, row["run_id"], attempt["node_key"], stage)
-        with_flow_guard(run["group_id"], body)
+        fencing.guarded(run["group_id"], body)
     except Exception:
         token_service.revoke(token_id, reason="graph_attempt_not_active")
         raise
@@ -393,6 +482,14 @@ def settle(flow_id):
     settle_graph_run(flow_id)
 
 
+def result_refused(run, kind, payload):
+    """T#7, inside the result binder's guard: a stopping run binds nothing, nor does a registration made with the
+    token of an attempt that may not write any more. Recorded."""
+    if fencing.run_refused(run, "result_" + kind, doc_id=payload.get("doc_id")):
+        return True
+    return kind == "inbox_registered" and fencing.token_refused(payload.get("token_id"), "result_" + kind)
+
+
 _ACTIONS = {
     "admission": scheduling.admission, "admit": scheduling.admit, "legacy_acquire": scheduling.legacy_acquire,
     "execution_wire": scheduling.wire, "opening": scheduling.opening, "can_open": scheduling.can_open,
@@ -401,4 +498,6 @@ _ACTIONS = {
     "settle": settle, "request_write": request_write, "request_hop": request_hop, "request_loop": request_loop,
     "launch": launch, "finish": finish, "transition": transition, "heartbeat": heartbeat,
     "working": ledger.working, "start_failed": start_failed,
+    "report_refused": fencing.report_refused, "node_refused": fencing.node_refused, "result_refused": result_refused,
+    "execution_attempt": fencing.execution_attempt, "handoff_end": handoff_end, "node_hold": node_hold,
 }

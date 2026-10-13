@@ -14,4 +14,6 @@ those ports to this package. The engine itself is not moved here. Nothing is reg
     legacy_adapter  the run store, the run step writes, the resolver's candidates and the node approval state of
                     the Graph workflow, called only
     integration     port handler registration
+    fencing         T#7: an attempt token's late write / result / report is refused (409 graph_attempt_inactive)
+    stop            T#7 Stop: stopping -> the AI processes ended -> attempts invalidated, nodes pending -> idle (stopped)
 """

@@ -86,9 +86,15 @@ def _control(request: Request, run_id: str, body: Any, action, with_mode: bool =
     return action(group, run_id, reason, user_id)
 
 
+@router.post("/runs/{run_id}/pause")
+def post_run_pause(run_id: str, request: Request, body: Any = Body(default=None)):
+    """flowgate.v02.0061 T#2 Pause (running -> paused), moved here from /stop by T#7."""
+    return envelope.run(request, lambda: _control(request, run_id, body, run_service.pause_run))
+
+
 @router.post("/runs/{run_id}/stop")
 def post_run_stop(run_id: str, request: Request, body: Any = Body(default=None)):
-    """flowgate.v02.0061 T#2: Pause (running -> paused) until T#7 moves it to /pause."""
+    """flowgate.v02.0061 T#7 Stop: stopping, the AI processes ended, then idle (stopped)."""
     return envelope.run(request, lambda: _control(request, run_id, body, run_service.stop_run))
 
 

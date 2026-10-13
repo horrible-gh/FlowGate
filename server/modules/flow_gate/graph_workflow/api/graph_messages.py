@@ -21,13 +21,19 @@ SOURCE_MESSAGES = {
         "en": "This source operation does not support Graph attempts.",
         "ja": "このソース操作は Graph attempt に対応していません。",
     },
+    # flowgate.v02.0061 T#7: a late write / result of a stopping run or an attempt / execution that no longer owns it
+    "graph_attempt_inactive": {
+        "ko": "이 Graph attempt는 더 이상 쓰기·결과 반영을 받을 수 없습니다(실행 정지 중이거나 attempt가 무효화됨).",
+        "en": "This Graph attempt no longer accepts writes or results (the run is stopping or the attempt was invalidated).",
+        "ja": "この Graph attempt はもう書き込み・結果反映を受け付けません（実行の停止中、または attempt が無効化されました）。",
+    },
 }
 
 RUN_EDIT_MESSAGES = {
     "graph_run_locked": {
-        "ko": "실행 중이거나 일시정지된 Flow는 편집할 수 없습니다.",
-        "en": "A running or paused flow cannot be edited.",
-        "ja": "実行中または一時停止中のフローは編集できません。",
+        "ko": "실행 중·일시정지·정지 중인 Flow는 편집할 수 없습니다.",
+        "en": "A running, paused or stopping flow cannot be edited.",
+        "ja": "実行中・一時停止中・停止中のフローは編集できません。",
     },
     "graph_node_protected": {
         "ko": "완료·개방·리뷰 노드와 그 입력선은 변경할 수 없습니다.",

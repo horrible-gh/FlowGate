@@ -660,6 +660,10 @@ def _read_worktree_expected_reasons(git_service) -> frozenset:
 def _attempt_source_root(grant: dict, op: str):
     token = _worker_token_for_grant(grant)
     try:
+        if op in {"write", "patch", "remove"}:
+            # flowgate.v02.0061 T#7: a write / remove of a stopping run's or an inactive attempt's token is refused
+            # (409 graph_attempt_inactive, recorded) before its source root is resolved; reads keep their path.
+            graph_source_hooks.require_writable(token, "source_" + op)
         if op == "resolve_base_dirty":
             graph_source_hooks.reject_group_source(token, op)
         return graph_source_hooks.source_root(

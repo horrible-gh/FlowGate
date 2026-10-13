@@ -57,7 +57,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db.connection import get_store
@@ -188,18 +188,27 @@ def start_ai(job: dict) -> None:
 def _instruction_job(job: dict) -> Optional[dict]:
     """The instruction stage's start: the job that writes the card's instruction, or None when it has a body
     already (approved without AI; the result stage is started)."""
+    attempt_id = job.get("graph_attempt_id")
     found = card_settings_ports.instruction_document(job["flow_id"], job["node"])
     if not found.get("doc_type"):                           # the card has no instruction stage any more
         start_result_stage(job["flow_id"], job["run_id"], job["node_key"], None, job["issued_to"],
-                           job.get("project_id"))
+                           job.get("project_id"), attempt_id=attempt_id)
         return None
     if found.get("written"):
-        if not card_settings_ports.approve_instruction(job["flow_id"], job["node"], found["doc_id"],
-                                                       job["issued_to"]):
-            _log.info("graph instruction left to the card approval run=%s node=%s doc=%s",
-                      job["run_id"], job["node_key"], found["doc_id"])
-        start_result_stage(job["flow_id"], job["run_id"], job["node_key"], found["doc_id"], job["issued_to"],
-                           job.get("project_id"))
+        # 0061 T#7: a job of an attempt that is no longer the node's active one approves nothing (recorded); the
+        # approval and the result stage's commit run under the Stop gate's shared hold, judged for the job's attempt.
+        jobs: list = []
+        with attempt_hold(job["run_id"], job["node_key"], attempt_id, "instruction_approval") as owned:
+            if not owned:
+                return None
+            if not card_settings_ports.approve_instruction(job["flow_id"], job["node"], found["doc_id"],
+                                                           job["issued_to"]):
+                _log.info("graph instruction left to the card approval run=%s node=%s doc=%s",
+                          job["run_id"], job["node_key"], found["doc_id"])
+            start_result_stage(job["flow_id"], job["run_id"], job["node_key"], found["doc_id"], job["issued_to"],
+                               job.get("project_id"), attempt_id=attempt_id, defer=jobs)
+        for queued in jobs:                                 # the result stage's AI start, after the hold
+            queued()
         return None
     target = found.get("doc_id")
     if target:
@@ -217,9 +226,31 @@ def _record_instruction(job: dict, doc_id: str) -> None:
     def body() -> None:
         row = _open_row(job["run_id"], job["node_key"])
         if row is not None and row.get("stage") == INSTRUCTION_STAGE:
+            if graph_execution_hooks.call("node_refused", job["run_id"], job["node_key"], "instruction_record",
+                                          job.get("graph_attempt_id")):
+                return                                      # 0061 T#7: a stopping run / not the job's attempt
             run_store.set_stage(job["run_id"], job["node_key"], INSTRUCTION_STAGE, doc_id)
 
     with_flow_guard(job["flow_id"], body)
+
+
+def attempt_owns(run_id: str, node_key: str, attempt_id: Optional[str], operation: str) -> bool:
+    """0061 T#7, outside a guard: the attempt a job or an AI run was made for (``attempt_id``; None: not known, the
+    node's active attempt judges) is still the node's active attempt and may write. A refusal is recorded."""
+    return not graph_execution_hooks.call("node_refused", run_id, node_key, operation, attempt_id)
+
+
+@contextmanager
+def attempt_hold(run_id: str, node_key: str, attempt_id: Optional[str], operation: str) -> Iterator[bool]:
+    """0061 T#7, outside a guard: ``attempt_owns`` judged under the Stop gate's shared hold, kept for the body — an
+    automatic approval and the step after it commit before a Stop's ``stopping`` does, or are refused after it.
+    Yields whether the body may go on (a refusal is recorded after the hold). No Graph handler: True."""
+    hold = graph_execution_hooks.call("node_hold", run_id, node_key, attempt_id, operation)
+    if hold is None:
+        yield True
+        return
+    with hold as owned:
+        yield bool(owned)
 
 
 def _open_row(run_id: str, node_key: str) -> Optional[dict]:
@@ -232,12 +263,16 @@ def _open_row(run_id: str, node_key: str) -> Optional[dict]:
 
 
 def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc_id: Optional[str],
-                       issued_to: str, project_id: Optional[str] = None) -> None:
+                       issued_to: str, project_id: Optional[str] = None, *, attempt_id: Optional[str] = None,
+                       defer: Optional[list] = None) -> None:
     """flowgate.v02.0056 T#2: the node's instruction stage is over (its instruction written or found written,
     and approved — or left to the card approval); its run AI writes the node's result now, the instruction
     attached as a reference. Only a node still open in its instruction stage moves on (a repeated call is a
     no-op), whether the run goes on or is stopped at the next step (a card already opened finishes both
-    stages). The start is a post-commit job like the dispatch's: a refused start records ``ai_invoke_failed``."""
+    stages). The start is a post-commit job like the dispatch's: a refused start records ``ai_invoke_failed``.
+    0061 T#7: ``attempt_id`` is the attempt whose instruction stage ended (the job's, the instruction AI run's); a
+    node opened again since (another active attempt) is left alone and the refusal recorded. ``defer``: the caller
+    runs the post-commit AI start itself (after the Stop gate's hold it took, ``attempt_hold``)."""
     from . import run_apply                                   # noqa: PLC0415 — run_apply imports this module
     from .flow_guard import with_flow_guard                   # noqa: PLC0415
 
@@ -248,6 +283,8 @@ def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc
         row = _open_row(run_id, node_key)
         if row is None or row.get("stage") != INSTRUCTION_STAGE:
             return
+        if graph_execution_hooks.call("node_refused", run_id, node_key, "result_stage", attempt_id):
+            return                                          # 0061 T#7: a late instruction end starts nothing
         ctx = run_apply.load_context(run_store.run_by_id(run_id), project, None, [])
         node = ctx.node_rows.get(node_key)
         if node is None:
@@ -267,11 +304,15 @@ def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc
         jobs.append(lambda: start_ai(job))
 
     with_flow_guard(flow_id, body)
+    if defer is not None:
+        defer.extend(jobs)
+        return
     for job in jobs:
         job()
 
 
-def instruction_stage_failed(flow_id: str, run_id: str, node_key: str, project_id: Optional[str] = None) -> None:
+def instruction_stage_failed(flow_id: str, run_id: str, node_key: str, project_id: Optional[str] = None, *,
+                             attempt_id: Optional[str] = None) -> None:
     """flowgate.v02.0056 T#2: the instruction stage's AI run failed (stopped, or ended without a written
     instruction): the node records it as an AI start failure does (``ai_invoke_failed``, L0009 E-23) and
     the result stage does not start. The node's token stays valid for a person; what the failed stage registered
@@ -280,7 +321,8 @@ def instruction_stage_failed(flow_id: str, run_id: str, node_key: str, project_i
     if not tokens:
         return
     record_ai_failure({"flow_id": flow_id, "run_id": run_id, "node_key": node_key, "token": {"token_id": tokens[0]},
-                       "project_id": project_id or (db_groups.get_by_id(flow_id) or {}).get("project_id")})
+                       "project_id": project_id or (db_groups.get_by_id(flow_id) or {}).get("project_id"),
+                       "graph_attempt_id": attempt_id})
 
 
 def record_ai_failure(job: dict) -> None:
@@ -298,6 +340,9 @@ def record_ai_failure(job: dict) -> None:
             return
         if job["token"]["token_id"] not in run_store.token_ids(run["run_id"], job["node_key"]):
             return
+        if graph_execution_hooks.call("node_refused", run["run_id"], job["node_key"], "ai_failure_record",
+                                      job.get("graph_attempt_id")):
+            return                                          # 0061 T#7: a stopping run's / an old attempt's failure
         dispatch = {**(run_apply.dispatch_block(row) or {}), "error_code": "ai_invoke_failed"}
         run_store.set_dispatch(run["run_id"], job["node_key"], dispatch)
         if row.get("stage") == INSTRUCTION_STAGE:              # T#2: a person's result binds, not the stage's

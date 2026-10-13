@@ -20,9 +20,11 @@ the card run uses (``instruction_doc_id``).
 flowgate.v02.0061 T#2: a Flow keeps one run — ``running``, ``paused`` or ``idle`` (``idle_reason``) — and a finished
 run stays idle (completed) and goes on with the next command. A command is ``step`` (open the run candidates of the
 moment; what they make runnable waits for the next command) or ``full`` (go on opening until no candidate is left):
-``POST /flows/{flow_id}/runs`` and ``POST /runs/{run_id}/resume`` take it as ``mode``. ``POST /runs/{run_id}/stop``
-is Pause in this set (running -> paused, open nodes keep their tokens and their work, the Flow stays locked); the
-Stop that ends a run is T#7. A run read tells the command (``mode``), the idle reason and each node's attempt.
+``POST /flows/{flow_id}/runs`` and ``POST /runs/{run_id}/resume`` take it as ``mode``. ``POST /runs/{run_id}/pause``
+is Pause (running -> paused, open nodes keep their tokens and their work, the Flow stays locked; T#2's behaviour, moved
+from ``/stop`` by T#7). ``POST /runs/{run_id}/stop`` is T#7's Stop (``run_state_ports.stop``: stopping, then idle with
+the reason ``stopped`` once the AI processes ended). A run read tells the command (``mode``), the idle reason and each
+node's attempt.
 Which command a run goes on with, what it records and whether a run goes on after a step are ``flowgate.graph_run``'s
 (``run_state_ports``); this module keeps the order of the steps. The run that goes on must hold its Flow (one run per
 Flow): a run written before migration 151 that completed gave the Flow up and takes it back only when no other run
@@ -263,10 +265,10 @@ def _guarded_run(run_id: str, body_of) -> dict:
     return result
 
 
-def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:
-    """``POST /runs/{run_id}/stop`` (P0008 S5-5, L0009 §2.6.7) — 0061 T#2: Pause (running -> paused). Nothing new
+def pause_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:
+    """``POST /runs/{run_id}/pause`` (P0008 S5-5, L0009 §2.6.7) — 0061 T#2: Pause (running -> paused). Nothing new
     opens and every propagation waits; open nodes keep their tokens and their work goes on; the run keeps its Flow
-    (locked). Resume recomputes the candidates. The route moves to /pause and /stop becomes Stop in T#7."""
+    (locked). Resume recomputes the candidates. 0061 T#7 moved it here from ``/stop``."""
     require_writable(group["group_id"])
 
     def body_of(run: dict, jobs: list) -> dict:
@@ -279,6 +281,16 @@ def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> d
         return {"run": run_payload(run_id, with_nodes=False)}
 
     return _guarded_run(run_id, body_of)
+
+
+def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:
+    """``POST /runs/{run_id}/stop`` — 0061 T#7 Stop (``run_state_ports.stop``, ``flowgate.graph_run.stop``): a running
+    or paused run becomes stopping at once, and idle (stopped) once its AI processes ended and the worktrees of the
+    attempts it invalidated are removed; a stopping run goes on with its stop; any other is 409 ``run_not_running``."""
+    require_writable(group["group_id"])
+    if run_store.run_by_id(run_id) is None:
+        raise GraphApiError(404, "run_not_found", {"run_id": run_id})
+    return run_state_ports.stop(group, run_id, reason, user_id)
 
 
 def resume_run(group: dict, run_id: str, reason: Optional[str], user_id: str, mode: Optional[str] = None) -> dict:

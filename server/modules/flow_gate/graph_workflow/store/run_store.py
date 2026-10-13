@@ -379,11 +379,22 @@ def node_run_by_token(token_id: str) -> Optional[dict]:
 
 
 def token_ids(run_id: str, node_key: str, skip_stage: Optional[str] = None) -> list[str]:
-    """Q-R13, mapping order — without the tokens of ``skip_stage`` when it is given."""
+    """Q-R13, mapping order — without the tokens of ``skip_stage`` when it is given. 0061 T#7: never the tokens of
+    an invalidated attempt (a Stop, a lost lease, a failed worktree): a node opened again takes nothing of them."""
     stage_sql = " AND (stage IS NULL OR stage <> ?)" if skip_stage is not None else ""
     params = [run_id, node_key, *([skip_stage] if skip_stage is not None else [])]
     rows = _all("SELECT token_id FROM graph_run_token_map WHERE run_id = ? AND node_key = ?"
-                f"{stage_sql} ORDER BY mapped_at, token_id", params)
+                f"{stage_sql} AND (attempt_id IS NULL OR attempt_id NOT IN "
+                "(SELECT attempt_id FROM graph_node_attempts WHERE status = 'invalidated')) "
+                "ORDER BY mapped_at, token_id", params)
+    return [r["token_id"] for r in rows]
+
+
+def invalidated_token_ids(run_id: str, node_key: str) -> list[str]:
+    """0061 T#7: the node's tokens of its invalidated attempts, mapping order — what an ended old attempt wrote with."""
+    rows = _all("SELECT m.token_id FROM graph_run_token_map m JOIN graph_node_attempts a ON a.attempt_id = m.attempt_id "
+                "WHERE m.run_id = ? AND m.node_key = ? AND a.status = 'invalidated' ORDER BY m.mapped_at, m.token_id",
+                [run_id, node_key])
     return [r["token_id"] for r in rows]
 
 

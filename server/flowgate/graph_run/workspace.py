@@ -22,6 +22,9 @@ from flowgate.graph_run import execution_store as ledger
 
 log = logging.getLogger(__name__)
 EVENT = "graph_attempt_workspace"
+# 0061 T#7: ``graph_run_events.event_type`` admits only the run / node status events (migration 144), so the
+# attempt's workspace record is a run status event with the status unchanged, told by its cause.
+CAUSE = "attempt_workspace"
 
 
 def attempt(attempt_id):
@@ -58,8 +61,8 @@ def _marker(row, project_id):
 def _mode(row):
     # The first successful preparation pins document-only mode even if Git is enabled later.
     for event in run_store._all(
-        "SELECT payload_json FROM graph_run_events WHERE run_id = ? AND event_type = ? "
-        "ORDER BY event_seq", [row["run_id"], EVENT]):
+        "SELECT payload_json FROM graph_run_events WHERE run_id = ? AND event_type = 'graph_run_status_changed' "
+        "AND cause = ? ORDER BY event_seq", [row["run_id"], CAUSE]):
         data = json.loads(event["payload_json"])
         if data.get("attempt_id") == row["attempt_id"]:
             return data
@@ -75,12 +78,17 @@ def _project(row, project_id=None, group_id=None):
 
 
 def _event(row, mode, **extra):
+    from modules.flow_gate.graph_workflow.services import run_events
     run = run_store.run_by_id(row["run_id"])
     seq = int(run["last_event_seq"]) + 1
+    payload = {"kind": EVENT, "flow_id": run["group_id"], "run_id": run["run_id"],
+               "revision_no": run.get("revision_no"), "event_seq": seq, "from": run["status"], "to": run["status"],
+               "cause": CAUSE, "reason": mode, "attempt_id": row["attempt_id"], "node_key": row["node_key"],
+               "mode": mode, **extra}
     run_store.append_event(
-        row["run_id"], seq, EVENT, {"attempt_id": row["attempt_id"], "mode": mode, **extra},
-        node_key=row["node_key"], from_status=None, to_status=row["status"],
-        cause=mode, result_doc_id=None, canvas_state=None, actor_user_id=None, reason=mode)
+        row["run_id"], seq, run_events.RUN_STATUS, payload, node_key=None, from_status=run["status"],
+        to_status=run["status"], cause=CAUSE, result_doc_id=None, canvas_state=None, actor_user_id=None,
+        reason=mode)
 
 
 @contextmanager
@@ -137,19 +145,31 @@ def source_root(attempt_id, *, project_id=None, group_id=None, locale="ko", docu
 
 @contextmanager
 def mutation(attempt_id, *, project_id, group_id):
+    from flowgate.graph_run import fencing
     row = attempt(attempt_id)
     if not row:
         raise port.GraphSourceError("graph_worktree_unavailable")
+    # T#7: a stopping run's or an inactive attempt's source write / remove is refused (409 graph_attempt_inactive)
+    # and recorded before the Git lock (its record takes the Flow guard). The write itself runs under the Stop
+    # gate's shared hold (taken before the Git lock), judged again once both are held: ``stopping`` cannot commit
+    # between that judgement and the write. A refusal there is recorded after both are released.
+    fencing.require(attempt_id, "source_mutation")
     project_id = _project(row, project_id, group_id)
     _directory, _root, branch = location(row, project_id)
-    ctx = locks.new_context("req")
-    outcome = locks.acquire("W", project_id, target_key=branch, holder_kind="source_mutation", ctx=ctx)
-    if not outcome.ok:
-        raise port.GraphSourceError("graph_worktree_unavailable", reason="git_busy")
-    try:
+
+    @contextmanager
+    def w_lock():
+        ctx = locks.new_context("req")
+        outcome = locks.acquire("W", project_id, target_key=branch, holder_kind="source_mutation", ctx=ctx)
+        if not outcome.ok:
+            raise port.GraphSourceError("graph_worktree_unavailable", reason="git_busy")
+        try:
+            yield
+        finally:
+            locks.release(ctx, outcome.lock_key)
+
+    with fencing.hold(attempt_id, "source_mutation", before=w_lock):
         yield source_root(attempt_id, project_id=project_id, group_id=group_id)
-    finally:
-        locks.release(ctx, outcome.lock_key)
 
 
 def _materialize(row, project_id):
@@ -201,6 +221,12 @@ def _materialize(row, project_id):
 
 
 def _failed(exec_id, cause):
+    """The runtime's invalidation of an attempt whose worktree failed. 0061 T#7: committed under the exclusive hold of
+    the Flow's Stop gate (``fencing.exclusive``, as the Stop's ``stopping``): a side effect of the attempt's token in
+    flight (an inbox registration, a source write) completes before it, and none starts after it — it is judged
+    again then and refused. Taken outside every Flow guard; this thread's own shared hold (an approval whose next
+    node failed here) is not waited for."""
+    from flowgate.graph_run import fencing
     row = ledger.get(exec_id)
     if not row:
         return
@@ -234,10 +260,11 @@ def _failed(exec_id, cause):
             ctx = run_apply.load_context(run_store.run_by_id(row["run_id"]), _project(original), None)
             run_apply.emit_node_state(ctx, node_attempt["node_key"], node["status"], "pending", "worktree_failed", None)
             # Do not immediately re-dispatch the same broken workspace.
-            if ctx.run["status"] == "running" and not ledger.working(ctx.run_id):
+            if ctx.run["status"] == "running" and not ledger.working(ctx.run_id)                     and not ledger.handing_off(ctx.run_id):     # T#7: another execution's run-end stage goes on
                 run_store.set_run_status(ctx.run_id, "running", "idle", "error")
                 run_apply.emit_run_status(ctx, "running", "idle", "worktree_failed", "error")
-    with_flow_guard(original["group_id"], body)
+    with fencing.exclusive(original["group_id"], own_ok=True):
+        with_flow_guard(original["group_id"], body)
     cleanup(row["attempt_id"])
 
 

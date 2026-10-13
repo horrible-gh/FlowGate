@@ -15,6 +15,8 @@ engine calls and the composition root (``startup.py``) registers the handlers.
                          with its own command (``run, mode`` -> ``"step" | "full" | None``)
     record_command       the running run's new command, before its run status event (``ctx, mode`` -> None)
     record_step_targets  a command's decision: a step's targets are the nodes it opens (``ctx, mode, decision``)
+    stop                 0061 T#7 Stop (``group, run_id, reason, user_id`` -> the response): stopping, the AI
+                         processes ended, the attempts invalidated, the open / review nodes pending, idle (stopped)
 
 * No handler registered: the port raises (fails closed, as ``run_scope_ports``) — a run step rolls back instead of
   inventing a run state.
@@ -34,8 +36,9 @@ RECORD_STEP_TARGETS = "record_step_targets"
 REQUIRE_EDITABLE = "require_editable"
 PROTECT_DEFINITION = "protect_definition"
 ADOPT_REVISION = "adopt_revision"
+STOP = "stop"
 PORT_NAMES = (SETTLE, SETTLE_PLAN, COMMAND_OF, RECORD_COMMAND, RECORD_STEP_TARGETS,
-              REQUIRE_EDITABLE, PROTECT_DEFINITION, ADOPT_REVISION)
+              REQUIRE_EDITABLE, PROTECT_DEFINITION, ADOPT_REVISION, STOP)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -98,3 +101,7 @@ def record_command(ctx: Any, mode: str) -> None:
 
 def record_step_targets(ctx: Any, mode: str, decision: Any) -> None:
     _handler(RECORD_STEP_TARGETS)(ctx, mode, decision)
+
+
+def stop(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:
+    return _handler(STOP)(group, run_id, reason, user_id)

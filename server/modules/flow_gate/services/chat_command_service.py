@@ -227,8 +227,12 @@ def _authorize_run(run: Optional[dict], token_id: Optional[str]) -> dict:
     if run and token_id:
         from modules.flow_gate.services import graph_source_hooks
         try:
+            token = db_tokens.get_by_id(token_id)
+            # flowgate.v02.0061 T#7: a stopping run's / inactive attempt's token gets no command — judged before
+            # its source root, so the refusal is graph_attempt_inactive (recorded), never a source error.
+            graph_source_hooks.require_writable(token, "chat_command")
             graph_source_hooks.source_root(
-                db_tokens.get_by_id(token_id), project_id=run.get("project_id"), group_id=run.get("group_id"))
+                token, project_id=run.get("project_id"), group_id=run.get("group_id"))
         except graph_source_hooks.GraphSourceError as exc:
             raise ChatCommandError(409, exc.code, exc.message) from exc
     if not run or run.get("action_scope") != "chat" or not run.get("doc_ref"):
@@ -407,7 +411,17 @@ def ai_result(row: dict) -> dict:
 # ── request / decision ──────────────────────────────────────────────────────
 
 def create_request(run: dict, payload: object, *, token_id: Optional[str] = None) -> dict:
-    """Validate, bind to the worktree, apply the user's policy. Returns the stored row."""
+    """Validate, bind to the worktree, apply the user's policy. Returns the stored row.
+
+    flowgate.v02.0061 T#7: one Graph attempt-token write session — the judgement of the token (``_authorize_run``)
+    keeps the Stop gate's shared hold it was made under until the row is stored, so a Stop's
+    ``stopping`` commits before the judgement (refused) or after the request exists (cancelled with the run)."""
+    from modules.flow_gate.services import graph_source_hooks
+    with graph_source_hooks.write_session():
+        return _create_request(run, payload, token_id=token_id)
+
+
+def _create_request(run: dict, payload: object, *, token_id: Optional[str] = None) -> dict:
     token_id = token_id or _live_token_id(run)
     _authorize_run(run, token_id)
     try:
@@ -653,7 +667,11 @@ def _execute_owned(request_id: str, expected_root: Optional[str]) -> None:
         # finalized while this request waited for approval or for this thread to start.
         # The check, the spawn and the control install happen under the run's launch gate,
         # so no cancellation can begin between the check and the spawn.
-        with _launch_gate(row["ai_run_id"]):
+        # flowgate.v02.0061 T#7: a Graph attempt token's judgement (``_live_refusal``) keeps the Stop gate's shared
+        # hold through the spawn: a Stop's ``stopping`` commits before it (refused) or after the process exists
+        # (killed with its run). The gate is taken inside the launch gate; the Stop never holds it while it kills.
+        from modules.flow_gate.services import graph_source_hooks
+        with graph_source_hooks.write_session(), _launch_gate(row["ai_run_id"]):
             refusal = _live_refusal(row["ai_run_id"], row["token_id"])
             with _lock:
                 if refusal is None and request_id in _cancel_requested:

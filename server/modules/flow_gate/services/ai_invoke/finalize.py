@@ -339,8 +339,26 @@ def _finalize_run(run: dict) -> None:
         terminal.attempt(run, "prepare_" + name, action)
     # flowgate.v02.0061 T#2: the run-end port's mark, before the release (see ``run_ended`` below).
     from modules.flow_gate.services import graph_execution_hooks
+    # flowgate.v02.0061 T#7: a Graph execution's report reaches the Graph only while that execution is running with the
+    # current lease token and its run / attempt may take it (not stopping, not invalidated); otherwise neither run-end
+    # hook follows it (recorded by the Graph). Read before the release below ends the execution.
+    if run.get("graph_exec_id") and not run.get("graph_lease_lost"):
+        try:
+            refused = graph_execution_hooks.call("report_refused", run)
+        except Exception:  # noqa: BLE001 — an unjudged report is not handed off
+            logger.warning("ai-invoke %s: Graph report check failed", run.get("run_id"), exc_info=True)
+            refused = True
+        if refused:
+            run["graph_lease_lost"] = True
+            run["graph_report_refused"] = True
     if not run.get("graph_lease_lost"):
         ai_run_end_hooks.run_ending(run)
+    # flowgate.v02.0061 T#7: an owned end of a Graph execution is handed on to its run-end stage below (``run_ended``);
+    # until that stage is over the Graph keeps the run working (``graph_run_end_pending``, ``handoff_end``), so the run
+    # never goes idle between the execution's ledger end and the stage that follows it.
+    graph_exec = bool(run.get("graph_exec_id"))
+    if graph_exec and not run.get("graph_lease_lost"):
+        run["graph_run_end_pending"] = True
     terminal.cleanup(run, handoff=respawn_pending, reason="normal_finish")
     # T#2: an AI responder POSTs while it still owns this lease, so the answer-path
     # attempt necessarily defers. Retry after finalization/release; human answers and
@@ -365,10 +383,19 @@ def _finalize_run(run: dict) -> None:
     # flowgate.v02.0053 T#2: the run-end port (a Graph card's review stage starts here). Like
     # the resumes above it may admit a new run for this group, so it too runs strictly after
     # the release. No handler registered: nothing happens.
-    if not run.get("graph_lease_lost") and (
-            not run.get("graph_exec_id") or run.get("graph_execution_finished")):
-        ai_run_end_hooks.run_ended(run)
-    if run.get("group_id"):
+    # flowgate.v02.0061 T#7: a Graph execution is handed on, and settled after, only when its end was proven owned to
+    # its close (``graph_end_owned``: the lease held to the end, the ledger took the end, not a Stop's or the
+    # recovery's late end, not an invalidated attempt's, not a stopping run's). A lost lease (a launcher a Stop
+    # cancelled, one refused at launch), a refused report or a failed terminal end hands nothing on and settles
+    # nothing — the Flow's run may be one started again since.
+    owned = not run.get("graph_lease_lost") and (not graph_exec or bool(run.get("graph_end_owned")))
+    try:
+        if owned:
+            ai_run_end_hooks.run_ended(run)
+    finally:
+        if graph_exec:
+            graph_execution_hooks.call("handoff_end", run)
+    if run.get("group_id") and owned:
         graph_execution_hooks.call("settle", run.get("group_id"))
 
 

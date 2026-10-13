@@ -2514,17 +2514,27 @@ async def inbox(request: Request):
         return _fail(400, "action must be new, edit, review, test_run, or failure_origin_review")
 
     if action == "new":
-        return await anyio.to_thread.run_sync(_handle_new, request, raw, body)
+        return await anyio.to_thread.run_sync(_in_write_session, _handle_new, request, raw, body)
     elif action == "review":
-        return await anyio.to_thread.run_sync(_handle_review, request, raw, body)
+        return await anyio.to_thread.run_sync(_in_write_session, _handle_review, request, raw, body)
     elif action == "failure_origin_review":
         return await anyio.to_thread.run_sync(
-            _handle_failure_origin_review, request, raw, body
+            _in_write_session, _handle_failure_origin_review, request, raw, body
         )
     elif action == "test_run":
-        return await anyio.to_thread.run_sync(_handle_test_run, request, raw, body)
+        return await anyio.to_thread.run_sync(_in_write_session, _handle_test_run, request, raw, body)
     else:
-        return await anyio.to_thread.run_sync(_handle_edit, request, raw, body)
+        return await anyio.to_thread.run_sync(_in_write_session, _handle_edit, request, raw, body)
+
+
+def _in_write_session(handler, request: Request, raw: str, body: dict) -> JSONResponse:
+    """flowgate.v02.0061 T#7: one handler is one attempt-token write session. A Graph attempt token's Step 3
+    judgement (``_check_context_binding``) keeps the Stop gate's shared hold it was made under until the handler
+    returns, so numbering, storage, registration, receipt / token consumption and their commits all happen before a
+    Stop's ``stopping`` commits, or are refused at Step 3 after it. Other tokens take no hold."""
+    from modules.flow_gate.services import graph_source_hooks
+    with graph_source_hooks.write_session():
+        return handler(request, raw, body)
 
 
 # ── Step 3: the one context-binding check (0492 T0018 item 2 / L0010 §2.3) ──────────
@@ -2558,7 +2568,19 @@ def _check_context_binding(
     Token-side group resolution is independent: its `group_id` column is authoritative when
     present, with its own `doc_ref` lookup only for legacy tokens that lack that column.
     Two unresolved values are never equal here; that is what `canonical_context` guarantees.
+
+    flowgate.v02.0061 T#7: a Graph attempt token registers only while its run is running or paused and
+    its attempt is active (a review verdict: also while its AI run is live and its execution runs with
+    the current lease) — else 409 `graph_attempt_inactive` and a run event, before anything is numbered,
+    stored or consumed. The judgement is made under the Stop gate's shared hold, kept for the rest of
+    the handler (`_in_write_session`): a Stop's `stopping` cannot commit between it and the side effects.
     """
+    from modules.flow_gate.services import graph_source_hooks
+    try:
+        graph_source_hooks.require_writable(
+            token_rec, "inbox_" + action_handler, report=action_handler == "review")
+    except graph_source_hooks.GraphSourceError as exc:
+        return _fail(409, exc.message, error={"code": exc.code, "details": exc.details})
     token_group = (token_rec.get("group_id") or "").strip() or register_binding.group_of_doc(
         token_rec.get("doc_ref")
     )

@@ -1,6 +1,17 @@
 """Execution lifecycle port. The composition root supplies the v0.2 implementation."""
 from __future__ import annotations
 
+import contextlib
+import threading
+from contextvars import ContextVar
+
+# flowgate.v02.0061 T#7 (0017-TR question 439): the span of a person's explicit AI request (the AI invoke start and
+# [이어서 진행] routes). A review / rework hop requested inside it is the person's explicit review request, which the
+# Graph also takes on an idle run; one requested anywhere else (an AI run's own chain, the card's review stage, a
+# replay) is not. Bound to the request's own thread: never taken by an AI run's worker thread, even one that would
+# inherit the context.
+_explicit: ContextVar = ContextVar("graph_explicit_request", default=None)
+
 class ExecutionLeaseLost(RuntimeError):
     """A Graph execution no longer owns the right to run or mutate."""
 
@@ -40,3 +51,17 @@ def admission(function):
             return function(*args, **kwargs)
         return call("admission", lambda: function(*args, **kwargs))
     return wrapped
+
+
+@contextlib.contextmanager
+def explicit_request():
+    """flowgate.v02.0061 T#7: the span of a person's explicit AI request (see ``_explicit``)."""
+    marker = _explicit.set(threading.get_ident())
+    try:
+        yield
+    finally:
+        _explicit.reset(marker)
+
+
+def explicit() -> bool:
+    return _explicit.get() == threading.get_ident()

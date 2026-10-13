@@ -1,13 +1,19 @@
 """Attempt source port; unmapped v0.1 tokens keep their original routing."""
 from __future__ import annotations
 
+import contextlib
+import threading
+
 from fastapi import HTTPException
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.graph_workflow.api.graph_messages import SOURCE_MESSAGES
+from modules.flow_gate.services.graph_execution_hooks import ExecutionLeaseLost
 
 _handler = None
 _mutation_handler = None
+_fence_handler = None
+_session = threading.local()
 
 
 class GraphSourceError(HTTPException):
@@ -18,14 +24,22 @@ class GraphSourceError(HTTPException):
         super().__init__(409, {"code": code, "message": message, **details})
 
 
-def register(handler, mutation_handler):
-    global _handler, _mutation_handler
-    _handler, _mutation_handler = handler, mutation_handler
+class GraphAttemptInactive(GraphSourceError, ExecutionLeaseLost):
+    """0061 T#7: an attempt token's write or result arrived when its run is stopping or its attempt / execution no
+    longer owns it (409 ``graph_attempt_inactive``). Also an ``ExecutionLeaseLost`` for the internal Graph paths."""
+
+    def __init__(self, *, locale="ko", **details):
+        GraphSourceError.__init__(self, "graph_attempt_inactive", locale=locale, **details)
+
+
+def register(handler, mutation_handler, fence_handler=None):
+    global _handler, _mutation_handler, _fence_handler
+    _handler, _mutation_handler, _fence_handler = handler, mutation_handler, fence_handler
 
 
 def unregister():
-    global _handler, _mutation_handler
-    _handler = _mutation_handler = None
+    global _handler, _mutation_handler, _fence_handler
+    _handler = _mutation_handler = _fence_handler = None
 
 
 def binding(token):
@@ -58,6 +72,29 @@ def mutation(token):
     if not attempt_id or _mutation_handler is None:
         raise GraphSourceError("graph_worktree_unavailable")
     return _mutation_handler(attempt_id, project_id=token.get("project"), group_id=token.get("group_id"))
+
+
+@contextlib.contextmanager
+def write_session():
+    """0061 T#7: the span of an attempt token's side effects (a document registration and its commit, a chat
+    command's creation or spawn). A ``require_writable`` inside it keeps the Stop gate's shared hold it was judged
+    under until the span ends, so no ``stopping`` commits between the judgement and the side effects."""
+    previous = getattr(_session, "stack", None)
+    with contextlib.ExitStack() as stack:
+        _session.stack = stack
+        try:
+            yield
+        finally:
+            _session.stack = previous
+
+
+def require_writable(token, operation, *, report=False):
+    """0061 T#7: an attempt token may still write or register a result (``report``: an execution's own report, a
+    review verdict). Raises ``GraphAttemptInactive``; an unmapped v0.1 token, or no handler, passes. Inside a
+    ``write_session`` the judgement's hold is kept for the session."""
+    if _fence_handler is None or not binding(token):
+        return
+    _fence_handler(token, operation, report=report, keep=getattr(_session, "stack", None))
 
 
 def reject_group_source(token, operation):

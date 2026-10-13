@@ -8,6 +8,7 @@
     command_of           the command a paused / idle run goes on with (``command.command_of``)
     record_command       the new command, before its run status event (``command.record_command``)
     record_step_targets  a step's targets (``command.record_step_targets``)
+    stop                 T#7 Stop (``stop.stop_run``)
 """
 from __future__ import annotations
 
@@ -17,8 +18,9 @@ from flowgate.graph_run import command, settle, editing, revision
 
 
 def register() -> None:
-    from flowgate.graph_run import execution
+    from flowgate.graph_run import execution, stop
     execution.register()
+    ports.register(ports.STOP, stop.stop_run)
     ports.register(ports.REQUIRE_EDITABLE, editing.require_editable)
     ports.register(ports.PROTECT_DEFINITION, editing.protect_definition)
     ports.register(ports.ADOPT_REVISION, revision.adopt_revision)

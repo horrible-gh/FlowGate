@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import secrets
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 from modules.flow_gate.db.group_ai_leases import ACTIVE_HEARTBEAT_TTL_SEC
@@ -127,3 +129,33 @@ def cancel_ineligible(exec_id):
 def working(run_id):
     return bool(run_store._one("SELECT 1 AS present FROM graph_attempt_runs WHERE run_id = ? "
                               "AND status IN ('requested', 'running') LIMIT 1", [run_id]))
+
+
+# 0061 T#7: the run-end hand-offs in flight (in-process). An execution that ended on its own and was owned to its end
+# is followed by its finalize's run-end stage (the instruction approval and the result stage, the result's review or
+# approval); until that stage is over the run is still worked on (``settle.working``), so it never goes idle between
+# the execution's ledger end and what follows it. Cleared by the finalize (``handoff_end``) or after the TTL.
+HANDOFF_TTL_SEC = 600
+_handoffs: dict[str, tuple[str, float]] = {}            # exec_id -> (run_id, deadline)
+_handoffs_lock = threading.Lock()
+
+
+def begin_handoff(exec_id, run_id):
+    with _handoffs_lock:
+        _handoffs[exec_id] = (run_id, time.monotonic() + HANDOFF_TTL_SEC)
+
+
+def end_handoff(exec_id):
+    """-> the run whose hand-off ended, or None."""
+    with _handoffs_lock:
+        found = _handoffs.pop(exec_id, None)
+    return found[0] if found else None
+
+
+def handing_off(run_id):
+    with _handoffs_lock:
+        clock = time.monotonic()
+        for exec_id, (owner, until) in list(_handoffs.items()):
+            if until <= clock:
+                _handoffs.pop(exec_id, None)
+        return any(owner == run_id for owner, _until in _handoffs.values())
