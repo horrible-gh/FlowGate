@@ -7,16 +7,17 @@
        flowgate.v02.0053 T#5 (0053 CH) — a Custom card shows 지시서 · 레포트 like 조사 · 작업 (its 지시서 line hidden
        when its settings omit the instruction, useGateCard); a document line's name has no type code. -->
   <section v-if="lines.length" class="inspector-gate-card" data-test="inspector-gate-card" :data-shape="shape">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action" />
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { openDocument } from '../../openDocument'
+import { INSPECTOR_HOST } from '../../inspectorHost'
+import { cardLineRow, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
 import type { InspectorTarget } from '../../inspectorTarget'
-import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
+import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import { gateCardShape, gateCardSlots, type GateSlot } from './gateCardModel'
 import { useGateCard } from './useGateCard'
 
@@ -25,6 +26,8 @@ const props = defineProps<{
 }>()
 
 const { t, te } = useI18n()
+
+const host = inject(INSPECTOR_HOST, null)
 
 const k = (key: string) => `gui.inspector.gateCard.${key}`
 
@@ -49,7 +52,15 @@ function lineOf(slot: GateSlot): InspectorSlotView {
     focus: slot.focus,
     danger: slot.state?.tone === 'danger',
     open: slot.open,
+    author: authorOf(slot.key),
+    // flowgate.v02.0056 F2-2: 문서 없음 [작성] · 비어 있음 · the history number · [AI 호출] of the card's own line.
+    ...cardLineRow(props.target, slot, slot.key),
   }
+}
+
+/** flowgate.v02.0056 F2-1: the card line's author (the instruction line: 지시 AI 또는 사람), as the server sent it. */
+function authorOf(key: string): string | null {
+  return props.target.cardDocuments.find((line) => line.slot === key)?.author ?? null
 }
 
 const lines = computed(() => gateCardSlots(props.target, instructionOmitted.value).map(lineOf))
@@ -61,6 +72,19 @@ function open(line: InspectorSlotView) {
 /** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
 function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit')
+}
+
+/** The history button: the document's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+function history(line: InspectorSlotView) {
+  if (line.id) openDocumentHistory(line.id)
+}
+
+/**
+ * flowgate.v02.0056 F2-2: a row action of a card line — [작성] opens the line's write window, [AI 호출] the
+ * document's AI call window (openCardLineAction; the Canvas is read again after them).
+ */
+function action(line: InspectorSlotView, key: SlotActionKey) {
+  openCardLineAction(props.target, line, key, host)
 }
 </script>
 

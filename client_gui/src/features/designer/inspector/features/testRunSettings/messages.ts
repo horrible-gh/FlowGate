@@ -1,5 +1,5 @@
 // flowgate.v02.0051 stage 2 — 테스트 card settings strings, merged under `gui.inspector.testRunSettings`.
-// flowgate.v02.0053 T#7 — the 실행 block only (지시서 · 검수 뒤 진행 are the settings feature's); no code on
+// flowgate.v02.0053 T#7 — the 실행 block only (지시서 is the settings feature's); no code on
 // screen (TSC / TSR, automated / manual / external) and the explanations at tooltip length.
 export default {
   ko: {

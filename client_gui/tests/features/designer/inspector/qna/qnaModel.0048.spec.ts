@@ -134,7 +134,7 @@ describe('answering availability (flowgate.v02.0048 T#7)', () => {
   const base: QnaInput = { readOnly: null, groupDisposed: false, aiRunning: false, busy: false }
 
   it('reading is a query, answering a change (D#1 §8.3 rule 0)', () => {
-    expect(QNA_OPERATION_CLASS).toEqual({ read: 'query', answer: 'change', ask: 'change' })
+    expect(QNA_OPERATION_CLASS).toEqual({ read: 'query', answer: 'change', ask: 'change', ai_request: 'change' })
   })
 
   it.each([
@@ -157,6 +157,8 @@ describe('answering availability (flowgate.v02.0048 T#7)', () => {
       answer: { visible: true, enabled, reason },
       // flowgate.v02.0053 T#6: asking closes on the same reasons (no question is on its way here).
       ask: { visible: true, enabled, reason: reason === null ? null : reason.replace('reason.', 'ask_reason.') },
+      // flowgate.v02.0056 F1: asking an AI closes on the same reasons (no request is on its way here).
+      ai_request: { visible: true, enabled, reason: reason === null ? null : reason.replace('reason.', 'ai_reason.') },
     })
   })
 

@@ -3,6 +3,17 @@
 DB0010 T15~T20 (migration 144_graph_runs.sql), queries §4.4 / §4.5 Q-R8~Q-R15 and Q-W10~Q-W17.
 Every write here runs inside a Flow guard (L0009 §2.1). Conditional updates return the affected
 row count; the caller asserts it (a mismatch is a rollback, DB0010 §5.2).
+
+flowgate.v02.0056 T#2 (migration 148_graph_node_run_stage.sql): an AI node run records the stage of its card
+run (``stage``: ``instruction`` while its instruction AI writes the card's instruction, ``result`` while its
+run AI writes the node's result; NULL for a node no AI starts) and the instruction its result stage was
+given (``instruction_doc_id``). When the instruction stage ends (the move to the result stage, or the stage's
+failure) it records the registration boundary of the node's result (``result_event_floor``, ``mark_result_floor``):
+a document the node's tokens registered up to it belongs to the instruction stage, never to the result. A node token
+records the stage it belongs to (``graph_run_token_map.stage``): an AI start's token the stage its AI was started for,
+the dispatch token (NULL when mapped) the instruction stage once a registration with it reached the result binder during
+that stage (``mark_token_stage``). What an instruction token registered is never the node's result, whenever the
+registration is consumed (the inbox contacts the Graph before it consumes the token) or committed.
 """
 from __future__ import annotations
 
@@ -21,7 +32,7 @@ _RUN_COLUMNS = (
 )
 _NODE_RUN_COLUMNS = (
     "run_id, node_key, status, result_doc_id, root_bound, opened_at, finished_at, dispatch_token_issued, "
-    "dispatch_issued_to, dispatch_mention_id, dispatch_error_code, updated_at"
+    "dispatch_issued_to, dispatch_mention_id, dispatch_error_code, stage, instruction_doc_id, result_event_floor, updated_at"
 )
 
 
@@ -187,31 +198,63 @@ def set_dispatch(run_id: str, node_key: str, dispatch: Optional[dict]) -> int:
     )
 
 
+def set_stage(run_id: str, node_key: str, stage: Optional[str], instruction_doc_id: Optional[str] = None) -> int:
+    """flowgate.v02.0056 T#2: the card run stage of a node run (dispatch, the instruction stage's target, the
+    move to the result stage). ``instruction_doc_id`` None keeps the recorded one."""
+    doc_sql = "instruction_doc_id = ?, " if instruction_doc_id is not None else ""
+    doc_params = [instruction_doc_id] if instruction_doc_id is not None else []
+    params = [stage, *doc_params, utc_now_ms(), run_id, node_key]
+    return _affected(
+        f"UPDATE graph_node_runs SET stage = ?, {doc_sql}updated_at = ? WHERE run_id = ? AND node_key = ?", params)
+
+
+def mark_result_floor(run_id: str, node_key: str) -> int:
+    """flowgate.v02.0056 T#2: the end of the node's instruction stage, as a registration boundary — the last
+    ``workflow_events`` id now (the inbox's ``token_consumed`` events are among them). A document the node's tokens
+    registered at or before it was registered during the instruction stage and is never the node's result. The first
+    boundary stays (a repeated end does not move it). It only sees registrations consumed by then: one still on its way
+    is told by its token's stage (``mark_token_stage``, the AI start's mapping)."""
+    last = _one("SELECT MAX(id) AS n FROM workflow_events", []) or {}
+    return _affected(
+        "UPDATE graph_node_runs SET result_event_floor = ?, updated_at = ? "
+        "WHERE run_id = ? AND node_key = ? AND result_event_floor IS NULL",
+        [int(last.get("n") or 0), utc_now_ms(), run_id, node_key])
+
+
 def _flag(dispatch: Optional[dict]) -> Optional[int]:
     return None if dispatch is None else (1 if dispatch.get("token_issued") else 0)
 
 
 # ── Token map (T18) ──────────────────────────────────────────────────────────
 
-def map_token(token_id: str, run_id: str, node_key: str) -> None:
-    """Q-W13 — after a successful issue, outside the dispatch savepoint."""
+def map_token(token_id: str, run_id: str, node_key: str, stage: Optional[str] = None) -> None:
+    """Q-W13 — after a successful issue, outside the dispatch savepoint. ``stage``: the card run stage an AI start's
+    token is minted for (flowgate.v02.0056 T#2); None for the node's dispatch token."""
     get_store()._execute(
-        "INSERT INTO graph_run_token_map (token_id, run_id, node_key, mapped_at) VALUES (?, ?, ?, ?)",
-        [token_id, run_id, node_key, utc_now_ms()],
+        "INSERT INTO graph_run_token_map (token_id, run_id, node_key, stage, mapped_at) VALUES (?, ?, ?, ?, ?)",
+        [token_id, run_id, node_key, stage, utc_now_ms()],
     )
 
 
+def mark_token_stage(token_id: str, stage: str) -> int:
+    """flowgate.v02.0056 T#2: a token mapped with no stage (the node's dispatch token) was spent in ``stage``. A
+    token's stage, once recorded, stays."""
+    return _affected("UPDATE graph_run_token_map SET stage = ? WHERE token_id = ? AND stage IS NULL", [stage, token_id])
+
+
 def node_run_by_token(token_id: str) -> Optional[dict]:
-    """Q-R11."""
+    """Q-R11 (with the token's ``stage``)."""
     if not available():
         return None
-    return _one("SELECT run_id, node_key FROM graph_run_token_map WHERE token_id = ?", [token_id])
+    return _one("SELECT run_id, node_key, stage FROM graph_run_token_map WHERE token_id = ?", [token_id])
 
 
-def token_ids(run_id: str, node_key: str) -> list[str]:
-    """Q-R13, mapping order."""
-    rows = _all("SELECT token_id FROM graph_run_token_map WHERE run_id = ? AND node_key = ? "
-                "ORDER BY mapped_at, token_id", [run_id, node_key])
+def token_ids(run_id: str, node_key: str, skip_stage: Optional[str] = None) -> list[str]:
+    """Q-R13, mapping order — without the tokens of ``skip_stage`` when it is given."""
+    stage_sql = " AND (stage IS NULL OR stage <> ?)" if skip_stage is not None else ""
+    params = [run_id, node_key, *([skip_stage] if skip_stage is not None else [])]
+    rows = _all("SELECT token_id FROM graph_run_token_map WHERE run_id = ? AND node_key = ?"
+                f"{stage_sql} ORDER BY mapped_at, token_id", params)
     return [r["token_id"] for r in rows]
 
 

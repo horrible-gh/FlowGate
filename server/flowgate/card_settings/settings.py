@@ -17,12 +17,18 @@ answer what a node's AI start takes from its card.
 - ``token_step_type`` is the source tools' ``worker_step_type_hooks`` handler: the token of an open AI
   node whose card changes what it writes is judged by that type (an omitted instruction's report),
   so the source access of the token follows what the AI was told to write.
+- flowgate.v02.0056 T#2: ``instruction_document`` is the Graph's ``card_settings_ports.instruction_document``
+  handler — an AI card that runs an instruction stage (instruction use) names its instruction type and its
+  instruction line's document, and whether that document is written (``card_documents.lines.has_body``: its
+  body, not its existence, decides whether the instruction AI runs). While a node is in that stage its
+  tokens write the instruction, so ``token_step_type`` judges them by the instruction type.
 """
 from __future__ import annotations
 
 from typing import Any, Optional
 
 from flowgate.card_documents import lines as card_lines
+from flowgate.card_documents import slots as card_slots
 from flowgate.card_settings import fields
 from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import repository
@@ -104,11 +110,31 @@ def result_type(flow_id: str, node: dict) -> Optional[str]:
 
     Only an AI node reads its card at dispatch, so only an AI node's result type follows the card.
     The card cannot change while the node is open (locked), so this is the type its AI was told.
+    flowgate.v02.0056 T#2: a node row that carries its node run's stage as ``run_stage`` None (the result binder,
+    the source tools) is an AI card run opened before migration 148 — its AI was told the one-stage type of that
+    time (``fields.result_doc_type`` ``one_stage``), so that type stays its result's.
     """
     if node.get("assignee_kind") != "ai" or not repository.available() or not node.get("node_key"):
         return None
+    one_stage = "run_stage" in node and node.get("run_stage") is None
     return fields.result_doc_type(node.get("node_type"), node.get("doc_type"),
-                                  repository.values(flow_id, node["node_key"]))
+                                  repository.values(flow_id, node["node_key"]), one_stage=one_stage)
+
+
+def instruction_document(flow_id: str, node: dict) -> dict:
+    """``{doc_type, doc_id, written}`` of an AI card's instruction when the card runs an instruction stage
+    (``node``: the run's node row), else ``{}``: its instruction type, its instruction line's live document
+    (None when the line has none) and whether that document has a body."""
+    if node.get("assignee_kind") != "ai" or not repository.available() or not node.get("node_key"):
+        return {}
+    doc_type = fields.instruction_stage(node.get("node_type"), node.get("doc_type"),
+                                        repository.values(flow_id, node["node_key"]))
+    if not doc_type:
+        return {}
+    line = card_lines.line_document(flow_id, node["node_key"], card_slots.INSTRUCTION, node.get("node_type"),
+                                    node.get("doc_type")) or {}
+    doc = line.get("document")
+    return {"doc_type": doc_type, "doc_id": doc["doc_id"] if doc else None, "written": card_lines.has_body(doc)}
 
 
 def token_step_type(token_rec: dict) -> Optional[str]:
@@ -116,9 +142,18 @@ def token_step_type(token_rec: dict) -> Optional[str]:
 
     Only a token the server mapped to a node (the node's dispatch token, the tokens its AI start and that
     start's retries minted) counts, and only while the node is open in its Flow's active run: the card is
-    locked then, so this is the type the dispatch told the AI and the result binder binds (``result_type``).
+    locked then, so this is the type the dispatch told the AI and the result binder binds (``result_type``)
+    — or, while the node is in its instruction stage, the instruction type that stage writes.
     """
     if not repository.available():
         return None
     found = legacy.open_node_of_token(token_rec)
-    return result_type(*found) if found else None
+    if not found:
+        return None
+    flow_id, node = found
+    if node.get("run_stage") == fields.INSTRUCTION_STAGE and node.get("assignee_kind") == "ai":
+        written = fields.instruction_stage(node.get("node_type"), node.get("doc_type"),
+                                           repository.values(flow_id, node["node_key"]))
+        if written:
+            return written
+    return result_type(flow_id, node)

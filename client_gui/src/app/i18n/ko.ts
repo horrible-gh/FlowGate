@@ -127,6 +127,44 @@ export default {
         done: '완료',
         blocked: '보류',
       },
+      // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
+      // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
+      card_states: {
+        writing_instruction: '지시서 작성 중',
+        writing_result: '결과 작성 중',
+        working: '작업 중',
+        awaiting_approval: '승인 대기',
+        approved: '승인됨',
+        rejected: '반려됨',
+        pending: '대기',
+        closed: '닫힘',
+      },
+      // flowgate.v02.0056 F2-1 — a card's [승인] (O1 0005-TR §4-1) and why it was refused, by the server's code.
+      approval: {
+        approve: '승인',
+        hint: '이 카드의 지시서와 결과를 승인합니다',
+        done: '카드를 승인했습니다',
+        failure: {
+          result_changed: '결과 문서가 바뀌었습니다. 카드를 다시 읽었으니 확인한 뒤 다시 승인하세요.',
+          group_ai_running: '이 그룹에서 다른 AI가 실행 중입니다. 끝난 뒤 다시 승인하세요.',
+          card_approval_busy: '다른 카드를 승인하는 중입니다. 잠시 뒤 다시 승인하세요.',
+          ai_running: 'AI가 아직 이 카드를 작업하고 있습니다. 끝난 뒤 다시 승인하세요.',
+          already_approved: '이미 승인된 카드입니다.',
+          node_not_in_review: '승인할 수 있는 상태가 아닙니다.',
+          no_result: '아직 결과가 없습니다.',
+          node_not_started: '아직 시작하지 않은 카드입니다.',
+          document_approval_refused: '문서 승인이 거절되었습니다.',
+          approval_forbidden: '승인 권한이 없습니다.',
+          forbidden: '이 카드를 승인할 권한이 없습니다.',
+          inactive: '지금은 이 카드를 승인할 수 없습니다.',
+          network: '서버에 연결하지 못했습니다.',
+          other: '카드를 승인하지 못했습니다.',
+        },
+        refused_document: '거절된 문서: {doc}',
+        refused_reason: '사유: {reason}',
+        approved_documents: '앞서 승인된 문서 {n}개',
+        approved_documents_named: '앞서 승인된 문서: {docs}',
+      },
     },
     // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
     palette: {
@@ -341,8 +379,25 @@ export default {
         open: '열기',
         // flowgate.v02.0053 T#3 — ✎ opens the document window straight in its editor.
         edit: '편집',
-        // flowgate.v02.0053 T#5 — the hollow state dot's tooltip on a line without a document.
+        // flowgate.v02.0053 T#5 — the wording of a line without a document (0056 F1: drawn in the line).
         none: '문서 없음',
+        // flowgate.v02.0056 F2-1 — who writes a card line (O2 0007-TR §4-3 `author`); only the instruction line's
+        // instruction_ai_or_human is drawn.
+        author: {
+          instruction_ai_or_human: '지시 AI 또는 사람',
+        },
+        // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
+        history: '검수·반려 이력',
+        history_count: '검수·반려 이력 {n}건',
+        // flowgate.v02.0056 F2-2 — a card line's document without a body yet (O3 has_body), the row actions and the
+        // history button's hover text with the AI review / rejection split.
+        blank: '비어 있음',
+        actions: {
+          write: '작성',
+          ai_invoke: 'AI 호출',
+          ai_invoke_running: 'AI 작업 중',
+        },
+        history_detail: '검수·반려 이력 {n}건 (AI 검수 {reviews} · 반려 {rejections})',
       },
       review: {
         pass: 'AI 검수 {n}회 · 남은 지적 {remain}',
@@ -493,6 +548,9 @@ export default {
       },
       // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.
       run_status: { running: '실행 중', stopped: '멈춤', completed: '완료' },
+      // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
+      run_pending: '멈춤 · 다음 카드 {n}개 대기',
+      run_pending_keys: '다음으로 넘어갈 카드: {keys}',
       run_errors: {
         run_policy_undecided: '실행 규칙이 아직 정해지지 않아 실행할 수 없습니다.',
         run_already_active: '이미 실행 중입니다.',
@@ -829,6 +887,8 @@ export default {
     editor: '문서 본문',
     save: '저장',
     cancel: '취소',
+    // flowgate.v02.0056 F1 — [닫기] of the editor bar: the window closes (unsaved text is asked about first).
+    close: '닫기',
     discard: {
       title: '저장하지 않은 내용을 버릴까요?',
       confirm: '버리기',
@@ -858,9 +918,97 @@ export default {
       error: '불러오지 못했습니다',
       retry: '다시 시도',
       copy_md: 'Markdown 복사',
-      copy_md_with_header: '헤더 포함 복사',
       copy_code: '코드 복사',
       copy_failed: '복사하지 못했습니다',
+    },
+    // flowgate.v02.0056 F1 — the 검수·반려 이력 window (the v0.1 '검수·반려 전체보기' dialog on ModelessShell).
+    history: {
+      title: '검수·반려 이력',
+      filter_label: '이력 종류',
+      filter_all: '전체',
+      filter_reject: '반려',
+      filter_ai_review: 'AI 검수',
+      empty: '이력이 없습니다.',
+      tag_reject: '반려',
+      tag_ai_review: 'AI 검수',
+      verdict: {
+        pass: '통과',
+        hold: '보류',
+        issues: '지적 {n}건',
+      },
+      intent_normal: '최초 검수',
+      intent_rerun: '재검수',
+      rev: 'rev {n}',
+      reviewer: '검수 AI: {name}',
+      requested: '요청한 AI: {name}',
+      supersedes: '대체 대상: {reference}',
+      by_user: '사용자',
+      by_ai: 'AI · {name}',
+      ai_unknown: 'AI (실행 정보 없음)',
+      ai_response: 'AI 대응',
+      fold: '접기',
+      unfold: '펼치기',
+    },
+    // flowgate.v02.0056 F2-2 — [작성] of a card line without a document (O3 0009-TR §4-2).
+    write: {
+      title: '{name} 작성',
+      editor: '작성할 본문',
+      placeholder: '본문을 Markdown으로 작성합니다. 비워 두고 저장하면 빈 초안이 만들어집니다.',
+      contentless: '빈 작업계획을 만듭니다. 내용은 만든 뒤 편집합니다.',
+      result_note: '카드가 실행 중입니다. 이 행이 카드의 결과이면 저장한 문서가 결과로 등록되고 카드는 승인 대기가 됩니다. 결과에는 본문이 필요합니다.',
+      save: '저장',
+      create: '만들기',
+      cancel: '취소',
+      close: '닫기',
+      failure: {
+        slot_has_document: '이 행에는 이미 문서가 있습니다. 그 문서를 엽니다.',
+        node_token_unavailable: '이 카드의 결과가 이미 등록되었습니다. 등록된 문서를 엽니다.',
+        node_in_instruction_stage: '지시 AI가 지시서를 쓰는 중입니다. 끝난 뒤 다시 저장하세요.',
+        node_ai_working: '카드의 AI가 작업 중입니다. 끝난 뒤 다시 저장하세요.',
+        flow_disposed: '폐기된 플로우라 작성할 수 없습니다.',
+        card_documents_unavailable: '서버가 카드 문서를 지원하지 않습니다.',
+        content: {
+          not_a_text: '본문을 글자로 보낼 수 없습니다.',
+          too_long: '본문이 너무 깁니다 (최대 500,000자).',
+          not_for_this_slot: '이 행은 본문 없이 만듭니다.',
+          empty_body: '결과로 등록되는 문서는 본문이 필요합니다.',
+        },
+        slot: {
+          not_a_slot_of_this_card: '이 카드에 없는 행입니다.',
+          slot_shares_a_document: '이 행은 다른 행의 문서를 함께 씁니다. 그 행에서 작성하세요.',
+          doc_type_not_registered: '프로젝트에 등록되지 않은 문서 종류입니다.',
+        },
+        invalid: '저장할 수 없는 내용입니다.',
+        forbidden: '문서를 만들 권한이 없습니다.',
+        not_found: '카드나 플로우를 찾을 수 없습니다.',
+        network: '서버에 연결하지 못했습니다.',
+        other: '저장하지 못했습니다.',
+      },
+    },
+    // flowgate.v02.0056 F2-2 — the single AI call on a document (O3 0009-TR §4-3).
+    ai: {
+      title: 'AI 호출',
+      provider: 'AI',
+      provider_loading: 'AI 목록을 불러오는 중...',
+      provider_pick: 'AI를 고르세요',
+      provider_error: 'AI 목록을 불러오지 못했습니다.',
+      opinion: '의견',
+      opinion_placeholder: 'AI에게 전할 의견을 적습니다 (비워 둘 수 있습니다).',
+      hint: '[실행]을 누르면 이 문서에 AI를 한 번 실행합니다. 검수·대응·카드 승인은 이어지지 않습니다. 카드의 [AI가 참조] 메모도 함께 전달됩니다.',
+      busy_this: '이 문서에서 다른 AI 실행이 진행 중입니다.',
+      busy_other: '이 플로우에서 다른 AI 실행이 진행 중입니다.',
+      running: 'AI 작업 중 ({id})',
+      finished: 'AI 실행이 끝났습니다 ({reason})',
+      run: '실행',
+      close: '닫기',
+      failure: {
+        run_in_progress: '이 플로우에서 다른 AI 실행이 진행 중입니다.',
+        invalid: '요청을 받을 수 없습니다.',
+        forbidden: 'AI를 실행할 권한이 없습니다.',
+        not_found: '프로젝트를 찾을 수 없습니다.',
+        network: '서버에 연결하지 못했습니다.',
+        other: 'AI를 실행하지 못했습니다.',
+      },
     },
     // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
     types: {
@@ -881,12 +1029,7 @@ export default {
     },
     work_plan: {
       label: '작업계획',
-      design: '설계',
-      work: '작업',
-      steps: '단계',
-      total_design: '{n}장',
-      total_work: '{n}세트',
-      total_steps: '{n}개',
+      // flowgate.v02.0056 F1 — the totals tiles (design · work · steps) are gone; the quantity boxes are the count.
       quantities: '수량',
       assignments: '단계별 담당',
       sets: {

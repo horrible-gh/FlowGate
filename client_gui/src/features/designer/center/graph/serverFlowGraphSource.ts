@@ -14,6 +14,8 @@
 // flowgate.v02.0059 T#2: 자동 배치's input when the shown Graph is not the server's whole one — the same
 // Canvas read with nothing left out (no collapse) and, given the v0.1 document read, a document's
 // supersede link (the sequence root's chain).
+//
+// flowgate.v02.0056 F2-1: approve a card of it (O1 0005-TR §4-1); a run carries its pending propagation.
 import type {
   FlowCanvas,
   FlowCanvasChangeHandlers,
@@ -54,9 +56,18 @@ export interface FlowCanvasLoaders {
   startFlowRun?(flowId: string): Promise<FlowRun>
   stopFlowRun?(runId: string): Promise<FlowRun>
   resumeFlowRun?(runId: string): Promise<FlowRun>
+  /** flowgate.v02.0056 F2-1: a card's [승인] (O1 0005-TR §4-1); absent = the Canvas approves nothing. */
+  approveFlowRunNode?(runId: string, nodeKey: string, resultDocId: string | null): Promise<{ run: FlowRun }>
 }
 
-const toRunInfo = (run: FlowRun): FlowRunInfo => ({ runId: run.runId, status: run.status, openNodeKeys: run.openNodeKeys })
+const toRunInfo = (run: FlowRun): FlowRunInfo => ({
+  runId: run.runId,
+  status: run.status,
+  openNodeKeys: run.openNodeKeys,
+  // flowgate.v02.0056 F2-1: the run band's "멈춤 · 다음 카드 N개 대기".
+  pendingPropagationCount: run.pendingPropagationCount ?? 0,
+  pendingNodeKeys: run.pendingNodeKeys ?? [],
+})
 
 /**
  * flowgate.v02.0045 TR0020 rev5: conversations (CH, and the Q / A of the same server collapse group,
@@ -245,5 +256,9 @@ export function createServerFlowGraphSource(
     loadLayoutGraph: async (_projectId: string, flowId: string, view?: string) =>
       toFlowGraph(await loaders.loadFlowCanvas(flowId, view)),
     readDocumentLink: readDocument ? (_projectId, docId) => readDocument(docId) : undefined,
+    approveNode:
+      runLoaders && loaders.approveFlowRunNode
+        ? async (_projectId, runId, nodeKey, resultDocId) => toRunInfo((await loaders.approveFlowRunNode!(runId, nodeKey, resultDocId)).run)
+        : undefined,
   }
 }

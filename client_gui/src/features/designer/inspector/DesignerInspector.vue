@@ -87,7 +87,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, provide, ref, toRaw } from 'vue'
+import { computed, provide, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import EmptyState from '../../../components/ui/EmptyState.vue'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
@@ -110,7 +110,8 @@ import {
    resolveInspectorTab,
   type InspectorTabKey,
 } from './inspectorTabs'
-import { toInspectorTarget } from './inspectorTarget'
+import { toInspectorTarget, withWrittenCardLines } from './inspectorTarget'
+import { cardLinesWritten, settleCardLinesWritten } from './openDocument'
 import { useInspectorEvents } from './useInspectorResource'
 
 const props = withDefaults(
@@ -141,7 +142,11 @@ provide(INSPECTOR_HOST, { request: (intent) => emit('host', intent) })
 const bodyElement = ref<HTMLElement | null>(null)
 provide(INSPECTOR_BODY, { element: bodyElement })
 
-const target = computed(() => toInspectorTarget(props.selection))
+// flowgate.v02.0056 F2-2: a card line written from here ([작성]) stands for the card's line until the Canvas read
+// shows its document; every read shown settles them (and opens a document a refused [작성] waits for).
+const readTarget = computed(() => toInspectorTarget(props.selection))
+const target = computed(() => withWrittenCardLines(readTarget.value, cardLinesWritten(readTarget.value)))
+watch(readTarget, (current) => settleCardLinesWritten(current), { immediate: true })
 
 /** Server events after which the header (the selected Flow's Canvas read) may be out of date. */
 const HEADER_REFRESH_EVENTS = ['doc_review_status_changed', 'ai_invoke_finished', 'document_explorer_refresh'] as const

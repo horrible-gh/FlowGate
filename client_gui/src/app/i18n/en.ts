@@ -124,6 +124,44 @@ export default {
         done: 'Done',
         blocked: 'On hold',
       },
+      // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
+      // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
+      card_states: {
+        writing_instruction: 'Writing instruction',
+        writing_result: 'Writing result',
+        working: 'Working',
+        awaiting_approval: 'Awaiting approval',
+        approved: 'Approved',
+        rejected: 'Rejected',
+        pending: 'Waiting',
+        closed: 'Closed',
+      },
+      // flowgate.v02.0056 F2-1 — a card's [승인] (O1 0005-TR §4-1) and why it was refused, by the server's code.
+      approval: {
+        approve: 'Approve',
+        hint: 'Approves this card\'s instruction and result',
+        done: 'The card was approved',
+        failure: {
+          result_changed: 'The result document changed. The card was read again; check it and approve again.',
+          group_ai_running: 'Another AI is running in this group. Approve again when it ends.',
+          card_approval_busy: 'Another card is being approved. Approve again in a moment.',
+          ai_running: 'An AI is still working on this card. Approve again when it ends.',
+          already_approved: 'The card is already approved.',
+          node_not_in_review: 'The card cannot be approved in its state.',
+          no_result: 'There is no result yet.',
+          node_not_started: 'The card has not started yet.',
+          document_approval_refused: 'A document approval was refused.',
+          approval_forbidden: 'You do not have the approval permission.',
+          forbidden: 'You may not approve this card.',
+          inactive: 'This card cannot be approved now.',
+          network: 'Could not reach the server.',
+          other: 'The card was not approved.',
+        },
+        refused_document: 'Refused document: {doc}',
+        refused_reason: 'Reason: {reason}',
+        approved_documents: '{n} document(s) approved before',
+        approved_documents_named: 'Approved before: {docs}',
+      },
     },
     // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
     palette: {
@@ -334,8 +372,25 @@ export default {
         open: 'Open',
         // flowgate.v02.0053 T#3 — ✎ opens the document window straight in its editor.
         edit: 'Edit',
-        // flowgate.v02.0053 T#5 — the hollow state dot's tooltip on a line without a document.
+        // flowgate.v02.0053 T#5 — the wording of a line without a document (0056 F1: drawn in the line).
         none: 'No document',
+        // flowgate.v02.0056 F2-1 — who writes a card line (O2 0007-TR §4-3 `author`); only the instruction line's
+        // instruction_ai_or_human is drawn.
+        author: {
+          instruction_ai_or_human: 'Instruction AI or person',
+        },
+        // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
+        history: 'Review history',
+        history_count: 'Review history · {n}',
+        // flowgate.v02.0056 F2-2 — a card line's document without a body yet (O3 has_body), the row actions and the
+        // history button's hover text with the AI review / rejection split.
+        blank: 'Empty',
+        actions: {
+          write: 'Write',
+          ai_invoke: 'Call AI',
+          ai_invoke_running: 'AI working',
+        },
+        history_detail: 'Review history · {n} (AI reviews {reviews} · rejections {rejections})',
       },
       review: {
         pass: 'AI review ×{n} · {remain} finding(s) left',
@@ -483,6 +538,9 @@ export default {
       },
       // flowgate.v02.0053 T#9 — the Toolbar's run dot (tooltip only) and a refused run's toast.
       run_status: { running: 'Running', stopped: 'Stopped', completed: 'Completed' },
+      // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
+      run_pending: 'Stopped · {n} next card(s) waiting',
+      run_pending_keys: 'Cards to go on from: {keys}',
       run_errors: {
         run_policy_undecided: 'The run rules are not decided yet, so it cannot run.',
         run_already_active: 'It is already running.',
@@ -819,6 +877,8 @@ export default {
     editor: 'Document body',
     save: 'Save',
     cancel: 'Cancel',
+    // flowgate.v02.0056 F1 — [Close] of the editor bar: the window closes (unsaved text is asked about first).
+    close: 'Close',
     discard: {
       title: 'Discard the unsaved changes?',
       confirm: 'Discard',
@@ -848,9 +908,97 @@ export default {
       error: 'Could not load',
       retry: 'Retry',
       copy_md: 'Copy Markdown',
-      copy_md_with_header: 'Copy with header',
       copy_code: 'Copy code',
       copy_failed: 'Could not copy',
+    },
+    // flowgate.v02.0056 F1 — the review history window (the v0.1 review / rejection dialog on ModelessShell).
+    history: {
+      title: 'Review history',
+      filter_label: 'Entry kind',
+      filter_all: 'All',
+      filter_reject: 'Rejections',
+      filter_ai_review: 'AI reviews',
+      empty: 'No history.',
+      tag_reject: 'Rejected',
+      tag_ai_review: 'AI review',
+      verdict: {
+        pass: 'Pass',
+        hold: 'Hold',
+        issues: '{n} finding(s)',
+      },
+      intent_normal: 'First review',
+      intent_rerun: 'Re-review',
+      rev: 'rev {n}',
+      reviewer: 'Reviewing AI: {name}',
+      requested: 'Requested AI: {name}',
+      supersedes: 'Replaces: {reference}',
+      by_user: 'User',
+      by_ai: 'AI · {name}',
+      ai_unknown: 'AI (run unknown)',
+      ai_response: 'AI response',
+      fold: 'Fold',
+      unfold: 'Unfold',
+    },
+    // flowgate.v02.0056 F2-2 — [Write] of a card line without a document (O3 0009-TR §4-2).
+    write: {
+      title: 'Write {name}',
+      editor: 'Body to write',
+      placeholder: 'Write the body in Markdown. Saving it blank makes an empty draft.',
+      contentless: 'An empty work plan is made. Edit it once it is made.',
+      result_note: 'The card is running. If this line is the card result, the saved document is registered as the result and the card waits for approval. A result needs a body.',
+      save: 'Save',
+      create: 'Create',
+      cancel: 'Cancel',
+      close: 'Close',
+      failure: {
+        slot_has_document: 'This line already has a document. Opening it.',
+        node_token_unavailable: 'The card result is already registered. Opening the registered document.',
+        node_in_instruction_stage: 'The instruction AI is writing the instruction. Save again when it is done.',
+        node_ai_working: 'The card AI is working. Save again when it is done.',
+        flow_disposed: 'The flow was disposed and cannot be written.',
+        card_documents_unavailable: 'The server does not support card documents.',
+        content: {
+          not_a_text: 'The body cannot be sent as text.',
+          too_long: 'The body is too long (500,000 characters at most).',
+          not_for_this_slot: 'This line is made without a body.',
+          empty_body: 'A document registered as the result needs a body.',
+        },
+        slot: {
+          not_a_slot_of_this_card: 'This card has no such line.',
+          slot_shares_a_document: 'This line shares the document of another line. Write it there.',
+          doc_type_not_registered: 'The document type is not registered in the project.',
+        },
+        invalid: 'This content cannot be saved.',
+        forbidden: 'You may not create documents.',
+        not_found: 'The card or the flow was not found.',
+        network: 'Could not reach the server.',
+        other: 'Could not save.',
+      },
+    },
+    // flowgate.v02.0056 F2-2 — the single AI call on a document (O3 0009-TR §4-3).
+    ai: {
+      title: 'Call AI',
+      provider: 'AI',
+      provider_loading: 'Loading the AIs...',
+      provider_pick: 'Pick an AI',
+      provider_error: 'Could not load the AIs.',
+      opinion: 'Opinion',
+      opinion_placeholder: 'An opinion for the AI (may be left blank).',
+      hint: '[Run] runs the AI once on this document. No review, rework or card approval follows. The card memos marked [AI refers] go with it.',
+      busy_this: 'Another AI run is working on this document.',
+      busy_other: 'Another AI run is working in this flow.',
+      running: 'AI working ({id})',
+      finished: 'The AI run ended ({reason})',
+      run: 'Run',
+      close: 'Close',
+      failure: {
+        run_in_progress: 'Another AI run is working in this flow.',
+        invalid: 'The request was not accepted.',
+        forbidden: 'You may not run the AI.',
+        not_found: 'The project was not found.',
+        network: 'Could not reach the server.',
+        other: 'Could not run the AI.',
+      },
     },
     // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
     types: {
@@ -871,12 +1019,7 @@ export default {
     },
     work_plan: {
       label: 'Work plan',
-      design: 'Design',
-      work: 'Work',
-      steps: 'Steps',
-      total_design: '{n} sheet(s)',
-      total_work: '{n} set(s)',
-      total_steps: '{n}',
+      // flowgate.v02.0056 F1 — the totals tiles (design · work · steps) are gone; the quantity boxes are the count.
       quantities: 'Quantities',
       assignments: 'Assignments',
       sets: {

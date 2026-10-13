@@ -1,14 +1,16 @@
 /**
  * flowgate.v02.0048 T#13 — the WP summary with `@/features/document` mocked as a small server that also refuses
- * (D#1 §12.1): the read view of a plan (WP rev, totals, progress, provider assignment, one row per card with
- * its started mark, where the plan is edited), ↗ 열기 into the plan's document window (flowgate.v02.0053 T#3),
- * the refusals — 409 wp_unreadable (its revision, ↗ 열기 for the raw view), 403, 404, 422, 500, network — and
- * the retry, the plan's change events (a save / restore / fill of the plan: document_explorer_refresh /
- * group_view_refresh; a review: doc_review_status_changed; a document of the same Flow added or updated: a card
- * started; frames of other Flows and other review changes ignored; a reconnect), the read-only Flows and a Node
- * change (a late answer of the previous Node is dropped). Last, the real registry: the summary on WP cards in
- * the documents tab above the documents list in every ownership, none on other cards or a WP Node without a
- * document (same tab row), a failed read leaves the documents tab as it is, and no undecided wording.
+ * (D#1 §12.1), as flowgate.v02.0056 F1 (0056 CH §5) left it: the two slot lines (작업계획 · 전개) without the
+ * `rev · Step` summary, and under them only what an operator acts on — the progress (cards the workflow
+ * started) and the warning when Steps have no AI; the 0048 details (rev, totals, provider assignment, one row
+ * per card, "Step 편집은 …", the details' open button) are gone. Still here: the refusals — 409 wp_unreadable
+ * (its reason), 403, 404, 422, 500, network — and the retry, the plan's change events (a save / restore /
+ * fill of the plan: document_explorer_refresh / group_view_refresh; a review: doc_review_status_changed; a
+ * document of the same Flow added or updated: a card started; frames of other Flows and other review changes
+ * ignored; a reconnect), the read-only Flows and a Node change (a late answer of the previous Node is
+ * dropped). Last, the real registry: the summary on WP cards in the documents tab in every ownership, none
+ * on other cards or a WP Node without a document (same tab row), a failed read leaves the documents tab as it
+ * is, and no undecided wording.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -19,7 +21,7 @@ import WorkPlanTab from '@/features/designer/inspector/features/workPlan/WorkPla
 import { WORK_PLAN_EVENTS } from '@/features/designer/inspector/features/workPlan/useWorkPlan'
 import { createInspectorRegistry, inspectorRegistry } from '@/features/designer/inspector/inspectorRegistry'
 import type { InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
-import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
+import { closeAllDocumentWindows, documentHistoryWindowList, documentWindowList } from '@/features/documentWindow'
 import { INSPECTOR_REFRESH_COALESCE_MS } from '@/features/designer/inspector/useInspectorResource'
 import { V01_TASK_NODE, prepareInspectorI18n, registrationModules, selectionOf, targetOf } from '../support/inspectorSupport'
 import { installProjectEventStream, removeProjectEventStream, type ProjectEventStream } from '../support/projectEventStream'
@@ -149,10 +151,11 @@ const docRow = (docId: string) => ({
 let pinia: Pinia
 let stream: ProjectEventStream
 let wrapper: VueWrapper<any> | null = null
-// flowgate.v02.0053 T#3: ↗ 열기 opens the document window in this tab — `opened()` lists the windows as
+// flowgate.v02.0053 T#3: the lines open the document window in this tab — `opened()` lists the windows as
 // [doc_id, mode]; a browser tab is never opened (`browserTabs` stays empty).
 let browserTabs: unknown[][]
 const opened = () => documentWindowList().map((win) => [win.docId, win.mode])
+const historyOpened = () => documentHistoryWindowList().map((win) => win.docId)
 
 beforeEach(() => {
   i18n.global.locale.value = 'ko'
@@ -193,13 +196,8 @@ const target = (flow: keyof typeof PLAN_FLOWS = 'v01', node = WP_NODE) => target
 type W = VueWrapper<any>
 const el = (w: W, name: string) => w.find(`[data-test="${name}"]`)
 const textOf = (w: W, name: string) => el(w, name).text()
-const rows = (w: W) =>
-  w.findAll('[data-test="work-plan-card"]').map((row) => ({
-    card: row.attributes('data-card'),
-    started: row.attributes('data-started'),
-    text: row.text(),
-  }))
 const paneState = (w: W) => el(w, 'inspector-work-plan').find('[data-test="inspector-pane-state"]')
+const planLine = (w: W) => w.get('[data-test="inspector-slot"][data-slot="plan"]')
 
 async function click(w: W, name: string) {
   await el(w, name).trigger('click')
@@ -214,95 +212,95 @@ async function emit(type: string, docId: string | null, groupId: string | null =
 
 // --- Reading ---------------------------------------------------------------------------------------
 
-describe('WP summary — reading (flowgate.v02.0048 T#13)', () => {
-  it('one read of the plan: WP rev, totals, progress, assignment, one row per card, the edit line and ↗ 열기', async () => {
+describe('WP summary — reading (flowgate.v02.0048 T#13, 0056 F1)', () => {
+  it('one read of the plan: the lines, the progress and the unassigned warning — nothing else', async () => {
     const w = await mountTab(target())
     expect(planRead).toHaveBeenCalledTimes(1)
     expect(planRead).toHaveBeenCalledWith(WP_DOC)
     expect(el(w, 'inspector-work-plan').attributes('data-status')).toBe('ready')
-    expect(textOf(w, 'work-plan-rev')).toBe('rev 3')
-    expect(textOf(w, 'work-plan-totals')).toBe('설계 2장 · 작업 2세트 · Step 6개')
-    expect(textOf(w, 'work-plan-progress')).toBe('진행 1/4 카드 시작 · Step 6개')
-    expect(textOf(w, 'work-plan-assignments')).toBe('공급자 배정: Claude 3 · Codex 2')
-    expect(textOf(w, 'work-plan-unassigned')).toBe('공급자를 정하지 않은 Step 1개')
-    expect(rows(w)).toEqual([
-      { card: 'D#1', started: 'true', text: 'D#1Claude시작됨' },
-      { card: 'D#2', started: 'false', text: 'D#2공급자 미정' },
-      { card: 'T#1', started: 'false', text: 'T#1 → TR#1Codex검수 1회' },
-      { card: 'T#2', started: 'false', text: 'T#2 → TR#2Claude' },
-    ])
-    expect(textOf(w, 'work-plan-edit')).toBe('Step 편집은 열기의 작업계획 편집기에서 합니다.')
-    // flowgate.v02.0053 T#5: the open button is the document icon; its wording is the tooltip.
-    expect(textOf(w, 'work-plan-open')).toBe('')
-    expect(el(w, 'work-plan-open').attributes('data-icon')).toBe('document')
-    expect(el(w, 'work-plan-open').attributes('title')).toBe('문서 열기')
-    expect(el(w, 'work-plan-open').attributes('disabled')).toBeUndefined()
+    expect(w.findAll('[data-test="inspector-slot-name"]').map((name) => name.text())).toEqual(['작업계획', '전개'])
+    expect(textOf(w, 'work-plan-progress')).toBe('시작한 카드 1/4')
+    expect(el(w, 'work-plan-progress').attributes('data-started')).toBe('1')
+    expect(el(w, 'work-plan-progress').attributes('data-cards')).toBe('4')
+    expect(textOf(w, 'work-plan-unassigned')).toBe('⚠담당 AI 미지정 Step 1개')
+    expect(el(w, 'work-plan-unassigned').attributes('role')).toBe('status')
     expect(paneState(w).exists()).toBe(false)
+    // 0056 F1: the details are gone — no rev, no totals, no assignment list, no per-card rows, no edit line,
+    // no second open button; the plan line carries no `rev · Step` summary.
+    for (const name of ['work-plan-details', 'work-plan-rev', 'work-plan-totals', 'work-plan-assignments', 'work-plan-card', 'work-plan-edit', 'work-plan-open', 'work-plan-empty']) {
+      expect(el(w, name).exists(), name).toBe(false)
+    }
+    expect(planLine(w).find('[data-test="inspector-slot-summary"]').exists()).toBe(false)
+    const text = el(w, 'inspector-work-plan').text()
+    for (const word of ['rev', 'Step 요약', '공급자', 'Claude', 'Codex', 'D#1', 'T#1', '편집기', '상세 정보']) expect(text).not.toContain(word)
   })
 
-  it('↗ 열기 opens the plan in its document window in this tab; nothing else is called', async () => {
+  it('the plan line opens the plan in its document window in this tab; nothing else is called', async () => {
     const w = await mountTab(target())
-    await click(w, 'work-plan-open')
+    await planLine(w).get('[data-test="inspector-slot-open"]').trigger('click')
+    await flushPromises()
     expect(opened()).toEqual([[WP_DOC, 'view']])
     expect(planRead).toHaveBeenCalledTimes(1)
   })
 
-  it('a finally confirmed plan: the lock line, ↗ 열기 still there', async () => {
+  it('the plan line has the history button, which opens the plan’s 검수·반려 이력 window (0056 F1)', async () => {
+    const w = await mountTab(target())
+    const history = planLine(w).get('[data-test="inspector-slot-history"]')
+    expect(history.attributes('title')).toBe('검수·반려 이력')
+    await history.trigger('click')
+    await flushPromises()
+    expect(historyOpened()).toEqual([WP_DOC])
+    expect(opened()).toEqual([])
+  })
+
+  it('a finally confirmed or locked plan reads the same (no edit line any more)', async () => {
     Object.assign(wp(), { editable: false, lockedReason: 'final_approved' })
     const w = await mountTab(target())
-    expect(textOf(w, 'work-plan-edit')).toBe('최종 확인된 계획이라 편집할 수 없습니다.')
-    expect(el(w, 'work-plan-open').exists()).toBe(true)
+    expect(textOf(w, 'work-plan-progress')).toBe('시작한 카드 1/4')
+    expect(el(w, 'work-plan-edit').exists()).toBe(false)
+    expect(el(w, 'inspector-work-plan').text()).not.toContain('편집')
   })
 
-  it('a plan locked by its state: the generic lock line', async () => {
-    Object.assign(wp(), { editable: false, lockedReason: 'status' })
-    const w = await mountTab(target())
-    expect(textOf(w, 'work-plan-edit')).toBe('지금 상태에서는 계획을 편집할 수 없습니다.')
-  })
-
-  it('a server-assembled card and a fully assigned plan: no unassigned line', async () => {
+  it('a fully assigned plan: no warning', async () => {
     wp().steps = [stepRow('AC', 1, { locked: true, locked_reason: 'server_assembled', origin: 'system' })]
     planRead.mockImplementationOnce(async () =>
       toWorkPlanView(workPlanDocument({ steps: wp().steps, unassigned_step_count: 0, assignment_summary: [], totals: { design_sheets: 0, work_sets: 0, steps: 1 } }, [])),
     )
     const w = await mountTab(target())
-    expect(rows(w)).toEqual([{ card: 'AC#1', started: 'false', text: 'AC#1서버 구성' }])
+    expect(textOf(w, 'work-plan-progress')).toBe('시작한 카드 0/1')
     expect(el(w, 'work-plan-unassigned').exists()).toBe(false)
-    expect(el(w, 'work-plan-assignments').exists()).toBe(false)
   })
 
-  it('a plan without Steps: the empty line, progress 0/0', async () => {
+  it('a plan without Steps: no cards', async () => {
     wp().steps = []
     const w = await mountTab(target())
-    expect(textOf(w, 'work-plan-empty')).toBe('계획에 Step이 없습니다.')
-    expect(textOf(w, 'work-plan-progress')).toBe('진행 0/0 카드 시작 · Step 0개')
-    expect(rows(w)).toEqual([])
+    expect(textOf(w, 'work-plan-progress')).toBe('계획에 카드가 없습니다')
+    expect(el(w, 'work-plan-progress').attributes('data-cards')).toBe('0')
   })
 
   it('the English and Japanese wording', async () => {
     i18n.global.locale.value = 'en'
     let w = await mountTab(target())
-    expect(textOf(w, 'work-plan-progress')).toBe('Progress: 1/4 cards started · 6 Step(s)')
-    expect(el(w, 'work-plan-open').attributes('title')).toBe('Open the document')
+    expect(textOf(w, 'work-plan-progress')).toBe('Cards started 1/4')
+    expect(textOf(w, 'work-plan-unassigned')).toBe('⚠1 Step(s) without an AI')
     w.unmount()
     i18n.global.locale.value = 'ja'
     w = await mountTab(target())
-    expect(textOf(w, 'work-plan-progress')).toBe('進行 1/4 カード開始 · Step 6件')
+    expect(textOf(w, 'work-plan-progress')).toBe('開始したカード 1/4')
   })
 })
 
 // --- Refusals ----------------------------------------------------------------------------------------
 
 describe('WP summary — refusals (flowgate.v02.0048 T#13)', () => {
-  it('409 wp_unreadable: the reason, the revision it answered, ↗ 열기 for the raw view', async () => {
+  it('409 wp_unreadable: the reason with a retry; the plan line still opens the document', async () => {
     Object.assign(wp(), { unreadable: true, revision: 4 })
     const w = await mountTab(target())
     expect(paneState(w).attributes('data-state')).toBe('error')
-    expect(paneState(w).text()).toContain('이 작업계획은 표로 읽을 수 없습니다. 열기에서 원문을 확인하세요.')
-    expect(textOf(w, 'work-plan-rev')).toBe('rev 4')
-    expect(el(w, 'work-plan-card').exists()).toBe(false)
-    expect(el(w, 'work-plan-edit').exists()).toBe(false)
-    await click(w, 'work-plan-open')
+    expect(paneState(w).text()).toContain('이 작업계획은 표로 읽을 수 없습니다. 문서를 열어 원문을 확인하세요.')
+    expect(el(w, 'work-plan-progress').exists()).toBe(false)
+    expect(el(w, 'inspector-work-plan').text()).not.toContain('rev 4')
+    await planLine(w).get('[data-test="inspector-slot-name"]').trigger('click')
     expect(opened()).toEqual([[WP_DOC, 'view']])
   })
 
@@ -313,21 +311,21 @@ describe('WP summary — refusals (flowgate.v02.0048 T#13)', () => {
     ['409 other', axiosError(409, { detail: { code: 'busy' } }), '작업계획을 읽지 못했습니다.'],
     ['500', axiosError(500, { detail: 'boom' }), '작업계획을 읽지 못했습니다.'],
     ['network', networkError(), '서버에 연결하지 못했습니다.'],
-  ])('%s: the reason with a retry; ↗ 열기 works; the retry reads again', async (_name, refusal, message) => {
+  ])('%s: the reason with a retry; the line still opens; the retry reads again', async (_name, refusal, message) => {
     refusals.push(refusal)
     const w = await mountTab(target())
     expect(paneState(w).attributes('data-state')).toBe('error')
     expect(paneState(w).text()).toContain(message)
-    expect(el(w, 'work-plan-rev').exists()).toBe(false)
-    await click(w, 'work-plan-open')
+    expect(el(w, 'work-plan-progress').exists()).toBe(false)
+    await planLine(w).get('[data-test="inspector-slot-open"]').trigger('click')
     expect(opened()).toHaveLength(1)
     await click(w, 'inspector-pane-retry')
     expect(planRead).toHaveBeenCalledTimes(2)
     expect(paneState(w).exists()).toBe(false)
-    expect(textOf(w, 'work-plan-rev')).toBe('rev 3')
+    expect(textOf(w, 'work-plan-progress')).toBe('시작한 카드 1/4')
   })
 
-  it('a failed read again keeps the last plan with the reason above it', async () => {
+  it('a failed read again keeps the last progress with the reason above it', async () => {
     vi.useFakeTimers()
     const w = await mountTab(target())
     stream.open()
@@ -335,8 +333,7 @@ describe('WP summary — refusals (flowgate.v02.0048 T#13)', () => {
     await emit('document_explorer_refresh', WP_DOC)
     expect(planRead).toHaveBeenCalledTimes(2)
     expect(paneState(w).attributes('data-state')).toBe('error')
-    expect(textOf(w, 'work-plan-rev')).toBe('rev 3')
-    expect(rows(w)).toHaveLength(4)
+    expect(textOf(w, 'work-plan-progress')).toBe('시작한 카드 1/4')
   })
 })
 
@@ -347,45 +344,41 @@ describe('WP summary — change events (flowgate.v02.0048 T#13)', () => {
     expect([...WORK_PLAN_EVENTS].sort()).toEqual(['doc_review_status_changed', 'document_explorer_refresh', 'group_view_refresh'])
   })
 
-  it('the plan saved elsewhere (document_explorer_refresh of the WP): the new revision and Steps', async () => {
+  it('the plan saved elsewhere (document_explorer_refresh of the WP): the new cards count', async () => {
     vi.useFakeTimers()
     const w = await mountTab(target())
     stream.open()
     Object.assign(wp(), { revision: 4, steps: [...planSteps(), ...pairRows('T', 'TR', 3)] })
     await emit('document_explorer_refresh', WP_DOC)
     expect(planRead).toHaveBeenCalledTimes(2)
-    expect(textOf(w, 'work-plan-rev')).toBe('rev 4')
-    expect(rows(w).map((row) => row.card)).toEqual(['D#1', 'D#2', 'T#1', 'T#2', 'T#3'])
-    expect(textOf(w, 'work-plan-progress')).toBe('진행 1/5 카드 시작 · Step 8개')
+    expect(textOf(w, 'work-plan-progress')).toBe('시작한 카드 1/5')
   })
 
   it('group_view_refresh of the WP reads again', async () => {
     vi.useFakeTimers()
-    const w = await mountTab(target())
+    await mountTab(target())
     stream.open()
-    wp().revision = 5
     await emit('group_view_refresh', WP_DOC)
-    expect(textOf(w, 'work-plan-rev')).toBe('rev 5')
+    expect(planRead).toHaveBeenCalledTimes(2)
   })
 
-  it('a card started (a document of the same Flow added): the progress and the started marks', async () => {
+  it('a card started (a document of the same Flow added): the progress follows', async () => {
     vi.useFakeTimers()
     const w = await mountTab(target())
     stream.open()
     wp().started = ['D#1', 'T#1']
     await emit('document_explorer_refresh', NEW_TASK_DOC)
     expect(planRead).toHaveBeenCalledTimes(2)
-    expect(textOf(w, 'work-plan-progress')).toBe('진행 2/4 카드 시작 · Step 6개')
-    expect(rows(w).filter((row) => row.started === 'true').map((row) => row.card)).toEqual(['D#1', 'T#1'])
+    expect(textOf(w, 'work-plan-progress')).toBe('시작한 카드 2/4')
+    expect(el(w, 'work-plan-progress').attributes('data-started')).toBe('2')
   })
 
-  it('the WP reviewed (doc_review_status_changed): the edit line follows the server', async () => {
+  it('the WP reviewed (doc_review_status_changed) reads again', async () => {
     vi.useFakeTimers()
-    const w = await mountTab(target())
+    await mountTab(target())
     stream.open()
-    Object.assign(wp(), { editable: false, lockedReason: 'final_approved' })
     await emit('doc_review_status_changed', WP_DOC)
-    expect(textOf(w, 'work-plan-edit')).toBe('최종 확인된 계획이라 편집할 수 없습니다.')
+    expect(planRead).toHaveBeenCalledTimes(2)
   })
 
   it('two frames in the window are one read again', async () => {
@@ -433,11 +426,10 @@ describe('WP summary — change events (flowgate.v02.0048 T#13)', () => {
 // --- Read-only Flows -------------------------------------------------------------------------------
 
 describe('WP summary — read-only Flows (flowgate.v02.0048 T#13)', () => {
-  it.each(['graphRevision', 'conflict', 'graph', 'unassigned'] as const)('%s: the summary and ↗ 열기 work (queries only)', async (flow) => {
+  it.each(['graphRevision', 'conflict', 'graph', 'unassigned'] as const)('%s: the summary shows and the line opens (queries only)', async (flow) => {
     const w = await mountTab(target(flow))
-    expect(textOf(w, 'work-plan-rev')).toBe('rev 3')
-    expect(el(w, 'work-plan-open').attributes('disabled')).toBeUndefined()
-    await click(w, 'work-plan-open')
+    expect(textOf(w, 'work-plan-progress')).toBe('시작한 카드 1/4')
+    await planLine(w).get('[data-test="inspector-slot-open"]').trigger('click')
     expect(opened()).toHaveLength(1)
   })
 })
@@ -452,12 +444,11 @@ describe('WP summary — Node change (flowgate.v02.0048 T#13)', () => {
     await flushPromises()
     await w.setProps({ target: target('v01', OTHER_WP_NODE) })
     await flushPromises()
-    expect(textOf(w, 'work-plan-rev')).toBe('rev 0')
+    expect(textOf(w, 'work-plan-progress')).toBe('시작한 카드 0/1')
     release()
     await flushPromises()
-    expect(textOf(w, 'work-plan-rev')).toBe('rev 0')
-    expect(rows(w).map((row) => row.card)).toEqual(['D#1'])
-    await click(w, 'work-plan-open')
+    expect(textOf(w, 'work-plan-progress')).toBe('시작한 카드 0/1')
+    await planLine(w).get('[data-test="inspector-slot-open"]').trigger('click')
     expect(opened()).toEqual([[OTHER_WP_DOC, 'view']])
   })
 })
@@ -491,12 +482,13 @@ describe('WP summary in the Frame (real registry)', () => {
     // flowgate.v02.0052: the common documents list is not repeated beneath the card.
     expect(w.find('[data-test="inspector-documents"]').exists()).toBe(false)
     expect(planRead).toHaveBeenCalledWith(WP_DOC)
-    expect(textOf(w, 'work-plan-rev')).toBe('rev 3')
+    expect(textOf(w, 'work-plan-progress')).toBe('시작한 카드 1/4')
   })
 
-  it('↗ 열기 in the Frame opens the selected plan', async () => {
+  it('the plan line in the Frame opens the selected plan', async () => {
     const w = await mountFrame(planSelection('v01', WP_NODE))
-    await click(w, 'work-plan-open')
+    await planLine(w).get('[data-test="inspector-slot-open"]').trigger('click')
+    await flushPromises()
     expect(opened()).toEqual([[WP_DOC, 'view']])
   })
 
@@ -514,15 +506,14 @@ describe('WP summary in the Frame (real registry)', () => {
 
   // flowgate.v02.0051 stage 2 (0051-R §2.3): a WP Node without a document keeps the card's shape — the two
   // lines empty, nothing read, the header actions drawn disabled.
-  it('a WP Node without a document: the two lines empty, no read, the deploy actions disabled', async () => {
+  it('a WP Node without a document: the two lines empty, no read, no status line, the deploy actions disabled', async () => {
     const w = await mountFrame(planSelection('v01', WP_EMPTY_NODE))
     const section = el(w, 'inspector-work-plan')
     expect(section.exists()).toBe(true)
     expect(section.attributes('data-has-document')).toBe('false')
     expect(section.findAll('[data-test="inspector-slot"]').map((line) => line.attributes('data-empty'))).toEqual(['true', 'true'])
     expect(planRead).not.toHaveBeenCalled()
-    expect(el(w, 'work-plan-rev').exists()).toBe(false)
-    expect(el(w, 'work-plan-open').exists()).toBe(false)
+    expect(el(w, 'work-plan-status').exists()).toBe(false)
     expect(el(w, 'work-plan-deploy').attributes('disabled')).toBeDefined()
   })
 
@@ -543,17 +534,17 @@ describe('WP summary in the Frame (real registry)', () => {
     expect(el(w2, 'inspector-work-plan').exists()).toBe(false)
   })
 
-  it('no Step editing in the WP summary; the only operations are open / ✎ (the slot line) and open (the summary line)', async () => {
+  it('no Step editing in the WP summary; the only operations are the slot line’s (name / history / open / ✎)', async () => {
     const w = await mountFrame(planSelection('v01', WP_NODE))
     const section = el(w, 'inspector-work-plan')
     for (const word of ['재계획', '⟳', '위임', '메모', 'AI 전달', '연동 전']) expect(section.text()).not.toContain(word)
     expect(section.findAll('input, select, textarea').length).toBe(0)
-    // flowgate.v02.0053 T#3: ✎ opens the plan's document window straight in its text editor (no Step editing here).
-    // flowgate.v02.0053 T#5: the plan line's name opens it too (a button), then the document icon and ✎.
-    expect(section.findAll('button').map((button) => button.attributes('data-test'))).toEqual(['inspector-slot-name', 'inspector-slot-open', 'inspector-slot-edit', 'work-plan-open'])
-    // flowgate.v02.0051 stage 2: the v7 lines above the summary — the plan with its state, the deploy result empty.
-    // flowgate.v02.0053 T#5: no type code in a name; the line without a document says why in its dot's tooltip.
+    // flowgate.v02.0053 T#3 / T#5: the name opens the plan (a button), then the history button (0056 F1), the
+    // document icon and ✎ — and nothing after the lines.
+    expect(section.findAll('button').map((button) => button.attributes('data-test'))).toEqual(['inspector-slot-name', 'inspector-slot-history', 'inspector-slot-open', 'inspector-slot-edit'])
+    // flowgate.v02.0051 stage 2: the v7 lines — the plan with its state, the deploy result empty.
+    // flowgate.v02.0053 T#5: no type code in a name; flowgate.v02.0056 F1: a line without a document says why.
     expect(section.findAll('[data-test="inspector-slot-name"]').map((name) => name.text())).toEqual(['작업계획', '전개'])
-    expect(section.findAll('[data-test="inspector-slot-state"]')[1].attributes('title')).toBe('전개 전')
+    expect(section.findAll('[data-test="inspector-slot-state"]').map((state) => state.text())).toEqual(['승인됨', '전개 전'])
   })
 })

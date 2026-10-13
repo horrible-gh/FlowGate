@@ -22,10 +22,12 @@
 // existing v0.1 endpoints are wrapped (still no new server API):
 //   ask      POST /api/v1/q/{doc_id}/questions { asker_kind: 'human', questions: [{ body }] }
 //            -> { ok, doc_id, added_item_ids: [id] }
-//   ai       POST /api/v1/q/{doc_id}/items/{item_id}/answers/ai-request {} -> { ok, doc_id, item_id,
-//            run_id, status, provider }; the AI run posts its answer on the same question
+//   ai       POST /api/v1/q/{doc_id}/items/{item_id}/answers/ai-request { provider_id? } -> { ok, doc_id,
+//            item_id, run_id, status, provider }; the AI run posts its answer on the same question
 //            (author_kind 'ai'), which arrives as `qna_answer_registered`. Its admission refusals keep
 //            the ai-invoke envelope: a flat `code` (409 run_in_progress, no_enabled_provider …).
+//            flowgate.v02.0056 F1 (0056 CH §3): the caller names the AI (`provider_id`, the route's
+//            AiAnswerRequest body); without one the project's provider chain picks.
 //   `answers/ai-mention` (copy a mention for one's own worker) stays unwrapped.
 //
 // Refusals keep the server's shape and are thrown as they are; qaErrorOf reads them. The q routes
@@ -230,11 +232,14 @@ export function toQaAiRequestResult(raw: unknown): QaAiRequestResult {
   return { docId: text(row.doc_id), itemId: integer(row.item_id), runId: text(row.run_id), status: text(row.status) }
 }
 
-/** Asks an AI to answer one question (the project's provider chain; the answer lands on the question). */
-export async function qaRequestAiAnswer(docId: string, itemId: number): Promise<QaAiRequestResult> {
+/**
+ * Asks an AI to answer one question (the answer lands on the question): the named provider, else the
+ * project's provider chain.
+ */
+export async function qaRequestAiAnswer(docId: string, itemId: number, providerId: string | null = null): Promise<QaAiRequestResult> {
   const response = await postRequest<unknown>(
     `${API}/q/${encodeURIComponent(docId)}/items/${encodeURIComponent(String(itemId))}/answers/ai-request`,
-    {},
+    providerId ? { provider_id: providerId } : {},
   )
   return toQaAiRequestResult(response.data)
 }

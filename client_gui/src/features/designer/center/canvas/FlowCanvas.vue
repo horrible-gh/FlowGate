@@ -97,7 +97,7 @@
       @edge-double-click="onEdgeDoubleClick"
     >
       <template #node-flowgate="nodeProps">
-        <FlowNodeCard :id="nodeProps.id" :data="nodeProps.data" />
+        <FlowNodeCard :id="nodeProps.id" :data="nodeProps.data" @approve="emit('node-approve', $event)" />
       </template>
       <template #edge-flowgate="edgeProps">
         <FlowEdgePath
@@ -233,8 +233,12 @@ const props = withDefaults(
     issues?: readonly FlowDraftIssue[]
     /** flowgate.v02.0059 0017-T: the step a card drag moves in (Graph units); null = 자율형 (none). */
     moveStep?: number | null
+    /** flowgate.v02.0056 F2-1: a card waiting for its approval offers [승인] (a `node-approve` event). */
+    canApprove?: boolean
+    /** flowgate.v02.0056 F2-1: the card whose [승인] is being answered, or null. */
+    approvingNodeId?: string | null
   }>(),
-  { selectedNodeIds: () => [], selectMode: false, viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [], moveStep: null },
+  { selectedNodeIds: () => [], selectMode: false, viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [], moveStep: null, canApprove: false, approvingNodeId: null },
 )
 
 const emit = defineEmits<{
@@ -253,6 +257,8 @@ const emit = defineEmits<{
   'node-remove': [nodeId: string]
   'edge-remove': [edgeId: string]
   undo: []
+  /** flowgate.v02.0056 F2-1: a card's [승인]. */
+  'node-approve': [nodeId: string]
 }>()
 
 const { t } = useI18n()
@@ -281,7 +287,13 @@ const issueMap = computed(() => {
 const selection = computed<readonly string[]>(() =>
   props.selectedNodeIds.length > 0 ? props.selectedNodeIds : props.selectedNodeId === null ? [] : [props.selectedNodeId],
 )
-const nodes = computed(() => toVueFlowNodes(props.graph, selection.value, issueMap.value, { selectMode: props.selectMode }))
+const nodes = computed(() =>
+  toVueFlowNodes(props.graph, selection.value, issueMap.value, {
+    selectMode: props.selectMode,
+    canApprove: props.canApprove,
+    approvingNodeId: props.approvingNodeId,
+  }),
+)
 const edges = computed(() => toVueFlowEdges(props.graph, issueMap.value, selectedEdgeId.value))
 /** The selected Edge as drawn, or null (also when it left the Graph). */
 const selectedEdge = computed(() => edges.value.find((edge) => edge.id === selectedEdgeId.value) ?? null)

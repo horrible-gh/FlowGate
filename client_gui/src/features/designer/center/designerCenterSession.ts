@@ -65,6 +65,9 @@
 // when the read fails. Nor does one whose answer comes after `cancelAutoLayout`, after the
 // session was disposed, or after a read replaced the Graph it was asked for (a retry, a change elsewhere, the
 // re-read of an ignored / failed save, a reset) — the cards stay where they are shown.
+//
+// flowgate.v02.0056 F2-1: a card's [승인] on the Canvas approves it through the same run control (with the
+// result the shown Graph has for the card); the Canvas is read again after the answer.
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
 import {
@@ -96,9 +99,9 @@ import { isEdgeProgressed } from './graph/edgeProgress'
 import type { FlowGraph, FlowGraphNode, FlowGraphSelection } from './graph/flowGraph'
 import type { FlowGraphSource, FlowLayoutChange } from './graph/flowGraphSource'
 import { createLayoutSaveQueue } from './layoutSaveQueue'
-import { createFlowRunControl, type FlowRunMode, type FlowRunState } from './run/flowRunControl'
+import { createFlowRunControl, type FlowRunFailure, type FlowRunMode, type FlowRunState } from './run/flowRunControl'
 
-export type { ArrangeKind, CanvasNodeSpec, FlowRunMode, FlowRunState, NodePlacement }
+export type { ArrangeKind, CanvasNodeSpec, FlowRunFailure, FlowRunMode, FlowRunState, NodePlacement }
 
 /**
  * flowgate.v02.0059 T#1: a view operation the Toolbar / View menu asks of a Flow's Canvas. Fit and
@@ -257,6 +260,13 @@ export interface DesignerCenterSession {
   runFlow(flowId: string, mode: FlowRunMode): Promise<boolean>
   /** 중지: stops the Flow's running run. Whether it stopped. */
   stopRun(flowId: string): Promise<boolean>
+  /** flowgate.v02.0056 F2-1: the source can approve a card (the Canvas offers [승인]). */
+  readonly canApprove: boolean
+  /**
+   * flowgate.v02.0056 F2-1 — a Canvas card's [승인]: approves the card (O1 0005-TR §4-1) with the result its
+   * Canvas read shows. Whether it was approved; a refusal is the Flow's run `error` (kind `approval`).
+   */
+  approveNode(flowId: string, nodeId: string): Promise<boolean>
 }
 
 export interface DesignerCenterSessionOptions {
@@ -828,6 +838,12 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     }),
     runFlow: runControl.run,
     stopRun: runControl.stop,
+    canApprove: runControl.canApprove,
+    approveNode: (flowId, nodeId) => {
+      const node = readyGraph(flowId)?.nodes.find((candidate) => candidate.id === nodeId)
+      if (!node?.nodeRun) return Promise.resolve(false)
+      return runControl.approve(flowId, nodeId, node.nodeRun.resultDocId ?? null)
+    },
   }
 }
 

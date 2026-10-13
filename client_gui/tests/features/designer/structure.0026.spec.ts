@@ -40,6 +40,8 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'flowTabs.ts',
         // flowgate.v02.0045 T0019: which Edges the work already went through.
         'graph/edgeProgress.ts',
+        // flowgate.v02.0056 F2-1: what a Graph card shows for its run (Canvas chip and Inspector alike).
+        'graph/cardStateView.ts',
         'graph/fixtureFlowGraphSource.ts',
         'graph/flowGraph.ts',
         'graph/flowGraphSource.ts',
@@ -78,7 +80,8 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
     const pure = CENTER_FILES.filter((f) =>
       /^(graph\/|flowTabs\.ts$|canvasView\.ts$|designerCenterSession\.ts$|layoutSaveQueue\.ts$)/.test(rel(f)),
     )
-    expect(pure).toHaveLength(9)
+    // flowgate.v02.0056 F2-1: graph/cardStateView.ts is the tenth.
+    expect(pure).toHaveLength(10)
     for (const file of pure) {
       for (const spec of importsOf(read(file))) {
         expect(spec, rel(file)).not.toMatch(/\.vue$|^@vue-flow\//)
@@ -154,6 +157,9 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         // flowgate.v02.0045 T0019: a selected Edge's remove button / why it cannot be removed.
         // (TR0020 rev4: no `edit` strings — nothing about saving / 검증 is shown on the Canvas.)
         'edge',
+        // flowgate.v02.0056 F2-1: a Graph card's state (cardStateView.ts) and its [승인] with the refusals.
+        'card_states',
+        'approval',
       ].sort(),
     )
     // flowgate.v02.0045 T0019: no empty-Graph text and no ownership badge any more.

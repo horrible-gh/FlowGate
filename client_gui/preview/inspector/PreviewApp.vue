@@ -90,7 +90,7 @@
 
     <!-- 3. Slot lines -->
     <section v-if="shown('slots')" id="slots" class="preview-section">
-      <h2>문서 / 결과 슬롯 행 (InspectorSlotRow) <small>38px · 이름 · 상태 점 + 요약 / 진행도 · 버튼(문서 아이콘 · ✎)</small></h2>
+      <h2>문서 / 결과 슬롯 행 (InspectorSlotRow) <small>38px · 이름 · 상태 배지(뜻이 있을 때만) + 요약 / 진행도 · 버튼(이력 · 문서 아이콘 · ✎)</small></h2>
       <div class="preview-frame preview-pad">
         <div class="preview-slots">
           <template v-for="(slot, i) in SLOT_FIXTURES" :key="i">
@@ -152,12 +152,6 @@
         <InspectorBlock>
           <InspectorControlRow label="지시서" hint="생략하면 문서 탭에 지시서 줄이 나오지 않습니다">
             <InspectorSegment v-model="useInstruction" :options="[{ value: '1', label: '사용' }, { value: '0', label: '생략' }]" aria-label="지시서" />
-          </InspectorControlRow>
-        </InspectorBlock>
-        <InspectorBlock>
-          <InspectorControlRow label="검수 뒤 진행" hint="실행 방식이 기본 정책. 사람 확인 필요는 자동 진행보다 우선">
-            <InspectorSegment v-model="policy" :options="[{ value: 'follow', label: '실행 방식 따름' }, { value: 'human', label: '사람 확인 필요' }]" aria-label="검수 뒤 진행" />
-            <span class="preview-muted">{{ policy === 'human' ? '전체 실행이어도 여기서 멈춤' : '지금: 다음 단계 실행 → 사람이 승인' }}</span>
           </InspectorControlRow>
         </InspectorBlock>
         <div class="preview-gap" />
@@ -267,7 +261,7 @@
       <p class="preview-caption">요구사항 · AI 위임 한도 도달 · 🔒 위임 진행 중 (시안 모양, fixture)</p>
       <div class="preview-frame preview-pad"><RequirementSettings :target="REQ_DRAFT" :view="REQ_SETTINGS_LIMIT" /></div>
 
-      <p class="preview-caption">테스트 · 실행 블록 · 실제 (서버 없이: 개수 ‘—’) — 지시서 · 검수 뒤 진행 · 시나리오 작성은 설정 feature가 위에 그림</p>
+      <p class="preview-caption">테스트 · 실행 블록 · 실제 (서버 없이: 개수 ‘—’) — 지시서 · 시나리오 작성은 설정 feature가 위에 그림</p>
       <div class="preview-frame preview-pad"><TestRunSettings :target="TEST_TS_RUNNING" /></div>
       <p class="preview-caption">테스트 · 실행 블록 · 시안 값 (fixture: 자동 49 · 수동 6 · 외부 2)</p>
       <div class="preview-frame preview-pad"><TestRunSettings :target="TEST_TS_RUNNING" :view="TEST_RUN_SETTINGS_SAMPLE" /></div>
@@ -430,7 +424,6 @@ const CARD_SAMPLES = [
 ] as const
 
 const useInstruction = ref('1')
-const policy = ref('follow')
 const advancedB = ref(true)
 
 // A fixture registry for the stage 1 frame sample: the four v7 tabs filled with common parts.

@@ -21,7 +21,10 @@
        press outside closes it.
        flowgate.v02.0059 0017-T: the zoom is one control — it shows the Canvas zoom (also one that is no
        preset, e.g. 115%) and chooses a preset; the zoom is never shown twice. The density radios set the
-       step a card drag moves in. -->
+       step a card drag moves in.
+       flowgate.v02.0056 F2-1: a stopped run with cards approved meanwhile says so beside the dot — "멈춤 · 다음
+       카드 N개 대기" (the waiting cards' keys in its tooltip). That is the run's stop, not a card waiting for
+       approval: the Canvas keeps those cards 승인됨. -->
   <div
     class="designer-toolbar"
     :class="{ 'is-unavailable': disabled }"
@@ -144,6 +147,13 @@
         <svg v-if="shownRunStatus === 'stopped'" viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.5v7M8.5 2.5v7" /></svg>
         <svg v-else-if="shownRunStatus === 'completed'" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.3l2.4 2.4 4.6-5" /></svg>
       </span>
+      <span
+        v-if="shownPending"
+        class="designer-run-pending"
+        :title="shownPending.nodeKeys.length ? t('gui.designer.top.run_pending_keys', { keys: shownPending.nodeKeys.join(', ') }) : undefined"
+        data-test="designer-run-pending"
+        :data-count="shownPending.count"
+      >{{ t('gui.designer.top.run_pending', { n: shownPending.count }) }}</span>
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
@@ -204,6 +214,7 @@ import {
   type DesignerDensity,
   type DesignerMenuTargets,
   type DesignerRunMode,
+  type DesignerRunPending,
   type DesignerTopCommand,
 } from './designerTop'
 
@@ -226,8 +237,10 @@ const props = withDefaults(
     selectMode?: boolean
     /** flowgate.v02.0059 T#2: what the 정렬 / 배치 ▾ commands act on (the Menu Bar's targets). */
     targets?: DesignerMenuTargets
+    /** flowgate.v02.0056 F2-1: cards approved while the run was stopped (runPendingView), or null. */
+    runPending?: DesignerRunPending | null
   }>(),
-  { disabled: false, canValidate: false, canUndo: true, canRedo: true, runStatus: null, selectMode: false, targets: () => ALL_MENU_TARGETS },
+  { disabled: false, canValidate: false, canUndo: true, canRedo: true, runStatus: null, selectMode: false, targets: () => ALL_MENU_TARGETS, runPending: null },
 )
 
 const emit = defineEmits<{
@@ -258,6 +271,8 @@ const { t } = useI18n()
 /** Run states the dot shows; any other value (or none) shows no dot. */
 const RUN_DOT_STATES: readonly string[] = ['running', 'stopped', 'completed']
 const shownRunStatus = computed(() => (!props.disabled && props.runStatus && RUN_DOT_STATES.includes(props.runStatus) ? props.runStatus : null))
+/** The pending line goes with the stopped dot only. */
+const shownPending = computed(() => (shownRunStatus.value === 'stopped' && props.runPending && props.runPending.count > 0 ? props.runPending : null))
 
 const RUN_BUTTONS = [
   { mode: 'next', command: 'run.next', label: 'run_next' },
@@ -515,6 +530,17 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
 
 .designer-run-dot.is-completed {
   background: #58a6ff;
+}
+
+/* flowgate.v02.0056 F2-1: the stop with waiting cards — the stopped dot's colour, in words. */
+.designer-run-pending {
+  flex: none;
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--fg2-status-warning-fg);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* flowgate.v02.0059 0017-T: the one zoom control — the current zoom in a box, presets on opening it. */

@@ -84,25 +84,50 @@ function toGraphNode(raw: Raw | null | undefined): FlowCanvasGraphNode | null {
 }
 
 // flowgate.v02.0048 T#1: kept for the Inspector; the top-level `run` and edge `condition` stay dropped.
+// flowgate.v02.0056 F2-1: `awaiting_approval` (O1) and `stage` / `instruction_doc_id` (O2), kept only when sent.
 function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
   if (!raw || typeof raw !== 'object') return null
-  return { status: str(raw.status), openedAt: str(raw.opened_at), finishedAt: str(raw.finished_at), resultDocId: str(raw.result_doc_id) }
+  return {
+    status: str(raw.status),
+    openedAt: str(raw.opened_at),
+    finishedAt: str(raw.finished_at),
+    resultDocId: str(raw.result_doc_id),
+    ...(typeof raw.awaiting_approval === 'boolean' ? { awaitingApproval: raw.awaiting_approval } : {}),
+    ...('stage' in raw ? { stage: str(raw.stage) } : {}),
+    ...('instruction_doc_id' in raw ? { instructionDocId: str(raw.instruction_doc_id) } : {}),
+  }
 }
 
+/** A count the server sent as a whole number of zero or more; null otherwise. */
+const count = (value: unknown): number | null => (typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null)
+
 // flowgate.v02.0053 T#5: the card's document lines (T#1 `card_documents`), in the server's order.
+// flowgate.v02.0056 F2-2 (O3 0009-TR §4-1): `has_body` and the history counts (`review_count`, `rejection_count`,
+// `history_count`), kept only when sent — a line from an older server says nothing about them.
+export function toCardDocument(line: Raw): FlowCanvasCardDocument {
+  const reviewCount = count(line.review_count)
+  const rejectionCount = count(line.rejection_count)
+  const historyCount = count(line.history_count)
+  return {
+    slot: String(line.slot),
+    docType: str(line.doc_type),
+    author: str(line.author),
+    docId: str(line.doc_id),
+    title: str(line.title),
+    status: str(line.status),
+    docReviewStatus: str(line.doc_review_status),
+    ...(typeof line.has_body === 'boolean' ? { hasBody: line.has_body } : {}),
+    ...(reviewCount !== null ? { reviewCount } : {}),
+    ...(rejectionCount !== null ? { rejectionCount } : {}),
+    ...(historyCount !== null ? { historyCount } : {}),
+  }
+}
+
 export function toCardDocuments(raw: unknown): FlowCanvasCardDocument[] {
   if (!Array.isArray(raw)) return []
   return raw
     .filter((line): line is Raw => !!line && typeof line === 'object' && typeof line.slot === 'string')
-    .map((line) => ({
-      slot: line.slot,
-      docType: str(line.doc_type),
-      author: str(line.author),
-      docId: str(line.doc_id),
-      title: str(line.title),
-      status: str(line.status),
-      docReviewStatus: str(line.doc_review_status),
-    }))
+    .map(toCardDocument)
 }
 
 function toView(raw: Raw | null | undefined): FlowCanvasView | null {

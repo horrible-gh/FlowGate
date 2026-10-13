@@ -7,6 +7,16 @@
 // `decision` is `confirm` | `reject`; the comment (a reject's reason) is at most 500 characters. A refusal
 // is thrown as it is (see documentErrorOf): 409 `run_not_running` (a stopped run takes no decision),
 // `node_not_open`, `node_not_gate`, `run_policy_undecided` (the gate rule is not decided yet) …
+//
+// flowgate.v02.0056 F2-1 — a card's [승인] from the Inspector (O1 0005-TR §4-1):
+//
+//   approve   POST /api/v1/runs/{run_id}/nodes/{node_key}/approval { result_doc_id } -> { run, approval }
+//
+// The node rows also carry `awaiting_approval` / `stage` / `result_doc_id` and the run its pending propagation
+// (O1 / O2 §4-2), each kept only when sent. A refused approval is read by runCardApprovalErrorOf: the code, the
+// status, the server's message as sent (x-locale) and the params a refusal names (the refused document, why,
+// the documents approved before it, the node's current result).
+import { normalizeApiError } from '@shared/apiErrors'
 import { getRequest, postRequest } from '@shared/api'
 
 const API = '/api/v1'
@@ -20,6 +30,12 @@ export interface RunNodeState {
   readonly nodeKey: string
   /** `pending` | `open` | `review` | `done` | `rejected` … as sent. */
   readonly status: string
+  /** flowgate.v02.0056 F2-1: the node's result document; absent when not sent. */
+  readonly resultDocId?: string | null
+  /** flowgate.v02.0056 F2-1: the card waits for its approval; absent when not sent. */
+  readonly awaitingApproval?: boolean
+  /** flowgate.v02.0056 F2-1: `instruction` | `result` | null; absent when not sent. */
+  readonly stage?: string | null
 }
 
 export interface RunCurrent {
@@ -27,6 +43,9 @@ export interface RunCurrent {
   /** `running` | `stopped` | `completed` as sent. */
   readonly status: string
   readonly nodes: readonly RunNodeState[]
+  /** flowgate.v02.0056 F2-1: cards approved while the run was stopped (their successors wait); absent when not sent. */
+  readonly pendingPropagationCount?: number
+  readonly pendingNodeKeys?: readonly string[]
 }
 
 type Raw = Record<string, unknown>
@@ -42,9 +61,20 @@ export function toRunCurrent(raw: unknown): RunCurrent | null {
     status: typeof run.status === 'string' ? run.status : '',
     nodes: rows
       .filter((row): row is Raw => !!row && typeof row === 'object' && typeof (row as Raw).node_key === 'string')
-      .map((row) => ({ nodeKey: row.node_key as string, status: typeof row.status === 'string' ? row.status : '' })),
+      .map((row) => ({
+        nodeKey: row.node_key as string,
+        status: typeof row.status === 'string' ? row.status : '',
+        ...('result_doc_id' in row ? { resultDocId: text(row.result_doc_id) } : {}),
+        ...(typeof row.awaiting_approval === 'boolean' ? { awaitingApproval: row.awaiting_approval } : {}),
+        ...('stage' in row ? { stage: text(row.stage) } : {}),
+      })),
+    ...(typeof run.pending_propagation_count === 'number' ? { pendingPropagationCount: run.pending_propagation_count } : {}),
+    ...(Array.isArray(run.pending_node_keys) ? { pendingNodeKeys: texts(run.pending_node_keys) } : {}),
   }
 }
+
+const text = (value: unknown): string | null => (typeof value === 'string' && value ? value : null)
+const texts = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [])
 
 /** The Flow's running or stopped run with its nodes, or null. */
 export async function runCurrentRead(flowId: string): Promise<RunCurrent | null> {
@@ -60,4 +90,72 @@ export async function runGateDecide(runId: string, nodeKey: string, decision: Ru
     text ? { decision, comment: text.slice(0, RUN_COMMENT_MAX_LENGTH) } : { decision },
   )
   return toRunCurrent(response.data?.run)
+}
+
+/** flowgate.v02.0056 F2-1: what a card approval did (O1 0005-TR §4-1 `approval`). */
+export interface RunCardApproval {
+  readonly nodeKey: string
+  /** The card's documents in approval order (the instruction first, the result last). */
+  readonly targetDocIds: readonly string[]
+  readonly approvedDocIds: readonly string[]
+}
+
+/**
+ * flowgate.v02.0056 F2-1 — approves a card waiting for its approval; `resultDocId` is the result the screen
+ * showed (null: the node's current one). Answers the run after it and what it approved. A refusal is thrown as
+ * it is (see runCardApprovalErrorOf).
+ */
+export async function runCardApprove(
+  runId: string,
+  nodeKey: string,
+  resultDocId: string | null,
+): Promise<{ readonly run: RunCurrent | null; readonly approval: RunCardApproval }> {
+  const response = await postRequest<Raw>(`${API}/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeKey)}/approval`, {
+    result_doc_id: resultDocId,
+  })
+  const approval = (response.data?.approval && typeof response.data.approval === 'object' ? response.data.approval : {}) as Raw
+  return {
+    run: toRunCurrent(response.data?.run),
+    approval: {
+      nodeKey: text(approval.node_key) ?? nodeKey,
+      targetDocIds: texts(approval.target_doc_ids),
+      approvedDocIds: texts(approval.approved_doc_ids),
+    },
+  }
+}
+
+/** flowgate.v02.0056 F2-1: a refused card approval as the screen reads it. */
+export interface RunCardApprovalError {
+  readonly code: string | null
+  readonly status: number | null
+  /** No answer reached the screen. */
+  readonly network: boolean
+  /** The server's message as it sent it (x-locale), or ''. */
+  readonly message: string
+  /** `document_approval_refused`: the refused document and why (`transition_refused`, a TR2 code …). */
+  readonly docId: string | null
+  readonly reason: string | null
+  readonly detail: string | null
+  /** `document_approval_refused`: the documents approved before the refusal. */
+  readonly approvedDocIds: readonly string[]
+  /** `result_changed`: the node's current result. */
+  readonly resultDocId: string | null
+}
+
+/** What a failed runCardApprove threw: code, status, the server's message and the params it names. */
+export function runCardApprovalErrorOf(error: unknown): RunCardApprovalError {
+  const normalized = normalizeApiError(error)
+  const source = normalized.source as Raw
+  const params = (source.params && typeof source.params === 'object' ? source.params : {}) as Raw
+  return {
+    code: normalized.code,
+    status: normalized.status,
+    network: normalized.network,
+    message: typeof source.message === 'string' ? source.message.trim() : '',
+    docId: text(params.doc_id),
+    reason: text(params.reason),
+    detail: text(params.detail),
+    approvedDocIds: texts(params.approved_doc_ids),
+    resultDocId: text(params.result_doc_id),
+  }
 }

@@ -8,7 +8,11 @@
 // user) and 완료. The window has no 편집 badge (answering is not editing the question).
 // flowgate.v02.0053 T#6 — the question line (ask / ask_placeholder, [+]'s tooltip and why it is closed)
 // and the refusals of a question; no empty-list sentence (the line alone shows). A refusal shows as an
-// icon on the line: `ask_failed.*` is its short name, `ask_failure.*` / `ai_failure.*` its tooltip.
+// icon on the line: `ask_failed` is its short name, `ask_failure.*` its tooltip.
+// flowgate.v02.0056 F1 (0056 CH §3) — registering a question and asking an AI are two steps: the line
+// registers only; each open question has its own [AI 답변 요청] with an AI picker (ai_request, ai_provider,
+// ai_reason.*), a waiting chip once the run started (ai_waiting) and a refusal icon (ai_failed,
+// ai_failure.*) beside it.
 export default {
   ko: {
     question: 'Q{seq}',
@@ -34,6 +38,13 @@ export default {
     send: '보내기',
     open: '열기',
     done_group: '완료',
+    ai_request: 'AI 답변 요청',
+    ai_provider: '답변할 AI',
+    ai_provider_loading: 'AI 목록 읽는 중…',
+    ai_provider_none: '쓸 수 있는 AI 없음',
+    ai_waiting: 'AI 답변 대기 중',
+    ai_failed: 'AI 답변 요청 실패',
+    ask_failed: '질문 등록 실패',
     window: {
       title: 'Q&A',
       view: '읽기 전용',
@@ -54,6 +65,16 @@ export default {
       asking: '질문을 보내는 중입니다.',
       busy: '답변을 보내는 중입니다.',
     },
+    ai_reason: {
+      read_only_conflict: 'Flow 소유가 충돌해 읽기 전용입니다.',
+      read_only_revision: '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 요청합니다.',
+      disposed: '폐기된 그룹이라 AI 답변을 요청할 수 없습니다.',
+      ai_running: 'AI 실행 중이라 AI 답변을 요청할 수 없습니다.',
+      requesting: 'AI 답변을 요청하는 중입니다.',
+      asking: '질문을 보내는 중입니다.',
+      busy: '답변을 보내는 중입니다.',
+      no_provider: '쓸 수 있는 AI가 없습니다.',
+    },
     ask_failure: {
       running: 'AI 실행 중이라 질문이 거절되었습니다.',
       disposed: '폐기된 그룹이라 질문이 거절되었습니다.',
@@ -64,14 +85,13 @@ export default {
       other: '질문을 등록하지 못했습니다.',
     },
     ai_failure: {
-      running: '질문은 등록했습니다. 다른 AI 실행 중이라 AI 답변 요청이 거절되었습니다.',
-      no_provider: '질문은 등록했습니다. 쓸 수 있는 AI가 없어 AI 답변을 요청하지 못했습니다.',
-      network: '질문은 등록했습니다. 서버에 연결하지 못해 AI 답변을 요청하지 못했습니다.',
-      other: '질문은 등록했습니다. AI 답변을 요청하지 못했습니다.',
-    },
-    ask_failed: {
-      ask: '질문 등록 실패',
-      ai: 'AI 답변 요청 실패',
+      running: '다른 AI 실행 중이라 AI 답변 요청이 거절되었습니다.',
+      no_provider: '쓸 수 있는 AI가 없어 AI 답변을 요청하지 못했습니다.',
+      disposed: '폐기된 그룹이라 AI 답변 요청이 거절되었습니다.',
+      forbidden: 'AI 답변을 요청할 권한이 없어 거절되었습니다.',
+      not_found: '질문을 찾을 수 없어 AI 답변 요청이 거절되었습니다.',
+      network: '서버에 연결하지 못해 AI 답변을 요청하지 못했습니다.',
+      other: 'AI 답변을 요청하지 못했습니다.',
     },
     failure: {
       running: 'AI 실행 중이라 거절되었습니다. 질문을 다시 읽었습니다.',
@@ -114,6 +134,13 @@ export default {
     send: 'Send',
     open: 'Open',
     done_group: 'Done',
+    ai_request: 'Ask an AI',
+    ai_provider: 'Answering AI',
+    ai_provider_loading: 'Loading the AI list…',
+    ai_provider_none: 'No AI available',
+    ai_waiting: 'Waiting for the AI answer',
+    ai_failed: 'AI answer not requested',
+    ask_failed: 'Question not registered',
     window: {
       title: 'Q&A',
       view: 'Read only',
@@ -134,6 +161,16 @@ export default {
       asking: 'Sending the question.',
       busy: 'Sending the answer.',
     },
+    ai_reason: {
+      read_only_conflict: 'Read only: the Flow ownership is in conflict.',
+      read_only_revision: 'Read only: this is a confirmed Graph revision view. Request in the draft view.',
+      disposed: 'The group was disposed; an AI answer cannot be requested.',
+      ai_running: 'An AI run is in progress; an AI answer cannot be requested.',
+      requesting: 'Requesting the AI answer.',
+      asking: 'Sending the question.',
+      busy: 'Sending the answer.',
+      no_provider: 'No AI is available.',
+    },
     ask_failure: {
       running: 'The question was refused because an AI run is in progress.',
       disposed: 'The question was refused because the group was disposed.',
@@ -144,14 +181,13 @@ export default {
       other: 'Could not register the question.',
     },
     ai_failure: {
-      running: 'The question was registered. The AI answer request was refused: another AI run is in progress.',
-      no_provider: 'The question was registered. No AI is available to answer it.',
-      network: 'The question was registered. Could not reach the server to ask an AI.',
-      other: 'The question was registered. Could not ask an AI to answer it.',
-    },
-    ask_failed: {
-      ask: 'Question not registered',
-      ai: 'AI answer not requested',
+      running: 'The AI answer request was refused: another AI run is in progress.',
+      no_provider: 'No AI is available to answer it.',
+      disposed: 'The AI answer request was refused: the group was disposed.',
+      forbidden: 'Refused: you do not have permission to request an AI answer.',
+      not_found: 'The AI answer request was refused: the question was not found.',
+      network: 'Could not reach the server to ask an AI.',
+      other: 'Could not ask an AI to answer it.',
     },
     failure: {
       running: 'Refused because an AI run is in progress. The questions were read again.',
@@ -194,6 +230,13 @@ export default {
     send: '送信',
     open: '開く',
     done_group: '完了',
+    ai_request: 'AI に回答を依頼',
+    ai_provider: '回答する AI',
+    ai_provider_loading: 'AI 一覧を読み込み中…',
+    ai_provider_none: '使える AI がありません',
+    ai_waiting: 'AI の回答待ち',
+    ai_failed: 'AI 回答の依頼に失敗',
+    ask_failed: '質問の登録に失敗',
     window: {
       title: 'Q&A',
       view: '読み取り専用',
@@ -214,6 +257,16 @@ export default {
       asking: '質問を送信しています。',
       busy: '回答を送信しています。',
     },
+    ai_reason: {
+      read_only_conflict: 'フローの所有が競合しているため読み取り専用です。',
+      read_only_revision: '確定した Graph revision の表示のため読み取り専用です。draft 表示で依頼します。',
+      disposed: '破棄されたグループのため AI 回答を依頼できません。',
+      ai_running: 'AI 実行中のため AI 回答を依頼できません。',
+      requesting: 'AI 回答を依頼しています。',
+      asking: '質問を送信しています。',
+      busy: '回答を送信しています。',
+      no_provider: '使える AI がありません。',
+    },
     ask_failure: {
       running: 'AI 実行中のため質問が拒否されました。',
       disposed: '破棄されたグループのため質問が拒否されました。',
@@ -224,14 +277,13 @@ export default {
       other: '質問を登録できませんでした。',
     },
     ai_failure: {
-      running: '質問は登録しました。別の AI 実行中のため AI 回答の依頼が拒否されました。',
-      no_provider: '質問は登録しました。使える AI がないため AI 回答を依頼できませんでした。',
-      network: '質問は登録しました。サーバーに接続できず AI 回答を依頼できませんでした。',
-      other: '質問は登録しました。AI 回答を依頼できませんでした。',
-    },
-    ask_failed: {
-      ask: '質問の登録に失敗',
-      ai: 'AI 回答の依頼に失敗',
+      running: '別の AI 実行中のため AI 回答の依頼が拒否されました。',
+      no_provider: '使える AI がないため AI 回答を依頼できませんでした。',
+      disposed: '破棄されたグループのため AI 回答の依頼が拒否されました。',
+      forbidden: 'AI 回答を依頼する権限がないため拒否されました。',
+      not_found: '質問が見つからないため AI 回答の依頼が拒否されました。',
+      network: 'サーバーに接続できず AI 回答を依頼できませんでした。',
+      other: 'AI 回答を依頼できませんでした。',
     },
     failure: {
       running: 'AI 実行中のため拒否されました。質問を読み直しました。',

@@ -1,18 +1,20 @@
 /**
- * flowgate.v02.0053 T#6 — a person asks on the Q&A tab and an AI answers (0053 CH §2), with
- * `@/features/document` mocked as a small server that also starts the AI run and refuses:
+ * flowgate.v02.0053 T#6 — a person asks on the Q&A tab (0053 CH §2), with `@/features/document` mocked as a
+ * small server that also starts the AI run and refuses.
+ * flowgate.v02.0056 F1 (0056 CH §3) — registering a question and asking an AI are two steps:
  *
  * - the question line (field + [+]) is at the top of the tab, always; a document without questions shows
  *   only the line, no sentence; [+] is an icon whose name / tooltip is 질문 등록, closed while blank;
- * - [+] or Enter registers the question (asker 'human', trimmed), then asks an AI to answer that question,
- *   then reads the questions and the guard again; the line clears; Enter ending an IME composition does not
- *   send; the AI's answer arrives with `qna_answer_registered` and shows under the question;
- * - a refused question (nothing stored) keeps the text; a refused AI request (question stored) lists the
- *   question and clears the line; both show as an icon on the line — red ! / amber △, named for the stage —
- *   whose tooltip (its accessible description) says why; no sentence is drawn in the tab;
- * - asking closes while a question is on its way, on a read-only Flow, a disposed group or an AI run, with
- *   the reason as [+]'s tooltip; the AI-asks / person-answers flow stays as it was;
- * - in the real Frame, a card just placed (T#1 documents) asks and shows the AI answer.
+ * - [+] or Enter registers the question (asker 'human', trimmed) and reads the questions and the guard
+ *   again — no AI is asked by itself; the line clears; Enter ending an IME composition does not send;
+ * - every open question has its AI line: a picker of the project's AIs (the project default picked first)
+ *   and [AI 답변 요청]; the request names the picked AI, the button shows it on its way, a running chip says
+ *   the answer is awaited until it arrives (`qna_answer_registered`) or the run ends; a refusal is an amber
+ *   ! icon beside the button whose tooltip says why;
+ * - a refused question keeps the text and shows a red ! icon on the line whose tooltip says why;
+ * - asking and requesting close while something is on its way, on a read-only Flow, a disposed group or an
+ *   AI run, with the reason as the tooltip; the AI-asks / person-answers flow stays as it was;
+ * - in the real Frame, a card just placed registers a question and gets the AI answer on request.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -36,6 +38,7 @@ const detailRead = vi.fn()
 const relationsRead = vi.fn()
 const attachmentsReadCall = vi.fn()
 const settingsNodeRead = vi.fn()
+const choicesRead = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/document')>()
   return {
@@ -46,6 +49,7 @@ vi.mock('@/features/document', async (importOriginal) => {
     qaRequestAiAnswer: (...args: unknown[]) => qaAiCall(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
     reviewDocumentRead: (...args: unknown[]) => documentRead(...args),
+    settingsChoicesRead: (...args: unknown[]) => choicesRead(...args),
     // The other parts of the Frame in the placed-card case.
     documentDetailRead: (...args: unknown[]) => detailRead(...args),
     documentRelationsRead: (...args: unknown[]) => relationsRead(...args),
@@ -61,7 +65,7 @@ vi.mock('@shared/api', async (importOriginal) => {
   return { ...actual, getRequest: vi.fn(offline), postRequest: vi.fn(offline), putRequest: vi.fn(offline), patchRequest: vi.fn(offline) }
 })
 
-const { toQaThread, toQaAnswerResult, toQaAskResult, toQaAiRequestResult, toReviewActivity, toReviewDocument, toDocumentDetail, toAttachmentsList } =
+const { toQaThread, toQaAnswerResult, toQaAskResult, toQaAiRequestResult, toReviewActivity, toReviewDocument, toDocumentDetail, toAttachmentsList, toSettingsChoices } =
   await vi.importActual<typeof import('@/features/document')>('@/features/document')
 
 const i18n = prepareInspectorI18n()
@@ -88,7 +92,7 @@ let running = false
 let disposed = false
 let itemSeq = 30
 /** Questions an AI run was started for: the run answers them when the test lets it. */
-const pendingAi: { docId: string; itemId: number }[] = []
+const pendingAi: { docId: string; itemId: number; providerId: string | null }[] = []
 const refusals = new Map<string, unknown>()
 /** Every call to the server, in order. */
 const calls: string[] = []
@@ -126,7 +130,7 @@ function seed() {
 
 /** The AI run answers every question it was started for and ends. */
 function aiAnswers(body = 'AI 답입니다.') {
-  for (const { docId, itemId } of pendingAi.splice(0)) {
+  for (const { docId, itemId, providerId } of pendingAi.splice(0)) {
     const entry = threads.get(docId)!.find((candidate) => candidate.id === itemId)!
     entry.answers.push({
       id: 900 + itemId,
@@ -134,7 +138,7 @@ function aiAnswers(body = 'AI 답입니다.') {
       author_kind: 'ai',
       author_id: null,
       selected_options: [],
-      author_provider: { ai_run_id: 'aiv_9', ai_provider_id: 'p1', ai_provider_name: 'Claude Opus 5.5' },
+      author_provider: { ai_run_id: 'aiv_9', ai_provider_id: providerId ?? 'p1', ai_provider_name: providerId === 'p2' ? 'Codex' : 'Claude Opus 5.5' },
     })
   }
   running = false
@@ -163,11 +167,11 @@ function serve() {
     threads.set(request.docId, list)
     return toQaAskResult({ ok: true, doc_id: request.docId, added_item_ids: [id] })
   })
-  qaAiCall.mockImplementation(async (docId: string, itemId: number) => {
-    calls.push(`ai ${itemId}`)
-    const refusal = refusalOf('ai')
+  qaAiCall.mockImplementation(async (docId: string, itemId: number, providerId: string | null = null) => {
+    calls.push(`ai ${itemId} ${providerId ?? '-'}`)
+    const refusal = refusalOf('ai') ?? (running ? admission('run_in_progress') : null)
     if (refusal) throw refusal
-    pendingAi.push({ docId, itemId })
+    pendingAi.push({ docId, itemId, providerId })
     running = true
     return toQaAiRequestResult({ ok: true, doc_id: docId, item_id: itemId, run_id: 'aiv_9', status: 'running' })
   })
@@ -180,6 +184,18 @@ function serve() {
   relationsRead.mockImplementation(async () => [])
   attachmentsReadCall.mockImplementation(async (docId: string) => toAttachmentsList({ data: { doc_id: docId, attachments: [], count: 0 } }))
   settingsNodeRead.mockResolvedValue({ cardKind: 'run', locked: false, fields: { instruction: { value: 'use', stored: null, default: 'use', choices: ['use', 'omit'] } } })
+  choicesRead.mockImplementation(async (projectId: string) => {
+    calls.push(`choices ${projectId}`)
+    const refusal = refusalOf('choices')
+    if (refusal) throw refusal
+    return toSettingsChoices({
+      providers: [
+        { id: 'p1', name: 'Claude Opus 5.5' },
+        { id: 'p2', name: 'Codex' },
+      ],
+      default_provider_id: 'p1',
+    })
+  })
 }
 
 const rowOf = (docId: string) => ({
@@ -209,7 +225,7 @@ beforeEach(() => {
   running = false
   disposed = false
   itemSeq = 30
-  for (const mock of [qaReadCall, qaAnswerCall, qaAskCall, qaAiCall, activityRead, documentRead, detailRead, relationsRead, attachmentsReadCall, settingsNodeRead]) mock.mockReset()
+  for (const mock of [qaReadCall, qaAnswerCall, qaAskCall, qaAiCall, activityRead, documentRead, detailRead, relationsRead, attachmentsReadCall, settingsNodeRead, choicesRead]) mock.mockReset()
   seed()
   serve()
 })
@@ -238,26 +254,24 @@ const itemEl = (w: VueWrapper<any>, id: number) => w.find(`[data-test="qna-item"
 const ids = (w: VueWrapper<any>) => w.findAll('[data-test="qna-item"]').map((el) => Number(el.attributes('data-item')))
 const askFailure = (w: VueWrapper<any>) => w.find('[data-test="qna-ask-failure"]')
 const inputValue = (w: VueWrapper<any>) => (askInput(w).element as HTMLInputElement).value
+const aiButton = (w: VueWrapper<any>, id: number) => itemEl(w, id).get('[data-test="qna-ai-request"]')
+const aiPicker = (w: VueWrapper<any>, id: number) => itemEl(w, id).get('select[data-test="qna-ai-provider"]')
+const aiFailure = (w: VueWrapper<any>, id: number) => itemEl(w, id).find('[data-test="qna-ai-failure"]')
+const aiWaiting = (w: VueWrapper<any>, id: number) => itemEl(w, id).find('[data-test="qna-ai-waiting"]')
 
-/** The refusal icon: where it sits, its stage, color, icon, name and description, and the text it draws. */
-function failureView(w: VueWrapper<any>) {
-  const el = askFailure(w)
-  return {
-    inLine: el.element.parentElement?.getAttribute('data-test') ?? null,
-    stage: el.attributes('data-stage'),
-    tone: el.attributes('data-tone'),
-    icon: el.get('svg').attributes('data-icon'),
-    role: el.attributes('role'),
-    focusable: el.attributes('tabindex'),
-    name: el.attributes('aria-label'),
-    description: el.attributes('title'),
-    text: el.text(),
-  }
+/** A refusal icon: its name, its description (the tooltip) and the text it draws. */
+function iconView(el: ReturnType<VueWrapper<any>['find']>) {
+  return { role: el.attributes('role'), focusable: el.attributes('tabindex'), name: el.attributes('aria-label'), description: el.attributes('title'), text: el.text() }
 }
 
 async function ask(w: VueWrapper<any>, text: string) {
   await askInput(w).setValue(text)
   await askButton(w).trigger('click')
+  await flushPromises()
+}
+
+async function requestAi(w: VueWrapper<any>, id: number) {
+  await aiButton(w, id).trigger('click')
   await flushPromises()
 }
 
@@ -304,37 +318,26 @@ describe('the question line (flowgate.v02.0053 T#6)', () => {
 
 // --- Asking --------------------------------------------------------------------------------------------
 
-describe('asking: register the question, ask an AI, show its answer (flowgate.v02.0053 T#6)', () => {
-  it('[+] registers the trimmed question as a person, asks an AI for that question, then reads again', async () => {
+describe('asking: register the question only (flowgate.v02.0056 F1)', () => {
+  it('[+] registers the trimmed question as a person, then reads again — no AI is asked', async () => {
     const w = await mountTab(emptyTarget())
     calls.length = 0
     await ask(w, '  완료 기준은 무엇인가요?  ')
     expect(qaAskCall).toHaveBeenCalledWith({ docId: OTHER_DOC, body: '완료 기준은 무엇인가요?' })
-    expect(qaAiCall).toHaveBeenCalledWith(OTHER_DOC, 31)
-    // The question first, then the AI request for it, then the questions and the guard read again.
-    expect(calls.slice(0, 2)).toEqual(['ask 완료 기준은 무엇인가요?', 'ai 31'])
-    expect(calls.slice(2).sort()).toEqual(['guard', `read ${OTHER_DOC}`])
+    expect(qaAiCall).not.toHaveBeenCalled()
+    // The question first, then the questions and the guard read again.
+    expect(calls[0]).toBe('ask 완료 기준은 무엇인가요?')
+    expect(calls.slice(1).sort()).toEqual(['guard', `read ${OTHER_DOC}`])
     expect(ids(w)).toEqual([31])
+    expect(itemEl(w, 31).attributes('data-state')).toBe('open')
     expect(itemEl(w, 31).get('[data-test="qna-item-title"]').text()).toBe('완료 기준은 무엇인가요?')
     expect(itemEl(w, 31).get('[data-test="qna-item-asker"]').attributes('data-side')).toBe('human')
     expect(inputValue(w)).toBe('')
     expect(askFailure(w).exists()).toBe(false)
-  })
-
-  it('the AI answer arrives with qna_answer_registered and shows under the question with who answered', async () => {
-    vi.useFakeTimers()
-    const w = await mountTab(emptyTarget())
-    stream.open()
-    await ask(w, '완료 기준은?')
-    expect(itemEl(w, 31).attributes('data-state')).toBe('open')
-    await aiAnswerArrives(OTHER_DOC, '테스트 통과가 완료 기준입니다.')
-    const item = itemEl(w, 31)
-    expect(item.attributes('data-state')).toBe('answered')
-    expect(item.get('[data-test="qna-answer-body"]').text()).toBe('테스트 통과가 완료 기준입니다.')
-    expect(item.get('[data-test="qna-answer"]').attributes('data-side')).toBe('ai')
-    expect(item.get('[data-test="qna-answer-side"]').text()).toBe('답: AI · Claude Opus 5.5')
-    // Answered: no answer form under it.
-    expect(item.find('[data-test="qna-answer-form"]').exists()).toBe(false)
+    // The registered question offers its AI line and waits for nobody yet.
+    expect(aiButton(w, 31).exists()).toBe(true)
+    expect(aiWaiting(w, 31).exists()).toBe(false)
+    expect(isDisabled(askInput(w))).toBe(false)
   })
 
   it('Enter sends the question like [+]; Enter that ends an IME composition does not', async () => {
@@ -348,7 +351,7 @@ describe('asking: register the question, ask an AI, show its answer (flowgate.v0
     await flushPromises()
     expect(qaAskCall).toHaveBeenCalledTimes(1)
     expect(qaAskCall).toHaveBeenCalledWith({ docId: OTHER_DOC, body: '한글 질문' })
-    expect(qaAiCall).toHaveBeenCalledTimes(1)
+    expect(qaAiCall).not.toHaveBeenCalled()
   })
 
   it('Enter on a blank line sends nothing', async () => {
@@ -381,7 +384,6 @@ describe('asking: register the question, ask an AI, show its answer (flowgate.v0
     expect(qaAskCall).toHaveBeenCalledTimes(1)
     release()
     await flushPromises()
-    expect(qaAiCall).toHaveBeenCalledTimes(1)
     expect(ids(w)).toEqual([31])
   })
 
@@ -395,10 +397,177 @@ describe('asking: register the question, ask an AI, show its answer (flowgate.v0
     expect(qaAskCall).not.toHaveBeenCalled()
     expect(qaAiCall).not.toHaveBeenCalled()
     expect(itemEl(w, 10).attributes('data-state')).toBe('answered')
+    // An answered question has no AI line.
+    expect(itemEl(w, 10).find('[data-test="qna-ai"]').exists()).toBe(false)
   })
 })
 
-// --- Refusals ------------------------------------------------------------------------------------------
+// --- Asking an AI --------------------------------------------------------------------------------------
+
+describe('the AI line of an open question: pick an AI, ask it, see its answer (flowgate.v02.0056 F1)', () => {
+  it('every open question has the picker (the project AIs, the default first) and [AI 답변 요청]', async () => {
+    const w = await mountTab(v01Target())
+    expect(choicesRead).toHaveBeenCalledWith('flowgate')
+    const picker = aiPicker(w, 10)
+    expect(picker.findAll('option').map((option) => [option.attributes('value'), option.text()])).toEqual([
+      ['', '쓸 수 있는 AI 없음'],
+      ['p1', 'Claude Opus 5.5'],
+      ['p2', 'Codex'],
+    ])
+    expect((picker.element as HTMLSelectElement).value).toBe('p1')
+    expect(picker.attributes('aria-label')).toBe('답변할 AI')
+    expect(aiButton(w, 10).text()).toBe('AI 답변 요청')
+    expect(isDisabled(aiButton(w, 10))).toBe(false)
+    expect(aiButton(w, 10).attributes('title')).toBeUndefined()
+  })
+
+  it('[AI 답변 요청] asks the picked AI for that question, then reads again; the row waits for the answer', async () => {
+    vi.useFakeTimers()
+    const w = await mountTab(emptyTarget())
+    stream.open()
+    await ask(w, '완료 기준은?')
+    await aiPicker(w, 31).setValue('p2')
+    calls.length = 0
+    await requestAi(w, 31)
+    expect(qaAiCall).toHaveBeenCalledWith(OTHER_DOC, 31, 'p2')
+    expect(calls[0]).toBe('ai 31 p2')
+    expect(calls.slice(1).sort()).toEqual(['guard', `read ${OTHER_DOC}`])
+    expect(itemEl(w, 31).attributes('data-state')).toBe('open')
+    expect(itemEl(w, 31).attributes('data-awaiting')).toBe('true')
+    expect(aiWaiting(w, 31).text()).toBe('AI 답변 대기 중')
+    // The run owns the Flow: asking an AI again (and asking) waits for it.
+    expect(isDisabled(aiButton(w, 31))).toBe(true)
+    expect(aiButton(w, 31).attributes('title')).toBe('AI 실행 중이라 AI 답변을 요청할 수 없습니다.')
+    await aiAnswerArrives(OTHER_DOC, '테스트 통과가 완료 기준입니다.')
+    const item = itemEl(w, 31)
+    expect(item.attributes('data-state')).toBe('answered')
+    expect(item.attributes('data-awaiting')).toBe('false')
+    expect(item.get('[data-test="qna-answer-body"]').text()).toBe('테스트 통과가 완료 기준입니다.')
+    expect(item.get('[data-test="qna-answer"]').attributes('data-side')).toBe('ai')
+    expect(item.get('[data-test="qna-answer-side"]').text()).toBe('답: AI · Codex')
+    expect(item.find('[data-test="qna-answer-form"]').exists()).toBe(false)
+  })
+
+  it('without a pick the project default AI is asked', async () => {
+    const w = await mountTab(v01Target())
+    await requestAi(w, 10)
+    expect(qaAiCall).toHaveBeenCalledWith(V01_DOC, 10, 'p1')
+  })
+
+  it('the run ending without an answer takes the waiting chip away', async () => {
+    vi.useFakeTimers()
+    const w = await mountTab(v01Target())
+    stream.open()
+    await requestAi(w, 10)
+    expect(aiWaiting(w, 10).exists()).toBe(true)
+    pendingAi.length = 0
+    running = false
+    stream.emit('ai_invoke_finished', { groupId: V01_FLOW, docId: V01_DOC })
+    await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
+    await flushPromises()
+    expect(aiWaiting(w, 10).exists()).toBe(false)
+    // Question 10 was asked by an AI: it waits for the user before and after — the request moves nothing else.
+    expect(itemEl(w, 10).attributes('data-state')).toBe('waiting')
+    expect(isDisabled(aiButton(w, 10))).toBe(false)
+  })
+
+  it('while the request is on its way the button shows it and a second press sends nothing', async () => {
+    let release: () => void = () => {}
+    qaAiCall.mockImplementationOnce(
+      (docId: string, itemId: number) =>
+        new Promise((resolve) => {
+          release = () => {
+            pendingAi.push({ docId, itemId, providerId: 'p1' })
+            running = true
+            resolve(toQaAiRequestResult({ ok: true, doc_id: docId, item_id: itemId, run_id: 'aiv_9', status: 'running' }))
+          }
+        }),
+    )
+    const w = await mountTab(v01Target())
+    await aiButton(w, 10).trigger('click')
+    await flushPromises()
+    expect(isDisabled(aiButton(w, 10))).toBe(true)
+    expect(aiButton(w, 10).attributes('title')).toBe('AI 답변을 요청하는 중입니다.')
+    await aiButton(w, 10).trigger('click')
+    expect(qaAiCall).toHaveBeenCalledTimes(1)
+    release()
+    await flushPromises()
+    expect(aiWaiting(w, 10).exists()).toBe(true)
+  })
+
+  it.each([
+    ['409 no_enabled_provider', admission('no_enabled_provider'), '쓸 수 있는 AI가 없어 AI 답변을 요청하지 못했습니다.'],
+    ['409 run_in_progress', admission('run_in_progress'), '다른 AI 실행 중이라 AI 답변 요청이 거절되었습니다.'],
+    ['409 disposed', qRefusal(409, 'Modification not allowed: the group has been disposed.'), '폐기된 그룹이라 AI 답변 요청이 거절되었습니다.'],
+    ['403', qRefusal(403, 'perm_document_create required'), 'AI 답변을 요청할 권한이 없어 거절되었습니다.'],
+    ['404', qRefusal(404, 'question_item does not belong'), '질문을 찾을 수 없어 AI 답변 요청이 거절되었습니다.'],
+    ['network', networkError(), '서버에 연결하지 못해 AI 답변을 요청하지 못했습니다.'],
+    ['409 another code', admission('worktree_unavailable'), 'AI 답변을 요청하지 못했습니다.'],
+  ])('a refused request (%s): the question stays as it was, an amber icon beside the button tells why in its tooltip', async (_label, refusal, text) => {
+    refusals.set('ai', refusal)
+    const w = await mountTab(v01Target())
+    await requestAi(w, 10)
+    // The question stays as it was (asked by an AI, waiting for the user) with no answer and nothing awaited.
+    expect(itemEl(w, 10).attributes('data-state')).toBe('waiting')
+    expect(itemEl(w, 10).attributes('data-awaiting')).toBe('false')
+    expect(aiWaiting(w, 10).exists()).toBe(false)
+    expect(iconView(aiFailure(w, 10))).toEqual({ role: 'img', focusable: '0', name: 'AI 답변 요청 실패', description: text, text: '' })
+    expect(w.get('[data-test="inspector-qna"]').text()).not.toContain(text)
+    // Read again after the refusal as well; the button opens again.
+    expect(qaReadCall).toHaveBeenCalledTimes(2)
+    expect(isDisabled(aiButton(w, 10))).toBe(false)
+  })
+
+  it('the next request clears the last refusal', async () => {
+    refusals.set('ai', networkError())
+    const w = await mountTab(v01Target())
+    await requestAi(w, 10)
+    expect(aiFailure(w, 10).exists()).toBe(true)
+    await requestAi(w, 10)
+    expect(aiFailure(w, 10).exists()).toBe(false)
+    expect(aiWaiting(w, 10).exists()).toBe(true)
+  })
+
+  it('a project without an AI: the picker is empty and closed, the button closed with the reason', async () => {
+    choicesRead.mockImplementation(async () => toSettingsChoices({ providers: [], default_provider_id: null }))
+    const w = await mountTab(v01Target())
+    const picker = aiPicker(w, 10)
+    expect(isDisabled(picker)).toBe(true)
+    expect(picker.findAll('option').map((option) => option.text())).toEqual(['쓸 수 있는 AI 없음'])
+    expect(isDisabled(aiButton(w, 10))).toBe(true)
+    expect(aiButton(w, 10).attributes('title')).toBe('쓸 수 있는 AI가 없습니다.')
+    await aiButton(w, 10).trigger('click')
+    expect(qaAiCall).not.toHaveBeenCalled()
+  })
+
+  it('the ↗ window carries the same AI line and the waiting chip', async () => {
+    vi.useFakeTimers()
+    const w = await mountTab(v01Target())
+    stream.open()
+    await itemEl(w, 10).get('[data-test="qna-open"]').trigger('click')
+    await flushPromises()
+    const win = document.body.querySelector('[data-test="qna-window"][data-item="10"]')!
+    expect(win.querySelector('[data-test="qna-window-ai-request"]')?.textContent).toBe('AI 답변 요청')
+    ;(win.querySelector('[data-test="qna-window-ai-request"]') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(qaAiCall).toHaveBeenCalledWith(V01_DOC, 10, 'p1')
+    expect(win.querySelector('[data-test="qna-window-ai-waiting"]')?.textContent).toBe('AI 답변 대기 중')
+    expect(aiWaiting(w, 10).exists()).toBe(true)
+  })
+
+  it('en / ja: the AI line wording', async () => {
+    const w = await mountTab(v01Target())
+    i18n.global.locale.value = 'en'
+    await flushPromises()
+    expect(aiButton(w, 10).text()).toBe('Ask an AI')
+    expect(aiPicker(w, 10).attributes('aria-label')).toBe('Answering AI')
+    i18n.global.locale.value = 'ja'
+    await flushPromises()
+    expect(aiButton(w, 10).text()).toBe('AI に回答を依頼')
+  })
+})
+
+// --- Refusals of a question --------------------------------------------------------------------------
 
 describe('asking: refusals (flowgate.v02.0053 T#6)', () => {
   it.each([
@@ -409,22 +578,13 @@ describe('asking: refusals (flowgate.v02.0053 T#6)', () => {
     ['400 CH document', qRefusal(400, 'This is a conversation (CH) document'), '질문 내용이 올바르지 않아 거절되었습니다.'],
     ['network', networkError(), '서버에 연결하지 못했습니다.'],
     ['500', qRefusal(500, 'boom'), '질문을 등록하지 못했습니다.'],
-  ])('a refused question (%s): nothing stored, no AI request, the text stays, a red icon tells why in its tooltip', async (_label, refusal, text) => {
+  ])('a refused question (%s): nothing stored, the text stays, a red icon tells why in its tooltip', async (_label, refusal, text) => {
     refusals.set('ask', refusal)
     const w = await mountTab(emptyTarget())
     await ask(w, '질문')
     expect(qaAiCall).not.toHaveBeenCalled()
-    expect(failureView(w)).toEqual({
-      inLine: 'qna-ask',
-      stage: 'ask',
-      tone: 'danger',
-      icon: 'error',
-      role: 'img',
-      focusable: '0',
-      name: '질문 등록 실패',
-      description: text,
-      text: '',
-    })
+    expect(iconView(askFailure(w))).toEqual({ role: 'img', focusable: '0', name: '질문 등록 실패', description: text, text: '' })
+    expect(askFailure(w).element.parentElement?.getAttribute('data-test')).toBe('qna-ask')
     // No sentence in the tab: the reason is only the tooltip.
     expect(w.get('[data-test="inspector-qna"]').text()).not.toContain(text)
     expect(w.find('[data-test="inspector-reason"]').exists()).toBe(false)
@@ -434,43 +594,16 @@ describe('asking: refusals (flowgate.v02.0053 T#6)', () => {
     expect(qaReadCall).toHaveBeenCalledTimes(2)
   })
 
-  it.each([
-    ['409 no_enabled_provider', admission('no_enabled_provider'), '질문은 등록했습니다. 쓸 수 있는 AI가 없어 AI 답변을 요청하지 못했습니다.'],
-    ['409 run_in_progress', admission('run_in_progress'), '질문은 등록했습니다. 다른 AI 실행 중이라 AI 답변 요청이 거절되었습니다.'],
-    ['network', networkError(), '질문은 등록했습니다. 서버에 연결하지 못해 AI 답변을 요청하지 못했습니다.'],
-    ['409 another code', admission('worktree_unavailable'), '질문은 등록했습니다. AI 답변을 요청하지 못했습니다.'],
-  ])('a refused AI request (%s): the question is listed, the line clears, an amber icon tells why in its tooltip', async (_label, refusal, text) => {
-    refusals.set('ai', refusal)
-    const w = await mountTab(emptyTarget())
-    await ask(w, '질문')
-    expect(ids(w)).toEqual([31])
-    expect(itemEl(w, 31).attributes('data-state')).toBe('open')
-    expect(failureView(w)).toEqual({
-      inLine: 'qna-ask',
-      stage: 'ai',
-      tone: 'warning',
-      icon: 'warning',
-      role: 'img',
-      focusable: '0',
-      name: 'AI 답변 요청 실패',
-      description: text,
-      text: '',
-    })
-    expect(w.get('[data-test="inspector-qna"]').text()).not.toContain(text)
-    expect(w.find('[data-test="inspector-reason"]').exists()).toBe(false)
-    expect(inputValue(w)).toBe('')
-  })
-
   it('en / ja: the icon name and the tooltip in the locale', async () => {
-    refusals.set('ai', admission('no_enabled_provider'))
+    refusals.set('ask', locked())
     const w = await mountTab(emptyTarget())
     await ask(w, '질문')
     i18n.global.locale.value = 'en'
     await flushPromises()
-    expect([failureView(w).name, failureView(w).description]).toEqual(['AI answer not requested', 'The question was registered. No AI is available to answer it.'])
+    expect([iconView(askFailure(w)).name, iconView(askFailure(w)).description]).toEqual(['Question not registered', 'The question was refused because an AI run is in progress.'])
     i18n.global.locale.value = 'ja'
     await flushPromises()
-    expect([failureView(w).name, failureView(w).description]).toEqual(['AI 回答の依頼に失敗', '質問は登録しました。使える AI がないため AI 回答を依頼できませんでした。'])
+    expect([iconView(askFailure(w)).name, iconView(askFailure(w)).description]).toEqual(['質問の登録に失敗', 'AI 実行中のため質問が拒否されました。'])
   })
 
   it('the next question clears the last refusal', async () => {
@@ -486,60 +619,67 @@ describe('asking: refusals (flowgate.v02.0053 T#6)', () => {
 
 // --- When asking is closed --------------------------------------------------------------------------
 
-describe('asking: closed with the reason as the tooltip (flowgate.v02.0053 T#6)', () => {
+describe('asking and requesting: closed with the reason as the tooltip', () => {
   it.each([
-    ['ownership conflict', { readOnly: 'conflict' as const }, 'Flow 소유가 충돌해 읽기 전용입니다.'],
-    ['revision view', { readOnly: 'revision' as const }, '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 질문합니다.'],
-  ])('%s: the field and [+] are closed and nothing is sent', async (_label, fields, title) => {
+    ['ownership conflict', { readOnly: 'conflict' as const }, 'Flow 소유가 충돌해 읽기 전용입니다.', 'Flow 소유가 충돌해 읽기 전용입니다.'],
+    [
+      'revision view',
+      { readOnly: 'revision' as const },
+      '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 질문합니다.',
+      '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 요청합니다.',
+    ],
+  ])('%s: the field, [+] and [AI 답변 요청] are closed and nothing is sent', async (_label, fields, askTitle, aiTitle) => {
     const w = await mountTab(v01Target(fields))
     expect(isDisabled(askInput(w))).toBe(true)
     expect(isDisabled(askButton(w))).toBe(true)
-    expect(askButton(w).attributes('title')).toBe(title)
+    expect(askButton(w).attributes('title')).toBe(askTitle)
+    expect(isDisabled(aiButton(w, 10))).toBe(true)
+    expect(aiButton(w, 10).attributes('title')).toBe(aiTitle)
     await askInput(w).trigger('keydown', { key: 'Enter' })
     await askButton(w).trigger('click')
+    await aiButton(w, 10).trigger('click')
     await flushPromises()
     expect(qaAskCall).not.toHaveBeenCalled()
+    expect(qaAiCall).not.toHaveBeenCalled()
   })
 
-  it('a disposed group closes asking', async () => {
+  it('a disposed group closes asking and requesting', async () => {
     disposed = true
     const w = await mountTab(v01Target())
     expect(isDisabled(askButton(w))).toBe(true)
     expect(askButton(w).attributes('title')).toBe('폐기된 그룹이라 질문할 수 없습니다.')
+    expect(isDisabled(aiButton(w, 10))).toBe(true)
+    expect(aiButton(w, 10).attributes('title')).toBe('폐기된 그룹이라 AI 답변을 요청할 수 없습니다.')
   })
 
-  it('an AI run of the Flow closes asking; it opens again when the run finishes', async () => {
+  it('an AI run of the Flow closes asking and requesting; both open again when the run finishes', async () => {
     vi.useFakeTimers()
     running = true
     const w = await mountTab(v01Target())
     stream.open()
     expect(isDisabled(askInput(w))).toBe(true)
     expect(askButton(w).attributes('title')).toBe('AI 실행 중이라 질문할 수 없습니다.')
+    expect(isDisabled(aiButton(w, 10))).toBe(true)
+    expect(aiButton(w, 10).attributes('title')).toBe('AI 실행 중이라 AI 답변을 요청할 수 없습니다.')
     running = false
     stream.emit('ai_invoke_finished', { groupId: V01_FLOW, docId: V01_DOC })
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
     await flushPromises()
     expect(isDisabled(askInput(w))).toBe(false)
     expect(askButton(w).attributes('title')).toBe('질문 등록')
+    expect(isDisabled(aiButton(w, 10))).toBe(false)
   })
 
-  it('the AI run started for the question closes asking until it answers', async () => {
-    vi.useFakeTimers()
-    const w = await mountTab(emptyTarget())
-    stream.open()
-    await ask(w, '질문')
-    expect(isDisabled(askInput(w))).toBe(true)
-    expect(askButton(w).attributes('title')).toBe('AI 실행 중이라 질문할 수 없습니다.')
-    await aiAnswerArrives(OTHER_DOC)
-    expect(isDisabled(askInput(w))).toBe(false)
-  })
-
-  it('the unsent question belongs to its document', async () => {
+  it('the unsent question and the AI picks belong to their document', async () => {
     const w = await mountTab(v01Target())
     await askInput(w).setValue('쓰던 질문')
+    await aiPicker(w, 10).setValue('p2')
     await w.setProps({ target: emptyTarget() })
     await flushPromises()
     expect(inputValue(w)).toBe('')
+    await w.setProps({ target: v01Target() })
+    await flushPromises()
+    expect((aiPicker(w, 10).element as HTMLSelectElement).value).toBe('p1')
   })
 
   it('a late refusal of the previous Node is not shown on the new one', async () => {
@@ -558,7 +698,7 @@ describe('asking: closed with the reason as the tooltip (flowgate.v02.0053 T#6)'
 
 // --- A card just placed, in the real Frame -----------------------------------------------------------
 
-describe('a card just placed: ask on the Q&A tab and see the AI answer (flowgate.v02.0053 T#6 완료 기준)', () => {
+describe('a card just placed: ask on the Q&A tab, request the AI answer and see it (0053 T#6 완료 기준, 0056 F1)', () => {
   const FLOW = 'flowgate.v02.0060'
   const INSTRUCTION = `${FLOW}.0009-T`
 
@@ -596,7 +736,7 @@ describe('a card just placed: ask on the Q&A tab and see the AI answer (flowgate
     draft: { version: 1, editable: true, confirmable: true, blockedReason: null, baseRevisionNo: null },
   })
 
-  it('the Q&A tab of the new card shows only the line; a question gets the AI answer under it', async () => {
+  it('the Q&A tab of the new card shows only the line; a question is registered, then an AI asked, then answered', async () => {
     vi.useFakeTimers()
     const node = placedTask()
     wrapper = mount(DesignerInspector, {
@@ -613,8 +753,11 @@ describe('a card just placed: ask on the Q&A tab and see the AI answer (flowgate
     expect(w.get('[data-test="inspector-qna"]').text()).toBe('')
     await ask(w, '이 작업의 완료 기준은?')
     expect(qaAskCall).toHaveBeenCalledWith({ docId: INSTRUCTION, body: '이 작업의 완료 기준은?' })
-    expect(qaAiCall).toHaveBeenCalledWith(INSTRUCTION, 31)
+    expect(qaAiCall).not.toHaveBeenCalled()
     expect(ids(w)).toEqual([31])
+    await requestAi(w, 31)
+    expect(qaAiCall).toHaveBeenCalledWith(INSTRUCTION, 31, 'p1')
+    expect(aiWaiting(w, 31).exists()).toBe(true)
     await aiAnswerArrives(INSTRUCTION, '단위 테스트가 모두 통과하면 완료입니다.')
     expect(itemEl(w, 31).attributes('data-state')).toBe('answered')
     expect(itemEl(w, 31).get('[data-test="qna-answer-body"]').text()).toBe('단위 테스트가 모두 통과하면 완료입니다.')

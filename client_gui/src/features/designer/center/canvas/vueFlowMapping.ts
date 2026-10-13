@@ -26,7 +26,12 @@
 // dragged then (a click selects it first); a Node the Graph does not mark `movable` never moves. Out
 // of the mode Nodes are mapped as before and are never `selected` for the library (it keeps a Node's
 // earlier fields on a redraw, so a selection left from the mode is cleared explicitly).
+//
+// flowgate.v02.0056 F2-1: a Graph node with a run carries its card state (graph/cardStateView.ts — 작업 중 ·
+// 승인 대기 · 승인됨 …) for the card's state chip, and whether the chip offers [승인] now (`approvable`: the
+// card waits for its approval, this Canvas may approve and the Flow is not an ownership conflict).
 import type { Edge, Node } from '@vue-flow/core'
+import { cardStateView, type CardStateView } from '../graph/cardStateView'
 import { progressedEdgeIds } from '../graph/edgeProgress'
 import type { FlowGraph } from '../graph/flowGraph'
 
@@ -47,6 +52,20 @@ export interface FlowGateNodeData {
   issue?: boolean
   /** What it reported (hover text). */
   issueText?: string
+  /** flowgate.v02.0056 F2-1: the card state of a Graph node with a run (the chip shows it instead of `state`). */
+  cardState?: CardStateView
+  /** flowgate.v02.0056 F2-1: the chip offers [승인]. */
+  approvable?: boolean
+  /** flowgate.v02.0056 F2-1: this card's [승인] is being answered. */
+  approving?: boolean
+}
+
+/** flowgate.v02.0056 F2-1: what the Canvas may do with a card waiting for its approval. */
+export interface FlowGateApprovalOptions {
+  /** The Canvas may approve cards (the source approves; the Shell wired the event). */
+  readonly canApprove: boolean
+  /** The card whose [승인] is being answered, or null. */
+  readonly approvingNodeId: string | null
 }
 
 /** `selected` is Vue Flow's own flag (its drag moves every selected Node); FlowGate always sets it. */
@@ -67,7 +86,8 @@ export interface FlowGateEdgeData {
   deletable: boolean
 }
 
-export interface VueFlowNodeOptions {
+/** flowgate.v02.0056 F2-1: the approval fields (FlowGateApprovalOptions) ride along; absent = no [승인]. */
+export interface VueFlowNodeOptions extends Partial<FlowGateApprovalOptions> {
   /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode is on. */
   selectMode?: boolean
 }
@@ -88,6 +108,13 @@ export function toVueFlowNodes(
     if (issues.has(node.id)) {
       data.issue = true
       data.issueText = issues.get(node.id)
+    }
+    // A gate decides with ✓ 확인 · ✕ 반려 (its own card), never [승인]; its chip keeps the Canvas state.
+    const cardState = node.definition?.nodeType !== 'gate' ? cardStateView(node.nodeRun) : null
+    if (cardState) {
+      data.cardState = cardState
+      if (cardState.approvable && options.canApprove && graph.ownership !== 'conflict') data.approvable = true
+      if (options.approvingNodeId === node.id) data.approving = true
     }
     const mapped: FlowGateVueFlowNode = {
       id: node.id,

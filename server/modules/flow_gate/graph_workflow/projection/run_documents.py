@@ -14,8 +14,10 @@ from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db.connection import get_store
 
 
-def registered_documents(flow_id: str, token_ids: Iterable[str]) -> list[dict]:
-    """Documents registered with any of ``token_ids``, in registration order (event id, doc_id)."""
+def registered_documents(flow_id: str, token_ids: Iterable[str], upto_event_id: Optional[int] = None) -> list[dict]:
+    """Documents registered with any of ``token_ids``, in registration order (event id, doc_id) — only those
+    registered by an event at or before ``upto_event_id`` when it is given (flowgate.v02.0056 T#2: a node run's
+    registration boundary)."""
     found: list[tuple[int, str]] = []
     for token_id in dict.fromkeys(t for t in token_ids if t):
         rows = get_store()._fetch_all(
@@ -28,8 +30,11 @@ def registered_documents(flow_id: str, token_ids: Iterable[str]) -> list[dict]:
                 meta = json.loads(row.get("metadata") or "{}")
             except (TypeError, ValueError):
                 continue
+            event_id = int(row.get("id") or 0)
+            if upto_event_id is not None and event_id > upto_event_id:
+                continue
             if meta.get("token_id") == token_id and meta.get("doc_id"):
-                found.append((int(row.get("id") or 0), str(meta["doc_id"])))
+                found.append((event_id, str(meta["doc_id"])))
     out: list[dict] = []
     for _id, doc_id in sorted(found):
         doc = db_documents.get_by_id(doc_id)

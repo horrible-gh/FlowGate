@@ -1,21 +1,14 @@
 // flowgate.v02.0048 T#6 — header action strings, merged under `gui.inspector.actions` (D#1 §5.5).
 // The three locales keep the same keys (structure.0048 B12). Reason keys follow D#1 §8.3 rule 6-2.
+// flowgate.v02.0056 F2-1: the header's approve / reject (with its reason dialog and the TR commit line) are gone —
+// a card is approved with its own [승인] (cardApproval / the Canvas card); only the v0.1 run / rework stay.
 export default {
   ko: {
-    label: '문서 조작',
-    approve: '승인',
-    reject: '반려',
+    label: '문서 실행',
     run: '▶ 실행',
     run_hint: 'v0.1 단건 실행: AI가 이 문서를 다시 작업합니다',
     rework: '↻ 재작업',
     rework_hint: 'v0.1 재작업: AI가 반려 사유를 반영해 다시 작업합니다',
-    reject_dialog: {
-      title: '반려',
-      label: '반려 사유',
-      placeholder: '반려 사유를 입력하세요',
-      submit: '반려',
-      cancel: '취소',
-    },
     reason: {
       read_only_conflict: '소유 충돌 Flow라 바꿀 수 없습니다.',
       read_only_revision: 'Graph revision 보기에서는 바꿀 수 없습니다. draft 보기로 옮기세요.',
@@ -33,26 +26,13 @@ export default {
       network: '서버에 연결하지 못했습니다.',
       other: '조작을 마치지 못했습니다.',
     },
-    tr_commit: {
-      committed: 'TR 커밋 {commit} {subject}',
-      skipped: 'TR 커밋 생략: {reason}',
-    },
   },
   en: {
-    label: 'Document actions',
-    approve: 'Approve',
-    reject: 'Reject',
+    label: 'Document run',
     run: '▶ Run',
     run_hint: 'v0.1 single run: the AI works on this document again',
     rework: '↻ Rework',
     rework_hint: 'v0.1 rework: the AI works again with the rejection reason',
-    reject_dialog: {
-      title: 'Reject',
-      label: 'Rejection reason',
-      placeholder: 'Enter the rejection reason',
-      submit: 'Reject',
-      cancel: 'Cancel',
-    },
     reason: {
       read_only_conflict: 'This Flow has an ownership conflict and cannot be changed.',
       read_only_revision: 'A Graph revision view cannot be changed. Switch to the draft view.',
@@ -70,26 +50,13 @@ export default {
       network: 'Could not reach the server.',
       other: 'The action could not be completed.',
     },
-    tr_commit: {
-      committed: 'TR commit {commit} {subject}',
-      skipped: 'TR commit skipped: {reason}',
-    },
   },
   ja: {
-    label: '文書操作',
-    approve: '承認',
-    reject: '差し戻し',
+    label: '文書実行',
     run: '▶ 実行',
     run_hint: 'v0.1 単発実行: AIがこの文書をもう一度作業します',
     rework: '↻ 再作業',
     rework_hint: 'v0.1 再作業: AIが差し戻し理由を反映して作業し直します',
-    reject_dialog: {
-      title: '差し戻し',
-      label: '差し戻し理由',
-      placeholder: '差し戻し理由を入力してください',
-      submit: '差し戻し',
-      cancel: 'キャンセル',
-    },
     reason: {
       read_only_conflict: '所有が競合しているフローのため変更できません。',
       read_only_revision: 'Graph revision 表示では変更できません。draft 表示に切り替えてください。',
@@ -106,10 +73,6 @@ export default {
       invalid: 'リクエストが拒否されました。',
       network: 'サーバーに接続できませんでした。',
       other: '操作を完了できませんでした。',
-    },
-    tr_commit: {
-      committed: 'TRコミット {commit} {subject}',
-      skipped: 'TRコミット省略: {reason}',
     },
   },
 }

@@ -287,7 +287,8 @@ describe('the header ✎ 메모 (MemoButton)', () => {
     const memoOf = (selection: (typeof SELECTIONS)[keyof typeof SELECTIONS]) =>
       contributionsFor(inspectorRegistry, targetOf(selection)).find((entry) => entry.headerMemo)?.key ?? null
     expect(memoOf(SELECTIONS.v01)).toBe('memo')
-    expect(memoOf(SELECTIONS.graphGate)).toBeNull()
+    // flowgate.v02.0056 (0017-CH): a Graph card's ✎ 메모 writes a card memo (features/cardMemo).
+    expect(memoOf(SELECTIONS.graphGate)).toBe('cardMemo')
     expect(memoOf(SELECTIONS.v01NoDocument)).toBeNull()
   })
 })

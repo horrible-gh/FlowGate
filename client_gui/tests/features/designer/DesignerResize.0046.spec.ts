@@ -217,9 +217,10 @@ describe('Designer Shell — Dock resize handles (0046)', () => {
   it('dragging the bottom line up raises the bottom Dock; the Workspace takes the rest', async () => {
     const w = await mountShell()
     await drag(w, 'designer-bottom-resize', 0, -100)
-    expect(bottomHeight(w)).toBe('400px')
+    // 0017-CH: the bottom Dock starts at 320px.
+    expect(bottomHeight(w)).toBe('420px')
     await drag(w, 'designer-bottom-resize', 0, 180)
-    expect(bottomHeight(w)).toBe('220px')
+    expect(bottomHeight(w)).toBe('240px')
   })
 
   it('follows the pointer while dragging and stops after mouseup', async () => {
@@ -294,6 +295,6 @@ describe('Designer Shell — Dock resize handles (0046)', () => {
     expect(get(w, 'designer-right-dock').find('[data-test="designer-right-tool-tabs"]').exists()).toBe(true)
     expect(leftWidth(w)).toBe(330)
     expect(rightWidth(w)).toBe(350)
-    expect(bottomHeight(w)).toBe('350px')
+    expect(bottomHeight(w)).toBe('370px')
   })
 })

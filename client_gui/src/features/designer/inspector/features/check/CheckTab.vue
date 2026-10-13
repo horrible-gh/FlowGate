@@ -9,7 +9,7 @@
        (check state pill · Git state and branch as its summary · "Git 패널 열기 ↗" · ↗), built from the
        common slot list part; the Git notes and the running-job line stay below. -->
   <section class="inspector-check" data-test="inspector-check" :data-review="reviewStatus ?? ''" :data-git="git?.status ?? ''">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @nav="openGit" @edit="edit">
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @nav="openGit" @edit="edit" @history="history">
       <template #summary>
         <span v-if="gitLine" class="inspector-check-git" data-test="check-git" :data-status="gitLine.status" :data-tone="gitLine.tone">{{ t(k(gitLine.key), { status: gitLine.status }) }}</span>
         <span v-if="git?.branch && git.status !== 'none'" class="inspector-check-sub" data-test="check-git-branch">{{ t(k('git.branch'), { branch: git.branch }) }}</span>
@@ -37,7 +37,7 @@ import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { openDocument } from '../../openDocument'
+import { openDocument, openDocumentHistory } from '../../openDocument'
 import { checkGitLine, checkGitNotes, checkJobLine, checkReviewKey, checkReviewTone } from './checkModel'
 import { useCheck } from './useCheck'
 
@@ -78,6 +78,11 @@ const lines = computed<InspectorSlotView[]>(() => {
 /** ✎: the AC's document window, straight in its editor (flowgate.v02.0053 T#3). */
 function edit(line: InspectorSlotView) {
   if (line.id) openDocument(line.id, 'edit')
+}
+
+/** The history button: the document's 검수·반려 이력 window (flowgate.v02.0056 F1). */
+function history(line: InspectorSlotView) {
+  if (line.id) openDocumentHistory(line.id)
 }
 </script>
 

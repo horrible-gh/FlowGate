@@ -1,8 +1,8 @@
 // flowgate.v02.0048 T#13 — the WP summary's rules (D#1 §8, §10.1 WP 요약 column, §10.2 T#13 row). Pure
 // functions over the target and the WP read view of its document (`GET /documents/{doc_id}/work-plan`,
-// normalized by `@/features/document`): the revision and totals line, the Step summary (one row per card:
-// an instruction / result pair is one card), the progress tally (cards the workflow already started) and
-// the provider assignment.
+// normalized by `@/features/document`): the cards of the plan (an instruction / result pair is one card)
+// and the progress tally (cards the workflow already started).
+// flowgate.v02.0056 F1 (0056 CH §5) — the "where the plan is edited" line is gone with the tab's details.
 //
 // Operations (D#1 §8.3 rule 0): this section only reads — reading and ↗ 열기 are queries, possible in every
 // ownership and view, read-only ones included. Editing the plan is the v0.1 WorkPlanEditor's (↗ 열기); the
@@ -86,13 +86,6 @@ export interface WorkPlanProgress {
 export function workPlanProgress(view: Pick<WorkPlanViewFacts, 'steps'> | null): WorkPlanProgress {
   const cards = workPlanCards(view)
   return { cards: cards.length, started: cards.filter((card) => card.started).length, steps: view?.steps.length ?? 0 }
-}
-
-/** Message key (under `gui.inspector.workPlan.`) of where the plan is edited. */
-export function workPlanEditKey(view: Pick<WorkPlanViewFacts, 'editable' | 'editLockedReason'> | null): string | null {
-  if (!view) return null
-  if (view.editable) return 'edit.open'
-  return view.editLockedReason === 'final_approved' ? 'edit.final_approved' : 'edit.locked'
 }
 
 /** Message key of a failed read (`WorkPlanErrorKind` of `@/features/document`). */
@@ -186,7 +179,8 @@ export function workPlanSlotState(reviewStatus: string | null, docStatus: string
   const status = docStatus?.trim() ?? ''
   if (!status) return null
   if (status === 'closed') return { key: 'slot_state.closed', raw: status, tone: 'neutral' }
-  return { key: 'slot_state.writing', raw: status, tone: 'info' }
+  // flowgate.v02.0056 F1: a document being written asks nothing of the operator — a neutral state draws no badge.
+  return { key: 'slot_state.writing', raw: status, tone: 'neutral' }
 }
 
 /** A human decision waits on the plan (v7: the line is highlighted). */

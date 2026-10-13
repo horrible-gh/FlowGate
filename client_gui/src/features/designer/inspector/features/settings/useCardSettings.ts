@@ -4,7 +4,16 @@
 // draft save answers its key. No server event announces a settings change; a run starting or ending a node
 // (the card's 🔒) is announced, and the card is read again then and when its Canvas run state moves.
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
-import { settingsChoicesRead, settingsNodeErrorOf, settingsNodeRead, settingsNodeWrite, type SettingsChoices, type SettingsNode } from '@/features/document'
+import {
+  settingsChoicesRead,
+  settingsNodeErrorMessage,
+  settingsNodeErrorOf,
+  settingsNodeErrorReason,
+  settingsNodeRead,
+  settingsNodeWrite,
+  type SettingsChoices,
+  type SettingsNode,
+} from '@/features/document'
 import { inspectorCardNodeKey, type InspectorTarget } from '../../inspectorTarget'
 import { useInspectorFieldWrite, useInspectorResource, type InspectorEventMatch, type InspectorEventScope, type InspectorResourceStatus } from '../../useInspectorResource'
 import { cardSettingsBlockedBy, type CardSettingsBlocked, type CardSettingsFailureKind, type CardSettingsField } from './cardSettingsModel'
@@ -32,8 +41,16 @@ export interface CardSettingsState {
   readonly status: Readonly<Ref<InspectorResourceStatus>>
   /** Kind of the failed read, or null. */
   readonly errorKind: ComputedRef<CardSettingsFailureKind | null>
-  /** The last refused change: its field and why, or null. */
-  readonly failure: ComputedRef<{ readonly field: string; readonly kind: CardSettingsFailureKind } | null>
+  /**
+   * The last refused change: its field, why, (a refused value) the server's reason, and the server's own message
+   * as it sent it (x-locale; flowgate.v02.0056 F2-1), or null.
+   */
+  readonly failure: ComputedRef<{
+    readonly field: string
+    readonly kind: CardSettingsFailureKind
+    readonly reason: string | null
+    readonly message: string | null
+  } | null>
   readonly blocked: Readonly<Ref<CardSettingsBlocked>>
   /** The target is a card just placed (`tmp_`): nothing to read yet. */
   readonly placing: ComputedRef<boolean>
@@ -84,7 +101,9 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
 
   const failure = computed(() => {
     const last = writes.failure.value
-    return last ? { field: last.field, kind: settingsNodeErrorOf(last.error) } : null
+    return last
+      ? { field: last.field, kind: settingsNodeErrorOf(last.error), reason: settingsNodeErrorReason(last.error), message: settingsNodeErrorMessage(last.error) }
+      : null
   })
   watch(failure, (now) => {
     if (now) blocked.value = cardSettingsBlockedBy(now.kind) ?? blocked.value

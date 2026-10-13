@@ -2,10 +2,10 @@
 
 Pure. The 0053 CH agreement (§4 "settings as drawn") and the v7 settings blocks name the items:
 
-- run cards (research N, work T / T2, design D / P / L / DB, custom): instruction use / omit, after
-  review, run AI, restart, review AI, review count, and the advanced time limit and review basis;
-- test cards (TS): instruction, after review, and the scenario writing block (writer AI, review AI,
-  review count). The run block shows each case's mode, which lives on the case inside the TS
+- run cards (research N, work T / T2, design D / P / L / DB, custom): instruction use / omit, instruction AI
+  (flowgate.v02.0056 T#2), run AI, restart, review AI, review count, and the advanced time limit and review
+  basis;
+- test cards (TS): instruction and the scenario writing block (writer AI, review AI, review count). The run block shows each case's mode, which lives on the case inside the TS
   document (0549 contract 2), so the card stores nothing for it;
 - requirement cards (R / B): AI delegation off / on, its scope, AI Team and the safety limits —
   values only, no delegation engine (0053 CH: out of this scope);
@@ -16,8 +16,18 @@ setting today, so storing nothing and storing the default run the same way. ``No
 means "decided elsewhere": the node's assignee AI, the project's default reviewer, or the final
 approval dialog that asks the Git choice.
 
-How a run applies them (``run_plan``, ``result_doc_type``, ``after_result``, ``review_loop``):
+How a run applies them (``run_plan``, ``instruction_stage``, ``result_doc_type``, ``after_result``,
+``review_loop``):
 
+- instruction use (the default; flowgate.v02.0056 T#2, 0002-CH turn 5 / 6 §3 / 10 O2): a run card runs in two
+  stages. The instruction stage writes the card's instruction (N, T, T2, DS, a Custom card's T) with the
+  instruction AI — ``instruction_ai``, else ``run_ai``, else the node's assignee AI — once, with no review,
+  and approves it; an instruction that already has a body is not written again, only approved. The result
+  stage then writes the card's report (NR, TR, TR2, the design document D / P / L / DB, a Custom card's TR)
+  with the run AI, the instruction attached as a reference; that report is the node's result and the review
+  below applies to it alone. So a work card that wrote only its T now goes on to its TR, and a design card
+  that wrote only its design document now writes its DS first. A test card (TS) has no instruction AI and
+  writes as before (the TS series is reorganized later);
 - instruction omit: the AI writes the card's report instead of the instruction-led node's own type
   (N -> NR, T -> TR, v0.1 AUTO_REPORT_MAP) and that report is the node's result. A Custom card runs as a
   work instruction (flowgate.v02.0053 T#8), so it folds like a work card: T -> TR. A design card
@@ -29,8 +39,11 @@ How a run applies them (``run_plan``, ``result_doc_type``, ``after_result``, ``r
 - review count not 0: when the node's AI run has ended, the card's review AI reviews the result with
   the v0.1 document review loop (review count, review basis, rework by the run AI); every review hop
   is told the review basis (``review_basis_note``);
-- after review: follow approves the result when the review passed (or at once with no review),
-  human leaves it to a person, as before.
+- what follows the review is fixed (flowgate.v02.0056 T#1, 0002-CH turn 5~10: the after review setting
+  is gone): the result is approved when the review passed, or at once with no review; a review that
+  ends any other way (count spent, failure, stop) and a result a person wrote wait for a person's
+  approval of the card. A stored ``after_review`` value is not a field any more, so nothing reads it
+  (migration 147 deletes the rows).
 
 Value checks that need the server (the repeat count range, an AI or AI Team that exists) are passed in.
 """
@@ -40,7 +53,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Optional
 
-from flowgate.card_documents.slots import CUSTOM_DOC_TYPES
+from flowgate.card_documents.slots import CUSTOM_DOC_TYPES, instruction_and_report
 
 RUN, TEST, REQUIREMENT, CHECK = "run", "test", "requirement", "check"
 CARD_KINDS = (RUN, TEST, REQUIREMENT, CHECK)
@@ -60,6 +73,8 @@ TEXT_MAX_LEN = 191
 REVIEW_CRITERIA = {"type": "document_type_default", "last": "last_rejection_only"}
 
 _RUN_DOC_TYPES = frozenset({"N", "T", "T2", "D", "P", "L", "DB"})
+# The instruction stage of a run card (``instruction_stage``) and its stage names (``graph_node_runs.stage``).
+INSTRUCTION_STAGE, RESULT_STAGE = "instruction", "result"
 # The report an instruction-led card writes with its instruction omitted (v0.1 AUTO_REPORT_MAP). T2 is
 # not here: its TR2 names the T2 it applies, and an omitted instruction leaves no T2 to name.
 REPORT_TYPES = {"N": "NR", "T": "TR"}
@@ -83,20 +98,19 @@ class Field:
 
 
 _INSTRUCTION = Field("instruction", CHOICE, "use", ("use", "omit"))
-# Today a node's result waits in review for a person's decision.
-_AFTER_REVIEW = Field("after_review", CHOICE, "human", ("follow", "human"))
+_INSTRUCTION_AI = Field("instruction_ai", AI)    # None: the run AI, else the node's assignee AI
 _RUN_AI = Field("run_ai", AI)                    # None: the node's assignee AI
 _REVIEW_AI = Field("review_ai", AI)              # None: the project's default reviewer
 _REVIEW_COUNT = Field("review_count", REPEAT, 0)
 _FIELDS = {
     RUN: (
-        _INSTRUCTION, _AFTER_REVIEW, _RUN_AI,
+        _INSTRUCTION, _INSTRUCTION_AI, _RUN_AI,
         Field("restart", REPEAT, 0),             # a single node run is one-shot today
         _REVIEW_AI, _REVIEW_COUNT,
         Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMIT_MINUTES),
         Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA)),
     ),
-    TEST: (_INSTRUCTION, _AFTER_REVIEW, _RUN_AI, _REVIEW_AI, _REVIEW_COUNT),
+    TEST: (_INSTRUCTION, _RUN_AI, _REVIEW_AI, _REVIEW_COUNT),
     REQUIREMENT: (
         Field("delegation", CHOICE, "off", ("off", "on")),
         Field("scope", CHOICE, "end", ("end", "confirm")),
@@ -212,14 +226,43 @@ def view(kind: Optional[str], stored: dict, repeat_choices: Iterable[int]) -> di
     return out
 
 
-def result_doc_type(node_type: Optional[str], doc_type: Optional[str], stored: dict) -> Optional[str]:
-    """The type the node's AI writes and the Graph binds when the card changes it, else None.
+def _omitted(stored: dict) -> bool:
+    return stored.get("instruction") == "omit"
 
-    Only an instruction-led card whose report stands alone (N / T, and a Custom card, which runs as its
-    work instruction T) with its instruction omitted writes another type: its report.
-    """
-    if stored.get("instruction") != "omit" or node_type not in ("document", "custom"):
+
+def instruction_stage(node_type: Optional[str], doc_type: Optional[str], stored: dict) -> Optional[str]:
+    """The instruction type a run card's AI run writes first (instruction use: N / T / T2 / DS, a Custom
+    card's T), else None: no instruction stage (instruction omitted, a test / requirement / plan card)."""
+    if _omitted(stored) or node_type not in ("document", "custom"):
         return None
+    pair = instruction_and_report(node_type, doc_type)
+    return pair[0] if pair else None
+
+
+def instruction_provider(stored: dict) -> Optional[str]:
+    """The AI of the instruction stage: the card's instruction AI, else its run AI; None = the node's assignee."""
+    return stored.get("instruction_ai") or stored.get("run_ai") or None
+
+
+def result_doc_type(node_type: Optional[str], doc_type: Optional[str], stored: dict,
+                    one_stage: bool = False) -> Optional[str]:
+    """The type the node's AI writes as the node's result and the Graph binds, when the card changes it,
+    else None (the node's own type).
+
+    - instruction use: a run card's result is its report (NR / TR / TR2 / the design document, a Custom
+      card's TR), written after the instruction stage (flowgate.v02.0056 T#2) — except for a card run
+      opened before that (``one_stage``: its node run has no stage, migration 148), whose AI was told to
+      write the node's own type and still does;
+    - instruction omitted: an instruction-led card whose report stands alone (N / T, and a Custom card,
+      which runs as its work instruction T) writes its report instead; the others are unchanged.
+    """
+    if node_type not in ("document", "custom"):
+        return None
+    if not _omitted(stored):
+        if one_stage:
+            return None
+        pair = instruction_and_report(node_type, doc_type)
+        return pair[1] if pair else None
     own = CUSTOM_DOC_TYPES[0] if node_type == "custom" else doc_type
     return REPORT_TYPES.get(str(own or "").strip().upper())
 
@@ -229,13 +272,13 @@ def _count(value: Any) -> Optional[int]:
 
 
 def after_result(kind: Optional[str], stored: dict) -> Optional[str]:
-    """What follows a node's AI result: the card's AI review (``REVIEW``), an approval (``APPROVE``:
-    after review follow with no review), or None (a person decides, as before)."""
+    """What follows a node's AI result: the card's AI review (``REVIEW``: review count not 0), else an
+    approval at once (``APPROVE``: no review); None for a card kind without a run (a person decides)."""
     if kind not in (RUN, TEST):
         return None
     if _count(stored.get("review_count")) not in (None, 0):
         return REVIEW
-    return APPROVE if stored.get("after_review") == "follow" else None
+    return APPROVE
 
 
 def review_loop(stored: dict, *, reviewer: str, reworker: str) -> dict:
@@ -287,7 +330,8 @@ def run_plan(kind: Optional[str], stored: dict, node_type: Optional[str] = None,
              doc_type: Optional[str] = None) -> dict:
     """What a node's AI start takes from its card (``card_settings_ports.run_settings``).
 
-    Only stored values are handed on, so a card with nothing stored starts exactly as before.
+    Only stored values are handed on, except the two stages of instruction use (flowgate.v02.0056 T#2), which
+    is the default: ``instruction`` (the instruction stage's type and AI) and the report as ``result_doc_type``.
     """
     if kind not in (RUN, TEST):
         return {}
@@ -295,6 +339,9 @@ def run_plan(kind: Optional[str], stored: dict, node_type: Optional[str] = None,
     written = result_doc_type(node_type, doc_type, stored)
     if written:
         plan["result_doc_type"] = written
+    instruction = instruction_stage(node_type, doc_type, stored) if kind == RUN else None
+    if instruction:
+        plan["instruction"] = {"doc_type": instruction, "provider_id": instruction_provider(stored)}
     if stored.get("run_ai"):
         plan["provider_id"] = stored["run_ai"]
     if kind == RUN and stored.get("time_limit") in TIME_LIMIT_MINUTES:

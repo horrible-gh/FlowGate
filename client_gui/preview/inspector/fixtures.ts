@@ -255,10 +255,10 @@ export const SLOT_FIXTURES: readonly SlotFixture[] = [
   { name: '레포트', id: '0008.0007-TR', state: { label: '반려됨', tone: 'danger' }, review: { count: 1, state: 'warn' }, open: true, focus: true, caption: '문서 슬롯 · 반려됨 · 🛡 1 (대응 필요)' },
   { name: '레포트', id: '0008.0007-TR', state: { label: '검수 한도 초과', tone: 'danger' }, review: { count: 2, state: 'limit', remain: 1 }, open: true, focus: true, caption: '문서 슬롯 · 검수 한도 초과 · 🛡 2 (빨강)' },
   { name: '레포트', id: '0008.0003-NR', state: { label: '생성 중', tone: 'running' }, review: { count: 1, state: 'run' }, open: true, caption: '문서 슬롯 · 생성 중 · 🛡 1 (보라)' },
-  { name: '레포트', empty: true, emptyText: '실행 후', caption: '문서 없는 줄 · 점선 · 빈 점(툴팁 “실행 후”)' },
+  { name: '레포트', empty: true, emptyText: '실행 후', caption: '문서 없는 줄 · 점선 · “실행 후” 문구' },
   { name: '레포트', empty: true, emptyText: '실패 · 제한 시간 초과', danger: true, caption: '문서 없는 줄 · 실패 (danger)' },
   { name: '시나리오', id: '0008.0008-TS', state: { label: '승인', tone: 'success' }, summary: '케이스 57 · automated 49 · manual 6 · external 2', open: true, caption: '문서 슬롯 · 요약 줄임' },
-  { name: '작업계획', id: '0008.0004-WP', state: { label: '스냅샷', tone: 'neutral' }, summary: 'rev 1 · Step 4', open: true, caption: '문서 슬롯 · 스냅샷 (idle)' },
+  { name: '작업계획', id: '0008.0004-WP', state: { label: '스냅샷', tone: 'neutral' }, open: true, caption: '문서 슬롯 · 스냅샷 (idle · 배지 없음)' },
   { name: '레포트', id: '0008.0010-TSR', state: { label: '진행 중', tone: 'running' }, summary: 'automated 12/49', progress: 24, open: true, caption: '문서 슬롯 · 진행도' },
   { name: '레포트', id: '0008.0010-TSR', state: { label: '결함 3', tone: 'danger' }, summary: '통과 54 · 실패 3', open: true, focus: true, caption: '문서 슬롯 · 결함 (focus)' },
   { kind: 'result', name: '확인 결과', state: { label: '보류', tone: 'hold' }, summary: '확인 완료 · Git 반영 보류', nav: 'Git 탭', open: true, caption: '결과 슬롯 · 보류 · 이동 버튼' },
@@ -353,6 +353,32 @@ export interface CardSlotFixture {
 }
 
 export const CARD_SLOT_FIXTURES: readonly CardSlotFixture[] = [
+  {
+    // flowgate.v02.0056 F2-2 — the three states of a card line (O3 0009-TR §4-1): 비어 있음 (a document without a
+    // body; the name opens its editor) · 문서 없음 + [작성] · a usual line with the history number and [AI 호출].
+    caption: '작업 · 비어 있음 · 문서 없음 [작성] · 이력 3 [AI 호출] (0056 F2-2)',
+    lines: [
+      { key: 'instruction', name: '지시서', id: '0008.0006-T', blank: true, open: 'enabled', actions: [{ key: 'ai_invoke', state: 'enabled' }] },
+      { key: 'report', name: '레포트', empty: true, actions: [{ key: 'write', state: 'enabled' }] },
+    ],
+  },
+  {
+    caption: '작업 · 검수 대기 · 이력 3 (AI 검수 2 · 반려 1) · AI 작업 중 (0056 F2-2)',
+    lines: [
+      { key: 'instruction', name: '지시서', id: '0008.0006-T', state: { label: '승인', tone: 'success' }, open: 'enabled', actions: [{ key: 'ai_invoke', state: 'enabled' }] },
+      {
+        key: 'report',
+        name: '레포트',
+        id: '0008.0007-TR',
+        state: { label: '검수 대기', tone: 'warning' },
+        focus: true,
+        open: 'enabled',
+        historyCount: 3,
+        historyDetail: { reviews: 2, rejections: 1 },
+        actions: [{ key: 'ai_invoke', state: 'running' }],
+      },
+    ],
+  },
   {
     caption: '작업계획 · 사람 WP · 작성 중 · 전개 전 (v7 plan.m.draft)',
     lines: [

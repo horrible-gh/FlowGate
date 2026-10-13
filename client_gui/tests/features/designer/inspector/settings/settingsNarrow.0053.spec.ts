@@ -8,8 +8,10 @@
  * - the requirement 범위 | AI Team and 안전 한도 rows follow the block's width, not the window's (no viewport
  *   media query): two to a line only while both fit whole, never more than two;
  * - the check card's 용도 line wraps its choice under its label when it does not fit beside it;
- * - a control row may take more than one line (`wrap`): the 검수 뒤 진행 choice with its status, the 병합 대상
- *   select with its two switches.
+ * - a control row may take more than one line (`wrap`): the 병합 대상 select with its two switches.
+ *
+ * flowgate.v02.0056 F2-1: the progress-after-review row (the other `wrap` row) is removed with its setting; the
+ * RUN card's 지시 AI row is a one-line select row.
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -52,8 +54,10 @@ describe('the settings tab on a narrow Inspector (flowgate.v02.0053 T#7)', () =>
     expect(src).toMatch(/<InspectorControlRow :label="t\(k\('git\.target'\)\)" :hint="reasonText" wrap>/)
   })
 
-  it('the 검수 뒤 진행 row wraps its status after the choice', () => {
-    expect(source('features/settings/SettingsTab.vue')).toMatch(/<InspectorControlRow :label="t\(k\('after_review\.label'\)\)" :hint="t\(k\('after_review\.hint'\)\)" wrap>/)
+  it('flowgate.v02.0056 F2-1: the settings tab has no wrapping row left; the 지시 AI row is one select', () => {
+    const tab = source('features/settings/SettingsTab.vue')
+    expect(tab).not.toMatch(/<InspectorControlRow[^>]* wrap>/)
+    expect(tab).toMatch(/<InspectorControlRow :label="t\(k\('instruction_ai\.label'\)\)"/)
   })
 
   it('a control row with `wrap` lets its controls take more lines; without it they stay on one', () => {

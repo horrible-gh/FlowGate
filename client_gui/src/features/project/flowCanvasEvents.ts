@@ -18,6 +18,17 @@ import { PROJECT_STREAM_RETRY_MS, subscribeProjectEvents, type ProjectEventFrame
  * 실행 / 중지 is read again as well.
  */
 export const CANVAS_REFRESH_EVENTS = ['graph_canvas_changed', 'flow_ownership_changed', 'graph_run_status_changed', 'graph_node_state_changed'] as const
+
+/**
+ * flowgate.v02.0056 F2-1 (O1 / O2 0005·0007-TR §4-2): a card's step (지시서 작성 중 → 결과 작성 중) and its wait for
+ * approval move without a node event — the instruction is approved (`doc_review_status_changed`), the result AI
+ * starts (`ai_invoke_started`), an AI run ends and leaves the card to a person (`ai_invoke_finished`). A Flow's
+ * frames of these read its Canvas again too, once per burst (CANVAS_CARD_STEP_COALESCE_MS), so every card's chip
+ * follows — not only the one the Inspector shows.
+ */
+export const CANVAS_CARD_STEP_EVENTS = ['doc_review_status_changed', 'ai_invoke_started', 'ai_invoke_finished'] as const
+/** One Canvas read for a burst of card step frames of a Flow. */
+export const CANVAS_CARD_STEP_COALESCE_MS = 200
 /** Wait before a closed stream (e.g. a 401 on a rotated token) is opened again with a fresh token. */
 export const CANVAS_STREAM_RETRY_MS = PROJECT_STREAM_RETRY_MS
 
@@ -51,12 +62,31 @@ export function changedFlowOf(data: string): string | null {
 
 /** Subscribes to the project's Canvas changes; returns the unsubscribe. No-op without EventSource. */
 export function subscribeFlowCanvasChanges(projectId: string, handlers: FlowCanvasChangeHandlers): () => void {
-  return subscribeProjectEvents(projectId, {
-    events: CANVAS_REFRESH_EVENTS,
+  // flowgate.v02.0056 F2-1: card step frames wait for the burst to end, per Flow.
+  const waiting = new Map<string, ReturnType<typeof setTimeout>>()
+  const stepChanged = (flowId: string) => {
+    if (waiting.has(flowId)) return
+    waiting.set(
+      flowId,
+      setTimeout(() => {
+        waiting.delete(flowId)
+        handlers.changed(flowId)
+      }, CANVAS_CARD_STEP_COALESCE_MS),
+    )
+  }
+  const stop = subscribeProjectEvents(projectId, {
+    events: [...CANVAS_REFRESH_EVENTS, ...CANVAS_CARD_STEP_EVENTS],
     event: (frame: ProjectEventFrame) => {
       const flowId = changedFlowOfFrame(frame.payload, frame.groupId)
-      if (flowId !== null) handlers.changed(flowId)
+      if (flowId === null) return
+      if ((CANVAS_CARD_STEP_EVENTS as readonly string[]).includes(frame.type)) stepChanged(flowId)
+      else handlers.changed(flowId)
     },
     resync: () => handlers.resync(),
   })
+  return () => {
+    for (const timer of waiting.values()) clearTimeout(timer)
+    waiting.clear()
+    stop()
+  }
 }

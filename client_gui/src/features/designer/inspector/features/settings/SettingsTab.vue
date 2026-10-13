@@ -4,13 +4,16 @@
        availability.
        flowgate.v02.0053 T#7 — drawn as v7 draws it (0035 insp.js execSettings / testSettings), on every
        조사 · 작업 · 설계 · Custom · 테스트 card, just placed or done alike: the 🔒 실행 중 line of a running
-       card, the 지시서 사용 / 생략 row, the 검수 뒤 진행 row (its short state on the right), then the 실행 설정
+       card, the 지시서 사용 / 생략 row, then the 실행 설정
        block (실행 AI · 재시작 | 검수 AI · 검수 횟수 · 고급 ▾ 실행 제한 시간 · 검수 기준) — or, on a 테스트 card,
        the 시나리오 작성 block (작성 AI | 검수 AI · 검수 횟수; its 실행 block is testRunSettings'). A change is
        saved at once (no save button, no "saved" line). Explanations are tooltips; a refused change is a red !
        beside its control. A Graph card keeps its settings itself (T#2, useCardSettings); a v0.1 Flow's Node
        keeps the three of its sequence row (0048, useSettings) and the rest is drawn off. A failed read with
-       nothing shown is the read failure icon (why: its tooltip) with a ↻ retry, as on every settings form. -->
+       nothing shown is the read failure icon (why: its tooltip) with a ↻ retry, as on every settings form.
+       flowgate.v02.0056 F2-1: the progress-after-review row is gone with its setting (O1 0005-TR §1-1, §4-3);
+       a RUN card whose instruction is used has the 지시 AI row under it (O2 0007-TR §4-1: none = the run AI,
+       then the assigned AI). -->
   <div class="inspector-settings" data-test="inspector-settings" :data-source="source" :data-kind="kind" :data-status="status">
     <InspectorReadFailure v-if="errorKey" :reason="t(k(errorKey))" @retry="reload" />
     <template v-else>
@@ -28,18 +31,23 @@
           <InspectorFailureIcon v-if="failureOf('instruction')" :name="t(k('failed'))" :reason="failureOf('instruction')!" data-field="instruction" />
         </InspectorControlRow>
       </InspectorBlock>
-      <InspectorBlock :locked="locked" class="inspector-settings-line" data-test="settings-policy">
-        <InspectorControlRow :label="t(k('after_review.label'))" :hint="t(k('after_review.hint'))" wrap>
-          <InspectorSegment
-            :model-value="segment('after_review').value"
-            :options="segmentOptions('after_review', ['follow', 'human'])"
-            :disabled="segment('after_review').disabled"
-            :aria-label="t(k('after_review.label'))"
-            data-test="settings-policy-switch"
-            @update:model-value="(value: string) => onChange('after_review', value)"
+      <InspectorBlock
+        v-if="instructionAiShown"
+        :locked="locked"
+        class="inspector-settings-line"
+        data-test="settings-instruction-ai"
+      >
+        <InspectorControlRow :label="t(k('instruction_ai.label'))" :hint="views.instruction_ai.reason ? t(k(views.instruction_ai.reason)) : t(k('instruction_ai.hint'))">
+          <Select
+            class="inspector-settings-select"
+            :model-value="views.instruction_ai.value"
+            :options="views.instruction_ai.options.map((option) => ({ value: option.value, label: labelOf(option) }))"
+            :disabled="locked || views.instruction_ai.disabled"
+            :aria-label="t(k('instruction_ai.label'))"
+            data-test="settings-instruction-ai-select"
+            @update:model-value="(value: string) => onChange('instruction_ai', value)"
           />
-          <span v-if="policyNote" class="inspector-settings-muted" data-test="settings-policy-note">{{ policyNote }}</span>
-          <InspectorFailureIcon v-if="failureOf('after_review')" :name="t(k('failed'))" :reason="failureOf('after_review')!" data-field="after_review" />
+          <InspectorFailureIcon v-if="failureOf('instruction_ai')" :name="t(k('failed'))" :reason="failureOf('instruction_ai')!" data-field="instruction_ai" />
         </InspectorControlRow>
       </InspectorBlock>
       <InspectorRunSettings
@@ -57,6 +65,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Select from '../../../../../components/ui/Select.vue'
 import InspectorBlock from '../../parts/InspectorBlock.vue'
 import InspectorControlRow from '../../parts/InspectorControlRow.vue'
 import InspectorFailureIcon from '../../parts/InspectorFailureIcon.vue'
@@ -72,6 +81,9 @@ import {
   cardSettingsDisabledReason,
   cardSettingsErrorKey,
   cardSettingsFailureKey,
+  cardSettingsFailureText,
+  cardSettingsInstructionAiShown,
+  cardSettingsIsAiField,
   cardSettingsReviewOff,
   cardSettingsText,
   cardSettingsValue,
@@ -148,7 +160,7 @@ function cardField(field: CardSettingsField): FieldView {
   const node = card.node.value
   const value = cardSettingsValue(node, card.pending.value, field)
   let options: SettingsOption[]
-  if (field === 'run_ai' || field === 'review_ai') options = cardSettingsAiOptions(field, card.choices.value?.providers ?? [], value)
+  if (cardSettingsIsAiField(field)) options = cardSettingsAiOptions(field, card.choices.value?.providers ?? [], value)
   else options = cardSettingsChoiceOptions(field, node?.fields[field]?.choices, value)
   let reason = cardReason.value
   if (reason === null && field === 'review_ai' && cardSettingsReviewOff(cardSettingsValue(node, card.pending.value, 'review_count'))) reason = 'reason.review_off'
@@ -172,27 +184,29 @@ const views = computed(() => {
   return out
 })
 
-function segment(field: 'instruction' | 'after_review') {
+function segment(field: 'instruction') {
   const view = views.value[field]
   return { value: view.value === '' ? null : view.value, disabled: view.disabled }
 }
 
-function segmentOptions(field: 'instruction' | 'after_review', values: readonly string[]): InspectorSegmentOption[] {
+function segmentOptions(field: 'instruction', values: readonly string[]): InspectorSegmentOption[] {
   const reason = views.value[field].reason
   return values.map((value) => ({ value, label: t(k(`${field}.${value}`)), title: reason ? t(k(reason)) : null }))
 }
 
-/** v7 policyRow: the short state of the chosen 검수 뒤 진행. */
-const policyNote = computed(() => {
-  const value = views.value.after_review.value
-  return value === 'follow' || value === 'human' ? t(k(`after_review.note_${value}`)) : null
-})
+/** flowgate.v02.0056 F2-1: the 지시 AI row — a RUN card (Graph) whose instruction is used (the value shown). */
+const instructionAiShown = computed(
+  () => source.value === 'card' && cardSettingsInstructionAiShown(kind.value, cardSettingsValue(card.node.value, card.pending.value, 'instruction')),
+)
 
-/** Why the server refused the field's last change (the ! icon's tooltip), or null. */
+/**
+ * Why the server refused the field's last change (the ! icon's tooltip), or null. flowgate.v02.0056 F2-1: on the
+ * 지시 AI the server's own message (x-locale) follows the code's sentence (cardSettingsFailureText).
+ */
 function failureOf(field: CardSettingsField): string | null {
   if (source.value === 'card') {
     const last = card.failure.value
-    return last && last.field === field ? t(k(cardSettingsFailureKey(last.kind))) : null
+    return last && last.field === field ? cardSettingsFailureText(field, t(k(cardSettingsFailureKey(last.kind, last.reason))), last.message) : null
   }
   const last = sequence.failure.value
   return last && SEQUENCE_FIELD[field] === last.field ? t(k(last.key)) : null
@@ -247,8 +261,9 @@ function reload() {
   padding: 6px 12px;
 }
 
-.inspector-settings-muted {
-  color: #7f96af;
-  font-size: 11px;
+/* flowgate.v02.0056 F2-1: the 지시 AI select, as tall as the run settings' selects. */
+.inspector-settings-select {
+  height: 32px;
+  font-size: 12px;
 }
 </style>

@@ -27,6 +27,9 @@
 // flowgate.v02.0059 T#2: the Canvas read's `projection` (layout field), so 자동 배치 follows the server's
 // auto placement of that projection; with it the v0.1 sequence root document and how many Nodes the read
 // left out (collapse), so 자동 배치 knows when the shown Graph is not the server's whole input.
+//
+// flowgate.v02.0056 F2-1: the node run also carries whether the card waits for its approval and the AI
+// card's step (O1 / O2); the Canvas card now reads the node run for its state chip (graph/cardStateView.ts).
 
 export interface FlowGraphNode {
   /** Unique within the Graph — the server node identity for a server Graph. */
@@ -64,13 +67,27 @@ export interface FlowGraphCardDocument {
   /** requirement · delegation · plan · deploy · instruction · scenario · report (open key). */
   readonly slot: string
   readonly docType: string | null
-  /** `human` | `run`. */
+  /**
+   * `human` | `run` | `instruction_ai_or_human` (flowgate.v02.0056 O2: the instruction line of a run card — its
+   * instruction AI or a person writes it). Open key, as sent.
+   */
   readonly author: string | null
   /** null when the line's document is gone. */
   readonly docId: string | null
   readonly title: string | null
   readonly status: string | null
   readonly docReviewStatus: string | null
+  /**
+   * flowgate.v02.0056 F2-2 (O3 0009-TR §4-1): the line's document has a body (false without a document); absent
+   * when the server did not send it. M and WP lines are always true.
+   */
+  readonly hasBody?: boolean
+  /** flowgate.v02.0056 F2-2: AI reviews of the line's document; absent when not sent. */
+  readonly reviewCount?: number
+  /** flowgate.v02.0056 F2-2: rejections with a reason; absent when not sent. */
+  readonly rejectionCount?: number
+  /** flowgate.v02.0056 F2-2: reviewCount + rejectionCount (the history button's number); absent when not sent. */
+  readonly historyCount?: number
 }
 
 export interface FlowGraphNodeDocument {
@@ -100,6 +117,15 @@ export interface FlowGraphNodeRun {
   readonly openedAt: string | null
   readonly finishedAt: string | null
   readonly resultDocId: string | null
+  /**
+   * flowgate.v02.0056 F2-1 (O1 0005-TR §4-2): the card waits for its approval (a review node whose result no
+   * AI works on any more). Absent = false.
+   */
+  readonly awaitingApproval?: boolean
+  /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): `instruction` | `result` | null — the AI card's current step. */
+  readonly stage?: string | null
+  /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): the instruction document this card run writes (wrote), or null. */
+  readonly instructionDocId?: string | null
 }
 
 export interface FlowGraphNodeDefinition {

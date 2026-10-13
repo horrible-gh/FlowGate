@@ -52,6 +52,11 @@ from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settin
 from flowgate.conversation.routes import router as _conversation_router
 # flowgate.v02.0053 T#2: the v0.2 card (Node) run settings (server/flowgate/card_settings).
 from flowgate.card_settings.routes import router as _card_settings_router
+# flowgate.v02.0056 T#1: the v0.2 card approval (server/flowgate/card_approval).
+from flowgate.card_approval.routes import router as _card_approval_router
+# flowgate.v02.0056 T#3: a card line's write and the v0.2 card memos (server/flowgate/card_documents, card_memos).
+from flowgate.card_documents.routes import router as _card_documents_router
+from flowgate.card_memos.routes import router as _card_memos_router
 from modules.flow_gate.api.v1.chat_command_routes import router as _chat_command_router
 from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_router
 from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
@@ -246,6 +251,9 @@ app.include_router(_graph_canvas_router, prefix=f"{CONTEXT}", tags=["GraphCanvas
 app.include_router(_graph_definition_router, prefix=f"{CONTEXT}", tags=["GraphDefinition"])
 app.include_router(_graph_run_router, prefix=f"{CONTEXT}", tags=["GraphRun"])
 app.include_router(_card_settings_router, prefix=f"{CONTEXT}", tags=["CardSettings"])
+app.include_router(_card_approval_router, prefix=f"{CONTEXT}", tags=["CardApproval"])
+app.include_router(_card_documents_router, prefix=f"{CONTEXT}", tags=["CardDocuments"])
+app.include_router(_card_memos_router, prefix=f"{CONTEXT}", tags=["CardMemos"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])
 # Every mutation route must carry an inventory classification. Group routes also name
 # the standard resolver used by GroupMutationPolicyMiddleware.

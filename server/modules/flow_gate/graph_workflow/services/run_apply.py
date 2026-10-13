@@ -158,6 +158,12 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None) ->
         emit_run_status(ctx, "running", "completed", "completed")
 
 
+def fill_line(ctx: RunContext, node_key: str, doc_id: str) -> None:
+    """A document of a node's card that is not its result — the instruction its card run wrote or found
+    written (flowgate.v02.0056 T#2) — takes its card line, as a bound result does (no node event)."""
+    result_bound(ctx.flow_id, node_key, doc_id)
+
+
 def dispatch_block(row: dict) -> Optional[dict]:
     """P0008 §7.1 ``dispatch`` from a node run row (``None`` when never dispatched)."""
     if row.get("dispatch_token_issued") is None:

@@ -5,7 +5,12 @@
 // A window follows its document's supersede chain (T#3 rework 2): a run result that replaced the card's
 // empty report becomes what the window shows (`shown`). A window is found by either id, and two windows
 // never show the same document (followDocumentWindow).
+// flowgate.v02.0056 F1 — the review history windows (0056 CH §2) are a second list kept the same way: one
+// 검수·반려 이력 window per document, opened from the history button of a document line, cascaded apart
+// from the document windows so both stay visible.
 import { reactive } from 'vue'
+import { closeAllDocumentAiWindows } from './documentAiWindows'
+import { closeAllSlotWriteWindows } from './slotWriteWindows'
 
 export type DocumentWindowMode = 'view' | 'edit'
 
@@ -22,13 +27,28 @@ export interface DocumentWindowState {
   raise: number
 }
 
+/** A document's review history window (flowgate.v02.0056 F1). */
+export interface DocumentHistoryWindowState {
+  readonly docId: string
+  minimized: boolean
+  readonly x: number
+  readonly y: number
+  /** Raised on every request for this window; the window brings itself to the front and reads again. */
+  raise: number
+}
+
 const CASCADE_STEPS = 6
 const CASCADE_PX = 28
 const ORIGIN_X = 200
 const ORIGIN_Y = 96
+/** The history windows start to the right of the document windows' origin. */
+const HISTORY_ORIGIN_X = 260
+const HISTORY_ORIGIN_Y = 132
 
 const windows = reactive<DocumentWindowState[]>([])
+const historyWindows = reactive<DocumentHistoryWindowState[]>([])
 let cascade = 0
+let historyCascade = 0
 
 /** The open windows, oldest first (reactive). */
 export function documentWindowList(): readonly DocumentWindowState[] {
@@ -97,8 +117,52 @@ export function closeDocumentWindow(docId: string): void {
   if (index !== -1) windows.splice(index, 1)
 }
 
-/** Closes every window (sign-out, tests). */
+// --- Review history windows (flowgate.v02.0056 F1) -------------------------------------------------
+
+/** The open history windows, oldest first (reactive). */
+export function documentHistoryWindowList(): readonly DocumentHistoryWindowState[] {
+  return historyWindows
+}
+
+export function documentHistoryWindowOf(docId: string): DocumentHistoryWindowState | undefined {
+  return historyWindows.find((win) => win.docId === docId)
+}
+
+/**
+ * Opens a document's review history window. A window already open for the document is restored, brought
+ * to the front and reads its history again.
+ */
+export function openDocumentHistoryWindow(docId: string): void {
+  if (!docId) return
+  const open = documentHistoryWindowOf(docId)
+  if (open) {
+    open.minimized = false
+    open.raise += 1
+    return
+  }
+  const offset = (historyCascade++ % CASCADE_STEPS) * CASCADE_PX
+  historyWindows.push({ docId, minimized: false, x: HISTORY_ORIGIN_X + offset, y: HISTORY_ORIGIN_Y + offset, raise: 0 })
+}
+
+export function setDocumentHistoryWindowMinimized(docId: string, minimized: boolean): void {
+  const open = documentHistoryWindowOf(docId)
+  if (open) open.minimized = minimized
+}
+
+export function closeDocumentHistoryWindow(docId: string): void {
+  const index = historyWindows.findIndex((win) => win.docId === docId)
+  if (index !== -1) historyWindows.splice(index, 1)
+}
+
+/**
+ * Closes every window — document and history, and (flowgate.v02.0056 F2-2) every [작성] and AI call window with
+ * the written lines and the followed runs (sign-out, tests).
+ */
 export function closeAllDocumentWindows(): void {
   windows.splice(0, windows.length)
+  historyWindows.splice(0, historyWindows.length)
   cascade = 0
+  historyCascade = 0
+  closeAllSlotWriteWindows()
+  closeAllDocumentAiWindows()
 }

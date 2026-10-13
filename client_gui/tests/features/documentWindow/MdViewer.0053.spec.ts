@@ -1,7 +1,8 @@
 /**
  * flowgate.v02.0053 T#3 — the v0.1 MD Viewer moved into v0.2 (features/documentWindow/MdViewer.vue): GFM
  * rendering with the frontmatter and the leading next-document header stripped, the copy buttons (body /
- * with header / code block), a document whose file is not written yet shown as an empty document (no
+ * code block — flowgate.v02.0056 F1 took the "with header" copy away), a document whose file is not written
+ * yet shown as an empty document (no
  * "no file" text), a failed read with a retry, and the reload on `fg:document_content_changed`.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -88,7 +89,9 @@ describe('MdViewer (flowgate.v02.0053 T#3)', () => {
     expect(content.text()).not.toContain('next_type')
     expect(content.text()).not.toContain('title:')
     expect(el(w, 'md-viewer-copy').attributes('title')).toBe('Markdown 복사')
-    expect(el(w, 'md-viewer-copy-header').attributes('title')).toBe('헤더 포함 복사')
+    // flowgate.v02.0056 F1 (0056 CH §5): the body copy is the one copy — no "with header" button.
+    expect(el(w, 'md-viewer-copy-header').exists()).toBe(false)
+    expect(w.findAll('.md-viewer__toolbar button')).toHaveLength(1)
   })
 
   it('a document whose file is not written yet is an empty document: no text, no toolbar, no regenerate', async () => {
@@ -111,16 +114,14 @@ describe('MdViewer (flowgate.v02.0053 T#3)', () => {
     expect(el(w, 'md-viewer-content').find('h1').text()).toBe('다시 읽음')
   })
 
-  it('⧉ copies the body without the frontmatter, ⎘ with it; the button shows ✓ for a moment', async () => {
+  it('⧉ copies the body without the frontmatter; the button shows ✓ for a moment', async () => {
     contentRead.mockResolvedValue({ docId: DOC, content: '---\na: 1\n---\n# 본문\n', missing: false })
     const w = await mountViewer()
     await el(w, 'md-viewer-copy').trigger('click')
     await flushPromises()
+    expect(copy).toHaveBeenCalledTimes(1)
     expect(copy).toHaveBeenLastCalledWith('# 본문\n')
     expect(el(w, 'md-viewer-copy').text()).toBe('✓')
-    await el(w, 'md-viewer-copy-header').trigger('click')
-    await flushPromises()
-    expect(copy).toHaveBeenLastCalledWith('---\na: 1\n---\n# 본문\n')
   })
 
   it('a failed copy marks the button instead of opening a fallback', async () => {
