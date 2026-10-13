@@ -5,6 +5,24 @@ Keys the domain attaches for wording (``_`` prefix) are used here and never sent
 """
 from __future__ import annotations
 
+SOURCE_MESSAGES = {
+    "graph_git_required": {
+        "ko": "문서 전용 Graph attempt의 소스 작업에는 Git 통합이 필요합니다.",
+        "en": "Source access for a document-only Graph attempt requires Git integration.",
+        "ja": "文書専用 Graph attempt のソース操作には Git 統合が必要です。",
+    },
+    "graph_worktree_unavailable": {
+        "ko": "Graph attempt의 전용 작업 공간을 확인할 수 없습니다.",
+        "en": "The dedicated Graph attempt worktree is unavailable.",
+        "ja": "Graph attempt 専用のワークツリーを確認できません。",
+    },
+    "graph_attempt_source_unsupported": {
+        "ko": "이 소스 경로는 Graph attempt를 지원하지 않습니다.",
+        "en": "This source operation does not support Graph attempts.",
+        "ja": "このソース操作は Graph attempt に対応していません。",
+    },
+}
+
 RUN_EDIT_MESSAGES = {
     "graph_run_locked": {
         "ko": "실행 중이거나 일시정지된 Flow는 편집할 수 없습니다.",

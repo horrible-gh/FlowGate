@@ -23,7 +23,7 @@ def call(action, *args, **kwargs):
         # Ordinary v0.1 callers have no Graph execution and retain their behavior.
         if action in ("launch", "finish", "transition") and args and args[0].get("graph_exec_id"):
             raise RuntimeError("Graph execution lifecycle is not registered")
-        if action in ("request_write", "working", "validate_write", "loop_state"):
+        if action in ("request_write", "working", "validate_write", "loop_state", "prepare_workspace"):
             raise RuntimeError("Graph execution lifecycle is not registered")
         return None
     return _handler(action, *args, **kwargs)

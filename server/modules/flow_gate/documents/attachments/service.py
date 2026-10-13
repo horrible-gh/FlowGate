@@ -738,6 +738,11 @@ def copy_to_source(
     actor: Optional[dict],
 ) -> dict:
     """Copy one attachment into source; group worktree writes obey TR2 ownership."""
+    from modules.flow_gate.services import graph_source_hooks
+    try:
+        graph_source_hooks.reject_group_source(actor, "attachment_copy")
+    except graph_source_hooks.GraphSourceError as exc:
+        raise AttachmentError(409, exc.code, exc.message) from exc
     doc = load_document(doc_id)
     segments = _validate_target_path(target_path)
     assert_mutable(doc, actor, "attachment copy")

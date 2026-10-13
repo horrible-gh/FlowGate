@@ -224,6 +224,13 @@ def _require_read_write(run: dict, token_id: Optional[str]) -> None:
 
 
 def _authorize_run(run: Optional[dict], token_id: Optional[str]) -> dict:
+    if run and token_id:
+        from modules.flow_gate.services import graph_source_hooks
+        try:
+            graph_source_hooks.source_root(
+                db_tokens.get_by_id(token_id), project_id=run.get("project_id"), group_id=run.get("group_id"))
+        except graph_source_hooks.GraphSourceError as exc:
+            raise ChatCommandError(409, exc.code, exc.message) from exc
     if not run or run.get("action_scope") != "chat" or not run.get("doc_ref"):
         raise ChatCommandError(403, "chat_command_capability_required",
                                "command execution is only available inside a live chat AI run")
@@ -298,15 +305,24 @@ def authorize_token(token: dict, run: Optional[dict]) -> dict:
     return _authorize_run(run, str(token.get("token_id") or ""))
 
 
-def worktree_root(project_id: str, group_id: str, expected: Optional[str] = None) -> Path:
+def worktree_root(project_id: str, group_id: str, expected: Optional[str] = None,
+                  *, token_id: Optional[str] = None) -> Path:
     """The group's managed worktree, strictly -- never the base checkout (R0001 §10).
 
     ``expected`` is the root the run was admitted with; a mismatch (the group was
     re-provisioned, the run fell back to another checkout) refuses instead of running
     the command somewhere the conversation is not working.
     """
+    from modules.flow_gate.services import graph_source_hooks
+    token = db_tokens.get_by_id(token_id) if token_id else None
+    if token_id and not token:
+        raise ChatCommandError(409, "chat_command_worktree_unavailable", "source token is missing")
     try:
-        root, reason = git_service.effective_src_root_ex(project_id, group_id)
+        root = graph_source_hooks.source_root(token, project_id=project_id, group_id=group_id)
+    except graph_source_hooks.GraphSourceError as exc:
+        raise ChatCommandError(409, exc.code, exc.message) from exc
+    try:
+        root, reason = (root, "worktree") if root is not None else git_service.effective_src_root_ex(project_id, group_id)
     except Exception as exc:
         raise ChatCommandError(409, "chat_command_worktree_unavailable", str(exc)[:200]) from exc
     if reason != "worktree" or not root:
@@ -398,7 +414,7 @@ def create_request(run: dict, payload: object, *, token_id: Optional[str] = None
         command = policy.validate_request(payload)
     except policy.ChatCommandPolicyError as exc:
         raise ChatCommandError(422, exc.code, exc.message) from exc
-    root = worktree_root(run["project_id"], run["group_id"], run.get("source_root"))
+    root = worktree_root(run["project_id"], run["group_id"], run.get("source_root"), token_id=token_id)
     try:
         policy.resolve(command, root)
     except policy.ChatCommandPolicyError as exc:
@@ -627,7 +643,7 @@ def _execute_owned(request_id: str, expected_root: Optional[str]) -> None:
     final: Optional[dict] = None
     try:
         # Re-verified right before the process exists: the approval may have waited long.
-        root = worktree_root(row["project_id"], row["group_id"], expected_root)
+        root = worktree_root(row["project_id"], row["group_id"], expected_root, token_id=row.get("token_id"))
         command = policy.ChatCommand(row["program"], tuple(row["args"]), row["cwd_relative"],
                                      int(row["timeout_seconds"]), row["category"], False)
         resolved, cwd, path_value = policy.resolve(command, root)

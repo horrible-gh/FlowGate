@@ -30,7 +30,8 @@ def register() -> None:
 
 
 def unregister() -> None:
-    from modules.flow_gate.services import graph_execution_hooks
+    from modules.flow_gate.services import graph_execution_hooks, graph_source_hooks
     graph_execution_hooks.unregister()
+    graph_source_hooks.unregister()
     for name in ports.PORT_NAMES:
         ports.unregister(name)

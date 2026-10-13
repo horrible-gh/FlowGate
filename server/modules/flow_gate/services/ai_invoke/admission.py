@@ -228,7 +228,8 @@ def _is_project_scoped_run(action_scope: Optional[str], merge_id: Optional[int] 
 def _require_group_worktree(
     project_id: str, module: str, group_id: str, branch: str, locale: Optional[str] = None,
     action_scope: Optional[str] = None, merge_id: Optional[int] = None,
-) -> None:
+    graph_exec_id: Optional[str] = None,
+):
     """Refuse to launch a run that would execute in the base tree (0299 R0001).
 
     This is the root cause R0001 describes: AI workers sometimes work on the main branch
@@ -243,6 +244,9 @@ def _require_group_worktree(
     self-heal, then a 409 carrying the blocking cause. Non-integrated projects and
     group-less runs are untouched — they have no worktree to demand.
     """
+    if graph_exec_id:
+        from modules.flow_gate.services import graph_execution_hooks
+        return graph_execution_hooks.call("prepare_workspace", graph_exec_id, project_id, group_id)
     if not group_id or not project_id:
         return
     # A project-scoped run works in the base checkout on purpose — there is no group
@@ -1129,11 +1133,12 @@ def start_run(
     # execute in the base tree must not start at all, and failing here keeps the
     # rollback trivial (nothing has been created yet). The doc's branch is only the
     # fallback-branch hint; the guard itself is about the group worktree.
-    _svc()._require_group_worktree(
+    graph_source_root = _svc()._require_group_worktree(
         project_id, module, group_id,
         (db_docs.get_by_id(doc_ref) or {}).get("branch") or "main",
         locale=template_provision.normalize_locale(continuation_locale),
         action_scope=action_scope,
+        **({"graph_exec_id": graph_exec_id} if graph_exec_id else {}),
         **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
     )
     # flowgate.default.0511 T0004: force the group worktree to the current
@@ -1141,11 +1146,12 @@ def start_run(
     # source-capable (read/read_write) AI invocation ever uses it. Placed here
     # — after the worktree is confirmed to exist, before any token/lease is
     # minted — so a sync failure blocks the run with nothing yet to unwind.
-    _svc()._ensure_initial_source_sync(
-        project_id, module, group_id, action_scope, doc_ref,
-        locale=continuation_locale,
-        **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
-    )
+    if not graph_exec_id:
+        _svc()._ensure_initial_source_sync(
+            project_id, module, group_id, action_scope, doc_ref,
+            locale=continuation_locale,
+            **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
+        )
 
     baseline_seq = db_docs.get_group_max_seq(group_id)
     # The -1 sentinel is accepted only at the original pre-decision admission. Once
@@ -1520,7 +1526,7 @@ def start_run(
     doc = db_docs.get_by_id(doc_ref) or {}
     # 0187 rev2: same group-worktree routing as the test runner — the invoked AI's
     # cwd and the pollution diff must watch the tree the group's CRUD writes to.
-    source_root = storage_paths.resolve_project_src_root(
+    source_root = graph_source_root if graph_exec_id else storage_paths.resolve_project_src_root(
         project_id, doc.get("branch") or "main", group_id=group_id
     )
 

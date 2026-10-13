@@ -10,13 +10,15 @@ from modules.flow_gate.db import groups as db_groups, ai_invoke_runs
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 from modules.flow_gate.services import graph_execution_hooks
-from flowgate.graph_run import execution_store as ledger
+from flowgate.graph_run import execution_store as ledger, workspace
 
 log = logging.getLogger(__name__)
 
 
 def register():
     graph_execution_hooks.register(lambda action, *args, **kwargs: _ACTIONS[action](*args, **kwargs))
+    from modules.flow_gate.services import graph_source_hooks
+    graph_source_hooks.register(workspace.source_root, workspace.mutation)
 
 
 def request_write(job):
@@ -144,12 +146,13 @@ def launch(run):
             proc = run.get("proc")
             if proc is not None and proc.poll() is None:
                 raise ledger.LeaseLost("previous provider has not exited")
+            workspace.verify_execution(exec_id)
             if run.get("graph_lease_token"):
                 ledger.renew(exec_id, run["graph_lease_token"])
             else:
                 run["graph_lease_token"] = ledger.acquire(exec_id, run["run_id"])
             return True
-        except ledger.LeaseLost:
+        except (ledger.LeaseLost, workspace.port.GraphSourceError):
             run["graph_lease_lost"] = True
             run["cancel_event"].set()
             ledger.cancel_ineligible(exec_id)
@@ -233,6 +236,8 @@ def start_failed(exec_id, error=None):
         ledger.cancel_ineligible(exec_id)
         return True
     detail = getattr(error, "detail", None)
+    if isinstance(detail, dict) and detail.get("reason") == "worktree_failed":
+        return True  # Workspace preparation already invalidated/reset the node.
     if isinstance(detail, dict) and detail.get("code") == "run_in_progress":
         return True  # Admission is busy; keep the durable request, including duplicate launches.
     row = ledger.get(exec_id)
@@ -331,6 +336,8 @@ def recover():
                 except Exception:
                     log.exception("Graph replay failure could not be recorded for %s", snapshot["exec_id"])
 
+    workspace.cleanup_invalidated()  # Outside all Flow guards and DB transactions.
+
 
 def map_token(exec_id, token_id):
     if not exec_id:
@@ -365,6 +372,7 @@ def settle(flow_id):
 
 
 _ACTIONS = {
+    "prepare_workspace": workspace.prepare,
     "map_token": map_token, "validate_write": validate_write, "loop_state": loop_state,
     "settle": settle, "request_write": request_write, "request_hop": request_hop, "request_loop": request_loop,
     "launch": launch, "finish": finish, "transition": transition, "heartbeat": heartbeat,

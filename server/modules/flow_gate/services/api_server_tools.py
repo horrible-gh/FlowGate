@@ -348,6 +348,16 @@ def validate(schema: dict, value: Any, path: str = "input") -> None:
 
 
 def require_group_root(run: dict) -> Path:
+    from modules.flow_gate.db import tokens as db_tokens
+    from modules.flow_gate.services import graph_source_hooks
+    token_id = run.get("current_token_id") or run.get("token_id")
+    token = db_tokens.get_by_id(token_id) if token_id else None
+    if run.get("graph_exec_id") and not token:
+        raise ToolError(409, "graph_worktree_unavailable")
+    try:
+        graph_source_hooks.reject_group_source(token, "api_group_source")
+    except graph_source_hooks.GraphSourceError as exc:
+        raise ToolError(409, exc.code, exc.message) from exc
     root = Path(str(run.get("source_root") or ""))
     project, group = run.get("project_id"), run.get("group_id")
     if not project or not group or not root.is_dir():
@@ -498,6 +508,11 @@ def self_check_call(run: dict, raw_token: str, name: str, tool_input: dict) -> t
         token = token_service.verify(raw_token)
     except Exception as exc:
         raise ToolError(401, "selfcheck_token_invalid") from exc
+    from modules.flow_gate.services import graph_source_hooks
+    try:
+        graph_source_hooks.reject_group_source(token, "self_check")
+    except graph_source_hooks.GraphSourceError as exc:
+        raise ToolError(409, exc.code, exc.message) from exc
     doc_id = run.get("doc_ref")
     scope = run.get("action_scope")
     if scope == "new":
