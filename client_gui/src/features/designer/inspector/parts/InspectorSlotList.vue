@@ -14,7 +14,12 @@
        flowgate.v02.0056 F1 (0056 CH §2) — a line that opens also has the history button (a clock, before
        the document icon): the document's 검수·반려 이력 window (a `history` event). A line may leave it out
        (`history: false`) or hand the number of entries it knows (`historyCount`).
-       flowgate.v02.0056 F2-1 — a line may carry its `author` (the row names the instruction line's). -->
+       flowgate.v02.0056 F2-1 — a line may carry its `author` (the row names the instruction line's).
+       flowgate.v02.0056 F2-2 (O3 0009-TR §4) — the three states of a card line: no document ("문서 없음" with
+       [작성]), a document without a body (`blank`: "비어 있음" — its name and document icon open it straight in
+       the editor) and a usual line. A line carries its row actions (`actions`, the docRowActions list: [작성] ·
+       [AI 호출], an `action` event with the key) and its history number with the AI review / rejection split
+       for the history button's hover text (`historyDetail`). -->
   <div class="inspector-slot-list" data-test="inspector-slot-list">
     <InspectorSlotRow
       v-for="line in slots"
@@ -32,8 +37,9 @@
       :danger="line.danger ?? false"
       :test-ids="line.testIds ?? null"
       :author="line.author ?? null"
+      :blank="line.blank ?? false"
       :data-slot="line.key ?? line.name"
-      @open="emit('open', line)"
+      @open="open(line)"
     >
       <template v-if="$slots.summary" #summary>
         <slot name="summary" :line="line" />
@@ -56,9 +62,23 @@
         :data-test="line.testIds?.nav ?? 'inspector-slot-nav'"
         @click="emit('nav', line)"
       >{{ line.nav.label }} ↗</Button>
+      <Button
+        v-for="action in line.actions ?? []"
+        :key="action.key"
+        size="sm"
+        variant="secondary"
+        class="inspector-slot-action"
+        :class="`is-${action.state}`"
+        :title="actionLabel(action)"
+        data-test="inspector-slot-action"
+        :data-action="action.key"
+        :data-state="action.state"
+        @click="emit('action', line, action.key)"
+      >{{ actionLabel(action) }}</Button>
       <InspectorHistoryButton
         v-if="line.open === 'enabled' && line.id && line.history !== false"
         :count="line.historyCount ?? null"
+        :title="historyTitle(line)"
         data-test="inspector-slot-history"
         @click="emit('history', line)"
       />
@@ -67,7 +87,7 @@
         :title="line.open === 'disabled' ? (line.openReason ?? t('gui.designer.inspector.unconnected')) : null"
         :disabled="line.open === 'disabled'"
         :data-test="line.testIds?.open ?? 'inspector-slot-open'"
-        @click="emit('open', line)"
+        @click="open(line)"
       />
       <IconButton
         v-if="editable && line.open === 'enabled'"
@@ -90,6 +110,9 @@ import InspectorHistoryButton from './InspectorHistoryButton.vue'
 import InspectorOpenButton from './InspectorOpenButton.vue'
 import InspectorReviewBadge, { type InspectorReviewState } from './InspectorReviewBadge.vue'
 import InspectorSlotRow, { type InspectorSlotState, type InspectorSlotTestIds } from './InspectorSlotRow.vue'
+import type { SlotAction, SlotActionKey } from './slotStateView'
+
+export type { SlotAction, SlotActionKey }
 
 /** A button that exists on the line: usable, or shown disabled (its operation is not connected). */
 export type InspectorSlotButton = 'enabled' | 'disabled' | 'none'
@@ -122,6 +145,14 @@ export interface InspectorSlotView {
   readonly historyCount?: number | null
   /** flowgate.v02.0056 F2-1: who writes the line (the card line's `author`, as sent); the row names some. */
   readonly author?: string | null
+  /** flowgate.v02.0056 F2-2: the card line (its slot) behind the line, when the line shows one. */
+  readonly cardSlot?: string | null
+  /** flowgate.v02.0056 F2-2: the line's document has no body yet ("비어 있음"; opening it opens its editor). */
+  readonly blank?: boolean
+  /** flowgate.v02.0056 F2-2: the AI reviews and rejections behind `historyCount` (the history button's hover text). */
+  readonly historyDetail?: { readonly reviews: number; readonly rejections: number } | null
+  /** flowgate.v02.0056 F2-2: the line's row actions ([작성] · [AI 호출]), drawn before the history button. */
+  readonly actions?: readonly SlotAction[]
   /** The feature's own test ids for the line's state, summary, nav and open (its specs read them). */
   readonly testIds?: (InspectorSlotTestIds & { readonly nav?: string; readonly open?: string }) | null
 }
@@ -141,9 +172,28 @@ const emit = defineEmits<{
   review: [line: InspectorSlotView]
   nav: [line: InspectorSlotView]
   history: [line: InspectorSlotView]
+  /** flowgate.v02.0056 F2-2: a row action was pressed. */
+  action: [line: InspectorSlotView, key: SlotActionKey]
 }>()
 
 const { t } = useI18n()
+
+/** Opening a line: a line whose document has no body yet opens straight in its editor (flowgate.v02.0056 F2-2). */
+function open(line: InspectorSlotView) {
+  if (line.blank && !line.empty) emit('edit', line)
+  else emit('open', line)
+}
+
+/** A row action's words (the common wording; a running one says it runs). */
+function actionLabel(action: SlotAction): string {
+  return t(`gui.designer.inspector.slot.actions.${action.state === 'running' ? `${action.key}_running` : action.key}`)
+}
+
+/** The history button's hover text: the common wording, with the AI review / rejection split when known. */
+function historyTitle(line: InspectorSlotView): string | null {
+  const detail = line.historyDetail
+  return detail ? t('gui.designer.inspector.slot.history_detail', { n: detail.reviews + detail.rejections, reviews: detail.reviews, rejections: detail.rejections }) : null
+}
 </script>
 
 <style scoped>
@@ -173,5 +223,24 @@ const { t } = useI18n()
   .inspector-slot-nav {
     padding: 0 8px;
   }
+}
+
+/* flowgate.v02.0056 F2-2 — a row action ([작성] · [AI 호출]); a running one wears the info status tokens. */
+.inspector-slot-action {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.inspector-slot-action :deep(.ui-btn-content) {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inspector-slot-action.is-running {
+  border-color: var(--fg2-status-info-border);
+  background: var(--fg2-status-info-bg);
+  color: var(--fg2-status-info-fg);
 }
 </style>

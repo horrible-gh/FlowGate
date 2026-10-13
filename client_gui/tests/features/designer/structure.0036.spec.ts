@@ -98,7 +98,9 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     // flowgate.v02.0053 T#5: no "not yet" / write wording on a line; `none` is the wording of a line without a
     // document. flowgate.v02.0056 F1: the history button of a line (history / history_count).
     // flowgate.v02.0056 F2-1: `author` — the instruction line's 지시 AI 또는 사람 (O2 0007-TR §4-3).
-    expect(Object.keys(inspector.slot).sort()).toEqual(['author', 'edit', 'history', 'history_count', 'none', 'open', 'progress'])
+    // flowgate.v02.0056 F2-2: a document without a body (blank), the row actions and the history split.
+    expect(Object.keys(inspector.slot).sort()).toEqual(['actions', 'author', 'blank', 'edit', 'history', 'history_count', 'history_detail', 'none', 'open', 'progress'])
+    expect(Object.keys(inspector.slot.actions).sort()).toEqual(['ai_invoke', 'ai_invoke_running', 'write'])
     expect(Object.keys(inspector.slot.author)).toEqual(['instruction_ai_or_human'])
     expect(Object.keys(inspector.slot_state).sort()).toEqual(['closed', 'in_progress', 'writing'])
     // flowgate.v02.0052 T#3: ■ 중단 / ↻ 재실행 belong to the top 실행 menu, the card keeps 실행 이력 only.

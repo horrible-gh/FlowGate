@@ -145,7 +145,8 @@ const TYPE_CODE = /\b(?:R|B|M|WP|DS|D|P|L|DB|N|NR|T|TR|T2|TR2|TS|TSC|TSR|AC)\b/
 describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () => {
   it.each(CARDS)('$card: the lines of the table, each without a badge while drafted, with the history button, the document icon and ✎', async ({ node, section, names }) => {
     const w = await mountFrame(node)
-    expect(w.findAll('[data-test="designer-inspector-section"]').map((part) => part.attributes('data-key'))).toEqual([section])
+    // flowgate.v02.0056 F2-2: the card's memos follow its lines in a draft (unassigned) Flow too.
+    expect(w.findAll('[data-test="designer-inspector-section"]').map((part) => part.attributes('data-key'))).toEqual([section, 'cardMemo'])
     const shown = lines(w)
     expect(shown.map((row) => row.get('[data-test="inspector-slot-name"]').text())).toEqual([...names])
     expect(shown.map((row) => row.attributes('data-doc'))).toEqual(node.cardDocuments!.map((own) => own.docId))

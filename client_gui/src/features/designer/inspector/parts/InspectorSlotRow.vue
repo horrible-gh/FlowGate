@@ -13,13 +13,16 @@
        words where the badge would be.
        flowgate.v02.0056 F2-1 — a line may name who writes it (`author`, O2 0007-TR §4-3): the instruction line
        of a run card says "지시 AI 또는 사람" in muted words before its state (slotAuthorKey; other authors draw
-       nothing). -->
+       nothing).
+       flowgate.v02.0056 F2-2 — a line whose document has no body yet (`blank`, O3 0009-TR §4-1 has_body) says
+       "비어 있음" in the same muted words as a line without a document (slotStateView). -->
   <div
     class="inspector-slot"
-    :class="[`inspector-slot--${kind}`, { 'is-empty': empty, 'is-focus': focus, 'is-danger': danger }]"
+    :class="[`inspector-slot--${kind}`, { 'is-empty': empty, 'is-blank': blank && !empty, 'is-focus': focus, 'is-danger': danger }]"
     data-test="inspector-slot"
     :data-kind="kind"
     :data-empty="empty ? 'true' : 'false'"
+    :data-blank="blank && !empty ? 'true' : undefined"
     :data-name="name"
     :data-doc="id ?? undefined"
   >
@@ -37,7 +40,7 @@
       <span
         v-if="view.kind !== 'none'"
         class="inspector-slot-state"
-        :class="[`is-${view.tone}`, { 'is-quiet': view.quiet, 'is-empty-text': view.kind === 'empty' }]"
+        :class="[`is-${view.tone}`, { 'is-quiet': view.quiet, 'is-empty-text': view.kind === 'empty' || view.kind === 'blank' }]"
         :title="view.title"
         :data-test="testIds?.state ?? 'inspector-slot-state'"
         :data-tone="view.tone"
@@ -100,8 +103,24 @@ const props = withDefaults(
     testIds?: InspectorSlotTestIds | null
     /** flowgate.v02.0056 F2-1: the line's author as the server sends it (`instruction_ai_or_human` is named). */
     author?: string | null
+    /** flowgate.v02.0056 F2-2: the line's document has no body yet ("비어 있음"). */
+    blank?: boolean
   }>(),
-  { kind: 'document', id: null, openable: false, empty: false, emptyText: null, state: null, summary: null, progress: null, focus: false, danger: false, testIds: null, author: null },
+  {
+    kind: 'document',
+    id: null,
+    openable: false,
+    empty: false,
+    emptyText: null,
+    state: null,
+    summary: null,
+    progress: null,
+    focus: false,
+    danger: false,
+    testIds: null,
+    author: null,
+    blank: false,
+  },
 )
 
 const emit = defineEmits<{ open: [] }>()
@@ -109,7 +128,14 @@ const emit = defineEmits<{ open: [] }>()
 const { t } = useI18n()
 
 /** The state badge, the empty wording, or nothing (slotStateView). */
-const view = computed(() => slotStateView(props.state, props.empty, props.empty ? (props.emptyText ?? t('gui.designer.inspector.slot.none')) : null))
+const view = computed(() =>
+  slotStateView(
+    props.state,
+    props.empty,
+    props.empty ? (props.emptyText ?? t('gui.designer.inspector.slot.none')) : null,
+    props.blank ? t('gui.designer.inspector.slot.blank') : null,
+  ),
+)
 
 const clamped = computed(() => Math.max(0, Math.min(100, Math.round(props.progress ?? 0))))
 

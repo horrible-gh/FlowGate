@@ -11,7 +11,7 @@
        so a test card without a bound document shows and opens them too; the 지시서 line is hidden when the
        card's settings omit the instruction (useTestCard). The details (and their reads) need a document. -->
   <section class="inspector-test-spec" data-test="inspector-test-spec" :data-status="status" :data-form="form">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="editLine" @history="historyLine" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="editLine" @history="historyLine" @action="actionLine" />
 
     <details v-if="target.docId" :key="target.docId" class="inspector-test-spec-details" data-test="test-spec-details">
       <summary>{{ t('gui.designer.inspector.pane.details') }}</summary>
@@ -109,15 +109,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../../components/ui/Button.vue'
 import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
-import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
+import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { openDocument, openDocumentHistory } from '../../openDocument'
+import { INSPECTOR_HOST } from '../../inspectorHost'
+import { cardLineRow, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
 import { testSpecSlots, testSpecVerdictKey, type TestSpecSlot } from './testSpecModel'
 import { useTestCard } from './useTestCard'
 import { useTestSpec } from './useTestSpec'
@@ -127,6 +128,8 @@ const props = defineProps<{
 }>()
 
 const { t, te } = useI18n()
+
+const host = inject(INSPECTOR_HOST, null)
 
 const k = (key: string) => `gui.inspector.testSpec.${key}`
 
@@ -179,6 +182,8 @@ const lines = computed<InspectorSlotView[]>(() =>
     focus: slot.focus,
     danger: slot.state?.tone === 'danger',
     open: slot.open,
+    // flowgate.v02.0056 F2-2: 문서 없음 [작성] · 비어 있음 · the history number · [AI 호출] of the card's own line.
+    ...cardLineRow(props.target, slot, slot.key),
   })),
 )
 
@@ -195,6 +200,14 @@ function editLine(line: InspectorSlotView) {
 /** The history button: the line's 검수·반려 이력 window (flowgate.v02.0056 F1). */
 function historyLine(line: InspectorSlotView) {
   if (line.id) openDocumentHistory(line.id)
+}
+
+/**
+ * flowgate.v02.0056 F2-2: a row action of a card line — [작성] opens the line's write window, [AI 호출] the
+ * document's AI call window (openCardLineAction; the Canvas is read again after them).
+ */
+function actionLine(line: InspectorSlotView, key: SlotActionKey) {
+  openCardLineAction(props.target, line, key, host)
 }
 </script>
 

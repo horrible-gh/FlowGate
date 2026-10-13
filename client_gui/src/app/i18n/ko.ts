@@ -389,6 +389,15 @@ export default {
         // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
         history: '검수·반려 이력',
         history_count: '검수·반려 이력 {n}건',
+        // flowgate.v02.0056 F2-2 — a card line's document without a body yet (O3 has_body), the row actions and the
+        // history button's hover text with the AI review / rejection split.
+        blank: '비어 있음',
+        actions: {
+          write: '작성',
+          ai_invoke: 'AI 호출',
+          ai_invoke_running: 'AI 작업 중',
+        },
+        history_detail: '검수·반려 이력 {n}건 (AI 검수 {reviews} · 반려 {rejections})',
       },
       review: {
         pass: 'AI 검수 {n}회 · 남은 지적 {remain}',
@@ -924,6 +933,67 @@ export default {
       ai_response: 'AI 대응',
       fold: '접기',
       unfold: '펼치기',
+    },
+    // flowgate.v02.0056 F2-2 — [작성] of a card line without a document (O3 0009-TR §4-2).
+    write: {
+      title: '{name} 작성',
+      editor: '작성할 본문',
+      placeholder: '본문을 Markdown으로 작성합니다. 비워 두고 저장하면 빈 초안이 만들어집니다.',
+      contentless: '빈 작업계획을 만듭니다. 내용은 만든 뒤 편집합니다.',
+      result_note: '카드가 실행 중입니다. 이 행이 카드의 결과이면 저장한 문서가 결과로 등록되고 카드는 승인 대기가 됩니다. 결과에는 본문이 필요합니다.',
+      save: '저장',
+      create: '만들기',
+      cancel: '취소',
+      close: '닫기',
+      failure: {
+        slot_has_document: '이 행에는 이미 문서가 있습니다. 그 문서를 엽니다.',
+        node_token_unavailable: '이 카드의 결과가 이미 등록되었습니다. 등록된 문서를 엽니다.',
+        node_in_instruction_stage: '지시 AI가 지시서를 쓰는 중입니다. 끝난 뒤 다시 저장하세요.',
+        node_ai_working: '카드의 AI가 작업 중입니다. 끝난 뒤 다시 저장하세요.',
+        flow_disposed: '폐기된 플로우라 작성할 수 없습니다.',
+        card_documents_unavailable: '서버가 카드 문서를 지원하지 않습니다.',
+        content: {
+          not_a_text: '본문을 글자로 보낼 수 없습니다.',
+          too_long: '본문이 너무 깁니다 (최대 500,000자).',
+          not_for_this_slot: '이 행은 본문 없이 만듭니다.',
+          empty_body: '결과로 등록되는 문서는 본문이 필요합니다.',
+        },
+        slot: {
+          not_a_slot_of_this_card: '이 카드에 없는 행입니다.',
+          slot_shares_a_document: '이 행은 다른 행의 문서를 함께 씁니다. 그 행에서 작성하세요.',
+          doc_type_not_registered: '프로젝트에 등록되지 않은 문서 종류입니다.',
+        },
+        invalid: '저장할 수 없는 내용입니다.',
+        forbidden: '문서를 만들 권한이 없습니다.',
+        not_found: '카드나 플로우를 찾을 수 없습니다.',
+        network: '서버에 연결하지 못했습니다.',
+        other: '저장하지 못했습니다.',
+      },
+    },
+    // flowgate.v02.0056 F2-2 — the single AI call on a document (O3 0009-TR §4-3).
+    ai: {
+      title: 'AI 호출',
+      provider: 'AI',
+      provider_loading: 'AI 목록을 불러오는 중...',
+      provider_pick: 'AI를 고르세요',
+      provider_error: 'AI 목록을 불러오지 못했습니다.',
+      opinion: '의견',
+      opinion_placeholder: 'AI에게 전할 의견을 적습니다 (비워 둘 수 있습니다).',
+      hint: '[실행]을 누르면 이 문서에 AI를 한 번 실행합니다. 검수·대응·카드 승인은 이어지지 않습니다. 카드의 [AI가 참조] 메모도 함께 전달됩니다.',
+      busy_this: '이 문서에서 다른 AI 실행이 진행 중입니다.',
+      busy_other: '이 플로우에서 다른 AI 실행이 진행 중입니다.',
+      running: 'AI 작업 중 ({id})',
+      finished: 'AI 실행이 끝났습니다 ({reason})',
+      run: '실행',
+      close: '닫기',
+      failure: {
+        run_in_progress: '이 플로우에서 다른 AI 실행이 진행 중입니다.',
+        invalid: '요청을 받을 수 없습니다.',
+        forbidden: 'AI를 실행할 권한이 없습니다.',
+        not_found: '프로젝트를 찾을 수 없습니다.',
+        network: '서버에 연결하지 못했습니다.',
+        other: 'AI를 실행하지 못했습니다.',
+      },
     },
     // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
     types: {

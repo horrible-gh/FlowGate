@@ -73,6 +73,17 @@ export interface FlowGraphCardDocument {
   readonly title: string | null
   readonly status: string | null
   readonly docReviewStatus: string | null
+  /**
+   * flowgate.v02.0056 F2-2 (O3 0009-TR §4-1): the line's document has a body (false without a document); absent
+   * when the server did not send it. M and WP lines are always true.
+   */
+  readonly hasBody?: boolean
+  /** flowgate.v02.0056 F2-2: AI reviews of the line's document; absent when not sent. */
+  readonly reviewCount?: number
+  /** flowgate.v02.0056 F2-2: rejections with a reason; absent when not sent. */
+  readonly rejectionCount?: number
+  /** flowgate.v02.0056 F2-2: reviewCount + rejectionCount (the history button's number); absent when not sent. */
+  readonly historyCount?: number
 }
 
 export interface FlowGraphNodeDocument {

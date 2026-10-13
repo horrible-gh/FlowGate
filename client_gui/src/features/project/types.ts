@@ -353,6 +353,17 @@ export interface FlowCanvasCardDocument {
   title: string | null
   status: string | null
   docReviewStatus: string | null
+  /**
+   * flowgate.v02.0056 F2-2 (O3 0009-TR §4-1): the line's document has a body after its front matter (false
+   * without a document); absent when not sent. M and WP lines are always true (the v0.1 approval rule).
+   */
+  hasBody?: boolean
+  /** flowgate.v02.0056 F2-2 (O3 §4-1): AI reviews of the line's document (`ai_review_history` length); absent when not sent. */
+  reviewCount?: number
+  /** flowgate.v02.0056 F2-2 (O3 §4-1): rejections with a reason (what the history window shows); absent when not sent. */
+  rejectionCount?: number
+  /** flowgate.v02.0056 F2-2 (O3 §4-1): reviewCount + rejectionCount — the history button's number; absent when not sent. */
+  historyCount?: number
 }
 
 /** P0008 §2.6 `node_run`: what the Inspector shows of a Graph node's run (status kept as the server sends it). */

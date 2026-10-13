@@ -72,9 +72,12 @@ export interface DocumentHistoryRejection {
 export interface DocumentHistory {
   readonly docId: string
   readonly record: DocumentRecord
-  /** As stored (oldest first). */
+  /**
+   * As the server sends them: newest first (flowgate.v02.0056 F2-2 — O3 0009-TR §4-4 checked the document read;
+   * the F1 note "as stored, oldest first" was wrong). The window orders by time itself (documentHistoryTimeline).
+   */
   readonly reviews: readonly DocumentHistoryReview[]
-  /** As stored (oldest first). */
+  /** As stored: oldest first (O3 §4-4). */
   readonly rejections: readonly DocumentHistoryRejection[]
 }
 

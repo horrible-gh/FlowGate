@@ -354,6 +354,32 @@ export interface CardSlotFixture {
 
 export const CARD_SLOT_FIXTURES: readonly CardSlotFixture[] = [
   {
+    // flowgate.v02.0056 F2-2 — the three states of a card line (O3 0009-TR §4-1): 비어 있음 (a document without a
+    // body; the name opens its editor) · 문서 없음 + [작성] · a usual line with the history number and [AI 호출].
+    caption: '작업 · 비어 있음 · 문서 없음 [작성] · 이력 3 [AI 호출] (0056 F2-2)',
+    lines: [
+      { key: 'instruction', name: '지시서', id: '0008.0006-T', blank: true, open: 'enabled', actions: [{ key: 'ai_invoke', state: 'enabled' }] },
+      { key: 'report', name: '레포트', empty: true, actions: [{ key: 'write', state: 'enabled' }] },
+    ],
+  },
+  {
+    caption: '작업 · 검수 대기 · 이력 3 (AI 검수 2 · 반려 1) · AI 작업 중 (0056 F2-2)',
+    lines: [
+      { key: 'instruction', name: '지시서', id: '0008.0006-T', state: { label: '승인', tone: 'success' }, open: 'enabled', actions: [{ key: 'ai_invoke', state: 'enabled' }] },
+      {
+        key: 'report',
+        name: '레포트',
+        id: '0008.0007-TR',
+        state: { label: '검수 대기', tone: 'warning' },
+        focus: true,
+        open: 'enabled',
+        historyCount: 3,
+        historyDetail: { reviews: 2, rejections: 1 },
+        actions: [{ key: 'ai_invoke', state: 'running' }],
+      },
+    ],
+  },
+  {
     caption: '작업계획 · 사람 WP · 작성 중 · 전개 전 (v7 plan.m.draft)',
     lines: [
       { key: 'plan', name: '작업계획', id: '0008.0004-WP', state: { label: '작성 중', tone: 'info' }, summary: 'rev 1 · Step 4', focus: true, open: 'enabled' },

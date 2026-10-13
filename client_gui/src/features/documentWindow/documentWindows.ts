@@ -9,6 +9,8 @@
 // 검수·반려 이력 window per document, opened from the history button of a document line, cascaded apart
 // from the document windows so both stay visible.
 import { reactive } from 'vue'
+import { closeAllDocumentAiWindows } from './documentAiWindows'
+import { closeAllSlotWriteWindows } from './slotWriteWindows'
 
 export type DocumentWindowMode = 'view' | 'edit'
 
@@ -152,10 +154,15 @@ export function closeDocumentHistoryWindow(docId: string): void {
   if (index !== -1) historyWindows.splice(index, 1)
 }
 
-/** Closes every window — document and history (sign-out, tests). */
+/**
+ * Closes every window — document and history, and (flowgate.v02.0056 F2-2) every [작성] and AI call window with
+ * the written lines and the followed runs (sign-out, tests).
+ */
 export function closeAllDocumentWindows(): void {
   windows.splice(0, windows.length)
   historyWindows.splice(0, historyWindows.length)
   cascade = 0
   historyCascade = 0
+  closeAllSlotWriteWindows()
+  closeAllDocumentAiWindows()
 }

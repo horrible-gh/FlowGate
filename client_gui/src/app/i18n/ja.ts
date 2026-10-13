@@ -382,6 +382,15 @@ export default {
         // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
         history: 'レビュー・差し戻し履歴',
         history_count: 'レビュー・差し戻し履歴 {n}件',
+        // flowgate.v02.0056 F2-2 — a card line's document without a body yet (O3 has_body), the row actions and the
+        // history button's hover text with the AI review / rejection split.
+        blank: '空です',
+        actions: {
+          write: '作成',
+          ai_invoke: 'AI 呼び出し',
+          ai_invoke_running: 'AI 作業中',
+        },
+        history_detail: 'レビュー・差し戻し履歴 {n}件 (AI レビュー {reviews} · 差し戻し {rejections})',
       },
       review: {
         pass: 'AIレビュー {n}回 · 残り指摘 {remain}',
@@ -914,6 +923,67 @@ export default {
       ai_response: 'AI 対応',
       fold: '折りたたむ',
       unfold: '展開する',
+    },
+    // flowgate.v02.0056 F2-2 — [作成] of a card line without a document (O3 0009-TR §4-2).
+    write: {
+      title: '{name}を作成',
+      editor: '作成する本文',
+      placeholder: '本文を Markdown で書きます。空のまま保存すると空の下書きが作られます。',
+      contentless: '空の作業計画を作ります。内容は作成後に編集します。',
+      result_note: 'カードは実行中です。この行がカードの結果であれば、保存した文書が結果として登録され、カードは承認待ちになります。結果には本文が必要です。',
+      save: '保存',
+      create: '作成',
+      cancel: 'キャンセル',
+      close: '閉じる',
+      failure: {
+        slot_has_document: 'この行にはすでに文書があります。その文書を開きます。',
+        node_token_unavailable: 'このカードの結果はすでに登録されています。登録された文書を開きます。',
+        node_in_instruction_stage: '指示 AI が指示書を書いています。終わってから保存し直してください。',
+        node_ai_working: 'カードの AI が作業中です。終わってから保存し直してください。',
+        flow_disposed: '破棄されたフローのため作成できません。',
+        card_documents_unavailable: 'サーバーがカード文書に対応していません。',
+        content: {
+          not_a_text: '本文を文字として送れません。',
+          too_long: '本文が長すぎます (最大 500,000 文字)。',
+          not_for_this_slot: 'この行は本文なしで作ります。',
+          empty_body: '結果として登録される文書には本文が必要です。',
+        },
+        slot: {
+          not_a_slot_of_this_card: 'このカードにない行です。',
+          slot_shares_a_document: 'この行は別の行の文書を共有しています。その行で作成してください。',
+          doc_type_not_registered: 'プロジェクトに登録されていない文書の種類です。',
+        },
+        invalid: '保存できない内容です。',
+        forbidden: '文書を作成する権限がありません。',
+        not_found: 'カードまたはフローが見つかりません。',
+        network: 'サーバーに接続できませんでした。',
+        other: '保存できませんでした。',
+      },
+    },
+    // flowgate.v02.0056 F2-2 — the single AI call on a document (O3 0009-TR §4-3).
+    ai: {
+      title: 'AI 呼び出し',
+      provider: 'AI',
+      provider_loading: 'AI の一覧を読み込んでいます...',
+      provider_pick: 'AI を選んでください',
+      provider_error: 'AI の一覧を読み込めませんでした。',
+      opinion: '意見',
+      opinion_placeholder: 'AI に伝える意見を書きます (空でもかまいません)。',
+      hint: '[実行] を押すとこの文書に AI を一度実行します。レビュー・対応・カード承認は続きません。カードの [AI が参照] メモも一緒に渡されます。',
+      busy_this: 'この文書で別の AI 実行が進行中です。',
+      busy_other: 'このフローで別の AI 実行が進行中です。',
+      running: 'AI 作業中 ({id})',
+      finished: 'AI の実行が終わりました ({reason})',
+      run: '実行',
+      close: '閉じる',
+      failure: {
+        run_in_progress: 'このフローで別の AI 実行が進行中です。',
+        invalid: 'リクエストを受け付けられません。',
+        forbidden: 'AI を実行する権限がありません。',
+        not_found: 'プロジェクトが見つかりません。',
+        network: 'サーバーに接続できませんでした。',
+        other: 'AI を実行できませんでした。',
+      },
     },
     // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
     types: {

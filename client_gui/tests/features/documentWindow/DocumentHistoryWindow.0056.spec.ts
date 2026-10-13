@@ -54,23 +54,14 @@ const base = (docId: string) => ({
   doc_review_status: 'rejected',
 })
 
-/** The v0.1 document responses (the history parts as the server sends them, oldest first). */
+/**
+ * The v0.1 document responses (the history parts as the server sends them — flowgate.v02.0056 F2-2: the AI reviews
+ * newest first, the rejections oldest first, O3 0009-TR §4-4).
+ */
 const RESPONSES: Record<string, Record<string, unknown>> = {
   [DOC]: {
     ...base(DOC),
     ai_review_history: [
-      {
-        id: 1,
-        revision_no: 1,
-        verdict: 'issues',
-        finding_count: 2,
-        findings: [{ locus: '§2', note: '테스트 누락' }, { note: '오타' }],
-        comment: '보완 필요',
-        review_intent: 'normal',
-        reviewer_name: 'Codex',
-        review_provider: { requested_provider_id: 'p-codex', actual_provider_id: 'p-codex', actual_provider_name: 'Codex1' },
-        reviewed_at: AT.review1,
-      },
       {
         id: 2,
         revision_no: 2,
@@ -82,6 +73,18 @@ const RESPONSES: Record<string, Record<string, unknown>> = {
         superseded_review_id: 1,
         review_provider: { requested_provider_id: 'p-a', actual_provider_id: 'p-b', actual_provider_name: 'B' },
         reviewed_at: AT.review2,
+      },
+      {
+        id: 1,
+        revision_no: 1,
+        verdict: 'issues',
+        finding_count: 2,
+        findings: [{ locus: '§2', note: '테스트 누락' }, { note: '오타' }],
+        comment: '보완 필요',
+        review_intent: 'normal',
+        reviewer_name: 'Codex',
+        review_provider: { requested_provider_id: 'p-codex', actual_provider_id: 'p-codex', actual_provider_name: 'Codex1' },
+        reviewed_at: AT.review1,
       },
     ],
     rejection_history: [

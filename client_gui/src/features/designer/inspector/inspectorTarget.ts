@@ -141,6 +141,26 @@ export function inspectorCardNodeKey(target: Pick<InspectorTarget, 'nodeType' | 
   return target && target.nodeType !== null && !target.nodeId.startsWith(INSPECTOR_CLIENT_KEY_PREFIX) ? target.nodeId : null
 }
 
+/**
+ * flowgate.v02.0056 F2-2 — the target with the card lines written from the Inspector ([작성], O3 0009-TR §4-2) that
+ * the Canvas read does not show yet: a written line takes the place of its slot's line while that line has no
+ * document (or the card has no line of the slot); a line the read shows with a document stays as read. The same
+ * target when nothing changes.
+ */
+export function withWrittenCardLines(target: InspectorTarget | null, written: readonly InspectorCardDocument[]): InspectorTarget | null {
+  if (!target || !written.length) return target
+  let changed = false
+  const lines = target.cardDocuments.map((line) => {
+    const own = written.find((item) => item.slot === line.slot)
+    if (!own || line.docId !== null) return line
+    changed = true
+    return own
+  })
+  const added = written.filter((item) => !target.cardDocuments.some((line) => line.slot === item.slot))
+  if (!changed && !added.length) return target
+  return { ...target, cardDocuments: [...lines, ...added] }
+}
+
 /** Selection context -> InspectorTarget; null when nothing is selected. */
 export function toInspectorTarget(selection: FlowGraphSelection | null | undefined): InspectorTarget | null {
   if (!selection) return null

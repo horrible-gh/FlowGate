@@ -10,7 +10,7 @@
        stays what an operator acts on — how many cards the workflow started, and a warning when Steps
        have no AI assigned. The `rev n · Step n` line summary is gone as well. -->
   <section class="inspector-work-plan" data-test="inspector-work-plan" :data-status="status" :data-has-document="hasDocument ? 'true' : 'false'">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="edit" @history="historyLine" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="edit" @history="historyLine" @action="actionLine" />
 
     <div v-if="hasDocument" :key="target.docId ?? undefined" class="inspector-work-plan-status" data-test="work-plan-status">
       <InspectorPaneState v-if="status === 'loading' && !view" state="loading" />
@@ -29,12 +29,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
-import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
+import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { openDocument, openDocumentHistory } from '../../openDocument'
+import { INSPECTOR_HOST } from '../../inspectorHost'
+import { cardLineRow, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
 import { workPlanSlotFocus, workPlanSlotState } from './workPlanModel'
 import { useWorkPlan } from './useWorkPlan'
 
@@ -43,6 +44,8 @@ const props = defineProps<{
 }>()
 
 const { t, te } = useI18n()
+
+const host = inject(INSPECTOR_HOST, null)
 
 const k = (key: string) => `gui.inspector.workPlan.${key}`
 
@@ -63,6 +66,14 @@ function edit(line: InspectorSlotView) {
 /** The history button: the line's 검수·반려 이력 window (flowgate.v02.0056 F1). */
 function historyLine(line: InspectorSlotView) {
   if (line.id) openDocumentHistory(line.id)
+}
+
+/**
+ * flowgate.v02.0056 F2-2: a row action of a card line — [작성] opens the line's write window (a plan line is made as an
+ * empty plan), [AI 호출] the document's AI call window (openCardLineAction; the Canvas is read again after them).
+ */
+function actionLine(line: InspectorSlotView, key: SlotActionKey) {
+  openCardLineAction(props.target, line, key, host)
 }
 
 function stateOf(reviewStatus: string | null, docStatus: string | null) {
@@ -106,7 +117,9 @@ const lines = computed<InspectorSlotView[]>(() => {
         open: 'enabled',
       }
     : { key: 'deploy', kind: 'result', name: t(k('slot.deploy')), empty: true, emptyText: t(k('slot_empty.deploy')) }
-  return [plan, deploy]
+  // flowgate.v02.0056 F2-2: 문서 없음 [작성] · the history number · [AI 호출] of the card's own lines (a WP / M line is
+  // never "비어 있음" — O3 §4-1 has_body is always true there).
+  return [plan, deploy].map((line) => ({ ...line, ...cardLineRow(target, line, line.key!) }))
 })
 </script>
 

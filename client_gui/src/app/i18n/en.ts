@@ -382,6 +382,15 @@ export default {
         // flowgate.v02.0056 F1 — the history button of a document line: its 검수·반려 이력 window.
         history: 'Review history',
         history_count: 'Review history · {n}',
+        // flowgate.v02.0056 F2-2 — a card line's document without a body yet (O3 has_body), the row actions and the
+        // history button's hover text with the AI review / rejection split.
+        blank: 'Empty',
+        actions: {
+          write: 'Write',
+          ai_invoke: 'Call AI',
+          ai_invoke_running: 'AI working',
+        },
+        history_detail: 'Review history · {n} (AI reviews {reviews} · rejections {rejections})',
       },
       review: {
         pass: 'AI review ×{n} · {remain} finding(s) left',
@@ -914,6 +923,67 @@ export default {
       ai_response: 'AI response',
       fold: 'Fold',
       unfold: 'Unfold',
+    },
+    // flowgate.v02.0056 F2-2 — [Write] of a card line without a document (O3 0009-TR §4-2).
+    write: {
+      title: 'Write {name}',
+      editor: 'Body to write',
+      placeholder: 'Write the body in Markdown. Saving it blank makes an empty draft.',
+      contentless: 'An empty work plan is made. Edit it once it is made.',
+      result_note: 'The card is running. If this line is the card result, the saved document is registered as the result and the card waits for approval. A result needs a body.',
+      save: 'Save',
+      create: 'Create',
+      cancel: 'Cancel',
+      close: 'Close',
+      failure: {
+        slot_has_document: 'This line already has a document. Opening it.',
+        node_token_unavailable: 'The card result is already registered. Opening the registered document.',
+        node_in_instruction_stage: 'The instruction AI is writing the instruction. Save again when it is done.',
+        node_ai_working: 'The card AI is working. Save again when it is done.',
+        flow_disposed: 'The flow was disposed and cannot be written.',
+        card_documents_unavailable: 'The server does not support card documents.',
+        content: {
+          not_a_text: 'The body cannot be sent as text.',
+          too_long: 'The body is too long (500,000 characters at most).',
+          not_for_this_slot: 'This line is made without a body.',
+          empty_body: 'A document registered as the result needs a body.',
+        },
+        slot: {
+          not_a_slot_of_this_card: 'This card has no such line.',
+          slot_shares_a_document: 'This line shares the document of another line. Write it there.',
+          doc_type_not_registered: 'The document type is not registered in the project.',
+        },
+        invalid: 'This content cannot be saved.',
+        forbidden: 'You may not create documents.',
+        not_found: 'The card or the flow was not found.',
+        network: 'Could not reach the server.',
+        other: 'Could not save.',
+      },
+    },
+    // flowgate.v02.0056 F2-2 — the single AI call on a document (O3 0009-TR §4-3).
+    ai: {
+      title: 'Call AI',
+      provider: 'AI',
+      provider_loading: 'Loading the AIs...',
+      provider_pick: 'Pick an AI',
+      provider_error: 'Could not load the AIs.',
+      opinion: 'Opinion',
+      opinion_placeholder: 'An opinion for the AI (may be left blank).',
+      hint: '[Run] runs the AI once on this document. No review, rework or card approval follows. The card memos marked [AI refers] go with it.',
+      busy_this: 'Another AI run is working on this document.',
+      busy_other: 'Another AI run is working in this flow.',
+      running: 'AI working ({id})',
+      finished: 'The AI run ended ({reason})',
+      run: 'Run',
+      close: 'Close',
+      failure: {
+        run_in_progress: 'Another AI run is working in this flow.',
+        invalid: 'The request was not accepted.',
+        forbidden: 'You may not run the AI.',
+        not_found: 'The project was not found.',
+        network: 'Could not reach the server.',
+        other: 'Could not run the AI.',
+      },
     },
     // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
     types: {
