@@ -27,12 +27,19 @@ def queue(project_id: Optional[str], flow_id: str, event_type: str, payload: dic
         _send()
 
 
+# Run status changes no person asked for (0061 T#2: idle, and an idle run whose existing work goes on again).
+AUTO_CAUSES = ("completed", "run_idle", "work_resumed")
+
+
 def run_status_payload(run: dict, seq: int, from_status: Optional[str], to_status: str, cause: str,
                        actor_user_id: Optional[str], reason: Optional[str]) -> dict:
+    """flowgate.v02.0061 T#2: with the run's command ``mode`` and, going idle, its ``idle_reason``. A command that
+    changes the mode is stored on ``run`` before its event is made, so the event tells the command it goes on with."""
     return {
         "flow_id": run["group_id"], "run_id": run["run_id"], "revision_no": run["revision_no"],
         "event_seq": seq, "from": from_status, "to": to_status, "cause": cause,
-        "actor_user_id": actor_user_id if cause != "completed" else None, "reason": reason,
+        "actor_user_id": actor_user_id if cause not in AUTO_CAUSES else None, "reason": reason,
+        "mode": run.get("run_mode") or "full", "idle_reason": run.get("idle_reason") if to_status == "idle" else None,
     }
 
 

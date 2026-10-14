@@ -6,6 +6,9 @@ as a whole (P0008 S3-1); concurrent saves are refused by version (Q-13 provision
 Structure is not checked on save, only on validation / confirmation. The same unit brings the
 cards' documents in line with the draft (flowgate.v02.0053 T#1, ``card_document_ports.draft_saved``;
 the feature lives in ``flowgate.card_documents``).
+
+flowgate.v02.0061 T#11: a Graph read tells whether each node's card is held (``hold`` on every node of the draft and the
+revisions, ``graph_execution_hooks`` ``held_nodes``; false for all when no handler is registered).
 """
 from __future__ import annotations
 
@@ -21,7 +24,6 @@ from modules.flow_gate.graph_workflow.domain.graph_model import (
     Graph,
     GraphEdge,
 )
-from modules.flow_gate.graph_workflow.domain.graph_validator import validate_graph
 from modules.flow_gate.graph_workflow.domain.root_binding import BindingCheck, check_root_binding
 from modules.flow_gate.graph_workflow.projection.flow_snapshot import (
     alive_documents,
@@ -33,7 +35,7 @@ from modules.flow_gate.graph_workflow.store import assignment_store, definition_
 
 from .canvas_events import publish_canvas_changed
 from .canvas_service import follow_supersede
-from . import card_document_ports
+from . import card_document_ports, graph_validation_ports, run_state_ports
 from .engine_router import Ownership, block, confirm_block_reason, read_ownership, require_graph_editable
 from .errors import GraphApiError
 from .flow_guard import with_flow_guard
@@ -89,15 +91,27 @@ def revision_wire(rev: Optional[dict]) -> Optional[dict]:
             "confirmed_by": rev.get("confirmed_by"), "nodes": nodes, "edges": edges}
 
 
+def _with_hold(flow_id: str, *wires: Optional[dict]) -> None:
+    """0061 T#11: ``hold`` on each node of the wires (the card's Hold, kept by node key whatever the revision)."""
+    from modules.flow_gate.services import graph_execution_hooks
+    held = frozenset(graph_execution_hooks.call("held_nodes", flow_id) or ())
+    for wire in wires:
+        for node in (wire or {}).get("nodes", []):
+            node["hold"] = node["node_key"] in held
+
+
 def graph_payload(flow_id: str) -> dict:
     """P0008 §5.2 ``GET /flows/{flow_id}/graph``."""
     own = read_ownership(flow_id)
     latest_no = definition_store.latest_revision_no(flow_id)
+    draft = draft_wire(definition_store.draft(flow_id), own.state)
+    latest = revision_wire(definition_store.revision(flow_id, latest_no) if latest_no else None)
+    _with_hold(flow_id, draft, latest)
     return {
         "flow_id": flow_id,
         "ownership": block(flow_id, own),
-        "draft": draft_wire(definition_store.draft(flow_id), own.state),
-        "latest_revision": revision_wire(definition_store.revision(flow_id, latest_no) if latest_no else None),
+        "draft": draft,
+        "latest_revision": latest,
         "policies": policies.policy_states(),
     }
 
@@ -108,6 +122,7 @@ def revision_payload(flow_id: str, revision_no: int) -> dict:
     if rev is None:
         raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": revision_no})
     out = revision_wire(rev)
+    _with_hold(flow_id, out)
     binding = assignment_store.root_binding(flow_id)
     out["root_binding"] = None
     if binding and binding["bound_at_revision_no"] <= revision_no and \
@@ -128,9 +143,10 @@ def version_conflict(flow_id: str, expected: int, current: Optional[dict]) -> Gr
 
 
 def check_draft(flow_id: str, own: Ownership, draft: dict) -> tuple[list[dict], BindingCheck]:
-    """Structure issues + root binding (L0009 §2.4.2 / §2.5): binding issues come last."""
+    """Structure issues + root binding (L0009 §2.4.2 / §2.5): binding issues come last. The structure is
+    validated through ``graph_validation_ports`` (the flowgate.v02.0061 pre-run rules when registered)."""
     graph = as_graph(draft)
-    issues = validate_graph(graph, policies.current())
+    issues = graph_validation_ports.validate(graph, policies.current())
     snap = read_snapshot(flow_id)
     binding = check_root_binding(
         graph, own.state, alive_documents(snap), assignment_store.root_binding(flow_id),
@@ -168,6 +184,7 @@ def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optio
     def body() -> dict:
         own = read_ownership(flow_id)
         require_graph_editable(flow_id, own)
+        run_state_ports.require_editable(flow_id)
         current = definition_store.draft(flow_id)
         if (current["draft_version"] if current else 0) != req.draft_version:
             raise version_conflict(flow_id, req.draft_version, current)
@@ -180,6 +197,7 @@ def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optio
             raise GraphApiError(422, "invalid_request", {"errors": dr.sort_errors(errors)})
         taken = known_nodes | known_edges | layout_store.retired_keys(flow_id) | set(layout_store.positions(flow_id))
         nodes, edges, key_map = _resolve(req, taken)
+        run_state_ports.protect_definition(flow_id, nodes, edges)
         if req.draft_version == 0:
             base = latest_no if own.state == "graph" else None
             written = definition_store.create_draft(flow_id, base, user_id)

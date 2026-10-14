@@ -30,7 +30,9 @@ NO_RESULT = "no_result"                      # open: its work has no result yet
 AI_RUNNING = "ai_running"                    # in review, but its AI run or its card review still works
 ALREADY_APPROVED = "already_approved"        # done
 NODE_NOT_IN_REVIEW = "node_not_in_review"    # rejected / closed
-REASONS = (NODE_IS_GATE, NODE_NOT_STARTED, NO_RESULT, AI_RUNNING, ALREADY_APPROVED, NODE_NOT_IN_REVIEW)
+INTEGRATION_WAITING = "integration_waiting"  # 0061 T#9: approved, in review until its result is merged
+REASONS = (NODE_IS_GATE, NODE_NOT_STARTED, NO_RESULT, AI_RUNNING, ALREADY_APPROVED, NODE_NOT_IN_REVIEW,
+           INTEGRATION_WAITING)
 
 _BY_STATUS = {"done": ALREADY_APPROVED, "pending": NODE_NOT_STARTED, "open": NO_RESULT}
 
@@ -46,6 +48,9 @@ def refusal(flow_id: str, row: dict, node_type: Optional[str] = None) -> Optiona
         return NODE_NOT_IN_REVIEW
     if not row.get("result_doc_id"):
         return NO_RESULT
+    from modules.flow_gate.services import graph_execution_hooks
+    if row.get("run_id") and graph_execution_hooks.call("integration_waiting", row["run_id"], row["node_key"]):
+        return INTEGRATION_WAITING
     if card_settings_ports.ai_working(flow_id, row["node_key"], row["result_doc_id"]):
         return AI_RUNNING
     return None

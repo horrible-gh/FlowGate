@@ -54,10 +54,30 @@ starts no review and approves nothing (``on_run_ended`` follows only a node's in
 run and a review loop). A node's ``new`` run reviews or approves only the result it registered itself
 (``legacy.node_of_ai_run``): a result a person registered on the node while the run went on (the card line write)
 is never reviewed or approved by the run's end; it waits for the card approval.
+
+flowgate.v02.0061 T#2 (the Graph run's idle judgement, 0002-CH turn 29): the run-end port is called after the AI run
+released its lease, so between that release and this stage (the review loop's start, the automatic approval) neither
+the node's own AI run nor a review works on the result, and the Graph run would take the card for one awaiting a
+person's approval and go idle. Right before the release (``on_run_ending``) a node's run this stage will follow — its
+result run that ended on its own, or its review loop that passed — marks the node as still worked on
+(``ai_working``) until ``on_run_ended`` has followed it; the mark is cleared there whatever happened (and expires
+after ``STAGE_HANDOFF_TTL_SEC`` should that hook never come), and the Graph run is then judged again
+(``legacy.settle_graph_run``): running while the review it started works, otherwise waiting for the approval.
+
+flowgate.v02.0061 T#7: a Graph execution's end reaches this stage only when it was owned to its close (the finalize's
+``graph_end_owned``), and until this stage is over the Graph keeps the run working (the execution's run-end hand-off),
+so the instruction -> result and result -> review / approval steps of a run's last execution find it running. Every
+step here is judged for the attempt the ended execution was made for (``legacy.attempt_of_ai_run``): the automatic
+approvals (the instruction's with the result stage's start, the result's) run under the Stop gate's shared hold
+(``legacy.attempt_hold``) and so commit before a Stop's ``stopping`` does or are refused after it; the review loop's
+start is refused unless that attempt still works on the result (``execution.request_loop``). An old attempt's late
+end — the node opened again after a Stop — approves, starts and records nothing of the new one (refused, recorded).
 """
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from typing import Optional
 
 from flowgate.card_approval import legacy_adapter as approvals
@@ -71,6 +91,11 @@ _log = logging.getLogger(__name__)
 PASSED = "review_passed"
 EXITED = "exited"
 APPROVED = ("approved", "wf_done")
+# flowgate.v02.0061 T#2: how long a node stays marked as followed when on_run_ended never comes.
+STAGE_HANDOFF_TTL_SEC = 600
+
+_handoffs: dict[tuple[str, str], tuple[str, float]] = {}      # (flow, node) -> (AI run id, deadline)
+_handoff_lock = threading.Lock()
 
 
 def ended_cleanly(run: dict) -> bool:
@@ -81,38 +106,96 @@ def ended_cleanly(run: dict) -> bool:
     return run.get("end_reason") == EXITED and not run.get("stop_code")
 
 
+def on_run_ending(run: dict) -> None:
+    """``ai_run_end_hooks.on_run_ending`` handler (flowgate.v02.0061 T#2): a run of a Graph Flow is about to release
+    its lease. A node's run this stage will follow marks the node as still worked on until ``on_run_ended``."""
+    flow_id = run.get("group_id")
+    if not flow_id or not run.get("run_id") or not repository.available() or not legacy.graph_owned(flow_id):
+        return
+    node_key = _followed_node(flow_id, run)
+    if node_key is not None:
+        with _handoff_lock:
+            _handoffs[(flow_id, node_key)] = (run["run_id"], time.monotonic() + STAGE_HANDOFF_TTL_SEC)
+
+
+def _followed_node(flow_id: str, run: dict) -> Optional[str]:
+    """The node whose result this stage follows after ``run``: its review loop passed (the approval follows), or its
+    result run ended on its own with its own result (the review or the approval follows)."""
+    if run.get("document_review_loop"):
+        loop = legacy.review_loop_row(run["run_id"]) or run.get("document_review_loop") or {}
+        node = legacy.node_of_result(flow_id, run.get("doc_ref")) if loop.get("stop_reason") == PASSED else None
+        return node["node_key"] if node else None
+    if run.get("mode") != "single" or run.get("action_scope") != "new" or not ended_cleanly(run):
+        return None
+    if legacy.instruction_node_of_ai_run(flow_id, run["run_id"]) is not None:
+        return None                             # the instruction stage: the node stays open
+    found = legacy.node_of_ai_run(flow_id, run["run_id"])
+    return found[0]["node_key"] if found else None
+
+
+def _handoff_pending(flow_id: str, node_key: str) -> bool:
+    with _handoff_lock:
+        mark = _handoffs.get((flow_id, node_key))
+        if mark is not None and mark[1] <= time.monotonic():
+            _handoffs.pop((flow_id, node_key), None)
+            return False
+    return mark is not None
+
+
+def _clear_handoffs(run_id: Optional[str]) -> bool:
+    with _handoff_lock:
+        keys = [k for k, (owner, _deadline) in _handoffs.items() if owner == run_id]
+        for key in keys:
+            _handoffs.pop(key, None)
+    return bool(keys)
+
+
 def on_run_ended(run: dict) -> None:
     """``ai_run_end_hooks.on_run_ended`` handler: a run of a Graph Flow ended and released its lease."""
     flow_id = run.get("group_id")
     if not flow_id or not repository.available() or not legacy.graph_owned(flow_id):
+        _clear_handoffs(run.get("run_id"))
         return
-    if run.get("document_review_loop"):
-        _after_review(flow_id, run)
-    elif run.get("mode") == "single" and run.get("action_scope") in ("new", "edit"):
-        stage = legacy.instruction_node_of_ai_run(flow_id, run["run_id"])
-        if stage is not None:
-            _after_instruction(flow_id, run, *stage)
-        elif run.get("action_scope") == "new":
-            _after_work(flow_id, run)
+    try:
+        if run.get("document_review_loop"):
+            _after_review(flow_id, run)
+        elif run.get("mode") == "single" and run.get("action_scope") in ("new", "edit"):
+            stage = legacy.instruction_node_of_ai_run(flow_id, run["run_id"])
+            if stage is not None:
+                _after_instruction(flow_id, run, *stage)
+            elif run.get("action_scope") == "new":
+                _after_work(flow_id, run)
+    finally:
+        if _clear_handoffs(run.get("run_id")):
+            legacy.settle_graph_run(flow_id)    # 0061 T#2: running while its review works, else the approval wait
 
 
 def _after_instruction(flow_id: str, run: dict, node: dict, row: dict) -> None:
     """The instruction stage's AI run ended: approve the written instruction and start the result stage, or
     record the stage's failure (flowgate.v02.0056 T#2)."""
     key, issuer = node["node_key"], run.get("issued_to") or ""
+    # 0061 T#7: the attempt this AI run worked for; an AI run of an attempt the node no longer has (opened again
+    # after a Stop) approves, records and starts nothing (refused and recorded by the Graph).
+    attempt_id = legacy.attempt_of_ai_run(run)
     if not ended_cleanly(run):
         _log.info("card instruction stage failed flow=%s node=%s run=%s: run ended %s/%s",
                   flow_id, key, run.get("run_id"), run.get("end_reason"), run.get("stop_code"))
-        legacy.instruction_stage_failed(flow_id, row["run_id"], key)
+        legacy.instruction_stage_failed(flow_id, row["run_id"], key, attempt_id)
         return
     doc_id = written_instruction(flow_id, node, row)
     if doc_id is None:
         _log.info("card instruction stage failed flow=%s node=%s run=%s: no instruction written",
                   flow_id, key, run.get("run_id"))
-        legacy.instruction_stage_failed(flow_id, row["run_id"], key)
+        legacy.instruction_stage_failed(flow_id, row["run_id"], key, attempt_id)
         return
-    approve_instruction(flow_id, node, doc_id, issuer)
-    legacy.start_result_stage(flow_id, row["run_id"], key, doc_id, issuer)
+    jobs: list = []
+    with legacy.attempt_hold(row["run_id"], key, attempt_id, "instruction_approval") as owned:
+        if not owned:
+            return
+        approve_instruction(flow_id, node, doc_id, issuer)
+        legacy.start_result_stage(flow_id, row["run_id"], key, doc_id, issuer, attempt_id, defer=jobs)
+    for job in jobs:                                # the result stage's AI start, after the hold
+        job()
 
 
 def written_instruction(flow_id: str, node: dict, row: dict) -> Optional[str]:
@@ -164,6 +247,9 @@ def _after_work(flow_id: str, run: dict) -> None:
         _log.info("card review stage skipped flow=%s node=%s run=%s: run ended %s/%s, awaiting approval",
                   flow_id, node["node_key"], run.get("run_id"), run.get("end_reason"), run.get("stop_code"))
         return                                  # stopped or failed: a person approves the card
+    run_id, attempt_id = legacy.active_run_id(flow_id), legacy.attempt_of_ai_run(run)     # 0061 T#7
+    if run_id is None:
+        return
     stored = repository.values(flow_id, node["node_key"])
     step = fields.after_result(fields.card_kind(node.get("node_type"), node.get("doc_type")), stored)
     if step == fields.REVIEW:
@@ -176,10 +262,15 @@ def _after_work(flow_id: str, run: dict) -> None:
             return
         loop = fields.review_loop(stored, reviewer=reviewer, reworker=reworker)
         criteria = loop["review_criteria"]
+        if not legacy.attempt_owns(run_id, node["node_key"], attempt_id, "review_start"):
+            return
         legacy.start_review_loop(project_id, flow_id, doc_id, run.get("issued_to") or "", loop,
-                                 lambda last: fields.review_basis_note(criteria, last), node["node_key"])
+                                 lambda last: fields.review_basis_note(criteria, last), node["node_key"],
+                                 attempt_id=attempt_id)
     elif step == fields.APPROVE:
-        legacy.approve(flow_id, doc_id, run.get("issued_to") or "")
+        with legacy.attempt_hold(run_id, node["node_key"], attempt_id, "result_approval") as owned:
+            if owned:
+                legacy.approve(flow_id, doc_id, run.get("issued_to") or "")
 
 
 def _after_review(flow_id: str, run: dict) -> None:
@@ -191,7 +282,13 @@ def _after_review(flow_id: str, run: dict) -> None:
     loop = legacy.review_loop_row(run["run_id"]) or run.get("document_review_loop") or {}
     if loop.get("stop_reason") != PASSED:
         return                                  # hold, count spent, stalled, failure: a person approves
-    legacy.approve(flow_id, doc_id, run.get("issued_to") or "")
+    run_id = legacy.active_run_id(flow_id)
+    if run_id is None:
+        return
+    # 0061 T#7: the review execution's attempt must still work on the node; the approval commits under the Stop gate.
+    with legacy.attempt_hold(run_id, node["node_key"], legacy.attempt_of_ai_run(run), "review_approval") as owned:
+        if owned:
+            legacy.approve(flow_id, doc_id, run.get("issued_to") or "")
 
 
 def review_running(_flow_id: str, _node_key: str, doc_id: Optional[str]) -> bool:
@@ -201,5 +298,7 @@ def review_running(_flow_id: str, _node_key: str, doc_id: Optional[str]) -> bool
 
 def ai_working(flow_id: str, node_key: str, doc_id: Optional[str]) -> bool:
     """``card_settings_ports.ai_working`` handler: the node's own AI run has not ended yet (it still
-    holds the Flow's group AI lease), or the card's review loop works on its result ``doc_id``."""
-    return legacy.node_ai_run_active(flow_id, node_key) or review_running(flow_id, node_key, doc_id)
+    holds the Flow's group AI lease), the card's review loop works on its result ``doc_id``, or this stage is
+    about to follow the node's run that just released the lease (flowgate.v02.0061 T#2, ``on_run_ending``)."""
+    return (_handoff_pending(flow_id, node_key) or legacy.node_ai_run_active(flow_id, node_key)
+            or review_running(flow_id, node_key, doc_id))

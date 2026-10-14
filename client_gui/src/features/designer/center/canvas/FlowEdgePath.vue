@@ -15,19 +15,25 @@
        that face each other (edgeGeometry.ts over the live node rectangles, `sourceNode` /
        `targetNode`), so a card moved below another one is reached from its top, not always from
        the left. Without the two nodes (a bare use) the anchor props Vue Flow computed are drawn. -->
+  <!-- flowgate.v02.0061 T#14: a third look next to progressed / pending — `running`, a line into a node the work is
+       going through now: a dashed line in the info colour that moves toward its target (still when the user asks
+       for reduced motion). A line into a done / open / review node (`protectedTarget`) is never removed; selected, it
+       shows the progressed line's lock mark. -->
   <g
     class="flow-edge"
     :class="{
       'flow-edge-editable': editable,
       'flow-edge-issue': issue,
-      'flow-edge-progressed': progressed,
-      'flow-edge-pending': !progressed,
+      'flow-edge-progressed': progressed && !running,
+      'flow-edge-running': running,
+      'flow-edge-pending': !progressed && !running,
       'is-selected': selected,
     }"
     data-test="designer-canvas-edge"
     :data-edge-id="id"
     :data-edge-class="edgeClass ?? ''"
-    :data-progress="progressed ? 'progressed' : 'pending'"
+    :data-progress="running ? 'running' : progressed ? 'progressed' : 'pending'"
+    :data-protected="protectedTarget ? 'true' : 'false'"
     :data-selected="selected ? 'true' : 'false'"
     :data-deletable="deletable ? 'true' : 'false'"
     :data-source-side="anchors.sourcePosition"
@@ -52,7 +58,7 @@
       <path d="M-3.5,-3.5 L3.5,3.5 M3.5,-3.5 L-3.5,3.5" />
     </g>
     <g
-      v-else-if="selected && progressed"
+      v-else-if="selected && (progressed || protectedTarget)"
       class="flow-edge-locked"
       :transform="`translate(${middle.x},${middle.y})`"
       data-test="designer-canvas-edge-locked"
@@ -90,6 +96,10 @@ const props = withDefaults(
     progressed?: boolean
     selected?: boolean
     deletable?: boolean
+    /** flowgate.v02.0061 T#14: a line into a done / open / review node (never removed). */
+    protectedTarget?: boolean
+    /** flowgate.v02.0061 T#14: a line into a node the work is going through now. */
+    running?: boolean
   }>(),
   {
     sourcePosition: Position.Right,
@@ -103,6 +113,8 @@ const props = withDefaults(
     progressed: false,
     selected: false,
     deletable: false,
+    protectedTarget: false,
+    running: false,
   },
 )
 
@@ -192,6 +204,35 @@ const arrow = computed(() => {
   fill: var(--fg2-status-success-fg);
 }
 
+/* flowgate.v02.0061 T#14: running — the info colour, dashed, moving toward the target. */
+.flow-edge-running .flow-edge-path {
+  stroke: var(--fg2-status-info-fg);
+  stroke-width: 2.2;
+  stroke-dasharray: 7 5;
+  animation: flow-edge-run 0.9s linear infinite;
+}
+
+.flow-edge-running .flow-edge-arrow,
+.flow-edge-running:hover .flow-edge-arrow {
+  fill: var(--fg2-status-info-fg);
+}
+
+.flow-edge-running:hover .flow-edge-path {
+  stroke: var(--fg2-status-info-fg);
+}
+
+@keyframes flow-edge-run {
+  to {
+    stroke-dashoffset: -12;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-edge-running .flow-edge-path {
+    animation: none;
+  }
+}
+
 .flow-edge-hit {
   fill: none;
   stroke: transparent;
@@ -229,11 +270,11 @@ const arrow = computed(() => {
   stroke-width: 8;
 }
 
-.flow-edge.is-selected:not(.flow-edge-progressed):not(.flow-edge-issue) .flow-edge-path {
+.flow-edge.is-selected:not(.flow-edge-progressed):not(.flow-edge-running):not(.flow-edge-issue) .flow-edge-path {
   stroke: var(--fg2-focus);
 }
 
-.flow-edge.is-selected:not(.flow-edge-progressed):not(.flow-edge-issue) .flow-edge-arrow {
+.flow-edge.is-selected:not(.flow-edge-progressed):not(.flow-edge-running):not(.flow-edge-issue) .flow-edge-arrow {
   fill: var(--fg2-focus);
 }
 

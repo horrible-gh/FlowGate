@@ -30,6 +30,12 @@ there is no card rejection.
   the result first, or the card's automatic approval of an AI result — is no node event; the node stays in
   review, awaiting the card's approval, and the approval of the last document, in whichever order and
   through whichever entry point, moves it on.
+- flowgate.v02.0061 T#7 (0017-TR question 440): a line document an ended attempt of the node left behind (registered
+  with the tokens of its attempts a Stop, a lost lease or a failed worktree invalidated, and with none of its live
+  tokens: ``legacy.stale_documents``) is the card's history, not a document of the attempt the node is worked on by
+  now — it is no approval target and no pending document (``stale`` on its line), and it is neither deleted nor
+  detached. A document already approved, and a document none of those tokens touched (a person's own input in the
+  editor), keep counting as before.
 """
 from __future__ import annotations
 
@@ -42,7 +48,8 @@ from flowgate.card_documents import legacy_adapter as card_docs
 from flowgate.card_documents import lines as card_lines
 from flowgate.card_documents import slots
 
-ACTIVE_RUN_STATUSES = ("running", "stopped")
+# flowgate.v02.0061 T#2: a Flow's run is running, paused or idle (an idle run's waiting_approval is this approval).
+ACTIVE_RUN_STATUSES = ("running", "paused", "idle")
 APPROVED = ("approved", "wf_done")
 # A submitted document of a line (an empty draft the card made has no review status yet).
 SUBMITTED = ("pending_review", "revised", "rejected") + APPROVED
@@ -109,15 +116,21 @@ def card_lines_of(flow_id: str, node: dict) -> list[dict]:
     docs = {d["doc_id"]: d for d in card_docs.flow_documents(flow_id) if d.get("doc_id")}
     stored = card_lines.lines_by_node(flow_id, docs, [node["node_key"]]).get(node["node_key"], [])
     lines = slots.lines_of(node.get("node_type"), node.get("doc_type"), stored)
+    stale = legacy.stale_documents(flow_id, node.get("node_key"))
     for line in lines:
         if line.get("doc_id") and line.get("doc_review_status") not in SUBMITTED:
             line["written"] = card_lines.has_body(docs.get(line["doc_id"]) or legacy.document(line["doc_id"]))
+        if line.get("doc_id") in stale and line.get("doc_review_status") not in APPROVED:
+            line["stale"] = True                       # 0061 T#7: an ended attempt's document, kept as history
     return lines
 
 
 def is_target(line: dict) -> bool:
-    """A line's document a card approval approves: submitted, or written and never submitted (pure)."""
-    return bool(line.get("doc_id")) and (line.get("doc_review_status") in SUBMITTED or bool(line.get("written")))
+    """A line's document a card approval approves: submitted, or written and never submitted (pure) — never an ended
+    attempt's document (``stale``, 0061 T#7)."""
+    if not line.get("doc_id") or line.get("stale"):
+        return False
+    return line.get("doc_review_status") in SUBMITTED or bool(line.get("written"))
 
 
 def targets(node: dict, lines: list[dict], result_doc_id: Optional[str]) -> list[str]:
@@ -152,7 +165,7 @@ def approve(group: dict, run_id: str, node_key: str, expected_result: Optional[s
 
     Order of the checks (all before any write):
 
-    1. run missing -> 404 run_not_found; not running / stopped -> 409 run_not_active
+    1. run missing -> 404 run_not_found; not running / paused / idle -> 409 run_not_active
     2. ownership not graph -> 409 (as stop / resume / gate decision)
     3. node not in the run -> 404 node_not_found
     4. not awaiting approval -> 409 node_is_gate / node_not_started / no_result / ai_running /

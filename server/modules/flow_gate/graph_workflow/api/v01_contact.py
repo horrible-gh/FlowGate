@@ -42,6 +42,22 @@ def progress_refusal(doc: Optional[dict]) -> Optional[tuple[str, dict]]:
     return (refused.error, refused.body()) if refused is not None else None
 
 
+def time_machine_refusal(doc: Optional[dict], request=None) -> Optional[JSONResponse]:
+    """0061 T#12: v0.1 reopen/restore stop before touching Graph-owned state.
+
+    Reuse the engine router's existing read-only ownership contact. v0.1 and
+    unassigned flows pass unchanged; conflicts retain the ownership-conflict code.
+    """
+    from . import envelope
+    refused = _contact.progress_refusal(doc)
+    if refused is None:
+        return None
+    body = refused.body()
+    code = "graph_engine_owned" if refused.error == "flow_owned_by_graph" else refused.error
+    body.update(error=code, code=code, message=envelope.message(code, request))
+    return JSONResponse(status_code=REFUSAL_STATUS, content=body)
+
+
 def after_inbox_registered(flow_id: Optional[str], doc_id: str, doc_type: str, token_id: Optional[str]) -> None:
     """inbox registration committed (Step 7.5 done). Never raises, never changes the response."""
     _contact.after_document_event("inbox_registered", flow_id,

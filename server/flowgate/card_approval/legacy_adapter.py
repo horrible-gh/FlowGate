@@ -31,6 +31,7 @@ from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import group_ai_leases as db_leases
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.graph_workflow.api import envelope, v01_contact
+from modules.flow_gate.graph_workflow.projection.run_documents import registered_documents
 from modules.flow_gate.graph_workflow.services import canvas_service, graph_service, node_approval, run_service
 from modules.flow_gate.graph_workflow.services.engine_router import read_ownership
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
@@ -39,7 +40,7 @@ from modules.flow_gate.graph_workflow.store import definition_store, run_store
 __all__ = ["GraphApiError", "authenticate", "authorize", "invalid", "run", "client_id_of", "locale_of", "load_flow",
            "run_flow_id", "require_writable", "require_graph_owned", "run_by_id", "node_run", "revision_node",
            "refusal", "run_payload", "group_ai_run", "permissions_of", "document", "approve_document",
-           "after_approved", "APPROVE_PERMISSION"]
+           "after_approved", "stale_documents", "APPROVE_PERMISSION"]
 
 APPROVE_PERMISSION = "document.approve"
 # The TR2 approval attempt key of a person's card approval of a revision no attempt failed on (the card
@@ -267,6 +268,25 @@ def approve_document(flow_id: str, doc: dict, user_id: str, permissions: set[str
         raise _refused(doc_id, "transition_refused", str(exc)) from exc
     tr_commit_service.on_document_approved(doc_id, result)
     after_approved(flow_id, doc_id)
+
+
+def stale_documents(flow_id: str, node_key: Optional[str]) -> set[str]:
+    """flowgate.v02.0061 T#7 (0017-TR question 440): the card's documents an ended attempt of the node left behind —
+    registered (new or edit) with the tokens of the node's invalidated attempts in the Flow's active run (a Stop, a
+    lost lease, a failed worktree) and with none of its live tokens. They stay as the card's history but are no
+    document of the attempt the node is worked on by now: the card approval neither approves nor waits for them."""
+    if not node_key or not get_store().table_exists("graph_node_attempts"):
+        return set()
+    run_row = run_store.active_run(flow_id)
+    if run_row is None:
+        return set()
+    old_tokens = run_store.invalidated_token_ids(run_row["run_id"], node_key)
+    if not old_tokens:
+        return set()
+    old = {d["doc_id"] for d in registered_documents(flow_id, old_tokens)}
+    live_tokens = run_store.token_ids(run_row["run_id"], node_key)
+    live = {d["doc_id"] for d in registered_documents(flow_id, live_tokens)} if live_tokens and old else set()
+    return old - live
 
 
 def after_approved(flow_id: str, doc_id: str) -> None:

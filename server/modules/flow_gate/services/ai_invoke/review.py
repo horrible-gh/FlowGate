@@ -1362,6 +1362,16 @@ def _queue_gate_bundle(group_id: str, bundle: dict) -> None:
     _svc().request_auto_resume(group_id, bundle)
 
 
+def _start_graph_hop(*, graph_exec_id=None, **kwargs):
+    """Keep the durable request consistent if the existing admission path refuses it."""
+    try:
+        return _svc().start_run(graph_exec_id=graph_exec_id, **kwargs)
+    except Exception as exc:
+        from modules.flow_gate.services import graph_execution_hooks
+        graph_execution_hooks.call("start_failed", graph_exec_id, exc)
+        raise
+
+
 def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     """Launch the review hop (L0008 §2.5).
 
@@ -1402,6 +1412,8 @@ def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
             locale=locale,
             ai_run_id=ai_run_id,
         )
+        from modules.flow_gate.services import graph_execution_hooks
+        graph_execution_hooks.call("map_token", graph_exec_id, issued["token_id"])
         mention = issued.get("mention") or ""
         return {
             "raw_token": issued["token"],
@@ -1418,7 +1430,10 @@ def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     # same hop directly (not through run_review_gate), and its caller relays start_run's
     # own result dict back to the route the way every other start_run entry point does.
     # run_review_gate itself never reads the return value, so this is a pure addition.
-    return _svc().start_run(
+    from modules.flow_gate.services import graph_execution_hooks
+    graph_exec_id = graph_execution_hooks.call("request_hop", group_id, bundle, gate, "review")
+    return _start_graph_hop(
+        graph_exec_id=graph_exec_id,
         project_id=project_id,
         module=module,
         group_id=group_id,
@@ -1549,13 +1564,18 @@ def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
             locale=locale,
             ai_run_id=ai_run_id,
         )
+        from modules.flow_gate.services import graph_execution_hooks
+        graph_execution_hooks.call("map_token", graph_exec_id, issued["token_id"])
         # 0688 T#2: the answers about this document the fix has to follow, recorded under
         # this run before it is launched (a failure raises: no hop).
         return {**issued, "mention": _append_answered_questions(
             issued.get("mention") or "", bundle, slot, REWORK_HOP_KIND,
             group_id=group_id, run_id=ai_run_id)}
 
-    return _svc().start_run(
+    from modules.flow_gate.services import graph_execution_hooks
+    graph_exec_id = graph_execution_hooks.call("request_hop", group_id, bundle, gate, "rework")
+    return _start_graph_hop(
+        graph_exec_id=graph_exec_id,
         project_id=project_id,
         module=module,
         group_id=group_id,
@@ -1884,7 +1904,10 @@ def _document_loop_review_view(bundle: dict, reviews: list[dict]) -> tuple[list[
         history = sorted(after_baseline, key=lambda item: int(item.get("id") or 0), reverse=True)
         return history, (history[0] if history else None)
 
-    owned = [review for review in after_baseline if review.get("review_run_id") == run_id]
+    # Only Graph replay supplies predecessor identities from its durable execution journal.
+    # Ordinary loops retain their single-run provenance filter.
+    owners = {run_id, *(bundle.get("graph_review_run_ids") or [])}
+    owned = [review for review in after_baseline if review.get("review_run_id") in owners]
     # Newest round first. Inside one round the highest attempt (then the newest row) is the
     # verdict that round ended on, so a late verdict from an earlier attempt of the SAME
     # round can never displace it.
@@ -2190,6 +2213,7 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
         # `attempt_no` is deliberately NOT carried any more: it never changes inside a run,
         # so it can neither name a round nor a hop (0486 NR0028 F1).
         "review_run_id": run["run_id"],
+        "graph_review_run_ids": run.get("graph_review_run_ids") or [],
     }
     if succeeded and not check_expected_progress(bundle, doc or {}, reviews):
         if late_recheck:

@@ -3,9 +3,10 @@
 ownership (engine router) -> node identity (keeper, may record a rematch) -> projection by
 ownership (v01: sequence, unassigned: documents + draft, graph / conflict: Graph definition) ->
 saved / auto positions -> collapse -> response. A Graph Flow's revision view carries the run
-(P0008 S1-3): ``run`` block and each node's ``node_run``. A running / stopped run draws the revision
-it pinned (P0008 S5-2 may pin one older than the latest), so ``view.revision_no`` is the run's;
-with no such run the latest run is shown only when it ran the latest revision.
+(P0008 S1-3): ``run`` block and each node's ``node_run``. A running / paused / idle run that holds
+its Flow draws the revision it pinned (P0008 S5-2 may pin one older than the latest), so
+``view.revision_no`` is the run's; with no such run the latest run is shown only when it ran
+the latest revision.
 """
 from __future__ import annotations
 
@@ -116,9 +117,10 @@ def _pick_mode(flow_id: str, state: str, view: Optional[str], d: _Definition) ->
 
 
 def _flow_run(flow_id: str, latest_no: Optional[int]) -> Optional[dict]:
-    """The run the Canvas shows (P0008 S1-3 ``run``): the running / stopped one on whatever revision
-    it pinned, else the latest run when it ran the latest revision (a finished run of an older
-    revision is not laid over a newer one)."""
+    """The run the Canvas shows (P0008 S1-3 ``run``): the Flow holder on its pinned revision,
+    else the latest run when it ran the latest revision. An idle run keeps its Flow and its
+    node states visible on the execution revision until its next command adopts the newer
+    revision (flowgate.v02.0061 T#3)."""
     from .run_service import run_payload                     # noqa: PLC0415 — run_service -> graph_service -> here
 
     run = run_store.active_run(flow_id)

@@ -21,6 +21,7 @@ import type {
   FlowCanvasNode,
   FlowCanvasNodeRun,
   FlowCanvasOwnership,
+  FlowCanvasRun,
   FlowCanvasSlot,
   FlowCanvasView,
   FlowCanvasViewport,
@@ -83,10 +84,15 @@ function toGraphNode(raw: Raw | null | undefined): FlowCanvasGraphNode | null {
   }
 }
 
-// flowgate.v02.0048 T#1: kept for the Inspector; the top-level `run` and edge `condition` stay dropped.
+// flowgate.v02.0048 T#1: kept for the Inspector; the edge `condition` stays dropped (the top-level `run`: toRun).
 // flowgate.v02.0056 F2-1: `awaiting_approval` (O1) and `stage` / `instruction_doc_id` (O2), kept only when sent.
+// flowgate.v02.0061 T#14: the attempt's `integration_status` / `integration_reason`, `hold` and the attempt's running /
+// requested execution counts, kept only when sent. T#15: the node's current `attempt_id` too (the Time Machine
+// confirmation's basis), kept only when sent.
 function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
   if (!raw || typeof raw !== 'object') return null
+  const running = count(raw.running_execution_count)
+  const requested = count(raw.requested_execution_count)
   return {
     status: str(raw.status),
     openedAt: str(raw.opened_at),
@@ -95,6 +101,12 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     ...(typeof raw.awaiting_approval === 'boolean' ? { awaitingApproval: raw.awaiting_approval } : {}),
     ...('stage' in raw ? { stage: str(raw.stage) } : {}),
     ...('instruction_doc_id' in raw ? { instructionDocId: str(raw.instruction_doc_id) } : {}),
+    ...('integration_status' in raw ? { integrationStatus: str(raw.integration_status) } : {}),
+    ...('integration_reason' in raw ? { integrationReason: str(raw.integration_reason) } : {}),
+    ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
+    ...(running !== null ? { runningExecutionCount: running } : {}),
+    ...(requested !== null ? { requestedExecutionCount: requested } : {}),
+    ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
   }
 }
 
@@ -128,6 +140,19 @@ export function toCardDocuments(raw: unknown): FlowCanvasCardDocument[] {
   return raw
     .filter((line): line is Raw => !!line && typeof line === 'object' && typeof line.slot === 'string')
     .map(toCardDocument)
+}
+
+// flowgate.v02.0061 TR0031 rev1: the top-level `run` block — its status keeps the run lock while the run read is
+// pending or failed. A block without a run id and status is no run. T#15: its `last_event_seq`, kept only when sent.
+function toRun(raw: Raw | null | undefined): FlowCanvasRun | null {
+  if (!raw || typeof raw.run_id !== 'string' || typeof raw.status !== 'string') return null
+  const lastEventSeq = count(raw.last_event_seq)
+  return {
+    runId: raw.run_id,
+    status: raw.status,
+    revisionNo: num(raw.revision_no),
+    ...(lastEventSeq !== null ? { lastEventSeq } : {}),
+  }
 }
 
 function toView(raw: Raw | null | undefined): FlowCanvasView | null {
@@ -235,6 +260,8 @@ export function toFlowCanvas(raw: Raw): FlowCanvas {
     },
     view: toView(raw.view),
     graph: toGraphBlock(raw.graph),
+    // Absent from an older server's answer: the Canvas then says nothing about the run.
+    ...('run' in raw ? { run: toRun(raw.run) } : {}),
   }
 }
 

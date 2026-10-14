@@ -45,6 +45,11 @@ its result type is the card's of that time (``result_type`` hands the stage on a
 Anything else binds nothing and stays an unbound document node. A lost delegation (exception in
 the contact) is recovered by reconciliation from the v0.1 records (L0009 E-27): on resume, and
 before a run read when ``needs_reconcile`` says something is missing.
+
+flowgate.v02.0061 T#7: a stopping run binds nothing (no contact, no reconciliation), and a registration made with the
+token of an attempt that may not write any more (invalidated, its run stopping) is refused and recorded
+(``graph_execution_hooks`` ``result_refused``). An invalidated attempt's tokens are no evidence any more
+(``run_store.token_ids``), so a node opened again never takes the old attempt's result.
 """
 from __future__ import annotations
 
@@ -62,7 +67,7 @@ from modules.flow_gate.graph_workflow.store import run_store
 from . import card_approval_ports, card_settings_ports
 from .engine_router import read_ownership
 from .flow_guard import with_flow_guard
-from .run_apply import RunContext, apply_decision, fill_line, load_context, read_run_state
+from .run_apply import RunContext, apply_decision, fill_line, load_context, read_run_state, settle_run
 
 _log = logging.getLogger(__name__)
 
@@ -72,6 +77,7 @@ RECONCILE_MAX_STEPS_PER_NODE = 64
 # Only an approval moves a node on; a rejection is no node event (flowgate.v02.0056 T#1).
 _DECISIONS = {"approve": "review_approved", "approved": "review_approved"}
 CANCELLED = "cancelled"
+STOPPING = "stopping"                                           # 0061 T#7
 
 
 def _project_id(flow_id: str) -> Optional[str]:
@@ -97,11 +103,15 @@ def on_document_event(kind: str, flow_id: str, payload: dict) -> None:
         run = run_store.active_run(flow_id)
         if run is None:
             return
+        from modules.flow_gate.services import graph_execution_hooks
+        if graph_execution_hooks.call("result_refused", run, kind, payload):
+            return                                               # 0061 T#7: fenced, recorded, nothing moves
         ctx = load_context(run, _project_id(flow_id), None, jobs)
         found = locate(ctx, kind, payload)
         if found is None:
             if kind == "review_decided" and _approval(payload):
                 _follow_card(ctx)                                # another document of a card approved
+            settle_run(ctx)                                      # 0061 T#2: a review ended with no node event
             return
         policies = policies_of(run_store.policy_entries(ctx.run_id))      # E-33 -> rollback
         if found.kind == "revised" and _next_in_chain(ctx, found.replaces) != found.doc_id:
@@ -278,6 +288,9 @@ def next_missing_event(ctx: RunContext, s: RunState, key: str) -> Optional[RunEv
     if nr.status == "review" and cur.get("doc_review_status") in ("approved", "wf_done"):
         if not card_complete(ctx, key, cur["doc_id"]):
             return None                                           # approved result, card not yet
+        from modules.flow_gate.services import graph_execution_hooks
+        if graph_execution_hooks.call("integration_waiting", ctx.run_id, key):
+            return None                                           # 0061 T#9: approved, its merge decides
         return RunEvent("review_approved", key, doc_id=cur["doc_id"])
     return None
 
@@ -310,7 +323,7 @@ def reconcile_links(ctx: RunContext, policies: dict) -> None:
 def reconcile_if_needed(flow_id: str, project_id: Optional[str]) -> None:
     """Before a run read (L0009 §2.6.8 호출 시점). A failure only skips the repair; the read goes on."""
     run = run_store.active_run(flow_id)
-    if run is None or not needs_reconcile(load_context(run, project_id, None)):
+    if run is None or run["status"] == STOPPING or not needs_reconcile(load_context(run, project_id, None)):
         return
     jobs: list = []
 
@@ -318,7 +331,7 @@ def reconcile_if_needed(flow_id: str, project_id: Optional[str]) -> None:
         if read_ownership(flow_id).state != "graph":
             return
         again = run_store.active_run(flow_id)
-        if again is None:
+        if again is None or again["status"] == STOPPING:      # 0061 T#7: a stopping run binds nothing
             return
         ctx = load_context(again, project_id, None, jobs)
         reconcile_links(ctx, policies_of(run_store.policy_entries(ctx.run_id)))

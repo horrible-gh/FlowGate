@@ -286,8 +286,12 @@ def open_tr_conflict_session(
     original_sha: Optional[str],
     subject: str,
     body: str,
+    extra_context: Optional[dict] = None,
 ) -> Optional[dict]:
     """Keep a conflicted revert alive as a conflict session instead of destroying it.
+
+    flowgate.v02.0061 T#9: a Graph attempt's conflicted merge is kept the same way (``kind``
+    ``graph_attempt_merge``); ``extra_context`` adds what names it (the attempt, its node and result).
 
     Returns ``{"merge_id": int, "files": [...]}``, or **None** when the conflict cannot be
     kept — git reports no unmerged path (so the revert failed for some other reason and
@@ -322,6 +326,7 @@ def open_tr_conflict_session(
                 "body": body,
                 "prev_status": state.get("status") or "none",
                 "branch": state.get("branch"),
+                **(extra_context or {}),
             },
         )
     except Exception:
@@ -425,7 +430,12 @@ def commit_tr_conflict(
         raise GitServiceError(
             409, "git_busy", f"another git operation is in progress for '{project_id}'"
         )
+    graph_merge = kind == _gs.db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE
     try:
+        if graph_merge:
+            # 0061 T#9: under G the session must still be open and its merge the one in flight — an abort (a
+            # person's, the sweep's, a Stop's) that won the lock leaves nothing to commit on.
+            _graph_merge_owned(group_id, merge_id, root)
         if review_fingerprint is not None:
             fresh = _gs.db_git.session_context(_gs.db_git.get_session(merge_id))
             if not fresh.get("review_fingerprint"):
@@ -452,7 +462,9 @@ def commit_tr_conflict(
         staged = _gs._run_git(
             ["diff", "--cached", "--quiet"], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC,
         )
-        empty = staged.returncode == 0
+        # 0061 T#9: a merge is committed even when its tree is HEAD's — its commit is what records the attempt's
+        # result as a parent on the group branch, and it ends the in-flight merge.
+        empty = staged.returncode == 0 and kind != _gs.db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE
         commit = None
         if not empty:
             proc = _gs._run_git(
@@ -466,11 +478,16 @@ def commit_tr_conflict(
             commit = (head.stdout or "").strip() or None
         # Either way the revert is over; the sequencer state is what is left of it.
         _gs._run_git(["revert", "--quit"], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+        if graph_merge:
+            # 0061 T#9: closed under the same G as the commit, so no abort can come between them.
+            _gs.db_git.close_session(merge_id, "done")
+            _gs._set_status(group_id, context.get("prev_status") or "waiting")
     finally:
         _release_group_lock(lock)
 
-    _gs.db_git.close_session(merge_id, "done")
-    _gs._set_status(group_id, context.get("prev_status") or "waiting")
+    if not graph_merge:
+        _gs.db_git.close_session(merge_id, "done")
+        _gs._set_status(group_id, context.get("prev_status") or "waiting")
     return {
         "ok": True,
         "result": {
@@ -486,19 +503,24 @@ def commit_tr_conflict(
     }
 
 
-def abort_tr_conflict(group_id: str, merge_id: int) -> dict:
+def abort_tr_conflict(group_id: str, merge_id: int, *, no_wait: bool = False) -> dict:
     """Give up on a TR conflict: restore the worktree, close the session, keep the row.
 
     The body is the old :func:`restore_after_failed_revert` — ``revert --quit`` then
     ``reset --hard HEAD``, and still never ``git clean`` (0382). The ledger row is left
     exactly as it was, because nothing about it changed: the commit it names is still live
     (a cancel that gave up) or still cancelled (a reapply that gave up).
+
+    flowgate.v02.0061 T#9: a ``graph_attempt_merge`` session is aborted under the group's G
+    (:func:`_abort_graph_attempt_merge`; ``no_wait`` for the sweep).
     """
     from modules.flow_gate.services import git_service as _gs
-    session, _cfg, _project_id, root = _gs._session_context(group_id, merge_id)
+    session, _cfg, project_id, root = _gs._session_context(group_id, merge_id)
     kind = _gs.db_git.session_kind(session)
     if kind not in _gs.db_git.TR_SESSION_KINDS:
         raise GitServiceError(409, "invalid_state", "not a TR conflict session")
+    if kind == _gs.db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE:
+        return _abort_graph_attempt_merge(group_id, merge_id, project_id, root, no_wait=no_wait)
     context = _gs.db_git.session_context(session)
     _gs._run_git(["revert", "--quit"], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
     _gs._run_git(["reset", "--hard", "HEAD"], cwd=root, timeout=GIT_LOCAL_TIMEOUT_SEC)
@@ -508,6 +530,58 @@ def abort_tr_conflict(group_id: str, merge_id: int) -> dict:
         "ok": True,
         "result": {
             "status": "aborted", "kind": kind,
+            "doc_id": context.get("doc_id"), "doc_code": context.get("doc_code"),
+            "ledger_row_id": context.get("ledger_row_id"),
+        },
+    }
+
+
+def _graph_merge_owned(group_id: str, merge_id: int, root: Path) -> dict:
+    """flowgate.v02.0061 T#9, under G: the ``graph_attempt_merge`` session is still open and the merge in flight
+    in the group worktree, if any, is its own (``MERGE_HEAD`` = its result). Returns its fresh context."""
+    from modules.flow_gate.services import git_service as _gs
+    fresh = _gs.db_git.get_session(merge_id)
+    if fresh is None or fresh.get("status") != "open" or fresh.get("group_id") != group_id:
+        raise GitServiceError(409, "invalid_state", f"merge session {merge_id} is no longer open")
+    context = _gs.db_git.session_context(fresh)
+    merge_head = _gs._rev_parse(root, "MERGE_HEAD")
+    if merge_head is not None and merge_head != context.get("target_sha"):
+        raise GitServiceError(409, "invalid_state", "the merge in flight is not this session's")
+    return context
+
+
+def _abort_graph_attempt_merge(
+    group_id: str, merge_id: int, project_id: str, root: Path, *, no_wait: bool = False,
+) -> dict:
+    """flowgate.v02.0061 T#9: give up on a Graph attempt's conflicted merge — a person's abort, the sweep's (TTL,
+    orphan) and a Stop's alike. Under the group's G (the lock its resolution and commit take): the session must still
+    be open and the merge in flight its own; ``merge --abort`` must succeed and leave no ``MERGE_HEAD`` and no
+    unmerged path before the session closes. A refused lock or a failed abort raises and keeps the session open (the
+    caller retries); a commit that won the lock closed the session first (409 ``invalid_state``) and its close
+    finishes the integration. Never ``reset --hard`` and never ``git clean``."""
+    from modules.flow_gate.services import git_service as _gs
+    lock = _acquire_group_lock(project_id, group_id, "tr_conflict", no_wait=no_wait)
+    if lock is None:
+        raise GitServiceError(
+            409, "git_busy", f"another git operation is in progress for '{project_id}'"
+        )
+    try:
+        context = _graph_merge_owned(group_id, merge_id, root)
+        if _gs._rev_parse(root, "MERGE_HEAD") is not None:
+            proc = _gs._run_git(["merge", "--abort"], cwd=root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+            if proc.returncode != 0:
+                raise GitServiceError(500, "git_error", "Merge abort failed",
+                                      diagnostic=_gs._last_line(proc.stderr))
+        if _gs._rev_parse(root, "MERGE_HEAD") is not None or _gs._unmerged_paths(root):
+            raise GitServiceError(500, "git_error", "the merge state remains after the abort")
+        _gs.db_git.close_session(merge_id, "aborted")
+        _gs._set_status(group_id, context.get("prev_status") or "waiting")
+    finally:
+        _release_group_lock(lock)
+    return {
+        "ok": True,
+        "result": {
+            "status": "aborted", "kind": _gs.db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE,
             "doc_id": context.get("doc_id"), "doc_code": context.get("doc_code"),
             "ledger_row_id": context.get("ledger_row_id"),
         },

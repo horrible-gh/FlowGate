@@ -12,6 +12,7 @@ from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.services import test_run_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services.auth_outbound import verify_bearer
+from modules.flow_gate.services import graph_source_hooks
 from modules.flow_gate.rbac.permission_service import has_permission
 
 router = APIRouter(prefix="/api/v1", tags=["TestRun"])
@@ -33,6 +34,10 @@ def post_test_run(body: TestRunBody, request: Request):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
+    try:
+        graph_source_hooks.reject_group_source(auth, "test_run")
+    except graph_source_hooks.GraphSourceError as exc:
+        return JSONResponse(status_code=409, content={"ok": False, "error": exc.detail})
     doc = db_docs.get_by_id(body.doc_id)
     if doc is None:
         return JSONResponse(status_code=404, content={"error": "doc_not_found", "doc_id": body.doc_id})
@@ -99,6 +104,10 @@ def post_test_results(body: TestResultsBody, request: Request):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
+    try:
+        graph_source_hooks.reject_group_source(auth, "test_run")
+    except graph_source_hooks.GraphSourceError as exc:
+        return JSONResponse(status_code=409, content={"ok": False, "error": exc.detail})
     if not auth.get("_is_user_jwt"):
         return JSONResponse(status_code=403, content={"error": "user_session_required"})
     doc = db_docs.get_by_id(body.doc_id)
@@ -151,6 +160,10 @@ def post_test_run_cancel(run_id: str, request: Request):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
+    try:
+        graph_source_hooks.reject_group_source(auth, "test_run")
+    except graph_source_hooks.GraphSourceError as exc:
+        return JSONResponse(status_code=409, content={"ok": False, "error": exc.detail})
     if not auth.get("_is_user_jwt"):
         return JSONResponse(status_code=403, content={"error": "user_session_required"})
     run = db_test_runs.get_run(run_id)
@@ -176,6 +189,10 @@ def post_test_run_request(body: TestRunBody, request: Request):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
+    try:
+        graph_source_hooks.reject_group_source(auth, "test_run")
+    except graph_source_hooks.GraphSourceError as exc:
+        return JSONResponse(status_code=409, content={"ok": False, "error": exc.detail})
     if not auth.get("_is_user_jwt"):
         return JSONResponse(status_code=403, content={"error": "user_session_required"})
     doc = db_docs.get_by_id(body.doc_id)
@@ -221,6 +238,10 @@ def _post_spec_execution(ts_id: str, case_id: Optional[str], request: Request):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
+    try:
+        graph_source_hooks.reject_group_source(auth, "test_run")
+    except graph_source_hooks.GraphSourceError as exc:
+        return JSONResponse(status_code=409, content={"ok": False, "error": exc.detail})
     if not auth.get("_is_user_jwt"):
         return JSONResponse(status_code=403, content={"error": "user_session_required"})
     doc = db_docs.get_by_id(ts_id)
@@ -252,6 +273,10 @@ def _test_asset_auth(ts_id: str, request: Request):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
+    try:
+        graph_source_hooks.reject_group_source(auth, "test_run")
+    except graph_source_hooks.GraphSourceError as exc:
+        return JSONResponse(status_code=409, content={"ok": False, "error": exc.detail})
     if not auth.get("_is_user_jwt"):
         return JSONResponse(status_code=403, content={"error": "user_session_required"})
     doc = db_docs.get_by_id(ts_id)

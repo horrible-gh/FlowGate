@@ -24,7 +24,13 @@
        step a card drag moves in.
        flowgate.v02.0056 F2-1: a stopped run with cards approved meanwhile says so beside the dot — "멈춤 · 다음
        카드 N개 대기" (the waiting cards' keys in its tooltip). That is the run's stop, not a card waiting for
-       approval: the Canvas keeps those cards 승인됨. -->
+       approval: the Canvas keeps those cards 승인됨.
+       flowgate.v02.0061 T#14 (R §실행 제어): the two run buttons are the open Flow's run phase's (`runPhase`) — idle:
+       다음 단계 · 전체 실행; running: 일시정지 · 중지; paused: 재개 · 중지; stopping: one 중지 중 in their place, off.
+       No standing button; 0038's "the pressed button turns into ■ 중지" is gone. Every run button (and 검증) is off
+       while a run command is answered (`targets.runBusy`). The dot shows the phase and the band beside it — in the
+       place of the waiting cards line — the run's status, its command, why an idle run is idle, its running /
+       requested executions against the Flow's limit and the cards waiting for the next command (keys in its tooltip). -->
   <div
     class="designer-toolbar"
     :class="{ 'is-unavailable': disabled }"
@@ -93,7 +99,7 @@
               type="button"
               role="menuitem"
               class="designer-tool-pop-item"
-              :disabled="!isMenuCommandEnabled(command, runMode, targets)"
+              :disabled="!isMenuCommandEnabled(command, runPhase, targets)"
               data-test="designer-arrange-item"
               :data-arrange="command"
               @click="chooseArrange(command)"
@@ -111,49 +117,57 @@
         class="designer-tool"
         data-test="designer-tool"
         data-command="run.validate"
-        :disabled="disabled || !canValidate || runMode !== null"
+        :disabled="disabled || !canValidate || !isMenuCommandEnabled('run.validate', runPhase, targets)"
         @click="emit('command', 'run.validate')"
       >
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" /><path d="M6.5 10.2l2.4 2.4 4.6-5" /></svg>
         <span>{{ t('gui.designer.top.tools.validate') }}</span>
       </button>
       <button
-        v-for="run in RUN_BUTTONS"
-        :key="run.mode"
+        v-for="run in runButtons"
+        :key="run.key"
         type="button"
         class="designer-tool"
-        :class="{ 'is-running': runMode === run.mode }"
-        :disabled="disabled || (runMode !== null && runMode !== run.mode)"
-        :aria-pressed="runMode === run.mode ? 'true' : 'false'"
+        :class="{ 'is-running': run.key === 'stopping' }"
+        :disabled="disabled || !run.enabled"
         data-test="designer-tool-run"
-        :data-run="run.mode"
-        @click="emit('command', runMode === run.mode ? 'run.stop' : run.command)"
+        :data-run="run.key"
+        :data-command="run.command"
+        @click="emit('command', run.command)"
       >
-        <svg v-if="runMode === run.mode" class="is-stop" viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="1" /></svg>
-        <svg v-else-if="run.mode === 'next'" class="is-run" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4l9 6-9 6z" /></svg>
+        <svg v-if="run.icon === 'stop'" class="is-stop" viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="1" /></svg>
+        <svg v-else-if="run.icon === 'pause'" class="is-stop" viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="4.5" width="3.5" height="11" rx="0.8" /><rect x="11.5" y="4.5" width="3.5" height="11" rx="0.8" /></svg>
+        <svg v-else-if="run.icon === 'next'" class="is-run" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4l9 6-9 6z" /></svg>
         <svg v-else class="is-run" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 4l8 6-8 6zM10 4l8 6-8 6z" /></svg>
-        <span>{{ runMode === run.mode ? t('gui.designer.top.tools.stop') : t(`gui.designer.top.tools.${run.label}`) }}</span>
+        <span>{{ t(`gui.designer.top.tools.${run.label}`) }}</span>
       </button>
       <span
-        v-if="shownRunStatus"
+        v-if="band"
         class="designer-run-dot"
-        :class="`is-${shownRunStatus}`"
+        :class="`is-${band.phase}`"
         role="img"
-        :aria-label="t(`gui.designer.top.run_status.${shownRunStatus}`)"
-        :title="t(`gui.designer.top.run_status.${shownRunStatus}`)"
+        :aria-label="t(`gui.designer.top.run_status.${band.phase}`)"
+        :title="t(`gui.designer.top.run_status.${band.phase}`)"
         data-test="designer-run-status"
-        :data-status="shownRunStatus"
+        :data-status="band.phase"
       >
-        <svg v-if="shownRunStatus === 'stopped'" viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.5v7M8.5 2.5v7" /></svg>
-        <svg v-else-if="shownRunStatus === 'completed'" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.3l2.4 2.4 4.6-5" /></svg>
+        <svg v-if="band.phase === 'paused'" viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.5v7M8.5 2.5v7" /></svg>
+        <svg v-else-if="band.phase === 'idle' && band.idleReason === 'completed'" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.3l2.4 2.4 4.6-5" /></svg>
       </span>
       <span
-        v-if="shownPending"
-        class="designer-run-pending"
-        :title="shownPending.nodeKeys.length ? t('gui.designer.top.run_pending_keys', { keys: shownPending.nodeKeys.join(', ') }) : undefined"
-        data-test="designer-run-pending"
-        :data-count="shownPending.count"
-      >{{ t('gui.designer.top.run_pending', { n: shownPending.count }) }}</span>
+        v-if="band"
+        class="designer-run-band"
+        :class="{ 'is-attention': attention }"
+        :title="bandTitle"
+        data-test="designer-run-band"
+        :data-phase="band.phase"
+        :data-command="band.command ?? ''"
+        :data-idle-reason="band.idleReason ?? ''"
+        :data-running="band.running"
+        :data-requested="band.requested"
+        :data-limit="band.limit ?? ''"
+        :data-pending="band.pendingCount"
+      >{{ bandText }}</span>
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
@@ -213,14 +227,15 @@ import {
   isMenuCommandEnabled,
   type DesignerDensity,
   type DesignerMenuTargets,
-  type DesignerRunMode,
-  type DesignerRunPending,
+  type DesignerRunBand,
+  type DesignerRunPhase,
   type DesignerTopCommand,
 } from './designerTop'
 
 const props = withDefaults(
   defineProps<{
-    runMode: DesignerRunMode
+    /** flowgate.v02.0061 T#14: the open Flow's run phase (which two run buttons show). */
+    runPhase: DesignerRunPhase
     density: DesignerDensity
     /** The Canvas zoom, in percent: what the zoom control shows. */
     zoom: number
@@ -231,16 +246,14 @@ const props = withDefaults(
     /** flowgate.v02.0059 T#2: the open Flow's structure edits can be undone / redone (Edit menu follows the same). */
     canUndo?: boolean
     canRedo?: boolean
-    /** flowgate.v02.0053 T#9: the open Flow's server run status (`running` | `stopped` | `completed`), or null. */
-    runStatus?: string | null
     /** flowgate.v02.0059 T#1: the [선택] mode is on. */
     selectMode?: boolean
     /** flowgate.v02.0059 T#2: what the 정렬 / 배치 ▾ commands act on (the Menu Bar's targets). */
     targets?: DesignerMenuTargets
-    /** flowgate.v02.0056 F2-1: cards approved while the run was stopped (runPendingView), or null. */
-    runPending?: DesignerRunPending | null
+    /** flowgate.v02.0061 T#14: the open Flow's run band (runBandView), or null (no run). */
+    runBand?: DesignerRunBand | null
   }>(),
-  { disabled: false, canValidate: false, canUndo: true, canRedo: true, runStatus: null, selectMode: false, targets: () => ALL_MENU_TARGETS, runPending: null },
+  { disabled: false, canValidate: false, canUndo: true, canRedo: true, selectMode: false, targets: () => ALL_MENU_TARGETS, runBand: null },
 )
 
 const emit = defineEmits<{
@@ -266,18 +279,68 @@ function chooseZoom(event: Event) {
   })
 }
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 
-/** Run states the dot shows; any other value (or none) shows no dot. */
-const RUN_DOT_STATES: readonly string[] = ['running', 'stopped', 'completed']
-const shownRunStatus = computed(() => (!props.disabled && props.runStatus && RUN_DOT_STATES.includes(props.runStatus) ? props.runStatus : null))
-/** The pending line goes with the stopped dot only. */
-const shownPending = computed(() => (shownRunStatus.value === 'stopped' && props.runPending && props.runPending.count > 0 ? props.runPending : null))
+// flowgate.v02.0061 T#14 (R §실행 제어): the two run buttons of each run phase, in place; 중지 중 is one, off.
+type RunIcon = 'next' | 'all' | 'pause' | 'stop'
+interface RunButton {
+  readonly key: string
+  readonly command: DesignerTopCommand
+  readonly label: string
+  readonly icon: RunIcon
+}
 
-const RUN_BUTTONS = [
-  { mode: 'next', command: 'run.next', label: 'run_next' },
-  { mode: 'all', command: 'run.all', label: 'run_all' },
-] as const
+const RUN_BUTTONS: Readonly<Record<DesignerRunPhase, readonly RunButton[]>> = {
+  idle: [
+    { key: 'next', command: 'run.next', label: 'run_next', icon: 'next' },
+    { key: 'all', command: 'run.all', label: 'run_all', icon: 'all' },
+  ],
+  running: [
+    { key: 'pause', command: 'run.pause', label: 'pause', icon: 'pause' },
+    { key: 'stop', command: 'run.stop', label: 'stop', icon: 'stop' },
+  ],
+  paused: [
+    { key: 'resume', command: 'run.resume', label: 'resume', icon: 'next' },
+    { key: 'stop', command: 'run.stop', label: 'stop', icon: 'stop' },
+  ],
+  stopping: [{ key: 'stopping', command: 'run.stop', label: 'stopping', icon: 'stop' }],
+}
+
+const runButtons = computed(() =>
+  RUN_BUTTONS[props.runPhase].map((run) => ({ ...run, enabled: isMenuCommandEnabled(run.command, props.runPhase, props.targets) })),
+)
+
+/** The run band, shown with an open Flow that has a run. */
+const band = computed(() => (!props.disabled ? props.runBand : null))
+
+/** Idle reasons a person acts on: the band stands out. */
+const ATTENTION_REASONS: readonly string[] = ['waiting_approval', 'blocked_rejected', 'error', 'merge_conflict', 'hold']
+const attention = computed(() => !!band.value?.idleReason && ATTENTION_REASONS.includes(band.value.idleReason))
+
+/** A server open key in words when this screen has them, else the key itself. */
+const wordOf = (group: string, key: string) => (te(`gui.designer.top.${group}.${key}`) ? t(`gui.designer.top.${group}.${key}`) : key)
+
+const bandText = computed(() => {
+  const run = band.value
+  if (!run) return ''
+  const parts = [t(`gui.designer.top.run_status.${run.phase}`)]
+  if (run.command) parts.push(wordOf('run_command', run.command))
+  if (run.idleReason) parts.push(wordOf('run_idle_reasons', run.idleReason))
+  if (run.phase !== 'idle' || run.running > 0 || run.requested > 0) {
+    parts.push(t('gui.designer.top.run_executions', { running: run.running, limit: run.limit ?? '-' }))
+    if (run.requested > 0) parts.push(t('gui.designer.top.run_requested', { n: run.requested }))
+  }
+  if (run.pendingCount > 0) parts.push(t('gui.designer.top.run_waiting_cards', { n: run.pendingCount }))
+  return parts.join(' · ')
+})
+
+const bandTitle = computed(() => {
+  const run = band.value
+  if (!run) return undefined
+  return run.pendingNodeKeys.length
+    ? `${bandText.value}\n${t('gui.designer.top.run_pending_keys', { keys: run.pendingNodeKeys.join(', ') })}`
+    : bandText.value
+})
 
 // flowgate.v02.0059 T#2: 정렬 / 배치 ▾ — the Edit menu's 정렬 / 배치 commands, then 자동 배치. The drop-down
 // is placed under its button in the viewport (fixed), so the Toolbar's own scrolling never clips it.
@@ -524,23 +587,32 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
   box-shadow: 0 0 0 3px rgba(43, 221, 173, 0.22);
 }
 
-.designer-run-dot.is-stopped {
+/* flowgate.v02.0061 T#14: paused amber (0053's stopped), stopping red, idle blue (0053's completed). */
+.designer-run-dot.is-paused {
   background: #f5a524;
 }
 
-.designer-run-dot.is-completed {
+.designer-run-dot.is-stopping {
+  background: var(--fg2-status-danger-fg);
+}
+
+.designer-run-dot.is-idle {
   background: #58a6ff;
 }
 
-/* flowgate.v02.0056 F2-1: the stop with waiting cards — the stopped dot's colour, in words. */
-.designer-run-pending {
+/* flowgate.v02.0061 T#14: the run band (0056 F2-1's waiting cards line, now the run's whole status). */
+.designer-run-band {
   flex: none;
-  max-width: 180px;
+  max-width: 300px;
   overflow: hidden;
-  color: var(--fg2-status-warning-fg);
+  color: #aebfd2;
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.designer-run-band.is-attention {
+  color: var(--fg2-status-warning-fg);
 }
 
 /* flowgate.v02.0059 0017-T: the one zoom control — the current zoom in a box, presets on opening it. */

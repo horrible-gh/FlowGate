@@ -13,11 +13,14 @@
        nothing shown is the read failure icon (why: its tooltip) with a ↻ retry, as on every settings form.
        flowgate.v02.0056 F2-1: the progress-after-review row is gone with its setting (O1 0005-TR §1-1, §4-3);
        a RUN card whose instruction is used has the 지시 AI row under it (O2 0007-TR §4-1: none = the run AI,
-       then the assigned AI). -->
+       then the assigned AI).
+       flowgate.v02.0061 T#14: a Graph card is also locked (the same 🔒 실행 중 line, every control off) while its Flow's
+       run is running, paused or stopping (`target.editLock`), without waiting for the settings read to say so.
+       TR0031 rev1: also while the run's status is not confirmed (`unknown`; the lock line then says so). -->
   <div class="inspector-settings" data-test="inspector-settings" :data-source="source" :data-kind="kind" :data-status="status">
     <InspectorReadFailure v-if="errorKey" :reason="t(k(errorKey))" @retry="reload" />
     <template v-else>
-      <InspectorLockNote v-if="locked" />
+      <InspectorLockNote v-if="locked" :text="lockText" />
       <InspectorBlock :locked="locked" class="inspector-settings-line" data-test="settings-instruction">
         <InspectorControlRow :label="t(k('instruction.label'))" :hint="t(k('instruction.hint'))">
           <InspectorSegment
@@ -128,12 +131,19 @@ const errorKey = computed(() => {
   return sequence.errorKey.value && !sequence.row.value ? sequence.errorKey.value : null
 })
 
-/** The 🔒 실행 중 line: a running card (server lock), or a v0.1 step started and not done yet. */
+/** The 🔒 실행 중 line: a running card (server lock or the Flow's run lock), or a v0.1 step started and not done yet. */
 const locked = computed(() => {
-  if (source.value === 'card') return card.node.value?.locked === true
+  if (source.value === 'card') return card.node.value?.locked === true || !!props.target.editLock
   const row = sequence.row.value
   return row !== null && settingsRowPhase(row) === 'in_progress'
 })
+
+/** TR0031 rev1: the lock line while only the unconfirmed run status locks the card (else the 🔒 실행 중 line). */
+const lockText = computed(() =>
+  source.value === 'card' && card.node.value?.locked !== true && props.target.editLock === 'unknown'
+    ? t('gui.designer.center.run_lock_pending')
+    : null,
+)
 
 /** Why nothing on a Graph card can change now (message key), or null. */
 const cardReason = computed(() =>
@@ -141,7 +151,7 @@ const cardReason = computed(() =>
     readOnly: props.target.readOnly,
     placing: card.placing.value,
     read: card.node.value !== null,
-    locked: card.node.value?.locked === true,
+    locked: card.node.value?.locked === true || !!props.target.editLock,
     blocked: card.blocked.value,
   }),
 )

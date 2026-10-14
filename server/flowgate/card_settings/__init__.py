@@ -12,7 +12,8 @@ ends, and ``integration.register`` (startup) connects those ports to this packag
     review_stage    what follows a node's AI run: the instruction stage's approval and the result stage
                     (flowgate.v02.0056 T#2), the card's AI review, then the approval (or a person's)
     routes          GET / PATCH /api/v1/flows/{flow_id}/nodes/{node_key}/settings
-    repository      the ``graph_node_settings`` table (migration 146) and which card a node key is
+    repository      the ``graph_node_settings`` table (migration 146) and which card a node key is; 0061 T#11
+                    also every card's Hold (field ``hold``), whose rules are ``flowgate.graph_run.hold``'s
     legacy_adapter  the Graph envelope, Flow guard, run state, AI policy, review loop and approval, called only
     integration     port handler registration
 """

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Query, Request
 from fastapi.responses import JSONResponse
 
 from modules.flow_gate.services.auth_outbound import verify_bearer
+from modules.flow_gate.services import graph_source_hooks
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import tr_self_check_service as selfcheck
 
@@ -26,6 +27,10 @@ def _auth(request: Request, doc_id: str, mutate: bool):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
+    try:
+        graph_source_hooks.reject_group_source(auth, "self_check")
+    except graph_source_hooks.GraphSourceError as exc:
+        return JSONResponse(status_code=409, content={"ok": False, "error": exc.detail})
     try:
         doc = selfcheck._document(doc_id)
     except selfcheck.SelfCheckError as exc:

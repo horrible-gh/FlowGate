@@ -74,6 +74,8 @@ function toDefinitionNode(raw: Raw): FlowGraphDefinitionNode {
     paletteItemId: str(raw.palette_item_id),
     label: str(raw.label) ?? '',
     assignee: toAssignee(raw.assignee),
+    // flowgate.v02.0061 T#15: every node of the draft and the revision says whether its card is held (T#11).
+    ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
   }
 }
 

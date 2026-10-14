@@ -2307,6 +2307,7 @@ def update_group(
     title: str | None = None,
     priority: str | None = None,
     module: str | None = None,
+    graph_execution_limit: int | None = None,
 ) -> dict:
     """Update group information (title/priority/module) and return {group_id, updated_at}."""
     group = db.get_group(group_id)
@@ -2314,6 +2315,10 @@ def update_group(
         return {"status": "error", "message": f"Group not found: {group_id}"}
 
     updates: dict = {}
+    if graph_execution_limit is not None:
+        if type(graph_execution_limit) is not int or graph_execution_limit < 1:
+            return {"status": "error", "message": "graph_execution_limit must be a positive integer."}
+        updates["graph_execution_limit"] = graph_execution_limit
     if title is not None:
         title = title.strip()
         if not title:
@@ -2329,13 +2334,19 @@ def update_group(
             "status": "success",
             "group_id": group_id,
             "updated_at": group.get("updated_at", ""),
+            "graph_execution_limit": group.get("graph_execution_limit", 4),
         }
 
-    updated = db_groups.update(group_id, updates)
+    if graph_execution_limit is not None:
+        from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+        updated = with_flow_guard(group_id, lambda: db_groups.update(group_id, updates))
+    else:
+        updated = db_groups.update(group_id, updates)
     return {
         "status": "success",
         "group_id": group_id,
         "updated_at": updated["updated_at"],
+        "graph_execution_limit": updated.get("graph_execution_limit", 4),
     }
 
 

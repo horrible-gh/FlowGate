@@ -3,7 +3,10 @@
        header (chat list / title / new chat) · participants · one chronological timeline ·
        composer (flowgate.v02.0047: the v9 order). It owns no tab button, panel header,
        collapse or width (R0001 §10): a Tool Panel Container puts this element in its body and
-       gives it the height to fill. -->
+       gives it the height to fill.
+       flowgate.v02.0061 T#14 (WP answer 2): `sourceLocked` — the Flow's Graph run is running / paused / stopping: the
+       AI source access mode cannot change (the reason on the mode icons); messages, AI calls and read use go on. A
+       refused edit / edit-once call (409 graph_run_locked) says so in the notice. -->
   <section class="conv-panel" data-test="conversation-panel" :aria-label="t('gui.conversation.label')">
     <ConversationHeader
       :chats="state.chats"
@@ -59,6 +62,7 @@
       :settings="state.settings"
       :saving-settings="state.savingSettings"
       :pending-source-mode="state.pendingSourceMode"
+      :source-locked="sourceLocked"
       :providers="state.providers"
       :selected-provider-id="state.selectedProviderId"
       :providers-status="state.providersStatus"
@@ -109,6 +113,8 @@ const props = defineProps<{
   groupId: string | null
   source?: ConversationSource
   readOnly?: boolean
+  /** flowgate.v02.0061 T#14: the Flow's Graph run locks the AI source access mode. */
+  sourceLocked?: boolean
 }>()
 
 const emit = defineEmits<{

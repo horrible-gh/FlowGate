@@ -30,6 +30,9 @@
 //
 // flowgate.v02.0056 F2-1: the node run also carries whether the card waits for its approval and the AI
 // card's step (O1 / O2); the Canvas card now reads the node run for its state chip (graph/cardStateView.ts).
+//
+// flowgate.v02.0061 T#15: the card Holds the Graph read tells (`holds`), so a card the run has no node run of shows its
+// Hold too.
 
 export interface FlowGraphNode {
   /** Unique within the Graph — the server node identity for a server Graph. */
@@ -126,6 +129,19 @@ export interface FlowGraphNodeRun {
   readonly stage?: string | null
   /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): the instruction document this card run writes (wrote), or null. */
   readonly instructionDocId?: string | null
+  /**
+   * flowgate.v02.0061 T#14: the node attempt's result integration (`pending` | `integrating` | `integrated` |
+   * `conflict` | `failed`, open key) and why, or null. Absent = not sent.
+   */
+  readonly integrationStatus?: string | null
+  readonly integrationReason?: string | null
+  /** flowgate.v02.0061 T#14: the card is held (T#11 Hold). Absent = false. */
+  readonly hold?: boolean
+  /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions. Absent = 0. */
+  readonly runningExecutionCount?: number
+  readonly requestedExecutionCount?: number
+  /** flowgate.v02.0061 T#15: the node's current attempt (null: none). Absent = not sent. */
+  readonly attemptId?: string | null
 }
 
 export interface FlowGraphNodeDefinition {
@@ -205,6 +221,31 @@ export interface FlowGraph {
    * them out with the others before leaving them out. Absent: none.
    */
   readonly hiddenNodeCount?: number
+  /**
+   * Meaning (flowgate.v02.0061 TR0031 rev1): the run the Canvas read shows, null when it shows none (no run, or not a
+   * Graph Flow). Absent: the source says nothing about runs (a sample source, an older server).
+   */
+  readonly run?: FlowGraphRun | null
+  /**
+   * Meaning (flowgate.v02.0061 T#15): the card Holds the Graph read (P0008 §5.2, T#11 `hold`) tells with this Graph, by
+   * node key — also of cards the run has no node run of. Absent: not read (a sample source, or that read failed).
+   */
+  readonly holds?: Readonly<Record<string, boolean>>
+}
+
+/**
+ * flowgate.v02.0061 TR0031 rev1: the run the Canvas read shows with the Graph (P0008 S1-3 `run`) — its status keeps the
+ * run lock while the run read is pending or failed.
+ */
+export interface FlowGraphRun {
+  readonly runId: string
+  readonly status: string
+  /**
+   * flowgate.v02.0061 T#15: the revision the run runs (null: not sent) and its event sequence (absent: not sent) — with
+   * the node runs' attempts, the Time Machine confirmation's basis when the run read is pending or failed.
+   */
+  readonly revisionNo?: number | null
+  readonly lastEventSeq?: number
 }
 
 /** flowgate.v02.0048 T#1: the selected Node with the Flow and project it belongs to (Center session -> Inspector). */
@@ -212,4 +253,10 @@ export interface FlowGraphSelection {
   readonly projectId: string
   readonly graph: FlowGraph
   readonly node: FlowGraphNode
+  /**
+   * flowgate.v02.0061 T#14: why the Flow's structure and card settings cannot change now — `run` while its run is
+   * running, paused or stopping (center/run/flowRunLock.ts); TR0031 rev1: `unknown` while its run status is not
+   * confirmed (being read, or the read failed). Absent / null = not locked.
+   */
+  readonly editLock?: 'run' | 'unknown' | null
 }

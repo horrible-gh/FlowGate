@@ -11,7 +11,7 @@
        Its Host intents are carried out here — select another Node, read the Flow again quietly —
        or, for a Tool Panel, passed up to the Shell. -->
   <div ref="columnRef" class="designer-center-column" data-test="designer-center-column">
-    <DesignerWorkspace :center="center" :unselected="unselected" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" />
+    <DesignerWorkspace :center="center" :unselected="unselected" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" @show-tool="emit('show-tool', $event)" />
     <DesignerResizeHandle
       class="designer-center-resize"
       axis="y"

@@ -171,6 +171,19 @@ def _close_run(run_id: str, reason: str, on_closed: Optional[Callable[[], None]]
 
 def _authorize_run(run: Optional[dict]) -> dict:
     """The checks every new request gets, re-applied at approval and right before spawn."""
+    if run:
+        from modules.flow_gate.db import tokens as db_tokens
+        from modules.flow_gate.services import graph_source_hooks
+        token_id = run.get("current_token_id") or run.get("token_id")
+        try:
+            token = db_tokens.get_by_id(token_id) if token_id else None
+            # flowgate.v02.0061 T#7: a stopping run's / inactive attempt's token gets no command — judged before
+            # its source root, so the refusal is graph_attempt_inactive (recorded), never a source error.
+            graph_source_hooks.require_writable(token, "chat_command")
+            graph_source_hooks.source_root(
+                token, project_id=run.get("project_id"), group_id=run.get("group_id"))
+        except graph_source_hooks.GraphSourceError as exc:
+            raise c.ConversationError(409, exc.code, exc.message) from exc
     if not run or run.get("action_scope") != "chat" or not run.get("doc_ref") \
             or not run.get("chat_command_capability"):
         raise c.ConversationError(403, c.ERR_CAPABILITY_REQUIRED,
@@ -216,14 +229,25 @@ def authorize_token(token: dict, run: Optional[dict]) -> dict:
     return _authorize_run(run)
 
 
-def worktree_root(project_id: str, group_id: str, expected: Optional[str] = None) -> Path:
+def worktree_root(project_id: str, group_id: str, expected: Optional[str] = None,
+                  *, token_id: Optional[str] = None) -> Path:
     """The group's managed worktree, strictly -- never the base checkout.
 
     ``expected`` is the root the run was admitted with; a mismatch (re-provisioned group,
     a run that fell back to another checkout) refuses instead of running elsewhere.
     """
+    from modules.flow_gate.db import tokens as db_tokens
+    from modules.flow_gate.services import graph_source_hooks
+    token = db_tokens.get_by_id(token_id) if token_id else None
+    if token_id and not token:
+        raise c.ConversationError(409, c.ERR_WORKTREE_UNAVAILABLE, "source token is missing")
     try:
-        root, reason = legacy_adapter.effective_src_root_ex(project_id, group_id)
+        root = graph_source_hooks.source_root(token, project_id=project_id, group_id=group_id)
+    except graph_source_hooks.GraphSourceError as exc:
+        raise c.ConversationError(409, exc.code, exc.message) from exc
+    try:
+        root, reason = ((root, legacy_adapter.WORKTREE_REASON) if root is not None
+                        else legacy_adapter.effective_src_root_ex(project_id, group_id))
     except Exception as exc:
         raise c.ConversationError(409, c.ERR_WORKTREE_UNAVAILABLE, str(exc)[:200]) from exc
     if reason != legacy_adapter.WORKTREE_REASON or not root:
@@ -488,13 +512,24 @@ def resolve_policy(user_id: Optional[str]) -> str:
 
 
 def create_request(run: dict, payload: object, *, token_id: Optional[str] = None) -> dict:
-    """Validate, bind to the worktree, apply the user's policy and store. Returns the row."""
+    """Validate, bind to the worktree, apply the user's policy and store. Returns the row.
+
+    flowgate.v02.0061 T#7: one Graph attempt-token write session — the judgement of the token (``_authorize_run``)
+    keeps the Stop gate's shared hold it was made under until the row is stored, so a Stop's
+    ``stopping`` commits before the judgement (refused) or after the request exists (cancelled with the run)."""
+    from modules.flow_gate.services import graph_source_hooks
+    with graph_source_hooks.write_session():
+        return _create_request(run, payload, token_id=token_id)
+
+
+def _create_request(run: dict, payload: object, *, token_id: Optional[str] = None) -> dict:
     _authorize_run(run)
     try:
         command = policy.validate_request(payload)
     except policy.CommandPolicyError as exc:
         raise c.ConversationError(422, exc.code, exc.message) from exc
-    root = worktree_root(run["project_id"], run["group_id"], run.get("source_root"))
+    root = worktree_root(run["project_id"], run["group_id"], run.get("source_root"),
+                         token_id=token_id or run.get("current_token_id") or run.get("token_id"))
     try:
         policy.resolve(command, root)
     except policy.CommandPolicyError as exc:
@@ -783,7 +818,7 @@ def _execute_owned(request_id: str, expected_root: Optional[str]) -> None:
 
     try:
         # Re-verified right before the process exists: the approval may have waited long.
-        root = worktree_root(row["project_id"], row["group_id"], expected_root)
+        root = worktree_root(row["project_id"], row["group_id"], expected_root, token_id=row.get("token_id"))
         command = policy.ChatCommand(row["program"], tuple(row["args"]), row["cwd_relative"],
                                      int(row["timeout_seconds"]), row["category"], False)
         resolved, cwd, path_value = policy.resolve(command, root)
@@ -791,7 +826,11 @@ def _execute_owned(request_id: str, expected_root: Optional[str]) -> None:
         env = policy.environment(path_value, runtime)
         # Last gate before a process exists. The check, the spawn and the control install
         # happen under the run's launch gate, so no cancellation begins in between.
-        with _launch_gate(row["ai_run_id"]):
+        # flowgate.v02.0061 T#7: a Graph attempt token's judgement (``_live_refusal``) keeps the Stop gate's shared
+        # hold through the spawn: a Stop's ``stopping`` commits before it (refused) or after the process exists
+        # (killed with its run). The gate is taken inside the launch gate; the Stop never holds it while it kills.
+        from modules.flow_gate.services import graph_source_hooks
+        with graph_source_hooks.write_session(), _launch_gate(row["ai_run_id"]):
             refusal_code = None
             refusal = _live_refusal(row["ai_run_id"])
             if refusal is not None:

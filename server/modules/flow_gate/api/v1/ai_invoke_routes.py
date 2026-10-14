@@ -12,6 +12,7 @@ the browser (P0005, notation rules).
 from __future__ import annotations
 
 from typing import Optional
+import functools
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
@@ -25,6 +26,7 @@ from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import ai_invoke_service
 from modules.flow_gate.services import ai_group_service
 from modules.flow_gate.services import card_memo_hooks
+from modules.flow_gate.services import graph_execution_hooks
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import token_service
@@ -307,7 +309,19 @@ def build_rework_mention(*, base: str, doc_ref: Optional[str], group_id: str,
     return "\n".join(leading) + "\n" + base if leading else base
 
 
+def _explicit_request(route):
+    """flowgate.v02.0061 T#7 (0017-TR question 439): a person's own AI request. A review / rework hop it asks of a
+    Graph attempt is the person's explicit review request, which the Graph takes on an idle run too
+    (``graph_execution_hooks.explicit_request``); nothing else about the route changes."""
+    @functools.wraps(route)
+    def handler(*args, **kwargs):
+        with graph_execution_hooks.explicit_request():
+            return route(*args, **kwargs)
+    return handler
+
+
 @router.post("/start")
+@_explicit_request
 def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     auth = _require_user(request)
     if isinstance(auth, JSONResponse):
@@ -1127,6 +1141,7 @@ def get_active_all_ai_invoke(request: Request):
 
 
 @router.post("/resume")
+@_explicit_request
 def resume_ai_invoke(body: dict, request: Request):
     """Resume a user-paused continuous chain (group 0252 P0008 S5). Group-keyed:
     a paused chain has no live run to address."""

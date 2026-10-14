@@ -322,6 +322,8 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 # token kept the prior review-scope, and POST /inbox action=edit 403'd
                 # ("Context binding mismatch") on every rework attempt, so the loop could
                 # never reach review_passed. See ai_invoke_routes._issue_review.
+                from modules.flow_gate.services import graph_execution_hooks
+                graph_execution_hooks.call("transition", run, loop)
                 loop_issue_builder = run.get("issue_builder")
                 if loop_issue_builder is not None:
                     loop_issue_builder.loop_stage = loop["current_stage"]
@@ -542,6 +544,9 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
 
         provider_prompt = _provider_prompt(run, provider, prompt)
         if provider.get("exec_type") == "api":
+            from modules.flow_gate.services import graph_execution_hooks
+            if graph_execution_hooks.call("launch", run) is False:
+                return False
             classification, detail = _svc()._api_execute(provider, provider_prompt, run)
         else:
             classification, detail = _svc()._cli_execute(provider, provider_prompt, run)

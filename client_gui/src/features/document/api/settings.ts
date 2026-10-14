@@ -375,6 +375,32 @@ export async function settingsNodeWrite(flowId: string, nodeKey: string, field: 
   return toSettingsNode(response.data)
 }
 
+// flowgate.v02.0061 T#15 — a card's Hold (T#11) is the card setting `hold` of the same call: true = held, false / null =
+// released (the default). The Designer's card context menu sets and releases it; the server judges it by the Flow's run
+// (409 graph_run_locked while the run is running / paused / stopping, 409 graph_hold_done_node for a done card) and a
+// release only changes the setting — nothing starts before the next run command.
+
+/** Whether the card's settings say it is held. */
+export function settingsNodeHold(node: SettingsNode | null | undefined): boolean {
+  return node?.fields.hold?.value === true
+}
+
+/** A refused card settings call as an Error with the server's `code`, `status` and message (x-locale) as sent. */
+export function settingsNodeRefusal(error: unknown): Error & { readonly code: string | null; readonly status: number | null } {
+  const normalized = normalizeApiError(error)
+  const message = typeof normalized.source.message === 'string' ? normalized.source.message.trim() : ''
+  return Object.assign(new Error(message), { code: normalized.network ? null : normalized.code, status: normalized.status })
+}
+
+/** Sets (true) or releases (false) the card's Hold; answers whether it is held now. A refusal rejects with settingsNodeRefusal's Error. */
+export async function settingsNodeHoldWrite(flowId: string, nodeKey: string, on: boolean): Promise<boolean> {
+  try {
+    return settingsNodeHold(await settingsNodeWrite(flowId, nodeKey, 'hold', on))
+  } catch (error) {
+    throw settingsNodeRefusal(error)
+  }
+}
+
 /**
  * Why a card settings call was refused: locked = the card runs (its AI already took the settings);
  * disposed = the Flow's group was disposed; unavailable = the server has no card settings yet; invalid =

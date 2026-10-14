@@ -11,6 +11,7 @@ RUN_REASON_MAX_LEN = 500
 RUN_LIST_LIMIT_MIN = 1
 RUN_LIST_LIMIT_MAX = 100
 GATE_DECISIONS = ("confirm", "reject")
+RUN_MODES = ("step", "full")
 
 
 def _is_int(value: Any) -> bool:
@@ -33,6 +34,18 @@ def parse_start(body: Any) -> tuple[Optional[int], list[dict]]:
     value = raw.get("revision_no")
     if value is not None and (not _is_int(value) or value < 1):
         return None, [{"field": "revision_no", "reason": "not_positive_integer_or_null"}]
+    return value, []
+
+
+def parse_mode(body: Any) -> tuple[Optional[str], list[dict]]:
+    """flowgate.v02.0061 T#2: ``{"mode": "step" | "full" | null}`` of a run command (start / resume); absent
+    means the run's own command (a new run: ``full``)."""
+    raw, errors = _body(body)
+    if raw is None:
+        return None, errors
+    value = raw.get("mode")
+    if value is not None and value not in RUN_MODES:
+        return None, [{"field": "mode", "reason": "not_one_of:" + ",".join(RUN_MODES)}]
     return value, []
 
 

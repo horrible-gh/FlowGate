@@ -16,6 +16,7 @@ Auth:
 """
 from __future__ import annotations
 
+import functools
 from typing import List, Optional, Tuple, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -25,7 +26,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from modules.flow_gate.auth.middleware import get_current_user, verify_token
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import q_answer_invoke_service, q_service, token_service
+from modules.flow_gate.services import graph_source_hooks, q_answer_invoke_service, q_service, token_service
 from modules.flow_gate.utils.help_url import help_url
 from modules.flow_gate.utils.id_validators import (
     validate_doc_id,
@@ -36,16 +37,28 @@ from modules.flow_gate.utils.id_validators import (
 router = APIRouter(prefix="/api/v1", tags=["QTapi"])
 
 
-def _fail(status: int, message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        content={
-            "ok": False,
-            "http_status": status,
-            "error_message": message,
-            "help_url": help_url(),
-        },
-    )
+def _fail(status: int, message: str, error: Optional[dict] = None) -> JSONResponse:
+    content: dict = {
+        "ok": False,
+        "http_status": status,
+        "error_message": message,
+        "help_url": help_url(),
+    }
+    if error is not None:
+        content["error"] = error
+    return JSONResponse(status_code=status, content=content)
+
+
+def _in_write_session(handler):
+    """flowgate.v02.0061 #18: one register-query/answer request is one attempt-token write session, as for the
+    inbox (``inbox_routes._in_write_session``). The Graph attempt fencing judged in ``_resolve_writer`` keeps the Stop
+    gate's shared hold until the handler returns, so the registration commits before a Stop's ``stopping`` or is
+    refused after it. Other credentials take no hold."""
+    @functools.wraps(handler)
+    def wrapper(*args, **kwargs):
+        with graph_source_hooks.write_session():
+            return handler(*args, **kwargs)
+    return wrapper
 
 
 def _operator_facing_api_base(request: Request) -> str:
@@ -127,7 +140,7 @@ def _extract_bearer(request: Request) -> Optional[str]:
 
 
 def _resolve_writer(
-    request: Request, doc_id: str
+    request: Request, doc_id: str, operation: Optional[str] = None
 ) -> Union[Tuple[str, Optional[str], Optional[str]], JSONResponse]:
     """Dual auth for register-query/answer endpoints.
 
@@ -147,6 +160,11 @@ def _resolve_writer(
     right here — the one place that verified it — leaving every AI question/answer with
     no way to say which model raised or answered it. It rides along now so the caller can
     resolve the run's actual provider without re-verifying the token.
+
+    flowgate.v02.0061 #18: with ``operation`` (register query/answer), a Graph attempt token is fenced like an inbox
+    registration (``graph_source_hooks.require_writable``) — a stopping run or an invalidated attempt answers 409
+    ``graph_attempt_inactive`` and leaves a run event, before anything is stored. An unmapped token or a session
+    is not affected; the caller runs inside ``_in_write_session``.
     """
     raw = _extract_bearer(request)
     if raw is None:
@@ -161,6 +179,11 @@ def _resolve_writer(
         # Context binding: an edit token may only register against its own document.
         if token_rec.get("doc_ref") not in (None, "", doc_id):
             return _fail(403, "Context binding mismatch. Use the correct token.")
+        if operation:
+            try:
+                graph_source_hooks.require_writable(token_rec, operation)
+            except graph_source_hooks.GraphSourceError as exc:
+                return _fail(409, exc.message, error={"code": exc.code, "details": exc.details})
         return token_rec["issued_to"], "ai", token_rec.get("ai_run_id")
 
     # 2) login session JWT (human via [+query])
@@ -356,6 +379,7 @@ def _detail_response(doc_id: str, user_id: str) -> JSONResponse:
 # ── POST /q/{doc_id}/questions — add query ──────────────────────────────────────
 
 @router.post("/q/{doc_id}/questions")
+@_in_write_session
 def post_add_questions(
     doc_id: str,
     body: AddQuestionsRequest,
@@ -370,7 +394,7 @@ def post_add_questions(
     A CH (conversation) document takes no queries at all (B0001 / NR0004) — see
     _reject_conversation_doc.
     """
-    auth = _resolve_writer(request, doc_id)
+    auth = _resolve_writer(request, doc_id, "q_question")
     if isinstance(auth, JSONResponse):
         return auth
     user_id, forced_kind, ai_run_id = auth
@@ -402,6 +426,7 @@ def post_add_questions(
 # ── POST /q/{doc_id}/items/{item_id}/answers — register answer ────────────────────────
 
 @router.post("/q/{project_id}/{module}/{group_seq}/{doc_code}/items/{item_id}/answers")
+@_in_write_session
 def post_register_answer_by_path(
     project_id: str,
     module: str,
@@ -416,7 +441,7 @@ def post_register_answer_by_path(
         doc_id = _compose_doc_id(project_id, module, group_seq, doc_code)
     except ValueError as exc:
         return _fail(422, str(exc))
-    auth = _resolve_writer(request, doc_id)
+    auth = _resolve_writer(request, doc_id, "q_answer")
     if isinstance(auth, JSONResponse):
         return auth
     user_id, forced_kind, ai_run_id = auth
@@ -425,6 +450,7 @@ def post_register_answer_by_path(
 
 
 @router.post("/q/{doc_id}/items/{item_id}/answers")
+@_in_write_session
 def post_register_answer(
     doc_id: str,
     item_id: int,
@@ -435,7 +461,7 @@ def post_register_answer(
 
     AI answers are called with the edit token issued by [Request AI answer], and author_kind is forced to 'ai'.
     """
-    auth = _resolve_writer(request, doc_id)
+    auth = _resolve_writer(request, doc_id, "q_answer")
     if isinstance(auth, JSONResponse):
         return auth
     user_id, forced_kind, ai_run_id = auth

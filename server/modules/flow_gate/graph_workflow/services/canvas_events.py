@@ -31,7 +31,8 @@ def publish_canvas_changed(
     draft_version: Optional[int] = None,
     revision_no: Optional[int] = None,
 ) -> None:
-    """``reason``: "layout" | "draft" | "revision" | "identity_rematch" (P0008 §8.3)."""
+    """``reason``: "layout" | "draft" | "revision" | "identity_rematch" (P0008 §8.3) | "hold" (0061 T#11: a card's
+    Hold was set / released, with or without a run; ``node_keys`` names the card)."""
     _queue(FlowEvent(
         event_type=EventType.GRAPH_CANVAS_CHANGED.value,
         payload={
@@ -41,7 +42,7 @@ def publish_canvas_changed(
             "origin_client_id": origin_client_id,
             "draft_version": draft_version if reason == "draft" else None,
             "revision_no": revision_no if reason == "revision" else None,
-            "node_keys": list(node_keys) if reason == "layout" else [],
+            "node_keys": list(node_keys) if reason in ("layout", "hold") else [],
         },
         audience="*",
         project=project_id,

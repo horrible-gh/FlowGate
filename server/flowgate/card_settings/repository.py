@@ -4,6 +4,7 @@ Migration 146_graph_node_settings.sql. One row per (Flow, node, field) holding t
 = the field's default. Rows are keyed by node key, so a card keeps its settings whether it is only in
 the draft or in confirmed revisions (a removed node's key is retired and never reused, and the Flow's
 rows go with the Flow). A value is replaced on its own, inside the caller's Flow guard.
+0061 T#11: Hold is the field ``hold`` (true) of the same table, kept by node key across revisions like any setting.
 
 Reads ``graph_draft_nodes`` / ``graph_revision_nodes`` (which card a node key is) and never writes them.
 """
@@ -44,6 +45,23 @@ def values(flow_id: str, node_key: str) -> dict[str, Any]:
         except (TypeError, ValueError):
             continue
     return out
+
+
+def keys_with(flow_id: str, field: str, value: Any) -> frozenset:
+    """0061 T#11: the node keys of the Flow whose ``field`` is stored as ``value`` (Hold: ``hold`` = true)."""
+    if not available():
+        return frozenset()
+    found = get_store()._fetch_all(
+        "SELECT node_key, value_json FROM graph_node_settings WHERE group_id = ? AND field = ?", [flow_id, field])
+    out = set()
+    for row in found or []:
+        try:
+            stored = json.loads(row["value_json"])
+        except (TypeError, ValueError):
+            continue
+        if type(stored) is type(value) and stored == value:          # true, never 1
+            out.add(row["node_key"])
+    return frozenset(out)
 
 
 def put(flow_id: str, node_key: str, field: str, value: Any, by: Optional[str]) -> None:

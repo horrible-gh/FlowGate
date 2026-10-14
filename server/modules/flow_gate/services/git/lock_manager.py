@@ -278,6 +278,14 @@ def current_context() -> Optional[ExecutionContext]:
     return getattr(_slot, "ctx", None)
 
 
+def current_thread_holds_locks() -> bool:
+    """Include explicit, unbound contexts used to acquire locks on this thread."""
+    ctx = current_context()
+    if ctx is not None and ctx.held:
+        return True
+    return any(ctx.held for ctx in list(getattr(_slot, "acquired_contexts", ())))
+
+
 def _resolve(ctx: Optional[ExecutionContext]) -> ExecutionContext:
     ctx = ctx or current_context()
     if ctx is None:
@@ -514,6 +522,8 @@ def acquire(domain: str, project_id: str, *, group_id: Optional[str] = None,
             hold_class: Optional[str] = None, ctx: Optional[ExecutionContext] = None) -> LockOutcome:
     """L 2.5.1 / 4.1. Returns an outcome; only caller bugs raise (LockProgramError)."""
     ctx = _resolve(ctx)
+    # Track explicit contexts too, without changing binding or re-entry semantics.
+    _slot.__dict__.setdefault("acquired_contexts", weakref.WeakSet()).add(ctx)
     if domain not in RANK:
         raise LockProgramError("unknown_domain", domain=domain)
     key = lock_key(domain, project_id, group_id, target_key)

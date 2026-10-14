@@ -87,6 +87,11 @@ def draft_target(token: dict) -> dict:
     """
     from modules.flow_gate.services import remote_tool_service  # lazy -- import cycle
 
+    from modules.flow_gate.services import graph_source_hooks
+    try:
+        graph_source_hooks.reject_group_source(token, "self_check")
+    except graph_source_hooks.GraphSourceError as exc:
+        raise SelfCheckError(409, exc.code, exc.message) from exc
     token_id, doc_ref = token.get("token_id"), token.get("doc_ref")
     project_id, group_id = token.get("project"), token.get("group_id")
     if token.get("action_scope") != "new" or not (token_id and doc_ref and project_id and group_id):

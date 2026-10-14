@@ -78,6 +78,12 @@ export interface InspectorTarget {
   readonly ownership: string | null
   readonly viewMode: string | null
   readonly readOnly: InspectorReadOnly
+  /**
+   * flowgate.v02.0061 T#14: `run` while the Flow's Graph run is running, paused or stopping — its structure and card
+   * settings cannot change (the Center session's run lock); TR0031 rev1: `unknown` while the run's status is not
+   * confirmed (being read, or the read failed). Absent / null = not locked.
+   */
+  readonly editLock?: 'run' | 'unknown' | null
 }
 
 const CARD_KIND_BY_DOC_TYPE: ReadonlyMap<string, InspectorCardKind> = new Map(
@@ -191,6 +197,7 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     ownership,
     viewMode,
     readOnly: inspectorReadOnly(ownership, viewMode),
+    editLock: selection.editLock ?? null,
   }
 }
 

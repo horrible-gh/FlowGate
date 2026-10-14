@@ -13,7 +13,7 @@ The ``undecided`` implementation of every key is always registered: any call rai
 - ``parallelism.admit(candidates, open_node_keys) -> [node_key]``
 - ``join.openable(node_key, in_edge_states) -> "open" | "wait" | "never"``
 - ``rejection_path.route(node_key, revision, state) -> (open [node_key], close [node_key])``
-- ``completion.is_complete(revision, state) -> bool``
+- ``completion.is_complete(revision, state) -> bool`` (state supplies ``has_active_attempts``)
 - ``gate_node.judge(node_key, decision, comment) -> "confirmed" | "rejected"`` (S6 gate decision)
 - ``report_pair`` / ``custom_node``: slots only (Q-5 / Q-11)
 
@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 
 from .graph_model import Graph, run_doc_type
+from .run_scope_ports import run_scope
 from .policies import POLICY_KEYS, UNDECIDED, UNDECIDED_IMPL_VERSION
 
 # L0009 §2.6.3 RULE_REF — the D0004 §8 question each slot waits on.
@@ -106,21 +107,25 @@ def policies_of(entries: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
 def required_policies(revision: Graph, bound_node_key: Optional[str] = None,
                       bound_review_status: Optional[str] = None) -> set[str]:
     """L0009 §2.6.3 ``required_policies`` for one revision and its root binding."""
+    targets = run_scope(revision).targets
+    nodes = [n for n in revision.nodes if n.key in targets]
+    live = [e for e in revision.live_edges() if e.source in targets and e.target in targets]
     req = {"start_node", "completion"}
     bound_done = bound_review_status in DONE_REVIEW_STATUSES
-    if any(not (n.key == bound_node_key and bound_done) for n in revision.nodes):
+    if any(not (n.key == bound_node_key and bound_done) for n in nodes):
         req.add("rejection_path")
-    if any((run_doc_type(n.node_type, n.doc_type) or "").upper() in INSTRUCTION_DOC_TYPES for n in revision.nodes):
+    if any((run_doc_type(n.node_type, n.doc_type) or "").upper() in INSTRUCTION_DOC_TYPES for n in nodes):
         req.add("report_pair")
-    live = revision.live_edges()
     out_degree: dict[str, int] = {}
+    in_degree: dict[str, int] = {}
     for e in live:
         out_degree[e.source] = out_degree.get(e.source, 0) + 1
-    if any(d >= 2 for d in out_degree.values()) or any(e.condition is not None for e in revision.edges):
+        in_degree[e.target] = in_degree.get(e.target, 0) + 1
+    if any(d >= 2 for d in out_degree.values()) or any(e.condition is not None for e in live):
         req |= {"edge_condition", "parallelism"}
-    if any(d >= 2 for d in revision.in_degree().values()):
+    if any(d >= 2 for d in in_degree.values()):
         req.add("join")
-    if any(n.node_type == "gate" for n in revision.nodes):
+    if any(n.node_type == "gate" for n in nodes):
         req.add("gate_node")
     return req
 

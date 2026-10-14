@@ -17,6 +17,9 @@ flowgate.v02.0056 T#2 (the instruction stage of a card run): which open node in 
 run worked for, the card instruction documents that node's tokens registered, and the Graph's own two steps
 that follow the stage — the result stage's start (``node_dispatch.start_result_stage``) and the stage's
 failure record (``node_dispatch.instruction_stage_failed``, the AI start failure path).
+
+flowgate.v02.0061 T#2: after the review stage followed a node's AI run, the Graph run is judged again
+(``run_service.settle_if_needed``, as before a run read).
 """
 from __future__ import annotations
 
@@ -45,9 +48,10 @@ __all__ = ["GraphApiError", "with_flow_guard", "registered_doc_types", "authenti
            "run", "load_flow", "require_writable", "repeat_choices", "ai_exists", "team_exists",
            "node_running", "graph_owned", "project_of", "node_of_ai_run", "node_of_result", "open_node_of_token",
            "node_ai_run_active", "instruction_node_of_ai_run", "registered_instructions", "start_result_stage",
-           "instruction_stage_failed",
+           "instruction_stage_failed", "attempt_of_ai_run", "attempt_owns", "attempt_hold", "active_run_id",
+           "invalidated_documents",
            "default_reviewer", "last_rejection", "start_review_loop", "review_loop_row", "review_loop_active",
-           "approve"]
+           "approve", "settle_graph_run"]
 
 _log = logging.getLogger(__name__)
 
@@ -258,12 +262,53 @@ def registered_instructions(flow_id: str, run_id: str, node_key: str, doc_type: 
 
 
 def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc_id: Optional[str],
-                       issued_to: str) -> None:
-    node_dispatch.start_result_stage(flow_id, run_id, node_key, instruction_doc_id, issued_to, project_of(flow_id))
+                       issued_to: str, attempt_id: Optional[str] = None, defer: Optional[list] = None) -> None:
+    node_dispatch.start_result_stage(flow_id, run_id, node_key, instruction_doc_id, issued_to, project_of(flow_id),
+                                     attempt_id=attempt_id, defer=defer)
 
 
-def instruction_stage_failed(flow_id: str, run_id: str, node_key: str) -> None:
-    node_dispatch.instruction_stage_failed(flow_id, run_id, node_key, project_of(flow_id))
+def instruction_stage_failed(flow_id: str, run_id: str, node_key: str, attempt_id: Optional[str] = None) -> None:
+    node_dispatch.instruction_stage_failed(flow_id, run_id, node_key, project_of(flow_id), attempt_id=attempt_id)
+
+
+def attempt_of_ai_run(run: dict) -> Optional[str]:
+    """0061 T#7: the attempt the AI run's Graph execution was made for (None: no Graph execution)."""
+    from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
+    return graph_execution_hooks.call("execution_attempt", run.get("graph_exec_id"))
+
+
+def attempt_owns(run_id: str, node_key: str, attempt_id: Optional[str], operation: str) -> bool:
+    """0061 T#7: that attempt is still the node's active one and may write (a refusal is recorded)."""
+    return node_dispatch.attempt_owns(run_id, node_key, attempt_id, operation)
+
+
+def attempt_hold(run_id: str, node_key: str, attempt_id: Optional[str], operation: str):
+    """0061 T#7: ``attempt_owns`` judged under the Stop gate's shared hold, kept for the ``with`` body (an automatic
+    approval and its commits). Yields whether the body may go on."""
+    return node_dispatch.attempt_hold(run_id, node_key, attempt_id, operation)
+
+
+def active_run_id(flow_id: str) -> Optional[str]:
+    run_row = run_store.active_run(flow_id)
+    return run_row["run_id"] if run_row else None
+
+
+def invalidated_documents(flow_id: str, node_key: str) -> set[str]:
+    """0061 T#7 (0017-TR question 440: kept as history, never the new attempt's evidence): the documents registered
+    (new or edit) with the tokens of the node's invalidated attempts in the Flow's active run — an attempt a Stop, a
+    lost lease or a failed worktree ended — and with none of the node's live tokens. A node opened again never takes
+    them as its instruction, its approval or its result."""
+    if not node_key or not get_store().table_exists("graph_node_attempts"):
+        return set()
+    run_row = run_store.active_run(flow_id)
+    if run_row is None:
+        return set()
+    tokens = run_store.invalidated_token_ids(run_row["run_id"], node_key)
+    if not tokens:
+        return set()
+    old = {d["doc_id"] for d in registered_documents(flow_id, tokens)}
+    live = run_store.token_ids(run_row["run_id"], node_key)
+    return old - {d["doc_id"] for d in registered_documents(flow_id, live)} if live and old else old
 
 
 def default_reviewer(project_id: Optional[str]) -> Optional[str]:
@@ -287,7 +332,8 @@ def last_rejection(doc_id: str) -> Optional[str]:
 
 def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issued_to: str,
                       loop: dict, basis_note: Callable[[Optional[str]], str],
-                      node_key: Optional[str] = None) -> Optional[dict]:
+                      node_key: Optional[str] = None, graph_exec_id: Optional[str] = None,
+                      attempt_id: Optional[str] = None) -> Optional[dict]:
     """Start the v0.1 document review loop on ``doc_id`` as the AI invoke route starts it (single
     run, ``action_scope`` review, its stage-aware issuer: a review token, an edit token for a
     rework hop). A refusal is logged and the result left to a person (returns None).
@@ -298,7 +344,10 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
     adds its own one-line criteria name only when it switches stages, never to the first hop.
 
     flowgate.v02.0056 T#3: every hop, review and rework, also carries the memos of the card ``node_key`` turned
-    on for AI reading (``card_memo_hooks``), read when the hop is issued."""
+    on for AI reading (``card_memo_hooks``), read when the hop is issued.
+
+    flowgate.v02.0061 T#7: ``attempt_id`` — the attempt of the node's run whose end starts the loop — must still be
+    the one the document's node is worked on by (``execution.request_loop`` refuses and records otherwise)."""
     from modules.flow_gate.services import ai_invoke_service, card_memo_hooks, invoke_mention_service  # noqa: PLC0415
     from modules.flow_gate.services import workflow_decision_service  # noqa: PLC0415
 
@@ -306,11 +355,17 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
         if getattr(_issue, "loop_stage", None) == ai_invoke_service.REWORK_HOP_KIND:
             issued = invoke_mention_service.issue_rework_request(
                 doc_id=doc_id, issued_to=issued_to, api_base_url=API_BASE_URL, locale=LOCALE, ai_run_id=ai_run_id)
+            from modules.flow_gate.services import graph_execution_hooks
+            live = ai_invoke_service.get_run_record(ai_run_id) if ai_run_id else None
+            graph_execution_hooks.call("map_token", (live or {}).get("graph_exec_id") or graph_exec_id, issued["token_id"])
             return {**issued, "mention": card_memo_hooks.prepend_memo_section(
                 issued.get("mention") or "", flow_id, node_key=node_key)}
         issued = workflow_decision_service.request_review(
             doc_id=doc_id, issued_to=issued_to, api_base_url=API_BASE_URL, ref_doc_ids=None, locale=LOCALE,
             ai_run_id=ai_run_id)
+        from modules.flow_gate.services import graph_execution_hooks
+        live = ai_invoke_service.get_run_record(ai_run_id) if ai_run_id else None
+        graph_execution_hooks.call("map_token", (live or {}).get("graph_exec_id") or graph_exec_id, issued["token_id"])
         mention = issued.get("mention") or ""
         if mention:
             mention = card_memo_hooks.prepend_memo_section(mention, flow_id, node_key=node_key)
@@ -319,15 +374,21 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
         return {"raw_token": issued["token"], "token_id": issued["token_id"],
                 "scratch_dir": issued["scratch_dir"], "mention": mention}
 
+    from flowgate.graph_run import execution
     try:
+        graph_exec_id = execution.request_loop(project_id, flow_id, doc_id, issued_to, loop,
+                                                basis_note(last_rejection(doc_id)), node_key, graph_exec_id,
+                                                attempt_id=attempt_id)
         return ai_invoke_service.start_run(
+            graph_exec_id=graph_exec_id,
             project_id=project_id or "", module=_module_of(flow_id), group_id=flow_id, doc_ref=doc_id,
             action_scope="review", mode="single", continuation_target_seq=None, continuation_review_mode=False,
             continuation_instruction_mode=None, continuation_locale=None, issued_to=issued_to,
             api_base_url=API_BASE_URL, mention_builder=lambda _raw, _scratch: None, issue_builder=_issue,
             document_review_loop=dict(loop),
         )
-    except Exception:  # noqa: BLE001 — the result stays in review for a person
+    except Exception as exc:  # noqa: BLE001 -- the result stays in review for a person
+        execution.start_failed(graph_exec_id, exc)
         _log.warning("card review loop start failed flow=%s doc=%s", flow_id, doc_id, exc_info=True)
         return None
 
@@ -402,3 +463,14 @@ def approve(flow_id: str, doc_id: str, actor_user_id: str) -> bool:
     tr_commit_service.on_document_approved(doc_id, result)
     v01_contact.after_review_decided(flow_id, doc_id, "approve")
     return True
+
+
+def settle_graph_run(flow_id: str) -> None:
+    """The Flow's Graph run is judged again (flowgate.v02.0061 T#2): running while the review its card stage started
+    works, idle when nothing works any more. Never raises (a failure only skips it, as before a run read)."""
+    from modules.flow_gate.graph_workflow.services import run_service  # noqa: PLC0415 — the run stack on use
+
+    try:
+        run_service.settle_if_needed(flow_id, project_of(flow_id))
+    except Exception:  # noqa: BLE001 — the stage's own end is not failed by the run's judgement
+        _log.warning("graph run settle after the card stage failed flow=%s", flow_id, exc_info=True)
