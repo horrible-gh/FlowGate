@@ -35,6 +35,18 @@ RUN_EDIT_MESSAGES = {
         "en": "Graph Time Machine cannot run safely. Check the blocking reasons.",
         "ja": "Graph Time Machine を安全に実行できません。ブロック理由を確認してください。",
     },
+    # 0061 T#13: an unfinished Graph Time Machine operation refuses commands / edits; a partial failure
+    "graph_time_machine_in_progress": {
+        "ko": "Graph Time Machine 작업이 끝나지 않았습니다. 완료 또는 복구 뒤에 다시 시도하세요.",
+        "en": "A Graph Time Machine operation is unfinished. Try again once it is finished or recovered.",
+        "ja": "Graph Time Machine の操作が完了していません。完了または復旧の後に再試行してください。",
+    },
+    "graph_time_machine_partial_failed": {
+        "ko": "Graph Time Machine의 Git 되돌리기 뒤 상태 반영에 실패했습니다. 서버 재시작 시 복구되며 그 전에는 실행할 수 없습니다.",
+        "en": "Graph Time Machine reverted Git but could not update the run state. It is recovered at the server "
+              "restart; until then the flow cannot run.",
+        "ja": "Graph Time Machine は Git を戻しましたが状態の反映に失敗しました。サーバー再起動時に復旧され、それまでは実行できません。",
+    },
     "graph_engine_owned": {
         "ko": "이 Flow는 Graph 엔진이 담당합니다. Graph Time Machine을 사용하세요.",
         "en": "This flow is owned by the Graph engine. Use Graph Time Machine.",
@@ -102,6 +114,14 @@ TIME_MACHINE_REASONS = {
     "execution_history_incomplete": (
         "실행 개정 또는 입력 의존 기록이 불완전합니다.", "Execution revision or input dependency history is incomplete.",
         "実行リビジョンまたは入力依存の記録が不完全です。"),
+    # 0061 T#13: judged by the operation itself (its plan, its Git step)
+    "integration_commit_shared": (
+        "대상의 병합 커밋을 대상 밖 attempt도 가리킵니다.", "A target's merge commit is shared with an attempt outside the targets.",
+        "対象のマージコミットを対象外の attempt も指しています。"),
+    "git_revert_blocked": (
+        "병합 커밋을 안전하게 되돌릴 수 없어 그룹 브랜치를 원래 상태로 두었습니다.",
+        "A merge commit could not be reverted safely; the group branch was left as it was.",
+        "マージコミットを安全に戻せないため、グループブランチを元の状態のままにしました。"),
 }
 
 

@@ -276,13 +276,24 @@ def hold_command(ctx, command: Optional[str]) -> None:
 
 # ── the integration ───────────────────────────────────────────────────────────
 
+def _time_machine_busy(flow_id: str) -> bool:
+    """T#13: a Flow with an unfinished Graph Time Machine operation (it keeps the run idle; its Git step holds the
+    group's G and reverts on the group branch, and its DB step needs the run idle) has no integration woken or started,
+    whatever its run's status; a pending integration waits for the next command's drain."""
+    from flowgate.graph_time_machine.operation import busy
+    return busy(flow_id)
+
+
 def _runnable(attempt_id: str) -> bool:
-    """(a): the run running / paused / idle (never stopping), the attempt active and pending."""
+    """(a): the run running / paused / idle (never stopping), the attempt active and pending; T#13: no Time Machine
+    operation of the Flow unfinished, whatever the run's status."""
     row = workspace.attempt(attempt_id)
     if not row or row["status"] != "active" or _status(row) != PENDING:
         return False
     run = run_store.run_by_id(row["run_id"])
-    return bool(run) and fencing._status(run["status"]) in fencing.OPENING
+    if not run or fencing._status(run["status"]) not in fencing.OPENING:
+        return False
+    return not _time_machine_busy(row["group_id"])
 
 
 def _wake(attempt_id: str) -> None:
@@ -298,7 +309,7 @@ def _wake(attempt_id: str) -> None:
         if not current or current["status"] != "active" or _status(current) != PENDING:
             return
         run = run_store.run_by_id(current["run_id"])
-        if run is None or fencing._status(run["status"]) != IDLE:
+        if run is None or fencing._status(run["status"]) != IDLE or _time_machine_busy(run["group_id"]):
             return
         ctx = run_apply.load_context(run, _project_of(run["group_id"]), None)
         if run_store.set_run_status(run["run_id"], IDLE, RUNNING) != 1:

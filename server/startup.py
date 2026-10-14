@@ -337,6 +337,20 @@ def start_graph_run_integration():
         logger.warning(f"[startup] graph run integration registration failed: {exc}")
 
 
+def recover_graph_time_machine():
+    """flowgate.v02.0061 T#13: once the Graph ports are registered and before the Graph execution recovery replays
+    anything, every unfinished Graph Time Machine operation (started, Git applied, partially failed) goes on from its
+    journal: its interrupted Git step put back, its Git step resumed, then its DB step. Until it is finished the Flow
+    refuses its run commands, edits and Time Machine requests, and no execution of it is requested, admitted or
+    replayed, nor any integration woken or started."""
+    try:
+        from flowgate.graph_time_machine.operation import recover
+
+        recover()
+    except Exception as exc:
+        logger.warning(f"[startup] graph time machine recovery failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
@@ -356,6 +370,7 @@ def run_all():
     start_graph_validation_integration()
     start_graph_run_integration()
     # T#4: all Graph ports are ready; orphan AI cleanup has already completed above.
+    recover_graph_time_machine()     # T#13: before any replay of the Flow's executions
     from flowgate.graph_run.execution import recover as recover_graph_executions
     recover_graph_executions()
     encrypt_ai_provider_keys()

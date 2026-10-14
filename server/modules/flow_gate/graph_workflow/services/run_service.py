@@ -128,6 +128,7 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
         own = read_ownership(flow_id)                                             # 1~3 담당
         if own.state != "graph":
             raise _ownership_error(flow_id, own)
+        _refuse_time_machine(flow_id)                                             # 0061 T#13
         active = run_store.active_run(flow_id)                                    # 4 진행 중 실행
         if active is not None:
             if active["status"] not in (run_store.PAUSED, run_store.IDLE) or (
@@ -227,6 +228,14 @@ def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
     if command is not None:
         run_state_ports.record_step_targets(ctx, command, d)
     apply_decision(ctx, d)
+
+
+def _refuse_time_machine(flow_id: str) -> None:
+    """0061 T#13: while a Graph Time Machine operation of the Flow is unfinished (started, its Git applied, or partially
+    failed), a step / full command is refused (409 ``graph_time_machine_in_progress``). Inside the command's guard;
+    the v0.2 judgement is ``flowgate.graph_time_machine``'s (``graph_execution_hooks`` ``time_machine_refusal``)."""
+    from modules.flow_gate.services import graph_execution_hooks
+    graph_execution_hooks.call("time_machine_refusal", flow_id)
 
 
 def _hold_flow(run: dict) -> None:
@@ -352,6 +361,7 @@ def resume_run(group: dict, run_id: str, reason: Optional[str], user_id: str, mo
         own = read_ownership(run["group_id"])                                     # 2
         if own.state != "graph":
             raise _ownership_error(run["group_id"], own)
+        _refuse_time_machine(run["group_id"])                                     # 0061 T#13
         _hold_flow(run)                                                           # 0061 T#2: one run per Flow
         _go_on(group, run, user_id, mode, "user_resume", reason, jobs)            # 3~5
         return {"run": run_payload(run_id, with_nodes=False)}

@@ -129,6 +129,9 @@ def admit(exec_id, ai_run_id, flow_id, attempt_id=None):
         graph = run_store.run_by_id(row["run_id"])
         if graph["group_id"] != flow_id or (attempt_id and attempt_id != row["attempt_id"]):
             raise ledger.LeaseLost("execution identity mismatch")
+        from flowgate.graph_time_machine.operation import busy as time_machine_busy
+        if time_machine_busy(flow_id):
+            busy()                  # T#13: kept requested (``start_failed``) until the Time Machine operation ends
         active = group_ai_leases.get_active(flow_id)
         if active:
             busy(active.get("run_id"))

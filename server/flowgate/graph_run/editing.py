@@ -7,7 +7,10 @@ PROTECTED = frozenset({"done", "open", "review"})
 
 
 def require_editable(flow_id: str, node_key=None) -> None:
-    """Inside the Flow guard; node_key adds the always-protected card check."""
+    """Inside the Flow guard; node_key adds the always-protected card check. T#13: an unfinished Graph Time Machine
+    operation refuses every edit (409 ``graph_time_machine_in_progress``)."""
+    from flowgate.graph_time_machine.operation import require_no_operation
+    require_no_operation(flow_id)
     run = run_store.active_run(flow_id)
     if not run:
         return

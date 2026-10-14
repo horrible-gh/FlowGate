@@ -30,6 +30,7 @@ def request_write(job):
     # T#7: a stopping run requests nothing (inside the guard). The engine's own opening of a node (a person's approval
     # on an idle run opens the next one) is no attempt token's write: idle opens, the acquire needs running / paused.
     fencing.check(attempt, "request_write", statuses=fencing.OPENING)
+    _refuse_time_machine(job["flow_id"], attempt, "request_write")
     job["graph_attempt_id"] = attempt
     payload = dict(job)
     payload.pop("graph_exec_id", None)
@@ -87,6 +88,7 @@ def _request_document(flow_id, doc_id, kind, payload, existing=None, attempt_id=
         if attempt_id and attempt["attempt_id"] != attempt_id:
             raise fencing.refuse(attempt_id, operation, "attempt_superseded", active_attempt_id=attempt["attempt_id"])
         fencing.check(attempt["attempt_id"], operation, statuses=statuses)
+        _refuse_time_machine(flow_id, attempt["attempt_id"], operation)
         if existing:
             row = ledger.get(existing)
             if not row or row["attempt_id"] != attempt["attempt_id"] or row["status"] != "requested":
@@ -386,6 +388,8 @@ def recover():
             if not row or row["status"] not in ("requested", "running"):
                 return
             if row["status"] == "requested":
+                if _time_machine().busy(snapshot["group_id"]):
+                    return              # T#13: kept requested; replayed once the Time Machine operation is finished
                 if ledger.eligible(row):
                     live = ai_invoke_service.get_run_record(row.get("ai_run_id")) if row.get("ai_run_id") else None
                     if live and live.get("status") != "finished":
@@ -485,6 +489,20 @@ def settle(flow_id):
     settle_graph_run(flow_id)
 
 
+def _time_machine():
+    from flowgate.graph_time_machine import operation
+    return operation
+
+
+def _refuse_time_machine(flow_id, attempt_id, operation):
+    """T#13, inside the step's guard: while a Graph Time Machine operation of the Flow is unfinished no execution is
+    requested — not an opened node's write (a person's approval opening the next node of the idle run), not a person's
+    explicit review / rework (which would take the idle run back to running under the operation). Recorded as a fence
+    refusal once the guard rolled back; the person's request answers 409 ``graph_attempt_inactive``."""
+    if _time_machine().busy(flow_id):
+        raise fencing.refuse(attempt_id, operation, "time_machine_in_progress")
+
+
 def result_refused(run, kind, payload):
     """T#7, inside the result binder's guard: a stopping run binds nothing, nor does a registration made with the
     token of an attempt that may not write any more. Recorded."""
@@ -509,4 +527,6 @@ _ACTIONS = {
     "hold_command": result_merge.hold_command, "propagation_held": result_merge.propagation_held,
     # T#11: the Flow's held node keys, never opened (``run_apply.read_run_state`` -> ``RunState.held``).
     "held_nodes": hold.held,
+    # T#13: an unfinished Graph Time Machine operation refuses a step / full command (``run_service``).
+    "time_machine_refusal": lambda flow_id: _time_machine().require_no_operation(flow_id),
 }
