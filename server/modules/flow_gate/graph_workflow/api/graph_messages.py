@@ -80,6 +80,14 @@ RUN_EDIT_MESSAGES = {
     },
 }
 
+# flowgate.v02.0061 T#14 (WP answer 2): a chat's edit / edit-once source access while the Flow's Graph run is running,
+# paused or stopping — refused with the T#3 lock code ``graph_run_locked`` and this wording.
+CHAT_SOURCE_LOCKED = {
+    "ko": "이 Flow의 Graph 실행이 진행 중(실행·일시정지·정지 중)이라 채팅으로 소스를 수정할 수 없습니다. 읽기 모드로 사용하세요.",
+    "en": "This flow's Graph run is running, paused or stopping, so a chat cannot change the source. Use the read mode.",
+    "ja": "このフローの Graph 実行が進行中（実行中・一時停止中・停止中）のため、チャットでソースを変更できません。読み取りモードを使用してください。",
+}
+
 # 0061 T#12: stable reason codes; message text is display-only.
 TIME_MACHINE_REASONS = {
     "run_missing": (

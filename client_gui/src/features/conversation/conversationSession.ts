@@ -147,6 +147,14 @@ export interface ConversationSessionOptions {
   onAutoCopyMention?: () => void
 }
 
+/**
+ * flowgate.v02.0061 T#14 (WP answer 2): the server refused an edit / edit-once source access because the Flow's Graph
+ * run is running, paused or stopping (409 `graph_run_locked`).
+ */
+function isSourceLocked(error: unknown): boolean {
+  return error instanceof ConversationRequestError && error.code === 'graph_run_locked'
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -754,7 +762,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
         return
       }
       state.runId = null
-      notify('danger', 'invoke_failed', messageOf(error))
+      // flowgate.v02.0061 T#14: an edit / edit-once call while the Flow's Graph run is locked (WP answer 2).
+      if (isSourceLocked(error)) notify('warning', 'source_locked')
+      else notify('danger', 'invoke_failed', messageOf(error))
     }
   }
 
@@ -794,7 +804,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
       void loadSettings()
       return mention
     } catch (error) {
-      notify('danger', 'mention_failed', messageOf(error))
+      if (isSourceLocked(error)) notify('warning', 'source_locked')
+      else notify('danger', 'mention_failed', messageOf(error))
       return null
     } finally {
       state.copyingMention = false

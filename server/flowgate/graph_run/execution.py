@@ -10,7 +10,7 @@ from modules.flow_gate.db import groups as db_groups, ai_invoke_runs
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 from modules.flow_gate.services import graph_execution_hooks
-from flowgate.graph_run import execution_store as ledger, workspace, scheduling, fencing, stop, result_merge, hold
+from flowgate.graph_run import execution_store as ledger, workspace, scheduling, fencing, stop, result_merge, hold, editing
 
 log = logging.getLogger(__name__)
 
@@ -529,4 +529,6 @@ _ACTIONS = {
     "held_nodes": hold.held,
     # T#13: an unfinished Graph Time Machine operation refuses a step / full command (``run_service``).
     "time_machine_refusal": lambda flow_id: _time_machine().require_no_operation(flow_id),
+    # T#14: a chat's edit / edit-once source access while the Flow's run is locked (``token_service.issue``).
+    "chat_source_refusal": editing.chat_source_refusal,
 }

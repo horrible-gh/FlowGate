@@ -14,6 +14,14 @@
 //
 // flowgate.v02.0059 0017-T: the density is the step a card drag moves in (DENSITY_MOVE_STEP, the one place
 // its numbers live); 자율형 forces none. It never lays cards out and never starts or stops 자동 배치.
+//
+// flowgate.v02.0061 T#14 (R §실행 제어, 0002-CH turn 8 §2.3): the run commands follow the open Flow's run phase —
+// idle: 다음 단계 · 전체 실행; running: 일시정지 · 중지; paused: 재개 · 중지; stopping: nothing (the band says 중지 중).
+// No standing button is added (the Toolbar shows the two of the phase in place). The Run menu's 다음 단계 실행 · 전체
+// 실행 · 실행 중지 · Flow 검증 follow the same rule and 재실행 is never available (Q7: no reset / forced rerun in a
+// Graph Flow). While one run command is answered (`runBusy`) every run command waits.
+// TR0031 rev1: so does every run command while the open Flow's run status is not confirmed (`runUnknown`) — a run being
+// read, or whose read failed, is not idle.
 
 /** Commands of the top band. Window panel / tab and density choices have their own events. */
 export type DesignerTopCommand =
@@ -41,6 +49,9 @@ export type DesignerTopCommand =
   | 'edit.select-mode'
   | 'run.next'
   | 'run.all'
+  /** flowgate.v02.0061 T#14: 일시정지 (running -> paused) and 재개 (paused -> running), Toolbar only. */
+  | 'run.pause'
+  | 'run.resume'
   | 'run.stop'
   | 'run.rerun'
   | 'run.validate'
@@ -269,54 +280,100 @@ export const DESIGNER_MENUS: readonly DesignerMenu[] = [
   },
 ]
 
-// --- UI-only run state -------------------------------------------------------------------------
+// --- run state ---------------------------------------------------------------------------------
 
-/** Which run button started the current run, or null when nothing runs. */
-export type DesignerRunMode = 'next' | 'all' | null
+/**
+ * flowgate.v02.0061 T#14: the open Flow's run phase the run commands follow — the server's run status
+ * (`running` | `paused` | `stopping`; anything else, or no run, is `idle`).
+ */
+export type DesignerRunPhase = 'idle' | 'running' | 'paused' | 'stopping'
+
+export const DESIGNER_RUN_PHASES: readonly DesignerRunPhase[] = ['idle', 'running', 'paused', 'stopping']
+
+/** The run phase of a server run status (an unknown status or no run is `idle`). */
+export function runPhaseOf(status: string | null | undefined): DesignerRunPhase {
+  return DESIGNER_RUN_PHASES.find((phase) => phase === status) ?? 'idle'
+}
 
 /**
  * Screen state of the top band, owned by one DesignerShell like its layout. Never persisted, so every Designer —
  * a newly created Project's too — starts at the density 보통 (flowgate.v02.0059 0018-TR rev2).
  */
 export interface DesignerTopState {
-  runMode: DesignerRunMode
+  runPhase: DesignerRunPhase
   density: DesignerDensity
 }
 
 export function createDesignerTopState(): DesignerTopState {
-  return { runMode: null, density: 'normal' }
+  return { runPhase: 'idle', density: 'normal' }
 }
 
 /**
- * Run mode after a command (0001-R §4.1.1): starting sets the button that was used, stopping
- * clears it, and a start while a run is on changes nothing. UI state only — no execution or stop
- * contract stands behind it yet, so a run ends only by stopping it.
+ * Run phase after a command where no server run stands behind the buttons (a sample source): a command runs,
+ * 일시정지 pauses, 재개 runs again and 중지 ends it at once. A server Flow's phase is its run's (`runPhaseOf`).
  */
-export function nextRunMode(current: DesignerRunMode, cmd: DesignerTopCommand): DesignerRunMode {
-  if (cmd === 'run.stop') return null
-  if (current !== null) return current
-  if (cmd === 'run.next') return 'next'
-  if (cmd === 'run.all') return 'all'
+export function nextRunPhase(current: DesignerRunPhase, cmd: DesignerTopCommand): DesignerRunPhase {
+  if (!isRunCommandEnabled(cmd, current)) return current
+  if (cmd === 'run.next' || cmd === 'run.all' || cmd === 'run.resume') return 'running'
+  if (cmd === 'run.pause') return 'paused'
+  if (cmd === 'run.stop') return 'idle'
   return current
 }
 
-/**
- * flowgate.v02.0056 F2-1 (O1 0005-TR §4-2) — the run band's "멈춤 · 다음 카드 N개 대기": cards approved while the
- * run was stopped whose successors wait for 다음 단계 / 전체 실행. Shown only on a stopped run with such cards.
- * A stop is not a card state: those cards are done (승인됨) on the Canvas; only this line tells they wait.
- */
-export interface DesignerRunPending {
-  readonly count: number
-  /** The waiting cards' node keys (the tooltip). */
-  readonly nodeKeys: readonly string[]
+/** Whether a run command fits the run phase (R: the buttons of each phase); other commands are not run commands. */
+function isRunCommandEnabled(cmd: DesignerTopCommand, phase: DesignerRunPhase): boolean {
+  if (cmd === 'run.next' || cmd === 'run.all' || cmd === 'run.validate') return phase === 'idle'
+  if (cmd === 'run.pause') return phase === 'running'
+  if (cmd === 'run.resume') return phase === 'paused'
+  if (cmd === 'run.stop') return phase === 'running' || phase === 'paused'
+  return false // run.rerun: Q7, no reset / forced rerun in a Graph Flow
 }
 
-export function runPendingView(
-  run: { readonly status: string; readonly pendingPropagationCount?: number; readonly pendingNodeKeys?: readonly string[] } | null | undefined,
-): DesignerRunPending | null {
-  const count = run?.pendingPropagationCount ?? 0
-  if (!run || run.status !== 'stopped' || !(count > 0)) return null
-  return { count, nodeKeys: [...(run.pendingNodeKeys ?? [])] }
+/**
+ * flowgate.v02.0061 T#14 — the run band beside the run buttons (the place of 0056's "멈춤 · 다음 카드 N개 대기"): the
+ * run's status, its command, why an idle run is idle, its running / requested AI executions against the Flow's limit,
+ * and the approved cards whose successors wait for the next command.
+ */
+export interface DesignerRunBand {
+  readonly phase: DesignerRunPhase
+  /** `step` | `full` (open key) on a running / paused run, else null. */
+  readonly command: string | null
+  /** Why an idle run is idle (open key), or null. */
+  readonly idleReason: string | null
+  readonly running: number
+  readonly requested: number
+  /** The Flow's execution limit, or null when not known. */
+  readonly limit: number | null
+  /** Approved cards whose successors wait for the next command, and their node keys (the tooltip). */
+  readonly pendingCount: number
+  readonly pendingNodeKeys: readonly string[]
+}
+
+export interface DesignerRunFacts {
+  readonly status: string
+  readonly mode?: string | null
+  readonly idleReason?: string | null
+  readonly runningExecutionCount?: number
+  readonly requestedExecutionCount?: number
+  readonly executionLimit?: number | null
+  readonly pendingPropagationCount?: number
+  readonly pendingNodeKeys?: readonly string[]
+}
+
+/** The band of a Flow's run, or null with no run (nothing ran yet). */
+export function runBandView(run: DesignerRunFacts | null | undefined): DesignerRunBand | null {
+  if (!run) return null
+  const phase = runPhaseOf(run.status)
+  return {
+    phase,
+    command: phase === 'running' || phase === 'paused' ? run.mode ?? null : null,
+    idleReason: phase === 'idle' ? run.idleReason ?? null : null,
+    running: run.runningExecutionCount ?? 0,
+    requested: run.requestedExecutionCount ?? 0,
+    limit: run.executionLimit ?? null,
+    pendingCount: Math.max(0, run.pendingPropagationCount ?? 0),
+    pendingNodeKeys: [...(run.pendingNodeKeys ?? [])],
+  }
 }
 
 // --- menu targets (flowgate.v02.0039 T#3 / v02.0042 / v02.0043) ---------------------------------
@@ -341,6 +398,10 @@ export interface DesignerMenuTargets {
   canRedo?: boolean
   /** flowgate.v02.0059 T#2: how many cards of the open Flow are selected (정렬 2+, 균등 분배 3+). */
   selectedCount?: number
+  /** flowgate.v02.0061 T#14: a run command of the open Flow is being answered (every run command waits). */
+  runBusy?: boolean
+  /** flowgate.v02.0061 TR0031 rev1: the open Flow's run status is not confirmed yet (every run command waits). */
+  runUnknown?: boolean
 }
 
 export const ALL_MENU_TARGETS: DesignerMenuTargets = Object.freeze({ project: true, group: true, flow: true })
@@ -377,11 +438,11 @@ const PROJECT_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopCom
 /**
  * Whether a menu command can be chosen. ALWAYS_COMMANDS always can; PROJECT_COMMANDS need the
  * Project context, Group 닫기 a chosen Group, Flow 닫기 an open Flow; everything else needs the
- * open Flow and then the run state decides.
+ * open Flow and then the run phase decides (flowgate.v02.0061 T#14: the run commands of each phase).
  */
 export function isMenuCommandEnabled(
   cmd: DesignerTopCommand,
-  runMode: DesignerRunMode,
+  runPhase: DesignerRunPhase,
   targets: DesignerMenuTargets = ALL_MENU_TARGETS,
 ): boolean {
   if (ALWAYS_COMMANDS.has(cmd)) return true
@@ -393,8 +454,7 @@ export function isMenuCommandEnabled(
   if (cmd === 'edit.redo') return targets.canRedo !== false
   const minimum = arrangeSelectionMinimum(cmd)
   if (minimum !== null) return (targets.selectedCount ?? 0) >= minimum
-  if (cmd === 'run.stop') return runMode !== null
-  if (cmd === 'run.next' || cmd === 'run.all' || cmd === 'run.rerun') return runMode === null
+  if (cmd.startsWith('run.')) return targets.runBusy !== true && targets.runUnknown !== true && isRunCommandEnabled(cmd, runPhase)
   return true
 }
 

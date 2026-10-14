@@ -378,6 +378,17 @@ export interface FlowCanvasNodeRun {
   stage?: string | null
   /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): the card run's instruction document; absent when not sent. */
   instructionDocId?: string | null
+  /**
+   * flowgate.v02.0061 T#14: the node's attempt result integration (`pending` | `integrating` | `integrated` |
+   * `conflict` | `failed`, open key) and why; absent when not sent, null when the attempt has none.
+   */
+  integrationStatus?: string | null
+  integrationReason?: string | null
+  /** flowgate.v02.0061 T#14: the card is held (T#11 Hold); absent when not sent. */
+  hold?: boolean
+  /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
+  runningExecutionCount?: number
+  requestedExecutionCount?: number
 }
 
 /** P0008 §2.6 `graph_node`: what a Graph node is, besides where it is drawn. */
@@ -445,6 +456,16 @@ export interface FlowCanvasViewport {
   zoom: number
 }
 
+/**
+ * flowgate.v02.0061 TR0031 rev1: P0008 S1-3 `run` — the run the Canvas read shows (a Graph Flow's running / paused /
+ * stopping run on whatever revision it pinned, else its latest run on the latest revision), whatever the view.
+ */
+export interface FlowCanvasRun {
+  runId: string
+  status: string
+  revisionNo: number | null
+}
+
 /** GET /api/v1/flows/{flowId}/canvas. */
 export interface FlowCanvas {
   flowId: string
@@ -462,6 +483,8 @@ export interface FlowCanvas {
   /** flowgate.v02.0045 S3: the shown Graph definition, or null (no Graph nodes drawn). */
   view?: FlowCanvasView | null
   graph?: FlowCanvasGraphBlock | null
+  /** flowgate.v02.0061 TR0031 rev1: the run block — null = the read shows no run; absent = not sent. */
+  run?: FlowCanvasRun | null
 }
 
 /** PUT /api/v1/flows/{flowId}/canvas/layout input. `viewport: null` = unchanged. */
@@ -567,6 +590,8 @@ export interface FlowGraphDefinition {
 
 // flowgate.v02.0053 T#9 — the Graph run of a Flow (P0008 §7 S5: start / current / stop / resume). The top
 // band's 다음 단계 · 전체 실행 · 중지 drive it; the Canvas shows the node states it causes.
+// flowgate.v02.0061 T#14 — one run per Flow (`running` | `paused` | `stopping` | `idle`): the step / full command,
+// Pause, Stop and Resume (T#2 / T#7), with the idle reason, the execution counts and each node's integration / Hold.
 
 /** One node of a run (P0008 S5-4 `node_runs[]`). */
 export interface FlowRunNode {
@@ -578,6 +603,13 @@ export interface FlowRunNode {
   awaitingApproval?: boolean
   /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): `instruction` | `result` | null; absent when not sent. */
   stage?: string | null
+  /** flowgate.v02.0061 T#14: the node attempt's result integration status (open key) or null; absent when not sent. */
+  integrationStatus?: string | null
+  /** flowgate.v02.0061 T#14: the card is held (T#11); absent when not sent. */
+  hold?: boolean
+  /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
+  runningExecutionCount?: number
+  requestedExecutionCount?: number
 }
 
 /** A Graph run (P0008 S5-4). */
@@ -585,8 +617,19 @@ export interface FlowRun {
   runId: string
   flowId: string
   revisionNo: number | null
-  /** `running` | `stopped` | `completed` (open key, as sent). */
+  /** flowgate.v02.0061 T#14: `running` | `paused` | `stopping` | `idle` (open key, as sent). */
   status: string
+  /** flowgate.v02.0061 T#14: the run's last command, `step` | `full` (open key), or null when not sent. */
+  mode: string | null
+  /**
+   * flowgate.v02.0061 T#14: why an idle run is idle — `completed` | `no_targets` | `waiting_approval` |
+   * `blocked_rejected` | `error` | `stopped` | `merge_conflict` | `hold` (open key) — or null.
+   */
+  idleReason: string | null
+  /** flowgate.v02.0061 T#14: the run's running / requested AI executions and the Flow's limit (null: not sent). */
+  runningExecutionCount: number
+  requestedExecutionCount: number
+  executionLimit: number | null
   openNodeKeys: string[]
   /** Present when the server answered with the nodes (start / current / gate decision). */
   nodeRuns: FlowRunNode[] | null

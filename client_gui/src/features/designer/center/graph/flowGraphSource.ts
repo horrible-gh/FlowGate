@@ -78,13 +78,39 @@ export interface FlowDraftError extends Error {
 }
 
 /**
+ * flowgate.v02.0061 T#14: one node of a run as the band and the Canvas lock read it — its state, its attempt's
+ * result integration and Hold, and its attempt's running / requested AI executions.
+ */
+export interface FlowRunNodeInfo {
+  readonly nodeKey: string
+  readonly status: string
+  readonly integrationStatus?: string | null
+  readonly hold?: boolean
+  readonly runningExecutionCount?: number
+  readonly requestedExecutionCount?: number
+}
+
+/** flowgate.v02.0061 T#14: the server's step / full command (다음 단계 / 전체 실행). */
+export type FlowRunCommand = 'step' | 'full'
+
+/**
  * flowgate.v02.0053 T#9: a Flow's Graph run as the top band shows it (P0008 S5-4). `status` is the server's
- * open key: `running` | `stopped` | `completed`.
+ * open key — flowgate.v02.0061 T#14: `running` | `paused` | `stopping` | `idle` (one run per Flow).
  */
 export interface FlowRunInfo {
   readonly runId: string
   readonly status: string
   readonly openNodeKeys: readonly string[]
+  /** flowgate.v02.0061 T#14: the run's last command (`step` | `full`), or null / absent when not known. */
+  readonly mode?: string | null
+  /** flowgate.v02.0061 T#14: why an idle run is idle (open key), or null / absent. */
+  readonly idleReason?: string | null
+  /** flowgate.v02.0061 T#14: running / requested AI executions of the run and the Flow's limit. Absent = not known. */
+  readonly runningExecutionCount?: number
+  readonly requestedExecutionCount?: number
+  readonly executionLimit?: number | null
+  /** flowgate.v02.0061 T#14: the run's nodes when the answer carried them, else absent. */
+  readonly nodeRuns?: readonly FlowRunNodeInfo[]
   /**
    * flowgate.v02.0056 F2-1 (O1 0005-TR §4-2): cards approved while the run was stopped whose successors wait
    * ("멈춤 · 다음 카드 N개 대기"), and their node keys. Absent = none (a source that does not know them).
@@ -137,14 +163,19 @@ export interface FlowGraphSource {
   confirmDraft?(projectId: string, flowId: string, version: number, baseRevisionNo: number | null): Promise<number>
   /** The latest revision's definition, to start a new draft from it (null = no revision). */
   loadRevision?(projectId: string, flowId: string): Promise<{ revisionNo: number; content: FlowDraftContent } | null>
-  /** flowgate.v02.0053 T#9: the Flow's running or stopped run, or null. Absent = the source runs nothing. */
+  /** flowgate.v02.0053 T#9: the Flow's run, or null. Absent = the source runs nothing. */
   loadRun?(projectId: string, flowId: string): Promise<FlowRunInfo | null>
-  /** Starts a run of the Flow's latest revision. */
-  startRun?(projectId: string, flowId: string): Promise<FlowRunInfo>
-  /** Stops a running run: open cards keep their work, nothing new opens. */
+  /**
+   * flowgate.v02.0061 T#14: one step / full command — a new run of the Flow's latest revision, or its idle run going on
+   * (`full` when omitted).
+   */
+  startRun?(projectId: string, flowId: string, mode?: FlowRunCommand): Promise<FlowRunInfo>
+  /** flowgate.v02.0061 T#14: Stop (T#7) — the run is stopping, then idle (stopped) once its AI processes ended. */
   stopRun?(projectId: string, runId: string): Promise<FlowRunInfo>
-  /** Resumes a stopped run. */
+  /** Resumes a paused run with its own command. */
   resumeRun?(projectId: string, runId: string): Promise<FlowRunInfo>
+  /** flowgate.v02.0061 T#14: Pause (running -> paused). Absent = the source cannot pause. */
+  pauseRun?(projectId: string, runId: string): Promise<FlowRunInfo>
   /**
    * flowgate.v02.0059 T#2: the Graph as loadGraph reads it but with nothing left out (no collapse) — the
    * input of 자동 배치 when the shown Graph left Nodes out. Absent = loadGraph leaves nothing out.

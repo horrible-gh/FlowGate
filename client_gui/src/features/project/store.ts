@@ -79,9 +79,11 @@ import {
 import {
   approveFlowRunNode as approveFlowRunNodeApi,
   fetchCurrentFlowRun,
+  pauseFlowRun as pauseFlowRunApi,
   resumeFlowRun as resumeFlowRunApi,
   startFlowRun as startFlowRunApi,
   stopFlowRun as stopFlowRunApi,
+  type FlowRunCommand,
 } from './flowRunApi'
 import { subscribeFlowCanvasChanges as subscribeFlowCanvasChangesApi, type FlowCanvasChangeHandlers } from './flowCanvasEvents'
 import { subscribeProjectEvents as subscribeProjectEventsApi, type ProjectEventSubscription } from './projectEvents'
@@ -444,8 +446,13 @@ export const useProjectStore = defineStore('project', () => {
     return fetchCurrentFlowRun(flowId)
   }
 
-  function startFlowRun(flowId: string): Promise<FlowRun> {
-    return startFlowRunApi(flowId)
+  // flowgate.v02.0061 T#14: the step / full command (다음 단계 / 전체 실행) and Pause.
+  function startFlowRun(flowId: string, mode?: FlowRunCommand): Promise<FlowRun> {
+    return startFlowRunApi(flowId, mode)
+  }
+
+  function pauseFlowRun(runId: string): Promise<FlowRun> {
+    return pauseFlowRunApi(runId)
   }
 
   function stopFlowRun(runId: string): Promise<FlowRun> {
@@ -544,6 +551,7 @@ export const useProjectStore = defineStore('project', () => {
     confirmFlowGraphRevision,
     loadFlowRun,
     startFlowRun,
+    pauseFlowRun,
     stopFlowRun,
     resumeFlowRun,
     approveFlowRunNode,

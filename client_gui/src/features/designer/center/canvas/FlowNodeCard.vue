@@ -16,7 +16,10 @@
        flowgate.v02.0056 F2-1: a Graph card with a run shows its card state in the chip (cardStateView: 지시서
        작성 중 · 결과 작성 중 · 작업 중 · 승인 대기 · 승인됨 …) instead of the Canvas state, and a card waiting for
        its approval offers [승인] under its title (`data.approvable`; an `approve` event, never the selection or a
-       drag). A done card stays 승인됨 while the run is stopped: the waiting successors are the run band's. -->
+       drag). A done card stays 승인됨 while the run is stopped: the waiting successors are the run band's.
+       flowgate.v02.0061 T#14: under the title, the card attempt's result integration when it needs a look (병합 대기 ·
+       병합 중 · 병합 충돌 · 병합 실패) and its Hold. 병합 충돌 is a button: it opens the Git tool panel, where the Flow's
+       conflict session is resolved (a `conflict` event, never the selection or a drag). -->
   <div
     class="flow-node-card"
     :class="{ 'is-selected': data.selected, 'is-unknown': kind.key === 'unknown', 'has-issue': data.issue === true }"
@@ -71,6 +74,26 @@
         @mousedown.stop
         @click.stop="emit('approve', id)"
       >{{ t('gui.designer.center.approval.approve') }}</button>
+      <div v-if="data.integration || data.hold" class="flow-node-flags" data-test="designer-canvas-node-flags">
+        <button
+          v-if="data.integration === 'conflict'"
+          type="button"
+          class="flow-node-flag is-conflict nodrag nopan"
+          :title="t('gui.designer.center.integration.open_conflict')"
+          data-test="designer-canvas-node-conflict"
+          @pointerdown.stop
+          @mousedown.stop
+          @click.stop="emit('conflict', id)"
+        >{{ t('gui.designer.center.integration.conflict') }}</button>
+        <span
+          v-else-if="data.integration"
+          class="flow-node-flag"
+          :class="`is-${data.integration}`"
+          data-test="designer-canvas-node-integration"
+          :data-integration="data.integration"
+        >{{ t(`gui.designer.center.integration.${data.integration}`) }}</span>
+        <span v-if="data.hold" class="flow-node-flag is-hold" data-test="designer-canvas-node-hold">{{ t('gui.designer.center.hold') }}</span>
+      </div>
     </div>
     <Handle
       v-for="side in LINK_SIDES"
@@ -97,7 +120,11 @@ const props = defineProps<{
   data: FlowGateNodeData
 }>()
 
-const emit = defineEmits<{ approve: [nodeId: string] }>()
+const emit = defineEmits<{
+  approve: [nodeId: string]
+  /** flowgate.v02.0061 T#14: the card's 병합 충돌 was pressed (the Git tool panel resolves it). */
+  conflict: [nodeId: string]
+}>()
 
 /** The four start strips of a connectable card, one source handle per side. */
 const LINK_SIDES = [
@@ -267,6 +294,53 @@ const state = computed(() => flowNodeStateDisplay(props.data.state))
   font-weight: 680;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* flowgate.v02.0061 T#14: the integration / Hold line under the title (status tokens; above the strips). */
+.flow-node-flags {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  gap: 4px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.flow-node-flag {
+  flex: none;
+  height: 16px;
+  padding: 0 6px;
+  border: 1px solid var(--fg2-status-info-border);
+  border-radius: 4px;
+  background: var(--fg2-status-info-bg);
+  color: var(--fg2-status-info-fg);
+  font: inherit;
+  font-size: 9.5px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.flow-node-flag.is-conflict,
+.flow-node-flag.is-failed {
+  border-color: var(--fg2-status-danger-border);
+  background: var(--fg2-status-danger-bg);
+  color: var(--fg2-status-danger-fg);
+}
+
+.flow-node-flag.is-conflict {
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.flow-node-flag.is-conflict:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: 1px;
+}
+
+.flow-node-flag.is-hold {
+  border-color: var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
 }
 
 /* Edge anchors only: invisible and inert. */

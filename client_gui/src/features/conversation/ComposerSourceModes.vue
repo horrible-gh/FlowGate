@@ -1,8 +1,19 @@
 <template>
   <!-- flowgate.v02.0047 — AI source mode as icons (R0001 §2.3-8): 읽기 / 편집 / 1회 편집, each
        with its name, tooltip and pressed state. Server-confirmed only: the highlight moves once
-       the PATCH answers (0568 T0004 §2). -->
-  <div v-if="modes.length > 0" class="csm" role="group" data-test="conv-source-mode" :aria-label="t('gui.conversation.composer.source_mode')">
+       the PATCH answers (0568 T0004 §2). flowgate.v02.0061 T#14 (WP answer 2): `locked` — the Flow's Graph run is
+       running / paused / stopping — keeps the mode as it is: the icons are off and say why (the current one still
+       shows pressed). -->
+  <div
+    v-if="modes.length > 0"
+    class="csm"
+    :class="{ 'is-locked': locked }"
+    role="group"
+    data-test="conv-source-mode"
+    :data-locked="locked ? 'true' : 'false'"
+    :aria-label="t('gui.conversation.composer.source_mode')"
+    :title="locked ? t('gui.conversation.composer.source_locked') : undefined"
+  >
     <button
       v-for="mode in modes"
       :key="mode"
@@ -10,9 +21,9 @@
       :class="{ 'is-on': current === mode }"
       :aria-pressed="current === mode"
       :aria-label="t(`gui.conversation.composer.source.${mode}`)"
-      :title="t(`gui.conversation.composer.source_tip.${mode}`)"
+      :title="locked ? t('gui.conversation.composer.source_locked') : t(`gui.conversation.composer.source_tip.${mode}`)"
       :data-mode="mode"
-      :disabled="disabled || pending !== null"
+      :disabled="disabled || locked || pending !== null"
       @click="emit('set', mode)"
     >
       <span v-if="pending === mode" aria-hidden="true">…</span>
@@ -37,6 +48,8 @@ defineProps<{
   current: SourceAccessMode
   pending: SourceAccessMode | null
   disabled?: boolean
+  /** flowgate.v02.0061 T#14: the Flow's Graph run locks the mode (its reason is the icons' tooltip). */
+  locked?: boolean
 }>()
 
 const emit = defineEmits<{ set: [mode: SourceAccessMode] }>()

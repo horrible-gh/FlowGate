@@ -16,6 +16,9 @@
 // supersede link (the sequence root's chain).
 //
 // flowgate.v02.0056 F2-1: approve a card of it (O1 0005-TR §4-1); a run carries its pending propagation.
+//
+// flowgate.v02.0061 T#14: the run is the server's one run per Flow — the step / full command, Pause, Stop, Resume —
+// and carries its command, idle reason, execution counts and its nodes' integration / Hold.
 import type {
   FlowCanvas,
   FlowCanvasChangeHandlers,
@@ -37,6 +40,7 @@ import type {
   FlowGraphSource,
   FlowLayoutChange,
   FlowLayoutSaveResult,
+  FlowRunCommand,
   FlowRunInfo,
 } from './flowGraphSource'
 
@@ -53,9 +57,11 @@ export interface FlowCanvasLoaders {
   confirmFlowGraphRevision?(flowId: string, draftVersion: number, baseRevisionNo: number | null): Promise<FlowGraphConfirmResult>
   /** flowgate.v02.0053 T#9: the Graph run (P0008 §7 S5); absent = the Designer runs nothing. */
   loadFlowRun?(flowId: string): Promise<FlowRun | null>
-  startFlowRun?(flowId: string): Promise<FlowRun>
+  startFlowRun?(flowId: string, mode?: FlowRunCommand): Promise<FlowRun>
   stopFlowRun?(runId: string): Promise<FlowRun>
   resumeFlowRun?(runId: string): Promise<FlowRun>
+  /** flowgate.v02.0061 T#14: Pause; absent = the Designer cannot pause. */
+  pauseFlowRun?(runId: string): Promise<FlowRun>
   /** flowgate.v02.0056 F2-1: a card's [승인] (O1 0005-TR §4-1); absent = the Canvas approves nothing. */
   approveFlowRunNode?(runId: string, nodeKey: string, resultDocId: string | null): Promise<{ run: FlowRun }>
 }
@@ -67,6 +73,13 @@ const toRunInfo = (run: FlowRun): FlowRunInfo => ({
   // flowgate.v02.0056 F2-1: the run band's "멈춤 · 다음 카드 N개 대기".
   pendingPropagationCount: run.pendingPropagationCount ?? 0,
   pendingNodeKeys: run.pendingNodeKeys ?? [],
+  // flowgate.v02.0061 T#14: the band's status line and the Canvas lock / running lines.
+  mode: run.mode ?? null,
+  idleReason: run.idleReason ?? null,
+  runningExecutionCount: run.runningExecutionCount ?? 0,
+  requestedExecutionCount: run.requestedExecutionCount ?? 0,
+  executionLimit: run.executionLimit ?? null,
+  ...(run.nodeRuns ? { nodeRuns: run.nodeRuns } : {}),
 })
 
 /**
@@ -138,6 +151,8 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
     projection: canvas.projection || null,
     sequenceRootDocId: canvas.ownership.sequenceRootDocId ?? null,
     hiddenNodeCount: Object.values(canvas.collapsed?.hiddenCounts ?? {}).reduce((sum, count) => sum + (Number(count) || 0), 0),
+    // flowgate.v02.0061 TR0031 rev1: the run block's status (the run lock while the run read is pending or failed).
+    ...(canvas.run !== undefined ? { run: canvas.run ? { runId: canvas.run.runId, status: canvas.run.status } : null } : {}),
   }
 }
 
@@ -250,9 +265,10 @@ export function createServerFlowGraphSource(
           return run ? toRunInfo(run) : null
         }
       : undefined,
-    startRun: runLoaders ? async (_projectId, flowId) => toRunInfo(await loaders.startFlowRun!(flowId)) : undefined,
+    startRun: runLoaders ? async (_projectId, flowId, mode) => toRunInfo(await loaders.startFlowRun!(flowId, mode)) : undefined,
     stopRun: runLoaders ? async (_projectId, runId) => toRunInfo(await loaders.stopFlowRun!(runId)) : undefined,
     resumeRun: runLoaders ? async (_projectId, runId) => toRunInfo(await loaders.resumeFlowRun!(runId)) : undefined,
+    pauseRun: runLoaders && loaders.pauseFlowRun ? async (_projectId, runId) => toRunInfo(await loaders.pauseFlowRun!(runId)) : undefined,
     loadLayoutGraph: async (_projectId: string, flowId: string, view?: string) =>
       toFlowGraph(await loaders.loadFlowCanvas(flowId, view)),
     readDocumentLink: readDocument ? (_projectId, docId) => readDocument(docId) : undefined,

@@ -97,7 +97,7 @@
       @edge-double-click="onEdgeDoubleClick"
     >
       <template #node-flowgate="nodeProps">
-        <FlowNodeCard :id="nodeProps.id" :data="nodeProps.data" @approve="emit('node-approve', $event)" />
+        <FlowNodeCard :id="nodeProps.id" :data="nodeProps.data" @approve="emit('node-approve', $event)" @conflict="emit('node-conflict', $event)" />
       </template>
       <template #edge-flowgate="edgeProps">
         <FlowEdgePath
@@ -117,12 +117,28 @@
           :progressed="edgeProps.data?.progressed === true"
           :selected="edgeProps.data?.selected === true"
           :deletable="edgeProps.data?.deletable === true"
+          :protected-target="edgeProps.data?.protected === true"
+          :running="edgeProps.data?.running === true"
           @remove="removeEdge(edgeProps.id)"
         />
       </template>
     </VueFlow>
     <Badge v-if="sample" class="flow-canvas-sample" size="sm" tone="info" data-test="designer-canvas-sample">
       {{ t('gui.designer.center.sample_data') }}
+    </Badge>
+    <!-- flowgate.v02.0061 T#14: why the structure cannot be edited now (the run lock; TR0031 rev1: or the run status
+         not confirmed yet); viewing stays as it is. -->
+    <Badge
+      v-if="lockText"
+      class="flow-canvas-lock"
+      size="sm"
+      tone="warning"
+      role="status"
+      :title="lockText"
+      data-test="designer-canvas-lock"
+      :data-lock="marks.lock ?? ''"
+    >
+      🔒 {{ lockText }}
     </Badge>
   </div>
 </template>
@@ -210,6 +226,7 @@ import type { FlowDraftIssue } from '../graph/flowGraphSource'
 import FlowEdgePath from './FlowEdgePath.vue'
 import FlowNodeCard from './FlowNodeCard.vue'
 import { toVueFlowEdges, toVueFlowNodes } from './vueFlowMapping'
+import { NO_RUN_MARKS, type FlowRunMarks } from '../run/flowRunLock'
 
 const props = withDefaults(
   defineProps<{
@@ -237,8 +254,13 @@ const props = withDefaults(
     canApprove?: boolean
     /** flowgate.v02.0056 F2-1: the card whose [승인] is being answered, or null. */
     approvingNodeId?: string | null
+    /**
+     * flowgate.v02.0061 T#14: the Flow's run marks (run/flowRunLock.ts) — the edit lock and its note, the protected
+     * lines and the running lines. `editable` already leaves the lock out (DesignerCenter).
+     */
+    marks?: FlowRunMarks
   }>(),
-  { selectedNodeIds: () => [], selectMode: false, viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [], moveStep: null, canApprove: false, approvingNodeId: null },
+  { selectedNodeIds: () => [], selectMode: false, viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [], moveStep: null, canApprove: false, approvingNodeId: null, marks: () => NO_RUN_MARKS },
 )
 
 const emit = defineEmits<{
@@ -259,6 +281,8 @@ const emit = defineEmits<{
   undo: []
   /** flowgate.v02.0056 F2-1: a card's [승인]. */
   'node-approve': [nodeId: string]
+  /** flowgate.v02.0061 T#14: a card's 병합 충돌 (its result's merge conflict) was pressed. */
+  'node-conflict': [nodeId: string]
 }>()
 
 const { t } = useI18n()
@@ -292,9 +316,15 @@ const nodes = computed(() =>
     selectMode: props.selectMode,
     canApprove: props.canApprove,
     approvingNodeId: props.approvingNodeId,
+    marks: props.marks,
   }),
 )
-const edges = computed(() => toVueFlowEdges(props.graph, issueMap.value, selectedEdgeId.value))
+const edges = computed(() => toVueFlowEdges(props.graph, issueMap.value, selectedEdgeId.value, props.marks))
+/** flowgate.v02.0061 T#14: the run lock's note (null when the structure may be edited); TR0031 rev1: `unknown` too. */
+const lockText = computed(() => {
+  if (props.marks.lock === 'run') return t('gui.designer.center.run_lock')
+  return props.marks.lock === 'unknown' ? t('gui.designer.center.run_lock_pending') : null
+})
 /** The selected Edge as drawn, or null (also when it left the Graph). */
 const selectedEdge = computed(() => edges.value.find((edge) => edge.id === selectedEdgeId.value) ?? null)
 
@@ -678,6 +708,18 @@ watch(
   position: absolute;
   top: 10px;
   right: 12px;
+  pointer-events: none;
+}
+
+/* flowgate.v02.0061 T#14: the run lock's note, top left (the sample badge keeps the top right). */
+.flow-canvas-lock {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   pointer-events: none;
 }
 </style>

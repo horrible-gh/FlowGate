@@ -68,6 +68,19 @@
 //
 // flowgate.v02.0056 F2-1: a card's [승인] on the Canvas approves it through the same run control (with the
 // result the shown Graph has for the card); the Canvas is read again after the answer.
+//
+// flowgate.v02.0061 T#14: the run buttons are 다음 단계 / 전체 실행 (one step / full command), 일시정지 / 재개 and 중지
+// (run/flowRunControl.ts). While the Flow's run is running, paused or stopping its structure is locked here
+// (run/flowRunLock.ts): no Palette drop, connection, removal, undo / redo or 검증 — only viewing, panning, zooming and
+// moving cards. Whatever the run's status, a done / open / review node and the execution lines into it are never
+// removed and get no new line (the server's T#3 judgement). The Canvas gets the same marks to draw (`runMarks`).
+//
+// flowgate.v02.0061 TR0031 rev1: the lock follows the Flow's confirmed run status (`runStatus`) — the run read (or a
+// command's answer), else, while that read is pending or failed, the run status of the Flow's Canvas read. With neither
+// (a Flow whose Canvas and run are both still unread, or whose run read failed with no Canvas shown) the status is not
+// confirmed and the structure waits as if locked (`unknown`); a run last known locked stays locked. No run command goes
+// until the status is confirmed. The Graph's load only adds the protected / running nodes: its loading or error never
+// lifts the lock. The marks also carry the run read's node runs of the shown nodes (result integration, Hold).
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
 import {
@@ -96,12 +109,23 @@ import { CLIENT_KEY_PREFIX, editableRevision, type CanvasNodeSpec } from './edit
 import type { NodeMove, NodePlacement } from './edit/editHistory'
 import { fixtureFlowGraphSource } from './graph/fixtureFlowGraphSource'
 import { isEdgeProgressed } from './graph/edgeProgress'
-import type { FlowGraph, FlowGraphNode, FlowGraphSelection } from './graph/flowGraph'
-import type { FlowGraphSource, FlowLayoutChange } from './graph/flowGraphSource'
+import type { FlowGraph, FlowGraphNode, FlowGraphRun, FlowGraphSelection } from './graph/flowGraph'
+import type { FlowGraphSource, FlowLayoutChange, FlowRunInfo } from './graph/flowGraphSource'
 import { createLayoutSaveQueue } from './layoutSaveQueue'
 import { createFlowRunControl, type FlowRunFailure, type FlowRunMode, type FlowRunState } from './run/flowRunControl'
+import { NO_RUN_MARKS, flowRunMarks, isEdgeProtected, isRunLocked, type FlowEditLock, type FlowRunMarks } from './run/flowRunLock'
 
-export type { ArrangeKind, CanvasNodeSpec, FlowRunFailure, FlowRunMode, FlowRunState, NodePlacement }
+export type { ArrangeKind, CanvasNodeSpec, FlowEditLock, FlowRunFailure, FlowRunMarks, FlowRunMode, FlowRunState, NodePlacement }
+
+/** flowgate.v02.0061 TR0031 rev1: a Flow's run status as the screen acts on it. */
+export interface FlowRunStatus {
+  /** The run (null: none). Not `known`: the run last known, if any. */
+  readonly run: FlowRunInfo | null
+  /** Confirmed by the run read / a command's answer, or (that read pending or failed) by the Flow's Canvas read. */
+  readonly known: boolean
+}
+
+const KNOWN_NO_RUN: FlowRunStatus = Object.freeze({ run: null, known: true })
 
 /**
  * flowgate.v02.0059 T#1: a view operation the Toolbar / View menu asks of a Flow's Canvas. Fit and
@@ -256,10 +280,27 @@ export interface DesignerCenterSession {
   readonly canRun: boolean
   /** The active Flow's run state, or null (none read yet). */
   readonly activeRun: ComputedRef<DeepReadonly<FlowRunState> | null>
-  /** 다음 단계 (`next`) / 전체 실행 (`all`): confirms the draft, then starts or resumes. Whether it went. */
+  /** 다음 단계 (`next`) / 전체 실행 (`all`): confirms the draft (idle only), then one step / full command. */
   runFlow(flowId: string, mode: FlowRunMode): Promise<boolean>
-  /** 중지: stops the Flow's running run. Whether it stopped. */
+  /** 중지 (T#7 Stop) of the Flow's running or paused run. Whether the server took it. */
   stopRun(flowId: string): Promise<boolean>
+  /** flowgate.v02.0061 T#14: the source can pause a run (일시정지). */
+  readonly canPause: boolean
+  /** flowgate.v02.0061 T#14 일시정지 of the Flow's running run. */
+  pauseRun(flowId: string): Promise<boolean>
+  /** flowgate.v02.0061 T#14 재개 of the Flow's paused run (its own command). */
+  resumeRun(flowId: string): Promise<boolean>
+  /**
+   * flowgate.v02.0061 T#14: what the Flow's run means for its Canvas — the edit lock (running / paused / stopping),
+   * the protected nodes (done / open / review) and the nodes the work is going through now (running lines).
+   */
+  runMarks(flowId: string): FlowRunMarks
+  /** flowgate.v02.0061 T#14: the active Flow's run marks (TR0031 rev1: the lock also without a ready Graph). */
+  readonly activeRunMarks: ComputedRef<FlowRunMarks>
+  /** flowgate.v02.0061 TR0031 rev1: the Flow's confirmed run status (`known` false: not confirmed yet). */
+  runStatus(flowId: string): FlowRunStatus
+  /** flowgate.v02.0061 TR0031 rev1: the active Flow's run status (no active Flow: no run). */
+  readonly activeRunStatus: ComputedRef<FlowRunStatus>
   /** flowgate.v02.0056 F2-1: the source can approve a card (the Canvas offers [승인]). */
   readonly canApprove: boolean
   /**
@@ -426,6 +467,48 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     prepare: (flowId) => prepareRun(flowId),
     refresh: (flowId) => refreshFlow(flowId),
   }, state.runs)
+
+  /**
+   * flowgate.v02.0061 TR0031 rev1: the run the Canvas read shows, with what the run last read adds when it is the same
+   * run (its band and node runs; a newer status is the Canvas's). A Canvas showing no run means no locked run.
+   */
+  function canvasRunInfo(shown: FlowGraphRun | null, last: FlowRunInfo | null): FlowRunInfo | null {
+    if (shown === null) return last && !isRunLocked(last) ? last : null
+    if (last?.runId === shown.runId) return last.status === shown.status ? last : { ...last, status: shown.status }
+    return { runId: shown.runId, status: shown.status, openNodeKeys: [] }
+  }
+
+  // flowgate.v02.0061 TR0031 rev1: the run status the lock and the run commands follow (see the head of this file).
+  function runStatus(flowId: string): FlowRunStatus {
+    const run = state.runs[flowId]
+    const shown = readyGraph(flowId)?.run
+    if (!runControl.available) return shown ? { run: canvasRunInfo(shown, null), known: true } : KNOWN_NO_RUN
+    if (run?.readState === 'read') return { run: run.run, known: true }
+    if (shown !== undefined) return { run: canvasRunInfo(shown, run?.run ?? null), known: true }
+    return { run: run?.run ?? null, known: false }
+  }
+
+  // flowgate.v02.0061 T#14: the run's marks of a Flow's shown Graph (run/flowRunLock.ts); TR0031 rev1: the lock stays
+  // whatever the Graph's load (no ready Graph: the lock alone).
+  function runMarks(flowId: string): FlowRunMarks {
+    const { run, known } = runStatus(flowId)
+    return flowRunMarks(readyGraph(flowId), run, known)
+  }
+
+  /** flowgate.v02.0061 TR0031 rev1: a run command goes only on a confirmed status (the phase's own buttons). */
+  function whenKnown(flowId: string, go: (run: FlowRunInfo | null) => boolean): boolean {
+    const status = runStatus(flowId)
+    return status.known && go(status.run)
+  }
+
+  const editLock = (flowId: string): FlowEditLock => runMarks(flowId).lock
+
+  function checkConnection(flowId: string, source: string, target: string): ConnectionCheck {
+    const marks = runMarks(flowId)
+    if (marks.lock !== null) return { ok: false, reason: 'locked' }
+    if (marks.protectedNodeIds.has(target)) return { ok: false, reason: 'protected' }
+    return drafts.check(flowId, source, target)
+  }
 
   function changedElsewhere(projectId: string, flowId: string) {
     if (isOpen(projectId, flowId)) readWhenSaved(flowId)
@@ -778,8 +861,9 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       const node = activeSelectedNode.value
       const id = exposed.activeFlowId
       const load = id === null ? undefined : (exposed.graphs[id] as FlowGraphLoad | undefined)
-      if (!node || exposed.projectId === null || load?.status !== 'ready') return null
-      return { projectId: exposed.projectId, graph: load.graph, node }
+      if (!node || id === null || exposed.projectId === null || load?.status !== 'ready') return null
+      // flowgate.v02.0061 T#14: the Inspector's card settings follow the run lock as the Canvas does.
+      return { projectId: exposed.projectId, graph: load.graph, node, editLock: editLock(id) }
     }),
     canvasSize: computed(() => canvasSize.value),
     setProject,
@@ -810,16 +894,24 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       const id = exposed.activeFlowId
       return id === null ? null : exposed.edits[id] ?? null
     }),
-    dropOnCanvas: drafts.drop,
-    checkConnection: drafts.check,
-    connectNodes: drafts.connect,
-    removeNode: drafts.removeNode,
+    dropOnCanvas: (flowId, transfer, x, y) => editLock(flowId) === null && drafts.drop(flowId, transfer, x, y),
+    checkConnection,
+    connectNodes: (flowId: string, source: string, target: string) =>
+      checkConnection(flowId, source, target).ok && drafts.connect(flowId, source, target),
+    removeNode: (flowId: string, nodeId: string) => {
+      const marks = runMarks(flowId)
+      return marks.lock === null && !marks.protectedNodeIds.has(nodeId) && drafts.removeNode(flowId, nodeId)
+    },
     removeEdge: (flowId: string, edgeId: string) => {
       const graph = readyGraph(flowId)
+      const marks = runMarks(flowId)
+      const edge = graph?.edges.find((candidate) => candidate.id === edgeId)
+      if (marks.lock !== null || (edge && isEdgeProtected(edge, marks.protectedNodeIds))) return false
       return !(graph && isEdgeProgressed(graph, edgeId)) && drafts.removeEdge(flowId, edgeId)
     },
-    undoEdit: drafts.undo,
-    redoEdit: drafts.redo,
+    // flowgate.v02.0061 T#14: the history holds structure edits, so it waits while the run is locked.
+    undoEdit: (flowId: string) => editLock(flowId) === null && drafts.undo(flowId),
+    redoEdit: (flowId: string) => editLock(flowId) === null && drafts.redo(flowId),
     validateDraft: drafts.validate,
     confirmDraft: drafts.confirm,
     prepareRun,
@@ -828,6 +920,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       const draft = id === null ? null : readyGraph(id)?.draft
       const edit = id === null ? undefined : exposed.edits[id]
       const status = edit?.status ?? 'idle'
+      if (id === null || editLock(id) !== null) return false
       return !!draft?.editable && !edit?.action && status !== 'conflict' && (draft.version > 0 || status !== 'idle')
     }),
     reloadDraft: drafts.reload,
@@ -836,8 +929,23 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       const id = exposed.activeFlowId
       return id === null ? null : exposed.runs[id] ?? null
     }),
-    runFlow: runControl.run,
-    stopRun: runControl.stop,
+    // TR0031 rev1: 다음 단계 / 전체 실행 only on a confirmed idle (or no) run; 일시정지 / 재개 / 중지 on a confirmed run.
+    runFlow: (flowId, mode) =>
+      whenKnown(flowId, (run) => !isRunLocked(run)) ? runControl.run(flowId, mode) : Promise.resolve(false),
+    stopRun: (flowId) => (whenKnown(flowId, (run) => run !== null) ? runControl.stop(flowId) : Promise.resolve(false)),
+    canPause: runControl.canPause,
+    pauseRun: (flowId) => (whenKnown(flowId, (run) => run !== null) ? runControl.pause(flowId) : Promise.resolve(false)),
+    resumeRun: (flowId) => (whenKnown(flowId, (run) => run !== null) ? runControl.resume(flowId) : Promise.resolve(false)),
+    runMarks,
+    activeRunMarks: computed(() => {
+      const id = exposed.activeFlowId
+      return id === null ? NO_RUN_MARKS : runMarks(id)
+    }),
+    runStatus,
+    activeRunStatus: computed(() => {
+      const id = exposed.activeFlowId
+      return id === null ? KNOWN_NO_RUN : runStatus(id)
+    }),
     canApprove: runControl.canApprove,
     approveNode: (flowId, nodeId) => {
       const node = readyGraph(flowId)?.nodes.find((candidate) => candidate.id === nodeId)

@@ -9,7 +9,8 @@
        Flow — designerTop.ts isMenuCommandEnabled / isSubmenuEnabled); the Window menu, Help and
        the menu titles themselves always open. flowgate.v02.0059 T#2: 편집 › 정렬 / 배치 is a submenu of the
        six 정렬 and two 균등 분배 commands (the Toolbar's 정렬 / 배치 ▾ lists the same); each needs enough
-       selected cards (`targets.selectedCount`) and is shown unavailable otherwise. -->
+       selected cards (`targets.selectedCount`) and is shown unavailable otherwise.
+       flowgate.v02.0061 T#14: the Run menu follows the open Flow's run phase (`runPhase`) as the Toolbar does. -->
   <nav
     ref="root"
     class="designer-menubar"
@@ -52,7 +53,7 @@
             type="button"
             role="menuitem"
             class="designer-menu-item"
-            :disabled="!isMenuCommandEnabled(entry.command, runMode, targets)"
+            :disabled="!isMenuCommandEnabled(entry.command, runPhase, targets)"
             data-test="designer-menu-item"
             :data-command="entry.command"
             @click="choose(() => emit('command', entry.command))"
@@ -126,7 +127,7 @@
                     type="button"
                     role="menuitem"
                     class="designer-menu-item"
-                    :disabled="!isMenuCommandEnabled(command, runMode, targets)"
+                    :disabled="!isMenuCommandEnabled(command, runPhase, targets)"
                     data-test="designer-menu-item"
                     :data-command="command"
                     @click="choose(() => emit('command', command))"
@@ -192,7 +193,7 @@ import {
   type DesignerMenuTargets,
   type DesignerRecentLists,
   type DesignerRecentRequest,
-  type DesignerRunMode,
+  type DesignerRunPhase,
   type DesignerTopCommand,
   type DesignerWindowPanel,
   type DesignerWindowState,
@@ -201,7 +202,8 @@ import {
 
 withDefaults(
   defineProps<{
-    runMode: DesignerRunMode
+    /** flowgate.v02.0061 T#14: the open Flow's run phase (the Run menu's availability). */
+    runPhase: DesignerRunPhase
     density: DesignerDensity
     windowState: DesignerWindowState
     /** Recent Project / Group / Flow entries, fed by the Shell (0043). */

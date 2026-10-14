@@ -3,7 +3,8 @@
        contract through the session; nothing here opens a dialog (0235 R0001) — settings, the
        menus and the manual-copy fallback are inline. flowgate.v02.0047 (v9): input and send on
        the first line; AI picker, source mode icons, settings (⚙) and the ⋯ menu (mention copy,
-       AI call) on the second. -->
+       AI call) on the second. flowgate.v02.0061 T#14: `sourceLocked` turns the source mode icons off with the
+       reason (the Flow's Graph run); nothing else changes. -->
   <form class="conv-compose" data-test="conv-composer" @submit.prevent="submit">
     <div v-if="manualCopyText" class="conv-manual" data-test="conv-manual-copy">
       <div class="conv-manual-head">
@@ -57,6 +58,7 @@
         :current="settings.sourceAccessMode"
         :pending="pendingSourceMode"
         :disabled="readOnly"
+        :locked="sourceLocked"
         @set="(mode) => emit('set-source-mode', mode)"
       />
       <span class="conv-assist-spacer"></span>
@@ -98,6 +100,8 @@ const props = defineProps<{
   settings: DeepReadonly<ChatSettings>
   savingSettings: boolean
   pendingSourceMode: SourceAccessMode | null
+  /** flowgate.v02.0061 T#14: the Flow's Graph run locks the source access mode. */
+  sourceLocked?: boolean
   providers: readonly ChatProvider[]
   selectedProviderId: string
   providersStatus: string

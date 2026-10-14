@@ -6,7 +6,7 @@
        lives in the Shell, so nothing is lost while the frame is shown. -->
   <section class="designer-workspace" data-test="designer-workspace">
     <div v-if="unselected" class="designer-workspace-frame" data-test="designer-center-unselected" />
-    <DesignerCenter v-else :center="center" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" />
+    <DesignerCenter v-else :center="center" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" @show-tool="emit('show-tool', $event)" />
   </section>
 </template>
 
@@ -29,6 +29,8 @@ withDefaults(
 const emit = defineEmits<{
   'canvas-place': [flowId: string, x: number, y: number]
   'cancel-placement': []
+  /** flowgate.v02.0061 T#14: a card's merge conflict asks for the Git tool panel. */
+  'show-tool': [tool: 'git']
 }>()
 </script>
 

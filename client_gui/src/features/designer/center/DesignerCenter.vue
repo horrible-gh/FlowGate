@@ -13,7 +13,10 @@
        Canvas, and the Selection it reports in that mode comes back to the session. flowgate.v02.0059 T#2: a
        drop of one card or of the selection goes to the session as one move (one undo entry).
        flowgate.v02.0059 0017-T: the density's move step (`move-step`, the Shell's) goes to the Canvas.
-       flowgate.v02.0056 F2-1: a card's [승인] goes to the session (approveNode); its refusal is the run band's toast. -->
+       flowgate.v02.0056 F2-1: a card's [승인] goes to the session (approveNode); its refusal is the run band's toast.
+       flowgate.v02.0061 T#14: the Canvas is editable only while the Flow's run does not lock it (the session's run marks:
+       running / paused / stopping); the marks also draw the lock note, the protected lines and the running lines. A
+       card's 병합 충돌 asks the Shell for the Git tool panel (`show-tool`), where the conflict session is resolved. -->
   <div class="designer-center" data-test="designer-center">
     <FlowTabStrip
       :tabs="center.state.tabs"
@@ -60,7 +63,8 @@
           @viewport-commit="center.commitViewport(activeTab.flowId, $event)"
           @canvas-resize="center.recordCanvasSize($event)"
           @nodes-move="center.moveNodes(activeTab.flowId, $event)"
-          :editable="load.graph.draft?.editable === true"
+          :editable="load.graph.draft?.editable === true && marks.lock === null"
+          :marks="marks"
           :can-connect="(source: string, target: string) => center.checkConnection(activeTab!.flowId, source, target).ok"
           :issues="edit?.check?.issues ?? []"
           @canvas-drop="center.dropOnCanvas(activeTab.flowId, $event.transfer, $event.x, $event.y)"
@@ -73,6 +77,7 @@
           :can-approve="center.canApprove"
           :approving-node-id="center.activeRun.value?.approving ?? null"
           @node-approve="center.approveNode(activeTab.flowId, $event)"
+          @node-conflict="emit('show-tool', 'git')"
         />
       </template>
     </div>
@@ -98,6 +103,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'canvas-place': [flowId: string, x: number, y: number]
   'cancel-placement': []
+  /** flowgate.v02.0061 T#14: a card's merge conflict — the Git tool panel resolves it. */
+  'show-tool': [tool: 'git']
 }>()
 
 const { t } = useI18n()
@@ -106,6 +113,7 @@ const activeTab = props.center.activeTab
 const load = props.center.activeGraphLoad
 const view = props.center.activeView
 const edit = props.center.activeEdit
+const marks = props.center.activeRunMarks
 </script>
 
 <style scoped>

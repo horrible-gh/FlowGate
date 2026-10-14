@@ -30,10 +30,19 @@
 // flowgate.v02.0056 F2-1: a Graph node with a run carries its card state (graph/cardStateView.ts — 작업 중 ·
 // 승인 대기 · 승인됨 …) for the card's state chip, and whether the chip offers [승인] now (`approvable`: the
 // card waits for its approval, this Canvas may approve and the Flow is not an ownership conflict).
+//
+// flowgate.v02.0061 T#14 (`marks`, run/flowRunLock.ts): while the Flow's run is locked no card takes a connection and
+// no line can be removed; an execution line into a done / open / review node is `protected` (never removed, shown
+// with the progressed line's lock mark), and one into a node the work is going through now is `running`. A card
+// carries its attempt's result integration (`integration`: conflict / failed / pending / integrating) and its Hold
+// for the chip. TR0031 rev1: they come from the run read's node run of the card (`marks.nodeRuns`, the latest) and else
+// from the Canvas node run, so a draft view (no node runs on its nodes) keeps them for the cards the run knows; a card
+// added to the draft is no node of the run and shows none.
 import type { Edge, Node } from '@vue-flow/core'
 import { cardStateView, type CardStateView } from '../graph/cardStateView'
 import { progressedEdgeIds } from '../graph/edgeProgress'
 import type { FlowGraph } from '../graph/flowGraph'
+import { NO_RUN_MARKS, isEdgeProtected, type FlowRunMarks } from '../run/flowRunLock'
 
 /** Custom node / edge type key: FlowCanvas renders it with FlowNodeCard / FlowEdgePath. */
 export const FLOWGATE_NODE_TYPE = 'flowgate'
@@ -58,7 +67,17 @@ export interface FlowGateNodeData {
   approvable?: boolean
   /** flowgate.v02.0056 F2-1: this card's [승인] is being answered. */
   approving?: boolean
+  /**
+   * flowgate.v02.0061 T#14: the card attempt's result integration when it needs a look — `conflict` | `failed` |
+   * `pending` | `integrating` (open key); absent otherwise.
+   */
+  integration?: string
+  /** flowgate.v02.0061 T#14: the card is held (T#11 Hold). */
+  hold?: boolean
 }
+
+/** flowgate.v02.0061 T#14: integration states the card chip names (an integrated / absent one says nothing). */
+const SHOWN_INTEGRATIONS: readonly string[] = ['conflict', 'failed', 'pending', 'integrating']
 
 /** flowgate.v02.0056 F2-1: what the Canvas may do with a card waiting for its approval. */
 export interface FlowGateApprovalOptions {
@@ -84,12 +103,18 @@ export interface FlowGateEdgeData {
   selected?: boolean
   /** flowgate.v02.0045 T0019: the Edge may be removed (editable and not progressed). */
   deletable: boolean
+  /** flowgate.v02.0061 T#14: an execution line into a done / open / review node (never removed). */
+  protected?: boolean
+  /** flowgate.v02.0061 T#14: an execution line into a node the work is going through now. */
+  running?: boolean
 }
 
 /** flowgate.v02.0056 F2-1: the approval fields (FlowGateApprovalOptions) ride along; absent = no [승인]. */
 export interface VueFlowNodeOptions extends Partial<FlowGateApprovalOptions> {
   /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode is on. */
   selectMode?: boolean
+  /** flowgate.v02.0061 T#14: the Flow's run marks; absent = none (no lock). */
+  marks?: FlowRunMarks
 }
 
 export function toVueFlowNodes(
@@ -99,8 +124,10 @@ export function toVueFlowNodes(
   options: VueFlowNodeOptions = {},
 ): FlowGateVueFlowNode[] {
   const selectedIds = new Set<string>(selection === null ? [] : typeof selection === 'string' ? [selection] : selection)
+  const marks = options.marks ?? NO_RUN_MARKS
+  const locked = marks.lock !== null
   return graph.nodes.map((node) => {
-    const connectable = node.structureEditable === true && !!node.definition
+    const connectable = node.structureEditable === true && !!node.definition && !locked
     const selected = selectedIds.has(node.id)
     const data: FlowGateNodeData = { kind: node.kind, title: node.title, state: node.state ?? null, selected }
     if (node.docType) data.docType = node.docType
@@ -116,6 +143,10 @@ export function toVueFlowNodes(
       if (cardState.approvable && options.canApprove && graph.ownership !== 'conflict') data.approvable = true
       if (options.approvingNodeId === node.id) data.approving = true
     }
+    const runNode = marks.nodeRuns.get(node.id)
+    const integration = (runNode && 'integrationStatus' in runNode ? runNode.integrationStatus : node.nodeRun?.integrationStatus) ?? null
+    if (integration && SHOWN_INTEGRATIONS.includes(integration)) data.integration = integration
+    if ((runNode && typeof runNode.hold === 'boolean' ? runNode.hold : node.nodeRun?.hold) === true) data.hold = true
     const mapped: FlowGateVueFlowNode = {
       id: node.id,
       type: FLOWGATE_NODE_TYPE,
@@ -145,6 +176,7 @@ export function toVueFlowEdges(
   graph: FlowGraph,
   issues: ReadonlyMap<string, string> = new Map(),
   selectedEdgeId: string | null = null,
+  marks: FlowRunMarks = NO_RUN_MARKS,
 ): Edge[] {
   const nodeIds = new Set(graph.nodes.map((node) => node.id))
   const progressed = progressedEdgeIds(graph)
@@ -156,11 +188,14 @@ export function toVueFlowEdges(
       continue
     }
     const isProgressed = progressed.has(edge.id)
+    const isProtected = isEdgeProtected({ edgeClass: edge.edgeClass ?? null, target: edge.target }, marks.protectedNodeIds)
     const data: FlowGateEdgeData = {
       edgeClass: edge.edgeClass ?? null,
       progressed: isProgressed,
-      deletable: edge.editable === true && !isProgressed,
+      deletable: edge.editable === true && !isProgressed && !isProtected && marks.lock === null,
     }
+    if (isProtected) data.protected = true
+    if (edge.edgeClass === 'execution' && marks.activeNodeIds.has(edge.target)) data.running = true
     if (edge.editable === true) data.editable = true
     if (issues.has(edge.id)) {
       data.issue = true
