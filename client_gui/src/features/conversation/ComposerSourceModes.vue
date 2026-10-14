@@ -2,8 +2,8 @@
   <!-- flowgate.v02.0047 — AI source mode as icons (R0001 §2.3-8): 읽기 / 편집 / 1회 편집, each
        with its name, tooltip and pressed state. Server-confirmed only: the highlight moves once
        the PATCH answers (0568 T0004 §2). flowgate.v02.0061 T#14 (WP answer 2): `locked` — the Flow's Graph run is
-       running / paused / stopping — keeps the mode as it is: the icons are off and say why (the current one still
-       shows pressed). -->
+       running / paused / stopping — only permits switching to read_only. Edit / edit-once stay off and say why
+       (the current one still shows pressed). -->
   <div
     v-if="modes.length > 0"
     class="csm"
@@ -21,9 +21,9 @@
       :class="{ 'is-on': current === mode }"
       :aria-pressed="current === mode"
       :aria-label="t(`gui.conversation.composer.source.${mode}`)"
-      :title="locked ? t('gui.conversation.composer.source_locked') : t(`gui.conversation.composer.source_tip.${mode}`)"
+      :title="locked && mode !== 'read_only' ? t('gui.conversation.composer.source_locked') : t(`gui.conversation.composer.source_tip.${mode}`)"
       :data-mode="mode"
-      :disabled="disabled || locked || pending !== null"
+      :disabled="disabled || (locked && mode !== 'read_only') || pending !== null"
       @click="emit('set', mode)"
     >
       <span v-if="pending === mode" aria-hidden="true">…</span>
@@ -48,7 +48,7 @@ defineProps<{
   current: SourceAccessMode
   pending: SourceAccessMode | null
   disabled?: boolean
-  /** flowgate.v02.0061 T#14: the Flow's Graph run locks the mode (its reason is the icons' tooltip). */
+  /** flowgate.v02.0061 T#14: the Flow's Graph run blocks edit modes; switching to read_only stays available. */
   locked?: boolean
 }>()
 

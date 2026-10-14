@@ -133,8 +133,31 @@ def calculate(snapshot: Snapshot, node_key: str) -> dict:
               and r.get("node_key") == by_id[r["attempt_id"]]["node_key"]
               and r.get("group_id") == snapshot.flow_id]
     attributed = {r["attempt_id"] for r in ledger if r.get("state") in ("live", "no_commit")}
+    def needs_attribution(attempt):
+        if attempt.get("input_source") == "document_only":
+            return False
+        # Once a result exists, missing ownership must still fail closed.
+        if attempt.get("result_commit") or attempt.get("integrated_commit"):
+            return True
+        graph = snapshot.revisions.get(attempt["revision_no"])
+        node = graph.node(attempt["node_key"]) if graph is not None else None
+        if node is not None and node.node_type == "gate":
+            return False
+        # Human-only attempts never prepare a workspace. Do not infer this from
+        # NULL input_source alone: pre-T#8 Git attempts still require attribution.
+        if (attempt.get("workspace_prepared") is False
+                and not attempt.get("input_commit") and not attempt.get("input_source")):
+            return False
+        # Approval creates the result/ledger later. Pending/failed integration is
+        # not this case, nor is an ended legacy attempt without a ledger entry.
+        if (attempt["status"] == "active"
+                and nodes[attempt["node_key"]]["status"] in ("open", "review")
+                and attempt.get("integration_status") in (None, "", "none")):
+            return False
+        return True
+
     missing = [a["attempt_id"] for a in selected
-               if a.get("input_source") != "document_only" and a["attempt_id"] not in attributed]
+               if a["attempt_id"] not in attributed and needs_attribution(a)]
     if missing:
         block("commit_attribution_missing", attempt_ids=sorted(missing))
     # A bound root deliberately has no attempt/token/Git result. Legacy progressed

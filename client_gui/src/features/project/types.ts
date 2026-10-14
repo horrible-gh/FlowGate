@@ -631,7 +631,7 @@ export interface FlowRun {
   mode: string | null
   /**
    * flowgate.v02.0061 T#14: why an idle run is idle — `completed` | `no_targets` | `waiting_approval` |
-   * `blocked_rejected` | `error` | `stopped` | `merge_conflict` | `hold` (open key) — or null.
+   * `blocked_rejected` | `error` | `stopped` | `merge_conflict` | `hold` | `step_done` (open key) — or null.
    */
   idleReason: string | null
   /** flowgate.v02.0061 T#14: the run's running / requested AI executions and the Flow's limit (null: not sent). */

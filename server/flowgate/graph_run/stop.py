@@ -30,7 +30,8 @@ stopping (``stop_pending``, ``merge_session_abort_pending``) until a repeated St
 attempt whose merge is in progress (``integrating``) is neither invalidated nor reset — it goes on to its end (done
 stays done) and the run stays stopping until then; its end goes on with the Stop (``result_merge``).
 The Stop goes on when that execution's own end arrives (``on_execution_finished``), on a repeated
-Stop, and at server start (``recover``); each of them retries the removal for the attempts already invalidated. A root-bound node (its root
+Stop, after Git locks are released (``result_merge.on_lock_released``), and at server start (``recover``);
+each of them retries the removal for the attempts already invalidated. A root-bound node (its root
 document's state, no attempt, no token) is not a run's work and keeps its state. The next step / full command opens
 the pending nodes with new attempts; nothing of the invalidated ones is reused (their tokens are revoked and are no
 evidence for the result binder any more, ``run_store.token_ids``).
@@ -203,6 +204,7 @@ def stopped_attempts(run_id: str) -> list[str]:
         "AND invalidated_reason = ? ORDER BY created_at, attempt_id", [run_id, INVALIDATED_REASON])]
 
 
+@result_merge.defer_lock_retries()
 def advance(flow_id: str, run_id: str, *, actor: Optional[str] = None,
             record_pending: bool = False) -> tuple[list[str], list[str]]:
     """(c)~(e) for a stopping run once every process is confirmed ended. Returns (the executions whose end is still

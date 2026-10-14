@@ -105,6 +105,22 @@ def active_run(flow_id: str) -> Optional[dict]:
     return _normalize(_one(f"SELECT {_RUN_COLUMNS} FROM graph_runs WHERE active_group_id = ?", [flow_id]))
 
 
+def current_run(flow_id: str) -> Optional[dict]:
+    """The Flow holder, or its latest pre-151 completed run awaiting a new command.
+
+    Reads do not claim the Flow; the command does so under its Flow guard. Never
+    select an older completed run when a later run exists.
+    """
+    run = active_run(flow_id)
+    if run is not None or not available():
+        return run
+    latest = _one(f"SELECT {_RUN_COLUMNS} FROM graph_runs WHERE group_id = ? "
+                  "ORDER BY started_at DESC, run_id DESC LIMIT 1", [flow_id])
+    if latest is not None and latest["status"] == "completed" and latest.get("active_group_id") is None:
+        return _normalize(latest)
+    return None
+
+
 def run_by_id(run_id: str) -> Optional[dict]:
     """Q-R15."""
     if not available():
@@ -371,6 +387,33 @@ def mark_token_stage(token_id: str, stage: str) -> int:
     return _affected("UPDATE graph_run_token_map SET stage = ? WHERE token_id = ? AND stage IS NULL", [stage, token_id])
 
 
+def authoring_token_map(group_id: str) -> dict[str, dict]:
+    """``{token_id: mapping}`` of the Flow's attempt-mapped new/edit tokens (0061 T#8 authorship).
+
+    0061 #15: the scope is read from the tokens row while it exists, else from the
+    token's ``token_issued`` event (written in the same transaction as the row), so a
+    token purged after expiry (``tokens.delete_expired``) still attributes its document.
+    """
+    rows = _all(
+        "SELECT m.token_id, m.attempt_id, m.node_key, m.run_id, m.stage, t.action_scope FROM graph_run_token_map m "
+        "JOIN graph_runs r ON r.run_id = m.run_id LEFT JOIN tokens t ON t.token_id = m.token_id "
+        "WHERE r.group_id = ? AND m.attempt_id IS NOT NULL", [group_id])
+    if any(r.get("action_scope") is None for r in rows):
+        issued: dict[str, str] = {}
+        for event in _all("SELECT metadata FROM workflow_events WHERE group_id = ? "
+                          "AND event_type = 'token_issued'", [group_id]):
+            try:
+                data = json.loads(event.get("metadata") or "{}")
+            except (TypeError, ValueError):
+                continue
+            if isinstance(data, dict) and data.get("token_id"):
+                issued[data["token_id"]] = data.get("action_scope")
+        for r in rows:
+            if r.get("action_scope") is None:
+                r["action_scope"] = issued.get(r["token_id"])
+    return {r["token_id"]: r for r in rows if r.get("action_scope") in ("new", "edit")}
+
+
 def registered_document_attempt(group_id: str, doc_id: str) -> Optional[dict]:
     """0061 T#8: durable authorship, never inferred from the current node/run.
 
@@ -380,11 +423,7 @@ def registered_document_attempt(group_id: str, doc_id: str) -> Optional[dict]:
     """
     if not get_store().table_exists("graph_node_attempts"):
         return None
-    mapped = {r["token_id"]: r for r in _all(
-        "SELECT m.token_id, m.attempt_id, m.node_key, m.run_id FROM graph_run_token_map m "
-        "JOIN graph_runs r ON r.run_id = m.run_id JOIN tokens t ON t.token_id = m.token_id "
-        "WHERE r.group_id = ? AND m.attempt_id IS NOT NULL "
-        "AND t.action_scope IN ('new', 'edit')", [group_id])}
+    mapped = authoring_token_map(group_id)
     if not mapped:
         return None
     for event in _all("SELECT metadata FROM workflow_events WHERE group_id = ? "

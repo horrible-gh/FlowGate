@@ -371,8 +371,12 @@ def run_all():
     start_graph_run_integration()
     # T#4: all Graph ports are ready; orphan AI cleanup has already completed above.
     recover_graph_time_machine()     # T#13: before any replay of the Flow's executions
-    from flowgate.graph_run.execution import recover as recover_graph_executions
-    recover_graph_executions()
+    try:
+        from flowgate.graph_run.execution import recover as recover_graph_executions
+
+        recover_graph_executions()
+    except Exception as exc:
+        logger.warning(f"[startup] graph execution recovery failed: {exc}")
     encrypt_ai_provider_keys()
     recover_ai_evaluations()
     start_snapshot_cleanup()

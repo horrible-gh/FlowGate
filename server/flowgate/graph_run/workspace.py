@@ -391,7 +391,8 @@ def _failed(exec_id, cause):
             ctx = run_apply.load_context(run_store.run_by_id(row["run_id"]), _project(original), None)
             run_apply.emit_node_state(ctx, node_attempt["node_key"], node["status"], "pending", "worktree_failed", None)
             # Do not immediately re-dispatch the same broken workspace.
-            if ctx.run["status"] == "running" and not ledger.working(ctx.run_id)                     and not ledger.handing_off(ctx.run_id):     # T#7: another execution's run-end stage goes on
+            from flowgate.graph_run import settle
+            if ctx.run["status"] == "running" and not settle.working(ctx, run_store.node_runs(ctx.run_id)):
                 run_store.set_run_status(ctx.run_id, "running", "idle", "error")
                 run_apply.emit_run_status(ctx, "running", "idle", "worktree_failed", "error")
     with fencing.exclusive(original["group_id"], own_ok=True):
@@ -438,6 +439,8 @@ def prepare(exec_id, project_id, group_id):
         raise
     except Exception as exc:
         cause = getattr(exc, "details", {}).get("reason") or type(exc).__name__
+        if isinstance(exc, port.GraphSourceError) and cause == "git_busy":
+            raise  # Transient contention keeps the attempt and durable request intact.
         _record_attempt(project_id, "failed", cause, "graph_attempt", "none")
         _failed(exec_id, cause)
         raise port.GraphSourceError("graph_worktree_unavailable", reason="worktree_failed") from exc

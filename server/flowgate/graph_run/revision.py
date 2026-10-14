@@ -44,8 +44,11 @@ def adopt_revision(group: dict, run: dict, actor: str, jobs: list) -> bool:
     existing = {r["node_key"] for r in rows}
     for row in rows:
         if row["status"] == "pending" and row["node_key"] not in targets:
-            store._execute("DELETE FROM graph_node_runs WHERE run_id = ? AND node_key = ? AND status = 'pending'",
-                           [run_id, row["node_key"]])
+            # Preserve history: deleting a node cascades its token mappings.
+            store._execute("DELETE FROM graph_node_runs WHERE run_id = ? AND node_key = ? AND status = 'pending' "
+                           "AND NOT EXISTS (SELECT 1 FROM graph_node_attempts WHERE run_id = ? AND node_key = ?) "
+                           "AND NOT EXISTS (SELECT 1 FROM graph_run_token_map WHERE run_id = ? AND node_key = ?)",
+                           [run_id, row["node_key"], run_id, row["node_key"], run_id, row["node_key"]])
     for key in sorted(set(targets) - existing):
         store._execute("INSERT INTO graph_node_runs (run_id, node_key, status, root_bound, updated_at) "
                        "VALUES (?, ?, 'pending', 0, ?)", [run_id, key, now])

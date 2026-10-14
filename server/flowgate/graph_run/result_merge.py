@@ -41,6 +41,10 @@ merge / group update session, a Stop) reaches ``session_closed`` through the one
 (``conflict_aborted``) — even when the session closed before its ``conflict`` was recorded; then the waiting
 integrations are asked again (the aborted attempt not in that drain).
 
+Git lock releases also retry pending integrations and deferred Stops, after the releasing thread's last lock and
+current drain / Stop have ended. W/M releases cover their project; G releases cover their group. Failed integrations
+are not explicitly requested by this trigger. Self-generated releases are coalesced to avoid recursive retry loops.
+
 Retries (no scheduler, no thread): when a session closes, when another attempt's integration ends (the drain's next
 pass), and on a step / full / resume command (before it opens anything), the ``pending`` / ``failed`` integrations
 are asked again in attempt order. ``pending`` / ``integrating`` keep a running / paused run working; only
@@ -58,6 +62,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -90,6 +95,7 @@ RUNNING, IDLE, STOPPING = "running", "idle", "stopping"
 # The integration hold: a run status event (running -> running, or idle -> running when an idle run wakes) whose
 # reason is the hold's kind — ``idle`` or the command that waits (``resume`` / ``command:<mode>``).
 HOLD_CAUSE, HOLD_END_CAUSE = "integration_hold", "integration_hold_end"
+HOLD_FAILED_CAUSE = "integration_hold_failed"            # a hold released by ``_release_hold``
 HOLD_IDLE, HOLD_RESUME, HOLD_COMMAND = "idle", "resume", "command:"
 
 
@@ -210,6 +216,7 @@ def _note(row: dict, status: str, reason: Optional[str], **extra) -> None:
     run_store.append_event(row["run_id"], seq, run_events.RUN_STATUS, payload, node_key=None,
                            from_status=run["status"], to_status=run["status"], cause=CAUSE, result_doc_id=None,
                            canvas_state=None, actor_user_id=None, reason=status)
+    run_events.queue(_project_of(run["group_id"]), run["group_id"], run_events.RUN_STATUS, payload)
 
 
 def _set(attempt_id: str, status: str, reason: Optional[str], expect) -> bool:
@@ -490,6 +497,17 @@ def _settle_closed(row: dict, expect) -> str:
 _local = threading.local()
 
 
+@contextmanager
+def defer_lock_retries():
+    """Finish the current drain / Stop before consuming its own lock release notices."""
+    _local.retry_depth = getattr(_local, "retry_depth", 0) + 1
+    try:
+        yield
+    finally:
+        _local.retry_depth -= 1
+        _dispatch()
+
+
 def _quiet() -> bool:
     """A Stop's own abort (``abort_for_stop``): the Stop goes on by itself, the session's end does not call it."""
     return bool(getattr(_local, "quiet", False))
@@ -613,6 +631,7 @@ def _requeue(attempt_id: str) -> bool:
     return _status(workspace.attempt(attempt_id)) == PENDING or _set(attempt_id, PENDING, "retry", (FAILED,))
 
 
+@defer_lock_retries()
 def retry(flow_id: str, skip=(), *, failed: bool = True) -> None:
     """The Flow's drain: its pending / failed integrations (``failed=False``: pending only), in attempt order, one
     at a time. A retry asked while one runs in this process is taken by it (one more pass); a pass repeats while an
@@ -644,11 +663,13 @@ def retry(flow_id: str, skip=(), *, failed: bool = True) -> None:
                     _skips.pop(flow_id, None)
                     break
             failed = True if more is None else (failed or more)
-    except BaseException:
+    except BaseException as exc:
         with _drain_lock:
             _draining.discard(flow_id)
             _again.pop(flow_id, None)
             _skips.pop(flow_id, None)
+        if isinstance(exc, Exception):
+            _release_hold(flow_id)             # the drain failed (a Flow lock timeout, ...): no hold stays
         raise
     _end_hold(flow_id, drained=True)
 
@@ -688,8 +709,42 @@ def _end_hold(flow_id: str, *, drained: bool) -> None:
     try:
         with_flow_guard(flow_id, body)
         run_service.run_jobs(jobs)
-    except Exception:  # noqa: BLE001 — the hold stays; the next drain or the server start ends it
+    except Exception:  # noqa: BLE001 — rolled back: at the drain's end the hold is released instead
         log.exception("Graph integration hold could not end flow=%s", flow_id)
+        if drained:                            # an ``_after`` inside the drain: the drain's own end follows
+            _release_hold(flow_id)
+
+
+def _release_hold(flow_id: str) -> None:
+    """A hold whose end or drain failed (``go_on_command`` raised — ``root_binding_lost``, a dispatch error —, a Flow
+    lock timeout, ...) never stays, else the running run opens nothing until a pause or a restart. In its own guard,
+    after the failed one rolled back: a command's hold -> paused (open nodes keep their work, the Flow stays locked; a
+    resume asks the waiting integrations again and goes on with the same command, refused as any command when it
+    cannot), an idle run's hold -> idle (``error``), as its end would have left it. Never raises: failing again, the
+    hold stays for the next drain or the server start."""
+    from modules.flow_gate.graph_workflow.services import run_apply, run_service
+    from flowgate.graph_run import settle
+    jobs: list = []
+
+    def body() -> None:
+        run = run_store.active_run(flow_id)
+        if run is None or run["status"] != RUNNING:
+            return
+        kind = hold_of(run["run_id"])
+        if kind is None:
+            return
+        ctx = run_apply.load_context(run, _project_of(flow_id), None, jobs)
+        to, reason = (IDLE, settle.IDLE_ERROR) if kind == HOLD_IDLE else (run_store.PAUSED, None)
+        if run_store.set_run_status(ctx.run_id, RUNNING, to, reason) != 1:
+            raise AssertionError("integration hold release missed its run")
+        ctx.run["idle_reason"] = reason
+        run_apply.emit_run_status(ctx, RUNNING, to, HOLD_FAILED_CAUSE, kind)
+
+    try:
+        with_flow_guard(flow_id, body)
+        run_service.run_jobs(jobs)
+    except Exception:  # noqa: BLE001 — the hold stays; the next drain or the server start ends it
+        log.exception("Graph integration hold could not be released flow=%s", flow_id)
 
 
 # ── the session close notice ──────────────────────────────────────────────────
@@ -725,27 +780,65 @@ def on_session_closed(merge_id: int, _status_: str) -> None:
     _dispatch()
 
 
-def on_lock_released(_held) -> None:
-    """``lock_manager.on_released``: a notice waiting for this thread's Git locks goes now."""
-    if getattr(_local, "closed", None):
-        _dispatch()
+def on_lock_released(held) -> None:
+    """Reuse the post-release dispatch for pending integrations and deferred Stops."""
+    if held.domain in ("G", "W", "M"):
+        scopes = _local.__dict__.setdefault("released", set())
+        scopes.add((held.project_id, held.group_id if held.domain == "G" else None))
+    _dispatch()
+
+
+def _retry_released(project_id: str, group_id: Optional[str], seen: set[str]) -> None:
+    from flowgate.graph_run import stop
+    if not run_store.available():
+        return
+    sql = ("SELECT run_id, group_id, status FROM graph_runs WHERE "
+           "(status = 'stopping' OR (status IN ('running', 'paused', 'idle') AND EXISTS "
+           "(SELECT 1 FROM graph_node_attempts a WHERE a.run_id = graph_runs.run_id "
+           "AND a.status = 'active' AND a.integration_status IN ('pending', 'integrating'))))")
+    args = []
+    if group_id:
+        sql += " AND group_id = ?"
+        args.append(group_id)
+    for run in run_store._all(sql, args):
+        flow_id = run["group_id"]
+        if flow_id in seen or _project_of(flow_id) != project_id:
+            continue
+        seen.add(flow_id)
+        try:
+            if run["status"] == STOPPING:
+                stop.advance(flow_id, run["run_id"])
+            else:
+                request(flow_id, failed=False)
+        except Exception:  # noqa: BLE001 — a release must not fail its original operation
+            log.exception("Graph retry after Git lock release failed flow=%s", flow_id)
 
 
 def _dispatch() -> None:
-    if getattr(_local, "dispatching", False) or in_transaction():
+    if getattr(_local, "dispatching", False) or getattr(_local, "retry_depth", 0) or in_transaction():
         return
-    ctx = lock_manager.current_context()
-    if ctx is not None and ctx.held:
+    if lock_manager.current_thread_holds_locks():
         return
     queue = _local.__dict__.setdefault("closed", [])
+    scopes = _local.__dict__.setdefault("released", set())
+    seen: set[str] = set()
     _local.dispatching = True
     try:
-        while queue:
-            group_id, merge_id = queue.pop(0)
-            try:
-                session_closed(group_id, merge_id)
-            except Exception:  # noqa: BLE001
-                log.exception("Graph integration after session %s failed for %s", merge_id, group_id)
+        while queue or scopes:
+            while queue:
+                group_id, merge_id = queue.pop(0)
+                try:
+                    session_closed(group_id, merge_id)
+                except Exception:  # noqa: BLE001
+                    log.exception("Graph integration after session %s failed for %s", merge_id, group_id)
+            if scopes:
+                project_id, group_id = scopes.pop()
+                try:
+                    # A retry may release G/W/M even if Git fails. Retry each Flow only
+                    # once per dispatch so these self-generated notices cannot spin.
+                    _retry_released(project_id, group_id, seen)
+                except Exception:  # noqa: BLE001
+                    log.exception("Graph retry could not read released scope %s/%s", project_id, group_id)
     finally:
         _local.dispatching = False
 

@@ -606,6 +606,7 @@ export default {
         stopped: 'Stopped',
         merge_conflict: 'Merge conflict',
         hold: 'Waiting on Hold',
+        step_done: 'Next step done',
       },
       run_executions: 'Running {running}/{limit}',
       run_requested: 'Requested {n}',
@@ -780,8 +781,8 @@ export default {
         edit: 'The AI may change the source',
         edit_once: 'The AI may change the source on the next call only',
       },
-      // flowgate.v02.0061 T#14 — the Flow's Graph run locks the source mode (WP answer 2).
-      source_locked: 'The AI source mode cannot change while this flow\'s Graph run is running, paused or stopping, or before its run status is confirmed',
+      // flowgate.v02.0061 T#14 — the Flow's Graph run only allows switching to read mode.
+      source_locked: 'Only switching to Read is allowed while this flow\'s Graph run is running, paused or stopping, or before its run status is confirmed',
       manual_copy_title: 'Could not copy to the clipboard. Copy the text below by hand.',
       manual_copy_again: 'Copy again',
     },

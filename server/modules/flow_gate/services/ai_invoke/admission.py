@@ -474,6 +474,43 @@ def _reclaim_orphan_lease_token(lease_row: dict, reason: str) -> None:
     token_service.revoke(token_id, reason=reason)
 
 
+def _startup_recover_graph_leases() -> None:
+    """Before traffic or handoff replay, retire the previous process's Graph owners.
+
+    Graph workers have no group lease. Persist the same restart end record first,
+    then expire their execution lease so the existing Graph recovery (including
+    Stop) can fence/reset them without waiting for the heartbeat TTL. A run in
+    this process's registry is never treated as a restart orphan.
+    """
+    from datetime import timezone
+    from modules.flow_gate.db import groups as db_groups
+
+    store = db_connection.get_store()
+    if not store.table_exists("graph_attempt_runs"):
+        return
+    rows = store._fetch_all(
+        "SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
+        "WHERE e.status IN ('requested', 'running') AND e.ai_run_id IS NOT NULL", [])
+    for row in rows:
+        if _svc().get_run_record(row["ai_run_id"]) is not None:
+            continue
+        try:
+            group = db_groups.get_by_id(row["group_id"]) or {}
+            # Include admitted requests: replay must not reuse their previous AI id.
+            _svc()._record_orphaned_lease_run({
+                "run_id": row["ai_run_id"], "group_id": row["group_id"],
+                "project_id": group.get("project_id"), "acquired_at": row["created_at"],
+            }, "orphaned_by_restart")
+            if row["status"] == "running":
+                stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                store._execute(
+                    "UPDATE graph_attempt_runs SET lease_expires_at = ? WHERE exec_id = ? "
+                    "AND status = 'running' AND ai_run_id = ? AND lease_token = ?",
+                    [stamp, row["exec_id"], row["ai_run_id"], row["lease_token"]])
+        except Exception:
+            logger.warning("orphaned Graph execution recovery failed for %s", row["exec_id"], exc_info=True)
+
+
 def startup_recover_leases() -> int:
     """Reclaim AI-run leases orphaned by a server restart (0401 NR0003 / T0004 item 1).
 
@@ -507,6 +544,7 @@ def startup_recover_leases() -> int:
         logger.warning("[ai_invoke] startup reclaimed %d orphaned group lease(s)", len(victims))
     # 0406 T0022 work item 4: the same startup also recovers hop handoffs that were cut
     # off. It pairs with lease reclaim: one recovers the lock, the other the intent.
+    _startup_recover_graph_leases()
     _svc().startup_recover_handoffs()
     # 0661 T0004 F3: question items whose AI responder died with the previous process
     # become a visible 'failed / interrupted' the Q&A panel can re-dispatch, instead of a
@@ -1131,6 +1169,11 @@ def start_run(
         )
         raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
                           run_id=active["run_id"])
+    # Claim the Graph launcher before preparing its worktree. A duplicate must
+    # lose admission before it can touch or fail the winner's workspace.
+    if graph_exec_id:
+        run_id = _svc()._next_run_id()
+        graph_attempt_id = graph_execution_hooks.call("admit", graph_exec_id, run_id, group_id, graph_attempt_id)
     # 0299 R0001: refuse before minting a token / creating scratch — a run that would
     # execute in the base tree must not start at all, and failing here keeps the
     # rollback trivial (nothing has been created yet). The doc's branch is only the
@@ -1211,7 +1254,8 @@ def start_run(
 
     # Allocate and lease before token issuance/worker spawn. The DB primary key makes two
     # concurrent starts atomic across processes; an acquiring lease self-reclaims on expiry.
-    run_id = _svc()._next_run_id()
+    if not graph_exec_id:
+        run_id = _svc()._next_run_id()
     lease_chain_id = chain_id or run_id
     lease = None
     if not project_scoped and not graph_exec_id:
@@ -1271,8 +1315,6 @@ def start_run(
     # owns it and before token issuance. Thus two concurrent normal starts cannot both
     # observe NONE, while reruns remain possible without a UNIQUE(doc_id, revision_no).
     issue = None
-    if graph_exec_id:
-        graph_attempt_id = graph_execution_hooks.call("admit", graph_exec_id, run_id, group_id, graph_attempt_id)
     try:
         review_admission_superseded_review_id: Optional[int] = None
         if action_scope == "review" and review_intent is not None:

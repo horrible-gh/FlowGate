@@ -129,13 +129,14 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
         if own.state != "graph":
             raise _ownership_error(flow_id, own)
         _refuse_time_machine(flow_id)                                             # 0061 T#13
-        active = run_store.active_run(flow_id)                                    # 4 진행 중 실행
+        active = run_store.current_run(flow_id)                                    # 4 진행 중 실행
         if active is not None:
             if active["status"] not in (run_store.PAUSED, run_store.IDLE) or (
                     revision_no is not None and revision_no not in (
                         int(active["revision_no"]), definition_store.latest_revision_no(flow_id))):
                 raise GraphApiError(409, "run_already_active",
                                     {"flow_id": flow_id, "run_id": active["run_id"], "status": active["status"]})
+            _hold_flow(active)
             _go_on(group, active, user_id, mode, "user_command", None, jobs)
             return {"run": run_payload(active["run_id"], with_nodes=True)}
         number = revision_no if revision_no is not None else definition_store.latest_revision_no(flow_id)
@@ -450,7 +451,7 @@ def current_run(group: dict) -> dict:
     flow_id = group["group_id"]
     result_binder.reconcile_if_needed(flow_id, group.get("project_id"))
     settle_if_needed(flow_id, group.get("project_id"))
-    run = run_store.active_run(flow_id)
+    run = run_store.current_run(flow_id)
     return {"run": run_payload(run["run_id"], with_nodes=True) if run else None}
 
 

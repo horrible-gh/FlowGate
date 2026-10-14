@@ -6,7 +6,7 @@ the result binder, the result stage, a review / rework hop) is taken only while
 (a) its run is ``running`` or ``paused`` (``WRITABLE``) — ``stopping``, ``idle`` and any other status refuse — with
     the two idle exceptions the 0017-TR question 439 settled (``IDLE_EXCEPTED``: running, paused or idle): a person's
     registration with the node's own token (no AI run on it; L0009 E-23, ``human_registration``) — its inbox
-    storage and its result binding alike — and the hop of a person's explicit review request
+    storage, its result binding and its Q&A registration alike — and the hop of a person's explicit review request
     (``graph_execution_hooks.explicit_request``), which then takes the run back to running. ``stopping`` and an
     invalidated attempt refuse them as any other;
 (b) its attempt is active — and, for a step that comes back from a job or an AI run of one attempt (an instruction's
@@ -56,7 +56,8 @@ WRITABLE = ("running", "paused")
 REPORTING = ("running", "paused")
 OPENING = ("running", "paused", "idle")
 IDLE_EXCEPTED = ("running", "paused", "idle")          # Q439: a person's own-token registration, an explicit review hop
-HUMAN_REGISTRATIONS = ("inbox_new", "inbox_edit", "result_inbox_registered")
+HUMAN_REGISTRATIONS = ("inbox_new", "inbox_edit", "result_inbox_registered",
+                       "q_question", "q_answer")       # #18: the Q&A registration API, as the inbox
 _STORED = {"stopped": "paused", "completed": "idle"}      # rows written before migration 151
 
 
@@ -236,8 +237,9 @@ def _execution_reason(ai_run_id: str, attempt_id: str) -> Optional[str]:
 
 
 def human_registration(token: Optional[dict], operation: str) -> bool:
-    """Q439 / L0009 E-23: a registration (inbox new / edit, its result binding) a person makes with the node's own
-    token — one no AI run was issued with (the node's dispatch token). It is taken on an idle run too."""
+    """Q439 / L0009 E-23: a registration (inbox new / edit, its result binding, a Q&A question / answer) a person
+    makes with the node's own token — one no AI run was issued with (the node's dispatch token). It is taken on an
+    idle run too."""
     return operation in HUMAN_REGISTRATIONS and bool(token) and not str(token.get("ai_run_id") or "").strip()
 
 

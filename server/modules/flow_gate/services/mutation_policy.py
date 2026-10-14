@@ -123,6 +123,16 @@ def assert_group_mutation_allowed(
         return None
     lease = db_leases.get_active(group_id)
     if lease is None:
+        # Graph workers own an execution lease, not a group lease.
+        if principal.kind == "worker" and principal.group_id == group_id and principal.run_id:
+            from modules.flow_gate.services import graph_execution_hooks
+            try:
+                graph_execution_hooks.call("heartbeat", str(principal.run_id))
+            except graph_execution_hooks.ExecutionLeaseLost as exc:
+                raise MutationPolicyError(
+                    403, "GRAPH_EXECUTION_LEASE_LOST", "This worker no longer owns its Graph execution.",
+                    group_id=group_id, run_id=principal.run_id, operation=operation,
+                ) from exc
         return None
     if principal.kind == "system":
         return lease

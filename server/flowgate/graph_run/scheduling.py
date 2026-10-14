@@ -97,7 +97,8 @@ def queue_requests(ctx):
     from flowgate.graph_run.execution import replay
     # Jobs execute after commit. Admission CAS suppresses duplicate queued callbacks.
     for row in requests(ctx.run_id)[:available(ctx.run_id, ctx.flow_id)]:
-        ctx.jobs.append(lambda row=row: replay(row))
+        if not row.get("ai_run_id"):
+            ctx.jobs.append(lambda row=row: replay(row))
 
 
 def busy(run_id=None):

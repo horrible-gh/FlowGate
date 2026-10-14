@@ -8,7 +8,7 @@ an explicit review request may promote idle to running before its admission.
 
 Only requested/running executions keep a run working; an active attempt awaiting
 a person does not occupy a slot. With no work or command candidate left, the run
-becomes idle with completed/no_targets/waiting_approval/error/blocked_rejected.
+becomes idle with completed/no_targets/waiting_approval/error/blocked_rejected/step_done.
 Deferred propagation remains deferred until the next explicit command.
 
 T#7: a Stop leaves the run idle with the reason ``stopped`` (``stop``); it stays so until the next command — a run read
@@ -28,8 +28,10 @@ candidate). "No run candidate" is the whole run candidates (``frontier.run_candi
 step that ended with a candidate outside its targets waits for the next command and is not ``hold`` (nor is a
 candidate opened by it — the step's boundary stays). ``idle_reason`` judges in this order, the first that holds wins: ``completed`` (completion policy),
 ``no_targets`` (an empty run scope), ``waiting_approval``, ``merge_conflict``, ``error``, ``blocked_rejected``,
-``hold``, else ``no_targets``. A reason a person must act on comes before the Hold, which a person chose; a run with a
-held target left is never ``completed`` (the completion policy needs every target done).
+``hold``, ``step_done`` (a step command that opened targets ended at its boundary), else ``no_targets``. A reason a
+person must act on comes before the Hold, which a person chose; a run with a held target left is never ``completed``
+(the completion policy needs every target done). ``no_targets`` means nothing was there to run: an empty run scope, a
+step that opened no target, or a full command with no run candidate left.
 """
 from __future__ import annotations
 
@@ -43,8 +45,9 @@ IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR = "waiting_approval", "
 IDLE_STOPPED = "stopped"                                     # T#7: set by a Stop only
 IDLE_MERGE_CONFLICT = "merge_conflict"                       # T#9: approved results whose merge waits (conflict / failed)
 IDLE_HOLD = "hold"                                           # T#11: held targets left (open key, no migration)
+IDLE_STEP_DONE = "step_done"                                 # a step that opened targets ended (open key, no migration)
 IDLE_REASONS = (IDLE_COMPLETED, IDLE_NO_TARGETS, IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR,
-                IDLE_STOPPED, IDLE_MERGE_CONFLICT, IDLE_HOLD)
+                IDLE_STOPPED, IDLE_MERGE_CONFLICT, IDLE_HOLD, IDLE_STEP_DONE)
 CAUSE_COMPLETED, CAUSE_IDLE, CAUSE_WORK_RESUMED = "completed", "run_idle", "work_resumed"
 
 
@@ -112,6 +115,8 @@ def idle_reason(ctx, rows: list[dict], state) -> str:
     from flowgate.graph_run import hold
     if hold.blocks(ctx, state):
         return IDLE_HOLD                                     # T#11
+    if ctx.run.get("run_mode") == engine.MODE_STEP and ctx.run.get("step_node_keys"):
+        return IDLE_STEP_DONE                                # the step's targets were opened and it ended normally
     return IDLE_NO_TARGETS
 
 

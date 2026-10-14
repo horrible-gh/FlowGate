@@ -16,7 +16,7 @@ def require_editable(flow_id: str, node_key=None) -> None:
     operation refuses every edit (409 ``graph_time_machine_in_progress``)."""
     from flowgate.graph_time_machine.operation import require_no_operation
     require_no_operation(flow_id)
-    run = run_store.active_run(flow_id)
+    run = run_store.current_run(flow_id)
     if not run:
         return
     params = {"flow_id": flow_id, "run_id": run["run_id"], "status": run["status"]}
@@ -55,7 +55,7 @@ def protect_definition(flow_id: str, nodes: list, edges: list, run=None) -> None
     Called before draft side effects as well as confirmation and revision adoption.
     Retired identities cannot reappear; retained pending nodes may freely change.
     """
-    run = run if run is not None else run_store.active_run(flow_id)
+    run = run if run is not None else run_store.current_run(flow_id)
     if not run:
         return
     before = definition_store.revision(flow_id, int(run["revision_no"]))

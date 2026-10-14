@@ -117,6 +117,14 @@ def request_cancel(exec_id, token):
         raise LeaseLost("execution cancel request refused")
 
 
+def cancel_requested(exec_id, ai_run_id):
+    """Cancel only this launcher's unacquired request."""
+    return run_store._affected(
+        "UPDATE graph_attempt_runs SET status = 'cancelled', ended_at = ? "
+        "WHERE exec_id = ? AND status = 'requested' AND lease_token IS NULL AND ai_run_id = ?",
+        [now(), exec_id, ai_run_id])
+
+
 def cancel_ineligible(exec_id):
     """A losing launcher may only cancel an unowned request whose prerequisites disappeared."""
     return run_store._affected(

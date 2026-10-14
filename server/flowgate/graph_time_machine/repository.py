@@ -26,11 +26,7 @@ OPERATION_CAUSE = "graph_time_machine"
 def _documents(flow_id: str, current_ids: set[str]) -> list[dict]:
     # Same durable authorship rule as registered_document_attempt: the latest
     # mapped new/edit registration wins. Review tokens never reattribute a doc.
-    mapped = {r["token_id"]: r for r in run_store._all(
-        "SELECT m.token_id, m.attempt_id, m.node_key, m.stage FROM graph_run_token_map m "
-        "JOIN graph_runs r ON r.run_id = m.run_id JOIN tokens t ON t.token_id = m.token_id "
-        "WHERE r.group_id = ? AND m.attempt_id IS NOT NULL AND t.action_scope IN ('new','edit')",
-        [flow_id])}
+    mapped = run_store.authoring_token_map(flow_id)
     seen, out = set(), []
     for event in run_store._all(
             "SELECT metadata FROM workflow_events WHERE group_id = ? AND event_type = 'token_consumed' "
@@ -108,6 +104,25 @@ def read_snapshot(flow_id: str) -> Snapshot:
     snapshot.attempts = [r for r in run_store._all(
         "SELECT * FROM graph_node_attempts WHERE run_id = ? AND status IN ('active','ended') "
         "ORDER BY node_key, created_at, attempt_id", [run_id]) if r["attempt_id"] in current_ids]
+    # Keep durable preparation evidence after worktree cleanup. Absence is only
+    # established when the journal is readable; malformed history fails closed.
+    prepared, readable = set(), True
+    for event in run_store._all(
+            "SELECT payload_json FROM graph_run_events WHERE run_id = ? "
+            "AND event_type = 'graph_run_status_changed' AND cause = 'attempt_workspace'",
+            [run_id]):
+        try:
+            data = json.loads(event["payload_json"])
+        except (TypeError, ValueError):
+            readable = False
+            continue
+        if not isinstance(data, dict) or not data.get("attempt_id"):
+            readable = False
+            continue
+        prepared.add(data["attempt_id"])
+    for attempt in snapshot.attempts:
+        attempt["workspace_prepared"] = (
+            True if attempt["attempt_id"] in prepared else False if readable else None)
     for number in sorted({run["revision_no"], *(a["revision_no"] for a in snapshot.attempts)}):
         record = definition_store.revision(flow_id, number)
         if record is not None:

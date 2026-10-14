@@ -186,6 +186,7 @@ def launch(run):
                         break
                     run["cancel_event"].wait(0.1)
                 if not run.get("graph_lease_token"):
+                    ledger.cancel_requested(exec_id, run["run_id"])
                     raise ledger.LeaseLost("execution cancelled while waiting for capacity")
                 workspace.verify_execution(exec_id)
             return True
@@ -338,6 +339,9 @@ def start_failed(exec_id, error=None):
         ledger.cancel_ineligible(exec_id)
         return True
     detail = getattr(error, "detail", None)
+    if isinstance(detail, dict) and detail.get("code") == "graph_worktree_unavailable" \
+            and detail.get("reason") == "git_busy":
+        return True  # Admission releases its claim; a later refill can retry this request.
     if isinstance(detail, dict) and detail.get("reason") == "worktree_failed":
         return True  # Workspace preparation already invalidated/reset the node.
     if isinstance(detail, dict) and detail.get("code") == "run_in_progress":

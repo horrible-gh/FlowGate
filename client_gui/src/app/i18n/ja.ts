@@ -606,6 +606,7 @@ export default {
         stopped: '停止済み',
         merge_conflict: 'マージ競合',
         hold: 'Hold で待機',
+        step_done: '次のステップ完了',
       },
       run_executions: '実行 {running}/{limit}',
       run_requested: '要求 {n}',
@@ -780,8 +781,8 @@ export default {
         edit: 'AI がソースを変更できます',
         edit_once: '次の AI 呼び出し 1 回だけソースを変更できます',
       },
-      // flowgate.v02.0061 T#14 — the Flow's Graph run locks the source mode (WP answer 2).
-      source_locked: 'このフローの Graph 実行中（実行中・一時停止中・停止中）または実行状態の確認前は AI ソースモードを変更できません',
+      // flowgate.v02.0061 T#14 — the Flow's Graph run only allows switching to read mode.
+      source_locked: 'このフローの Graph 実行中（実行中・一時停止中・停止中）または実行状態の確認前は、読み取りモードへの切り替えのみ可能です',
       manual_copy_title: 'クリップボードにコピーできませんでした。下の内容を手動でコピーしてください。',
       manual_copy_again: 'もう一度コピー',
     },

@@ -616,6 +616,7 @@ export default {
         stopped: '중지됨',
         merge_conflict: '병합 충돌',
         hold: 'Hold로 대기',
+        step_done: '다음 단계 완료',
       },
       run_executions: '실행 {running}/{limit}',
       run_requested: '요청 {n}',
@@ -790,8 +791,8 @@ export default {
         edit: 'AI가 소스를 수정할 수 있습니다',
         edit_once: '다음 AI 호출 한 번만 소스를 수정할 수 있습니다',
       },
-      // flowgate.v02.0061 T#14 — the Flow's Graph run locks the source mode (WP answer 2).
-      source_locked: '이 흐름의 Graph 실행 중(실행·일시정지·중지 중)이거나 실행 상태를 확인하기 전에는 AI 소스 모드를 바꿀 수 없습니다',
+      // flowgate.v02.0061 T#14 — the Flow's Graph run only allows switching to read mode.
+      source_locked: '이 흐름의 Graph 실행 중(실행·일시정지·중지 중)이거나 실행 상태를 확인하기 전에는 읽기 모드로만 전환할 수 있습니다',
       manual_copy_title: '클립보드에 복사하지 못했습니다. 아래 내용을 직접 복사하세요.',
       manual_copy_again: '다시 복사',
     },
