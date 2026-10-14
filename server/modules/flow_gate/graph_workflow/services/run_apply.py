@@ -83,7 +83,10 @@ def read_run_state(ctx: RunContext) -> RunState:
     pending = [PendingPropagation(p["node_key"], p["outcome"], int(p["source_event_seq"]))
                for p in run_store.pending_propagations(ctx.run_id)]
     step = ctx.run.get("step_node_keys")
-    return RunState(ctx.run["status"], nodes, pending, has_active_attempts=bool(graph_execution_hooks.call("working", ctx.run_id)),
+    status = ctx.run["status"]
+    if status == "running" and graph_execution_hooks.call("propagation_held", ctx.run_id):
+        status = "paused"           # 0061 T#9: a run holding for its integrations: a result's propagation waits
+    return RunState(status, nodes, pending, has_active_attempts=bool(graph_execution_hooks.call("working", ctx.run_id)),
                     mode=ctx.run.get("run_mode") or "full",
                     step_targets=frozenset(step) if step is not None else None)
 
@@ -142,7 +145,15 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
     on (``settle_run``, 0061 T#2; ``settle=False`` for a step that applies its command afterwards).
 
     ``note`` (who decided, the comment) goes with the node transitions of the deciding event (gate).
+
+    0061 T#9: a code node's approval (``review_approved``) is done only once its attempt's result is merged into the
+    Flow's branch: until then the decision is held back whole (``defer_done``: the node stays in review, its
+    integration is requested after the commit) and only whether the run goes on is judged.
     """
+    if graph_execution_hooks.call("defer_done", ctx, d):
+        if settle:
+            settle_run(ctx)
+        return
     for t in d.node_transitions:
         _assert_one(run_store.transition_node_run(
             ctx.run_id, t.node, t.from_status, t.expected_doc_id, t.to_status, t.result_doc_id,

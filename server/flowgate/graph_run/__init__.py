@@ -16,4 +16,6 @@ those ports to this package. The engine itself is not moved here. Nothing is reg
     integration     port handler registration
     fencing         T#7: an attempt token's late write / result / report is refused (409 graph_attempt_inactive)
     stop            T#7 Stop: stopping -> the AI processes ended -> attempts invalidated, nodes pending -> idle (stopped)
+    result_commit   T#8: an attempt's result frozen and committed in its own worktree
+    result_merge    T#9: an approved code node is done once its result is merged into the Flow's branch
 """

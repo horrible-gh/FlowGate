@@ -1492,6 +1492,11 @@ def commit_conflict_resolution(
     )
     result = dict(outcome.get("result") or {})
     kind, commit = result.get("kind"), result.get("commit")
+    if kind == db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE:
+        # 0061 T#9: the merge commit carries the attempt's result into the group branch; its ledger row is the
+        # attempt's result (T#8) and stays as it is. The Graph integration goes on from the session's close notice
+        # (``db_git.on_session_closed``): done, then the next integrations.
+        return {"ok": True, "result": result}
     row_id = result.get("ledger_row_id")
     row = db_ledger.get_by_id(int(row_id)) if row_id is not None else None
     written = False
@@ -1559,6 +1564,10 @@ def abort_conflict_resolution(group_id: str, merge_id: int) -> dict[str, Any]:
     """
     outcome = git_service.abort_tr_conflict(group_id, merge_id)
     result = dict(outcome.get("result") or {})
+    if result.get("kind") == db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE:
+        # 0061 T#9: no cancel was attempted on the attempt's ledger row; its integration failed (conflict_aborted)
+        # from the session's close notice.
+        return {"ok": True, "result": result}
     row_id = result.get("ledger_row_id")
     if row_id is not None:
         try:

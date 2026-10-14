@@ -23,7 +23,13 @@ Pause (``POST /runs/{run_id}/pause``, T#2) keeps the run's work going; Stop ends
 A process whose end is not confirmed within the wait keeps the run ``stopping`` (a ``stop_pending`` run event names
 the reason) and nothing of (c)~(e) happens; the fence goes on refusing. So does a worktree whose removal failed (Git
 busy and the like): the run stays ``stopping`` and locked (``stop_pending``, ``worktree_cleanup_pending``) and its
-removal is retried. The Stop goes on when that execution's own end arrives (``on_execution_finished``), on a repeated
+removal is retried. T#9: the run's merge sessions (``graph_attempt_merge``) are aborted before (c) (the abort under the
+group's G, ``result_merge.abort_for_stop``); while one of them is still open (G busy, the Git abort failed) nothing of
+(c)~(e) happens — no attempt is invalidated, no token revoked, no worktree removed, no node reset — and the run stays
+stopping (``stop_pending``, ``merge_session_abort_pending``) until a repeated Stop or the server start aborts it. An
+attempt whose merge is in progress (``integrating``) is neither invalidated nor reset — it goes on to its end (done
+stays done) and the run stays stopping until then; its end goes on with the Stop (``result_merge``).
+The Stop goes on when that execution's own end arrives (``on_execution_finished``), on a repeated
 Stop, and at server start (``recover``); each of them retries the removal for the attempts already invalidated. A root-bound node (its root
 document's state, no attempt, no token) is not a run's work and keeps its state. The next step / full command opens
 the pending nodes with new attempts; nothing of the invalidated ones is reused (their tokens are revoked and are no
@@ -39,7 +45,7 @@ from modules.flow_gate.db import groups as db_groups, ai_invoke_runs
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
-from flowgate.graph_run import execution_store as ledger, workspace, fencing
+from flowgate.graph_run import execution_store as ledger, workspace, fencing, result_merge
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +54,7 @@ CAUSE_STOP, CAUSE_PENDING = "user_stop", "stop_pending"
 INVALIDATED_REASON = "user_stop"
 PENDING_REASON = "process_exit_unconfirmed"
 CLEANUP_PENDING_REASON = "worktree_cleanup_pending"
+SESSION_PENDING_REASON = "merge_session_abort_pending"      # T#9: a graph_attempt_merge session is still open
 # The existing kill path's own waits: the process tree kill (taskkill, 10 s) and the reap after it (5 s).
 KILL_WAIT_SEC = 15
 POLL_SEC = 0.2
@@ -62,8 +69,9 @@ def _context(run: dict, actor: Optional[str]):
 def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:
     """``run_state_ports.stop``. A running or paused run stops; a stopping one goes on with its stop (a repeated Stop);
     any other is 409 ``run_not_running``. Answers the run as it is: idle (stopped), or still stopping with the
-    executions whose end was not confirmed (``unconfirmed_exec_ids``) or the stopped attempts whose worktree is not
-    removed yet (``cleanup_pending_attempt_ids``)."""
+    executions whose end was not confirmed (``unconfirmed_exec_ids``), the stopped attempts whose worktree is not
+    removed yet (``cleanup_pending_attempt_ids``) or, T#9, the attempts whose merge session is not aborted yet
+    (``merge_session_pending_attempt_ids``)."""
     flow_id = group["group_id"]
     launchers: list[str] = []
 
@@ -102,7 +110,8 @@ def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> d
     pending, cleanup_pending = advance(flow_id, run_id, actor=user_id, record_pending=True)
     from modules.flow_gate.graph_workflow.services.run_service import run_payload
     return {"run": run_payload(run_id, with_nodes=False), "unconfirmed_exec_ids": pending,
-            "cleanup_pending_attempt_ids": cleanup_pending}
+            "cleanup_pending_attempt_ids": cleanup_pending,
+            "merge_session_pending_attempt_ids": result_merge.session_pending(run_id)}
 
 
 def _kill(run_id: str, launchers=()) -> None:
@@ -154,17 +163,22 @@ def _settle_executions(run: dict, actor: Optional[str]) -> list[str]:
     run_id, stamp = run["run_id"], ledger.now()
     run_store._affected("UPDATE graph_attempt_runs SET status = 'cancelled', ended_at = ? "
                         "WHERE run_id = ? AND status IN ('requested', 'running')", [stamp, run_id])
+    # T#9: a merge in progress goes on to its end (``result_merge``); its attempt and node are left to it, and the
+    # Stop's idle (stopped) waits for it (``finish_stop``: an active attempt).
+    merging = {r["node_key"] for r in result_merge.integrating(run_id)}
     active = [r["attempt_id"] for r in run_store._all(
-        "SELECT attempt_id FROM graph_node_attempts WHERE run_id = ? AND status = 'active'", [run_id])]
+        "SELECT attempt_id FROM graph_node_attempts WHERE run_id = ? AND status = 'active' "
+        "AND COALESCE(integration_status, 'none') <> 'integrating'", [run_id])]
     run_store._affected("UPDATE graph_node_attempts SET status = 'invalidated', active_node_key = NULL, "
-                        "invalidated_reason = ?, ended_at = ? WHERE run_id = ? AND status = 'active'",
+                        "invalidated_reason = ?, ended_at = ? WHERE run_id = ? AND status = 'active' "
+                        "AND COALESCE(integration_status, 'none') <> 'integrating'",
                         [INVALIDATED_REASON, stamp, run_id])
     for attempt_id in active:
         _revoke(r["token_id"] for r in run_store._all(
             "SELECT token_id FROM graph_run_token_map WHERE attempt_id = ?", [attempt_id]))
     ctx = _context(run, actor)
     for row in run_store.node_runs(run_id):
-        if row["status"] not in RESET_STATUSES or int(row.get("root_bound") or 0):
+        if row["status"] not in RESET_STATUSES or int(row.get("root_bound") or 0) or row["node_key"] in merging:
             continue
         moved = run_store._affected(
             "UPDATE graph_node_runs SET status = 'pending', result_doc_id = NULL, opened_at = NULL, "
@@ -198,10 +212,27 @@ def advance(flow_id: str, run_id: str, *, actor: Optional[str] = None,
     attempts already invalidated."""
     from modules.flow_gate.graph_workflow.services import run_apply
     held: dict = {}
+    run = run_store.run_by_id(run_id)
+    if run is not None and run["status"] == STOPPING:
+        # T#9: the run's merge sessions, before its attempts; one still open holds the whole of (c)~(e).
+        left = result_merge.abort_for_stop(flow_id, run_id)
+        if left:
+            log.warning("Graph stop waits for merge session aborts run=%s attempts=%s", run_id, left)
+            if record_pending:
+                def note_sessions() -> None:
+                    run = run_store.run_by_id(run_id)
+                    if run is not None and run["status"] == STOPPING:
+                        run_apply.emit_run_status(_context(run, actor), STOPPING, STOPPING, CAUSE_PENDING,
+                                                  SESSION_PENDING_REASON)
+                with_flow_guard(flow_id, note_sessions)
+            return list(unconfirmed(run_id)), []
 
     def settle_executions() -> None:
         run = run_store.run_by_id(run_id)
         if run is None or run["status"] != STOPPING:
+            return
+        if result_merge.session_pending(run_id):
+            held["sessions"] = True             # T#9: a merge session opened or kept since: nothing settles yet
             return
         pending = unconfirmed(run_id)
         if pending:
@@ -212,6 +243,9 @@ def advance(flow_id: str, run_id: str, *, actor: Optional[str] = None,
         held["attempts"] = _settle_executions(run, actor)
 
     with_flow_guard(flow_id, settle_executions)
+    if held.get("sessions"):
+        log.warning("Graph stop waits for merge session aborts run=%s", run_id)
+        return list(unconfirmed(run_id)), []
     if "attempts" not in held:
         if held.get("pending"):
             log.warning("Graph stop waits for unconfirmed process ends run=%s executions=%s", run_id, held["pending"])
@@ -234,7 +268,7 @@ def advance(flow_id: str, run_id: str, *, actor: Optional[str] = None,
         run = run_store.run_by_id(run_id)
         if run is None or run["status"] != STOPPING:
             return
-        if run_store.has_active_attempts(run_id) or ledger.working(run_id):
+        if run_store.has_active_attempts(run_id) or ledger.working(run_id) or result_merge.session_pending(run_id):
             return                              # never idle with work; the next advance settles it first
         now = run_store.utc_now_ms()
         if run_store._affected("UPDATE graph_runs SET status = 'idle', idle_reason = ?, finished_at = ?, "

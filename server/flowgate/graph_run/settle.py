@@ -15,6 +15,12 @@ T#7: a Stop leaves the run idle with the reason ``stopped`` (``stop``); it stays
 does not judge a stopped run's reason again. A stopping run settles nothing (``stop`` finishes it). An execution's
 run-end hand-off in flight keeps a running run working (``working``), so the instruction -> result and result ->
 review / approval hand-offs of its last execution find it running, not idle.
+
+T#9: an approved result whose merge is pending or in progress keeps a running / paused run working. An idle run's
+integration wakes it first (``result_merge._wake``: running under the integration hold ``idle``), and a step / full /
+resume command whose waiting integrations go first holds too (``result_merge.hold_command``): while a running run
+holds, it opens, refills and dispatches nothing — the hold's end decides (an idle run goes idle again, a command goes
+on from the state of that moment).
 """
 from __future__ import annotations
 
@@ -26,8 +32,9 @@ from flowgate.graph_run import scheduling
 IDLE_COMPLETED, IDLE_NO_TARGETS = "completed", "no_targets"
 IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR = "waiting_approval", "blocked_rejected", "error"
 IDLE_STOPPED = "stopped"                                     # T#7: set by a Stop only
+IDLE_MERGE_CONFLICT = "merge_conflict"                       # T#9: approved results whose merge waits (conflict / failed)
 IDLE_REASONS = (IDLE_COMPLETED, IDLE_NO_TARGETS, IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR,
-                IDLE_STOPPED)
+                IDLE_STOPPED, IDLE_MERGE_CONFLICT)
 CAUSE_COMPLETED, CAUSE_IDLE, CAUSE_WORK_RESUMED = "completed", "run_idle", "work_resumed"
 
 
@@ -53,11 +60,14 @@ def working(ctx, rows: list[dict]) -> bool:
     """Only requested/running AI executions count; a person's approval wait does not. T#7: so does an execution's
     run-end hand-off in flight on a running / paused run (``execution_store.handing_off``) — between an execution's
     ledger end and the stage that follows it (the result stage after its instruction, the result's review or approval)
-    the run is not idle. It never wakes an idle run."""
-    from flowgate.graph_run import execution_store
+    the run is not idle. It never wakes an idle run. T#9: neither is a running / paused run with an approved result
+    whose merge is pending or in progress (``result_merge.in_progress``). An idle run is woken by its integration
+    itself (``result_merge._wake``), never by a settlement."""
+    from flowgate.graph_run import execution_store, result_merge
     if execution_store.working(ctx.run_id):
         return True
-    return ctx.run.get("status") in (engine.RUNNING, engine.PAUSED) and execution_store.handing_off(ctx.run_id)
+    return ctx.run.get("status") in (engine.RUNNING, engine.PAUSED) and (
+        execution_store.handing_off(ctx.run_id) or result_merge.in_progress(ctx.run_id))
 
 
 def _completion(ctx, state) -> tuple[bool, Optional[str]]:
@@ -82,6 +92,9 @@ def idle_reason(ctx, rows: list[dict], state) -> str:
         return IDLE_NO_TARGETS
     if any(_waits_on_person(ctx, r) for r in rows):
         return IDLE_WAITING_APPROVAL
+    from flowgate.graph_run import result_merge
+    if result_merge.waiting(ctx.run_id):
+        return IDLE_MERGE_CONFLICT                           # T#9: conflict / failed merges left
     if any(_failed(ctx, r) for r in rows):
         return IDLE_ERROR
     if any(r["status"] == "rejected" for r in rows):
@@ -110,6 +123,10 @@ def settle_plan(ctx) -> Optional[tuple[str, object]]:
     if status not in (engine.RUNNING, engine.PAUSED, engine.IDLE):
         return None
     rows = engine.node_runs(ctx.run_id)
+    if status == engine.RUNNING:
+        from flowgate.graph_run import result_merge
+        if result_merge.holding(ctx.run_id):
+            return None                                      # T#9: the waiting integrations go first
     if status in (engine.RUNNING, engine.PAUSED):
         if scheduling.requests(ctx.run_id) and scheduling.available(ctx.run_id, ctx.flow_id):
             return ("refill", None)

@@ -182,27 +182,43 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
     if adopted and command is None:
         command = run.get("run_mode") or MODE_FULL
     try:
+        from modules.flow_gate.services import graph_execution_hooks
         result_binder.reconcile_links(ctx, policies)                             # 5-1 while paused / idle
+        # 0061 T#9: the integrations that wait (pending / integrating / failed) go first. Asked after the commit in
+        # attempt order; until the drain has asked each of them the command holds — its re-dispatch, drain and
+        # openings follow in ``go_on_command`` from the state of that moment (the Git work stays outside the guard).
+        held = bool(graph_execution_hooks.call("retry_integrations", ctx))
         if run_store.set_run_status(run_id, from_status, run_store.RUNNING) != 1:
             raise AssertionError("resume missed its run")
         ctx.run["idle_reason"] = None
         if command is not None:
             run_state_ports.record_command(ctx, command)
         emit_run_status(ctx, from_status, run_store.RUNNING, cause, reason)
-        for row in run_store.node_runs(run_id):                                  # 5-3 re-dispatch
-            if row["status"] == "open" and row.get("dispatch_token_issued") == 0:
-                dispatch = node_dispatch.dispatch(ctx, row["node_key"])
-                run_store.set_dispatch(run_id, row["node_key"], dispatch)
-                emit_node_state(ctx, row["node_key"], "open", "open", "redispatched",
-                                row.get("result_doc_id"), dispatch)
-        event = RunEvent("resume" if command is None else "command")
-        d = resolve(ctx.revision, read_run_state(ctx), event, policies)
-        if command is not None:
-            run_state_ports.record_step_targets(ctx, command, d)
-        apply_decision(ctx, d)
+        if held:
+            graph_execution_hooks.call("hold_command", ctx, command)
+            return
+        go_on_command(ctx, command, policies)
     except PolicyUndecided as exc:                                                # E-21 (defence)
         raise _undecided(run["group_id"], int(run["revision_no"]),
                          [{"policy": exc.key, "rule_ref": RULE_REF[exc.key]}])
+
+
+def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
+    """The second half of ``_go_on``, inside the run's Flow guard: re-dispatch -> drain -> run candidates (a step
+    records its targets). 0061 T#9: also the end of a command's integration hold, once its waiting integrations were
+    asked (``flowgate.graph_run.result_merge``)."""
+    run_id = ctx.run_id
+    for row in run_store.node_runs(run_id):                                      # 5-3 re-dispatch
+        if row["status"] == "open" and row.get("dispatch_token_issued") == 0:
+            dispatch = node_dispatch.dispatch(ctx, row["node_key"])
+            run_store.set_dispatch(run_id, row["node_key"], dispatch)
+            emit_node_state(ctx, row["node_key"], "open", "open", "redispatched",
+                            row.get("result_doc_id"), dispatch)
+    event = RunEvent("resume" if command is None else "command")
+    d = resolve(ctx.revision, read_run_state(ctx), event, policies)
+    if command is not None:
+        run_state_ports.record_step_targets(ctx, command, d)
+    apply_decision(ctx, d)
 
 
 def _hold_flow(run: dict) -> None:
@@ -343,9 +359,11 @@ def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
 def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None) -> dict:
     """flowgate.v02.0056 T#2: ``stage`` (``instruction`` / ``result``, null for a node no AI starts) and the
     card run's ``instruction_doc_id`` (null until known). 0061 T#2: the node's current ``attempt_id`` (its active
-    attempt, else its last ended one; null for a node not opened since migration 151)."""
+    attempt, else its last ended one; null for a node not opened since migration 151). 0061 T#9: that attempt's
+    result integration (``integration_status``, ``integration_reason``; null when it has none)."""
     from modules.flow_gate.services import graph_execution_hooks
     return {**graph_execution_hooks.call("execution_wire", row["run_id"], flow_id, attempt_id or ""),
+            **(graph_execution_hooks.call("integration_wire", attempt_id) or {}),
             "node_key": row["node_key"], "status": row["status"], "opened_at": row.get("opened_at"),
             "finished_at": row.get("finished_at"), "result_doc_id": row.get("result_doc_id"),
             "root_bound": bool(row.get("root_bound")), "dispatch": dispatch_block(row),

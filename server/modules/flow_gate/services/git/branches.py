@@ -530,6 +530,42 @@ def merge_branches(
     )
 
 
+def merge_no_ff(merge_root: Path, source_head: str, message: str,
+                source_branch: str, target_branch: str) -> list[str]:
+    """``git merge --no-ff`` of ``source_head`` into the checkout at ``merge_root``: the conflicted paths (the merge
+    left in flight, MERGE_HEAD / index / markers kept), or [] when it committed. A merge git never started (an
+    untracked collision, any other refusal) is aborted and raised. Shared by ``run_merge`` and the Graph attempt
+    integration (flowgate.v02.0061 T#9); the caller holds the target's lock."""
+    from modules.flow_gate.services import git_service as _gs
+    merged = _gs._run_git(
+        [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-ff",
+         "-m", message, source_head],
+        cwd=merge_root,
+    )
+    if merged.returncode == 0:
+        return []
+    files_proc = _gs._run_git(["diff", "--name-only", "--diff-filter=U"], cwd=merge_root)
+    files = [line for line in (files_proc.stdout or "").splitlines() if line]
+    if not files:
+        # No conflict markers means git never started the merge at all — an
+        # untracked collision refuses BEFORE MERGE_HEAD exists. Nothing to keep.
+        blockers = _gs._untracked_merge_blockers(merged.stderr)
+        _gs._run_git(["merge", "--abort"], cwd=merge_root)
+        if blockers is not None:
+            raise GitServiceError(
+                409, "branch_merge_untracked_conflict",
+                "branch merge is blocked by untracked files that collide "
+                "with the source branch",
+                {"source_branch": source_branch, "target_branch": target_branch,
+                 "files": blockers},
+            )
+        raise GitServiceError(
+            500, "branch_merge_failed", "Git could not merge the branches",
+            diagnostic=_one_line(merged.stderr),
+        )
+    return files
+
+
 def run_merge(
     project_id: str, source_ep: MergeEndpointIdentity, target_ep: MergeEndpointIdentity,
     push: bool, *, holder: str, requested_by: Optional[str] = None,
@@ -663,31 +699,9 @@ def run_merge(
             ctx, pre_head=target_before, source_head=source_before,
             expected_remote_head=expected_remote_head,
         )
-        merged = _gs._run_git(
-            [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-ff",
-             "-m", f"Merge branch '{source_branch}' into {target_branch}", source_before],
-            cwd=merge_root,
-        )
-        if merged.returncode != 0:
-            files_proc = _gs._run_git(["diff", "--name-only", "--diff-filter=U"], cwd=merge_root)
-            files = [line for line in (files_proc.stdout or "").splitlines() if line]
-            if not files:
-                # No conflict markers means git never started the merge at all — an
-                # untracked collision refuses BEFORE MERGE_HEAD exists. Nothing to keep.
-                blockers = _gs._untracked_merge_blockers(merged.stderr)
-                _gs._run_git(["merge", "--abort"], cwd=merge_root)
-                if blockers is not None:
-                    raise GitServiceError(
-                        409, "branch_merge_untracked_conflict",
-                        "branch merge is blocked by untracked files that collide "
-                        "with the source branch",
-                        {"source_branch": source_branch, "target_branch": target_branch,
-                         "files": blockers},
-                    )
-                raise GitServiceError(
-                    500, "branch_merge_failed", "Git could not merge the branches",
-                    diagnostic=_one_line(merged.stderr),
-                )
+        files = merge_no_ff(merge_root, source_before, f"Merge branch '{source_branch}' into {target_branch}",
+                            source_branch, target_branch)
+        if files:
             # 0630 T0005: the conflict is KEPT — no `merge --abort`, no workspace cleanup.
             branch_merge.mark_conflict(
                 ctx, files, source_head=source_before, target_head=target_before,

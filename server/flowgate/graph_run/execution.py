@@ -10,13 +10,14 @@ from modules.flow_gate.db import groups as db_groups, ai_invoke_runs
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 from modules.flow_gate.services import graph_execution_hooks
-from flowgate.graph_run import execution_store as ledger, workspace, scheduling, fencing, stop
+from flowgate.graph_run import execution_store as ledger, workspace, scheduling, fencing, stop, result_merge
 
 log = logging.getLogger(__name__)
 
 
 def register():
     graph_execution_hooks.register(lambda action, *args, **kwargs: _ACTIONS[action](*args, **kwargs))
+    result_merge.install()      # T#9: every session close of a group reaches its Graph integrations
     from modules.flow_gate.services import graph_source_hooks
     graph_source_hooks.register(workspace.source_root, workspace.mutation, fencing.require_token)
 
@@ -373,6 +374,7 @@ def recover():
     from modules.flow_gate.graph_workflow.services import run_apply
     if not get_store().table_exists("graph_attempt_runs"):
         return
+    result_merge.recover()  # T#9: an integrating merge is finished or pending again, before a Stop goes on
     stop.recover()          # T#7: a stopping run goes on with its stop, never with a replay or a lease loss
     rows = run_store._all("SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN graph_runs r "
                          "ON r.run_id = e.run_id WHERE e.status IN ('requested', 'running') "
@@ -500,4 +502,8 @@ _ACTIONS = {
     "working": ledger.working, "start_failed": start_failed,
     "report_refused": fencing.report_refused, "node_refused": fencing.node_refused, "result_refused": result_refused,
     "execution_attempt": fencing.execution_attempt, "handoff_end": handoff_end, "node_hold": node_hold,
+    # T#9: an approved code node is done once its result is merged into the Flow's branch.
+    "defer_done": result_merge.defer_done, "integration_waiting": result_merge.integration_waiting,
+    "integration_wire": result_merge.integration_wire, "retry_integrations": result_merge.retry_integrations,
+    "hold_command": result_merge.hold_command, "propagation_held": result_merge.propagation_held,
 }

@@ -288,6 +288,9 @@ def next_missing_event(ctx: RunContext, s: RunState, key: str) -> Optional[RunEv
     if nr.status == "review" and cur.get("doc_review_status") in ("approved", "wf_done"):
         if not card_complete(ctx, key, cur["doc_id"]):
             return None                                           # approved result, card not yet
+        from modules.flow_gate.services import graph_execution_hooks
+        if graph_execution_hooks.call("integration_waiting", ctx.run_id, key):
+            return None                                           # 0061 T#9: approved, its merge decides
         return RunEvent("review_approved", key, doc_id=cur["doc_id"])
     return None
 
