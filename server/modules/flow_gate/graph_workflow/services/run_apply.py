@@ -8,6 +8,11 @@ flowgate.v02.0061 T#2: opening a node starts its attempt (``run_store.open_attem
 node's token is mapped to it) and its approval (``done``) ends it. After a decision, ``settle_run`` asks whether the
 run goes on (``run_state_ports.settle``): the running / idle judgement, the idle reason and the candidates a command
 may still open are v0.2 rules in ``flowgate.graph_run``; this module only writes what a step decides.
+
+flowgate.v02.0061 T#11: the run state the resolver reads carries the Flow's held node keys (``RunState.held``, asked
+through ``graph_execution_hooks`` ``held_nodes``; none when no handler is registered), so no opening takes a held node.
+A bound node still ``pending`` that has not taken its root document's state (its Hold kept it so at the start) is kept
+out of the openings the same way: only the next command's root bound start takes it (``run_service._take_root_binding``).
 """
 from __future__ import annotations
 
@@ -78,17 +83,23 @@ def load_context(run: dict, project_id: Optional[str], actor: Optional[str],
 
 
 def read_run_state(ctx: RunContext) -> RunState:
-    nodes = {r["node_key"]: NodeRun(r["node_key"], r["status"], r.get("result_doc_id"))
-             for r in run_store.node_runs(ctx.run_id)}
+    rows = run_store.node_runs(ctx.run_id)
+    nodes = {r["node_key"]: NodeRun(r["node_key"], r["status"], r.get("result_doc_id")) for r in rows}
     pending = [PendingPropagation(p["node_key"], p["outcome"], int(p["source_event_seq"]))
                for p in run_store.pending_propagations(ctx.run_id)]
     step = ctx.run.get("step_node_keys")
     status = ctx.run["status"]
+    held = frozenset(graph_execution_hooks.call("held_nodes", ctx.flow_id) or ())               # 0061 T#11
+    bound = ctx.binding["node_key"] if ctx.binding else None
+    if bound and any(r["node_key"] == bound and r["status"] == "pending" and not int(r.get("root_bound") or 0)
+                     for r in rows):
+        held |= {bound}             # 0061 T#11: never an ordinary opening of the bound node
     if status == "running" and graph_execution_hooks.call("propagation_held", ctx.run_id):
         status = "paused"           # 0061 T#9: a run holding for its integrations: a result's propagation waits
     return RunState(status, nodes, pending, has_active_attempts=bool(graph_execution_hooks.call("working", ctx.run_id)),
                     mode=ctx.run.get("run_mode") or "full",
-                    step_targets=frozenset(step) if step is not None else None)
+                    step_targets=frozenset(step) if step is not None else None,
+                    held=held)
 
 
 def canvas_state_of(ctx: RunContext, node_key: str, status: str) -> Optional[str]:

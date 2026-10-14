@@ -21,6 +21,15 @@ integration wakes it first (``result_merge._wake``: running under the integratio
 resume command whose waiting integrations go first holds too (``result_merge.hold_command``): while a running run
 holds, it opens, refills and dispatches nothing — the hold's end decides (an idle run goes idle again, a command goes
 on from the state of that moment).
+
+T#11: the idle reason ``hold`` — no execution or integration going on, no run candidate, and a run target not done is
+held and pending (``hold.blocks``: it, and every target below it, waits for its release; a held node is never a run
+candidate). "No run candidate" is the whole run candidates (``frontier.run_candidates``), not the current command's: a
+step that ended with a candidate outside its targets waits for the next command and is not ``hold`` (nor is a
+candidate opened by it — the step's boundary stays). ``idle_reason`` judges in this order, the first that holds wins: ``completed`` (completion policy),
+``no_targets`` (an empty run scope), ``waiting_approval``, ``merge_conflict``, ``error``, ``blocked_rejected``,
+``hold``, else ``no_targets``. A reason a person must act on comes before the Hold, which a person chose; a run with a
+held target left is never ``completed`` (the completion policy needs every target done).
 """
 from __future__ import annotations
 
@@ -33,8 +42,9 @@ IDLE_COMPLETED, IDLE_NO_TARGETS = "completed", "no_targets"
 IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR = "waiting_approval", "blocked_rejected", "error"
 IDLE_STOPPED = "stopped"                                     # T#7: set by a Stop only
 IDLE_MERGE_CONFLICT = "merge_conflict"                       # T#9: approved results whose merge waits (conflict / failed)
+IDLE_HOLD = "hold"                                           # T#11: held targets left (open key, no migration)
 IDLE_REASONS = (IDLE_COMPLETED, IDLE_NO_TARGETS, IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR,
-                IDLE_STOPPED, IDLE_MERGE_CONFLICT)
+                IDLE_STOPPED, IDLE_MERGE_CONFLICT, IDLE_HOLD)
 CAUSE_COMPLETED, CAUSE_IDLE, CAUSE_WORK_RESUMED = "completed", "run_idle", "work_resumed"
 
 
@@ -84,7 +94,7 @@ def _completion(ctx, state) -> tuple[bool, Optional[str]]:
 
 
 def idle_reason(ctx, rows: list[dict], state) -> str:
-    """Why a run with no work going on and nothing its command may open is idle."""
+    """Why a run with no work going on and nothing its command may open is idle (the order: module docstring)."""
     complete, reason = _completion(ctx, state)
     if complete:
         return IDLE_COMPLETED
@@ -99,6 +109,9 @@ def idle_reason(ctx, rows: list[dict], state) -> str:
         return IDLE_ERROR
     if any(r["status"] == "rejected" for r in rows):
         return IDLE_BLOCKED_REJECTED
+    from flowgate.graph_run import hold
+    if hold.blocks(ctx, state):
+        return IDLE_HOLD                                     # T#11
     return IDLE_NO_TARGETS
 
 

@@ -10,7 +10,8 @@ records it through here:
 - ``record_command``: the new command is stored on the running run — mode, no step targets yet — before the run
   status event, so the event, the stored run and the response tell the same command.
 - ``record_step_targets``: a step's targets are the nodes its command's decision opens (the drained propagations and
-  the run candidates of the moment); a full command has none.
+  the run candidates of the moment); a full command has none. T#11: never a held node (the decision opens none; one is
+  dropped all the same, so a refill of the step cannot open it either).
 """
 from __future__ import annotations
 
@@ -36,7 +37,8 @@ def record_command(ctx, mode: str) -> None:
 def record_step_targets(ctx, mode: str, decision) -> None:
     if mode != engine.MODE_STEP:
         return
-    keys = sorted(set(decision.open))
+    from flowgate.graph_run import hold
+    keys = sorted(set(decision.open) - hold.held(ctx.flow_id))
     if engine.set_run_command(ctx.run_id, engine.MODE_STEP, keys) != 1:
         raise AssertionError("step command missed its run")
     ctx.run["step_node_keys"] = keys

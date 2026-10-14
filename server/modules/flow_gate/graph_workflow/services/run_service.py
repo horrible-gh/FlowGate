@@ -29,6 +29,13 @@ Which command a run goes on with, what it records and whether a run goes on afte
 (``run_state_ports``); this module keeps the order of the steps. The run that goes on must hold its Flow (one run per
 Flow): a run written before migration 151 that completed gave the Flow up and takes it back only when no other run
 holds or follows it.
+
+flowgate.v02.0061 T#11: each node run tells whether its card is held (``hold``, ``graph_execution_hooks`` ``held_nodes``).
+A held root-bound node does not take its root document's state at the run start either (``_take_root_binding``): it
+stays ``pending``, no propagation is recorded and nothing follows it. Released, nothing happens until the next step /
+full command, which takes the root's state first (done / review, an approved root's propagation, a rejected root's
+``review_rejected``) and then goes on as the start would have — never an ordinary opening of the R / B card
+(``run_apply.read_run_state`` keeps such a node out of every opening).
 """
 from __future__ import annotations
 
@@ -150,8 +157,7 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
         ctx = load_context(run, project_id, user_id, jobs)
         emit_run_status(ctx, None, "running", "user_start")
         try:
-            if ctx.binding is not None:
-                _root_bound_start(ctx, root, policies)
+            _take_root_binding(ctx, policies, root)
             d = resolve(ctx.revision, read_run_state(ctx), RunEvent("start"), policies)
             run_state_ports.record_step_targets(ctx, command, d)
             apply_decision(ctx, d)
@@ -206,8 +212,10 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
 def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
     """The second half of ``_go_on``, inside the run's Flow guard: re-dispatch -> drain -> run candidates (a step
     records its targets). 0061 T#9: also the end of a command's integration hold, once its waiting integrations were
-    asked (``flowgate.graph_run.result_merge``)."""
+    asked (``flowgate.graph_run.result_merge``). 0061 T#11: a bound node its Hold kept pending at the start takes its
+    root's state first, once released (``_take_root_binding``)."""
     run_id = ctx.run_id
+    _take_root_binding(ctx, policies)
     for row in run_store.node_runs(run_id):                                      # 5-3 re-dispatch
         if row["status"] == "open" and row.get("dispatch_token_issued") == 0:
             dispatch = node_dispatch.dispatch(ctx, row["node_key"])
@@ -239,6 +247,27 @@ def _hold_flow(run: dict) -> None:
     if run_store.claim_flow(run["run_id"], flow_id) != 1:
         raise AssertionError("resume missed its Flow")
     run["active_group_id"] = flow_id
+
+
+def _take_root_binding(ctx: RunContext, policies: dict, root: Optional[dict] = None) -> None:
+    """0061 T#11: the bound node takes its root document's state (``_root_bound_start``) while it is ``pending`` and
+    has not taken it yet — at the run start, or at the first command after its Hold is released. A held one stays
+    pending (the Hold bounds this as it bounds an opening); a root lost by then is refused as at the start (409
+    ``root_binding_lost``)."""
+    if ctx.binding is None:
+        return
+    key = ctx.binding["node_key"]
+    row = next((r for r in run_store.node_runs(ctx.run_id) if r["node_key"] == key), None)
+    if row is None or row["status"] != "pending" or int(row.get("root_bound") or 0) == 1:
+        return
+    from modules.flow_gate.services import graph_execution_hooks
+    if key in frozenset(graph_execution_hooks.call("held_nodes", ctx.flow_id) or ()):
+        return
+    root = root if root is not None else ctx.root_document()
+    if root is None:
+        raise GraphApiError(409, "root_binding_lost", {"flow_id": ctx.flow_id, "node_key": key,
+                                                       "doc_id": ctx.binding["doc_id"]})
+    _root_bound_start(ctx, root, policies)
 
 
 def _root_bound_start(ctx: RunContext, root: dict, policies: dict) -> None:
@@ -352,16 +381,20 @@ def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
     out.update(graph_execution_hooks.call("execution_wire", run_id, run["group_id"]))
     if with_nodes:
         attempts = run_store.current_attempts(run_id)
-        out["node_runs"] = [node_run_wire(r, run["group_id"], attempts.get(r["node_key"])) for r in rows]
+        held = frozenset(graph_execution_hooks.call("held_nodes", run["group_id"]) or ())          # 0061 T#11
+        out["node_runs"] = [node_run_wire(r, run["group_id"], attempts.get(r["node_key"]), held) for r in rows]
     return out
 
 
-def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None) -> dict:
+def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, held: Optional[frozenset] = None) -> dict:
     """flowgate.v02.0056 T#2: ``stage`` (``instruction`` / ``result``, null for a node no AI starts) and the
     card run's ``instruction_doc_id`` (null until known). 0061 T#2: the node's current ``attempt_id`` (its active
     attempt, else its last ended one; null for a node not opened since migration 151). 0061 T#9: that attempt's
-    result integration (``integration_status``, ``integration_reason``; null when it has none)."""
+    result integration (``integration_status``, ``integration_reason``; null when it has none). 0061 T#11: whether its
+    card is held (``hold``; ``held``: the Flow's held node keys when the caller read them already)."""
     from modules.flow_gate.services import graph_execution_hooks
+    if held is None:
+        held = frozenset(graph_execution_hooks.call("held_nodes", flow_id) or ())
     return {**graph_execution_hooks.call("execution_wire", row["run_id"], flow_id, attempt_id or ""),
             **(graph_execution_hooks.call("integration_wire", attempt_id) or {}),
             "node_key": row["node_key"], "status": row["status"], "opened_at": row.get("opened_at"),
@@ -369,7 +402,7 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None) -> 
             "root_bound": bool(row.get("root_bound")), "dispatch": dispatch_block(row),
             "awaiting_approval": node_approval.awaiting_approval(flow_id, row),
             "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id"),
-            "attempt_id": attempt_id}
+            "attempt_id": attempt_id, "hold": row["node_key"] in held}
 
 
 def settle_if_needed(flow_id: str, project_id: Optional[str]) -> None:

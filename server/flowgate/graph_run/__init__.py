@@ -6,7 +6,7 @@ the run, its nodes and its events, its resolver (``domain.frontier``) computes t
 those ports to this package. The engine itself is not moved here. Nothing is registered on import.
 
     settle          after a step: a running run with no work going on opens what its command may still open, else
-                    goes idle with its reason (completed, no_targets, waiting_approval, blocked_rejected, error);
+                    goes idle with its reason (completed, no_targets, waiting_approval, blocked_rejected, error, hold);
                     an idle run whose existing work goes on again (a card's review started) is running again; an
                     idle run's reason follows its nodes
     command         the command a paused / idle run goes on with, recorded before its run status event, and a
@@ -20,4 +20,5 @@ those ports to this package. The engine itself is not moved here. Nothing is reg
     result_merge    T#9: an approved code node is done once its result is merged into the Flow's branch
     workspace       T#5 an attempt's own worktree; T#10 its input from its predecessors' results (a Join merged, a
                     conflict -> the group branch HEAD) and its removal once its integration ended
+    hold            T#11 Hold: the held nodes no opening takes, who may set / release it, the idle reason ``hold``
 """

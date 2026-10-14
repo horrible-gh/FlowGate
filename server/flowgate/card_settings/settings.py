@@ -9,6 +9,12 @@ answer what a node's AI start takes from its card.
 - 0061 T#3: running/paused flows lock every card setting (409 ``graph_run_locked``).
   Done/open/review nodes remain protected while idle (409 ``graph_node_protected``), including
   instruction use and AI settings. The earlier node_settings_locked check remains as a fallback.
+- 0061 T#11: Hold (``hold``: true / false or null) is written through the same PATCH for every card, with the Graph
+  run's rules instead of the lock above (``flowgate.graph_run.hold``): refused while a run is running / paused /
+  stopping (409 ``graph_run_locked``), setting refused on a node done in the Flow's run (409 ``graph_hold_done_node``),
+  allowed on an open / in-review node (it bounds the opening only). Releasing changes the setting only: nothing opens
+  until the next step / full command. Every change is a ``graph_canvas_changed`` (reason ``hold``) after the commit,
+  with or without a run, and a ``graph_node_state_changed`` too when the Flow's run has the node.
 - The requirement card's AI delegation on / off adds / removes the card's AI delegation document
   line (``card_documents.lines.set_delegation``), in the same guard.
 - ``run_settings`` is the Graph's ``card_settings_ports.run_settings`` handler: only stored values are
@@ -32,7 +38,7 @@ from flowgate.card_documents import slots as card_slots
 from flowgate.card_settings import fields
 from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import repository
-from flowgate.graph_run import editing
+from flowgate.graph_run import editing, hold
 
 DELEGATION_FIELD = "delegation"
 
@@ -69,6 +75,8 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
     registered = legacy.registered_doc_types(group.get("project_id"))
 
     def body() -> dict:
+        if name == fields.HOLD.name:
+            return _write_hold(group, node_key, value, user_id)
         editing.require_editable(flow_id, node_key)
         node = _card(flow_id, node_key)
         kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
@@ -96,6 +104,26 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
         return _payload(flow_id, node, stored)
 
     return legacy.with_flow_guard(flow_id, body)
+
+
+def _write_hold(group: dict, node_key: str, value: Any, user_id: Optional[str]) -> dict:
+    """0061 T#11, inside the Flow guard: Hold on (true) / off (false or null: the default, no row). Not the card
+    settings lock — the Graph run's rules (``hold.require_settable``): any card, also one open / in review."""
+    flow_id = group["group_id"]
+    if value is not None and not isinstance(value, bool):
+        raise legacy.GraphApiError(422, "invalid_request", {"errors": [
+            {"field": "value", "reason": "not_a_boolean"}]}, message="The value does not fit this setting.")
+    on = value is True
+    hold.require_settable(flow_id, node_key, on)
+    node = _card(flow_id, node_key)
+    before = repository.values(flow_id, node_key).get(fields.HOLD.name) is True
+    if on:
+        repository.put(flow_id, node_key, fields.HOLD.name, True, user_id)
+    else:
+        repository.remove(flow_id, node_key, fields.HOLD.name)
+    if on != before:
+        hold.changed(flow_id, group.get("project_id"), node_key, on, user_id)
+    return _payload(flow_id, node, repository.values(flow_id, node_key))
 
 
 def run_settings(flow_id: str, node: dict) -> dict:

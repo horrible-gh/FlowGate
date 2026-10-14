@@ -6,6 +6,9 @@ as a whole (P0008 S3-1); concurrent saves are refused by version (Q-13 provision
 Structure is not checked on save, only on validation / confirmation. The same unit brings the
 cards' documents in line with the draft (flowgate.v02.0053 T#1, ``card_document_ports.draft_saved``;
 the feature lives in ``flowgate.card_documents``).
+
+flowgate.v02.0061 T#11: a Graph read tells whether each node's card is held (``hold`` on every node of the draft and the
+revisions, ``graph_execution_hooks`` ``held_nodes``; false for all when no handler is registered).
 """
 from __future__ import annotations
 
@@ -88,15 +91,27 @@ def revision_wire(rev: Optional[dict]) -> Optional[dict]:
             "confirmed_by": rev.get("confirmed_by"), "nodes": nodes, "edges": edges}
 
 
+def _with_hold(flow_id: str, *wires: Optional[dict]) -> None:
+    """0061 T#11: ``hold`` on each node of the wires (the card's Hold, kept by node key whatever the revision)."""
+    from modules.flow_gate.services import graph_execution_hooks
+    held = frozenset(graph_execution_hooks.call("held_nodes", flow_id) or ())
+    for wire in wires:
+        for node in (wire or {}).get("nodes", []):
+            node["hold"] = node["node_key"] in held
+
+
 def graph_payload(flow_id: str) -> dict:
     """P0008 §5.2 ``GET /flows/{flow_id}/graph``."""
     own = read_ownership(flow_id)
     latest_no = definition_store.latest_revision_no(flow_id)
+    draft = draft_wire(definition_store.draft(flow_id), own.state)
+    latest = revision_wire(definition_store.revision(flow_id, latest_no) if latest_no else None)
+    _with_hold(flow_id, draft, latest)
     return {
         "flow_id": flow_id,
         "ownership": block(flow_id, own),
-        "draft": draft_wire(definition_store.draft(flow_id), own.state),
-        "latest_revision": revision_wire(definition_store.revision(flow_id, latest_no) if latest_no else None),
+        "draft": draft,
+        "latest_revision": latest,
         "policies": policies.policy_states(),
     }
 
@@ -107,6 +122,7 @@ def revision_payload(flow_id: str, revision_no: int) -> dict:
     if rev is None:
         raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": revision_no})
     out = revision_wire(rev)
+    _with_hold(flow_id, out)
     binding = assignment_store.root_binding(flow_id)
     out["root_binding"] = None
     if binding and binding["bound_at_revision_no"] <= revision_no and \

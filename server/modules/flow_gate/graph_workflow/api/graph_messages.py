@@ -50,6 +50,12 @@ RUN_EDIT_MESSAGES = {
         "en": "The run cannot adopt the latest revision while an attempt is active.",
         "ja": "進行中の attempt があるため最新リビジョンへ移行できません。",
     },
+    # flowgate.v02.0061 T#11: Hold cannot be set on a node done in the Flow's run
+    "graph_hold_done_node": {
+        "ko": "완료된 노드에는 Hold를 설정할 수 없습니다.",
+        "en": "Hold cannot be set on a done node.",
+        "ja": "完了したノードには Hold を設定できません。",
+    },
 }
 
 _RULE = {

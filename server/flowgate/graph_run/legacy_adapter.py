@@ -5,25 +5,39 @@ Everything this package takes from ``modules.flow_gate`` goes through here, call
 writes of ``run_apply`` (a decision, the run status event, the run state the resolver reads), the resolver's run
 candidates (``frontier.command_candidates``, a step's targets applied), the completion policy restore and the node
 approval state (``node_approval``: a gate, a card awaiting a person's approval, AI still working on a card in review).
+0061 T#11 (Hold): the Flow's run (``active_run``), the run context and the node state event (``load_context``,
+``emit_node_state``) and the Graph error (``GraphApiError``); the whole run candidates (``frontier.run_candidates``, no
+step applied: the idle reason ``hold``) and the Canvas refresh signal (``canvas_events.publish_canvas_changed``).
 """
 from __future__ import annotations
 
-from modules.flow_gate.graph_workflow.domain.frontier import MODE_FULL, MODE_STEP, Decision, command_candidates
+from modules.flow_gate.graph_workflow.domain.frontier import (
+    MODE_FULL, MODE_STEP, Decision, command_candidates, run_candidates,
+)
 from modules.flow_gate.graph_workflow.domain.run_policies import (
     PolicySnapshotUnavailable, PolicyUndecided, policies_of,
 )
 from modules.flow_gate.graph_workflow.services import node_approval
-from modules.flow_gate.graph_workflow.services.run_apply import apply_decision, emit_run_status, read_run_state
+from modules.flow_gate.graph_workflow.services.canvas_events import publish_canvas_changed
+from modules.flow_gate.graph_workflow.services.errors import GraphApiError
+from modules.flow_gate.graph_workflow.services.run_apply import (
+    apply_decision, emit_node_state, emit_run_status, load_context, read_run_state,
+)
 from modules.flow_gate.graph_workflow.store import run_store
 
 __all__ = ["MODE_FULL", "MODE_STEP", "RUNNING", "PAUSED", "IDLE", "GATE_NODE_TYPE", "AI_RUNNING", "NO_RESULT",
            "Decision", "PolicySnapshotUnavailable", "PolicyUndecided", "apply_decision", "command_candidates",
            "emit_run_status", "read_run_state", "node_runs", "completion_policy", "refusal", "awaiting_approval",
-           "set_run_status", "set_idle_reason", "set_run_command"]
+           "set_run_status", "set_idle_reason", "set_run_command", "GraphApiError", "active_run", "load_context",
+           "emit_node_state", "run_candidates", "publish_canvas_changed"]
 
 RUNNING, PAUSED, IDLE = run_store.RUNNING, run_store.PAUSED, run_store.IDLE
 GATE_NODE_TYPE = node_approval.GATE_NODE_TYPE
 AI_RUNNING, NO_RESULT = node_approval.AI_RUNNING, node_approval.NO_RESULT
+
+
+def active_run(flow_id: str):
+    return run_store.active_run(flow_id)
 
 
 def node_runs(run_id: str) -> list[dict]:

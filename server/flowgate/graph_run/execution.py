@@ -10,7 +10,7 @@ from modules.flow_gate.db import groups as db_groups, ai_invoke_runs
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 from modules.flow_gate.services import graph_execution_hooks
-from flowgate.graph_run import execution_store as ledger, workspace, scheduling, fencing, stop, result_merge
+from flowgate.graph_run import execution_store as ledger, workspace, scheduling, fencing, stop, result_merge, hold
 
 log = logging.getLogger(__name__)
 
@@ -507,4 +507,6 @@ _ACTIONS = {
     "defer_done": result_merge.defer_done, "integration_waiting": result_merge.integration_waiting,
     "integration_wire": result_merge.integration_wire, "retry_integrations": result_merge.retry_integrations,
     "hold_command": result_merge.hold_command, "propagation_held": result_merge.propagation_held,
+    # T#11: the Flow's held node keys, never opened (``run_apply.read_run_state`` -> ``RunState.held``).
+    "held_nodes": hold.held,
 }

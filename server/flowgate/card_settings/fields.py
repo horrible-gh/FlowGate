@@ -130,6 +130,12 @@ _FIELDS = {
 }
 
 
+# 0061 T#11: Hold (the node is not opened by a Graph run while on). Every card has it, whatever its kind (also a card
+# kind with no run settings), so it is not one of a kind's fields: no run plan hands it on, and its write rules are the
+# Graph run's (``settings.write`` -> ``flowgate.graph_run.hold``), not the card settings lock.
+HOLD = Field("hold", FLAG, False)
+
+
 class InvalidValue(ValueError):
     """The value does not fit the field (``reason`` names why)."""
 
@@ -159,6 +165,8 @@ def fields_of(kind: Optional[str]) -> tuple:
 
 
 def field_of(kind: Optional[str], name: str) -> Optional[Field]:
+    if name == HOLD.name:
+        return HOLD                                # 0061 T#11: every card
     return next((f for f in fields_of(kind) if f.name == name), None)
 
 
@@ -216,10 +224,11 @@ def choices_of(field: Field, repeat_choices: Iterable[int]) -> Optional[list]:
 
 
 def view(kind: Optional[str], stored: dict, repeat_choices: Iterable[int]) -> dict:
-    """``field -> {value, stored, default, choices}`` in display order (shown value = stored, else default)."""
+    """``field -> {value, stored, default, choices}`` in display order (shown value = stored, else default); 0061
+    T#11: the card's Hold last, for every card."""
     choices = tuple(repeat_choices)
     out = {}
-    for f in fields_of(kind):
+    for f in fields_of(kind) + (HOLD,):
         has = f.name in stored
         out[f.name] = {"value": stored[f.name] if has else f.default, "stored": has,
                        "default": f.default, "choices": choices_of(f, choices)}

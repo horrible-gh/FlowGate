@@ -15,6 +15,12 @@ a step command also when it would open a node outside the step's targets (``RunS
 (``start``, ``command`` = a new step / full command, ``resume`` = the paused command going on) drains what waits
 and then opens the run candidates (``run_candidates``: run scope targets that are pending with every predecessor
 done), so a node that became runnable without a propagation (a node added after a done node) opens as well.
+
+flowgate.v02.0061 T#11 Hold: the caller passes the Flow's held node keys (``RunState.held``, the cards whose ``hold``
+setting is on). ``openable_only`` — the one step every opening goes through (the start node, a propagation's opening,
+a rejection path, the run candidates) — never opens a held node: it stays ``pending``, so its successors and the joins
+they enter wait as the propagation structure already makes them wait, and branches without it go on. Hold only bounds
+the opening: a held node already open / in review goes on. Once released, the next command's run candidates open it.
 """
 from __future__ import annotations
 
@@ -73,6 +79,7 @@ class RunState:
     has_active_attempts: bool = False  # compatibility name: requested/running AI executions (0061 T#4)
     mode: str = MODE_FULL              # the command the run goes on with (0061 T#2)
     step_targets: Optional[frozenset] = None   # a step's targets; None: a full command or a step not begun yet
+    held: frozenset = frozenset()      # 0061 T#11: never opened — the held node keys (and a bound node waiting for its root)
 
     def node(self, key: str) -> Optional[NodeRun]:
         return self.node_runs.get(key)
@@ -150,7 +157,7 @@ def virtual(s: RunState, d: Decision) -> RunState:
     done = set(d.propagation_done)
     status = "idle" if d.run_transition == "completed" else s.status
     return RunState(status, nodes, [p for p in s.pending if p not in done],
-                    s.open_decided | frozenset(d.open), s.has_active_attempts, s.mode, s.step_targets)
+                    s.open_decided | frozenset(d.open), s.has_active_attempts, s.mode, s.step_targets, s.held)
 
 
 def transition_doc(s: RunState, nr: NodeRun, event: RunEvent) -> Any:
@@ -245,7 +252,8 @@ def drain_pending(revision: Graph, s: RunState, policies: Mapping[str, Any]) -> 
 
 def run_candidates(revision: Graph, s: RunState) -> list[str]:
     """0061 T#2: the run scope targets that are ``pending`` with every live predecessor ``done``, in revision order
-    (``openable_only``). Pure; every command calls it after ``drain_pending`` (the revision move of T#3 as well)."""
+    (``openable_only``; T#11: not held). Pure; every command calls it after ``drain_pending`` (the revision move of
+    T#3 as well)."""
     targets = run_scope(revision).targets
     preds: dict[str, list[str]] = {}
     for e in revision.live_edges():
@@ -306,11 +314,13 @@ def propagate(revision: Graph, s: RunState, node: str, outcome: str, policies: M
 
 
 def openable_only(s: RunState, nodes) -> list[str]:
-    """Only ``pending`` nodes not already chosen are opened (L0009 §2.6.4); order kept, no repeats."""
+    """Only ``pending`` nodes not already chosen are opened (L0009 §2.6.4); order kept, no repeats. 0061 T#11: a held
+    node (``RunState.held``) is never opened."""
     out: list[str] = []
     for key in nodes:
         nr = s.node(key)
-        if nr is not None and nr.status == "pending" and key not in s.open_decided and key not in out:
+        if nr is not None and nr.status == "pending" and key not in s.open_decided and key not in out \
+                and key not in s.held:
             out.append(key)
     return out
 
