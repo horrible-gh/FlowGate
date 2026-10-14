@@ -30,6 +30,16 @@ SOURCE_MESSAGES = {
 }
 
 RUN_EDIT_MESSAGES = {
+    "graph_time_machine_blocked": {
+        "ko": "Graph Time Machine을 안전하게 실행할 수 없습니다. 차단 사유를 확인하세요.",
+        "en": "Graph Time Machine cannot run safely. Check the blocking reasons.",
+        "ja": "Graph Time Machine を安全に実行できません。ブロック理由を確認してください。",
+    },
+    "graph_engine_owned": {
+        "ko": "이 Flow는 Graph 엔진이 담당합니다. Graph Time Machine을 사용하세요.",
+        "en": "This flow is owned by the Graph engine. Use Graph Time Machine.",
+        "ja": "このフローは Graph エンジンの担当です。Graph Time Machine を使用してください。",
+    },
     "graph_run_locked": {
         "ko": "실행 중·일시정지·정지 중인 Flow는 편집할 수 없습니다.",
         "en": "A running, paused or stopping flow cannot be edited.",
@@ -57,6 +67,48 @@ RUN_EDIT_MESSAGES = {
         "ja": "完了したノードには Hold を設定できません。",
     },
 }
+
+# 0061 T#12: stable reason codes; message text is display-only.
+TIME_MACHINE_REASONS = {
+    "run_missing": (
+        "되돌릴 Graph 실행이 없습니다.", "There is no Graph run to rewind.", "巻き戻す Graph 実行がありません。"),
+    "run_not_idle": (
+        "실행이 idle 상태가 아닙니다.", "The run is not idle.", "実行が idle 状態ではありません。"),
+    "executions_in_progress": (
+        "요청 또는 실행 중인 AI 실행이 있습니다.", "AI executions are requested or running.",
+        "要求中または実行中の AI 実行があります。"),
+    "integrations_in_progress": (
+        "대기 또는 진행 중인 결과 통합이 있습니다.", "Result integrations are pending or in progress.",
+        "待機中または進行中の結果統合があります。"),
+    "merge_conflict_open": (
+        "Graph attempt 병합 충돌 세션이 열려 있습니다.", "A Graph attempt merge conflict session is open.",
+        "Graph attempt のマージ競合セッションが開いています。"),
+    "integration_head_input": (
+        "통합 브랜치 HEAD를 입력으로 사용한 attempt가 대상에 있습니다.",
+        "A target attempt used the integration branch HEAD as its input.",
+        "統合ブランチの HEAD を入力に使った attempt が対象に含まれています。"),
+    "commit_attribution_missing": (
+        "대상의 커밋 귀속 기록이 없습니다.", "Commit attribution is missing for a target.",
+        "対象のコミット帰属記録がありません。"),
+    "node_not_done": (
+        "지정 노드가 완료 상태가 아닙니다.", "The selected node is not done.", "指定ノードは完了していません。"),
+    "node_outside_run_scope": (
+        "지정 노드가 실행 대상 밖입니다.", "The selected node is outside the run scope.",
+        "指定ノードは実行対象外です。"),
+    "previous_operation_incomplete": (
+        "이전 Graph Time Machine 작업의 완료 또는 복구가 필요합니다.",
+        "A previous Graph Time Machine operation must finish or be recovered.",
+        "以前の Graph Time Machine 操作の完了または復旧が必要です。"),
+    "execution_history_incomplete": (
+        "실행 개정 또는 입력 의존 기록이 불완전합니다.", "Execution revision or input dependency history is incomplete.",
+        "実行リビジョンまたは入力依存の記録が不完全です。"),
+}
+
+
+def time_machine_reasons(reasons: list[dict], locale: str) -> list[dict]:
+    index = ("ko", "en", "ja").index(locale) if locale in ("ko", "en", "ja") else 0
+    return [{**r, "message": TIME_MACHINE_REASONS[r["code"]][index]} for r in reasons]
+
 
 _RULE = {
     "multiple_start": ("시작 노드가 여러 개인 그래프", "a graph with several start nodes", "開始ノードが複数あるグラフ"),

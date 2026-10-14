@@ -2262,6 +2262,7 @@ def open_final_approval(
 def reopen_workflow(
     body: _ReopenBody,
     current_user: dict = Depends(get_current_user),
+    request: Request = None,
 ) -> dict:
     """Time-machine reopen: roll the workflow back to an earlier step.
 
@@ -2274,6 +2275,9 @@ def reopen_workflow(
     doc = _db_docs.get_by_id(body.doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
+    graph_refusal = _graph_contact.time_machine_refusal(doc, request)
+    if graph_refusal is not None:
+        return graph_refusal
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
     project_id = doc.get("project_id")
@@ -2445,6 +2449,7 @@ def _attach_tr_commit_restore(
 def restore_workflow(
     body: _RestoreBody,
     current_user: dict = Depends(get_current_user),
+    request: Request = None,
 ) -> dict:
     """Reverse time-machine restore: re-approve unchanged rollback steps."""
     from modules.flow_gate.db import documents as _db_docs
@@ -2455,6 +2460,9 @@ def restore_workflow(
     doc = _db_docs.get_by_id(body.doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
+    graph_refusal = _graph_contact.time_machine_refusal(doc, request)
+    if graph_refusal is not None:
+        return graph_refusal
     group_id = doc.get("group_id")
     project_id = doc.get("project_id")
     if not project_id or not group_id:
