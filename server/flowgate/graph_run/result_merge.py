@@ -12,12 +12,14 @@ Flow guard and DB transaction (``integrate``):
     none. An idle run (a person's approval on it) goes running first (``_wake``: the integration hold ``idle``), so
     the run is working, locked and may be stopped while its integration waits or runs;
 (b) the attempt's result commit (T#8 ``result_commit.commit_result``, reused when it exists);
-(c) a result equal to its input (no source change) goes to (e) with no merge;
+(c) a result equal to its input (no source change) already in the group branch goes to (e) with no merge (T#10: a
+    Join's merged input is not, and is merged as any result so the branch keeps it);
 (d) ``integrating``, then the group's G (``commit._acquire_group_lock``, no wait) for one merge only: the result is
     merged into the group worktree with a merge commit (``branches.merge_no_ff``, --no-ff), so the result commit
     stays a parent on the group branch;
 (e) once G is released, in one Flow guard: ``integrated_commit``, ``integrated``, the held approval applied (the
-    node done, its attempt ended, the candidates recomputed and the free slots refilled — T#2 / T#6).
+    node done, its attempt ended, the candidates recomputed and the free slots refilled — T#2 / T#6); then, outside
+    the guard, the ended attempt's worktree and branch are removed (T#10 ``workspace.cleanup_ended``).
 
 The integration hold (a run status event of the cause ``integration_hold``; it ends with ``integration_hold_end`` or
 with the run leaving running): while a command's or an idle run's waiting integrations go first, a running run opens,
@@ -336,6 +338,13 @@ def _group_root(row: dict) -> tuple[Optional[str], Optional[Path], Optional[str]
     return project_id, git.src_root(name, state["branch"]), state["branch"]
 
 
+def _in_group(row: dict) -> bool:
+    """(c) T#10: the result is already on the group branch (a run base or a predecessor's result). A Join's merged
+    input is not: it is merged, else the ended attempt's branch removal would leave it unreferenced."""
+    _project_id, root, _branch = _group_root(row)
+    return root is not None and git._is_ancestor(root, row["result_commit"], "HEAD")
+
+
 def _trailer(row: dict) -> str:
     return f"FlowGate-Attempt: {row['attempt_id']}\nFlowGate-Result: {row['result_commit']}"
 
@@ -452,6 +461,8 @@ def _finish(attempt_id: str, integrated: Optional[str], expect) -> str:
         return INTEGRATED
     outcome = with_flow_guard(row["group_id"], body)
     run_service.run_jobs(jobs)
+    if outcome == INTEGRATED:
+        workspace.cleanup_ended(attempt_id)          # T#10: only once the attempt ended (the approval applied)
     return outcome
 
 
@@ -515,7 +526,7 @@ def integrate(attempt_id: str) -> str:
         _set(attempt_id, status, "result_commit:" + reason, (PENDING,))
     else:
         row = workspace.attempt(attempt_id)
-        if row["result_commit"] == row["input_commit"]:
+        if row["result_commit"] == row["input_commit"] and _in_group(row):
             status = _finish(attempt_id, row["result_commit"], (PENDING,))                  # (c)
         elif not _begin(attempt_id, row["group_id"]):
             return SKIPPED

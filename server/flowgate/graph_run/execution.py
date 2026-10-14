@@ -446,7 +446,8 @@ def recover():
                 except Exception:
                     log.exception("Graph replay failure could not be recorded for %s", snapshot["exec_id"])
 
-    workspace.cleanup_invalidated()  # Outside all Flow guards and DB transactions.
+    # Outside all Flow guards and DB transactions. T#10: invalidated and integrated (ended) attempts' trees.
+    workspace.cleanup_finished()
 
 
 def map_token(exec_id, token_id):

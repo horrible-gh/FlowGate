@@ -18,4 +18,6 @@ those ports to this package. The engine itself is not moved here. Nothing is reg
     stop            T#7 Stop: stopping -> the AI processes ended -> attempts invalidated, nodes pending -> idle (stopped)
     result_commit   T#8: an attempt's result frozen and committed in its own worktree
     result_merge    T#9: an approved code node is done once its result is merged into the Flow's branch
+    workspace       T#5 an attempt's own worktree; T#10 its input from its predecessors' results (a Join merged, a
+                    conflict -> the group branch HEAD) and its removal once its integration ended
 """

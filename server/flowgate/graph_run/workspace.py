@@ -2,16 +2,28 @@
 
 Git changes precede journal changes. Git locks are never acquired inside a Flow
 guard/transaction and are released before admission or any provider is started.
+
+0061 T#10: the attempt starts from its predecessors' results (``_inputs``): a start node from the group branch HEAD
+(``run_base``), one predecessor from its ended attempt's ``result_commit``, a Join from those results merged in the
+attempt worktree in node_key order (``predecessors``); a predecessor with no attempt commit (a gate) hands its own
+input on. Inputs that reach the start without a commit (an approved root, a gate) start from the run's base
+(``_run_base``): the commit the run's first ``run_base`` attempt recorded, not the group branch HEAD that has moved
+since, so a branch integrated meanwhile stays out. Every predecessor attempt in the input is recorded, also those
+sharing a commit; the merge uses each commit once. A Join whose results conflict starts from the group branch HEAD,
+which holds them all (``integration_head``, recorded by a run event). An ended attempt whose integration ended
+(``integrated``) loses its tree and branch (``cleanup_ended``; its result stays a parent on the group branch), as an
+invalidated one does; the server start removes both (``cleanup_finished``). An active attempt's tree is never removed.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 from contextlib import contextmanager
 from pathlib import Path
 
 from modules.flow_gate.db import groups as db_groups
-from modules.flow_gate.graph_workflow.store import run_store
+from modules.flow_gate.graph_workflow.store import definition_store, run_store
 from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 from modules.flow_gate.services import git_service as git, graph_source_hooks as port
 from modules.flow_gate.services.git import lock_manager as locks, merge_target, branches
@@ -172,6 +184,116 @@ def mutation(attempt_id, *, project_id, group_id):
         yield source_root(attempt_id, project_id=project_id, group_id=group_id)
 
 
+def _prior(run_id, node_key):
+    """The node's current attempt once it is done: its last ended one."""
+    return run_store._one("SELECT attempt_id, node_key, result_commit FROM graph_node_attempts WHERE run_id = ? "
+                          "AND node_key = ? AND status = 'ended' ORDER BY created_at DESC, attempt_id DESC LIMIT 1",
+                          [run_id, node_key])
+
+
+def _inputs(row):
+    """T#10: ``[(node_key, attempt_id, result_commit)]`` the attempt starts from, in node_key order, one per
+    predecessor attempt (two may share a commit; each is recorded): each predecessor's ended attempt with a result
+    commit; a predecessor with none (a gate, a document-only or never prepared attempt) hands on its own
+    predecessors' results. [] -> the run base (``_run_base``)."""
+    record = definition_store.revision(row["group_id"], int(row["revision_no"])) or {"nodes": [], "edges": []}
+    keys = {n["node_key"] for n in record["nodes"]}
+    preds = {}
+    for e in record["edges"]:
+        if e["source"] in keys and e["target"] in keys:
+            preds.setdefault(e["target"], set()).add(e["source"])
+    found, seen = [], set()
+
+    def follow(key):
+        for pred in sorted(preds.get(key, ())):
+            if pred in seen:
+                continue
+            seen.add(pred)
+            prior = _prior(row["run_id"], pred)
+            if prior and prior.get("result_commit"):
+                found.append((pred, prior["attempt_id"], prior["result_commit"]))
+            else:
+                follow(pred)
+    follow(row["node_key"])
+    return sorted(found, key=lambda i: i[0])
+
+
+def _run_base(row, group_root):
+    """T#10, under the Git locks: the run's base — the commit its first ``run_base`` attempt started from (the group
+    branch HEAD then). Every attempt of the run with no input commit starts there, so a branch integrated since
+    (one done before it under the same root) is not in its input. The first one starts from the group branch HEAD:
+    a result of the run is integrated only after an attempt that started from the base recorded it."""
+    base = run_store._one("SELECT input_commit FROM graph_node_attempts WHERE run_id = ? AND input_source = 'run_base' "
+                          "AND input_commit IS NOT NULL ORDER BY created_at, attempt_id LIMIT 1", [row["run_id"]])
+    sha = base["input_commit"] if base else git._rev_parse(group_root, "HEAD^{commit}")
+    if not sha or git._rev_parse(group_root, sha + "^{commit}") != sha:
+        raise port.GraphSourceError("graph_worktree_unavailable", reason="input_missing")
+    return sha
+
+
+def _start(row, group_root):
+    """The marker's input half, under the Git locks: ``input_commit`` (the worktree's first commit), its source, the
+    attempts in it, and the Join's other heads still to merge (``join_inputs``)."""
+    inputs = _inputs(row)
+    if not inputs:
+        return {"input_commit": _run_base(row, group_root), "input_source": "run_base", "input_attempt_ids": []}
+    # Predecessors sharing a result commit are all recorded; the merge takes the commit once.
+    shas = list(dict.fromkeys(sha for _key, _attempt_id, sha in inputs))
+    if any(git._rev_parse(group_root, sha + "^{commit}") != sha for sha in shas):
+        raise port.GraphSourceError("graph_worktree_unavailable", reason="input_missing")
+    # A result another input already holds adds nothing to the merge.
+    heads = [sha for sha in shas if not any(other != sha and git._is_ancestor(group_root, sha, other)
+                                            for other in shas)]
+    return {"input_commit": heads[0], "input_source": "predecessors",
+            "input_attempt_ids": [attempt_id for _key, attempt_id, _sha in inputs], "join_inputs": heads[1:]}
+
+
+def _write_marker(directory, marker):
+    temp = directory / (merge_target.OWNER_MARKER + ".tmp")
+    temp.write_text(json.dumps(marker, ensure_ascii=False), encoding="utf-8")
+    os.replace(temp, directory / merge_target.OWNER_MARKER)
+
+
+def _join(row, directory, root, branch, marker, group_root):
+    """T#10, under the Git locks: the Join's other heads merged one by one in the attempt worktree (an interrupted
+    join starts again from ``input_commit``). A conflict aborts the merge and the attempt starts from the group
+    branch HEAD (every predecessor is done, so it holds them all): ``integration_head``. The marker then records the
+    final input and loses ``join_inputs``."""
+    def run(args, reason):
+        if git._run_git(args, cwd=root).returncode:
+            raise port.GraphSourceError("graph_worktree_unavailable", reason=reason)
+
+    def reset(sha):
+        if git._rev_parse(root, "MERGE_HEAD") is not None:
+            run(["merge", "--abort"], "join_abort_failed")
+        run(["reset", "--hard", sha], "join_reset_failed")
+        if git._rev_parse(root, "HEAD") != sha or git._rev_parse(root, "MERGE_HEAD") is not None:
+            raise port.GraphSourceError("graph_worktree_unavailable", reason="join_reset_failed")
+
+    reset(marker["input_commit"])
+    final = {"input_commit": None}
+    for sha in marker["join_inputs"]:
+        message = (f"Merge join input {sha} into {branch}\n\n"
+                   f"FlowGate-Attempt: {row['attempt_id']}\nFlowGate-Join-Input: {sha}")
+        files = branches.merge_no_ff(root, sha, message, sha, branch)
+        if files:
+            head = git._rev_parse(group_root, "HEAD^{commit}")
+            if not head:
+                raise port.GraphSourceError("graph_worktree_unavailable", reason="input_missing")
+            reset(head)
+            final = {"input_commit": head, "input_source": "integration_head",
+                     "join_conflict": {"conflict_commit": sha, "files": files[:50], "join_inputs":
+                                       [marker["input_commit"], *marker["join_inputs"]]}}
+            break
+    if final["input_commit"] is None:
+        final["input_commit"] = git._rev_parse(root, "HEAD")
+        if not final["input_commit"]:
+            raise port.GraphSourceError("graph_worktree_unavailable", reason="input_missing")
+    marker = {**{k: v for k, v in marker.items() if k != "join_inputs"}, **final}
+    _write_marker(directory, marker)
+    return marker
+
+
 def _materialize(row, project_id):
     directory, root, branch = location(row, project_id)
     module = row["group_id"].split(".")[1]
@@ -192,11 +314,10 @@ def _materialize(row, project_id):
         if marker is None:
             if directory.exists() or git._ref_exists(group_root, "refs/heads/" + branch):
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="workspace_occupied")
-            sha = git._rev_parse(group_root, "HEAD^{commit}")
-            if not sha:
-                raise port.GraphSourceError("graph_worktree_unavailable", reason="input_missing")
-            marker = {**_owner(row, project_id, branch), "input_commit": sha,
+            marker = {**_owner(row, project_id, branch), **_start(current, group_root),
                       "repository": str(group_root), "common_dir": str(_common_dir(group_root))}
+            if not marker.get("join_inputs"):
+                marker.pop("join_inputs", None)
             directory.mkdir(parents=True, exist_ok=False)
             # Exclusive owner marker precedes branch/worktree creation, as in merge_target.
             with (directory / merge_target.OWNER_MARKER).open("x", encoding="utf-8") as stream:
@@ -207,9 +328,9 @@ def _materialize(row, project_id):
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="repository_mismatch")
         sha = marker["input_commit"]
         if not root.exists():
-            # Recovery can reuse an owned branch left by an interrupted worktree add.
+            # Recovery can reuse an owned branch left by an interrupted worktree add (or an interrupted join).
             exists = git._ref_exists(group_root, "refs/heads/" + branch)
-            if exists and git._rev_parse(group_root, branch + "^{commit}") != sha:
+            if exists and not marker.get("join_inputs") and git._rev_parse(group_root, branch + "^{commit}") != sha:
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="branch_occupied")
             args = ["worktree", "add"]
             args += [str(root), branch] if exists else ["-b", branch, str(root), sha]
@@ -217,7 +338,17 @@ def _materialize(row, project_id):
             if proc.returncode:
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="worktree_add_failed")
         _validate_tree(root, branch, marker)
-    return sha
+        if marker.get("join_inputs"):
+            marker = _join(current, directory, root, branch, marker, group_root)
+    return marker["input_commit"]
+
+
+def _input_record(row, project_id):
+    """The input the marker recorded (a marker before T#10 started from the group branch HEAD)."""
+    marker = merge_target.read_owner_marker(location(row, project_id)[0]) or {}
+    return {"input_source": marker.get("input_source") or "integration_head",
+            "input_attempt_ids": list(marker.get("input_attempt_ids") or []),
+            "join_conflict": marker.get("join_conflict")}
 
 
 def _failed(exec_id, cause):
@@ -281,6 +412,9 @@ def prepare(exec_id, project_id, group_id):
         cfg = git.db_git.get_config(project_id)
         mode = "worktree" if cfg and cfg.get("enabled") else "document_only"
         sha = _materialize(row, project_id) if mode == "worktree" else None
+        # T#10: a document-only attempt has no start point (no input rule).
+        record = _input_record(row, project_id) if mode == "worktree" else {
+            "input_source": "document_only", "input_attempt_ids": [], "join_conflict": None}
         def record_ready():
             current = attempt(row["attempt_id"])
             if not current or current["status"] != "active" or not ledger.eligible(ledger.get(exec_id)):
@@ -288,9 +422,15 @@ def prepare(exec_id, project_id, group_id):
             if not _mode(current):
                 run_store._affected("UPDATE graph_node_attempts SET input_commit = ?, input_source = ?, "
                                     "input_attempt_ids = ? WHERE attempt_id = ? AND status = 'active'",
-                                    [sha, "document_only" if mode == "document_only" else "integration_head",
-                                     "[]", row["attempt_id"]])
-                _event(current, mode, input_commit=sha)
+                                    [sha, record["input_source"], json.dumps(record["input_attempt_ids"]),
+                                     row["attempt_id"]])
+                _event(current, mode, input_commit=sha, input_source=record["input_source"],
+                       input_attempt_ids=record["input_attempt_ids"])
+                if record["join_conflict"]:
+                    # After the mode record (``_mode`` reads the attempt's first event): the Join's results conflict,
+                    # so its input is the group branch HEAD and may hold branches unrelated to it (T#12 reads this).
+                    _event(current, "join_input_conflict", input_commit=sha, input_source=record["input_source"],
+                           input_attempt_ids=record["input_attempt_ids"], **record["join_conflict"])
         with_flow_guard(group_id, record_ready)
         return source_root(row["attempt_id"], project_id=project_id, group_id=group_id, document_ok=True)
     except ledger.LeaseLost:
@@ -317,10 +457,19 @@ def verify_execution(exec_id):
         raise
 
 
+def _integrated(row):
+    return bool(row) and row["status"] == "ended" and row.get("integration_status") == "integrated"
+
+
+def _removable(row):
+    return bool(row) and (row["status"] == "invalidated" or _integrated(row))
+
+
 def cleanup(attempt_id):
-    """Only invalidated, owned attempts; ended trees remain until integration."""
+    """Only owned attempts that are invalidated or, T#10, ended with their integration done; an active attempt's
+    tree is never removed."""
     row = attempt(attempt_id)
-    if not row or row["status"] != "invalidated":
+    if not _removable(row):
         return False
     try:
         project_id = _project(row)
@@ -329,7 +478,7 @@ def cleanup(attempt_id):
             return True
         with _git_locks(row, project_id, branch):
             current = attempt(attempt_id)
-            if not current or current["status"] != "invalidated":
+            if not _removable(current):
                 return False
             # Never remove a worktree while an execution could still own a process.
             if run_store._one("SELECT exec_id FROM graph_attempt_runs WHERE attempt_id = ? "
@@ -369,3 +518,47 @@ def cleanup(attempt_id):
 def cleanup_invalidated():
     for row in run_store._all("SELECT attempt_id FROM graph_node_attempts WHERE status = 'invalidated'", []):
         cleanup(row["attempt_id"])
+
+
+def cleanup_ended(attempt_id):
+    """T#10, outside every Flow guard, DB transaction and Git lock: an ended attempt whose integration ended (merged,
+    or no source change) loses its worktree and branch — its result commit stays a parent on the group branch. A
+    failure is a run event (``cleanup_failed``); the node keeps its state and the server start tries again."""
+    row = attempt(attempt_id)
+    if not _integrated(row):
+        return False
+    record = _mode(row)
+    if not record or record.get("mode") != "worktree" or cleanup(attempt_id):
+        return True
+    log.warning("Graph attempt workspace cleanup failed: %s", attempt_id)
+
+    def note():
+        current = attempt(attempt_id)
+        if _integrated(current):
+            _event(current, "cleanup_failed")
+    try:
+        with_flow_guard(row["group_id"], note)
+    except Exception:  # noqa: BLE001 — the record only
+        log.exception("Graph attempt workspace cleanup failure not recorded: %s", attempt_id)
+    return False
+
+
+def cleanup_finished():
+    """T#10, server start, outside every guard: each attempt tree whose owner marker names an attempt that is
+    invalidated or ended with its integration done is removed. An active attempt's tree is left as it is."""
+    base = git.get_storage_root() / "graph_attempts"
+    if not base.is_dir():
+        return
+    for directory in sorted(d for project in base.iterdir() if project.is_dir()
+                            for d in project.iterdir() if d.is_dir()):
+        try:
+            marker = merge_target.read_owner_marker(directory)
+            if not marker or marker.get("owner") != "graph_node_attempt" or not marker.get("attempt_id"):
+                continue
+            row = attempt(marker["attempt_id"])
+            if row and row["status"] == "invalidated":
+                cleanup(row["attempt_id"])
+            elif _integrated(row):
+                cleanup_ended(row["attempt_id"])
+        except Exception:  # noqa: BLE001 — the next start tries again
+            log.exception("Graph attempt workspace start-up cleanup failed: %s", directory)
