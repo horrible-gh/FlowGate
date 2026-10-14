@@ -389,6 +389,8 @@ export interface FlowCanvasNodeRun {
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
   runningExecutionCount?: number
   requestedExecutionCount?: number
+  /** flowgate.v02.0061 T#15: the node's current attempt (active, else last ended), null when none; absent when not sent. */
+  attemptId?: string | null
 }
 
 /** P0008 §2.6 `graph_node`: what a Graph node is, besides where it is drawn. */
@@ -464,6 +466,8 @@ export interface FlowCanvasRun {
   runId: string
   status: string
   revisionNo: number | null
+  /** flowgate.v02.0061 T#15: the run's event sequence (grows with every run event); absent when not sent. */
+  lastEventSeq?: number
 }
 
 /** GET /api/v1/flows/{flowId}/canvas. */
@@ -571,6 +575,8 @@ export interface FlowGraphDefinitionNode {
   paletteItemId: string | null
   label: string
   assignee: FlowGraphAssignee | null
+  /** flowgate.v02.0061 T#15: the card's Hold as the Graph read tells it (T#11 `hold`); absent = not told. */
+  hold?: boolean
 }
 
 export interface FlowGraphDefinitionEdge {
@@ -610,6 +616,8 @@ export interface FlowRunNode {
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
   runningExecutionCount?: number
   requestedExecutionCount?: number
+  /** flowgate.v02.0061 T#15: the node's current attempt (active, else last ended), null when none; absent when not sent. */
+  attemptId?: string | null
 }
 
 /** A Graph run (P0008 S5-4). */
@@ -640,6 +648,44 @@ export interface FlowRun {
    */
   pendingPropagationCount: number
   pendingNodeKeys: string[]
+}
+
+/**
+ * flowgate.v02.0061 T#15 — what a Graph Time Machine did (T#13 `time_machine`): the operation, the server's impact
+ * (the node and every node below it that it took back) and what changed. Lists are [] and counts 0 when not sent.
+ */
+export interface FlowRunTimeMachine {
+  operationId: string | null
+  /** `completed` (open key, as sent), or null. */
+  operationStatus: string | null
+  nodeKey: string
+  /** The impact's node keys (the selected node and its downstream, by the server's execution history). */
+  impactNodeKeys: string[]
+  /** The nodes set back to pending. */
+  resetNodeKeys: string[]
+  /** The documents opened again. */
+  reopenedDocumentIds: string[]
+  /** The integration commits reverted on the group branch. */
+  revertedCommitCount: number
+  /** The attempts invalidated. */
+  invalidatedAttemptCount: number
+  revokedTokenCount: number
+  /** The run's idle reason after it, or null. */
+  idleReason: string | null
+}
+
+/** flowgate.v02.0061 T#15 — one reason a Graph Time Machine was refused (409 `graph_time_machine_blocked`). */
+export interface FlowRunTimeMachineReason {
+  code: string
+  /** The server's sentence (x-locale), or ''. */
+  message: string
+}
+
+/** flowgate.v02.0061 T#15 — a refused Graph Time Machine's assessment as sent in the refusal's params. */
+export interface FlowRunTimeMachineRefusal {
+  reasons: FlowRunTimeMachineReason[]
+  /** The impact's node keys the assessment found ([] when not sent). */
+  impactNodeKeys: string[]
 }
 
 /** flowgate.v02.0056 F2-1 (O1 0005-TR §4-1): what a card approval did. */

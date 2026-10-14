@@ -2420,6 +2420,9 @@ export default {
       // 0332 D0005 §6.4 — 差し戻した後。すべて取り消せた場合は通知一行で終わる。
       toast_reopened_canceled: '差し戻しました — コミット {n} 件を取り消しました。',
       toast_reopened_nothing: '差し戻しました — 取り消すコミットはありませんでした。',
+      // flowgate.v02.0061 T#15 — reopen / restore of a Graph-owned flow: the server refuses it (409
+      // graph_engine_owned); used only when the refusal carries no message of its own.
+      graph_engine_owned: 'このフローは Graph エンジンの担当です。戻すには Designer で完了カードの [ここから戻す] (Graph Time Machine) を使用してください。',
       // 一つでも取り消せなかった場合、ダイアログは結果画面に変わる。見出しがまず
       // 差し戻し自体は確定したことを明言する。
       result_title: 'ワークフローは差し戻しました。ソースコミットは以下のとおりです。',

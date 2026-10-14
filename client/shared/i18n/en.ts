@@ -2424,6 +2424,9 @@ export default {
       // 0332 D0005 §6.4 — after the rewind. A fully canceled one ends in a toast.
       toast_reopened_canceled: 'Rewound — {n} commit(s) canceled.',
       toast_reopened_nothing: 'Rewound — there were no commits to cancel.',
+      // flowgate.v02.0061 T#15 — reopen / restore of a Graph-owned flow: the server refuses it (409
+      // graph_engine_owned); used only when the refusal carries no message of its own.
+      graph_engine_owned: "This flow is owned by the Graph engine. Rewind it in the Designer with a done card's [Rewind from here] (Graph Time Machine).",
       // If anything was left uncanceled the dialog becomes a result screen whose heading
       // states first that the rewind itself is final.
       result_title: 'The workflow was rewound. The source commits stand as follows.',

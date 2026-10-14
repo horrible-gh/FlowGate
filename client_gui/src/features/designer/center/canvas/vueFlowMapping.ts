@@ -38,6 +38,9 @@
 // for the chip. TR0031 rev1: they come from the run read's node run of the card (`marks.nodeRuns`, the latest) and else
 // from the Canvas node run, so a draft view (no node runs on its nodes) keeps them for the cards the run knows; a card
 // added to the draft is no node of the run and shows none.
+//
+// flowgate.v02.0061 T#15: the session may give every card's Hold as it judges it (`holds`: its Hold writes, the run's
+// and the Canvas node runs, the Graph read — also of cards the run has no node run of); then that is the card's Hold.
 import type { Edge, Node } from '@vue-flow/core'
 import { cardStateView, type CardStateView } from '../graph/cardStateView'
 import { progressedEdgeIds } from '../graph/edgeProgress'
@@ -115,6 +118,8 @@ export interface VueFlowNodeOptions extends Partial<FlowGateApprovalOptions> {
   selectMode?: boolean
   /** flowgate.v02.0061 T#14: the Flow's run marks; absent = none (no lock). */
   marks?: FlowRunMarks
+  /** flowgate.v02.0061 T#15: each card's Hold as the session judges it (by node id); absent = from the node runs. */
+  holds?: ReadonlyMap<string, boolean>
 }
 
 export function toVueFlowNodes(
@@ -146,7 +151,10 @@ export function toVueFlowNodes(
     const runNode = marks.nodeRuns.get(node.id)
     const integration = (runNode && 'integrationStatus' in runNode ? runNode.integrationStatus : node.nodeRun?.integrationStatus) ?? null
     if (integration && SHOWN_INTEGRATIONS.includes(integration)) data.integration = integration
-    if ((runNode && typeof runNode.hold === 'boolean' ? runNode.hold : node.nodeRun?.hold) === true) data.hold = true
+    const hold = options.holds
+      ? options.holds.get(node.id)
+      : runNode && typeof runNode.hold === 'boolean' ? runNode.hold : node.nodeRun?.hold
+    if (hold === true) data.hold = true
     const mapped: FlowGateVueFlowNode = {
       id: node.id,
       type: FLOWGATE_NODE_TYPE,

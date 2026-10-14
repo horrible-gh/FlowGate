@@ -19,7 +19,9 @@
        drag). A done card stays 승인됨 while the run is stopped: the waiting successors are the run band's.
        flowgate.v02.0061 T#14: under the title, the card attempt's result integration when it needs a look (병합 대기 ·
        병합 중 · 병합 충돌 · 병합 실패) and its Hold. 병합 충돌 is a button: it opens the Git tool panel, where the Flow's
-       conflict session is resolved (a `conflict` event, never the selection or a drag). -->
+       conflict session is resolved (a `conflict` event, never the selection or a drag).
+       flowgate.v02.0061 T#15: a held card shows the Hold mark (an open palm in a round frame) at the end of its head row,
+       next to the Hold chip and the run band's idle reason, with its tooltip / accessible name. -->
   <div
     class="flow-node-card"
     :class="{ 'is-selected': data.selected, 'is-unknown': kind.key === 'unknown', 'has-issue': data.issue === true }"
@@ -59,6 +61,18 @@
         :class="`flow-node-state--${state.tone}`"
         data-test="designer-canvas-node-state"
       >{{ t(`gui.designer.center.node_states.${state.key}`) }}</span>
+      <span
+        v-if="data.hold"
+        class="flow-node-hold"
+        role="img"
+        :aria-label="t('gui.designer.center.hold_icon')"
+        :title="t('gui.designer.center.hold_icon')"
+        data-test="designer-canvas-node-hold-icon"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path :d="FLOW_NODE_HOLD_ICON" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </span>
     </div>
     <div class="flow-node-body">
       <p class="flow-node-title" :title="data.title" data-test="designer-canvas-node-title">{{ data.title }}</p>
@@ -112,7 +126,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Handle, Position } from '@vue-flow/core'
-import { flowNodeKindDisplay, flowNodeKindLabelKey, flowNodeStateDisplay } from './flowNodeKinds'
+import { FLOW_NODE_HOLD_ICON, flowNodeKindDisplay, flowNodeKindLabelKey, flowNodeStateDisplay } from './flowNodeKinds'
 import type { FlowGateNodeData } from './vueFlowMapping'
 
 const props = defineProps<{
@@ -224,6 +238,29 @@ const state = computed(() => flowNodeStateDisplay(props.data.state))
   font-size: 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* flowgate.v02.0061 T#15: the Hold mark — the warning tokens, at the end of the head row (after the state, if any). */
+.flow-node-hold {
+  display: grid;
+  flex: 0 0 18px;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
+}
+
+.flow-node-state + .flow-node-hold {
+  margin-left: 4px;
+}
+
+.flow-node-hold svg {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 
 .flow-node-body {

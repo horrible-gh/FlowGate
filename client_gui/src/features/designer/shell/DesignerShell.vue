@@ -193,9 +193,13 @@
 // the server's (graph_run_locked, graph_git_required, …) show the server's message in the same toast. While the Flow's
 // run locks it, the Conversation's AI source access mode cannot change (`sourceLocked`, WP answer 2) — its messages
 // and read use stay as they are; the Canvas / Inspector lock is the Center session's, a separate rule.
+//
+// flowgate.v02.0061 T#15: a card's Hold is written through the card settings (features/document) the Center source is
+// given (it is read with the Graph); a refused Hold 설정 / 해제 is a toast as well (with the server's message: graph_run_locked,
+// graph_hold_done_node, …).
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { documentRead } from '@/features/document'
+import { documentRead, settingsNodeHoldWrite } from '@/features/document'
 import { useProjectStore, type CreatedGroup } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
 import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
@@ -266,7 +270,8 @@ const projectId = computed<string | null>(() => projectStore.currentProjectId)
 // session which node a drop means, so the Palette and the Canvas never know each other.
 const center = createDesignerCenterSession({
   // flowgate.v02.0059 T#2: the document read lets 자동 배치 follow a v0.1 sequence root's supersede chain.
-  source: createServerFlowGraphSource(projectStore, documentRead),
+  // flowgate.v02.0061 T#15: the card Hold of the card context menu goes through the card settings.
+  source: createServerFlowGraphSource(projectStore, documentRead, { write: settingsNodeHoldWrite }),
   readDrop: (transfer) => {
     const definition = readPaletteDragData(transfer)
     return definition ? paletteNodeSpec(definition) : null
@@ -351,13 +356,22 @@ function approvalErrorText(error: FlowRunFailure): string {
   return parts.join(' · ')
 }
 
+/** flowgate.v02.0061 T#15: a refused Hold 설정 / 해제 — the common sentence and the server's own message when it says more. */
+function holdErrorText(error: FlowRunFailure): string {
+  const head = t('gui.designer.center.card_menu.hold_failed')
+  const message = error.message.trim()
+  if (message && message !== error.code) return `${head} — ${message}`
+  const key = error.code ? `gui.designer.top.run_errors.${error.code}` : ''
+  return key && te(key) ? `${head} — ${t(key)}` : head
+}
+
 watch(
   () => center.activeRun.value?.error?.seq ?? 0,
   (seq) => {
     const error = center.activeRun.value?.error
     if (!seq || !error) return
     toastSeq += 1
-    const message = error.kind === 'approval' ? approvalErrorText(error) : runErrorText(error)
+    const message = error.kind === 'approval' ? approvalErrorText(error) : error.kind === 'hold' ? holdErrorText(error) : runErrorText(error)
     const tone = error.kind === 'approval' && error.approval?.keepButton ? 'warning' : 'danger'
     // A refused document is read, not glanced at: that toast stays until it is closed.
     const duration = error.kind === 'approval' && error.approval?.kind === 'refused' ? null : 4000

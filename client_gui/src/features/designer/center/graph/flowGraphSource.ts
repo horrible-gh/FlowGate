@@ -79,7 +79,8 @@ export interface FlowDraftError extends Error {
 
 /**
  * flowgate.v02.0061 T#14: one node of a run as the band and the Canvas lock read it — its state, its attempt's
- * result integration and Hold, and its attempt's running / requested AI executions.
+ * result integration and Hold, and its attempt's running / requested AI executions. T#15: its current attempt
+ * (`attemptId`, null when none; absent when not known), a basis of the Time Machine confirmation.
  */
 export interface FlowRunNodeInfo {
   readonly nodeKey: string
@@ -88,6 +89,7 @@ export interface FlowRunNodeInfo {
   readonly hold?: boolean
   readonly runningExecutionCount?: number
   readonly requestedExecutionCount?: number
+  readonly attemptId?: string | null
 }
 
 /** flowgate.v02.0061 T#14: the server's step / full command (다음 단계 / 전체 실행). */
@@ -111,6 +113,12 @@ export interface FlowRunInfo {
   readonly executionLimit?: number | null
   /** flowgate.v02.0061 T#14: the run's nodes when the answer carried them, else absent. */
   readonly nodeRuns?: readonly FlowRunNodeInfo[]
+  /**
+   * flowgate.v02.0061 T#15: the revision the run runs and its event sequence (grows with every run event). Absent = not
+   * known. With the node runs' attempts they tell the Time Machine confirmation that the run's history changed.
+   */
+  readonly revisionNo?: number | null
+  readonly lastEventSeq?: number
   /**
    * flowgate.v02.0056 F2-1 (O1 0005-TR §4-2): cards approved while the run was stopped whose successors wait
    * ("멈춤 · 다음 카드 N개 대기"), and their node keys. Absent = none (a source that does not know them).
@@ -137,6 +145,31 @@ export interface FlowRunError extends Error {
   /** flowgate.v02.0056 F2-1: the HTTP status and the server's params (a refused approval names its document). */
   readonly status?: number | null
   readonly params?: Readonly<Record<string, unknown>>
+  /** flowgate.v02.0061 T#15: a refused Graph Time Machine's assessment (`graph_time_machine_blocked`), else absent. */
+  readonly timeMachine?: FlowTimeMachineRefusal
+}
+
+/**
+ * flowgate.v02.0061 T#15: what a Graph Time Machine of a done node did (T#13): the server's impact (the node and every
+ * node below it) and what changed. The run stays idle; the next step / full command opens the pending nodes again.
+ */
+export interface FlowTimeMachineResult {
+  readonly operationId: string | null
+  readonly operationStatus: string | null
+  readonly nodeKey: string
+  readonly impactNodeKeys: readonly string[]
+  readonly resetNodeKeys: readonly string[]
+  readonly reopenedDocumentIds: readonly string[]
+  readonly revertedCommitCount: number
+  readonly invalidatedAttemptCount: number
+  readonly revokedTokenCount: number
+  readonly idleReason: string | null
+}
+
+/** flowgate.v02.0061 T#15: why a Graph Time Machine was refused — the server's reasons (its sentences) and impact. */
+export interface FlowTimeMachineRefusal {
+  readonly reasons: ReadonlyArray<{ readonly code: string; readonly message: string }>
+  readonly impactNodeKeys: readonly string[]
 }
 
 export interface FlowGraphSource {
@@ -145,7 +178,8 @@ export interface FlowGraphSource {
   /**
    * Reads the Graph of one Flow. Rejects with an Error whose `message` is safe to show to the
    * user when the Graph cannot be read. `view` ('draft' | 'revision') picks the definition a
-   * Graph Flow shows; omitted, the source's default.
+   * Graph Flow shows; omitted, the source's default. flowgate.v02.0061 T#15: with the card Holds (`holds`) when the
+   * source keeps Holds.
    */
   loadGraph(projectId: string, flowId: string, view?: string): Promise<FlowGraph>
   /** Stores a layout change. Absent = the source keeps no layout (moves stay on screen only). */
@@ -189,4 +223,15 @@ export interface FlowGraphSource {
    * Absent = the source approves nothing.
    */
   approveNode?(projectId: string, runId: string, nodeKey: string, resultDocId: string | null): Promise<FlowRunInfo>
+  /**
+   * flowgate.v02.0061 T#15: sets (true) / releases (false) a card's Hold; resolves whether it is held now. Only the
+   * setting changes: nothing runs before the next command. Rejects with a FlowRunError (the server's code).
+   */
+  writeCardHold?(projectId: string, flowId: string, nodeKey: string, on: boolean): Promise<boolean>
+  /**
+   * flowgate.v02.0061 T#15: the Graph Time Machine of a done node of the run (T#13) — the node and every node below it.
+   * Answers what it did and the run after it; a refusal rejects with a FlowRunError (`timeMachine` when blocked).
+   * Absent = the source has no Time Machine.
+   */
+  timeMachine?(projectId: string, runId: string, nodeKey: string): Promise<{ result: FlowTimeMachineResult; run: FlowRunInfo }>
 }

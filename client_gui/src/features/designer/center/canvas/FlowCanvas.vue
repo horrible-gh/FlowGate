@@ -19,7 +19,9 @@
        flowgate.v02.0059 0017-T: a dragged card (or the dragged selection) moves in whole steps of
        `move-step` (the density's) while it is dragged and where it is dropped; none = 자율형.
        0018-TR rework: the dot grid is that step's lattice (a dot on every whole-step Graph point, following
-       pan / zoom), and a dragged card lands on one of its dots; 자율형 has no lattice and shows no grid. -->
+       pan / zoom), and a dragged card lands on one of its dots; 자율형 has no lattice and shows no grid.
+       flowgate.v02.0061 T#15: a right click on a card opens its context menu (the shared ContextMenu, `card-menu` gives
+       the items) — Hold 설정 / 해제 and, on a done card, 되돌리기; the chosen item goes up as `node-menu`. -->
   <div
     ref="canvasEl"
     class="flow-canvas"
@@ -95,6 +97,7 @@
       @connect-end="connecting = false"
       @edge-click="onEdgeClick"
       @edge-double-click="onEdgeDoubleClick"
+      @node-context-menu="onNodeContextMenu"
     >
       <template #node-flowgate="nodeProps">
         <FlowNodeCard :id="nodeProps.id" :data="nodeProps.data" @approve="emit('node-approve', $event)" @conflict="emit('node-conflict', $event)" />
@@ -140,6 +143,8 @@
     >
       🔒 {{ lockText }}
     </Badge>
+    <!-- flowgate.v02.0061 T#15: one card menu for the Canvas, opened at the pointer (nothing wrapped). -->
+    <ContextMenu ref="cardMenuEl" :items="cardMenuItems" @select="onCardMenuSelect" @close="menuNodeId = null" />
   </div>
 </template>
 
@@ -207,6 +212,7 @@ import {
   type VueFlowStore,
 } from '@vue-flow/core'
 import Badge from '../../../../components/ui/Badge.vue'
+import ContextMenu, { type ContextMenuItem } from '../../../../components/ui/ContextMenu.vue'
 import {
   CANVAS_FIT_MAX_ZOOM,
   CANVAS_MAX_ZOOM,
@@ -227,6 +233,7 @@ import FlowEdgePath from './FlowEdgePath.vue'
 import FlowNodeCard from './FlowNodeCard.vue'
 import { toVueFlowEdges, toVueFlowNodes } from './vueFlowMapping'
 import { NO_RUN_MARKS, type FlowRunMarks } from '../run/flowRunLock'
+import type { FlowCardMenuItem, FlowCardMenuKey } from '../run/flowCardMenu'
 
 const props = withDefaults(
   defineProps<{
@@ -259,8 +266,12 @@ const props = withDefaults(
      * lines and the running lines. `editable` already leaves the lock out (DesignerCenter).
      */
     marks?: FlowRunMarks
+    /** flowgate.v02.0061 T#15: a card's context menu items now (run/flowCardMenu.ts); null = no card menu. */
+    cardMenu?: ((nodeId: string) => readonly FlowCardMenuItem[]) | null
+    /** flowgate.v02.0061 T#15: each card's Hold as the session judges it (by node id); absent = from the node runs. */
+    holds?: ReadonlyMap<string, boolean>
   }>(),
-  { selectedNodeIds: () => [], selectMode: false, viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [], moveStep: null, canApprove: false, approvingNodeId: null, marks: () => NO_RUN_MARKS },
+  { selectedNodeIds: () => [], selectMode: false, viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [], moveStep: null, canApprove: false, approvingNodeId: null, marks: () => NO_RUN_MARKS, cardMenu: null },
 )
 
 const emit = defineEmits<{
@@ -283,6 +294,8 @@ const emit = defineEmits<{
   'node-approve': [nodeId: string]
   /** flowgate.v02.0061 T#14: a card's 병합 충돌 (its result's merge conflict) was pressed. */
   'node-conflict': [nodeId: string]
+  /** flowgate.v02.0061 T#15: an item of a card's context menu was chosen. */
+  'node-menu': [nodeId: string, key: FlowCardMenuKey]
 }>()
 
 const { t } = useI18n()
@@ -317,6 +330,7 @@ const nodes = computed(() =>
     canApprove: props.canApprove,
     approvingNodeId: props.approvingNodeId,
     marks: props.marks,
+    holds: props.holds,
   }),
 )
 const edges = computed(() => toVueFlowEdges(props.graph, issueMap.value, selectedEdgeId.value, props.marks))
@@ -449,6 +463,40 @@ function onPaneClick(event: MouseEvent) {
     return
   }
   emit('select-node', null)
+}
+
+// ── flowgate.v02.0061 T#15: a card's context menu ───────────────────────────────────────────────
+
+const cardMenuEl = ref<InstanceType<typeof ContextMenu> | null>(null)
+/** The card whose menu is open, or null. */
+const menuNodeId = ref<string | null>(null)
+
+/** The open card's items as the menu shows them: a disabled one names why. */
+const cardMenuItems = computed<ContextMenuItem[]>(() => {
+  const nodeId = menuNodeId.value
+  if (nodeId === null || !props.cardMenu) return []
+  return props.cardMenu(nodeId).map((entry) => {
+    const label = t(`gui.designer.center.card_menu.${entry.key}`)
+    return {
+      key: entry.key,
+      label: entry.reason ? t('gui.designer.center.card_menu.with_reason', { label, reason: t(`gui.designer.center.card_menu.reasons.${entry.reason}`) }) : label,
+      disabled: entry.disabled,
+      danger: entry.danger,
+    }
+  })
+})
+
+function onNodeContextMenu({ event, node }: NodeMouseEvent) {
+  if (!props.cardMenu || !('clientX' in event) || props.cardMenu(node.id).length === 0) return
+  event.preventDefault()
+  selectedEdgeId.value = null
+  menuNodeId.value = node.id
+  cardMenuEl.value?.openAt(event.clientX, event.clientY)
+}
+
+function onCardMenuSelect(entry: ContextMenuItem) {
+  const nodeId = menuNodeId.value
+  if (nodeId !== null) emit('node-menu', nodeId, entry.key as FlowCardMenuKey)
 }
 
 // ── flowgate.v02.0045 T0019: Edge selection and removal ───────────────────────────────────────

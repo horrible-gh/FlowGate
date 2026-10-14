@@ -13,19 +13,23 @@
 //   approve  POST /api/v1/runs/{run_id}/nodes/{node_key}/approval { result_doc_id } -> { run, approval }
 //            (flowgate.v02.0056 F2-1, O1 0005-TR §4-1: the card's [승인] — its documents not approved yet, the
 //            result last; refusals are 409 / 403 / 404 / 422 codes, see center/graph/cardStateView.ts)
+//   rewind   POST /api/v1/runs/{run_id}/nodes/{node_key}/time-machine (no body) -> { time_machine, run }
+//            (flowgate.v02.0061 T#15: the T#13 Graph Time Machine of a done node and everything below it; 409
+//            `graph_time_machine_blocked` carries the assessment — its `reasons` and `impact` — in the params)
 //
 // flowgate.v02.0056 F2-1: a run also carries `pending_propagation_count` / `pending_node_keys` (cards approved
 // while it was stopped, their successors waiting) and each node `awaiting_approval` / `stage` (O1 / O2 §4-2).
 //
 // flowgate.v02.0061 T#14: a run also carries its command (`mode`), `idle_reason`, the running / requested execution
-// counts with the Flow's `execution_limit`, and each node its attempt's `integration_status` and `hold`.
+// counts with the Flow's `execution_limit`, and each node its attempt's `integration_status` and `hold`. T#15: and
+// each node its current `attempt_id` (kept only when sent).
 //
 // The run events (P0008 §8.2 `graph_run_status_changed` / `graph_node_state_changed`) are refresh
 // signals of the Canvas (flowCanvasEvents.ts), never state.
 import { getRequest, postRequest } from '@shared/api'
 import { canvasHeaders, num, str, type Raw } from './flowCanvasApi'
 import { toGraphError } from './flowGraphApi'
-import type { FlowRun, FlowRunApproval, FlowRunNode } from './types'
+import type { FlowRun, FlowRunApproval, FlowRunNode, FlowRunTimeMachine, FlowRunTimeMachineRefusal } from './types'
 
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [])
 
@@ -42,6 +46,7 @@ function toRunNode(raw: Raw): FlowRunNode {
     ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
+    ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
   }
 }
 
@@ -141,6 +146,62 @@ export async function resumeFlowRun(runId: string, reason?: string): Promise<Flo
     return runOf(response.data, 'The run did not resume.')
   } catch (error) {
     throw toGraphError(error, 'Failed to resume the flow run.')
+  }
+}
+
+/** flowgate.v02.0061 T#15: the server's `time_machine` object -> FlowRunTimeMachine. */
+export function toFlowRunTimeMachine(raw: unknown, nodeKey: string): FlowRunTimeMachine {
+  const body = raw && typeof raw === 'object' ? (raw as Raw) : {}
+  const impact = body.impact && typeof body.impact === 'object' ? (body.impact as Raw) : {}
+  return {
+    operationId: str(body.operation_id),
+    operationStatus: str(body.operation_status),
+    nodeKey: str(body.node_key) ?? nodeKey,
+    impactNodeKeys: strings(impact.node_keys),
+    resetNodeKeys: strings(body.reset_node_keys),
+    reopenedDocumentIds: strings(body.reopened_document_ids),
+    revertedCommitCount: Array.isArray(body.reverts) ? body.reverts.length : 0,
+    invalidatedAttemptCount: strings(body.invalidated_attempt_ids).length,
+    revokedTokenCount: countOf(body.revoked_token_count),
+    idleReason: str(body.idle_reason),
+  }
+}
+
+/**
+ * flowgate.v02.0061 T#15: the assessment a refused Graph Time Machine sends in its params (`reasons` with the
+ * server's sentences, `impact.node_keys`), or null when the params carry no reason list.
+ */
+export function toFlowRunTimeMachineRefusal(params: unknown): FlowRunTimeMachineRefusal | null {
+  const body = params && typeof params === 'object' ? (params as Raw) : {}
+  if (!Array.isArray(body.reasons)) return null
+  const impact = body.impact && typeof body.impact === 'object' ? (body.impact as Raw) : {}
+  return {
+    reasons: body.reasons
+      .filter((r: unknown): r is Raw => !!r && typeof r === 'object')
+      .map((r: Raw) => ({ code: String(r.code ?? ''), message: str(r.message) ?? '' })),
+    impactNodeKeys: strings(impact.node_keys),
+  }
+}
+
+/**
+ * flowgate.v02.0061 T#15 — POST /api/v1/runs/{runId}/nodes/{nodeKey}/time-machine: the Graph Time Machine of a done
+ * node (T#13): the node and every node below it go back to pending, their merges are reverted on the group branch, and
+ * the run stays idle (nothing starts until the next command). Answers what it did and the run after it. A refusal
+ * rejects with a FlowGraphApiError carrying the server's code / params / message; a `graph_time_machine_blocked` one
+ * also carries the assessment as `timeMachine` (toFlowRunTimeMachineRefusal).
+ */
+export async function timeMachineFlowRunNode(runId: string, nodeKey: string): Promise<{ run: FlowRun; timeMachine: FlowRunTimeMachine }> {
+  try {
+    const response = await postRequest<Raw>(`${runPath(runId)}/nodes/${encodeURIComponent(nodeKey)}/time-machine`, {}, canvasHeaders())
+    return {
+      run: runOf(response.data, 'The Time Machine did not answer the run.'),
+      timeMachine: toFlowRunTimeMachine(response.data?.time_machine, nodeKey),
+    }
+  } catch (error) {
+    const refused = toGraphError(error, 'Failed to run the Graph Time Machine.')
+    const assessment = toFlowRunTimeMachineRefusal(refused.params)
+    if (assessment) Object.defineProperty(refused, 'timeMachine', { value: assessment, configurable: true, enumerable: true })
+    throw refused
   }
 }
 

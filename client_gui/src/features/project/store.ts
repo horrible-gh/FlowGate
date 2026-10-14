@@ -47,6 +47,7 @@ import type {
   FlowGraphValidation,
   FlowRun,
   FlowRunApproval,
+  FlowRunTimeMachine,
   MergeReviewFileDiff,
   Project,
   ProjectGitStatus,
@@ -83,6 +84,7 @@ import {
   resumeFlowRun as resumeFlowRunApi,
   startFlowRun as startFlowRunApi,
   stopFlowRun as stopFlowRunApi,
+  timeMachineFlowRunNode as timeMachineFlowRunNodeApi,
   type FlowRunCommand,
 } from './flowRunApi'
 import { subscribeFlowCanvasChanges as subscribeFlowCanvasChangesApi, type FlowCanvasChangeHandlers } from './flowCanvasEvents'
@@ -468,6 +470,11 @@ export const useProjectStore = defineStore('project', () => {
     return approveFlowRunNodeApi(runId, nodeKey, resultDocId)
   }
 
+  // flowgate.v02.0061 T#15: the Graph Time Machine of a done card (its context menu); the run it answers goes to the band.
+  function timeMachineFlowRunNode(runId: string, nodeKey: string): Promise<{ run: FlowRun; timeMachine: FlowRunTimeMachine }> {
+    return timeMachineFlowRunNodeApi(runId, nodeKey)
+  }
+
   // Other tabs' / devices' Canvas changes of one project (P0008 §8). Returns the unsubscribe.
   function subscribeFlowCanvasChanges(projectId: string, handlers: FlowCanvasChangeHandlers): () => void {
     return subscribeFlowCanvasChangesApi(projectId, handlers)
@@ -555,6 +562,7 @@ export const useProjectStore = defineStore('project', () => {
     stopFlowRun,
     resumeFlowRun,
     approveFlowRunNode,
+    timeMachineFlowRunNode,
     subscribeFlowCanvasChanges,
     subscribeProjectEvents,
   }

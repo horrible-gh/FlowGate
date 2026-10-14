@@ -56,6 +56,15 @@ const KIND_TABLE: Record<FlowNodeKindKey, Omit<FlowNodeKindDisplay, 'key'>> = {
   unknown: { icon: 'M5 5h14v14H5z', accent: '#7f95ad' },
 }
 
+/**
+ * flowgate.v02.0061 T#15 — the Hold mark of a held card (R): a stop-sign like glyph, an open palm inside a round frame.
+ * Same glyph format as the kinds (24x24 path, stroke="currentColor").
+ */
+export const FLOW_NODE_HOLD_ICON =
+  'M12 2.5a9.5 9.5 0 1 0 0 19a9.5 9.5 0 1 0 0-19z ' +
+  'M9.5 11.5V8 M11.5 11V6.8 M13.5 11V7.3 M15.5 12V8.8 ' +
+  'M15.5 12v1.8a3.7 3.7 0 0 1-3.7 3.7h-.6a3.4 3.4 0 0 1-2.8-1.5L6.9 13.3a1 1 0 0 1 1.6-1.2l1 1.2V11.5'
+
 const STATE_TONES: Record<FlowNodeStateKey, FlowNodeStateTone> = {
   draft: 'neutral',
   in_progress: 'info',

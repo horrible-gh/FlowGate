@@ -19,6 +19,10 @@
 //
 // flowgate.v02.0061 T#14: the run is the server's one run per Flow — the step / full command, Pause, Stop, Resume —
 // and carries its command, idle reason, execution counts and its nodes' integration / Hold.
+//
+// flowgate.v02.0061 T#15: a card's Hold is read with the Graph — each Canvas read goes with the Graph read, whose nodes
+// tell their cards' Hold (`holds`, also of cards the run has no node run of) — and written through the card settings
+// call the Shell hands in (`cardHold`, features/document); a done card's Graph Time Machine goes through the run transport.
 import type {
   FlowCanvas,
   FlowCanvasChangeHandlers,
@@ -31,6 +35,7 @@ import type {
   FlowGraphIssue,
   FlowGraphValidation,
   FlowRun,
+  FlowRunTimeMachine,
 } from '@/features/project'
 import type { FlowGraph, FlowGraphDraftInfo } from './flowGraph'
 import type {
@@ -64,6 +69,22 @@ export interface FlowCanvasLoaders {
   pauseFlowRun?(runId: string): Promise<FlowRun>
   /** flowgate.v02.0056 F2-1: a card's [승인] (O1 0005-TR §4-1); absent = the Canvas approves nothing. */
   approveFlowRunNode?(runId: string, nodeKey: string, resultDocId: string | null): Promise<{ run: FlowRun }>
+  /** flowgate.v02.0061 T#15: a done card's Graph Time Machine (T#13); absent = none. */
+  timeMachineFlowRunNode?(runId: string, nodeKey: string): Promise<{ run: FlowRun; timeMachine: FlowRunTimeMachine }>
+}
+
+/** flowgate.v02.0061 T#15: a card's Hold write through the card settings (features/document settingsNodeHoldWrite). */
+export interface FlowCardHoldLoaders {
+  write(flowId: string, nodeKey: string, on: boolean): Promise<boolean>
+}
+
+/** flowgate.v02.0061 T#15: the card Holds a Graph read tells (draft and latest revision nodes, by node key). */
+export function toCardHolds(definition: FlowGraphDefinition): Record<string, boolean> {
+  const holds: Record<string, boolean> = {}
+  for (const node of [...(definition.latestRevision?.nodes ?? []), ...(definition.draft?.nodes ?? [])]) {
+    if (typeof node.hold === 'boolean') holds[node.nodeKey] = node.hold
+  }
+  return holds
 }
 
 const toRunInfo = (run: FlowRun): FlowRunInfo => ({
@@ -80,6 +101,9 @@ const toRunInfo = (run: FlowRun): FlowRunInfo => ({
   requestedExecutionCount: run.requestedExecutionCount ?? 0,
   executionLimit: run.executionLimit ?? null,
   ...(run.nodeRuns ? { nodeRuns: run.nodeRuns } : {}),
+  // flowgate.v02.0061 T#15: the run's history as the Time Machine confirmation compares it.
+  revisionNo: run.revisionNo ?? null,
+  lastEventSeq: run.lastEventSeq ?? 0,
 })
 
 /**
@@ -152,7 +176,19 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
     sequenceRootDocId: canvas.ownership.sequenceRootDocId ?? null,
     hiddenNodeCount: Object.values(canvas.collapsed?.hiddenCounts ?? {}).reduce((sum, count) => sum + (Number(count) || 0), 0),
     // flowgate.v02.0061 TR0031 rev1: the run block's status (the run lock while the run read is pending or failed).
-    ...(canvas.run !== undefined ? { run: canvas.run ? { runId: canvas.run.runId, status: canvas.run.status } : null } : {}),
+    // T#15: with the revision it runs and its event sequence (the Time Machine confirmation's basis).
+    ...(canvas.run !== undefined
+      ? {
+          run: canvas.run
+            ? {
+                runId: canvas.run.runId,
+                status: canvas.run.status,
+                revisionNo: canvas.run.revisionNo,
+                ...(canvas.run.lastEventSeq !== undefined ? { lastEventSeq: canvas.run.lastEventSeq } : {}),
+              }
+            : null,
+        }
+      : {}),
   }
 }
 
@@ -199,18 +235,26 @@ function asDraftError(error: unknown): unknown {
 /**
  * `readDocument`: the v0.1 document read (`documentRead` of features/document fits); absent = no supersede
  * link is read, so 자동 배치 cannot tell a v0.1 root that replaced an older root document.
+ * `cardHold` (flowgate.v02.0061 T#15): a card's Hold write; absent = the Canvas holds nothing.
  */
 export function createServerFlowGraphSource(
   loaders: FlowCanvasLoaders,
   readDocument?: (docId: string) => Promise<FlowDocumentLink>,
+  cardHold?: FlowCardHoldLoaders,
 ): FlowGraphSource {
   const graphLoaders = loaders.saveFlowGraphDraft && loaders.validateFlowGraphDraft && loaders.confirmFlowGraphRevision
   const runLoaders = loaders.loadFlowRun && loaders.startFlowRun && loaders.stopFlowRun && loaders.resumeFlowRun
+  // flowgate.v02.0061 T#15: the card Holds of a Canvas read, read beside it; a failed Graph read leaves them unknown.
+  const readHolds = (flowId: string): Promise<Record<string, boolean> | null> =>
+    cardHold && loaders.loadFlowGraph ? loaders.loadFlowGraph(flowId).then(toCardHolds, () => null) : Promise.resolve(null)
   return {
     isSample: false,
     // The Flow id is the global v0.1 group id; the project id is not part of the address.
-    loadGraph: async (_projectId: string, flowId: string, view?: string) =>
-      toFlowGraph(await loaders.loadFlowCanvas(flowId, view, CANVAS_COLLAPSE)),
+    loadGraph: async (_projectId: string, flowId: string, view?: string) => {
+      const [canvas, holds] = await Promise.all([loaders.loadFlowCanvas(flowId, view, CANVAS_COLLAPSE), readHolds(flowId)])
+      const graph = toFlowGraph(canvas)
+      return holds ? { ...graph, holds } : graph
+    },
     saveLayout: async (_projectId: string, flowId: string, change: FlowLayoutChange): Promise<FlowLayoutSaveResult> => {
       const result = await loaders.saveFlowCanvasLayout(flowId, toLayoutInput(change))
       return { ignoredNodeIds: result.ignored.map((item) => item.nodeKey) }
@@ -275,6 +319,14 @@ export function createServerFlowGraphSource(
     approveNode:
       runLoaders && loaders.approveFlowRunNode
         ? async (_projectId, runId, nodeKey, resultDocId) => toRunInfo((await loaders.approveFlowRunNode!(runId, nodeKey, resultDocId)).run)
+        : undefined,
+    writeCardHold: cardHold ? (_projectId, flowId, nodeKey, on) => cardHold.write(flowId, nodeKey, on) : undefined,
+    timeMachine:
+      runLoaders && loaders.timeMachineFlowRunNode
+        ? async (_projectId, runId, nodeKey) => {
+            const answer = await loaders.timeMachineFlowRunNode!(runId, nodeKey)
+            return { result: { ...answer.timeMachine }, run: toRunInfo(answer.run) }
+          }
         : undefined,
   }
 }

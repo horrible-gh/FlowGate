@@ -22,22 +22,49 @@
 // message) and the run is read again. What the refusal names in its params (the refused document, why, the
 // documents approved before it) is kept with it (`refusal`), so the Shell's toast can say it too.
 //
+// flowgate.v02.0061 T#15 — a card's context menu goes through here too:
+// - Hold 설정 / 해제 (`hold`): the card setting `hold` (T#11), one per Flow at a time (`holding`, the card's key). It
+//   never touches `action` and calls no run command: a released card is opened by the next step / full command only.
+//   The answer's Hold is put on the run's node run of the card at once and told to the caller (`answered`), and only
+//   then are the run and the Canvas read again, so those reads go out after the caller kept the answer. A refusal
+//   (graph_run_locked, graph_hold_done_node, …) is kept as `error` with kind `hold`. An answer that comes after the
+//   Flow's tab was closed (also when it was opened again since) or the project changed belongs to no open tab: it is
+//   dropped — no Hold, no error, no read.
+// - 되돌리기 (`timeMachine`): the Graph Time Machine of a done card (T#13) on the Flow's run — the card and everything
+//   below it. It is an action of the Flow (`action` `time_machine`: the run buttons are off meanwhile). Its outcome is
+//   answered to the caller (the confirmation dialog shows the result, or the server's reasons when it is blocked), not
+//   kept as `error`; the run it answers is kept and the Canvas is read again.
+//
 // flowgate.v02.0061 TR0031 rev1 — whether the run status is confirmed (`readState`): a run read going on (`reading`) or
 // failed (`failed`), and a Flow not read yet (`unread`), are not "no run": the Center session then keeps the run lock
 // (its Canvas read's run status, or the run last known locked) and lets no command, edit or source mode change go until
 // it is confirmed (`read`: a run read or a command's answer told it; `run` null = no run).
 import { cardApprovalFailureView, cardApprovalRefusalOf, type CardApprovalFailureView, type CardApprovalRefusal } from '../graph/cardStateView'
-import type { FlowGraphSource, FlowRunError, FlowRunInfo } from '../graph/flowGraphSource'
+import type { FlowGraphSource, FlowRunError, FlowRunInfo, FlowTimeMachineRefusal, FlowTimeMachineResult } from '../graph/flowGraphSource'
 import { isRunLocked } from './flowRunLock'
 
 export type FlowRunMode = 'next' | 'all'
 
-/** flowgate.v02.0061 T#14: what this tab is doing to the run — a command, Pause, Resume or Stop. */
-export type FlowRunAction = FlowRunMode | 'pause' | 'resume' | 'stop'
+/** flowgate.v02.0061 T#14: what this tab is doing to the run — a command, Pause, Resume or Stop (T#15: or 되돌리기). */
+export type FlowRunAction = FlowRunMode | 'pause' | 'resume' | 'stop' | 'time_machine'
+
+/**
+ * flowgate.v02.0061 T#15: how a Graph Time Machine ended — done (what it did), blocked (the server's reasons and the
+ * impact it found; nothing changed), failed (another refusal or no answer), or skipped (nothing was sent: another
+ * action of the Flow is answered, or the source has no Time Machine).
+ */
+export type FlowTimeMachineOutcome =
+  | { readonly kind: 'done'; readonly result: FlowTimeMachineResult }
+  | ({ readonly kind: 'blocked'; readonly code: string | null; readonly message: string } & FlowTimeMachineRefusal)
+  | { readonly kind: 'failed'; readonly code: string | null; readonly status: number | null; readonly message: string }
+  | { readonly kind: 'skipped' }
 
 export interface FlowRunFailure {
-  /** What was refused: a run button (`run`) or a card's [승인] (`approval`, flowgate.v02.0056 F2-1). */
-  readonly kind: 'run' | 'approval'
+  /**
+   * What was refused: a run button (`run`), a card's [승인] (`approval`, flowgate.v02.0056 F2-1) or a card's Hold
+   * 설정 / 해제 (`hold`, flowgate.v02.0061 T#15).
+   */
+  readonly kind: 'run' | 'approval' | 'hold'
   /** The server's error code, or null (transport / unknown failure). */
   readonly code: string | null
   /** The HTTP status, or null (no answer). */
@@ -63,6 +90,8 @@ export interface FlowRunState {
   action: FlowRunAction | null
   /** flowgate.v02.0056 F2-1: the card whose [승인] is being answered (its node key), or null. */
   approving: string | null
+  /** flowgate.v02.0061 T#15: the card whose Hold 설정 / 해제 is being answered (its node key), or null. */
+  holding: string | null
   error: FlowRunFailure | null
 }
 
@@ -102,11 +131,48 @@ export interface FlowRunControl {
    * showed. Resolves whether it was approved. Ignored while another approval of the Flow is answered.
    */
   approve(flowId: string, nodeKey: string, resultDocId: string | null): Promise<boolean>
+  /** flowgate.v02.0061 T#15: the source can hold / release cards. */
+  readonly canHold: boolean
+  /** flowgate.v02.0061 T#15: the source has the Graph Time Machine. */
+  readonly canTimeMachine: boolean
+  /**
+   * flowgate.v02.0061 T#15: sets (true) / releases (false) the Hold of card `nodeKey`. Resolves whether it is held now,
+   * or null when nothing changed (refused — kept as `error`, kind `hold` — or another Hold of the Flow is answered) or
+   * the answer belongs to no open tab any more (the tab closed — also when opened again since — or the project changed).
+   * `answered` is told the Hold answered, before the run and the Canvas are read again. Never a run command.
+   */
+  hold(flowId: string, nodeKey: string, on: boolean, answered?: (held: boolean) => void): Promise<boolean | null>
+  /** flowgate.v02.0061 T#15: the Graph Time Machine of the run's done card `nodeKey` (and everything below it). */
+  timeMachine(flowId: string, nodeKey: string): Promise<FlowTimeMachineOutcome>
   forget(flowId: string): void
   clear(): void
 }
 
-export const createFlowRunState = (): FlowRunState => ({ run: null, readState: 'unread', action: null, approving: null, error: null })
+export const createFlowRunState = (): FlowRunState => ({
+  run: null,
+  readState: 'unread',
+  action: null,
+  approving: null,
+  holding: null,
+  error: null,
+})
+
+/** flowgate.v02.0061 T#15: the run with the card's node run (when it has one) held or released as answered. */
+function withNodeHold(run: FlowRunInfo, nodeKey: string, hold: boolean): FlowRunInfo {
+  if (!run.nodeRuns?.some((nodeRun) => nodeRun.nodeKey === nodeKey)) return run
+  return { ...run, nodeRuns: run.nodeRuns.map((nodeRun) => (nodeRun.nodeKey === nodeKey ? { ...nodeRun, hold } : nodeRun)) }
+}
+
+/** flowgate.v02.0061 T#15: a Graph Time Machine that did not run, as the dialog shows it. */
+function timeMachineFailure(error: unknown): FlowTimeMachineOutcome {
+  const refused = error as FlowRunError | null
+  const code = typeof refused?.code === 'string' ? refused.code : null
+  const message = error instanceof Error ? error.message.trim() : ''
+  if (refused?.timeMachine) {
+    return { kind: 'blocked', code, message, reasons: refused.timeMachine.reasons, impactNodeKeys: refused.timeMachine.impactNodeKeys }
+  }
+  return { kind: 'failed', code, status: typeof refused?.status === 'number' ? refused.status : null, message }
+}
 
 /** A refused request as the state keeps it (the server's code and status, its message as sent, its params' names). */
 function failureOf(kind: FlowRunFailure['kind'], error: unknown, seq: number): FlowRunFailure {
@@ -256,6 +322,64 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     return ok
   }
 
+  async function hold(flowId: string, nodeKey: string, on: boolean, answered?: (held: boolean) => void): Promise<boolean | null> {
+    const projectId = deps.projectId()
+    if (!source.writeCardHold || projectId === null) return null
+    const state = stateOf(flowId)
+    if (state.holding !== null || state.action) return null
+    // The request belongs to this opening of the Flow: closing its tab (forget) or changing the project (clear) drops its
+    // state, and a tab opened again gets a new one — an answer for an earlier one is not this tab's.
+    const alive = () => deps.isOpen(projectId, flowId) && runs[flowId] === state
+    state.holding = nodeKey
+    state.error = null
+    reads.delete(flowId)
+    let held: boolean | null = null
+    try {
+      // Only the card setting: no run command follows, also not for a release (R: the next command opens it).
+      held = await source.writeCardHold(projectId, flowId, nodeKey, on)
+      if (alive() && state.run) state.run = withNodeHold(state.run, nodeKey, held)
+    } catch (error) {
+      if (alive()) state.error = failureOf('hold', error, ++failures)
+    } finally {
+      state.holding = null
+    }
+    if (!alive()) return null
+    // The caller keeps the answer first, so the reads below are the ones sent after it.
+    if (held !== null) answered?.(held)
+    read(flowId)
+    deps.refresh(flowId)
+    return held
+  }
+
+  async function timeMachine(flowId: string, nodeKey: string): Promise<FlowTimeMachineOutcome> {
+    const projectId = deps.projectId()
+    if (!available || !source.timeMachine || projectId === null) return { kind: 'skipped' }
+    const state = stateOf(flowId)
+    if (state.action || state.approving !== null || state.holding !== null) return { kind: 'skipped' }
+    state.action = 'time_machine'
+    state.error = null
+    reads.delete(flowId)
+    let outcome: FlowTimeMachineOutcome
+    try {
+      const runId = await runIdOf(projectId, flowId, state)
+      if (runId === null) throw Object.assign(new Error(''), { code: 'run_not_found' })
+      const answer = await source.timeMachine(projectId, runId, nodeKey)
+      if (deps.isOpen(projectId, flowId)) {
+        state.run = answer.run
+        state.readState = 'read'
+      }
+      outcome = { kind: 'done', result: answer.result }
+    } catch (error) {
+      outcome = timeMachineFailure(error)
+    } finally {
+      state.action = null
+    }
+    if (!deps.isOpen(projectId, flowId)) return outcome
+    if (outcome.kind !== 'done') read(flowId)
+    deps.refresh(flowId)
+    return outcome
+  }
+
   return {
     available,
     canApprove: available && !!source.approveNode,
@@ -266,6 +390,10 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     resume,
     stop,
     approve,
+    canHold: !!source.writeCardHold,
+    canTimeMachine: available && !!source.timeMachine,
+    hold,
+    timeMachine,
     forget: (flowId) => {
       reads.delete(flowId)
       delete runs[flowId]

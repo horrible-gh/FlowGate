@@ -2421,6 +2421,9 @@ export default {
       // 0332 D0005 §6.4 — 되돌린 뒤. 전부 취소됐으면 알림 한 줄로 끝난다.
       toast_reopened_canceled: '되감았습니다 — 커밋 {n}개를 취소했습니다.',
       toast_reopened_nothing: '되감았습니다 — 취소할 커밋이 없었습니다.',
+      // flowgate.v02.0061 T#15 — reopen / restore of a Graph-owned flow: the server refuses it (409
+      // graph_engine_owned); used only when the refusal carries no message of its own.
+      graph_engine_owned: '이 흐름은 Graph 엔진이 담당합니다. 되돌리기는 Designer에서 완료 카드의 [여기부터 되돌리기](Graph Time Machine)로 합니다.',
       // 하나라도 취소되지 않았으면 창이 결과 화면으로 바뀐다. 머리글이 되감기가
       // 확정됐다는 사실을 먼저 못 박는다.
       result_title: '워크플로는 되감았습니다. 소스 커밋은 아래와 같습니다.',
