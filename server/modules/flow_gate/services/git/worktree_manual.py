@@ -1,4 +1,4 @@
-"""Group worktree status and manual index mutations (0066 D#1, E1--E3).
+"""Group worktree status, manual index mutations, commit and revert (0066 D#1, E1--E6).
 
 No automatic absorption and no changes to the legacy scope/diff endpoints.
 Snapshots contain immutable object IDs; later consumers need not reopen the index.
@@ -9,12 +9,13 @@ import hashlib
 import json
 import os
 import tempfile
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 from modules.flow_gate.db import operation_job
-from modules.flow_gate.services import git_service as gs
+from modules.flow_gate.documents import tr2_service
+from modules.flow_gate.services import git_service as gs, path_exclusion_rules, tr2_file_policy as tr2
 from modules.flow_gate.storage.paths import get_storage_root
 from . import approval_intent, finalize, lock, lock_manager, manual_path_policy as policy, scope_base
 from .credentials import GitServiceError
@@ -276,7 +277,7 @@ def mutation_context(group_id: str):
         lock_manager.release(ctx, outcome.lock_key)
 
 
-def _apply_paths(root: Path, paths: list[str], *, unstage: bool) -> None:
+def _git_paths(root: Path, command: list[str], paths: list[str]) -> None:
     if not paths:
         return
     # One Git transaction, with no argv length limit and no pathspec expansion.
@@ -287,9 +288,12 @@ def _apply_paths(root: Path, paths: list[str], *, unstage: bool) -> None:
     with tempfile.TemporaryDirectory(prefix="paths-", dir=scratch) as temporary:
         pathspec = Path(temporary) / "paths"
         pathspec.write_bytes(b"\0".join(p.encode("utf-8") for p in paths) + b"\0")
-        command = ["reset", "-q", "HEAD"] if unstage else ["add"]
         _git(root, ["--literal-pathspecs", *command, "--pathspec-from-file=" + str(pathspec),
                     "--pathspec-file-nul"])
+
+
+def _apply_paths(root: Path, paths: list[str], *, unstage: bool) -> None:
+    _git_paths(root, ["reset", "-q", "HEAD"] if unstage else ["add"], paths)
 
 
 def _updated_status(group_id: str, result: dict) -> dict:
@@ -360,3 +364,217 @@ def stage(group_id: str, *, paths: list[str] | None = None, all: bool = False,
 def unstage(group_id: str, *, paths: list[str] | None = None, all: bool = False,
             worktree_token: str | None = None) -> dict:
     return _change_index(group_id, paths=paths, all=all, worktree_token=worktree_token, unstage=True)
+
+
+# ── E4 commit, E5 revert, E6 remove (0066 D#1 §3-4, §3-5) ──────────────────
+
+def _commit_subject(message) -> str:
+    # Same normalizer, limit and wording as FinalizeBody.commit_message; no lock yet.
+    subject = gs.normalize_subject(message)
+    if not subject:
+        raise GitServiceError(422, "commit_message_required", "A commit message is required")
+    if len(subject) > gs.COMMIT_SUBJECT_MAX or any(ord(ch) < 32 or ord(ch) == 127 for ch in subject):
+        raise GitServiceError(422, "invalid_request",
+                              f"message must be a single line of at most {gs.COMMIT_SUBJECT_MAX} characters.")
+    return subject
+
+
+def _compare_tokens(current: dict, *, worktree_token: str | None = None,
+                    index_token: str | None = None) -> None:
+    if ((worktree_token is not None and worktree_token != current["worktree_token"])
+            or (index_token is not None and index_token != current["snapshot"].index_token)):
+        raise GitServiceError(409, "worktree_changed", "Worktree changed; reload before retrying")
+
+
+def _require_history_recovered(group_id: str) -> None:
+    # A commit rewrites the Group branch history, so it uses general_source_mutation's rule:
+    # an unreadable recovery state is treated as recovery required.
+    try:
+        required = tr2.db_recovery.has_unresolved(group_id)
+    except Exception:
+        gs._log.warning("Manual Git recovery state unavailable for %s", group_id, exc_info=True)
+        required = True
+    if required:
+        raise GitServiceError(409, "tr_history_recovery_required", "TR history recovery is required",
+                              details={"reason": "tr_history_recovery_required"})
+
+
+def commit(group_id: str, *, message, worktree_token: str | None = None,
+           index_token: str | None = None) -> dict:
+    """Commit exactly the index. Never stages, unstages, absorbs, merges or pushes."""
+    subject = _commit_subject(message)
+    with mutation_context(group_id) as (_, cfg, _, root):
+        _require_history_recovered(group_id)
+        ownership = policy.read_ownership(group_id)
+        ownership.require()
+        current = _collect(root, ownership)
+        _compare_tokens(current, worktree_token=worktree_token, index_token=index_token)
+        staged = [row for row in current["entries"] if row["staged"]]
+        if not staged:
+            raise GitServiceError(422, "nothing_staged", "No staged changes to commit")
+        unsupported = [row for row in staged if row["staged"] in ("U", "T")]
+        if unsupported:
+            raise GitServiceError(409, "index_entry_unsupported", "The index has unsupported entries", details={
+                "counts": {"unmerged": sum(row["staged"] == "U" for row in unsupported),
+                           "type_change": sum(row["staged"] == "T" for row in unsupported)},
+                "paths": [row["path"] for row in unsupported if not row["hidden"]]})
+        counts = dict.fromkeys(("hidden", "managed", "excluded_new"), 0)
+        protected = []
+        for row in staged:
+            key = ("hidden" if row["hidden"] else "managed" if row["class"] == "managed"
+                   else "excluded_new" if row["protected_reason"] == "excluded_new" else None)
+            if key:
+                counts[key] += 1
+                if key != "hidden":
+                    protected.append(row["path"])
+        if any(counts.values()):
+            # The server never unstages on the requester's behalf.
+            raise GitServiceError(409, "staged_protected_paths", "Protected paths are staged",
+                                  details={"counts": counts, "paths": protected})
+        proc = gs._run_git([*gs._GIT_IDENT, "commit", "-q", "-m", subject], cwd=root,
+                           author_env=gs._author_env_from_cfg(cfg))
+        if proc.returncode:
+            gs._log.warning("Manual Git commit failed: %s", proc.stderr)
+            raise GitServiceError(500, "git_error", "Git commit failed")
+        sha = _git(root, ["rev-parse", "--verify", "HEAD"]).strip()
+        paths = [row["path"] for row in staged]
+        result = {"commit_sha": sha, "commit": sha[:7], "subject": subject,
+                  "committed_paths": paths, "committed_count": len(paths)}
+        return _updated_status(group_id, result)
+
+
+def _source_mutation_error(exc: Exception, paths: list[str]) -> GitServiceError:
+    """Map general_source_mutation refusals without copying upstream details."""
+    if isinstance(exc, GitServiceError):
+        return exc
+    if isinstance(exc, tr2.Tr2OwnershipInvariantError):
+        gs._log.warning("Manual Git ownership invariant: %s", exc.details)
+        return GitServiceError(409, "ownership_unavailable", "Source ownership could not be verified",
+                               details={"reason": "ownership_invariant"})
+    if isinstance(exc, tr2.Tr2FilePolicyError):
+        if exc.code == tr2.SOURCE_MUTATION_BUSY:
+            return GitServiceError(409, "git_busy", "Another Git operation is in progress", details={
+                k: v for k, v in exc.details.items() if k not in ("code", "project_id", "group_id")})
+        if exc.code == tr2.SOURCE_WORKTREE_UNAVAILABLE:
+            return GitServiceError(409, "invalid_state", "Group worktree is unavailable",
+                                   details={"reason": "worktree_unavailable"})
+        if exc.code == tr2.TR_HISTORY_RECOVERY_REQUIRED:
+            return GitServiceError(409, "tr_history_recovery_required", "TR history recovery is required",
+                                   details={"reason": "tr_history_recovery_required"})
+        if exc.code in (tr2.TR2_MANAGED_FILE, tr2.SOURCE_PATH_ALIAS_NOT_ALLOWED):
+            reason = "managed" if exc.code == tr2.TR2_MANAGED_FILE else "alias"
+            shown = [p for p in paths if p == exc.path and not policy.hidden(p)]
+            return GitServiceError(409, "path_protected", "Requested paths cannot be changed", details={
+                "cause_code": exc.code, "paths": [{"path": p, "reason": reason} for p in shown]})
+        if exc.code == tr2.SOURCE_PATH_INVALID:
+            return GitServiceError(422, "invalid_request", "Invalid file path",
+                                   details={"reason": "invalid_path"})
+    if isinstance(exc, tr2_service.Tr2ValidationError):
+        return GitServiceError(409, "invalid_state", "Group worktree is unavailable",
+                               details={"reason": "worktree_unavailable"})
+    gs._log.warning("Manual Git ownership read failed", exc_info=exc)
+    return GitServiceError(409, "ownership_unavailable", "Source ownership could not be verified",
+                           details={"reason": "ownership_read_failed"})
+
+
+def _ignores_case(root: Path) -> bool:
+    proc = gs._run_git(["config", "--bool", "core.ignorecase"], cwd=root, timeout=gs.GIT_READ_TIMEOUT_SEC)
+    return not proc.returncode and (proc.stdout or "").strip() == "true"
+
+
+def _disk_case_alias(root: Path, path: str) -> bool:
+    current = root
+    for part in path.split("/"):
+        try:
+            names = os.listdir(current)
+        except OSError:
+            return False
+        if part not in names:
+            return any(name.casefold() == part.casefold() for name in names)
+        current = current / part
+    return False
+
+
+def _change_files(group_id: str, *, paths: list[str], worktree_token: str | None, remove: bool) -> dict:
+    selected = policy.normalize_paths(paths, False)
+    policy.guard_selected_visibility(selected)
+    project_id, _, state, _ = _context(group_id)
+    _admission(group_id, state)
+    with ExitStack() as stack:
+        try:
+            # G, worktree re-resolution, no-alias, TR history recovery, TR2 ownership.
+            mutation = stack.enter_context(tr2.general_source_mutation(
+                project_id, group_id, exact_paths=selected, allow_missing_leaf=True))
+        except Exception as exc:
+            raise _source_mutation_error(exc, selected) from None
+        _, _, state, root = _context(group_id)
+        _admission(group_id, state)
+        if root.resolve() != Path(mutation.root).resolve():
+            raise GitServiceError(409, "invalid_state", "Group worktree is unavailable",
+                                  details={"reason": "worktree_unavailable"})
+        ownership = policy.read_ownership(group_id)
+        ownership.require()
+        current = _collect(root, ownership)
+        _compare_tokens(current, worktree_token=worktree_token)
+        head, _ = snapshot_changes(current["snapshot"])
+        rows = {row["path"]: row for row in current["entries"]}
+        known = set(head) | set(rows) | {entry[0] for entry in current["snapshot"].entries}
+        folders = {p.rsplit("/", 1)[0] for p in known if "/" in p}
+        folders |= {f.rsplit("/", i)[0] for f in folders for i in range(1, f.count("/") + 1)}
+        targets = dict(mutation.exact_targets)
+        if any(p in folders or targets[p].is_dir() for p in selected):
+            raise GitServiceError(422, "invalid_request", "Only file paths are accepted",
+                                  details={"reason": "not_a_file"})
+        folded = {p.casefold() for p in known}
+        ignorecase = _ignores_case(root)
+        refused = []
+        for path in selected:
+            row = rows.get(path)
+            reason = ("alias" if ignorecase and path not in known and (
+                          path.casefold() in folded or _disk_case_alias(root, path)) else
+                      "index_entry_unsupported" if row and row["unsupported"] else
+                      "managed" if path in ownership.paths else
+                      "excluded_new" if remove and path not in head
+                      and path_exclusion_rules.is_excluded_path(path) else None)
+            if reason:
+                refused.append({"path": path, "reason": reason})
+        if refused:
+            details = {"paths": refused}
+            if any(r["reason"] == "alias" for r in refused):
+                details["cause_code"] = tr2.SOURCE_PATH_ALIAS_NOT_ALLOWED
+            raise GitServiceError(409, "path_protected", "Requested paths cannot be changed", details=details)
+        if remove:
+            mismatch = [p for p in selected if p in head]
+            if mismatch:
+                raise GitServiceError(422, "existing_path_use_revert", "Existing paths must be reverted",
+                                      details={"paths": mismatch})
+        else:
+            mismatch = [p for p in selected if p not in head]
+            if mismatch:
+                raise GitServiceError(422, "new_path_use_remove", "New paths must be removed",
+                                      details={"paths": mismatch})
+        # An ignored new file is not a listed change, but naming it still removes it.
+        changed = [p for p in selected if p in rows or remove and (
+            targets[p].exists() or targets[p].is_symlink())]
+        if remove:
+            # Dropping an index entry absent from HEAD leaves no trace in the index.
+            _git_paths(root, ["reset", "-q", "HEAD"], [p for p in changed if p in rows and rows[p]["staged"]])
+            for path in changed:
+                try:
+                    targets[path].unlink(missing_ok=True)
+                except OSError as exc:
+                    gs._log.warning("Manual Git remove failed", exc_info=True)
+                    raise GitServiceError(500, "git_error", "Cannot remove file") from exc
+        else:
+            _git_paths(root, ["checkout", "HEAD"], changed)
+        done = "removed" if remove else "reverted"
+        result = {"results": [{"path": p, "result": done if p in changed else "not_changed"} for p in selected]}
+        return _updated_status(group_id, result)
+
+
+def revert(group_id: str, *, paths: list[str], worktree_token: str | None = None) -> dict:
+    return _change_files(group_id, paths=paths, worktree_token=worktree_token, remove=False)
+
+
+def remove(group_id: str, *, paths: list[str], worktree_token: str | None = None) -> dict:
+    return _change_files(group_id, paths=paths, worktree_token=worktree_token, remove=True)

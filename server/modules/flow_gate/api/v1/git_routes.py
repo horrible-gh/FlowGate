@@ -1669,10 +1669,10 @@ def post_branch_merge_write_plan_token(
         return _guard(exc)
 
 
-# ── Group worktree manual index operations (0066 D#1 E1--E3) ──────────────
+# ── Group worktree manual index operations (0066 D#1 E1--E6) ──────────────
 
 class WorktreeRequestRoute(APIRoute):
-    """Bound E2/E3 bodies before JSON decoding, including chunked requests."""
+    """Bound E2--E6 bodies before JSON decoding, including chunked requests."""
     def get_route_handler(self):
         handler = super().get_route_handler()
 
@@ -1733,6 +1733,57 @@ def post_group_worktree_unstage(group_id: str, body: WorktreePathsBody, user=Dep
     from modules.flow_gate.services.git import worktree_manual
     try:
         return {"ok": True, "result": worktree_manual.unstage(group_id, **body.model_dump())}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class WorktreeCommitBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    message: str
+    worktree_token: str | None = None
+    index_token: str | None = None
+
+
+class WorktreeFilesBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    paths: list[str]
+    worktree_token: str | None = None
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/worktree/commit")
+def post_group_worktree_commit(group_id: str, body: WorktreeCommitBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import worktree_manual
+    try:
+        return {"ok": True, "result": worktree_manual.commit(group_id, **body.model_dump())}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/worktree/revert")
+def post_group_worktree_revert(group_id: str, body: WorktreeFilesBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import worktree_manual
+    try:
+        return {"ok": True, "result": worktree_manual.revert(group_id, **body.model_dump())}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/worktree/remove")
+def post_group_worktree_remove(group_id: str, body: WorktreeFilesBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import worktree_manual
+    try:
+        return {"ok": True, "result": worktree_manual.remove(group_id, **body.model_dump())}
     except GitServiceError as exc:
         return _guard(exc)
 
