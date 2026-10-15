@@ -1,7 +1,16 @@
 import { vi } from 'vitest'
 import type { FlowAiActivity, ProjectGitPendingRow, ProjectGitStatus } from '@/features/project'
 import type { GitSource } from '@/features/git'
-import type { GitConflictSession, GitProviders, GitReview } from '@/features/git/types'
+import type {
+  GitConfigSave,
+  GitConfigView,
+  GitConflictSession,
+  GitConnectionTest,
+  GitProviders,
+  GitProvisionResult,
+  GitProvisionView,
+  GitReview,
+} from '@/features/git/types'
 
 // flowgate.v02.0033 — in-memory GitSource. Every server state the Git part reacts to, including
 // the S1 / S2 stage-2 fields and a push_rejected answer, is replayed through it (0033-D §5.1).
@@ -128,6 +137,38 @@ export function createFakeGitSource(init: Partial<FakeState> = {}, extra: Partia
     baseRemove: vi.fn(async (_pid: string, files: string[]) => ({
       results: files.map((path) => ({ path, result: 'removed' })),
       remainingUntracked: [],
+    })),
+    // flowgate.v02.0065 — `Git 연결`: no settings yet, a remote that answers, a Base that prepares.
+    fetchGitConfig: vi.fn(async (): Promise<GitConfigView> => ({
+      configured: false,
+      repoUrl: '',
+      provider: 'generic',
+      username: null,
+      baseBranch: 'main',
+      enabled: false,
+      hasSecret: false,
+    })),
+    testGitConnection: vi.fn(async (): Promise<GitConnectionTest> => ({
+      reachable: true,
+      authenticated: true,
+      failureCode: null,
+      remoteDefaultBranch: 'main',
+    })),
+    saveGitConfig: vi.fn(async (_pid: string, input: GitConfigSave): Promise<GitConfigView> => ({
+      configured: true,
+      repoUrl: input.repoUrl,
+      provider: input.provider,
+      username: input.username,
+      baseBranch: input.baseBranch,
+      enabled: true,
+      hasSecret: true,
+    })),
+    provisionGit: vi.fn(async (): Promise<GitProvisionResult> => ({ status: 'ok', mode: 'clone', busy: false, provision: null })),
+    fetchGitProvision: vi.fn(async (): Promise<GitProvisionView | null> => ({
+      configured: true,
+      enabled: true,
+      baseCheckoutExists: false,
+      lastAttemptResult: 'failed',
     })),
     ...extra,
   } satisfies GitSource

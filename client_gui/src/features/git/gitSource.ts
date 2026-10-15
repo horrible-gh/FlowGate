@@ -12,10 +12,15 @@ import type {
   GitBaseRemoveResult,
   GitBaseRevertAllResult,
   GitBaseRevertResult,
+  GitConfigSave,
+  GitConfigView,
   GitConflictSession,
+  GitConnectionTest,
   GitFinalizeAction,
   GitFinalizeResult,
   GitProviders,
+  GitProvisionResult,
+  GitProvisionView,
   GitRejectResult,
   GitReview,
 } from './types'
@@ -56,6 +61,13 @@ export interface GitSource {
    * a revert-then-delete pair of requests could not promise. Absent until the contract exists.
    */
   baseRevertAll?(projectId: string, trackedFiles: string[], expectedUntrackedTotal: number): Promise<GitBaseRevertAllResult>
+
+  // flowgate.v02.0065 — `Git 연결`: the existing project Git settings contracts (api.ts).
+  fetchGitConfig(projectId: string): Promise<GitConfigView>
+  testGitConnection(projectId: string, input: GitConfigSave): Promise<GitConnectionTest>
+  saveGitConfig(projectId: string, input: GitConfigSave): Promise<GitConfigView>
+  provisionGit(projectId: string): Promise<GitProvisionResult>
+  fetchGitProvision(projectId: string): Promise<GitProvisionView | null>
 }
 
 export function createHttpGitSource(): GitSource {
@@ -78,5 +90,10 @@ export function createHttpGitSource(): GitSource {
     baseCommit: api.baseCommit,
     baseRevert: api.baseRevert,
     baseRemove: api.baseRemove,
+    fetchGitConfig: api.fetchGitConfig,
+    testGitConnection: api.testGitConnection,
+    saveGitConfig: api.saveGitConfig,
+    provisionGit: api.provisionGit,
+    fetchGitProvision: api.fetchGitProvision,
   }
 }
