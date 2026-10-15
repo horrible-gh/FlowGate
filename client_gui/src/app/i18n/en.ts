@@ -956,6 +956,35 @@ export default {
       ok: 'OK',
       cancel: 'Cancel',
     },
+    // flowgate.v02.0065 — Git not connected / status read failure / Connect Git modeless.
+    unlinked: {
+      heading: 'Git not connected',
+      connect: 'Connect Git',
+    },
+    status_error: {
+      title: 'Could not read Git status',
+      network: 'Could not reach the server.',
+      unreadable: 'The Git status could not be read.',
+      retry: 'Retry',
+    },
+    connect: {
+      title: 'Connect Git',
+      restore: 'Restore Connect Git window',
+      remote: 'Repository URL',
+      remote_placeholder: 'https://github.com/org/repo.git',
+      provider: 'Provider',
+      username: 'Username',
+      secret: 'Access token',
+      secret_stored: 'Saved token in use · type only to change',
+      branch: 'Base branch',
+      test: 'Test connection',
+      testing: 'Testing…',
+      cancel: 'Cancel',
+      submit: 'Connect',
+      submitting: 'Connecting…',
+      required: 'Enter the repository URL and Base branch.',
+      invalid_url: 'Check the repository URL format.',
+    },
   },
   // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.
   document_window: {

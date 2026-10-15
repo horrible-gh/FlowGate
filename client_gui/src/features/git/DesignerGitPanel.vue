@@ -1,21 +1,44 @@
 <template>
   <section class="gx-panel" data-test="designer-git-panel">
-    <GitHeader
-      :work-branch="session.workBranch.value"
-      :base-branch="session.state.status?.baseBranch ?? null"
-      :status-known="session.state.statusLoad === 'ready'"
-      :enabled="session.state.status?.enabled === true"
-      :status-error="session.state.statusError"
-      :loading="session.state.statusLoad === 'loading'"
-      :refreshing="session.state.statusLoad === 'loading'"
-      :notice="headerNotice"
-      @refresh="session.refresh()"
+    <div v-show="!unlinked" class="gx-head" data-test="git-head">
+      <GitHeader
+        :work-branch="session.workBranch.value"
+        :base-branch="session.state.status?.baseBranch ?? null"
+        :status-known="session.state.statusLoad === 'ready'"
+        :enabled="session.state.status?.enabled === true"
+        :status-error="session.state.statusError"
+        :loading="session.state.statusLoad === 'loading'"
+        :refreshing="session.state.statusLoad === 'loading'"
+        :notice="headerNotice"
+        @refresh="session.refresh()"
+      />
+    </div>
+    <GitStatusErrorCard
+      v-if="session.state.statusLoad === 'error'"
+      :reason="session.state.statusError"
+      @retry="session.refresh()"
     />
-    <GitExceptionList />
+    <GitUnlinkedCard v-else-if="unlinked" :disabled="readOnly" @connect="openConnect" />
+    <GitExceptionList v-else />
     <template v-for="win in session.state.windows" :key="win.id">
       <GitConflictWindow v-if="win.kind === 'conflict'" :win="win" />
       <GitPushErrorWindow v-else :win="win" />
     </template>
+    <GitConnectWindow
+      v-model:minimized="connectMinimized"
+      :open="connectOpen"
+      :initial="connectInitial"
+      :busy="connectBusy"
+      :test-state="connectTestState"
+      :message="connectMessage"
+      :has-stored-secret="false"
+      :read-only="readOnly"
+      @test="onConnectTest"
+      @connect="onConnectSubmit"
+      @cancel="closeConnect"
+      @close="closeConnect"
+      @input-change="clearConnectFeedback"
+    />
     <ConfirmDialog
       :open="!!pendingConfirm"
       :title="pendingConfirm?.title ?? ''"
@@ -39,20 +62,28 @@
 //
 // The panel owns one Git session for its lifetime; the container keeps it mounted after the
 // first show so the badge stays live while the tab is hidden (§3.8).
-import { computed, onBeforeUnmount, provide, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, provide, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
 import './gitPanel.css'
 import type { FlowRef } from '@/features/project'
 import GitConflictWindow from './GitConflictWindow.vue'
+import GitConnectWindow from './GitConnectWindow.vue'
 import GitExceptionList from './GitExceptionList.vue'
 import GitHeader from './GitHeader.vue'
 import GitPushErrorWindow from './GitPushErrorWindow.vue'
+import GitStatusErrorCard from './GitStatusErrorCard.vue'
+import GitUnlinkedCard from './GitUnlinkedCard.vue'
 import type { GitSource } from './gitSource'
 import { createGitSession, GIT_PANEL_CONTEXT, type GitConfirmRequest } from './gitSession'
 import type {
   GitBadge,
   GitConfirmSettingsIntent,
+  GitConnectBusy,
+  GitConnectForm,
+  GitConnectInitial,
+  GitConnectMessage,
+  GitConnectTestState,
   GitDiffIntent,
   GitFileLetter,
   GitFileOrigin,
@@ -140,6 +171,55 @@ watch(
   (value, previous) => {
     if (value && previous === false) void session.refresh()
   },
+)
+
+// flowgate.v02.0065 — Git 미연동 / read failure / Git 연결 (0065-R §3.1, §3.2). One branch shows
+// either the read-failure card, the "미연동" card (a status the server answered with Git off) or
+// the 0033 exception area — a failed re-read never leaves an earlier exception card (and its
+// actions) up beside it. "미연동" also hides the header, as v12 does; it stays in the DOM.
+// The connect window's state is the panel's own, not the session's window list:
+// `windows-change` keeps reporting the 0033 windows only.
+const unlinked = computed(() => session.state.statusLoad === 'ready' && session.state.status?.enabled === false)
+const connectOpen = ref(false)
+const connectMinimized = ref(false)
+const connectInitial = shallowRef<GitConnectInitial | null>(null)
+const connectBusy = ref<GitConnectBusy>('idle')
+const connectTestState = shallowRef<GitConnectTestState | null>(null)
+const connectMessage = shallowRef<GitConnectMessage | null>(null)
+
+function clearConnectFeedback(): void {
+  connectTestState.value = null
+  connectMessage.value = null
+}
+
+function openConnect(): void {
+  if (props.readOnly) return
+  clearConnectFeedback()
+  connectMinimized.value = false
+  connectOpen.value = true
+}
+
+function closeConnect(): void {
+  connectOpen.value = false
+  connectMinimized.value = false
+  connectBusy.value = 'idle'
+  clearConnectFeedback()
+}
+
+// The requests behind `연결 테스트` / `연결` (existing test-connection → settings save with Git
+// on → provision → refresh) are not wired yet. Nothing here may report a success the server
+// did not give (0065-R §4), so for now both only clear the previous outcome.
+function onConnectTest(_form: GitConnectForm): void {
+  clearConnectFeedback()
+}
+
+function onConnectSubmit(_form: GitConnectForm): void {
+  clearConnectFeedback()
+}
+
+watch(
+  () => props.projectId,
+  () => closeConnect(),
 )
 
 const badgeKey = (badge: GitBadge | null) => (badge ? `${badge.tone}:${badge.text}` : '')

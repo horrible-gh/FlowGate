@@ -336,3 +336,234 @@
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+/* flowgate.v02.0065 — Git 미연동 card, read-failure card and the Git 연결 modeless (v12
+   `gx-unlinked*` / `gx-connect-btn` / `gxc-*`). The mockup's literal colours are carried over as
+   the theme tokens; the 0033 rules above are left as they are. */
+/* Wraps the header only so "미연동" can hide it (v12 `.git-control-head`); adds no box. */
+.gx-head {
+  display: contents;
+}
+
+.gx-unlinked {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  padding: 11px 5px 8px;
+}
+
+.gx-unlinked-hero {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.gx-unlinked-symbol {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--fg2-status-info-border);
+  border-radius: var(--fg2-control-radius);
+  background: var(--fg2-status-info-bg);
+  color: var(--fg2-status-info-fg);
+}
+
+.gx-unlinked-symbol svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.gx-unlinked-heading {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+  color: var(--fg2-text);
+}
+
+.gx-connect-btn {
+  width: 100%;
+  height: 36px;
+  border: 1px solid var(--fg2-blue);
+  border-radius: var(--fg2-control-radius-sm);
+  background: var(--fg2-blue);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.gx-connect-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.gx-connect-btn:disabled {
+  opacity: var(--fg2-control-disabled-opacity);
+  cursor: default;
+}
+
+.gxc-title,
+.gxc-restore {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg2-text);
+}
+
+.gxc-restore {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.gxc-restore:hover {
+  color: var(--fg2-focus);
+}
+
+.gxc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: var(--fg2-font);
+  color: var(--fg2-text);
+}
+
+.gxc-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--fg2-line);
+  border-radius: var(--fg2-control-radius);
+  background: var(--fg2-bg);
+}
+
+.gxc-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+}
+
+.gxc-row label {
+  color: var(--fg2-muted);
+}
+
+.gxc-row input,
+.gxc-row select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 33px;
+  padding: 0 9px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: 6px;
+  background: var(--fg2-panel);
+  color: var(--fg2-text);
+  font-size: 11px;
+  outline: none;
+}
+
+.gxc-row input:focus,
+.gxc-row select:focus {
+  border-color: var(--fg2-focus);
+}
+
+.gxc-row input::placeholder {
+  color: var(--fg2-muted-2);
+}
+
+.gxc-row input:disabled,
+.gxc-row select:disabled {
+  opacity: var(--fg2-control-disabled-opacity);
+}
+
+.gxc-message {
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--fg2-status-danger-fg);
+}
+
+.gxc-message.is-info {
+  color: var(--fg2-status-info-fg);
+}
+
+.gxc-message.is-empty {
+  display: none;
+}
+
+.gxc-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  padding-top: 10px;
+  border-top: 1px solid var(--fg2-line);
+}
+
+.gxc-footer-test {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-right: auto;
+  min-width: 0;
+}
+
+.gxc-test-status {
+  font-size: 10.5px;
+  color: var(--fg2-muted);
+  white-space: nowrap;
+}
+
+.gxc-test-status.is-success {
+  color: var(--fg2-status-success-fg);
+}
+
+.gxc-test-status.is-error {
+  color: var(--fg2-status-danger-fg);
+}
+
+.gxc-foot-btn {
+  height: 31px;
+  padding: 0 13px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: 6px;
+  background: var(--fg2-control-surface);
+  color: var(--fg2-control-fg);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.gxc-foot-btn.primary {
+  border-color: var(--fg2-blue);
+  background: var(--fg2-blue);
+  color: #fff;
+}
+
+.gxc-foot-btn:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+
+.gxc-foot-btn:disabled {
+  opacity: 0.48;
+  cursor: default;
+  filter: none;
+}
+
+@media (max-width: 525px) {
+  .gxc-footer-test {
+    width: 100%;
+    margin-right: 0;
+  }
+}

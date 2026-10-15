@@ -956,6 +956,35 @@ export default {
       ok: '確認',
       cancel: '取消',
     },
+    // flowgate.v02.0065 — Git 未連携 / 状態取得の失敗 / Git 連携モードレス。
+    unlinked: {
+      heading: 'Git 未連携',
+      connect: 'Git 連携',
+    },
+    status_error: {
+      title: 'Git 状態の取得に失敗',
+      network: 'サーバーと通信できませんでした。',
+      unreadable: 'Git 状態を読み取れません。',
+      retry: '再試行',
+    },
+    connect: {
+      title: 'Git 連携',
+      restore: 'Git 連携ウィンドウを復元',
+      remote: 'リポジトリ URL',
+      remote_placeholder: 'https://github.com/org/repo.git',
+      provider: 'プロバイダー',
+      username: 'ユーザー名',
+      secret: '認証トークン',
+      secret_stored: '保存済みトークンを使用 · 変更時のみ入力',
+      branch: 'Base branch',
+      test: '接続テスト',
+      testing: 'テスト中…',
+      cancel: 'キャンセル',
+      submit: '連携',
+      submitting: '連携中…',
+      required: 'リポジトリ URL と Base branch を入力してください。',
+      invalid_url: 'リポジトリ URL の形式を確認してください。',
+    },
   },
   // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.
   document_window: {

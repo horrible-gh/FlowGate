@@ -966,6 +966,35 @@ export default {
       ok: '확인',
       cancel: '취소',
     },
+    // flowgate.v02.0065 — Git 미연동 / 상태 조회 실패 / Git 연결 모달리스.
+    unlinked: {
+      heading: 'Git 미연동',
+      connect: 'Git 연결',
+    },
+    status_error: {
+      title: 'Git 상태 조회 실패',
+      network: '서버와 통신하지 못했습니다.',
+      unreadable: 'Git 상태를 읽을 수 없습니다.',
+      retry: '다시 시도',
+    },
+    connect: {
+      title: 'Git 연결',
+      restore: 'Git 연결 창 복원',
+      remote: '저장소 URL',
+      remote_placeholder: 'https://github.com/org/repo.git',
+      provider: '제공자',
+      username: '사용자명',
+      secret: '인증 토큰',
+      secret_stored: '저장된 토큰 사용 · 바꿀 때만 입력',
+      branch: 'Base branch',
+      test: '연결 테스트',
+      testing: '테스트 중…',
+      cancel: '취소',
+      submit: '연결',
+      submitting: '연결 중…',
+      required: '저장소 URL과 Base branch를 입력하세요.',
+      invalid_url: '저장소 URL 형식을 확인하세요.',
+    },
   },
   // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.
   document_window: {

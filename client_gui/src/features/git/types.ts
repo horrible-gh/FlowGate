@@ -170,3 +170,37 @@ export interface GitNotice {
   code: string
   params?: Record<string, string | number>
 }
+
+// ── Git connect window (flowgate.v02.0065) ─────────────────────────────────────────────
+
+/** Provider choices of the connect window — the values the existing Git settings use. */
+export type GitConnectProvider = 'generic' | 'github' | 'gitlab' | 'gitea' | 'gitbucket'
+
+/** What the connect window hands up with `test` / `connect`. `secret` is the token typed in
+ *  the window; it only ever leaves the window in these two payloads. */
+export interface GitConnectForm {
+  repoUrl: string
+  provider: GitConnectProvider
+  username: string
+  secret: string
+  baseBranch: string
+}
+
+/** Values the connect window opens with — never the token. */
+export type GitConnectInitial = Omit<GitConnectForm, 'secret'>
+
+export type GitConnectBusy = 'idle' | 'testing' | 'connecting'
+
+/** The line beside `연결 테스트`. `messageKey` is a full i18n key. */
+export interface GitConnectTestState {
+  ok: boolean
+  messageKey: string
+  params?: Record<string, string | number>
+}
+
+/** The window's message area. `messageKey` is a full i18n key. */
+export interface GitConnectMessage {
+  tone: 'error' | 'info'
+  messageKey: string
+  params?: Record<string, string | number>
+}
