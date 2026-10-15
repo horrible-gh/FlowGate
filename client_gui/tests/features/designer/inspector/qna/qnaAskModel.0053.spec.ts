@@ -27,17 +27,17 @@ const lookup = (messages: Record<string, unknown>, key: string) =>
 
 describe('asking availability (flowgate.v02.0053 T#6)', () => {
   it.each([
-    ['open', {}, null],
-    ['ownership conflict', { readOnly: 'conflict' }, 'ask_reason.read_only_conflict'],
-    ['revision view', { readOnly: 'revision' }, 'ask_reason.read_only_revision'],
-    ['disposed', { groupDisposed: true, aiRunning: true, asking: true }, 'ask_reason.disposed'],
-    ['AI running', { aiRunning: true, asking: true, busy: true }, 'ask_reason.ai_running'],
-    ['a question on its way', { asking: true, busy: true }, 'ask_reason.asking'],
-    ['an answer on its way', { busy: true }, 'ask_reason.busy'],
-  ] as const)('%s -> %s', (_label, fields, reason) => {
+    ['open', {}, null, true],
+    ['ownership conflict', { readOnly: 'conflict' }, 'ask_reason.read_only_conflict', false],
+    ['revision view', { readOnly: 'revision' }, null, true],
+    ['disposed', { groupDisposed: true, aiRunning: true, asking: true }, 'ask_reason.disposed', false],
+    ['AI running', { aiRunning: true, asking: true, busy: true }, 'ask_reason.ai_running', true],
+    ['a question on its way', { asking: true, busy: true }, 'ask_reason.asking', true],
+    ['an answer on its way', { busy: true }, 'ask_reason.busy', true],
+  ] as const)('%s -> %s', (_label, fields, reason, shown) => {
     const input = { ...base, ...(fields as Partial<QnaInput>) }
     expect(qnaAskDisabledReason(input)).toBe(reason)
-    expect(qnaAvailability(input).ask).toEqual({ visible: true, enabled: reason === null, reason })
+    expect(qnaAvailability(input).ask).toEqual({ visible: shown, enabled: reason === null, reason })
   })
 
   it('a question on its way does not close answering', () => {
@@ -61,18 +61,18 @@ describe('asking availability (flowgate.v02.0053 T#6)', () => {
 
 describe('AI answer request availability (flowgate.v02.0056 F1)', () => {
   it.each([
-    ['open', {}, null],
-    ['ownership conflict', { readOnly: 'conflict' }, 'ai_reason.read_only_conflict'],
-    ['revision view', { readOnly: 'revision' }, 'ai_reason.read_only_revision'],
-    ['disposed', { groupDisposed: true, aiRunning: true, requesting: true }, 'ai_reason.disposed'],
-    ['AI running', { aiRunning: true, requesting: true, asking: true }, 'ai_reason.ai_running'],
-    ['a request on its way', { requesting: true, asking: true, busy: true }, 'ai_reason.requesting'],
-    ['a question on its way', { asking: true, busy: true }, 'ai_reason.asking'],
-    ['an answer on its way', { busy: true }, 'ai_reason.busy'],
-  ] as const)('%s -> %s', (_label, fields, reason) => {
+    ['open', {}, null, true],
+    ['ownership conflict', { readOnly: 'conflict' }, 'ai_reason.read_only_conflict', false],
+    ['revision view', { readOnly: 'revision' }, null, true],
+    ['disposed', { groupDisposed: true, aiRunning: true, requesting: true }, 'ai_reason.disposed', false],
+    ['AI running', { aiRunning: true, requesting: true, asking: true }, 'ai_reason.ai_running', true],
+    ['a request on its way', { requesting: true, asking: true, busy: true }, 'ai_reason.requesting', true],
+    ['a question on its way', { asking: true, busy: true }, 'ai_reason.asking', true],
+    ['an answer on its way', { busy: true }, 'ai_reason.busy', true],
+  ] as const)('%s -> %s', (_label, fields, reason, shown) => {
     const input = { ...base, ...(fields as Partial<QnaInput>) }
     expect(qnaAiDisabledReason(input)).toBe(reason)
-    expect(qnaAvailability(input).ai_request).toEqual({ visible: true, enabled: reason === null, reason })
+    expect(qnaAvailability(input).ai_request).toEqual({ visible: shown, enabled: reason === null, reason })
   })
 
   it('a request on its way closes neither answering nor asking', () => {
@@ -124,8 +124,8 @@ describe('refusal keys of a question and of an AI answer request', () => {
       'ai_waiting',
       'ai_failed',
       'failure.no_provider',
-      ...['read_only_conflict', 'read_only_revision', 'disposed', 'ai_running', 'asking', 'busy'].map((reason) => `ask_reason.${reason}`),
-      ...['read_only_conflict', 'read_only_revision', 'disposed', 'ai_running', 'requesting', 'asking', 'busy', 'no_provider'].map((reason) => `ai_reason.${reason}`),
+      ...['read_only_conflict', 'disposed', 'ai_running', 'asking', 'busy'].map((reason) => `ask_reason.${reason}`),
+      ...['read_only_conflict', 'disposed', 'ai_running', 'requesting', 'asking', 'busy', 'no_provider'].map((reason) => `ai_reason.${reason}`),
       ...kinds.map((kind) => qnaAskFailureKey(kind)),
       ...kinds.map((kind) => qnaAiFailureKey(kind)),
     ]

@@ -4,8 +4,8 @@
 //
 // - Hold 설정 / Hold 해제 (T#11, R's Hold): every stored Graph card (a `tmp_` card not saved yet has no settings) of a
 //   Flow the Graph engine may run (not one v0.1 owns, nor an ownership conflict: Hold means nothing there). The one that
-//   changes the card's current Hold is offered — both while the card's Hold is not known (no node run tells it and the
-//   Graph read did not answer it). Both wait while the Flow's run is running / paused / stopping, or its status is not confirmed
+//   changes the card's current Hold is offered; an unknown Hold uses the new-card default (OFF) for this menu.
+//   The item waits while the Flow's run is running / paused / stopping, or its status is not confirmed
 //   (WP answer 1: the server refuses a change during a run, 409 graph_run_locked); 설정 is never offered enabled on a done
 //   card (Q8, 409 graph_hold_done_node). A release only changes the setting: nothing runs before the next command.
 // - 되돌리기 (Graph Time Machine, WP answer 3): only on a done card of a Graph-owned Flow, for the card and every card
@@ -71,8 +71,8 @@ export function flowCardMenu(input: FlowCardMenuInput): FlowCardMenuItem[] {
   const busy = input.busy ? 'busy' : null
   if (input.canHold && input.stored && input.ownership !== 'v01' && input.ownership !== 'conflict') {
     const locked = lockReason(input.lock) ?? busy
-    if (input.hold !== true) items.push(item('hold_set', (done ? 'done_node' : null) ?? locked))
-    if (input.hold !== false) items.push(item('hold_release', locked))
+    if (input.hold === true) items.push(item('hold_release', locked))
+    else items.push(item('hold_set', (done ? 'done_node' : null) ?? locked))
   }
   if (input.canTimeMachine && done && input.ownership === 'graph') {
     let reason: FlowCardMenuReason | null = null

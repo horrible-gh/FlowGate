@@ -55,14 +55,7 @@
       <slot name="kind">
         <span class="inspector-header-kind" data-test="designer-inspector-kind">{{ t(kindLabelKey) }}</span>
       </slot>
-      <span class="inspector-header-title" :title="target.title" data-test="designer-inspector-title">{{ target.title }}</span>
-      <span
-        v-if="target.readOnly"
-        class="inspector-header-read-only"
-        :title="t(`gui.designer.inspector.header.read_only_${target.readOnly}`)"
-        data-test="designer-inspector-read-only"
-        :data-reason="target.readOnly"
-      >{{ t('gui.designer.inspector.header.read_only') }}</span>
+      <span v-if="target.title.trim() !== t(kindLabelKey).trim()" class="inspector-header-title" :title="target.title" data-test="designer-inspector-title">{{ target.title }}</span>
       <span class="inspector-header-gap" />
       <span v-if="$slots.meta" class="inspector-header-meta" data-test="designer-inspector-meta"><slot name="meta" /></span>
       <slot name="memo">

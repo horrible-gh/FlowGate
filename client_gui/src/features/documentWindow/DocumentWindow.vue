@@ -27,7 +27,9 @@
       </span>
     </template>
     <template #actions>
+      <span v-if="!editing" ref="copyTarget" class="document-window-copy-action" />
       <IconButton
+        v-else
         :label="t(k('edit'))"
         :title="t(k('edit'))"
         variant="ghost"
@@ -45,7 +47,7 @@
 
       <!-- The body view depends on the document's type (T#4): it is chosen once the title line read answered. -->
       <div v-else-if="!editing && !recordSettled" class="document-window-note" data-test="document-window-loading">{{ t(k('viewer.loading')) }}</div>
-      <DocumentWindowBody v-else-if="!editing" ref="body" :doc-id="win.shown" :type-code="record?.typeCode ?? null" :title="record?.title ?? null" />
+      <DocumentWindowBody v-else-if="!editing" ref="body" :doc-id="win.shown" :type-code="record?.typeCode ?? null" :title="record?.title ?? null" :copy-target="copyTarget" />
 
       <div v-else class="document-window-editor" data-test="document-window-editor">
         <div v-if="editLoading" class="document-window-note" data-test="document-window-editor-loading">{{ t(k('viewer.loading')) }}</div>
@@ -95,6 +97,10 @@
           <Button size="sm" variant="secondary" :disabled="saving" data-test="document-window-close" @click="requestClose">{{ t(k('close')) }}</Button>
         </div>
       </div>
+      <div v-if="!editing" class="document-window-viewer-bar">
+        <Button size="sm" variant="primary" :disabled="gone" data-test="document-window-edit" @click="startEdit">{{ t(k('edit')) }}</Button>
+        <Button size="sm" variant="secondary" data-test="document-window-close" @click="requestClose">{{ t(k('close')) }}</Button>
+      </div>
     </div>
   </ModelessShell>
 
@@ -111,8 +117,9 @@
 
 <script setup lang="ts">
 // flowgate.v02.0053 T#3 — one document's modeless window (ModelessShell, the Q&A window's look): the
-// title line is name · state dot · ✎ · minimize · close, the body is the document's view
-// (DocumentWindowBody → MD Viewer; T#4: a work plan / test scenario / test report its own view). ✎ turns the same window to a text editor of the body (the
+// title line is name · state dot · copy · minimize · close, the body is the document's view
+// (DocumentWindowBody → MD Viewer; T#4: a work plan / test scenario / test report its own view). The viewer
+// footer's edit button turns the same window to a text editor of the body (the
 // frontmatter is kept aside and put back, as the v0.1 editor does); 저장 writes it with the v0.1
 // content save and goes back to the view, 취소 drops it. Unsaved text is asked about once — on 취소,
 // on close and on Esc. flowgate.v02.0056 F1: the editor bar also has [닫기] (0056 CH §5), the window's
@@ -166,6 +173,7 @@ const k = (key: string) => `gui.document_window.${key}`
 
 const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 const editorRef = ref<HTMLTextAreaElement | null>(null)
+const copyTarget = ref<HTMLElement | null>(null)
 const body = ref<InstanceType<typeof DocumentWindowBody> | null>(null)
 
 // --- The document (title line) ---------------------------------------------------------------------
@@ -273,6 +281,8 @@ async function save(): Promise<void> {
     await documentContentSave(docId, joinDocumentSource({ frontmatter: frontmatter.value, body: draft.value }))
     saving.value = false
     toView()
+    // The content save sends no server event; notify the Inspector using the document actually saved.
+    window.dispatchEvent(new CustomEvent('fg:document_content_changed', { detail: { doc_id: docId } }))
     void readRecord()
   } catch (error) {
     saving.value = false
@@ -381,6 +391,11 @@ defineExpose({ dirty })
   max-width: 100%;
 }
 
+.document-window-copy-action {
+  display: inline-flex;
+  align-items: center;
+}
+
 .document-window-title {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -448,7 +463,6 @@ defineExpose({ dirty })
   margin: 0;
   padding: 14px 18px;
   border: none;
-  border-bottom: 1px solid var(--fg2-line);
   outline: none;
   resize: none;
   background: var(--fg2-bg);
@@ -463,13 +477,19 @@ defineExpose({ dirty })
   box-shadow: inset 0 0 0 1px var(--fg2-focus);
 }
 
-.document-window-editor-bar {
+.document-window-editor-bar,
+.document-window-viewer-bar {
   display: flex;
   flex: none;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
   padding: 10px 12px;
+  border-top: 1px solid var(--fg2-line);
+}
+
+.document-window-viewer-bar {
+  margin-top: auto;
 }
 
 .document-window-editor-bar .document-window-cancel {

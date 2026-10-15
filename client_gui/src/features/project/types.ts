@@ -368,6 +368,8 @@ export interface FlowCanvasCardDocument {
 
 /** P0008 §2.6 `node_run`: what the Inspector shows of a Graph node's run (status kept as the server sends it). */
 export interface FlowCanvasNodeRun {
+  /** Existing node_run.dispatch.error_code; no result is still an open card. */
+  dispatchErrorCode?: string | null
   status: string | null
   openedAt: string | null
   finishedAt: string | null
@@ -386,6 +388,8 @@ export interface FlowCanvasNodeRun {
   integrationReason?: string | null
   /** flowgate.v02.0061 T#14: the card is held (T#11 Hold); absent when not sent. */
   hold?: boolean
+  /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
+  question?: boolean
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
   runningExecutionCount?: number
   requestedExecutionCount?: number
@@ -613,6 +617,8 @@ export interface FlowRunNode {
   integrationStatus?: string | null
   /** flowgate.v02.0061 T#14: the card is held (T#11); absent when not sent. */
   hold?: boolean
+  /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
+  question?: boolean
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
   runningExecutionCount?: number
   requestedExecutionCount?: number

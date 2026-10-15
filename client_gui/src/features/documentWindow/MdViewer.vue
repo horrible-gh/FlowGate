@@ -6,17 +6,20 @@
       <IconButton :label="t(k('retry'))" :title="t(k('retry'))" variant="secondary" size="sm" data-test="md-viewer-retry" @click="loadContent()">↻</IconButton>
     </div>
     <template v-else>
-      <div v-if="hasBody" class="md-viewer__toolbar">
-        <IconButton
-          :label="t(k('copy_md'))"
-          :title="copyMdState === 'failed' ? t(k('copy_failed')) : t(k('copy_md'))"
-          variant="ghost"
-          size="sm"
-          :class="copyStateClass(copyMdState)"
-          data-test="md-viewer-copy"
-          @click="copyMarkdown"
-        >{{ copyGlyph(copyMdState, '⧉') }}</IconButton>
-      </div>
+      <Teleport :to="copyTarget ?? 'body'" :disabled="!copyTarget">
+        <span v-if="hasBody" class="md-viewer__toolbar" :class="{ 'md-viewer__toolbar--titlebar': copyTarget }">
+          <IconButton
+            :label="t(k('copy_md'))"
+            :title="copyMdState === 'failed' ? t(k('copy_failed')) : t(k('copy_md'))"
+            variant="ghost"
+            size="sm"
+            :class="copyStateClass(copyMdState)"
+            data-test="md-viewer-copy"
+            @mousedown.stop
+            @click="copyMarkdown"
+          >{{ copyGlyph(copyMdState, '⧉') }}</IconButton>
+        </span>
+      </Teleport>
       <div class="md-viewer__content" data-test="md-viewer-content" v-html="renderedContent" @click.capture="handleContentClick" />
     </template>
   </div>
@@ -53,6 +56,8 @@ const props = defineProps<{
   docId: string | null
   /** Shown instead of reading the document (a preview of text that is not saved). */
   contentOverride?: string | null
+  /** Relocate the existing copy action without changing its content or feedback. */
+  copyTarget?: HTMLElement | null
 }>()
 
 const { t, locale } = useI18n()
@@ -346,9 +351,7 @@ defineExpose({
   margin-bottom: 0.5em;
 }
 
-.md-viewer__content :deep(h1:first-child),
-.md-viewer__content :deep(h2:first-child),
-.md-viewer__content :deep(h3:first-child) {
+.md-viewer__content :deep(> :first-child) {
   margin-top: 0;
 }
 
@@ -460,6 +463,10 @@ defineExpose({
   justify-content: flex-end;
   gap: 4px;
   margin-bottom: 4px;
+}
+
+.md-viewer__toolbar--titlebar {
+  margin-bottom: 0;
 }
 
 .md-copy--done {

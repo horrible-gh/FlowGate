@@ -138,27 +138,29 @@ describe('answering availability (flowgate.v02.0048 T#7)', () => {
   })
 
   it.each([
-    // D#1 §8.5 read-only rows
-    ['v01 / draft (none)', { readOnly: null }, true, null],
-    ['ownership conflict', { readOnly: 'conflict' }, false, 'reason.read_only_conflict'],
-    ['graph revision view', { readOnly: 'revision' }, false, 'reason.read_only_revision'],
-    ['conflict + revision-like facts', { readOnly: 'conflict', groupDisposed: true, aiRunning: true, busy: true }, false, 'reason.read_only_conflict'],
-    ['revision + disposed + AI running', { readOnly: 'revision', groupDisposed: true, aiRunning: true }, false, 'reason.read_only_revision'],
-    ['disposed', { groupDisposed: true }, false, 'reason.disposed'],
-    ['disposed + AI running + busy', { groupDisposed: true, aiRunning: true, busy: true }, false, 'reason.disposed'],
-    ['AI running', { aiRunning: true }, false, 'reason.ai_running'],
-    ['AI running + busy', { aiRunning: true, busy: true }, false, 'reason.ai_running'],
-    ['answer in flight', { busy: true }, false, 'reason.busy'],
-  ] as const)('%s -> enabled %s, %s', (_label, fields, enabled, reason) => {
+    // D#1 §8.5 read-only rows. flowgate.v02.0063: a revision view answers as the draft view does; a Flow whose
+    // answers stay closed (conflict, disposed) shows no answer, question or AI line.
+    ['v01 / draft (none)', { readOnly: null }, true, null, true],
+    ['ownership conflict', { readOnly: 'conflict' }, false, 'reason.read_only_conflict', false],
+    ['graph revision view', { readOnly: 'revision' }, true, null, true],
+    ['conflict + revision-like facts', { readOnly: 'conflict', groupDisposed: true, aiRunning: true, busy: true }, false, 'reason.read_only_conflict', false],
+    ['revision + disposed + AI running', { readOnly: 'revision', groupDisposed: true, aiRunning: true }, false, 'reason.disposed', false],
+    ['revision + AI running', { readOnly: 'revision', aiRunning: true }, false, 'reason.ai_running', true],
+    ['disposed', { groupDisposed: true }, false, 'reason.disposed', false],
+    ['disposed + AI running + busy', { groupDisposed: true, aiRunning: true, busy: true }, false, 'reason.disposed', false],
+    ['AI running', { aiRunning: true }, false, 'reason.ai_running', true],
+    ['AI running + busy', { aiRunning: true, busy: true }, false, 'reason.ai_running', true],
+    ['answer in flight', { busy: true }, false, 'reason.busy', true],
+  ] as const)('%s -> enabled %s, %s, shown %s', (_label, fields, enabled, reason, shown) => {
     const input = { ...base, ...(fields as Partial<QnaInput>) }
     expect(qnaDisabledReason(input)).toBe(reason)
     expect(qnaAvailability(input)).toEqual({
       read: { visible: true, enabled: true, reason: null },
-      answer: { visible: true, enabled, reason },
+      answer: { visible: shown, enabled, reason },
       // flowgate.v02.0053 T#6: asking closes on the same reasons (no question is on its way here).
-      ask: { visible: true, enabled, reason: reason === null ? null : reason.replace('reason.', 'ask_reason.') },
+      ask: { visible: shown, enabled, reason: reason === null ? null : reason.replace('reason.', 'ask_reason.') },
       // flowgate.v02.0056 F1: asking an AI closes on the same reasons (no request is on its way here).
-      ai_request: { visible: true, enabled, reason: reason === null ? null : reason.replace('reason.', 'ai_reason.') },
+      ai_request: { visible: shown, enabled, reason: reason === null ? null : reason.replace('reason.', 'ai_reason.') },
     })
   })
 
@@ -195,7 +197,7 @@ describe('keys and wording (flowgate.v02.0048 T#7)', () => {
 
   it.each(['ko', 'en', 'ja'] as const)('every key the rules produce has %s wording', (locale) => {
     const keys = [
-      ...['read_only_conflict', 'read_only_revision', 'disposed', 'ai_running', 'busy'].map((reason) => `reason.${reason}`),
+      ...['read_only_conflict', 'disposed', 'ai_running', 'busy'].map((reason) => `reason.${reason}`),
       ...kinds.map(qnaFailureKey),
       ...kinds.map(qnaErrorKey),
       // 0052 T#1: the tab shows two chips for the three model states (waiting / open -> unanswered).

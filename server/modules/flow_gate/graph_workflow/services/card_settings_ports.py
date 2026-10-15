@@ -6,6 +6,7 @@ binds a node's result and when it tells whether a node awaits approval, and ``mo
 never imports ``flowgate``, so this module offers
 named ports the Graph calls and the composition root (``startup.py``) registers the handlers.
 
+    uses_ai          whether the node uses AI (explicit assignment, or an unassigned runnable Designer card)
     run_settings     node dispatch, inside its Flow guard: what the node's AI start takes from its card
     result_type      result binding / reconciliation, inside its Flow guard: the document type the
                      node's result is (instruction omitted: the card's report), or None (the node's own).
@@ -42,12 +43,13 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable, Optional
 
+USES_AI = "uses_ai"
 RUN_SETTINGS = "run_settings"
 RESULT_TYPE = "result_type"
 AI_WORKING = "ai_working"
 INSTRUCTION_DOCUMENT = "instruction_document"
 APPROVE_INSTRUCTION = "approve_instruction"
-PORT_NAMES = (RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION)
+PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -75,6 +77,13 @@ def registered(name: str) -> bool:
 def _handler(name: str) -> Optional[Callable[..., Any]]:
     with _lock:
         return _handlers.get(name)
+
+
+def uses_ai(flow_id: str, node: dict) -> bool:
+    """One assignment judgement for dispatch, instruction/result binding and run-end processing.
+    Without the v0.2 handler only an explicit AI assignment runs, as before."""
+    handler = _handler(USES_AI)
+    return bool(handler(flow_id, node)) if handler else node.get("assignee_kind") == "ai"
 
 
 def run_settings(flow_id: str, node: dict) -> dict:

@@ -141,33 +141,6 @@
         <svg v-else class="is-run" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 4l8 6-8 6zM10 4l8 6-8 6z" /></svg>
         <span>{{ t(`gui.designer.top.tools.${run.label}`) }}</span>
       </button>
-      <span
-        v-if="band"
-        class="designer-run-dot"
-        :class="`is-${band.phase}`"
-        role="img"
-        :aria-label="t(`gui.designer.top.run_status.${band.phase}`)"
-        :title="t(`gui.designer.top.run_status.${band.phase}`)"
-        data-test="designer-run-status"
-        :data-status="band.phase"
-      >
-        <svg v-if="band.phase === 'paused'" viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.5v7M8.5 2.5v7" /></svg>
-        <svg v-else-if="band.phase === 'idle' && band.idleReason === 'completed'" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.3l2.4 2.4 4.6-5" /></svg>
-      </span>
-      <span
-        v-if="band"
-        class="designer-run-band"
-        :class="{ 'is-attention': attention }"
-        :title="bandTitle"
-        data-test="designer-run-band"
-        :data-phase="band.phase"
-        :data-command="band.command ?? ''"
-        :data-idle-reason="band.idleReason ?? ''"
-        :data-running="band.running"
-        :data-requested="band.requested"
-        :data-limit="band.limit ?? ''"
-        :data-pending="band.pendingCount"
-      >{{ bandText }}</span>
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
@@ -279,7 +252,7 @@ function chooseZoom(event: Event) {
   })
 }
 
-const { t, te } = useI18n()
+const { t } = useI18n()
 
 // flowgate.v02.0061 T#14 (R §실행 제어): the two run buttons of each run phase, in place; 중지 중 is one, off.
 type RunIcon = 'next' | 'all' | 'pause' | 'stop'
@@ -309,38 +282,6 @@ const RUN_BUTTONS: Readonly<Record<DesignerRunPhase, readonly RunButton[]>> = {
 const runButtons = computed(() =>
   RUN_BUTTONS[props.runPhase].map((run) => ({ ...run, enabled: isMenuCommandEnabled(run.command, props.runPhase, props.targets) })),
 )
-
-/** The run band, shown with an open Flow that has a run. */
-const band = computed(() => (!props.disabled ? props.runBand : null))
-
-/** Idle reasons a person acts on: the band stands out. */
-const ATTENTION_REASONS: readonly string[] = ['waiting_approval', 'blocked_rejected', 'error', 'merge_conflict', 'hold']
-const attention = computed(() => !!band.value?.idleReason && ATTENTION_REASONS.includes(band.value.idleReason))
-
-/** A server open key in words when this screen has them, else the key itself. */
-const wordOf = (group: string, key: string) => (te(`gui.designer.top.${group}.${key}`) ? t(`gui.designer.top.${group}.${key}`) : key)
-
-const bandText = computed(() => {
-  const run = band.value
-  if (!run) return ''
-  const parts = [t(`gui.designer.top.run_status.${run.phase}`)]
-  if (run.command) parts.push(wordOf('run_command', run.command))
-  if (run.idleReason) parts.push(wordOf('run_idle_reasons', run.idleReason))
-  if (run.phase !== 'idle' || run.running > 0 || run.requested > 0) {
-    parts.push(t('gui.designer.top.run_executions', { running: run.running, limit: run.limit ?? '-' }))
-    if (run.requested > 0) parts.push(t('gui.designer.top.run_requested', { n: run.requested }))
-  }
-  if (run.pendingCount > 0) parts.push(t('gui.designer.top.run_waiting_cards', { n: run.pendingCount }))
-  return parts.join(' · ')
-})
-
-const bandTitle = computed(() => {
-  const run = band.value
-  if (!run) return undefined
-  return run.pendingNodeKeys.length
-    ? `${bandText.value}\n${t('gui.designer.top.run_pending_keys', { keys: run.pendingNodeKeys.join(', ') })}`
-    : bandText.value
-})
 
 // flowgate.v02.0059 T#2: 정렬 / 배치 ▾ — the Edit menu's 정렬 / 배치 commands, then 자동 배치. The drop-down
 // is placed under its button in the viewport (fixed), so the Toolbar's own scrolling never clips it.
@@ -558,61 +499,6 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
 
 .designer-toolbar.is-unavailable .designer-tool-density button {
   cursor: default;
-}
-
-.designer-run-dot {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 14px;
-  height: 14px;
-  margin: 0 2px;
-  border-radius: 50%;
-}
-
-.designer-run-dot svg {
-  width: 10px;
-  height: 10px;
-  fill: none;
-  stroke: #0d1b2e;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.designer-run-dot.is-running {
-  width: 10px;
-  height: 10px;
-  background: #2bddad;
-  box-shadow: 0 0 0 3px rgba(43, 221, 173, 0.22);
-}
-
-/* flowgate.v02.0061 T#14: paused amber (0053's stopped), stopping red, idle blue (0053's completed). */
-.designer-run-dot.is-paused {
-  background: #f5a524;
-}
-
-.designer-run-dot.is-stopping {
-  background: var(--fg2-status-danger-fg);
-}
-
-.designer-run-dot.is-idle {
-  background: #58a6ff;
-}
-
-/* flowgate.v02.0061 T#14: the run band (0056 F2-1's waiting cards line, now the run's whole status). */
-.designer-run-band {
-  flex: none;
-  max-width: 300px;
-  overflow: hidden;
-  color: #aebfd2;
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.designer-run-band.is-attention {
-  color: var(--fg2-status-warning-fg);
 }
 
 /* flowgate.v02.0059 0017-T: the one zoom control — the current zoom in a box, presets on opening it. */

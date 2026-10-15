@@ -87,6 +87,8 @@ export interface FlowRunNodeInfo {
   readonly status: string
   readonly integrationStatus?: string | null
   readonly hold?: boolean
+  /** flowgate.v02.0063: the card's document holds a question still unanswered. */
+  readonly question?: boolean
   readonly runningExecutionCount?: number
   readonly requestedExecutionCount?: number
   readonly attemptId?: string | null

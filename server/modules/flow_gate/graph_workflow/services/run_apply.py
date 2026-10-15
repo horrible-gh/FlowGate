@@ -45,6 +45,7 @@ class RunContext:
     actor: Optional[str]
     jobs: list[Callable[[], None]] = field(default_factory=list)
     _docs: Optional[dict] = None
+    command_pending: bool = False  # an explicit command reconciles before changing the run status
 
     @property
     def run_id(self) -> str:
@@ -161,6 +162,7 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
     Flow's branch: until then the decision is held back whole (``defer_done``: the node stays in review, its
     integration is requested after the commit) and only whether the run goes on is judged.
     """
+    continuing = settle and not ctx.command_pending and graph_execution_hooks.call("resume_approval", ctx, d)
     if graph_execution_hooks.call("defer_done", ctx, d):
         if settle:
             settle_run(ctx)
@@ -190,7 +192,9 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
         dispatch = node_dispatch.dispatch(ctx, key)
         _assert_one(run_store.open_node_run(ctx.run_id, key, dispatch), f"open {key}")
         emit_node_state(ctx, key, "pending", "open", "opened", None, dispatch)
-    if settle:
+    if continuing:
+        graph_execution_hooks.call("continue_approval", ctx)
+    elif settle:
         settle_run(ctx)
 
 

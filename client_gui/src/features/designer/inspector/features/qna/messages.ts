@@ -52,14 +52,12 @@ export default {
     },
     reason: {
       read_only_conflict: 'Flow 소유가 충돌해 읽기 전용입니다.',
-      read_only_revision: '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 답변합니다.',
       disposed: '폐기된 그룹이라 답변할 수 없습니다.',
       ai_running: 'AI 실행 중이라 답변할 수 없습니다.',
       busy: '답변을 보내는 중입니다.',
     },
     ask_reason: {
       read_only_conflict: 'Flow 소유가 충돌해 읽기 전용입니다.',
-      read_only_revision: '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 질문합니다.',
       disposed: '폐기된 그룹이라 질문할 수 없습니다.',
       ai_running: 'AI 실행 중이라 질문할 수 없습니다.',
       asking: '질문을 보내는 중입니다.',
@@ -67,7 +65,6 @@ export default {
     },
     ai_reason: {
       read_only_conflict: 'Flow 소유가 충돌해 읽기 전용입니다.',
-      read_only_revision: '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 요청합니다.',
       disposed: '폐기된 그룹이라 AI 답변을 요청할 수 없습니다.',
       ai_running: 'AI 실행 중이라 AI 답변을 요청할 수 없습니다.',
       requesting: 'AI 답변을 요청하는 중입니다.',
@@ -148,14 +145,12 @@ export default {
     },
     reason: {
       read_only_conflict: 'Read only: the Flow ownership is in conflict.',
-      read_only_revision: 'Read only: this is a confirmed Graph revision view. Answer in the draft view.',
       disposed: 'The group was disposed; answering is not possible.',
       ai_running: 'An AI run is in progress; answering is not possible.',
       busy: 'Sending the answer.',
     },
     ask_reason: {
       read_only_conflict: 'Read only: the Flow ownership is in conflict.',
-      read_only_revision: 'Read only: this is a confirmed Graph revision view. Ask in the draft view.',
       disposed: 'The group was disposed; asking is not possible.',
       ai_running: 'An AI run is in progress; asking is not possible.',
       asking: 'Sending the question.',
@@ -163,7 +158,6 @@ export default {
     },
     ai_reason: {
       read_only_conflict: 'Read only: the Flow ownership is in conflict.',
-      read_only_revision: 'Read only: this is a confirmed Graph revision view. Request in the draft view.',
       disposed: 'The group was disposed; an AI answer cannot be requested.',
       ai_running: 'An AI run is in progress; an AI answer cannot be requested.',
       requesting: 'Requesting the AI answer.',
@@ -244,14 +238,12 @@ export default {
     },
     reason: {
       read_only_conflict: 'フローの所有が競合しているため読み取り専用です。',
-      read_only_revision: '確定した Graph revision の表示のため読み取り専用です。draft 表示で回答します。',
       disposed: '破棄されたグループのため回答できません。',
       ai_running: 'AI 実行中のため回答できません。',
       busy: '回答を送信しています。',
     },
     ask_reason: {
       read_only_conflict: 'フローの所有が競合しているため読み取り専用です。',
-      read_only_revision: '確定した Graph revision の表示のため読み取り専用です。draft 表示で質問します。',
       disposed: '破棄されたグループのため質問できません。',
       ai_running: 'AI 実行中のため質問できません。',
       asking: '質問を送信しています。',
@@ -259,7 +251,6 @@ export default {
     },
     ai_reason: {
       read_only_conflict: 'フローの所有が競合しているため読み取り専用です。',
-      read_only_revision: '確定した Graph revision の表示のため読み取り専用です。draft 表示で依頼します。',
       disposed: '破棄されたグループのため AI 回答を依頼できません。',
       ai_running: 'AI 実行中のため AI 回答を依頼できません。',
       requesting: 'AI 回答を依頼しています。',

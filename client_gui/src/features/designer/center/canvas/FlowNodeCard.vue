@@ -13,15 +13,16 @@
        four start strips run along the card's top, right, bottom and left edges (one source handle
        each); the Edge itself is drawn between the facing sides (FlowEdgePath / edgeGeometry.ts).
        A card the last validation reported names the problem on hover (`data.issueText`).
-       flowgate.v02.0056 F2-1: a Graph card with a run shows its card state in the chip (cardStateView: 지시서
-       작성 중 · 결과 작성 중 · 작업 중 · 승인 대기 · 승인됨 …) instead of the Canvas state, and a card waiting for
+       A Graph card with a run shows a state icon and tooltip (working / awaiting approval / approved);
+       pending has no mark. Other states keep their labels. A card waiting for
        its approval offers [승인] under its title (`data.approvable`; an `approve` event, never the selection or a
        drag). A done card stays 승인됨 while the run is stopped: the waiting successors are the run band's.
        flowgate.v02.0061 T#14: under the title, the card attempt's result integration when it needs a look (병합 대기 ·
-       병합 중 · 병합 충돌 · 병합 실패) and its Hold. 병합 충돌 is a button: it opens the Git tool panel, where the Flow's
+       병합 중 · 병합 충돌 · 병합 실패) only. 병합 충돌 is a button: it opens the Git tool panel, where the Flow's
        conflict session is resolved (a `conflict` event, never the selection or a drag).
        flowgate.v02.0061 T#15: a held card shows the Hold mark (an open palm in a round frame) at the end of its head row,
-       next to the Hold chip and the run band's idle reason, with its tooltip / accessible name. -->
+       with its tooltip / accessible name. While held, the state text and duplicate Hold chip are hidden.
+       flowgate.v02.0063: a card whose document holds a question still unanswered shows the [Q] mark in its head row. -->
   <div
     class="flow-node-card"
     :class="{ 'is-selected': data.selected, 'is-unknown': kind.key === 'unknown', 'has-issue': data.issue === true }"
@@ -48,19 +49,34 @@
       </span>
       <span class="flow-node-kind" data-test="designer-canvas-node-kind">{{ t(kindLabelKey) }}</span>
       <span
-        v-if="data.cardState"
+        v-if="!data.hold && data.cardState && data.cardState.key !== 'pending'"
         class="flow-node-state is-card"
-        :class="`flow-node-state--${data.cardState.tone}`"
+        :class="[`flow-node-state--${data.cardState.tone}`, { 'is-icon': cardStateIcon }]"
+        :role="cardStateIcon ? 'img' : undefined"
+        :aria-label="cardStateIcon ? t(data.cardState.labelKey) : undefined"
+        :title="t(data.cardState.labelKey)"
         data-test="designer-canvas-node-card-state"
         :data-state="data.cardState.key"
         :data-phase="data.cardState.phase"
-      >{{ t(data.cardState.labelKey) }}</span>
+      >
+        <svg v-if="cardStateIcon" viewBox="0 0 24 24" :class="{ 'is-spinning': data.cardState.phase === 'working' }" aria-hidden="true">
+          <path :d="cardStateIcon" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <template v-else>{{ t(data.cardState.labelKey) }}</template>
+      </span>
       <span
-        v-else-if="state"
+        v-else-if="!data.hold && !data.cardState && state"
         class="flow-node-state"
         :class="`flow-node-state--${state.tone}`"
         data-test="designer-canvas-node-state"
       >{{ t(`gui.designer.center.node_states.${state.key}`) }}</span>
+      <span
+        v-if="data.question"
+        class="flow-node-question"
+        role="img"
+        aria-label="Q"
+        data-test="designer-canvas-node-question-icon"
+      >Q</span>
       <span
         v-if="data.hold"
         class="flow-node-hold"
@@ -75,7 +91,7 @@
       </span>
     </div>
     <div class="flow-node-body">
-      <p class="flow-node-title" :title="data.title" data-test="designer-canvas-node-title">{{ data.title }}</p>
+      <p v-if="data.title.trim() !== t(kindLabelKey).trim()" class="flow-node-title" :title="data.title" data-test="designer-canvas-node-title">{{ data.title }}</p>
       <button
         v-if="data.approvable"
         type="button"
@@ -88,7 +104,7 @@
         @mousedown.stop
         @click.stop="emit('approve', id)"
       >{{ t('gui.designer.center.approval.approve') }}</button>
-      <div v-if="data.integration || data.hold" class="flow-node-flags" data-test="designer-canvas-node-flags">
+      <div v-if="data.integration" class="flow-node-flags" data-test="designer-canvas-node-flags">
         <button
           v-if="data.integration === 'conflict'"
           type="button"
@@ -106,7 +122,6 @@
           data-test="designer-canvas-node-integration"
           :data-integration="data.integration"
         >{{ t(`gui.designer.center.integration.${data.integration}`) }}</span>
-        <span v-if="data.hold" class="flow-node-flag is-hold" data-test="designer-canvas-node-hold">{{ t('gui.designer.center.hold') }}</span>
       </div>
     </div>
     <Handle
@@ -153,6 +168,20 @@ const { t } = useI18n()
 const kind = computed(() => flowNodeKindDisplay(props.data.kind, props.data.docType))
 const kindLabelKey = computed(() => flowNodeKindLabelKey(props.data.kind, props.data.docType))
 const state = computed(() => flowNodeStateDisplay(props.data.state))
+
+// Presentation only: retain the shared card state and approval rules.
+const cardStateIcon = computed(() => {
+  switch (props.data.cardState?.phase) {
+    case 'approved':
+      return 'M5 12l4 4L19 6'
+    case 'awaiting':
+      return 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 7v5l3 2'
+    case 'working':
+      return 'M21 12a9 9 0 1 1-9-9'
+    default:
+      return null
+  }
+})
 </script>
 
 <style scoped>
@@ -240,6 +269,36 @@ const state = computed(() => flowNodeStateDisplay(props.data.state))
   white-space: nowrap;
 }
 
+.flow-node-state.is-icon {
+  position: relative;
+  z-index: 4;
+  display: grid;
+  flex: 0 0 18px;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding-left: 0;
+}
+
+.flow-node-state.is-icon svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.flow-node-state.is-icon.flow-node-state--success {
+  color: #22c98c;
+  opacity: 1;
+}
+
+.flow-node-state .is-spinning {
+  animation: flow-node-state-spin 1s linear infinite;
+}
+
+@keyframes flow-node-state-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* flowgate.v02.0061 T#15: the Hold mark — the warning tokens, at the end of the head row (after the state, if any). */
 .flow-node-hold {
   display: grid;
@@ -253,14 +312,31 @@ const state = computed(() => flowNodeStateDisplay(props.data.state))
   color: var(--fg2-status-warning-fg);
 }
 
-.flow-node-state + .flow-node-hold {
-  margin-left: 4px;
-}
-
 .flow-node-hold svg {
   display: block;
   width: 16px;
   height: 16px;
+}
+
+/* flowgate.v02.0063: the [Q] mark — the info tokens, before the Hold mark (after the state, if any). */
+.flow-node-question {
+  display: grid;
+  flex: 0 0 18px;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  border-radius: 4px;
+  background: var(--fg2-status-info-bg);
+  color: var(--fg2-status-info-fg);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.flow-node-state + .flow-node-question,
+.flow-node-question + .flow-node-hold {
+  margin-left: 4px;
 }
 
 .flow-node-body {
@@ -283,11 +359,6 @@ const state = computed(() => flowNodeStateDisplay(props.data.state))
 .flow-node-state.is-card.flow-node-state--warning {
   color: var(--fg2-status-warning-fg);
   font-weight: 700;
-}
-
-.flow-node-state.is-card.flow-node-state--success {
-  color: var(--fg2-status-success-fg);
-  opacity: 0.8;
 }
 
 .flow-node-state.is-card.flow-node-state--danger {
@@ -333,7 +404,7 @@ const state = computed(() => flowNodeStateDisplay(props.data.state))
   white-space: nowrap;
 }
 
-/* flowgate.v02.0061 T#14: the integration / Hold line under the title (status tokens; above the strips). */
+/* flowgate.v02.0061 T#14: the integration line under the title (status tokens; above the strips). */
 .flow-node-flags {
   position: relative;
   z-index: 4;
@@ -372,12 +443,6 @@ const state = computed(() => flowNodeStateDisplay(props.data.state))
 .flow-node-flag.is-conflict:focus-visible {
   outline: 2px solid var(--fg2-focus);
   outline-offset: 1px;
-}
-
-.flow-node-flag.is-hold {
-  border-color: var(--fg2-status-warning-border);
-  background: var(--fg2-status-warning-bg);
-  color: var(--fg2-status-warning-fg);
 }
 
 /* Edge anchors only: invisible and inert. */

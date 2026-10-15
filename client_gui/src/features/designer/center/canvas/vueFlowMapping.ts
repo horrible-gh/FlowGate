@@ -77,6 +77,8 @@ export interface FlowGateNodeData {
   integration?: string
   /** flowgate.v02.0061 T#14: the card is held (T#11 Hold). */
   hold?: boolean
+  /** flowgate.v02.0063: the card's document holds a question still unanswered (the [Q] mark). */
+  question?: boolean
 }
 
 /** flowgate.v02.0061 T#14: integration states the card chip names (an integrated / absent one says nothing). */
@@ -155,6 +157,8 @@ export function toVueFlowNodes(
       ? options.holds.get(node.id)
       : runNode && typeof runNode.hold === 'boolean' ? runNode.hold : node.nodeRun?.hold
     if (hold === true) data.hold = true
+    const question = runNode && typeof runNode.question === 'boolean' ? runNode.question : node.nodeRun?.question
+    if (question === true) data.question = true
     const mapped: FlowGateVueFlowNode = {
       id: node.id,
       type: FLOWGATE_NODE_TYPE,

@@ -64,9 +64,11 @@ def _waits_on_person(ctx, row: dict) -> bool:
 
 
 def _failed(ctx, row: dict) -> bool:
-    """An open node (not a gate) whose hand-out or AI start failed, or that nothing was handed out for."""
+    """An open non-gate with a failed dispatch or a finished writer missing its result."""
+    from flowgate.graph_run.execution import write_failure
     return row["status"] == "open" and _node_type(ctx, row["node_key"]) != engine.GATE_NODE_TYPE and (
-        row.get("dispatch_token_issued") is None or bool(row.get("dispatch_error_code")))
+        row.get("dispatch_token_issued") is None or bool(row.get("dispatch_error_code"))
+        or bool(write_failure(row)))
 
 
 def working(ctx, rows: list[dict]) -> bool:

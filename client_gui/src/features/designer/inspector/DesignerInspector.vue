@@ -87,7 +87,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, provide, ref, toRaw, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import EmptyState from '../../../components/ui/EmptyState.vue'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
@@ -157,6 +157,19 @@ useInspectorEvents(() => (props.unselected ? null : target.value), {
   resync: false,
   changed: () => emit('host', { kind: 'refresh-flow' }),
 })
+
+// A local document save sends no server event. Read the selected card's stored lines again,
+// including an instruction whose document differs from the Node's bound result document.
+function onDocumentContentChanged(event: Event): void {
+  const docId = (event as CustomEvent<{ doc_id?: string | null }>).detail?.doc_id
+  const current = props.unselected ? null : target.value
+  if (!docId || !current) return
+  if (current.docId !== docId && !current.cardDocuments.some((line) => line.docId === docId)) return
+  emit('host', { kind: 'refresh-flow', flowId: current.flowId })
+}
+
+onMounted(() => window.addEventListener('fg:document_content_changed', onDocumentContentChanged))
+onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', onDocumentContentChanged))
 
 const contributions = computed(() => contributionsFor(registry, target.value))
 const headerMetas = computed(() => contributions.value.filter((entry) => entry.headerMeta))

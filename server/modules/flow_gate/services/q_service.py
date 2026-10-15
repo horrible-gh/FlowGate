@@ -732,6 +732,13 @@ def register_answer(
         )
         if trace is not None:
             result["question_resume_trace"] = trace
+    # flowgate.v02.0063: a Graph card whose AI asked this goes on after its last answer (no handler: nothing).
+    from modules.flow_gate.services import ai_run_end_hooks
+    ai_run_end_hooks.question_answered({
+        "group_id": (db_documents.get_by_id(doc_id) or {}).get("group_id"), "doc_id": doc_id, "item_id": item_id,
+        "asker_kind": item.get("asker_kind"), "asker_ai_run_id": item.get("asker_ai_run_id"),
+        "author_kind": author_kind,
+    })
     return result
 
 

@@ -559,12 +559,16 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   /**
    * flowgate.v02.0061 TR0031 rev1: the run the Canvas read shows, with what the run last read adds when it is the same
-   * run (its band and node runs; a newer status is the Canvas's). A Canvas showing no run means no locked run.
+   * run (its band and node runs; event sequence decides which status is newer). A Canvas showing no run means no locked run.
    */
   function canvasRunInfo(shown: FlowGraphRun | null, last: FlowRunInfo | null): FlowRunInfo | null {
     if (shown === null) return last && !isRunLocked(last) ? last : null
-    if (last?.runId === shown.runId) return last.status === shown.status ? last : { ...last, status: shown.status }
-    return { runId: shown.runId, status: shown.status, openNodeKeys: [] }
+    if (last?.runId === shown.runId) {
+      // A background Canvas read can predate a run command's response. Keep the newer server state.
+      if (last.lastEventSeq !== undefined && shown.lastEventSeq !== undefined && last.lastEventSeq >= shown.lastEventSeq) return last
+      return { ...last, status: shown.status, lastEventSeq: shown.lastEventSeq }
+    }
+    return { runId: shown.runId, status: shown.status, lastEventSeq: shown.lastEventSeq, openNodeKeys: [] }
   }
 
   // flowgate.v02.0061 TR0031 rev1: the run status the lock and the run commands follow (see the head of this file).
@@ -572,7 +576,15 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     const run = state.runs[flowId]
     const shown = readyGraph(flowId)?.run
     if (!runControl.available) return shown ? { run: canvasRunInfo(shown, null), known: true } : KNOWN_NO_RUN
-    if (run?.readState === 'read') return { run: run.run, known: true }
+    if (run?.readState === 'read') {
+      const last = run.run
+      // Conversely, a newer Canvas event must not be hidden by an older run response.
+      if (shown && last?.runId === shown.runId && shown.lastEventSeq !== undefined &&
+          last.lastEventSeq !== undefined && shown.lastEventSeq > last.lastEventSeq) {
+        return { run: canvasRunInfo(shown, last), known: true }
+      }
+      return { run: last, known: true }
+    }
     if (shown !== undefined) return { run: canvasRunInfo(shown, run?.run ?? null), known: true }
     return { run: run?.run ?? null, known: false }
   }

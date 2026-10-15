@@ -6,7 +6,7 @@
        FlowCanvas); one the last validation reported is drawn in the warning colour and names the
        problem on hover. -->
   <!-- flowgate.v02.0045 T0019: an Edge the work already went through (`progressed`) is drawn in a
-       bright solid colour, one not yet taken stays a faint line. Every Edge has a wide hit line so
+       bright solid colour, one not yet taken stays a neutral line. Every Edge has a wide hit line so
        it can be selected (click); the selected Edge is highlighted. Selection and removal are apart:
        only a selected Edge that is `deletable` shows the remove button — a progressed one shows
        that it cannot be removed instead. -->
@@ -183,18 +183,19 @@ const arrow = computed(() => {
 </script>
 
 <style scoped>
+/* Keep the line and arrow opaque and scaled together by the Canvas viewport. */
 .flow-edge-path {
   fill: none;
-  stroke: var(--fg2-line-strong);
-  stroke-width: 1.6;
+  stroke: var(--fg2-muted);
+  stroke-width: 2;
 }
 
 .flow-edge-arrow {
-  fill: var(--fg2-line-strong);
+  fill: var(--fg2-muted);
   stroke: none;
 }
 
-/* flowgate.v02.0045 T0019: not yet taken — the muted line above; already taken — bright, thicker. */
+/* flowgate.v02.0045 T0019: not yet taken — the neutral line above; already taken — bright, thicker. */
 .flow-edge-progressed .flow-edge-path {
   stroke: var(--fg2-status-success-fg);
   stroke-width: 2.2;
@@ -249,11 +250,11 @@ const arrow = computed(() => {
 }
 
 .flow-edge:hover .flow-edge-path {
-  stroke: var(--fg2-control-hover-border);
+  stroke: var(--fg2-control-fg);
 }
 
 .flow-edge:hover .flow-edge-arrow {
-  fill: var(--fg2-control-hover-border);
+  fill: var(--fg2-control-fg);
 }
 
 .flow-edge-progressed:hover .flow-edge-path {

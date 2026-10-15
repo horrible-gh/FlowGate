@@ -49,7 +49,15 @@ from modules.flow_gate.services import ai_invoke_service, card_memo_hooks, menti
 
 from .flow_guard import with_flow_guard
 
-API_BASE_URL = "/flowgate/api/v1"            # operator base; the agent base is resolved downstream
+
+def api_base_url() -> str:
+    """0063 B7: the operator base of a Graph AI start, absolute as an HTTP-started run's is (``token_routes``).
+    The start is a post-commit or recovery job with no request to read the origin from, so it is this server's
+    loopback; a relative base made the CLI launch refuse the run before its provider chain
+    (``provider_api._resolve_agent_api_base``). The agent base is resolved downstream."""
+    from config import settings                                    # noqa: PLC0415
+
+    return f"http://127.0.0.1:{settings.FLOWGATE_PORT}{settings.CONTEXT.rstrip('/')}/api/v1"
 
 
 class NodeNotStartable(RuntimeError):
@@ -117,7 +125,7 @@ def start_ai_invoke(job: dict) -> dict:
         mention = mention_service.build_mention_from_token_rec(
             token_rec={"project": project_id, "group_id": flow_id, "scratch_dir": issue["scratch_dir"]},
             head_type=job.get("result_doc_type") or job["doc_type"], head_status="pending", parent_doc=parent,
-            api_base_url=API_BASE_URL, raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,
+            api_base_url=api_base_url(), raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,
         )
         mention = card_memo_hooks.prepend_memo_section(mention or "", flow_id, node_key=job["node_key"])
         return {"raw_token": issue["raw_token"], "token_id": issue["token_id"],
@@ -127,7 +135,7 @@ def start_ai_invoke(job: dict) -> dict:
         project_id=project_id, module=_module_of(flow_id), group_id=flow_id, doc_ref=doc_ref,
         action_scope=scope, mode="single", continuation_target_seq=None, continuation_review_mode=False,
         continuation_instruction_mode=None, continuation_locale=None, issued_to=job["issued_to"],
-        api_base_url=API_BASE_URL, mention_builder=lambda _raw, _scratch: None,
+        api_base_url=api_base_url(), mention_builder=lambda _raw, _scratch: None,
         provider_id=job.get("provider_id"), issue_builder=_issue,
         continuation_step_timeout_sec=job.get("step_timeout_sec"),
         node_restart_max_attempts=job.get("restart_max"),
