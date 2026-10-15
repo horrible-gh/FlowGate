@@ -61,6 +61,7 @@ import re
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
@@ -1666,3 +1667,74 @@ def post_branch_merge_write_plan_token(
         )
     except GitServiceError as exc:
         return _guard(exc)
+
+
+# ── Group worktree manual index operations (0066 D#1 E1--E3) ──────────────
+
+class WorktreeRequestRoute(APIRoute):
+    """Bound E2/E3 bodies before JSON decoding, including chunked requests."""
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def bounded(request: Request):
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > 1024 * 1024:
+                    return JSONResponse(status_code=413, content={
+                        "ok": False, "error": {"code": "request_too_large",
+                                              "message": "Worktree request exceeds 1 MiB"}})
+                body.extend(chunk)
+            # Starlette's body cache is also used by FastAPI's JSON parser.
+            request._body = bytes(body)
+            return await handler(request)
+        return bounded
+
+
+_worktree_mutations = APIRouter(route_class=WorktreeRequestRoute)
+
+
+class WorktreePathsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    paths: list[str] | None = None
+    all: bool = False
+    worktree_token: str | None = None
+
+
+@router.get("/groups/{group_id}/git/worktree/status")
+def get_group_worktree_status(group_id: str, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import worktree_manual
+    try:
+        return {"ok": True, "result": worktree_manual.worktree_status(group_id)}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/worktree/stage")
+def post_group_worktree_stage(group_id: str, body: WorktreePathsBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import worktree_manual
+    try:
+        return {"ok": True, "result": worktree_manual.stage(group_id, **body.model_dump())}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/worktree/unstage")
+def post_group_worktree_unstage(group_id: str, body: WorktreePathsBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import worktree_manual
+    try:
+        return {"ok": True, "result": worktree_manual.unstage(group_id, **body.model_dump())}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+router.include_router(_worktree_mutations)
