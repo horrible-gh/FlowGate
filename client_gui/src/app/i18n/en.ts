@@ -984,6 +984,23 @@ export default {
       submitting: 'Connecting…',
       required: 'Enter the repository URL and Base branch.',
       invalid_url: 'Check the repository URL format.',
+      // flowgate.v02.0065 T#2 — follow-up of a saved-but-not-prepared connection, request outcomes.
+      retry_provision: 'Prepare repository again',
+      provisioning: 'Preparing repository…',
+      result: {
+        test_ok: 'Connection works',
+        auth_failed: 'Authentication failed. Check the username and access token.',
+        unreachable: 'Could not reach the remote repository. Check the repository URL.',
+        test_failed: 'The connection test failed.',
+        forbidden: 'You do not have permission to change the Git settings of this project.',
+        invalid_request: 'The server did not accept the values. Check what you entered.',
+        network: 'Could not reach the server.',
+        save_failed: 'Could not save the Git settings.',
+        provision_failed: 'The settings were saved, but preparing the repository failed. Prepare the repository again.',
+        provision_busy: 'The settings were saved, but other Git work is running, so the repository was not prepared. Try again shortly.',
+        provision_forbidden: 'The settings were saved, but you do not have permission to prepare the repository.',
+        config_failed: 'Could not load the existing Git settings. Enter the values yourself.',
+      },
     },
   },
   // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.

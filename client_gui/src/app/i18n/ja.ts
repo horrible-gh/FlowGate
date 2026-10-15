@@ -984,6 +984,23 @@ export default {
       submitting: '連携中…',
       required: 'リポジトリ URL と Base branch を入力してください。',
       invalid_url: 'リポジトリ URL の形式を確認してください。',
+      // flowgate.v02.0065 T#2 — follow-up of a saved-but-not-prepared connection, request outcomes.
+      retry_provision: 'リポジトリ準備を再試行',
+      provisioning: 'リポジトリ準備中…',
+      result: {
+        test_ok: '接続可能',
+        auth_failed: '認証に失敗しました。ユーザー名と認証トークンを確認してください。',
+        unreachable: 'リモートリポジトリにアクセスできませんでした。リポジトリ URL を確認してください。',
+        test_failed: '接続テストに失敗しました。',
+        forbidden: 'この Project の Git 設定を変更する権限がありません。',
+        invalid_request: 'サーバーが入力値を受け付けませんでした。入力値を確認してください。',
+        network: 'サーバーと通信できませんでした。',
+        save_failed: 'Git 設定を保存できませんでした。',
+        provision_failed: '設定は保存されましたが、リポジトリの準備に失敗しました。リポジトリ準備を再試行してください。',
+        provision_busy: '設定は保存されましたが、他の Git 作業が実行中のためリポジトリを準備できませんでした。しばらくしてから再試行してください。',
+        provision_forbidden: '設定は保存されましたが、リポジトリを準備する権限がありません。',
+        config_failed: '既存の Git 設定を読み込めませんでした。値を直接入力してください。',
+      },
     },
   },
   // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.

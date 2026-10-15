@@ -994,6 +994,23 @@ export default {
       submitting: '연결 중…',
       required: '저장소 URL과 Base branch를 입력하세요.',
       invalid_url: '저장소 URL 형식을 확인하세요.',
+      // flowgate.v02.0065 T#2 — follow-up of a saved-but-not-prepared connection, request outcomes.
+      retry_provision: '저장소 준비 다시 시도',
+      provisioning: '저장소 준비 중…',
+      result: {
+        test_ok: '연결 가능',
+        auth_failed: '인증에 실패했습니다. 사용자명과 인증 토큰을 확인하세요.',
+        unreachable: '원격 저장소에 접근하지 못했습니다. 저장소 URL을 확인하세요.',
+        test_failed: '연결 테스트에 실패했습니다.',
+        forbidden: '이 Project의 Git 설정을 바꿀 권한이 없습니다.',
+        invalid_request: '입력값을 서버가 받아들이지 않았습니다. 입력값을 확인하세요.',
+        network: '서버와 통신하지 못했습니다.',
+        save_failed: 'Git 설정을 저장하지 못했습니다.',
+        provision_failed: '설정은 저장됐지만 저장소 준비에 실패했습니다. 저장소 준비를 다시 시도하세요.',
+        provision_busy: '설정은 저장됐지만 다른 Git 작업이 진행 중이라 저장소를 준비하지 못했습니다. 잠시 후 다시 시도하세요.',
+        provision_forbidden: '설정은 저장됐지만 저장소를 준비할 권한이 없습니다.',
+        config_failed: '기존 Git 설정을 불러오지 못했습니다. 값을 직접 입력하세요.',
+      },
     },
   },
   // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.

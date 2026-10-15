@@ -14,9 +14,17 @@
 //   AI          POST  /api/v1/ai-invoke/start (resolve_conflict) · POST /api/v1/ai-invoke/{run}/cancel
 //   providers   GET   /api/v1/ai-invoke/providers?project=
 //
+// flowgate.v02.0065 — the project Git settings contracts the v0.1 GitSettingsView uses, for the
+// Git tab's own `Git 연결` window (no new endpoint, no new field):
+//
+//   config      GET   /api/v1/projects/{pid}/git/config
+//   save        PUT   /api/v1/projects/{pid}/git/config            { repo_url, provider, username, secret, base_branch, enabled: true }
+//   test        POST  /api/v1/projects/{pid}/git/test-connection   { repo_url, username, secret, base_branch, provider }
+//   provision   GET | POST /api/v1/projects/{pid}/git/provision
+//
 // Errors are thrown as GitRequestError carrying `normalizeGitError`'s code / status — the
 // server `message` is never surfaced (0033-D §4.5).
-import { getRequest, postRequest } from '@shared/api'
+import { getRequest, postRequest, putRequest } from '@shared/api'
 import { normalizeGitError, type NormalizedGitError } from '@shared/gitErrors'
 import type {
   GitApproveResult,
@@ -24,10 +32,15 @@ import type {
   GitBaseFileResult,
   GitBaseRemoveResult,
   GitBaseRevertResult,
+  GitConfigSave,
+  GitConfigView,
   GitConflictSession,
+  GitConnectionTest,
   GitFinalizeAction,
   GitFinalizeResult,
   GitProviders,
+  GitProvisionResult,
+  GitProvisionView,
   GitRejectResult,
   GitReview,
 } from './types'
@@ -317,4 +330,131 @@ export async function baseRevert(projectId: string, files: string[]): Promise<Gi
 export async function baseRemove(projectId: string, files: string[]): Promise<GitBaseRemoveResult> {
   const data = await fileCall(() => postRequest<RawFileResults>(`${projectGit(projectId)}/base-remove`, { files }))
   return { results: fileResults(data), remainingUntracked: strList(data.result?.remaining_untracked) }
+}
+
+// ── Project Git settings (flowgate.v02.0065) ───────────────────────────────────────────
+
+interface RawConfig {
+  repo_url?: string | null
+  provider?: string | null
+  username?: string | null
+  base_branch?: string | null
+  enabled?: boolean
+  has_secret?: boolean
+}
+
+type RawConfigAnswer = Envelope & { configured?: boolean; config?: RawConfig | null }
+
+// The masked token the server also sends is not kept.
+function toConfigView(data: RawConfigAnswer): GitConfigView {
+  const raw = data.config ?? null
+  return {
+    configured: data.configured === true && !!raw,
+    repoUrl: str(raw?.repo_url) ?? '',
+    provider: str(raw?.provider) ?? 'generic',
+    username: str(raw?.username),
+    baseBranch: str(raw?.base_branch) ?? 'main',
+    enabled: raw?.enabled === true,
+    hasSecret: raw?.has_secret === true,
+  }
+}
+
+/** GET git/config. */
+export async function fetchGitConfig(projectId: string): Promise<GitConfigView> {
+  return toConfigView(await call(() => getRequest<RawConfigAnswer>(`${projectGit(projectId)}/config`)))
+}
+
+/**
+ * PUT git/config with Git on. Only the window's fields and `enabled: true` go out; every other
+ * settings field is left unsent so the server keeps what is stored (exclude_unset).
+ */
+export async function saveGitConfig(projectId: string, input: GitConfigSave): Promise<GitConfigView> {
+  const data = await call(() =>
+    putRequest<RawConfigAnswer>(`${projectGit(projectId)}/config`, {
+      repo_url: input.repoUrl,
+      provider: input.provider,
+      username: input.username || null,
+      secret: input.secret || null,
+      base_branch: input.baseBranch,
+      enabled: true,
+    }),
+  )
+  return toConfigView(data)
+}
+
+/**
+ * POST git/test-connection with the window's values, before anything is saved. A blank token
+ * goes out as null: the server then tests with the stored one. The server's failure text
+ * (git's last stderr line, which can hold the URL) is dropped; only its code is kept.
+ */
+export async function testGitConnection(projectId: string, input: GitConfigSave): Promise<GitConnectionTest> {
+  const data = await call(() =>
+    postRequest<
+      Envelope & {
+        result?: {
+          reachable?: boolean | null
+          authenticated?: boolean | null
+          remote_default_branch?: string | null
+          failure?: { code?: string | null } | null
+        }
+      }
+    >(`${projectGit(projectId)}/test-connection`, {
+      repo_url: input.repoUrl,
+      username: input.username || null,
+      secret: input.secret || null,
+      base_branch: input.baseBranch,
+      provider: input.provider,
+    }),
+  )
+  const raw = data.result ?? {}
+  return {
+    reachable: typeof raw.reachable === 'boolean' ? raw.reachable : null,
+    authenticated: typeof raw.authenticated === 'boolean' ? raw.authenticated : null,
+    failureCode: str(raw.failure?.code),
+    remoteDefaultBranch: str(raw.remote_default_branch),
+  }
+}
+
+interface RawProvisionView {
+  configured?: boolean
+  enabled?: boolean
+  base_checkout_exists?: boolean
+  last_attempt?: { result?: string | null } | null
+}
+
+const toProvisionView = (raw: RawProvisionView | null | undefined): GitProvisionView | null =>
+  raw && typeof raw === 'object'
+    ? {
+        configured: raw.configured === true,
+        enabled: raw.enabled === true,
+        baseCheckoutExists: raw.base_checkout_exists === true,
+        lastAttemptResult: str(raw.last_attempt?.result),
+      }
+    : null
+
+/** GET git/provision. */
+export async function fetchGitProvision(projectId: string): Promise<GitProvisionView | null> {
+  const data = await call(() => getRequest<Envelope & { provision?: RawProvisionView | null }>(`${projectGit(projectId)}/provision`))
+  return toProvisionView(data.provision)
+}
+
+/**
+ * POST git/provision (synchronous). A preparation that did not work is an HTTP 200 with
+ * `result.status: 'failed'` — the caller decides on `status`, never on the HTTP success alone.
+ */
+export async function provisionGit(projectId: string): Promise<GitProvisionResult> {
+  const data = await call(() =>
+    postRequest<
+      Envelope & {
+        result?: { status?: string | null; mode?: string | null; reason?: string | null; provision?: RawProvisionView | null }
+      }
+    >(`${projectGit(projectId)}/provision`, {}),
+  )
+  const raw = data.result ?? {}
+  return {
+    status: str(raw.status) ?? '',
+    mode: str(raw.mode),
+    busy: raw.reason === 'git_busy',
+    provision: toProvisionView(raw.provision),
+  }
 }

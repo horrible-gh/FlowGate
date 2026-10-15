@@ -500,6 +500,11 @@
 .gxc-message.is-empty {
   display: none;
 }
+/* flowgate.v02.0065 T#2 — follow-up of a saved-but-not-prepared connection. */
+.gxc-followup {
+  display: flex;
+  justify-content: flex-start;
+}
 
 .gxc-footer {
   display: flex;

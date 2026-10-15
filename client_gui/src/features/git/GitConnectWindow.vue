@@ -98,6 +98,17 @@
         aria-live="polite"
         data-test="git-connect-message"
       >{{ messageText }}</div>
+      <div v-if="retryProvision" class="gxc-followup" data-test="git-connect-followup">
+        <button
+          type="button"
+          class="gxc-foot-btn"
+          :disabled="locked"
+          data-test="git-connect-retry-provision"
+          @click="onRetryProvision"
+        >
+          {{ busy === 'provisioning' ? t('gui.git.connect.provisioning') : t('gui.git.connect.retry_provision') }}
+        </button>
+      </div>
       <div class="gxc-footer">
         <div class="gxc-footer-test">
           <button type="button" class="gxc-foot-btn" :disabled="locked" data-test="git-connect-test" @click="onTest">
@@ -133,7 +144,8 @@ let connectWindowSeq = 0
 //
 // UI only: the window checks what it can on its own (empty URL / Base branch, URL form) and
 // hands a valid form up as `test` / `connect`. Whoever mounts it runs the requests and feeds
-// the result back through `busy` / `testState` / `message`. The token typed here leaves only in
+// the result back through `busy` / `testState` / `message`; `retryProvision` adds the follow-up
+// `저장소 준비 다시 시도` (settings saved, Base not prepared) that asks with `retry-provision`. The token typed here leaves only in
 // those two payloads; it is cleared on cancel / close and whenever the window opens or closes,
 // and it is never put in a title, a data attribute or a log.
 import { computed, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
@@ -160,6 +172,8 @@ const props = withDefaults(
     message?: GitConnectMessage | null
     // A token is already stored: the token field says so in its placeholder only.
     hasStoredSecret?: boolean
+    // Settings are saved but the Base checkout is not prepared: offer preparing it again.
+    retryProvision?: boolean
     readOnly?: boolean
   }>(),
   {
@@ -169,6 +183,7 @@ const props = withDefaults(
     testState: null,
     message: null,
     hasStoredSecret: false,
+    retryProvision: false,
     readOnly: false,
   },
 )
@@ -178,6 +193,7 @@ const emit = defineEmits<{
   connect: [form: GitConnectForm]
   cancel: []
   close: []
+  'retry-provision': []
   'update:minimized': [value: boolean]
   'input-change': []
 }>()
@@ -364,6 +380,10 @@ function onTest(): void {
 function onConnect(): void {
   const value = payload()
   if (value) emit('connect', value)
+}
+
+function onRetryProvision(): void {
+  if (!locked.value) emit('retry-provision')
 }
 
 function onCancel(): void {

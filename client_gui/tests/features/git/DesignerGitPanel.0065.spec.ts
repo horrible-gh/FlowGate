@@ -201,22 +201,24 @@ describe('DesignerGitPanel — Git 연결 modeless', () => {
     expect(q('git-connect-window')).toBeNull()
   })
 
-  it('test / connect send nothing and show no success yet', async () => {
+  // T#2 wired the requests (GitConnectFlow.0065.spec.ts covers them): test / connect go to the
+  // Git settings contracts only and show nothing before the server answers.
+  it('test / connect use the Git settings contracts only, never a 0033 action', async () => {
     const fake = createFakeGitSource({ status: off() })
+    fake.source.testGitConnection.mockImplementation(() => new Promise(() => undefined))
     await mountPanel(fake)
     await click('git-unlinked-connect')
     const remote = q('git-connect-remote') as HTMLInputElement
     remote.value = 'https://github.com/org/repo.git'
     remote.dispatchEvent(new Event('input'))
     await flushPromises()
-    const reads = fake.source.loadStatus.mock.calls.length
     await click('git-connect-test')
-    await click('git-connect-submit')
     expect(text('git-connect-test-status')).toBe('')
     expect(text('git-connect-message')).toBe('')
     expect(q('git-connect-window')).not.toBeNull()
     expect(q('git-unlinked')).not.toBeNull()
-    expect(fake.source.loadStatus.mock.calls.length).toBe(reads)
+    expect(fake.source.testGitConnection).toHaveBeenCalledTimes(1)
+    expect(fake.source.saveGitConfig).not.toHaveBeenCalled()
     for (const call of ['finalize', 'push', 'baseCommit', 'baseRevert', 'baseRemove'] as const) {
       expect(fake.source[call], call).not.toHaveBeenCalled()
     }

@@ -189,7 +189,8 @@ export interface GitConnectForm {
 /** Values the connect window opens with — never the token. */
 export type GitConnectInitial = Omit<GitConnectForm, 'secret'>
 
-export type GitConnectBusy = 'idle' | 'testing' | 'connecting'
+/** `provisioning` = only `저장소 준비 다시 시도` runs (the settings are already saved). */
+export type GitConnectBusy = 'idle' | 'testing' | 'connecting' | 'provisioning'
 
 /** The line beside `연결 테스트`. `messageKey` is a full i18n key. */
 export interface GitConnectTestState {
@@ -203,4 +204,57 @@ export interface GitConnectMessage {
   tone: 'error' | 'info'
   messageKey: string
   params?: Record<string, string | number>
+}
+
+// ── Existing project Git settings contracts (flowgate.v02.0065 T#2) ────────────────────
+// The shapes of GET/PUT git/config, POST git/test-connection and GET/POST git/provision as the
+// connect window needs them. No token, masked or not, is ever part of a model here.
+
+/** GET git/config — `configured: false` when the project has no Git settings at all. */
+export interface GitConfigView {
+  configured: boolean
+  repoUrl: string
+  provider: string
+  username: string | null
+  baseBranch: string
+  enabled: boolean
+  // A token is stored (its value never comes into the client model).
+  hasSecret: boolean
+}
+
+/** What `연결` saves: the window's values with Git turned on; nothing else is sent. */
+export interface GitConfigSave {
+  repoUrl: string
+  provider: GitConnectProvider
+  // Blank = null.
+  username: string | null
+  // null = keep the stored token; a blank input is never sent as "" (that would clear it).
+  secret: string | null
+  baseBranch: string
+}
+
+/** POST git/test-connection. `failureCode` is the server's classification only (its text is dropped). */
+export interface GitConnectionTest {
+  reachable: boolean | null
+  authenticated: boolean | null
+  failureCode: string | null
+  remoteDefaultBranch: string | null
+}
+
+/** GET git/provision — the Base checkout state of the project. */
+export interface GitProvisionView {
+  configured: boolean
+  enabled: boolean
+  baseCheckoutExists: boolean
+  lastAttemptResult: string | null
+}
+
+/** POST git/provision. A failed preparation is an HTTP 200 with `status: 'failed'`. */
+export interface GitProvisionResult {
+  // ok | failed | skipped
+  status: string
+  mode: string | null
+  // The other Git work held the lock (`reason: git_busy`). Other reasons are server text, dropped.
+  busy: boolean
+  provision: GitProvisionView | null
 }
