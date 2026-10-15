@@ -18,12 +18,14 @@
 
 /** The node run facts the state is read from (FlowGraphNodeRun, the Canvas `node_run`). */
 export interface CardRunFacts {
+  readonly dispatchErrorCode?: string | null
+  readonly resultDocId?: string | null
   readonly status: string | null
   readonly awaitingApproval?: boolean
   readonly stage?: string | null
 }
 
-export const CARD_STATE_KEYS = ['writing_instruction', 'writing_result', 'working', 'awaiting_approval', 'approved', 'rejected', 'pending', 'closed'] as const
+export const CARD_STATE_KEYS = ['no_result', 'incomplete', 'writing_instruction', 'writing_result', 'working', 'awaiting_approval', 'approved', 'rejected', 'pending', 'closed'] as const
 
 export type CardStateKey = (typeof CARD_STATE_KEYS)[number]
 
@@ -59,6 +61,8 @@ export function cardStateView(run: CardRunFacts | null | undefined): CardStateVi
     case 'review':
       return run?.awaitingApproval === true ? view('awaiting_approval', 'awaiting', 'warning') : view('working', 'working', 'info')
     case 'open':
+      if (!run?.resultDocId && run?.dispatchErrorCode === 'no_result') return view('no_result', 'other', 'warning')
+      if (!run?.resultDocId && run?.dispatchErrorCode) return view('incomplete', 'other', 'warning')
       if (run?.stage === 'instruction') return view('writing_instruction', 'working', 'info')
       if (run?.stage === 'result') return view('writing_result', 'working', 'info')
       return view('working', 'working', 'info')

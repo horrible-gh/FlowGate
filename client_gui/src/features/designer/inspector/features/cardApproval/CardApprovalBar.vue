@@ -1,12 +1,11 @@
 <template>
-  <!-- flowgate.v02.0056 F2-1 — the card approval bar at the bottom of the documents tab (O1 0005-TR §4-1): the
-       Graph card's state (cardStateView, the Canvas card's rule — 지시서 작성 중 · 결과 작성 중 · 작업 중 · 승인 대기 ·
-       승인됨 …) and, while it waits for its approval, [승인]. A thin container: useCardApproval reads and calls,
+  <!-- The documents tab keeps the approval action and refusal feedback, without a duplicate card-state box.
+       A thin container: useCardApproval reads and calls,
        cardApprovalModel decides what is shown. A refusal is one line under the bar — the code's sentence, the
        server's own message, and for a refused document its name (it opens), why, and how many documents were
        approved before it — except a busy refusal, told in a toast while the button stays. -->
   <section
-    v-if="bar.shown && state"
+    v-if="bar.shown && state && (bar.approveVisible || (failure && !toasted) || toasts.length)"
     class="inspector-card-approval"
     :class="`is-${state.phase}`"
     role="group"
@@ -15,11 +14,8 @@
     :data-state="state.key"
     :data-phase="state.phase"
   >
-    <div class="inspector-card-approval-line">
-      <InspectorStatusChip :label="t(state.labelKey)" :tone="state.tone" dot data-test="card-approval-state" />
-      <span v-if="approved && state.phase === 'approved'" class="inspector-card-approval-note" data-test="card-approval-done">{{ t(c('done')) }}</span>
+    <div v-if="bar.approveVisible" class="inspector-card-approval-line">
       <Button
-        v-if="bar.approveVisible"
         class="inspector-card-approval-button"
         size="sm"
         variant="primary"
@@ -59,7 +55,6 @@ import Button from '../../../../../components/ui/Button.vue'
 import ToastHost, { type ToastHostItem } from '../../../../../components/ui/ToastHost.vue'
 import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
-import InspectorStatusChip from '../../parts/InspectorStatusChip.vue'
 import { openDocument } from '../../openDocument'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { cardApprovalFailureTone, cardApprovalServerMessage, cardApprovalToasted } from './cardApprovalModel'
@@ -75,7 +70,7 @@ const k = (key: string) => `gui.inspector.cardApproval.${key}`
 /** The [승인] wording shared with the Canvas card. */
 const c = (key: string) => `gui.designer.center.approval.${key}`
 
-const { state, bar, busy, failure, failureSeq, approved, approve } = useCardApproval(() => props.target)
+const { state, bar, busy, failure, failureSeq, approve } = useCardApproval(() => props.target)
 
 const toasted = computed(() => cardApprovalToasted(failure.value))
 const sentence = computed(() => (failure.value ? t(failure.value.view.labelKey) : ''))

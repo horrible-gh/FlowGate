@@ -456,6 +456,18 @@ def token_ids(run_id: str, node_key: str, skip_stage: Optional[str] = None) -> l
     return [r["token_id"] for r in rows]
 
 
+def nodes_of_ai_runs(run_id: str, ai_run_ids: list[str]) -> set[str]:
+    """flowgate.v02.0063: the nodes of the run whose mapped tokens carry one of ``ai_run_ids`` (the AI runs that worked
+    for them)."""
+    wanted = sorted({r for r in ai_run_ids if r})
+    if not wanted or not available():
+        return set()
+    marks = ", ".join("?" for _ in wanted)
+    rows = _all("SELECT DISTINCT m.node_key FROM graph_run_token_map m JOIN tokens t ON t.token_id = m.token_id "
+                f"WHERE m.run_id = ? AND t.ai_run_id IN ({marks})", [run_id, *wanted])
+    return {r["node_key"] for r in rows}
+
+
 def invalidated_token_ids(run_id: str, node_key: str) -> list[str]:
     """0061 T#7: the node's tokens of its invalidated attempts, mapping order — what an ended old attempt wrote with."""
     rows = _all("SELECT m.token_id FROM graph_run_token_map m JOIN graph_node_attempts a ON a.attempt_id = m.attempt_id "

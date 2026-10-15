@@ -126,6 +126,17 @@ def _write_hold(group: dict, node_key: str, value: Any, user_id: Optional[str]) 
     return _payload(flow_id, node, repository.values(flow_id, node_key))
 
 
+def uses_ai(_flow_id: str, node: dict) -> bool:
+    """0063 B7: Designer cards have no explicit assignee. Runnable cards use their run AI,
+    then the invoke service's project default. An explicit human assignment is never overridden;
+    requirement delegation, gates and cards without a run plan retain their own contracts."""
+    assignment = node.get("assignee_kind")
+    if assignment is not None:
+        return assignment == "ai"
+    return repository.available() and fields.card_kind(node.get("node_type"), node.get("doc_type")) in (
+        fields.RUN, fields.TEST)
+
+
 def run_settings(flow_id: str, node: dict) -> dict:
     """What a node's AI start takes from its card (``node``: the run's node row)."""
     if not repository.available() or not node.get("node_key"):
@@ -144,7 +155,7 @@ def result_type(flow_id: str, node: dict) -> Optional[str]:
     the source tools) is an AI card run opened before migration 148 — its AI was told the one-stage type of that
     time (``fields.result_doc_type`` ``one_stage``), so that type stays its result's.
     """
-    if node.get("assignee_kind") != "ai" or not repository.available() or not node.get("node_key"):
+    if not uses_ai(flow_id, node) or not repository.available() or not node.get("node_key"):
         return None
     one_stage = "run_stage" in node and node.get("run_stage") is None
     return fields.result_doc_type(node.get("node_type"), node.get("doc_type"),
@@ -155,7 +166,7 @@ def instruction_document(flow_id: str, node: dict) -> dict:
     """``{doc_type, doc_id, written}`` of an AI card's instruction when the card runs an instruction stage
     (``node``: the run's node row), else ``{}``: its instruction type, its instruction line's live document
     (None when the line has none) and whether that document has a body."""
-    if node.get("assignee_kind") != "ai" or not repository.available() or not node.get("node_key"):
+    if not uses_ai(flow_id, node) or not repository.available() or not node.get("node_key"):
         return {}
     doc_type = fields.instruction_stage(node.get("node_type"), node.get("doc_type"),
                                         repository.values(flow_id, node["node_key"]))
@@ -185,7 +196,7 @@ def token_step_type(token_rec: dict) -> Optional[str]:
     if not found:
         return None
     flow_id, node = found
-    if node.get("run_stage") == fields.INSTRUCTION_STAGE and node.get("assignee_kind") == "ai":
+    if node.get("run_stage") == fields.INSTRUCTION_STAGE and uses_ai(flow_id, node):
         written = fields.instruction_stage(node.get("node_type"), node.get("doc_type"),
                                            repository.values(flow_id, node["node_key"]))
         if written:

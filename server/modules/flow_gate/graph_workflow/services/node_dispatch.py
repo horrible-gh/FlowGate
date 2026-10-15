@@ -109,8 +109,25 @@ def dispatch(ctx, node_key: str) -> Optional[dict]:
     return executor(ctx, row) if executor else None
 
 
+def needs_ai_dispatch(ctx, row: dict) -> bool:
+    """An explicit command can retry a finished result writer with no result, or recover a
+    default Designer card opened without dispatch (0063 B7). Result reconciliation runs first;
+    the legacy no-dispatch repair still excludes staged nodes and explicit assignees."""
+    node = ctx.node_rows.get(row["node_key"]) or {}
+    # An explicit command may retry a result writer that ended without its result.
+    # Hold, live executions and registered results still prevent a new dispatch.
+    if card_settings_ports.uses_ai(ctx.flow_id, node) \
+            and row["node_key"] not in (graph_execution_hooks.call("held_nodes", ctx.flow_id) or ()) \
+            and graph_execution_hooks.call("write_failure", row):
+        return True
+    return (row["status"] == "open" and row.get("stage") is None and row.get("result_doc_id") is None
+            and node.get("assignee_kind") is None
+            and card_settings_ports.uses_ai(ctx.flow_id, node)
+            and run_store.active_attempt_id(ctx.run_id, row["node_key"]) is not None)
+
+
 def dispatch_document(ctx, row: dict) -> dict:
-    ai = row.get("assignee_kind") == "ai"
+    ai = card_settings_ports.uses_ai(ctx.flow_id, row)
     plan = card_settings_ports.run_settings(ctx.flow_id, row) if ai else {}
     provider = (plan.get("provider_id") or row.get("assignee_provider_id")) if ai else None
     user = row.get("assignee_user_id") if row.get("assignee_kind") == "human" else None
@@ -309,6 +326,48 @@ def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc
         return
     for job in jobs:
         job()
+
+
+def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str, project_id: Optional[str] = None, *,
+                       attempt_id: Optional[str] = None) -> bool:
+    """flowgate.v02.0063: the node's result writer ended with no result after asking questions, and they are answered
+    now: its run AI writes the result again on the same attempt (a new execution, the instruction attached as at the
+    result stage's start). Only a node still open in its result stage whose writer ended with no result
+    (``write_failure``) and that is not held moves on; ``attempt_id`` must still be the node's active attempt. True when
+    the AI start was requested (it runs after the guard)."""
+    from . import run_apply                                   # noqa: PLC0415 — run_apply imports this module
+    from .flow_guard import with_flow_guard                   # noqa: PLC0415
+
+    project = project_id or (db_groups.get_by_id(flow_id) or {}).get("project_id")
+    jobs: list = []
+
+    def body() -> None:
+        row = _open_row(run_id, node_key)
+        if row is None or row.get("stage") != RESULT_STAGE or row.get("result_doc_id"):
+            return
+        if graph_execution_hooks.call("write_failure", row) != "no_result"                 or node_key in (graph_execution_hooks.call("held_nodes", flow_id) or ()):
+            return
+        if graph_execution_hooks.call("node_refused", run_id, node_key, "result_retry", attempt_id):
+            return
+        ctx = run_apply.load_context(run_store.run_by_id(run_id), project, None, [])
+        node = ctx.node_rows.get(node_key)
+        if node is None:
+            return
+        if node.get("node_type") == "custom":                 # handed out as ``dispatch_custom`` does
+            node = {**node, "doc_type": run_doc_type(node.get("node_type"), node.get("doc_type"))}
+        plan = card_settings_ports.run_settings(flow_id, node)
+        provider = plan.get("provider_id") or node.get("assignee_provider_id")
+        tokens = run_store.token_ids(run_id, node_key)
+        instruction_doc_id = row.get("instruction_doc_id")
+        job = _ai_job(ctx, node, plan, provider, issued_to, {"token_id": tokens[0] if tokens else None},
+                      RESULT_STAGE, [instruction_doc_id] if instruction_doc_id else None)
+        graph_execution_hooks.call("request_write", job)
+        jobs.append(lambda: start_ai(job))
+
+    with_flow_guard(flow_id, body)
+    for job in jobs:
+        job()
+    return bool(jobs)
 
 
 def instruction_stage_failed(flow_id: str, run_id: str, node_key: str, project_id: Optional[str] = None, *,

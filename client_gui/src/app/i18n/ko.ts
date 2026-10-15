@@ -183,6 +183,8 @@ export default {
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
+        no_result: '결과 없음',
+        incomplete: '실행 미완료',
         writing_instruction: '지시서 작성 중',
         writing_result: '결과 작성 중',
         working: '작업 중',

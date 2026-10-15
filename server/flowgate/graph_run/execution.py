@@ -10,7 +10,7 @@ from modules.flow_gate.db import groups as db_groups, ai_invoke_runs
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 from modules.flow_gate.services import graph_execution_hooks
-from flowgate.graph_run import execution_store as ledger, workspace, scheduling, fencing, stop, result_merge, hold, editing
+from flowgate.graph_run import execution_store as ledger, workspace, scheduling, fencing, stop, result_merge, hold, editing, command
 
 log = logging.getLogger(__name__)
 
@@ -201,6 +201,11 @@ def _finish_owned(run):
     token = run.get("graph_lease_token")
     # A losing launcher never touches the winner's row or card.
     if run.get("graph_lease_lost") and not token:
+        # 0063 B7: a launcher whose provider chain failed before its acquire (a refused report: the execution is still
+        # requested) keeps its own admission claim, which no refill replays (``queue_requests``). It cancels that claim
+        # only -- never a winner's -- and its node records the AI start failure (``finish``).
+        if ledger.cancel_requested(run["graph_exec_id"], run.get("run_id")) == 1:
+            run["graph_start_failed"] = True
         return False
     from modules.flow_gate.services.ai_invoke.terminal import provider_stopped
     if not provider_stopped(run):
@@ -235,6 +240,8 @@ def finish(run):
     with _lock(run):
         if not run.get("graph_execution_finished"):
             run["graph_execution_finished"] = _finish_owned(run)
+    if run.pop("graph_start_failed", False):
+        _start_failure(run)
     if not run.get("graph_execution_finished") or run.get("graph_end_judged"):
         return
     run["graph_end_judged"] = True
@@ -255,6 +262,19 @@ def finish(run):
         ledger.begin_handoff(run["graph_exec_id"], graph["run_id"])      # T#7: settled after the run-end stage
         return
     settle(run["group_id"])
+
+
+def _start_failure(run):
+    """0063 B7: the request its launcher cancelled before the acquire. A node write records the AI start failure as a
+    refused start does (``node_dispatch.record_ai_failure``, L0009 E-23: the token stays a person's, the run settles idle
+    with ``error``); a review / rework hop leaves the result to a person (``start_review_loop``) and the run settles."""
+    row = ledger.get(run["graph_exec_id"]) or {}
+    payload = json.loads(row.get("request_json") or "{}")
+    if payload.get("type") == "write":
+        from modules.flow_gate.graph_workflow.services.node_dispatch import record_ai_failure
+        record_ai_failure(payload["job"])
+    else:
+        settle(run["group_id"])
 
 
 def handoff_end(run):
@@ -488,6 +508,46 @@ def map_token(exec_id, token_id):
         raise
 
 
+def write_failure(row):
+    """0063: a finished result writer with no result stays open, but is no longer working.
+    Derive from the current attempt's durable records, also for runs ended before this fix.
+    No new node state or persisted failure is needed; a new request hides the old outcome.
+    """
+    if row.get("status") != "open" or row.get("result_doc_id") or row.get("stage") != "result":
+        return None
+    if not get_store().table_exists("graph_attempt_runs") or ledger.handing_off(row["run_id"]):
+        return None
+    attempt = run_store.active_attempt_id(row["run_id"], row["node_key"])
+    if not attempt:
+        return None
+    if run_store._one("SELECT 1 AS present FROM graph_attempt_runs WHERE attempt_id = ? "
+                      "AND status IN ('requested', 'running') LIMIT 1", [attempt]):
+        return None
+    latest = run_store._one("SELECT * FROM graph_attempt_runs WHERE attempt_id = ? "
+                            "ORDER BY created_at DESC, exec_id DESC LIMIT 1", [attempt])
+    if not latest or latest["kind"] != "write" or latest["status"] != "ended" or not latest.get("ai_run_id"):
+        return None
+    job = json.loads(latest["request_json"]).get("job") or {}
+    if job.get("stage") != "result":
+        return None
+    ended = ai_invoke_runs.get(latest["ai_run_id"])
+    if not ended or ended.get("status") != "finished":
+        return None
+    # A registration whose contact was lost must reconcile normally, never look like missing output.
+    from modules.flow_gate.graph_workflow.services import result_binder, run_apply
+    graph = run_store.run_by_id(row["run_id"])
+    if not graph or graph["status"] == stop.STOPPING:
+        return None
+    ctx = run_apply.load_context(graph, None, None)
+    if result_binder.next_missing_event(ctx, run_apply.read_run_state(ctx), row["node_key"]) is not None:
+        return None
+    if ended.get("end_reason") == "exited" and ended.get("exit_code") == 0 \
+            and ended.get("stop_code") in (None, "", "no_output_exhausted") \
+            and not ended.get("register_errors"):
+        return "no_result"
+    return "ai_invoke_failed"
+
+
 def settle(flow_id):
     from flowgate.card_settings.legacy_adapter import settle_graph_run
     settle_graph_run(flow_id)
@@ -522,10 +582,11 @@ _ACTIONS = {
     "map_token": map_token, "validate_write": validate_write, "loop_state": loop_state,
     "settle": settle, "request_write": request_write, "request_hop": request_hop, "request_loop": request_loop,
     "launch": launch, "finish": finish, "transition": transition, "heartbeat": heartbeat,
-    "working": ledger.working, "start_failed": start_failed,
+    "working": ledger.working, "start_failed": start_failed, "write_failure": write_failure,
     "report_refused": fencing.report_refused, "node_refused": fencing.node_refused, "result_refused": result_refused,
     "execution_attempt": fencing.execution_attempt, "handoff_end": handoff_end, "node_hold": node_hold,
     # T#9: an approved code node is done once its result is merged into the Flow's branch.
+    "resume_approval": command.resume_approval, "continue_approval": command.continue_approval,
     "defer_done": result_merge.defer_done, "integration_waiting": result_merge.integration_waiting,
     "integration_wire": result_merge.integration_wire, "retry_integrations": result_merge.retry_integrations,
     "hold_command": result_merge.hold_command, "propagation_held": result_merge.propagation_held,

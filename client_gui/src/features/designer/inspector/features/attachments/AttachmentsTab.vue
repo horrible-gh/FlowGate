@@ -35,7 +35,7 @@
       data-test="attachments-picker"
       @change="onPick"
     />
-    <div v-if="availability.add.reason" data-test="attachments-reason">
+    <div v-if="availability.add.reason && availability.add.reason !== 'reason.read_only_revision'" data-test="attachments-reason">
       <InspectorReason :text="t(k(availability.add.reason), { limit: limits.maxCount })" />
     </div>
     <div v-if="failure && !rowFailure" data-test="attachments-failure">

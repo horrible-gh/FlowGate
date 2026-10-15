@@ -116,6 +116,7 @@ export interface FlowGraphNodeSlot {
 }
 
 export interface FlowGraphNodeRun {
+  readonly dispatchErrorCode?: string | null
   readonly status: string | null
   readonly openedAt: string | null
   readonly finishedAt: string | null
@@ -137,6 +138,8 @@ export interface FlowGraphNodeRun {
   readonly integrationReason?: string | null
   /** flowgate.v02.0061 T#14: the card is held (T#11 Hold). Absent = false. */
   readonly hold?: boolean
+  /** flowgate.v02.0063: the card's document holds a question still unanswered. Absent = false. */
+  readonly question?: boolean
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions. Absent = 0. */
   readonly runningExecutionCount?: number
   readonly requestedExecutionCount?: number

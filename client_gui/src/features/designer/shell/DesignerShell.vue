@@ -16,7 +16,7 @@
        Body / CenterColumn resize handles; the Shell clamps each drag into the layout bounds. -->
   <div class="designer-shell" data-test="designer-shell" @keydown.esc="selectedPalette = null">
     <DesignerTop
-      :run-phase="top.runPhase"
+      :run-phase="runPhase"
       :density="top.density"
       :zoom="zoom"
       :window-state="windowState"
@@ -298,18 +298,17 @@ watch(() => center.state.activeFlowId, () => { selectedPalette.value = null })
 // session's): its phase decides which two show; while a command is answered every run button waits (`runBusy`).
 // TR0031 rev1: the phase and the band follow the session's confirmed run status (the run read, else the Canvas read's);
 // until it is confirmed no run command is available (`runUnknown`).
-const serverRunPhase = computed(() => runPhaseOf(center.activeRunStatus.value.run?.status))
+const runPhase = computed(() => {
+  if (!center.canRun) return top.runPhase
+  // Show the pending Stop immediately; the existing action guard prevents duplicate requests.
+  if (center.activeRun.value?.action === 'stop') return 'stopping'
+  return runPhaseOf(center.activeRunStatus.value.run?.status)
+})
 // The band: status, command, idle reason, executions and the cards waiting for the next command (O1 §4-2's place).
 const runBand = computed(() => (hasWorkTarget.value ? runBandView(center.activeRunStatus.value.run) : null))
 // WP answer 2: the Conversation's source access mode waits while the open Flow's run is locked — TR0031 rev1: and while
 // its run status is not confirmed (the session's `unknown` lock). Messages, viewing, panning and zooming go on.
 const sourceLocked = computed(() => hasWorkTarget.value && center.activeRunMarks.value.lock !== null)
-
-if (center.canRun) {
-  watch(serverRunPhase, (phase) => {
-    top.runPhase = phase
-  }, { immediate: true })
-}
 
 const toasts = ref<ToastHostItem[]>([])
 let toastSeq = 0
@@ -595,7 +594,7 @@ function onOpenRecent(request: DesignerRecentRequest) {
 /** Toolbar zoom preset (percent) for the open Flow's Canvas. */
 function onZoomSelect(percent: number) {
   const flowId = center.state.activeFlowId
-  if (flowId === null || !isMenuCommandEnabled('view.zoom-reset', top.runPhase, menuTargets.value)) return
+  if (flowId === null || !isMenuCommandEnabled('view.zoom-reset', runPhase.value, menuTargets.value)) return
   center.requestView(flowId, { kind: 'zoom-to', zoom: percent / 100 })
 }
 
@@ -610,7 +609,7 @@ const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
 
 function onTopCommand(command: DesignerTopCommand) {
   // The parts disable what has no target; this is the same rule for a command that still arrives.
-  if (!isMenuCommandEnabled(command, top.runPhase, menuTargets.value)) return
+  if (!isMenuCommandEnabled(command, runPhase.value, menuTargets.value)) return
   // flowgate.v02.0059 T#2: 정렬 / 균등 분배 of the open Flow's selected cards (the command names the kind).
   if (arrangeSelectionMinimum(command) !== null) {
     const flowId = center.state.activeFlowId

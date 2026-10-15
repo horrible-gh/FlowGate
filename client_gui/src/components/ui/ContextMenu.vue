@@ -187,11 +187,15 @@ function onDocKeydown(event: KeyboardEvent): void {
   close()
 }
 
-document.addEventListener('mousedown', onDocMousedown)
+// Capture outside presses before Canvas handlers can stop propagation. A new
+// contextmenu event also dismisses this menu before another trigger opens its menu.
+document.addEventListener('mousedown', onDocMousedown, true)
+document.addEventListener('contextmenu', onDocMousedown, true)
 document.addEventListener('keydown', onDocKeydown, true)
 
 onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onDocMousedown)
+  document.removeEventListener('mousedown', onDocMousedown, true)
+  document.removeEventListener('contextmenu', onDocMousedown, true)
   document.removeEventListener('keydown', onDocKeydown, true)
 })
 

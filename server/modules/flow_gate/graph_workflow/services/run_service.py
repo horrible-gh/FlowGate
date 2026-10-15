@@ -191,7 +191,9 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
         command = run.get("run_mode") or MODE_FULL
     try:
         from modules.flow_gate.services import graph_execution_hooks
+        ctx.command_pending = True  # this explicit command owns any reconciled approval
         result_binder.reconcile_links(ctx, policies)                             # 5-1 while paused / idle
+        ctx.command_pending = False
         # 0061 T#9: the integrations that wait (pending / integrating / failed) go first. Asked after the commit in
         # attempt order; until the drain has asked each of them the command holds — its re-dispatch, drain and
         # openings follow in ``go_on_command`` from the state of that moment (the Git work stays outside the guard).
@@ -219,7 +221,8 @@ def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
     run_id = ctx.run_id
     _take_root_binding(ctx, policies)
     for row in run_store.node_runs(run_id):                                      # 5-3 re-dispatch
-        if row["status"] == "open" and row.get("dispatch_token_issued") == 0:
+        if row["status"] == "open" and (row.get("dispatch_token_issued") == 0
+                                      or node_dispatch.needs_ai_dispatch(ctx, row)):
             dispatch = node_dispatch.dispatch(ctx, row["node_key"])
             run_store.set_dispatch(run_id, row["node_key"], dispatch)
             emit_node_state(ctx, row["node_key"], "open", "open", "redispatched",
@@ -393,27 +396,60 @@ def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
     if with_nodes:
         attempts = run_store.current_attempts(run_id)
         held = frozenset(graph_execution_hooks.call("held_nodes", run["group_id"]) or ())          # 0061 T#11
-        out["node_runs"] = [node_run_wire(r, run["group_id"], attempts.get(r["node_key"]), held) for r in rows]
+        asked = question_nodes(run_id, run["group_id"])                                           # 0063
+        out["node_runs"] = [node_run_wire(r, run["group_id"], attempts.get(r["node_key"]), held, asked) for r in rows]
     return out
 
 
-def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, held: Optional[frozenset] = None) -> dict:
+def question_nodes(run_id: str, flow_id: str) -> frozenset:
+    """flowgate.v02.0063: the nodes whose own document (result document, the root bound one included, or instruction)
+    holds a question (Q&A item) nobody has answered yet — the card of the document the question is on, not the card
+    of the AI that asked it. A failed read marks nothing."""
+    from modules.flow_gate.db import questions as db_questions  # noqa: PLC0415
+    from modules.flow_gate.graph_workflow.store import assignment_store  # noqa: PLC0415
+    try:
+        asked = frozenset(db_questions.list_open_doc_ids_by_group(flow_id) or ())
+        if not asked:
+            return frozenset()
+        binding = assignment_store.root_binding(flow_id) or {}
+        nodes: set[str] = set()
+        for row in run_store.node_runs(run_id):
+            docs = {row.get("result_doc_id"), row.get("instruction_doc_id")}
+            if row["node_key"] == binding.get("node_key"):
+                docs.add(binding.get("doc_id"))
+            if docs & asked:
+                nodes.add(row["node_key"])
+        return frozenset(nodes)
+    except Exception:  # noqa: BLE001 — the run read goes on
+        _log.warning("graph question nodes read failed flow=%s", flow_id, exc_info=True)
+        return frozenset()
+
+
+def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, held: Optional[frozenset] = None,
+                  asked: Optional[frozenset] = None) -> dict:
     """flowgate.v02.0056 T#2: ``stage`` (``instruction`` / ``result``, null for a node no AI starts) and the
     card run's ``instruction_doc_id`` (null until known). 0061 T#2: the node's current ``attempt_id`` (its active
     attempt, else its last ended one; null for a node not opened since migration 151). 0061 T#9: that attempt's
     result integration (``integration_status``, ``integration_reason``; null when it has none). 0061 T#11: whether its
-    card is held (``hold``; ``held``: the Flow's held node keys when the caller read them already)."""
+    card is held (``hold``; ``held``: the Flow's held node keys when the caller read them already). 0063: whether its
+    document holds a question still unanswered (``question``; ``asked``: ``question_nodes`` when the caller read them already)."""
     from modules.flow_gate.services import graph_execution_hooks
     if held is None:
         held = frozenset(graph_execution_hooks.call("held_nodes", flow_id) or ())
+    if asked is None:
+        asked = question_nodes(row["run_id"], flow_id)
+    dispatch = dispatch_block(row)
+    failure = graph_execution_hooks.call("write_failure", row)
+    if failure and dispatch is not None:
+        dispatch = {**dispatch, "error_code": failure}
     return {**graph_execution_hooks.call("execution_wire", row["run_id"], flow_id, attempt_id or ""),
             **(graph_execution_hooks.call("integration_wire", attempt_id) or {}),
             "node_key": row["node_key"], "status": row["status"], "opened_at": row.get("opened_at"),
             "finished_at": row.get("finished_at"), "result_doc_id": row.get("result_doc_id"),
-            "root_bound": bool(row.get("root_bound")), "dispatch": dispatch_block(row),
+            "root_bound": bool(row.get("root_bound")), "dispatch": dispatch,
             "awaiting_approval": node_approval.awaiting_approval(flow_id, row),
             "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id"),
-            "attempt_id": attempt_id, "hold": row["node_key"] in held}
+            "attempt_id": attempt_id, "hold": row["node_key"] in held, "question": row["node_key"] in asked}
 
 
 def settle_if_needed(flow_id: str, project_id: Optional[str]) -> None:

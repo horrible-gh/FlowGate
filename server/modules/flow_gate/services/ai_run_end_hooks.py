@@ -13,6 +13,9 @@ handler. Nothing here imports ``flowgate``.
                    record, its stop code and review checkpoint already final. A handler marks what
                    ``on_run_ended`` will follow, so the gap between the release and that hook is not
                    taken for "nothing works any more"; it must stay short (no new run here)
+    on_question_answered  flowgate.v02.0063: an answer to a question was committed (``q_service.register_answer``):
+                   ``group_id``, ``doc_id``, ``item_id``, ``asker_kind``, ``asker_ai_run_id``, ``author_kind``. A Graph
+                   card whose AI asked it goes on once all its questions are answered
 
 * With no handler registered the port is a no-op, so the engine behaves exactly as before.
 * ``on_run_ended`` is called strictly after the release, so a handler may admit a new run for the
@@ -30,7 +33,8 @@ logger = logging.getLogger(__name__)
 
 ON_RUN_ENDED = "on_run_ended"
 ON_RUN_ENDING = "on_run_ending"
-HOOK_NAMES = (ON_RUN_ENDED, ON_RUN_ENDING)
+ON_QUESTION_ANSWERED = "on_question_answered"
+HOOK_NAMES = (ON_RUN_ENDED, ON_RUN_ENDING, ON_QUESTION_ANSWERED)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -78,3 +82,8 @@ def run_ending(run: dict) -> None:
 def run_ended(run: dict) -> None:
     """The run finished and released its group lease. Never raises."""
     _call(ON_RUN_ENDED, run)
+
+
+def question_answered(answer: dict) -> None:
+    """flowgate.v02.0063: an answer to a question was committed. Never raises."""
+    _call(ON_QUESTION_ANSWERED, answer)

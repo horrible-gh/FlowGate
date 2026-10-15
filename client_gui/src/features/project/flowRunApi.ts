@@ -44,6 +44,7 @@ function toRunNode(raw: Raw): FlowRunNode {
     ...('stage' in raw ? { stage: str(raw.stage) } : {}),
     ...('integration_status' in raw ? { integrationStatus: str(raw.integration_status) } : {}),
     ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
+    ...(typeof raw.question === 'boolean' ? { question: raw.question } : {}),
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),

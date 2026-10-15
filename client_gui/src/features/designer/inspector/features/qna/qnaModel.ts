@@ -9,7 +9,7 @@
 // nobody. The tab number is that count, shown only when it is at least one.
 //
 // Operations (D#1 §8.3 rule 0): reading the questions is a query; answering is a change, so it is
-// disabled with one reason — ownership conflict, revision view, disposed group, AI running (the
+// disabled with one reason — ownership conflict, disposed group, AI running (the
 // server refuses a person's write with 423 while an AI run owns the group), then an answer in flight.
 // Not offered (D#1 §8.4): team handling, resuming after an answer, the AI answer request.
 //
@@ -19,6 +19,9 @@
 // flowgate.v02.0056 F1 (0056 CH §3) — registering and asking an AI are two steps: an open question's
 // [AI 답변 요청] asks the chosen AI to answer it (`ai_request`), a change with the same reasons, then a
 // request already on its way.
+// flowgate.v02.0063 — a question is answered on its document, not on the Graph: a confirmed revision view
+// answers, asks and requests as the draft view does. A Flow whose answers stay closed (ownership conflict,
+// disposed group) does not show the question line, the answer form or the AI line at all.
 import type { InspectorReadOnly } from '../../inspectorTarget'
 
 /** The parts of a question the rules read (the `@/features/document` QaItem). */
@@ -189,7 +192,6 @@ export type QnaAvailability = Readonly<Record<QnaOperation, QnaAvailabilityItem>
 /** Why answering is disabled: one reason, in the order of D#1 §8.3 rule 6-1. */
 export function qnaDisabledReason(input: QnaInput): string | null {
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
-  if (input.readOnly === 'revision') return 'reason.read_only_revision'
   if (input.groupDisposed) return 'reason.disposed'
   if (input.aiRunning) return 'reason.ai_running'
   if (input.busy) return 'reason.busy'
@@ -221,17 +223,19 @@ export function qnaAiDisabledReason(input: QnaInput): string | null {
 
 /**
  * Reading is always possible; answering, asking and asking an AI are offered in every ownership (a
- * document feature, D#1 §8.3 rules 2-4) and disabled with the first reason that holds.
+ * document feature, D#1 §8.3 rules 2-4) and disabled with the first reason that holds. 0063: they are not
+ * shown at all while the Flow's answers stay closed (ownership conflict, disposed group).
  */
 export function qnaAvailability(input: QnaInput): QnaAvailability {
   const reason = qnaDisabledReason(input)
   const ask = qnaAskDisabledReason(input)
   const ai = qnaAiDisabledReason(input)
+  const shown = input.readOnly !== 'conflict' && !input.groupDisposed
   return {
     read: { visible: true, enabled: true, reason: null },
-    answer: { visible: true, enabled: reason === null, reason },
-    ask: { visible: true, enabled: ask === null, reason: ask },
-    ai_request: { visible: true, enabled: ai === null, reason: ai },
+    answer: { visible: shown, enabled: reason === null, reason },
+    ask: { visible: shown, enabled: ask === null, reason: ask },
+    ai_request: { visible: shown, enabled: ai === null, reason: ai },
   }
 }
 

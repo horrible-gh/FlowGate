@@ -262,17 +262,23 @@ def build_answer_mention(
     # 0661 T0004 F5: the hand-off to a human is a SEPARATE signal, never an answer body.
     # The normal path is to answer; this is the exception path, and the conditions are
     # spelled out so uncertainty, a failed tool call or a thin context never become a
-    # hand-off (T0004 "자동답변 우선 계약").
+    # hand-off (T0004 "자동답변 우선 계약"). flowgate.v02.0063: only infrastructure, a
+    # permission or an instruction whose intent cannot be told goes to a person; a logic
+    # question never does (the user operates through AI and cannot answer it).
     escalate_url = f"{api_base_url}/q/{doc_id}/items/{item_id}/escalate"
     lines.append("")
     lines.append("[사용자 판단 이관 — 예외 경로]")
     lines.append(
-        "정상 경로는 위 답변 등록입니다. 참조 문서·소스·기존 정책을 확인하고도 "
-        "**사람의 업무적 의사결정**(요구사항 선택, 승인/우선순위 판단 등)이 반드시 필요한 질의에 한해, "
-        "답변을 등록하지 말고 아래 이관 신호를 보내십시오."
+        "정상 경로는 위 답변 등록입니다. 참조 문서·소스·기존 정책을 확인해 직접 답하십시오. "
+        "아래 세 경우에 한해서만 답변을 등록하지 말고 아래 이관 신호를 보내십시오."
     )
+    lines.append("- 인프라: 서버, 배포 환경, 외부 계정·서비스처럼 문서와 소스로 알 수 없는 운영 환경 정보")
+    lines.append("- 권한: 사람이 승인하거나 부여해야 하는 접근·실행 권한")
+    lines.append("- 지시 자체가 모호해, 문서와 소스를 확인해도 무엇을 원하는지 정할 수 없는 경우")
     lines.append(
-        "단순한 확신 부족, 조사 시간 부족, 도구 호출 실패, 빈 출력은 이관 사유가 아닙니다 — "
+        "로직·구현 방식·코드 구조·설계 선택에 관한 질의는 절대 이관하지 마십시오. "
+        "문서와 소스를 근거로 직접 정해 답하십시오. "
+        "단순한 확신 부족, 조사 시간 부족, 도구 호출 실패, 빈 출력도 이관 사유가 아닙니다 — "
         "그런 경우에는 근거를 밝힌 최선의 답변을 등록하십시오."
     )
     lines.append(f"POST {escalate_url}")

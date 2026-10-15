@@ -620,36 +620,23 @@ describe('asking: refusals (flowgate.v02.0053 T#6)', () => {
 // --- When asking is closed --------------------------------------------------------------------------
 
 describe('asking and requesting: closed with the reason as the tooltip', () => {
+  // flowgate.v02.0063: a Flow whose answers stay closed shows neither the question line nor the AI line.
   it.each([
-    ['ownership conflict', { readOnly: 'conflict' as const }, 'Flow 소유가 충돌해 읽기 전용입니다.', 'Flow 소유가 충돌해 읽기 전용입니다.'],
-    [
-      'revision view',
-      { readOnly: 'revision' as const },
-      '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 질문합니다.',
-      '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 요청합니다.',
-    ],
-  ])('%s: the field, [+] and [AI 답변 요청] are closed and nothing is sent', async (_label, fields, askTitle, aiTitle) => {
+    ['ownership conflict', { readOnly: 'conflict' as const }, false],
+    ['a disposed group', {}, true],
+  ])('%s: no question line and no AI line', async (_label, fields, dispose) => {
+    disposed = dispose
     const w = await mountTab(v01Target(fields))
-    expect(isDisabled(askInput(w))).toBe(true)
-    expect(isDisabled(askButton(w))).toBe(true)
-    expect(askButton(w).attributes('title')).toBe(askTitle)
-    expect(isDisabled(aiButton(w, 10))).toBe(true)
-    expect(aiButton(w, 10).attributes('title')).toBe(aiTitle)
-    await askInput(w).trigger('keydown', { key: 'Enter' })
-    await askButton(w).trigger('click')
-    await aiButton(w, 10).trigger('click')
-    await flushPromises()
-    expect(qaAskCall).not.toHaveBeenCalled()
-    expect(qaAiCall).not.toHaveBeenCalled()
+    expect(w.find('[data-test="qna-ask"]').exists()).toBe(false)
+    expect(itemEl(w, 10).find('[data-test="qna-ai"]').exists()).toBe(false)
+    expect(itemEl(w, 10).find('[data-test="qna-ai-provider"]').exists()).toBe(false)
   })
 
-  it('a disposed group closes asking and requesting', async () => {
-    disposed = true
-    const w = await mountTab(v01Target())
-    expect(isDisabled(askButton(w))).toBe(true)
-    expect(askButton(w).attributes('title')).toBe('폐기된 그룹이라 질문할 수 없습니다.')
-    expect(isDisabled(aiButton(w, 10))).toBe(true)
-    expect(aiButton(w, 10).attributes('title')).toBe('폐기된 그룹이라 AI 답변을 요청할 수 없습니다.')
+  it('a revision view asks and requests as the draft view does (0063)', async () => {
+    const w = await mountTab(v01Target({ readOnly: 'revision' }))
+    expect(isDisabled(askInput(w))).toBe(false)
+    expect(askButton(w).attributes('title')).toBe('질문 등록')
+    expect(isDisabled(aiButton(w, 10))).toBe(false)
   })
 
   it('an AI run of the Flow closes asking and requesting; both open again when the run finishes', async () => {

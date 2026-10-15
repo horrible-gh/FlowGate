@@ -13,7 +13,7 @@
        it and an answered one 완료 (0052 T#1) — the asker kind is never read as a hand-off.
        The window's title line keeps its badge and buttons in view: the title shrinks with an
        ellipsis, the badge does not. Answering is not editing the question, so there is no 편집
-       badge; 읽기 전용 shows only when the Flow is read only (ownership conflict / revision view).
+       badge; 읽기 전용 shows only when the Flow is read only (ownership conflict).
        flowgate.v02.0053 T#6 (0053 CH §2) — the question line at the top: a person writes a question
        and [+] (or Enter) registers it. The line is always there, and a document without questions
        shows only the line — no "no questions" sentence. Why [+] is closed is its tooltip. A refusal is a
@@ -22,9 +22,11 @@
        carries its own AI line under the answer form: an AI picker (the project's providers, the project
        default picked first) and [AI 답변 요청]; the button shows the request on its way, a running chip
        says the AI answer is awaited once the run started, and a refusal is an amber ! icon beside the
-       button with the reason as its tooltip. A person still answers directly, as before. -->
+       button with the reason as its tooltip. A person still answers directly, as before.
+       flowgate.v02.0063 — no reason sentence under a closed form; a Flow whose answers stay closed shows
+       no question line, answer form or AI line (qnaAvailability `visible`). -->
   <div class="inspector-qna" data-test="inspector-qna" :data-status="status">
-    <div class="inspector-qna-ask" data-test="qna-ask">
+    <div v-if="availability.ask.visible" class="inspector-qna-ask" data-test="qna-ask">
       <Input
         class="inspector-qna-ask-field"
         :model-value="askBody"
@@ -104,7 +106,7 @@
             </div>
 
             <!-- v7 `.q-ans`: the short inline answer under a question without an answer. -->
-            <div v-if="item.answerable" class="inspector-qna-answer" data-test="qna-answer-form">
+            <div v-if="item.answerable && availability.answer.visible" class="inspector-qna-answer" data-test="qna-answer-form">
               <div v-if="item.options.length" class="inspector-qna-options" role="group" :aria-label="t(k('options'))">
                 <Button
                   v-for="option in item.options"
@@ -133,12 +135,13 @@
                   variant="primary"
                   :disabled="!availability.answer.enabled || !canSend(item.id)"
                   :loading="busy === item.id"
+                  :title="answerTitle"
                   data-test="qna-answer-submit"
                   @click="submit(item.id)"
                 >{{ t(k('send')) }}</Button>
               </div>
               <!-- flowgate.v02.0056 F1: the AI line — pick an AI, ask it; the request state beside the button. -->
-              <div class="inspector-qna-ai" data-test="qna-ai">
+              <div v-if="availability.ai_request.visible" class="inspector-qna-ai" data-test="qna-ai">
                 <Select
                   class="inspector-qna-ai-pick"
                   :model-value="aiPickOf(item.id)"
@@ -160,9 +163,6 @@
                 >{{ t(k('ai_request')) }}</Button>
                 <InspectorStatusChip v-if="awaiting.has(item.id)" :label="t(k('ai_waiting'))" tone="running" dot data-test="qna-ai-waiting" />
                 <InspectorFailureIcon v-if="aiFailure && aiFailure.itemId === item.id" :name="t(k('ai_failed'))" :reason="t(k(aiFailure.key))" data-test="qna-ai-failure" />
-              </div>
-              <div v-if="availability.answer.reason" data-test="qna-answer-reason">
-                <InspectorReason :text="t(k(availability.answer.reason))" />
               </div>
               <div v-if="failure && failure.itemId === item.id" data-test="qna-answer-failure">
                 <InspectorReason tone="danger" :text="t(k(failure.key))" />
@@ -218,7 +218,7 @@
             </li>
           </ul>
 
-          <div v-if="windowItem(win.id)!.answerable" class="inspector-qna-answer" data-test="qna-window-form">
+          <div v-if="windowItem(win.id)!.answerable && availability.answer.visible" class="inspector-qna-answer" data-test="qna-window-form">
             <div v-if="windowItem(win.id)!.options.length" class="inspector-qna-options" role="group" :aria-label="t(k('options'))">
               <Button
                 v-for="option in windowItem(win.id)!.options"
@@ -246,11 +246,12 @@
                 variant="primary"
                 :disabled="!availability.answer.enabled || !canSend(win.id)"
                 :loading="busy === win.id"
+                :title="answerTitle"
                 data-test="qna-window-submit"
                 @click="submit(win.id)"
               >{{ t(k('answer')) }}</Button>
             </div>
-            <div class="inspector-qna-ai" data-test="qna-window-ai">
+            <div v-if="availability.ai_request.visible" class="inspector-qna-ai" data-test="qna-window-ai">
               <Select
                 class="inspector-qna-ai-pick"
                 :model-value="aiPickOf(win.id)"
@@ -271,9 +272,6 @@
                 @click="requestAiFor(win.id)"
               >{{ t(k('ai_request')) }}</Button>
               <InspectorFailureIcon v-if="aiFailure && aiFailure.itemId === win.id" :name="t(k('ai_failed'))" :reason="t(k(aiFailure.key))" data-test="qna-window-ai-failure" />
-            </div>
-            <div v-if="availability.answer.reason" data-test="qna-window-reason">
-              <InspectorReason :text="t(k(availability.answer.reason))" />
             </div>
             <div v-if="failure && failure.itemId === win.id" data-test="qna-window-failure">
               <InspectorReason tone="danger" :text="t(k(failure.key))" />
@@ -480,6 +478,9 @@ function pick(itemId: number, optionId: string) {
 function canSend(itemId: number): boolean {
   return ready(itemId, bodyOf(itemId), pickedOf(itemId))
 }
+
+/** The send button's tooltip: why answering is closed, else nothing beyond its label. */
+const answerTitle = computed(() => (availability.value.answer.reason ? t(k(availability.value.answer.reason)) : undefined))
 
 async function submit(itemId: number) {
   if (await answer(itemId, bodyOf(itemId), pickedOf(itemId))) delete drafts[itemId]

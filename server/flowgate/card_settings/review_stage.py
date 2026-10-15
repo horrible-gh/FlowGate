@@ -72,6 +72,12 @@ approvals (the instruction's with the result stage's start, the result's) run un
 (``legacy.attempt_hold``) and so commit before a Stop's ``stopping`` does or are refused after it; the review loop's
 start is refused unless that attempt still works on the result (``execution.request_loop``). An old attempt's late
 end — the node opened again after a Stop — approves, starts and records nothing of the new one (refused, recorded).
+
+flowgate.v02.0063: a run that asked questions still unanswered when it ended leaves its step — the instruction's
+approval and the result stage, the result's review or approval, a passed review's approval — until they are answered
+(``question_wait``: the card's instruction AI answers first, the step goes on after the last answer); a result writer
+that ended with no result and asked questions has them answered too and writes again. Every run end of the Flow is
+followed by ``question_wait.follow`` (a responder's end, a question waiting for one).
 """
 from __future__ import annotations
 
@@ -84,7 +90,7 @@ from flowgate.card_approval import legacy_adapter as approvals
 from flowgate.card_documents import lines as card_lines
 from flowgate.card_settings import fields
 from flowgate.card_settings import legacy_adapter as legacy
-from flowgate.card_settings import repository, settings
+from flowgate.card_settings import question_wait, repository, settings
 
 _log = logging.getLogger(__name__)
 
@@ -168,6 +174,7 @@ def on_run_ended(run: dict) -> None:
     finally:
         if _clear_handoffs(run.get("run_id")):
             legacy.settle_graph_run(flow_id)    # 0061 T#2: running while its review works, else the approval wait
+        question_wait.follow(run)               # 0063: a responder's end, a question waiting for its responder
 
 
 def _after_instruction(flow_id: str, run: dict, node: dict, row: dict) -> None:
@@ -182,6 +189,8 @@ def _after_instruction(flow_id: str, run: dict, node: dict, row: dict) -> None:
                   flow_id, key, run.get("run_id"), run.get("end_reason"), run.get("stop_code"))
         legacy.instruction_stage_failed(flow_id, row["run_id"], key, attempt_id)
         return
+    if question_wait.hold(flow_id, run, node, asked_by_instruction=True):
+        return                                  # 0063: its questions are answered first
     doc_id = written_instruction(flow_id, node, row)
     if doc_id is None:
         _log.info("card instruction stage failed flow=%s node=%s run=%s: no instruction written",
@@ -241,6 +250,7 @@ def _after_work(flow_id: str, run: dict) -> None:
     """The node's AI run ended: start the card's review, or approve at once."""
     found = legacy.node_of_ai_run(flow_id, run["run_id"])
     if found is None:
+        question_wait.hold_without_result(flow_id, run)     # 0063: a writer with no result that asked questions
         return                                  # not a node's AI run, or no result of its own bound
     node, doc_id = found
     if not ended_cleanly(run):
@@ -250,6 +260,8 @@ def _after_work(flow_id: str, run: dict) -> None:
     run_id, attempt_id = legacy.active_run_id(flow_id), legacy.attempt_of_ai_run(run)     # 0061 T#7
     if run_id is None:
         return
+    if question_wait.hold(flow_id, run, node):
+        return                                  # 0063: its questions are answered first
     stored = repository.values(flow_id, node["node_key"])
     step = fields.after_result(fields.card_kind(node.get("node_type"), node.get("doc_type")), stored)
     if step == fields.REVIEW:
@@ -285,6 +297,8 @@ def _after_review(flow_id: str, run: dict) -> None:
     run_id = legacy.active_run_id(flow_id)
     if run_id is None:
         return
+    if question_wait.hold(flow_id, run, node):
+        return                                  # 0063: its questions are answered first
     # 0061 T#7: the review execution's attempt must still work on the node; the approval commits under the Stop gate.
     with legacy.attempt_hold(run_id, node["node_key"], legacy.attempt_of_ai_run(run), "review_approval") as owned:
         if owned:
