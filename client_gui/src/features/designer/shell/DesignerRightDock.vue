@@ -14,7 +14,9 @@
        mounted but gets no Project / Flow context while there is no target, so a Project switch
        back to the initial state does not read Git / Conversation data for the new Project.
        flowgate.v02.0061 T#14: `sourceLocked` (the open Flow's Graph run is running / paused / stopping) goes to the
-       Conversation, whose AI source access mode then cannot change. -->
+       Conversation, whose AI source access mode then cannot change.
+       flowgate.v02.0066 T#6: of the Git part's intents only two go up, unchanged — `open-diff` as `git-open-diff` and
+       `git-center-diff-refresh` — for the Shell's Center Diff (0066 D#2 §2-3). The rest stays unhandled here. -->
   <aside
     class="designer-right-dock"
     :class="{ 'is-unselected': unselected }"
@@ -48,7 +50,13 @@
         <ConversationPanel :project-id="partProjectId" :group-id="partFlow?.groupId ?? null" :source-locked="sourceLocked" />
       </div>
       <div v-if="mountedTools.git" v-show="!unselected && tool === 'git'" class="designer-right-pane" data-test="designer-right-pane-git">
-        <DesignerGitPanel :project-id="partProjectId" :flow="partFlow" :active="!collapsed && !unselected && tool === 'git'" />
+        <DesignerGitPanel
+          :project-id="partProjectId"
+          :flow="partFlow"
+          :active="!collapsed && !unselected && tool === 'git'"
+          @open-diff="emit('git-open-diff', $event)"
+          @git-center-diff-refresh="emit('git-center-diff-refresh', $event)"
+        />
       </div>
     </div>
   </aside>
@@ -58,7 +66,7 @@
 import { computed, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ConversationPanel } from '@/features/conversation'
-import { DesignerGitPanel } from '@/features/git'
+import { DesignerGitPanel, type GitCenterDiffRefresh, type GitDiffIntent } from '@/features/git'
 import type { FlowRef } from '@/features/project'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
 import PalettePanel from '../palette/PalettePanel.vue'
@@ -84,6 +92,8 @@ const emit = defineEmits<{
   'update:tool': [tool: DesignerRightTool]
   'palette-select': [definition: PaletteItemDefinition]
   'palette-drag-start': []
+  'git-open-diff': [intent: GitDiffIntent]
+  'git-center-diff-refresh': [request: GitCenterDiffRefresh]
 }>()
 
 const { t } = useI18n()

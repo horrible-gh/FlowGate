@@ -650,3 +650,40 @@ export interface RefsFetchResult {
   behindCount: number | null
   group: RefsFetchGroup | null
 }
+
+// ── Worktree area and Center Diff (flowgate.v02.0066 T#6) ──────────────────────────────
+
+/** A line of the worktree area (0066 D#2 §3-3). Codes only: the text is gui.git.worktree.notice.*. */
+export interface WorktreeNotice {
+  code: string
+  params?: Record<string, string | number>
+  tone?: 'info' | 'error'
+  // The full unstage link a staged_protected_paths refusal carries (§3-6(1)).
+  link?: 'unstage_all'
+}
+
+/** `git-center-diff-refresh` (Panel → Dock → Shell): read the open group diff again, or close it. */
+export interface GitCenterDiffRefresh {
+  groupId: string
+  // Close a diff opened from the target comparison list (compareBase set) instead of reading it.
+  closeCompare: boolean
+}
+
+/** The one diff the Designer Center shows (0066 D#2 §3-10). */
+export interface CenterDiffTarget {
+  projectId: string
+  groupId: string
+  path: string
+  // null = the group work base floor against the working file; a name = merge-base with it.
+  compareBase: string | null
+  // The letter the row showed (the answer's own status wins once it is in).
+  status: GitFileLetter | null
+}
+
+export type CenterDiffLoad = 'idle' | 'loading' | 'ready' | 'error'
+
+/** How a failed Center Diff read is shown; `code` is the server code (tooltip only). */
+export interface CenterDiffError {
+  kind: 'floor' | 'not_found' | 'forbidden' | 'compare' | 'network' | 'failed'
+  code: string | null
+}

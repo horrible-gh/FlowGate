@@ -572,3 +572,448 @@
     margin-right: 0;
   }
 }
+
+/* flowgate.v02.0066 T#6 — the worktree area (v19 mock-up `gw-*`): summary line, the changed-files
+   accordion and the commit line. The open list lives in a viewport of bounded height and scrolls
+   inside it, so 100+ files never push the commit line (or the Base apply header) off the panel. */
+.gw-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.gw-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0 2px 6px;
+  border-bottom: 1px solid var(--fg2-line);
+  font-size: 10.5px;
+  color: var(--fg2-text);
+}
+
+.gw-summary.is-muted,
+.gw-line.is-muted {
+  color: var(--fg2-muted);
+}
+
+.gw-dot {
+  opacity: 0.6;
+}
+
+.gw-chip {
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--fg2-status-warning-border);
+  border-radius: 999px;
+  background: var(--fg2-status-warning-bg);
+  font-size: 9.5px;
+}
+
+.gw-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--fg2-status-info-fg);
+}
+
+.gw-line.is-error {
+  color: var(--fg2-status-danger-fg);
+}
+
+.gw-link {
+  border: 0;
+  padding: 0 2px;
+  background: transparent;
+  color: var(--fg2-blue);
+  font: inherit;
+  cursor: pointer;
+}
+
+.gw-link:disabled,
+.gw-act:disabled,
+.gw-quick:disabled,
+.gw-small:disabled,
+.gw-icon:disabled,
+.gw-ai:disabled,
+.gw-iconbtn:disabled {
+  opacity: var(--fg2-control-disabled-opacity);
+  cursor: not-allowed;
+}
+
+.gw-acc {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.gw-acc-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.gw-acc-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--fg2-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gw-acc-toggle:disabled {
+  color: var(--fg2-muted);
+  cursor: default;
+}
+
+.gw-caret {
+  width: 10px;
+  color: var(--fg2-muted);
+}
+
+.gw-num,
+.gw-folder-count {
+  padding: 0 5px;
+  border-radius: 5px;
+  background: var(--fg2-control-surface);
+  font: 700 9.5px ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--fg2-muted);
+}
+
+.gw-staged {
+  color: var(--fg2-status-success-fg);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.gw-lock,
+.gw-quick,
+.gw-iconbtn,
+.gw-small,
+.gw-act,
+.gw-ai {
+  flex: none;
+  height: 25px;
+  padding: 0 7px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: var(--fg2-control-radius-sm);
+  background: var(--fg2-control-surface);
+  color: var(--fg2-control-fg);
+  font: inherit;
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gw-iconbtn {
+  min-width: 26px;
+  padding: 0 4px;
+  font-size: 14px;
+}
+
+.gw-iconbtn.is-on {
+  border-color: var(--fg2-blue);
+}
+
+.gw-small {
+  height: 22px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--fg2-blue);
+}
+
+.gw-act.primary {
+  border-color: var(--fg2-blue);
+  background: var(--fg2-blue);
+  color: #fff;
+}
+
+.gw-lockbox {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 9px;
+  border: 1px solid var(--fg2-status-info-border);
+  border-radius: 7px;
+  background: var(--fg2-status-info-bg);
+  font-size: 10px;
+}
+
+.gw-lockbox p {
+  margin: 0;
+}
+
+.gw-lockbox .gw-act {
+  align-self: flex-start;
+}
+
+.gw-acc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.gw-search,
+.gw-menu,
+.gw-bulk {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.gw-bulk-count {
+  margin-right: auto;
+  font-size: 10px;
+  color: var(--fg2-muted);
+}
+
+.gw-input,
+.gw-select {
+  height: 28px;
+  min-width: 0;
+  padding: 0 7px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: var(--fg2-control-radius-sm);
+  background: var(--fg2-bg);
+  color: var(--fg2-text);
+  font: inherit;
+  font-size: 10.5px;
+}
+
+.gw-search .gw-input {
+  flex: 1 1 auto;
+}
+
+.gw-select {
+  width: 86px;
+}
+
+/* The bounded list window (v19: 285px); it scrolls, the rest of the panel stays put. */
+.gw-viewport {
+  max-height: min(285px, 45vh);
+  min-height: 60px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 7px;
+}
+
+.gw-section + .gw-section {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--fg2-line);
+}
+
+.gw-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 2px;
+  font-weight: 700;
+}
+
+.gw-grow {
+  flex: 1 1 auto;
+}
+
+.gw-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 3px;
+  border: 0;
+  border-top: 1px solid var(--fg2-line);
+  background: transparent;
+  color: var(--fg2-muted);
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gw-folder-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gw-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 2px 0 8px;
+  border-radius: 5px;
+}
+
+.gw-row:hover,
+.gw-row:focus-within,
+.gw-row.is-selected {
+  background: var(--fg2-control-surface);
+}
+
+.gw-check {
+  flex: none;
+  margin: 0 3px 0 0;
+}
+
+.gw-row-main {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg2-text);
+  font: inherit;
+  font-size: 10.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gw-mark {
+  flex: 0 0 19px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: 4px;
+  font: 700 9px ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--fg2-yellow);
+}
+
+.gw-mark.mk-a {
+  color: var(--fg2-status-success-fg);
+}
+
+.gw-mark.mk-u {
+  color: var(--fg2-status-info-fg);
+}
+
+.gw-mark.mk-d {
+  color: var(--fg2-status-danger-fg);
+}
+
+.gw-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gw-tag {
+  flex: none;
+  font-size: 9px;
+  color: var(--fg2-muted);
+}
+
+.gw-row-btns {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+.gw-icon {
+  width: 23px;
+  height: 23px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg2-muted);
+  font: 600 14px var(--fg2-font);
+  cursor: pointer;
+}
+
+.gw-icon:hover:not(:disabled) {
+  background: var(--fg2-control-surface);
+  color: var(--fg2-text);
+}
+
+.gw-icon.danger:hover:not(:disabled) {
+  color: var(--fg2-status-danger-fg);
+}
+
+.gw-more {
+  width: 100%;
+  height: 25px;
+  margin: 3px 0 5px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg2-blue);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.gw-empty,
+.gw-hidden-staged,
+.gw-count-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  padding: 5px 4px;
+  font-size: 10px;
+  color: var(--fg2-muted);
+}
+
+.gw-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--fg2-line);
+}
+
+.gw-commit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gw-commit-input {
+  flex: 1 1 auto;
+  width: 0;
+  height: 31px;
+}
+
+.gw-ai {
+  height: 31px;
+  font-size: 14px;
+}
+
+.gw-commit-btn {
+  height: 31px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 700;
+}

@@ -9,9 +9,10 @@
        a new Bottom Dock height; the Workspace (and its Canvas) takes the rest.
        flowgate.v02.0048 T#1 (D#1 §4.2 / §5.7): the Inspector gets the session's selection context.
        Its Host intents are carried out here — select another Node, read the Flow again quietly —
-       or, for a Tool Panel, passed up to the Shell. -->
+       or, for a Tool Panel, passed up to the Shell.
+       flowgate.v02.0066 T#6: the Shell's Center Diff (optional) passes through to the Workspace. -->
   <div ref="columnRef" class="designer-center-column" data-test="designer-center-column">
-    <DesignerWorkspace :center="center" :unselected="unselected" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" @show-tool="emit('show-tool', $event)" />
+    <DesignerWorkspace :center="center" :center-diff="centerDiff" :unselected="unselected" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" @show-tool="emit('show-tool', $event)" />
     <DesignerResizeHandle
       class="designer-center-resize"
       axis="y"
@@ -35,6 +36,7 @@ import { computed, ref } from 'vue'
 import type { CanvasViewport } from '../center/canvasView'
 import type { DesignerCenterSession } from '../center/designerCenterSession'
 import type { FlowGraph } from '../center/graph/flowGraph'
+import type { GitCenterDiffSession } from '@/features/git'
 import DesignerBottomDock from './DesignerBottomDock.vue'
 import DesignerResizeHandle from './DesignerResizeHandle.vue'
 import { provide } from 'vue'
@@ -48,8 +50,10 @@ const props = withDefaults(
     unselected?: boolean
     /** flowgate.v02.0059 0017-T: the density's card drag step (the Shell's), for the Canvas; null = 자율형. */
     moveStep?: number | null
+    /** flowgate.v02.0066 T#6: the Shell's Center Diff, drawn by the Workspace while a file is open. */
+    centerDiff?: GitCenterDiffSession | null
   }>(),
-  { unselected: false, placing: false, moveStep: null },
+  { unselected: false, placing: false, moveStep: null, centerDiff: null },
 )
 
 // Each drag step carries the column's own height, which the Shell's clamp keeps the Workspace's room in.
