@@ -1,3 +1,4 @@
+import { lineWarns } from '@/features/document/api/cardLine'
 // flowgate.v02.0056 F1 — what a slot line shows for its state, decided in one place for every card (0056 CH
 // §1 / §5). The 0053 line drew every state as a coloured dot whose meaning lived in its tooltip; since most
 // lines sit in a state that asks nothing of the operator ('작성 중', '완료'), the colour carried no
@@ -89,6 +90,7 @@ export interface SlotCardLine {
   readonly docType: string | null
   readonly docId: string | null
   readonly hasBody?: boolean
+  readonly bodyState?: string | null
   readonly reviewCount?: number
   readonly rejectionCount?: number
   readonly historyCount?: number
@@ -133,6 +135,7 @@ export interface SlotAction {
 export interface SlotLineCard {
   /** The card line behind the row (its slot), or null when the row shows no card line. */
   readonly cardSlot: string | null
+  readonly bodyState?: string | null
   /** The row's document has no body yet: "비어 있음", and opening it opens its editor. */
   readonly blank: boolean
   /** The history button's number (`history_count`), or null when not sent. */
@@ -177,7 +180,8 @@ export function slotLineCard(
     card.reviewCount !== undefined && card.rejectionCount !== undefined ? { reviews: card.reviewCount, rejections: card.rejectionCount } : null
   return {
     cardSlot: card.slot,
-    blank: slotFill(card) === 'blank',
+    ...(card.bodyState !== undefined ? { bodyState: card.bodyState } : {}),
+    blank: !lineWarns(card) && slotFill(card) === 'blank',
     historyCount: card.historyCount ?? null,
     historyDetail,
     actions: context.changeable ? [{ key: 'ai_invoke', state: context.running(card.docId) ? 'running' : 'enabled' }] : [],

@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from test_fg_card_documents import FB, _doc, db_path, env
 from fastapi import HTTPException
 
 os.environ["TESTING"] = "1"
@@ -27,27 +28,17 @@ def _r_document(tmp_path: Path, review_status: str) -> dict:
     }
 
 
-def test_closed_document_content_is_editable_before_final_approval(
-    monkeypatch,
-    tmp_path,
-):
+def test_closed_document_content_is_editable_before_final_approval(env):
     from modules.flow_gate.documents.routers import documents as routes
 
-    doc = _r_document(tmp_path, "wf_in_progress")
-    update_mock = MagicMock(return_value=doc)
-    monkeypatch.setattr(routes.document_service, "get_document", lambda _doc_id: doc)
-    monkeypatch.setattr(routes.document_service, "update_document", update_mock)
-    monkeypatch.setattr(routes, "_document_file_path", lambda _doc: Path(doc["file_path"]))
-
+    doc_id = _doc(FB, 1, "R", review="wf_in_progress", status="closed",
+                  file_path=str(env["storage"] / "R0001.md"))
     result = routes.update_document_content(
-        doc["doc_id"],
-        routes.DocumentContentUpdate(content="updated"),
-        {"user_id": "user-1"},
+        doc_id, routes.DocumentContentUpdate(content="updated"), {"user_id": "u_kim"},
     )
-
-    assert Path(doc["file_path"]).read_text(encoding="utf-8") == "updated"
+    assert (env["storage"] / "R0001.md").read_text(encoding="utf-8") == "updated"
     assert result["content"] == "updated"
-    update_mock.assert_called_once()
+    assert result["data"]["doc_review_status"] == "wf_in_progress"
 
 
 def test_document_content_is_locked_after_final_approval(monkeypatch, tmp_path):

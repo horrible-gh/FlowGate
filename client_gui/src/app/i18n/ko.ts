@@ -2,6 +2,19 @@
 // (see ./index.ts). Copy follows the approved 01-dashboard.html; lines broken with \n
 // in the mockup are "\n" here and rendered with white-space: pre-line.
 export default {
+  document: {
+    bodyState: {
+      file_path_missing: "파일 경로 미기록",
+      file_not_found: "파일 없음",
+      path_unresolved: "경로 해석 실패",
+      read_error: "읽기 오류(권한·인코딩 확인 필요)",
+      aiUnreadable: "AI도 이 문서를 읽지 못합니다.",
+      reenter: "본문 다시 입력",
+      unreadable: "본문 읽기 불가",
+      file_exists_unrecorded: "표준 위치에 연결되지 않은 파일이 있습니다. 본문 진단·복구로 파일을 확인한 뒤 다시 저장하세요.",
+    },
+  },
+  card: { bodyUnreadable: "AI가 읽을 수 없는 문서 있음" },
   brand: {
     tagline: 'Turn Ideas into Working Flow',
     home_aria: 'FlowGate 대시보드로 이동',

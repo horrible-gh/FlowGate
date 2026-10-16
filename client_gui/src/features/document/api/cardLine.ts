@@ -38,6 +38,7 @@ export interface CardLineRecord {
   readonly status: string | null
   readonly docReviewStatus: string | null
   readonly hasBody?: boolean
+  readonly bodyState?: string | null
   readonly reviewCount?: number
   readonly rejectionCount?: number
   readonly historyCount?: number
@@ -73,6 +74,7 @@ export function toCardLineRecord(raw: unknown): CardLineRecord | null {
     status: text(line.status),
     docReviewStatus: text(line.doc_review_status),
     ...(typeof line.has_body === 'boolean' ? { hasBody: line.has_body } : {}),
+    ...(typeof line.body_state === 'string' || line.body_state === null ? { bodyState: line.body_state } : {}),
     ...(reviewCount !== null ? { reviewCount } : {}),
     ...(rejectionCount !== null ? { rejectionCount } : {}),
     ...(historyCount !== null ? { historyCount } : {}),
@@ -136,4 +138,14 @@ export function cardLineErrorOf(error: unknown): CardLineError {
     reason: text(first.reason),
     docId: text(params.doc_id),
   }
+}
+
+
+/** Only known unreadable states warn; older servers and documentless lines do not. */
+export const UNREADABLE_BODY_STATES: ReadonlySet<string> = new Set([
+  'file_path_missing', 'file_not_found', 'path_unresolved', 'read_error',
+])
+
+export function lineWarns(line: { readonly docId?: string | null; readonly bodyState?: string | null }): boolean {
+  return line.docId != null && typeof line.bodyState === 'string' && UNREADABLE_BODY_STATES.has(line.bodyState)
 }

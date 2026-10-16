@@ -72,6 +72,28 @@ def approvable_body(doc: dict) -> bool:
     return True
 
 
+def line_body_facts(doc: Optional[dict]) -> tuple[bool, Optional[str]]:
+    """One read supplies both line facts; an unreadable line cannot break Canvas."""
+    if doc is None:
+        return False, None
+    from modules.flow_gate.storage.body import body_read_state
+    from modules.flow_gate.workflow import pipeline_service
+
+    try:
+        state, text = body_read_state(doc)
+    except (OSError, UnicodeError):
+        _log.warning("card line body read failed: %s", doc.get("doc_id"), exc_info=True)
+        return False, "read_error"
+    # These types have always bypassed the file/body approval requirement.
+    # Preserve has_body while exposing their independently measured body state.
+    kind = str(doc.get("type_code") or "").upper()
+    if kind in pipeline_service.AUTO_COMPLETE_TYPES or kind in pipeline_service.FILELESS_APPROVABLE_TYPES:
+        return approvable_body(doc), state
+    if state != "readable":
+        return False, state
+    return pipeline_service.approvable_text(doc, text), state
+
+
 def supersede(old_id: str, new_id: str) -> None:
     db_documents.set_superseded_by(old_id, new_id)
 

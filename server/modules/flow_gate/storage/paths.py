@@ -600,10 +600,18 @@ def resolve_storage_path(
       ④ branch-segment drift (absorbs _fallback_file_path).
     Returns None when nothing resolves to a file inside the allowed roots.
     """
+    return locate_storage_path(stored, project_id, branch)[0]
+
+
+def locate_storage_path(stored: str, project_id: Optional[str] = None, branch: str = "main"):
+    """Return (path, state), preserving the legacy resolver's candidate order."""
+    any_inside = False
     for candidate, inside in storage_path_candidates(stored, project_id, branch):
-        if inside and candidate.is_file():
-            return candidate
-    return None
+        if inside:
+            any_inside = True
+            if candidate.is_file():
+                return candidate, "readable"
+    return None, "file_not_found" if any_inside else "path_unresolved"
 
 
 def storage_path_candidates(stored: str, project_id: Optional[str] = None, branch: str = "main"):

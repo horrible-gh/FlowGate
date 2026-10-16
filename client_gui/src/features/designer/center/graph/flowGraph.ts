@@ -85,6 +85,7 @@ export interface FlowGraphCardDocument {
    * when the server did not send it. M and WP lines are always true.
    */
   readonly hasBody?: boolean
+  readonly bodyState?: string | null
   /** flowgate.v02.0056 F2-2: AI reviews of the line's document; absent when not sent. */
   readonly reviewCount?: number
   /** flowgate.v02.0056 F2-2: rejections with a reason; absent when not sent. */

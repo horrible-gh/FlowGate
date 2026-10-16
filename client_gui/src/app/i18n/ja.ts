@@ -1,4 +1,17 @@
 export default {
+  document: {
+    bodyState: {
+      file_path_missing: "ファイルパス未記録",
+      file_not_found: "ファイルが見つかりません",
+      path_unresolved: "パスを解決できません",
+      read_error: "読み取りエラー（権限・文字コードを確認）",
+      aiUnreadable: "AIもこの文書を読めません。",
+      reenter: "本文を再入力",
+      unreadable: "本文を読み取れません",
+      file_exists_unrecorded: "標準の保存先に未接続のファイルがあります。本文の診断・復旧でファイルを確認してから再保存してください。",
+    },
+  },
+  card: { bodyUnreadable: "AIが読めない文書があります" },
   brand: {
     tagline: 'Turn Ideas into Working Flow',
     home_aria: 'FlowGate ダッシュボードへ移動',

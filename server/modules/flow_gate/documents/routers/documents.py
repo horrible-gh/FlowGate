@@ -186,6 +186,20 @@ def _is_relative_to(path: Path, base: Path) -> bool:
         return False
 
 
+class _BodyUnavailable(HTTPException):
+    """Keep the old detail string while adding a top-level reason at content routes."""
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(status_code=404, detail={
+            "file_path_missing": "Document file path is missing.",
+            "file_not_found": "Document file not found.",
+            "path_unresolved": "Not found",
+        }[reason])
+
+    def response(self) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": self.detail, "reason": self.reason})
+
+
 def _document_file_path(doc: dict) -> Path:
     """Resolve a document's stored file_path to a jailed absolute Path.
 
@@ -195,20 +209,20 @@ def _document_file_path(doc: dict) -> Path:
     """
     raw = (doc.get("file_path") or "").strip()
     if not raw:
-        raise HTTPException(status_code=404, detail="Document file path is missing.")
+        raise _BodyUnavailable("file_path_missing")
 
     project_id = doc.get("project_id")
     branch = (doc.get("branch") or "main") or "main"
-    resolved = storage_paths.resolve_storage_path(raw, project_id, branch=branch)
+    resolved, state = storage_paths.locate_storage_path(raw, project_id, branch=branch)
+    if state == "path_unresolved":
+        raise _BodyUnavailable(state)
     if resolved is None:
-        # Fall back to a best-effort jailed path so existing 404-on-missing-file
-        # behaviour at call sites (which separately check .is_file()) is preserved.
-        root = get_storage_root(project_id).resolve()
-        cand = (Path(raw) if (Path(raw).is_absolute() or _re.match(r"^[A-Za-z]:", raw))
-                else root / raw).resolve(strict=False)
-        if not storage_paths._within_allowed_roots(cand, project_id):
-            raise HTTPException(status_code=404, detail="Not found")
-        return cand
+        # Use the same normalized candidate order as reads, including /storage/
+        # legacy paths. A missing file remains writable only inside the jail.
+        for candidate, inside in storage_paths.storage_path_candidates(raw, project_id, branch):
+            if inside:
+                return candidate
+        raise _BodyUnavailable("path_unresolved")
     return resolved
 
 
@@ -2920,6 +2934,8 @@ def save_test_spec(
     saved = update_document_content(
         doc_id, DocumentContentUpdate(content=content), current_user, request
     )
+    if isinstance(saved, JSONResponse):
+        return saved
     return {**saved, "ok": True, "cases": cases}
 
 
@@ -3235,10 +3251,12 @@ def get_document_content(
             "conversation": _conversation_compat_block(doc_id, True),
         }
 
-    file_path = _document_file_path(doc)
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Document file not found.")
-    return {"content": file_path.read_text(encoding="utf-8")}
+    from modules.flow_gate.storage.body import file_body_read_state
+
+    state, content = file_body_read_state(doc)
+    if state != "readable":
+        return _BodyUnavailable(state).response()
+    return {"content": content}
 
 
 @router.patch("/{doc_id}/content")
@@ -3257,6 +3275,82 @@ def update_document_content(
     doc = document_service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    _save_write_checks(doc)
+
+    def save():
+        fresh = document_service.get_document(doc_id)
+        if fresh is None:
+            raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+        _save_write_checks(fresh)
+        target = _save_target(fresh)
+        existed = target.is_file()
+        relative = storage_paths.to_storage_relative(target, fresh.get("project_id"))
+        updated = document_service.update_document(
+            doc_id, {"file_path": relative}, actor_user_id=current_user["user_id"],
+        )
+        data = body.content.encode("utf-8")
+        from modules.flow_gate.storage.files import overwrite_file, write_new_file
+        from modules.flow_gate.storage.body import record_body_saved
+        from modules.flow_gate.db.connection import after_commit
+
+        if existed:
+            overwrite_file(target, data)
+        else:
+            write_new_file(target, data)
+        record_body_saved(fresh, source="console_save", file_path=relative, size=len(data))
+        after_commit(lambda: _broadcast_document_refresh(fresh))
+        if fresh.get("group_id"):
+            from modules.flow_gate.graph_workflow.services.canvas_events import (
+                CANVAS_REASON_DOCUMENTS, publish_canvas_changed,
+            )
+            publish_canvas_changed(project_id=fresh.get("project_id"), flow_id=fresh["group_id"],
+                                   reason=CANVAS_REASON_DOCUMENTS, actor_user_id=current_user["user_id"],
+                                   origin_client_id=None)
+        return {"data": updated, "content": body.content}
+
+    try:
+        return _run_body_save_guard(doc, save)
+    except _BodyUnavailable as exc:
+        return exc.response()
+
+
+def _run_body_save_guard(doc: dict, call):
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.graph_workflow.store import definition_store
+    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+
+    if doc.get("group_id") and definition_store.available():
+        return with_flow_guard(doc["group_id"], call)
+    with get_store().transaction():
+        return call()
+
+
+def _save_target(doc: dict) -> Path:
+    if (doc.get("file_path") or "").strip():
+        return _document_file_path(doc)
+    meta = doc.get("meta") or {}
+    if isinstance(meta, str):
+        try:
+            meta = _json.loads(meta)
+        except (TypeError, ValueError):
+            meta = {}
+    graph_card = meta.get("graph_card") if isinstance(meta, dict) else None
+    if isinstance(graph_card, dict) and graph_card.get("slot"):
+        target = storage_paths.document_path(
+            project_id=doc.get("project_id"), group_code=doc.get("group_id") or "",
+            doc_code=_short_doc_code(doc), filename=f"{graph_card['slot']}.md",
+            module=doc.get("module") or "none", branch=_get_project_branch(doc.get("project_id")),
+        )
+    else:
+        target = _regenerate_target_path(doc)
+    import os
+
+    if os.path.lexists(target):
+        raise HTTPException(status_code=409, detail="file_exists_unrecorded")
+    return target
+
+
+def _save_write_checks(doc: dict) -> None:
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
     if str(doc.get("type_code") or "").upper() == "TR2":
@@ -3272,10 +3366,10 @@ def update_document_content(
     # 여기를 열어 두면 "저장 성공" 응답을 받고도 대화는 하나도 바뀌지 않는다.
     # 이관되지 않은 대화(pending/in_progress/failed)는 아직 파일이 정본이라 그대로 저장된다.
     # 봉투는 세션 계열 HTTPException(detail) 그대로 — 0344.0004-P §0-5.
-    if conversation_turn_service.is_full_body_edit_blocked(doc.get("type_code"), doc_id):
+    if conversation_turn_service.is_full_body_edit_blocked(doc.get("type_code"), doc["doc_id"]):
         raise HTTPException(
             status_code=409,
-            detail=conversation_turn_service.full_body_edit_message(doc_id),
+            detail=conversation_turn_service.full_body_edit_message(doc["doc_id"]),
         )
     final_approved = document_service.is_final_approved(doc)
     if not document_service.is_document_editable(doc, final_approved=final_approved):
@@ -3284,20 +3378,6 @@ def update_document_content(
         else:
             detail = f"Modification not allowed for status: {doc.get('status')}"
         raise HTTPException(status_code=422, detail=detail)
-
-
-    file_path = _document_file_path(doc)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(body.content, encoding="utf-8")
-    # L0054.0002 correction: this is a real documents.file_path write (persisted via
-    # update_document), not a runtime-only path. Store it relative so a content edit
-    # does not silently re-introduce an absolute path (B0001 regression).
-    updated = document_service.update_document(
-        doc_id,
-        {"file_path": storage_paths.to_storage_relative(file_path, doc.get("project_id"))},
-        actor_user_id=current_user["user_id"],
-    )
-    return {"data": updated, "content": body.content}
 
 
 @router.post("/{doc_id}/regenerate")

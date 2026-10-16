@@ -44,6 +44,7 @@
 import type { Edge, Node } from '@vue-flow/core'
 import { cardStateView, type CardStateView } from '../graph/cardStateView'
 import { progressedEdgeIds } from '../graph/edgeProgress'
+import { lineWarns } from '@/features/document/api/cardLine'
 import type { FlowGraph } from '../graph/flowGraph'
 import { NO_RUN_MARKS, isEdgeProtected, type FlowRunMarks } from '../run/flowRunLock'
 
@@ -79,6 +80,7 @@ export interface FlowGateNodeData {
   hold?: boolean
   /** flowgate.v02.0063: the card's document holds a question still unanswered (the [Q] mark). */
   question?: boolean
+  bodyUnreadable?: boolean
 }
 
 /** flowgate.v02.0061 T#14: integration states the card chip names (an integrated / absent one says nothing). */
@@ -137,6 +139,7 @@ export function toVueFlowNodes(
     const connectable = node.structureEditable === true && !!node.definition && !locked
     const selected = selectedIds.has(node.id)
     const data: FlowGateNodeData = { kind: node.kind, title: node.title, state: node.state ?? null, selected }
+    if (node.cardDocuments?.some(lineWarns)) data.bodyUnreadable = true
     if (node.docType) data.docType = node.docType
     if (connectable) data.connectable = true
     if (issues.has(node.id)) {

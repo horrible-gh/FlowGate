@@ -249,12 +249,13 @@ def lines_by_node(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[s
     for row, shown in shown_rows:
         review_count = reviews.get(shown["doc_id"], 0) if shown else 0
         rejection_count = legacy.rejection_count(shown)
+        written, body_state = legacy.line_body_facts(shown)
         out.setdefault(row["node_key"], []).append({
             "slot": row["slot"], "doc_type": row["doc_type"], "author": cs.author_of(row["slot"], row["doc_type"]),
             "doc_id": shown["doc_id"] if shown else None,
             "title": (shown or {}).get("title"), "status": (shown or {}).get("status"),
             "doc_review_status": (shown or {}).get("doc_review_status"),
-            "has_body": has_body(shown),
+            "has_body": written, "body_state": body_state,
             "review_count": review_count, "rejection_count": rejection_count,
             "history_count": review_count + rejection_count,
         })

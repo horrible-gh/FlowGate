@@ -92,3 +92,15 @@ def write_new_file(abs_path, data: bytes) -> None:
             except OSError:
                 _log.warning("temporary file cleanup failed: %s", tmp, exc_info=True)
         raise StorageUnwritable(exception=type(exc).__name__) from exc
+
+
+def overwrite_file(abs_path, data: bytes) -> None:
+    """Replace an existing document atomically, preserving submitted bytes exactly."""
+    path = Path(abs_path)
+    tmp = _side_path(path, TEMP_SUFFIX)
+    try:
+        with tmp.open("xb") as stream:
+            stream.write(data)
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)

@@ -70,6 +70,7 @@
         :class="`flow-node-state--${state.tone}`"
         data-test="designer-canvas-node-state"
       >{{ t(`gui.designer.center.node_states.${state.key}`) }}</span>
+      <span v-if="data.bodyUnreadable" class="flow-node-body-warning" role="img" :aria-label="t('gui.card.bodyUnreadable')" :title="t('gui.card.bodyUnreadable')" data-test="designer-canvas-node-body-warning">⚠</span>
       <span
         v-if="data.question"
         class="flow-node-question"
@@ -185,6 +186,8 @@ const cardStateIcon = computed(() => {
 </script>
 
 <style scoped>
+.flow-node-body-warning { color: var(--fg2-status-warning-fg); margin-left: 4px; }
+
 /* Card size is defined here only: fixed 176x92 (03-designer-shell `.node`). Long text never
    grows the card — every text line stays one line and ends with an ellipsis. */
 .flow-node-card {

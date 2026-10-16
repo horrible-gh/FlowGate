@@ -1,4 +1,17 @@
 export default {
+  document: {
+    bodyState: {
+      file_path_missing: "File path is not recorded",
+      file_not_found: "File not found",
+      path_unresolved: "Path could not be resolved",
+      read_error: "Read error (check permissions and encoding)",
+      aiUnreadable: "AI cannot read this document either.",
+      reenter: "Re-enter body",
+      unreadable: "Body unreadable",
+      file_exists_unrecorded: "An unlinked file exists at the standard location. Check the file using body diagnostics and recovery before saving again.",
+    },
+  },
+  card: { bodyUnreadable: "Some documents cannot be read by AI" },
   brand: {
     tagline: 'Turn Ideas into Working Flow',
     home_aria: 'Go to the FlowGate dashboard',

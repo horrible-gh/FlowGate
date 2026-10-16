@@ -870,6 +870,9 @@ def _save(doc_id: str, build, *, actor: str, expected_revision: int,
                 snapshot = snapshot_path(doc, current + 1)
                 _record_snapshot(store, doc, current + 1, content, actor=actor,
                                  origin=origin, now=now)
+                from modules.flow_gate.storage.body import record_body_saved
+
+                record_body_saved(fresh, source="tr2_save", file_path=rel, size=len(content))
         except Exception:
             if write_attempted:
                 try:

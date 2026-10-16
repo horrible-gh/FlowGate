@@ -5,6 +5,11 @@
       <span>{{ t(k('error')) }}</span>
       <IconButton :label="t(k('retry'))" :title="t(k('retry'))" variant="secondary" size="sm" data-test="md-viewer-retry" @click="loadContent()">↻</IconButton>
     </div>
+    <div v-else-if="unreadableReason" class="md-viewer__unreadable" role="alert" data-test="md-viewer-unreadable">
+      <p>⚠ {{ t(`gui.document.bodyState.${unreadableReason}`) }}</p>
+      <p>{{ t('gui.document.bodyState.aiUnreadable') }}</p>
+      <IconButton v-if="canReenter" :label="t('gui.document.bodyState.reenter')" :title="t('gui.document.bodyState.reenter')" variant="secondary" size="sm" data-test="md-viewer-reenter" @click="emit('reenter')">{{ t('gui.document.bodyState.reenter') }}</IconButton>
+    </div>
     <template v-else>
       <Teleport :to="copyTarget ?? 'body'" :disabled="!copyTarget">
         <span v-if="hasBody" class="md-viewer__toolbar" :class="{ 'md-viewer__toolbar--titlebar': copyTarget }">
@@ -36,8 +41,7 @@
 // Changed for v0.2:
 // - Documents only: the body is read through `@/features/document` (documentContentRead). The v0.1
 //   source-file and Git-branch blob modes stay in v0.1 (they need its explorer store).
-// - A document whose file is not written yet (a report before its run) is an empty document — no
-//   "no file" text and no regenerate button; saving it from the window's editor writes the file.
+// - Known unreadable body states show a warning and allow authorized users to re-enter the body.
 // - The copy button is an icon with a tooltip (⧉ the body without its frontmatter); a failed copy marks
 //   the button instead of the v0.1 fallback modal. Strings live under `gui.document_window.viewer`; colors
 //   are the v0.2 dark theme. flowgate.v02.0056 F1 (0056 CH §5): the v0.1 "copy with header" (⎘, the
@@ -58,8 +62,10 @@ const props = defineProps<{
   contentOverride?: string | null
   /** Relocate the existing copy action without changing its content or feedback. */
   copyTarget?: HTMLElement | null
+  canReenter?: boolean
 }>()
 
+const emit = defineEmits<{ reenter: [] }>()
 const { t, locale } = useI18n()
 const k = (key: string) => `gui.document_window.viewer.${key}`
 
@@ -68,6 +74,7 @@ type CopyState = 'idle' | 'done' | 'failed'
 const content = ref('')
 const loading = ref(false)
 const error = ref(false)
+const unreadableReason = ref<string | null>(null)
 const copyMdState = ref<CopyState>('idle')
 // v0.1 rev4: rendered by the applyContent() call that set `content`, never by a computed over shared
 // refs, so one load's diagnostics cause can not attach to another load's parse.
@@ -207,6 +214,7 @@ async function loadContent(cause: MarkdownParseCause | null = null): Promise<boo
   const docId = props.docId
   const current = () => !disposed && seq === loadSequence && docId === props.docId
   if (props.contentOverride != null) {
+    unreadableReason.value = null
     applyContent(props.contentOverride, cause)
     error.value = false
     loading.value = false
@@ -214,6 +222,7 @@ async function loadContent(cause: MarkdownParseCause | null = null): Promise<boo
     return true
   }
   if (!docId) {
+    unreadableReason.value = null
     applyContent('', cause)
     error.value = false
     loading.value = false
@@ -227,6 +236,7 @@ async function loadContent(cause: MarkdownParseCause | null = null): Promise<boo
   try {
     const read = await documentContentRead(docId)
     if (!current()) return false
+    unreadableReason.value = read.state === 'unreadable' ? (read.reason ?? null) : null
     // The window reads its document again on a period (T#3 rework 2): an unchanged body is not parsed again.
     if (!(loadedOnce && read.content === content.value)) applyContent(read.content, cause)
     loadedOnce = true
@@ -234,6 +244,7 @@ async function loadContent(cause: MarkdownParseCause | null = null): Promise<boo
   } catch {
     if (!current()) return false
     error.value = true
+    unreadableReason.value = null
     applyContent('', cause)
     return false
   } finally {
@@ -310,6 +321,11 @@ defineExpose({
 </script>
 
 <style scoped>
+.md-viewer__unreadable {
+  padding: 16px;
+  color: var(--fg2-status-warning-fg);
+}
+
 .md-viewer {
   height: 100%;
   overflow-y: auto;

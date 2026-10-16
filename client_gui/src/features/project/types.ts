@@ -358,6 +358,7 @@ export interface FlowCanvasCardDocument {
    * without a document); absent when not sent. M and WP lines are always true (the v0.1 approval rule).
    */
   hasBody?: boolean
+  readonly bodyState?: string | null
   /** flowgate.v02.0056 F2-2 (O3 §4-1): AI reviews of the line's document (`ai_review_history` length); absent when not sent. */
   reviewCount?: number
   /** flowgate.v02.0056 F2-2 (O3 §4-1): rejections with a reason (what the history window shows); absent when not sent. */

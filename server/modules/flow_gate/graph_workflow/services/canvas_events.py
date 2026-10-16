@@ -12,6 +12,9 @@ from modules.flow_gate.api.v1.events.publisher import FlowEvent, broadcast_event
 from modules.flow_gate.db.connection import after_commit
 
 
+CANVAS_REASON_DOCUMENTS = "documents"
+
+
 def _queue(event: FlowEvent) -> None:
     def _send() -> None:
         broadcast_event_threadsafe(event)
@@ -32,7 +35,8 @@ def publish_canvas_changed(
     revision_no: Optional[int] = None,
 ) -> None:
     """``reason``: "layout" | "draft" | "revision" | "identity_rematch" (P0008 §8.3) | "hold" (0061 T#11: a card's
-    Hold was set / released, with or without a run; ``node_keys`` names the card)."""
+    Hold was set / released, with or without a run; ``node_keys`` names the card),
+    or "documents" when document body facts changed without a draft change."""
     _queue(FlowEvent(
         event_type=EventType.GRAPH_CANVAS_CHANGED.value,
         payload={

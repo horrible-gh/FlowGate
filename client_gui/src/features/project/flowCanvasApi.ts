@@ -131,6 +131,7 @@ export function toCardDocument(line: Raw): FlowCanvasCardDocument {
     status: str(line.status),
     docReviewStatus: str(line.doc_review_status),
     ...(typeof line.has_body === 'boolean' ? { hasBody: line.has_body } : {}),
+    ...(typeof line.body_state === 'string' || line.body_state === null ? { bodyState: line.body_state } : {}),
     ...(reviewCount !== null ? { reviewCount } : {}),
     ...(rejectionCount !== null ? { rejectionCount } : {}),
     ...(historyCount !== null ? { historyCount } : {}),

@@ -114,14 +114,15 @@ def _load_test_runs(doc_id: str) -> tuple[Optional[dict], list[dict]]:
 
 def _file_content(doc: dict) -> Optional[str]:
     """Read the durable artifact used by non-live and legacy conversations."""
-    file_path = doc.get("file_path")
-    if not file_path:
-        return None
-    branch_val = doc.get("branch", "main") or "main"
-    resolved = resolve_storage_path(file_path, doc.get("project_id"), branch=branch_val)
-    if resolved is None:
-        return None
-    return resolved.read_text(encoding="utf-8")
+    from modules.flow_gate.storage.body import file_body_read_state
+
+    return file_body_read_state(doc)[1]
+
+
+def _content_state(doc: dict, content) -> str:
+    from modules.flow_gate.storage.body import body_path_state
+
+    return "readable" if content is not None else body_path_state(doc)[1]
 
 
 def _download_available(doc: dict) -> bool:
@@ -471,7 +472,7 @@ def get_document_by_path(
     file_path = document.get("file_path")
     try:
         content = _resolve_live_content(document)
-    except OSError:
+    except (OSError, UnicodeError):
         return _fail(500, "An error occurred while reading the document content")
 
     resp: dict = {
@@ -619,7 +620,7 @@ def _load_for_query(request: Request, doc_id: str, revision_no: Optional[int]):
 
     try:
         text = _document_text(doc)
-    except OSError:
+    except (OSError, UnicodeError):
         return _fail_with(500, "An error occurred while reading the document content"), None, None
     current = int(doc.get("revision_no", 0) or 0)
     if revision_no is not None and int(revision_no) != current:
@@ -652,7 +653,8 @@ def get_document_outline(
     if err is not None:
         return err
     if text is None:
-        return _fail(404, f"document body is not readable: {doc_id}")
+        return _fail_with(404, f"document body is not readable: {doc_id}",
+                          {"content_state": _content_state(doc, None)})
 
     # max_level is only a display depth, so an out-of-range value is clamped rather than
     # rejected. Bouncing one outline read with a 422 buys nothing in unattended work.
@@ -669,6 +671,7 @@ def get_document_outline(
         "document_chars": text.document_chars,
         "body_line_start": text.body_line_start,
         "section_total": text.section_total,
+        "content_state": "readable",
         "max_level": level,
         "truncated": truncated,
         "items": items,
@@ -700,7 +703,8 @@ def get_document_section(
     if err is not None:
         return err
     if text is None:
-        return _fail(404, f"document body is not readable: {doc_id}")
+        return _fail_with(404, f"document body is not readable: {doc_id}",
+                          {"content_state": _content_state(doc, None)})
 
     rev = int(doc.get("revision_no", 0) or 0)
     try:
@@ -734,6 +738,7 @@ def get_document_section(
         "doc_id": doc_id,
         "revision_no": rev,
         "content_sha256": text.content_sha256,
+        "content_state": "readable",
         "resolved_by": resolved.resolved_by,
         "ambiguous": resolved.ambiguous,
         "candidates": resolved.candidates,
@@ -813,7 +818,9 @@ def get_document_meta(
     resp["test_run"], resp["test_run_history"] = _load_test_runs(doc_id)
     # Use the existing lookup if you need answer contents; the point here is to omit bodies, so only counts.
     resp["answers_count"] = len(get_answers_for_document(doc_id) or [])
+    body["state"] = _content_state(doc, text)
     resp["body"] = body
+    resp["content_state"] = body["state"]
     return JSONResponse(content=resp)
 
 
@@ -1099,7 +1106,7 @@ def get_document(request: Request, doc_id: str):
     file_path = doc.get("file_path")
     try:
         content = _resolve_live_content(doc)
-    except OSError:
+    except (OSError, UnicodeError):
         return _fail(500, "An error occurred while reading the document content")
 
     resp: dict = {
@@ -1117,6 +1124,7 @@ def get_document(request: Request, doc_id: str):
         "branch": doc.get("branch", "main"),
         "stored_path": file_path,
         "content": content,
+        "content_state": _content_state(doc, content),
         "download_available": _download_available(doc),
         "doc_review_status": doc.get("doc_review_status"),
         "rejection_reason": doc.get("rejection_reason"),
