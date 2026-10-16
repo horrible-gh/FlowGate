@@ -10,12 +10,13 @@
         :loading="session.state.statusLoad === 'loading'"
         :refreshing="session.state.statusLoad === 'loading'"
         :notice="headerNotice"
-        @refresh="session.refresh()"
+        @refresh="refreshAll()"
       />
     </div>
     <GitStatusErrorCard v-if="statusReadFailed" :reason="statusReadReason" @retry="session.refresh()" />
     <GitUnlinkedCard v-else-if="unlinked" :disabled="readOnly" @connect="openConnect" />
     <GitExceptionList v-else />
+    <GitWorktreePanel v-if="worktree.gateOpen.value" />
     <template v-for="win in session.state.windows" :key="win.id">
       <GitConflictWindow v-if="win.kind === 'conflict'" :win="win" />
       <GitPushErrorWindow v-else :win="win" />
@@ -45,7 +46,7 @@
       :cancel-label="t('gui.git.confirm.cancel')"
       :danger="pendingConfirm?.danger ?? false"
       @confirm="onConfirm"
-      @cancel="pendingConfirm = null"
+      @cancel="closeConfirm"
     />
   </section>
 </template>
@@ -60,6 +61,15 @@
 //
 // The panel owns one Git session for its lifetime; the container keeps it mounted after the
 // first show so the badge stays live while the tab is hidden (§3.8).
+//
+// flowgate.v02.0066 — beside it the panel owns the Group worktree session (0066 D#2 §2-2): the
+// worktree area below the exception cards once git/status confirmed Git on (§3-1), refresh and
+// tab activation reading both sessions, the worktree count added to a count badge (§3-8), the
+// worktree `open-diff` intent (origin worktree, diffSource group) and `git-center-diff-refresh`.
+// A worktree confirm dialog is bound to the project / Flow / generation it was opened in: it
+// closes when that context goes and its action runs only while the context is still current.
+// T#7: the `Diff` pane rows raise the same intent with the target as compareBase, and a merge
+// dialog also closes when the merge target changes (0066 D#2 §3-2-2 ⑤ ⑦).
 import { computed, onBeforeUnmount, provide, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
@@ -72,11 +82,14 @@ import GitHeader from './GitHeader.vue'
 import GitPushErrorWindow from './GitPushErrorWindow.vue'
 import GitStatusErrorCard from './GitStatusErrorCard.vue'
 import GitUnlinkedCard from './GitUnlinkedCard.vue'
+import GitWorktreePanel from './GitWorktreePanel.vue'
 import { gitErrorOf } from './api'
 import { createHttpGitSource, type GitSource } from './gitSource'
 import { createGitSession, GIT_PANEL_CONTEXT, type GitConfirmRequest } from './gitSession'
+import { createGitWorktreeSession, GIT_WORKTREE_CONTEXT, type WorktreeTicket } from './gitWorktreeSession'
 import type {
   GitBadge,
+  GitCenterDiffRefresh,
   GitConfigSave,
   GitConfirmSettingsIntent,
   GitConnectBusy,
@@ -108,11 +121,40 @@ const emit = defineEmits<{
   'open-diff': [intent: GitDiffIntent]
   'open-confirm-settings': [intent: GitConfirmSettingsIntent]
   'windows-change': [windows: GitWindowDescriptor[]]
+  'git-center-diff-refresh': [request: GitCenterDiffRefresh]
 }>()
 
 const { t } = useI18n()
 const session = createGitSession({ source: props.source })
+const worktree = createGitWorktreeSession({
+  git: session,
+  source: props.source,
+  onCenterDiffRefresh: (request) => emit('git-center-diff-refresh', { ...request }),
+})
 const pendingConfirm = shallowRef<GitConfirmRequest | null>(null)
+// The worktree context of the open dialog; null for a 0033 dialog.
+const confirmTicket = shallowRef<WorktreeTicket | null>(null)
+// What else must hold for the open worktree dialog (e.g. the merge target it was opened for).
+const confirmValid = shallowRef<(() => boolean) | null>(null)
+
+function askConfirm(request: GitConfirmRequest, ticket: WorktreeTicket | null, stillValid?: () => boolean): void {
+  pendingConfirm.value = request
+  confirmTicket.value = ticket
+  confirmValid.value = ticket && stillValid ? stillValid : null
+}
+
+function closeConfirm(): void {
+  pendingConfirm.value = null
+  confirmTicket.value = null
+  confirmValid.value = null
+}
+
+// A worktree dialog lives only while its context (and its own condition) still holds.
+const confirmStale = (): boolean => {
+  const ticket = confirmTicket.value
+  if (!ticket) return false
+  return !worktree.isCurrent(ticket) || (!!confirmValid.value && !confirmValid.value())
+}
 
 function openDiff(origin: GitFileOrigin, path: string, status: GitFileLetter | null): void {
   const projectId = session.state.projectId
@@ -137,20 +179,74 @@ function openSettings(): void {
   emit('open-confirm-settings', { projectId, groupId: hold.groupId, acDocId: hold.acDocId })
 }
 
+const WORKTREE_LETTERS: readonly GitFileLetter[] = ['A', 'D', 'M', '?']
+
+// A worktree row: the group work base floor against the working file (0066 D#2 §5-2). The
+// letters T / U have no diff letter and go up as null.
+function openFileDiff(path: string, letter: string): void {
+  const projectId = session.state.projectId
+  const groupId = session.state.flow?.groupId ?? null
+  if (!projectId || !groupId) return
+  emit('open-diff', {
+    projectId,
+    groupId,
+    mergeId: null,
+    path,
+    status: WORKTREE_LETTERS.find((l) => l === letter) ?? null,
+    origin: 'worktree',
+    diffSource: 'group',
+    compareBase: null,
+  })
+}
+
+// A row of the `Diff` pane: the merge-base with the target its list was read for (§5-2, ⑦).
+// `/changes` letters other than M / A / D / ? go up as null.
+function openTargetDiff(path: string, letter: string, target: string): void {
+  const projectId = session.state.projectId
+  const groupId = session.state.flow?.groupId ?? null
+  if (!projectId || !groupId || !target) return
+  emit('open-diff', {
+    projectId,
+    groupId,
+    mergeId: null,
+    path,
+    status: WORKTREE_LETTERS.find((l) => l === letter) ?? null,
+    origin: 'worktree',
+    diffSource: 'group',
+    compareBase: target,
+  })
+}
+
+provide(GIT_WORKTREE_CONTEXT, { worktree, openFileDiff, openTargetDiff, confirm: askConfirm })
+
+// Header refresh, tab activation and the exposed refresh read both sessions (§3-2-1); the
+// worktree reads nothing while its gate is closed.
+function refreshAll(): Promise<void> {
+  worktree.refresh()
+  return session.refresh()
+}
+
 provide(GIT_PANEL_CONTEXT, {
   session,
   openDiff,
   openSettings,
-  confirm: (request) => {
-    pendingConfirm.value = request
-  },
+  confirm: (request) => askConfirm(request, null),
 })
 
 function onConfirm(): void {
   const request = pendingConfirm.value
-  pendingConfirm.value = null
+  const stale = confirmStale()
+  closeConfirm()
+  // A worktree dialog never acts on a context other than the one it was opened in.
+  if (stale) return
   request?.run()
 }
+
+// Flow / project switch, gate closed, dispose or its own condition gone (a merge dialog after a
+// target change): the worktree dialog closes and sends nothing.
+watch(confirmStale, (stale) => {
+  if (stale) closeConfirm()
+})
 
 const headerNotice = computed(() => {
   const notice = session.state.notices.header
@@ -171,7 +267,7 @@ watch(
 watch(
   () => props.active,
   (value, previous) => {
-    if (value && previous === false) void session.refresh()
+    if (value && previous === false) void refreshAll()
   },
 )
 
@@ -435,10 +531,20 @@ watch(
   },
 )
 
-const badgeKey = (badge: GitBadge | null) => (badge ? `${badge.tone}:${badge.text}` : '')
+// 0033 rule (danger > progress > count, one only); the worktree's changed paths join a count
+// badge only, and only while the worktree area is shown (0066 D#2 §3-8).
+const badge = computed<GitBadge | null>(() => {
+  const base = session.badge.value
+  const changed = worktree.changedCount.value ?? 0
+  if (!changed || (base && base.tone !== 'count')) return base
+  if (!base) return { tone: 'count', text: String(changed) }
+  const lowerBound = base.text.endsWith('+')
+  return { tone: 'count', text: `${(Number.parseInt(base.text, 10) || 0) + changed}${lowerBound ? '+' : ''}` }
+})
+const badgeKey = (value: GitBadge | null) => (value ? `${value.tone}:${value.text}` : '')
 watch(
-  () => badgeKey(session.badge.value),
-  () => emit('badge-change', session.badge.value ? { ...session.badge.value } : null),
+  () => badgeKey(badge.value),
+  () => emit('badge-change', badge.value ? { ...badge.value } : null),
 )
 watch(
   () => session.state.windows,
@@ -447,11 +553,13 @@ watch(
 
 onBeforeUnmount(() => {
   connectDisposed = true
+  if (confirmTicket.value) closeConfirm()
+  worktree.dispose()
   session.dispose()
 })
 
 defineExpose({
-  refresh: () => session.refresh(),
+  refresh: () => refreshAll(),
   restoreWindow: (id: string) => session.restoreWindow(id),
   closeWindow: (id: string) => session.closeWindow(id),
 })

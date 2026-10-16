@@ -56,8 +56,9 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
     )
   })
 
-  it('exposes only the panel at runtime', () => {
-    expect(Object.keys(ConversationFeature)).toEqual(['ConversationPanel'])
+  // flowgate.v02.0066 T#5: plus the pure line comparison the Git tab's Center Diff reuses.
+  it('exposes only the panel and the pure line comparison at runtime', () => {
+    expect(Object.keys(ConversationFeature).sort()).toEqual(['ConversationPanel', 'diffLines'])
   })
 
   it('reaches the server only through api.ts and the shared transport', () => {

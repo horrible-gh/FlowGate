@@ -59,6 +59,7 @@
       <template #center>
         <DesignerCenterColumn
           :center="center"
+          :center-diff="centerDiff"
           :bottom-height="layout.bottomHeight"
           :placing="selectedPalette !== null"
           :move-step="moveStep"
@@ -81,6 +82,8 @@
           @update:tool="layout.activeRightTool = $event"
           @palette-select="selectedPalette = $event"
           @palette-drag-start="selectedPalette = null"
+          @git-open-diff="centerDiff.open($event)"
+          @git-center-diff-refresh="centerDiff.refresh($event)"
         />
       </template>
     </DesignerBody>
@@ -197,9 +200,16 @@
 // flowgate.v02.0061 T#15: a card's Hold is written through the card settings (features/document) the Center source is
 // given (it is read with the Graph); a refused Hold 설정 / 해제 is a toast as well (with the server's message: graph_run_locked,
 // graph_hold_done_node, …).
+//
+// flowgate.v02.0066 T#6 — the Center Diff (0066 D#2 §2-4, §3-10). The Shell is the one place that knows both the
+// right Tool Panel and the Center, so it owns the Git part's Center Diff session: the Git tab's `open-diff` and
+// `git-center-diff-refresh` come up through the right Dock and go to that session, which opens only a worktree intent
+// of the current Project and active Flow group (a 0033 intent opens nothing). A Project or Flow group change, or no
+// work target, closes it. The Workspace draws it over the hidden Flow tabs and Canvas.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { documentRead, settingsNodeHoldWrite } from '@/features/document'
+import { createGitCenterDiff } from '@/features/git'
 import { useProjectStore, type CreatedGroup } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
 import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
@@ -283,6 +293,14 @@ const center = createDesignerCenterSession({
 const activeFlowRef = center.activeFlowRef
 
 const hasWorkTarget = computed(() => activeFlowRef.value !== null)
+
+// flowgate.v02.0066 T#6: the one Center Diff, closed whenever the Project or the active Flow group changes.
+const centerDiff = createGitCenterDiff()
+watch(
+  [projectId, () => activeFlowRef.value?.groupId ?? null],
+  ([pid, groupId]) => centerDiff.setContext(pid, groupId),
+  { immediate: true },
+)
 const selectedPalette = ref<PaletteItemDefinition | null>(null)
 
 function onCanvasPlace(flowId: string, x: number, y: number) {
@@ -400,7 +418,10 @@ onMounted(() => {
 })
 
 // flowgate.v02.0045: send pending Canvas saves and close the Canvas change stream with the Shell.
-onBeforeUnmount(() => center.dispose())
+onBeforeUnmount(() => {
+  center.dispose()
+  centerDiff.dispose()
+})
 
 // The Toolbar shows the zoom the active Canvas last reported (100% before it reports one).
 const zoom = computed(() => zoomPercent(center.activeView.value?.viewport?.zoom))

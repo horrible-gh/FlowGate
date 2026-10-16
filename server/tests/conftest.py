@@ -10,6 +10,10 @@ from pathlib import Path
 import pytest
 
 os.environ.setdefault("TESTING", "1")
+# Git for Windows may ask forever on a failed unlink when stdin is a pipe.
+# Tests are unattended: fail that operation instead of waiting for a console.
+os.environ.setdefault("GIT_ASK_YESNO", "false")
+os.environ.setdefault("GIT_TERMINAL_PROMPT", "0")
 # pymysql calls getpass.getuser() at import time; a Self-check host may export no user name.
 os.environ.setdefault("USERNAME", "flowgate-test")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -593,7 +597,29 @@ def migrated_sqlite_db(tmp_path_factory):
         conn.execute("PRAGMA foreign_keys = ON")
         try:
             for migration_file in get_migration_files():
-                conn.executescript(migration_file.read_text(encoding="utf-8"))
+                sql = migration_file.read_text(encoding="utf-8")
+                if migration_file.name == "138_chat_activity_anchor.sql":
+                    previous = (_MIGRATIONS_DIR / "137_chat_activity_anchor.sql").read_text(encoding="utf-8")
+                    statements = lambda text: "\n".join(
+                        line.strip() for line in text.splitlines()
+                        if line.strip() and not line.lstrip().startswith("--"))
+                    assert statements(sql) == statements(previous), "anchor migration drift"
+                    continue  # the exact same statements already ran in 137
+                if migration_file.name == "137_chat_command_execution.sql":
+                    # 136 and 137 came from separate branches. Only their four
+                    # identical indexes overlap; do not swallow migration errors.
+                    for name in ("idx_chat_cmd_run", "idx_chat_cmd_doc",
+                                 "idx_chat_cmd_status", "idx_run_changes_doc"):
+                        statement = next(line for line in sql.splitlines()
+                                         if line.startswith(f"CREATE INDEX {name} "))
+                        existing = conn.execute(
+                            "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+                            (name,),
+                        ).fetchone()
+                        if existing is not None:
+                            assert existing[0].rstrip(";") == statement.rstrip(";"), name
+                            sql = sql.replace(statement, "-- identical index already created by 136")
+                conn.executescript(sql)
             if seed_sql:
                 conn.executescript(seed_sql)
             conn.commit()

@@ -125,10 +125,12 @@ def _wanted(project_id: str, group_id: str, p: dict) -> list:
     return wanted
 
 
-def _admit(ctx: store.JobContext, p: dict, held: list) -> None:
+def _admit(ctx: store.JobContext, p: dict, held: list, wanted: Optional[list] = None) -> None:
+    """L 2.4 admission. ``wanted`` (0066 D#1: merge_result_push) replaces the finalize
+    lock list; omitted, the behavior is the finalize job's own."""
     mode = getattr(base_publish._origin, "mode", None) or "job"
     project_id, group_id = ctx.job["project_id"], ctx.job["group_id"]
-    for domain, g, target_key, kind in _wanted(project_id, group_id, p):
+    for domain, g, target_key, kind in (wanted if wanted is not None else _wanted(project_id, group_id, p)):
         store.ensure_lease(ctx)
         o = locks.acquire(domain, project_id, group_id=g, target_key=target_key, holder_kind=kind,
                           mode=mode, hold_class="long", ctx=ctx.lock_ctx)
