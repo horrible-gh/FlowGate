@@ -575,7 +575,23 @@ def result_refused(run, kind, payload):
     return kind == "inbox_registered" and fencing.token_refused(payload.get("token_id"), "result_" + kind)
 
 
+def manual_git_blocker(run_id):
+    """0066 D#1 §3-6(3): what keeps a person's manual merge off the Flow's worktree, or None. Read only: a
+    requested/running execution, a run-end hand-off of a running / paused run, an approved result's merge into the
+    Flow's branch (pending / integrating). An open manual or gate node alone (an attempt without an execution) and a
+    failed integration waiting for a person do not block."""
+    if ledger.working(run_id):
+        return "graph_execution_active"
+    run = run_store.run_by_id(run_id) or {}
+    if run.get("status") in (run_store.RUNNING, run_store.PAUSED) and ledger.handing_off(run_id):
+        return "graph_execution_handoff"
+    if result_merge.in_progress(run_id):
+        return "graph_integration_active"
+    return None
+
+
 _ACTIONS = {
+    "manual_git_blocker": manual_git_blocker,
     "admission": scheduling.admission, "admit": scheduling.admit, "legacy_acquire": scheduling.legacy_acquire,
     "execution_wire": scheduling.wire, "opening": scheduling.opening, "can_open": scheduling.can_open,
     "prepare_workspace": workspace.prepare,

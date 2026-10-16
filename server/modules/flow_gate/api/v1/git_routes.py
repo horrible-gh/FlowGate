@@ -1789,3 +1789,96 @@ def post_group_worktree_remove(group_id: str, body: WorktreeFilesBody, user=Depe
 
 
 router.include_router(_worktree_mutations)
+
+
+# ── Manual merge, merge results, follow-up push, fetch-only (0066 D#1 E8--E12) ──
+
+def _manual_guard(exc: GitServiceError) -> JSONResponse:
+    """D#1 §3-1(3): no hidden path in any manual Git error detail."""
+    from modules.flow_gate.services.git import manual_path_policy
+    if exc.details:
+        exc.details = manual_path_policy.public_details(exc.details)
+    return _guard(exc)
+
+
+class ManualMergeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    target_branch: str | None = None
+    push: bool = False
+
+
+class MergeResultPushBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    merge_id: int | None = None
+    merge_commit: str | None = None
+
+
+class FetchRefsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    group_id: str | None = None
+
+
+@router.get("/groups/{group_id}/git/manual-merge")
+def get_group_manual_merge(group_id: str, target: Optional[str] = None, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import manual_merge
+    try:
+        return {"ok": True, "result": manual_merge.merge_view(group_id, target)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
+@router.post("/groups/{group_id}/git/manual-merge")
+def post_group_manual_merge(group_id: str, body: ManualMergeBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import manual_merge
+    try:
+        return {"ok": True, "result": manual_merge.request_merge(group_id, body.target_branch, body.push)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
+@router.get("/groups/{group_id}/git/merge-result")
+def get_group_merge_result(group_id: str, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import manual_merge
+    try:
+        return {"ok": True, "result": manual_merge.merge_results_view(group_id)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
+@router.post("/groups/{group_id}/git/merge-result/push")
+def post_group_merge_result_push(group_id: str, body: MergeResultPushBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import manual_merge
+    try:
+        return {"ok": True, "result": manual_merge.request_result_push(
+            group_id, body.merge_id, body.merge_commit)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
+@router.post("/projects/{project_id}/git/fetch-refs")
+def post_git_fetch_refs(
+    project_id: str,
+    body: FetchRefsBody | None = None,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    """Fetch-only refresh: remote-tracking refs move, nothing local does (D#1 §3-7)."""
+    from modules.flow_gate.services.git import remote_refresh
+    try:
+        return {"ok": True, "result": remote_refresh.fetch_refs(project_id, body.group_id if body else None)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)

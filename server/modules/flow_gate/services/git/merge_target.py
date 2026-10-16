@@ -76,6 +76,12 @@ _LANDED_UNKNOWN = "unknown"
 
 MERGE_ACTIONS = ("merge", "merge_only")
 
+# 0066 D#1 §2-2: optional target-record keys. A record without them is read exactly as
+# before; ``origin=manual_merge`` marks a manual merge attempt (Group kept on success),
+# ``recovery_merge_commit`` an attempt that completes an earlier unpushed merge.
+ORIGIN_MANUAL_MERGE = "manual_merge"
+RECOVERY_MERGE_COMMIT_KEY = "recovery_merge_commit"
+
 WORKSPACES_DIR = "git_merge_targets"
 WORKSPACE_TREE = "tree"
 OWNER_MARKER = "owner.json"
@@ -752,8 +758,11 @@ def preview_target(group_id: str, requested: Optional[str] = None) -> dict:
 
 def open_attempt(
     group_id: str, target: MergeTargetContext, action: str, lock_holder: str, owner: str,
+    *, origin: Optional[str] = None, recovery_merge_commit: Optional[str] = None,
 ) -> MergeTargetContext:
-    """Write the attempt record (before any git merge work) and return the pinned context."""
+    """Write the attempt record (before any git merge work) and return the pinned context.
+
+    ``origin`` / ``recovery_merge_commit`` (0066 D#1) are written only when given."""
     from modules.flow_gate.services import git_service as _gs
     base_root = _gs._base_root_of(target.project_id)
     remote_expectation = (
@@ -777,6 +786,10 @@ def open_attempt(
         "unmerge_supported": target.unmerge_supported,
         "defaulted_to_work_base": target.defaulted_to_work_base,
     }
+    if origin is not None:
+        record["origin"] = origin
+    if recovery_merge_commit is not None:
+        record[RECOVERY_MERGE_COMMIT_KEY] = recovery_merge_commit
     merge_id = _gs.db_git.create_session(
         group_id, [], finalize_action=action,
         context={
@@ -901,6 +914,111 @@ def complete_attempt(ctx: MergeTargetContext, *, merge_commit: Optional[str], pu
                   result={"merge_commit": merge_commit, "pushed": pushed})
     release_workspace(ctx)
     _remember_default_target(ctx)
+
+
+def is_manual_record(rec: Optional[dict]) -> bool:
+    return bool(rec) and rec.get("origin") == ORIGIN_MANUAL_MERGE
+
+
+def is_manual_session(session: Optional[dict]) -> bool:
+    return is_manual_record(target_record(session))
+
+
+def finish_manual_attempt(
+    ctx: MergeTargetContext, *, merge_commit: Optional[str], merge_commit_sha: Optional[str],
+    pushed: bool, recovered: bool = False,
+) -> None:
+    """0066 D#1 §3-6(7): the end of a manual merge that really is in its target.
+
+    The ledger goes back to ``none`` (merge id/commit cleared) FIRST, then the attempt
+    row is closed as completed — it is the per-target merge history E10/E11 read — and
+    only the target workspace is released. The Group slot, work branch and scope floor
+    are kept. A crash between the two leaves an open attempt that recovery settles."""
+    from modules.flow_gate.services import git_service as _gs
+    assert ctx.merge_id is not None
+    session = _gs.db_git.get_session(ctx.merge_id) or {}
+    group_id = session.get("group_id")
+    _gs._set_status(group_id, "none")
+    result = {"merge_commit": merge_commit, "merge_commit_sha": merge_commit_sha, "pushed": pushed}
+    if recovered:
+        result["recovered"] = True
+    close_attempt(ctx.merge_id, ATTEMPT_COMPLETED, result=result)
+    release_workspace(ctx)
+    _remember_default_target(ctx)
+    payload = {
+        "project": ctx.project_id, "group_id": group_id, "status": "merged",
+        "merge_commit": merge_commit, "pushed": pushed, "target_branch": ctx.target_branch,
+        "merge_id": ctx.merge_id, "manual": True, "group_status": "none",
+    }
+    if recovered:
+        payload["recovered"] = True
+    _gs._emit("git_finalize_done", ctx.project_id, group_id, payload)
+
+
+def _manual_result_row(session: Optional[dict]) -> Optional[dict]:
+    from modules.flow_gate.services import git_service as _gs
+    if not session or _gs.db_git.session_kind(session) != _gs.db_git.SESSION_KIND_MERGE:
+        return None
+    rec = target_record(session)
+    if not is_manual_record(rec):
+        return None
+    context = _gs.db_git.session_context(session)
+    if context.get(ATTEMPT_STATE_KEY) != ATTEMPT_COMPLETED:
+        return None
+    result = context.get("attempt_result") or {}
+    return {
+        "merge_id": int(session["merge_id"]),
+        "group_id": session.get("group_id"),
+        "target_branch": rec["branch"],
+        "recorded_is_project_base": bool(rec.get("is_project_base")),
+        "merge_commit": result.get("merge_commit_sha") or result.get("merge_commit"),
+        "pushed": bool(result.get("pushed")),
+        "recovered": bool(result.get("recovered") or rec.get(RECOVERY_MERGE_COMMIT_KEY)),
+        "completed_at": context.get("attempt_closed_at"),
+        "started_at": rec.get("started_at"),
+    }
+
+
+def manual_merge_results(group_id: str) -> list[dict]:
+    """0066 D#1 §3-8(0): the latest completed manual merge attempt of each target branch
+    of the group, newest completion first. Read from the existing attempt rows."""
+    from modules.flow_gate.services import git_service as _gs
+    latest: dict[str, dict] = {}
+    for session in _gs.db_git.sessions_by_group(group_id):      # newest merge_id first
+        row = _manual_result_row(session)
+        if row is not None and row["target_branch"] not in latest:
+            latest[row["target_branch"]] = row
+    return sorted(latest.values(), key=lambda r: (r["completed_at"] or "", r["merge_id"]), reverse=True)
+
+
+def manual_merge_standing(group_id: str, merge_id) -> tuple[Optional[dict], Optional[dict]]:
+    """``(row, latest)``: the completed manual attempt ``merge_id`` of this group (None when
+    it is not one) and the latest completed manual attempt of the same target."""
+    from modules.flow_gate.services import git_service as _gs
+    try:
+        session = _gs.db_git.get_session(int(merge_id))
+    except (TypeError, ValueError):
+        return None, None
+    if session is None or session.get("group_id") != group_id:
+        return None, None
+    row = _manual_result_row(session)
+    if row is None:
+        return None, None
+    latest = next((r for r in manual_merge_results(group_id)
+                   if r["target_branch"] == row["target_branch"]), None)
+    return row, latest
+
+
+def recorded_manual_merge(group_id: str, branch: str, merge_commit: str) -> Optional[int]:
+    """The latest completed manual attempt id of ``branch`` when any completed manual
+    attempt of that target recorded ``merge_commit`` (§3-6(7-1) "already recorded")."""
+    from modules.flow_gate.services import git_service as _gs
+    from .refs import _full_sha_matches
+    rows = [r for r in (_manual_result_row(s) for s in _gs.db_git.sessions_by_group(group_id))
+            if r is not None and r["target_branch"] == branch]
+    if any(_full_sha_matches(r["merge_commit"] or "", merge_commit) for r in rows):
+        return rows[0]["merge_id"]
+    return None
 
 
 def fail_attempt(ctx: MergeTargetContext, error: dict) -> None:
@@ -1094,6 +1212,11 @@ def recover_interrupted_attempt(session: dict, reason: str) -> Optional[str]:
         )
         return None
     from modules.flow_gate.services import git_service as _gs
+    rec = target_record(session) or {}
+    if rec.get(RECOVERY_MERGE_COMMIT_KEY):
+        # 0066 D#1 §3-6(7-1): an unpushed-merge recovery row has no merge inputs; it is
+        # judged by the merge commit it names.
+        return _recover_recovery_attempt(session, ctx, rec, reason)
     root = ctx.root
     if ownership == OWN_OWNED and root is not None and root.exists():
         if _gs._merge_in_progress(root):
@@ -1117,6 +1240,73 @@ def recover_interrupted_attempt(session: dict, reason: str) -> Optional[str]:
     if ctx.managed_workspace:
         release_workspace(ctx)
     return ATTEMPT_INTERRUPTED
+
+
+def _recover_recovery_attempt(
+    session: dict, ctx: MergeTargetContext, rec: dict, reason: str,
+) -> Optional[str]:
+    """Restart table of D#1 §3-6(7-1): local target lost M -> interrupted; no push ->
+    completed; push and origin has M (a crash right after the push) -> completed without
+    pushing again; push and origin lacks M -> interrupted (M is never rewound); origin
+    unreadable -> left open."""
+    from modules.flow_gate.services import git_service as _gs
+    merge_commit = rec[RECOVERY_MERGE_COMMIT_KEY]
+    root = ctx.root
+    if root is None or not root.exists():
+        return None
+    contained = _gs._is_ancestor(root, merge_commit, f"refs/heads/{ctx.target_branch}")
+    if contained is None:
+        return None
+    if contained:
+        published: Optional[bool] = False
+        if rec.get("push"):
+            published = _remote_contains(ctx, merge_commit)
+            if published is None:
+                return None
+        if not rec.get("push") or published:
+            finish_manual_attempt(
+                ctx, merge_commit=_gs._rev_parse(root, merge_commit, short=True) or merge_commit[:7],
+                merge_commit_sha=merge_commit, pushed=bool(rec.get("push")), recovered=True,
+            )
+            return ATTEMPT_COMPLETED
+    close_attempt(ctx.merge_id, ATTEMPT_INTERRUPTED, error={"code": reason})
+    _return_merging_to_waiting(session.get("group_id"))
+    return ATTEMPT_INTERRUPTED
+
+
+def _remote_contains(ctx: MergeTargetContext, sha: str) -> Optional[bool]:
+    """Whether origin's target branch contains ``sha`` (see origin_branch_contains)."""
+    return origin_branch_contains(ctx.project_id, ctx.root, ctx.target_branch, sha)
+
+
+def fetch_origin_pruned(project_id: str, repo: Path) -> bool:
+    """0066 D#1 §3-7/§3-8: origin synced with the config, then ``fetch --prune origin``.
+    Pruning drops the tracking ref of a branch deleted on origin, so a later read of
+    ``refs/remotes/origin/<b>`` never reports a deleted branch as still holding its old
+    tip (``fetch.prune=false`` repositories included). False = sync or fetch failed."""
+    from modules.flow_gate.services import git_service as _gs
+    cfg = _gs.db_git.get_config(project_id) or {}
+    try:
+        _gs.ensure_origin_matches_config(repo, (cfg.get("repo_url") or "").strip())
+    except GitServiceError:
+        return False
+    proc = _gs._run_git(
+        ["fetch", "--prune", "origin"], cwd=repo, timeout=_gs.GIT_NET_TIMEOUT_SEC,
+        username=cfg.get("username"), secret=_gs._load_secret_for(cfg) or "",
+    )
+    return proc.returncode == 0
+
+
+def origin_branch_contains(project_id: str, repo: Path, branch: str, sha: str) -> Optional[bool]:
+    """Whether origin's ``branch`` contains ``sha``: a pruned fetch, then ancestry against
+    the refreshed tracking ref. A branch absent on origin = False. None = cannot be told."""
+    from modules.flow_gate.services import git_service as _gs
+    if not fetch_origin_pruned(project_id, repo):
+        return None
+    remote = f"refs/remotes/origin/{branch}"
+    if not _gs._ref_exists(repo, remote):
+        return False
+    return _gs._is_ancestor(repo, sha, remote)
 
 
 def _flag_manual_reconciliation(merge_id: int, reason: str, observed: Optional[str]) -> None:
@@ -1210,6 +1400,14 @@ def _finish_landed_merge(
         branch_merge.finish_landed_merge(session, ctx, merge_commit, pushed=pushed)
         return
     group_id = session["group_id"]
+    if is_manual_session(session):
+        # 0066 D#1 §3-6(7): a recovered manual merge keeps the Group as well.
+        finish_manual_attempt(
+            ctx, merge_commit=merge_commit,
+            merge_commit_sha=_gs._rev_parse(ctx.root, merge_commit) if ctx.root and merge_commit else None,
+            pushed=pushed, recovered=True,
+        )
+        return
     _gs._set_status(group_id, "merged", merge_id=ctx.merge_id, merge_commit=merge_commit)
     close_attempt(ctx.merge_id, ATTEMPT_COMPLETED, result={
         "merge_commit": merge_commit, "pushed": pushed, "recovered": True,

@@ -36,7 +36,8 @@ def call(action, *args, **kwargs):
         # Ordinary v0.1 callers have no Graph execution and retain their behavior.
         if action in ("launch", "finish", "transition") and args and args[0].get("graph_exec_id"):
             raise RuntimeError("Graph execution lifecycle is not registered")
-        if action in ("request_write", "working", "validate_write", "loop_state", "prepare_workspace", "admit", "admission", "opening", "can_open", "execution_wire"):
+        # 0066 D#1 §3-6(3): a manual merge fails closed when it cannot ask the Graph.
+        if action in ("request_write", "working", "validate_write", "loop_state", "prepare_workspace", "admit", "admission", "opening", "can_open", "execution_wire", "manual_git_blocker"):
             raise RuntimeError("Graph execution lifecycle is not registered")
         return None
     return _handler(action, *args, **kwargs)

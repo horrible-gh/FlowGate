@@ -35,6 +35,9 @@ Deviations recorded as design changes (0669 chat):
 
 Unit 9a: a manual (non-approval) finalize is a job of this kind too, with action
 ``finalize``; its executor and resume live in ``finalize_publish``.
+
+0066 D#1: actions ``manual_merge`` and ``merge_result_push`` are jobs of this kind as
+well; their executors, phases and resume live in ``manual_merge``.
 """
 from __future__ import annotations
 
@@ -59,6 +62,10 @@ KIND = "base_publish"
 PUSH = "push"
 UNMERGE = "unmerge"
 FINALIZE = "finalize"     # unit 9a: finalize_publish
+# 0066 D#1 §2-2: a manual merge and the follow-up push of a manual merge result
+# (executors in manual_merge; both take G -> B/W -> R for their whole run).
+MANUAL_MERGE = "manual_merge"
+MERGE_RESULT_PUSH = "merge_result_push"
 
 _LEASE_CLEARED = {"lease_owner": None, "lease_token": None, "lease_until": None}
 _READ_ERROR = approval_freeze._READ_ERROR
@@ -489,6 +496,9 @@ def run(ctx: store.JobContext, entry: str) -> Optional[store.RunResult]:
     if _payload(ctx.job).get("action") == FINALIZE:
         from . import finalize_publish
         return finalize_publish.run(ctx, entry)
+    if _payload(ctx.job).get("action") in (MANUAL_MERGE, MERGE_RESULT_PUSH):
+        from . import manual_merge
+        return manual_merge.run(ctx, entry)
     try:
         op = _op_of(ctx.job)
         for _ in range(len(_STEPS) + 1):
@@ -512,8 +522,9 @@ def _decide_not_applied(job: dict) -> "runner.Decision":
 
 def _decide_start(job: dict) -> "runner.Decision":
     """unmerge: base ref vs (b0, b1). A push applies nothing, so it always re-plans; a
-    finalize is judged by its own resume under the locks (finalize_publish)."""
-    if _payload(job).get("action") == FINALIZE:
+    finalize (and a manual merge / merge result push) is judged by its own resume under
+    the locks (finalize_publish, manual_merge)."""
+    if _payload(job).get("action") in (FINALIZE, MANUAL_MERGE, MERGE_RESULT_PUSH):
         return runner.Decision(runner.NOT_APPLIED)
     op = _op_of(job)
     if op.action == PUSH or not op.plan:
@@ -541,6 +552,7 @@ _DECIDERS = {
     "start": _decide_start,
     "applied": _decide_not_applied,     # the push step re-reads the remote under R
     "pushed": _decide_not_applied,      # DB only
+    "planned": _decide_not_applied,     # merge_result_push: re-judged under its locks
 }
 
 

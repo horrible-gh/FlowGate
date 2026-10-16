@@ -2988,6 +2988,16 @@ def _complete_merge_review(
     db_git.set_session_context(merge_id, context)
     merge_commit = context.get("merge_commit") or ""
     merge_commit_short = merge_commit[:7] or None
+    if merge_target.is_manual_record(context.get(merge_target.TARGET_RECORD_KEY)):
+        # 0066 D#1 §3-6(9): a reviewed manual merge ends like a clean one — ledger
+        # ``none``, the Group slot kept, no approval to finish (it never carries one).
+        _finish_reviewed_attempt(group_id, merge_id, project_id, merge_commit_short, pushed)
+        db_git.consume_resolution_checkpoint(merge_id)
+        return {"ok": True, "result": {
+            "status": "merged", "review_state": REVIEW_STATE_COMPLETED,
+            "merge_commit": merge_commit_short, "pushed": pushed,
+            "group_status": "none", "worktree_kept": True,
+        }}
     # 0594 T0012 §6.3: ledger → the completed attempt, attempt row closed, only its
     # own workspace released. emit=False: the status row is written now (Git really
     # is terminal), but the git_pending_changed broadcast waits until the approval
@@ -3044,8 +3054,18 @@ def _finish_reviewed_attempt(
     stays, the group ledger points at it, and only its own workspace is released.
 
     ``emit``/``cleanup_slot`` let the deferred final approval (0555 T0008 §12)
-    broadcast and tear the slot down itself once its decision is known."""
+    broadcast and tear the slot down itself once its decision is known.
+
+    0066 D#1 §3-6(7): a manual merge attempt (``origin=manual_merge``) keeps the Group
+    slot and leaves the ledger at ``none`` instead."""
     target = merge_target.resolve_merge_id_target(merge_id)
+    session = db_git.get_session(merge_id)
+    if target is not None and merge_target.is_manual_session(session):
+        full = (db_git.session_context(session).get("merge_commit") or "") or None
+        merge_target.finish_manual_attempt(
+            target, merge_commit=merge_commit_short, merge_commit_sha=full, pushed=pushed,
+        )
+        return
     # Ledger first: a crash before the close leaves an open row in review_state
     # `completed`, which startup/sweep finish (merge_target.finish_completed_review).
     _set_status(group_id, "merged", merge_id=merge_id, merge_commit=merge_commit_short, emit=emit)
