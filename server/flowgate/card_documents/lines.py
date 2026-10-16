@@ -193,15 +193,17 @@ def set_delegation(group: dict, node: dict, on: bool, user_id: Optional[str], re
 
 # ── R↔B root conversion ──────────────────────────────────────────────────────
 
-def follow_root_conversion(flow_id: str, old_doc_id: str, converted: dict) -> None:
-    """The converter gave a root a new id and kind (``document_service.convert_root_document_type``,
-    inside the same Flow guard): the lines holding it follow — id, line kind (R/B) — and keep their
-    ownership. A line of the new kind the node already has keeps its kind and only takes the new id."""
+def follow_root_conversion(flow_id: str, old_doc_id: str, converted: dict) -> list[str]:
+    """The converter gave a root a new id and kind (``documents.root_conversion``, inside the same Flow
+    guard): the lines holding it follow — id, line kind (R/B) — and keep their ownership. A line of the
+    new kind the node already has keeps its kind and only takes the new id. Returns the node keys whose
+    requirement line now holds the converted root (their draft cards follow it, 0064 T#3)."""
     if not repository.available():
-        return
+        return []
     new_id, new_type = converted["doc_id"], str(converted.get("type_code") or "").upper()
     rows = repository.rows(flow_id)
     taken = {(r["node_key"], r["slot"], r["doc_type"]) for r in rows}
+    holders: list[str] = []
     for row in rows:
         if row["doc_id"] != old_doc_id:
             continue
@@ -209,6 +211,9 @@ def follow_root_conversion(flow_id: str, old_doc_id: str, converted: dict) -> No
         if doc_type in cs.ROOT_TYPES and new_type in cs.ROOT_TYPES and (row["node_key"], row["slot"], new_type) not in taken:
             doc_type = new_type
         repository.retarget(flow_id, row["node_key"], row["slot"], row["doc_type"], doc_type, new_id)
+        if row["slot"] == cs.REQUIREMENT:
+            holders.append(row["node_key"])
+    return list(dict.fromkeys(holders))
 
 
 # ── run results ──────────────────────────────────────────────────────────────

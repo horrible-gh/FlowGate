@@ -264,7 +264,9 @@ def test_unassigned_flow_converts_as_before_inside_the_flow_guard(env, monkeypat
     assert "body preserved" in (env["storage"] / rel_path(FU, "B")).read_text(encoding="utf-8")
     assert _sql(env["db"], "SELECT 1 FROM events WHERE doc_id = ?", (root(FU, "B"),))
     assert _sql(env["db"], "SELECT 1 FROM events WHERE doc_id = ?", (root(FU),)) == []
-    assert [e["metadata"] for e in converted_events(env)] == [f"R->B ({root(FU)} -> {root(FU, 'B')})"]
+    # 0064 T#3 (P0006 §3.4): the note names the mode, children and moved attachments.
+    assert [e["metadata"] for e in converted_events(env)] == [
+        f"R->B ({root(FU)} -> {root(FU, 'B')}) mode=number_swap children=0 attachments=0/0 ghosts=0"]
     # the Flow stays unassigned and nobody is told it changed engine
     from modules.flow_gate.graph_workflow.services.engine_router import read_ownership
     assert read_ownership(FU).state == "unassigned"

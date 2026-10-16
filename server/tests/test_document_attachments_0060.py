@@ -37,10 +37,37 @@ OTHER_DOC_ID = "flowgate.default.0060.0002-N"
 
 # ── fixtures ────────────────────────────────────────────────────────────────────
 
+# 0064 T#3: the base tree carries main's 136/137_chat_* next to v0.2's 137/138_chat_* (the same chat
+# tables, index and columns twice), so the strict conftest builder stops at 137_chat_command_execution.sql
+# ("index idx_chat_cmd_run already exists") before any test here runs. Only those two duplicates may fail,
+# and only with "already exists" / "duplicate column name"; every other migration error still fails.
+_BASE_DUPLICATE_MIGRATIONS = {"137_chat_command_execution.sql", "138_chat_activity_anchor.sql"}
+
+
+def _migrated_sqlite_db(tmp_path_factory, name: str, seed_sql: str) -> str:
+    db_path = str(tmp_path_factory.mktemp("db") / name)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        for migration in sorted((_SERVER_DIR / "sql" / "migrations" / "sqlite").glob("*.sql")):
+            try:
+                conn.executescript(migration.read_text(encoding="utf-8"))
+            except sqlite3.OperationalError as exc:
+                duplicate = "already exists" in str(exc) or "duplicate column name" in str(exc)
+                if migration.name not in _BASE_DUPLICATE_MIGRATIONS or not duplicate:
+                    raise
+        conn.executescript(seed_sql)
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
 @pytest.fixture(scope="module")
-def attachments_db(migrated_sqlite_db):
-    """Every migration in order, then the rows these tests need (conftest factory)."""
-    return migrated_sqlite_db(
+def attachments_db(tmp_path_factory):
+    """Every migration in order, then the rows these tests need."""
+    return _migrated_sqlite_db(
+        tmp_path_factory,
         "test_attachments_0060.db",
         seed_sql=f"""
         INSERT OR IGNORE INTO projects(project_id,project_name,is_active,created_at,updated_at)
@@ -77,6 +104,16 @@ class _Store:
     def _execute(self, sql, params=None):
         self._conn.execute(sql, params or [])
         self._conn.commit()
+
+    def _execute_affected(self, sql, params=None):
+        # 0064 T#3: attachment writes commit under the Flow guard, whose bump reads this count.
+        count = self._conn.execute(sql, params or []).rowcount
+        self._conn.commit()
+        return count
+
+    def table_exists(self, name):
+        return self._fetch_one(
+            "SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name=?", [name]) is not None
 
     def _fetch_one(self, sql, params=None):
         row = self._conn.execute(sql, params or []).fetchone()
@@ -636,10 +673,18 @@ def src_root(tmp_path, monkeypatch):
     """A stand-in for the group worktree. There is no git repo in a unit test."""
     from modules.flow_gate.services import git_service
 
+    from modules.flow_gate.services import tr2_file_policy
+
     root = tmp_path / "worktree"
     root.mkdir()
     monkeypatch.setattr(git_service, "effective_src_root_ex", lambda *_: (root, "worktree"))
     monkeypatch.setattr(git_service, "base_src_root", lambda *_a, **_k: root)
+    # 0064 T#3: a group copy now resolves its worktree through the TR2 source policy (base tree);
+    # the same stand-in answers there for this suite's Group, after the policy's own Group lock.
+    real_group_root = tr2_file_policy._group_root
+    monkeypatch.setattr(tr2_file_policy, "_group_root",
+                        lambda project_id, group_id: root.resolve() if group_id == GROUP_ID
+                        else real_group_root(project_id, group_id))
     return root
 
 

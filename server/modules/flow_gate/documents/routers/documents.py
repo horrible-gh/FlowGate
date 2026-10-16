@@ -3490,17 +3490,27 @@ def convert_root_type(
     and a revision is never rewritten. An unassigned Flow converts inside the Flow guard;
     a v0.1 Flow and a document without a group convert exactly as before.
     flowgate.v02.0053 T#1: in that guard a Designer card line holding the root follows the new id.
+    0064 T#3 (L0005 2.5~2.8, P0006 §3.2 / §3.5 / §3.6): ``root_conversion.execute_root_conversion`` is the
+    one entry point. Inside the guard it judges again, stages the new body file next to the original,
+    moves the attachment rows and files, the card lines and the draft cards, and removes the old files
+    only after the commit. The response adds ``conversion``; new refusals answer with a flat 409.
     """
+    from modules.flow_gate.documents import root_conversion
+
     doc = document_service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
     actor = current_user["user_id"]
-    result = _graph_contact.guarded_root_conversion(doc, lambda: document_service.convert_root_document_type(doc_id, body.new_type, actor_user_id=actor), actor)
+    try:
+        result = _graph_contact.guarded_root_conversion(
+            doc, lambda: root_conversion.execute_root_conversion(doc_id, body.new_type, actor), actor)
+    except root_conversion.ConversionRefused as refused:
+        return refused.response()
     if isinstance(result, JSONResponse):
         return result
-    return {"data": result}
+    return result
 
 
 

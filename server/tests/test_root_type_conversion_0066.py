@@ -32,10 +32,13 @@ def _migrations() -> list[Path]:
 
 
 @pytest.fixture()
-def env(tmp_path):
+def env(tmp_path, monkeypatch):
     """Real FlowGateStore on a fresh migrated SQLite DB + a tmp storage root."""
-    from modules.flow_gate.db import _SqliteDbAdapter
+    from modules.flow_gate.db import _SqliteDbAdapter, _SqliteTxnAdapter
     from modules.flow_gate.db import connection as conn_mod
+
+    # 0064 T#3: the converter runs inside the Flow guard, whose bump reads the affected-row count.
+    monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name

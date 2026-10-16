@@ -94,6 +94,19 @@ export interface FlowGraphCardDocument {
   readonly historyCount?: number
 }
 
+/**
+ * flowgate.v02.0064 T#2: only these known body states warn (the server's `body_state`); an older server sends none and
+ * a documentless line never warns. The same rule as features/document `lineWarns` and the Inspector parts'
+ * (`parts/slotStateView.ts`): the Designer Center imports features/document nowhere, so it keeps its own copy.
+ */
+export const UNREADABLE_BODY_STATES: ReadonlySet<string> = new Set([
+  'file_path_missing', 'file_not_found', 'path_unresolved', 'read_error',
+])
+
+export function lineWarns(line: { readonly docId?: string | null; readonly bodyState?: string | null }): boolean {
+  return line.docId != null && typeof line.bodyState === 'string' && UNREADABLE_BODY_STATES.has(line.bodyState)
+}
+
 export interface FlowGraphNodeDocument {
   readonly docId: string
   readonly typeCode: string | null

@@ -9,7 +9,8 @@ calls and the composition root (``startup.py``) registers the handlers.
                        returns ``node_key -> [line]`` for the save response
     card_view          Canvas read: the card lines of each node and the documents drawn in a card
     on_result_bound    run step, inside its Flow guard: a result bound to a node fills its line
-    on_root_converted  R↔B root conversion, inside its Flow guard: the line holding the root follows
+    on_root_converted  R↔B root conversion, inside its Flow guard: the line holding the root follows;
+                       returns the node keys whose requirement line holds it (the draft cards to sync)
 
 * With no handler registered a port is a no-op (no lines, nothing hidden), so the Graph behaves
   exactly as it did before the ports existed.
@@ -91,7 +92,9 @@ def result_bound(flow_id: str, node_key: str, doc_id: Optional[str]) -> None:
         handler(flow_id, node_key, doc_id)
 
 
-def root_converted(flow_id: str, old_doc_id: str, converted: dict) -> None:
+def root_converted(flow_id: str, old_doc_id: str, converted: dict) -> list[str]:
+    """The node keys whose requirement line now holds the converted root (none without a handler)."""
     handler = _handler(ON_ROOT_CONVERTED)
-    if handler is not None:
-        handler(flow_id, old_doc_id, converted)
+    if handler is None:
+        return []
+    return list(handler(flow_id, old_doc_id, converted) or [])

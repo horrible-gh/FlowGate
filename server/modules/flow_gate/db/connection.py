@@ -409,6 +409,19 @@ def after_rollback(callback) -> bool:
     return True
 
 
-def track_new_file(abs_path) -> bool:
-    """Remove a newly created file on rollback; never use for an overwritten existing file."""
-    return after_rollback(lambda: Path(abs_path).unlink(missing_ok=True))
+def track_new_file(abs_path, still_ours=None, under=None) -> bool:
+    """Remove a newly created file on rollback; never use for an overwritten existing file.
+
+    The callback runs after this transaction's locks are gone, so another writer may already have moved the
+    file aside and created its own at the same path (0064 T#3). ``still_ours(path)`` keeps the removal to the
+    file this transaction created; ``under(fn)`` runs check and removal under the durable lock that writer has
+    to take. Without them the path is removed unchecked (the earlier behaviour).
+    """
+    path = Path(abs_path)
+
+    def remove() -> None:
+        if still_ours is not None and not still_ours(path):
+            return
+        path.unlink(missing_ok=True)
+
+    return after_rollback(remove if under is None else (lambda: under(remove)))

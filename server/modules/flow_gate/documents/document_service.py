@@ -22,7 +22,6 @@ UPDATE … WHERE status=<expected_status>. If a race is detected, it raises 409.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -505,159 +504,92 @@ def _converted_filename(filename: Optional[str], old_code: str, new_code: str) -
     return filename
 
 
-def _rename_document_file(doc: dict, old_code: str, new_code: str) -> Optional[str]:
-    """Rename the document's .md file to the new doc-code, returning the new
-    storage-relative path (or the unchanged stored value when there is no file)."""
-    stored = (doc.get("file_path") or "").strip()
-    if not stored:
-        return doc.get("file_path")
-    project_id = doc.get("project_id")
-    branch = (doc.get("branch") or "main") or "main"
-    abs_path = storage_paths.resolve_storage_path(stored, project_id, branch=branch)
-    if abs_path is None or not abs_path.is_file():
-        # No physical file (e.g. a memo-only root). Still update the stored string
-        # so the persisted path tracks the new code.
-        new_basename = _converted_filename(os.path.basename(stored), old_code, new_code)
-        return stored[: -len(os.path.basename(stored))] + new_basename if new_basename else stored
-    new_name = _converted_filename(abs_path.name, old_code, new_code)
-    new_abs = abs_path.with_name(new_name)
-    if new_abs != abs_path:
-        os.replace(abs_path, new_abs)
-    return storage_paths.to_storage_relative(new_abs, project_id)
-
-
 def convert_root_document_type(
     doc_id: str,
     new_type: str,
     actor_user_id: str,
 ) -> dict:
-    """Convert a workflow root document between R and B (NR0066.0003 §5).
+    """Convert a workflow root document between R and B (NR0066.0003 §5) and return its row.
 
-    Allowed only on a pristine root — i.e. before the workflow decision is taken
-    (no child documents reference it and no workflow sequence has been created).
-    Rewrites the doc_id, type_code, filename and every inbound reference atomically.
-
-    Raises HTTPException on every rejection path (404 missing, 409 not convertible,
-    422 invalid target type).
+    0064 T#3: the judgement, the file stage and the identity rewrite run in
+    ``root_conversion.execute_root_conversion`` (one Flow guard transaction, the new body file staged
+    next to the original and the original removed only after the commit). This keeps the direct
+    service entry point: the same refusals (HTTPException 404 / 409 / 422, ``ConversionRefused`` for the
+    new reasons) and the converted (or unchanged, for the same type) document row.
     """
-    new_type = (new_type or "").strip().upper()
-    if new_type not in _WORKFLOW_ROOT_TYPES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Target type must be one of {sorted(_WORKFLOW_ROOT_TYPES)}; got {new_type!r}.",
-        )
+    from modules.flow_gate.documents import root_conversion
 
-    doc = db_docs.get_by_id(doc_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    return root_conversion.execute_root_conversion(doc_id, new_type, actor_user_id)["data"]
 
+
+def convert_by_number_swap(
+    doc: dict,
+    new_doc_id: str,
+    new_type: str,
+    new_file_path: Optional[str],
+    new_filename: Optional[str],
+    actor_user_id: Optional[str],
+    *,
+    before_delete=None,
+    note_suffix: str = "",
+) -> dict:
+    """The DB part of a number-swap conversion (0064 L0005 2.7), inside the caller's transaction.
+
+    The body file is already staged by the coordinator (``root_conversion``); nothing here touches a
+    file. ``before_delete`` runs after every reference points at the new row and before the old row is
+    deleted — the attachment rows move there, because ``attachments.doc_id`` cascades on delete.
+    """
+    doc_id = doc["doc_id"]
     current_type = (doc.get("type_code") or "").upper()
-    if current_type not in _WORKFLOW_ROOT_TYPES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Only workflow root documents (R/B) can be converted; {doc_id} is {current_type}.",
-        )
-    if current_type == new_type:
-        # Idempotent no-op: already the requested type.
-        return doc
-
-    # Gate: a workflow decision must not have been taken yet. The decision creates
-    # the workflow_sequence and the first child document(s) referencing this root.
-    if db_sequences.get_sequence_by_doc_id(doc_id) is not None:
-        raise HTTPException(
-            status_code=409,
-            detail="Cannot convert root type after the workflow decision was taken.",
-        )
-    store = get_store()
-    group_id = doc.get("group_id")
-    if group_id:
-        children = store._fetch_all(
-            "SELECT doc_id FROM documents "
-            "WHERE group_id = ? AND doc_id != ? AND (triggered_by = ? OR target_id = ?)",
-            [group_id, doc_id, doc_id, doc_id],
-        )
-        if children:
-            raise HTTPException(
-                status_code=409,
-                detail="Cannot convert root type: child documents already reference it.",
-            )
-
-    new_doc_id = compute_converted_doc_id(doc_id, new_type)
-    if db_docs.get_by_id(new_doc_id) is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Target doc_id already exists: {new_doc_id}.",
-        )
-
-    old_code = doc_id.rpartition(".")[2]
-    new_code = new_doc_id.rpartition(".")[2]
-    new_file_path = _rename_document_file(doc, old_code, new_code)
-    new_filename = _converted_filename(doc.get("filename"), old_code, new_code)
-
     old_int_id = doc.get("id")
+    store = get_store()
 
-    try:
-        with store.transaction():
-            # Portable identity rewrite (NR0108.0003 §7 candidate b). An in-place
-            # UPDATE of documents.doc_id is impossible under IMMEDIATE foreign keys
-            # (PostgreSQL/MySQL): the rename momentarily diverges from the rows that
-            # reference it — and every document keeps at least its `created` event —
-            # so the FK check aborts the transaction (B0108). The earlier SQLite-only
-            # `PRAGMA defer_foreign_keys` masked this on SQLite but had no equivalent
-            # on other backends. Instead create the new identity row FIRST, repoint
-            # every reference to it, then drop the old row: a parent-first ordering
-            # that satisfies IMMEDIATE FKs on every dialect and needs no deferral.
-            new_row = dict(doc)
-            new_row.pop("id", None)  # let the backend assign a fresh SERIAL id
-            new_row["doc_id"] = new_doc_id
-            new_row["type_code"] = new_type
-            new_row["file_path"] = new_file_path
-            new_row["filename"] = new_filename
-            new_row["updated_at"] = now_iso()
-            inserted = db_docs.create(new_row)
-            new_int_id = (inserted or {}).get("id")
+    # Portable identity rewrite (NR0108.0003 §7 candidate b). An in-place
+    # UPDATE of documents.doc_id is impossible under IMMEDIATE foreign keys
+    # (PostgreSQL/MySQL): the rename momentarily diverges from the rows that
+    # reference it — and every document keeps at least its `created` event —
+    # so the FK check aborts the transaction (B0108). The earlier SQLite-only
+    # `PRAGMA defer_foreign_keys` masked this on SQLite but had no equivalent
+    # on other backends. Instead create the new identity row FIRST, repoint
+    # every reference to it, then drop the old row: a parent-first ordering
+    # that satisfies IMMEDIATE FKs on every dialect and needs no deferral.
+    new_row = dict(doc)
+    new_row.pop("id", None)  # let the backend assign a fresh SERIAL id
+    new_row["doc_id"] = new_doc_id
+    new_row["type_code"] = new_type
+    new_row["file_path"] = new_file_path
+    new_row["filename"] = new_filename
+    new_row["updated_at"] = now_iso()
+    inserted = db_docs.create(new_row)
+    new_int_id = (inserted or {}).get("id")
 
-            # Repoint every inbound / self reference keyed on the textual doc_id.
-            for table, column in _DOC_REFERENCE_COLUMNS:
-                try:
-                    store._execute(
-                        f"UPDATE {table} SET {column} = ? WHERE {column} = ?",
-                        [new_doc_id, doc_id],
-                    )
-                except Exception:
-                    # Table/column absent for this dialect or migration level — skip.
-                    continue
+    # Repoint every inbound / self reference keyed on the textual doc_id.
+    for table, column in _DOC_REFERENCE_COLUMNS:
+        try:
+            store._execute(
+                f"UPDATE {table} SET {column} = ? WHERE {column} = ?",
+                [new_doc_id, doc_id],
+            )
+        except Exception:
+            # Table/column absent for this dialect or migration level — skip.
+            continue
 
-            # Repoint references keyed on the integer documents.id (new SERIAL).
-            if old_int_id is not None and new_int_id is not None:
-                for table, column in _DOC_REFERENCE_ID_COLUMNS:
-                    try:
-                        store._execute(
-                            f"UPDATE {table} SET {column} = ? WHERE {column} = ?",
-                            [new_int_id, old_int_id],
-                        )
-                    except Exception:
-                        continue
-
-            # Drop the old identity row; nothing references it anymore.
-            store._execute("DELETE FROM documents WHERE doc_id = ?", [doc_id])
-    except HTTPException:
-        raise
-    except Exception as exc:  # pragma: no cover - defensive: surface as 409, file already moved is best-effort
-        # Best-effort rollback of the file rename so disk and DB stay consistent.
-        if new_file_path and new_file_path != doc.get("file_path"):
+    # Repoint references keyed on the integer documents.id (new SERIAL).
+    if old_int_id is not None and new_int_id is not None:
+        for table, column in _DOC_REFERENCE_ID_COLUMNS:
             try:
-                back = storage_paths.resolve_storage_path(
-                    new_file_path, doc.get("project_id"), branch=(doc.get("branch") or "main")
+                store._execute(
+                    f"UPDATE {table} SET {column} = ? WHERE {column} = ?",
+                    [new_int_id, old_int_id],
                 )
-                old_abs = storage_paths.resolve_storage_path(
-                    doc.get("file_path"), doc.get("project_id"), branch=(doc.get("branch") or "main")
-                )
-                if back is not None and back.is_file() and old_abs is not None:
-                    os.replace(back, old_abs)
             except Exception:
-                pass
-        raise HTTPException(status_code=409, detail=f"Conversion failed: {exc}") from exc
+                continue
+
+    if before_delete is not None:
+        before_delete()
+
+    # Drop the old identity row; nothing references it anymore.
+    store._execute("DELETE FROM documents WHERE doc_id = ?", [doc_id])
 
     refreshed = db_docs.get_by_id(new_doc_id)
     if refreshed is None:
@@ -669,6 +601,6 @@ def convert_root_document_type(
         "group_id": refreshed.get("group_id"),
         "document_id": refreshed["id"],
         "actor_user_id": actor_user_id,
-        "metadata": f"{current_type}->{new_type} ({doc_id} -> {new_doc_id})",
+        "metadata": f"{current_type}->{new_type} ({doc_id} -> {new_doc_id}){note_suffix}",
     })
     return refreshed

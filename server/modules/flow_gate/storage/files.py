@@ -1,11 +1,19 @@
-"""New document files and shared identity checks (0064 T-B1a, L0005 2.2/2.3)."""
+"""New document files and shared identity checks (0064 T-B1a, L0005 2.2/2.3).
+
+0064 T#3 (L0005 2.6 / 2.7.1): a file is removed by the transaction that made it (rollback) or that let it go
+(commit) only while its path still holds that very file (``file_identity``), and only under the durable lock the
+next writer of that path takes (``cleanup_runner``). The transaction's own lock is gone by the time its callbacks
+run, so another server process may already have moved the file aside and staged its own at the same path.
+"""
 from __future__ import annotations
 
 import logging
 import os
+import stat
 import threading
 import time
 from pathlib import Path
+from typing import Optional
 
 from modules.flow_gate.db.connection import get_store, track_new_file
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
@@ -53,6 +61,52 @@ def referenced_by_any_document(abs_path, exclude_doc_ids=()) -> bool:
     return False
 
 
+def file_identity(abs_path) -> Optional[tuple]:
+    """``(st_dev, st_ino, st_size, st_mtime_ns)`` of the regular file at the path; None when absent or not a file.
+
+    A writer that moves a file aside (``write_new_file``) keeps its inode, and the file it stages has a new one, so
+    the identity tells "the file I made / read" from "a file someone put at the same path later".
+    """
+    try:
+        st = os.lstat(abs_path)
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def is_same_file_as(abs_path, identity: Optional[tuple]) -> bool:
+    """Whether the path still holds the file ``identity`` was taken of (a shorter identity compares its prefix)."""
+    current = file_identity(abs_path)
+    return identity is not None and current is not None and current[: len(identity)] == tuple(identity)
+
+
+def remove_owned_file(abs_path, identity: Optional[tuple]) -> bool:
+    """Unlink the path only while it is still the very file of ``identity``; anything else stays. True: removed."""
+    path = Path(abs_path)
+    if not is_same_file_as(path, identity):
+        if os.path.lexists(path):
+            _log.info("file kept, no longer the one this transaction owned: %s", path)
+        return False
+    path.unlink(missing_ok=True)
+    return True
+
+
+def cleanup_runner(what: str):
+    """How a cleanup queued now must run later: under the durable lock of the guard this thread holds.
+
+    Returns ``None`` outside a guard (the cleanup runs inline, identity-checked). See
+    ``flow_guard.run_cleanup``: a fresh transaction whose first statement takes that guard's durable lock again.
+    """
+    from modules.flow_gate.graph_workflow.services import flow_guard
+
+    key = flow_guard.held_guard()
+    if key is None:
+        return None
+    return lambda body: flow_guard.run_cleanup(key, body, what)
+
+
 def _side_path(path: Path, suffix: str) -> Path:
     global _last_ms
     with _name_lock:
@@ -69,7 +123,9 @@ def write_new_file(abs_path, data: bytes) -> None:
     """Preserve unreferenced orphans, write bytes atomically, and track the new file for rollback.
 
     Call inside the outer transaction, never inside a savepoint. Existing referenced
-    files (including links) are refused without any movement or byte changes.
+    files (including links) are refused without any movement or byte changes. The rollback
+    removes the file only while the path still holds it, under the guard's durable lock
+    (0064 T#3): a retry in another process that moved it aside keeps its own file.
     """
     path, tmp = Path(abs_path), None
     try:
@@ -84,7 +140,9 @@ def write_new_file(abs_path, data: bytes) -> None:
         with tmp.open("xb") as stream:
             stream.write(data)
         tmp.replace(path)
-        track_new_file(path)
+        identity = file_identity(path)
+        track_new_file(path, still_ours=lambda p: is_same_file_as(p, identity),
+                       under=cleanup_runner(f"rollback new file {path}"))
     except OSError as exc:
         if tmp is not None:
             try:

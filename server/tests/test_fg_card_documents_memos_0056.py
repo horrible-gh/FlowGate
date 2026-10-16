@@ -231,7 +231,13 @@ def test_a_line_tells_whether_its_document_is_written(env):
 def test_the_body_judgement_is_the_one_of_the_instruction_stage():
     """No second judgement: the line read asks the same function the instruction stage and the card approval ask."""
     lines_src = (_SERVER_DIR / "flowgate" / "card_documents" / "lines.py").read_text(encoding="utf-8")
-    assert '"has_body": has_body(shown)' in lines_src
+    # 0064 T#2 (L0005 2.1.1): the line reads its file once for both facts; ``written`` is still the approval's own
+    # judgement (``approvable_text``, the text rule ``_require_document_body_for_approval`` applies).
+    assert "written, body_state = legacy.line_body_facts(shown)" in lines_src and '"has_body": written' in lines_src
+    adapter_src = (_SERVER_DIR / "flowgate" / "card_documents" / "legacy_adapter.py").read_text(encoding="utf-8")
+    assert "return pipeline_service.approvable_text(doc, text), state" in adapter_src
+    pipeline_src = (_SERVER_DIR / "modules" / "flow_gate" / "workflow" / "pipeline_service.py").read_text(encoding="utf-8")
+    assert "if not approvable_text(doc, content):" in pipeline_src
     assert lines_src.count("def has_body(") == 1 and "approvable_body" in lines_src
     for package in ("card_documents", "card_memos"):
         for path in (_SERVER_DIR / "flowgate" / package).glob("*.py"):

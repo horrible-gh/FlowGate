@@ -7,8 +7,8 @@ import { lineWarns, toCardLineRecord, UNREADABLE_BODY_STATES } from '@/features/
 import { toCardDocument } from '@/features/project/flowCanvasApi'
 import { changedFlowOf } from '@/features/project/flowCanvasEvents'
 import { toVueFlowNodes } from '@/features/designer/center/canvas/vueFlowMapping'
-import type { FlowGraph } from '@/features/designer/center/graph/flowGraph'
-import { slotLineCard } from '@/features/designer/inspector/parts/slotStateView'
+import { lineWarns as centerLineWarns, UNREADABLE_BODY_STATES as CENTER_STATES, type FlowGraph } from '@/features/designer/center/graph/flowGraph'
+import { lineWarns as partsLineWarns, slotLineCard, UNREADABLE_BODY_STATES as PARTS_STATES } from '@/features/designer/inspector/parts/slotStateView'
 import InspectorSlotRow from '@/features/designer/inspector/parts/InspectorSlotRow.vue'
 import FlowNodeCard from '@/features/designer/center/canvas/FlowNodeCard.vue'
 import MdViewer from '@/features/documentWindow/MdViewer.vue'
@@ -23,6 +23,19 @@ const DOC = 'flowgate.v02.0064.0001-R'
 const wrappers: VueWrapper<any>[] = []
 const failure = (status: number, data: object) => ({ isAxiosError: true, response: { status, data } })
 const el = (w: VueWrapper<any>, id: string) => w.find(`[data-test="${id}"]`)
+const inBody = (id: string) => document.body.querySelector<HTMLElement>(`[data-test="${id}"]`)
+async function click(node: HTMLElement | null) {
+  if (!node) throw new Error('nothing to click')
+  node.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await flushPromises()
+}
+async function type(node: HTMLElement | null, value: string) {
+  if (!node) throw new Error('nothing to type into')
+  const area = node as HTMLTextAreaElement
+  area.value = value
+  area.dispatchEvent(new Event('input', { bubbles: true }))
+  await flushPromises()
+}
 beforeEach(() => {
   api.getRequest.mockReset()
   api.patchRequest.mockReset()
@@ -61,6 +74,8 @@ describe('0064 body state wire contracts', () => {
     expect(Object.hasOwn(written, 'bodyState')).toBe(state !== undefined)
     const warns = typeof state === 'string' && UNREADABLE_BODY_STATES.has(state)
     expect(lineWarns(line)).toBe(warns)
+    expect(centerLineWarns(line)).toBe(warns)                      // the Designer's own copies of the rule
+    expect(partsLineWarns(line)).toBe(warns)
     const row = slotLineCard({ id: line.docId }, line, { changeable: true, running: () => false })
     const rowView = mount(InspectorSlotRow, { props: { name: '요구사항', id: line.docId, bodyState: row.bodyState }, global: { plugins: [i18n] } })
     wrappers.push(rowView)
@@ -74,7 +89,12 @@ describe('0064 body state wire contracts', () => {
     if (warns) expect(row.blank).toBe(false)
   })
   it('never warns for a documentless line, including a stale state', () => {
-    expect(lineWarns({ docId: null, bodyState: 'read_error' })).toBe(false)
+    for (const warns of [lineWarns, centerLineWarns, partsLineWarns]) expect(warns({ docId: null, bodyState: 'read_error' })).toBe(false)
+  })
+  it('keeps one set of unreadable states in features/document, the Designer Center and the Inspector parts', () => {
+    // The Designer Center and the Inspector parts may not import features/document (structure 0024 / 0026 / 0048).
+    expect([...CENTER_STATES].sort()).toEqual([...UNREADABLE_BODY_STATES].sort())
+    expect([...PARTS_STATES].sort()).toEqual([...UNREADABLE_BODY_STATES].sort())
   })
   it.each(['documents', 'future_reason'])('refreshes Canvas for the %s reason', (reason) => {
     expect(changedFlowOf(JSON.stringify({ payload: { flow_id: 'flow', reason, origin_client_id: null } }))).toBe('flow')
@@ -119,15 +139,14 @@ describe('0064 unreadable viewer and re-entry', () => {
     wrappers.push(w)
     openDocumentWindow(DOC)
     await flushPromises()
-    await el(w, 'md-viewer-reenter').trigger('click')
-    await flushPromises()
-    await el(w, 'document-window-textarea').setValue('New body')
-    await el(w, 'document-window-save').trigger('click')
-    await flushPromises()
+    // The window is teleported to <body> (ModelessShell), so it is read from the document, not the wrapper.
+    await click(inBody('md-viewer-reenter'))
+    await type(inBody('document-window-textarea'), 'New body')
+    await click(inBody('document-window-save'))
     expect(api.patchRequest).toHaveBeenCalledWith('/api/v1/documents/content', { doc_id: DOC, content: 'New body' })
-    expect(el(w, 'document-window-save-error').text()).toContain('진단·복구')
-    expect((el(w, 'document-window-textarea').element as HTMLTextAreaElement).value).toBe('New body')
-    expect(w.find('[data-test="md-viewer-recover"]').exists()).toBe(false)
+    expect(inBody('document-window-save-error')!.textContent).toContain('진단·복구')
+    expect((inBody('document-window-textarea') as HTMLTextAreaElement).value).toBe('New body')
+    expect(inBody('md-viewer-recover')).toBeNull()
   })
   it('reads the server editability without inventing permission from a missing field', () => {
     expect(toDocumentRecord({ doc_id: DOC }).isEditable).toBeUndefined()

@@ -44,8 +44,7 @@
 import type { Edge, Node } from '@vue-flow/core'
 import { cardStateView, type CardStateView } from '../graph/cardStateView'
 import { progressedEdgeIds } from '../graph/edgeProgress'
-import { lineWarns } from '@/features/document/api/cardLine'
-import type { FlowGraph } from '../graph/flowGraph'
+import { lineWarns, type FlowGraph } from '../graph/flowGraph'
 import { NO_RUN_MARKS, isEdgeProtected, type FlowRunMarks } from '../run/flowRunLock'
 
 /** Custom node / edge type key: FlowCanvas renders it with FlowNodeCard / FlowEdgePath. */

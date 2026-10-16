@@ -73,9 +73,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { lineWarns } from '@/features/document/api/cardLine'
 import { useI18n } from 'vue-i18n'
-import { slotAuthorKey, slotStateView, type SlotStateInput } from './slotStateView'
+import { lineWarns, slotAuthorKey, slotStateView, type SlotStateInput } from './slotStateView'
 
 export type InspectorSlotState = SlotStateInput
 

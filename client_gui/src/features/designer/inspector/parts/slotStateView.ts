@@ -1,4 +1,3 @@
-import { lineWarns } from '@/features/document/api/cardLine'
 // flowgate.v02.0056 F1 — what a slot line shows for its state, decided in one place for every card (0056 CH
 // §1 / §5). The 0053 line drew every state as a coloured dot whose meaning lived in its tooltip; since most
 // lines sit in a state that asks nothing of the operator ('작성 중', '완료'), the colour carried no
@@ -7,6 +6,19 @@ import { lineWarns } from '@/features/document/api/cardLine'
 // settled (success — drawn dim). A neutral state draws nothing at all. A line without a document says why
 // in plain words (the former hollow dot's tooltip) where the badge would be.
 // Pure: no Vue, no i18n — the caller hands the worded label, this decides whether and how it is drawn.
+
+/**
+ * flowgate.v02.0064 T#2: only these known body states warn (the server's `body_state`); an older server sends none and
+ * a documentless line never warns. The same rule as features/document `lineWarns` and the Designer Center's
+ * (`center/graph/flowGraph.ts`): Inspector parts import no feature, so they keep their own copy.
+ */
+export const UNREADABLE_BODY_STATES: ReadonlySet<string> = new Set([
+  'file_path_missing', 'file_not_found', 'path_unresolved', 'read_error',
+])
+
+export function lineWarns(line: { readonly docId?: string | null; readonly bodyState?: string | null }): boolean {
+  return line.docId != null && typeof line.bodyState === 'string' && UNREADABLE_BODY_STATES.has(line.bodyState)
+}
 
 export type SlotStateTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
 

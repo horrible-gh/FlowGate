@@ -31,9 +31,9 @@ def guarded_assignment(doc: Optional[dict], call: Callable[[], Any], actor: Opti
 
 def guarded_root_conversion(doc: Optional[dict], call: Callable[[], Any], actor: Optional[str] = None) -> Any:
     """R↔B root-type conversion of ``doc``: guarded like a sequence save (``guarded_assignment``,
-    flowgate.v02.0048); inside that guard a card line holding the root follows the converted
-    document (flowgate.v02.0053 T#1)."""
-    return guarded_assignment(doc, lambda: _contact.follow_root_conversion(doc, call()), actor)
+    flowgate.v02.0048). ``call`` is ``documents.root_conversion.execute_root_conversion``, which joins
+    this guard and moves the card lines and draft cards itself (flowgate.v02.0053 T#1, 0064 T#3)."""
+    return guarded_assignment(doc, call, actor)
 
 
 def progress_refusal(doc: Optional[dict]) -> Optional[tuple[str, dict]]:
