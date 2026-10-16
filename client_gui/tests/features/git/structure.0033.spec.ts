@@ -36,6 +36,9 @@ describe('features/git structure (flowgate.v02.0033)', () => {
       [
         'DesignerGitPanel.vue',
         'GitAiResolvingCard.vue',
+        'GitApplyAccordion.vue',
+        'GitApplyInfo.vue',
+        'GitMergeResultPush.vue',
         'GitCenterDiffView.vue',
         'GitChangeFolder.vue',
         'GitChangeRow.vue',
@@ -187,25 +190,45 @@ describe('features/git structure (flowgate.v02.0033)', () => {
   })
 
   // flowgate.v02.0066 T#6 — every worktree notice and disabled reason code has its text.
+  // T#7 — also the merge / push / Fetch notices (APPLY_NOTICE_CODES and `code: a ? 'x' : 'y'`).
   it('has a text for every worktree notice and every disabled reason code', () => {
     const session = read(join(GIT, 'gitWorktreeSession.ts'))
     const codes = new Set<string>()
-    for (const m of session.matchAll(/code: '([a-z_]+)'/g)) codes.add(m[1])
-    const list = session.match(/const WORKTREE_NOTICE_CODES[^=]*=\s*\[([\s\S]*?)\]/)?.[1] ?? ''
-    for (const m of list.matchAll(/'([a-z_]+)'/g)) codes.add(m[1])
-    expect(codes.size).toBeGreaterThan(20)
+    for (const m of session.matchAll(/code: ([^,}\n]+)/g)) for (const q of m[1].matchAll(/'([a-z_]+)'/g)) codes.add(q[1])
+    for (const name of ['WORKTREE_NOTICE_CODES', 'APPLY_NOTICE_CODES']) {
+      const list = session.match(new RegExp(`const ${name}[^=]*=\\s*\\[([\\s\\S]*?)\\]`))?.[1] ?? ''
+      expect(list, name).not.toBe('')
+      for (const m of list.matchAll(/'([a-z_]+)'/g)) codes.add(m[1])
+    }
+    expect(codes.size).toBeGreaterThan(40)
     const ko = APP_MESSAGES.ko.git as unknown as { worktree: { notice: Record<string, string> }; reason: Record<string, string> }
     for (const code of codes) expect(ko.worktree.notice[code], code).toBeTruthy()
     const reasons = read(join(GIT, 'worktreeReasons.ts')).match(/const WORKTREE_REASON_CODES[^=]*=\s*\[([\s\S]*?)\]/)?.[1] ?? ''
     const reasonCodes = [...reasons.matchAll(/'([a-z_]+)'/g)].map((m) => m[1])
-    expect(reasonCodes.length).toBeGreaterThan(10)
+    expect(reasonCodes.length).toBeGreaterThan(30)
     for (const code of [...reasonCodes, 'unknown']) expect(ko.reason[code], code).toBeTruthy()
   })
 
   // flowgate.v02.0066 T#6 — none of the v19 mock-up's demo data, fixed branches or "(시안)" success texts.
+  // T#7 (C15) — the Base apply parts too: no `v0.2` / `main` literal, no demo counters or gate.
   it('carries no mock-up demo data, fixed branch name or fake success text in the worktree area', () => {
-    for (const file of FILES.filter((f) => /worktree|Worktree|GitChange|GitCommitBar|CenterDiff/.test(rel(f)))) {
-      expect(read(file), rel(file)).not.toMatch(/'v0\.2'|'main'|folderDefs|sampleNames|pendingCommits|\(시안\)|mockSwitch/)
+    const files = FILES.filter((f) => /worktree|Worktree|GitChange|GitCommitBar|CenterDiff|GitApply|GitMergeResult/.test(rel(f)))
+    expect(files.map(rel)).toEqual(expect.arrayContaining(['GitApplyAccordion.vue', 'GitApplyInfo.vue', 'GitMergeResultPush.vue']))
+    for (const file of files) {
+      expect(read(file), rel(file)).not.toMatch(
+        /['"`]v0\.2['"`]|['"`]main['"`]|>\s*(v0\.2|main)\s*<|folderDefs|sampleNames|pendingCommits|mergedCommits|pushedCommits|\(시안\)|mockSwitch|gateText/,
+      )
     }
+  })
+
+  // flowgate.v02.0066 T#7 — the Base apply area has no approval or commit button and never calls
+  // the Base checkout push / fetch or finalize (0066 D#2 §6-4, §8 T#7 "하지 않는 것").
+  it('the Base apply parts add no approval / commit action and no /git/push, /git/fetch or finalize call', () => {
+    for (const name of ['GitApplyAccordion.vue', 'GitApplyInfo.vue', 'GitMergeResultPush.vue']) {
+      const src = read(join(GIT, name))
+      expect(src, name).not.toMatch(/approve|승인 요청|wt\.commit\b|commitSnapshot|finalize|pushBranch|GitApplyRequest|retryApply|applyNow/)
+    }
+    const session = read(join(GIT, 'gitWorktreeSession.ts'))
+    expect(session).not.toMatch(/\bfinalize\(|pushBranch|src\(\)\.push\(|GitApplyRequest/)
   })
 })

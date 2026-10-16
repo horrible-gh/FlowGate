@@ -1017,3 +1017,194 @@
   font-size: 11px;
   font-weight: 700;
 }
+
+/* flowgate.v02.0066 T#7 — the folded Base apply accordion (v19 `gw-simple-apply`, `gw-merge-target`,
+   `gw-merge-options`, `gw-merge-push-later`): header word, merge target + Fetch icon, `머지 후 Push`
+   with the `Diff` / `상태` links and their inline pane, the merge button and the follow-up Push. */
+.gw-apply {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--fg2-line);
+}
+
+.gw-apply-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--fg2-text);
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gw-apply-status {
+  margin-left: auto;
+  color: var(--fg2-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.gw-apply-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 0 6px;
+}
+
+.gw-merge-target,
+.gw-merge-options,
+.gw-apply-actions,
+.gw-push-later {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.gw-merge-target label {
+  flex: 0 0 auto;
+  color: var(--fg2-muted);
+  font-size: 10px;
+}
+
+.gw-merge-target .gw-select,
+.gw-push-later .gw-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.gw-fetch {
+  height: 28px;
+}
+
+.gw-merge-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.gw-merge-options label + .gw-mini-link {
+  margin-left: auto;
+}
+
+.gw-mini-link {
+  padding: 3px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--fg2-blue);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.gw-mini-link.is-on {
+  text-decoration: underline;
+}
+
+.gw-line.is-warn {
+  color: var(--fg2-text);
+}
+
+.gw-apply-actions .gw-act {
+  flex: 1 1 auto;
+  height: 30px;
+  font-size: 10.5px;
+}
+
+.gw-progress {
+  flex: none;
+  color: var(--fg2-muted);
+  font-size: 10px;
+}
+
+.gw-push-later {
+  margin-top: 4px;
+  padding-top: 7px;
+  border-top: 1px solid var(--fg2-line);
+  color: var(--fg2-muted);
+  font-size: 10px;
+}
+
+.gw-push-later.is-highlight {
+  border-top-color: var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
+}
+
+.gw-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 6px;
+  font-size: 10px;
+}
+
+.gw-info-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.gw-info-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin: 0;
+}
+
+.gw-info-list dt {
+  color: var(--fg2-muted);
+}
+
+.gw-info-list dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gw-info-merges,
+.gw-info-files {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: min(220px, 35vh);
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.gw-info-merges li {
+  display: flex;
+  gap: 6px;
+}
+
+.gw-info-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg2-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gw-info-file:hover {
+  background: var(--fg2-control-surface);
+}

@@ -4,7 +4,8 @@
  * (`@shared/api`) is mocked. A changed-file row of the Git tab opens its group diff in the Center
  * over the hidden (still mounted) Flow tabs and Canvas; ✕ brings the Flow back; another Flow closes
  * it; a 0033 conflict file opens nothing and keeps its intent as it was.
- * (b) — the target comparison list of the Base apply area — is T#7's.
+ * T#7 — (b): a row of the Base apply `Diff` pane (target comparison list) opens the diff against
+ * that target (`base=<target>`, "<target> 기준 ↔ 작업 파일"); changing the target closes it (C23 c).
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -110,7 +111,11 @@ beforeEach(() => {
     }
     const group = /^\/api\/v1\/projects\/p\/git\/groups\/([^/]+)\/(tree|changes|diff)$/.exec(url)
     if (group?.[2] === 'tree') return { data: { data: { branch: 'flow', commit: 'c0ffee', nodes: [] } } }
-    if (group?.[2] === 'changes') return { data: { data: { group_id: group[1], branch: 'flow', commit: 'c0ffee', base_branch: 'v0.2', changes: [] } } }
+    if (group?.[2] === 'changes') {
+      // The target comparison list (T#7 `Diff` pane): one file against `release`.
+      const changes = params.base === 'release' ? [{ path: 'src/rel.ts', status: 'M' }] : []
+      return { data: { data: { group_id: group[1], branch: 'flow', commit: 'c0ffee', base_branch: params.base ?? 'v0.2', changes } } }
+    }
     if (group?.[2] === 'diff') {
       return {
         data: {
@@ -138,7 +143,10 @@ beforeEach(() => {
             can_merge: false,
             blocked: [],
             default_target: 'v0.2',
-            targets: [{ name: 'v0.2', kind: 'base', eligible: true, is_work_base: true }],
+            targets: [
+              { name: 'v0.2', kind: 'base', eligible: true, is_work_base: true },
+              { name: 'release', kind: 'local', eligible: true, is_work_base: false },
+            ],
             ahead_of_target: 0,
           },
         },
@@ -240,6 +248,51 @@ describe('Designer Shell x Git tab — Center Diff (C14)', () => {
     expect(w.findComponent(DesignerGitPanel).emitted('open-diff')).toEqual([
       [{ projectId: 'p', groupId: 'p.ui.0001', mergeId: null, path: 'src/app.ts', status: 'M', origin: 'worktree', diffSource: 'group', compareBase: null }],
     ])
+  })
+
+  it('(b) a row of the Base apply `Diff` pane opens the diff against that target; a target change closes it', async () => {
+    const w = await mountShell()
+    await openFlow(w, 'Designer v0.2')
+    await showGitTab(w)
+    find('git-apply-toggle')!.click()
+    await settle()
+    const select = find('git-apply-target') as HTMLSelectElement
+    select.value = 'release'
+    select.dispatchEvent(new Event('change'))
+    await settle()
+    find('git-apply-diff')!.click()
+    await settle()
+    const changesCalls = getRequest.mock.calls.filter(([url]) => /\/git\/groups\/[^/]+\/changes$/.test(String(url)))
+    expect(changesCalls.at(-1)).toEqual(['/api/v1/projects/p/git/groups/p.ui.0001/changes', { base: 'release' }])
+    find('git-apply-diff-row')!.click()
+    await settle()
+    expect(diffCalls()).toEqual([['/api/v1/projects/p/git/groups/p.ui.0001/diff', { path: 'src/rel.ts', base: 'release' }]])
+    expect(find('git-center-diff-compare')!.textContent).toBe('release 기준 ↔ 작업 파일')
+    expect(hidden(find('designer-center'))).toBe(true)
+    expect(w.findComponent(DesignerGitPanel).emitted('open-diff')).toEqual([
+      [{ projectId: 'p', groupId: 'p.ui.0001', mergeId: null, path: 'src/rel.ts', status: 'M', origin: 'worktree', diffSource: 'group', compareBase: 'release' }],
+    ])
+    // C23(c): back to the default target — the comparison diff closes, the Flow is back.
+    const again = find('git-apply-target') as HTMLSelectElement
+    again.value = 'v0.2'
+    again.dispatchEvent(new Event('change'))
+    await settle()
+    expect(find('git-center-diff')).toBeNull()
+    expect(hidden(find('designer-center'))).toBe(false)
+  })
+
+  it('(c) a worktree file diff stays open when the merge target changes', async () => {
+    const w = await mountShell()
+    await openFlow(w, 'Designer v0.2')
+    await openFileDiff(w)
+    find('git-apply-toggle')!.click()
+    await settle()
+    const select = find('git-apply-target') as HTMLSelectElement
+    select.value = 'release'
+    select.dispatchEvent(new Event('change'))
+    await settle()
+    expect(find('git-center-diff')).not.toBeNull()
+    expect(find('git-center-diff-compare')!.textContent).toBe('작업 기준(v0.2) ↔ 작업 파일')
   })
 
   it('(c) ✕ closes the diff and the same Flow screen is back', async () => {

@@ -68,6 +68,8 @@
 // worktree `open-diff` intent (origin worktree, diffSource group) and `git-center-diff-refresh`.
 // A worktree confirm dialog is bound to the project / Flow / generation it was opened in: it
 // closes when that context goes and its action runs only while the context is still current.
+// T#7: the `Diff` pane rows raise the same intent with the target as compareBase, and a merge
+// dialog also closes when the merge target changes (0066 D#2 §3-2-2 ⑤ ⑦).
 import { computed, onBeforeUnmount, provide, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
@@ -132,15 +134,26 @@ const worktree = createGitWorktreeSession({
 const pendingConfirm = shallowRef<GitConfirmRequest | null>(null)
 // The worktree context of the open dialog; null for a 0033 dialog.
 const confirmTicket = shallowRef<WorktreeTicket | null>(null)
+// What else must hold for the open worktree dialog (e.g. the merge target it was opened for).
+const confirmValid = shallowRef<(() => boolean) | null>(null)
 
-function askConfirm(request: GitConfirmRequest, ticket: WorktreeTicket | null): void {
+function askConfirm(request: GitConfirmRequest, ticket: WorktreeTicket | null, stillValid?: () => boolean): void {
   pendingConfirm.value = request
   confirmTicket.value = ticket
+  confirmValid.value = ticket && stillValid ? stillValid : null
 }
 
 function closeConfirm(): void {
   pendingConfirm.value = null
   confirmTicket.value = null
+  confirmValid.value = null
+}
+
+// A worktree dialog lives only while its context (and its own condition) still holds.
+const confirmStale = (): boolean => {
+  const ticket = confirmTicket.value
+  if (!ticket) return false
+  return !worktree.isCurrent(ticket) || (!!confirmValid.value && !confirmValid.value())
 }
 
 function openDiff(origin: GitFileOrigin, path: string, status: GitFileLetter | null): void {
@@ -186,7 +199,25 @@ function openFileDiff(path: string, letter: string): void {
   })
 }
 
-provide(GIT_WORKTREE_CONTEXT, { worktree, openFileDiff, confirm: askConfirm })
+// A row of the `Diff` pane: the merge-base with the target its list was read for (§5-2, ⑦).
+// `/changes` letters other than M / A / D / ? go up as null.
+function openTargetDiff(path: string, letter: string, target: string): void {
+  const projectId = session.state.projectId
+  const groupId = session.state.flow?.groupId ?? null
+  if (!projectId || !groupId || !target) return
+  emit('open-diff', {
+    projectId,
+    groupId,
+    mergeId: null,
+    path,
+    status: WORKTREE_LETTERS.find((l) => l === letter) ?? null,
+    origin: 'worktree',
+    diffSource: 'group',
+    compareBase: target,
+  })
+}
+
+provide(GIT_WORKTREE_CONTEXT, { worktree, openFileDiff, openTargetDiff, confirm: askConfirm })
 
 // Header refresh, tab activation and the exposed refresh read both sessions (§3-2-1); the
 // worktree reads nothing while its gate is closed.
@@ -204,20 +235,18 @@ provide(GIT_PANEL_CONTEXT, {
 
 function onConfirm(): void {
   const request = pendingConfirm.value
-  const ticket = confirmTicket.value
+  const stale = confirmStale()
   closeConfirm()
   // A worktree dialog never acts on a context other than the one it was opened in.
-  if (ticket && !worktree.isCurrent(ticket)) return
+  if (stale) return
   request?.run()
 }
 
-// Flow / project switch, gate closed or dispose: the worktree dialog of the old context closes.
-watch(
-  () => !!confirmTicket.value && !worktree.isCurrent(confirmTicket.value),
-  (stale) => {
-    if (stale) closeConfirm()
-  },
-)
+// Flow / project switch, gate closed, dispose or its own condition gone (a merge dialog after a
+// target change): the worktree dialog closes and sends nothing.
+watch(confirmStale, (stale) => {
+  if (stale) closeConfirm()
+})
 
 const headerNotice = computed(() => {
   const notice = session.state.notices.header

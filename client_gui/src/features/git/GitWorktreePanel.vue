@@ -5,9 +5,10 @@
       <span>{{ t(`gui.git.worktree.read_${wt.state.statusError ?? 'failed'}`) }}</span>
       <button type="button" class="gw-link" data-test="git-worktree-retry" @click="wt.refresh()">{{ t('gui.git.worktree.retry') }}</button>
     </p>
-    <p v-else-if="areaState === 'unavailable'" class="gw-summary is-muted" data-test="git-worktree-unavailable">
-      {{ t('gui.git.worktree.unavailable') }}
-    </p>
+    <template v-else-if="areaState === 'unavailable'">
+      <p class="gw-summary is-muted" data-test="git-worktree-unavailable">{{ t('gui.git.worktree.unavailable') }}</p>
+      <GitApplyAccordion />
+    </template>
     <template v-else-if="status">
       <p v-if="wt.state.statusError === 'network'" class="gw-line is-error" data-test="git-worktree-stale">
         {{ t('gui.git.worktree.read_network') }}
@@ -25,16 +26,19 @@
       </p>
       <GitChangesAccordion />
       <GitCommitBar />
+      <GitApplyAccordion />
     </template>
   </section>
 </template>
 
 <script setup lang="ts">
 // flowgate.v02.0066 — the worktree area of the Git tab (0066 D#2 §6-1): the summary line, the
-// changed-files accordion (folded at first) and the commit line that is always in view. The Base
-// apply accordion below them is T#7's. The work branch, Base and refresh stay the GitHeader's.
+// changed-files accordion (folded at first), the commit line that is always in view and the folded
+// Base apply accordion below it (T#7). Without a workspace (W2) only the Base apply accordion
+// stays, for Fetch and the follow-up Push. The work branch, Base and refresh stay the GitHeader's.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import GitApplyAccordion from './GitApplyAccordion.vue'
 import GitChangesAccordion from './GitChangesAccordion.vue'
 import GitCommitBar from './GitCommitBar.vue'
 import { useGitWorktree } from './gitWorktreeSession'

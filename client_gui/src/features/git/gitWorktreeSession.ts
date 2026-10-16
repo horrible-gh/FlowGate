@@ -15,14 +15,24 @@
 // A new status fingerprint (worktree token or HEAD) makes what depends on it read again (§3-2-3).
 // A confirm dialog is bound to the context it was opened in (a ticket): it is dropped when that
 // context goes and never sends to another one.
+//
+// T#7 adds the Base apply part (§3-2-2 ⑤–⑨, §3-3 merge–Fetch, §3-4): choosing a merge target
+// voids the old judgment at once (⑤) and closes a target comparison Center Diff (⑧); the `Diff`
+// pane list is tied to the target it was read for (⑦); a merge / follow-up push confirm fixes the
+// judgment it showed and sends nothing once another one is on screen (⑥); E10 keeps its latest
+// answer only (⑨). A merge, follow-up push or Fetch reads git/status and E1 / E8 / E10 again and
+// never repeats itself; after a refused push the re-read judgment decides the hint (§3-4(4-1)).
 import { computed, effectScope, inject, reactive, readonly, ref, watch, type ComputedRef, type DeepReadonly, type InjectionKey } from 'vue'
+import type { FlowChangeEntry, ProjectGitStatus } from '@/features/project'
 import { worktreeErrorOf } from './api'
 import { createHttpGitSource, type GitSource, type GitWorktreeSource } from './gitSource'
 import type { GitConfirmRequest, GitSession } from './gitSession'
 import type {
   GitCenterDiffRefresh,
+  ManualMergeResult,
   ManualMergeTarget,
   ManualMergeView,
+  MergeResultRow,
   MergeResultsView,
   WorktreeFile,
   WorktreeNotice,
@@ -51,8 +61,14 @@ export const WORKTREE_MESSAGE_MAX = 200
 
 type Load = 'idle' | 'loading' | 'ready' | 'error'
 
-/** Where a notice line is drawn: under the changed-files header, or under the commit line. */
-export type WorktreeNoticeArea = 'files' | 'commit'
+/**
+ * Where a notice line is drawn: under the changed-files header, under the commit line, in the
+ * Base apply body (merge / Fetch) or in the follow-up push part.
+ */
+export type WorktreeNoticeArea = 'files' | 'commit' | 'apply' | 'push'
+
+/** The inline pane of the Base apply body (`상태` / `Diff`); one at a time. */
+export type WorktreeInfoPane = 'status' | 'diff'
 
 // Refusal codes with their own notice text (gui.git.worktree.notice.*); others read "failed".
 export const WORKTREE_NOTICE_CODES: readonly string[] = [
@@ -73,6 +89,18 @@ export const WORKTREE_NOTICE_CODES: readonly string[] = [
   'git_busy',
   'invalid_state',
   'ownership_unavailable',
+]
+
+// Merge / follow-up push / Fetch refusals with their own notice text (T#7, §3-4(4), §3-3).
+export const APPLY_NOTICE_CODES: readonly string[] = [
+  'graph_execution_active',
+  'merge_conflict_open',
+  'approval_retry_pending',
+  'recovery_required',
+  'invalid_state',
+  'git_busy',
+  'git_error',
+  'git_unavailable',
 ]
 
 // Refusals after which the list on screen may be wrong: E1 is read again (never the request).
@@ -124,6 +152,30 @@ export interface WorktreeState {
   message: string
   suggestion: WorktreeSuggestion | null
   notices: Partial<Record<WorktreeNoticeArea, WorktreeNotice>>
+  // ── Base apply (T#7) ──
+  applyOpen: boolean
+  // `머지 후 Push`: unchecked at first, kept while the Flow stays (§3-4(3)).
+  pushAfterMerge: boolean
+  infoPane: WorktreeInfoPane | null
+  // The E8 / E10 numbers of the answers on screen: a confirm dialog fixes them (⑥).
+  mergeSeq: number
+  resultsSeq: number
+  // The `Diff` pane list with the target it was read for (⑦); null while none is on screen.
+  targetList: WorktreeTargetList | null
+  targetListLoad: Load
+  targetListLimit: number
+  // The follow-up push row picked when there are two or more; null = the newest.
+  pushChoice: number | null
+  // The E10 row an `already_recorded` refusal points at.
+  highlightMergeId: number | null
+  // §3-4(4-1): after a refused merge + push the re-read judgment of the target decides the line.
+  rejectHint: 'pending' | 'recovery' | 'rewound' | null
+}
+
+/** The `/changes?base=` list of the `Diff` pane and the target it was read for. */
+export interface WorktreeTargetList {
+  target: string
+  changes: FlowChangeEntry[]
 }
 
 /** The context an action was asked in: project, Flow group and the session generation (①). */
@@ -144,6 +196,35 @@ export interface WorktreeCommitSnapshot {
   ticket: WorktreeTicket
 }
 
+/**
+ * What a merge confirm dialog showed and fixes (⑥): the target, the E8 answer it was made from,
+ * its commit count and recovery flag, and whether it pushes.
+ */
+export interface WorktreeMergeSnapshot {
+  target: string
+  e8Seq: number
+  ahead: number
+  recovery: boolean
+  push: boolean
+  ticket: WorktreeTicket
+}
+
+/** What a follow-up push confirm dialog showed and fixes: the record, its commit, the E10 answer. */
+export interface WorktreePushSnapshot {
+  mergeId: number
+  mergeCommit: string
+  target: string
+  isProjectBase: boolean
+  e10Seq: number
+  ticket: WorktreeTicket
+}
+
+/** The one-word state of the folded Base apply header (§3-4(1)); null = nothing to say. */
+export interface WorktreeApplySummary {
+  kind: 'merging' | 'conflict' | 'remote_pending' | 'checking' | 'ahead' | 'recovery' | 'nothing' | 'unknown'
+  n?: number
+}
+
 export interface GitWorktreeSession {
   readonly state: DeepReadonly<WorktreeState>
   /** §3-1 row 6: Git is confirmed on, a Flow is active and the source has a worktree. */
@@ -155,6 +236,13 @@ export interface GitWorktreeSession {
   readonly suggestionStale: ComputedRef<boolean>
   /** `counts.changed` for the tab badge; null while the area is hidden or unread (§3-8). */
   readonly changedCount: ComputedRef<number | null>
+  /** The folded Base apply header word (§3-4(1)). */
+  readonly applySummary: ComputedRef<WorktreeApplySummary | null>
+  /** E10 rows a follow-up push may send (newest first) and the one it would send now. */
+  readonly pushCandidates: ComputedRef<DeepReadonly<MergeResultRow>[]>
+  readonly pushRow: ComputedRef<DeepReadonly<MergeResultRow> | null>
+  /** The 0033 session's git/status (Base remote state for the `상태` pane and the push dialog). */
+  readonly projectGit: ComputedRef<DeepReadonly<ProjectGitStatus> | null>
 
   refresh(): void
   /** The current context while the gate is open; null otherwise. */
@@ -188,6 +276,21 @@ export interface GitWorktreeSession {
   commit(snapshot: WorktreeCommitSnapshot): Promise<void>
   suggest(ticket?: WorktreeTicket | null): Promise<void>
   dismissNotice(area: WorktreeNoticeArea): void
+
+  // ── Base apply (T#7) ──
+  toggleApply(): void
+  /** ⑤: the old judgment goes at once, the new target is read; ⑦ ⑧ follow. */
+  setMergeTarget(target: string): void
+  setPushAfterMerge(push: boolean): void
+  toggleInfo(pane: WorktreeInfoPane): void
+  showMoreTargetList(): void
+  setPushChoice(mergeId: number): void
+  mergeSnapshot(): WorktreeMergeSnapshot | null
+  /** Sends nothing unless the context and the judgment the dialog showed are still on screen. */
+  merge(snapshot: WorktreeMergeSnapshot): Promise<void>
+  pushSnapshot(): WorktreePushSnapshot | null
+  pushResult(snapshot: WorktreePushSnapshot): Promise<void>
+  fetchRemote(): Promise<void>
   dispose(): void
 }
 
@@ -232,6 +335,17 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     message: '',
     suggestion: null,
     notices: {},
+    applyOpen: false,
+    pushAfterMerge: false,
+    infoPane: null,
+    mergeSeq: 0,
+    resultsSeq: 0,
+    targetList: null,
+    targetListLoad: 'idle',
+    targetListLimit: WORKTREE_FOLDER_PAGE,
+    pushChoice: null,
+    highlightMergeId: null,
+    rejectHint: null,
   })
 
   let disposed = false
@@ -249,11 +363,15 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   // ④ The latest E8 / E10 request; only its answer applies.
   let e8Seq = 0
   let e10Seq = 0
+  // ⑦ The latest `Diff` pane list request.
+  let listSeq = 0
+  // §3-4(4-1): E8 answers asked after this number settle the hint of a refused merge push.
+  let rejectFrom = 0
   // A merge target a person chose (the first default-target answer must not override it).
   let targetChosen = false
   let providersFor: string | null = null
   // ③ Reads asked for while a write runs, sent once afterwards (and coalesced otherwise).
-  const pendingReads = { e1: false, e8: false, e10: false }
+  const pendingReads = { e1: false, e8: false, e10: false, list: false }
   let flushQueued = false
 
   const projectId = () => git.state.projectId
@@ -282,6 +400,12 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
 
   const hiddenStaged = computed(() => hiddenStagedCount(state.status as WorktreeStatus | null))
 
+  // Rows a follow-up push may send, newest first; the picked one, else the newest (§3-4(5)).
+  const pushCandidates = computed(() => (state.results?.results ?? []).filter((r) => r.pushAvailable))
+  const pushRow = computed(
+    () => pushCandidates.value.find((r) => r.mergeId === state.pushChoice) ?? pushCandidates.value[0] ?? null,
+  )
+
   const reasons = computed(() =>
     worktreeReasons({
       readOnly: git.state.readOnly,
@@ -293,8 +417,34 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
       stagedProtectedRows: stagedProtectedRows(state.status as WorktreeStatus | null),
       message: state.message,
       providerId: state.providerId,
+      merge: {
+        checking: state.mergeLoad === 'idle' || state.mergeLoad === 'loading',
+        failed: state.mergeLoad === 'error',
+        target: state.mergeTarget,
+        view: state.merge as ManualMergeView | null,
+      },
+      push: { results: state.results as MergeResultsView | null, row: pushRow.value as MergeResultRow | null },
     }),
   )
+
+  // §3-4(1), first rule that hits. Only the E8 judgment of the chosen target gives the number;
+  // the display-only committed range never does.
+  const applySummary = computed<WorktreeApplySummary | null>(() => {
+    const groupState = state.status?.gitState.status ?? state.results?.groupStatus ?? null
+    if (groupState === 'merging' || state.busy === 'merge') return { kind: 'merging' }
+    if (groupState === 'conflict') return { kind: 'conflict' }
+    const candidates = state.results?.pushCandidates ?? 0
+    if (candidates > 0) return { kind: 'remote_pending', n: candidates }
+    if (state.status && !state.status.worktreeAvailable) return null
+    if (state.mergeLoad === 'loading') return { kind: 'checking' }
+    if (state.mergeLoad === 'error') return { kind: 'unknown' }
+    const merge = state.merge
+    if (state.mergeLoad !== 'ready' || !merge || !state.mergeTarget || merge.aheadOfTarget === null) return null
+    if (merge.aheadOfTarget > 0) return { kind: 'ahead', n: merge.aheadOfTarget }
+    return { kind: merge.recovery ? 'recovery' : 'nothing' }
+  })
+
+  const projectGit = computed(() => git.state.status)
 
   const suggestionStale = computed(
     () => !!state.suggestion && !!state.status && state.suggestion.indexToken !== state.status.indexToken,
@@ -342,15 +492,22 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   function clearServer(): void {
     nextGeneration()
     appliedSeq = 0
-    pendingReads.e1 = pendingReads.e8 = pendingReads.e10 = false
+    pendingReads.e1 = pendingReads.e8 = pendingReads.e10 = pendingReads.list = false
     state.status = null
     state.statusLoad = 'idle'
     state.statusError = null
     state.merge = null
     state.mergeTargets = []
     state.mergeLoad = 'idle'
+    state.mergeSeq = 0
     state.results = null
     state.resultsLoad = 'idle'
+    state.resultsSeq = 0
+    state.targetList = null
+    state.targetListLoad = 'idle'
+    state.pushChoice = null
+    state.highlightMergeId = null
+    state.rejectHint = null
     state.busy = null
     state.selected = []
     state.notices = {}
@@ -372,6 +529,10 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     state.suggestion = null
     state.mergeTarget = null
     targetChosen = false
+    state.applyOpen = false
+    state.pushAfterMerge = false
+    state.infoPane = null
+    state.targetListLimit = WORKTREE_FOLDER_PAGE
     if (projectChanged) {
       state.forbidden = false
       state.providerId = null
@@ -395,13 +556,14 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     return true
   }
 
-  // §3-2-3: the merge judgment of the chosen target is void until it is read again; an open
-  // Center Diff of this group reads again. E10 does not depend on the workspace.
+  // §3-2-3: the merge judgment of the chosen target is void until it is read again; an open `Diff`
+  // pane reads the same target again (its list stays, "갱신 중"); an open Center Diff of this group
+  // reads again. E10 does not depend on the workspace.
   function dependentsChanged(): void {
     const gid = groupId()
     state.merge = null
     if (state.mergeLoad !== 'idle') state.mergeLoad = 'loading'
-    requestReads({ e8: true })
+    requestReads({ e8: true, list: state.infoPane === 'diff' })
     if (gid) options.onCenterDiffRefresh?.({ groupId: gid, closeCompare: false })
   }
 
@@ -452,19 +614,43 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     try {
       const view = await wt.loadManualMerge(gid, target)
       if (myGen !== gen || disposed || seq !== e8Seq || target !== state.mergeTarget) return
-      if (target === null) {
-        if (targetChosen) return
-        const chosen = view.targets.find((t) => t.name === view.defaultTarget && t.eligible)
-        state.mergeTarget = chosen ? chosen.name : null
+      state.mergeTargets = view.targets
+      state.mergeSeq = seq
+      settleRejectHint(seq, view)
+      const eligible = (name: string | null) => view.targets.some((t) => t.name === name && t.eligible)
+      if (target === null && !targetChosen) {
+        // The first answer picks the default target when it can be chosen.
+        state.mergeTarget = eligible(view.defaultTarget) ? view.defaultTarget : null
+      } else if (target === null || !eligible(target)) {
+        // No target chosen, or the chosen one is gone / no longer eligible: no judgment, no_target.
+        if (target !== null) dropTarget()
+        state.merge = null
+        state.mergeLoad = 'ready'
+        return
       }
       state.merge = view
-      state.mergeTargets = view.targets
       state.mergeLoad = 'ready'
     } catch {
       if (myGen !== gen || disposed || seq !== e8Seq || target !== state.mergeTarget) return
+      settleRejectHint(seq, null)
       state.merge = null
       state.mergeLoad = 'error'
     }
+  }
+
+  // The chosen target left the candidates: the selection empties and the pane list with it.
+  function dropTarget(): void {
+    state.mergeTarget = null
+    state.targetList = null
+    state.targetListLoad = 'idle'
+  }
+
+  // §3-4(4-1): only a judgment read after the refusal settles the line; a failed read says nothing.
+  function settleRejectHint(seq: number, view: ManualMergeView | null): void {
+    if (state.rejectHint !== 'pending' || seq <= rejectFrom) return
+    if (view?.recovery) state.rejectHint = 'recovery'
+    else if (view && (view.aheadOfTarget ?? 0) > 0) state.rejectHint = 'rewound'
+    else state.rejectHint = null
   }
 
   async function readResults(): Promise<void> {
@@ -478,10 +664,43 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
       const results = await wt.loadMergeResults(gid)
       if (myGen !== gen || disposed || seq !== e10Seq) return
       state.results = results
+      state.resultsSeq = seq
       state.resultsLoad = 'ready'
+      if (state.pushChoice !== null && !results.results.some((r) => r.mergeId === state.pushChoice && r.pushAvailable)) {
+        state.pushChoice = null
+      }
     } catch {
       if (myGen !== gen || disposed || seq !== e10Seq) return
       state.resultsLoad = 'error'
+    }
+  }
+
+  // ⑦ The `Diff` pane list of the chosen target; an answer applies only while that target is
+  // still chosen and it is the latest request. A new target never shows the old list meanwhile.
+  async function readTargetList(): Promise<void> {
+    const wt = wsrc()
+    const pid = projectId()
+    const gid = groupId()
+    if (!wt || !pid || !gid || disposed || state.infoPane !== 'diff') return
+    const target = state.mergeTarget
+    if (!target) {
+      state.targetList = null
+      state.targetListLoad = 'idle'
+      return
+    }
+    const myGen = gen
+    const seq = ++listSeq
+    if (state.targetList && state.targetList.target !== target) state.targetList = null
+    state.targetListLoad = 'loading'
+    try {
+      const set = await wt.loadTargetChanges(pid, gid, target)
+      if (myGen !== gen || disposed || seq !== listSeq || target !== state.mergeTarget) return
+      state.targetList = { target, changes: set.changes }
+      state.targetListLoad = 'ready'
+    } catch {
+      if (myGen !== gen || disposed || seq !== listSeq || target !== state.mergeTarget) return
+      state.targetList = null
+      state.targetListLoad = 'error'
     }
   }
 
@@ -504,29 +723,32 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     flushQueued = false
     if (disposed || state.busy) return
     if (!gateOpen.value) {
-      pendingReads.e1 = pendingReads.e8 = pendingReads.e10 = false
+      pendingReads.e1 = pendingReads.e8 = pendingReads.e10 = pendingReads.list = false
       return
     }
     const reads = { ...pendingReads }
-    pendingReads.e1 = pendingReads.e8 = pendingReads.e10 = false
+    pendingReads.e1 = pendingReads.e8 = pendingReads.e10 = pendingReads.list = false
     if (reads.e1) void readStatus()
     if (reads.e8) void readMerge()
     if (reads.e10) void readResults()
+    if (reads.list) void readTargetList()
   }
 
   // Reads asked for in one turn go out once; during a write they wait for its answer (③).
-  function requestReads(reads: { e1?: boolean; e8?: boolean; e10?: boolean }): void {
+  function requestReads(reads: { e1?: boolean; e8?: boolean; e10?: boolean; list?: boolean }): void {
     if (disposed) return
     pendingReads.e1 ||= !!reads.e1
     pendingReads.e8 ||= !!reads.e8
     pendingReads.e10 ||= !!reads.e10
+    pendingReads.list ||= !!reads.list
     if (state.busy || flushQueued) return
     flushQueued = true
     void Promise.resolve().then(flushReads)
   }
 
+  // An open `Diff` pane reads its list again with the rest.
   function refresh(): void {
-    if (gateOpen.value) requestReads({ e1: true, e8: true, e10: true })
+    if (gateOpen.value) requestReads({ e1: true, e8: true, e10: true, list: state.infoPane === 'diff' })
   }
 
   // ── Tickets: the context a dialog was opened in ────────────────────────────────────
@@ -672,12 +894,14 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   // comes back after a project / Flow switch, a closed gate or dispose (another generation, ①)
   // is not applied: no status, notice, selection, message, draft or dependent read follows it.
   // A ticket (a confirm dialog) must still be current, or nothing is sent at all.
+  // `fail` replaces the common refusal handling (the merge / push / Fetch ones read more again).
   async function write<T>(
     area: WorktreeNoticeArea,
     key: string,
     send: (wt: GitWorktreeSource, gid: string) => Promise<T>,
     apply: (result: T, seq: number) => void,
     held?: WorktreeTicket | null,
+    fail?: (error: unknown) => void,
   ): Promise<void> {
     const wt = wsrc()
     const gid = groupId()
@@ -692,7 +916,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
       const result = await send(wt, gid)
       if (current()) apply(result, seq)
     } catch (error) {
-      if (current()) reportError(area, error)
+      if (current()) (fail ?? ((e: unknown) => reportError(area, e)))(error)
     } finally {
       if (myGen === gen) state.busy = null
     }
@@ -833,6 +1057,236 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     )
   }
 
+  // ── Base apply (T#7, §3-4) ─────────────────────────────────────────────────────────
+
+  // Folding closes the `상태` / `Diff` pane (§3-7 구역 열림).
+  function toggleApply(): void {
+    state.applyOpen = !state.applyOpen
+    if (!state.applyOpen) state.infoPane = null
+  }
+
+  function setMergeTarget(target: string): void {
+    if (!gateOpen.value || target === state.mergeTarget) return
+    if (!state.mergeTargets.some((t) => t.name === target && t.eligible)) return
+    targetChosen = true
+    state.mergeTarget = target
+    // ⑤ The old target's judgment leaves at once: "확인 중" until the new one is in.
+    state.merge = null
+    state.mergeLoad = 'loading'
+    state.rejectHint = null
+    // ⑦ An open `Diff` pane drops the old list now and reads the new target.
+    if (state.infoPane === 'diff') {
+      state.targetList = null
+      state.targetListLoad = 'loading'
+      state.targetListLimit = WORKTREE_FOLDER_PAGE
+    }
+    // ⑧ A Center Diff opened from the comparison list closes; a worktree file diff stays.
+    const gid = groupId()
+    if (gid) options.onCenterDiffRefresh?.({ groupId: gid, closeCompare: true })
+    requestReads({ e8: true, list: state.infoPane === 'diff' })
+  }
+
+  function setPushAfterMerge(push: boolean): void {
+    state.pushAfterMerge = push
+  }
+
+  // One pane at a time; opening `Diff` reads the chosen target's list.
+  function toggleInfo(pane: WorktreeInfoPane): void {
+    state.infoPane = state.infoPane === pane ? null : pane
+    if (state.infoPane === 'diff') requestReads({ list: true })
+  }
+
+  function showMoreTargetList(): void {
+    state.targetListLimit += WORKTREE_FOLDER_PAGE
+  }
+
+  function setPushChoice(mergeId: number): void {
+    if (pushCandidates.value.some((r) => r.mergeId === mergeId)) state.pushChoice = mergeId
+  }
+
+  // A merge, push or Fetch moved Git outside the worktree: git/status (0033) and our reads again.
+  function afterRemote(reads: { e1?: boolean; e8?: boolean; e10?: boolean }): void {
+    void git.refresh()
+    requestReads({ ...reads, list: !!reads.e8 && state.infoPane === 'diff' })
+  }
+
+  /** What the merge dialog shows and fixes (⑥); null when the merge cannot go now. */
+  function mergeSnapshot(): WorktreeMergeSnapshot | null {
+    const held = ticket()
+    const view = state.merge
+    const target = state.mergeTarget
+    if (!held || !view || !target || state.mergeLoad !== 'ready' || !allowed('merge')) return null
+    return {
+      target,
+      e8Seq: state.mergeSeq,
+      ahead: view.aheadOfTarget ?? 0,
+      recovery: view.recovery,
+      push: state.pushAfterMerge,
+      ticket: held,
+    }
+  }
+
+  function mergedNotice(result: ManualMergeResult, target: string): WorktreeNotice {
+    const params = { target: result.targetBranch ?? target }
+    if (result.recovered) return { code: result.pushed ? 'recovered_pushed' : 'recovered', params }
+    return { code: result.pushed ? 'merged_pushed' : 'merged', params }
+  }
+
+  // E9 with the target the dialog fixed. Merged: the area stays (worktree kept) and reads again;
+  // conflict: the 0033 conflict card takes over through git/status.
+  function merge(snapshot: WorktreeMergeSnapshot): Promise<void> {
+    if (!isCurrent(snapshot.ticket)) return Promise.resolve()
+    // ⑥ Another judgment on screen than the one the dialog showed: nothing is sent.
+    if (state.mergeTarget !== snapshot.target || state.mergeLoad !== 'ready' || state.mergeSeq !== snapshot.e8Seq) {
+      setNotice('apply', { code: 'judgment_changed', tone: 'error' })
+      return Promise.resolve()
+    }
+    if (!allowed('merge')) return Promise.resolve()
+    state.rejectHint = null
+    state.highlightMergeId = null
+    return write(
+      'apply',
+      'merge',
+      (wt, gid) => wt.manualMerge(gid, snapshot.target, snapshot.push),
+      (result) => {
+        setNotice('apply', result.status === 'conflict' ? { code: 'merge_conflict' } : mergedNotice(result, snapshot.target))
+        afterRemote({ e1: true, e8: true, e10: true })
+      },
+      snapshot.ticket,
+      mergeFailed,
+    )
+  }
+
+  // §3-4(4): one notice per refusal, what may have moved is read again, nothing is resent.
+  function mergeFailed(error: unknown): void {
+    const err = worktreeErrorOf(error)
+    const code = err.code ?? ''
+    const d = err.details
+    if (err.network || err.httpStatus === 403 || code === 'forbidden') return reportError('apply', error)
+    if (code === 'push_rejected') {
+      // New merge rewound or an unpushed merge kept: only the re-read judgment can tell (4-1).
+      setNotice('apply', { code: 'merge_push_rejected', tone: 'error' })
+      state.rejectHint = 'pending'
+      rejectFrom = e8Seq
+      return afterRemote({ e1: true, e8: true, e10: true })
+    }
+    if (code === 'nothing_to_merge') {
+      if (d.reason === 'already_recorded') {
+        setNotice('apply', { code: 'already_recorded' })
+        state.highlightMergeId = d.mergeId
+        if (d.mergeId !== null) state.pushChoice = d.mergeId
+      } else {
+        setNotice('apply', { code: d.reason === 'target_synced_contains' ? 'target_synced_contains' : 'nothing_to_merge' })
+      }
+      return requestReads({ e8: true, e10: true })
+    }
+    if (code === 'uncommitted_changes') {
+      const params = { n: d.count ?? 0, protected: d.protectedUncommitted ?? 0 }
+      setNotice('apply', { code: params.protected > 0 ? 'uncommitted_protected' : 'uncommitted_changes', tone: 'error', params })
+      return requestReads({ e1: true, e8: true })
+    }
+    if (code === 'git_busy' && d.jobId) {
+      // Queued behind another Git job: the result shows on a refresh, never by sending again.
+      setNotice('apply', { code: 'queued' })
+      return requestReads({ e8: true, e10: true })
+    }
+    if (code.startsWith('merge_target_')) {
+      setNotice('apply', { code: 'merge_target_unavailable', tone: 'error', params: { code } })
+      return requestReads({ e8: true })
+    }
+    applyFailed('apply', err.code, err.httpStatus)
+    if (err.httpStatus === 409) requestReads({ e1: true, e8: true })
+  }
+
+  // A refusal with its own apply text, else "failed ({code})".
+  function applyFailed(area: WorktreeNoticeArea, code: string | null, httpStatus: number | null): void {
+    const known = !!code && (APPLY_NOTICE_CODES.includes(code) || WORKTREE_NOTICE_CODES.includes(code))
+    setNotice(
+      area,
+      known
+        ? { code: code as string, tone: 'error' }
+        : { code: 'failed', tone: 'error', params: { code: code || String(httpStatus ?? '') } },
+    )
+  }
+
+  /** What the follow-up push dialog shows and fixes; null when no row can be pushed now. */
+  function pushSnapshot(): WorktreePushSnapshot | null {
+    const held = ticket()
+    const row = pushRow.value
+    if (!held || !row?.mergeCommit || !allowed('push')) return null
+    return {
+      mergeId: row.mergeId,
+      mergeCommit: row.mergeCommit,
+      target: row.target.targetBranch,
+      isProjectBase: row.target.isProjectBase,
+      e10Seq: state.resultsSeq,
+      ticket: held,
+    }
+  }
+
+  // E11 with the record the dialog fixed: never a branch name, never another row.
+  function pushResult(snapshot: WorktreePushSnapshot): Promise<void> {
+    if (!isCurrent(snapshot.ticket)) return Promise.resolve()
+    const row = state.results?.results.find((r) => r.mergeId === snapshot.mergeId)
+    if (state.resultsSeq !== snapshot.e10Seq || row?.mergeCommit !== snapshot.mergeCommit || !row.pushAvailable) {
+      setNotice('push', { code: 'push_changed', tone: 'error' })
+      return Promise.resolve()
+    }
+    if (!allowed('push')) return Promise.resolve()
+    return write(
+      'push',
+      'push',
+      (wt, gid) => wt.pushMergeResult(gid, snapshot.mergeId, snapshot.mergeCommit),
+      (result) => {
+        const params = { target: result.targetBranch ?? snapshot.target }
+        setNotice('push', { code: result.alreadyPublished ? 'already_published' : 'pushed', params })
+        state.highlightMergeId = null
+        afterRemote({ e10: true })
+      },
+      snapshot.ticket,
+      pushFailed,
+    )
+  }
+
+  // §3-4(5): a moved record reads E10 again and is never swapped for another row.
+  function pushFailed(error: unknown): void {
+    const err = worktreeErrorOf(error)
+    const code = err.code ?? ''
+    if (err.network || err.httpStatus === 403 || code === 'forbidden') return reportError('push', error)
+    if (code === 'stale_target' || code === 'merge_target_moved' || code === 'merge_result_missing') {
+      setNotice('push', { code: 'record_changed', tone: 'error' })
+    } else if (code === 'push_rejected') {
+      // E11 never rewinds the target: the merge result stays.
+      setNotice('push', { code: 'push_rejected_kept', tone: 'error' })
+    } else if (code === 'git_busy' && err.details.jobId) {
+      setNotice('push', { code: 'queued' })
+    } else {
+      applyFailed('push', err.code, err.httpStatus)
+    }
+    requestReads({ e10: true })
+  }
+
+  // E12 only: remote-tracking refs; no Pull, no merge, no working file changes (§3-4(6)).
+  function fetchRemote(): Promise<void> {
+    const pid = projectId()
+    if (!pid || !allowed('fetch')) return Promise.resolve()
+    return write(
+      'apply',
+      'fetch',
+      (wt, gid) => wt.fetchRefs(pid, gid),
+      () => {
+        setNotice('apply', { code: 'fetched' })
+        afterRemote({ e8: true, e10: true })
+      },
+      null,
+      (error) => {
+        const err = worktreeErrorOf(error)
+        if (err.network || err.httpStatus === 403 || err.code === 'forbidden') return reportError('apply', error)
+        applyFailed('apply', err.code, err.httpStatus)
+      },
+    )
+  }
+
   function dispose(): void {
     disposed = true
     nextGeneration()
@@ -847,6 +1301,10 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     reasons,
     suggestionStale,
     changedCount,
+    applySummary,
+    pushCandidates,
+    pushRow,
+    projectGit,
     refresh,
     ticket,
     isCurrent,
@@ -875,6 +1333,17 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     commit,
     suggest,
     dismissNotice,
+    toggleApply,
+    setMergeTarget,
+    setPushAfterMerge,
+    toggleInfo,
+    showMoreTargetList,
+    setPushChoice,
+    mergeSnapshot,
+    merge,
+    pushSnapshot,
+    pushResult,
+    fetchRemote,
     dispose,
   }
 }
@@ -887,11 +1356,14 @@ export interface GitWorktreeContext {
   worktree: GitWorktreeSession
   /** Raises a worktree `open-diff` intent for a listed row (compareBase null, §5-2). */
   openFileDiff(path: string, letter: string): void
+  /** Raises the `open-diff` intent of a `Diff` pane row: compareBase = the target its list was read for. */
+  openTargetDiff(path: string, letter: string, target: string): void
   /**
    * Opens a confirm dialog bound to `ticket`: the panel closes it when that context goes (Flow /
-   * project switch, gate closed, unmount) and runs nothing unless the ticket is still current.
+   * project switch, gate closed, unmount) or `stillValid` turns false (e.g. the merge target
+   * changed, ⑤), and runs nothing unless the ticket is still current.
    */
-  confirm(request: GitConfirmRequest, ticket: WorktreeTicket): void
+  confirm(request: GitConfirmRequest, ticket: WorktreeTicket, stillValid?: () => boolean): void
 }
 
 export const GIT_WORKTREE_CONTEXT: InjectionKey<GitWorktreeContext> = Symbol('designer-git-worktree')

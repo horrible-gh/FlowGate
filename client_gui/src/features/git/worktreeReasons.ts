@@ -1,13 +1,17 @@
 // flowgate.v02.0066 — the one disabled reason of a Git tab worktree button (0066 D#2 §3-5). Pure:
 // the session hands in what it read, this picks the first rule of the priority table that hits.
-// T#6 holds the file and commit columns; the merge / follow-up push / fetch columns are T#7's.
+// T#6 holds the file and commit columns; T#7 adds the merge / follow-up push / fetch columns.
 //
-// Reasons come only from server values (E1 blockers / counts / row flags) and the screen's own
-// state (read-only, 403, an action running). A waiting approval is never a reason (D#1 Q1).
-import type { WorktreeStatus } from './types'
+// Reasons come only from server values (E1 blockers / counts / row flags, E8 `blocked[]`, E10
+// `group_blocker` / `push_blocked_reason`) and the screen's own state (read-only, 403, an action
+// running, a judgment being checked). A waiting approval is never a reason (D#1 Q1).
+import type { ManualMergeBlock, ManualMergeView, MergeResultRow, MergeResultsView, WorktreeStatus } from './types'
 
-/** The buttons of T#6. `unstageAll` is every full unstage entry (quick button, 🔒 box, link). */
-export type WorktreeButton = 'stage' | 'unstage' | 'unstageAll' | 'commit' | 'ai'
+/**
+ * The buttons of the worktree area. `unstageAll` is every full unstage entry (quick button, 🔒 box,
+ * link); `merge` is `머지` / `머지 + Push`, `push` the follow-up Push, `fetch` the Fetch icon.
+ */
+export type WorktreeButton = 'stage' | 'unstage' | 'unstageAll' | 'commit' | 'ai' | 'merge' | 'push' | 'fetch'
 
 /**
  * Reason codes with their own text (gui.git.reason.*). A server blocker code without one reads
@@ -29,6 +33,26 @@ export const WORKTREE_REASON_CODES: readonly string[] = [
   'staged_protected',
   'no_message',
   'no_provider',
+  // T#7 — merge (rank 13–14: the E8 blocked codes with their own text), follow-up push (rank 15).
+  'merge_unread',
+  'no_target',
+  'merge_unavailable',
+  'uncommitted_changes',
+  'uncommitted_protected',
+  'nothing_to_merge',
+  'already_recorded',
+  'graph_execution_active',
+  'git_busy',
+  'merge_conflict_open',
+  'approval_retry_pending',
+  'invalid_state',
+  'merge_target',
+  'recovery_required',
+  'unmeasured',
+  'group_blocked',
+  'target_moved',
+  'already_published',
+  'no_push_candidate',
 ]
 
 export interface WorktreeReasonInput {
@@ -44,17 +68,39 @@ export interface WorktreeReasonInput {
   stagedProtectedRows: number
   message: string
   providerId: string | null
+  // T#7 — the merge judgment of the chosen target and the follow-up push row (absent: in progress).
+  merge?: WorktreeMergeInput
+  push?: WorktreePushInput
+}
+
+/** The E8 judgment as the merge button sees it (0066 D#2 §3-4(3)). */
+export interface WorktreeMergeInput {
+  // No judgment for the chosen target yet, or voided and read again (rank 4 "확인 중").
+  checking: boolean
+  // The last E8 read failed: no judgment, no merge.
+  failed: boolean
+  target: string | null
+  view: ManualMergeView | null
+}
+
+/** The E10 answer and the row the follow-up Push would send (0066 D#2 §3-4(5)). */
+export interface WorktreePushInput {
+  results: MergeResultsView | null
+  row: MergeResultRow | null
 }
 
 export interface WorktreeReason {
   disabled: boolean
   // null with `disabled` = in progress (no text, a progress mark only).
   code: string | null
+  // Values of the reason text (e.g. the uncommitted count); absent when the text has none.
+  params?: Record<string, string | number>
 }
 
 const OK: WorktreeReason = { disabled: false, code: null }
 const BUSY: WorktreeReason = { disabled: true, code: null }
-const off = (code: string): WorktreeReason => ({ disabled: true, code })
+const off = (code: string, params?: Record<string, string | number>): WorktreeReason =>
+  params ? { disabled: true, code, params } : { disabled: true, code }
 
 // The E1 blocker operation a button stands for (server worktree_manual OPERATIONS + suggest).
 const OPERATION: Record<WorktreeButton, readonly string[]> = {
@@ -63,6 +109,55 @@ const OPERATION: Record<WorktreeButton, readonly string[]> = {
   unstageAll: ['unstage'],
   commit: ['commit'],
   ai: ['suggest'],
+  // E1 blockers (rank 7) never apply here: the merge reads its E8 judgment, the push its E10.
+  merge: [],
+  push: [],
+  fetch: [],
+}
+
+/**
+ * The reason of an E8 `blocked[]` entry (rank 14, the server's order). The code picks the text;
+ * `uncommitted_changes` carries the blocking count and the protected entries the Git tab cannot
+ * handle, `nothing_to_merge` of an already recorded merge points at the follow-up Push.
+ */
+export function mergeBlockReason(block: ManualMergeBlock, view: ManualMergeView | null): WorktreeReason {
+  const d = block.details
+  if (block.code === 'uncommitted_changes') {
+    const n = view?.uncommitted?.blocking ?? d.count ?? 0
+    const protectedCount = view?.uncommitted?.protectedUncommitted ?? d.protectedUncommitted ?? 0
+    return off(protectedCount > 0 ? 'uncommitted_protected' : 'uncommitted_changes', { n, protected: protectedCount })
+  }
+  if (block.code === 'nothing_to_merge') return off(d.reason === 'already_recorded' ? 'already_recorded' : 'nothing_to_merge')
+  if (block.code.startsWith('merge_target_')) return off('merge_target', { code: block.code })
+  // Another Git session of the group is open: the 0033 card above takes it.
+  if (block.code === 'invalid_state' && d.sessionKind) return off('session_open')
+  return off(block.code)
+}
+
+// Ranks 4, 5, 13 and 14 of the merge column: only a judgment of the chosen target admits a merge.
+function mergeReason(input: WorktreeReasonInput): WorktreeReason {
+  const m = input.merge
+  if (!m || m.checking) return BUSY
+  if (input.status && !input.status.worktreeAvailable) return off('worktree_unavailable')
+  if (m.failed) return off('merge_unread')
+  if (!m.target || !m.view?.targets.some((t) => t.name === m.target && t.eligible)) return off('no_target')
+  const first = m.view.blocked[0]
+  if (first) return mergeBlockReason(first, m.view)
+  if (!m.view.canMerge) return off('merge_unavailable')
+  return OK
+}
+
+// Rank 15: the group blocker, else the row's own reason; only a push-available row is sent.
+function pushReason(input: WorktreeReasonInput): WorktreeReason {
+  const p = input.push
+  if (!p?.results) return BUSY
+  if (p.results.groupBlocker) return off('group_blocked')
+  if (!p.row) {
+    const reason = p.results.results.map((r) => r.pushBlockedReason).find((r) => r === 'unmeasured' || r === 'group_blocked')
+    return off(reason ?? 'no_push_candidate')
+  }
+  if (!p.row.pushAvailable) return off(p.row.pushBlockedReason ?? 'no_push_candidate')
+  return OK
 }
 
 /** The first rule of §3-5 that applies to `button`, or enabled. */
@@ -71,6 +166,10 @@ export function worktreeReason(button: WorktreeButton, input: WorktreeReasonInpu
   if (input.readOnly) return off('read_only')
   if (input.forbidden) return off('forbidden')
   if (input.busy) return BUSY
+  // Fetch has no other rule; the follow-up push and the merge have their own columns.
+  if (button === 'fetch') return OK
+  if (button === 'push') return pushReason(input)
+  if (button === 'merge') return mergeReason(input)
   const status = input.status
   if (!status) return BUSY
   // 5: no workspace.
@@ -98,12 +197,19 @@ export function worktreeReasons(input: WorktreeReasonInput): Record<WorktreeButt
     unstageAll: worktreeReason('unstageAll', input),
     commit: worktreeReason('commit', input),
     ai: worktreeReason('ai', input),
+    merge: worktreeReason('merge', input),
+    push: worktreeReason('push', input),
+    fetch: worktreeReason('fetch', input),
   }
 }
 
 /** The i18n key and values of a reason's short line; null = no text (enabled or in progress). */
 export function reasonMessage(reason: WorktreeReason): { key: string; params: Record<string, string> } | null {
   if (!reason.disabled || !reason.code) return null
-  if (WORKTREE_REASON_CODES.includes(reason.code)) return { key: `gui.git.reason.${reason.code}`, params: {} }
+  if (WORKTREE_REASON_CODES.includes(reason.code)) {
+    const params: Record<string, string> = {}
+    for (const [key, value] of Object.entries(reason.params ?? {})) params[key] = String(value)
+    return { key: `gui.git.reason.${reason.code}`, params }
+  }
   return { key: 'gui.git.reason.unknown', params: { code: reason.code } }
 }
