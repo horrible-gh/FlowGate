@@ -1216,7 +1216,6 @@ export default {
     },
     // flowgate.v02.0066 T#7 — Base apply accordion (merge target, Fetch, push after merge, status / diff, follow-up push).
     apply: {
-      title: 'Base apply',
       summary: {
         merging: 'Merging',
         conflict: 'Conflict — card above',
@@ -1228,19 +1227,10 @@ export default {
         unknown: 'Unknown',
       },
       target_label: 'Merge into',
-      target_aria: 'Merge target branch',
       target_default: '{name} (default)',
       target_none: 'No target',
-      target_reason: {
-        remote_only: 'remote only',
-        internal_slot: 'internal work branch',
-        workspace_busy: 'workspace in use',
-        owner_mismatch: 'owned by other work',
-        unknown: 'not selectable',
-      },
       fetch: 'Fetch',
       fetch_tip: 'Refresh remote information (Fetch) — working files and local branches do not change',
-      fetch_only: 'No workspace — only refreshing remote information and pushing merge results are possible.',
       push_after: 'Push after merge',
       merge: 'Merge',
       merge_push: 'Merge + Push',
@@ -1249,7 +1239,6 @@ export default {
         target_differs_from_work_base: 'This target differs from the work base.',
         unmerge_unsupported_for_non_base_target: 'A merge into this target cannot be undone.',
       },
-      artifacts_info: '{n} uncommitted tool artifacts stay in the workspace.',
       merge_confirm: 'Merge {n} commits into {target}. Uncommitted files are not included.',
       merge_push_confirm: 'Merge {n} commits into {target} and push to the remote. Uncommitted files are not included.',
       recovery_confirm: 'Record the result already merged into {target}. No new merge is made.',

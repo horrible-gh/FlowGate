@@ -1216,7 +1216,6 @@ export default {
     },
     // flowgate.v02.0066 T#7 — Base 反映アコーディオン(マージ対象・Fetch・マージ後 Push・状態/Diff・後続 Push)。
     apply: {
-      title: 'Base 反映',
       summary: {
         merging: 'マージ中',
         conflict: '競合 — 上のカード',
@@ -1228,19 +1227,10 @@ export default {
         unknown: '確認不可',
       },
       target_label: 'マージ対象',
-      target_aria: 'マージ対象ブランチ',
       target_default: '{name}(既定)',
       target_none: '対象なし',
-      target_reason: {
-        remote_only: 'リモートのみ',
-        internal_slot: '内部作業ブランチ',
-        workspace_busy: '作業スペース使用中',
-        owner_mismatch: '別の作業が所有',
-        unknown: '選択不可',
-      },
       fetch: 'Fetch',
       fetch_tip: 'リモート情報の更新(Fetch) — 作業ファイルとローカルブランチは変わりません',
-      fetch_only: '作業スペースなし — リモート情報の更新とマージ結果の Push のみできます。',
       push_after: 'マージ後に Push',
       merge: 'マージ',
       merge_push: 'マージ + Push',
@@ -1249,7 +1239,6 @@ export default {
         target_differs_from_work_base: '作業基準とは異なる対象です。',
         unmerge_unsupported_for_non_base_target: 'この対象へのマージは取り消しに対応していません。',
       },
-      artifacts_info: 'コミットされないツール残骸 {n} 件は作業スペースに残ります。',
       merge_confirm: '{n} 件のコミットを {target} にマージします。未コミットのファイルは含まれません。',
       merge_push_confirm: '{n} 件のコミットを {target} にマージしてリモートに Push します。未コミットのファイルは含まれません。',
       recovery_confirm: '先に {target} にマージされた結果を記録します。新しいマージは作りません。',

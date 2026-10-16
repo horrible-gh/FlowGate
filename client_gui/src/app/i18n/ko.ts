@@ -1226,7 +1226,6 @@ export default {
     },
     // flowgate.v02.0066 T#7 — Base 반영 아코디언(머지 대상·Fetch·머지 후 Push·상태/Diff·후속 Push).
     apply: {
-      title: 'Base 반영',
       summary: {
         merging: '머지 중',
         conflict: '충돌 — 위 카드',
@@ -1238,19 +1237,10 @@ export default {
         unknown: '확인 불가',
       },
       target_label: '머지 대상',
-      target_aria: '머지 대상 브랜치',
       target_default: '{name} (기본)',
       target_none: '대상 없음',
-      target_reason: {
-        remote_only: '원격에만 있음',
-        internal_slot: '내부 작업 브랜치',
-        workspace_busy: '작업 공간 사용 중',
-        owner_mismatch: '다른 작업이 소유',
-        unknown: '선택 불가',
-      },
       fetch: 'Fetch',
       fetch_tip: '원격 정보 갱신(Fetch) — 작업 파일과 로컬 브랜치는 바뀌지 않습니다',
-      fetch_only: '작업 공간 없음 — 원격 정보 갱신과 머지 결과 Push만 할 수 있습니다.',
       push_after: '머지 후 Push',
       merge: '머지',
       merge_push: '머지 + Push',
@@ -1259,7 +1249,6 @@ export default {
         target_differs_from_work_base: '작업 기준과 다른 대상입니다.',
         unmerge_unsupported_for_non_base_target: '이 대상의 머지는 되돌리기를 지원하지 않습니다.',
       },
-      artifacts_info: '커밋되지 않는 도구 잔재 {n}개는 작업 공간에 남습니다.',
       merge_confirm: '{n}개 커밋을 {target}에 머지합니다. 미커밋 파일은 포함되지 않습니다.',
       merge_push_confirm: '{n}개 커밋을 {target}에 머지하고 원격에 Push합니다. 미커밋 파일은 포함되지 않습니다.',
       recovery_confirm: '앞서 {target}에 머지된 결과를 기록합니다. 새 머지는 만들지 않습니다.',

@@ -75,8 +75,8 @@
 // z-index), owned by the panel as GitConnectWindow is — it never opens a Center canvas tab.
 //
 // The tab bodies are the 0066 parts: `파일 관리` is the changed-files list and the commit line at
-// its bottom (T#2); the Base apply accordion and the target comparison list stay as they are until
-// T#3–T#4 finish them. Every value and action is the worktree session's; the window holds no Git
+// its bottom (T#2), `Base 반영` the v27 merge body (T#3); the target comparison list stays as it is
+// until T#4 finishes it. Every value and action is the worktree session's; the window holds no Git
 // state of its own.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'

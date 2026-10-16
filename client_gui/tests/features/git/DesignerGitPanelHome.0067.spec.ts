@@ -265,8 +265,7 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     await mountPanel(t)
     await click(entry('files'))
     await click(windowTab('merge'))
-    await click('git-apply-toggle')
-    expect(text('git-apply-status')).toBe('1개 커밋 미반영')
+    expect(text('git-apply-ahead')).toBe('1')
     expect(disabled('git-apply-merge')).toBe(false)
     expect(q('git-apply-reason')).toBeNull()
     expect(q('git-result-push')).toBeNull()
@@ -291,11 +290,11 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     expect(entries().map((e) => e.querySelector('[data-test="git-worktree-entry-count"]')?.textContent)).toEqual(['2개', '2개 대기', '', ''])
     expect(qa('[data-test="git-row"]').map((r) => r.dataset.path).sort()).toEqual(['src/a.ts', 'src/b.ts'])
     await click(windowTab('merge'))
-    // The merge is blocked now and a merge result waits for its Push (the header word says so first).
+    // The merge is blocked now and a merge result waits for its Push.
     expect(disabled('git-apply-merge')).toBe(true)
     expect(text('git-apply-reason')).toContain('미커밋 변경 2개')
     expect(q('git-result-push')).not.toBeNull()
-    expect(text('git-apply-status')).toBe('원격 미반영 1곳')
+    expect(text('git-apply-ahead')).toBe('2')
     await click(windowTab('status'))
     expect([text('git-status-changed'), text('git-status-staged'), text('git-status-ahead')]).toEqual(['2', '1', '2'])
 

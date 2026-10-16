@@ -261,8 +261,6 @@ describe('Designer Shell x Git tab — Center Diff (C14)', () => {
     await openFlow(w, 'Designer v0.2')
     await showGitTab(w)
     await openGitWindow('merge')
-    find('git-apply-toggle')!.click()
-    await settle()
     const select = find('git-apply-target') as HTMLSelectElement
     select.value = 'release'
     select.dispatchEvent(new Event('change'))
@@ -293,8 +291,6 @@ describe('Designer Shell x Git tab — Center Diff (C14)', () => {
     await openFlow(w, 'Designer v0.2')
     await openFileDiff(w)
     await openGitWindow('merge')
-    find('git-apply-toggle')!.click()
-    await settle()
     const select = find('git-apply-target') as HTMLSelectElement
     select.value = 'release'
     select.dispatchEvent(new Event('change'))

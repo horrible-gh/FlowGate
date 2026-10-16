@@ -5,7 +5,14 @@
 // Reasons come only from server values (E1 blockers / counts / row flags, E8 `blocked[]`, E10
 // `group_blocker` / `push_blocked_reason`) and the screen's own state (read-only, 403, an action
 // running, a judgment being checked). A waiting approval is never a reason (D#1 Q1).
-import type { ManualMergeBlock, ManualMergeView, MergeResultRow, MergeResultsView, WorktreeStatus } from './types'
+import type {
+  ManualMergeBlock,
+  ManualMergeTarget,
+  ManualMergeView,
+  MergeResultRow,
+  MergeResultsView,
+  WorktreeStatus,
+} from './types'
 
 /**
  * The buttons of the worktree area. `unstageAll` is every full unstage entry (quick button, 🔒 box,
@@ -232,4 +239,32 @@ export function applySummaryMessage(summary: { kind: string; n?: number } | null
   if (!summary) return null
   const key = APPLY_SUMMARY_KEYS[summary.kind]
   return key ? { key, params: { n: summary.n ?? 0 } } : null
+}
+
+// flowgate.v02.0067 T#3 — what the `Base 반영` tab lists and when it shows the follow-up Push (R §5).
+
+/**
+ * The merge targets the `머지 대상` choice lists: only the ones E8 admits (`eligible`). A FlowGate
+ * internal work branch is never listed — the server marks it `internal_slot` from its slot
+ * registry, not from its name — and neither is a remote-only, busy or foreign one. Nothing is
+ * deleted: the branches stay, they are just not offered.
+ */
+export function mergeTargetChoices<T extends Pick<ManualMergeTarget, 'eligible' | 'blockedReason'>>(targets: readonly T[]): T[] {
+  return targets.filter((t) => t.eligible && t.blockedReason !== 'internal_slot')
+}
+
+/**
+ * How the follow-up Push part shows (null = not at all). It is there only while a recorded merge
+ * really waits for its remote — the E10 rows a push may send (one / many), or ones that wait
+ * behind the group's Git job (`group_blocked`, a disabled Push and its reason). A row already on
+ * its remote, a moved target or a remote state that could not be measured shows nothing.
+ */
+export function followUpPushMode(
+  results: Pick<MergeResultsView, 'results'> | null,
+  candidates: number,
+): 'one' | 'many' | 'blocked' | null {
+  if (!results) return null
+  if (candidates === 1) return 'one'
+  if (candidates > 1) return 'many'
+  return results.results.some((r) => r.pushBlockedReason === 'group_blocked') ? 'blocked' : null
 }

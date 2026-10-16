@@ -43,11 +43,14 @@
 // (target · short merge commit · time), the newest first. A Push sends that record's merge id and
 // commit only — never a branch name, never the worktree, never /git/push. No candidate but an
 // unmeasured or blocked row: a disabled Push and its reason. Already published or moved rows: nothing.
+// flowgate.v02.0067 T#3 — only a merge that really waits for its remote shows it (R §5-6,
+// followUpPushMode): a row behind the group's Git job keeps the disabled Push and its reason; an
+// unmeasured remote shows nothing (the Fetch icon above measures it again).
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGitWorktree } from './gitWorktreeSession'
-import type { MergeResultRow } from './types'
-import { reasonMessage } from './worktreeReasons'
+import type { MergeResultRow, MergeResultsView } from './types'
+import { followUpPushMode, reasonMessage } from './worktreeReasons'
 
 const { t } = useI18n()
 const { worktree: wt, confirm } = useGitWorktree()
@@ -57,14 +60,7 @@ const candidates = computed(() => wt.pushCandidates.value as MergeResultRow[])
 const row = computed(() => wt.pushRow.value as MergeResultRow | null)
 const notice = computed(() => wt.state.notices.push ?? null)
 
-const mode = computed<'one' | 'many' | 'blocked' | null>(() => {
-  const results = wt.state.results
-  if (!results) return null
-  if (candidates.value.length === 1) return 'one'
-  if (candidates.value.length > 1) return 'many'
-  const waiting = results.results.some((r) => r.pushBlockedReason === 'unmeasured' || r.pushBlockedReason === 'group_blocked')
-  return waiting ? 'blocked' : null
-})
+const mode = computed(() => followUpPushMode(wt.state.results as MergeResultsView | null, candidates.value.length))
 
 const highlighted = computed(() => wt.state.highlightMergeId !== null && row.value?.mergeId === wt.state.highlightMergeId)
 
