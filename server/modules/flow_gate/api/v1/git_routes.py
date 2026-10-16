@@ -1788,6 +1788,26 @@ def post_group_worktree_remove(group_id: str, body: WorktreeFilesBody, user=Depe
         return _guard(exc)
 
 
+class CommitSuggestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    provider_id: str | None = None
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/worktree/commit-message/suggest")
+def post_group_commit_suggest(group_id: str, body: CommitSuggestBody | None = None,
+                             user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import commit_suggest
+    try:
+        return {"ok": True, "result": commit_suggest.suggest(
+            group_id, provider_id=body.provider_id if body else None)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
 router.include_router(_worktree_mutations)
 
 
