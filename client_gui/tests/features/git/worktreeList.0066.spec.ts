@@ -132,7 +132,9 @@ describe('worktreeList — hidden Stage (§3-6(0)) and selection (§3-6(4))', ()
     expect(stagedProtectedRows(status)).toBe(3)
   })
 
-  it('selects only what a row may do: stage, or release its Stage', () => {
+  // flowgate.v02.0067 T#2 (0067-R §4-3): a managed / protected row is never checked, not even for its
+  // Stage release — its own `−` and the full unstage stay its way out.
+  it('selects only what a row may do: stage, or release its Stage — never a managed or protected row', () => {
     const status = worktreeStatus({
       files: [
         worktreeFile('a.ts'),
@@ -141,12 +143,12 @@ describe('worktreeList — hidden Stage (§3-6(0)) and selection (§3-6(4))', ()
         staged('both.ts', { unstaged: 'M', canStage: true }),
       ],
     })
-    expect(selectAllTargets(status, '', 'all').sort()).toEqual(['a.ts', 'both.ts', 'mg.ts'])
+    expect(selectAllTargets(status, '', 'all').sort()).toEqual(['a.ts', 'both.ts'])
     expect(selectAllTargets(status, 'a.ts', 'all')).toEqual(['a.ts'])
     const chosen = ['a.ts', 'mg.ts', 'both.ts', 'lock.ts']
     expect(stageTargets(chosen, status)).toEqual(['a.ts', 'both.ts'])
     expect(unstageTargets(chosen, status)).toEqual(['mg.ts', 'both.ts'])
     // After a status change only listed, still selectable paths stay.
-    expect(pruneSelection(['a.ts', 'gone.ts', 'lock.ts'], status)).toEqual(['a.ts'])
+    expect(pruneSelection(['a.ts', 'gone.ts', 'lock.ts', 'mg.ts'], status)).toEqual(['a.ts'])
   })
 })

@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { FlowChangeSet } from '@/features/project'
+import type { FlowChangeSet, FlowFileDiff } from '@/features/project'
 import type { GitWorktreeSource } from '@/features/git'
 import type {
   ManualMergeView,
@@ -158,6 +158,25 @@ export interface FakeWorktreeState {
   merge: ManualMergeView
   results: MergeResultsView
   targetChanges: Record<string, FlowChangeSet>
+  // flowgate.v02.0067 T#4 — group file diffs by path (the `Diff` tab detail); others get fileDiff().
+  fileDiffs: Record<string, FlowFileDiff>
+}
+
+/** A group file diff: one changed line, `old <path>` → `new <path>`. */
+export function fileDiff(path: string, overrides: Partial<FlowFileDiff> = {}): FlowFileDiff {
+  const side = (content: string) => ({ exists: true, binary: false, truncated: false, size: content.length, content })
+  return {
+    groupId: G,
+    branch: 'flowgate_v02_0008',
+    commit: null,
+    baseBranch: 'v0.2',
+    mergeBase: 'f1',
+    path,
+    status: 'M',
+    old: side(`old ${path}\nsame\n`),
+    new: side(`new ${path}\nsame\n`),
+    ...overrides,
+  }
 }
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -295,6 +314,7 @@ export function createFakeWorktreeSource(init: Partial<FakeWorktreeState> = {}, 
     merge: manualMergeView(),
     results: mergeResults(),
     targetChanges: {},
+    fileDiffs: {},
     ...init,
   }
   let generation = 1
@@ -479,6 +499,9 @@ export function createFakeWorktreeSource(init: Partial<FakeWorktreeState> = {}, 
     ),
     loadTargetChanges: vi.fn(async (_pid: string, groupId: string, target: string): Promise<FlowChangeSet> =>
       clone(db.targetChanges[target] ?? { groupId, branch: 'flowgate_v02_0008', commit: 'h1', baseBranch: target, changes: [] }),
+    ),
+    loadFileDiff: vi.fn(async (_pid: string, groupId: string, path: string, compareBase: string | null): Promise<FlowFileDiff> =>
+      clone(db.fileDiffs[path] ?? fileDiff(path, { groupId, baseBranch: compareBase ?? db.status.floor.workBaseRef ?? 'v0.2' })),
     ),
     ...extra,
   } satisfies GitWorktreeSource

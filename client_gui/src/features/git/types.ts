@@ -662,14 +662,14 @@ export interface WorktreeNotice {
   link?: 'unstage_all'
 }
 
-/** `git-center-diff-refresh` (Panel → Dock → Shell): read the open group diff again, or close it. */
+/** `git-center-diff-refresh` (worktree session → the panel's Center Diff, 0067 T#4): read the open group diff again, or close it. */
 export interface GitCenterDiffRefresh {
   groupId: string
   // Close a diff opened from the target comparison list (compareBase set) instead of reading it.
   closeCompare: boolean
 }
 
-/** The one diff the Designer Center shows (0066 D#2 §3-10). */
+/** The one group file diff on screen (0066 D#2 §3-10) — the Git modeless `Diff` tab detail since 0067 T#4. */
 export interface CenterDiffTarget {
   projectId: string
   groupId: string
@@ -687,3 +687,6 @@ export interface CenterDiffError {
   kind: 'floor' | 'not_found' | 'forbidden' | 'compare' | 'network' | 'failed'
   code: string | null
 }
+
+// flowgate.v02.0067 T#1 — the four tabs of the Git modeless the Git tab entries open (0067-R §3).
+export type GitWorktreeTab = 'files' | 'merge' | 'diff' | 'status'

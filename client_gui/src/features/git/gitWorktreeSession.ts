@@ -25,6 +25,7 @@
 import { computed, effectScope, inject, reactive, readonly, ref, watch, type ComputedRef, type DeepReadonly, type InjectionKey } from 'vue'
 import type { FlowChangeEntry, ProjectGitStatus } from '@/features/project'
 import { worktreeErrorOf } from './api'
+import type { GitCenterDiffSession } from './gitCenterDiff'
 import { createHttpGitSource, type GitSource, type GitWorktreeSource } from './gitSource'
 import type { GitConfirmRequest, GitSession } from './gitSession'
 import type {
@@ -160,10 +161,10 @@ export interface WorktreeState {
   // The E8 / E10 numbers of the answers on screen: a confirm dialog fixes them (⑥).
   mergeSeq: number
   resultsSeq: number
-  // The `Diff` pane list with the target it was read for (⑦); null while none is on screen.
+  // The `Diff` pane list with the target it was read for (⑦); null while none is on screen. Its
+  // search and pages are the `Diff` tab's own screen state (0067 T#4).
   targetList: WorktreeTargetList | null
   targetListLoad: Load
-  targetListLimit: number
   // The follow-up push row picked when there are two or more; null = the newest.
   pushChoice: number | null
   // The E10 row an `already_recorded` refusal points at.
@@ -260,6 +261,8 @@ export interface GitWorktreeSession {
   showMore(key: string): void
   setSelected(path: string, selected: boolean): void
   toggleSelectAll(): void
+  /** flowgate.v02.0067 T#2 — the folder checkbox: checks / unchecks these paths (selectable ones only). */
+  selectPaths(paths: readonly string[], selected: boolean): void
   clearSelection(): void
 
   stagePath(path: string): Promise<void>
@@ -283,7 +286,6 @@ export interface GitWorktreeSession {
   setMergeTarget(target: string): void
   setPushAfterMerge(push: boolean): void
   toggleInfo(pane: WorktreeInfoPane): void
-  showMoreTargetList(): void
   setPushChoice(mergeId: number): void
   mergeSnapshot(): WorktreeMergeSnapshot | null
   /** Sends nothing unless the context and the judgment the dialog showed are still on screen. */
@@ -297,7 +299,7 @@ export interface GitWorktreeSession {
 export interface GitWorktreeSessionOptions {
   git: GitSession
   source?: GitSource
-  /** `git-center-diff-refresh`: the panel raises it to the Center Diff (§2-4). */
+  /** `git-center-diff-refresh`: the panel hands it to its Center Diff — the `Diff` tab detail (§2-4, 0067 T#4). */
   onCenterDiffRefresh?: (request: GitCenterDiffRefresh) => void
 }
 
@@ -342,7 +344,6 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     resultsSeq: 0,
     targetList: null,
     targetListLoad: 'idle',
-    targetListLimit: WORKTREE_FOLDER_PAGE,
     pushChoice: null,
     highlightMergeId: null,
     rejectHint: null,
@@ -532,7 +533,6 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     state.applyOpen = false
     state.pushAfterMerge = false
     state.infoPane = null
-    state.targetListLimit = WORKTREE_FOLDER_PAGE
     if (projectChanged) {
       state.forbidden = false
       state.providerId = null
@@ -619,8 +619,10 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
       settleRejectHint(seq, view)
       const eligible = (name: string | null) => view.targets.some((t) => t.name === name && t.eligible)
       if (target === null && !targetChosen) {
-        // The first answer picks the default target when it can be chosen.
+        // The first answer picks the default target when it can be chosen. A `Diff` pane opened
+        // before it asked for a list there was no target for: it reads that target's list now.
         state.mergeTarget = eligible(view.defaultTarget) ? view.defaultTarget : null
+        if (state.mergeTarget && state.infoPane === 'diff') requestReads({ list: true })
       } else if (target === null || !eligible(target)) {
         // No target chosen, or the chosen one is gone / no longer eligible: no judgment, no_target.
         if (target !== null) dropTarget()
@@ -879,6 +881,20 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
       : [...state.selected, ...targets.filter((p) => !state.selected.includes(p))]
   }
 
+  // The folder checkbox (0067-R §4-2): a selection only — what each path may do is still its row's.
+  function selectPaths(paths: readonly string[], selected: boolean): void {
+    const set = new Set(paths)
+    if (!selected) {
+      state.selected = state.selected.filter((p) => !set.has(p))
+      return
+    }
+    const have = new Set(state.selected)
+    const add = (state.status?.files ?? [])
+      .filter((f) => set.has(f.path) && !have.has(f.path) && isSelectable(f as WorktreeFile))
+      .map((f) => f.path)
+    if (add.length) state.selected = [...state.selected, ...add]
+  }
+
   function clearSelection(): void {
     state.selected = []
   }
@@ -1078,7 +1094,6 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     if (state.infoPane === 'diff') {
       state.targetList = null
       state.targetListLoad = 'loading'
-      state.targetListLimit = WORKTREE_FOLDER_PAGE
     }
     // ⑧ A Center Diff opened from the comparison list closes; a worktree file diff stays.
     const gid = groupId()
@@ -1094,10 +1109,6 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   function toggleInfo(pane: WorktreeInfoPane): void {
     state.infoPane = state.infoPane === pane ? null : pane
     if (state.infoPane === 'diff') requestReads({ list: true })
-  }
-
-  function showMoreTargetList(): void {
-    state.targetListLimit += WORKTREE_FOLDER_PAGE
   }
 
   function setPushChoice(mergeId: number): void {
@@ -1319,6 +1330,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     showMore,
     setSelected,
     toggleSelectAll,
+    selectPaths,
     clearSelection,
     stagePath,
     unstagePath,
@@ -1337,7 +1349,6 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     setMergeTarget,
     setPushAfterMerge,
     toggleInfo,
-    showMoreTargetList,
     setPushChoice,
     mergeSnapshot,
     merge,
@@ -1351,12 +1362,16 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
 // ── Panel context ────────────────────────────────────────────────────────────────────
 // DesignerGitPanel provides this to the worktree area beside the 0033 GIT_PANEL_CONTEXT: the
 // session, and the worktree diff intent only the panel can raise.
+// flowgate.v02.0067 T#4 — the intent opens the panel's Center Diff, the Git modeless `Diff` tab
+// detail (0067-R §6); nothing goes up to the Designer Center any more.
 
 export interface GitWorktreeContext {
   worktree: GitWorktreeSession
-  /** Raises a worktree `open-diff` intent for a listed row (compareBase null, §5-2). */
+  /** The one file diff the `Diff` tab shows; null `open` = its list is shown. */
+  diff: GitCenterDiffSession
+  /** Opens a listed row's diff (compareBase null, §5-2) — the `파일 관리` tab's way in. */
   openFileDiff(path: string, letter: string): void
-  /** Raises the `open-diff` intent of a `Diff` pane row: compareBase = the target its list was read for. */
+  /** Opens a `Diff` list row's diff: compareBase = the target its list was read for. */
   openTargetDiff(path: string, letter: string, target: string): void
   /**
    * Opens a confirm dialog bound to `ticket`: the panel closes it when that context goes (Flow /

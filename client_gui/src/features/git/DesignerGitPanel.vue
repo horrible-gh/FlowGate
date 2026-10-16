@@ -70,6 +70,11 @@
 // closes when that context goes and its action runs only while the context is still current.
 // T#7: the `Diff` pane rows raise the same intent with the target as compareBase, and a merge
 // dialog also closes when the merge target changes (0066 D#2 §3-2-2 ⑤ ⑦).
+//
+// flowgate.v02.0067 T#4 — the worktree diff no longer goes up: the panel owns the Center Diff
+// session and its intents open it as the detail of the Git modeless `Diff` tab (0067-R §6); the
+// session's `git-center-diff-refresh` goes straight to it. Only the 0033 intents (conflict / AI /
+// review / uncommitted Base file) still raise `open-diff`, as before.
 import { computed, onBeforeUnmount, provide, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
@@ -84,12 +89,12 @@ import GitStatusErrorCard from './GitStatusErrorCard.vue'
 import GitUnlinkedCard from './GitUnlinkedCard.vue'
 import GitWorktreePanel from './GitWorktreePanel.vue'
 import { gitErrorOf } from './api'
+import { createGitCenterDiff } from './gitCenterDiff'
 import { createHttpGitSource, type GitSource } from './gitSource'
 import { createGitSession, GIT_PANEL_CONTEXT, type GitConfirmRequest } from './gitSession'
 import { createGitWorktreeSession, GIT_WORKTREE_CONTEXT, type WorktreeTicket } from './gitWorktreeSession'
 import type {
   GitBadge,
-  GitCenterDiffRefresh,
   GitConfigSave,
   GitConfirmSettingsIntent,
   GitConnectBusy,
@@ -121,15 +126,22 @@ const emit = defineEmits<{
   'open-diff': [intent: GitDiffIntent]
   'open-confirm-settings': [intent: GitConfirmSettingsIntent]
   'windows-change': [windows: GitWindowDescriptor[]]
-  'git-center-diff-refresh': [request: GitCenterDiffRefresh]
 }>()
 
 const { t } = useI18n()
 const session = createGitSession({ source: props.source })
+// The `Diff` tab's one file diff, read through the same kind of GitSource the worktree session uses.
+let diffSource: GitSource | null = props.source ?? null
+const diff = createGitCenterDiff({
+  loadFileDiff: (projectId, groupId, path, compareBase) => {
+    const wt = (diffSource ??= createHttpGitSource()).worktree
+    return wt ? wt.loadFileDiff(projectId, groupId, path, compareBase) : Promise.reject(new Error('no Group worktree source'))
+  },
+})
 const worktree = createGitWorktreeSession({
   git: session,
   source: props.source,
-  onCenterDiffRefresh: (request) => emit('git-center-diff-refresh', { ...request }),
+  onCenterDiffRefresh: (request) => diff.refresh(request),
 })
 const pendingConfirm = shallowRef<GitConfirmRequest | null>(null)
 // The worktree context of the open dialog; null for a 0033 dialog.
@@ -182,12 +194,12 @@ function openSettings(): void {
 const WORKTREE_LETTERS: readonly GitFileLetter[] = ['A', 'D', 'M', '?']
 
 // A worktree row: the group work base floor against the working file (0066 D#2 §5-2). The
-// letters T / U have no diff letter and go up as null.
+// letters T / U have no diff letter and open with none.
 function openFileDiff(path: string, letter: string): void {
   const projectId = session.state.projectId
   const groupId = session.state.flow?.groupId ?? null
   if (!projectId || !groupId) return
-  emit('open-diff', {
+  diff.open({
     projectId,
     groupId,
     mergeId: null,
@@ -199,13 +211,13 @@ function openFileDiff(path: string, letter: string): void {
   })
 }
 
-// A row of the `Diff` pane: the merge-base with the target its list was read for (§5-2, ⑦).
-// `/changes` letters other than M / A / D / ? go up as null.
+// A row of the `Diff` list: the merge-base with the target its list was read for (§5-2, ⑦).
+// `/changes` letters other than M / A / D / ? open with none.
 function openTargetDiff(path: string, letter: string, target: string): void {
   const projectId = session.state.projectId
   const groupId = session.state.flow?.groupId ?? null
   if (!projectId || !groupId || !target) return
-  emit('open-diff', {
+  diff.open({
     projectId,
     groupId,
     mergeId: null,
@@ -217,7 +229,22 @@ function openTargetDiff(path: string, letter: string, target: string): void {
   })
 }
 
-provide(GIT_WORKTREE_CONTEXT, { worktree, openFileDiff, openTargetDiff, confirm: askConfirm })
+provide(GIT_WORKTREE_CONTEXT, { worktree, diff, openFileDiff, openTargetDiff, confirm: askConfirm })
+
+// Another project or Flow group closes the open diff (it opens only intents of the current one).
+watch(
+  () => [session.state.projectId, session.state.flow?.groupId ?? null] as const,
+  ([projectId, groupId]) => diff.setContext(projectId, groupId),
+  { immediate: true },
+)
+// A closed gate takes the worktree area and its window away: the open diff closes with them and
+// any answer still on its way is dropped, so the same context opened again starts on the list.
+watch(
+  () => worktree.gateOpen.value,
+  (open) => {
+    if (!open) diff.close()
+  },
+)
 
 // Header refresh, tab activation and the exposed refresh read both sessions (§3-2-1); the
 // worktree reads nothing while its gate is closed.
@@ -555,6 +582,7 @@ onBeforeUnmount(() => {
   connectDisposed = true
   if (confirmTicket.value) closeConfirm()
   worktree.dispose()
+  diff.dispose()
   session.dispose()
 })
 

@@ -272,7 +272,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
 .gx-file-go {
@@ -574,8 +574,9 @@
 }
 
 /* flowgate.v02.0066 T#6 — the worktree area (v19 mock-up `gw-*`): summary line, the changed-files
-   accordion and the commit line. The open list lives in a viewport of bounded height and scrolls
-   inside it, so 100+ files never push the commit line (or the Base apply header) off the panel. */
+   list and the commit line. flowgate.v02.0067 T#2: the list is the `파일 관리` tab of the Git
+   modeless (v27 `gw-dialog-*`); it scrolls inside its viewport, so 100+ files never push the commit
+   line below out of the window. */
 .gw-panel {
   display: flex;
   flex-direction: column;
@@ -638,47 +639,11 @@
 
 .gw-link:disabled,
 .gw-act:disabled,
-.gw-quick:disabled,
-.gw-small:disabled,
 .gw-icon:disabled,
 .gw-ai:disabled,
 .gw-iconbtn:disabled {
   opacity: var(--fg2-control-disabled-opacity);
   cursor: not-allowed;
-}
-
-.gw-acc {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
-}
-
-.gw-acc-head {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-}
-
-.gw-acc-toggle {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 4px 2px;
-  border: 0;
-  background: transparent;
-  color: var(--fg2-text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.gw-acc-toggle:disabled {
-  color: var(--fg2-muted);
-  cursor: default;
 }
 
 .gw-caret {
@@ -695,16 +660,7 @@
   color: var(--fg2-muted);
 }
 
-.gw-staged {
-  color: var(--fg2-status-success-fg);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.gw-lock,
-.gw-quick,
 .gw-iconbtn,
-.gw-small,
 .gw-act,
 .gw-ai {
   flex: none;
@@ -730,58 +686,104 @@
   border-color: var(--fg2-blue);
 }
 
-.gw-small {
-  height: 22px;
-  border-color: transparent;
-  background: transparent;
-  color: var(--fg2-blue);
-}
-
 .gw-act.primary {
   border-color: var(--fg2-blue);
   background: var(--fg2-blue);
   color: #fff;
 }
 
-.gw-lockbox {
+/* The `파일 관리` tab body (v27 `gw-dialog-stats` / `-search` / `-bulk` / `-files`): it takes the
+   height the commit line leaves and gives it to the list viewport. */
+.gw-files {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
-  gap: 5px;
-  padding: 7px 9px;
-  border: 1px solid var(--fg2-status-info-border);
-  border-radius: 7px;
-  background: var(--fg2-status-info-bg);
-  font-size: 10px;
-}
-
-.gw-lockbox p {
-  margin: 0;
-}
-
-.gw-lockbox .gw-act {
-  align-self: flex-start;
-}
-
-.gw-acc-body {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+  gap: 9px;
   min-width: 0;
 }
 
-.gw-search,
-.gw-menu,
-.gw-bulk {
+.gw-files-stats {
   display: flex;
+  flex: none;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
+  gap: 9px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--fg2-line);
+  color: var(--fg2-muted);
+  font-size: 11px;
 }
 
-.gw-bulk-count {
-  margin-right: auto;
-  font-size: 10px;
+.gw-files-stats strong {
+  margin-left: 4px;
+  color: var(--fg2-text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gw-files-search {
+  display: grid;
+  flex: none;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 7px;
+}
+
+.gw-files-search .gw-input,
+.gw-files-search .gw-select {
+  width: 100%;
+  height: 34px;
+  padding: 0 11px;
+  font-size: 11px;
+}
+
+/* The selection bar: adjacent on the left in the R §4-4 order, one colour per action. */
+.gw-files-bulk {
+  display: flex;
+  flex: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 31px;
+}
+
+.gw-files-bulk .gw-act {
+  height: 31px;
+  padding: 0 11px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.gw-bulk-stage {
+  border-color: var(--fg2-blue);
+  background: var(--fg2-blue);
+  color: #fff;
+}
+
+.gw-bulk-unstage {
+  border-color: var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
+}
+
+.gw-bulk-all {
+  border-color: var(--fg2-status-success-border);
+  background: var(--fg2-status-success-bg);
+  color: var(--fg2-status-success-fg);
+}
+
+.gw-files-count {
+  margin-left: auto;
   color: var(--fg2-muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.gw-files-empty {
+  margin: 0;
+  padding: 30px 12px;
+  color: var(--fg2-muted);
+  font-size: 11.5px;
+  text-align: center;
 }
 
 .gw-input,
@@ -797,22 +799,19 @@
   font-size: 10.5px;
 }
 
-.gw-search .gw-input {
-  flex: 1 1 auto;
-}
-
 .gw-select {
   width: 86px;
 }
 
-/* The bounded list window (v19: 285px); it scrolls, the rest of the panel stays put. */
+/* The list viewport (v27 `gw-dialog-files`): the rest of the tab, scrolling inside; never
+   shorter than a few rows (a very small window scrolls its body instead). */
 .gw-viewport {
-  max-height: min(285px, 45vh);
-  min-height: 60px;
+  flex: 1 1 0;
+  min-height: 88px;
   overflow: auto;
-  padding: 4px;
+  padding: 3px 7px 6px;
   border: 1px solid var(--fg2-line);
-  border-radius: 7px;
+  border-radius: 8px;
 }
 
 .gw-section + .gw-section {
@@ -834,21 +833,38 @@
   flex: 1 1 auto;
 }
 
+/* The folder head: its checkbox (v27 `gw-dir-select`) apart from the fold button. */
 .gw-folder-head {
   display: flex;
   align-items: center;
   gap: 5px;
-  width: 100%;
-  min-height: 28px;
+  min-height: 32px;
   padding: 0 3px;
-  border: 0;
   border-top: 1px solid var(--fg2-line);
+}
+
+.gw-folder-head .gw-folder-check {
+  margin: 0 1px 0 5px;
+}
+
+.gw-folder-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 5px 0;
+  border: 0;
   background: transparent;
   color: var(--fg2-muted);
   font: inherit;
-  font-size: 10px;
+  font-size: 10.5px;
   text-align: left;
   cursor: pointer;
+}
+
+.gw-folder-toggle:hover {
+  color: var(--fg2-text);
 }
 
 .gw-folder-name {
@@ -864,7 +880,7 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
-  height: 28px;
+  height: 33px;
   padding: 0 2px 0 8px;
   border-radius: 5px;
 }
@@ -986,139 +1002,178 @@
   color: var(--fg2-muted);
 }
 
+/* The commit line at the bottom of the `파일 관리` tab (v27 `gw-dialog-commit`): message, 🤖, 커밋. */
 .gw-commit {
   display: flex;
+  flex: none;
   flex-direction: column;
   gap: 4px;
-  padding-top: 6px;
+  padding-top: 12px;
   border-top: 1px solid var(--fg2-line);
 }
 
 .gw-commit-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px minmax(75px, auto);
   align-items: center;
-  gap: 6px;
+  gap: 7px;
 }
 
 .gw-commit-input {
-  flex: 1 1 auto;
-  width: 0;
-  height: 31px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.gw-commit-input:disabled {
+  opacity: var(--fg2-control-disabled-opacity);
+  cursor: not-allowed;
 }
 
 .gw-ai {
-  height: 31px;
-  font-size: 14px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 15px;
 }
 
 .gw-commit-btn {
-  height: 31px;
+  height: 36px;
   padding: 0 12px;
   font-size: 11px;
   font-weight: 700;
 }
 
-/* flowgate.v02.0066 T#7 — the folded Base apply accordion (v19 `gw-simple-apply`, `gw-merge-target`,
-   `gw-merge-options`, `gw-merge-push-later`): header word, merge target + Fetch icon, `머지 후 Push`
-   with the `Diff` / `상태` links and their inline pane, the merge button and the follow-up Push. */
+/* flowgate.v02.0066 T#7 — the Base apply part: merge target + Fetch icon, `머지 후 Push`, the merge
+   button and the follow-up Push. 0067 T#1: its `Diff` pane is the Git modeless `Diff` tab.
+   0067 T#3 — the v27 `Base 반영` body (`gw-merge-workflow`, `gw-merge-field`, `gw-merge-switch-row`,
+   `gw-merge-submit`, `gw-merge-push`): not folded; the target row and the switch row share one
+   label column (`--gw-merge-label`) and one input start column, the same gap and row height. */
 .gw-apply {
+  --gw-merge-label: 90px;
+  --gw-merge-gap: 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-top: 4px;
-  border-top: 1px solid var(--fg2-line);
+  gap: 14px;
+  min-width: 0;
 }
 
-.gw-apply-toggle {
-  display: flex;
+.gw-apply .gw-progress {
+  margin-left: auto;
+}
+
+.gw-merge-field,
+.gw-merge-switch-row {
+  display: grid;
+  column-gap: var(--gw-merge-gap);
   align-items: center;
-  gap: 8px;
+  min-width: 0;
+  min-height: 36px;
+  color: var(--fg2-muted);
+  font-size: 11.5px;
+}
+
+.gw-merge-field {
+  grid-template-columns: var(--gw-merge-label) minmax(0, 1fr) 35px;
+}
+
+.gw-merge-field .gw-select {
   width: 100%;
-  padding: 6px 2px;
-  border: 0;
-  background: transparent;
-  color: var(--fg2-text);
-  font: inherit;
-  font-weight: 650;
-  text-align: left;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.gw-merge-field .gw-fetch {
+  width: 35px;
+  height: 36px;
+  border-radius: 7px;
+  font-size: 16px;
+}
+
+/* No workspace: the short line takes the label and input columns, Fetch stays in its own. */
+.gw-merge-field-wide {
+  grid-column: 1 / 3;
+}
+
+/* The ON/OFF switch (a native checkbox with role=switch) right in the input start column. */
+.gw-merge-switch-row {
+  grid-template-columns: var(--gw-merge-label) 43px;
+  justify-content: start;
   cursor: pointer;
 }
 
-.gw-apply-status {
-  margin-left: auto;
-  color: var(--fg2-muted);
-  font-size: 10px;
-  font-weight: 500;
-}
-
-.gw-apply-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 2px 0 6px;
-}
-
-.gw-merge-target,
-.gw-merge-options,
-.gw-apply-actions,
-.gw-push-later {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-
-.gw-merge-target label {
-  flex: 0 0 auto;
-  color: var(--fg2-muted);
-  font-size: 10px;
-}
-
-.gw-merge-target .gw-select,
-.gw-push-later .gw-select {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.gw-fetch {
-  height: 28px;
-}
-
-.gw-merge-options label {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10px;
+.gw-merge-switch-row > span:first-child {
   white-space: nowrap;
 }
 
-.gw-merge-options label + .gw-mini-link {
-  margin-left: auto;
+.gw-merge-switch {
+  position: relative;
+  width: 43px;
+  height: 24px;
 }
 
-.gw-mini-link {
-  padding: 3px 2px;
-  border: 0;
-  background: transparent;
-  color: var(--fg2-blue);
-  font: inherit;
-  font-size: 10px;
+.gw-merge-switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
   cursor: pointer;
 }
 
-.gw-mini-link.is-on {
-  text-decoration: underline;
+.gw-merge-switch-track {
+  display: block;
+  box-sizing: border-box;
+  width: 43px;
+  height: 24px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: 999px;
+  background: var(--fg2-control-surface);
+  pointer-events: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.gw-merge-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--fg2-muted);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.gw-merge-switch input:checked + .gw-merge-switch-track {
+  border-color: var(--fg2-blue);
+  background: var(--fg2-blue);
+}
+
+.gw-merge-switch input:checked + .gw-merge-switch-track::after {
+  transform: translateX(19px);
+  background: #fff;
+}
+
+.gw-merge-switch input:focus-visible + .gw-merge-switch-track {
+  outline: 2px solid var(--fg2-blue);
+  outline-offset: 2px;
 }
 
 .gw-line.is-warn {
   color: var(--fg2-text);
 }
 
-.gw-apply-actions .gw-act {
-  flex: 1 1 auto;
-  height: 30px;
-  font-size: 10.5px;
+.gw-merge-submit {
+  width: 100%;
+  height: 38px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .gw-progress {
@@ -1127,12 +1182,28 @@
   font-size: 10px;
 }
 
+/* The follow-up Push (v27 `gw-merge-push`), only while a merge waits for its remote. */
 .gw-push-later {
-  margin-top: 4px;
-  padding-top: 7px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 0 0;
   border-top: 1px solid var(--fg2-line);
   color: var(--fg2-muted);
-  font-size: 10px;
+  font-size: 11px;
+}
+
+.gw-push-later .gw-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+}
+
+.gw-push-later .gw-act {
+  min-width: 85px;
+  height: 32px;
+  font-size: 11px;
 }
 
 .gw-push-later.is-highlight {
@@ -1140,71 +1211,431 @@
   background: var(--fg2-status-warning-bg);
 }
 
-.gw-info {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
-  border: 1px solid var(--fg2-line);
-  border-radius: 6px;
-  font-size: 10px;
-}
-
-.gw-info-head {
+/* flowgate.v02.0067 T#1 — the Git tab home (v27 `gw-v21-overview`, `gw-v21-choices`): the
+   `변경 / Stage / 미반영` line and four equal full-width entry rows, one per Git modeless tab. */
+.gw-overview {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-}
-
-.gw-info-list {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 8px;
+  gap: 9px;
   margin: 0;
-}
-
-.gw-info-list dt {
+  padding: 2px 2px 4px;
   color: var(--fg2-muted);
+  font-size: 10.5px;
+  white-space: nowrap;
 }
 
-.gw-info-list dd {
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
+.gw-overview strong {
+  margin-left: 3px;
+  color: var(--fg2-text);
+  font-size: 11.5px;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
 }
 
-.gw-info-merges,
-.gw-info-files {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  max-height: min(220px, 35vh);
-  margin: 0;
-  padding: 0;
-  overflow: auto;
-  list-style: none;
+.gw-overview-sep {
+  width: 1px;
+  height: 13px;
+  background: var(--fg2-line-strong);
 }
 
-.gw-info-merges li {
-  display: flex;
-  gap: 6px;
-}
-
-.gw-info-file {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.gw-entries {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
   width: 100%;
-  padding: 2px 3px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
+}
+
+.gw-entry {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto 12px;
+  align-items: center;
+  column-gap: 10px;
+  width: 100%;
+  height: 47px;
+  min-width: 0;
+  margin: 0;
+  padding: 0 13px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: 9px;
+  background: var(--fg2-control-surface);
   color: var(--fg2-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.gw-info-file:hover {
+.gw-entry:hover,
+.gw-entry[aria-pressed='true'] {
+  border-color: var(--fg2-control-hover-border);
+}
+
+.gw-entry:focus-visible,
+.gw-win-tab:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: 2px;
+}
+
+.gw-entry-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: var(--fg2-blue);
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.gw-entry-title {
+  overflow: hidden;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gw-entry-count {
+  color: var(--fg2-muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.gw-entry-arrow {
+  color: var(--fg2-muted);
+  font-size: 18px;
+  line-height: 1;
+  text-align: right;
+}
+
+/* The Git modeless (v27 `gw-detail-window`): one header, four equal tabs, one scrolling body. The
+   shell body already pads; the tabs stay put and only the active body scrolls. */
+.gw-win-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.gw-win-sub {
+  overflow: hidden;
+  color: var(--fg2-muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10.5px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gw-win {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  font-family: var(--fg2-font);
+  font-size: 11px;
+  color: var(--fg2-text);
+}
+
+.gw-win-tabs {
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--fg2-line);
+}
+
+.gw-win-tab {
+  height: 40px;
+  min-width: 0;
+  padding: 0 4px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--fg2-muted);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gw-win-tab.is-active {
+  border-bottom-color: var(--fg2-blue);
+  color: var(--fg2-text);
+}
+
+.gw-win-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+  padding-top: 14px;
+  overflow: auto;
+}
+
+/* The `상태` tab (v27 `gw-detail-summary`, `gw-detail-row`): three numbers and four rows. */
+.gw-status-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.gw-status-metric {
+  padding: 11px 9px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: 8px;
   background: var(--fg2-control-surface);
+}
+
+.gw-status-metric b {
+  display: block;
+  font-size: 17px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.gw-status-metric span {
+  display: block;
+  margin-top: 5px;
+  color: var(--fg2-muted);
+  font-size: 10px;
+}
+
+.gw-status-rows {
+  margin: 0;
+}
+
+.gw-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 3px;
+  border-bottom: 1px solid var(--fg2-line);
+}
+
+.gw-status-row dt {
+  min-width: 84px;
+  color: var(--fg2-muted);
+}
+
+.gw-status-row dd {
+  min-width: 0;
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* flowgate.v02.0067 T#4 — the `Diff` tab (v27 `compareBase()` / `workDiff()`): the comparison list
+   with its search and pages, and the file detail. Both take the tab body's height: the list scrolls
+   in its viewport, the code in its own area — sideways too, so a long line never widens the window
+   or squeezes the line-number columns. */
+.gw-diff-list,
+.gw-diff {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.gw-diff-list > .gw-files-stats {
+  margin: 0;
+}
+
+.gw-diff-search {
+  flex: none;
+  width: 100%;
+  height: 35px;
+  padding: 0 11px;
+  font-size: 11px;
+}
+
+.gw-diff-files {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px;
+}
+
+.gw-diff-file {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 6px;
+  background: var(--fg2-control-surface);
+  color: var(--fg2-text);
+  font: 10.5px ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gw-diff-file:hover {
+  border-color: var(--fg2-control-hover-border);
+}
+
+.gw-diff-pages {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--fg2-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gw-diff-pages-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.gw-diff-pages .gw-act {
+  min-width: 64px;
+  height: 29px;
+  font-size: 11px;
+}
+
+.gw-diff-nav {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.gw-diff-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: 7px;
+  background: var(--fg2-control-surface);
+  color: var(--fg2-blue);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.gw-diff-back:hover {
+  border-color: var(--fg2-control-hover-border);
+}
+
+.gw-diff-back:focus-visible,
+.gw-diff-file:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: 2px;
+}
+
+/* `파일 경로` / `비교 기준`: the `상태` tab's label column (84px); the path is shown whole, wrapping. */
+.gw-diff-meta {
+  flex: none;
+  margin: 0;
+}
+
+.gw-diff-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 3px;
+  border-bottom: 1px solid var(--fg2-line);
+}
+
+.gw-diff-meta-row dt {
+  flex: 0 0 84px;
+  color: var(--fg2-muted);
+}
+
+.gw-diff-meta-row dd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  font-weight: 600;
+}
+
+.gw-diff-path {
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.gw-diff-code {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 88px;
+  padding: 6px 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--fg2-line);
+  border-radius: 8px;
+  background: var(--fg2-bg);
+  font: 11px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.gw-diff-line {
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  white-space: pre;
+}
+
+.gw-diff-line.is-add {
+  background: var(--fg2-status-success-bg);
+}
+
+.gw-diff-line.is-del {
+  background: var(--fg2-status-danger-bg);
+}
+
+.gw-diff-no {
+  flex: 0 0 42px;
+  padding-right: 6px;
+  color: var(--fg2-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.gw-diff-sign {
+  flex: 0 0 16px;
+  text-align: center;
+  user-select: none;
+}
+
+.gw-diff-text {
+  flex: none;
+  padding-right: 14px;
+}
+
+.gw-diff-note {
+  flex: none;
+  margin: 0;
+  padding: 12px 3px;
+  color: var(--fg2-muted);
+  font-size: 11px;
+}
+
+.gw-diff-note p {
+  margin: 0 0 6px;
+}
+
+.gw-diff-note.is-error {
+  color: var(--fg2-status-danger-fg);
+}
+
+.gw-diff-hint {
+  color: var(--fg2-muted);
 }

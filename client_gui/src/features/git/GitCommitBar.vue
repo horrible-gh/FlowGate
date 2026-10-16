@@ -9,6 +9,8 @@
         :aria-label="t('gui.git.worktree.message_placeholder')"
         :maxlength="WORKTREE_MESSAGE_MAX"
         :value="wt.state.message"
+        :disabled="inputDisabled"
+        :title="inputDisabled ? tip(reasons.commit, null) : undefined"
         @input="wt.setMessage(($event.target as HTMLInputElement).value)"
         @keydown.enter.prevent
       />
@@ -16,9 +18,9 @@
         type="button"
         class="gw-ai"
         data-test="git-commit-ai"
-        :disabled="reasons.ai.disabled"
+        :disabled="aiReason.disabled"
         :aria-label="t('gui.git.worktree.ai')"
-        :title="tip('ai', 'gui.git.worktree.ai')"
+        :title="tip(aiReason, 'gui.git.worktree.ai')"
         @click="onSuggest"
       >🤖</button>
       <button
@@ -26,7 +28,7 @@
         class="gw-act primary gw-commit-btn"
         data-test="git-commit"
         :disabled="reasons.commit.disabled"
-        :title="tip('commit', null)"
+        :title="tip(reasons.commit, null)"
         @click="onCommit"
       >{{ staged ? t('gui.git.worktree.commit_count', { n: staged }) : t('gui.git.worktree.commit') }}</button>
     </div>
@@ -52,10 +54,16 @@
 // AI 🤖 draft, `커밋 · M`. Always in the same place, folded list or not. Enter never commits; the
 // commit asks first with the E1 count and sends the index token that dialog showed (§3-3). Both
 // dialogs are bound to the context they were opened in (the snapshot / draft ticket).
+//
+// flowgate.v02.0067 T#2 — the bottom of the `파일 관리` tab (0067-R §4-5): with no Stage, or while the
+// commit cannot run for any reason but an empty message, the message, 🤖 and 커밋 are all disabled;
+// an empty message blocks 커밋 only. No Stage is not worth a line of its own (the button tooltip
+// still says it); other reasons keep their short line. The shared reasons stay as they are; this
+// area alone lets a commit block (empty message aside) close 🤖 too, with the commit's reason.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGitWorktree, WORKTREE_MESSAGE_MAX } from './gitWorktreeSession'
-import { reasonMessage, type WorktreeButton } from './worktreeReasons'
+import { reasonMessage, type WorktreeReason } from './worktreeReasons'
 
 const { t } = useI18n()
 const { worktree: wt, confirm } = useGitWorktree()
@@ -74,12 +82,26 @@ const suggestionLine = computed(() => {
 })
 
 const commitReason = computed(() => {
+  if (reasons.value.commit.code === 'no_staged') return null
   const message = reasonMessage(reasons.value.commit)
   return message ? t(message.key, message.params) : null
 })
 
-function tip(button: WorktreeButton, help: string | null): string | undefined {
-  const message = reasonMessage(reasons.value[button])
+// The commit is blocked by anything but the missing message (no Stage, read-only, 403, running, a
+// session, an E1 commit blocker, protected Stage): the whole area is closed for that reason.
+const areaBlock = computed<WorktreeReason | null>(() => {
+  const commit = reasons.value.commit
+  return commit.disabled && commit.code !== 'no_message' ? commit : null
+})
+
+// Typing is open exactly when only the message itself is missing (or nothing blocks).
+const inputDisabled = computed(() => areaBlock.value !== null)
+
+// 🤖 follows the area block first, then its own reason (no default AI, a suggest blocker).
+const aiReason = computed(() => areaBlock.value ?? reasons.value.ai)
+
+function tip(reason: WorktreeReason, help: string | null): string | undefined {
+  const message = reasonMessage(reason)
   if (message) return t(message.key, message.params)
   return help ? t(help) : undefined
 }
@@ -101,7 +123,7 @@ function onCommit(): void {
 // A typed message is replaced only after asking (§3-3 AI 🤖).
 function onSuggest(): void {
   const ticket = wt.ticket()
-  if (reasons.value.ai.disabled || !ticket) return
+  if (aiReason.value.disabled || !ticket) return
   if (!wt.state.message.trim()) {
     void wt.suggest(ticket)
     return

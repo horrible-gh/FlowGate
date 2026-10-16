@@ -22,6 +22,11 @@ import {
 // (C17), merge results incl. push_rejected (C18), the follow-up Push part (C19), Fetch (C20), the
 // no-workspace area (C22), the `Diff` pane intent (C14 b intent, C23 b·c), read-only / 403 (C25)
 // and the merge button after a revert (C28).
+// flowgate.v02.0067 T#3 — the tab body is no longer folded (no toggle, no header word): its count is
+// `미반영 커밋`, only E8-admitted targets are listed and the follow-up Push shows only for a merge that
+// really waits (DesignerGitPanelApply.0067 has the new rules).
+// flowgate.v02.0067 T#4 — a `Diff` row opens its diff in the same tab (no `open-diff` /
+// `git-center-diff-refresh`); the list pages by 16 with `이전` / `다음` (DesignerGitPanelDiff.0067).
 registerAppMessages(i18n)
 
 let wrapper: VueWrapper | null = null
@@ -97,28 +102,39 @@ async function confirmDialog() {
   await flushPromises()
 }
 
+// flowgate.v02.0067 T#1 — the worktree parts live in the Git modeless the Git tab entries open;
+// every tab stays mounted while it is open, the active one shown.
+const entry = (tab: string) => document.body.querySelector<HTMLElement>(`[data-test="git-worktree-entry"][data-tab="${tab}"]`)
+const windowTab = (tab: string) => document.body.querySelector<HTMLElement>(`[data-test="git-window-tab"][data-tab="${tab}"]`)
+const panel = (tab: string) => document.body.querySelector<HTMLElement>(`[data-test="git-window-panel"][data-tab="${tab}"]`)
+
+async function openTab(tab: string) {
+  await click(windowTab(tab))
+}
+
 async function openApply() {
-  await click('git-apply-toggle')
+  await click(entry('merge'))
 }
 
 describe('Base apply — first look, header word, controls (R §4, C5 d)', () => {
-  it('folded at first under the commit line; its header word is the E8 count of the chosen target', async () => {
+  it('the `Base 반영` tab shows its body at once; its count is the E8 count of the chosen target', async () => {
     const t = setup({ merge: manualMergeView({ aheadOfTarget: 3 }) })
     await mountPanel(t)
-    const area = q('git-worktree')!
+    // Not in the Git tab itself: the `Base 반영` entry opens the modeless on its tab (0067-R §2-4).
+    expect(q('git-apply')).toBeNull()
+    expect(text('git-worktree-entry-count')).toBe('1개')
+    await click(entry('merge'))
     const apply = q('git-apply')!
-    expect(apply.dataset.open).toBe('false')
-    expect(q('git-apply-toggle')?.getAttribute('aria-expanded')).toBe('false')
-    expect(q('git-apply-body')).toBeNull()
-    // The order of the area: changed files, commit line, Base apply.
-    const order = ['git-changes', 'git-commit-bar', 'git-apply'].map((s) => [...area.querySelectorAll('[data-test]')].indexOf(q(s)!))
-    expect(order).toEqual([...order].sort((a, b) => a - b))
-    expect(text('git-apply-toggle')).toContain('Base 반영')
-    expect(text('git-apply-status')).toBe('3개 커밋 미반영')
+    expect(panel('merge')!.contains(apply)).toBe(true)
+    expect(panel('files')!.contains(q('git-commit-bar'))).toBe(true)
+    // 0067 T#3: no fold toggle and no header word any more.
+    expect(q('git-apply-toggle')).toBeNull()
+    expect(q('git-apply-status')).toBeNull()
+    expect(text('git-apply-ahead')).toBe('3')
     expect(t.wt.source.loadTargetChanges).not.toHaveBeenCalled()
   })
 
-  it('opened: target (E8 targets, default marked, ineligible disabled with why), Fetch, 머지 후 Push, Diff · 상태, 머지 — no approval / commit button', async () => {
+  it('opened: target (E8-admitted targets, default marked), Fetch, 머지 후 Push, 머지 — no approval / commit button', async () => {
     const t = setup({
       merge: manualMergeView({
         targets: [
@@ -131,33 +147,31 @@ describe('Base apply — first look, header word, controls (R §4, C5 d)', () =>
     await mountPanel(t)
     await openApply()
     const options = qa('[data-test="git-apply-target"] option').map((o) => [(o as HTMLOptionElement).value, o.textContent?.trim(), (o as HTMLOptionElement).disabled])
+    // 0067 T#3: a target E8 does not admit (here remote-only) is not listed (R §5-4).
     expect(options).toEqual([
       ['v0.2', 'v0.2 (기본)', false],
       ['release', 'release', false],
-      ['ext', 'ext — 원격에만 있음', true],
     ])
     expect((q('git-apply-target') as HTMLSelectElement).value).toBe('v0.2')
     expect(q('git-apply-fetch')?.getAttribute('title')).toBe('원격 정보 갱신(Fetch) — 작업 파일과 로컬 브랜치는 바뀌지 않습니다')
     expect((q('git-apply-push-after') as HTMLInputElement).checked).toBe(false)
-    expect(text('git-apply-diff')).toBe('Diff')
-    expect(text('git-apply-state')).toBe('상태')
+    // `Diff` / `상태` are the modeless tabs now, not links of the Base apply body.
+    expect(q('git-apply-diff')).toBeNull()
+    expect(q('git-apply-state')).toBeNull()
     expect(text('git-apply-merge')).toBe('머지')
     expect(disabled('git-apply-merge')).toBe(false)
-    const body = q('git-apply-body')!.textContent ?? ''
+    const body = q('git-apply')!.textContent ?? ''
     expect(body).not.toMatch(/승인|커밋 ·|Commit/)
-    expect(q('git-apply-body')!.querySelector('[data-test="git-commit"]')).toBeNull()
-    // Folding again closes it; reopening keeps the choice.
-    await click('git-apply-toggle')
-    expect(q('git-apply-body')).toBeNull()
+    expect(q('git-apply')!.querySelector('[data-test="git-commit"]')).toBeNull()
   })
 })
 
 describe('Base apply — target choice (C15)', () => {
-  it('A→B: summary line and header say "확인 중", merge off with a progress mark; a late A answer changes nothing', async () => {
+  it('A→B: summary count is void and the header says "확인 중", merge off with a progress mark; a late A answer changes nothing', async () => {
     const t = setup()
     await mountPanel(t)
     await openApply()
-    expect(text('git-worktree-summary-merge')).toBe('v0.2 미반영 1')
+    expect(text('git-worktree-summary-merge')).toBe('1')
     const held: Array<ReturnType<typeof deferred<ManualMergeView>>> = []
     t.wt.source.loadManualMerge.mockImplementation(() => {
       const answer = deferred<ManualMergeView>()
@@ -166,19 +180,20 @@ describe('Base apply — target choice (C15)', () => {
     })
     await click('git-refresh')
     await choose('git-apply-target', 'release')
-    expect(text('git-worktree-summary-merge')).toBe('release 확인 중')
+    expect(text('git-worktree-summary-merge')).toBe('—')
     expect(text('git-worktree-summary')).not.toContain('Base 미반영')
-    expect(text('git-apply-status')).toBe('확인 중')
+    expect(text('git-apply-ahead')).toBe('—')
     expect(disabled('git-apply-merge')).toBe(true)
     expect(q('git-apply-checking')).not.toBeNull()
     expect(q('git-apply-reason')).toBeNull()
     held[0].resolve(manualMergeView({ aheadOfTarget: 9 }))
     await flushPromises()
-    expect(text('git-worktree-summary-merge')).toBe('release 확인 중')
+    expect(text('git-worktree-summary-merge')).toBe('—')
     held[1].resolve(manualMergeView({ aheadOfTarget: 4 }))
     await flushPromises()
-    expect(text('git-worktree-summary-merge')).toBe('release 미반영 4')
-    expect(text('git-apply-status')).toBe('4개 커밋 미반영')
+    expect(text('git-worktree-summary-merge')).toBe('4')
+    expect(text('git-worktree-summary')).not.toContain('release')
+    expect(text('git-apply-ahead')).toBe('4')
     expect(disabled('git-apply-merge')).toBe(false)
     // A non-default target shows the E8 preview warnings.
     expect(qa('[data-test="git-apply-warning"]')).toHaveLength(0)
@@ -269,9 +284,8 @@ describe('Base apply — 머지 / 머지 + Push (C16, C17)', () => {
     await openApply()
     expect(disabled('git-apply-merge')).toBe(false)
     expect(q('git-apply-reason')).toBeNull()
-    await click('git-apply-state')
-    expect(text('git-apply-info-graph')).toBe('열린 승인 노드 있음 — 머지를 막지 않음')
-    expect(text('git-apply-info-approval')).toBe('p.m.0001.0009-AC · pending_review')
+    await openTab('status')
+    expect(text('git-status-state')).toBe('1개 커밋 미반영')
     expect(document.body.textContent).not.toContain('승인 대기')
   })
 
@@ -289,9 +303,9 @@ describe('Base apply — 머지 / 머지 + Push (C16, C17)', () => {
     expect(text('git-apply-reason')).toBe(
       '미커밋 변경 4개 — 먼저 커밋하거나 되돌리세요 · Git 탭에서 처리할 수 없는 보호 파일 2개 — 작업자 또는 관리자에게 정리를 요청하세요',
     )
-    expect(text('git-apply-artifacts')).toBe('커밋되지 않는 도구 잔재 3개는 작업 공간에 남습니다.')
-    await click('git-apply-state')
-    expect(text('git-apply-info-uncommitted')).toBe('차단 4개 · 변경 2 · 표시되지 않는 파일 2 · 도구 잔재 3(차단 안 함)')
+    // 0067 T#3: no "uncommitted … stay" guidance line (R §5-1).
+    expect(q('git-apply-artifacts')).toBeNull()
+    expect(q('git-apply')!.textContent).not.toContain('도구 잔재')
   })
 })
 
@@ -321,7 +335,7 @@ describe('Base apply — merge results (C18)', () => {
     expect(q('git-conflict-card')).not.toBeNull()
     expect(text('git-apply-notice')).toContain('충돌 — 위 카드에서 해결하세요.')
     expect(q('git-worktree')).not.toBeNull()
-    expect(q('git-apply')?.dataset.open).toBe('true')
+    expect(q('git-apply')).not.toBeNull()
   })
 
   it('push_rejected (new merge): no "되돌려졌", re-reads, then "이번 머지는 남아 있지 않음"; no 0033 push failure card', async () => {
@@ -393,16 +407,16 @@ describe('Base apply — follow-up Push (C19)', () => {
     await mountPanel(t)
     await openApply()
     expect(q('git-result-push')).toBeNull()
-    expect(text('git-apply-status')).toBe('1개 커밋 미반영')
+    expect(text('git-apply-ahead')).toBe('1')
   })
 
-  it('unmeasured only: a disabled Push and its reason', async () => {
-    const t = setup({ results: mergeResults({ results: [mergeResultRow({ pushAvailable: false, pushBlockedReason: 'unmeasured' })] }) })
+  it('a row waiting behind the group Git job: a disabled Push and its reason (0067 T#3: unmeasured alone shows nothing)', async () => {
+    const t = setup({ results: mergeResults({ results: [mergeResultRow({ pushAvailable: false, pushBlockedReason: 'group_blocked' })] }) })
     await mountPanel(t)
     await openApply()
     expect(q('git-result-push')?.dataset.mode).toBe('blocked')
     expect(disabled('git-result-push-button')).toBe(true)
-    expect(text('git-result-push-reason')).toBe('원격 상태를 확인할 수 없음 — Fetch 후 다시')
+    expect(text('git-result-push-reason')).toBe('진행 중인 Git 작업 뒤에 Push 가능')
   })
 
   it('one candidate: its target and one Push; the dialog names it and the other Base merges; E11 sends the record only', async () => {
@@ -420,7 +434,6 @@ describe('Base apply — follow-up Push (C19)', () => {
       }),
     )
     await mountPanel(t)
-    expect(text('git-apply-status')).toBe('원격 미반영 1곳')
     await openApply()
     expect(q('git-result-push')?.dataset.mode).toBe('one')
     expect(text('git-result-push-label')).toBe('원격 미반영 · v0.2')
@@ -513,8 +526,12 @@ describe('Base apply — Fetch (C20), no workspace (C22), read-only / 403 (C25)'
     await mountPanel(t)
     expect(q('git-changes')).toBeNull()
     expect(q('git-commit-bar')).toBeNull()
-    expect(text('git-apply-status')).toBe('원격 미반영 1곳')
-    await openApply()
+    await click(entry('merge'))
+    expect(q('git-changes')).toBeNull()
+    expect(q('git-commit-bar')).toBeNull()
+    // 0067 T#3: one short line instead of the explanation, and no count without a workspace.
+    expect(text('git-apply-unavailable')).toBe('작업 공간 없음')
+    expect(q('git-apply-stats')).toBeNull()
     expect(q('git-apply-target')).toBeNull()
     expect(q('git-apply-merge')).toBeNull()
     expect(q('git-apply-push-after')).toBeNull()
@@ -531,7 +548,7 @@ describe('Base apply — Fetch (C20), no workspace (C22), read-only / 403 (C25)'
     expect([disabled('git-apply-merge'), disabled('git-result-push-button'), disabled('git-apply-fetch')]).toEqual([true, true, true])
     expect(text('git-apply-reason')).toBe('읽기 전용')
     expect(q('git-apply-fetch')?.getAttribute('title')).toBe('읽기 전용')
-    await click('git-apply-diff')
+    await openTab('diff')
     expect(t.wt.source.loadTargetChanges).toHaveBeenCalledTimes(1)
   })
 
@@ -544,11 +561,12 @@ describe('Base apply — Fetch (C20), no workspace (C22), read-only / 403 (C25)'
     await confirmDialog()
     expect(text('git-apply-reason')).toBe('권한 없음')
     expect(disabled('git-apply-fetch')).toBe(true)
+    await openTab('files')
     expect(disabled('git-commit')).toBe(true)
   })
 })
 
-describe('Base apply — `상태` / `Diff` panes (C14 b intent, C23 b·c)', () => {
+describe('Base apply — the `Diff` / `상태` tabs of the Git modeless (C14 b intent, C23 b·c)', () => {
   const list = (target: string, paths: Array<[string, string]>): FlowChangeSet => ({
     groupId: G,
     branch: 'flowgate_v02_0008',
@@ -557,74 +575,90 @@ describe('Base apply — `상태` / `Diff` panes (C14 b intent, C23 b·c)', () =
     changes: paths.map(([path, letter]) => ({ path, status: letter })),
   })
 
-  it('`Diff`: the chosen target list; a row raises open-diff with that target as compareBase', async () => {
+  it('`Diff`: the chosen target list; a row opens its diff against that target in the tab; a target change closes it', async () => {
     const t = setup({ targetChanges: { 'v0.2': list('v0.2', [['src/a.ts', 'M']]), release: list('release', [['r.ts', 'A'], ['x.ts', 'R']]) } })
     const w = await mountPanel(t)
     await openApply()
-    await click('git-apply-diff')
+    await openTab('diff')
     expect(text('git-apply-diff-title')).toBe('v0.2 기준 변경 1개')
+    await openTab('merge')
     await choose('git-apply-target', 'release')
+    await openTab('diff')
     expect(t.wt.source.loadTargetChanges.mock.calls.map((c) => c[2])).toEqual(['v0.2', 'release'])
     expect(qa('[data-test="git-apply-diff-row"]').map((r) => r.dataset.path)).toEqual(['r.ts', 'x.ts'])
     await click(qa('[data-test="git-apply-diff-row"]')[0])
+    expect(text('git-center-diff-path')).toBe('r.ts')
+    expect(text('git-center-diff-compare')).toBe('release 기준 ↔ 작업 파일')
+    await click('git-center-diff-back')
+    expect(q('git-window')?.dataset.tab).toBe('diff')
     await click(qa('[data-test="git-apply-diff-row"]')[1])
-    expect(w.emitted('open-diff')).toEqual([
-      [{ projectId: P, groupId: G, mergeId: null, path: 'r.ts', status: 'A', origin: 'worktree', diffSource: 'group', compareBase: 'release' }],
-      [{ projectId: P, groupId: G, mergeId: null, path: 'x.ts', status: null, origin: 'worktree', diffSource: 'group', compareBase: 'release' }],
+    expect(t.wt.source.loadFileDiff.mock.calls).toEqual([
+      [P, G, 'r.ts', 'release'],
+      [P, G, 'x.ts', 'release'],
     ])
-    // (c) the target change asked the Shell to close a comparison Center Diff.
-    expect(w.emitted('git-center-diff-refresh')).toEqual([[{ groupId: G, closeCompare: true }]])
+    expect(w.emitted('open-diff')).toBeUndefined()
+    // (c) a target change closes the comparison diff: the new target's list is back.
+    await openTab('merge')
+    await choose('git-apply-target', 'v0.2')
+    await openTab('diff')
+    expect(q('git-center-diff')).toBeNull()
+    expect(qa('[data-test="git-apply-diff-row"]').map((r) => r.dataset.path)).toEqual(['src/a.ts'])
+    expect(w.emitted('git-center-diff-refresh')).toBeUndefined()
   })
 
-  it('`Diff` shows a page and `더 보기`; `상태` and `Diff` are exclusive', async () => {
+  it('`Diff` pages by 16 with `이전` / `다음`; another tab and back keeps the page without reading again', async () => {
     const paths = Array.from({ length: 23 }, (_, i) => [`f${String(i).padStart(2, '0')}.ts`, 'M'] as [string, string])
     const t = setup({ targetChanges: { 'v0.2': list('v0.2', paths) } })
     await mountPanel(t)
-    await openApply()
-    await click('git-apply-diff')
-    expect(qa('[data-test="git-apply-diff-row"]')).toHaveLength(10)
-    expect(text('git-apply-diff-more')).toBe('13개 더 있음 · 10개씩 더 보기')
-    await click('git-apply-diff-more')
-    expect(qa('[data-test="git-apply-diff-row"]')).toHaveLength(20)
-    await click('git-apply-state')
-    expect(q('git-apply-info')?.dataset.pane).toBe('status')
-    expect(q('git-apply-diff-list')).toBeNull()
+    await click(entry('diff'))
+    expect(qa('[data-test="git-apply-diff-row"]')).toHaveLength(16)
+    expect(text('git-apply-diff-range')).toBe('1–16 / 23')
+    expect([disabled('git-apply-diff-prev'), disabled('git-apply-diff-next')]).toEqual([true, false])
+    expect(q('git-apply-diff-more')).toBeNull()
+    await click('git-apply-diff-next')
+    expect(qa('[data-test="git-apply-diff-row"]').map((r) => r.dataset.path)).toEqual(paths.slice(16).map(([p]) => p))
+    expect(text('git-apply-diff-range')).toBe('17–23 / 23')
+    expect([disabled('git-apply-diff-prev'), disabled('git-apply-diff-next')]).toEqual([false, true])
+    await openTab('status')
+    expect(panel('status')!.style.display).toBe('')
+    expect(panel('diff')!.style.display).toBe('none')
+    await openTab('diff')
+    expect(qa('[data-test="git-apply-diff-row"]')).toHaveLength(7)
+    expect(t.wt.source.loadTargetChanges).toHaveBeenCalledTimes(1)
   })
 
-  it('`상태` of the project Base: E8 values, git/status ahead / behind and unmapped merges (tooltip)', async () => {
-    const t = setup(
-      {},
-      status({
-        aheadCount: 2,
-        behindCount: 0,
-        unpushed: {
-          count: 2,
-          commitCount: 4,
-          measured: true,
-          remoteBranchMissing: false,
-          localCommitCount: null,
-          merges: [
-            { mergeCommit: 'abc1234', groupId: null, subject: 'm', mergedAt: null, canUnmerge: false, blockedReason: null },
-            { mergeCommit: 'def5678', groupId: 'p.m.0003', subject: 'n', mergedAt: null, canUnmerge: true, blockedReason: null },
-          ],
-        },
-      }),
-    )
+  it('`상태`: the v27 numbers and rows from the values already read; a voided judgment never shows the old ones', async () => {
+    const t = setup({ merge: manualMergeView({ aheadOfTarget: 2 }) })
     await mountPanel(t)
-    await openApply()
-    await click('git-apply-state')
-    expect(text('git-apply-info-target')).toBe('v0.2 (기본)')
-    expect(text('git-apply-info-ahead')).toBe('1')
-    expect(text('git-apply-info-base')).toBe('앞섬 2 · 뒤처짐 0 · 미Push 머지 2개')
-    const merges = qa('[data-test="git-apply-info-unpushed"] li')
-    expect(merges.map((m) => [...m.children].map((c) => c.textContent).join(' '))).toEqual(['abc1234 그룹 미확인 머지', 'def5678 p.m.0003'])
-    expect(merges[0].getAttribute('title')).toBe('수동 머지 커밋은 그룹이 기록되지 않아 그룹 미확인으로 표시됩니다.')
-    // A voided judgment never shows the old values.
+    await click(entry('status'))
+    expect([text('git-status-changed'), text('git-status-staged'), text('git-status-ahead')]).toEqual(['1', '0', '2'])
+    expect(text('git-status-worktree')).toBe('flowgate_v02_0008')
+    expect(text('git-status-base')).toBe('v0.2')
+    expect(text('git-status-target')).toBe('v0.2 (기본)')
+    expect(text('git-status-state')).toBe('2개 커밋 미반영')
+    // Nothing beyond the v27 items (0067-R §7).
+    expect(qa('[data-test="git-status"] .gw-status-metric')).toHaveLength(3)
+    expect(qa('[data-test="git-status"] .gw-status-row')).toHaveLength(4)
     const held = deferred<ManualMergeView>()
     t.wt.source.loadManualMerge.mockImplementationOnce(() => held.promise)
+    await openTab('merge')
     await choose('git-apply-target', 'release')
-    expect(q('git-apply-info-loading')).not.toBeNull()
-    expect(q('git-apply-info-status')).toBeNull()
+    await openTab('status')
+    expect(text('git-status-ahead')).toBe('—')
+    expect(text('git-status-target')).toBe('release')
+    expect(text('git-status-state')).toBe('확인 중')
+    held.resolve(manualMergeView({ aheadOfTarget: 5 }))
+    await flushPromises()
+    expect(text('git-status-ahead')).toBe('5')
+  })
+
+  it('`상태`: a failed E8 read says so', async () => {
+    const t = setup()
+    t.wt.source.loadManualMerge.mockRejectedValue(gitError(500, 'git_error'))
+    await mountPanel(t)
+    await click(entry('status'))
+    expect(text('git-status-ahead')).toBe('—')
+    expect(text('git-status-failed')).toBe('머지 판정을 읽지 못했습니다.')
   })
 })
 
@@ -643,18 +677,19 @@ describe('Base apply — the merge button after a revert (C28)', () => {
     expect(disabled('git-apply-merge')).toBe(true)
     expect(text('git-apply-reason')).toBe('미커밋 변경 1개 — 먼저 커밋하거나 되돌리세요')
     t.wt.db.merge = manualMergeView({ aheadOfTarget: 2 })
-    await click('git-changes-toggle')
+    await openTab('files')
     const revert = document.body.querySelector<HTMLElement>('[data-test="git-row"][data-path="src/a.ts"] [data-test="git-row-revert"]')
     await click(revert)
     await confirmDialog()
+    await openTab('merge')
     expect(disabled('git-apply-merge')).toBe(false)
     expect(q('git-apply-reason')).toBeNull()
-    expect(text('git-apply-status')).toBe('2개 커밋 미반영')
+    expect(text('git-apply-ahead')).toBe('2')
   })
 })
 
 describe('Base apply — a Flow switch (C23 a for the apply part)', () => {
-  it('folds the area, unchecks 머지 후 Push and closes a merge dialog', async () => {
+  it('turns 머지 후 Push OFF and closes a merge dialog and the Git modeless', async () => {
     const t = setup()
     const w = await mountPanel(t)
     await openApply()
@@ -664,9 +699,11 @@ describe('Base apply — a Flow switch (C23 a for the apply part)', () => {
     await w.setProps({ flow: { groupId: 'p.m.0002', name: 'B' } })
     await flushPromises()
     expect(dialogOpen()).toBe(false)
-    expect(q('git-apply')?.dataset.open).toBe('false')
-    await openApply()
+    // 0067 T#1: another Flow is another worktree — the Git modeless closes too.
+    expect(q('git-window')).toBeNull()
+    await click(entry('merge'))
     expect((q('git-apply-push-after') as HTMLInputElement).checked).toBe(false)
+    expect(text('git-apply-merge')).toBe('머지')
     expect(t.wt.source.manualMerge).not.toHaveBeenCalled()
   })
 })
@@ -677,7 +714,7 @@ describe('Base apply — no branch input', () => {
     const t = setup()
     await mountPanel(t)
     await openApply()
-    expect(q('git-apply-body')!.querySelectorAll('input[type="text"], input:not([type])')).toHaveLength(0)
+    expect(q('git-apply')!.querySelectorAll('input[type="text"], input:not([type])')).toHaveLength(0)
   })
 })
 

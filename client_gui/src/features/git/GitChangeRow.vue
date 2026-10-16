@@ -73,6 +73,7 @@
 // may do is the server's `can*` flags only — nothing is guessed from the path. The name opens the
 // file's Center Diff; that is a read and stays open to read-only users too. The 0033 GitFileRow
 // is a card row and is not used here.
+// flowgate.v02.0067 T#4 — that diff is the Git modeless `Diff` tab detail; its `목록으로` comes back here.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGitWorktree } from './gitWorktreeSession'

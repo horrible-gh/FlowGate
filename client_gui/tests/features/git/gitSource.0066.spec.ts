@@ -74,6 +74,30 @@ describe('createHttpGitSource().worktree', () => {
     expect(loadFlowChanges).toHaveBeenCalledWith(P, G, { base: 'release' })
   })
 
+  // flowgate.v02.0067 T#4 — the Git modeless `Diff` tab detail reads through the source too.
+  it('reads a group file diff through the existing project /diff loader; base only for a compared target', async () => {
+    const store = useProjectStore()
+    const diff = {
+      groupId: G,
+      branch: 'flow',
+      commit: null,
+      baseBranch: 'release',
+      mergeBase: 'f1',
+      path: 'src/a.ts',
+      status: 'M' as const,
+      old: { exists: true, binary: false, truncated: false, size: 1, content: 'a' },
+      new: { exists: true, binary: false, truncated: false, size: 1, content: 'b' },
+    }
+    const loadFlowFileDiff = vi.spyOn(store, 'loadFlowFileDiff').mockResolvedValue(diff)
+    const worktree = createHttpGitSource().worktree as GitWorktreeSource
+    await expect(worktree.loadFileDiff(P, G, 'src/a.ts', 'release')).resolves.toBe(diff)
+    await worktree.loadFileDiff(P, G, 'src/a.ts', null)
+    expect(loadFlowFileDiff.mock.calls).toEqual([
+      [P, G, 'src/a.ts', { base: 'release' }],
+      [P, G, 'src/a.ts', {}],
+    ])
+  })
+
   it('keeps every existing member of the HTTP source', () => {
     const source = createHttpGitSource()
     expect(source.finalize).toBe(api.finalizeGroup)

@@ -8,7 +8,7 @@
 // `worktree` member: the worktree area appears only for a source that has one, so a test
 // source without it keeps the 0033 / 0065 behaviour unchanged (0066 D#2 §2-3, §3-1).
 import { useProjectStore } from '@/features/project'
-import type { BaseFileDiff, FlowAiActivity, FlowChangeSet, MergeReviewFileDiff, ProjectGitStatus } from '@/features/project'
+import type { BaseFileDiff, FlowAiActivity, FlowChangeSet, FlowFileDiff, MergeReviewFileDiff, ProjectGitStatus } from '@/features/project'
 import * as api from './api'
 import type {
   GitApproveResult,
@@ -69,6 +69,11 @@ export interface GitWorktreeSource {
   fetchRefs(projectId: string, groupId: string | null): Promise<RefsFetchResult>
   /** The existing /changes?base= list against one target (the `Diff` panel). */
   loadTargetChanges(projectId: string, groupId: string, target: string): Promise<FlowChangeSet>
+  /**
+   * flowgate.v02.0067 T#4 — the existing group file diff (GET .../groups/{gid}/diff?path=[&base=]) the
+   * Git modeless `Diff` tab shows; `compareBase` null = the work base floor (no `base` sent).
+   */
+  loadFileDiff(projectId: string, groupId: string, path: string, compareBase: string | null): Promise<FlowFileDiff>
 }
 
 export interface GitSource {
@@ -158,6 +163,8 @@ export function createHttpGitSource(): GitSource {
       pushMergeResult: api.pushMergeResult,
       fetchRefs: api.fetchRefs,
       loadTargetChanges: (projectId, groupId, target) => projectStore.loadFlowChanges(projectId, groupId, { base: target }),
+      loadFileDiff: (projectId, groupId, path, compareBase) =>
+        projectStore.loadFlowFileDiff(projectId, groupId, path, compareBase ? { base: compareBase } : {}),
     },
   }
 }

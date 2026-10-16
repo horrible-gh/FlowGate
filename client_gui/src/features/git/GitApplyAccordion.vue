@@ -1,90 +1,23 @@
 <template>
-  <div class="gw-apply" data-test="git-apply" :data-open="open ? 'true' : 'false'">
-    <button
-      type="button"
-      class="gw-apply-toggle"
-      data-test="git-apply-toggle"
-      :aria-expanded="open ? 'true' : 'false'"
-      @click="wt.toggleApply()"
-    >
-      <span class="gw-apply-title">↗ {{ t('gui.git.apply.title') }}</span>
-      <span v-if="summary" class="gw-apply-status" data-test="git-apply-status">{{ summary }}</span>
-      <span class="gw-caret" aria-hidden="true">{{ open ? '▴' : '▾' }}</span>
-    </button>
-
-    <div v-if="open" class="gw-apply-body" data-test="git-apply-body">
-      <template v-if="workspace">
-        <div class="gw-merge-target">
-          <label :for="selectId">{{ t('gui.git.apply.target_label') }}</label>
-          <select
-            :id="selectId"
-            class="gw-select"
-            data-test="git-apply-target"
-            :aria-label="t('gui.git.apply.target_aria')"
-            :value="wt.state.mergeTarget ?? ''"
-            :disabled="!targets.length"
-            @change="onTarget(($event.target as HTMLSelectElement).value)"
-          >
-            <option v-if="!wt.state.mergeTarget" value="" disabled>{{ t('gui.git.apply.target_none') }}</option>
-            <option v-for="target in targets" :key="target.name" :value="target.name" :disabled="!target.eligible">
-              {{ targetLabel(target) }}
-            </option>
-          </select>
-          <button
-            type="button"
-            class="gw-iconbtn gw-fetch"
-            data-test="git-apply-fetch"
-            :disabled="reasons.fetch.disabled"
-            :aria-label="t('gui.git.apply.fetch')"
-            :title="tip('fetch', 'gui.git.apply.fetch_tip')"
-            @click="wt.fetchRemote()"
-          >⟳</button>
-        </div>
-        <p v-for="warning in warnings" :key="warning" class="gw-line is-warn" data-test="git-apply-warning">⚠ {{ warning }}</p>
-        <div class="gw-merge-options">
-          <label>
-            <input
-              type="checkbox"
-              data-test="git-apply-push-after"
-              :checked="wt.state.pushAfterMerge"
-              @change="wt.setPushAfterMerge(($event.target as HTMLInputElement).checked)"
-            />
-            <span>{{ t('gui.git.apply.push_after') }}</span>
-          </label>
-          <button
-            type="button"
-            class="gw-mini-link"
-            :class="{ 'is-on': wt.state.infoPane === 'diff' }"
-            data-test="git-apply-diff"
-            :aria-pressed="wt.state.infoPane === 'diff' ? 'true' : 'false'"
-            @click="wt.toggleInfo('diff')"
-          >{{ t('gui.git.apply.diff') }}</button>
-          <button
-            type="button"
-            class="gw-mini-link"
-            :class="{ 'is-on': wt.state.infoPane === 'status' }"
-            data-test="git-apply-state"
-            :aria-pressed="wt.state.infoPane === 'status' ? 'true' : 'false'"
-            @click="wt.toggleInfo('status')"
-          >{{ t('gui.git.apply.status') }}</button>
-        </div>
-        <GitApplyInfo v-if="wt.state.infoPane" />
-        <div class="gw-apply-actions">
-          <button
-            type="button"
-            class="gw-act primary"
-            data-test="git-apply-merge"
-            :disabled="reasons.merge.disabled"
-            :title="tip('merge', null)"
-            @click="onMerge"
-          >{{ wt.state.pushAfterMerge ? t('gui.git.apply.merge_push') : t('gui.git.apply.merge') }}</button>
-          <span v-if="checking" class="gw-progress" data-test="git-apply-checking">{{ t('gui.git.apply.checking') }}</span>
-        </div>
-        <p v-if="mergeReason" class="gw-line is-muted" data-test="git-apply-reason">{{ mergeReason }}</p>
-        <p v-if="artifacts" class="gw-line is-muted" data-test="git-apply-artifacts">{{ t('gui.git.apply.artifacts_info', { n: artifacts }) }}</p>
-      </template>
-      <div v-else class="gw-merge-target">
-        <span class="gw-grow gw-line is-muted">{{ t('gui.git.apply.fetch_only') }}</span>
+  <div class="gw-apply" data-test="git-apply">
+    <template v-if="workspace">
+      <div class="gw-files-stats" data-test="git-apply-stats">
+        <span>{{ t('gui.git.worktree.status.ahead') }}<strong data-test="git-apply-ahead">{{ ahead ?? '—' }}</strong></span>
+        <span v-if="checking" class="gw-progress" data-test="git-apply-checking">{{ t('gui.git.apply.checking') }}</span>
+      </div>
+      <div class="gw-merge-field" data-test="git-apply-target-row">
+        <label :for="selectId">{{ t('gui.git.apply.target_label') }}</label>
+        <select
+          :id="selectId"
+          class="gw-select"
+          data-test="git-apply-target"
+          :value="chosen ?? ''"
+          :disabled="!targets.length"
+          @change="onTarget(($event.target as HTMLSelectElement).value)"
+        >
+          <option v-if="!chosen" value="" disabled>{{ t('gui.git.apply.target_none') }}</option>
+          <option v-for="target in targets" :key="target.name" :value="target.name">{{ targetLabel(target) }}</option>
+        </select>
         <button
           type="button"
           class="gw-iconbtn gw-fetch"
@@ -95,71 +28,103 @@
           @click="wt.fetchRemote()"
         >⟳</button>
       </div>
-      <p v-if="notice" class="gw-line" :class="{ 'is-error': notice.tone === 'error' }" data-test="git-apply-notice">
-        <span>{{ t(`gui.git.worktree.notice.${notice.code}`, { ...(notice.params ?? {}) }) }}</span>
-        <button type="button" class="gw-link" :aria-label="t('gui.git.worktree.dismiss')" @click="wt.dismissNotice('apply')">×</button>
-      </p>
-      <p v-if="rejectLine" class="gw-line" data-test="git-apply-reject-hint">{{ rejectLine }}</p>
-      <GitMergeResultPush />
+      <label class="gw-merge-switch-row" data-test="git-apply-push-row" :for="switchId">
+        <span>{{ t('gui.git.apply.push_after') }}</span>
+        <span class="gw-merge-switch">
+          <input
+            :id="switchId"
+            type="checkbox"
+            role="switch"
+            data-test="git-apply-push-after"
+            :checked="wt.state.pushAfterMerge"
+            @change="wt.setPushAfterMerge(($event.target as HTMLInputElement).checked)"
+          />
+          <span class="gw-merge-switch-track" aria-hidden="true" />
+        </span>
+      </label>
+      <p v-for="warning in warnings" :key="warning" class="gw-line is-warn" data-test="git-apply-warning">⚠ {{ warning }}</p>
+      <button
+        type="button"
+        class="gw-act primary gw-merge-submit"
+        data-test="git-apply-merge"
+        :disabled="reasons.merge.disabled"
+        :title="tip('merge', null)"
+        @click="onMerge"
+      >{{ wt.state.pushAfterMerge ? t('gui.git.apply.merge_push') : t('gui.git.apply.merge') }}</button>
+      <p v-if="mergeReason" class="gw-line is-muted" data-test="git-apply-reason">{{ mergeReason }}</p>
+    </template>
+    <div v-else class="gw-merge-field">
+      <span class="gw-merge-field-wide gw-line is-muted" data-test="git-apply-unavailable">{{ t('gui.git.reason.worktree_unavailable') }}</span>
+      <button
+        type="button"
+        class="gw-iconbtn gw-fetch"
+        data-test="git-apply-fetch"
+        :disabled="reasons.fetch.disabled"
+        :aria-label="t('gui.git.apply.fetch')"
+        :title="tip('fetch', 'gui.git.apply.fetch_tip')"
+        @click="wt.fetchRemote()"
+      >⟳</button>
     </div>
+    <p v-if="notice" class="gw-line" :class="{ 'is-error': notice.tone === 'error' }" data-test="git-apply-notice">
+      <span>{{ t(`gui.git.worktree.notice.${notice.code}`, { ...(notice.params ?? {}) }) }}</span>
+      <button type="button" class="gw-link" :aria-label="t('gui.git.worktree.dismiss')" @click="wt.dismissNotice('apply')">×</button>
+    </p>
+    <p v-if="rejectLine" class="gw-line" data-test="git-apply-reject-hint">{{ rejectLine }}</p>
+    <GitMergeResultPush />
   </div>
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0066 T#7 — the folded `Base 반영` accordion (0066 D#2 §3-4, §6-4). Its header says
-// one word of state even folded; opened: the merge target (E8 `targets[]` only, never a typed or
-// fixed branch), the small Fetch icon (E12 only), `머지 후 Push`, the `Diff` / `상태` panes, the
-// `머지` / `머지 + Push` button with its one reason, and the follow-up Push part. No commit and no
-// approval button: committing is the commit line's, approving is the approval flow's. Without a
+// flowgate.v02.0066 T#7 — the Base apply part (0066 D#2 §3-4, §6-4): the merge target (E8
+// `targets[]` only, never a typed or fixed branch), the small Fetch icon (E12 only), `머지 후 Push`,
+// the `머지` / `머지 + Push` button with its one reason, and the follow-up Push part. No commit and
+// no approval button: committing is the commit line's, approving is the approval flow's. Without a
 // workspace (W2) only Fetch and the follow-up Push stay. Every value is a server answer.
+// flowgate.v02.0067 T#1 — it is the `Base 반영` tab body of the Git modeless; its `Diff` / `상태`
+// panes left for the window's own `Diff` / `상태` tabs (GitApplyInfo, GitWorktreeStatus).
+// flowgate.v02.0067 T#3 — the v27 `Base 반영` body (R §5, `modalMergeHTML`), no longer folded: the
+// `미반영 커밋` count alone on top (the same E8 number as the Git tab), the merge target and the
+// `머지 후 Push` switch (ON/OFF, OFF at first) on one label column and one input start column, then
+// one full-width `머지` / `머지 + Push`. Only the targets E8 admits are listed (mergeTargetChoices —
+// internal work branches by the server's `internal_slot`, never by a name prefix). The merge
+// judgment, the dialogs, Fetch and the follow-up Push are the session's, unchanged.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import GitApplyInfo from './GitApplyInfo.vue'
 import GitMergeResultPush from './GitMergeResultPush.vue'
-import { useGitWorktree, type WorktreeApplySummary } from './gitWorktreeSession'
+import { useGitWorktree } from './gitWorktreeSession'
 import type { ManualMergeTarget } from './types'
-import { reasonMessage, type WorktreeButton } from './worktreeReasons'
+import { mergeTargetChoices, reasonMessage, type WorktreeButton } from './worktreeReasons'
 
 const { t } = useI18n()
 const { worktree: wt, confirm } = useGitWorktree()
 
-const selectId = `gw-merge-target-${Math.random().toString(36).slice(2, 8)}`
-const open = computed(() => wt.state.applyOpen)
+const uid = Math.random().toString(36).slice(2, 8)
+const selectId = `gw-merge-target-${uid}`
+const switchId = `gw-merge-push-${uid}`
 const workspace = computed(() => wt.state.status?.worktreeAvailable === true)
 const reasons = computed(() => wt.reasons.value)
-const targets = computed(() => wt.state.mergeTargets as ManualMergeTarget[])
+const targets = computed(() => mergeTargetChoices(wt.state.mergeTargets as ManualMergeTarget[]))
 const checking = computed(() => wt.state.mergeLoad === 'loading')
 const notice = computed(() => wt.state.notices.apply ?? null)
 
-const SUMMARY_KEYS: Record<WorktreeApplySummary['kind'], string> = {
-  merging: 'gui.git.apply.summary.merging',
-  conflict: 'gui.git.apply.summary.conflict',
-  remote_pending: 'gui.git.apply.summary.remote_pending',
-  checking: 'gui.git.apply.summary.checking',
-  ahead: 'gui.git.apply.summary.ahead',
-  recovery: 'gui.git.apply.summary.recovery',
-  nothing: 'gui.git.apply.summary.nothing',
-  unknown: 'gui.git.apply.summary.unknown',
-}
-
-const summary = computed(() => {
-  const s = wt.applySummary.value
-  return s ? t(SUMMARY_KEYS[s.kind], { n: s.n ?? 0 }) : null
+// The chosen target as the choice shows it: one the list does not offer reads as "대상 없음".
+const chosen = computed(() => {
+  const target = wt.state.mergeTarget
+  return target && targets.value.some((x) => x.name === target) ? target : null
 })
 
-const TARGET_REASONS: Record<string, string> = {
-  remote_only: 'gui.git.apply.target_reason.remote_only',
-  internal_slot: 'gui.git.apply.target_reason.internal_slot',
-  workspace_busy: 'gui.git.apply.target_reason.workspace_busy',
-  owner_mismatch: 'gui.git.apply.target_reason.owner_mismatch',
-}
+// The E8 count of the chosen target (0066 D#2 §6-1), as on the Git tab: unknown while it is void
+// or being checked.
+const ahead = computed(() => {
+  if (checking.value) return null
+  const merge = wt.state.merge
+  if (!merge || !wt.state.mergeTarget) return null
+  return merge.aheadOfTarget
+})
 
-// "(기본)" on the work base; a target that cannot be chosen says why.
+// "(기본)" on the work base.
 function targetLabel(target: ManualMergeTarget): string {
-  const name = target.isWorkBase ? t('gui.git.apply.target_default', { name: target.name }) : target.name
-  if (target.eligible) return name
-  const key = TARGET_REASONS[target.blockedReason ?? ''] ?? 'gui.git.apply.target_reason.unknown'
-  return `${name} — ${t(key)}`
+  return target.isWorkBase ? t('gui.git.apply.target_default', { name: target.name }) : target.name
 }
 
 function onTarget(value: string): void {
@@ -174,15 +139,17 @@ const WARNING_KEYS: Record<string, string> = {
 // The E8 preview warnings of a target other than the work base, one line each (§3-4(2)).
 const warnings = computed(() => {
   const merge = wt.state.merge
-  const target = targets.value.find((x) => x.name === wt.state.mergeTarget)
+  const target = wt.state.mergeTargets.find((x) => x.name === wt.state.mergeTarget)
   if (!merge?.preview || !target || target.isWorkBase) return []
   return merge.preview.warnings.filter((w) => w in WARNING_KEYS).map((w) => t(WARNING_KEYS[w]))
 })
 
-// New tool artifacts never block a merge: they stay in the workspace (information only).
-const artifacts = computed(() => wt.state.merge?.uncommitted?.counts.excluded_new_untracked ?? 0)
+// 0067 R §1 / §2-5: "nothing to merge" and "no target" only repeat the count and the choice above,
+// so they stay in the button's tooltip; every other reason keeps its one line.
+const QUIET_REASONS: readonly string[] = ['nothing_to_merge', 'no_target']
 
 const mergeReason = computed(() => {
+  if (QUIET_REASONS.includes(reasons.value.merge.code ?? '')) return null
   const message = reasonMessage(reasons.value.merge)
   return message ? t(message.key, message.params) : null
 })

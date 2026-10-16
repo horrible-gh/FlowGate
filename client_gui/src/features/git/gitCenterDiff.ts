@@ -1,10 +1,12 @@
-// flowgate.v02.0066 — Center Diff: the single owner of the one group file diff the Designer Center
-// shows (0066 D#2 §2-2, §3-10). The Designer Shell creates it and it lives and dies with the Shell
-// (not a Pinia store). It opens only worktree intents of the Shell's current project and Flow
-// group, reads them through the existing group diff loader (GET .../groups/{gid}/diff) and drops
-// any answer that is not for the latest request of the diff still open.
+// flowgate.v02.0066 — Center Diff: the single owner of the one group file diff on screen (0066 D#2
+// §2-2, §3-10), not a Pinia store. It opens only worktree intents of the current project and Flow
+// group, reads them through the group diff loader (GET .../groups/{gid}/diff) and drops any answer
+// that is not for the latest request of the diff still open.
+// flowgate.v02.0067 T#4 — it is the detail of the Git modeless `Diff` tab (0067-R §6), no longer a
+// Designer Center screen: DesignerGitPanel owns it for its lifetime and hands it the GitSource read
+// (`worktree.loadFileDiff`).
 import { reactive, readonly, type DeepReadonly } from 'vue'
-import { useProjectStore, type FlowFileDiff } from '@/features/project'
+import type { FlowFileDiff } from '@/features/project'
 import { gitErrorOf } from './api'
 import type { CenterDiffError, CenterDiffLoad, CenterDiffTarget, GitCenterDiffRefresh, GitDiffIntent } from './types'
 
@@ -17,7 +19,7 @@ export type CenterDiffLoader = (
 ) => Promise<FlowFileDiff>
 
 export interface CenterDiffState {
-  // The Shell's project and active Flow group; an intent of another one is not opened.
+  // The panel's project and active Flow group; an intent of another one is not opened.
   projectId: string | null
   groupId: string | null
   open: CenterDiffTarget | null
@@ -28,7 +30,7 @@ export interface CenterDiffState {
 
 export interface GitCenterDiffSession {
   readonly state: DeepReadonly<CenterDiffState>
-  /** The Shell's work target; a change of either closes the diff. */
+  /** The panel's work target; a change of either closes the diff. */
   setContext(projectId: string | null, groupId: string | null): void
   /** An `open-diff` intent: only origin worktree / diffSource group of the current context opens. */
   open(intent: GitDiffIntent): void
@@ -40,7 +42,7 @@ export interface GitCenterDiffSession {
 }
 
 export interface GitCenterDiffOptions {
-  loadFileDiff?: CenterDiffLoader
+  loadFileDiff: CenterDiffLoader
 }
 
 const FLOOR_CODES: readonly string[] = ['group_work_base_unverified', 'group_work_base_diverged']
@@ -57,11 +59,8 @@ export function centerDiffError(error: unknown): CenterDiffError {
   return { kind: 'failed', code: code ?? (err.status !== null ? String(err.status) : null) }
 }
 
-export function createGitCenterDiff(options: GitCenterDiffOptions = {}): GitCenterDiffSession {
-  const loadFileDiff: CenterDiffLoader =
-    options.loadFileDiff ??
-    ((projectId, groupId, path, compareBase) =>
-      useProjectStore().loadFlowFileDiff(projectId, groupId, path, compareBase ? { base: compareBase } : {}))
+export function createGitCenterDiff(options: GitCenterDiffOptions): GitCenterDiffSession {
+  const { loadFileDiff } = options
 
   const state = reactive<CenterDiffState>({
     projectId: null,
