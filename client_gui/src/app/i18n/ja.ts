@@ -98,6 +98,7 @@ export default {
       close_tab: '{name} を閉じる',
       graph_loading: 'グラフを読み込み中',
       graph_load_failed: 'グラフを読み込めませんでした',
+      document_storage_unwritable: '保存失敗: 文書ストレージエラー。編集内容は保持されています。',
       retry: '再試行',
       sample_data: 'サンプルデータ',
       canvas_label: '{name} キャンバス',
@@ -1090,6 +1091,7 @@ export default {
         node_ai_working: 'カードの AI が作業中です。終わってから保存し直してください。',
         flow_disposed: '破棄されたフローのため作成できません。',
         card_documents_unavailable: 'サーバーがカード文書に対応していません。',
+        document_storage_unwritable: '保存失敗: 文書ストレージエラー。編集内容は保持されています。',
         content: {
           not_a_text: '本文を文字として送れません。',
           too_long: '本文が長すぎます (最大 500,000 文字)。',

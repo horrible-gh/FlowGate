@@ -42,12 +42,11 @@ RUN_FIELDS = ["instruction", "instruction_ai", "run_ai", "restart", "review_ai",
 
 
 @pytest.fixture()
-def db_path():
+def db_path(tmp_path):
     from modules.flow_gate.db import _SqliteDbAdapter
     from modules.flow_gate.db import connection as conn_mod
 
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        path = f.name
+    path = str(tmp_path / "cards.db")
     conn = sqlite3.connect(path)
     for mig in sorted(_MIGRATIONS_DIR.glob("*.sql")):
         try:
@@ -96,7 +95,26 @@ def env(db_path, monkeypatch, tmp_path):
     # Token scratch stays where token_scratch.create requires it: <storage root>/work/<project>/<token>.
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", "settingstest")
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_settingstest", "card-settings-test-pepper")
-    old_starter = node_dispatch.set_ai_starter(lambda job: state["jobs"].append(job))
+    # Wire the current startup ports and restore their registries after this fixture.
+    from flowgate.graph_run import integration as graph_run
+    from modules.flow_gate.graph_workflow.services import run_state_ports
+    from modules.flow_gate.services import graph_execution_hooks, graph_source_hooks
+    monkeypatch.setattr(run_state_ports, "_handlers", dict(run_state_ports._handlers))
+    monkeypatch.setattr(graph_execution_hooks, "_handler", graph_execution_hooks._handler)
+    for attr in ("_handler", "_mutation_handler", "_fence_handler"):
+        monkeypatch.setattr(graph_source_hooks, attr, getattr(graph_source_hooks, attr))
+    graph_run.register()
+    from flowgate.graph_validation.run_scope import run_scope
+    from modules.flow_gate.graph_workflow.domain import run_scope_ports
+    monkeypatch.setattr(run_scope_ports, "_handler", run_scope)
+    def record_job(job):
+        # Recovery may redeliver a durable execution until the fake worker starts it.
+        # Record each execution once, like a worker's execution lease admission.
+        if job.get("graph_exec_id") and any(
+                old.get("graph_exec_id") == job["graph_exec_id"] for old in state["jobs"]):
+            return
+        state["jobs"].append(job)
+    old_starter = node_dispatch.set_ai_starter(record_job)
     card_documents.register()
     integration.register()
     app = FastAPI()

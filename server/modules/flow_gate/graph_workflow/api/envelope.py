@@ -23,6 +23,11 @@ READ_PERMISSION = "perm_document_read"
 WRITE_PERMISSION = "perm_document_update"
 
 _MESSAGES = {
+    "document_storage_unwritable": {
+        "ko": "문서 저장소에 쓸 수 없어 저장하지 못했습니다. 잠시 뒤 다시 시도하거나 운영자에게 알리세요.",
+        "en": "The document storage could not be written, so nothing was saved. Try again later or tell an operator.",
+        "ja": "文書ストレージに書き込めないため保存できませんでした。しばらくしてから再試行するか、運用者にお知らせください。",
+    },
     "unauthorized": {"ko": "인증이 필요합니다.", "en": "Authentication is required.", "ja": "認証が必要です。"},
     "token_kind_not_allowed": {
         "ko": "작업 토큰으로는 이 API를 호출할 수 없습니다.",

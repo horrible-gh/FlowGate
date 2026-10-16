@@ -98,6 +98,7 @@ export default {
       close_tab: 'Close {name}',
       graph_loading: 'Loading graph',
       graph_load_failed: 'Could not load the graph',
+      document_storage_unwritable: 'Save failed: document storage error. Your edits are preserved.',
       retry: 'Retry',
       sample_data: 'Sample data',
       canvas_label: '{name} canvas',
@@ -1090,6 +1091,7 @@ export default {
         node_ai_working: 'The card AI is working. Save again when it is done.',
         flow_disposed: 'The flow was disposed and cannot be written.',
         card_documents_unavailable: 'The server does not support card documents.',
+        document_storage_unwritable: 'Save failed: document storage error. Your edits are preserved.',
         content: {
           not_a_text: 'The body cannot be sent as text.',
           too_long: 'The body is too long (500,000 characters at most).',

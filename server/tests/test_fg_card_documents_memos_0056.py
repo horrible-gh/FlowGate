@@ -282,7 +282,7 @@ def test_a_person_writes_a_line_that_has_no_document(env):
         doc_id, True, "instruction_ai_or_human")
     row = _doc_row(doc_id)
     assert (row["type_code"], row["status"], row["doc_review_status"], row["owner_id"]) == ("T", "draft", None, "u_kim")
-    assert json.loads(row["meta"])["graph_card"] == {"node_key": key, "slot": "instruction"}
+    assert json.loads(row["meta"])["graph_card"] == {"node_key": key, "slot": "instruction", "created_empty": False}
     text = _body_of(env, doc_id)
     assert text.startswith("---\n") and f"group_id: {FB}" in text and text.endswith("## Work\n\nwritten by a person\n")
     assert _line_doc(env, FB, key, "instruction") == {"doc_id": doc_id, "owned": 1}

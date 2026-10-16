@@ -41,12 +41,11 @@ TEST_VALUE, TEST_VERSION = "card_docs_test", "1"
 
 
 @pytest.fixture()
-def db_path():
+def db_path(tmp_path):
     from modules.flow_gate.db import _SqliteDbAdapter
     from modules.flow_gate.db import connection as conn_mod
 
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        path = f.name
+    path = str(tmp_path / "cards.db")
     conn = sqlite3.connect(path)
     for mig in sorted(_MIGRATIONS_DIR.glob("*.sql")):
         try:
@@ -92,9 +91,21 @@ def env(db_path, monkeypatch, tmp_path):
     monkeypatch.setattr(envelope, "has_permission", lambda u, p, perm: True)
     monkeypatch.setattr(canvas_events, "broadcast_event_threadsafe", lambda ev: state["events"].append(ev) or 1)
     monkeypatch.setattr(run_events, "broadcast_event_threadsafe", lambda ev: state["events"].append(ev) or 1)
-    monkeypatch.setattr(token_service, "_scratch_dir", lambda project, token_id: tmp_path / "work" / token_id)
+    # Use the real token scratch layout inside the fixture storage root.
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", "cardtest")
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_cardtest", "card-test-pepper")
+    # Wire the current startup ports and restore their registries after this fixture.
+    from flowgate.graph_run import integration as graph_run
+    from modules.flow_gate.graph_workflow.services import run_state_ports
+    from modules.flow_gate.services import graph_execution_hooks, graph_source_hooks
+    monkeypatch.setattr(run_state_ports, "_handlers", dict(run_state_ports._handlers))
+    monkeypatch.setattr(graph_execution_hooks, "_handler", graph_execution_hooks._handler)
+    for attr in ("_handler", "_mutation_handler", "_fence_handler"):
+        monkeypatch.setattr(graph_source_hooks, attr, getattr(graph_source_hooks, attr))
+    graph_run.register()
+    from flowgate.graph_validation.run_scope import run_scope
+    from modules.flow_gate.graph_workflow.domain import run_scope_ports
+    monkeypatch.setattr(run_scope_ports, "_handler", run_scope)
     old_starter = node_dispatch.set_ai_starter(None)
     integration.register()
     app = FastAPI()

@@ -211,8 +211,15 @@ def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optio
         removed_edges = [e["edge_id"] for e in (current or {}).get("edges", []) if e["edge_id"] not in new_edges]
         for key in removed_nodes:
             layout_store.retire(flow_id, key, "draft_removed")
-        card_documents = card_document_ports.draft_saved(group, user_id, nodes, removed_nodes, registered,
-                                                         ((current or latest) or {}).get("nodes", []))
+        try:
+            card_documents = card_document_ports.draft_saved(group, user_id, nodes, removed_nodes, registered,
+                                                             ((current or latest) or {}).get("nodes", []))
+        except GraphApiError as exc:
+            if exc.code == "document_storage_unwritable":
+                reverse_keys = {value: key for key, value in key_map.items()}
+                key = exc.params.get("node_key")
+                exc.params["node_key"] = reverse_keys.get(key, key)
+            raise
         version = req.draft_version + 1
         publish_canvas_changed(project_id=project_id, flow_id=flow_id, reason="draft", actor_user_id=user_id,
                                origin_client_id=client_id, draft_version=version)

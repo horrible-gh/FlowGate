@@ -84,6 +84,10 @@
           :holds="holds"
           @node-menu="chooseCardMenu"
         />
+        <p
+          v-if="edit?.status === 'error' && edit.errorCode === 'document_storage_unwritable'"
+          class="designer-storage-error" role="alert" data-test="designer-storage-error"
+        >{{ t('gui.designer.center.document_storage_unwritable') }}</p>
       </template>
     </div>
     <GraphTimeMachineDialog
@@ -148,6 +152,20 @@ const timeMachineTitles = computed(() => {
 </script>
 
 <style scoped>
+.designer-storage-error {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 6px;
+  background: var(--fg2-bg);
+  color: var(--fg2-danger, #c43b3b);
+}
+
 .designer-center {
   display: flex;
   flex: 1 1 auto;

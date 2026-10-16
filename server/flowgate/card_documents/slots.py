@@ -24,6 +24,8 @@ The lines a run makes for the record (AI delegation, deploy) and the scenario sh
 """
 from __future__ import annotations
 
+import unicodedata
+
 from dataclasses import dataclass
 from typing import Optional
 
@@ -43,6 +45,10 @@ SLOT_TITLES = {
     "en": {
         REQUIREMENT: "Requirement", DELEGATION: "AI delegation", PLAN: "Work plan", DEPLOY: "Deploy",
         INSTRUCTION: "Instruction", SCENARIO: "Scenario", REPORT: "Report",
+    },
+    "ja": {
+        REQUIREMENT: ("要件", "バグレポート"), DELEGATION: "AI委任", PLAN: "作業計画", DEPLOY: "展開",
+        INSTRUCTION: "指示書", SCENARIO: "シナリオ", REPORT: "レポート",
     },
 }
 DEFAULT_LOCALE = "ko"
@@ -113,8 +119,21 @@ def slot_signature(slot: CardSlot) -> tuple:
     return (slot.slot, slot.doc_type)
 
 
+def normalize_title(raw: str) -> str:
+    """0062 L0006 2.1 normalization, also used for exact default-name comparisons."""
+    text = unicodedata.normalize("NFC", raw)
+    text = "".join(" " if unicodedata.category(ch) in {"Cc", "Zs", "Zl", "Zp"} else ch
+                   for ch in text if ch not in {"\u200b", "\ufeff"})
+    return " ".join(part for part in text.split(" ") if part)
+
+
+def name_key(raw: str) -> str:
+    return normalize_title(raw).casefold()
+
+
 def slot_title(slot: str, locale: Optional[str] = None) -> str:
-    return (SLOT_TITLES.get(locale or DEFAULT_LOCALE) or SLOT_TITLES[DEFAULT_LOCALE])[slot]
+    value = (SLOT_TITLES.get(locale or DEFAULT_LOCALE) or SLOT_TITLES[DEFAULT_LOCALE])[slot]
+    return value if isinstance(value, str) else value[0]
 
 
 def author_of(slot: str, doc_type: Optional[str] = None) -> str:

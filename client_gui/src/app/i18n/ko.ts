@@ -101,6 +101,7 @@ export default {
       close_tab: '{name} 닫기',
       graph_loading: '그래프를 불러오는 중',
       graph_load_failed: '그래프를 불러오지 못했습니다',
+      document_storage_unwritable: '저장 실패: 문서 저장소 오류. 편집 내용은 유지됩니다.',
       retry: '다시 시도',
       sample_data: '샘플 데이터',
       canvas_label: '{name} 캔버스',
@@ -1100,6 +1101,7 @@ export default {
         node_ai_working: '카드의 AI가 작업 중입니다. 끝난 뒤 다시 저장하세요.',
         flow_disposed: '폐기된 플로우라 작성할 수 없습니다.',
         card_documents_unavailable: '서버가 카드 문서를 지원하지 않습니다.',
+        document_storage_unwritable: '저장 실패: 문서 저장소 오류. 편집 내용은 유지됩니다.',
         content: {
           not_a_text: '본문을 글자로 보낼 수 없습니다.',
           too_long: '본문이 너무 깁니다 (최대 500,000자).',
