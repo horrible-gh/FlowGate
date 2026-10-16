@@ -4,25 +4,19 @@
        flowgate.v02.0039 T#3: with no work target the work area is an empty frame — no Flow
        tabs, no guide text, no Canvas (confirmed initial-state design). The Center session
        lives in the Shell, so nothing is lost while the frame is shown.
-       flowgate.v02.0066 T#6: while the Shell's Center Diff has a file open, the Workspace draws it and only hides the
-       Designer Center (still mounted, so the Flow tabs and Canvas come back as they were). No Center Diff given, or
-       none open, draws exactly as before; with no work target the Diff is never drawn. -->
+       flowgate.v02.0066 T#6 drew the Shell's Git Center Diff here over the hidden Designer Center; flowgate.v02.0067
+       T#4 moved that diff into the Git modeless (`Diff` tab), so the Workspace holds the Designer Center only. -->
   <section class="designer-workspace" data-test="designer-workspace">
     <div v-if="unselected" class="designer-workspace-frame" data-test="designer-center-unselected" />
-    <template v-else>
-      <GitCenterDiffView v-if="diffOpen && centerDiff" :session="centerDiff" />
-      <DesignerCenter v-show="!diffOpen" :center="center" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" @show-tool="emit('show-tool', $event)" />
-    </template>
+    <DesignerCenter v-else :center="center" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" @show-tool="emit('show-tool', $event)" />
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { GitCenterDiffView, type GitCenterDiffSession } from '@/features/git'
 import DesignerCenter from '../center/DesignerCenter.vue'
 import type { DesignerCenterSession } from '../center/designerCenterSession'
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     center: DesignerCenterSession
     placing?: boolean
@@ -30,13 +24,9 @@ const props = withDefaults(
     unselected?: boolean
     /** flowgate.v02.0059 0017-T: the density's card drag step, passed to the Canvas; null = 자율형. */
     moveStep?: number | null
-    /** flowgate.v02.0066 T#6: the Shell's Center Diff; absent = the Workspace as before. */
-    centerDiff?: GitCenterDiffSession | null
   }>(),
-  { unselected: false, placing: false, moveStep: null, centerDiff: null },
+  { unselected: false, placing: false, moveStep: null },
 )
-
-const diffOpen = computed(() => !props.unselected && !!props.centerDiff?.state.open)
 
 const emit = defineEmits<{
   'canvas-place': [flowId: string, x: number, y: number]

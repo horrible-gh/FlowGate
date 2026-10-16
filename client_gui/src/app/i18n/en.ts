@@ -1195,8 +1195,11 @@ export default {
     },
     centerDiff: {
       reload: 'Read again',
-      close: 'Close',
       loading: 'Reading…',
+      // flowgate.v02.0067 T#4 — Git modeless `Diff` tab detail: back to list · file path · compared with.
+      back: 'Back to list',
+      path_label: 'File path',
+      compare_label: 'Compared with',
       compare_floor: 'Work base ↔ working file',
       compare_floor_named: 'Work base ({branch}) ↔ working file',
       compare_target: '{target} base ↔ working file',
@@ -1261,7 +1264,11 @@ export default {
       diff_title: '{n} changes against {target}',
       diff_refreshing: 'Updating…',
       diff_empty: 'No changes',
-      diff_more: '{n} more · show {page} more',
+      // flowgate.v02.0067 T#4 — search and pages of the `Diff` tab list.
+      diff_search: 'Search files to compare',
+      diff_range: '{from}–{to} / {n}',
+      diff_prev: 'Previous',
+      diff_next: 'Next',
     },
   },
   // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.

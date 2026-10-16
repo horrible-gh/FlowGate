@@ -58,7 +58,11 @@
         </template>
         <GitApplyAccordion v-else-if="name === 'merge'" />
         <template v-else-if="name === 'diff'">
-          <GitApplyInfo v-if="workspace" />
+          <template v-if="workspace">
+            <!-- The list stays mounted under an open file, so `목록으로` finds its search and page. -->
+            <GitApplyInfo v-show="!diffOpen" />
+            <GitCenterDiffView v-if="diffOpen" :session="diff" @back="backFromDiff" />
+          </template>
           <p v-else class="gw-line is-muted" data-test="git-window-unavailable">{{ t('gui.git.worktree.unavailable') }}</p>
         </template>
         <GitWorktreeStatus v-else />
@@ -75,14 +79,20 @@
 // z-index), owned by the panel as GitConnectWindow is — it never opens a Center canvas tab.
 //
 // The tab bodies are the 0066 parts: `파일 관리` is the changed-files list and the commit line at
-// its bottom (T#2), `Base 반영` the v27 merge body (T#3); the target comparison list stays as it is
-// until T#4 finishes it. Every value and action is the worktree session's; the window holds no Git
-// state of its own.
+// its bottom (T#2), `Base 반영` the v27 merge body (T#3), `Diff` the target comparison list and the
+// panel's Center Diff as its detail (T#4). Every value and action is the worktree session's or that
+// diff's; the window holds no Git state of its own.
+//
+// T#4 (0067-R §6): a file opens in the `Diff` tab — from its list, or from a `파일 관리` row, which
+// brings the window to `Diff`. `목록으로` closes the file and goes back to where it was opened: a row
+// of the list (compareBase = the list's target) back to the list, a `파일 관리` row (compareBase
+// null — only that tab opens one) back to `파일 관리`. Closing the window closes the file too.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModelessShell from '../../components/ui/ModelessShell.vue'
 import GitApplyAccordion from './GitApplyAccordion.vue'
 import GitApplyInfo from './GitApplyInfo.vue'
+import GitCenterDiffView from './GitCenterDiffView.vue'
 import GitChangesAccordion from './GitChangesAccordion.vue'
 import GitCommitBar from './GitCommitBar.vue'
 import GitWorktreeStatus from './GitWorktreeStatus.vue'
@@ -101,7 +111,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { worktree: wt } = useGitWorktree()
+const { worktree: wt, diff } = useGitWorktree()
 
 const TABS: readonly GitWorktreeTab[] = ['files', 'merge', 'diff', 'status']
 
@@ -171,6 +181,21 @@ function bringToFront(): void {
 const uid = `gw-win-${Math.random().toString(36).slice(2, 8)}`
 const workspace = computed(() => wt.state.status?.worktreeAvailable === true)
 const branch = computed(() => wt.state.status?.branch ?? null)
+const diffOpen = computed(() => diff.state.open !== null)
+
+// A file opened from another tab (a `파일 관리` row) shows on `Diff`.
+watch(
+  () => diff.state.open,
+  (target, previous) => {
+    if (target && target !== previous && props.open && props.tab !== 'diff') emit('update:tab', 'diff')
+  },
+)
+
+function backFromDiff(): void {
+  const fromFiles = diff.state.open?.compareBase === null
+  diff.close()
+  if (fromFiles) emit('update:tab', 'files')
+}
 
 // The `Diff` tab is the session's `Diff` pane: showing it reads the chosen target's list (and keeps
 // it read on refresh / target change); closing the window lets it go.
@@ -197,10 +222,18 @@ watch(
     } else if (!open && wasOpen) {
       window.removeEventListener('resize', fitViewport)
       if (wt.state.infoPane) wt.toggleInfo(wt.state.infoPane)
+      diff.close()
     }
   },
 )
-onBeforeUnmount(() => window.removeEventListener('resize', fitViewport))
+// Taken away while open (the Git gate closed: git/status failed, Git off) is a close too: the
+// file closes — its late answer dropped — and the next window opens on the list.
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', fitViewport)
+  if (!props.open) return
+  if (wt.state.infoPane) wt.toggleInfo(wt.state.infoPane)
+  diff.close()
+})
 
 // Restored from its titlebar: fitted to the viewport as it is now, and in front.
 watch(

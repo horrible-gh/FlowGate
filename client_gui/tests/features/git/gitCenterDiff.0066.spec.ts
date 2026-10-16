@@ -3,12 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import type { FlowFileDiff } from '@/features/project'
-import { createGitCenterDiff, GitCenterDiffView, type GitCenterDiffSession, type GitDiffIntent } from '@/features/git'
+import GitCenterDiffView from '@/features/git/GitCenterDiffView.vue'
+import { createGitCenterDiff, type GitCenterDiffSession } from '@/features/git/gitCenterDiff'
+import type { GitDiffIntent } from '@/features/git/types'
 import { G, P, gitError, networkError } from './fakeGitSource'
 
 // flowgate.v02.0066 T#6 — C29: the Center Diff session and screen (0066 D#2 §3-10, §6-6): which
 // intents open, latest answer only, closing, and every state / error line. The server message
 // is never shown.
+// flowgate.v02.0067 T#4 — the screen is the Git modeless `Diff` tab detail: `‹ 목록으로` (raised as
+// `back`), `파일 경로` with the full path once and `비교 기준`, then the same states; no ✕ / ⟳ of its
+// own. The part is internal now (not on the public surface).
 registerAppMessages(i18n)
 
 let wrapper: VueWrapper | null = null
@@ -167,10 +172,10 @@ describe('GitCenterDiffView — states and error lines (C29)', () => {
     session.open(intent('src/a.ts'))
     await mountView(session)
     expect(text('git-center-diff-loading')).toBe('읽는 중…')
-    expect(text('git-center-diff-path')).toBe('◧ src/a.ts')
+    expect(text('git-center-diff-path')).toBe('src/a.ts')
     answer.resolve(fileDiff('src/a.ts', 'one\ntwo\nthree\n', 'one\nTWO\nthree\nfour\n'))
     await flushPromises()
-    const lines = [...document.body.querySelectorAll<HTMLElement>('.gcd-line')].map((l) => `${l.dataset.kind}:${l.textContent}`)
+    const lines = [...document.body.querySelectorAll<HTMLElement>('.gw-diff-line')].map((l) => `${l.dataset.kind}:${l.textContent}`)
     expect(lines).toEqual(['context:11 one', 'del:2-two', 'add:2+TWO', 'context:33 three', 'add:4+four'])
     expect(text('git-center-diff-compare')).toBe('작업 기준(v0.2) ↔ 작업 파일')
     expect(text('git-center-diff-letter')).toBe('M')
@@ -199,7 +204,7 @@ describe('GitCenterDiffView — states and error lines (C29)', () => {
     expect(text('git-center-diff-unavailable')).toBe('파일이 커서 표시할 수 없습니다.')
     session.open(intent('long'))
     await flushPromises()
-    expect(document.body.querySelectorAll('.gcd-line')).toHaveLength(2000)
+    expect(document.body.querySelectorAll('.gw-diff-line')).toHaveLength(2000)
     expect(text('git-center-diff-more')).toBe('500줄 더 있음')
   })
 
@@ -251,16 +256,63 @@ describe('GitCenterDiffView — states and error lines (C29)', () => {
     expect(q('git-center-diff-lines')).not.toBeNull()
   })
 
-  it('✕ closes, ⟳ reads again', async () => {
+  it('0067 T#4: ‹ 목록으로 is raised as `back`; no ✕ / ⟳ of its own; closing leaves nothing drawn', async () => {
     const { session, loadFileDiff } = setup(async (path) => fileDiff(path, 'a', 'b'))
     session.open(intent('a'))
     await mountView(session)
-    q('git-center-diff-reload')!.click()
+    expect(text('git-center-diff-back')).toBe('‹ 목록으로')
+    expect(q('git-center-diff-reload')).toBeNull()
+    expect(q('git-center-diff-close')).toBeNull()
+    q('git-center-diff-back')!.click()
     await flushPromises()
-    expect(loadFileDiff).toHaveBeenCalledTimes(2)
-    q('git-center-diff-close')!.click()
+    expect(wrapper!.emitted('back')).toEqual([[]])
+    // The view decides nothing: the window closes the session.
+    expect(session.state.open?.path).toBe('a')
+    session.close()
     await flushPromises()
-    expect(session.state.open).toBeNull()
     expect(q('git-center-diff')).toBeNull()
+    expect(loadFileDiff).toHaveBeenCalledTimes(1)
+  })
+
+  it('0067 T#4: `파일 경로` shows the full path once, `비교 기준` its own label; the code keeps its columns', async () => {
+    const path = 'client_gui/src/features/git/deep/nested/file-with-a-long-name.ts'
+    const long = `const x = '${'y'.repeat(400)}'`
+    const { session } = setup(async (p) => fileDiff(p, 'a\n', `${long}\n`))
+    session.open(intent(path, { status: 'M' }))
+    await mountView(session)
+    const rows = [...document.body.querySelectorAll<HTMLElement>('.gw-diff-meta-row')]
+    expect(rows.map((r) => r.querySelector('dt')?.textContent)).toEqual(['파일 경로', '비교 기준'])
+    expect(text('git-center-diff-path')).toBe(path)
+    expect(q('git-center-diff-path')?.getAttribute('title')).toBe(path)
+    // The path once in the whole detail: no separate file name line or title.
+    const all = q('git-center-diff')!.textContent ?? ''
+    expect(all.split(path).length - 1).toBe(1)
+    expect(all.split('file-with-a-long-name.ts').length - 1).toBe(1)
+    expect(text('git-center-diff-letter')).toBe('M')
+    expect(text('git-center-diff-compare')).toBe('작업 기준(v0.2) ↔ 작업 파일')
+    // Each line: two number cells, the sign and the text, one row of the scrolling code area.
+    const line = document.body.querySelector<HTMLElement>('.gw-diff-line.is-add')!
+    expect([...line.children].map((c) => c.className)).toEqual(['gw-diff-no', 'gw-diff-no', 'gw-diff-sign', 'gw-diff-text'])
+    expect(line.parentElement?.dataset.test).toBe('git-center-diff-lines')
+    expect(line.querySelector('.gw-diff-text')?.textContent).toBe(long)
+  })
+
+  it('0067 T#4: no difference and a failed read are different lines', async () => {
+    let fail = false
+    const { session } = setup(async (path) => {
+      if (fail) throw loaderError(gitError(500, 'git_error'))
+      return fileDiff(path, 'x\n', 'x\n')
+    })
+    session.open(intent('same'))
+    await mountView(session)
+    expect(q('git-center-diff-same')?.className).toBe('gw-diff-note')
+    expect(text('git-center-diff-same')).toBe('차이 없음')
+    expect(q('git-center-diff-error')).toBeNull()
+    fail = true
+    session.reload()
+    await flushPromises()
+    expect(q('git-center-diff-same')).toBeNull()
+    expect(q('git-center-diff-error')?.className).toContain('is-error')
+    expect(text('git-center-diff-error')).toBe('Diff를 읽지 못했습니다. (git_error)')
   })
 })

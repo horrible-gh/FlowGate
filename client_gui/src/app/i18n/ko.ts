@@ -1205,8 +1205,11 @@ export default {
     },
     centerDiff: {
       reload: '다시 읽기',
-      close: '닫기',
       loading: '읽는 중…',
+      // flowgate.v02.0067 T#4 — Git 모달리스 `Diff` 탭 상세: 목록으로 · 파일 경로 · 비교 기준.
+      back: '목록으로',
+      path_label: '파일 경로',
+      compare_label: '비교 기준',
       compare_floor: '작업 기준 ↔ 작업 파일',
       compare_floor_named: '작업 기준({branch}) ↔ 작업 파일',
       compare_target: '{target} 기준 ↔ 작업 파일',
@@ -1271,7 +1274,11 @@ export default {
       diff_title: '{target} 기준 변경 {n}개',
       diff_refreshing: '갱신 중…',
       diff_empty: '변경 없음',
-      diff_more: '{n}개 더 있음 · {page}개씩 더 보기',
+      // flowgate.v02.0067 T#4 — `Diff` 탭 목록의 검색과 페이지 이동.
+      diff_search: '비교할 파일 검색',
+      diff_range: '{from}–{to} / {n}',
+      diff_prev: '이전',
+      diff_next: '다음',
     },
   },
   // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.

@@ -25,6 +25,8 @@ import {
 // flowgate.v02.0067 T#3 — the tab body is no longer folded (no toggle, no header word): its count is
 // `미반영 커밋`, only E8-admitted targets are listed and the follow-up Push shows only for a merge that
 // really waits (DesignerGitPanelApply.0067 has the new rules).
+// flowgate.v02.0067 T#4 — a `Diff` row opens its diff in the same tab (no `open-diff` /
+// `git-center-diff-refresh`); the list pages by 16 with `이전` / `다음` (DesignerGitPanelDiff.0067).
 registerAppMessages(i18n)
 
 let wrapper: VueWrapper | null = null
@@ -573,7 +575,7 @@ describe('Base apply — the `Diff` / `상태` tabs of the Git modeless (C14 b i
     changes: paths.map(([path, letter]) => ({ path, status: letter })),
   })
 
-  it('`Diff`: the chosen target list; a row raises open-diff with that target as compareBase', async () => {
+  it('`Diff`: the chosen target list; a row opens its diff against that target in the tab; a target change closes it', async () => {
     const t = setup({ targetChanges: { 'v0.2': list('v0.2', [['src/a.ts', 'M']]), release: list('release', [['r.ts', 'A'], ['x.ts', 'R']]) } })
     const w = await mountPanel(t)
     await openApply()
@@ -585,29 +587,43 @@ describe('Base apply — the `Diff` / `상태` tabs of the Git modeless (C14 b i
     expect(t.wt.source.loadTargetChanges.mock.calls.map((c) => c[2])).toEqual(['v0.2', 'release'])
     expect(qa('[data-test="git-apply-diff-row"]').map((r) => r.dataset.path)).toEqual(['r.ts', 'x.ts'])
     await click(qa('[data-test="git-apply-diff-row"]')[0])
+    expect(text('git-center-diff-path')).toBe('r.ts')
+    expect(text('git-center-diff-compare')).toBe('release 기준 ↔ 작업 파일')
+    await click('git-center-diff-back')
+    expect(q('git-window')?.dataset.tab).toBe('diff')
     await click(qa('[data-test="git-apply-diff-row"]')[1])
-    expect(w.emitted('open-diff')).toEqual([
-      [{ projectId: P, groupId: G, mergeId: null, path: 'r.ts', status: 'A', origin: 'worktree', diffSource: 'group', compareBase: 'release' }],
-      [{ projectId: P, groupId: G, mergeId: null, path: 'x.ts', status: null, origin: 'worktree', diffSource: 'group', compareBase: 'release' }],
+    expect(t.wt.source.loadFileDiff.mock.calls).toEqual([
+      [P, G, 'r.ts', 'release'],
+      [P, G, 'x.ts', 'release'],
     ])
-    // (c) the target change asked the Shell to close a comparison Center Diff.
-    expect(w.emitted('git-center-diff-refresh')).toEqual([[{ groupId: G, closeCompare: true }]])
+    expect(w.emitted('open-diff')).toBeUndefined()
+    // (c) a target change closes the comparison diff: the new target's list is back.
+    await openTab('merge')
+    await choose('git-apply-target', 'v0.2')
+    await openTab('diff')
+    expect(q('git-center-diff')).toBeNull()
+    expect(qa('[data-test="git-apply-diff-row"]').map((r) => r.dataset.path)).toEqual(['src/a.ts'])
+    expect(w.emitted('git-center-diff-refresh')).toBeUndefined()
   })
 
-  it('`Diff` shows a page and `더 보기`; another tab and back keeps the list without reading again', async () => {
+  it('`Diff` pages by 16 with `이전` / `다음`; another tab and back keeps the page without reading again', async () => {
     const paths = Array.from({ length: 23 }, (_, i) => [`f${String(i).padStart(2, '0')}.ts`, 'M'] as [string, string])
     const t = setup({ targetChanges: { 'v0.2': list('v0.2', paths) } })
     await mountPanel(t)
     await click(entry('diff'))
-    expect(qa('[data-test="git-apply-diff-row"]')).toHaveLength(10)
-    expect(text('git-apply-diff-more')).toBe('13개 더 있음 · 10개씩 더 보기')
-    await click('git-apply-diff-more')
-    expect(qa('[data-test="git-apply-diff-row"]')).toHaveLength(20)
+    expect(qa('[data-test="git-apply-diff-row"]')).toHaveLength(16)
+    expect(text('git-apply-diff-range')).toBe('1–16 / 23')
+    expect([disabled('git-apply-diff-prev'), disabled('git-apply-diff-next')]).toEqual([true, false])
+    expect(q('git-apply-diff-more')).toBeNull()
+    await click('git-apply-diff-next')
+    expect(qa('[data-test="git-apply-diff-row"]').map((r) => r.dataset.path)).toEqual(paths.slice(16).map(([p]) => p))
+    expect(text('git-apply-diff-range')).toBe('17–23 / 23')
+    expect([disabled('git-apply-diff-prev'), disabled('git-apply-diff-next')]).toEqual([false, true])
     await openTab('status')
     expect(panel('status')!.style.display).toBe('')
     expect(panel('diff')!.style.display).toBe('none')
     await openTab('diff')
-    expect(qa('[data-test="git-apply-diff-row"]')).toHaveLength(20)
+    expect(qa('[data-test="git-apply-diff-row"]')).toHaveLength(7)
     expect(t.wt.source.loadTargetChanges).toHaveBeenCalledTimes(1)
   })
 

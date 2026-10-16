@@ -1195,8 +1195,11 @@ export default {
     },
     centerDiff: {
       reload: '再読み込み',
-      close: '閉じる',
       loading: '読み込み中…',
+      // flowgate.v02.0067 T#4 — Git モードレス `Diff` タブ詳細: 一覧へ · ファイルパス · 比較基準。
+      back: '一覧へ',
+      path_label: 'ファイルパス',
+      compare_label: '比較基準',
       compare_floor: '作業基準 ↔ 作業ファイル',
       compare_floor_named: '作業基準({branch}) ↔ 作業ファイル',
       compare_target: '{target} 基準 ↔ 作業ファイル',
@@ -1261,7 +1264,11 @@ export default {
       diff_title: '{target} 基準の変更 {n} 件',
       diff_refreshing: '更新中…',
       diff_empty: '変更なし',
-      diff_more: 'さらに {n} 件 · {page} 件ずつ表示',
+      // flowgate.v02.0067 T#4 — `Diff` タブ一覧の検索とページ移動。
+      diff_search: '比較するファイルを検索',
+      diff_range: '{from}–{to} / {n}',
+      diff_prev: '前へ',
+      diff_next: '次へ',
     },
   },
   // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.

@@ -1211,46 +1211,6 @@
   background: var(--fg2-status-warning-bg);
 }
 
-.gw-info {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
-  border: 1px solid var(--fg2-line);
-  border-radius: 6px;
-  font-size: 10px;
-}
-
-.gw-info-files {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  max-height: min(220px, 35vh);
-  margin: 0;
-  padding: 0;
-  overflow: auto;
-  list-style: none;
-}
-
-.gw-info-file {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 2px 3px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--fg2-text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.gw-info-file:hover {
-  background: var(--fg2-control-surface);
-}
-
 /* flowgate.v02.0067 T#1 — the Git tab home (v27 `gw-v21-overview`, `gw-v21-choices`): the
    `변경 / Stage / 미반영` line and four equal full-width entry rows, one per Git modeless tab. */
 .gw-overview {
@@ -1414,15 +1374,6 @@
   overflow: auto;
 }
 
-.gw-win-body > .gw-info {
-  padding: 0;
-  border: 0;
-}
-
-.gw-win-body .gw-info-files {
-  max-height: none;
-}
-
 /* The `상태` tab (v27 `gw-detail-summary`, `gw-detail-row`): three numbers and four rows. */
 .gw-status-metrics {
   display: grid;
@@ -1474,4 +1425,217 @@
   margin: 0;
   font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+/* flowgate.v02.0067 T#4 — the `Diff` tab (v27 `compareBase()` / `workDiff()`): the comparison list
+   with its search and pages, and the file detail. Both take the tab body's height: the list scrolls
+   in its viewport, the code in its own area — sideways too, so a long line never widens the window
+   or squeezes the line-number columns. */
+.gw-diff-list,
+.gw-diff {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.gw-diff-list > .gw-files-stats {
+  margin: 0;
+}
+
+.gw-diff-search {
+  flex: none;
+  width: 100%;
+  height: 35px;
+  padding: 0 11px;
+  font-size: 11px;
+}
+
+.gw-diff-files {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px;
+}
+
+.gw-diff-file {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 6px;
+  background: var(--fg2-control-surface);
+  color: var(--fg2-text);
+  font: 10.5px ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gw-diff-file:hover {
+  border-color: var(--fg2-control-hover-border);
+}
+
+.gw-diff-pages {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--fg2-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gw-diff-pages-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.gw-diff-pages .gw-act {
+  min-width: 64px;
+  height: 29px;
+  font-size: 11px;
+}
+
+.gw-diff-nav {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.gw-diff-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: 7px;
+  background: var(--fg2-control-surface);
+  color: var(--fg2-blue);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.gw-diff-back:hover {
+  border-color: var(--fg2-control-hover-border);
+}
+
+.gw-diff-back:focus-visible,
+.gw-diff-file:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: 2px;
+}
+
+/* `파일 경로` / `비교 기준`: the `상태` tab's label column (84px); the path is shown whole, wrapping. */
+.gw-diff-meta {
+  flex: none;
+  margin: 0;
+}
+
+.gw-diff-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 3px;
+  border-bottom: 1px solid var(--fg2-line);
+}
+
+.gw-diff-meta-row dt {
+  flex: 0 0 84px;
+  color: var(--fg2-muted);
+}
+
+.gw-diff-meta-row dd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  font-weight: 600;
+}
+
+.gw-diff-path {
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.gw-diff-code {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 88px;
+  padding: 6px 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--fg2-line);
+  border-radius: 8px;
+  background: var(--fg2-bg);
+  font: 11px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.gw-diff-line {
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  white-space: pre;
+}
+
+.gw-diff-line.is-add {
+  background: var(--fg2-status-success-bg);
+}
+
+.gw-diff-line.is-del {
+  background: var(--fg2-status-danger-bg);
+}
+
+.gw-diff-no {
+  flex: 0 0 42px;
+  padding-right: 6px;
+  color: var(--fg2-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.gw-diff-sign {
+  flex: 0 0 16px;
+  text-align: center;
+  user-select: none;
+}
+
+.gw-diff-text {
+  flex: none;
+  padding-right: 14px;
+}
+
+.gw-diff-note {
+  flex: none;
+  margin: 0;
+  padding: 12px 3px;
+  color: var(--fg2-muted);
+  font-size: 11px;
+}
+
+.gw-diff-note p {
+  margin: 0 0 6px;
+}
+
+.gw-diff-note.is-error {
+  color: var(--fg2-status-danger-fg);
+}
+
+.gw-diff-hint {
+  color: var(--fg2-muted);
 }

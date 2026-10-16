@@ -9,6 +9,9 @@ import { APP_MESSAGES } from '@/app/i18n'
 // §2-2, §2-3): their files, the Center Diff's public entry points, the Center Diff's own read
 // through the project store, `diffLines` from the Conversation surface, and the Designer Shell /
 // Center column / Workspace that assemble the Center Diff through the public surface.
+// flowgate.v02.0067 T#4 — the Center Diff is the Git modeless `Diff` tab detail inside the part: it is
+// off the public surface, reads through the GitSource (gitSource.ts only touches the project store at
+// runtime) and only the right Dock assembles the part.
 const ROOT = resolve(__dirname, '../../..')
 const SRC = join(ROOT, 'src')
 const GIT = join(SRC, 'features/git')
@@ -76,8 +79,8 @@ describe('features/git structure (flowgate.v02.0033)', () => {
     )
   })
 
-  it('exposes only the panel and the Center Diff (session factory + screen) at runtime', () => {
-    expect(Object.keys(GitFeature).sort()).toEqual(['DesignerGitPanel', 'GitCenterDiffView', 'createGitCenterDiff'].sort())
+  it('exposes only the panel at runtime (0067 T#4: the Center Diff is internal)', () => {
+    expect(Object.keys(GitFeature)).toEqual(['DesignerGitPanel'])
   })
 
   it('reaches the server only through api.ts (actions) and features/project (reads)', () => {
@@ -87,12 +90,12 @@ describe('features/git structure (flowgate.v02.0033)', () => {
         expect(spec, rel(file)).not.toMatch(/^pinia$|^vue-router$|^axios$/)
       }
     }
-    // Runtime use of the project store (its loaders) is the HTTP source's and the Center Diff's
-    // default group diff loader (0066 D#2 §5-1); the rest import types.
+    // Runtime use of the project store (its loaders) is the HTTP source's only — the group file diff
+    // too since 0067 T#4 (`worktree.loadFileDiff`, 0066 D#2 §5-1); the rest import types.
     const runtimeProjectImports = FILES.filter((file) =>
       /^\s*import\s+\{[^}]*\}\s+from\s+'@\/features\/project'/m.test(read(file)),
     ).map(rel)
-    expect(runtimeProjectImports.sort()).toEqual(['gitCenterDiff.ts', 'gitSource.ts'])
+    expect(runtimeProjectImports.sort()).toEqual(['gitSource.ts'])
   })
 
   it('imports only vue / vue-i18n, its own files, ui primitives, features/project and the shared Git helpers', () => {
@@ -147,20 +150,14 @@ describe('features/git structure (flowgate.v02.0033)', () => {
 
   // flowgate.v02.0037 — the Designer right Tool Panel assembles the part through the public
   // surface, and only there.
-  // flowgate.v02.0066 T#6 — the Shell owns the Center Diff and hands it through the Center column
-  // to the Workspace, which draws it; all of them through the public surface only.
-  it('is assembled into the Designer by the right Tool Panel and the Center Diff path, through the public surface', () => {
+  // flowgate.v02.0066 T#6 — the Shell owned the Center Diff and handed it through the Center column
+  // to the Workspace. flowgate.v02.0067 T#4 — the diff lives in the Git modeless, so the right Tool
+  // Panel is again the only Designer file that knows the part (through the public surface).
+  it('is assembled into the Designer by the right Tool Panel only, through the public surface', () => {
     const users = filesUnder(join(SRC, 'features/designer'))
       .filter((file) => /features\/git/.test(read(file)))
       .map((file) => relative(SRC, file).replace(/\\/g, '/'))
-    expect(users.sort()).toEqual(
-      [
-        'features/designer/shell/DesignerCenterColumn.vue',
-        'features/designer/shell/DesignerRightDock.vue',
-        'features/designer/shell/DesignerShell.vue',
-        'features/designer/shell/DesignerWorkspace.vue',
-      ].sort(),
-    )
+    expect(users).toEqual(['features/designer/shell/DesignerRightDock.vue'])
     for (const user of users) {
       expect(importsOf(read(join(SRC, user))).filter((spec) => /features\/git/.test(spec)), user).toEqual(['@/features/git'])
     }

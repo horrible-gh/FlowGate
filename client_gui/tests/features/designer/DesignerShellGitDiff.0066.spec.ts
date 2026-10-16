@@ -6,6 +6,9 @@
  * it; a 0033 conflict file opens nothing and keeps its intent as it was.
  * T#7 — (b): a row of the Base apply `Diff` pane (target comparison list) opens the diff against
  * that target (`base=<target>`, "<target> 기준 ↔ 작업 파일"); changing the target closes it (C23 c).
+ * flowgate.v02.0067 T#4 — the same cases with the diff where it is now: the detail of the Git modeless
+ * `Diff` tab (0067-R §6). The Designer Center is never hidden or replaced, nothing goes up to the
+ * Shell, and `목록으로` goes back to where the file was opened (`파일 관리` or the `Diff` list).
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -233,8 +236,24 @@ async function openFileDiff(w: VueWrapper<any>) {
   await settle()
 }
 
-describe('Designer Shell x Git tab — Center Diff (C14)', () => {
-  it('(a) a changed-file row opens its group diff in the Center; the Flow tabs and Canvas stay mounted, hidden', async () => {
+async function chooseTarget(name: string) {
+  await openGitWindow('merge')
+  const select = find('git-apply-target') as HTMLSelectElement
+  select.value = name
+  select.dispatchEvent(new Event('change'))
+  await settle()
+}
+
+// flowgate.v02.0067 T#4 — the diff is the Git modeless `Diff` tab detail; the Center stays the Flow's.
+const inGitWindow = (el: HTMLElement | null) => !!el && !!find('git-window')?.contains(el)
+const centerUntouched = (canvas: HTMLElement | null) => {
+  expect(hidden(find('designer-center'))).toBe(false)
+  expect(find('designer-canvas')).toBe(canvas)
+  expect(find('designer-workspace')!.querySelector('[data-test="git-center-diff"]')).toBeNull()
+}
+
+describe('Designer Shell x Git tab — the diff in the Git modeless `Diff` tab (C14, 0067 T#4)', () => {
+  it('(a) a changed-file row opens its group diff in the `Diff` tab; the Flow tabs and Canvas stay on screen', async () => {
     const w = await mountShell()
     await openFlow(w, 'Designer v0.2')
     const canvas = find('designer-canvas')
@@ -242,29 +261,30 @@ describe('Designer Shell x Git tab — Center Diff (C14)', () => {
     await openFileDiff(w)
     expect(diffCalls()).toEqual([['/api/v1/projects/p/git/groups/p.ui.0001/diff', { path: 'src/app.ts' }]])
     const view = find('git-center-diff')
-    expect(view).not.toBeNull()
-    expect(find('designer-workspace')!.contains(view)).toBe(true)
-    expect(find('git-center-diff-path')!.textContent).toContain('src/app.ts')
+    expect(inGitWindow(view)).toBe(true)
+    expect(find('git-window')!.dataset.tab).toBe('diff')
+    expect(find('git-center-diff-path')!.textContent).toBe('src/app.ts')
     expect(find('git-center-diff-compare')!.textContent).toBe('작업 기준(v0.2) ↔ 작업 파일')
-    const kinds = [...document.body.querySelectorAll<HTMLElement>('.gcd-line')].map((l) => l.dataset.kind)
+    const kinds = [...document.body.querySelectorAll<HTMLElement>('.gw-diff-line')].map((l) => l.dataset.kind)
     expect(kinds).toEqual(['del', 'add', 'context'])
-    expect(hidden(find('designer-center'))).toBe(true)
-    expect(find('designer-canvas')).toBe(canvas)
-    // The intent that went up: worktree, group diff, no compare base.
-    expect(w.findComponent(DesignerGitPanel).emitted('open-diff')).toEqual([
-      [{ projectId: 'p', groupId: 'p.ui.0001', mergeId: null, path: 'src/app.ts', status: 'M', origin: 'worktree', diffSource: 'group', compareBase: null }],
-    ])
+    centerUntouched(canvas)
+    // Nothing goes up to the Shell any more.
+    expect(w.findComponent(DesignerGitPanel).emitted('open-diff')).toBeUndefined()
+    expect(w.findComponent(DesignerGitPanel).emitted('git-center-diff-refresh')).toBeUndefined()
+    // `목록으로` goes back to `파일 관리`, where the file was opened.
+    find('git-center-diff-back')!.click()
+    await settle()
+    expect(find('git-center-diff')).toBeNull()
+    expect(find('git-window')!.dataset.tab).toBe('files')
+    expect(find('git-row-open')).not.toBeNull()
   })
 
-  it('(b) a row of the Base apply `Diff` pane opens the diff against that target; a target change closes it', async () => {
+  it('(b) a `Diff` list row opens the diff against that target; `목록으로` is the list; a target change closes it', async () => {
     const w = await mountShell()
     await openFlow(w, 'Designer v0.2')
+    const canvas = find('designer-canvas')
     await showGitTab(w)
-    await openGitWindow('merge')
-    const select = find('git-apply-target') as HTMLSelectElement
-    select.value = 'release'
-    select.dispatchEvent(new Event('change'))
-    await settle()
+    await chooseTarget('release')
     await openGitWindow('diff')
     const changesCalls = getRequest.mock.calls.filter(([url]) => /\/git\/groups\/[^/]+\/changes$/.test(String(url)))
     expect(changesCalls.at(-1)).toEqual(['/api/v1/projects/p/git/groups/p.ui.0001/changes', { base: 'release' }])
@@ -272,57 +292,57 @@ describe('Designer Shell x Git tab — Center Diff (C14)', () => {
     await settle()
     expect(diffCalls()).toEqual([['/api/v1/projects/p/git/groups/p.ui.0001/diff', { path: 'src/rel.ts', base: 'release' }]])
     expect(find('git-center-diff-compare')!.textContent).toBe('release 기준 ↔ 작업 파일')
-    expect(hidden(find('designer-center'))).toBe(true)
-    expect(w.findComponent(DesignerGitPanel).emitted('open-diff')).toEqual([
-      [{ projectId: 'p', groupId: 'p.ui.0001', mergeId: null, path: 'src/rel.ts', status: 'M', origin: 'worktree', diffSource: 'group', compareBase: 'release' }],
-    ])
-    // C23(c): back to the default target — the comparison diff closes, the Flow is back.
-    await openGitWindow('merge')
-    const again = find('git-apply-target') as HTMLSelectElement
-    again.value = 'v0.2'
-    again.dispatchEvent(new Event('change'))
+    expect(inGitWindow(find('git-center-diff'))).toBe(true)
+    centerUntouched(canvas)
+    find('git-center-diff-back')!.click()
     await settle()
+    expect(find('git-window')!.dataset.tab).toBe('diff')
+    expect(find('git-apply-diff-row')!.dataset.path).toBe('src/rel.ts')
+    // C23(c): open it again, then back to the default target — the comparison diff closes.
+    find('git-apply-diff-row')!.click()
+    await settle()
+    await chooseTarget('v0.2')
+    await openGitWindow('diff')
     expect(find('git-center-diff')).toBeNull()
-    expect(hidden(find('designer-center'))).toBe(false)
+    expect(find('git-apply-diff-empty')).not.toBeNull()
   })
 
   it('(c) a worktree file diff stays open when the merge target changes', async () => {
     const w = await mountShell()
     await openFlow(w, 'Designer v0.2')
     await openFileDiff(w)
-    await openGitWindow('merge')
-    const select = find('git-apply-target') as HTMLSelectElement
-    select.value = 'release'
-    select.dispatchEvent(new Event('change'))
-    await settle()
+    await chooseTarget('release')
+    await openGitWindow('diff')
     expect(find('git-center-diff')).not.toBeNull()
     expect(find('git-center-diff-compare')!.textContent).toBe('작업 기준(v0.2) ↔ 작업 파일')
   })
 
-  it('(c) ✕ closes the diff and the same Flow screen is back', async () => {
+  it('(c) closing the Git modeless closes the diff; opened again, `Diff` shows its list first', async () => {
     const w = await mountShell()
     await openFlow(w, 'Designer v0.2')
-    const canvas = find('designer-canvas')
     await openFileDiff(w)
-    find('git-center-diff-close')!.click()
+    const win = find('git-window')!.closest<HTMLElement>('.ui-modeless-panel')!
+    win.querySelector<HTMLElement>('button[aria-label="Close"]')!.click()
     await settle()
+    expect(find('git-window')).toBeNull()
+    await openGitWindow('diff')
     expect(find('git-center-diff')).toBeNull()
-    expect(hidden(find('designer-center'))).toBe(false)
-    expect(find('designer-canvas')).toBe(canvas)
+    expect(find('git-apply-info')).not.toBeNull()
   })
 
-  it('(d) another Flow (another group) closes the diff', async () => {
+  it('(d) another Flow (another group) closes the window and the diff', async () => {
     const w = await mountShell()
     await openFlow(w, 'Designer v0.2')
     await openFileDiff(w)
     expect(find('git-center-diff')).not.toBeNull()
     await openFlow(w, 'Canvas')
     expect(find('git-center-diff')).toBeNull()
+    expect(find('git-window')).toBeNull()
     expect(hidden(find('designer-center'))).toBe(false)
     expect(find('designer-canvas')?.getAttribute('data-flow-id')).toBe('p.ui.0002')
   })
 
-  it('(e) a 0033 conflict file opens no Center Diff; its intent is the 0033 value, unchanged', async () => {
+  it('(e) a 0033 conflict file opens no diff; its intent is the 0033 value, unchanged', async () => {
     pending = [{ group_id: 'p.ui.0001', status: 'conflict', merge_id: 7, ac_doc_id: null, review_state: null, final_approval_bound: false }]
     const w = await mountShell()
     await openFlow(w, 'Designer v0.2')

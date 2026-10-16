@@ -15,6 +15,8 @@ import { createFakeWorktreeSource, worktreeFile, worktreeStatus } from './fakeWo
 // draft, revert / remove, badge, read-only / 403 and the worktree `open-diff` intent
 // (0066 D#2 §3-1, §3-3, §3-5, §3-6, §3-8, §6-1–§6-3; C5–C13, C24, C25), and confirm dialogs /
 // late answers bound to the Flow they were made in (§3-2-2 ①, C23).
+// flowgate.v02.0067 T#4 — a row name opens its diff in the Git modeless `Diff` tab (no `open-diff`,
+// no `git-center-diff-refresh` any more); DesignerGitPanelDiff.0067 has the tab itself.
 registerAppMessages(i18n)
 
 let wrapper: VueWrapper | null = null
@@ -511,8 +513,7 @@ describe('revert / remove (C13)', () => {
     await confirmDialog()
     expect(t.wt.source.revert).toHaveBeenCalledWith(G, ['src/a.ts'], 'wt-1')
     expect(rowEl('src/a.ts')).toBeNull()
-    // A changed fingerprint asks the Center Diff of this group to read again.
-    expect(w.emitted('git-center-diff-refresh')).toEqual([[{ groupId: G, closeCompare: false }]])
+    expect(w.emitted('git-center-diff-refresh')).toBeUndefined()
 
     await click(inRow('src/n.ts', 'git-row-remove'))
     expect(confirmText()).toContain('src/n.ts — 새 파일을 지웁니다. 되돌릴 수 없습니다.')
@@ -528,16 +529,23 @@ describe('revert / remove (C13)', () => {
 })
 
 describe('Center Diff intent, badge, read-only / 403 (C14 intent, C24, C25)', () => {
-  it('a row name raises a worktree open-diff: group diff, no compare base', async () => {
+  it('a row name opens its group diff (no compare base) in the `Diff` tab; nothing goes up', async () => {
     const t = setup(worktreeStatus({ files: [worktreeFile('src/a.ts'), added('src/n.ts')] }))
     const w = await mountPanel(t)
-    await click(inRow('src/a.ts', 'git-row-open'))
-    await click(inRow('src/n.ts', 'git-row-open'))
-    expect(w.emitted('open-diff')).toEqual([
-      [{ projectId: P, groupId: G, mergeId: null, path: 'src/a.ts', status: 'M', origin: 'worktree', diffSource: 'group', compareBase: null }],
-      [{ projectId: P, groupId: G, mergeId: null, path: 'src/n.ts', status: '?', origin: 'worktree', diffSource: 'group', compareBase: null }],
-    ])
     expect(inRow('src/a.ts', 'git-row-open')?.getAttribute('title')).toBe('src/a.ts')
+    await click(inRow('src/a.ts', 'git-row-open'))
+    expect(q('git-window')?.dataset.tab).toBe('diff')
+    expect(q('git-center-diff')?.dataset.path).toBe('src/a.ts')
+    expect(text('git-center-diff-letter')).toBe('M')
+    await click('git-center-diff-back')
+    expect(q('git-window')?.dataset.tab).toBe('files')
+    await click(inRow('src/n.ts', 'git-row-open'))
+    expect(q('git-center-diff')?.dataset.path).toBe('src/n.ts')
+    expect(t.wt.source.loadFileDiff.mock.calls).toEqual([
+      [P, G, 'src/a.ts', null],
+      [P, G, 'src/n.ts', null],
+    ])
+    expect(w.emitted('open-diff')).toBeUndefined()
   })
 
   it('C24: the worktree count joins a count badge only; danger stays; nothing while the area is hidden', async () => {
@@ -577,7 +585,9 @@ describe('Center Diff intent, badge, read-only / 403 (C14 intent, C24, C25)', ()
     expect((q('git-commit-ai') as HTMLButtonElement).disabled).toBe(true)
     expect((q('git-commit-message') as HTMLInputElement).disabled).toBe(true)
     await click(inRow('src/a.ts', 'git-row-open'))
-    expect(w.emitted('open-diff')).toHaveLength(1)
+    expect(t.wt.source.loadFileDiff).toHaveBeenCalledTimes(1)
+    expect(q('git-center-diff-lines')).not.toBeNull()
+    expect(w.emitted('open-diff')).toBeUndefined()
   })
 
   it('C25: a 403 on a write keeps every write disabled as 권한 없음', async () => {
@@ -712,12 +722,11 @@ describe('late write answers after a Flow switch (①)', () => {
     await w.setProps({ flow: { groupId: 'p.m.0002', name: '다른 Flow' } })
     await flushPromises()
     expect(q('git-worktree-loading')).not.toBeNull()
-    const emitted = w.emitted('git-center-diff-refresh')?.length ?? 0
     gate.resolve()
     await flushPromises()
     expect(q('git-worktree-loading')).not.toBeNull()
     expect(q('git-changes')).toBeNull()
-    expect(w.emitted('git-center-diff-refresh')?.length ?? 0).toBe(emitted)
+    expect(t.wt.source.loadFileDiff).not.toHaveBeenCalled()
     const ofB = worktreeStatus({ groupId: 'p.m.0002', worktreeToken: 'wt-b', files: [worktreeFile('b/x.ts'), worktreeFile('b/y.ts')] })
     // The fake keeps one worktree: from here on it is B's (opening the Git modeless reads it again).
     t.wt.db.status = ofB

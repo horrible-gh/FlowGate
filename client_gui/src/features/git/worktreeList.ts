@@ -227,3 +227,35 @@ export function unstageTargets(selected: readonly string[], status: WorktreeStat
   const set = new Set(selected)
   return status.files.filter((f) => set.has(f.path) && inStaged(f) && f.canUnstage).map((f) => f.path)
 }
+
+// ── `Diff` list (flowgate.v02.0067 T#4, v27 `gw-diff-search` / `gw-diff-pages`) ─────────────────────
+
+/** Rows one page of the `Diff` tab's comparison list shows (v27: 16). */
+export const WORKTREE_DIFF_PAGE = 16
+
+export interface WorktreeDiffPage<T> {
+  rows: T[]
+  // Rows matching the search, over every page.
+  matched: number
+  // The page shown (0-based, kept inside the pages there are) and how many there are (at least 1).
+  page: number
+  pages: number
+  // 1-based numbers of the first and last row shown; 0 / 0 when nothing matches.
+  from: number
+  to: number
+}
+
+/** One page of the comparison list: rows whose path contains the search (any case), in list order. */
+export function diffListPage<T extends { path: string }>(
+  changes: readonly T[],
+  search: string,
+  page: number,
+  size = WORKTREE_DIFF_PAGE,
+): WorktreeDiffPage<T> {
+  const needle = search.trim().toLowerCase()
+  const matches = needle ? changes.filter((c) => c.path.toLowerCase().includes(needle)) : changes
+  const pages = Math.max(1, Math.ceil(matches.length / size))
+  const at = Math.min(Math.max(0, Math.floor(page)), pages - 1)
+  const rows = matches.slice(at * size, (at + 1) * size)
+  return { rows, matched: matches.length, page: at, pages, from: rows.length ? at * size + 1 : 0, to: at * size + rows.length }
+}
