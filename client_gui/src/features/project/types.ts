@@ -141,6 +141,34 @@ export interface ProjectGitBaseUntracked {
   total: number | null
 }
 
+/** One merge commit of the Base not on its remote yet (git/status `unpushed.merges[]`). */
+export interface ProjectGitUnpushedMerge {
+  // Short SHA.
+  mergeCommit: string
+  // null = the server could not map the merge to a group (`unmapped`).
+  groupId: string | null
+  subject: string | null
+  mergedAt: string | null
+  canUnmerge: boolean
+  blockedReason: string | null
+}
+
+/**
+ * What of the project Base is not on its remote (flowgate.v02.0066). Base only: a non-Base
+ * target's remote state is the group merge result read.
+ */
+export interface ProjectGitUnpushed {
+  // Unpushed merge commits / commits ahead of the remote. null whenever `measured` is false:
+  // an unmeasured Base is never read as "in sync" (0).
+  count: number | null
+  commitCount: number | null
+  measured: boolean
+  remoteBranchMissing: boolean | null
+  // Only meaningful while unmeasured; null otherwise.
+  localCommitCount: number | null
+  merges: ProjectGitUnpushedMerge[]
+}
+
 export interface ProjectGitStatus {
   enabled: boolean
   // The project's configured Base branch exactly as the server reports it, or null when it
@@ -152,12 +180,33 @@ export interface ProjectGitStatus {
   pending: ProjectGitPendingRow[]
   baseDirty: ProjectGitBaseDirty
   baseUntracked: ProjectGitBaseUntracked
+  // flowgate.v02.0066: Base against its remote. Left out (undefined) when the server does not
+  // send the field at all; null when it sends no number. Both read as "unknown", never 0.
+  aheadCount?: number | null
+  behindCount?: number | null
+  unpushed?: ProjectGitUnpushed | null
+}
+
+/**
+ * The scope floor a group's changes are measured from (flowgate.v02.0066): the group work base
+ * and the commit the comparison starts at. Each value is null when the server does not say.
+ */
+export interface GroupScopeFloor {
+  workBaseRef: string | null
+  scopeBaseSha: string | null
+  workBaseSha: string | null
+  workBaseSyncSha: string | null
+  workBaseState: string | null
 }
 
 export interface FlowChangeEntry {
   path: string
   // Raw git letter from the server: M / A / D / R / T / ... and '?' for untracked.
   status: string
+  // flowgate.v02.0066: line counts; left out when the server does not send them, null when
+  // it sends no number.
+  insertions?: number | null
+  deletions?: number | null
 }
 
 export interface FlowChangeSet {
@@ -167,6 +216,11 @@ export interface FlowChangeSet {
   // The branch the server actually compared against, or null when the answer did not say.
   baseBranch: string | null
   changes: FlowChangeEntry[]
+  // flowgate.v02.0066: left out when the server sends none of the floor fields.
+  floor?: GroupScopeFloor
+  // flowgate.v02.0066: how many uncommitted tool artifacts the server left out of the list
+  // (their paths are not kept). Left out when the server does not send the list.
+  toolArtifactCount?: number
 }
 
 export interface FlowDiffSide {

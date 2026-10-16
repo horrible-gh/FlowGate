@@ -5,6 +5,10 @@
 // composer parts, the session and the API adapter stay internal.
 export { default as ConversationPanel } from './ConversationPanel.vue'
 export type { ConversationSource } from './conversationSource'
+// flowgate.v02.0066 — the pure old/new line comparison, shared with the Designer Center Diff of
+// the Git tab (0066 D#2 §2-3). Vue- and server-free; its behaviour is unchanged.
+export { diffLines } from './changeDiff'
+export type { DiffLine } from './changeDiff'
 export type {
   ActivityAnchor,
   ChatSummary,
