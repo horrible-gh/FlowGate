@@ -574,8 +574,9 @@
 }
 
 /* flowgate.v02.0066 T#6 — the worktree area (v19 mock-up `gw-*`): summary line, the changed-files
-   accordion and the commit line. The open list lives in a viewport of bounded height and scrolls
-   inside it, so 100+ files never push the commit line (or the Base apply header) off the panel. */
+   list and the commit line. flowgate.v02.0067 T#2: the list is the `파일 관리` tab of the Git
+   modeless (v27 `gw-dialog-*`); it scrolls inside its viewport, so 100+ files never push the commit
+   line below out of the window. */
 .gw-panel {
   display: flex;
   flex-direction: column;
@@ -638,47 +639,11 @@
 
 .gw-link:disabled,
 .gw-act:disabled,
-.gw-quick:disabled,
-.gw-small:disabled,
 .gw-icon:disabled,
 .gw-ai:disabled,
 .gw-iconbtn:disabled {
   opacity: var(--fg2-control-disabled-opacity);
   cursor: not-allowed;
-}
-
-.gw-acc {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
-}
-
-.gw-acc-head {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-}
-
-.gw-acc-toggle {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 4px 2px;
-  border: 0;
-  background: transparent;
-  color: var(--fg2-text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.gw-acc-toggle:disabled {
-  color: var(--fg2-muted);
-  cursor: default;
 }
 
 .gw-caret {
@@ -695,16 +660,7 @@
   color: var(--fg2-muted);
 }
 
-.gw-staged {
-  color: var(--fg2-status-success-fg);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.gw-lock,
-.gw-quick,
 .gw-iconbtn,
-.gw-small,
 .gw-act,
 .gw-ai {
   flex: none;
@@ -730,58 +686,104 @@
   border-color: var(--fg2-blue);
 }
 
-.gw-small {
-  height: 22px;
-  border-color: transparent;
-  background: transparent;
-  color: var(--fg2-blue);
-}
-
 .gw-act.primary {
   border-color: var(--fg2-blue);
   background: var(--fg2-blue);
   color: #fff;
 }
 
-.gw-lockbox {
+/* The `파일 관리` tab body (v27 `gw-dialog-stats` / `-search` / `-bulk` / `-files`): it takes the
+   height the commit line leaves and gives it to the list viewport. */
+.gw-files {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
-  gap: 5px;
-  padding: 7px 9px;
-  border: 1px solid var(--fg2-status-info-border);
-  border-radius: 7px;
-  background: var(--fg2-status-info-bg);
-  font-size: 10px;
-}
-
-.gw-lockbox p {
-  margin: 0;
-}
-
-.gw-lockbox .gw-act {
-  align-self: flex-start;
-}
-
-.gw-acc-body {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+  gap: 9px;
   min-width: 0;
 }
 
-.gw-search,
-.gw-menu,
-.gw-bulk {
+.gw-files-stats {
   display: flex;
+  flex: none;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
+  gap: 9px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--fg2-line);
+  color: var(--fg2-muted);
+  font-size: 11px;
 }
 
-.gw-bulk-count {
-  margin-right: auto;
-  font-size: 10px;
+.gw-files-stats strong {
+  margin-left: 4px;
+  color: var(--fg2-text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gw-files-search {
+  display: grid;
+  flex: none;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 7px;
+}
+
+.gw-files-search .gw-input,
+.gw-files-search .gw-select {
+  width: 100%;
+  height: 34px;
+  padding: 0 11px;
+  font-size: 11px;
+}
+
+/* The selection bar: adjacent on the left in the R §4-4 order, one colour per action. */
+.gw-files-bulk {
+  display: flex;
+  flex: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 31px;
+}
+
+.gw-files-bulk .gw-act {
+  height: 31px;
+  padding: 0 11px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.gw-bulk-stage {
+  border-color: var(--fg2-blue);
+  background: var(--fg2-blue);
+  color: #fff;
+}
+
+.gw-bulk-unstage {
+  border-color: var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
+}
+
+.gw-bulk-all {
+  border-color: var(--fg2-status-success-border);
+  background: var(--fg2-status-success-bg);
+  color: var(--fg2-status-success-fg);
+}
+
+.gw-files-count {
+  margin-left: auto;
   color: var(--fg2-muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.gw-files-empty {
+  margin: 0;
+  padding: 30px 12px;
+  color: var(--fg2-muted);
+  font-size: 11.5px;
+  text-align: center;
 }
 
 .gw-input,
@@ -797,22 +799,19 @@
   font-size: 10.5px;
 }
 
-.gw-search .gw-input {
-  flex: 1 1 auto;
-}
-
 .gw-select {
   width: 86px;
 }
 
-/* The bounded list window (v19: 285px); it scrolls, the rest of the panel stays put. */
+/* The list viewport (v27 `gw-dialog-files`): the rest of the tab, scrolling inside; never
+   shorter than a few rows (a very small window scrolls its body instead). */
 .gw-viewport {
-  max-height: min(285px, 45vh);
-  min-height: 60px;
+  flex: 1 1 0;
+  min-height: 88px;
   overflow: auto;
-  padding: 4px;
+  padding: 3px 7px 6px;
   border: 1px solid var(--fg2-line);
-  border-radius: 7px;
+  border-radius: 8px;
 }
 
 .gw-section + .gw-section {
@@ -834,21 +833,38 @@
   flex: 1 1 auto;
 }
 
+/* The folder head: its checkbox (v27 `gw-dir-select`) apart from the fold button. */
 .gw-folder-head {
   display: flex;
   align-items: center;
   gap: 5px;
-  width: 100%;
-  min-height: 28px;
+  min-height: 32px;
   padding: 0 3px;
-  border: 0;
   border-top: 1px solid var(--fg2-line);
+}
+
+.gw-folder-head .gw-folder-check {
+  margin: 0 1px 0 5px;
+}
+
+.gw-folder-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 5px 0;
+  border: 0;
   background: transparent;
   color: var(--fg2-muted);
   font: inherit;
-  font-size: 10px;
+  font-size: 10.5px;
   text-align: left;
   cursor: pointer;
+}
+
+.gw-folder-toggle:hover {
+  color: var(--fg2-text);
 }
 
 .gw-folder-name {
@@ -864,7 +880,7 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
-  height: 28px;
+  height: 33px;
   padding: 0 2px 0 8px;
   border-radius: 5px;
 }
@@ -986,33 +1002,44 @@
   color: var(--fg2-muted);
 }
 
+/* The commit line at the bottom of the `파일 관리` tab (v27 `gw-dialog-commit`): message, 🤖, 커밋. */
 .gw-commit {
   display: flex;
+  flex: none;
   flex-direction: column;
   gap: 4px;
-  padding-top: 6px;
+  padding-top: 12px;
   border-top: 1px solid var(--fg2-line);
 }
 
 .gw-commit-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px minmax(75px, auto);
   align-items: center;
-  gap: 6px;
+  gap: 7px;
 }
 
 .gw-commit-input {
-  flex: 1 1 auto;
-  width: 0;
-  height: 31px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.gw-commit-input:disabled {
+  opacity: var(--fg2-control-disabled-opacity);
+  cursor: not-allowed;
 }
 
 .gw-ai {
-  height: 31px;
-  font-size: 14px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 15px;
 }
 
 .gw-commit-btn {
-  height: 31px;
+  height: 36px;
   padding: 0 12px;
   font-size: 11px;
   font-weight: 700;

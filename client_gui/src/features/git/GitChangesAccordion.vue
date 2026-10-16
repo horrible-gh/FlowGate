@@ -1,82 +1,9 @@
 <template>
-  <div class="gw-acc" data-test="git-changes" :data-open="open ? 'true' : 'false'">
-    <div class="gw-acc-head">
-      <button
-        type="button"
-        class="gw-acc-toggle"
-        data-test="git-changes-toggle"
-        :aria-expanded="open ? 'true' : 'false'"
-        :disabled="empty"
-        @click="wt.toggleFiles()"
-      >
-        <span class="gw-caret" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
-        <b v-if="empty" data-test="git-changes-empty">{{ t('gui.git.worktree.no_changes') }}</b>
-        <template v-else>
-          <b>{{ t('gui.git.worktree.files_title') }}</b>
-          <span class="gw-num" data-test="git-changes-count">{{ counts.changed ?? 0 }}</span>
-          <span v-if="counts.staged" class="gw-staged" data-test="git-changes-staged">{{ t('gui.git.worktree.staged_count', { n: counts.staged }) }}</span>
-        </template>
-      </button>
-      <button
-        v-if="hidden > 0"
-        type="button"
-        class="gw-lock"
-        data-test="git-changes-lock"
-        :aria-expanded="wt.state.lockOpen ? 'true' : 'false'"
-        :title="t('gui.git.worktree.lock_title')"
-        @click="wt.toggleLock()"
-      >🔒{{ hidden }}</button>
-      <button
-        v-if="quick === 'stage'"
-        type="button"
-        class="gw-quick"
-        data-test="git-changes-stage-all"
-        :disabled="reasons.stage.disabled"
-        :title="reasonTip('stage', 'gui.git.worktree.all_tip')"
-        @click="wt.stageAll()"
-      >{{ t('gui.git.worktree.stage_all') }}</button>
-      <button
-        v-else-if="quick === 'unstage'"
-        type="button"
-        class="gw-quick"
-        data-test="git-changes-unstage-all"
-        :disabled="reasons.unstageAll.disabled"
-        :title="reasonTip('unstageAll', 'gui.git.worktree.unstage_all_tip')"
-        @click="wt.unstageAll()"
-      >{{ t('gui.git.worktree.unstage_all') }}</button>
-      <template v-if="open">
-        <button
-          type="button"
-          class="gw-iconbtn"
-          :class="{ 'is-on': wt.state.searchOpen }"
-          data-test="git-changes-search-toggle"
-          :aria-label="t('gui.git.worktree.search_toggle')"
-          :title="t('gui.git.worktree.search_toggle')"
-          @click="wt.toggleSearch()"
-        >⌕</button>
-        <button
-          type="button"
-          class="gw-iconbtn"
-          :class="{ 'is-on': wt.state.menuOpen }"
-          data-test="git-changes-menu-toggle"
-          :aria-label="t('gui.git.worktree.menu_toggle')"
-          :title="t('gui.git.worktree.menu_toggle')"
-          @click="wt.toggleMenu()"
-        >⋯</button>
-      </template>
-    </div>
-
-    <div v-if="wt.state.lockOpen && hidden > 0" class="gw-lockbox" data-test="git-changes-lockbox">
-      <p>{{ t('gui.git.worktree.lock_hidden', { n: hidden }) }}</p>
-      <p v-if="hiddenStaged > 0" data-test="git-changes-lock-staged">{{ t('gui.git.worktree.lock_staged', { n: hiddenStaged }) }}</p>
-      <button
-        type="button"
-        class="gw-act"
-        data-test="git-changes-lock-unstage-all"
-        :disabled="reasons.unstageAll.disabled"
-        :title="reasonTip('unstageAll', 'gui.git.worktree.unstage_all_tip')"
-        @click="wt.unstageAll()"
-      >{{ t('gui.git.worktree.unstage_all_full') }}</button>
+  <div class="gw-files" data-test="git-changes">
+    <div class="gw-files-stats" data-test="git-changes-stats">
+      <span>{{ t('gui.git.worktree.overview.changed') }}<strong data-test="git-changes-count">{{ counts.changed ?? 0 }}</strong></span>
+      <i class="gw-overview-sep" aria-hidden="true" />
+      <span>{{ t('gui.git.worktree.overview.staged') }}<strong data-test="git-changes-staged">{{ counts.staged ?? 0 }}</strong></span>
     </div>
 
     <p v-if="notice" class="gw-line" :class="{ 'is-error': notice.tone === 'error' }" data-test="git-changes-notice">
@@ -84,8 +11,8 @@
       <button type="button" class="gw-link" :aria-label="t('gui.git.worktree.dismiss')" @click="wt.dismissNotice('files')">×</button>
     </p>
 
-    <div v-if="open" class="gw-acc-body">
-      <div v-if="wt.state.searchOpen" class="gw-search" data-test="git-changes-search">
+    <template v-if="!empty">
+      <div class="gw-files-search" data-test="git-changes-search">
         <input
           type="search"
           class="gw-input"
@@ -105,19 +32,16 @@
           <option v-for="f in WORKTREE_FILTERS" :key="f" :value="f">{{ t(`gui.git.worktree.filter.${filterKey(f)}`) }}</option>
         </select>
       </div>
-      <div v-if="wt.state.menuOpen" class="gw-menu" data-test="git-changes-menu">
-        <button type="button" class="gw-act" data-test="git-folders-open" @click="wt.setFolderMode('open')">{{ t('gui.git.worktree.folders_open') }}</button>
-        <button type="button" class="gw-act" data-test="git-folders-close" @click="wt.setFolderMode('closed')">{{ t('gui.git.worktree.folders_close') }}</button>
-      </div>
-      <div class="gw-bulk" data-test="git-changes-bulk">
-        <button type="button" class="gw-act" data-test="git-select-all" :disabled="!selectTargets.length" @click="wt.toggleSelectAll()">
+      <!-- v27 `gw-dialog-bulk`: 전체 선택 / 선택 해제 → Stage → Stage 해제 → 전체 Stage / 전체 해제, side by
+           side on the left; only what applies is there, each in its own colour; the count is aside. -->
+      <div class="gw-files-bulk" data-test="git-changes-bulk">
+        <button type="button" class="gw-act gw-bulk-reset" data-test="git-select-all" :disabled="!selectTargets.length" @click="wt.toggleSelectAll()">
           {{ allSelected ? t('gui.git.worktree.select_none') : t('gui.git.worktree.select_all') }}
         </button>
-        <span v-if="selectedCount" class="gw-bulk-count" data-test="git-selected-count">{{ t('gui.git.worktree.selected', { n: selectedCount }) }}</span>
         <button
           v-if="stageable.length"
           type="button"
-          class="gw-act primary"
+          class="gw-act gw-bulk-stage"
           data-test="git-stage-selected"
           :disabled="reasons.stage.disabled"
           :title="reasonTip('stage', null)"
@@ -126,19 +50,37 @@
         <button
           v-if="unstageable.length"
           type="button"
-          class="gw-act"
+          class="gw-act gw-bulk-unstage"
           data-test="git-unstage-selected"
           :disabled="reasons.unstage.disabled"
           :title="reasonTip('unstage', null)"
           @click="wt.unstageSelected()"
         >{{ t('gui.git.worktree.unstage_selected') }}</button>
-        <button v-if="selectedCount" type="button" class="gw-link" data-test="git-selection-clear" @click="wt.clearSelection()">
-          {{ t('gui.git.worktree.selection_clear') }}
-        </button>
+        <button
+          v-if="quick === 'stage'"
+          type="button"
+          class="gw-act gw-bulk-all"
+          data-test="git-changes-stage-all"
+          :disabled="reasons.stage.disabled"
+          :title="reasonTip('stage', 'gui.git.worktree.all_tip')"
+          @click="wt.stageAll()"
+        >{{ t('gui.git.worktree.stage_all') }}</button>
+        <button
+          v-else-if="quick === 'unstage'"
+          type="button"
+          class="gw-act gw-bulk-all"
+          data-test="git-changes-unstage-all"
+          :disabled="reasons.unstageAll.disabled"
+          :title="reasonTip('unstageAll', 'gui.git.worktree.unstage_all_tip')"
+          @click="wt.unstageAll()"
+        >{{ t('gui.git.worktree.unstage_all') }}</button>
+        <span v-if="selectedCount" class="gw-files-count" data-test="git-selected-count">{{ t('gui.git.worktree.selected', { n: selectedCount }) }}</span>
       </div>
-      <div class="gw-viewport" data-test="git-changes-viewport">
-        <GitChangeSection v-for="section in wt.sections.value" :key="section.key" :section="section" />
-      </div>
+    </template>
+
+    <div class="gw-viewport" data-test="git-changes-viewport">
+      <p v-if="empty" class="gw-files-empty" data-test="git-changes-empty">{{ t('gui.git.worktree.no_changes') }}</p>
+      <GitChangeSection v-for="section in wt.sections.value" :key="section.key" :section="section" />
       <p v-if="hidden > 0" class="gw-count-line" data-test="git-changes-hidden-line">
         <span>{{ t('gui.git.worktree.hidden_line', { n: hidden }) }}</span>
         <button
@@ -161,11 +103,12 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0066 — the changed-files accordion (0066 D#2 §3-6, §6-2). Folded at first; its
-// header carries `변경 파일 N`, `Stage M`, the 🔒K hidden-files box and a quick full Stage / full
-// unstage, all visible while folded. Opened, it adds search / filter, the folder menu, the
-// selection bar and the two sections in a viewport of limited height (the commit line below never
-// moves). Every number is the E1 answer; every button only asks the session.
+// flowgate.v02.0066 — the changed-files list; flowgate.v02.0067 T#2 — the `파일 관리` tab body of the
+// Git modeless (0067-R §4, v27 `modalFilesHTML`). No fold of its own any more: the `변경 / Stage`
+// numbers, search and change-type filter, the selection bar, then the sections in a viewport that
+// takes the rest of the window and scrolls inside it — 100+ files never push the commit line below
+// out of the window. Folders fold and select on their own (GitChangeFolder); every number is the E1
+// answer and every button only asks the session.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitChangeSection from './GitChangeSection.vue'
@@ -180,14 +123,12 @@ const { worktree: wt } = useGitWorktree()
 const status = computed(() => wt.state.status as WorktreeStatus | null)
 const counts = computed(() => status.value?.counts ?? { changed: 0, staged: 0, hidden: 0, excludedNewUntracked: 0 })
 const empty = computed(() => isWorktreeEmpty(status.value))
-const open = computed(() => wt.state.filesOpen && !empty.value)
 const hidden = computed(() => status.value?.counts.hidden ?? 0)
-const hiddenStaged = computed(() => wt.hiddenStaged.value)
 const reasons = computed(() => wt.reasons.value)
 const notice = computed(() => wt.state.notices.files ?? null)
 
-// + 전체 Stage while a listed row can still be staged; otherwise − 전체 해제 while anything is
-// staged — hidden entries included, so a hidden-only Stage keeps its way out (§3-6(1)).
+// 전체 Stage while a listed row can still be staged; otherwise 전체 해제 while anything is staged —
+// hidden entries included, so a hidden-only Stage keeps its way out (0066 §3-6(1)).
 const quick = computed(() => {
   const s = status.value
   if (!s) return null

@@ -184,11 +184,14 @@ describe('Git modeless (0067-R §3)', () => {
     expect(w.emitted('open-diff')).toBeUndefined()
   })
 
-  it('a switch keeps the tab context — the selection, the typed message and the open list', async () => {
-    const t = setup({ status: worktreeStatus({ files: [worktreeFile('src/a.ts'), worktreeFile('src/b.ts')] }) })
+  it('a switch keeps the tab context — the selection, the typed message and the search', async () => {
+    const t = setup({ status: worktreeStatus({ files: [worktreeFile('src/a.ts'), staged('src/b.ts')] }) })
     await mountPanel(t)
     await click(entry('files'))
-    await click('git-changes-toggle')
+    const search = q('git-changes-search-input') as HTMLInputElement
+    search.value = 'src/'
+    search.dispatchEvent(new Event('input'))
+    await flushPromises()
     const select = document.body.querySelector<HTMLInputElement>('[data-test="git-row"][data-path="src/a.ts"] [data-test="git-row-select"]')!
     select.click()
     await flushPromises()
@@ -198,7 +201,7 @@ describe('Git modeless (0067-R §3)', () => {
     await flushPromises()
     await click(windowTab('status'))
     await click(windowTab('files'))
-    expect(q('git-changes')?.dataset.open).toBe('true')
+    expect((q('git-changes-search-input') as HTMLInputElement).value).toBe('src/')
     expect(text('git-selected-count')).toBe('선택 1개')
     expect((q('git-commit-message') as HTMLInputElement).value).toBe('wip')
   })
@@ -261,7 +264,6 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     const t = setup({ status: worktreeStatus({ files: [worktreeFile('src/a.ts')] }), merge: manualMergeView({ aheadOfTarget: 1 }) })
     await mountPanel(t)
     await click(entry('files'))
-    await click('git-changes-toggle')
     await click(windowTab('merge'))
     await click('git-apply-toggle')
     expect(text('git-apply-status')).toBe('1개 커밋 미반영')
@@ -363,7 +365,8 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
 
   it('a normal screen keeps 700 × 560; made smaller while open it shrinks and moves inside, keeping its tab and input; restored, it fits', async () => {
     setViewport(1280, 800)
-    const t = setup()
+    // flowgate.v02.0067 T#2: the message opens once something is staged.
+    const t = setup({ status: worktreeStatus({ files: [staged('src/a.ts')] }) })
     await mountPanel(t)
     await click(entry('files'))
     expect(box(shell()!)).toMatchObject({ left: 200, top: 88, width: 700, height: 560 })

@@ -260,6 +260,8 @@ export interface GitWorktreeSession {
   showMore(key: string): void
   setSelected(path: string, selected: boolean): void
   toggleSelectAll(): void
+  /** flowgate.v02.0067 T#2 — the folder checkbox: checks / unchecks these paths (selectable ones only). */
+  selectPaths(paths: readonly string[], selected: boolean): void
   clearSelection(): void
 
   stagePath(path: string): Promise<void>
@@ -879,6 +881,20 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
       : [...state.selected, ...targets.filter((p) => !state.selected.includes(p))]
   }
 
+  // The folder checkbox (0067-R §4-2): a selection only — what each path may do is still its row's.
+  function selectPaths(paths: readonly string[], selected: boolean): void {
+    const set = new Set(paths)
+    if (!selected) {
+      state.selected = state.selected.filter((p) => !set.has(p))
+      return
+    }
+    const have = new Set(state.selected)
+    const add = (state.status?.files ?? [])
+      .filter((f) => set.has(f.path) && !have.has(f.path) && isSelectable(f as WorktreeFile))
+      .map((f) => f.path)
+    if (add.length) state.selected = [...state.selected, ...add]
+  }
+
   function clearSelection(): void {
     state.selected = []
   }
@@ -1319,6 +1335,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     showMore,
     setSelected,
     toggleSelectAll,
+    selectPaths,
     clearSelection,
     stagePath,
     unstagePath,

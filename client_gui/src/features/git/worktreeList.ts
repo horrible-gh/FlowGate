@@ -38,7 +38,13 @@ export interface WorktreeFolderView {
   rows: WorktreeListRow[]
   // Matching rows past the display limit.
   remaining: number
+  // flowgate.v02.0067 T#2 — every matching row of this folder that may be checked, folded or past
+  // the display limit included: what the folder checkbox selects and reads its state from.
+  selectable: string[]
 }
+
+/** The folder checkbox: all / some / none of its selectable rows checked (0067-R §4-2). */
+export type WorktreeFolderSelection = 'all' | 'some' | 'none'
 
 export interface WorktreeSectionView {
   key: WorktreeSectionKey
@@ -73,8 +79,12 @@ export function isLocked(file: WorktreeFile): boolean {
   return !!file.unsupported || !!file.protectedReason || file.fileClass === 'managed' || file.fileClass === 'unverified'
 }
 
-/** A row can be checked only for what it may do: Stage, or release its Stage. */
-export const isSelectable = (file: WorktreeFile): boolean => file.canStage || file.canUnstage
+/**
+ * A row can be checked only for what it may do: Stage, or release its Stage. A FlowGate-managed,
+ * protected or unsupported row is never checked (0067-R §4-3): its own `−` (when the server lets
+ * it) and the full unstage stay its way out.
+ */
+export const isSelectable = (file: WorktreeFile): boolean => (file.canStage || file.canUnstage) && !isLocked(file)
 
 /** `counts.staged` (hidden included) minus the listed staged rows; never below 0 (§3-6(0)). */
 export function hiddenStagedCount(status: WorktreeStatus | null): number {
@@ -162,7 +172,15 @@ export function buildSections(status: WorktreeStatus | null, options: WorktreeLi
           : options.folderMode === 'open' || (options.folderMode === 'default' && folder === firstFolder)
       const limit = Math.max(WORKTREE_FOLDER_PAGE, options.limits[folderKey] ?? WORKTREE_FOLDER_PAGE)
       const shown = open ? rows.slice(0, limit) : []
-      folders.push({ key: folderKey, folder, count: rows.length, open, rows: shown, remaining: open ? rows.length - shown.length : 0 })
+      folders.push({
+        key: folderKey,
+        folder,
+        count: rows.length,
+        open,
+        rows: shown,
+        remaining: open ? rows.length - shown.length : 0,
+        selectable: rows.filter((row) => isSelectable(row.file)).map((row) => row.file.path),
+      })
     }
     sections.push({ key, total: all.length, matched: matched.length, folders, hiddenStaged: key === 'staged' ? hidden : 0 })
   }
@@ -179,6 +197,14 @@ export function selectAllTargets(status: WorktreeStatus | null, search: string, 
     }
   }
   return [...out]
+}
+
+/** The folder checkbox state of `paths` (the folder's selectable rows) against the selection. */
+export function folderSelection(paths: readonly string[], selected: readonly string[]): WorktreeFolderSelection {
+  if (!paths.length) return 'none'
+  const set = new Set(selected)
+  const n = paths.filter((p) => set.has(p)).length
+  return n === 0 ? 'none' : n === paths.length ? 'all' : 'some'
 }
 
 /** After a status change: only paths still listed and still selectable stay selected (§3-6(4)). */

@@ -229,8 +229,6 @@ async function openGitWindow(tab: string) {
 async function openFileDiff(w: VueWrapper<any>) {
   await showGitTab(w)
   await openGitWindow('files')
-  find('git-changes-toggle')!.click()
-  await settle()
   find('git-row-open')!.click()
   await settle()
 }

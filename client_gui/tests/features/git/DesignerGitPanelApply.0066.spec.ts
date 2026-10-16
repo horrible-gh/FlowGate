@@ -664,7 +664,6 @@ describe('Base apply — the merge button after a revert (C28)', () => {
     expect(text('git-apply-reason')).toBe('미커밋 변경 1개 — 먼저 커밋하거나 되돌리세요')
     t.wt.db.merge = manualMergeView({ aheadOfTarget: 2 })
     await openTab('files')
-    await click('git-changes-toggle')
     const revert = document.body.querySelector<HTMLElement>('[data-test="git-row"][data-path="src/a.ts"] [data-test="git-row-revert"]')
     await click(revert)
     await confirmDialog()
