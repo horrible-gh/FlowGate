@@ -213,3 +213,23 @@ export function reasonMessage(reason: WorktreeReason): { key: string; params: Re
   }
   return { key: 'gui.git.reason.unknown', params: { code: reason.code } }
 }
+
+// flowgate.v02.0067 T#1 — the Base apply one-word state (WorktreeApplySummary) as text, shared by the
+// Base apply header and the `상태` tab of the Git modeless.
+const APPLY_SUMMARY_KEYS: Record<string, string> = {
+  merging: 'gui.git.apply.summary.merging',
+  conflict: 'gui.git.apply.summary.conflict',
+  remote_pending: 'gui.git.apply.summary.remote_pending',
+  checking: 'gui.git.apply.summary.checking',
+  ahead: 'gui.git.apply.summary.ahead',
+  recovery: 'gui.git.apply.summary.recovery',
+  nothing: 'gui.git.apply.summary.nothing',
+  unknown: 'gui.git.apply.summary.unknown',
+}
+
+/** The i18n key and values of the Base apply state word; null = nothing to say. */
+export function applySummaryMessage(summary: { kind: string; n?: number } | null): { key: string; params: Record<string, number> } | null {
+  if (!summary) return null
+  const key = APPLY_SUMMARY_KEYS[summary.kind]
+  return key ? { key, params: { n: summary.n ?? 0 } } : null
+}

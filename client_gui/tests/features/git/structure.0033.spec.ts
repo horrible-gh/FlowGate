@@ -46,6 +46,9 @@ describe('features/git structure (flowgate.v02.0033)', () => {
         'GitChangesAccordion.vue',
         'GitCommitBar.vue',
         'GitWorktreePanel.vue',
+        // flowgate.v02.0067 T#1 — the Git modeless and its `상태` tab.
+        'GitWorktreeStatus.vue',
+        'GitWorktreeWindow.vue',
         'GitConflictCard.vue',
         'GitConflictWindow.vue',
         'GitConnectWindow.vue',

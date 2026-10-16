@@ -51,24 +51,7 @@
             />
             <span>{{ t('gui.git.apply.push_after') }}</span>
           </label>
-          <button
-            type="button"
-            class="gw-mini-link"
-            :class="{ 'is-on': wt.state.infoPane === 'diff' }"
-            data-test="git-apply-diff"
-            :aria-pressed="wt.state.infoPane === 'diff' ? 'true' : 'false'"
-            @click="wt.toggleInfo('diff')"
-          >{{ t('gui.git.apply.diff') }}</button>
-          <button
-            type="button"
-            class="gw-mini-link"
-            :class="{ 'is-on': wt.state.infoPane === 'status' }"
-            data-test="git-apply-state"
-            :aria-pressed="wt.state.infoPane === 'status' ? 'true' : 'false'"
-            @click="wt.toggleInfo('status')"
-          >{{ t('gui.git.apply.status') }}</button>
         </div>
-        <GitApplyInfo v-if="wt.state.infoPane" />
         <div class="gw-apply-actions">
           <button
             type="button"
@@ -108,17 +91,18 @@
 <script setup lang="ts">
 // flowgate.v02.0066 T#7 — the folded `Base 반영` accordion (0066 D#2 §3-4, §6-4). Its header says
 // one word of state even folded; opened: the merge target (E8 `targets[]` only, never a typed or
-// fixed branch), the small Fetch icon (E12 only), `머지 후 Push`, the `Diff` / `상태` panes, the
-// `머지` / `머지 + Push` button with its one reason, and the follow-up Push part. No commit and no
-// approval button: committing is the commit line's, approving is the approval flow's. Without a
-// workspace (W2) only Fetch and the follow-up Push stay. Every value is a server answer.
+// fixed branch), the small Fetch icon (E12 only), `머지 후 Push`, the `머지` / `머지 + Push` button
+// with its one reason, and the follow-up Push part. No commit and no approval button: committing is
+// the commit line's, approving is the approval flow's. Without a workspace (W2) only Fetch and the
+// follow-up Push stay. Every value is a server answer.
+// flowgate.v02.0067 T#1 — it is the `Base 반영` tab body of the Git modeless; its `Diff` / `상태`
+// panes left for the window's own `Diff` / `상태` tabs (GitApplyInfo, GitWorktreeStatus).
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import GitApplyInfo from './GitApplyInfo.vue'
 import GitMergeResultPush from './GitMergeResultPush.vue'
-import { useGitWorktree, type WorktreeApplySummary } from './gitWorktreeSession'
+import { useGitWorktree } from './gitWorktreeSession'
 import type { ManualMergeTarget } from './types'
-import { reasonMessage, type WorktreeButton } from './worktreeReasons'
+import { applySummaryMessage, reasonMessage, type WorktreeButton } from './worktreeReasons'
 
 const { t } = useI18n()
 const { worktree: wt, confirm } = useGitWorktree()
@@ -131,20 +115,9 @@ const targets = computed(() => wt.state.mergeTargets as ManualMergeTarget[])
 const checking = computed(() => wt.state.mergeLoad === 'loading')
 const notice = computed(() => wt.state.notices.apply ?? null)
 
-const SUMMARY_KEYS: Record<WorktreeApplySummary['kind'], string> = {
-  merging: 'gui.git.apply.summary.merging',
-  conflict: 'gui.git.apply.summary.conflict',
-  remote_pending: 'gui.git.apply.summary.remote_pending',
-  checking: 'gui.git.apply.summary.checking',
-  ahead: 'gui.git.apply.summary.ahead',
-  recovery: 'gui.git.apply.summary.recovery',
-  nothing: 'gui.git.apply.summary.nothing',
-  unknown: 'gui.git.apply.summary.unknown',
-}
-
 const summary = computed(() => {
-  const s = wt.applySummary.value
-  return s ? t(SUMMARY_KEYS[s.kind], { n: s.n ?? 0 }) : null
+  const message = applySummaryMessage(wt.applySummary.value)
+  return message ? t(message.key, message.params) : null
 })
 
 const TARGET_REASONS: Record<string, string> = {

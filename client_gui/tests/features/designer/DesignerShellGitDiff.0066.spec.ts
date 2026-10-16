@@ -219,8 +219,16 @@ const find = (test: string) => document.body.querySelector<HTMLElement>(`[data-t
 const diffCalls = () => getRequest.mock.calls.filter(([url]) => /\/git\/groups\/[^/]+\/diff$/.test(String(url)))
 const hidden = (el: HTMLElement | null) => !!el && el.style.display === 'none'
 
+// flowgate.v02.0067 T#1 — the Git tab entries open the Git modeless on their tab; its top tabs switch.
+async function openGitWindow(tab: string) {
+  const selector = `[data-test="git-worktree-entry"][data-tab="${tab}"], [data-test="git-window-tab"][data-tab="${tab}"]`
+  document.body.querySelector<HTMLElement>(selector)!.click()
+  await settle()
+}
+
 async function openFileDiff(w: VueWrapper<any>) {
   await showGitTab(w)
+  await openGitWindow('files')
   find('git-changes-toggle')!.click()
   await settle()
   find('git-row-open')!.click()
@@ -254,14 +262,14 @@ describe('Designer Shell x Git tab — Center Diff (C14)', () => {
     const w = await mountShell()
     await openFlow(w, 'Designer v0.2')
     await showGitTab(w)
+    await openGitWindow('merge')
     find('git-apply-toggle')!.click()
     await settle()
     const select = find('git-apply-target') as HTMLSelectElement
     select.value = 'release'
     select.dispatchEvent(new Event('change'))
     await settle()
-    find('git-apply-diff')!.click()
-    await settle()
+    await openGitWindow('diff')
     const changesCalls = getRequest.mock.calls.filter(([url]) => /\/git\/groups\/[^/]+\/changes$/.test(String(url)))
     expect(changesCalls.at(-1)).toEqual(['/api/v1/projects/p/git/groups/p.ui.0001/changes', { base: 'release' }])
     find('git-apply-diff-row')!.click()
@@ -273,6 +281,7 @@ describe('Designer Shell x Git tab — Center Diff (C14)', () => {
       [{ projectId: 'p', groupId: 'p.ui.0001', mergeId: null, path: 'src/rel.ts', status: 'M', origin: 'worktree', diffSource: 'group', compareBase: 'release' }],
     ])
     // C23(c): back to the default target — the comparison diff closes, the Flow is back.
+    await openGitWindow('merge')
     const again = find('git-apply-target') as HTMLSelectElement
     again.value = 'v0.2'
     again.dispatchEvent(new Event('change'))
@@ -285,6 +294,7 @@ describe('Designer Shell x Git tab — Center Diff (C14)', () => {
     const w = await mountShell()
     await openFlow(w, 'Designer v0.2')
     await openFileDiff(w)
+    await openGitWindow('merge')
     find('git-apply-toggle')!.click()
     await settle()
     const select = find('git-apply-target') as HTMLSelectElement

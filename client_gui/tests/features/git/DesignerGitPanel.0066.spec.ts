@@ -59,14 +59,26 @@ function setup(wtStatus?: WorktreeStatus, gitStatus?: ProjectGitStatus | null) {
   return { wt, fake }
 }
 
-async function mountPanel(t: ReturnType<typeof setup>, props: Record<string, unknown> = {}) {
+// flowgate.v02.0067 T#1 — the changed files and the commit line live in the Git modeless the
+// `파일 관리` entry opens; the panel is mounted with it open there unless `window: false`.
+const entry = (tab: string) => document.body.querySelector<HTMLElement>(`[data-test="git-worktree-entry"][data-tab="${tab}"]`)
+
+async function mountPanel(t: ReturnType<typeof setup>, props: Record<string, unknown> = {}, opts: { window?: boolean } = {}) {
   wrapper = mount(DesignerGitPanel, {
     props: { projectId: P, flow: FLOW, source: t.fake.source, ...props },
     attachTo: document.body,
     global: { plugins: [i18n] },
   })
   await flushPromises()
+  if (opts.window !== false) await openFiles()
   return wrapper
+}
+
+async function openFiles() {
+  const button = entry('files')
+  if (!button) return
+  button.click()
+  await flushPromises()
 }
 
 const q = (sel: string) => document.body.querySelector<HTMLElement>(`[data-test="${sel}"]`)
@@ -113,20 +125,28 @@ function many(folders: number, per: number): WorktreeFile[] {
 }
 
 describe('worktree area — gate and first look (C5)', () => {
-  it('appears below the 0033 area once git/status says Git on: both parts folded, commit line in view', async () => {
+  it('appears below the 0033 area once git/status says Git on: the summary and four entries; the list and commit line in the modeless', async () => {
     const t = setup()
-    await mountPanel(t)
+    await mountPanel(t, {}, { window: false })
     expect(q('git-worktree')).not.toBeNull()
+    expect(text('git-worktree-summary-changed')).toBe('1')
+    expect(text('git-worktree-summary-staged')).toBe('0')
+    expect(text('git-worktree-summary-merge')).toBe('1')
+    expect(q('git-worktree-chip')).toBeNull()
+    expect(q('git-changes')).toBeNull()
+    expect(q('git-commit-bar')).toBeNull()
+    expect(t.wt.source.loadStatus).toHaveBeenCalledTimes(1)
+    expect(t.wt.source.loadManualMerge).toHaveBeenCalledTimes(1)
+    expect(t.wt.source.loadMergeResults).toHaveBeenCalledTimes(1)
+    await openFiles()
     expect(q('git-changes')?.dataset.open).toBe('false')
     expect(q('git-changes-toggle')?.getAttribute('aria-expanded')).toBe('false')
     expect(q('git-row')).toBeNull()
     expect(q('git-commit-bar')).not.toBeNull()
-    expect(text('git-worktree-summary')).toContain('변경 1')
-    expect(text('git-worktree-summary-merge')).toBe('v0.2 미반영 1')
-    expect(q('git-worktree-chip')).toBeNull()
-    expect(t.wt.source.loadStatus).toHaveBeenCalledTimes(1)
-    expect(t.wt.source.loadManualMerge).toHaveBeenCalledTimes(1)
-    expect(t.wt.source.loadMergeResults).toHaveBeenCalledTimes(1)
+    // flowgate.v02.0067 T#1: opening the Git modeless reads the worktree once more.
+    expect(t.wt.source.loadStatus).toHaveBeenCalledTimes(2)
+    expect(t.wt.source.loadManualMerge).toHaveBeenCalledTimes(2)
+    expect(t.wt.source.loadMergeResults).toHaveBeenCalledTimes(2)
     expect(t.wt.source.loadTargetChanges).not.toHaveBeenCalled()
   })
 
@@ -161,7 +181,7 @@ describe('worktree area — gate and first look (C5)', () => {
 
   it('header refresh and coming into view read both sessions', async () => {
     const t = setup()
-    const w = await mountPanel(t, { active: false })
+    const w = await mountPanel(t, { active: false }, { window: false })
     await click('git-refresh')
     expect(t.fake.source.loadStatus).toHaveBeenCalledTimes(2)
     expect(t.wt.source.loadStatus).toHaveBeenCalledTimes(2)
@@ -185,6 +205,7 @@ describe('worktree area — gate and first look (C5)', () => {
     await mountPanel(t)
     expect(text('git-worktree-error')).toContain('작업 공간 상태를 읽지 못했습니다.')
     await click('git-worktree-retry')
+    await openFiles()
     expect(q('git-changes')).not.toBeNull()
   })
 })
@@ -615,7 +636,8 @@ describe('worktree confirm dialogs follow the context they were opened in', () =
     await flushPromises()
     expect(dialogOpen()).toBe(false)
     expect(t.wt.source.revert).not.toHaveBeenCalled()
-    // B lists the same path; its own dialog acts on B.
+    // B lists the same path; its own dialog acts on B (the Git modeless closed with A).
+    await openFiles()
     await click('git-changes-toggle')
     await click(inRow('src/a.ts', 'git-row-revert'))
     await confirmDialog()
@@ -649,6 +671,7 @@ describe('worktree confirm dialogs follow the context they were opened in', () =
     expect(t.wt.source.loadStatus.mock.calls.at(-1)?.[0]).toBe(FLOW_B.groupId)
     expect(t.wt.db.status.indexToken).toBe('ix-1')
     expect(t.wt.source.commit).not.toHaveBeenCalled()
+    await openFiles()
     expect((q('git-commit-message') as HTMLInputElement).value).toBe('')
   })
 
@@ -707,10 +730,12 @@ describe('late write answers after a Flow switch (①)', () => {
     expect(q('git-worktree-loading')).not.toBeNull()
     expect(q('git-changes')).toBeNull()
     expect(w.emitted('git-center-diff-refresh')?.length ?? 0).toBe(emitted)
-    firstOfB.resolve(
-      worktreeStatus({ groupId: 'p.m.0002', worktreeToken: 'wt-b', files: [worktreeFile('b/x.ts'), worktreeFile('b/y.ts')] }),
-    )
+    const ofB = worktreeStatus({ groupId: 'p.m.0002', worktreeToken: 'wt-b', files: [worktreeFile('b/x.ts'), worktreeFile('b/y.ts')] })
+    // The fake keeps one worktree: from here on it is B's (opening the Git modeless reads it again).
+    t.wt.db.status = ofB
+    firstOfB.resolve(ofB)
     await flushPromises()
+    await openFiles()
     expect(text('git-changes-count')).toBe('2')
     expect(q('git-changes-staged')).toBeNull()
     expect(q('git-changes-notice')).toBeNull()

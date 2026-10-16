@@ -687,3 +687,6 @@ export interface CenterDiffError {
   kind: 'floor' | 'not_found' | 'forbidden' | 'compare' | 'network' | 'failed'
   code: string | null
 }
+
+// flowgate.v02.0067 T#1 — the four tabs of the Git modeless the Git tab entries open (0067-R §3).
+export type GitWorktreeTab = 'files' | 'merge' | 'diff' | 'status'
