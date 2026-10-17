@@ -47,7 +47,7 @@
 
       <!-- The body view depends on the document's type (T#4): it is chosen once the title line read answered. -->
       <div v-else-if="!editing && !recordSettled" class="document-window-note" data-test="document-window-loading">{{ t(k('viewer.loading')) }}</div>
-      <DocumentWindowBody v-else-if="!editing" ref="body" :doc-id="win.shown" :type-code="record?.typeCode ?? null" :title="record?.title ?? null" :copy-target="copyTarget" :can-reenter="canReenter" @reenter="startEdit" />
+      <DocumentWindowBody v-else-if="!editing" ref="body" :doc-id="win.shown" :type-code="record?.typeCode ?? null" :title="record?.title ?? null" :copy-target="copyTarget" :can-reenter="canReenter" />
 
       <div v-else class="document-window-editor" data-test="document-window-editor">
         <div v-if="editLoading" class="document-window-note" data-test="document-window-editor-loading">{{ t(k('viewer.loading')) }}</div>
@@ -97,8 +97,19 @@
           <Button size="sm" variant="secondary" :disabled="saving" data-test="document-window-close" @click="requestClose">{{ t(k('close')) }}</Button>
         </div>
       </div>
-      <div v-if="!editing" class="document-window-viewer-bar">
-        <Button size="sm" variant="primary" :disabled="gone" data-test="document-window-edit" @click="startEdit">{{ t(k('edit')) }}</Button>
+      <!-- flowgate.v02.0070 T#3 (B3): the view's one action group, by the body's state (documentViewerActions) —
+           unreadable: [복구]? [본문 다시 입력] [닫기]; readable or empty: [편집] [닫기]; not editable: [닫기]. -->
+      <div v-if="!editing" class="document-window-viewer-bar" data-test="document-window-viewer-bar">
+        <Button
+          v-if="viewerActions.includes('recover')"
+          size="sm"
+          variant="secondary"
+          :loading="bodyStatus?.recovering === true"
+          data-test="document-window-recover"
+          @click="recover"
+        >{{ t('gui.document.recover.action') }}</Button>
+        <Button v-if="viewerActions.includes('reenter')" size="sm" variant="primary" data-test="document-window-reenter" @click="startEdit">{{ t('gui.document.bodyState.reenter') }}</Button>
+        <Button v-if="viewerActions.includes('edit')" size="sm" variant="primary" data-test="document-window-edit" @click="startEdit">{{ t(k('edit')) }}</Button>
         <Button size="sm" variant="secondary" data-test="document-window-close" @click="requestClose">{{ t(k('close')) }}</Button>
       </div>
     </div>
@@ -152,6 +163,7 @@ import DocumentWindowBody from './DocumentWindowBody.vue'
 import {
   documentDot,
   documentReadErrorKey,
+  documentViewerActions,
   documentSaveErrorKey,
   joinDocumentSource,
   splitDocumentSource,
@@ -266,9 +278,18 @@ async function loadEditor(): Promise<void> {
   }
 }
 
+/** The body's state as the MD Viewer reads it (null before the body view or for a special view). */
+const bodyStatus = computed(() => body.value?.status ?? null)
+const viewerActions = computed(() => documentViewerActions(bodyStatus.value, canReenter.value && !gone.value))
+
 function startEdit(): void {
   if (gone.value) return
   setDocumentWindowMode(props.win.docId, 'edit')
+}
+
+/** [복구]: only on this click, with the existing recovery API and the diagnosed method (MdViewer.recover). */
+function recover(): void {
+  void body.value?.recover()
 }
 
 function toView(): void {
@@ -494,7 +515,9 @@ defineExpose({ dirty })
   border-top: 1px solid var(--fg2-line);
 }
 
+/* A narrow window (360px) wraps whole buttons, still at the right end; the button text never wraps (ui-btn). */
 .document-window-viewer-bar {
+  flex-wrap: wrap;
   margin-top: auto;
 }
 

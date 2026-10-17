@@ -78,6 +78,34 @@ export function documentReadErrorKey(kind: DocumentErrorKind): string {
   return 'load'
 }
 
+/**
+ * flowgate.v02.0070 T#3 (B3) — what the MD Viewer reports up to the window: the state of its body and whether
+ * the body diagnosis offers [복구] for it. `loading` is the first read only (a reload keeps the shown state).
+ */
+export interface DocumentBodyStatus {
+  readonly state: 'loading' | 'error' | 'unreadable' | 'empty' | 'body'
+  readonly recoverable: boolean
+  readonly recovering: boolean
+}
+
+/** A footer action of the view, before [닫기] (which every state has). */
+export type DocumentViewerAction = 'recover' | 'reenter' | 'edit'
+
+/**
+ * The view footer's actions (flowgate.v02.0070 T#3, 0003-NR §3 B3): an unreadable body offers [복구] (only when
+ * diagnosed recoverable) and [본문 다시 입력] instead of [편집] — both open the same editor, so never together;
+ * a readable or empty body offers [편집]; a failed read or the first read offers nothing (the body has its
+ * retry). Nothing is offered to a person who may not edit the document. `status` is null when the view is not
+ * the MD Viewer (a work plan / test view): its body is readable.
+ */
+export function documentViewerActions(status: DocumentBodyStatus | null, canEdit: boolean): DocumentViewerAction[] {
+  if (!canEdit) return []
+  const state = status?.state ?? 'body'
+  if (state === 'unreadable') return status?.recoverable ? ['recover', 'reenter'] : ['reenter']
+  if (state === 'loading' || state === 'error') return []
+  return ['edit']
+}
+
 /** Message key under `gui.document_window.error` for a failed save (422: not editable now). */
 export function documentSaveErrorKey(kind: DocumentErrorKind, status: number | null): string {
   if (status === 422) return 'locked'

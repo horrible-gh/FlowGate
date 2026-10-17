@@ -102,7 +102,7 @@ describe('0064 body state wire contracts', () => {
 })
 
 describe('0064 unreadable viewer and re-entry', () => {
-  it.each(['ko', 'en', 'ja'] as const)('shows the reason and AI warning in %s; only authorized re-entry is offered', async (locale) => {
+  it.each(['ko', 'en', 'ja'] as const)('shows the reason and AI warning in %s on one line; the viewer itself has no buttons', async (locale) => {
     i18n.global.locale.value = locale
     api.getRequest.mockRejectedValue(failure(404, { reason: 'file_path_missing' }))
     const w = mount(MdViewer, { props: { docId: DOC }, global: { plugins: [i18n] } })
@@ -112,10 +112,13 @@ describe('0064 unreadable viewer and re-entry', () => {
     expect(el(w, 'md-viewer-unreadable').text()).toContain(i18n.global.t('gui.document.bodyState.aiUnreadable'))
     expect(w.text()).not.toContain('gui.document.bodyState')
     expect(el(w, 'md-viewer-content').exists()).toBe(false)
-    expect(el(w, 'md-viewer-reenter').exists()).toBe(false)
+    expect(el(w, 'md-viewer-unreadable').find('.md-viewer__state-message').text()).toBe(
+      `${i18n.global.t('gui.document.bodyState.file_path_missing')} · ${i18n.global.t('gui.document.bodyState.aiUnreadable')}`)
+    // flowgate.v02.0070 T#3 (B3): the viewer reports the state; [본문 다시 입력] is the window footer's (DocumentWindow.0053).
+    expect(w.vm.status).toEqual({ state: 'unreadable', recoverable: false, recovering: false })
     await w.setProps({ canReenter: true })
-    await el(w, 'md-viewer-reenter').trigger('click')
-    expect(w.emitted('reenter')).toHaveLength(1)
+    await flushPromises()
+    expect(w.findAll('button')).toHaveLength(0)
   })
   it('keeps a frontmatter-only document empty and clears warning after a successful reload', async () => {
     api.getRequest.mockRejectedValue(failure(404, { reason: 'file_not_found' }))
@@ -140,13 +143,16 @@ describe('0064 unreadable viewer and re-entry', () => {
     openDocumentWindow(DOC)
     await flushPromises()
     // The window is teleported to <body> (ModelessShell), so it is read from the document, not the wrapper.
-    await click(inBody('md-viewer-reenter'))
+    // flowgate.v02.0070 T#3 (B3): the footer offers [본문 다시 입력] in place of [편집], beside [닫기].
+    expect([...inBody('document-window-viewer-bar')!.querySelectorAll('button')].map((b) => b.getAttribute('data-test')))
+      .toEqual(['document-window-reenter', 'document-window-close'])
+    await click(inBody('document-window-reenter'))
     await type(inBody('document-window-textarea'), 'New body')
     await click(inBody('document-window-save'))
     expect(api.patchRequest).toHaveBeenCalledWith('/api/v1/documents/content', { doc_id: DOC, content: 'New body' })
     expect(inBody('document-window-save-error')!.textContent).toContain('진단·복구')
     expect((inBody('document-window-textarea') as HTMLTextAreaElement).value).toBe('New body')
-    expect(inBody('md-viewer-recover')).toBeNull()
+    expect(inBody('document-window-recover')).toBeNull()
   })
   it('reads the server editability without inventing permission from a missing field', () => {
     expect(toDocumentRecord({ doc_id: DOC }).isEditable).toBeUndefined()

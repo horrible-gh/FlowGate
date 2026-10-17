@@ -29,6 +29,7 @@ import {
   DOCUMENT_WINDOW_REFRESH_COALESCE_MS,
 } from '@/features/documentWindow/useDocumentWindowEvents'
 import { installProjectEventStream, removeProjectEventStream, type ProjectEventStream } from '../designer/inspector/support/projectEventStream'
+import { setCurrentUser } from '@/core/auth/currentUser'
 
 const recordRead = vi.fn()
 const contentRead = vi.fn()
@@ -59,7 +60,8 @@ const FRONT = '---\ntitle: 레포트\n---'
 const files = new Map<string, string>()
 const records = new Map<string, Record<string, unknown>>()
 const record = (docId: string, fields: Record<string, unknown>) =>
-  records.set(docId, { doc_id: docId, project_id: 'flowgate', group_id: FLOW, type_code: 'TR', ...fields })
+  // flowgate.v02.0070 T#3: the view footer offers [편집] only to a signed-in person on an editable document.
+  records.set(docId, { doc_id: docId, project_id: 'flowgate', group_id: FLOW, type_code: 'TR', is_editable: true, ...fields })
 
 let stream: ProjectEventStream
 let wrapper: VueWrapper<any> | null = null
@@ -67,6 +69,7 @@ let wrapper: VueWrapper<any> | null = null
 beforeEach(() => {
   i18n.global.locale.value = 'ko'
   closeAllDocumentWindows()
+  setCurrentUser({ username: 'worker', email: null, isAdmin: false })
   stream = installProjectEventStream()
   files.clear()
   records.clear()
@@ -96,6 +99,7 @@ afterEach(() => {
   wrapper?.unmount()
   wrapper = null
   closeAllDocumentWindows()
+  setCurrentUser(null)
   removeProjectEventStream()
   document.body.querySelectorAll('.ui-modal-overlay').forEach((node) => node.remove())
 })

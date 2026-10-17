@@ -7,12 +7,12 @@
        Viewer passed in as its fallback, the way the v0.1 TestDocumentBody kept the Markdown body. -->
   <div class="document-window-body" data-test="document-window-body" :data-view="view">
     <WorkPlanBody v-if="view === 'work_plan'" ref="special" :doc-id="docId">
-      <template #fallback><MdViewer ref="viewer" :doc-id="docId" :copy-target="copyTarget" :can-reenter="canReenter" @reenter="emit('reenter')" /></template>
+      <template #fallback><MdViewer ref="viewer" :doc-id="docId" :copy-target="copyTarget" :can-reenter="canReenter" /></template>
     </WorkPlanBody>
     <TestDocumentBody v-else-if="view === 'test'" ref="special" :doc-id="docId" :title="title">
-      <template #fallback><MdViewer ref="viewer" :doc-id="docId" :copy-target="copyTarget" :can-reenter="canReenter" @reenter="emit('reenter')" /></template>
+      <template #fallback><MdViewer ref="viewer" :doc-id="docId" :copy-target="copyTarget" :can-reenter="canReenter" /></template>
     </TestDocumentBody>
-    <MdViewer v-else ref="viewer" :doc-id="docId" :copy-target="copyTarget" :can-reenter="canReenter" @reenter="emit('reenter')" />
+    <MdViewer v-else ref="viewer" :doc-id="docId" :copy-target="copyTarget" :can-reenter="canReenter" />
   </div>
 </template>
 
@@ -21,7 +21,7 @@ import { computed, ref } from 'vue'
 import MdViewer from './MdViewer.vue'
 import TestDocumentBody from './TestDocumentBody.vue'
 import WorkPlanBody from './WorkPlanBody.vue'
-import { documentBodyView } from './documentWindowModel'
+import { documentBodyView, type DocumentBodyStatus } from './documentWindowModel'
 import type { DocumentContentChange } from './useDocumentWindowEvents'
 
 const props = defineProps<{
@@ -34,8 +34,6 @@ const props = defineProps<{
   canReenter?: boolean
 }>()
 
-const emit = defineEmits<{ reenter: [] }>()
-
 const view = computed(() => documentBodyView(props.typeCode))
 
 const viewer = ref<InstanceType<typeof MdViewer> | null>(null)
@@ -47,7 +45,15 @@ function refresh(change: DocumentContentChange): void {
   viewer.value?.requestContentRefresh({ doc_id: change.docId, revision_no: change.revisionNo })
 }
 
-defineExpose({ refresh })
+/** The MD Viewer's body state for the window footer (flowgate.v02.0070 T#3); null while a special view shows its own. */
+const status = computed<DocumentBodyStatus | null>(() => viewer.value?.status ?? null)
+
+/** [복구] of the window footer: the MD Viewer recovers with its diagnosed method (only on the person's click). */
+async function recover(): Promise<void> {
+  await viewer.value?.recover()
+}
+
+defineExpose({ refresh, status, recover })
 </script>
 
 <style scoped>
