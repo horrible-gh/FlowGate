@@ -290,9 +290,20 @@ def _resolve_ai_provenance(ai_run_id: Optional[str]) -> dict:
     "question" action_scope), so this does not filter by scope the way the review path
     does. {} (every field null) when the token carries no run — a legacy token or the
     [Copy Mention] hand-off, which starts no run by design.
+
+    flowgate.v02.0064 T-B5 (L0005 2.18, P0006 §5.3): the in-memory run record is looked up
+    first and, when it yields nothing, the finished run's persisted ``ai_invoke_runs`` row —
+    the same memory-then-DB order as ``inbox_routes._resolve_origin_provider_name``. The
+    persisted row carries no requested provider, so requested_provider_id / fallback_used
+    stay null there.
     """
-    from modules.flow_gate.services.ai_invoke.provenance import resolve_run_provenance
+    from modules.flow_gate.services.ai_invoke.provenance import (
+        resolve_persisted_run_provenance,
+        resolve_run_provenance,
+    )
     snapshot = resolve_run_provenance(ai_run_id, doc_id=None, allowed_action_scopes=None)
+    if ai_run_id and not snapshot:
+        snapshot = resolve_persisted_run_provenance(ai_run_id)
     if ai_run_id and not snapshot:
         # 0661 T0004 F6: the run id came from the VERIFIED token, not from the body, so it
         # is evidence in its own right even when the provider half cannot be read (the
