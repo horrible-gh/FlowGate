@@ -256,6 +256,25 @@ export default {
         approved_documents_named: '先に承認された文書: {docs}',
       },
     },
+    // flowgate.v02.0064 T#4 — a card's inline title edit (0062 D0005 §3.2, 0064 P0006 §4.2.3 / §6.5).
+    nodeTitle: {
+      edit: 'タイトルを編集',
+      input: 'カードのタイトル',
+      hint: 'Enter で保存 · Esc で取消',
+      length: '{count}/{max}文字',
+      save: '保存',
+      cancel: '取消',
+      locked: '実行中のカードのタイトルは変更できません。',
+      failed: 'タイトルを保存できませんでした。',
+      error: {
+        title_empty: 'タイトルを入力してください。',
+        title_too_long: 'タイトルは30文字以内にしてください。',
+        node_title_not_editable: '現在このカードのタイトルは変更できません。',
+        node_title_not_supported: 'このカードはタイトルを個別に設定できません。',
+        node_not_found: 'カードが見つかりません。',
+        flow_disposed: '破棄されたフローは変更できません。',
+      },
+    },
     // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
     palette: {
       label: 'パレット',

@@ -42,6 +42,8 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'graph/edgeProgress.ts',
         // flowgate.v02.0056 F2-1: what a Graph card shows for its run (Canvas chip and Inspector alike).
         'graph/cardStateView.ts',
+        // flowgate.v02.0064 T#4: a card's own title — its length, version order and who may edit it.
+        'graph/nodeTitle.ts',
         'graph/fixtureFlowGraphSource.ts',
         'graph/flowGraph.ts',
         'graph/flowGraphSource.ts',
@@ -80,8 +82,8 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
     const pure = CENTER_FILES.filter((f) =>
       /^(graph\/|flowTabs\.ts$|canvasView\.ts$|designerCenterSession\.ts$|layoutSaveQueue\.ts$)/.test(rel(f)),
     )
-    // flowgate.v02.0056 F2-1: graph/cardStateView.ts is the tenth.
-    expect(pure).toHaveLength(10)
+    // flowgate.v02.0056 F2-1: graph/cardStateView.ts is the tenth; flowgate.v02.0064 T#4: graph/nodeTitle.ts the eleventh.
+    expect(pure).toHaveLength(11)
     for (const file of pure) {
       for (const spec of importsOf(read(file))) {
         expect(spec, rel(file)).not.toMatch(/\.vue$|^@vue-flow\//)

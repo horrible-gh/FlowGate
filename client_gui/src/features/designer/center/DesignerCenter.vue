@@ -18,7 +18,8 @@
        running / paused / stopping); the marks also draw the lock note, the protected lines and the running lines. A
        card's 병합 충돌 asks the Shell for the Git tool panel (`show-tool`), where the conflict session is resolved.
        flowgate.v02.0061 T#15: a card's context menu is the session's (cardMenu / chooseCardMenu: Hold 설정 / 해제,
-       되돌리기), and the Graph Time Machine's confirmation and outcome are the session's dialog (timeMachine). -->
+       되돌리기), and the Graph Time Machine's confirmation and outcome are the session's dialog (timeMachine).
+       flowgate.v02.0064 T#4: a card's inline title edit saves through the session (saveNodeTitle) when it can save titles. -->
   <div class="designer-center" data-test="designer-center">
     <FlowTabStrip
       :tabs="center.state.tabs"
@@ -83,6 +84,7 @@
           :card-menu="cardMenuOf"
           :holds="holds"
           @node-menu="chooseCardMenu"
+          :save-title="saveTitle"
         />
         <p
           v-if="edit?.status === 'error' && edit.errorCode === 'document_storage_unwritable'"
@@ -143,6 +145,13 @@ function chooseCardMenu(nodeId: string, key: FlowCardMenuKey) {
 /** flowgate.v02.0061 T#15: the active Flow's card Holds as the session judges them (the Graph read's for every card). */
 const holds = computed(() => (activeTab.value ? props.center.cardHolds(activeTab.value.flowId) : new Map<string, boolean>()))
 const timeMachine = props.center.timeMachine
+/** flowgate.v02.0064 T#4: a card title of the active Flow, saved by the session; null when the source saves none. */
+const saveTitle = props.center.canEditNodeTitles
+  ? (nodeId: string, title: string) =>
+      activeTab.value
+        ? props.center.saveNodeTitle(activeTab.value.flowId, nodeId, title)
+        : Promise.resolve({ ok: false as const, code: null, message: '' })
+  : null
 /** flowgate.v02.0061 T#15: the dialog's Flow's card titles by node key (its shown Graph). */
 const timeMachineTitles = computed(() => {
   const flowId = timeMachine.value?.flowId

@@ -33,6 +33,8 @@
 //
 // flowgate.v02.0061 T#15: the card Holds the Graph read tells (`holds`), so a card the run has no node run of shows its
 // Hold too.
+//
+// flowgate.v02.0064 T#4: a Graph node's card title state (`titleState`), the base of the card's inline title edit.
 
 export interface FlowGraphNode {
   /** Unique within the Graph — the server node identity for a server Graph. */
@@ -63,6 +65,21 @@ export interface FlowGraphNode {
   readonly nodeRun?: FlowGraphNodeRun | null
   /** Meaning (flowgate.v02.0053 T#5): the card's document lines (Graph / draft nodes only). */
   readonly cardDocuments?: readonly FlowGraphCardDocument[] | null
+  /**
+   * Meaning (flowgate.v02.0064 T#4): the card's own title state (`title` above already shows it). Only a v0.2 Graph node
+   * (document / gate / custom) has one; null / absent elsewhere and from an older server — its title is not editable.
+   */
+  readonly titleState?: FlowGraphTitleState | null
+}
+
+/**
+ * flowgate.v02.0064 T#4 (0064 P0006 §4.2.1, 0062 L0006 2.8): a card title state as the server sent it, one bundle. The
+ * screen takes a bundle only when its `version` is above the one it shows (graph/nodeTitle.ts).
+ */
+export interface FlowGraphTitleState {
+  readonly title: string | null
+  readonly titleSource: string | null
+  readonly version: number
 }
 
 /** One document line of a card (the server makes them when the card is placed, flowgate.v02.0053 T#1). */
@@ -154,6 +171,8 @@ export interface FlowGraphNodeRun {
   readonly hold?: boolean
   /** flowgate.v02.0063: the card's document holds a question still unanswered. Absent = false. */
   readonly question?: boolean
+  /** flowgate.v02.0064 T#4: the card is running now (the server's card running lock, `node_running`). Absent = not sent. */
+  readonly nodeRunning?: boolean
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions. Absent = 0. */
   readonly runningExecutionCount?: number
   readonly requestedExecutionCount?: number

@@ -259,6 +259,25 @@ export default {
         approved_documents_named: '앞서 승인된 문서: {docs}',
       },
     },
+    // flowgate.v02.0064 T#4 — a card's inline title edit (0062 D0005 §3.2, 0064 P0006 §4.2.3 / §6.5).
+    nodeTitle: {
+      edit: '제목 편집',
+      input: '카드 제목',
+      hint: 'Enter 저장 · Esc 취소',
+      length: '{count}/{max}자',
+      save: '저장',
+      cancel: '취소',
+      locked: '실행 중인 카드의 제목은 바꿀 수 없습니다.',
+      failed: '제목을 저장하지 못했습니다.',
+      error: {
+        title_empty: '제목을 입력하세요.',
+        title_too_long: '제목은 30자 이하여야 합니다.',
+        node_title_not_editable: '지금은 이 카드의 제목을 바꿀 수 없습니다.',
+        node_title_not_supported: '이 카드는 제목을 따로 정할 수 없습니다.',
+        node_not_found: '카드를 찾을 수 없습니다.',
+        flow_disposed: '폐기된 플로우는 변경할 수 없습니다.',
+      },
+    },
     // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
     palette: {
       label: '팔레트',

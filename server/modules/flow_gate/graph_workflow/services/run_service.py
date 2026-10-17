@@ -36,6 +36,10 @@ stays ``pending``, no propagation is recorded and nothing follows it. Released, 
 full command, which takes the root's state first (done / review, an approved root's propagation, a rejected root's
 ``review_rejected``) and then goes on as the start would have — never an ordinary opening of the R / B card
 (``run_apply.read_run_state`` keeps such a node out of every opening).
+
+flowgate.v02.0064 T#4: each node run also tells whether its card is running now (``node_running``): the running lock the
+card settings and a card title save use (``card_settings_ports.node_running`` — open in the active run, or in review while
+the card's AI review works on its result). The Canvas closes a card's title edit by it instead of judging it again.
 """
 from __future__ import annotations
 
@@ -53,7 +57,7 @@ from modules.flow_gate.graph_workflow.domain.run_policies import (
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
 from modules.flow_gate.graph_workflow.domain.run_scope_ports import run_scope
 
-from . import node_approval, node_dispatch, result_binder, run_state_ports
+from . import card_settings_ports, node_approval, node_dispatch, result_binder, run_state_ports
 from .engine_router import Ownership, read_ownership
 from .errors import GraphApiError
 from .flow_guard import with_flow_guard
@@ -432,7 +436,8 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
     attempt, else its last ended one; null for a node not opened since migration 151). 0061 T#9: that attempt's
     result integration (``integration_status``, ``integration_reason``; null when it has none). 0061 T#11: whether its
     card is held (``hold``; ``held``: the Flow's held node keys when the caller read them already). 0063: whether its
-    document holds a question still unanswered (``question``; ``asked``: ``question_nodes`` when the caller read them already)."""
+    document holds a question still unanswered (``question``; ``asked``: ``question_nodes`` when the caller read them already).
+    0064 T#4: whether its card is running now (``node_running``, ``running_lock``)."""
     from modules.flow_gate.services import graph_execution_hooks
     if held is None:
         held = frozenset(graph_execution_hooks.call("held_nodes", flow_id) or ())
@@ -449,7 +454,14 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
             "root_bound": bool(row.get("root_bound")), "dispatch": dispatch,
             "awaiting_approval": node_approval.awaiting_approval(flow_id, row),
             "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id"),
-            "attempt_id": attempt_id, "hold": row["node_key"] in held, "question": row["node_key"] in asked}
+            "attempt_id": attempt_id, "hold": row["node_key"] in held, "question": row["node_key"] in asked,
+            "node_running": running_lock(flow_id, row)}
+
+
+def running_lock(flow_id: str, row: dict) -> bool:
+    """0064 T#4: the card settings' running lock of the node run ``row``'s card (``card_settings_ports.node_running``,
+    the one a title save is refused by). Only an open or review node can be running, so no other is asked."""
+    return row.get("status") in ("open", "review") and card_settings_ports.node_running(flow_id, row["node_key"])
 
 
 def settle_if_needed(flow_id: str, project_id: Optional[str]) -> None:

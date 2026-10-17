@@ -334,6 +334,12 @@ export interface FlowCanvasNode {
   nodeRun?: FlowCanvasNodeRun | null
   /** flowgate.v02.0053 T#5: the card's document lines (`card_documents`) of a Graph / draft node; absent elsewhere. */
   cardDocuments?: FlowCanvasCardDocument[]
+  /**
+   * flowgate.v02.0064 T#4 (P0006 §4.2.1 / §6.5): the node's card title state; null on a v0.1 free document / slot node
+   * and a v0.1 Flow. Absent when an older server sent none — read as null: its title cannot be edited and no version is
+   * compared.
+   */
+  titleState?: FlowCanvasTitleState | null
 }
 
 /**
@@ -391,6 +397,11 @@ export interface FlowCanvasNodeRun {
   hold?: boolean
   /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
   question?: boolean
+  /**
+   * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
+   * (`node_running`: open, or in review while its AI review works); absent when not sent.
+   */
+  nodeRunning?: boolean
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
   runningExecutionCount?: number
   requestedExecutionCount?: number
@@ -407,6 +418,17 @@ export interface FlowCanvasGraphNode {
   assignee: FlowGraphAssignee | null
   /** The start node the Flow's existing root R / B document is bound to (D0004 §3.7). */
   rootBound: boolean
+}
+
+/**
+ * flowgate.v02.0064 T#4 (0064 P0006 §4.2.1): a Graph node's own card title state — the title a person (or later the AI)
+ * gave it, read with its `version` in one transaction. `version` 0 = no state yet (title null); it only grows.
+ */
+export interface FlowCanvasTitleState {
+  title: string | null
+  /** `human` | `ai` | null (open key). */
+  titleSource: string | null
+  version: number
 }
 
 export interface FlowGraphAssignee {
@@ -620,6 +642,11 @@ export interface FlowRunNode {
   hold?: boolean
   /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
   question?: boolean
+  /**
+   * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
+   * (`node_running`: open, or in review while its AI review works); absent when not sent.
+   */
+  nodeRunning?: boolean
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
   runningExecutionCount?: number
   requestedExecutionCount?: number

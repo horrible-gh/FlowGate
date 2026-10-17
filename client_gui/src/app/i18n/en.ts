@@ -256,6 +256,25 @@ export default {
         approved_documents_named: 'Approved before: {docs}',
       },
     },
+    // flowgate.v02.0064 T#4 — a card's inline title edit (0062 D0005 §3.2, 0064 P0006 §4.2.3 / §6.5).
+    nodeTitle: {
+      edit: 'Edit title',
+      input: 'Card title',
+      hint: 'Enter to save · Esc to cancel',
+      length: '{count}/{max} characters',
+      save: 'Save',
+      cancel: 'Cancel',
+      locked: 'The title of a running card cannot be changed.',
+      failed: 'The title could not be saved.',
+      error: {
+        title_empty: 'Enter a title.',
+        title_too_long: 'A title must be 30 characters or fewer.',
+        node_title_not_editable: 'The title of this card cannot be changed now.',
+        node_title_not_supported: 'This card cannot have a separate title.',
+        node_not_found: 'Card not found.',
+        flow_disposed: 'A disposed flow cannot be changed.',
+      },
+    },
     // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
     palette: {
       label: 'Palette',

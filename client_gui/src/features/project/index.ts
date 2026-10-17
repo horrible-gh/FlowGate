@@ -20,6 +20,7 @@ export { useProjectStore } from './store'
 // flowgate.v02.0053 T#5 adds the card document lines of a Graph / draft node (FlowCanvasCardDocument).
 // flowgate.v02.0053 T#9 adds the Graph run of a Flow (FlowRun / FlowRunNode) the top band runs through the store.
 // flowgate.v02.0061 T#15 adds what a Graph Time Machine of a run's done node did or why it was refused.
+// flowgate.v02.0064 T#4 adds a Graph node's card title state (FlowCanvasTitleState), saved through the store loader.
 // flowgate.v02.0048 T#2 adds the subscription and frame shapes of the store's project event
 // subscription (subscribeProjectEvents, the hub the Canvas subscription also runs on).
 export type { FlowCanvasChangeHandlers } from './flowCanvasEvents'
@@ -48,6 +49,7 @@ export type {
   FlowCanvasOwnership,
   FlowCanvasPosition,
   FlowCanvasSlot,
+  FlowCanvasTitleState,
   FlowCanvasView,
   FlowCanvasViewport,
   FlowChangeSet,
