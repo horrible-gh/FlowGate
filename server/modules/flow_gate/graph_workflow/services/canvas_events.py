@@ -13,6 +13,8 @@ from modules.flow_gate.db.connection import after_commit
 
 
 CANVAS_REASON_DOCUMENTS = "documents"
+CANVAS_REASON_TITLE = "title"
+_NODE_KEY_REASONS = ("layout", "hold", CANVAS_REASON_TITLE)
 
 
 def _queue(event: FlowEvent) -> None:
@@ -36,7 +38,8 @@ def publish_canvas_changed(
 ) -> None:
     """``reason``: "layout" | "draft" | "revision" | "identity_rematch" (P0008 §8.3) | "hold" (0061 T#11: a card's
     Hold was set / released, with or without a run; ``node_keys`` names the card),
-    or "documents" when document body facts changed without a draft change."""
+    or "documents" when document body facts changed without a draft change, or "title" (0064 T-B4b, P0006 §4.2.4:
+    a card's title was saved; ``node_keys`` names that one card)."""
     _queue(FlowEvent(
         event_type=EventType.GRAPH_CANVAS_CHANGED.value,
         payload={
@@ -46,7 +49,7 @@ def publish_canvas_changed(
             "origin_client_id": origin_client_id,
             "draft_version": draft_version if reason == "draft" else None,
             "revision_no": revision_no if reason == "revision" else None,
-            "node_keys": list(node_keys) if reason in ("layout", "hold") else [],
+            "node_keys": list(node_keys) if reason in _NODE_KEY_REASONS else [],
         },
         audience="*",
         project=project_id,

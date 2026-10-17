@@ -17,13 +17,15 @@ root (``startup.py``) calls :func:`register` once at startup.
     on_question_answered   a question was answered: the card whose AI asked it goes on after its last answer
                      (``question_wait``, flowgate.v02.0063)
     token_step_type  the source tools' step type of a node token (``settings.token_step_type``)
+    node_running     a card title save: the card is running (``legacy_adapter.node_running``, the card settings lock;
+                     0064 T-B4b)
 """
 from __future__ import annotations
 
 from modules.flow_gate.graph_workflow.services import card_settings_ports as ports
 from modules.flow_gate.services import ai_run_end_hooks, worker_step_type_hooks
 
-from flowgate.card_settings import question_wait, review_stage, settings
+from flowgate.card_settings import legacy_adapter, question_wait, review_stage, settings
 
 
 def register() -> None:
@@ -33,6 +35,7 @@ def register() -> None:
     ports.register(ports.AI_WORKING, review_stage.ai_working)
     ports.register(ports.INSTRUCTION_DOCUMENT, settings.instruction_document)
     ports.register(ports.APPROVE_INSTRUCTION, review_stage.approve_instruction)
+    ports.register(ports.NODE_RUNNING, legacy_adapter.node_running)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDED, review_stage.on_run_ended)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDING, review_stage.on_run_ending)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_QUESTION_ANSWERED, question_wait.on_question_answered)

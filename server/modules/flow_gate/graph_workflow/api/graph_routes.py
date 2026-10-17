@@ -1,4 +1,5 @@
-"""Graph definition routes (P0008 §5 S3, §6 S4). Thin: no judgement lives here."""
+"""Graph definition routes (P0008 §5 S3, §6 S4) and the card title save (0064 P0006 §4.2.2).
+Thin: no judgement lives here."""
 from __future__ import annotations
 
 from typing import Any
@@ -6,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Request
 
 from modules.flow_gate.graph_workflow.domain.draft_request import parse_draft, parse_version, sort_errors
-from modules.flow_gate.graph_workflow.services import canvas_service, confirm_service, graph_service
+from modules.flow_gate.graph_workflow.services import canvas_service, confirm_service, graph_service, node_title
 
 from . import envelope
 from .graph_messages import fill_issue_messages
@@ -85,3 +86,29 @@ def post_flow_graph_revision(flow_id: str, request: Request, body: Any = Body(de
         return confirm_service.confirm_revision(group, user_id, version, base, client_id)
 
     return envelope.run(request, handle, status=201)
+
+
+def _title_of(body: Any) -> tuple[Any, list[dict]]:
+    """The ``title`` of a title save body; anything else in it (a state version too) is ignored."""
+    if not isinstance(body, dict):
+        return None, [{"field": "body", "reason": "not_an_object"}]
+    if "title" not in body:
+        return None, [{"field": "title", "reason": "required"}]
+    if not isinstance(body["title"], str):
+        return None, [{"field": "title", "reason": "not_a_string"}]
+    return body["title"], []
+
+
+@router.put("/flows/{flow_id}/graph/nodes/{node_key}/title")
+def put_flow_graph_node_title(flow_id: str, node_key: str, request: Request, body: Any = Body(default=None)):
+    def handle() -> dict:
+        user_id = envelope.authenticate(request)
+        client_id = envelope.client_id_of(request)
+        group = canvas_service.load_flow(flow_id)
+        envelope.authorize(user_id, group, "write")
+        title, errors = _title_of(body)
+        if errors:
+            raise envelope.invalid(request, errors)
+        return node_title.save_human_title(group, node_key, title, user_id, client_id)
+
+    return envelope.run(request, handle)

@@ -14,6 +14,9 @@ the very guard the document needs; any other open transaction is refused before 
 the rollback, before the queued callbacks run. A file cleanup a guarded write queues therefore runs through
 ``run_cleanup``: a fresh short transaction whose first statement takes the durable lock again (no guard bump),
 so a writer of another process staging files at the same paths is never interleaved with it.
+
+0064 T-B4b (DB0007 Q1, L0006 2.8): ``with_read_snapshot`` is the read unit of a Canvas / Graph / revision response — the
+definition and the card title states it carries are read in one transaction that is one snapshot of the database.
 """
 from __future__ import annotations
 
@@ -96,6 +99,32 @@ def with_flow_guard(flow_id: str, body: Callable[[], T]) -> T:
                 return body()
     finally:
         lock.release()
+
+
+# The first statement of a read unit, by dialect: it makes the unit's reads one snapshot. SQLite: the driver opens no
+# transaction for a SELECT, so a deferred BEGIN (the snapshot starts at the first read and lasts to the commit). PostgreSQL:
+# READ COMMITTED takes a snapshot per statement, so the unit asks REPEATABLE READ. MySQL / MariaDB: InnoDB's snapshot now.
+READ_SNAPSHOT_STATEMENTS = {
+    db_dialect.SQLITE: "BEGIN",
+    db_dialect.POSTGRESQL: "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+    db_dialect.MYSQL: "START TRANSACTION WITH CONSISTENT SNAPSHOT",
+}
+
+
+def with_read_snapshot(body: Callable[[], T]) -> T:
+    """One transaction, one snapshot, for the reads of a response (0064 T-B4b, DB0007 Q1 / L0006 2.8).
+
+    The Graph definition (draft, revisions, ownership) and the card title states ``body`` reads come from one moment:
+    a write committed meanwhile is either wholly seen or not at all. Inside an open transaction (a Flow guard) ``body``
+    joins it, the guard's reads being one unit already. Nothing here takes the Flow guard, so a step that may write
+    under it (``ensure_identity``, a run reconcile) runs before this unit, never inside it.
+    """
+    if in_transaction():
+        return body()
+    store = get_store()
+    with store.transaction():
+        store._execute(READ_SNAPSHOT_STATEMENTS.get(getattr(store, "dialect", db_dialect.SQLITE), "BEGIN"))
+        return body()
 
 
 def lock_document_row(doc_id: str) -> None:

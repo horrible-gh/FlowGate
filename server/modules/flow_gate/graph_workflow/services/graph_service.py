@@ -9,6 +9,11 @@ the feature lives in ``flowgate.card_documents``).
 
 flowgate.v02.0061 T#11: a Graph read tells whether each node's card is held (``hold`` on every node of the draft and the
 revisions, ``graph_execution_hooks`` ``held_nodes``; false for all when no handler is registered).
+
+0064 T-B4b (P0006 §4.2.1): a Graph read carries each node's ``title_state`` (the card's current state, also on a
+past revision; null on a v0.1 Flow). A draft save neither reads nor writes title states nor answers them. A Graph read
+and a revision read take their definition and title states in one read unit (``flow_guard.with_read_snapshot``,
+DB0007 Q1): never a draft of one moment with the title states of another.
 """
 from __future__ import annotations
 
@@ -30,15 +35,15 @@ from modules.flow_gate.graph_workflow.projection.flow_snapshot import (
     read_snapshot,
     registered_doc_types,
 )
-from modules.flow_gate.graph_workflow.projection.graph_projector import to_graph_node
-from modules.flow_gate.graph_workflow.store import assignment_store, definition_store, layout_store
+from modules.flow_gate.graph_workflow.projection.graph_projector import title_state_block, to_graph_node
+from modules.flow_gate.graph_workflow.store import assignment_store, definition_store, layout_store, title_store
 
 from .canvas_events import publish_canvas_changed
 from .canvas_service import follow_supersede
 from . import card_document_ports, graph_validation_ports, run_state_ports
 from .engine_router import Ownership, block, confirm_block_reason, read_ownership, require_graph_editable
 from .errors import GraphApiError
-from .flow_guard import with_flow_guard
+from .flow_guard import with_flow_guard, with_read_snapshot
 
 _KEY_ALPHABET = string.digits + string.ascii_lowercase
 _KEY_LENGTH = 12
@@ -100,13 +105,27 @@ def _with_hold(flow_id: str, *wires: Optional[dict]) -> None:
             node["hold"] = node["node_key"] in held
 
 
+def _with_title_states(flow_id: str, carried: bool, *wires: Optional[dict]) -> None:
+    """0064 T-B4b: ``title_state`` on each node of the wires (the Flow's states in one statement, in the caller's read
+    unit with the wires' definition), else null."""
+    states = title_store.states(flow_id) if carried else {}
+    for wire in wires:
+        for node in (wire or {}).get("nodes", []):
+            node["title_state"] = title_state_block(states.get(node["node_key"])) if carried else None
+
+
 def graph_payload(flow_id: str) -> dict:
     """P0008 §5.2 ``GET /flows/{flow_id}/graph``."""
+    return with_read_snapshot(lambda: _graph_read(flow_id))
+
+
+def _graph_read(flow_id: str) -> dict:
     own = read_ownership(flow_id)
     latest_no = definition_store.latest_revision_no(flow_id)
     draft = draft_wire(definition_store.draft(flow_id), own.state)
     latest = revision_wire(definition_store.revision(flow_id, latest_no) if latest_no else None)
     _with_hold(flow_id, draft, latest)
+    _with_title_states(flow_id, own.state != "v01", draft, latest)
     return {
         "flow_id": flow_id,
         "ownership": block(flow_id, own),
@@ -118,11 +137,16 @@ def graph_payload(flow_id: str) -> dict:
 
 def revision_payload(flow_id: str, revision_no: int) -> dict:
     """P0008 §5.2 ``GET /flows/{flow_id}/graph/revisions/{n}``."""
+    return with_read_snapshot(lambda: _revision_read(flow_id, revision_no))
+
+
+def _revision_read(flow_id: str, revision_no: int) -> dict:
     rev = definition_store.revision(flow_id, revision_no)
     if rev is None:
         raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": revision_no})
     out = revision_wire(rev)
     _with_hold(flow_id, out)
+    _with_title_states(flow_id, True, out)
     binding = assignment_store.root_binding(flow_id)
     out["root_binding"] = None
     if binding and binding["bound_at_revision_no"] <= revision_no and \

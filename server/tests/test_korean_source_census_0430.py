@@ -200,6 +200,12 @@ FILE_LINE_CAPS: dict[str, int] = {
     # New file (flowgate.v02.0064 T#2, T-B1e): the AI start body precheck's mention copy P0006 fixes -- the
     # "[읽을 수 없는 문서]" section header and the four reason sentences of §1.3. Mention copy for the AI, not comments.
     "modules/flow_gate/services/ai_start_precheck.py": 5,
+    # 0 -> 33: flowgate.v02.0064 T#3 (T-B4b). Measured: 27 before the change (the Graph API's ko message table, never
+    # entered here), and T-B4b adds exactly 6 -- the ko sentences of the six card title codes P0006 §4.2.3 fixes.
+    "modules/flow_gate/graph_workflow/api/envelope.py": 33,
+    # New file (flowgate.v02.0064 T#3, T-B4b): the default card names copied from the client i18n (palette items,
+    # node kinds; 0062 L0006 1.3) the title rules compare against. Locale-dictionary (A) values, not comments.
+    "modules/flow_gate/graph_workflow/services/node_title_names.py": 18,
     "modules/flow_gate/services/remote_tool_service.py": 14,
     "modules/flow_gate/services/test_run_service.py": 28,
     # 45 -> 97. Measured, split into its two causes: 55 lines were already there before

@@ -14,6 +14,9 @@
   The documents a card made are never drawn as free document nodes (``hidden_doc_ids``).
 - flowgate.v02.0053 T#8: a Custom card (``custom`` node) is titled with the name a person gave it (its
   label), also once a run bound a result document to it — that name is all that tells one apart.
+- flowgate.v02.0064 T-B4b (0062 D0005 §3.1, P0006 §4.2.1): every Graph / draft node carries its card's title
+  state (``title_state``: title, source, version; version 0 without a row) and shows that title first; with
+  none it keeps the rules above. The canvas service hands each view the Flow's states read in one statement.
 Pure over its inputs; positions are placed by the canvas service.
 """
 from __future__ import annotations
@@ -31,6 +34,7 @@ EDGE_ORIGIN = {"draft": "draft", "revision": "graph"}
 # The card line authors (card_documents ``author``) a node without a document shows first: a person's line,
 # and an instruction its instruction AI or a person writes (flowgate.v02.0056 T#2).
 _WRITTEN_AUTHORS = ("human", "instruction_ai_or_human")
+_TITLE_SOURCES = ("ai", "human")
 
 
 @dataclass
@@ -43,6 +47,7 @@ class GraphView:
     node_runs: dict = field(default_factory=dict)     # node_key -> P0008 §2.6 ``node_run`` block
     card_docs: dict = field(default_factory=dict)     # node_key -> card lines of the node's kind in this view
     hidden_doc_ids: frozenset = frozenset()            # documents a card made (never free nodes)
+    title_states: dict = field(default_factory=dict)  # node_key -> stored title state (0064 T-B4b)
 
 
 def to_graph_node(row: dict) -> GraphNode:
@@ -53,16 +58,27 @@ def to_graph_node(row: dict) -> GraphNode:
     )
 
 
+def title_state_block(state: Optional[dict]) -> dict:
+    """P0006 §4.2.1 ``title_state`` of a card: no row is version 0 with no title; the source ``none`` is null."""
+    state = state or {}
+    source = state.get("title_source")
+    return {"title": state.get("title") or None, "title_source": source if source in _TITLE_SOURCES else None,
+            "version": int(state.get("version") or 0)}
+
+
 def graph_node(row: dict, origin: str, ownership: str, document: Optional[dict], supersedes,
-               root_bound: bool, lines: Optional[list] = None, line_doc: Optional[dict] = None) -> dict:
+               root_bound: bool, lines: Optional[list] = None, line_doc: Optional[dict] = None,
+               title_state: Optional[dict] = None) -> dict:
     node = to_graph_node(row)
+    state = title_state_block(title_state)
+    shown = node.label if node.node_type == "custom" else (document or {}).get("title") or node.label
     return {
         "node_key": node.key,
         "identity_source": "graph_node",
         "origin": origin,
         "kind": node_kind(node, cm.kind_for_type),
         "doc_type": node.doc_type,
-        "title": node.label if node.node_type == "custom" else (document or {}).get("title") or node.label,
+        "title": state["title"] or shown,
         "state": (cm.document_state(document.get("doc_review_status"), document.get("type_code"))
                   if document else "draft"),
         "editable": cm.editable_for(ownership, origin),
@@ -74,6 +90,7 @@ def graph_node(row: dict, origin: str, ownership: str, document: Optional[dict],
         },
         "node_run": None,
         "card_documents": list(lines or []),
+        "title_state": state,
     }
 
 
@@ -111,7 +128,8 @@ def _graph_nodes(out: Projection, view: GraphView, ownership: str, by_id: dict, 
             doc = result if result is not None and cm.is_alive(result, result.get("group_id")) else None
         lines = view.card_docs.get(row["node_key"]) or []
         node = graph_node(row, origin, ownership, doc, supersedes, bound, lines,
-                          None if doc is not None else first_line_document(lines, by_id))
+                          None if doc is not None else first_line_document(lines, by_id),
+                          view.title_states.get(row["node_key"]))
         if run is not None:
             node["node_run"] = run
             if not bound:
