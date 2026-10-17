@@ -31,6 +31,9 @@ document type).
   what the instruction AI registers with it is never the node's result, however late its registration lands.
 - flowgate.v02.0056 T#3: the card's memos turned on for AI reading open the mention of both stages (and of every
   reissue of the run's token) as one "User memos" section (``card_memo_hooks``); none, or no handler: unchanged.
+- flowgate.v02.0064 T-B1e: before the memos, every document the run hands over (its start, target and reference
+  documents and the card's line documents) is checked for a readable body (``ai_start_precheck``): an unreadable one
+  puts the "unreadable documents" section between the memos and the mention; all readable: unchanged.
 - flowgate.v02.0056 T#3: a person may register the node's result with its dispatch token (the card line write) once
   the AI start holds the group lease but before its token is mapped. The mapping guard then finds that result
   registered (its consume is committed before the Graph is told) and refuses the start, as for a node no longer
@@ -45,7 +48,9 @@ from typing import Optional
 
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.graph_workflow.store import run_store
-from modules.flow_gate.services import ai_invoke_service, card_memo_hooks, mention_service, token_service
+from modules.flow_gate.services import (
+    ai_invoke_service, ai_start_precheck, card_memo_hooks, mention_service, token_service,
+)
 
 from .flow_guard import with_flow_guard
 
@@ -127,6 +132,7 @@ def start_ai_invoke(job: dict) -> dict:
             head_type=job.get("result_doc_type") or job["doc_type"], head_status="pending", parent_doc=parent,
             api_base_url=api_base_url(), raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,
         )
+        mention = ai_start_precheck.node_mention(mention or "", job, ai_run_id)    # 0064 T-B1e: memos go in front of it
         mention = card_memo_hooks.prepend_memo_section(mention or "", flow_id, node_key=job["node_key"])
         return {"raw_token": issue["raw_token"], "token_id": issue["token_id"],
                 "scratch_dir": issue["scratch_dir"], "mention": mention or ""}

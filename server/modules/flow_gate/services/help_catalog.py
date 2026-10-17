@@ -769,6 +769,22 @@ def _content_group_documents(ctx: dict) -> dict:
     }
 
 
+#: ``content_state`` values of the token document read (P0006 §1.2 / §2.9 ③); ``read_error`` is never a response
+#: reason there (a read error stays 500), so it is not listed.
+_DOCUMENT_CONTENT_STATES: tuple[tuple[str, str], ...] = (
+    ("readable", "본문을 읽었다. front matter뿐이면 빈 문서이며 읽기 실패가 아니다"),
+    ("file_path_missing", "문서의 파일 경로가 기록되지 않았다"),
+    ("file_not_found", "파일 경로는 있으나 파일이 없다"),
+    ("path_unresolved", "파일 경로를 저장소 안에서 해석할 수 없다"),
+)
+
+
+def _body_unreadable_rules() -> tuple[str, ...]:
+    from modules.flow_gate.services import mention_service   # noqa: PLC0415 - the rule owner, imported on use
+
+    return mention_service.BODY_UNREADABLE_RULES
+
+
 def _content_document_access(ctx: dict) -> dict:
     base = ctx["base_url"]
     doc_id = ctx.get("doc_id") or "{doc_id}"
@@ -805,6 +821,10 @@ def _content_document_access(ctx: dict) -> dict:
             },
         },
         "note": _copy(_ITEM_NOTES, ctx["locale"], "document_access"),
+        # 0064 T-B1e (P0006 §2.9 ③): what each ``content_state`` of a document read means, and the unread-body
+        # rules -- the Flow node AI reads them here through the help index (the same constant as the Q&A mention).
+        "content_state": dict(_DOCUMENT_CONTENT_STATES),
+        "rules": list(_body_unreadable_rules()),
     }
     if ctx.get("action_scope") == "chat":
         payload["conversation_history"] = {

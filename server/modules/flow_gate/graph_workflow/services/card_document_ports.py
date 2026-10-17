@@ -11,6 +11,8 @@ calls and the composition root (``startup.py``) registers the handlers.
     on_result_bound    run step, inside its Flow guard: a result bound to a node fills its line
     on_root_converted  R↔B root conversion, inside its Flow guard: the line holding the root follows;
                        returns the node keys whose requirement line holds it (the draft cards to sync)
+    card_line_documents  AI start (0064 T-B1e, read only): the live documents the lines of a card show --
+                       the card ``node_key``, or the cards whose lines show ``doc_id`` -- for the body precheck
 
 * With no handler registered a port is a no-op (no lines, nothing hidden), so the Graph behaves
   exactly as it did before the ports existed.
@@ -27,7 +29,8 @@ ON_DRAFT_SAVED = "on_draft_saved"
 CARD_VIEW = "card_view"
 ON_RESULT_BOUND = "on_result_bound"
 ON_ROOT_CONVERTED = "on_root_converted"
-PORT_NAMES = (ON_DRAFT_SAVED, CARD_VIEW, ON_RESULT_BOUND, ON_ROOT_CONVERTED)
+CARD_LINE_DOCUMENTS = "card_line_documents"
+PORT_NAMES = (ON_DRAFT_SAVED, CARD_VIEW, ON_RESULT_BOUND, ON_ROOT_CONVERTED, CARD_LINE_DOCUMENTS)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -98,3 +101,13 @@ def root_converted(flow_id: str, old_doc_id: str, converted: dict) -> list[str]:
     if handler is None:
         return []
     return list(handler(flow_id, old_doc_id, converted) or [])
+
+
+def card_line_doc_ids(flow_id: Optional[str], *, node_key: Optional[str] = None,
+                      doc_id: Optional[str] = None) -> list[str]:
+    """The doc ids the lines of the card ``node_key`` (or of the cards showing ``doc_id``) show, card by card in
+    line order (none without a handler, a Flow or a card)."""
+    handler = _handler(CARD_LINE_DOCUMENTS)
+    if handler is None or not flow_id or not (node_key or doc_id):
+        return []
+    return [d for d in handler(flow_id, node_key, doc_id) or [] if d]

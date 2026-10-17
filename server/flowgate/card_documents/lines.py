@@ -241,14 +241,20 @@ def adopt_result(flow_id: str, node_key: str, doc_id: Optional[str]) -> None:
 
 # ── reads ────────────────────────────────────────────────────────────────────
 
-def lines_by_node(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[str]] = None) -> dict[str, list[dict]]:
-    """``node_key -> [line]`` with each line's live document (the end of its supersede chain), whether it is
-    written (``has_body``) and its review history counts (flowgate.v02.0056 T#3; 0 without a document)."""
+def _shown_rows(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[str]] = None) -> list[tuple]:
+    """``(row, shown)`` per stored line: its live document (the end of its supersede chain), or None."""
     shown_rows = []
     for row in repository.rows(flow_id, node_keys):
         doc = docs_by_id.get(row["doc_id"])
         end = legacy.live_end(flow_id, doc, docs_by_id)[0] if doc else None
         shown_rows.append((row, end or (doc if doc and legacy.is_alive(doc, flow_id) else None)))
+    return shown_rows
+
+
+def lines_by_node(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[str]] = None) -> dict[str, list[dict]]:
+    """``node_key -> [line]`` with each line's live document (the end of its supersede chain), whether it is
+    written (``has_body``) and its review history counts (flowgate.v02.0056 T#3; 0 without a document)."""
+    shown_rows = _shown_rows(flow_id, docs_by_id, node_keys)
     reviews = legacy.review_counts([shown["doc_id"] for _row, shown in shown_rows if shown])
     out: dict[str, list[dict]] = {}
     for row, shown in shown_rows:
@@ -281,6 +287,24 @@ def node_keys_showing(flow_id: str, doc_id: Optional[str]) -> list[str]:
             if end is not None and end["doc_id"] == doc_id:
                 keys.append(row["node_key"])
     return list(dict.fromkeys(keys))
+
+
+def card_line_doc_ids(flow_id: str, node_key: Optional[str], doc_id: Optional[str]) -> list[str]:
+    """``card_document_ports.card_line_doc_ids`` handler (0064 T-B1e, L0005 2.14): the documents the lines of the
+    card ``node_key`` show -- or, for an AI working on one document (a Q&A answer), of the cards whose lines show
+    ``doc_id`` (``node_keys_showing``, the cards the memo section reads) -- card by card in line order. The same
+    live documents the line read shows (``lines_by_node``); no body is read here."""
+    if not repository.available():
+        return []
+    keys = [node_key] if node_key else node_keys_showing(flow_id, doc_id)
+    if not keys:
+        return []
+    docs = {d["doc_id"]: d for d in legacy.flow_documents(flow_id) if d.get("doc_id")}
+    by_node: dict[str, list[str]] = {}
+    for row, shown in _shown_rows(flow_id, docs, keys):
+        if shown:
+            by_node.setdefault(row["node_key"], []).append(shown["doc_id"])
+    return [shown_id for key in keys for shown_id in by_node.get(key, [])]
 
 
 def has_body(doc: Optional[dict]) -> bool:

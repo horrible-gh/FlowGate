@@ -239,6 +239,21 @@ def _reference_doc_lines(doc_dot_dash_path: str, base: str, locale: str = "ko") 
     return lines
 
 
+# 0064 T-B1e (D0004 §3.6 rules 1-5, L0005 2.15, P0006 §2.9): the one wording of the unread-body rules. The Q&A
+# answer and chat lookup lines below, the help item ``document_access`` (``help_catalog``) and the unreadable
+# documents section of an AI start (``ai_start_precheck``) all carry this constant; change the wording here only.
+BODY_UNREADABLE_RULES: tuple[str, ...] = (
+    "본문 미열람 규칙 1: content가 null이거나 content_state가 readable이 아닌 문서는 '읽지 못한 문서'입니다. "
+    "front matter뿐인 빈 문서(content_state=readable)와 구분해 적으십시오.",
+    "본문 미열람 규칙 2: 읽지 못한 문서의 내용을 읽은 것처럼 인용하거나 요약하지 마십시오.",
+    "본문 미열람 규칙 3: 답변 첫머리에 (가) 본문을 읽지 못한 문서 번호, (나) 받은 사유(content_state 값), "
+    "(다) 대신 사용한 근거를 밝히십시오.",
+    "본문 미열람 규칙 4: 질문이 그 문서의 내용을 전제로 하면, 다른 자료에서 끌어낸 내용에 "
+    "'원문 미확인 상태의 추정'이라고 표시하십시오.",
+    "본문 미열람 규칙 5: 이관 조건은 그대로입니다. 사유가 권한 오류(403)이면 기존 '권한' 조건을 적용하십시오.",
+)
+
+
 def _document_lookup_lines(
     base: str,
     raw_token: str,
@@ -272,6 +287,7 @@ def _document_lookup_lines(
             f"?q=<keyword>{project_filter}&include_matches=true&context_lines=2&hits_per_doc=5"
         ),
         "Section reads accept exactly one of section, section_id, lines, or chars.",
+        *BODY_UNREADABLE_RULES,          # 0064 T-B1e: always, right before the credential line (P0006 §2.9 ②)
         f"Authorization: Bearer {raw_token}",
     ]
 

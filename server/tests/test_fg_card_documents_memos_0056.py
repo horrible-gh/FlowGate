@@ -1007,8 +1007,11 @@ def test_a_qa_answer_on_a_card_document_reads_the_card_s_memos(env, monkeypatch)
     _assert_memos_lead(issued["mention"])
     assert issued["mention"].endswith("\n\nANSWER MENTION")
     free = _doc_row(ROOT)                                                  # no card line shows the root here
-    assert qa.issue_answer_token(doc=free, item={"id": 2}, issued_to="u_kim",
-                                 api_base_url="http://h/api/v1")["mention"] == "ANSWER MENTION"
+    free_mention = qa.issue_answer_token(doc=free, item={"id": 2}, issued_to="u_kim",
+                                         api_base_url="http://h/api/v1")["mention"]
+    # 0064 T-B1e: the root has no body file, so the unreadable documents section leads -- but no memo section.
+    assert free_mention.startswith("[읽을 수 없는 문서]\n") and free_mention.endswith("\n\nANSWER MENTION")
+    assert "## User memos" not in free_mention
 
 
 def test_a_document_a_card_line_holds_or_shows_finds_its_card(env, decided):

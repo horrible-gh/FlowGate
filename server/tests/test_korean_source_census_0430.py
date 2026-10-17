@@ -178,7 +178,11 @@ FILE_LINE_CAPS: dict[str, int] = {
     # 70 -> 73: flowgate.default.0523 T0004 added the document_attachments help item
     # (title/summary/note, ko locale) that bridges attachment list/read/copy to the
     # worker-token document surface.
-    "modules/flow_gate/services/help_catalog.py": 73,
+    # 73 -> 104: flowgate.v02.0064 T#2 (T-B1e). Measured with this suite's scanner: the file was already at 100
+    # before the change (drift from other merged groups, untracked here like the mention_service.py entry), and
+    # T-B1e adds exactly 4 -- the ko meanings of the four ``content_state`` values the help item ``document_access``
+    # now serves (P0006 §2.9 ③, the protocol's own sentences; the rules come from mention_service, not from here).
+    "modules/flow_gate/services/help_catalog.py": 104,
     "modules/flow_gate/services/invoke_mention_service.py": 4,
     # 157 -> 176: this file was already at 175 (pre-existing drift from other merged
     # groups untouched by 0523, same as the tr_commit_ledger.py entry this census still
@@ -186,8 +190,16 @@ FILE_LINE_CAPS: dict[str, int] = {
     # flowgate.default.0523 T0004 §18 then added
     # exactly one new ko line — the mention's document_attachments help-item pointer —
     # bringing the measured count to 176.
-    "modules/flow_gate/services/mention_service.py": 176,
-    "modules/flow_gate/services/q_answer_invoke_service.py": 24,
+    # 176 -> 209: flowgate.v02.0064 T#2 (T-B1e). Measured: 201 before the change (drift, as above), and T-B1e adds
+    # exactly 8 -- ``BODY_UNREADABLE_RULES``, the five unread-body rules P0006 §2.9 fixes word for word for the AI
+    # mentions (eight source lines; three rules are split over two string literals).
+    "modules/flow_gate/services/mention_service.py": 209,
+    # 24 -> 39: flowgate.v02.0064 T#2 (T-B1e). Measured: 38 before the change (drift), and T-B1e adds exactly 1 --
+    # the answer mention's sentence pointing at the unread-body rules 3 and 4 (P0006 §2.9 ②, its exact wording).
+    "modules/flow_gate/services/q_answer_invoke_service.py": 39,
+    # New file (flowgate.v02.0064 T#2, T-B1e): the AI start body precheck's mention copy P0006 fixes -- the
+    # "[읽을 수 없는 문서]" section header and the four reason sentences of §1.3. Mention copy for the AI, not comments.
+    "modules/flow_gate/services/ai_start_precheck.py": 5,
     "modules/flow_gate/services/remote_tool_service.py": 14,
     "modules/flow_gate/services/test_run_service.py": 28,
     # 45 -> 97. Measured, split into its two causes: 55 lines were already there before
