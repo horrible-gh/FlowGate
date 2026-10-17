@@ -5,13 +5,19 @@
        flowgate.v02.0039 T#3: with no work target the Inspector keeps only its frame and the
        Minimap stays on screen dimmed and unavailable (confirmed initial-state design).
        flowgate.v02.0048 T#1 (D#1 §4.2 / §5.7): the Inspector gets the selection context and its
-       Host intents are passed up unchanged — the Dock knows no Inspector feature. -->
+       Host intents are passed up unchanged — the Dock knows no Inspector feature.
+       flowgate.v02.0070 T#1: so is the card title save the Center column gives (the Inspector header's). -->
   <section
     class="designer-bottom-dock"
     data-test="designer-bottom-dock"
     :style="{ height: `${height}px`, gridTemplateColumns: DESIGNER_BOTTOM_DOCK_COLUMNS }"
   >
-    <DesignerInspector :selection="inspector?.selection() ?? null" :unselected="unselected" @host="inspector?.host($event)" />
+    <DesignerInspector
+      :selection="inspector?.selection() ?? null"
+      :unselected="unselected"
+      :save-title="inspector?.saveTitle ?? null"
+      @host="inspector?.host($event)"
+    />
     <aside
       class="designer-bottom-minimap"
       :class="{ 'is-unavailable': unselected }"
@@ -63,10 +69,13 @@ withDefaults(
 // its Host intents go (inspector/inspectorHost.ts, which the Shell does not import — structure.0025),
 // so the Dock's props and events stay as they are. Null when the Dock is mounted without it.
 import { inject } from 'vue'
+import type { DesignerCenterSession } from '../center/designerCenterSession'
 import type { FlowGraphSelection } from '../center/graph/flowGraph'
 interface BottomDockInspector {
   readonly selection: () => FlowGraphSelection | null
   readonly host: (intent: { readonly kind: string; readonly nodeId?: string; readonly tool?: string }) => void
+  /** flowgate.v02.0070 T#1: the card title save (the session's, for the Flow and card given); null = none. */
+  readonly saveTitle?: DesignerCenterSession['saveNodeTitle'] | null
 }
 const inspector = inject<BottomDockInspector | null>(Symbol.for('flowgate.designer.bottomDockInspector'), null)
 

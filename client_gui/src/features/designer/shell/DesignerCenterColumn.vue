@@ -9,7 +9,9 @@
        a new Bottom Dock height; the Workspace (and its Canvas) takes the rest.
        flowgate.v02.0048 T#1 (D#1 §4.2 / §5.7): the Inspector gets the session's selection context.
        Its Host intents are carried out here — select another Node, read the Flow again quietly —
-       or, for a Tool Panel, passed up to the Shell. -->
+       or, for a Tool Panel, passed up to the Shell.
+       flowgate.v02.0070 T#1 (B1): the Inspector header's card title save goes to the session's saveNodeTitle for the
+       Flow and card the edit was opened on (never the active Flow at answer time). -->
   <div ref="columnRef" class="designer-center-column" data-test="designer-center-column">
     <DesignerWorkspace :center="center" :unselected="unselected" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" @show-tool="emit('show-tool', $event)" />
     <DesignerResizeHandle
@@ -66,6 +68,9 @@ const emit = defineEmits<{
 // (the Dock injects the same key) so the Dock's props and events stay as they are.
 provide(Symbol.for('flowgate.designer.bottomDockInspector'), {
   selection: () => props.center.activeSelection.value,
+  saveTitle: props.center.canEditNodeTitles
+    ? (flowId: string, nodeId: string, title: string) => props.center.saveNodeTitle(flowId, nodeId, title)
+    : null,
   host(intent: { readonly kind: string; readonly nodeId?: string; readonly tool?: string; readonly flowId?: string }) {
     const flowId = props.center.state.activeFlowId
     if (intent.kind === 'select-node' && flowId !== null && intent.nodeId) props.center.selectNode(flowId, intent.nodeId)

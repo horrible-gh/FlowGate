@@ -91,6 +91,11 @@ describe('toInspectorTarget', () => {
       ownership: 'v01',
       viewMode: null,
       readOnly: null,
+      editLock: null,
+      // flowgate.v02.0070 T#1: a v0.1 document Node has no title state and its title never opens.
+      titleState: null,
+      canEditTitle: false,
+      titleLock: null,
     })
   })
 

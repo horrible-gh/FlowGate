@@ -270,7 +270,10 @@ describe('InspectorHeader (flowgate.v02.0051)', () => {
     expect(rule).toMatch(/\.inspector-header \{[^}]*flex-wrap: wrap;[^}]*height: auto;/)
     expect(rule).toMatch(/\.inspector-header::after \{[^}]*flex: 0 0 100%;[^}]*order: 1;/)
     expect(rule).toMatch(/\.inspector-header-read-only,\s*\.inspector-header-pill,\s*\.inspector-header-actions \{\s*order: 2;/)
-    expect(rule).toMatch(/\.inspector-header-title \{[^}]*min-width: 48px;/)
+    // flowgate.v02.0070 T#1 rev1: the item keeping that room is the title area (the title, or its input, with the note
+    // right of it) — editing asks the line for no more than the title, so the ✎ 메모 and ⋯ stay on the title line.
+    expect(rule).toMatch(/\.inspector-header-title-area\.is-editing,\s*\.inspector-header-title-area \{[^}]*flex: 4 1 0;[^}]*min-width: 48px;/)
+    expect(rule).not.toMatch(/min-width: 96px/)
   })
 
   it('follows the locale', () => {

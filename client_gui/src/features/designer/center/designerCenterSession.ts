@@ -103,6 +103,9 @@
 // the same version order (graph/nodeTitle.ts), so a late answer or an old read never takes a newer title back. The
 // answer goes onto the shared Graph at once (the Canvas card and the Inspector header read it); another tab's save comes
 // as a Canvas change event (reason `title`) and is read again like any other. Title saves never hold a read back.
+// flowgate.v02.0070 T#1 (B1): the title is edited in the Inspector header, not on the card — `activeSelection` says
+// whether the selected card's title opens now (`titleEdit`, the rule the card had: graph/nodeTitle.ts nodeTitleEdit with
+// the run read's node run of the card) and the header saves through `saveNodeTitle` for the card it opened on.
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
 import {
@@ -133,7 +136,7 @@ import { fixtureFlowGraphSource } from './graph/fixtureFlowGraphSource'
 import { isEdgeProgressed } from './graph/edgeProgress'
 import type { FlowGraph, FlowGraphNode, FlowGraphRun, FlowGraphSelection, FlowGraphTitleState } from './graph/flowGraph'
 import type { FlowGraphSource, FlowLayoutChange, FlowRunError, FlowRunInfo } from './graph/flowGraphSource'
-import { applyTitleState, takeTitleStates, type NodeTitleSaveOutcome } from './graph/nodeTitle'
+import { applyTitleState, nodeTitleEdit, takeTitleStates, type NodeTitleSaveOutcome } from './graph/nodeTitle'
 import { createLayoutSaveQueue } from './layoutSaveQueue'
 import {
   createFlowRunControl,
@@ -1144,6 +1147,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     if (next) state.graphs[flowId] = { status: 'ready', graph: markRaw(next) }
   }
 
+  const canEditNodeTitles = !source.isSample && !!source.saveNodeTitle
+
   async function saveNodeTitle(flowId: string, nodeId: string, title: string): Promise<NodeTitleSaveOutcome> {
     const projectId = state.projectId
     if (projectId === null || !source.saveNodeTitle || !isOpen(projectId, flowId)) return { ok: false, code: null, message: '' }
@@ -1195,7 +1200,9 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       const load = id === null ? undefined : (exposed.graphs[id] as FlowGraphLoad | undefined)
       if (!node || id === null || exposed.projectId === null || load?.status !== 'ready') return null
       // flowgate.v02.0061 T#14: the Inspector's card settings follow the run lock as the Canvas does.
-      return { projectId: exposed.projectId, graph: load.graph, node, editLock: editLock(id) }
+      // flowgate.v02.0070 T#1: so does the Inspector's title edit (closed when the source saves no titles).
+      const titleEdit = canEditNodeTitles ? nodeTitleEdit(load.graph as FlowGraph, node as FlowGraphNode, runMarks(id).nodeRuns.get(node.id)) : null
+      return { projectId: exposed.projectId, graph: load.graph, node, editLock: editLock(id), titleEdit }
     }),
     canvasSize: computed(() => canvasSize.value),
     setProject,
@@ -1293,7 +1300,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     askTimeMachine,
     confirmTimeMachine,
     closeTimeMachine,
-    canEditNodeTitles: !source.isSample && !!source.saveNodeTitle,
+    canEditNodeTitles,
     saveNodeTitle,
   }
 }

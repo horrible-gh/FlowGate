@@ -38,7 +38,18 @@
        pill / actions were cut up to a 504px Inspector), so there the header becomes two lines: the
        title line (icon, kind, title, meta, ✎, ⋯) and the state line (읽기 전용, ● pill, actions), the
        actions wrapping instead of scrolling. The frame around the header is the size container the
-       header itself is laid out by. Wider Inspectors keep the v7 single 40px line unchanged. -->
+       header itself is laid out by. Wider Inspectors keep the v7 single 40px line unchanged.
+       flowgate.v02.0070 T#1 (B1, moved here from the Canvas card): the card's own title is edited in its title area. A
+       title that may be edited now (`target.canEditTitle`, with the host's `saveTitle`) turns into an input in place on a
+       click, or on Enter / F2 when focused; a title that only repeats the kind name (so not shown) keeps a small ✎ entry.
+       Enter saves, Esc or a press outside cancels; Enter / Esc while an IME composes only end the composition. Right of
+       the input, the length (30, as the server counts) or why the title was refused — the input stays; the input and that
+       note are one item of the line (the title area), so at any Inspector width they share the title's room (where the note
+       clips, the input's tooltip names the refusal). A card that starts
+       running meanwhile, or a save refused as running (`node_title_locked`), closes the edit with the lock note. The save
+       goes to the Flow and card the edit was opened on; another card selected meanwhile closes the edit, and a late answer
+       only reaches its own card (the session's Graph). Nothing is shown before the server answered: the title shown is the
+       target's (the session's, its version order). -->
   <div class="inspector-header-frame">
     <header
       class="inspector-header"
@@ -55,7 +66,61 @@
       <slot name="kind">
         <span class="inspector-header-kind" data-test="designer-inspector-kind">{{ t(kindLabelKey) }}</span>
       </slot>
-      <span v-if="target.title.trim() !== t(kindLabelKey).trim()" class="inspector-header-title" :title="target.title" data-test="designer-inspector-title">{{ target.title }}</span>
+      <!-- The title area: one header item holding the title (or its input) and the note right of it, so they share
+           the title's room and shrink together instead of pushing the ✎ 메모 and ⋯ off the line. -->
+      <span
+        v-if="editing || !titleRepeatsKind || titleEditable || note"
+        class="inspector-header-title-area"
+        :class="{ 'is-editing': editing }"
+        data-test="designer-inspector-title-area"
+      >
+        <span v-if="editing" ref="editorEl" class="inspector-header-title-editor" data-test="designer-inspector-title-editor">
+          <input
+            ref="inputEl"
+            v-model="draft"
+            type="text"
+            class="inspector-header-title-input"
+            :aria-label="t('gui.designer.nodeTitle.input')"
+            :title="error ?? t('gui.designer.nodeTitle.hint')"
+            :aria-invalid="error ? 'true' : undefined"
+            :disabled="saving"
+            data-test="designer-inspector-title-input"
+            @input="error = null"
+            @keydown="onInputKeydown"
+            @compositionstart="composing = true"
+            @compositionend="composing = false"
+          />
+        </span>
+        <span
+          v-else-if="!titleRepeatsKind"
+          class="inspector-header-title"
+          :class="{ 'is-editable': titleEditable }"
+          :title="target.title"
+          :role="titleEditable ? 'button' : undefined"
+          :tabindex="titleEditable ? 0 : undefined"
+          data-test="designer-inspector-title"
+          @click="openEdit"
+          @keydown="onTitleKeydown"
+        >{{ target.title }}</span>
+        <button
+          v-else-if="titleEditable"
+          type="button"
+          class="inspector-header-title-edit"
+          :aria-label="t('gui.designer.nodeTitle.edit')"
+          :title="t('gui.designer.nodeTitle.edit')"
+          data-test="designer-inspector-title-edit"
+          @click="openEdit"
+        >✎</button>
+        <span
+          v-if="note"
+          class="inspector-header-title-note"
+          :class="`is-${note.tone}`"
+          :role="note.tone === 'hint' ? undefined : note.tone === 'error' ? 'alert' : 'status'"
+          :title="note.text"
+          data-test="designer-inspector-title-note"
+          :data-tone="note.tone"
+        >{{ note.text }}</span>
+      </span>
       <span class="inspector-header-gap" />
       <span v-if="$slots.meta" class="inspector-header-meta" data-test="designer-inspector-meta"><slot name="meta" /></span>
       <slot name="memo">
@@ -129,12 +194,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onScopeDispose, ref } from 'vue'
+import { computed, inject, nextTick, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Dropdown from '../../../components/ui/Dropdown.vue'
 import IconButton from '../../../components/ui/IconButton.vue'
 import { flowNodeKindDisplay, flowNodeKindLabelKey, flowNodeStateDisplay } from '../center/canvas/flowNodeKinds'
-import type { InspectorTarget } from './inspectorTarget'
+import { INSPECTOR_HOST } from './inspectorHost'
+import { NODE_TITLE_MAX_CHARS, checkNodeTitle, type InspectorTarget, type NodeTitleSaveOutcome } from './inspectorTarget'
 
 const props = defineProps<{
   target: InspectorTarget
@@ -292,8 +358,157 @@ async function copyId() {
   }, 1500)
 }
 
+// ── flowgate.v02.0070 T#1 (B1): the card title edit (see the head of this file) ──────────────────────────────────
+
+const host = inject(INSPECTOR_HOST, null)
+
+/** The title only repeats the kind name of the badge: not shown again (the ✎ entry stays when it may be edited). */
+const titleRepeatsKind = computed(() => props.target.title.trim() === t(kindLabelKey.value).trim())
+const titleEditable = computed(() => props.target.canEditTitle === true && !!host?.saveTitle)
+
+const editing = ref(false)
+const draft = ref('')
+const saving = ref(false)
+const composing = ref(false)
+/** Why the title was refused (the input stays), or null. */
+const error = ref<string | null>(null)
+/** The lock note left once the edit closed because the card runs, or null. */
+const closedNote = ref<string | null>(null)
+const editorEl = ref<HTMLElement | null>(null)
+const inputEl = ref<HTMLInputElement | null>(null)
+/** The Flow and card the open edit was opened on: its save goes there, whatever is selected meanwhile. */
+let editFor: { readonly flowId: string; readonly nodeId: string } | null = null
+/** One per opening: an answer for an earlier opening is dropped. */
+let opening = 0
+let noteTimer: ReturnType<typeof setTimeout> | null = null
+
+const note = computed<{ tone: 'hint' | 'error' | 'notice'; text: string } | null>(() => {
+  if (!editing.value) return closedNote.value ? { tone: 'notice', text: closedNote.value } : null
+  if (error.value) return { tone: 'error', text: error.value }
+  const { length } = checkNodeTitle(draft.value)
+  const text = t('gui.designer.nodeTitle.length', { count: length, max: NODE_TITLE_MAX_CHARS })
+  return { tone: length > NODE_TITLE_MAX_CHARS ? 'error' : 'hint', text }
+})
+
+function clearClosedNote() {
+  if (noteTimer !== null) clearTimeout(noteTimer)
+  noteTimer = null
+  closedNote.value = null
+}
+
+function close(lockNote = false) {
+  editing.value = false
+  saving.value = false
+  composing.value = false
+  error.value = null
+  editFor = null
+  opening += 1
+  document.removeEventListener('pointerdown', onOutsidePointer, true)
+  if (!lockNote) return
+  closedNote.value = t('gui.designer.nodeTitle.locked')
+  noteTimer = setTimeout(clearClosedNote, 4000)
+}
+
+function openEdit() {
+  if (!titleEditable.value || editing.value) return
+  clearClosedNote()
+  opening += 1
+  editFor = { flowId: props.target.flowId, nodeId: props.target.nodeId }
+  // The input starts from the title shown now; a newer title arriving meanwhile changes only what Esc keeps.
+  draft.value = props.target.title
+  error.value = null
+  editing.value = true
+  document.addEventListener('pointerdown', onOutsidePointer, true)
+  void nextTick(() => {
+    inputEl.value?.focus()
+    inputEl.value?.select()
+  })
+}
+
+function cancel() {
+  if (editing.value && !saving.value) close()
+}
+
+/** A press elsewhere cancels (only Enter saves); not while the save is answered. */
+function onOutsidePointer(event: Event) {
+  const target = event.target as Node | null
+  if (!editing.value || saving.value || (target && editorEl.value?.contains(target))) return
+  close()
+}
+
+/** A refusal in the screen's words: the code's own sentence, else the server's, else a general one. */
+function refusalText(code: string | null, message: string): string {
+  const key = `gui.designer.nodeTitle.error.${code}`
+  if (code && te(key)) return t(key)
+  return message || t('gui.designer.nodeTitle.failed')
+}
+
+async function save() {
+  const at = editFor
+  if (!editing.value || saving.value || composing.value || !at || !host?.saveTitle) return
+  const check = checkNodeTitle(draft.value)
+  if (check.refusal) {
+    error.value = t(`gui.designer.nodeTitle.error.${check.refusal}`)
+    return
+  }
+  const asked = opening
+  saving.value = true
+  error.value = null
+  let outcome: NodeTitleSaveOutcome
+  try {
+    outcome = await host.saveTitle(at.flowId, at.nodeId, draft.value)
+  } catch {
+    outcome = { ok: false, code: null, message: '' }
+  }
+  // Closed meanwhile (cancelled, another card selected, the card started running): the answer is not this edit's.
+  if (asked !== opening || !editing.value) return
+  saving.value = false
+  if (outcome.ok) close()
+  else if (outcome.code === 'node_title_locked') close(true)
+  else {
+    error.value = refusalText(outcome.code, outcome.message)
+    void nextTick(() => inputEl.value?.focus())
+  }
+}
+
+function onInputKeydown(event: KeyboardEvent) {
+  // An IME composing (Korean, Japanese …): Enter / Esc only end the composition.
+  if (event.isComposing || composing.value || event.keyCode === 229) return
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    event.stopPropagation()
+    void save()
+  } else if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    cancel()
+  }
+}
+
+function onTitleKeydown(event: KeyboardEvent) {
+  if (!titleEditable.value || (event.key !== 'Enter' && event.key !== 'F2')) return
+  event.preventDefault()
+  openEdit()
+}
+
+// Another card (or Flow) selected: an open edit closes and a lock note of the card before goes.
+watch(
+  () => `${props.target.flowId}\n${props.target.nodeId}`,
+  () => {
+    if (editing.value) close()
+    clearClosedNote()
+  },
+)
+
+// The card starts running (or can no longer be edited) while its edit is open: the edit closes, nothing is saved.
+watch(titleEditable, (open) => {
+  if (!open && editing.value) close(props.target.titleLock === 'running')
+})
+
 onScopeDispose(() => {
   if (copiedTimer !== null) clearTimeout(copiedTimer)
+  if (noteTimer !== null) clearTimeout(noteTimer)
+  document.removeEventListener('pointerdown', onOutsidePointer, true)
 })
 </script>
 
@@ -354,9 +569,19 @@ onScopeDispose(() => {
 }
 
 /* A long title shrinks first; the kind badge and the right side keep their place. The large shrink
-   weight lets the title give way before the pill, the meta part and the actions (T#4: 264px). */
-.inspector-header-title {
+   weight lets the title give way before the pill, the meta part and the actions (T#4: 264px).
+   flowgate.v02.0070 T#1 rev1: that item is the title area — the title (or its input) with the note right of it —
+   so the input and the note take only the title's room and never push the ✎ 메모 and ⋯ onto another line. */
+.inspector-header-title-area {
+  display: flex;
   flex: 0 1000 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.inspector-header-title {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--fg2-text);
@@ -364,6 +589,113 @@ onScopeDispose(() => {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* flowgate.v02.0070 T#1: the title edit — in place of the title, within the header line (same font). */
+.inspector-header-title.is-editable {
+  border-radius: 4px;
+  cursor: text;
+}
+
+.inspector-header-title.is-editable:hover {
+  background: color-mix(in srgb, var(--inspector-kind-accent) 14%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--inspector-kind-accent) 14%, transparent);
+}
+
+.inspector-header-title.is-editable:focus-visible,
+.inspector-header-title-edit:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: 1px;
+}
+
+/* While editing, the area asks for a usable input on the single line (it still gives way first); the input and the
+   note right of it shrink together, and on the narrowest line the area clips rather than run over the meta / ✎ 메모. */
+.inspector-header-title-area.is-editing {
+  flex: 1 1000 240px;
+  min-width: 96px;
+  max-width: 420px;
+  overflow: hidden;
+}
+
+.inspector-header-title-editor {
+  display: flex;
+  flex: 1 1 96px;
+  align-items: center;
+  min-width: 48px;
+}
+
+.inspector-header-title-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--inspector-kind-accent) 55%, transparent);
+  border-radius: 6px;
+  background: #0b1827;
+  color: var(--fg2-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Drawn inside the input: the title area clips at its edge. */
+.inspector-header-title-input:focus {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: -2px;
+}
+
+.inspector-header-title-input[aria-invalid='true'] {
+  border-color: var(--fg2-status-danger-border);
+}
+
+.inspector-header-title-input:disabled {
+  cursor: progress;
+  opacity: var(--fg2-control-disabled-opacity);
+}
+
+/* The ✎ entry of a title that only repeats the kind name: small and quiet, like the ✎ 메모 glyph. */
+.inspector-header-title-edit {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #6f87a0;
+  font: inherit;
+  font-size: 12px;
+  line-height: 22px;
+  cursor: pointer;
+}
+
+.inspector-header-title-edit:hover {
+  color: var(--fg2-text);
+}
+
+/* The length, a refusal or the lock note: small text right of the title, inside the title area; a long sentence
+   clips (its tooltip has it). */
+.inspector-header-title-note {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg2-muted);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-header-title-note.is-hint {
+  flex: 0 0 auto;
+}
+
+.inspector-header-title-note.is-error {
+  color: var(--fg2-status-danger-fg);
+}
+
+.inspector-header-title-note.is-notice {
+  color: var(--fg2-status-warning-fg);
 }
 
 /* v7 `.ro-tag`. */
@@ -516,7 +848,10 @@ onScopeDispose(() => {
    title, meta, ✎ and ⋯ (DOM order); the line break (::after) and the state line (읽기 전용, the
    pill, the actions) follow by `order`. The title takes the free room of its line (so the ✎ and ⋯
    stay at its end) and never goes below a few letters; the meta part shares what is left. The pill
-   shows its whole label; the actions keep every button whole and wrap. */
+   shows its whole label; the actions keep every button whole and wrap.
+   flowgate.v02.0070 T#1 rev1: the title area does that, the same while editing — it asks the line for no more
+   than the title did (a 0 basis, 48px at least), so the input and its note fit in the title's room and the
+   line never breaks again. */
 @container inspector-header-frame (max-width: 560px) {
   .inspector-header {
     flex-wrap: wrap;
@@ -538,9 +873,11 @@ onScopeDispose(() => {
     display: none;
   }
 
-  .inspector-header-title {
+  .inspector-header-title-area.is-editing,
+  .inspector-header-title-area {
     flex: 4 1 0;
     min-width: 48px;
+    max-width: none;
   }
 
   .inspector-header-meta {
