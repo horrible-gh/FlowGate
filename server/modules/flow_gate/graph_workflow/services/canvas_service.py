@@ -12,6 +12,9 @@ the latest revision.
 once per request, title and version from one row); a free document or v0.1 slot node carries null. The steps that
 may take the Flow guard (a run reconcile, ``ensure_identity``) come first; the response read after them — ownership,
 definition, title states, run and positions — is one read unit (``flow_guard.with_read_snapshot``, DB0007 Q1).
+
+0064 T-B4d (0062 L0006 2.5): ``title_views`` hands the AI naming judgement every view a card is drawn in, read the way
+the Canvas reads them but with no step that writes, so it runs inside the Flow guard.
 """
 from __future__ import annotations
 
@@ -253,6 +256,28 @@ def _canvas_nodes(flow_id: str) -> list[dict]:
         pinned = {"revision_no": int(active["revision_no"]), "node_runs": []}
         nodes += _project(flow_id, own.state, snap, row_keys, protected, d, "revision", run=pinned).nodes
     return nodes
+
+
+def title_views(flow_id: str) -> tuple[list[GraphView], dict]:
+    """0062 L0006 2.5 ``guard_safe_views``: the draft, the latest revision and the revision of the run the Canvas shows
+    (with its node runs), and the Flow's documents by id. Reads only (no reconcile, no identity record): safe inside a
+    Flow guard. A bound root that is not alive shows no document, as on the Canvas."""
+    snap = read_snapshot(flow_id)
+    own = judge(flow_id, snap.sequence)
+    d = _Definition(flow_id, snap.docs_by_id)
+    by_id = {doc["doc_id"]: doc for doc in snap.documents if doc.get("doc_id")}
+    views = [d.view("draft")] if d.draft is not None else []
+    if own.state in ("graph", "conflict") and d.latest_no is not None:
+        views.append(d.view("revision"))
+        run = _flow_run(flow_id, d.latest_no)
+        if run is not None:
+            shown = d.view("revision", run["revision_no"])
+            shown.node_runs = {r["node_key"]: dict(r) for r in run["node_runs"]}
+            views.append(shown)
+    for view in views:
+        if view.bound_doc_id and not cm.is_alive(by_id.get(view.bound_doc_id) or {}, flow_id):
+            view.bound_doc_id = None
+    return views, by_id
 
 
 def _place(proj: Projection, saved: dict) -> None:

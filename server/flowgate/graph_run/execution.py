@@ -501,7 +501,7 @@ def map_token(exec_id, token_id):
             node = next(n for n in run_store.node_runs(row["run_id"]) if n["node_key"] == attempt["node_key"])
             stage = "instruction" if doc_id and doc_id == node.get("instruction_doc_id") else "result"
             if not run_store.node_run_by_token(token_id):
-                run_store.map_token(token_id, row["run_id"], attempt["node_key"], stage)
+                run_store.map_token(token_id, row["run_id"], attempt["node_key"], stage, map_kind=run_store.MAP_ATTEMPT)
         fencing.guarded(run["group_id"], body)
     except Exception:
         token_service.revoke(token_id, reason="graph_attempt_not_active")

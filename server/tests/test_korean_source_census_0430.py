@@ -206,6 +206,9 @@ FILE_LINE_CAPS: dict[str, int] = {
     # New file (flowgate.v02.0064 T#3, T-B4b): the default card names copied from the client i18n (palette items,
     # node kinds; 0062 L0006 1.3) the title rules compare against. Locale-dictionary (A) values, not comments.
     "modules/flow_gate/graph_workflow/services/node_title_names.py": 18,
+    # New file (flowgate.v02.0064 T#5, T-B4d): the ko title requests P0006 §4.2.6 fixes for a claiming AI start's
+    # mention (CLI and API wordings, three source lines each). Mention copy for the AI, not comments.
+    "modules/flow_gate/services/node_title_hooks.py": 6,
     "modules/flow_gate/services/remote_tool_service.py": 14,
     "modules/flow_gate/services/test_run_service.py": 28,
     # 45 -> 97. Measured, split into its two causes: 55 lines were already there before

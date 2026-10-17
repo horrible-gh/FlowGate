@@ -17,6 +17,9 @@
 - flowgate.v02.0064 T-B4b (0062 D0005 §3.1, P0006 §4.2.1): every Graph / draft node carries its card's title
   state (``title_state``: title, source, version; version 0 without a row) and shows that title first; with
   none it keeps the rules above. The canvas service hands each view the Flow's states read in one statement.
+- flowgate.v02.0064 T-B4d (0062 L0006 2.5): the card's document (``card_document``) and the title it shows before its
+  title state (``card_title_source``) are pure functions the AI naming judgement shares, so it reads a card exactly
+  as it is drawn.
 Pure over its inputs; positions are placed by the canvas service.
 """
 from __future__ import annotations
@@ -66,12 +69,34 @@ def title_state_block(state: Optional[dict]) -> dict:
             "version": int(state.get("version") or 0)}
 
 
+def card_document(view: GraphView, row: dict, by_id: dict) -> Optional[dict]:
+    """0062 L0006 2.5 ``card_document``: the document a card shows — the bound root (live end) of the root-bound node,
+    else the node run's result while it is alive; None for neither."""
+    bound = row["node_key"] == view.bound_node_key
+    doc = by_id.get(view.bound_doc_id) if bound and view.bound_doc_id else None
+    run = view.node_runs.get(row["node_key"])
+    if run is not None and not bound and run.get("result_doc_id"):
+        result = by_id.get(run["result_doc_id"])
+        doc = result if result is not None and cm.is_alive(result, result.get("group_id")) else None
+    return doc
+
+
+def card_title_source(row: dict, document: Optional[dict]) -> tuple[str, Optional[str], Optional[str]]:
+    """0062 L0006 2.5 ``card_title_source``, the title before the card's title state: a Custom card's label, else its
+    document's title, else its label -> ``(kind, text, doc_id)``, kind "label" or "document"."""
+    if row.get("node_type") == "custom":
+        return "label", row.get("label"), None
+    if document and document.get("title"):
+        return "document", document["title"], document.get("doc_id")
+    return "label", row.get("label"), None
+
+
 def graph_node(row: dict, origin: str, ownership: str, document: Optional[dict], supersedes,
                root_bound: bool, lines: Optional[list] = None, line_doc: Optional[dict] = None,
                title_state: Optional[dict] = None) -> dict:
     node = to_graph_node(row)
     state = title_state_block(title_state)
-    shown = node.label if node.node_type == "custom" else (document or {}).get("title") or node.label
+    shown = card_title_source(row, document)[1]
     return {
         "node_key": node.key,
         "identity_source": "graph_node",
@@ -121,11 +146,8 @@ def _graph_nodes(out: Projection, view: GraphView, ownership: str, by_id: dict, 
     origin = VIEW_ORIGIN[view.mode]
     for row in view.nodes:
         bound = row["node_key"] == view.bound_node_key
-        doc = by_id.get(view.bound_doc_id) if bound and view.bound_doc_id else None
+        doc = card_document(view, row, by_id)
         run = view.node_runs.get(row["node_key"])
-        if run is not None and not bound and run.get("result_doc_id"):
-            result = by_id.get(run["result_doc_id"])
-            doc = result if result is not None and cm.is_alive(result, result.get("group_id")) else None
         lines = view.card_docs.get(row["node_key"]) or []
         node = graph_node(row, origin, ownership, doc, supersedes, bound, lines,
                           None if doc is not None else first_line_document(lines, by_id),

@@ -232,7 +232,7 @@ def test_snapshot_uses_current_attempts_and_token_authorship(history_db):
         INSERT INTO graph_node_attempts VALUES ('a-old','run','A',1,'ended','before',NULL,NULL,NULL,NULL);
         INSERT INTO graph_node_attempts VALUES ('b-invalid','run','B',1,'invalidated','later',NULL,NULL,NULL,NULL);
         INSERT INTO tokens VALUES ('ta','new'),('tc','edit'),('review','review'),('invalid','new');
-        INSERT INTO graph_run_token_map VALUES ('ta','run','A','a','instruction'),
+        INSERT INTO graph_run_token_map (token_id, run_id, node_key, attempt_id, stage) VALUES ('ta','run','A','a','instruction'),
             ('tc','run','C','c','result'),('review','run','B','b','result'),
             ('invalid','run','B','b-invalid','result');
         INSERT INTO workflow_events VALUES

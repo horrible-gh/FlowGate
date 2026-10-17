@@ -41,6 +41,14 @@ document type).
   reconciliation's own (``result_binder.next_missing_event``), so it sees what the contact or a reconciliation
   binds next, whoever registered it. The line write refuses in turn once an AI token is mapped while its run
   holds the lease (``node_ai_working``): under the Flow guard, whichever comes first wins.
+- flowgate.v02.0064 T-B4d (0062 D0005 set 3, L0006 2.4, P0006 §4.2.6, DB0007 §2.2): the mapping guard maps the token as
+  ``ai_start`` and, just before, lets the card's first AI start claim its title opportunity (``node_title_ai``, in its
+  own savepoint). Only a start that claimed it gets the title request at the very end of its prompt, after the memos
+  ([memos] [unreadable documents] [mention] [title request]): its token is recorded as asking
+  (``node_title_hooks.request_title``) and the worker words the request for the provider it actually launches with
+  that token (API: the ``register_document`` input, else the inbox body; ``_provider_prompt``) — the job often names
+  no provider (the project default chain picks it) and a fallback may change the kind. The mention itself, and any
+  other start's prompt, is byte for byte what it was; a failing request wording starts the AI with the mention.
 """
 from __future__ import annotations
 
@@ -49,7 +57,7 @@ from typing import Optional
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.services import (
-    ai_invoke_service, ai_start_precheck, card_memo_hooks, mention_service, token_service,
+    ai_invoke_service, ai_start_precheck, card_memo_hooks, mention_service, node_title_hooks, token_service,
 )
 
 from .flow_guard import with_flow_guard
@@ -74,8 +82,9 @@ def _module_of(flow_id: str) -> Optional[str]:
     return parts[1] if len(parts) > 2 and parts[1] != "none" else None
 
 
-def _map_if_open(job: dict, token_id: str) -> None:
-    def body() -> None:
+def _map_if_open(job: dict, token_id: str, ai_run_id: Optional[str] = None) -> bool:
+    """Map the AI start's token inside the Flow guard; True when the start claimed the card's title opportunity."""
+    def body() -> bool:
         run = run_store.run_by_id(job["run_id"])                   # re-read inside the guard (L0009 §2.1.1)
         row = next((r for r in run_store.node_runs(job["run_id"]) if r["node_key"] == job["node_key"]), None)
         if run is None or run_store.completed(run) or row is None or row["status"] != "open":
@@ -84,9 +93,12 @@ def _map_if_open(job: dict, token_id: str) -> None:
         graph_execution_hooks.call("validate_write", job)
         if _result_registered(run, job):
             raise NodeNotStartable(f"node {job['node_key']} already has a registered result")
-        run_store.map_token(token_id, job["run_id"], job["node_key"], job.get("stage"))
+        from .node_title_ai import claim_on_ai_start                  # noqa: PLC0415 - 0064 T-B4d, never raises
+        requested = claim_on_ai_start(job, token_id, ai_run_id)
+        run_store.map_token(token_id, job["run_id"], job["node_key"], job.get("stage"), map_kind=run_store.MAP_AI_START)
+        return requested
 
-    with_flow_guard(job["flow_id"], body)
+    return with_flow_guard(job["flow_id"], body)
 
 
 def _result_registered(run: dict, job: dict) -> bool:
@@ -123,7 +135,7 @@ def start_ai_invoke(job: dict) -> dict:
             issued_to=job["issued_to"], provider_id=job.get("provider_id"), ai_run_id=ai_run_id,
         )
         try:
-            _map_if_open(job, issue["token_id"])
+            title_requested = _map_if_open(job, issue["token_id"], ai_run_id)
         except Exception:
             token_service.revoke(issue["token_id"], reason="graph_node_not_open")
             raise
@@ -134,6 +146,8 @@ def start_ai_invoke(job: dict) -> dict:
         )
         mention = ai_start_precheck.node_mention(mention or "", job, ai_run_id)    # 0064 T-B1e: memos go in front of it
         mention = card_memo_hooks.prepend_memo_section(mention or "", flow_id, node_key=job["node_key"])
+        if title_requested:                     # 0064 T-B4d: worded at the provider boundary, at the very end
+            node_title_hooks.request_title(issue["raw_token"], job.get("locale"))
         return {"raw_token": issue["raw_token"], "token_id": issue["token_id"],
                 "scratch_dir": issue["scratch_dir"], "mention": mention or ""}
 

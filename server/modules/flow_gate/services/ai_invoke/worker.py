@@ -34,6 +34,7 @@ from modules.flow_gate.services import api_server_tools
 from modules.flow_gate.services import chat_run_hooks
 from modules.flow_gate.services import chat_settings_service
 from modules.flow_gate.services import chat_command_service
+from modules.flow_gate.services import node_title_hooks
 from modules.flow_gate.services import q_service
 from modules.flow_gate.services import register_binding
 from modules.flow_gate.services import token_service
@@ -501,6 +502,9 @@ _CLI_REVIEW_FILE_FIRST: dict[str, str] = {
 
 def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
     """Add transport rules that apply only at a concrete provider boundary."""
+    # flowgate.v02.0064 T-B4d: a claiming Graph AI start's card title request, worded for THIS provider (P0006
+    # §4.2.6); any other token's prompt is returned as it is.
+    prompt = node_title_hooks.provider_prompt(prompt, run.get("raw_token"), provider.get("exec_type"))
     if provider.get("exec_type") == "api" or run.get("action_scope") != "review":
         return prompt
     locale = str(run.get("continuation_locale") or run.get("locale") or "ko").lower()
@@ -2387,10 +2391,12 @@ _REGISTER_SCOPES = ("new", "edit", "review", "test_run")
 # Per-scope allowlist of model-authored fields. Anything else the model sends is dropped
 # here even if a future schema change lets it through validation — this list, not the
 # model's input, decides what an /inbox body may contain besides the server's own axes.
+# 0064 T-B4d (P0006 §4.2.5 ②): new / edit carry the card title candidate ``node_title`` as it came (no value is
+# reshaped here; the title service judges it). review / test_run never carry it.
 _REGISTER_MODEL_FIELDS = {
-    "new": ("doc_type", "title", "content"),
+    "new": ("doc_type", "title", "content", "node_title"),
     "edit": ("content", "edit_reason", "rejection_response", "rejection_id",
-             "rejection_review_id"),
+             "rejection_review_id", "node_title"),
     # 0474 T0007 §1.1: force_encoding_reason dropped -- review never lets a
     # model-authored value bypass the corruption guard.
     "review": ("verdict", "findings", "comment", "body_sha256", "body_chars"),

@@ -21,11 +21,12 @@ STATE_VERSION_START = 1
 STATE_VERSION_NONE = 0
 SOURCE_NONE, SOURCE_AI, SOURCE_HUMAN = "none", "ai", "human"
 UNUSED, CLAIMED, CLOSED = "unused", "claimed", "closed"
-# 0062 L0006 1.2. An open key in the database (DB0007 §2.1.2): the values are checked here.
+# 0062 L0006 1.2. An open key in the database (DB0007 §2.1.2): the values are checked here. 0064 T-B4d (L0005 2.17,
+# question #441 o1): a legacy mapping L6 cannot tell from a re-dispatch counts as evidence, closed as its own reason.
 CLOSE_REASONS = (
     "applied", "no_candidate", "invalid_candidate", "human_edited", "prior_evidence", "superseded_start",
     "other_registration", "source_changed", "node_gone", "flow_disposed", "not_target_node", "not_target_title",
-    "not_target_display",
+    "not_target_display", "prior_evidence_legacy",
 )
 _COLUMNS = ("group_id, node_key, title, title_source, human_edited, opportunity_state, close_reason, "
             "claimed_token_id, claimed_ai_run_id, claimed_at, closed_at, version, created_at, updated_at, updated_by")

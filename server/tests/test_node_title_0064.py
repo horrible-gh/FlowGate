@@ -795,7 +795,7 @@ def test_the_store_writes_follow_the_state_rules(env):
     assert ts.states(FB) == {"gn_a": {"title": "사람 제목", "title_source": "human", "version": 3},
                              "gn_b": {"title": "먼저 저장", "title_source": "human", "version": 2},
                              "gn_c": {"title": None, "title_source": "none", "version": 1}}
-    assert len(ts.CLOSE_REASONS) == 13
+    assert len(ts.CLOSE_REASONS) == 14          # 0064 T-B4d: + prior_evidence_legacy (question #441 o1)
 
 
 def test_a_row_closed_without_a_title_reads_as_no_source(env):

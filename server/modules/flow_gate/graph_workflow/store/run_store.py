@@ -45,6 +45,9 @@ IDLE_COMPLETED = "completed"
 _STORED_STATUS = {RUNNING: (RUNNING,), PAUSED: (PAUSED, "stopped"), IDLE: (IDLE, "completed")}
 _LEGACY_STATUS = {"stopped": (PAUSED, None), "completed": (IDLE, IDLE_COMPLETED)}
 ATTEMPT_ACTIVE, ATTEMPT_ENDED = "active", "ended"
+# 0064 T-B4d (DB0007 §2.2, 0062 L0006 1.1 MAP_KIND): the token map kinds; NULL is a mapping made before migration 154.
+MAP_DISPATCH, MAP_AI_START, MAP_ATTEMPT = "dispatch", "ai_start", "attempt"
+MAP_KINDS = (MAP_DISPATCH, MAP_AI_START, MAP_ATTEMPT)
 ATTEMPT_ID_PREFIX = "att_"
 
 _RUN_COLUMNS = (
@@ -370,14 +373,18 @@ def current_attempts(run_id: str) -> dict[str, str]:
 
 # ── Token map (T18) ──────────────────────────────────────────────────────────
 
-def map_token(token_id: str, run_id: str, node_key: str, stage: Optional[str] = None) -> None:
+def map_token(token_id: str, run_id: str, node_key: str, stage: Optional[str] = None, *, map_kind: str) -> None:
     """Q-W13 — after a successful issue, outside the dispatch savepoint. ``stage``: the card run stage an AI start's
     token is minted for (flowgate.v02.0056 T#2); None for the node's dispatch token. 0061 T#2: the token is mapped
-    to the node's active attempt (NULL for a node opened before migration 151)."""
+    to the node's active attempt (NULL for a node opened before migration 151). 0064 T-B4d (DB0007 §2.2.1, migration
+    154): ``map_kind`` (required, no default) is written by the same INSERT and never changes; outside ``MAP_KINDS``
+    it is refused before the INSERT, so a missed caller fails instead of writing a legacy NULL row."""
+    if map_kind not in MAP_KINDS:
+        raise ValueError(f"unknown token map kind: {map_kind!r}")
     get_store()._execute(
-        "INSERT INTO graph_run_token_map (token_id, run_id, node_key, stage, attempt_id, mapped_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        [token_id, run_id, node_key, stage, active_attempt_id(run_id, node_key), utc_now_ms()],
+        "INSERT INTO graph_run_token_map (token_id, run_id, node_key, stage, attempt_id, map_kind, mapped_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [token_id, run_id, node_key, stage, active_attempt_id(run_id, node_key), map_kind, utc_now_ms()],
     )
 
 
