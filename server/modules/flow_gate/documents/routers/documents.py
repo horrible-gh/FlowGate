@@ -20,7 +20,7 @@ import re as _re
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -288,6 +288,8 @@ def _latest_revision_body(doc_id: str, project_id: Optional[str]) -> Optional[st
     recorded in ``document_revisions``. When the live file is lost we can restore the
     last-saved body from the newest backup that still resolves to a real file. Returns
     None when there is no backup (e.g. revision_no=0 / pruned by delete_old).
+    A backup that cannot be read or is not UTF-8 is skipped for the next older one
+    (0064 T-B1d: one broken backup never stops the body diagnosis).
     """
     from modules.flow_gate.db import document_revisions as _db_rev
     try:
@@ -302,7 +304,7 @@ def _latest_revision_body(doc_id: str, project_id: Optional[str]) -> Optional[st
         if resolved is not None and resolved.is_file():
             try:
                 return resolved.read_text(encoding="utf-8")
-            except OSError:
+            except (OSError, UnicodeError):
                 continue
     return None
 
@@ -387,6 +389,21 @@ class DocumentUrlImportRequest(BaseModel):
 class RootTypeConvert(BaseModel):
     """Convert a workflow root document between R and B (NR0066.0003 §5)."""
     new_type: Literal["R", "B"]
+
+
+class RegenerateRequest(BaseModel):
+    """0064 T-B1d (P0006 §2.7): the method the body diagnosis showed. Without it the call is the old one."""
+    expected_method: Optional[str] = None
+
+
+class BodyRecoverySelection(BaseModel):
+    doc_id: str
+    expected_method: Optional[str] = None
+
+
+class BodyRecoveryRequest(BaseModel):
+    """0064 T-B1d (P0006 §2.8): the documents to recover, each with the method its diagnosis showed."""
+    selections: list[BodyRecoverySelection]
 
 
 
@@ -2760,6 +2777,47 @@ def get_document_content_rpc(
     return get_document_content(doc_id, current_user)
 
 
+@router.get("/body-diagnosis")
+@require_permission("perm_document_read")
+def diagnose_document_bodies(
+    group_id: Optional[str] = Query(None),
+    project_id: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Read-only body diagnosis of a Flow or a project (0064 T-B1d, L0005 2.11, P0006 §2.6).
+
+    Every unreadable document with its reason, the recommended recovery method and what recovering it may
+    lose. Nothing is written: no row, no file, no ``id_counter``. A static path, so it is registered before
+    ``/{doc_id}``.
+    """
+    from modules.flow_gate.documents import body_recovery
+
+    return body_recovery.diagnose_scope(group_id=group_id, project_id=project_id)
+
+
+@router.post("/body-recovery")
+@require_permission("perm_document_update")
+def recover_document_bodies(
+    body: BodyRecoveryRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Recover the selected documents one transaction each (0064 T-B1d, L0005 2.13, P0006 §2.8).
+
+    Each document is judged exactly as ``regenerate`` judges it; a refusal or a failure is that document's
+    result and the next one goes on. A well-formed request always answers 200.
+    """
+    from modules.flow_gate.documents import body_recovery
+
+    if not 1 <= len(body.selections) <= body_recovery.BULK_RECOVERY_MAX:
+        return JSONResponse(status_code=422, content={
+            "detail": body_recovery.SELECTION_COUNT_INVALID, "error": "selection_count_invalid"})
+    if any(s.expected_method is not None and s.expected_method not in body_recovery.METHODS
+           for s in body.selections):
+        raise HTTPException(status_code=422, detail=body_recovery.UNKNOWN_METHOD)
+    return body_recovery.recover_bulk([(s.doc_id, s.expected_method) for s in body.selections],
+                                      current_user["user_id"])
+
+
 @router.post("/mention-copy")
 @require_permission("perm_document_read")
 def record_mention_copy(
@@ -3345,21 +3403,9 @@ def _run_body_save_guard(doc: dict, call):
 def _save_target(doc: dict) -> Path:
     if (doc.get("file_path") or "").strip():
         return _document_file_path(doc)
-    meta = doc.get("meta") or {}
-    if isinstance(meta, str):
-        try:
-            meta = _json.loads(meta)
-        except (TypeError, ValueError):
-            meta = {}
-    graph_card = meta.get("graph_card") if isinstance(meta, dict) else None
-    if isinstance(graph_card, dict) and graph_card.get("slot"):
-        target = storage_paths.document_path(
-            project_id=doc.get("project_id"), group_code=doc.get("group_id") or "",
-            doc_code=_short_doc_code(doc), filename=f"{graph_card['slot']}.md",
-            module=doc.get("module") or "none", branch=_get_project_branch(doc.get("project_id")),
-        )
-    else:
-        target = _regenerate_target_path(doc)
+    from modules.flow_gate.documents.body_recovery import standard_location
+
+    target = standard_location(doc)
     import os
 
     if os.path.lexists(target):
@@ -3402,87 +3448,47 @@ def _save_write_checks(doc: dict) -> None:
 def regenerate_document_file(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
-) -> dict:
-    """Recreate the Markdown file for a document whose stored file is missing (R0001).
+    body: Optional[RegenerateRequest] = Body(None),
+):
+    """Recover the body of a document whose file cannot be read (R0001; 0064 T-B1d, L0005 2.12, P0006 §2.7).
 
     This is a *recovery* operation, not a content edit, so it deliberately does NOT
     apply the editable/final-approval gate (NR0003 §5) — a missing file must be
-    recoverable regardless of workflow state (R0001 itself is ``closed``). Safety
-    instead comes from two guards: the document row must exist, and an existing file
-    is never clobbered (409).
+    recoverable regardless of workflow state (R0001 itself is ``closed``). An existing file
+    is never clobbered: a readable body answers 409 ``file_exists``, and a file another row
+    uses answers 409 ``target_in_use``.
 
-    Recovery source priority (NR0003 §3): the newest readable revision backup (restores
-    the last-saved body) → else a frontmatter stub synthesized from DB metadata (always
-    works, but the body is lost — surfaced as ``body_lost: true``).
+    0064 T-B1d: the method is the body diagnosis's (``body_recovery.diagnose_doc``): relink the
+    other root number's file or the standard location's file, the newest revision backup, the
+    card document's empty draft, else the metadata stub. Inside the document's guard the checks,
+    the body state and the diagnosis are taken again; ``expected_method`` (optional) that no longer
+    matches refuses with ``diagnosis_changed``. ``restored_from``, ``body_lost`` and ``content`` keep
+    their meaning; ``method``, ``body_loss`` and the file paths are added.
     """
-    doc = document_service.get_document(doc_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
-    _reject_if_group_disposed(doc)
-    _reject_if_group_ai_running(doc)
-    if str(doc.get("type_code") or "").upper() == "TR2":
-        raise HTTPException(
-            status_code=409,
-            detail="TR2 recovery requires its canonical JSON document.",
-        )
+    from modules.flow_gate.documents import body_recovery
 
-    target = _regenerate_target_path(doc)
-    if target.is_file():
-        # The file is present — there is nothing to recover, and overwriting it would
-        # destroy good data. Treat as a no-op conflict (NR0003 §7-3).
-        raise HTTPException(
-            status_code=409,
-            detail="Document file already exists; nothing to regenerate.",
-        )
-
-    project_id = doc.get("project_id")
-    body = _latest_revision_body(doc_id, project_id)
-    if body is not None:
-        restored_from = "revision"
-    elif str(doc.get("type_code") or "").upper() == WORK_PLAN_TYPE:
-        # The metadata stub below is Markdown frontmatter, which a work plan reader can
-        # only report as "this work plan cannot be opened as a table". Recover a valid but undecided
-        # plan instead: every countable type present, every count 0. The response still
-        # says body_lost, so nobody mistakes it for the plan that was there.
-        from modules.flow_gate.services import work_plan_service as _wp
-
-        restored_from = "metadata"
-        body = _wp.dumps(_wp.empty_recovery_body(project_id))
-    else:
-        restored_from = "metadata"
-        body = _build_next_empty_content(
-            project_id=project_id,
-            module=doc.get("module") or "none",
-            group_id=doc.get("group_id") or "",
-            type_code=doc.get("type_code") or "",
-            doc_code=_short_doc_code(doc),
-            title=doc.get("title") or "",
-            target_id=doc.get("target_id") or "",
-            next_type="",
-        )
-
+    expected = body.expected_method if isinstance(body, RegenerateRequest) else None
+    if expected is not None and expected not in body_recovery.METHODS:
+        raise HTTPException(status_code=422, detail=body_recovery.UNKNOWN_METHOD)
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body, encoding="utf-8")
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Storage error: {exc}") from exc
+        return body_recovery.recover_one(doc_id, expected, current_user["user_id"])
+    except body_recovery.RecoveryRefused as refused:
+        return _recovery_refused_response(refused)
 
-    # L0054.0002: persist the path relative so recovery never re-introduces an
-    # absolute path (B0001 regression).
-    updated = document_service.update_document(
-        doc_id,
-        {"file_path": storage_paths.to_storage_relative(target, project_id)},
-        actor_user_id=current_user["user_id"],
-    )
 
-    _broadcast_document_refresh(doc)
-
-    return {
-        "data": updated,
-        "restored_from": restored_from,
-        "body_lost": restored_from == "metadata",
-        "content": body,
-    }
+def _recovery_refused_response(refused) -> JSONResponse:
+    """P0006 §2.7: the existing envelopes stay — 404, the disposal 409, the AI run 423 and the TR2 409
+    without ``error``; the new refusals are a flat 409 ``{detail, error, evidence | diagnosis}``."""
+    if refused.cause is not None:
+        raise refused.cause
+    if refused.error in ("not_found", "tr2_not_supported"):
+        raise HTTPException(status_code=refused.status, detail=refused.detail)
+    content = {"detail": refused.detail, "error": refused.error}
+    if refused.error == "diagnosis_changed":
+        content["diagnosis"] = refused.evidence
+    elif refused.evidence is not None:
+        content["evidence"] = refused.evidence
+    return JSONResponse(status_code=refused.status, content=content)
 
 
 @router.patch("/{doc_id}/root-type")

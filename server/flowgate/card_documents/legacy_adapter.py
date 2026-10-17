@@ -158,9 +158,10 @@ def _title(label: str, slot: cs.CardSlot) -> str:
 
 
 def _front_matter(project_id: str, module: str, flow_id: str, doc_type: str, code: str, title: str) -> str:
-    lines = ["---", f"project: {project_id}", f"module: {module}", f"group: {flow_id.rsplit('.', 1)[-1]}",
-             f"group_id: {flow_id}", f"type: {doc_type}", f"doc_number: {code}", f"title: {title}", "---", ""]
-    return "\n".join(lines)
+    """One rule with the body recovery's empty card draft (0064 T-B1d, L0005 2.12 ``card_draft_bytes``)."""
+    from modules.flow_gate.documents.body_recovery import card_front_matter   # noqa: PLC0415
+
+    return card_front_matter(project_id, module, flow_id, doc_type, code, title)
 
 
 def _work_plan_body(project_id: str) -> tuple[str, str]:

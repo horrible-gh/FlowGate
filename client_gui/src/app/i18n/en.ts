@@ -10,6 +10,30 @@ export default {
       unreadable: "Body unreadable",
       file_exists_unrecorded: "An unlinked file exists at the standard location. Check the file using body diagnostics and recovery before saving again.",
     },
+    recover: {
+      action: "Recover",
+      done: "The body was recovered.",
+      loss: {
+        possible: "The body may have been lost — ask the document owner to enter it again.",
+        lost: "The body was lost — ask the document owner to enter it again.",
+      },
+      guide: {
+        fix_storage_root: "Check the storage root setting. This document's file was found under another storage root.",
+        read_error_manual: "Check the file's permissions and encoding. The file exists but cannot be read.",
+      },
+      refusal: {
+        not_found: "The document was not found.",
+        file_exists: "The body file already exists; nothing was recovered.",
+        read_error: "The file exists but cannot be read. Check permissions and encoding first.",
+        diagnosis_changed: "The state changed after the diagnosis. Run the diagnosis again.",
+        storage_root_mismatch: "The storage root appears to have changed. Correct the storage root setting instead of recovering the document.",
+        group_disposed: "The Flow has been disposed; it cannot be recovered.",
+        group_ai_running: "An AI run is in progress. Try again after it ends.",
+        target_in_use: "Another document uses the file at the recovery target; nothing was changed.",
+        tr2_not_supported: "A TR2 document cannot be recovered this way.",
+        internal_error: "An error occurred during recovery.",
+      },
+    },
   },
   card: { bodyUnreadable: "Some documents cannot be read by AI" },
   brand: {

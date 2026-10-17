@@ -185,6 +185,35 @@ def check(data: bytes, type_code: str, doc_code: str) -> IdentityCheck:
     return IdentityCheck(True, bom=bom, lines=lines, fields=fields)
 
 
+def scalars(data: bytes, keys) -> Optional[dict]:
+    """The one-line scalar values of ``keys`` in the front matter of ``data``, read by the rules of ``check``.
+
+    0064 T-B1d (L0005 2.11.3, ``parse_front_matter_scalars``): ``{}`` when there is no front matter; None when
+    the front matter cannot be read safely (no end delimiter, a duplicated key, a value that is not a one-line
+    scalar). A key that is absent is left out.
+    """
+    body = data[len(BOM):] if data.startswith(BOM) else data
+    lines = _split_lines(body)
+    if not lines or _delimiter(lines[0]) != _START:
+        return {}
+    end = next((i for i in range(1, len(lines)) if _delimiter(lines[i]) in _ENDS), None)
+    if end is None:
+        return None
+    found: dict = {}
+    for i in range(1, end):
+        m = _KEY_RE.match(lines[i])
+        key = m.group(1).decode("ascii") if m else None
+        if key not in keys:
+            continue
+        if key in found:
+            return None
+        scalar = _parse_scalar(lines[i], m.end())
+        if scalar is None or (i + 1 < end and lines[i + 1][:1] in (b" ", b"\t")):
+            return None
+        found[key] = scalar.value.strip()
+    return found
+
+
 def rewrite(data: bytes, type_code: str, doc_code: str, new_type: str, new_code: str) -> bytes:
     """``data`` with only the identity values replaced; raises ``IdentityUnsafe`` when that is not safe."""
     found = check(data, type_code, doc_code)

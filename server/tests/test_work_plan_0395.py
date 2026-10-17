@@ -528,6 +528,11 @@ class _MockTxn:
         self._conn = conn
         self._last_cursor = None
 
+    @property
+    def cursor(self):
+        """The affected-row count a guarded write reads (0064 T-B1d: ``regenerate`` runs in the document's guard)."""
+        return self._last_cursor
+
     def execute(self, sql: str, params=None):
         self._last_cursor = self._conn.execute(sql, params or [])
         self._conn.commit()

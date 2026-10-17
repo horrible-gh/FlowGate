@@ -13,6 +13,30 @@ export default {
       unreadable: "본문 읽기 불가",
       file_exists_unrecorded: "표준 위치에 연결되지 않은 파일이 있습니다. 본문 진단·복구로 파일을 확인한 뒤 다시 저장하세요.",
     },
+    recover: {
+      action: "복구",
+      done: "본문을 복구했습니다.",
+      loss: {
+        possible: "본문 유실 가능 — 문서 주인에게 다시 입력을 안내하세요.",
+        lost: "본문 유실 — 문서 주인에게 다시 입력을 안내하세요.",
+      },
+      guide: {
+        fix_storage_root: "기준 위치 설정을 확인하세요. 다른 저장 기준 위치에서 이 문서의 파일이 발견되었습니다.",
+        read_error_manual: "파일 권한·인코딩을 확인하세요. 파일은 있지만 읽을 수 없습니다.",
+      },
+      refusal: {
+        not_found: "문서를 찾을 수 없습니다.",
+        file_exists: "본문 파일이 이미 있어 복구하지 않았습니다.",
+        read_error: "파일은 있지만 읽을 수 없습니다. 권한·인코딩을 먼저 확인하세요.",
+        diagnosis_changed: "진단 뒤 상태가 바뀌었습니다. 진단을 다시 실행하세요.",
+        storage_root_mismatch: "기준 위치가 바뀐 것으로 보입니다. 문서를 복구하지 말고 기준 위치 설정을 바로잡으세요.",
+        group_disposed: "처분된 Flow라 복구할 수 없습니다.",
+        group_ai_running: "AI가 실행 중이라 복구할 수 없습니다. 실행이 끝난 뒤 다시 시도하세요.",
+        target_in_use: "복구 대상 위치의 파일을 다른 문서가 쓰고 있어 아무것도 바꾸지 않았습니다.",
+        tr2_not_supported: "TR2 문서는 이 방법으로 복구할 수 없습니다.",
+        internal_error: "복구 중 오류가 발생했습니다.",
+      },
+    },
   },
   card: { bodyUnreadable: "AI가 읽을 수 없는 문서 있음" },
   brand: {
