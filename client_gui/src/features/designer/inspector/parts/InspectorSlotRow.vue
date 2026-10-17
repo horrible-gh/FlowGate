@@ -16,10 +16,15 @@
        nothing).
        flowgate.v02.0056 F2-2 — a line whose document has no body yet (`blank`, O3 0009-TR §4-1 has_body).
        flowgate.v02.0056 (0017-CH) — no author words, and a blank line has no words either: a dashed frame and a
-       dim name (the list draws its hollow document icon); "비어 있음" is the line's hover text. -->
+       dim name (the list draws its hollow document icon); "비어 있음" is the line's hover text.
+       flowgate.v02.0070 T#2 (B2) — an unreadable body is no longer words before the state: it is a small ⚠ at the
+       head of the buttons (before 이력 · 열기), no bigger than the state badge; its words are the tooltip and the
+       aria-label. The line reads `name · [state badge] · ⚠ · buttons`, and only the name ellipsises: on a narrow
+       list such a line (`is-state-first`) keeps its badge, ⚠ and buttons whole; its summary gives way first, then
+       the name (264px: the start of the name and … stay beside ⚠ · AI 호출 · 이력 · 열기 · ✎). -->
   <div
     class="inspector-slot"
-    :class="[`inspector-slot--${kind}`, { 'is-empty': empty, 'is-blank': blank && !empty, 'is-focus': focus, 'is-danger': danger }]"
+    :class="[`inspector-slot--${kind}`, { 'is-empty': empty, 'is-blank': blank && !empty, 'is-focus': focus, 'is-danger': danger, 'is-state-first': warns }]"
     :title="view.kind === 'blank' ? view.title : undefined"
     data-test="inspector-slot"
     :data-kind="kind"
@@ -38,7 +43,6 @@
     >{{ name }}</button>
     <span v-else class="inspector-slot-name" :title="name" data-test="inspector-slot-name">{{ name }}</span>
     <span class="inspector-slot-value">
-      <span v-if="lineWarns({ docId: id, bodyState })" class="inspector-slot-unreadable" role="img" :aria-label="t('gui.document.bodyState.unreadable')" :title="t(`gui.document.bodyState.${bodyState}`)" data-test="inspector-slot-unreadable">⚠ {{ t('gui.document.bodyState.unreadable') }}</span>
       <span v-if="authorKey" class="inspector-slot-author" :title="t(authorKey)" data-test="inspector-slot-author" :data-author="author">{{ t(authorKey) }}</span>
       <span
         v-if="view.kind !== 'none' && view.text"
@@ -66,6 +70,7 @@
       </template>
     </span>
     <span class="inspector-slot-buttons" data-test="inspector-slot-buttons">
+      <span v-if="warns" class="inspector-slot-unreadable" role="img" :aria-label="t('gui.document.bodyState.unreadable')" :title="t(`gui.document.bodyState.${bodyState}`)" data-test="inspector-slot-unreadable">⚠</span>
       <slot />
     </span>
   </div>
@@ -145,11 +150,17 @@ const clamped = computed(() => Math.max(0, Math.min(100, Math.round(props.progre
 
 /** The author's wording key, or null (nothing drawn). */
 const authorKey = computed(() => slotAuthorKey(props.author))
+
+/**
+ * The line's document body cannot be read: the small ⚠ before the buttons. flowgate.v02.0070 T#2 (B2): such a line
+ * is also `is-state-first` — its buttons are fixed icons (the warning comes from a card's document line, which has
+ * no shrinking nav), so on a narrow list the badge, ⚠ and buttons keep their width, the summary gives way first and
+ * then the name.
+ */
+const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyState }))
 </script>
 
 <style scoped>
-.inspector-slot-unreadable { color: var(--fg2-status-warning-fg); }
-
 .inspector-slot {
   display: grid;
   /* T#4: the buttons column may shrink below its content on a narrow Inspector (264px); the line's
@@ -170,6 +181,38 @@ const authorKey = computed(() => slotAuthorKey(props.author))
 @container (max-width: 360px) {
   .inspector-slot {
     grid-template-columns: 72px minmax(0, 1fr) minmax(0, max-content);
+  }
+
+  /* flowgate.v02.0070 T#2 (B2): a warning line keeps its badge and ⚠ · [AI 호출] · 이력 · 열기 · ✎ whole; the name
+     ellipsises below 72px. Whatever follows the badge (the summary, its slot, the progress bar) gives way first:
+     it takes no room of its own (no gap, zero width), only what is left after the name. */
+  .inspector-slot.is-state-first {
+    grid-template-columns: minmax(0, 72px) minmax(min-content, 1fr) max-content;
+  }
+
+  .inspector-slot.is-state-first .inspector-slot-value {
+    gap: 0;
+  }
+
+  .inspector-slot.is-state-first .inspector-slot-value > :deep(:not(.inspector-slot-state)) {
+    flex: 1 1 0;
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* The gap, drawn inside the part that follows (so a part with no room costs none). */
+  .inspector-slot.is-state-first .inspector-slot-value > :deep(* + *) {
+    text-indent: 8px;
+  }
+
+  .inspector-slot.is-state-first .inspector-slot-value > :deep(* + .inspector-slot-progress) {
+    transform: translateX(8px);
+  }
+
+  .inspector-slot.is-state-first .inspector-slot-progress {
+    max-width: 120px;
   }
 }
 
@@ -209,6 +252,15 @@ const authorKey = computed(() => slotAuthorKey(props.author))
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+}
+
+/* flowgate.v02.0070 T#2 (B2): the unreadable-body mark — a glyph the size of the state badge's words, in the
+   warning colour; it never gives way, so the state badge before it stays the line's main state. */
+.inspector-slot-unreadable {
+  flex: 0 0 auto;
+  color: var(--fg2-status-warning-fg);
+  font-size: 10.5px;
+  line-height: 1;
 }
 
 /* The state badge (0056 F1): a short word with the tone colours of InspectorStatusChip; drawn only when
@@ -355,5 +407,22 @@ const authorKey = computed(() => slotAuthorKey(props.author))
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* flowgate.v02.0070 T#2 (B2): the 264px Inspector (a 236px list) — tighter gaps on every line, so the buttons keep
+   lining up from line to line and a warning line with all its buttons still shows the start of its name. */
+@container (max-width: 240px) {
+  .inspector-slot {
+    column-gap: 4px;
+    padding: 0 6px 0 8px;
+  }
+
+  .inspector-slot-buttons {
+    gap: 2px;
+  }
+
+  .inspector-slot-state {
+    padding: 0 5px;
+  }
 }
 </style>

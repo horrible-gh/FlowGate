@@ -144,6 +144,57 @@ describe('InspectorSlotRow', () => {
     const failed = mount(InspectorSlotRow, { props: { name: '레포트', empty: true, emptyText: '실패 · 제한 시간 초과', danger: true }, global })
     expect(failed.get('[data-test="inspector-slot"]').classes()).toContain('is-danger')
   })
+
+  // flowgate.v02.0070 T#2 (B2): `name · [state badge] · ⚠ · 이력 · 열기` — the unreadable mark is a small icon at the
+  // head of the buttons, its words only in the tooltip and the aria-label; the state badge stays in the value.
+  it('an unreadable body: a small ⚠ before the buttons, named by aria-label and tooltip, not words before the state', () => {
+    const w = mount(InspectorSlotRow, {
+      props: { name: '요구사항', id: 'doc-r', bodyState: 'file_not_found', openable: true, state: { label: '승인됨', tone: 'success' } },
+      slots: { default: () => [h('button', { 'data-test': 'history' }, 'history'), h('button', { 'data-test': 'open' }, 'open')] },
+      global,
+    })
+    const mark = w.get('[data-test="inspector-slot-unreadable"]')
+    expect(mark.text()).toBe('⚠')
+    expect(mark.attributes('role')).toBe('img')
+    expect(mark.attributes('aria-label')).toBe('본문 읽기 불가')
+    expect(mark.attributes('title')).toBe('파일 없음')
+    expect(mark.classes()).toContain('inspector-slot-unreadable')
+    const buttons = w.get('[data-test="inspector-slot-buttons"]').element
+    expect(mark.element.parentElement).toBe(buttons)
+    expect([...buttons.children].map((el) => el.getAttribute('data-test'))).toEqual(['inspector-slot-unreadable', 'history', 'open'])
+    const value = w.get('.inspector-slot-value')
+    expect(value.find('[data-test="inspector-slot-unreadable"]').exists()).toBe(false)
+    expect(value.get('[data-test="inspector-slot-state"]').text()).toBe('승인됨')
+    expect(w.text()).not.toContain('본문 읽기 불가')
+    // On a narrow list a warning line keeps its badge and ⚠ · buttons whole: what follows the badge (the summary, the
+    // summary slot, the progress bar) gives way first, then the name. A line without the warning keeps the usual columns.
+    expect(w.get('[data-test="inspector-slot"]').classes()).toContain('is-state-first')
+    const summed = mount(InspectorSlotRow, {
+      props: { name: '시나리오', id: 'doc-ts', bodyState: 'read_error', state: { label: '검수 대기', tone: 'warning' }, summary: '12/49', progress: 40 },
+      global,
+    })
+    expect(summed.get('[data-test="inspector-slot"]').classes()).toContain('is-state-first')
+    expect([...summed.get('.inspector-slot-value').element.children].map((el) => el.getAttribute('data-test'))).toEqual([
+      'inspector-slot-state',
+      'inspector-slot-summary',
+      'inspector-slot-progress',
+    ])
+    expect(summed.find('[data-test="inspector-slot-unreadable"]').exists()).toBe(true)
+    const slotted = mount(InspectorSlotRow, {
+      props: { name: '시나리오', id: 'doc-ts', bodyState: 'file_not_found', state: { label: '검수 대기', tone: 'warning' } },
+      slots: { summary: () => h('span', { 'data-test': 'own-summary' }, 'Git 정상') },
+      global,
+    })
+    expect(slotted.get('[data-test="inspector-slot"]').classes()).toContain('is-state-first')
+    expect([...slotted.get('.inspector-slot-value').element.children].map((el) => el.getAttribute('data-test'))).toEqual(['inspector-slot-state', 'own-summary'])
+    expect(slotted.get('[data-test="inspector-slot-buttons"]').element.firstElementChild?.getAttribute('data-test')).toBe('inspector-slot-unreadable')
+    const readable = mount(InspectorSlotRow, { props: { name: '요구사항', id: 'doc-r', state: { label: '승인됨', tone: 'success' } }, global })
+    expect(readable.get('[data-test="inspector-slot"]').classes()).not.toContain('is-state-first')
+    i18n.global.locale.value = 'en'
+    const en = mount(InspectorSlotRow, { props: { name: 'Requirement', id: 'doc-r', bodyState: 'read_error' }, global })
+    expect(en.get('[data-test="inspector-slot-unreadable"]').attributes('aria-label')).toBe('Body unreadable')
+    expect(mount(InspectorSlotRow, { props: { name: '요구사항', id: 'doc-r', bodyState: 'readable' }, global }).find('[data-test="inspector-slot-unreadable"]').exists()).toBe(false)
+  })
 })
 
 // flowgate.v02.0052 T#4: on the 264px Inspector the "{nav} ↗" label is the part that gives way, so the
