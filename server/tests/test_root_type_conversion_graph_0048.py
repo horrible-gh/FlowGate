@@ -300,15 +300,19 @@ def test_unassigned_refusals_inside_the_guard_reach_the_caller_unchanged(env, mo
     db_documents.create({"doc_id": f"{FU}.0002-N", "project_id": "flowgate", "module": "v02", "group_id": FU,
                          "type_code": "N", "seq": 2, "title": "child", "status": "open", "owner_id": USER,
                          "triggered_by": root(FU), "target_id": root(FU)})
+    # 0064 T#4 (P0006 §3.5): a root with child documents is succeeded, no longer refused.
     children = convert(env, root(FU))
+    assert children.status_code == 200, children.text
+    assert (children.json()["conversion"]["mode"], children.json()["conversion"]["child_count"]) == ("succession", 1)
+    again = convert(env, root(FU))
     not_root = convert(env, f"{FU}.0002-N", "R")
     missing = convert(env, f"{FU}.0009-R")
     _bypass(env, monkeypatch)
-    for res, old in ((children, convert(env, root(FU))), (not_root, convert(env, f"{FU}.0002-N", "R")),
+    for res, old in ((again, convert(env, root(FU))), (not_root, convert(env, f"{FU}.0002-N", "R")),
                      (missing, convert(env, f"{FU}.0009-R"))):
         assert (res.status_code, res.json()) == (old.status_code, old.json())
-    assert children.status_code == 409
-    assert children.json() == {"detail": "Cannot convert root type: child documents already reference it."}
+    assert again.status_code == 409
+    assert (again.json()["error"], again.json()["live_root_doc_id"]) == ("root_superseded", root(FU, "B"))
     assert not_root.status_code == 422
     assert missing.status_code == 404
     assert doc_row(env, root(FU))["type_code"] == "R"

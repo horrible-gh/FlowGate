@@ -30,6 +30,7 @@ from modules.flow_gate.db import conversation_turns as conv_turn_store
 from modules.flow_gate.db import mention_copies as db_mention_copies
 from modules.flow_gate.documents import attachments
 from modules.flow_gate.documents import document_service, document_types, template_service, url_import_service
+from modules.flow_gate.documents import live_root as _live_root
 from modules.flow_gate.documents.type_code import doc_code_seq_text
 from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact  # D#2 §4.2 (flowgate.v02.0048 T#10)
 from modules.flow_gate.documents.constants import (
@@ -561,21 +562,17 @@ def _parse_doc_workflow(doc: dict) -> dict:
     if doc.get("type_code") not in WORKFLOW_ROOT_TYPES and doc.get("group_id") and doc.get("project_id"):
         from modules.flow_gate.db import documents as _db_docs
         try:
-            roots = [c for c in candidates if c.get("type_code") == "R"][:1]
+            # 0064 T#4 (L0005 2.10 P4): only a live root (R/B, not cancelled, not succeeded) is the parent.
+            live = _live_root.live_roots(candidates)
+            roots = [c for c in live if c.get("type_code") == "R"][:1]
             if not roots:
-                roots = [c for c in candidates if c.get("type_code") == "B"][:1]
+                roots = [c for c in live if c.get("type_code") == "B"][:1]
             if not roots and (_candidates_truncated or not candidates):
                 # The list was truncated or unreadable — absence cannot be concluded, so check.
-                roots = _db_docs.list_documents(
-                    project_id=doc["project_id"],
-                    group_id=doc["group_id"],
-                    type_code="R",
-                    limit=1,
-                ) or _db_docs.list_documents(
-                    project_id=doc["project_id"],
-                    group_id=doc["group_id"],
-                    type_code="B",
-                    limit=1,
+                roots = _db_docs.list_live_roots(
+                    doc["project_id"], doc["group_id"], "R", limit=1,
+                ) or _db_docs.list_live_roots(
+                    doc["project_id"], doc["group_id"], "B", limit=1,
                 )
             if roots:
                 parent_root = roots[0]
@@ -623,7 +620,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
     final_approved = (
         doc.get("doc_review_status") == "wf_done"
         or any(
-            c.get("type_code") in WORKFLOW_ROOT_TYPES
+            _live_root.is_live_root(c)                      # 0064 T#4 (L0005 2.10 P5)
             and c.get("doc_review_status") == "wf_done"
             for c in candidates
         )
@@ -649,6 +646,11 @@ def _parse_doc_workflow(doc: dict) -> dict:
         if doc.get("type_code") in WORKFLOW_ROOT_TYPES
         else out.get("parent_root_doc_id") or out.get("parent_r_doc_id")
     )
+    if _live_root.is_succeeded_root(doc):
+        # 0064 T#4 (L0005 2.10 P5): a succeeded root reads the head of the live root at its chain's end.
+        root_doc_id_for_head = _live_root.live_end_doc_id(
+            doc, {c["doc_id"]: c for c in candidates if c.get("doc_id")} if not _candidates_truncated else None,
+        ) or doc["doc_id"]
     seq_items: list = []
     _seq_found = False
     if root_doc_id_for_head:
@@ -745,7 +747,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
                 # explicit step, not a document: keep the head at AC/pending until
                 # the R doc is finalized (wf_done), then the workflow is done.
                 root_done = any(
-                    c.get("type_code") in WORKFLOW_ROOT_TYPES
+                    _live_root.is_live_root(c)              # 0064 T#4 (L0005 2.10 P5)
                     and c.get("doc_review_status") == "wf_done"
                     for c in candidates
                 )
@@ -3143,13 +3145,28 @@ def _scope_fallback_body(doc: dict) -> Optional[str]:
 @require_permission("perm_document_read")
 def get_document(
     doc_id: str,
+    include: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """Fetch a single document."""
+    """Fetch a single document.
+
+    0064 T#4 (P0006 §3.1): ``converted_from`` / ``converted_to`` / ``live_root_doc_id`` are added, and with
+    ``include=root_conversion`` the R↔B conversion judgement for the other root type (a pure read). Without the
+    query the judgement is not computed.
+    """
     doc = document_service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     out = _parse_doc_workflow(doc)
+    from modules.flow_gate.documents import root_conversion as _root_conversion
+
+    out.update(_root_conversion.document_conversion_items(doc))
+    if "root_conversion" in {part.strip() for part in (include or "").split(",")}:
+        try:
+            out["root_conversion"] = _root_conversion.preview_root_conversion(doc)
+        except Exception:  # noqa: BLE001 — no guessed judgement: the screen falls back to the server's answer
+            _log.warning("root conversion preview failed: %s", doc_id, exc_info=True)
+            out["root_conversion"] = None
     try:
         out["download_available"] = bool(doc.get("file_path")) and _document_file_path(doc).is_file()
     except (HTTPException, OSError, ValueError):

@@ -2,7 +2,8 @@
 
 ``judge_root_conversion`` is a pure read: no number reservation, no file, no DB write. Its order is its
 result — type, document, root, same type (no-op), disposed, AI run, Flow ownership, workflow decision,
-children, target id, target attachment rows, body state, front matter identity.
+superseded root, children / succession chain (the mode), target id, target attachment rows, body state, front
+matter identity, and for a succession the expected number (``peek``, never ``reserve``) and its attachment rows.
 
 ``execute_root_conversion`` is the one entry point of the route and the v0.1 contact. Inside one Flow guard
 transaction (the document's own row lock for a document without a Flow) it reads the document and its
@@ -14,13 +15,18 @@ the file it owns (the identity taken when it was read / made) and runs under the
 next conversion of the root takes (``flow_guard.run_cleanup``), so a conversion of another server process that
 starts right after the commit or the rollback never loses the body or the attachments it staged.
 
-Set 4 (T-B3) adds the succession branch: ``root_superseded`` (``superseded_by``), ``in_succession_chain``
-and ``SUCCESSION`` replace the existing child-document refusal kept here.
+0064 T#4 (T-B3, L0005 2.5 / 2.9): a root with child documents, or a member of a succession chain, converts by
+succession — a new document of the other type (the same seq when that number is free, else one reservation
+inside the guard) takes over the body copy (identity values only), the review state, the attachment copies,
+the card lines and the draft cards; the original keeps everything and only gets ``superseded_by``,
+``meta.converted_to`` and ``updated_at``. A succeeded root is refused (``root_superseded``) with its live root.
+``preview_root_conversion`` puts the judgement on the console document read (P0006 §3.1).
 """
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -31,6 +37,7 @@ from modules.flow_gate.db import workflow_sequences as db_sequences
 from modules.flow_gate.db.connection import after_commit, get_store
 from modules.flow_gate.documents import document_service
 from modules.flow_gate.documents import front_matter_identity as identity
+from modules.flow_gate.documents import live_root
 from modules.flow_gate.documents.attachments import conversion as attachment_conversion
 from modules.flow_gate.documents.attachments.registry import registry_list
 from modules.flow_gate.documents.conversion_errors import ConversionRefused
@@ -47,7 +54,8 @@ NUMBER_SWAP, SUCCESSION = "number_swap", "succession"
 REFUSED, NOOP = "refused", "noop"
 
 __all__ = ["ConversionRefused", "ConversionContext", "Judgement", "read_context", "judge_root_conversion",
-           "execute_root_conversion", "stage_converted_file", "finish_converted_file"]
+           "execute_root_conversion", "stage_converted_file", "finish_converted_file", "succession_number_preview",
+           "allocate_succession_id", "preview_root_conversion", "document_conversion_items"]
 
 
 @dataclass
@@ -62,12 +70,16 @@ class ConversionContext:
 
 @dataclass
 class Judgement:
-    kind: str                                     # REFUSED | NOOP | NUMBER_SWAP
+    kind: str                                     # REFUSED | NOOP | NUMBER_SWAP | SUCCESSION
     refusal: Optional[Exception] = None
     new_type: Optional[str] = None
-    new_id: Optional[str] = None
-    mode: Optional[str] = None
+    new_id: Optional[str] = None                  # a succession: the expected number (``exact`` tells)
+    mode: Optional[str] = None                    # a refusal: only when its mode was already known
     children: int = 0
+    chained: bool = False
+    exact: bool = False                           # ``new_id`` is the number the execution takes
+    code: Optional[str] = None                    # a refusal: the P0006 §3.1 ``refusal.code``
+    extra: dict = field(default_factory=dict)     # a refusal: the items that follow ``code``
 
 
 @dataclass(frozen=True)
@@ -83,8 +95,11 @@ def _code(doc_id: str) -> str:
     return doc_id.rpartition(".")[2]
 
 
-def _refused(exc: Exception) -> Judgement:
-    return Judgement(REFUSED, refusal=exc)
+def _refused(exc: Exception, code: str, *, children: int = 0, chained: bool = False, mode: Optional[str] = None,
+             **extra: Any) -> Judgement:
+    if mode is not None:
+        extra["mode"] = mode
+    return Judgement(REFUSED, refusal=exc, mode=mode, children=children, chained=chained, code=code, extra=extra)
 
 
 def read_context(doc_id: str, doc: Optional[dict]) -> ConversionContext:
@@ -145,52 +160,115 @@ def judge_root_conversion(doc: Optional[dict], new_type: Any, context: Conversio
     t = str(new_type or "").strip().upper()
     if t not in ROOT_TYPES:
         return _refused(HTTPException(
-            status_code=422, detail=f"Target type must be one of {sorted(ROOT_TYPES)}; got {t!r}."))
+            status_code=422, detail=f"Target type must be one of {sorted(ROOT_TYPES)}; got {t!r}."),
+            "invalid_target_type")
     if doc is None:
-        return _refused(HTTPException(status_code=404, detail=f"Document not found: {doc_id}"))
+        return _refused(HTTPException(status_code=404, detail=f"Document not found: {doc_id}"), "not_found")
     current = (doc.get("type_code") or "").upper()
     if current not in ROOT_TYPES:
         return _refused(HTTPException(
             status_code=422,
-            detail=f"Only workflow root documents (R/B) can be converted; {doc_id} is {current}."))
+            detail=f"Only workflow root documents (R/B) can be converted; {doc_id} is {current}."), "not_root")
     if current == t:
         return Judgement(NOOP)
     if context.disposed is not None:
-        return _refused(context.disposed)
+        return _refused(context.disposed, "group_disposed")
     if context.ai_running is not None:
-        return _refused(context.ai_running)
+        return _refused(context.ai_running, "group_ai_running")
     if context.ownership in ("graph", "conflict"):
         body = context.ownership_refusal or {"error": "flow_owned_by_graph" if context.ownership == "graph"
                                               else "flow_ownership_conflict", "doc_id": doc_id}
-        return _refused(ConversionRefused(body["error"], body=body))
+        return _refused(ConversionRefused(body["error"], body=body), body["error"])
     if db_sequences.get_sequence_by_doc_id(doc_id) is not None:
         return _refused(HTTPException(
-            status_code=409, detail="Cannot convert root type after the workflow decision was taken."))
-    # Set 4 (T-B3): ``superseded_by`` -> root_superseded(live_root) is judged here.
+            status_code=409, detail="Cannot convert root type after the workflow decision was taken."),
+            "decision_taken")
+    if str(doc.get("superseded_by") or "").strip():
+        live = live_root.live_end_doc_id(doc)
+        return _refused(ConversionRefused("root_superseded", doc_id=doc_id, live_root_doc_id=live), "root_superseded",
+                        children=child_count(doc), chained=live_root.in_succession_chain(doc), live_root_doc_id=live)
     children = child_count(doc)
-    # Set 4 (T-B3): in_succession_chain(doc) and the SUCCESSION mode replace this refusal. Until then a
-    # root with children keeps the existing refusal, status and detail unchanged.
-    if children:
-        return _refused(HTTPException(
-            status_code=409, detail="Cannot convert root type: child documents already reference it."))
-    mode = NUMBER_SWAP
-    new_id = document_service.compute_converted_doc_id(doc_id, t)
-    if db_docs.get_by_id(new_id) is not None:
-        return _refused(HTTPException(status_code=409, detail=f"Target doc_id already exists: {new_id}."))
-    if registry_list(new_id):
-        return _refused(ConversionRefused(
-            "attachment_target_rows_exist", doc_id=doc_id, target_doc_id=new_id, mode=mode))
+    chained = live_root.in_succession_chain(doc)          # DB0007 Q8: the meta marks, parsed here
+    mode = NUMBER_SWAP if children == 0 and not chained else SUCCESSION
+    seen = {"children": children, "chained": chained}
+    new_id = None
+    if mode == NUMBER_SWAP:
+        new_id = document_service.compute_converted_doc_id(doc_id, t)
+        if db_docs.get_by_id(new_id) is not None:
+            return _refused(HTTPException(status_code=409, detail=f"Target doc_id already exists: {new_id}."),
+                            "target_id_exists", target_doc_id=new_id, **seen)
+        if registry_list(new_id):
+            return _refused(ConversionRefused(
+                "attachment_target_rows_exist", doc_id=doc_id, target_doc_id=new_id, mode=mode),
+                "attachment_target_rows_exist", target_doc_id=new_id, mode=mode, **seen)
     try:
         state, found = _body_identity(doc)        # one read per judgement; errors stay inside this boundary
     except (OSError, UnicodeError):
         state, found = "read_error", None         # never read as "empty" or "no identity fields"
-    if state == "read_error":
-        return _refused(ConversionRefused("root_body_unreadable", doc_id=doc_id, reason="read_error", mode=mode))
-    # A number swap of a root without a readable file keeps the existing behaviour (path value only).
+    if state == "read_error" or (mode == SUCCESSION and state != "readable"):
+        # A number swap of a root without its file keeps the existing behaviour (path value only); a
+        # succession copies the body, so it needs one it can read.
+        return _refused(ConversionRefused("root_body_unreadable", doc_id=doc_id, reason=state, mode=mode),
+                        "root_body_unreadable", reason=state, mode=mode, **seen)
     if found is not None and not found.safe:
         return _refused(ConversionRefused(
-            "front_matter_identity_unsafe", doc_id=doc_id, reason=found.reason, field=found.field))
-    return Judgement(NUMBER_SWAP, new_type=t, new_id=new_id, mode=mode, children=0)
+            "front_matter_identity_unsafe", doc_id=doc_id, reason=found.reason, field=found.field),
+            "front_matter_identity_unsafe", reason=found.reason, field=found.field, **seen)
+    if mode == NUMBER_SWAP:
+        return Judgement(NUMBER_SWAP, new_type=t, new_id=new_id, mode=mode, exact=True, **seen)
+    new_id, exact = succession_number_preview(doc, t)
+    if exact and registry_list(new_id):
+        return _refused(ConversionRefused(
+            "attachment_target_rows_exist", doc_id=doc_id, target_doc_id=new_id, mode=mode),
+            "attachment_target_rows_exist", target_doc_id=new_id, mode=mode, **seen)
+    return Judgement(SUCCESSION, new_type=t, new_id=new_id, mode=mode, exact=exact, **seen)
+
+
+# ── succession number (L0005 2.9.1) ───────────────────────────────────────────
+
+def _group_counter(doc: dict) -> tuple[Optional[str], Optional[int]]:
+    """(project id, the group-shared document counter's ``last_seq`` or None): a SELECT only."""
+    from modules.flow_gate.db import groups as db_groups
+
+    group_id = doc.get("group_id")
+    group = db_groups.get_by_id(group_id) if group_id else None
+    if group is None:
+        return None, None
+    row = get_store()._fetch_one(
+        "SELECT last_seq FROM id_counter WHERE project_id=? AND module=? AND group_seq=? AND sub_group_seq=? "
+        "AND series=? AND type_code=?",
+        [group["project_id"], doc.get("module") or "none", group_id, "", "", "__doc__"])
+    return group["project_id"], (int(row["last_seq"]) if row and row.get("last_seq") is not None else None)
+
+
+def succession_number_preview(doc: dict, new_type: str) -> tuple[str, bool]:
+    """(doc_id, exact). The same seq when no document holds it; else the expected next number. Reads only:
+    the shared counter's ``last_seq + 1``, or ``peek_document_code`` (MAX(seq)+1, the seed rule of a missing
+    counter) — never ``reserve_document``, so ``id_counter`` stays as it is (V-B3-12)."""
+    from modules.flow_gate.numbering import numbering_service
+    from modules.flow_gate.numbering.id_formatter import format_doc_code
+
+    candidate = document_service.compute_converted_doc_id(doc["doc_id"], new_type)
+    if db_docs.get_by_id(candidate) is None:
+        return candidate, True
+    group_id, module = doc["group_id"], doc.get("module") or "none"
+    project_id, last_seq = _group_counter(doc)
+    if last_seq is None:
+        return f"{group_id}.{numbering_service.peek_document_code(group_id, new_type, module=module)}", False
+    width = numbering_service._get_widths(project_id)["document"]
+    return f"{group_id}.{format_doc_code(new_type, last_seq + 1, width)}", False
+
+
+def allocate_succession_id(doc: dict, new_type: str) -> str:
+    """The coordinator's number, inside the guard: the same seq when free (no reservation; a cancelled row
+    counts as taken), else the one ``reserve_document`` of this conversion — rolled back with it."""
+    from modules.flow_gate.numbering import numbering_service
+
+    candidate = document_service.compute_converted_doc_id(doc["doc_id"], new_type)
+    if db_docs.get_by_id(candidate) is None:
+        return candidate
+    code = numbering_service.reserve_document(doc["group_id"], new_type, module=doc.get("module") or "none")
+    return f"{doc['group_id']}.{code}"
 
 
 # ── file stage (L0005 2.6) ───────────────────────────────────────────────────
@@ -202,19 +280,22 @@ def _converted_path_string(raw: str, old_code: str, new_code: str) -> str:
 
 
 def stage_converted_file(doc: dict, new_id: str, new_type: str, mode: str) -> StagedFile:
-    """Prepare the converted body next to the original, which is never touched here."""
+    """Prepare the converted body next to the original, which is never touched here (both modes)."""
     doc_id = doc["doc_id"]
     old_code, new_code = _code(doc_id), _code(new_id)
     filename = document_service._converted_filename(doc.get("filename"), old_code, new_code)
     raw = (doc.get("file_path") or "").strip()
     if not raw:
+        if mode == SUCCESSION:                                     # the body went missing after the judgement
+            raise ConversionRefused("root_body_unreadable", doc_id=doc_id, reason="file_path_missing", mode=mode)
         return StagedFile(doc.get("file_path"), filename)          # number swap: the value stays as it is
     try:
         old_abs, state = storage_paths.locate_storage_path(raw, doc.get("project_id"), doc.get("branch") or "main")
     except (OSError, UnicodeError):
         raise ConversionRefused("root_body_unreadable", doc_id=doc_id, reason="read_error", mode=mode)
     if old_abs is None:
-        # Set 4: a succession refuses here (the body went missing after the judgement).
+        if mode == SUCCESSION:                                     # the body went missing after the judgement
+            raise ConversionRefused("root_body_unreadable", doc_id=doc_id, reason=state, mode=mode)
         return StagedFile(_converted_path_string(raw, old_code, new_code), filename)
     new_name = document_service._converted_filename(old_abs.name, old_code, new_code)
     if new_name == old_abs.name:
@@ -293,6 +374,8 @@ def _execute_in_guard(doc_id: str, new_type: Any, actor: Optional[str]) -> dict:
     if judged.kind == NOOP:
         return {"data": doc}
     try:
+        if judged.kind == SUCCESSION:
+            return _convert_by_succession(doc, judged, actor)
         return _convert_by_number_swap(doc, judged, actor)
     except HTTPException:
         raise
@@ -332,3 +415,73 @@ def _convert_by_number_swap(doc: dict, judged: Judgement, actor: Optional[str]) 
             "draft_node_keys": list(draft_node_keys),
         },
     }
+
+
+def _convert_by_succession(doc: dict, judged: Judgement, actor: Optional[str]) -> dict:
+    """L0005 2.9: number (the same seq, or one reservation) -> target rows empty -> body copy staged ->
+    attachments checked and copied -> new row, the original's three columns, attachment rows, events -> card
+    lines -> draft cards. The original body, attachments and room stay; nothing of theirs is queued for cleanup."""
+    from modules.flow_gate.graph_workflow.services import v01_contact
+
+    old_id, mode, children = doc["doc_id"], SUCCESSION, judged.children
+    old_type, new_type = (doc.get("type_code") or "").upper(), judged.new_type
+    new_id = allocate_succession_id(doc, new_type)
+    attachment_conversion.require_target_empty(old_id, new_id, mode, "number_confirmed")
+    staged = stage_converted_file(doc, new_id, new_type, mode)
+    stage = attachment_conversion.stage_attachment_room(doc, new_id, staged.path_value, mode)
+    inserted = document_service.convert_by_succession(
+        doc, new_id, new_type, staged.path_value, staged.filename, children, actor,
+        after_original=lambda: attachment_conversion.copy_attachments(doc, new_id, stage, mode),
+    )
+    draft_node_keys = v01_contact.follow_root_conversion(doc, inserted, old_type=old_type, new_type=new_type,
+                                                         actor=actor)
+    if judged.new_id != new_id:
+        _log.info("succession number differs from the judgement: %s -> %s (judged %s)", old_id, new_id, judged.new_id)
+    _log.info("root converted mode=%s %s -> %s children=%d", mode, old_id, new_id, children)
+    return {
+        "data": inserted,
+        "conversion": {
+            "mode": mode, "old_doc_id": old_id, "new_doc_id": new_id, "old_type": old_type, "new_type": new_type,
+            "child_count": children,
+            "attachments": {"count": stage.reassigned_count, "ghosts": stage.ghost_count},
+            "draft_node_keys": list(draft_node_keys),
+        },
+    }
+
+
+# ── console read (P0006 §3.1) ────────────────────────────────────────────────
+
+def document_conversion_items(doc: dict) -> dict:
+    """``converted_from`` / ``converted_to`` unfolded from ``meta`` and the live root of an R/B document."""
+    live = None
+    if live_root.is_root_type(doc):
+        live = live_root.live_end_doc_id(doc) if live_root.is_succeeded_root(doc) else doc.get("doc_id")
+    return {
+        "converted_from": live_root.conversion_mark(doc, "converted_from"),
+        "converted_to": live_root.conversion_mark(doc, "converted_to"),
+        "live_root_doc_id": live,
+    }
+
+
+def preview_root_conversion(doc: dict) -> Optional[dict]:
+    """The judgement for the other root type as of now (``include=root_conversion``), or None for a non-root.
+
+    A pure read: the same ``judge_root_conversion`` the execution runs, outside its guard — so the number of
+    a succession that would need a reservation is the expected one (``new_doc_exact`` false)."""
+    current = (doc.get("type_code") or "").upper()
+    if current not in ROOT_TYPES:
+        return None
+    target = "B" if current == "R" else "R"
+    judged = judge_root_conversion(doc, target, read_context(doc["doc_id"], doc))
+    out = {
+        "target_type": target, "decision": judged.kind, "mode": judged.mode, "refusal": None,
+        "new_doc_id": None, "new_doc_exact": False, "child_count": judged.children, "chained": judged.chained,
+        "live_root_doc_id": None,
+        "read_at": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+    }
+    if judged.kind == REFUSED:
+        out["refusal"] = {"code": judged.code, **judged.extra}
+        out["live_root_doc_id"] = judged.extra.get("live_root_doc_id") if judged.code == "root_superseded" else None
+    else:
+        out["new_doc_id"], out["new_doc_exact"] = judged.new_id, judged.exact
+    return out

@@ -21,6 +21,7 @@ UPDATE … WHERE status=<expected_status>. If a race is detected, it raises 409.
 """
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any, Optional
 
@@ -96,7 +97,11 @@ def is_final_approved(document: dict[str, Any]) -> bool:
     if not project_id or not group_id:
         return False
 
-    if document.get("type_code") in _WORKFLOW_ROOT_TYPES:
+    from modules.flow_gate.documents.live_root import is_live_root, is_succeeded_root
+
+    # 0064 T#4 (L0005 2.10 P6): a root answers for itself, except one succeeded by a later document — that
+    # one is history and follows the live root at its chain's end, as the console read (P5) does.
+    if document.get("type_code") in _WORKFLOW_ROOT_TYPES and not is_succeeded_root(document):
         return False
 
     group_docs = db_docs.list_documents(
@@ -104,8 +109,10 @@ def is_final_approved(document: dict[str, Any]) -> bool:
         group_id=group_id,
         limit=200,
     )
+
+    # 0064 T#4 (L0005 2.10 P6): a root succeeded by a later document is not the group's live root.
     return any(
-        item.get("type_code") in _WORKFLOW_ROOT_TYPES
+        is_live_root(item)
         and item.get("doc_review_status") == "wf_done"
         for item in group_docs
     )
@@ -603,4 +610,97 @@ def convert_by_number_swap(
         "actor_user_id": actor_user_id,
         "metadata": f"{current_type}->{new_type} ({doc_id} -> {new_doc_id}){note_suffix}",
     })
+    return refreshed
+
+
+# Columns of a succession's new row that are not copied from the original (L0005 2.9.2): the identity, the
+# file, the per-document history (revisions, rejections live on the original) and the timestamps.
+_SUCCESSION_NOT_COPIED = frozenset({
+    "id", "doc_id", "type_code", "seq", "file_path", "filename", "superseded_by", "revision_no",
+    "rejection_reason", "rejection_history", "meta", "created_at", "updated_at",
+})
+
+
+def _meta_object(meta: Any) -> dict:
+    from modules.flow_gate.documents.live_root import meta_dict
+
+    return copy.deepcopy(meta_dict(meta))
+
+
+def convert_by_succession(
+    doc: dict,
+    new_doc_id: str,
+    new_type: str,
+    new_file_path: Optional[str],
+    new_filename: Optional[str],
+    children: int,
+    actor_user_id: Optional[str],
+    *,
+    after_original=None,
+) -> dict:
+    """The DB part of a succession conversion (0064 L0005 2.9.2, DB0007 §2.3 / §2.4), in the caller's transaction.
+
+    A new row of ``new_type`` takes the original's columns — title, owner, status and review status included —
+    with the staged body copy, ``revision_no`` 0 and ``meta`` deep-copied plus ``converted_from``
+    (``graph_card.created_empty`` forced to false: the copied body is no empty draft). The original changes in
+    ``superseded_by``, ``meta.converted_to`` and ``updated_at`` only; no reference is rewritten, so child
+    documents, reviews, events, revisions, tokens, Q&A and runs keep pointing at it. ``after_original`` runs
+    once both rows are written (the attachment rows are copied there). Events: ``doc_type_succeeded`` on the
+    original, ``doc_type_converted`` on the new row (P0006 §3.4) and ``doc_review_inherited`` (``events``,
+    ``related_doc_id`` = the original).
+    """
+    from modules.flow_gate.db import events as db_doc_events
+    from modules.flow_gate.numbering.id_formatter import parse_doc_code
+
+    doc_id = doc["doc_id"]
+    current_type = (doc.get("type_code") or "").upper()
+    store = get_store()
+    now = now_iso()
+    _code_type, new_seq = parse_doc_code(new_doc_id.rpartition(".")[2])
+
+    new_meta = _meta_object(doc.get("meta"))
+    new_meta["converted_from"] = {"doc_id": doc_id, "mode": "succession", "at": now, "by": actor_user_id,
+                                  "children": children}
+    if isinstance(new_meta.get("graph_card"), dict):
+        new_meta["graph_card"]["created_empty"] = False
+    new_row = {k: v for k, v in doc.items() if k not in _SUCCESSION_NOT_COPIED}
+    new_row.update({
+        "doc_id": new_doc_id, "type_code": new_type, "seq": new_seq, "file_path": new_file_path,
+        "filename": new_filename, "superseded_by": None, "meta": json.dumps(new_meta, ensure_ascii=False),
+        "created_at": now, "updated_at": now,
+    })
+    inserted = db_docs.create(new_row)
+    # db_docs.create writes its own column list; the rest of the original's columns (doc_review_status,
+    # workflow_steps, ...) follow here. Column names come from the row itself.
+    rest = {k: doc[k] for k in doc if k not in _SUCCESSION_NOT_COPIED and k in (inserted or {})
+            and inserted.get(k) != doc[k]}
+    if rest:
+        store._execute(f"UPDATE documents SET {', '.join(f'{k} = ?' for k in rest)} WHERE doc_id = ?",
+                       [*rest.values(), new_doc_id])
+
+    old_meta = _meta_object(doc.get("meta"))
+    old_meta["converted_to"] = {"doc_id": new_doc_id, "mode": "succession", "at": now, "by": actor_user_id}
+    store._execute("UPDATE documents SET superseded_by = ?, meta = ?, updated_at = ? WHERE doc_id = ?",
+                   [new_doc_id, json.dumps(old_meta, ensure_ascii=False), now, doc_id])
+
+    if after_original is not None:
+        after_original()
+
+    refreshed = db_docs.get_by_id(new_doc_id)
+    if refreshed is None:
+        raise HTTPException(status_code=409, detail="Conversion failed: document missing after succession.")
+    note = f"{current_type}->{new_type} ({doc_id} -> {new_doc_id}) mode=succession children={children}"
+    for event_type, row in (("doc_type_succeeded", doc), ("doc_type_converted", refreshed)):
+        db_events.create({
+            "event_type": event_type,
+            "project_id": refreshed["project_id"],
+            "group_id": refreshed.get("group_id"),
+            "document_id": row.get("id"),
+            "actor_user_id": actor_user_id,
+            "metadata": note,
+        })
+    if doc.get("status") or doc.get("doc_review_status"):
+        db_doc_events.insert_event(new_doc_id, "doc_review_inherited", related_doc_id=doc_id, note=json.dumps({
+            "from": doc_id, "status": doc.get("status"), "doc_review_status": doc.get("doc_review_status"),
+        }, ensure_ascii=False))
     return refreshed

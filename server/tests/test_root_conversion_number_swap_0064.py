@@ -909,8 +909,9 @@ def test_the_route_answers_with_conversion_and_flat_refusals(env, client):
     make_doc(env, doc_id=f"{FLOW}.0002-R", seq=2, rel=f"{GROUP_DIR}/0002-R_requirement.md")
     make_doc(env, doc_id=f"{FLOW}.0003-N", seq=3, body=None, rel="", triggered_by=f"{FLOW}.0002-R")
     child = client.patch(f"/api/v1/documents/{FLOW}.0002-R/root-type", json={"new_type": "B"})
-    assert (child.status_code, child.json()) == (
-        409, {"detail": "Cannot convert root type: child documents already reference it."})
+    # 0064 T#4: a root with child documents is succeeded (P0006 §3.3), the child refusal is gone (§3.5).
+    assert child.status_code == 200, child.text
+    assert (child.json()["conversion"]["mode"], child.json()["conversion"]["child_count"]) == ("succession", 1)
 
 
 # ── one guard: the contact's, the coordinator's own, attachment writes (L0005 2.6 / 2.7.1) ─────

@@ -141,11 +141,14 @@ export function cardLineErrorOf(error: unknown): CardLineError {
 }
 
 
-/** Only known unreadable states warn; older servers and documentless lines do not. */
-export const UNREADABLE_BODY_STATES: ReadonlySet<string> = new Set([
+/**
+ * Only known unreadable states warn; older servers and documentless lines do not. (flowgate.v02.0064 T#4: the
+ * names carry the file's area, as every export of features/document does — publicSurface.0048.)
+ */
+export const cardLineUnreadableBodyStates: ReadonlySet<string> = new Set([
   'file_path_missing', 'file_not_found', 'path_unresolved', 'read_error',
 ])
 
-export function lineWarns(line: { readonly docId?: string | null; readonly bodyState?: string | null }): boolean {
-  return line.docId != null && typeof line.bodyState === 'string' && UNREADABLE_BODY_STATES.has(line.bodyState)
+export function cardLineWarns(line: { readonly docId?: string | null; readonly bodyState?: string | null }): boolean {
+  return line.docId != null && typeof line.bodyState === 'string' && cardLineUnreadableBodyStates.has(line.bodyState)
 }

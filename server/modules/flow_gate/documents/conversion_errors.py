@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 DETAILS = {
+    "root_superseded": "This root was already succeeded by a later document; convert the live root instead.",
     "root_body_unreadable": "The root body cannot be read, so it cannot be converted; recover the document first.",
     "front_matter_identity_unsafe": (
         "The front matter identity fields cannot be rewritten safely; correct them and convert again."),

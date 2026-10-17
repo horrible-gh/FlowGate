@@ -49,6 +49,19 @@ def list_documents(
     return store._fetch_all(sql, params)
 
 
+def list_live_roots(project_id: str, group_id: str, type_code: str, limit: int = 1) -> list[dict]:
+    """Rows of ``type_code`` (R/B) in a group that are live roots: not cancelled, not superseded.
+
+    0064 L0005 2.10 P4: the narrow fallback of the parent-root lookup, the same order as ``list_documents``.
+    """
+    return get_store()._fetch_all(
+        "SELECT * FROM documents WHERE project_id = ? AND group_id = ? "
+        "AND (superseded_by IS NULL OR superseded_by = '') AND (status IS NULL OR status <> 'cancelled') "
+        "AND type_code = ? ORDER BY updated_at DESC LIMIT ?",
+        [project_id, group_id, type_code, limit],
+    )
+
+
 def find_by_content_fingerprint(
     content_sha256: str,
     exclude_group_id: Optional[str] = None,
@@ -785,7 +798,8 @@ def get_docs_for_tree_by_group(group_id: str) -> list[dict]:
 TREE_DOC_COLUMNS = (
     "doc_id, project_id, group_id, module, type_code, title,"
     " file_path, direction, doc_review_status,"
-    " origin_provider_name, origin_ai_run_id"
+    " origin_provider_name, origin_ai_run_id,"
+    " status, superseded_by"   # 0064 T#4 (L0005 2.10 P8): the final-approval mark counts live roots only
 )
 
 

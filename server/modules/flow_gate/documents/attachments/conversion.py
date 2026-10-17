@@ -14,6 +14,9 @@ body (``0001-R/`` → ``0001-B/``), so the rows and the files move together:
 4. ``finish_attachment_room``: only queues the cleanup of the old files and the empty old room after the
    outermost commit; another row pointing at the same file keeps it.
 
+A succession (L0005 2.9.3, 0064 T#4) stages the same way (1, 2) and then ``copy_attachments`` registers the
+copies as the new document's rows; the original rows, files and room stay and nothing is queued for them.
+
 Every cleanup — the old files after the commit, the copies and a room made here after a rollback — removes
 only what it owns (the file identity taken when the file was read or made, a room only while empty) and runs
 under the durable lock of the guard the next writer of those paths takes (``flow_guard.run_cleanup``, 0064 T#3).
@@ -141,6 +144,8 @@ def stage_attachment_room(doc: dict, new_id: str, new_file_path: Optional[str], 
         if dict(row) != snapshot.get(name):
             raise ConversionRefused("attachments_changed", doc_id=doc_id)
         dst = new_room / row["filename"]
+        if os.path.islink(dst) and not os.path.islink(new_room):  # a link already at the target (L0005 2.9.3)
+            raise ConversionRefused("attachment_target_exists", doc_id=doc_id, filename=name)
         resolved = dst.resolve(strict=False)
         if resolved.parent != room_key or not within_storage_jail(resolved, project_id):
             raise _unsafe(doc_id, name, "STORAGE_PATH_OUTSIDE_ROOT")
@@ -243,3 +248,29 @@ def referenced_by_any_attachment(abs_path) -> bool:
         if same_file((root / stored).resolve(strict=False), path):
             return True
     return False
+
+
+def copy_attachments(doc: dict, new_id: str, stage: AttachStage, mode: str) -> None:
+    """L0005 2.9.3, a succession: register the copies ``stage_attachment_room`` made as the new document's rows.
+
+    No file is copied here. Before the first INSERT the target id is empty again (an empty ``moves`` too) and
+    the source rows are still the snapshot (order free); every row — ghosts too — becomes a new row with its
+    new-room ``file_path`` and the rest of its metadata, and the new id holds exactly those rows. The original
+    rows, files and room are kept: nothing of theirs is removed or queued for removal."""
+    from .registry import registry_insert
+
+    doc_id = doc["doc_id"]
+    require_target_empty(doc_id, new_id, mode, "row_write")
+    if attachment_snapshot(registry_list(doc_id), doc_id) != stage.snapshot:
+        raise ConversionRefused("attachments_changed", doc_id=doc_id)
+    expected = {}
+    for m in stage.moves:
+        r = m.row
+        path_value = storage_relative(m.dst, stage.project_id)
+        registry_insert(doc_id=new_id, original_filename=r["original_filename"], filename=r["filename"],
+                        file_path=path_value, size=r["size"], content_type=r["content_type"],
+                        content_sha256=r["content_sha256"], uploaded_by=r.get("uploaded_by"),
+                        uploaded_at=r.get("uploaded_at"), is_legacy_migrated=bool(r.get("is_legacy_migrated")))
+        expected[m.filename] = path_value
+    if {r.get("filename"): r.get("file_path") for r in registry_list(new_id)} != expected:
+        raise ConversionRefused("attachments_changed", doc_id=doc_id)
