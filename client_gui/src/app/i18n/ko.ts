@@ -2,6 +2,43 @@
 // (see ./index.ts). Copy follows the approved 01-dashboard.html; lines broken with \n
 // in the mockup are "\n" here and rendered with white-space: pre-line.
 export default {
+  document: {
+    bodyState: {
+      file_path_missing: "파일 경로 미기록",
+      file_not_found: "파일 없음",
+      path_unresolved: "경로 해석 실패",
+      read_error: "읽기 오류(권한·인코딩 확인 필요)",
+      aiUnreadable: "AI도 이 문서를 읽지 못합니다.",
+      reenter: "본문 다시 입력",
+      unreadable: "본문 읽기 불가",
+      file_exists_unrecorded: "표준 위치에 연결되지 않은 파일이 있습니다. 본문 진단·복구로 파일을 확인한 뒤 다시 저장하세요.",
+    },
+    recover: {
+      action: "복구",
+      done: "본문을 복구했습니다.",
+      loss: {
+        possible: "본문 유실 가능 — 문서 주인에게 다시 입력을 안내하세요.",
+        lost: "본문 유실 — 문서 주인에게 다시 입력을 안내하세요.",
+      },
+      guide: {
+        fix_storage_root: "기준 위치 설정을 확인하세요. 다른 저장 기준 위치에서 이 문서의 파일이 발견되었습니다.",
+        read_error_manual: "파일 권한·인코딩을 확인하세요. 파일은 있지만 읽을 수 없습니다.",
+      },
+      refusal: {
+        not_found: "문서를 찾을 수 없습니다.",
+        file_exists: "본문 파일이 이미 있어 복구하지 않았습니다.",
+        read_error: "파일은 있지만 읽을 수 없습니다. 권한·인코딩을 먼저 확인하세요.",
+        diagnosis_changed: "진단 뒤 상태가 바뀌었습니다. 진단을 다시 실행하세요.",
+        storage_root_mismatch: "기준 위치가 바뀐 것으로 보입니다. 문서를 복구하지 말고 기준 위치 설정을 바로잡으세요.",
+        group_disposed: "처분된 Flow라 복구할 수 없습니다.",
+        group_ai_running: "AI가 실행 중이라 복구할 수 없습니다. 실행이 끝난 뒤 다시 시도하세요.",
+        target_in_use: "복구 대상 위치의 파일을 다른 문서가 쓰고 있어 아무것도 바꾸지 않았습니다.",
+        tr2_not_supported: "TR2 문서는 이 방법으로 복구할 수 없습니다.",
+        internal_error: "복구 중 오류가 발생했습니다.",
+      },
+    },
+  },
+  card: { bodyUnreadable: "AI가 읽을 수 없는 문서 있음" },
   brand: {
     tagline: 'Turn Ideas into Working Flow',
     home_aria: 'FlowGate 대시보드로 이동',
@@ -101,6 +138,7 @@ export default {
       close_tab: '{name} 닫기',
       graph_loading: '그래프를 불러오는 중',
       graph_load_failed: '그래프를 불러오지 못했습니다',
+      document_storage_unwritable: '저장 실패: 문서 저장소 오류. 편집 내용은 유지됩니다.',
       retry: '다시 시도',
       sample_data: '샘플 데이터',
       canvas_label: '{name} 캔버스',
@@ -219,6 +257,25 @@ export default {
         refused_reason: '사유: {reason}',
         approved_documents: '앞서 승인된 문서 {n}개',
         approved_documents_named: '앞서 승인된 문서: {docs}',
+      },
+    },
+    // flowgate.v02.0064 T#4 — a card's inline title edit (0062 D0005 §3.2, 0064 P0006 §4.2.3 / §6.5).
+    nodeTitle: {
+      edit: '제목 편집',
+      input: '카드 제목',
+      hint: 'Enter 저장 · Esc 취소',
+      length: '{count}/{max}자',
+      save: '저장',
+      cancel: '취소',
+      locked: '실행 중인 카드의 제목은 바꿀 수 없습니다.',
+      failed: '제목을 저장하지 못했습니다.',
+      error: {
+        title_empty: '제목을 입력하세요.',
+        title_too_long: '제목은 30자 이하여야 합니다.',
+        node_title_not_editable: '지금은 이 카드의 제목을 바꿀 수 없습니다.',
+        node_title_not_supported: '이 카드는 제목을 따로 정할 수 없습니다.',
+        node_not_found: '카드를 찾을 수 없습니다.',
+        flow_disposed: '폐기된 플로우는 변경할 수 없습니다.',
       },
     },
     // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
@@ -1368,6 +1425,7 @@ export default {
         node_ai_working: '카드의 AI가 작업 중입니다. 끝난 뒤 다시 저장하세요.',
         flow_disposed: '폐기된 플로우라 작성할 수 없습니다.',
         card_documents_unavailable: '서버가 카드 문서를 지원하지 않습니다.',
+        document_storage_unwritable: '저장 실패: 문서 저장소 오류. 편집 내용은 유지됩니다.',
         content: {
           not_a_text: '본문을 글자로 보낼 수 없습니다.',
           too_long: '본문이 너무 깁니다 (최대 500,000자).',

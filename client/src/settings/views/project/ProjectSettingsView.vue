@@ -51,6 +51,7 @@ import TestRecipesView from './TestRecipesView.vue';
 import GitSettingsView from './GitSettingsView.vue';
 import AiProjectSettingsView from './AiProjectSettingsView.vue';
 import SelfCheckSettingsView from './SelfCheckSettingsView.vue';
+import BodyDiagnosisView from './BodyDiagnosisView.vue';
 
 const { t } = useI18n();
 const settings = useSettingsStore();
@@ -66,9 +67,11 @@ const tabs = computed(() => [
   { id: 'git', label: t('settings.project.git.tab'), icon: 'git-branch', component: GitSettingsView },
   { id: 'ai', label: t('settings.project.ai.tab'), icon: 'robot', component: AiProjectSettingsView },
   { id: 'self-check', label: 'TR Self-check', icon: 'terminal', component: SelfCheckSettingsView },
+  // flowgate.v02.0064 T-B1d (P0006 §6.3): document body diagnosis and recovery.
+  { id: 'body-diagnosis', label: t('settings.project.body_diagnosis.tab'), icon: 'magnifying-glass', component: BodyDiagnosisView },
 ]);
 
-const validTabIds = new Set(['paths', 'source-mode', 'test-recipes', 'numbering', 'messages', 'git', 'ai', 'self-check']);
+const validTabIds = new Set(['paths', 'source-mode', 'test-recipes', 'numbering', 'messages', 'git', 'ai', 'self-check', 'body-diagnosis']);
 const defaultTab = 'paths';
 const activeTab = ref(validTabIds.has(route.query.tab) ? route.query.tab : defaultTab);
 const activeComponent = computed(() => tabs.value.find((tab) => tab.id === activeTab.value)?.component || PathSettingsView);

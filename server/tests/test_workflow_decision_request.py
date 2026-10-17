@@ -221,6 +221,14 @@ def test_workflow_decide_broadcasts_status_and_group_refresh(monkeypatch):
             "status": "open",
             "doc_review_status": None,
         },
+        # flowgate.v02.0064 T#4 rework: the row is read again where the decision runs (L0005 2.10 P10).
+        {
+            "doc_id": doc_id,
+            "project_id": "flowgate",
+            "group_id": "flowgate.default.0002",
+            "status": "open",
+            "doc_review_status": None,
+        },
         {
             "doc_id": doc_id,
             "project_id": "flowgate",

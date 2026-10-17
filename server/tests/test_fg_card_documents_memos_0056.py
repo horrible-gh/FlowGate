@@ -231,7 +231,13 @@ def test_a_line_tells_whether_its_document_is_written(env):
 def test_the_body_judgement_is_the_one_of_the_instruction_stage():
     """No second judgement: the line read asks the same function the instruction stage and the card approval ask."""
     lines_src = (_SERVER_DIR / "flowgate" / "card_documents" / "lines.py").read_text(encoding="utf-8")
-    assert '"has_body": has_body(shown)' in lines_src
+    # 0064 T#2 (L0005 2.1.1): the line reads its file once for both facts; ``written`` is still the approval's own
+    # judgement (``approvable_text``, the text rule ``_require_document_body_for_approval`` applies).
+    assert "written, body_state = legacy.line_body_facts(shown)" in lines_src and '"has_body": written' in lines_src
+    adapter_src = (_SERVER_DIR / "flowgate" / "card_documents" / "legacy_adapter.py").read_text(encoding="utf-8")
+    assert "return pipeline_service.approvable_text(doc, text), state" in adapter_src
+    pipeline_src = (_SERVER_DIR / "modules" / "flow_gate" / "workflow" / "pipeline_service.py").read_text(encoding="utf-8")
+    assert "if not approvable_text(doc, content):" in pipeline_src
     assert lines_src.count("def has_body(") == 1 and "approvable_body" in lines_src
     for package in ("card_documents", "card_memos"):
         for path in (_SERVER_DIR / "flowgate" / package).glob("*.py"):
@@ -282,7 +288,7 @@ def test_a_person_writes_a_line_that_has_no_document(env):
         doc_id, True, "instruction_ai_or_human")
     row = _doc_row(doc_id)
     assert (row["type_code"], row["status"], row["doc_review_status"], row["owner_id"]) == ("T", "draft", None, "u_kim")
-    assert json.loads(row["meta"])["graph_card"] == {"node_key": key, "slot": "instruction"}
+    assert json.loads(row["meta"])["graph_card"] == {"node_key": key, "slot": "instruction", "created_empty": False}
     text = _body_of(env, doc_id)
     assert text.startswith("---\n") and f"group_id: {FB}" in text and text.endswith("## Work\n\nwritten by a person\n")
     assert _line_doc(env, FB, key, "instruction") == {"doc_id": doc_id, "owned": 1}
@@ -1001,8 +1007,11 @@ def test_a_qa_answer_on_a_card_document_reads_the_card_s_memos(env, monkeypatch)
     _assert_memos_lead(issued["mention"])
     assert issued["mention"].endswith("\n\nANSWER MENTION")
     free = _doc_row(ROOT)                                                  # no card line shows the root here
-    assert qa.issue_answer_token(doc=free, item={"id": 2}, issued_to="u_kim",
-                                 api_base_url="http://h/api/v1")["mention"] == "ANSWER MENTION"
+    free_mention = qa.issue_answer_token(doc=free, item={"id": 2}, issued_to="u_kim",
+                                         api_base_url="http://h/api/v1")["mention"]
+    # 0064 T-B1e: the root has no body file, so the unreadable documents section leads -- but no memo section.
+    assert free_mention.startswith("[읽을 수 없는 문서]\n") and free_mention.endswith("\n\nANSWER MENTION")
+    assert "## User memos" not in free_mention
 
 
 def test_a_document_a_card_line_holds_or_shows_finds_its_card(env, decided):

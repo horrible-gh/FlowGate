@@ -726,6 +726,11 @@ def _require_fileless_approval_structure(doc: dict, locale: str = "ko") -> None:
         raise TransitionError(_fileless_approval_structure_message(locale))
 
 
+def approvable_text(doc: dict, content: str) -> bool:
+    """Apply the existing non-blank body rule to text that was already read."""
+    return bool(_strip_frontmatter(content).strip())
+
+
 def _require_document_body_for_approval(doc: dict, locale: str = "ko") -> None:
     """Reject approval when a reviewable document has no readable, non-blank body."""
     type_code = str(doc.get("type_code") or "").upper()
@@ -753,7 +758,7 @@ def _require_document_body_for_approval(doc: dict, locale: str = "ko") -> None:
     except (OSError, UnicodeError) as exc:
         raise TransitionError(_empty_body_approval_message(locale)) from exc
 
-    if not _strip_frontmatter(content).strip():
+    if not approvable_text(doc, content):
         raise TransitionError(_empty_body_approval_message(locale))
 
 

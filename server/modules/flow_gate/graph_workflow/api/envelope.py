@@ -23,6 +23,11 @@ READ_PERMISSION = "perm_document_read"
 WRITE_PERMISSION = "perm_document_update"
 
 _MESSAGES = {
+    "document_storage_unwritable": {
+        "ko": "문서 저장소에 쓸 수 없어 저장하지 못했습니다. 잠시 뒤 다시 시도하거나 운영자에게 알리세요.",
+        "en": "The document storage could not be written, so nothing was saved. Try again later or tell an operator.",
+        "ja": "文書ストレージに書き込めないため保存できませんでした。しばらくしてから再試行するか、運用者にお知らせください。",
+    },
     "unauthorized": {"ko": "인증이 필요합니다.", "en": "Authentication is required.", "ja": "認証が必要です。"},
     "token_kind_not_allowed": {
         "ko": "작업 토큰으로는 이 API를 호출할 수 없습니다.",
@@ -118,6 +123,25 @@ _MESSAGES = {
     },
     "feature_not_enabled": {
         "ko": "이 기능은 아직 열리지 않았습니다.", "en": "This feature is not enabled yet.", "ja": "この機能はまだ有効ではありません。",
+    },
+    # 0064 T-B4b — the card title save (P0006 §4.2.3).
+    "title_empty": {"ko": "제목을 입력하세요.", "en": "Enter a title.", "ja": "タイトルを入力してください。"},
+    "title_too_long": {
+        "ko": "제목은 30자 이하여야 합니다.", "en": "A title must be 30 characters or fewer.",
+        "ja": "タイトルは30文字以内にしてください。",
+    },
+    "node_not_found": {"ko": "카드를 찾을 수 없습니다.", "en": "Card not found.", "ja": "カードが見つかりません。"},
+    "node_title_not_supported": {
+        "ko": "이 카드는 제목을 따로 정할 수 없습니다.", "en": "This card cannot have a separate title.",
+        "ja": "このカードはタイトルを個別に設定できません。",
+    },
+    "node_title_not_editable": {
+        "ko": "지금은 이 카드의 제목을 바꿀 수 없습니다.", "en": "The title of this card cannot be changed now.",
+        "ja": "現在このカードのタイトルは変更できません。",
+    },
+    "node_title_locked": {
+        "ko": "실행 중인 카드의 제목은 바꿀 수 없습니다.", "en": "The title of a running card cannot be changed.",
+        "ja": "実行中のカードのタイトルは変更できません。",
     },
 }
 

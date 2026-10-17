@@ -36,6 +36,12 @@ def client():
 
 
 def _base(monkeypatch, row, auth):
+    from modules.flow_gate.storage import body as body_storage
+    # The shared body reader now owns location lookup; retain this fixture's resolver double.
+    def locate(stored, project_id=None, branch="main"):
+        path = document_routes.resolve_storage_path(stored, project_id, branch=branch)
+        return path, "readable" if path is not None else "file_not_found"
+    monkeypatch.setattr(body_storage, "locate_storage_path", locate)
     monkeypatch.setattr(document_routes, "verify_bearer", lambda _request: dict(auth))
     monkeypatch.setattr(document_routes.db_docs, "get_by_id", lambda doc_id: dict(row) if doc_id == row["doc_id"] else None)
     monkeypatch.setattr(document_routes, "get_answers_for_document", lambda _doc_id: [])

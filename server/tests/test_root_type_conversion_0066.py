@@ -32,10 +32,13 @@ def _migrations() -> list[Path]:
 
 
 @pytest.fixture()
-def env(tmp_path):
+def env(tmp_path, monkeypatch):
     """Real FlowGateStore on a fresh migrated SQLite DB + a tmp storage root."""
-    from modules.flow_gate.db import _SqliteDbAdapter
+    from modules.flow_gate.db import _SqliteDbAdapter, _SqliteTxnAdapter
     from modules.flow_gate.db import connection as conn_mod
+
+    # 0064 T#3: the converter runs inside the Flow guard, whose bump reads the affected-row count.
+    monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
@@ -277,7 +280,7 @@ def test_convert_is_idempotent_for_same_type(env):
 
 # ── rejection gates ───────────────────────────────────────────────────────────
 
-def test_reject_when_child_document_exists(env):
+def test_a_child_document_makes_it_a_succession(env):
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.documents import document_service as svc
 
@@ -298,11 +301,13 @@ def test_reject_when_child_document_exists(env):
         "target_id": root["doc_id"],
     })
 
-    with pytest.raises(HTTPException) as exc:
-        svc.convert_root_document_type(root["doc_id"], "B", actor_user_id="usr_admin")
-    assert exc.value.status_code == 409
-    # The root was NOT mutated.
-    assert db_docs.get_by_id(root["doc_id"]) is not None
+    # 0064 T#4 (L0005 2.9): no longer refused — a new B succeeds the root, which keeps its row and body.
+    result = svc.convert_root_document_type(root["doc_id"], "B", actor_user_id="usr_admin")
+    assert (result["doc_id"], result["type_code"]) == ("flowgate.default.0066.0001-B", "B")
+    original = db_docs.get_by_id(root["doc_id"])
+    assert original is not None and original["superseded_by"] == "flowgate.default.0066.0001-B"
+    assert root["abs"].read_text(encoding="utf-8") == "# root R\nbody preserved\n"
+    assert db_docs.get_by_id("flowgate.default.0066.0002-N")["target_id"] == root["doc_id"]
 
 
 def test_reject_when_workflow_sequence_exists(env):

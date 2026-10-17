@@ -7,6 +7,9 @@
 // nodes and edges with their keys), so 편집 needs no button and the revision itself never changes.
 // flowgate.v02.0053 T#5: the shown Graph keeps a draft node's documents while its kind stays, and takes
 // the card lines a save answered (withCardDocuments).
+// flowgate.v02.0064 T#4: a card's title state is no part of the draft — the draft content, its saves and its undo /
+// redo history never carry it (a title is saved apart, graph/nodeTitle.ts). A draft node shown again after an edit, an
+// undo or a redo keeps the title and title state it shows now.
 import type {
   FlowGraph,
   FlowGraphCardDocument,
@@ -147,6 +150,7 @@ export function withDraft(graph: FlowGraph, model: DraftModel): FlowGraph {
       // flowgate.v02.0053 T#5: a node keeps its documents while it keeps its kind (an edit elsewhere, a
       // move); a retyped node shows none until its save answers the new card lines (withCardDocuments).
       ...(sameKind(before, n) ? keptDocuments(before!) : {}),
+      ...(before?.titleState !== undefined ? { titleState: before.titleState } : {}),
     }
   })
   // Draft edges are exactly the editable ones; reference edges to a removed node are skipped

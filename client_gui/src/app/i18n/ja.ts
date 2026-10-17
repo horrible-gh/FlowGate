@@ -1,4 +1,41 @@
 export default {
+  document: {
+    bodyState: {
+      file_path_missing: "ファイルパス未記録",
+      file_not_found: "ファイルが見つかりません",
+      path_unresolved: "パスを解決できません",
+      read_error: "読み取りエラー（権限・文字コードを確認）",
+      aiUnreadable: "AIもこの文書を読めません。",
+      reenter: "本文を再入力",
+      unreadable: "本文を読み取れません",
+      file_exists_unrecorded: "標準の保存先に未接続のファイルがあります。本文の診断・復旧でファイルを確認してから再保存してください。",
+    },
+    recover: {
+      action: "復旧",
+      done: "本文を復旧しました。",
+      loss: {
+        possible: "本文が失われた可能性があります — 文書の担当者に再入力を依頼してください。",
+        lost: "本文が失われました — 文書の担当者に再入力を依頼してください。",
+      },
+      guide: {
+        fix_storage_root: "保存先の基準設定を確認してください。別の基準位置でこの文書のファイルが見つかりました。",
+        read_error_manual: "ファイルの権限・文字コードを確認してください。ファイルはありますが読み取れません。",
+      },
+      refusal: {
+        not_found: "文書が見つかりません。",
+        file_exists: "本文ファイルが既にあるため復旧しませんでした。",
+        read_error: "ファイルはありますが読み取れません。先に権限・文字コードを確認してください。",
+        diagnosis_changed: "診断後に状態が変わりました。診断をやり直してください。",
+        storage_root_mismatch: "保存先の基準位置が変わったようです。文書を復旧せず基準位置の設定を直してください。",
+        group_disposed: "破棄されたFlowのため復旧できません。",
+        group_ai_running: "AIの実行中のため復旧できません。実行終了後にもう一度お試しください。",
+        target_in_use: "復旧先のファイルを別の文書が使用しているため、何も変更しませんでした。",
+        tr2_not_supported: "TR2文書はこの方法では復旧できません。",
+        internal_error: "復旧中にエラーが発生しました。",
+      },
+    },
+  },
+  card: { bodyUnreadable: "AIが読めない文書があります" },
   brand: {
     tagline: 'Turn Ideas into Working Flow',
     home_aria: 'FlowGate ダッシュボードへ移動',
@@ -98,6 +135,7 @@ export default {
       close_tab: '{name} を閉じる',
       graph_loading: 'グラフを読み込み中',
       graph_load_failed: 'グラフを読み込めませんでした',
+      document_storage_unwritable: '保存失敗: 文書ストレージエラー。編集内容は保持されています。',
       retry: '再試行',
       sample_data: 'サンプルデータ',
       canvas_label: '{name} キャンバス',
@@ -216,6 +254,25 @@ export default {
         refused_reason: '理由: {reason}',
         approved_documents: '先に承認された文書 {n} 件',
         approved_documents_named: '先に承認された文書: {docs}',
+      },
+    },
+    // flowgate.v02.0064 T#4 — a card's inline title edit (0062 D0005 §3.2, 0064 P0006 §4.2.3 / §6.5).
+    nodeTitle: {
+      edit: 'タイトルを編集',
+      input: 'カードのタイトル',
+      hint: 'Enter で保存 · Esc で取消',
+      length: '{count}/{max}文字',
+      save: '保存',
+      cancel: '取消',
+      locked: '実行中のカードのタイトルは変更できません。',
+      failed: 'タイトルを保存できませんでした。',
+      error: {
+        title_empty: 'タイトルを入力してください。',
+        title_too_long: 'タイトルは30文字以内にしてください。',
+        node_title_not_editable: '現在このカードのタイトルは変更できません。',
+        node_title_not_supported: 'このカードはタイトルを個別に設定できません。',
+        node_not_found: 'カードが見つかりません。',
+        flow_disposed: '破棄されたフローは変更できません。',
       },
     },
     // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
@@ -1358,6 +1415,7 @@ export default {
         node_ai_working: 'カードの AI が作業中です。終わってから保存し直してください。',
         flow_disposed: '破棄されたフローのため作成できません。',
         card_documents_unavailable: 'サーバーがカード文書に対応していません。',
+        document_storage_unwritable: '保存失敗: 文書ストレージエラー。編集内容は保持されています。',
         content: {
           not_a_text: '本文を文字として送れません。',
           too_long: '本文が長すぎます (最大 500,000 文字)。',

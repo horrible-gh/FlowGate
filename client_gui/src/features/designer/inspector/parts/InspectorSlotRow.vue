@@ -38,6 +38,7 @@
     >{{ name }}</button>
     <span v-else class="inspector-slot-name" :title="name" data-test="inspector-slot-name">{{ name }}</span>
     <span class="inspector-slot-value">
+      <span v-if="lineWarns({ docId: id, bodyState })" class="inspector-slot-unreadable" role="img" :aria-label="t('gui.document.bodyState.unreadable')" :title="t(`gui.document.bodyState.${bodyState}`)" data-test="inspector-slot-unreadable">⚠ {{ t('gui.document.bodyState.unreadable') }}</span>
       <span v-if="authorKey" class="inspector-slot-author" :title="t(authorKey)" data-test="inspector-slot-author" :data-author="author">{{ t(authorKey) }}</span>
       <span
         v-if="view.kind !== 'none' && view.text"
@@ -73,7 +74,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { slotAuthorKey, slotStateView, type SlotStateInput } from './slotStateView'
+import { lineWarns, slotAuthorKey, slotStateView, type SlotStateInput } from './slotStateView'
 
 export type InspectorSlotState = SlotStateInput
 
@@ -90,6 +91,7 @@ const props = withDefaults(
     name: string
     /** The document id behind the line (data-doc); null when there is none. */
     id?: string | null
+    bodyState?: string | null
     /** The name opens the document (an `open` event). */
     openable?: boolean
     /** No document behind the line: `emptyText` says why in the line. */
@@ -146,6 +148,8 @@ const authorKey = computed(() => slotAuthorKey(props.author))
 </script>
 
 <style scoped>
+.inspector-slot-unreadable { color: var(--fg2-status-warning-fg); }
+
 .inspector-slot {
   display: grid;
   /* T#4: the buttons column may shrink below its content on a narrow Inspector (264px); the line's

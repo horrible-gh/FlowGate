@@ -13,6 +13,9 @@
 // registers only; each open question has its own [AI 답변 요청] with an AI picker (ai_request, ai_provider,
 // ai_reason.*), a waiting chip once the run started (ai_waiting) and a refusal icon (ai_failed,
 // ai_failure.*) beside it.
+// flowgate.v02.0064 T-B5 (P0006 §5.2) — who answered: a person by name (else 사람), an AI with its provider, an
+// AI whose run is not linked to a record, an AI with no run information (external/unconfirmed); the ↗ window's
+// answer detail adds the answer time and the run id (detail.*).
 export default {
   ko: {
     question: 'Q{seq}',
@@ -23,10 +26,16 @@ export default {
       answered: '완료',
     },
     side: {
-      human: '사용자',
-      ai: 'AI(실행 정보 없음)',
+      human: '사람',
+      human_named: '{name}',
       ai_named: 'AI · {name}',
+      ai_run_only: 'AI(실행 기록 연결 안 됨)',
+      ai_no_evidence: 'AI(실행 정보 없음 — 외부/미확인)',
       unknown: '알 수 없음({kind})',
+    },
+    detail: {
+      answered_at: '답변 시각: {at}',
+      run_id: '실행 번호: {runId}',
     },
     asked_by: '질문: {side}',
     answered_by: '답: {side}',
@@ -116,10 +125,16 @@ export default {
       answered: 'Done',
     },
     side: {
-      human: 'User',
-      ai: 'AI (run unknown)',
+      human: 'Person',
+      human_named: '{name}',
       ai_named: 'AI · {name}',
+      ai_run_only: 'AI (run record not linked)',
+      ai_no_evidence: 'AI (no run information — external/unconfirmed)',
       unknown: 'Unknown ({kind})',
+    },
+    detail: {
+      answered_at: 'Answered at: {at}',
+      run_id: 'Run: {runId}',
     },
     asked_by: 'Asked by: {side}',
     answered_by: 'Answer: {side}',
@@ -209,10 +224,16 @@ export default {
       answered: '完了',
     },
     side: {
-      human: 'ユーザー',
-      ai: 'AI(実行情報なし)',
+      human: '人',
+      human_named: '{name}',
       ai_named: 'AI · {name}',
+      ai_run_only: 'AI(実行記録と未連携)',
+      ai_no_evidence: 'AI(実行情報なし — 外部/未確認)',
       unknown: '不明({kind})',
+    },
+    detail: {
+      answered_at: '回答日時: {at}',
+      run_id: '実行番号: {runId}',
     },
     asked_by: '質問: {side}',
     answered_by: '答: {side}',

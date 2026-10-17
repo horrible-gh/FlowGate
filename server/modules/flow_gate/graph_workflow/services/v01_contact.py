@@ -10,8 +10,9 @@ engine moves it.
 - advance (``progress_refusal``): read-only judgement.
 - inbox registration / review decision (``after_document_event``): after v0.1 committed; a Graph
   Flow hands the event to the result binder, never changing the v0.1 response.
-- R↔B root conversion (``follow_root_conversion``): runs inside the guard of ``guarded_v01_assignment``
-  after the converter, so a card line holding the root follows its new id (flowgate.v02.0053 T#1).
+- R↔B root conversion (``follow_root_conversion``): called by ``documents.root_conversion`` inside its
+  Flow guard after the identity rewrite, so a card line holding the root follows its new id (flowgate.v02.0053
+  T#1) and the draft cards holding it take the new type (0064 T#3).
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ from typing import Any, Callable, Optional
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.graph_workflow.store import definition_store
 
-from . import card_document_ports, result_binder
+from . import card_document_ports, result_binder, root_conversion_cards
 from .canvas_events import publish_ownership_changed
 from .engine_router import Ownership, read_ownership
 from .flow_guard import with_flow_guard
@@ -87,13 +88,22 @@ def guarded_v01_assignment(doc: Optional[dict], call: Callable[[], Any], actor: 
     return with_flow_guard(flow_id, body)
 
 
-def follow_root_conversion(doc: Optional[dict], converted: Any) -> Any:
-    """After the R↔B converter, in its transaction: the card lines holding the converted root take
-    its new id and kind. Returns the converter's result unchanged (same-type no-op: nothing moves)."""
+def ownership_refusal(own: Ownership, doc_id: str, flow_id: str) -> Optional[V01Rejection]:
+    """The v0.1 flat refusal of a Graph / conflict Flow, or None (the R↔B conversion judges with it)."""
+    return _refusal(own, doc_id, flow_id)
+
+
+def follow_root_conversion(doc: Optional[dict], converted: Any, *, old_type: str, new_type: str,
+                           actor: Optional[str] = None) -> list[str]:
+    """After the R↔B identity rewrite, in its transaction (``root_conversion``, 0064 L0005 2.8): the card
+    lines holding the converted root take its new id and kind, then the draft cards holding it as their
+    requirement line take the new type. Returns the node keys whose draft card changed."""
     flow_id = (doc or {}).get("group_id")
-    if flow_id and isinstance(converted, dict) and converted.get("doc_id") not in (None, doc.get("doc_id")):
-        card_document_ports.root_converted(flow_id, doc["doc_id"], converted)
-    return converted
+    if not flow_id or not isinstance(converted, dict) or converted.get("doc_id") in (None, doc.get("doc_id")):
+        return []
+    holders = card_document_ports.root_converted(flow_id, doc["doc_id"], converted)
+    return root_conversion_cards.sync_draft_cards(flow_id, doc.get("project_id"), doc["doc_id"], holders,
+                                                  old_type, new_type, actor)
 
 
 def progress_refusal(doc: Optional[dict]) -> Optional[V01Rejection]:

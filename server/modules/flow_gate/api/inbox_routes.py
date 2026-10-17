@@ -5101,6 +5101,12 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         doc_id=canonical_doc_id,
     )
 
+    # 0064 T-B4d (P0006 §4.2.5): the AI's card title candidate, read apart from the document, after the commit and
+    # the consume. It never changes this response, the document, the token or a review (never raises).
+    from modules.flow_gate.services import node_title_hooks
+    node_title_hooks.after_registration(group["group_id"], canonical_doc_id, token_rec.get("token_id"), body.get("node_title"),
+                                        "new")
+
     # ── Step 9: Screen push (Phase 2) ──────────────────────────────────────────
     try:
         from modules.flow_gate.api.v1.events.publisher import publish_event_threadsafe, FlowEvent
@@ -6121,6 +6127,12 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         project_id=project,
         doc_id=doc_id,
     )
+
+    # 0064 T-B4d (P0006 §4.2.5): the AI's card title candidate, read apart from the document, after the commit and
+    # the consume. It never changes this response, the document, the token or a review (never raises).
+    from modules.flow_gate.services import node_title_hooks
+    node_title_hooks.after_registration(group["group_id"], doc_id, token_rec.get("token_id"), body.get("node_title"),
+                                        "edit")
 
     # ── Step 9: Screen push (Phase 2) ──────────────────────────────────────────
     try:

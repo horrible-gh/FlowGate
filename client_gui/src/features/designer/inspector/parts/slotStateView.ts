@@ -7,6 +7,19 @@
 // in plain words (the former hollow dot's tooltip) where the badge would be.
 // Pure: no Vue, no i18n — the caller hands the worded label, this decides whether and how it is drawn.
 
+/**
+ * flowgate.v02.0064 T#2: only these known body states warn (the server's `body_state`); an older server sends none and
+ * a documentless line never warns. The same rule as features/document `lineWarns` and the Designer Center's
+ * (`center/graph/flowGraph.ts`): Inspector parts import no feature, so they keep their own copy.
+ */
+export const UNREADABLE_BODY_STATES: ReadonlySet<string> = new Set([
+  'file_path_missing', 'file_not_found', 'path_unresolved', 'read_error',
+])
+
+export function lineWarns(line: { readonly docId?: string | null; readonly bodyState?: string | null }): boolean {
+  return line.docId != null && typeof line.bodyState === 'string' && UNREADABLE_BODY_STATES.has(line.bodyState)
+}
+
 export type SlotStateTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
 
 export interface SlotStateInput {
@@ -89,6 +102,7 @@ export interface SlotCardLine {
   readonly docType: string | null
   readonly docId: string | null
   readonly hasBody?: boolean
+  readonly bodyState?: string | null
   readonly reviewCount?: number
   readonly rejectionCount?: number
   readonly historyCount?: number
@@ -133,6 +147,7 @@ export interface SlotAction {
 export interface SlotLineCard {
   /** The card line behind the row (its slot), or null when the row shows no card line. */
   readonly cardSlot: string | null
+  readonly bodyState?: string | null
   /** The row's document has no body yet: "비어 있음", and opening it opens its editor. */
   readonly blank: boolean
   /** The history button's number (`history_count`), or null when not sent. */
@@ -177,7 +192,8 @@ export function slotLineCard(
     card.reviewCount !== undefined && card.rejectionCount !== undefined ? { reviews: card.reviewCount, rejections: card.rejectionCount } : null
   return {
     cardSlot: card.slot,
-    blank: slotFill(card) === 'blank',
+    ...(card.bodyState !== undefined ? { bodyState: card.bodyState } : {}),
+    blank: !lineWarns(card) && slotFill(card) === 'blank',
     historyCount: card.historyCount ?? null,
     historyDetail,
     actions: context.changeable ? [{ key: 'ai_invoke', state: context.running(card.docId) ? 'running' : 'enabled' }] : [],

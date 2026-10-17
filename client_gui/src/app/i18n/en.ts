@@ -1,4 +1,41 @@
 export default {
+  document: {
+    bodyState: {
+      file_path_missing: "File path is not recorded",
+      file_not_found: "File not found",
+      path_unresolved: "Path could not be resolved",
+      read_error: "Read error (check permissions and encoding)",
+      aiUnreadable: "AI cannot read this document either.",
+      reenter: "Re-enter body",
+      unreadable: "Body unreadable",
+      file_exists_unrecorded: "An unlinked file exists at the standard location. Check the file using body diagnostics and recovery before saving again.",
+    },
+    recover: {
+      action: "Recover",
+      done: "The body was recovered.",
+      loss: {
+        possible: "The body may have been lost — ask the document owner to enter it again.",
+        lost: "The body was lost — ask the document owner to enter it again.",
+      },
+      guide: {
+        fix_storage_root: "Check the storage root setting. This document's file was found under another storage root.",
+        read_error_manual: "Check the file's permissions and encoding. The file exists but cannot be read.",
+      },
+      refusal: {
+        not_found: "The document was not found.",
+        file_exists: "The body file already exists; nothing was recovered.",
+        read_error: "The file exists but cannot be read. Check permissions and encoding first.",
+        diagnosis_changed: "The state changed after the diagnosis. Run the diagnosis again.",
+        storage_root_mismatch: "The storage root appears to have changed. Correct the storage root setting instead of recovering the document.",
+        group_disposed: "The Flow has been disposed; it cannot be recovered.",
+        group_ai_running: "An AI run is in progress. Try again after it ends.",
+        target_in_use: "Another document uses the file at the recovery target; nothing was changed.",
+        tr2_not_supported: "A TR2 document cannot be recovered this way.",
+        internal_error: "An error occurred during recovery.",
+      },
+    },
+  },
+  card: { bodyUnreadable: "Some documents cannot be read by AI" },
   brand: {
     tagline: 'Turn Ideas into Working Flow',
     home_aria: 'Go to the FlowGate dashboard',
@@ -98,6 +135,7 @@ export default {
       close_tab: 'Close {name}',
       graph_loading: 'Loading graph',
       graph_load_failed: 'Could not load the graph',
+      document_storage_unwritable: 'Save failed: document storage error. Your edits are preserved.',
       retry: 'Retry',
       sample_data: 'Sample data',
       canvas_label: '{name} canvas',
@@ -216,6 +254,25 @@ export default {
         refused_reason: 'Reason: {reason}',
         approved_documents: '{n} document(s) approved before',
         approved_documents_named: 'Approved before: {docs}',
+      },
+    },
+    // flowgate.v02.0064 T#4 — a card's inline title edit (0062 D0005 §3.2, 0064 P0006 §4.2.3 / §6.5).
+    nodeTitle: {
+      edit: 'Edit title',
+      input: 'Card title',
+      hint: 'Enter to save · Esc to cancel',
+      length: '{count}/{max} characters',
+      save: 'Save',
+      cancel: 'Cancel',
+      locked: 'The title of a running card cannot be changed.',
+      failed: 'The title could not be saved.',
+      error: {
+        title_empty: 'Enter a title.',
+        title_too_long: 'A title must be 30 characters or fewer.',
+        node_title_not_editable: 'The title of this card cannot be changed now.',
+        node_title_not_supported: 'This card cannot have a separate title.',
+        node_not_found: 'Card not found.',
+        flow_disposed: 'A disposed flow cannot be changed.',
       },
     },
     // flowgate.v02.0030 — Designer Palette part (categories, default items, add dialog).
@@ -1358,6 +1415,7 @@ export default {
         node_ai_working: 'The card AI is working. Save again when it is done.',
         flow_disposed: 'The flow was disposed and cannot be written.',
         card_documents_unavailable: 'The server does not support card documents.',
+        document_storage_unwritable: 'Save failed: document storage error. Your edits are preserved.',
         content: {
           not_a_text: 'The body cannot be sent as text.',
           too_long: 'The body is too long (500,000 characters at most).',

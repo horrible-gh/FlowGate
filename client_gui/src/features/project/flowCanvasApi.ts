@@ -6,6 +6,8 @@
 // Every Graph API request carries `x-canvas-client-id` (P0008 §1.1): one opaque id per browser
 // tab (this module instance), so the SSE events this tab caused are told apart by tab, not by
 // user (P0008 §8.1 / §8.3, flowCanvasEvents.ts).
+//
+// flowgate.v02.0064 T#4 (0064 P0006 §4.2 / §6.5): a node's card title state (`title_state`) and its title save.
 
 import { extractApiErrorMessage, getRequest, putRequest } from '@shared/api'
 import type {
@@ -23,6 +25,7 @@ import type {
   FlowCanvasOwnership,
   FlowCanvasRun,
   FlowCanvasSlot,
+  FlowCanvasTitleState,
   FlowCanvasView,
   FlowCanvasViewport,
   FlowGraphAssignee,
@@ -88,7 +91,7 @@ function toGraphNode(raw: Raw | null | undefined): FlowCanvasGraphNode | null {
 // flowgate.v02.0056 F2-1: `awaiting_approval` (O1) and `stage` / `instruction_doc_id` (O2), kept only when sent.
 // flowgate.v02.0061 T#14: the attempt's `integration_status` / `integration_reason`, `hold` and the attempt's running /
 // requested execution counts, kept only when sent. T#15: the node's current `attempt_id` too (the Time Machine
-// confirmation's basis), kept only when sent.
+// confirmation's basis), kept only when sent. flowgate.v02.0064 T#4: `node_running` (the card's running lock), kept only when sent.
 function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
   if (!raw || typeof raw !== 'object') return null
   const running = count(raw.running_execution_count)
@@ -106,6 +109,7 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     ...('integration_reason' in raw ? { integrationReason: str(raw.integration_reason) } : {}),
     ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
     ...(typeof raw.question === 'boolean' ? { question: raw.question } : {}),
+    ...(typeof raw.node_running === 'boolean' ? { nodeRunning: raw.node_running } : {}),
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
@@ -131,6 +135,7 @@ export function toCardDocument(line: Raw): FlowCanvasCardDocument {
     status: str(line.status),
     docReviewStatus: str(line.doc_review_status),
     ...(typeof line.has_body === 'boolean' ? { hasBody: line.has_body } : {}),
+    ...(typeof line.body_state === 'string' || line.body_state === null ? { bodyState: line.body_state } : {}),
     ...(reviewCount !== null ? { reviewCount } : {}),
     ...(rejectionCount !== null ? { rejectionCount } : {}),
     ...(historyCount !== null ? { historyCount } : {}),
@@ -203,7 +208,17 @@ function toNode(raw: Raw): FlowCanvasNode {
     ...(nodeRun ? { nodeRun } : {}),
     // Only a Graph / draft node carries its card lines (absent on document and sequence nodes).
     ...(Array.isArray(raw.card_documents) ? { cardDocuments: toCardDocuments(raw.card_documents) } : {}),
+    // flowgate.v02.0064 T#4: kept only when sent (an older server sends none: no title edit, no version compare).
+    ...('title_state' in raw ? { titleState: toTitleState(raw.title_state) } : {}),
   }
+}
+
+/** flowgate.v02.0064 T#4 (P0006 §4.2.1): `title_state` -> one bundle, or null (not a title node, or malformed). */
+export function toTitleState(raw: unknown): FlowCanvasTitleState | null {
+  const value = raw as Raw | null
+  const version = count(value?.version)
+  if (!value || typeof value !== 'object' || version === null) return null
+  return { title: str(value.title), titleSource: str(value.title_source), version }
 }
 
 function toEdge(raw: Raw): FlowCanvasEdge {
@@ -302,6 +317,44 @@ export async function fetchFlowCanvas(flowId: string, view?: string, collapse: r
   } catch (error) {
     throw wrapError(error, 'Failed to load the flow canvas.')
   }
+}
+
+/** flowgate.v02.0064 T#4: a refused title save — the server's `error.code` / `params` (P0006 §4.2.3), its sentence. */
+export class FlowNodeTitleError extends Error {
+  readonly code: string | null
+  readonly params: Record<string, unknown>
+  readonly status: number | null
+
+  constructor(message: string, code: string | null, params: Record<string, unknown>, status: number | null) {
+    super(message)
+    this.name = 'FlowNodeTitleError'
+    this.code = code
+    this.params = params
+    this.status = status
+  }
+}
+
+/**
+ * flowgate.v02.0064 T#4 (P0006 §4.2.2): PUT /api/v1/flows/{flowId}/graph/nodes/{nodeKey}/title — the title only (no
+ * version: the server never refuses on one). Resolves the saved `title_state`; a refusal rejects with FlowNodeTitleError.
+ */
+export async function nodeTitleSave(flowId: string, nodeKey: string, title: string): Promise<FlowCanvasTitleState> {
+  const path = `/api/v1/flows/${encodeURIComponent(flowId)}/graph/nodes/${encodeURIComponent(nodeKey)}/title`
+  let data: Raw
+  try {
+    data = (await putRequest<Raw>(path, { title }, canvasHeaders())).data ?? {}
+  } catch (error) {
+    const response = (error as { response?: { status?: number; data?: Raw } } | null)?.response
+    const envelope = response?.data?.error
+    const message = str(envelope?.message) || wrapError(error, 'Failed to save the card title.').message
+    const params = envelope?.params && typeof envelope.params === 'object' ? { ...envelope.params } : {}
+    const refusal = new FlowNodeTitleError(message, str(envelope?.code), params, num(response?.status))
+    ;(refusal as Error & { cause?: unknown }).cause = error
+    throw refusal
+  }
+  const state = toTitleState(data.title_state)
+  if (!state) throw new FlowNodeTitleError('Failed to save the card title.', null, {}, null)
+  return state
 }
 
 /** PUT /api/v1/flows/{flowId}/canvas/layout — moved node positions and / or the viewport. */

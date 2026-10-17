@@ -41,12 +41,11 @@ TEST_VALUE, TEST_VERSION = "card_docs_test", "1"
 
 
 @pytest.fixture()
-def db_path():
+def db_path(tmp_path):
     from modules.flow_gate.db import _SqliteDbAdapter
     from modules.flow_gate.db import connection as conn_mod
 
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        path = f.name
+    path = str(tmp_path / "cards.db")
     conn = sqlite3.connect(path)
     for mig in sorted(_MIGRATIONS_DIR.glob("*.sql")):
         try:
@@ -92,9 +91,21 @@ def env(db_path, monkeypatch, tmp_path):
     monkeypatch.setattr(envelope, "has_permission", lambda u, p, perm: True)
     monkeypatch.setattr(canvas_events, "broadcast_event_threadsafe", lambda ev: state["events"].append(ev) or 1)
     monkeypatch.setattr(run_events, "broadcast_event_threadsafe", lambda ev: state["events"].append(ev) or 1)
-    monkeypatch.setattr(token_service, "_scratch_dir", lambda project, token_id: tmp_path / "work" / token_id)
+    # Use the real token scratch layout inside the fixture storage root.
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", "cardtest")
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_cardtest", "card-test-pepper")
+    # Wire the current startup ports and restore their registries after this fixture.
+    from flowgate.graph_run import integration as graph_run
+    from modules.flow_gate.graph_workflow.services import run_state_ports
+    from modules.flow_gate.services import graph_execution_hooks, graph_source_hooks
+    monkeypatch.setattr(run_state_ports, "_handlers", dict(run_state_ports._handlers))
+    monkeypatch.setattr(graph_execution_hooks, "_handler", graph_execution_hooks._handler)
+    for attr in ("_handler", "_mutation_handler", "_fence_handler"):
+        monkeypatch.setattr(graph_source_hooks, attr, getattr(graph_source_hooks, attr))
+    graph_run.register()
+    from flowgate.graph_validation.run_scope import run_scope
+    from modules.flow_gate.graph_workflow.domain import run_scope_ports
+    monkeypatch.setattr(run_scope_ports, "_handler", run_scope)
     old_starter = node_dispatch.set_ai_starter(None)
     integration.register()
     app = FastAPI()
@@ -520,43 +531,66 @@ def _draft_card(env, flow, key):
     return {n["node_key"]: n for n in nodes}[key], {n["node_key"] for n in nodes}
 
 
+def _draft_node(env, flow, key):
+    """The stored draft card (``graph_draft_nodes``) and the draft version."""
+    [row] = _sql(env["db"], "SELECT doc_type, palette_item_id, label FROM graph_draft_nodes "
+                            "WHERE group_id = ? AND node_key = ?", (flow, key))
+    version = _sql(env["db"], "SELECT draft_version FROM graph_drafts WHERE group_id = ?", (flow,))[0]
+    return row, version["draft_version"]
+
+
+def _draft_events(env):
+    return [(e.payload["reason"], e.payload["draft_version"]) for e in env["events"]
+            if e.event_type == "graph_canvas_changed"]
+
+
 def test_converting_a_card_root_moves_its_line_and_the_card_still_owns_it(env, convert_root):
     first = put_draft(env, FB, 0, [node("tmp_r", "R", "요구")])
     key = first["key_map"]["tmp_r"]
     r_doc = first["card_documents"][key][0]["doc_id"]
+    env["events"].clear()
     b_doc = convert_root(r_doc, "B")                                         # R -> B
     assert doc(r_doc) is None and doc(b_doc)["type_code"] == "B"
     assert line_rows(env, FB) == [{"node_key": key, "slot": "requirement", "doc_type": "B", "doc_id": b_doc, "owned": 1}]
+    # 0064 T#3 (L0005 2.8): the draft card follows its document in the same transaction — type B, the label a
+    # person gave it kept, draft version + 1 and one ``draft`` Canvas event (it used to stay R until a re-save).
+    assert _draft_node(env, FB, key) == ({"doc_type": "B", "palette_item_id": None, "label": "요구"}, 2)
+    assert _draft_events(env) == [("draft", 2)]
     shown, keys = _draft_card(env, FB, key)
     assert [(line["doc_type"], line["doc_id"]) for line in shown["card_documents"]] == [("B", b_doc)]
     assert shown["document"]["doc_id"] == b_doc and f"doc:{b_doc}" not in keys
     created, deleted = len(doc_events(env, "doc_created")), len(doc_events(env, "doc_deleted"))
-    same = put_draft(env, FB, 1, [node(key, "R", "요구")])                     # re-save, the card unchanged
+    stale = env["client"].put(f"/api/v1/flows/{FB}/graph/draft",                # a screen still holding version 1
+                              json={"draft_version": 1, "nodes": [node(key, "R", "요구")], "edges": []}, headers=_h())
+    assert stale.status_code == 409 and stale.json()["error"]["code"] == "draft_version_conflict"
+    assert _draft_node(env, FB, key)[0]["doc_type"] == "B"
+    same = put_draft(env, FB, 2, [node(key, "B", "요구")])                     # re-save, the card unchanged
     assert [line["doc_id"] for line in same["card_documents"][key]] == [b_doc]
     assert line_rows(env, FB)[0]["doc_id"] == b_doc and doc(b_doc) is not None
     assert (len(doc_events(env, "doc_created")), len(doc_events(env, "doc_deleted"))) == (created, deleted)
-    retyped = put_draft(env, FB, 2, [node(key, "B", "요구")])                  # the card follows the document
-    assert lines(retyped, key) == [("requirement", "B")] and retyped["card_documents"][key][0]["doc_id"] == b_doc
     r_again = convert_root(b_doc, "R")                                       # B -> R
     assert line_rows(env, FB) == [{"node_key": key, "slot": "requirement", "doc_type": "R", "doc_id": r_again, "owned": 1}]
+    assert _draft_node(env, FB, key) == ({"doc_type": "R", "palette_item_id": None, "label": "요구"}, 4)
     shown, keys = _draft_card(env, FB, key)
     assert [line["doc_id"] for line in shown["card_documents"]] == [r_again] and f"doc:{r_again}" not in keys
-    put_draft(env, FB, 3, [node(key, "B", "요구")])
+    put_draft(env, FB, 4, [node(key, "R", "요구")])
     assert line_rows(env, FB)[0]["doc_id"] == r_again and doc(r_again) is not None
-    gone = put_draft(env, FB, 4, [])                                         # removing the card deletes its draft
+    gone = put_draft(env, FB, 5, [])                                         # removing the card deletes its draft
     assert gone["removed_node_keys"] == [key] and line_rows(env, FB) == []
     assert doc(r_again) is None and len(doc_events(env, "doc_deleted")) == deleted + 1
     assert _sql(env["db"], "SELECT doc_id FROM documents WHERE group_id = ?", (FB,)) == []
 
 
 def test_converting_a_card_root_then_removing_the_card_deletes_the_converted_draft(env, convert_root):
-    first = put_draft(env, FB, 0, [node("tmp_b", "B", "버그")])
+    first = put_draft(env, FB, 0, [node("tmp_b", "B", "버그", palette="bug")])
     key = first["key_map"]["tmp_b"]
     b_doc = first["card_documents"][key][0]["doc_id"]
     r_doc = convert_root(b_doc, "R")                                         # B -> R, then the card goes
+    # the default name and the reserved palette id follow the type (L0005 1.5)
+    assert _draft_node(env, FB, key) == ({"doc_type": "R", "palette_item_id": "requirement", "label": "요구사항"}, 2)
     shown, _keys = _draft_card(env, FB, key)
     assert [line["doc_id"] for line in shown["card_documents"]] == [r_doc]
-    put_draft(env, FB, 1, [])
+    put_draft(env, FB, 2, [])
     assert doc(r_doc) is None and doc(b_doc) is None and line_rows(env, FB) == []
     assert canvas(env, FB, "?view=draft")["nodes"] == []                     # nothing left as a free document
 

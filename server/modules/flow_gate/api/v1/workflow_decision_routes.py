@@ -76,6 +76,42 @@ def _disposed_group_response(doc_id: str, doc: Optional[dict]):
     return None
 
 
+def _superseded_root_response(doc_id: str, doc: Optional[dict]):
+    """Return a 409 root_superseded JSONResponse when the doc is a root succeeded by an R↔B succession.
+
+    0064 T#4 (L0005 2.10 P10): the original root of a succession stays readable history; its workflow is
+    decided on the live root at the chain's end, whose id the answer names. Checked where the disposed group
+    is. Returns None for every other document.
+    """
+    from modules.flow_gate.documents import live_root
+
+    if not live_root.is_succeeded_root(doc) or live_root.conversion_mark(doc, "converted_to") is None:
+        return None
+    return JSONResponse(
+        status_code=409,
+        content={
+            "error": "root_superseded",
+            "detail": "This root was already succeeded by a later document; use the live root instead.",
+            "doc_id": doc_id,
+            "live_root_doc_id": live_root.live_end_doc_id(doc),
+        },
+    )
+
+
+def _unless_superseded(doc_id: str, call):
+    """``call`` preceded by the P10 check on the document row read again where ``call`` runs.
+
+    0064 T#4 rework: the route's own check reads the row before the Flow guard, so a succession committing
+    between that read and the guard would let the decision or the first sequence save land on the old root.
+    The contact runs this inside the guard the conversion takes (unassigned Flow); a v0.1 Flow runs it
+    unwrapped, but a conversion is refused there (``decision_taken``), so the row read here is final.
+    """
+    def run():
+        refused = _superseded_root_response(doc_id, _db_documents.get_by_id(doc_id))
+        return refused if refused is not None else call()
+    return run
+
+
 def _active_ai_run_response_for_user(doc: Optional[dict], auth: dict):
     """Return the central policy response for human mutations; owner workers pass."""
     from modules.flow_gate.services.mutation_policy import (
@@ -290,15 +326,18 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
     _disposed = _disposed_group_response(doc_id, _pre_doc)
     if _disposed is not None:
         return _disposed
+    _superseded = _superseded_root_response(doc_id, _pre_doc)
+    if _superseded is not None:
+        return _superseded
 
     try:
-        result = _graph_contact.guarded_assignment(_pre_doc, lambda: decide_workflow(
+        result = _graph_contact.guarded_assignment(_pre_doc, _unless_superseded(doc_id, lambda: decide_workflow(
             doc_id=doc_id,
             doc_class=body.doc_class,
             sequence=[item.model_dump() for item in body.sequence],
             force_encoding_reason=body.force_encoding_reason,
             locale=request.headers.get("x-locale") or "ko",
-        ), auth.get("issued_to"))
+        )), auth.get("issued_to"))
     except LookupError as exc:
         code, _, val = str(exc).partition(":")
         if code == "doc_not_found":
@@ -952,12 +991,15 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
     _disposed = _disposed_group_response(body.doc_id, _pre_doc)
     if _disposed is not None:
         return _disposed
+    _superseded = _superseded_root_response(body.doc_id, _pre_doc)
+    if _superseded is not None:
+        return _superseded
     _active_run = _active_ai_run_response_for_user(_pre_doc, auth)
     if _active_run is not None:
         return _active_run
 
     try:
-        result = _graph_contact.guarded_assignment(_pre_doc, lambda: edit_workflow_pending(
+        result = _graph_contact.guarded_assignment(_pre_doc, _unless_superseded(body.doc_id, lambda: edit_workflow_pending(
             doc_id=body.doc_id,
             new_items=[item.model_dump(exclude_unset=True) for item in body.items],
             force_encoding_reason=body.force_encoding_reason,
@@ -966,7 +1008,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             applied_by=auth.get("issued_to"),
             locale=request.headers.get("x-locale") or "ko",
             acknowledged_codes=body.acknowledged_codes,
-        ), auth.get("issued_to"))
+        )), auth.get("issued_to"))
     except ProtectedRowModified as exc:
         # 0649 T#1 (NR0003 O1): an echo tried to change a protected row's identity.
         return JSONResponse(

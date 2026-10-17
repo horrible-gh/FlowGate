@@ -97,6 +97,13 @@ def _seed_live(store, monkeypatch, tmp_path):
     monkeypatch.setattr(document_routes, "_load_test_runs", lambda _doc_id: (None, []))
     monkeypatch.setattr(document_routes.db_docs, "get_by_id", lambda doc_id: dict(row) if doc_id == DOC_ID else None)
     monkeypatch.setattr(document_routes, "resolve_storage_path", lambda *_args, **_kwargs: stale_file)
+    from modules.flow_gate.storage import body as body_storage
+    # The shared body reader now owns location lookup; retain this fixture's resolver double.
+    def locate(stored, project_id=None, branch="main"):
+        path = document_routes.resolve_storage_path(stored, project_id, branch=branch)
+        return path, "readable" if path is not None else "file_not_found"
+    monkeypatch.setattr(body_storage, "locate_storage_path", locate)
+
     for service in (conversation_markdown_service.document_service, conversation_query_service.document_service):
         monkeypatch.setattr(service, "get_document", lambda doc_id: dict(row) if doc_id == DOC_ID else None)
 

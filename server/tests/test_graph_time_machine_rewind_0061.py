@@ -350,7 +350,8 @@ def db(monkeypatch):
         connection.execute("INSERT INTO graph_node_attempts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                            [key.lower(), "run", key, 1, status, key if status == "active" else None, key, None, None,
                             "result-" + key, "integrated" if merged else "none", merged, "input-" + key])
-        connection.execute("INSERT INTO graph_run_token_map VALUES (?,?,?,?,?,?)",
+        connection.execute("INSERT INTO graph_run_token_map (token_id, run_id, node_key, stage, attempt_id, mapped_at) "
+                           "VALUES (?,?,?,?,?,?)",
                            ["tok-" + key, "run", key, "result", key.lower(), 1])
         if key != "C":
             connection.execute("INSERT INTO graph_propagations VALUES ('run',?,?,'approved','pending',1,NULL)",
@@ -441,8 +442,9 @@ def test_db_step_rewinds_the_selected_branch_and_keeps_the_other(db):
 
 def test_old_tokens_of_no_attempt_are_cut_off_with_their_node(db):
     # Tokens mapped before migration 151 (attempt_id NULL): A's goes with its node, B's stays B's.
-    db.connection.execute("INSERT INTO graph_run_token_map VALUES ('old-A','run','A','result',NULL,0)")
-    db.connection.execute("INSERT INTO graph_run_token_map VALUES ('old-B','run','B','result',NULL,0)")
+    columns = "(token_id, run_id, node_key, stage, attempt_id, mapped_at)"           # legacy rows: map_kind NULL
+    db.connection.execute(f"INSERT INTO graph_run_token_map {columns} VALUES ('old-A','run','A','result',NULL,0)")
+    db.connection.execute(f"INSERT INTO graph_run_token_map {columns} VALUES ('old-B','run','B','result',NULL,0)")
     assert run_store.token_ids("run", "A") == ["old-A", "tok-A"]
     result = rewind.rewind(ctx_of(), PLAN, REVERTS)
     [legacy] = result["detached_legacy_attempt_ids"]

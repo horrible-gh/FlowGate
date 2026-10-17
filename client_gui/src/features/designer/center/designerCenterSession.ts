@@ -96,6 +96,13 @@
 // answer itself sends (the run control's, after it was kept here) and every later one take over. Reads of a closed Flow
 // or another project are dropped like every Graph read, and so is a Hold answer for a tab closed (or opened again) or a
 // project changed since it was asked (the run control's `hold`).
+//
+// flowgate.v02.0064 T#4 (0062 D0005 §3.2 / §3.5, 0062 L0006 2.8, 0064 P0006 §6.5): a card's title is saved on its own
+// (`saveNodeTitle`) — never through the draft, so neither the draft version nor the undo / redo history changes. Per open
+// Flow the session keeps the title state each card shows (its version); a save answer and every Graph read go through
+// the same version order (graph/nodeTitle.ts), so a late answer or an old read never takes a newer title back. The
+// answer goes onto the shared Graph at once (the Canvas card and the Inspector header read it); another tab's save comes
+// as a Canvas change event (reason `title`) and is read again like any other. Title saves never hold a read back.
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
 import {
@@ -124,8 +131,9 @@ import { CLIENT_KEY_PREFIX, editableRevision, type CanvasNodeSpec } from './edit
 import type { NodeMove, NodePlacement } from './edit/editHistory'
 import { fixtureFlowGraphSource } from './graph/fixtureFlowGraphSource'
 import { isEdgeProgressed } from './graph/edgeProgress'
-import type { FlowGraph, FlowGraphNode, FlowGraphRun, FlowGraphSelection } from './graph/flowGraph'
-import type { FlowGraphSource, FlowLayoutChange, FlowRunInfo } from './graph/flowGraphSource'
+import type { FlowGraph, FlowGraphNode, FlowGraphRun, FlowGraphSelection, FlowGraphTitleState } from './graph/flowGraph'
+import type { FlowGraphSource, FlowLayoutChange, FlowRunError, FlowRunInfo } from './graph/flowGraphSource'
+import { applyTitleState, takeTitleStates, type NodeTitleSaveOutcome } from './graph/nodeTitle'
 import { createLayoutSaveQueue } from './layoutSaveQueue'
 import {
   createFlowRunControl,
@@ -149,6 +157,7 @@ export type {
   FlowRunState,
   FlowTimeMachineOutcome,
   NodePlacement,
+  NodeTitleSaveOutcome,
 }
 
 /**
@@ -395,6 +404,15 @@ export interface DesignerCenterSession {
   confirmTimeMachine(): Promise<boolean>
   /** Closes the dialog (not while its request is answered). */
   closeTimeMachine(): void
+
+  // flowgate.v02.0064 T#4 — a card's own title (graph/nodeTitle.ts).
+  /** The source saves card titles (the Canvas opens a card's title for editing). */
+  readonly canEditNodeTitles: boolean
+  /**
+   * Saves one card's title (the text as typed; the server normalizes and judges it). A saved answer newer than the title
+   * the Flow shows goes onto its shared Graph at once; a refusal names the server's code. Draft and history stay as they are.
+   */
+  saveNodeTitle(flowId: string, nodeId: string, title: string): Promise<NodeTitleSaveOutcome>
 }
 
 export interface DesignerCenterSessionOptions {
@@ -452,6 +470,12 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   const graphViews = new Map<string, string>()
   // flowgate.v02.0045 T0019: default nodes of just created Flows, until their Graph is first shown.
   const seeds = new Map<string, CanvasNodeSpec>()
+  // flowgate.v02.0064 T#4: per open Flow, the title state each card shows (by node id) — the version order's base.
+  const titleStates = new Map<string, Map<string, FlowGraphTitleState>>()
+  const titlesOf = (flowId: string) => {
+    if (!titleStates.has(flowId)) titleStates.set(flowId, new Map())
+    return titleStates.get(flowId)!
+  }
   let stopWatching: (() => void) | null = null
   let disposed = false
 
@@ -853,7 +877,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
           readGraph(flowId, true)
           return
         }
-        const shown = source.saveDraft ? editableRevision(graph) ?? graph : graph
+        // flowgate.v02.0064 T#4: a card keeps a newer title this tab already shows (a save answered after the read went).
+        const shown = takeTitleStates(source.saveDraft ? editableRevision(graph) ?? graph : graph, titlesOf(flowId))
         setShownLoad(flowId, { status: 'ready', graph: markRaw(shown) })
         takeHolds(flowId, graph.holds, holdWritesAtSend)
         drafts.graphLoaded(flowId, shown)
@@ -901,6 +926,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     graphViews.clear()
     seeds.clear()
     holdWrites.clear()
+    titleStates.clear()
     runControl.clear()
     state.projectId = projectId
     watchProject(projectId)
@@ -937,6 +963,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     graphViews.delete(flowId)
     seeds.delete(flowId)
     holdWrites.delete(flowId)
+    titleStates.delete(flowId)
     runControl.forget(flowId)
     delete state.graphs[flowId]
     delete state.views[flowId]
@@ -1109,6 +1136,29 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     return drafts.confirm(flowId).then(() => state.edits[flowId]?.notice?.kind === 'confirmed')
   }
 
+  // ── flowgate.v02.0064 T#4: a card's own title ───────────────────────────────────────────────────────────────
+
+  /** A title state answered for an open Flow's card: shown when newer than the one the card shows (see the file head). */
+  function showTitleState(flowId: string, nodeId: string, incoming: FlowGraphTitleState) {
+    const next = applyTitleState(readyGraph(flowId), nodeId, incoming, titlesOf(flowId))
+    if (next) state.graphs[flowId] = { status: 'ready', graph: markRaw(next) }
+  }
+
+  async function saveNodeTitle(flowId: string, nodeId: string, title: string): Promise<NodeTitleSaveOutcome> {
+    const projectId = state.projectId
+    if (projectId === null || !source.saveNodeTitle || !isOpen(projectId, flowId)) return { ok: false, code: null, message: '' }
+    let answered: FlowGraphTitleState
+    try {
+      answered = await source.saveNodeTitle(projectId, flowId, nodeId, title)
+    } catch (error) {
+      const refusal = error as FlowRunError | null
+      return { ok: false, code: refusal?.code ?? null, message: refusal?.message ?? '' }
+    }
+    // A Flow closed (or another project) meanwhile shows nothing of it; one opened again reads the stored title.
+    if (!disposed && isOpen(projectId, flowId)) showTitleState(flowId, nodeId, answered)
+    return { ok: true, titleState: answered }
+  }
+
   const exposed = readonly(state)
 
   const activeSelectedNode = computed(() => {
@@ -1243,6 +1293,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     askTimeMachine,
     confirmTimeMachine,
     closeTimeMachine,
+    canEditNodeTitles: !source.isSample && !!source.saveNodeTitle,
+    saveNodeTitle,
   }
 }
 

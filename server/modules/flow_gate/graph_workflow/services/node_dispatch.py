@@ -144,7 +144,7 @@ def dispatch_document(ctx, row: dict) -> dict:
     except Exception as exc:  # noqa: BLE001 — L0009 E-22: the run goes on, the node stays open
         _log.warning("graph node dispatch failed run=%s node=%s: %s", ctx.run_id, row.get("node_key"), exc)
         return {"token_issued": False, "mention_id": None, "issued_to": shown, "error_code": "token_issue_failed"}
-    run_store.map_token(token["token_id"], ctx.run_id, row["node_key"])
+    run_store.map_token(token["token_id"], ctx.run_id, row["node_key"], map_kind=run_store.MAP_DISPATCH)
     if ai:
         stage = INSTRUCTION_STAGE if plan.get("instruction") else RESULT_STAGE
         run_store.set_stage(ctx.run_id, row["node_key"], stage)

@@ -121,6 +121,7 @@ class FlowGateStore:
             yield self
             return
         _tx_local.after_commit = []
+        _tx_local.after_rollback = []
         try:
             with self._transaction_frame():
                 yield self
@@ -128,7 +129,14 @@ class FlowGateStore:
             # Rolled back: whatever the queued callbacks were going to record describes
             # writes that no longer exist, so drop them instead of running them.
             _tx_local.after_commit = []
+            callbacks, _tx_local.after_rollback = list(getattr(_tx_local, "after_rollback", None) or []), []
+            for callback in reversed(callbacks):
+                try:
+                    callback()
+                except Exception:  # cleanup is best-effort, with no retry
+                    _logging.getLogger(__name__).warning("after-rollback callback failed", exc_info=True)
             raise
+        _tx_local.after_rollback = []
         callbacks, _tx_local.after_commit = list(getattr(_tx_local, "after_commit", None) or []), []
         for callback in callbacks:
             # after_commit() is documented as best-effort: a failing callback must not
@@ -384,3 +392,36 @@ def after_commit(callback) -> bool:
         return False
     queue.append(callback)
     return True
+
+
+def after_rollback(callback) -> bool:
+    """Queue best-effort cleanup after the outer transaction rolls back (including commit failure).
+
+    Nested frames join the outer queue. Callbacks run in reverse registration order,
+    after the DB frame closes; successful commits discard them. No transaction: False.
+    """
+    if not in_transaction():
+        return False
+    queue = getattr(_tx_local, "after_rollback", None)
+    if queue is None:
+        return False
+    queue.append(callback)
+    return True
+
+
+def track_new_file(abs_path, still_ours=None, under=None) -> bool:
+    """Remove a newly created file on rollback; never use for an overwritten existing file.
+
+    The callback runs after this transaction's locks are gone, so another writer may already have moved the
+    file aside and created its own at the same path (0064 T#3). ``still_ours(path)`` keeps the removal to the
+    file this transaction created; ``under(fn)`` runs check and removal under the durable lock that writer has
+    to take. Without them the path is removed unchecked (the earlier behaviour).
+    """
+    path = Path(abs_path)
+
+    def remove() -> None:
+        if still_ours is not None and not still_ours(path):
+            return
+        path.unlink(missing_ok=True)
+
+    return after_rollback(remove if under is None else (lambda: under(remove)))

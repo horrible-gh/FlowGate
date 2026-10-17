@@ -23,11 +23,14 @@
 // flowgate.v02.0061 T#15: a card's Hold is read with the Graph — each Canvas read goes with the Graph read, whose nodes
 // tell their cards' Hold (`holds`, also of cards the run has no node run of) — and written through the card settings
 // call the Shell hands in (`cardHold`, features/document); a done card's Graph Time Machine goes through the run transport.
+//
+// flowgate.v02.0064 T#4: each node keeps its card title state; a card's title is saved through the store loader.
 import type {
   FlowCanvas,
   FlowCanvasChangeHandlers,
   FlowCanvasLayoutInput,
   FlowCanvasLayoutResult,
+  FlowCanvasTitleState,
   FlowGraphConfirmResult,
   FlowGraphDefinition,
   FlowGraphDraftInput,
@@ -71,6 +74,8 @@ export interface FlowCanvasLoaders {
   approveFlowRunNode?(runId: string, nodeKey: string, resultDocId: string | null): Promise<{ run: FlowRun }>
   /** flowgate.v02.0061 T#15: a done card's Graph Time Machine (T#13); absent = none. */
   timeMachineFlowRunNode?(runId: string, nodeKey: string): Promise<{ run: FlowRun; timeMachine: FlowRunTimeMachine }>
+  /** flowgate.v02.0064 T#4: a card's title save (P0006 §4.2.2); absent = no inline title edit. */
+  saveFlowNodeTitle?(flowId: string, nodeKey: string, title: string): Promise<FlowCanvasTitleState>
 }
 
 /** flowgate.v02.0061 T#15: a card's Hold write through the card settings (features/document settingsNodeHoldWrite). */
@@ -158,6 +163,8 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
       slot: node.slot,
       nodeRun: node.nodeRun ?? null,
       ...(node.cardDocuments ? { cardDocuments: node.cardDocuments } : {}),
+      // flowgate.v02.0064 T#4: the card title state, as sent (absent from an older server).
+      ...(node.titleState !== undefined ? { titleState: node.titleState } : {}),
     })),
     edges: canvas.edges.map((edge) => ({
       id: edge.edgeId,
@@ -328,5 +335,8 @@ export function createServerFlowGraphSource(
             return { result: { ...answer.timeMachine }, run: toRunInfo(answer.run) }
           }
         : undefined,
+    saveNodeTitle: loaders.saveFlowNodeTitle
+      ? async (_projectId, flowId, nodeKey, title) => ({ ...(await loaders.saveFlowNodeTitle!(flowId, nodeKey, title)) })
+      : undefined,
   }
 }

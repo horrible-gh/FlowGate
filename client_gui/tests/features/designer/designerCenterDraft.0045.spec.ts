@@ -100,6 +100,23 @@ describe('Palette node spec', () => {
 })
 
 describe('Center session draft editing', () => {
+  it('keeps the version and local edits after a storage refusal, then saves them with the next edit', async () => {
+    const { center, source, loads, drafts } = setup([unassigned()])
+    await vi.runAllTimersAsync()
+    vi.mocked(source.saveDraft!).mockRejectedValueOnce({ code: 'document_storage_unwritable' })
+    center.dropOnCanvas('f1', dataTransfer('task'), 560, 320)
+    await vi.runAllTimersAsync()
+    expect(loads).toHaveLength(1)
+    expect(shown(center).draft?.version).toBe(0)
+    expect(shown(center).nodes.filter((n) => n.id.startsWith('tmp_'))).toHaveLength(1)
+    expect(center.state.edits.f1).toMatchObject({ status: 'error', errorCode: 'document_storage_unwritable' })
+    center.dropOnCanvas('f1', dataTransfer('task'), 800, 320)
+    await vi.runAllTimersAsync()
+    expect(drafts[0].version).toBe(0)
+    expect(drafts[0].content.nodes).toHaveLength(2)
+    expect(center.state.edits.f1.status).toBe('idle')
+  })
+
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 

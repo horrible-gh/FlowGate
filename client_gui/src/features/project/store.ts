@@ -40,6 +40,7 @@ import type {
   FlowCanvas,
   FlowCanvasLayoutInput,
   FlowCanvasLayoutResult,
+  FlowCanvasTitleState,
   FlowGraphConfirmResult,
   FlowGraphDefinition,
   FlowGraphDraftInput,
@@ -70,7 +71,7 @@ import {
   fetchProjectGroupTree as fetchProjectGroupTreeApi,
   suggestProjectSlug,
 } from './api'
-import { fetchFlowCanvas, saveFlowCanvasLayout as saveFlowCanvasLayoutApi } from './flowCanvasApi'
+import { fetchFlowCanvas, nodeTitleSave, saveFlowCanvasLayout as saveFlowCanvasLayoutApi } from './flowCanvasApi'
 import {
   confirmFlowGraphRevision as confirmFlowGraphRevisionApi,
   fetchFlowGraph,
@@ -424,6 +425,11 @@ export const useProjectStore = defineStore('project', () => {
     return saveFlowCanvasLayoutApi(flowId, input)
   }
 
+  // flowgate.v02.0064 T#4 (P0006 §4.2.2): one card's title save; the version order of what is shown is the Center's.
+  function saveFlowNodeTitle(flowId: string, nodeKey: string, title: string): Promise<FlowCanvasTitleState> {
+    return nodeTitleSave(flowId, nodeKey, title)
+  }
+
   // flowgate.v02.0045 S3+S4: the Graph definition saver (P0008 §5 / §6). Draft batching, version
   // tracking and key remapping belong to the Center session's draft editor.
   function loadFlowGraph(flowId: string): Promise<FlowGraphDefinition> {
@@ -552,6 +558,7 @@ export const useProjectStore = defineStore('project', () => {
     loadMergeReviewFileDiff,
     loadFlowCanvas,
     saveFlowCanvasLayout,
+    saveFlowNodeTitle,
     loadFlowGraph,
     saveFlowGraphDraft,
     validateFlowGraphDraft,

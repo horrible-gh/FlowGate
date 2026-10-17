@@ -131,6 +131,19 @@ afterEach(() => {
 })
 
 describe('FlowCanvas editing a Graph draft (flowgate.v02.0045 S3)', () => {
+  it.each(['ko', 'en', 'ja'] as const)('shows a storage refusal in %s and keeps the unsaved connection', async (locale) => {
+    const w = await mountWith(draftGraph())
+    i18n.global.locale.value = locale
+    saveDraft = async () => { throw { code: 'document_storage_unwritable' } }
+    center.connectNodes('f1', 'gn_a', 'gn_b')
+    await wait()
+    await settle()
+    expect(w.get('[data-test="designer-storage-error"]').text()).toBe(i18n.global.t('gui.designer.center.document_storage_unwritable'))
+    const load = center.state.graphs.f1
+    expect(load?.status === 'ready' && load.graph.draft?.version).toBe(2)
+    expect(load?.status === 'ready' && load.graph.edges).toHaveLength(1)
+  })
+
   it('shows no draft name or draft buttons on the Canvas and marks draft nodes connectable', async () => {
     const w = await mountWith(draftGraph())
     // TR0020 rev4: nothing is laid over the Canvas — the canvas area holds the Canvas and nothing else.

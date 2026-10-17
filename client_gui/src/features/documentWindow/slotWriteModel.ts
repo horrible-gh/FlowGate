@@ -54,7 +54,7 @@ export interface SlotWriteFailure {
 }
 
 const EXISTING_CODES: readonly string[] = ['slot_has_document', 'node_token_unavailable']
-const NOTICE_CODES: readonly string[] = ['node_in_instruction_stage', 'node_ai_working', 'flow_disposed', 'card_documents_unavailable']
+const NOTICE_CODES: readonly string[] = ['node_in_instruction_stage', 'node_ai_working', 'flow_disposed', 'card_documents_unavailable', 'document_storage_unwritable']
 const CONTENT_REASONS: readonly string[] = ['not_a_text', 'too_long', 'not_for_this_slot', 'empty_body']
 const SLOT_REASONS: readonly string[] = ['not_a_slot_of_this_card', 'slot_shares_a_document', 'doc_type_not_registered']
 

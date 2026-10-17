@@ -12,6 +12,9 @@
 //            a Graph revision view (D#2 §3.5: 종류 전환 leaves D#1 §8.3 rule 5's "shown disabled" list).
 // Whether child documents already reference the root is not known here for sure; the server
 // refuses it (409) and the refusal is shown (D#2 §3.4). Permissions are the server's (403).
+// flowgate.v02.0064 T#4 (P0006 §6.1): a root with children is succeeded instead of refused, and the
+// server's judgement (`refusal`, read with the document) disables the switch with its reason. A judgement
+// not read yet blocks nothing: the server decides when the switch runs.
 import type { InspectorCardKind, InspectorReadOnly } from '../../inspectorTarget'
 
 export type KindSwitchOperation = 'switch'
@@ -41,6 +44,8 @@ export interface KindSwitchInput {
   readonly groupDisposed: boolean
   /** The switch is waiting for its answer (or for the state read after it). */
   readonly busy: boolean
+  /** The server judged the switch refused (the kind of its reason); null / absent: not refused or not read. */
+  readonly refusal?: KindSwitchFailureKind | null
 }
 
 export interface KindSwitchAvailabilityItem {
@@ -82,6 +87,7 @@ export function kindSwitchDisabledReason(input: KindSwitchInput): string | null 
   if (input.groupDisposed) return 'reason.disposed'
   if (input.aiRunning) return 'reason.ai_running'
   if (input.busy) return 'reason.busy'
+  if (input.refusal) return kindSwitchFailureKey(input.refusal)
   return null
 }
 
@@ -94,6 +100,10 @@ export function kindSwitchAvailability(input: KindSwitchInput): KindSwitchAvaila
 
 /** Kinds of a refused switch (the `@/features/document` kindSwitchErrorOf kinds). */
 export type KindSwitchFailureKind =
+  | 'superseded'
+  | 'body_unreadable'
+  | 'identity_unsafe'
+  | 'attachment'
   | 'graph'
   | 'ownership_conflict'
   | 'decided'
@@ -116,9 +126,10 @@ export function kindSwitchFailureKey(kind: KindSwitchFailureKind): string {
 /**
  * Refusals that mean the Canvas is out of date — the Flow's ownership moved (Graph / conflict /
  * a sequence was decided), documents now reference the root, the other identity or the document
- * itself changed — so the Flow is read again (`refresh-flow`) as well as the switch's own state.
+ * itself changed, the root was already succeeded — so the Flow is read again (`refresh-flow`) as well
+ * as the switch's own state. The body / identity / attachment refusals only read the state again.
  */
-const CANVAS_STALE: readonly KindSwitchFailureKind[] = ['graph', 'ownership_conflict', 'decided', 'children', 'collision', 'conflict', 'not_found']
+const CANVAS_STALE: readonly KindSwitchFailureKind[] = ['graph', 'ownership_conflict', 'decided', 'children', 'collision', 'conflict', 'not_found', 'superseded']
 
 export function kindSwitchRefreshesFlow(kind: KindSwitchFailureKind): boolean {
   return CANVAS_STALE.includes(kind)
