@@ -5,7 +5,7 @@
 // passes the server source (serverFlowGraphSource.ts, flowgate.v02.0045). A server source goes
 // through the features/project public surface (store loaders), never @shared/api or axios
 // directly (structure.0024).
-import type { FlowGraph, FlowGraphCardDocument, FlowGraphNodeDefinition, FlowGraphViewport } from './flowGraph'
+import type { FlowGraph, FlowGraphCardDocument, FlowGraphNodeDefinition, FlowGraphTitleState, FlowGraphViewport } from './flowGraph'
 
 /** One batched layout change of a Flow: moved Node positions and / or the Viewport. */
 export interface FlowLayoutChange {
@@ -89,6 +89,8 @@ export interface FlowRunNodeInfo {
   readonly hold?: boolean
   /** flowgate.v02.0063: the card's document holds a question still unanswered. */
   readonly question?: boolean
+  /** flowgate.v02.0064 T#4: the card is running now (the server's card running lock, `node_running`). */
+  readonly nodeRunning?: boolean
   readonly runningExecutionCount?: number
   readonly requestedExecutionCount?: number
   readonly attemptId?: string | null
@@ -236,4 +238,10 @@ export interface FlowGraphSource {
    * Absent = the source has no Time Machine.
    */
   timeMachine?(projectId: string, runId: string, nodeKey: string): Promise<{ result: FlowTimeMachineResult; run: FlowRunInfo }>
+  /**
+   * flowgate.v02.0064 T#4 (0064 P0006 §4.2.2): saves one card's title (no draft save, no undo entry); resolves the title
+   * state the server answered. A refusal rejects with a FlowRunError (the server's code: `title_empty`, `node_title_locked`
+   * …). Absent = the source keeps no card title (no inline edit).
+   */
+  saveNodeTitle?(projectId: string, flowId: string, nodeKey: string, title: string): Promise<FlowGraphTitleState>
 }

@@ -43,7 +43,9 @@ from fastapi import HTTPException
 from modules.flow_gate.db import answers as db_answers
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import question_items as db_question_items
-from modules.flow_gate.services import ai_invoke_service, card_memo_hooks, q_service, token_service
+from modules.flow_gate.services import (
+    ai_invoke_service, ai_start_precheck, card_memo_hooks, q_service, token_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +283,9 @@ def build_answer_mention(
         "단순한 확신 부족, 조사 시간 부족, 도구 호출 실패, 빈 출력도 이관 사유가 아닙니다 — "
         "그런 경우에는 근거를 밝힌 최선의 답변을 등록하십시오."
     )
+    # 0064 T-B1e (D0004 §3.6, P0006 §2.9 ②): "an answer stating its grounds" includes the unread-body rules 3 and 4
+    # of the lookup block; one sentence points there, the three hand-off conditions above stay as they are.
+    lines.append("본문을 읽지 못한 문서가 있으면 [문서 조회 도구]의 본문 미열람 규칙 3·4항을 지키십시오.")
     lines.append(f"POST {escalate_url}")
     lines.append(f"Authorization: Bearer {raw_token}")
     lines.append("Content-Type: application/json")
@@ -341,13 +346,18 @@ def issue_answer_token(
         "expires_at": issued.get("expires_at"),
         # flowgate.v02.0056 T#3: a question on a Designer card's document is answered with that card's memos
         # turned on for AI reading in front (card_memo_hooks; none, or no handler: the mention as before).
+        # 0064 T-B1e: behind the memos, the documents of the answer that cannot be read (ai_start_precheck; all
+        # readable: the mention as before) -- the same section on the run and the [copy mention] path.
         "mention": card_memo_hooks.prepend_memo_section(
-            build_answer_mention(
-                doc=doc,
-                item=item,
-                raw_token=issued["raw_token"],
-                scratch_dir=issued["scratch_dir"],
-                api_base_url=api_base_url,
+            ai_start_precheck.qna_mention(
+                build_answer_mention(
+                    doc=doc,
+                    item=item,
+                    raw_token=issued["raw_token"],
+                    scratch_dir=issued["scratch_dir"],
+                    api_base_url=api_base_url,
+                ),
+                doc, item, ai_run_id,
             ),
             doc.get("group_id"),
             doc_id=doc.get("doc_id"),

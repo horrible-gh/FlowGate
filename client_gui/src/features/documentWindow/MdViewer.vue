@@ -5,7 +5,18 @@
       <span>{{ t(k('error')) }}</span>
       <IconButton :label="t(k('retry'))" :title="t(k('retry'))" variant="secondary" size="sm" data-test="md-viewer-retry" @click="loadContent()">↻</IconButton>
     </div>
+    <div v-else-if="unreadableReason" class="md-viewer__unreadable" role="alert" data-test="md-viewer-unreadable">
+      <p>⚠ {{ t(`gui.document.bodyState.${unreadableReason}`) }}</p>
+      <p>{{ t('gui.document.bodyState.aiUnreadable') }}</p>
+      <p v-if="canReenter && recoverGuide" data-test="md-viewer-recover-guide">{{ t(recoverGuide) }}</p>
+      <div v-if="canReenter" class="md-viewer__actions">
+        <IconButton v-if="recoverMethod" :label="t('gui.document.recover.action')" :title="t('gui.document.recover.action')" variant="secondary" size="sm" :disabled="recovering" data-test="md-viewer-recover" @click="recover">{{ t('gui.document.recover.action') }}</IconButton>
+        <IconButton :label="t('gui.document.bodyState.reenter')" :title="t('gui.document.bodyState.reenter')" variant="secondary" size="sm" data-test="md-viewer-reenter" @click="emit('reenter')">{{ t('gui.document.bodyState.reenter') }}</IconButton>
+      </div>
+      <p v-if="recoverNotice" data-test="md-viewer-recover-notice">{{ t(recoverNotice) }}</p>
+    </div>
     <template v-else>
+      <p v-if="recoverNotice" class="md-viewer__notice" role="status" data-test="md-viewer-recover-notice">{{ t(recoverNotice) }}</p>
       <Teleport :to="copyTarget ?? 'body'" :disabled="!copyTarget">
         <span v-if="hasBody" class="md-viewer__toolbar" :class="{ 'md-viewer__toolbar--titlebar': copyTarget }">
           <IconButton
@@ -36,8 +47,10 @@
 // Changed for v0.2:
 // - Documents only: the body is read through `@/features/document` (documentContentRead). The v0.1
 //   source-file and Git-branch blob modes stay in v0.1 (they need its explorer store).
-// - A document whose file is not written yet (a report before its run) is an empty document — no
-//   "no file" text and no regenerate button; saving it from the window's editor writes the file.
+// - Known unreadable body states show a warning and allow authorized users to re-enter the body.
+//   flowgate.v02.0064 T-B1d (P0006 §6.2): the same users get [복구] with the method the body diagnosis of the
+//   document's Flow shows (sent as `expected_method`); a method that cannot be recovered shows its guidance
+//   instead, and the result says when the body may be (or is) lost.
 // - The copy button is an icon with a tooltip (⧉ the body without its frontmatter); a failed copy marks
 //   the button instead of the v0.1 fallback modal. Strings live under `gui.document_window.viewer`; colors
 //   are the v0.2 dark theme. flowgate.v02.0056 F1 (0056 CH §5): the v0.1 "copy with header" (⎘, the
@@ -48,7 +61,14 @@ import { Marked } from 'marked'
 import { stripFrontmatter, stripLeadingNextHeader } from '@shared/utils/markdown'
 import { recordMarkdownParse, snapshotRecoverySource } from '@shared/diagnostics/runtimeDiagnostics'
 import type { MarkdownParseCause } from '@shared/diagnostics/runtimeDiagnostics'
-import { documentContentRead } from '@/features/document'
+import {
+  bodyRecoveryDiagnose,
+  bodyRecoveryFlowOf,
+  bodyRecoveryRecover,
+  bodyRecoveryRefusalOf,
+  documentContentRead,
+  type BodyRecoveryMethod,
+} from '@/features/document'
 import IconButton from '@/components/ui/IconButton.vue'
 import { copyToClipboard } from '@/core/interaction/clipboard'
 
@@ -58,8 +78,10 @@ const props = defineProps<{
   contentOverride?: string | null
   /** Relocate the existing copy action without changing its content or feedback. */
   copyTarget?: HTMLElement | null
+  canReenter?: boolean
 }>()
 
+const emit = defineEmits<{ reenter: [] }>()
 const { t, locale } = useI18n()
 const k = (key: string) => `gui.document_window.viewer.${key}`
 
@@ -68,6 +90,11 @@ type CopyState = 'idle' | 'done' | 'failed'
 const content = ref('')
 const loading = ref(false)
 const error = ref(false)
+const unreadableReason = ref<string | null>(null)
+const recoverMethod = ref<BodyRecoveryMethod | null>(null)
+const recoverGuide = ref<string | null>(null)
+const recoverNotice = ref<string | null>(null)
+const recovering = ref(false)
 const copyMdState = ref<CopyState>('idle')
 // v0.1 rev4: rendered by the applyContent() call that set `content`, never by a computed over shared
 // refs, so one load's diagnostics cause can not attach to another load's parse.
@@ -207,6 +234,7 @@ async function loadContent(cause: MarkdownParseCause | null = null): Promise<boo
   const docId = props.docId
   const current = () => !disposed && seq === loadSequence && docId === props.docId
   if (props.contentOverride != null) {
+    unreadableReason.value = null
     applyContent(props.contentOverride, cause)
     error.value = false
     loading.value = false
@@ -214,6 +242,7 @@ async function loadContent(cause: MarkdownParseCause | null = null): Promise<boo
     return true
   }
   if (!docId) {
+    unreadableReason.value = null
     applyContent('', cause)
     error.value = false
     loading.value = false
@@ -227,6 +256,7 @@ async function loadContent(cause: MarkdownParseCause | null = null): Promise<boo
   try {
     const read = await documentContentRead(docId)
     if (!current()) return false
+    unreadableReason.value = read.state === 'unreadable' ? (read.reason ?? null) : null
     // The window reads its document again on a period (T#3 rework 2): an unchanged body is not parsed again.
     if (!(loadedOnce && read.content === content.value)) applyContent(read.content, cause)
     loadedOnce = true
@@ -234,6 +264,7 @@ async function loadContent(cause: MarkdownParseCause | null = null): Promise<boo
   } catch {
     if (!current()) return false
     error.value = true
+    unreadableReason.value = null
     applyContent('', cause)
     return false
   } finally {
@@ -242,6 +273,46 @@ async function loadContent(cause: MarkdownParseCause | null = null): Promise<boo
       loading.value = false
       if (contentRefreshPending) scheduleContentRefresh()
     }
+  }
+}
+
+/** The diagnosed method of the shown document (its Flow's diagnosis); none when it cannot be read. */
+async function diagnoseShown(docId: string): Promise<void> {
+  recoverMethod.value = null
+  recoverGuide.value = null
+  const flowId = bodyRecoveryFlowOf(docId)
+  if (!flowId) return
+  try {
+    const diagnosis = await bodyRecoveryDiagnose({ groupId: flowId })
+    if (disposed || docId !== props.docId) return
+    const item = diagnosis.items.find((entry) => entry.docId === docId)
+    if (!item) return
+    if (item.recoverable) recoverMethod.value = item.method
+    else recoverGuide.value = `gui.document.recover.guide.${item.method}`
+  } catch {
+    // No diagnosis: re-entry stays the way to restore the body.
+  }
+}
+
+async function recover(): Promise<void> {
+  const docId = props.docId
+  const method = recoverMethod.value
+  if (!docId || !method || recovering.value) return
+  recovering.value = true
+  recoverNotice.value = null
+  try {
+    const result = await bodyRecoveryRecover(docId, method)
+    if (disposed || docId !== props.docId) return
+    recoverNotice.value = result.bodyLoss === 'possible' || result.bodyLoss === 'lost'
+      ? `gui.document.recover.loss.${result.bodyLoss}`
+      : 'gui.document.recover.done'
+    await loadContent()
+  } catch (error) {
+    if (disposed || docId !== props.docId) return
+    recoverNotice.value = `gui.document.recover.refusal.${bodyRecoveryRefusalOf(error) ?? 'internal_error'}`
+    await diagnoseShown(docId)
+  } finally {
+    recovering.value = false
   }
 }
 
@@ -279,10 +350,23 @@ watch(
   // Never an event-caused reload — the watcher's own arguments are not a cause.
   () => {
     clearContentRefresh()
+    recoverNotice.value = null
     loadedOnce = false
     void loadContent()
   },
   { immediate: true },
+)
+
+// The diagnosis is read only for a person who may restore the body, and only while it cannot be read.
+watch(
+  () => [unreadableReason.value, props.canReenter] as const,
+  ([reason, allowed]) => {
+    if (reason && allowed && props.docId) void diagnoseShown(props.docId)
+    else {
+      recoverMethod.value = null
+      recoverGuide.value = null
+    }
+  },
 )
 
 // v0.1 rev5: re-render the loaded content in place on a locale change (the code copy button's label
@@ -310,6 +394,21 @@ defineExpose({
 </script>
 
 <style scoped>
+.md-viewer__unreadable {
+  padding: 16px;
+  color: var(--fg2-status-warning-fg);
+}
+
+.md-viewer__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.md-viewer__notice {
+  margin: 0 0 8px;
+  color: var(--fg2-status-warning-fg);
+}
+
 .md-viewer {
   height: 100%;
   overflow-y: auto;

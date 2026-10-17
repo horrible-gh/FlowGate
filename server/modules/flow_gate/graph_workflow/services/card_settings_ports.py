@@ -21,6 +21,9 @@ named ports the Graph calls and the composition root (``startup.py``) registers 
     approve_instruction    the instruction stage: approve the card's instruction automatically, without a
                      review (``flow_id, node, doc_id, actor_user_id`` -> True when approved); a refusal is
                      left to the card approval (False), the stage goes on
+    node_running     a card title save, inside its Flow guard (0064 T-B4b, 0062 L0006 2.7 step 4): the card is
+                     running — open in the active run, or in review while its AI review works — the same
+                     judgement that locks the card settings
 
 ``run_settings`` answers a dict; every key is optional and an absent key keeps the existing default:
 
@@ -33,8 +36,8 @@ named ports the Graph calls and the composition root (``startup.py``) registers 
     settings            every setting of the card as stored (carried on the job for the record)
 
 * With no handler registered ``run_settings`` answers ``{}``, ``result_type`` None,
-  ``ai_working`` False, ``instruction_document`` ``{}`` and ``approve_instruction`` False, so a node starts
-  and binds exactly as it did before (one stage).
+  ``ai_working`` False, ``instruction_document`` ``{}``, ``approve_instruction`` False and ``node_running``
+  False, so a node starts and binds exactly as it did before (one stage).
 * A handler exception propagates: the callers run inside a run step's Flow guard or a run read.
 * One handler per port. Registering again replaces it (startup may run more than once in a process).
 """
@@ -49,7 +52,8 @@ RESULT_TYPE = "result_type"
 AI_WORKING = "ai_working"
 INSTRUCTION_DOCUMENT = "instruction_document"
 APPROVE_INSTRUCTION = "approve_instruction"
-PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION)
+NODE_RUNNING = "node_running"
+PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, NODE_RUNNING)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -125,3 +129,11 @@ def approve_instruction(flow_id: str, node: dict, doc_id: str, actor_user_id: st
     if handler is None:
         return False
     return bool(handler(flow_id, node, doc_id, actor_user_id))
+
+
+def node_running(flow_id: str, node_key: str) -> bool:
+    """The card is running (open, or its AI review works on its result): its title cannot change now."""
+    handler = _handler(NODE_RUNNING)
+    if handler is None:
+        return False
+    return bool(handler(flow_id, node_key))

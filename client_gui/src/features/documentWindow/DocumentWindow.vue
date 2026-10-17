@@ -47,7 +47,7 @@
 
       <!-- The body view depends on the document's type (T#4): it is chosen once the title line read answered. -->
       <div v-else-if="!editing && !recordSettled" class="document-window-note" data-test="document-window-loading">{{ t(k('viewer.loading')) }}</div>
-      <DocumentWindowBody v-else-if="!editing" ref="body" :doc-id="win.shown" :type-code="record?.typeCode ?? null" :title="record?.title ?? null" :copy-target="copyTarget" />
+      <DocumentWindowBody v-else-if="!editing" ref="body" :doc-id="win.shown" :type-code="record?.typeCode ?? null" :title="record?.title ?? null" :copy-target="copyTarget" :can-reenter="canReenter" @reenter="startEdit" />
 
       <div v-else class="document-window-editor" data-test="document-window-editor">
         <div v-if="editLoading" class="document-window-note" data-test="document-window-editor-loading">{{ t(k('viewer.loading')) }}</div>
@@ -71,10 +71,10 @@
           <span
             v-if="saveErrorKey"
             class="document-window-save-error"
-            :title="t(k(`error.${saveErrorKey}`))"
+            :title="t(saveErrorKey === 'file_exists_unrecorded' ? 'gui.document.bodyState.file_exists_unrecorded' : k(`error.${saveErrorKey}`))"
             data-test="document-window-save-error"
             :data-key="saveErrorKey"
-          >{{ t(k(`error.${saveErrorKey}`)) }}</span>
+          >{{ t(saveErrorKey === 'file_exists_unrecorded' ? 'gui.document.bodyState.file_exists_unrecorded' : k(`error.${saveErrorKey}`)) }}</span>
           <!-- flowgate.v02.0056 F1 — [닫기] closes the window from the editor (the same path as × / Esc: unsaved
                text is asked about once). 0017-CH: [취소] · [저장] · [닫기] at the right end, the card memo window's
                buttons (bordered [취소] / [닫기], blue [저장]); [취소] takes a soft amber tone (it drops the edit). -->
@@ -135,6 +135,8 @@
 // it is saved or dropped. Two windows never show the same document (followDocumentWindow).
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { normalizeApiInput } from '@shared/apiErrors'
+import { useCurrentUser } from '@/core/auth/currentUser'
 import {
   documentContentRead,
   documentContentSave,
@@ -205,6 +207,8 @@ async function readRecord(): Promise<void> {
 
 /** The title line is the shown document's. */
 const record = computed(() => chain.value.find((item) => item.docId === props.win.shown) ?? chain.value[0] ?? null)
+const { user } = useCurrentUser()
+const canReenter = computed(() => !!user.value && record.value?.isEditable === true && !record.value?.groupDisposed && record.value?.typeCode !== 'TR2')
 const liveDocId = computed(() => chain.value[chain.value.length - 1]?.docId ?? null)
 
 const title = computed(() => record.value?.title || t(k('untitled')))
@@ -287,7 +291,9 @@ async function save(): Promise<void> {
   } catch (error) {
     saving.value = false
     const read = documentErrorOf(error)
-    saveErrorKey.value = documentSaveErrorKey(read.kind, read.status)
+    saveErrorKey.value = read.status === 409 && normalizeApiInput(error).data.detail === 'file_exists_unrecorded'
+      ? 'file_exists_unrecorded'
+      : documentSaveErrorKey(read.kind, read.status)
   }
 }
 

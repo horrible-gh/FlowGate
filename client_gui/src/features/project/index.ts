@@ -22,6 +22,7 @@ export { useProjectStore } from './store'
 // flowgate.v02.0061 T#15 adds what a Graph Time Machine of a run's done node did or why it was refused.
 // flowgate.v02.0066 T#5 adds the Base remote state of git/status (ProjectGitUnpushed*) and the
 // group scope floor of the change list (GroupScopeFloor) the Designer Git tab reads.
+// flowgate.v02.0064 T#4 adds a Graph node's card title state (FlowCanvasTitleState), saved through the store loader.
 // flowgate.v02.0048 T#2 adds the subscription and frame shapes of the store's project event
 // subscription (subscribeProjectEvents, the hub the Canvas subscription also runs on).
 export type { FlowCanvasChangeHandlers } from './flowCanvasEvents'
@@ -50,6 +51,7 @@ export type {
   FlowCanvasOwnership,
   FlowCanvasPosition,
   FlowCanvasSlot,
+  FlowCanvasTitleState,
   FlowCanvasView,
   FlowCanvasViewport,
   FlowChangeSet,

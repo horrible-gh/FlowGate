@@ -14,6 +14,8 @@ workflow sequence and belong to the next task set. Nothing here starts a run (P0
 """
 from __future__ import annotations
 
+from modules.flow_gate.storage.body import record_body_saved
+
 import json as _json
 import os
 import re as _re
@@ -869,31 +871,34 @@ def restore_work_plan_revision(
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
 
-        now = now_iso()
-        store = get_store()
-        store._execute(
-            "UPDATE documents SET revision_no = revision_no + 1, updated_at = ? WHERE doc_id = ? AND revision_no = ?",
-            [now, doc_id, current_revision],
-        )
-        refreshed = db_docs.get_by_id(doc_id)
-        if refreshed is None or refreshed.get("revision_no") != current_revision + 1:
-            try:
-                before.unlink(missing_ok=True)
-            except OSError:
-                pass
-            return _revision_conflict_response(refreshed or fresh, locale, body.base_revision_no, current_revision)
-        try:
-            wp.write_body_atomically(path, restored_body)
-        except OSError as exc:
+        with get_store().transaction() as store:
+            now = now_iso()
             store._execute(
-                "UPDATE documents SET revision_no = ?, updated_at = ? WHERE doc_id = ? AND revision_no = ?",
-                [current_revision, fresh.get("updated_at"), doc_id, current_revision + 1],
+                "UPDATE documents SET revision_no = revision_no + 1, updated_at = ? WHERE doc_id = ? AND revision_no = ?",
+                [now, doc_id, current_revision],
             )
+            refreshed = db_docs.get_by_id(doc_id)
+            if refreshed is None or refreshed.get("revision_no") != current_revision + 1:
+                try:
+                    before.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return _revision_conflict_response(refreshed or fresh, locale, body.base_revision_no, current_revision)
             try:
-                before.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
+                wp.write_body_atomically(path, restored_body)
+            except OSError as exc:
+                store._execute(
+                    "UPDATE documents SET revision_no = ?, updated_at = ? WHERE doc_id = ? AND revision_no = ?",
+                    [current_revision, fresh.get("updated_at"), doc_id, current_revision + 1],
+                )
+                try:
+                    before.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
+            record_body_saved(fresh, source="work_plan_save",
+                              file_path=storage_paths.to_storage_relative(path, doc.get("project_id")),
+                              size=len(wp.dumps(restored_body).encode("utf-8")))
 
     # 0599: only insert a new `document_revisions` row when the before-image is a real,
     # unclaimed revision slot — main inserted this unconditionally, which for
@@ -1056,38 +1061,41 @@ def save_work_plan(
 
         # Even inside the lock the revision bump precedes the file write, so that on the day
         # this server runs as multiple processes, "a request that lost the revision never touches the file" still holds.
-        now = now_iso()
-        store = get_store()
-        store._execute(
-            "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
-            "file_path = ?, title = ?, meta = ? WHERE doc_id = ? AND revision_no = ?",
-            [now, storage_paths.to_storage_relative(path, doc.get("project_id")),
-             derived_title, updated_meta, doc_id, current_revision],
-        )
-        refreshed = db_docs.get_by_id(doc_id)
-        if refreshed is None or refreshed.get("revision_no") != current_revision + 1:
-            # The revision was not taken. This request has not touched the file and never will.
-            return _revision_conflict_response(
-                refreshed or fresh, locale, body.base_revision_no, current_revision,
+        with get_store().transaction() as store:
+            now = now_iso()
+            store._execute(
+                "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
+                "file_path = ?, title = ?, meta = ? WHERE doc_id = ? AND revision_no = ?",
+                [now, storage_paths.to_storage_relative(path, doc.get("project_id")),
+                 derived_title, updated_meta, doc_id, current_revision],
             )
-        new_revision = refreshed["revision_no"]
-
-        try:
-            wp.write_body_atomically(path, plan)
-        except OSError as exc:
-            # Never leave the revision bumped with an old body. Even if the rollback fails the
-            # file still holds the previous body, so the data stays consistent — only the revision number runs one ahead.
-            try:
-                store._execute(
-                    "UPDATE documents SET revision_no = ?, updated_at = ?, file_path = ?, "
-                    "title = ?, meta = ? WHERE doc_id = ? AND revision_no = ?",
-                    [current_revision, fresh.get("updated_at"), fresh.get("file_path"),
-                     fresh.get("title"), fresh.get("meta"), doc_id, new_revision],
+            refreshed = db_docs.get_by_id(doc_id)
+            if refreshed is None or refreshed.get("revision_no") != current_revision + 1:
+                # The revision was not taken. This request has not touched the file and never will.
+                return _revision_conflict_response(
+                    refreshed or fresh, locale, body.base_revision_no, current_revision,
                 )
-            except Exception as revert_exc:  # noqa: BLE001
-                import LogAssist.log as logger
-                logger.warning(f"[work-plan] revision revert failed ({doc_id}): {revert_exc}")
-            raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
+            new_revision = refreshed["revision_no"]
+
+            try:
+                wp.write_body_atomically(path, plan)
+            except OSError as exc:
+                # Never leave the revision bumped with an old body. Even if the rollback fails the
+                # file still holds the previous body, so the data stays consistent — only the revision number runs one ahead.
+                try:
+                    store._execute(
+                        "UPDATE documents SET revision_no = ?, updated_at = ?, file_path = ?, "
+                        "title = ?, meta = ? WHERE doc_id = ? AND revision_no = ?",
+                        [current_revision, fresh.get("updated_at"), fresh.get("file_path"),
+                         fresh.get("title"), fresh.get("meta"), doc_id, new_revision],
+                    )
+                except Exception as revert_exc:  # noqa: BLE001
+                    import LogAssist.log as logger
+                    logger.warning(f"[work-plan] revision revert failed ({doc_id}): {revert_exc}")
+                raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
+            record_body_saved(fresh, source="work_plan_save",
+                              file_path=storage_paths.to_storage_relative(path, doc.get("project_id")),
+                              size=len(wp.dumps(plan).encode("utf-8")))
 
     refreshed = db_docs.get_by_id(doc_id) or refreshed
 

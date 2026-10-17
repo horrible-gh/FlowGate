@@ -16,14 +16,21 @@
 // The answer may come after another Flow tab was activated, so `refresh-flow` names the Flow the
 // switch was made in (its `flowId`): that Flow is read again at once even when its tab is not the
 // active one, and no other Flow's Canvas or selection is touched (rev2).
+//
+// flowgate.v02.0064 T#4 (P0006 §3.1 / §6.1): the document state is read with the server's judgement
+// (kindSwitchPreviewRead): `preview` tells the confirmation a number swap from a succession (the new or
+// expected number, the child count); a refused judgement disables the switch with its reason; no judgement
+// yet blocks nothing. The link to the document a succeeded root came from is features/kindSwitchOrigin.
 import { computed, inject, ref, shallowRef, watch, type ComputedRef, type Ref } from 'vue'
 import {
   kindSwitchConvert,
   kindSwitchErrorOf,
+  kindSwitchPreviewRead,
+  kindSwitchRefusalKind,
   reviewActivityRead,
-  reviewDocumentRead,
+  type KindSwitchPreview,
+  type KindSwitchPreviewJudgement,
   type KindSwitchResult,
-  type ReviewDocument,
 } from '@/features/document'
 import { INSPECTOR_HOST } from '../../inspectorHost'
 import type { InspectorTarget } from '../../inspectorTarget'
@@ -57,6 +64,8 @@ export interface KindSwitchState {
   readonly failureKey: ComputedRef<string | null>
   /** The last switch of this target that succeeded, until the Canvas moves the selection. */
   readonly done: Readonly<Ref<KindSwitchResult | null>>
+  /** The server's judgement of the switch as last read, or null (not read yet / not judged). */
+  readonly preview: ComputedRef<KindSwitchPreviewJudgement | null>
   /** Switches the target root to the other kind; true when the server switched it. */
   run(): Promise<boolean>
   /** Forgets the last refusal (e.g. the confirmation opens again). */
@@ -65,7 +74,7 @@ export interface KindSwitchState {
 
 export function useKindSwitch(target: () => InspectorTarget | null): KindSwitchState {
   const host = inject(INSPECTOR_HOST, null)
-  const docState = useInspectorResource<ReviewDocument>({ target, read: reviewDocumentRead, events: KIND_SWITCH_DOCUMENT_EVENTS })
+  const docState = useInspectorResource<KindSwitchPreview>({ target, read: kindSwitchPreviewRead, events: KIND_SWITCH_DOCUMENT_EVENTS })
   const activity = useInspectorResource({
     target,
     read: () => {
@@ -98,8 +107,16 @@ export function useKindSwitch(target: () => InspectorTarget | null): KindSwitchS
     return read && current && read.record.docId === current.docId ? read : null
   })
 
+  /** The judgement for the kind the target switches to (an answer for the other kind is not used). */
+  const preview = computed<KindSwitchPreviewJudgement | null>(() => {
+    const judged = readDocument.value?.conversion ?? null
+    const next = kindSwitchTarget(target()?.docType)
+    return judged && (judged.targetType === null || judged.targetType === next) ? judged : null
+  })
+
   const availability = computed(() => {
     const current = target()
+    const judged = preview.value
     return kindSwitchAvailability({
       cardKind: current?.cardKind ?? 'other',
       docType: current?.docType ?? null,
@@ -111,6 +128,7 @@ export function useKindSwitch(target: () => InspectorTarget | null): KindSwitchS
       groupDisposed: readDocument.value?.groupDisposed === true,
       // A finished switch waits for the Canvas read it asked for: the target still names the old id.
       busy: busy.value || done.value !== null,
+      refusal: judged?.decision === 'refused' && judged.refusal ? kindSwitchRefusalKind(judged.refusal.code) : null,
     })
   })
 
@@ -150,6 +168,7 @@ export function useKindSwitch(target: () => InspectorTarget | null): KindSwitchS
     busy,
     failureKey: computed(() => (failure.value ? kindSwitchFailureKey(failure.value) : null)),
     done,
+    preview,
     run,
     clearFailure: () => {
       failure.value = null

@@ -24,7 +24,8 @@ from typing import Optional
 
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import groups as db_groups
-from modules.flow_gate.db.connection import get_store
+from modules.flow_gate.db.connection import after_rollback, get_store, in_transaction
+from modules.flow_gate.storage.files import StorageUnwritable, write_new_file
 from modules.flow_gate.graph_workflow.api import envelope, v01_contact
 from modules.flow_gate.graph_workflow.domain.canvas_mapping import CANCELLED_STATUS, is_alive
 from modules.flow_gate.graph_workflow.domain.supersede import live_end
@@ -71,6 +72,28 @@ def approvable_body(doc: dict) -> bool:
     return True
 
 
+def line_body_facts(doc: Optional[dict]) -> tuple[bool, Optional[str]]:
+    """One read supplies both line facts; an unreadable line cannot break Canvas."""
+    if doc is None:
+        return False, None
+    from modules.flow_gate.storage.body import body_read_state
+    from modules.flow_gate.workflow import pipeline_service
+
+    try:
+        state, text = body_read_state(doc)
+    except (OSError, UnicodeError):
+        _log.warning("card line body read failed: %s", doc.get("doc_id"), exc_info=True)
+        return False, "read_error"
+    # These types have always bypassed the file/body approval requirement.
+    # Preserve has_body while exposing their independently measured body state.
+    kind = str(doc.get("type_code") or "").upper()
+    if kind in pipeline_service.AUTO_COMPLETE_TYPES or kind in pipeline_service.FILELESS_APPROVABLE_TYPES:
+        return approvable_body(doc), state
+    if state != "readable":
+        return False, state
+    return pipeline_service.approvable_text(doc, text), state
+
+
 def supersede(old_id: str, new_id: str) -> None:
     db_documents.set_superseded_by(old_id, new_id)
 
@@ -92,30 +115,53 @@ def create_document(group: dict, node: dict, slot: cs.CardSlot, user_id: Optiona
     module = group.get("module") or "none"
     code = numbering_service.reserve_document(group_id=flow_id, doc_type=slot.doc_type, module=module)
     doc_id = f"{flow_id}.{code}"
+    created_empty = not (body or "").strip()
     title = _title(node.get("label") or "", slot)
     if slot.doc_type == "WP":
         body, title = _work_plan_body(project_id)
     else:
         text = _front_matter(project_id, module, flow_id, slot.doc_type, code, title)
         body = text + body if body else text
-    document_service.create_document({
-        "doc_id": doc_id, "project_id": project_id, "module": module, "group_id": flow_id,
-        "type_code": slot.doc_type, "seq": int(code.split("-", 1)[0]), "title": title, "status": "draft",
-        "owner_id": user_id, "file_path": _write_file(project_id, flow_id, module, code, slot.slot, body),
-        "meta": json.dumps({"graph_card": {"node_key": node["node_key"], "slot": slot.slot}}, ensure_ascii=False),
-    }, actor_user_id=user_id or "")
+    file_path = _write_file(project_id, flow_id, module, code, slot.slot, body, node["node_key"])
+    try:
+        document_service.create_document({
+            "doc_id": doc_id, "project_id": project_id, "module": module, "group_id": flow_id,
+            "type_code": slot.doc_type, "seq": int(code.split("-", 1)[0]), "title": title, "status": "draft",
+            "owner_id": user_id, "file_path": file_path,
+            "meta": json.dumps({"graph_card": {"node_key": node["node_key"], "slot": slot.slot,
+                                               "created_empty": created_empty}}, ensure_ascii=False),
+        }, actor_user_id=user_id or "")
+    except BaseException:
+        if not in_transaction():
+            from modules.flow_gate.storage.paths import resolve_storage_path
+            try:
+                path = resolve_storage_path(file_path, project_id, repository.project_branch(project_id))
+                if path is not None:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                _log.warning("card document cleanup failed: %s", file_path, exc_info=True)
+        raise
     return doc_id
 
 
 def _title(label: str, slot: cs.CardSlot) -> str:
-    suffix = f" · {cs.slot_title(slot.slot)}"
-    return label.strip()[: TITLE_MAX_LEN - len(suffix)] + suffix
+    line = cs.slot_title(slot.slot)
+    label = label.strip()
+    names = set()
+    for titles in cs.SLOT_TITLES.values():
+        value = titles[slot.slot]
+        names.update(cs.name_key(name) for name in ((value,) if isinstance(value, str) else value))
+    if not label or cs.name_key(label) in names:
+        return line
+    suffix = f" · {line}"
+    return label[: TITLE_MAX_LEN - len(suffix)] + suffix
 
 
 def _front_matter(project_id: str, module: str, flow_id: str, doc_type: str, code: str, title: str) -> str:
-    lines = ["---", f"project: {project_id}", f"module: {module}", f"group: {flow_id.rsplit('.', 1)[-1]}",
-             f"group_id: {flow_id}", f"type: {doc_type}", f"doc_number: {code}", f"title: {title}", "---", ""]
-    return "\n".join(lines)
+    """One rule with the body recovery's empty card draft (0064 T-B1d, L0005 2.12 ``card_draft_bytes``)."""
+    from modules.flow_gate.documents.body_recovery import card_front_matter   # noqa: PLC0415
+
+    return card_front_matter(project_id, module, flow_id, doc_type, code, title)
 
 
 def _work_plan_body(project_id: str) -> tuple[str, str]:
@@ -126,21 +172,34 @@ def _work_plan_body(project_id: str) -> tuple[str, str]:
     return wp.dumps(body), wp.derived_title(body, cs.DEFAULT_LOCALE)
 
 
-def _write_file(project_id: str, flow_id: str, module: str, code: str, slot: str, body: str) -> Optional[str]:
-    """The document file (storage-relative), or None when it cannot be written (v0.1 precedent:
-    the row is still registered and ``regenerate`` recovers the file)."""
-    from modules.flow_gate.storage import paths as storage_paths   # noqa: PLC0415
+def _write_file(project_id: str, flow_id: str, module: str, code: str, slot: str, body: str,
+                node_key: str) -> str:
+    """Only return a storage-relative path after its file was successfully written."""
+    from modules.flow_gate.storage import paths as storage_paths
+    from modules.flow_gate.db.group_events import insert_group_event
 
     try:
         path = storage_paths.document_path(project_id=project_id, group_code=flow_id, doc_code=code,
                                            filename=f"{slot}.md", module=module,
                                            branch=repository.project_branch(project_id))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body, encoding="utf-8")
+        write_new_file(path, body.encode("utf-8"))
         return storage_paths.to_storage_relative(path, project_id)
-    except Exception:  # noqa: BLE001
+    except (StorageUnwritable, OSError) as exc:
+        error = exc if isinstance(exc, StorageUnwritable) else StorageUnwritable(exception=type(exc).__name__)
+        error.params.update(node_key=node_key, slot=slot)
         _log.warning("card document file not written flow=%s code=%s", flow_id, code, exc_info=True)
-        return None
+        reason = error.exception
+        note = json.dumps({"flow_id": flow_id, "code": code, "slot": slot, "exception": reason}, ensure_ascii=False)
+        def record_failure():
+            insert_group_event(flow_id, "doc_storage_write_failed", reason=reason, note=note)
+        if not after_rollback(record_failure):
+            try:
+                record_failure()
+            except Exception:
+                _log.warning("card storage failure event not written", exc_info=True)
+        if error is exc:
+            raise
+        raise error from exc
 
 
 # ── review history counts (flowgate.v02.0056 T#3) ────────────────────────────

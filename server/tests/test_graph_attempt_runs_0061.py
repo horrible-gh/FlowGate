@@ -78,7 +78,8 @@ def db(monkeypatch):
             dispatch_mention_id TEXT, dispatch_error_code TEXT, stage TEXT, instruction_doc_id TEXT,
             result_event_floor INTEGER, updated_at TEXT);
     """)
-    for version in ("151_graph_run_state_attempts.sql", "152_graph_attempt_runs.sql"):
+    # 0064 T-B4d: 154 adds the token map kind run_store.map_token writes (DB0007 §2.2.1).
+    for version in ("151_graph_run_state_attempts.sql", "152_graph_attempt_runs.sql", "154_graph_run_token_map_kind.sql"):
         store.db.executescript((MIGRATIONS / "sqlite" / version).read_text(encoding="utf-8"))
     store._execute("INSERT INTO graph_runs(run_id,group_id,status,run_mode,step_node_keys) "
                    "VALUES('run','flow','running','step','[\"node\"]')")
@@ -281,7 +282,7 @@ def test_expired_recovery_requires_termination_then_invalidates_and_reschedules(
     eid = request(db)
     ledger.acquire(eid, "ai")
     db._execute("UPDATE graph_attempt_runs SET lease_expires_at=?", [PAST])
-    run_store.map_token("token", "run", "node", "result")
+    run_store.map_token("token", "run", "node", "result", map_kind=run_store.MAP_ATTEMPT)
     monkeypatch.setattr(ai_invoke_service, "get_run_record", lambda _: None)
     monkeypatch.setattr(execution.ai_invoke_runs, "get", lambda _: {"status": "finished"} if ended else None)
     reclaim = Mock()

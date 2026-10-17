@@ -26,6 +26,7 @@
 // The response is the documents row plus workflow / review extras; only the fields below are
 // taken, snake_case -> camelCase. The v0.1 response shape is not changed.
 import { getRequest, patchRequest } from '@shared/api'
+import { normalizeApiInput } from '@shared/apiErrors'
 import { documentErrorOf } from '../documentError'
 
 const API = '/api/v1'
@@ -46,6 +47,8 @@ export interface DocumentRecord {
   readonly rejectionReason: string | null
   readonly supersededBy: string | null
   readonly updatedAt: string | null
+  readonly isEditable?: boolean
+  readonly groupDisposed?: boolean
 }
 
 type Raw = Record<string, unknown>
@@ -71,6 +74,8 @@ export function toDocumentRecord(raw: unknown): DocumentRecord {
     rejectionReason: text(row.rejection_reason),
     supersededBy: text(row.superseded_by),
     updatedAt: text(row.updated_at),
+    ...(typeof row.is_editable === 'boolean' ? { isEditable: row.is_editable } : {}),
+    ...(typeof row.group_disposed === 'boolean' ? { groupDisposed: row.group_disposed } : {}),
   }
 }
 
@@ -161,6 +166,8 @@ export interface DocumentContent {
   readonly content: string
   /** The file is not written yet (the read answered 404). */
   readonly missing: boolean
+  readonly state?: 'readable' | 'unreadable'
+  readonly reason?: 'file_path_missing' | 'file_not_found' | 'path_unresolved'
 }
 
 /** Reads a document's body. A missing file is an empty body; other errors are thrown as they are. */
@@ -170,7 +177,13 @@ export async function documentContentRead(docId: string): Promise<DocumentConten
     const data = response.data as { content?: unknown } | null
     return { docId, content: typeof data?.content === 'string' ? data.content : '', missing: false }
   } catch (error) {
-    if (documentErrorOf(error).kind === 'not_found') return { docId, content: '', missing: true }
+    if (documentErrorOf(error).kind === 'not_found') {
+      const reason = normalizeApiInput(error).data.reason
+      if (reason === 'file_path_missing' || reason === 'file_not_found' || reason === 'path_unresolved') {
+        return { docId, content: '', missing: true, state: 'unreadable', reason }
+      }
+      return { docId, content: '', missing: true }
+    }
     throw error
   }
 }

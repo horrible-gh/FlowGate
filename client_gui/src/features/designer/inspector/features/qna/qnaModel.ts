@@ -22,6 +22,10 @@
 // flowgate.v02.0063 — a question is answered on its document, not on the Graph: a confirmed revision view
 // answers, asks and requests as the draft view does. A Flow whose answers stay closed (ownership conflict,
 // disposed group) does not show the question line, the answer form or the AI line at all.
+// flowgate.v02.0064 T-B5 (L0005 2.18, P0006 §5.2·§6.4) — who answered is one of four classes plus unknown:
+// a person (by the server's `author_name`), an AI with its recorded provider, an AI with a run id only
+// (실행 기록 연결 안 됨) and an AI with no run evidence (외부/미확인). The list shows the side; the ↗ window adds
+// the answer time and the run id when there is one. The item's `responder` is never read for this.
 import type { InspectorReadOnly } from '../../inspectorTarget'
 
 /** The parts of a question the rules read (the `@/features/document` QaItem). */
@@ -41,12 +45,18 @@ export interface QnaAnswerFacts {
   readonly id: number | null
   readonly body: string
   readonly authorKind: string
+  /** The person author's name the server sent (`author_name`); null / absent for an AI or unknown person. */
+  readonly authorName?: string | null
   readonly selectedOptionIds: readonly string[]
   readonly provider: QnaProviderFacts | null
+  /** When the answer was registered (`created_at`). */
+  readonly createdAt?: string | null
 }
 
 export interface QnaProviderFacts {
   readonly providerName: string | null
+  readonly providerId?: string | null
+  readonly runId?: string | null
 }
 
 export type QnaOperation = 'read' | 'answer' | 'ask' | 'ai_request'
@@ -100,24 +110,57 @@ export function qnaSorted<T extends Pick<QnaItemFacts, 'id' | 'seq' | 'askerKind
   )
 }
 
-/** Who asked or answered, as a message key (under `gui.inspector.qna.`) and its parameters. */
+/**
+ * Who asked or answered (flowgate.v02.0064 T-B5, P0006 §5.2): the class, its message key (under
+ * `gui.inspector.qna.`) and the key's parameters.
+ *   human           a person — `side.human_named` with the server's `author_name`, else `side.human`
+ *   ai_named        an AI whose provider name (or id) the server recorded
+ *   ai_run_only     an AI whose run id is recorded but not its provider (실행 기록 연결 안 됨)
+ *   ai_no_evidence  an AI with no run evidence at all (실행 정보 없음 — 외부/미확인)
+ *   unknown         any other author kind
+ */
+export type QnaSideClass = 'human' | 'ai_named' | 'ai_run_only' | 'ai_no_evidence' | 'unknown'
+
 export interface QnaSide {
   readonly kind: 'ai' | 'human' | 'unknown'
+  readonly sideClass: QnaSideClass
   readonly key: string
   readonly params: Readonly<Record<string, string>>
 }
 
 /**
- * The side of an asker / author kind: a person, an AI with its provider when the server knows the
- * run, or an AI whose run is not known (an external worker) — never a guessed provider name.
+ * The side of an asker / author kind (L0005 2.18 `qna_side`): only the answer's own `author_provider`
+ * is read — never the item's `responder` — and a provider name is never guessed.
  */
-export function qnaSide(kind: string, provider: QnaProviderFacts | null): QnaSide {
-  if (kind === 'human') return { kind: 'human', key: 'side.human', params: {} }
-  if (kind === 'ai') {
-    const name = provider?.providerName ?? null
-    return name ? { kind: 'ai', key: 'side.ai_named', params: { name } } : { kind: 'ai', key: 'side.ai', params: {} }
+export function qnaSide(kind: string, provider: QnaProviderFacts | null, authorName: string | null = null): QnaSide {
+  if (kind === 'human') {
+    return authorName
+      ? { kind: 'human', sideClass: 'human', key: 'side.human_named', params: { name: authorName } }
+      : { kind: 'human', sideClass: 'human', key: 'side.human', params: {} }
   }
-  return { kind: 'unknown', key: 'side.unknown', params: { kind } }
+  if (kind === 'ai') {
+    const name = provider?.providerName || provider?.providerId || null
+    if (name) return { kind: 'ai', sideClass: 'ai_named', key: 'side.ai_named', params: { name } }
+    if (provider?.runId) return { kind: 'ai', sideClass: 'ai_run_only', key: 'side.ai_run_only', params: {} }
+    return { kind: 'ai', sideClass: 'ai_no_evidence', key: 'side.ai_no_evidence', params: {} }
+  }
+  return { kind: 'unknown', sideClass: 'unknown', key: 'side.unknown', params: { kind } }
+}
+
+/**
+ * What the answer's detail (the ↗ window) shows beside who answered (P0006 §5.2): when it was
+ * answered, and the AI run id when the server recorded one. The list shows the side only.
+ */
+export interface QnaAnswerDetail {
+  readonly answeredAt: string | null
+  readonly runId: string | null
+}
+
+export function qnaAnswerDetail(answer: Pick<QnaAnswerFacts, 'authorKind' | 'provider' | 'createdAt'>): QnaAnswerDetail {
+  return {
+    answeredAt: answer.createdAt ?? null,
+    runId: answer.authorKind === 'ai' ? answer.provider?.runId ?? null : null,
+  }
 }
 
 export interface QnaAnswerView {
@@ -126,6 +169,7 @@ export interface QnaAnswerView {
   readonly side: QnaSide
   /** Labels of the options this answer picked. */
   readonly picked: readonly string[]
+  readonly detail: QnaAnswerDetail
 }
 
 export interface QnaItemView {
@@ -155,8 +199,9 @@ export function qnaItemView(item: QnaItemFacts): QnaItemView {
     answers: item.answers.map((answer, index) => ({
       key: answer.id === null ? `i${index}` : `a${answer.id}`,
       body: answer.body,
-      side: qnaSide(answer.authorKind, answer.provider),
+      side: qnaSide(answer.authorKind, answer.provider, answer.authorName ?? null),
       picked: answer.selectedOptionIds.flatMap((id) => labels.get(id) ?? []),
+      detail: qnaAnswerDetail(answer),
     })),
     answerable: state !== 'answered',
   }

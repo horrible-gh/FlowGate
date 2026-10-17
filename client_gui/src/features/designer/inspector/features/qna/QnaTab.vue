@@ -24,7 +24,10 @@
        says the AI answer is awaited once the run started, and a refusal is an amber ! icon beside the
        button with the reason as its tooltip. A person still answers directly, as before.
        flowgate.v02.0063 — no reason sentence under a closed form; a Flow whose answers stay closed shows
-       no question line, answer form or AI line (qnaAvailability `visible`). -->
+       no question line, answer form or AI line (qnaAvailability `visible`).
+       flowgate.v02.0064 T-B5 (P0006 §5.2·§6.4) — who answered reads one of four classes (person by name /
+       AI · provider / AI run not linked / AI no run information) plus unknown; the list shows the side only,
+       the window's answer adds the answer time and the run id when there is one. -->
   <div class="inspector-qna" data-test="inspector-qna" :data-status="status">
     <div v-if="availability.ask.visible" class="inspector-qna-ask" data-test="qna-ask">
       <Input
@@ -87,7 +90,7 @@
                   <span data-test="qna-item-asker" :data-side="item.asker.kind">{{ sideText(item.asker) }}</span>
                   <template v-if="lastAnswerOf(item)">
                     <span class="inspector-qna-sep" aria-hidden="true">·</span>
-                    <span class="inspector-qna-last" data-test="qna-answer" :data-side="lastAnswerOf(item)!.side.kind">
+                    <span class="inspector-qna-last" data-test="qna-answer" :data-side="lastAnswerOf(item)!.side.kind" :data-side-class="lastAnswerOf(item)!.side.sideClass">
                       <span aria-hidden="true">↳</span>
                       <span class="inspector-qna-last-body" data-test="qna-answer-body">{{ lastAnswerOf(item)!.body }}</span>
                       <span v-if="lastAnswerOf(item)!.picked.length" class="inspector-qna-by" data-test="qna-answer-picked">{{ t(k('picked'), { labels: lastAnswerOf(item)!.picked.join(', ') }) }}</span>
@@ -211,8 +214,10 @@
           <p class="inspector-qna-text" data-test="qna-window-body">{{ windowItem(win.id)!.body }}</p>
 
           <ul v-if="windowItem(win.id)!.answers.length" class="inspector-qna-answers">
-            <li v-for="answer in windowItem(win.id)!.answers" :key="answer.key" data-test="qna-window-answer" :data-side="answer.side.kind">
-              <span class="inspector-qna-sub">{{ t(k('answered_by'), { side: sideText(answer.side) }) }}</span>
+            <li v-for="answer in windowItem(win.id)!.answers" :key="answer.key" data-test="qna-window-answer" :data-side="answer.side.kind" :data-side-class="answer.side.sideClass">
+              <span class="inspector-qna-sub" data-test="qna-window-answer-side">{{ t(k('answered_by'), { side: sideText(answer.side) }) }}</span>
+              <span v-if="answer.detail.answeredAt" class="inspector-qna-sub" data-test="qna-window-answer-at">{{ t(k('detail.answered_at'), { at: formatAt(answer.detail.answeredAt) }) }}</span>
+              <span v-if="answer.detail.runId" class="inspector-qna-sub" data-test="qna-window-answer-run">{{ t(k('detail.run_id'), { runId: answer.detail.runId }) }}</span>
               <span v-if="answer.picked.length" class="inspector-qna-sub">{{ t(k('picked'), { labels: answer.picked.join(', ') }) }}</span>
               <p class="inspector-qna-text">{{ answer.body }}</p>
             </li>
@@ -306,7 +311,7 @@ const props = defineProps<{
   target: InspectorTarget
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const k = (key: string) => `gui.inspector.qna.${key}`
 
@@ -506,6 +511,12 @@ const readOnlyReason = computed(() => {
 
 function sideText(side: QnaSide): string {
   return t(k(side.key), side.params)
+}
+
+/** The answer time of the window's answer detail (0064 T-B5), in the UI locale; the raw value if unreadable. */
+function formatAt(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale.value)
 }
 
 const lastAnswerOf = (item: QnaItemView): QnaAnswerView | null => item.answers[item.answers.length - 1] ?? null

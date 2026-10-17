@@ -600,31 +600,45 @@ def resolve_storage_path(
       ④ branch-segment drift (absorbs _fallback_file_path).
     Returns None when nothing resolves to a file inside the allowed roots.
     """
+    return locate_storage_path(stored, project_id, branch)[0]
+
+
+def locate_storage_path(stored: str, project_id: Optional[str] = None, branch: str = "main"):
+    """Return (path, state), preserving the legacy resolver's candidate order."""
+    any_inside = False
+    for candidate, inside in storage_path_candidates(stored, project_id, branch):
+        if inside:
+            any_inside = True
+            if candidate.is_file():
+                return candidate, "readable"
+    return None, "file_not_found" if any_inside else "path_unresolved"
+
+
+def storage_path_candidates(stored: str, project_id: Optional[str] = None, branch: str = "main"):
+    """Yield (resolved path, inside allowed roots) in the existing reader's order.
+
+    Identity checks also need candidates outside the read jail. Keep this lazy so
+    a successful primary read never evaluates the fallback or changes its result.
+    """
     if not stored:
-        return None
+        return
     s = stored.strip().replace("\\", "/")
     root = get_storage_root(project_id).resolve()
-
     if s.startswith("/storage/"):
         cand = root / s[len("/storage/"):]
     elif Path(s).is_absolute() or _DRIVE_RE.match(s):
         cand = Path(s)
     else:
         cand = root / s
-
     cand = cand.resolve(strict=False)
-    if _within_allowed_roots(cand, project_id) and cand.is_file():
-        return cand
-
+    yield cand, _within_allowed_roots(cand, project_id)
     fb = _apply_branch_segment(s, branch)
     if fb:
         fcand = (
             Path(fb) if (Path(fb).is_absolute() or _DRIVE_RE.match(fb)) else root / fb
         ).resolve(strict=False)
-        if _within_allowed_roots(fcand, project_id) and fcand.is_file():
-            return fcand
+        yield fcand, _within_allowed_roots(fcand, project_id)
 
-    return None
 
 
 def resolve_storage_dir(stored: str, project_id: Optional[str] = None) -> Optional[Path]:

@@ -45,7 +45,7 @@ def result_db(db, monkeypatch, tmp_path):
     db._execute("UPDATE graph_node_attempts SET input_commit=?, input_source='integration_head' "
                 "WHERE attempt_id=?", [BASE, db.attempt])
     db._execute("INSERT INTO tokens VALUES ('author','new',NULL)")
-    run_store.map_token("author", "run", "node", "result")
+    run_store.map_token("author", "run", "node", "result", map_kind=run_store.MAP_AI_START)
     db._execute("INSERT INTO workflow_events VALUES (1,'flow','token_consumed',?)",
                 [json.dumps({"token_id": "author", "doc_id": "doc"})])
     monkeypatch.setattr(tr_commit_ledger, "get_store", lambda: db)
@@ -109,7 +109,7 @@ def test_non_graph_approval_retains_existing_commit_and_payload(result_db, monke
 def test_review_token_does_not_reattribute_authored_document(result_db):
     other = run_store.open_attempt("run", "another", 1)
     result_db._execute("INSERT INTO tokens VALUES ('reviewer','review','ai')")
-    run_store.map_token("reviewer", "run", "another")
+    run_store.map_token("reviewer", "run", "another", map_kind=run_store.MAP_ATTEMPT)
     result_db._execute("INSERT INTO workflow_events VALUES (2,'flow','token_consumed',?)",
                        [json.dumps({"token_id": "reviewer", "doc_id": "doc"})])
     binding = run_store.registered_document_attempt("flow", "doc")

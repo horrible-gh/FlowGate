@@ -9,6 +9,7 @@ from datetime import date, datetime
 
 from . import db
 from . import linter
+from .documents.live_root import conversion_mark
 
 
 STALE_OPEN_HOURS = 72
@@ -813,19 +814,29 @@ def build_chain_tree(
     docs: list[dict],
     current_doc_id: str,
 ) -> tuple[list[dict], list[str]]:
-    """Return BFS-ordered chain node list based on L001 §4-3."""
+    """Return BFS-ordered chain node list based on L001 §4-3.
+
+    0064 T#4 (L0005 2.10 P9): a document made by a succession conversion (``meta.converted_from``) is no
+    root candidate; its tree parent is the document it succeeded, so the chain keeps one root.
+    """
     warnings: list[str] = []
     if not docs:
         return [], warnings
 
     doc_ids = {d["doc_id"] for d in docs}
 
+    def tree_parent(d: dict) -> str:
+        parent = (d.get("target_id") or "").strip()
+        if parent:
+            return parent
+        return str((conversion_mark(d, "converted_from") or {}).get("doc_id") or "").strip()
+
     # 1. Find root
-    root_candidates = [d for d in docs if not (d.get("target_id") or "").strip()]
+    root_candidates = [d for d in docs if not tree_parent(d)]
     if not root_candidates:
         root_candidates = [
             d for d in docs
-            if (d.get("target_id") or "").strip() not in doc_ids
+            if tree_parent(d) not in doc_ids
         ]
     if not root_candidates:
         root_candidates = sorted(docs, key=lambda d: d.get("created_at") or "")
@@ -838,7 +849,7 @@ def build_chain_tree(
     # 2. Build children map (created_at ASC)
     children_map: dict[str, list[dict]] = {}
     for doc in docs:
-        pid = (doc.get("target_id") or "").strip()
+        pid = tree_parent(doc)
         children_map.setdefault(pid, []).append(doc)
     for children in children_map.values():
         children.sort(key=lambda d: d.get("created_at") or "")
@@ -863,7 +874,7 @@ def build_chain_tree(
             result.append({
                 "doc_id": nid,
                 "type": node.get("type", ""),
-                "parent_id": (node.get("target_id") or "").strip() or None,
+                "parent_id": tree_parent(node) or None,
                 "title": node.get("title", ""),
                 "status": node.get("status", ""),
                 "is_current": nid == current_doc_id,

@@ -7,6 +7,14 @@ saved / auto positions -> collapse -> response. A Graph Flow's revision view car
 its Flow draws the revision it pinned (P0008 S5-2 may pin one older than the latest), so
 ``view.revision_no`` is the run's; with no such run the latest run is shown only when it ran
 the latest revision.
+
+0064 T-B4b (P0006 §4.2.1): every Graph / draft node carries its card's ``title_state`` (the Flow's states read
+once per request, title and version from one row); a free document or v0.1 slot node carries null. The steps that
+may take the Flow guard (a run reconcile, ``ensure_identity``) come first; the response read after them — ownership,
+definition, title states, run and positions — is one read unit (``flow_guard.with_read_snapshot``, DB0007 Q1).
+
+0064 T-B4d (0062 L0006 2.5): ``title_views`` hands the AI naming judgement every view a card is drawn in, read the way
+the Canvas reads them but with no step that writes, so it runs inside the Flow guard.
 """
 from __future__ import annotations
 
@@ -24,11 +32,18 @@ from modules.flow_gate.graph_workflow.projection.flow_snapshot import (
 )
 from modules.flow_gate.graph_workflow.projection.graph_projector import GraphView, add_draft, project_graph
 from modules.flow_gate.graph_workflow.projection.legacy_projector import Projection, project
-from modules.flow_gate.graph_workflow.store import assignment_store, definition_store, layout_store, run_store
+from modules.flow_gate.graph_workflow.store import (
+    assignment_store,
+    definition_store,
+    layout_store,
+    run_store,
+    title_store,
+)
 
 from . import card_document_ports
 from .engine_router import block, confirm_block_reason, judge
 from .errors import FlowNotFound, GraphApiError
+from .flow_guard import with_read_snapshot
 from .identity_keeper import ensure_identity, keys_from_record
 
 VIEW_MODES = ("revision", "draft")
@@ -50,7 +65,8 @@ def follow_supersede(flow_id: str, docs: dict, doc_id: Optional[str]) -> Optiona
 
 
 class _Definition:
-    """The Flow's Graph definition state read once per request."""
+    """The Flow's Graph definition state read once per request, with the card title states, in the caller's
+    transaction (the Canvas read unit, or the Flow guard of ``current_node_keys``)."""
 
     def __init__(self, flow_id: str, docs: dict):
         self.draft = definition_store.draft(flow_id)
@@ -58,6 +74,7 @@ class _Definition:
         self.binding = assignment_store.root_binding(flow_id)
         self.bound_doc_id = follow_supersede(flow_id, docs, (self.binding or {}).get("doc_id"))
         self.cards = card_document_ports.card_view(flow_id, docs)     # flowgate.v02.0053 T#1
+        self.titles = title_store.states(flow_id)                     # 0064 T-B4b
         self._flow_id = flow_id
         self._revisions: dict[int, Optional[dict]] = {}
 
@@ -78,7 +95,7 @@ class _Definition:
         return GraphView(mode=mode, nodes=nodes, edges=list((record or {}).get("edges") or []),
                          bound_node_key=bound_key, bound_doc_id=self.bound_doc_id if bound_key else None,
                          card_docs={n["node_key"]: self.cards.lines_for(n) for n in nodes},
-                         hidden_doc_ids=frozenset(self.cards.hidden_doc_ids))
+                         hidden_doc_ids=frozenset(self.cards.hidden_doc_ids), title_states=self.titles)
 
     def graph_block(self, state: str) -> dict:
         draft = None
@@ -153,6 +170,12 @@ def read_canvas(group: dict, user_id: Optional[str], *, view: Optional[str], col
         from .result_binder import reconcile_if_needed       # noqa: PLC0415 — see _flow_run
         reconcile_if_needed(flow_id, project_id)                 # L0009 §2.6.8 before a run read
     ident = ensure_identity(flow_id, project_id, user_id, client_id)
+    return with_read_snapshot(lambda: _read(group, user_id, ident, view, collapse))
+
+
+def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], collapse: Optional[str]) -> dict:
+    """The Canvas response, read in one snapshot after the identity step (the definition with its title states)."""
+    flow_id, project_id = group["group_id"], group.get("project_id")
     snap = ident.snapshot
     own = judge(flow_id, snap.sequence)
     d = _Definition(flow_id, snap.docs_by_id)
@@ -161,6 +184,8 @@ def read_canvas(group: dict, user_id: Optional[str], *, view: Optional[str], col
     proj = _project(flow_id, own.state, snap, ident.row_keys, ident.protected, d, mode,
                     lambda ids: lookup_documents(ids), run)
     _place(proj, layout_store.positions(flow_id))
+    for node in proj.nodes:
+        node.setdefault("title_state", None)                      # free documents, v0.1 slots (P0006 §4.2.1)
     applied, ignored = cm.parse_collapse(collapse)
     hidden_counts = _collapse(proj, applied)
     view_block = None
@@ -198,6 +223,20 @@ def current_node_keys(flow_id: str) -> set[str]:
     stopped run pinned), so a node moved in any of them is stored. Reads the recorded mapping only
     (never rematches): safe inside a Flow guard.
     """
+    return {node["node_key"] for node in _canvas_nodes(flow_id)}
+
+
+def free_node_keys(flow_id: str) -> set[str]:
+    """The Canvas nodes that are no Graph / draft node in any view: free documents and v0.1 slots (0064 T-B4b,
+    ``node_title_not_supported``). A Graph node only a run's pinned revision still draws is not one of them, though the
+    draft and the latest revision dropped it (L0006 2.7 step 2: ``node_not_found``). Safe inside a Flow guard."""
+    nodes = _canvas_nodes(flow_id)
+    graph = {node["node_key"] for node in nodes if node.get("graph_node") is not None}
+    return {node["node_key"] for node in nodes if node.get("graph_node") is None} - graph
+
+
+def _canvas_nodes(flow_id: str) -> list[dict]:
+    """The nodes of every view ``current_node_keys`` counts, as projected (a key may come once per view)."""
     snap = read_snapshot(flow_id)
     protected = protected_ids(snap.rows)
     row_keys = keys_from_record(snap.rows, layout_store.identity_record(flow_id), protected)
@@ -209,16 +248,36 @@ def current_node_keys(flow_id: str) -> set[str]:
     elif own.state in ("graph", "conflict"):
         modes = [m for m, present in (("revision", d.latest_no is not None), ("draft", d.draft is not None))
                  if present] or [None]
-    keys: set[str] = set()
+    nodes: list[dict] = []
     for mode in modes:
-        proj = _project(flow_id, own.state, snap, row_keys, protected, d, mode)
-        keys |= {node["node_key"] for node in proj.nodes}
+        nodes += _project(flow_id, own.state, snap, row_keys, protected, d, mode).nodes
     active = run_store.active_run(flow_id) if "revision" in modes else None
     if active is not None and int(active["revision_no"]) != d.latest_no:
         pinned = {"revision_no": int(active["revision_no"]), "node_runs": []}
-        proj = _project(flow_id, own.state, snap, row_keys, protected, d, "revision", run=pinned)
-        keys |= {node["node_key"] for node in proj.nodes}
-    return keys
+        nodes += _project(flow_id, own.state, snap, row_keys, protected, d, "revision", run=pinned).nodes
+    return nodes
+
+
+def title_views(flow_id: str) -> tuple[list[GraphView], dict]:
+    """0062 L0006 2.5 ``guard_safe_views``: the draft, the latest revision and the revision of the run the Canvas shows
+    (with its node runs), and the Flow's documents by id. Reads only (no reconcile, no identity record): safe inside a
+    Flow guard. A bound root that is not alive shows no document, as on the Canvas."""
+    snap = read_snapshot(flow_id)
+    own = judge(flow_id, snap.sequence)
+    d = _Definition(flow_id, snap.docs_by_id)
+    by_id = {doc["doc_id"]: doc for doc in snap.documents if doc.get("doc_id")}
+    views = [d.view("draft")] if d.draft is not None else []
+    if own.state in ("graph", "conflict") and d.latest_no is not None:
+        views.append(d.view("revision"))
+        run = _flow_run(flow_id, d.latest_no)
+        if run is not None:
+            shown = d.view("revision", run["revision_no"])
+            shown.node_runs = {r["node_key"]: dict(r) for r in run["node_runs"]}
+            views.append(shown)
+    for view in views:
+        if view.bound_doc_id and not cm.is_alive(by_id.get(view.bound_doc_id) or {}, flow_id):
+            view.bound_doc_id = None
+    return views, by_id
 
 
 def _place(proj: Projection, saved: dict) -> None:

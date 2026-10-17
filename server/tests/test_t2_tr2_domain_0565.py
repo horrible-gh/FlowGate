@@ -151,6 +151,10 @@ def test_single_writer_revision_cas_never_touches_file_on_stale_request(tmp_path
     monkeypatch.setattr(tr2, "resolve_source_root", lambda *_: root)
     monkeypatch.setattr(tr2, "canonical_path_for_doc", lambda _: path)
     monkeypatch.setattr(tr2.storage_paths, "to_storage_relative", lambda *_: str(path))
+    from modules.flow_gate.storage import body as body_storage
+    evidence = []
+    monkeypatch.setattr(body_storage, "record_body_saved",
+                        lambda doc, **fields: evidence.append((doc["doc_id"], fields)))
     saved = tr2.save(doc_id, _body(), actor="tester", expected_revision=0)
     first_bytes = path.read_bytes()
     assert saved["new_revision"] == row["revision_no"] == 1
@@ -160,3 +164,5 @@ def test_single_writer_revision_cas_never_touches_file_on_stale_request(tmp_path
     assert error.value.code == "tr2_spec_changed"
     assert row["revision_no"] == 1
     assert path.read_bytes() == first_bytes
+    assert evidence == [(doc_id, {"source": "tr2_save", "file_path": str(path),
+                                 "size": len(first_bytes)})]

@@ -21,6 +21,7 @@ from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import questions as db_questions
 from modules.flow_gate.db import question_items as db_question_items
 from modules.flow_gate.db import answers as db_answers
+from modules.flow_gate.db import users as db_users
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.api.v1.events.event_types import EventType
@@ -1075,6 +1076,7 @@ def get_qa_detail(doc_id: str) -> dict:
     into ``asker_provider``/``answer.provider`` (0582 T0005 §D) — the same
     {ai_run_id, ai_provider_id, ai_provider_name} shape every other AI-provenance
     surface uses, rather than exposing the raw column names to the API.
+    Every answer also carries ``author_name`` (``_attach_author_names``, flowgate.v02.0064 T-B5).
     """
     container = db_questions.get_container_by_doc(doc_id)
     if container is None:
@@ -1084,6 +1086,7 @@ def get_qa_detail(doc_id: str) -> dict:
     result = dict(container)
     result["doc_id"] = doc_id
     result["items"] = []
+    all_answers: list[dict] = []
     for item in items:
         item_dict = dict(item)
         item_dict["options"] = _parse_options(item)
@@ -1104,9 +1107,33 @@ def get_qa_detail(doc_id: str) -> dict:
             )
             answer_dict["author_provenance"] = _answer_provenance_view(answer_dict)
             answers.append(answer_dict)
+            all_answers.append(answer_dict)
         item_dict["answers"] = answers
         result["items"].append(item_dict)
+    _attach_author_names(all_answers)
     return result
+
+
+def _attach_author_names(answers: list[dict]) -> None:
+    """Add ``author_name`` to every answer (flowgate.v02.0064 T-B5, P0006 §5.1, DB0007 §2.6).
+
+    A person's answer gets ``users.username`` of its ``author_id`` (there is no display-name
+    column), looked up once for the whole list; an AI answer, a person not found (a removed
+    user) or a failed lookup reads null — the client then shows the generic "person" label.
+    """
+    human_ids = [a.get("author_id") for a in answers if a.get("author_kind") == "human" and a.get("author_id")]
+    names: dict[str, str] = {}
+    if human_ids:
+        try:
+            names = db_users.usernames_by_ids(human_ids)
+        except Exception:
+            logger.warning("[q] answer author name lookup failed", exc_info=True)
+            names = {}
+    for answer_dict in answers:
+        author_id = answer_dict.get("author_id")
+        answer_dict["author_name"] = (
+            names.get(author_id) if answer_dict.get("author_kind") == "human" and author_id else None
+        )
 
 
 def get_answers_for_document(doc_id: str) -> list[dict]:

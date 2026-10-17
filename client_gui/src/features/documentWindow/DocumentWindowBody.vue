@@ -7,12 +7,12 @@
        Viewer passed in as its fallback, the way the v0.1 TestDocumentBody kept the Markdown body. -->
   <div class="document-window-body" data-test="document-window-body" :data-view="view">
     <WorkPlanBody v-if="view === 'work_plan'" ref="special" :doc-id="docId">
-      <template #fallback><MdViewer ref="viewer" :doc-id="docId" :copy-target="copyTarget" /></template>
+      <template #fallback><MdViewer ref="viewer" :doc-id="docId" :copy-target="copyTarget" :can-reenter="canReenter" @reenter="emit('reenter')" /></template>
     </WorkPlanBody>
     <TestDocumentBody v-else-if="view === 'test'" ref="special" :doc-id="docId" :title="title">
-      <template #fallback><MdViewer ref="viewer" :doc-id="docId" :copy-target="copyTarget" /></template>
+      <template #fallback><MdViewer ref="viewer" :doc-id="docId" :copy-target="copyTarget" :can-reenter="canReenter" @reenter="emit('reenter')" /></template>
     </TestDocumentBody>
-    <MdViewer v-else ref="viewer" :doc-id="docId" :copy-target="copyTarget" />
+    <MdViewer v-else ref="viewer" :doc-id="docId" :copy-target="copyTarget" :can-reenter="canReenter" @reenter="emit('reenter')" />
   </div>
 </template>
 
@@ -31,7 +31,10 @@ const props = defineProps<{
   title?: string | null
   /** The document window's titlebar hosts the Markdown copy action. */
   copyTarget?: HTMLElement | null
+  canReenter?: boolean
 }>()
+
+const emit = defineEmits<{ reenter: [] }>()
 
 const view = computed(() => documentBodyView(props.typeCode))
 

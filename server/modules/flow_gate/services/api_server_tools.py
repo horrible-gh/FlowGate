@@ -127,9 +127,12 @@ SCHEMAS = {
     },["snapshot_id","task_kind","command"]),
 }
 
+# 0064 T-B4d (P0006 §4.2.5): the card title candidate of a new / edit registration. The model sees a string; validate
+# never refuses it (``x-flowgate-lenient``), so no value of it fails a registration — the title service judges it.
+NODE_TITLE_SCHEMA = {"type": "string", "x-flowgate-lenient": True}
 REGISTER_SCHEMAS = {
-    "new": _obj({"title": {"type": "string"}, "content": {"type": "string", "minLength": 1}, "doc_type": {"type": "string"}}, ["content", "doc_type"]),
-    "edit": _obj({"content": {"type": "string", "minLength": 1}, "edit_reason": {"type": "string", "enum": ["rejected", "qna_followup", "user_comment", "worker_self"]}, "rejection_response": {"type": "string"}, "rejection_id": {"type": "string"}, "rejection_review_id": {"type": "integer"}}, ["content", "edit_reason"]),
+    "new": _obj({"title": {"type": "string"}, "content": {"type": "string", "minLength": 1}, "doc_type": {"type": "string"}, "node_title": NODE_TITLE_SCHEMA}, ["content", "doc_type"]),
+    "edit": _obj({"content": {"type": "string", "minLength": 1}, "edit_reason": {"type": "string", "enum": ["rejected", "qna_followup", "user_comment", "worker_self"]}, "rejection_response": {"type": "string"}, "rejection_id": {"type": "string"}, "rejection_review_id": {"type": "integer"}, "node_title": NODE_TITLE_SCHEMA}, ["content", "edit_reason"]),
     # 0474 T0007 §1.1: force_encoding_reason removed -- review never accepts a
     # model-authored corruption bypass, so the schema no longer exposes the field.
     "review": _obj({"verdict": {"type": "string", "enum": ["pass", "issues", "hold"]}, "findings": {"type": "array", "items": _obj({"locus": {"type": "string"}, "note": {"type": "string"}})}, "comment": {"type": "string"}, "body_sha256": {"type": "string"}, "body_chars": {"type": "integer"}}, ["verdict"]),
@@ -154,6 +157,13 @@ DESCRIPTIONS["read_self_check"] = (
     "evidence; only TR edit and TR(new) workers may run or cancel Self-check."
 )
 DESCRIPTIONS["cancel_self_check"] = "Cancel a running run_self_check by self_check_run_id."
+# 0064 T-B4d (P0006 §4.2.5 ①): one tool shares the four scope schemas, so the description names the scopes.
+DESCRIPTIONS["register_document"] = (
+    "Register the document for this step. Optional node_title (new and edit scopes only; other scopes reject it): "
+    "a 20-30 character card title that tells at a glance what this work is; do not simply repeat the card kind name "
+    "(for example \"Research\" or \"Requirement\"). Only offered when your prompt asks for it. It never affects "
+    "whether the document registers."
+)
 DESCRIPTIONS["request_source_snapshot"] = "Retired (410). Use the live source tools."
 DESCRIPTIONS["access_source_snapshot"] = (
     "Read a legacy created Snapshot for historical compatibility only. New work uses the live source tools."
@@ -302,6 +312,8 @@ def open_conflict_counts(run: dict) -> tuple[int, int]:
 
 
 def validate(schema: dict, value: Any, path: str = "input") -> None:
+    if schema.get("x-flowgate-lenient"):
+        return                                  # 0064 T-B4d: no type / length / enum check (the name is allowlisted)
     if schema is READ_DOCUMENT_SCHEMA:
         normalize_read_document_input(value)
         return

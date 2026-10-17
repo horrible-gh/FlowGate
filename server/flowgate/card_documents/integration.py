@@ -7,6 +7,7 @@ composition root (``startup.py``) calls :func:`register` once at startup.
     card_view          Canvas read: each node's card lines, the documents drawn in a card
     on_result_bound    run step: a result bound to a node fills its line (``lines.adopt_result``)
     on_root_converted  R↔B root conversion: the line holding the root follows it
+    card_line_documents  AI start body precheck: the documents a card's lines show (``lines.card_line_doc_ids``)
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ def register() -> None:
     ports.register(ports.CARD_VIEW, lines.CardView)
     ports.register(ports.ON_RESULT_BOUND, lines.adopt_result)
     ports.register(ports.ON_ROOT_CONVERTED, lines.follow_root_conversion)
+    ports.register(ports.CARD_LINE_DOCUMENTS, lines.card_line_doc_ids)
 
 
 def unregister() -> None:

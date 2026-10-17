@@ -94,8 +94,10 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     state.canUndo = historyOf(flowId)?.canUndo() ?? false
     state.canRedo = historyOf(flowId)?.canRedo() ?? false
     // A save just refused: read the Flow again as stored (no note, no button — TR0020 rev4).
-    if (editor && refused(state.status) && !refused(before)) host.reread(flowId)
-    if (editor && !editor.busy()) host.settled?.(flowId)
+    const storageFailure = state.status === 'error' && state.errorCode === 'document_storage_unwritable'
+    if (editor && refused(state.status) && !refused(before) && !storageFailure) host.reread(flowId)
+    // Storage refusal saves nothing. Keep the local edit for a retry, including deferred reads.
+    if (editor && !editor.busy() && !storageFailure) host.settled?.(flowId)
   }
 
   function show(flowId: string, editor: DraftEditor) {

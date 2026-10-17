@@ -6,7 +6,11 @@
        flowgate.v02.0051 stage 2 — drawn as the v7 header 종류 배지 ▾ (0035 insp.js kindBadge): the badge
        itself is the trigger, its menu lists 📄 요구사항 / 🐞 버그 with ✓ on the current kind, and picking
        the other opens the confirmation. A switch that is not usable now shows the locked badge with the
-       reason as its hover text (v7 `.kind-badge.locked`). -->
+       reason as its hover text (v7 `.kind-badge.locked`).
+       flowgate.v02.0064 T#4 (P0006 §6.1): the confirmation follows the server's judgement — a number swap keeps
+       the short confirmation, a succession names the new document (or its expected number, fixed when the switch
+       runs), the child documents and that the original and its history stay. The link of a succeeded document to
+       the document it came from ("전환 전 문서") is not the switch's: features/kindSwitchOrigin, on every ownership. -->
   <div
     v-if="availability.switch.visible && to"
     class="inspector-kind-switch"
@@ -57,7 +61,7 @@
 
     <ConfirmDialog
       :open="confirmOpen"
-      :title="t(k('confirm.title'))"
+      :title="confirmTitle"
       :message="confirmMessage"
       :confirm-label="t(k('confirm.submit'))"
       :cancel-label="t(k('confirm.cancel'))"
@@ -88,7 +92,7 @@ const k = (key: string) => `gui.inspector.kindSwitch.${key}`
 
 const KINDS: readonly KindSwitchKind[] = ['R', 'B']
 
-const { availability, to, busy, failureKey, done, run, clearFailure } = useKindSwitch(() => props.target)
+const { availability, to, busy, failureKey, done, preview, run, clearFailure } = useKindSwitch(() => props.target)
 
 /** The current kind: the one the switch leaves; the document type when there is no switch. */
 const from = computed<KindSwitchKind | null>(() => {
@@ -107,9 +111,21 @@ const names = computed(() => ({
 /** `…0001-R` -> `0001-R`: the document number the switch changes. */
 const codeOf = (docId: string | null) => (docId ?? '').split('.').pop() ?? ''
 
+/** A succession judged by the server (the confirmation names the new document and the children). */
+const succession = computed(() => (preview.value?.decision === 'succession' ? preview.value : null))
+
+const confirmTitle = computed(() => t(k(succession.value ? 'confirm.succession.title' : 'confirm.title')))
+
 const confirmMessage = computed(() => {
   const fromCode = codeOf(props.target.docId)
-  const toCode = to.value ? fromCode.replace(/-[RB]$/i, `-${to.value}`) : fromCode
+  const judged = succession.value
+  if (judged) {
+    const newCode = codeOf(judged.newDocId)
+    const toCode = judged.newDocExact ? newCode : t(k('confirm.succession.expected'), { code: newCode })
+    return t(k('confirm.succession.body'), { ...names.value, from_code: fromCode, to_code: toCode, children: judged.childCount })
+  }
+  const swapped = preview.value?.decision === 'number_swap' && preview.value.newDocId ? codeOf(preview.value.newDocId) : null
+  const toCode = swapped ?? (to.value ? fromCode.replace(/-[RB]$/i, `-${to.value}`) : fromCode)
   return t(k('confirm.message'), { ...names.value, from_code: fromCode, to_code: toCode })
 })
 

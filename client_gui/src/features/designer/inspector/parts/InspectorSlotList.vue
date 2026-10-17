@@ -40,6 +40,7 @@
       :test-ids="line.testIds ?? null"
       :author="line.author ?? null"
       :blank="line.blank ?? false"
+      :body-state="line.bodyState"
       :data-slot="line.key ?? line.name"
       @open="open(line)"
     >
@@ -153,6 +154,7 @@ export interface InspectorSlotView {
   readonly kind?: 'document' | 'result'
   readonly name: string
   readonly id?: string | null
+  readonly bodyState?: string | null
   readonly empty?: boolean
   /** Why the line has no document (shown in the line); the common wording otherwise. */
   readonly emptyText?: string | null

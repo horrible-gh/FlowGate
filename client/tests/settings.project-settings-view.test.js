@@ -79,8 +79,10 @@ describe('ProjectSettingsView tabs', () => {
     const wrapper = mountProjectSettings();
 
     // Tab set has grown across groups (source-mode 0147, test-recipes 0152, git 0162/0186,
-    // ai 0164/0187) to 7 unconditional tabs; the removed doc-types/structure tabs stay gone.
-    expect(wrapper.findAll('.tab-nav-item')).toHaveLength(7);
+    // ai 0164/0187, TR Self-check, body diagnosis flowgate.v02.0064 T-B1d) to 9 unconditional tabs;
+    // the removed doc-types/structure tabs stay gone.
+    expect(wrapper.findAll('.tab-nav-item')).toHaveLength(9);
+    expect(wrapper.text()).toContain(i18n.global.t('settings.project.body_diagnosis.tab'));
     expect(wrapper.text()).toContain(i18n.global.t('settings.project.path'));
     expect(wrapper.text()).toContain(i18n.global.t('settings.project.project_settings_view.text_56'));
     expect(wrapper.text()).toContain(i18n.global.t('settings.project.messages'));
