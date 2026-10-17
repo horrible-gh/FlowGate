@@ -141,6 +141,34 @@ export interface ProjectGitBaseUntracked {
   total: number | null
 }
 
+/** One merge commit of the Base not on its remote yet (git/status `unpushed.merges[]`). */
+export interface ProjectGitUnpushedMerge {
+  // Short SHA.
+  mergeCommit: string
+  // null = the server could not map the merge to a group (`unmapped`).
+  groupId: string | null
+  subject: string | null
+  mergedAt: string | null
+  canUnmerge: boolean
+  blockedReason: string | null
+}
+
+/**
+ * What of the project Base is not on its remote (flowgate.v02.0066). Base only: a non-Base
+ * target's remote state is the group merge result read.
+ */
+export interface ProjectGitUnpushed {
+  // Unpushed merge commits / commits ahead of the remote. null whenever `measured` is false:
+  // an unmeasured Base is never read as "in sync" (0).
+  count: number | null
+  commitCount: number | null
+  measured: boolean
+  remoteBranchMissing: boolean | null
+  // Only meaningful while unmeasured; null otherwise.
+  localCommitCount: number | null
+  merges: ProjectGitUnpushedMerge[]
+}
+
 export interface ProjectGitStatus {
   enabled: boolean
   // The project's configured Base branch exactly as the server reports it, or null when it
@@ -152,12 +180,33 @@ export interface ProjectGitStatus {
   pending: ProjectGitPendingRow[]
   baseDirty: ProjectGitBaseDirty
   baseUntracked: ProjectGitBaseUntracked
+  // flowgate.v02.0066: Base against its remote. Left out (undefined) when the server does not
+  // send the field at all; null when it sends no number. Both read as "unknown", never 0.
+  aheadCount?: number | null
+  behindCount?: number | null
+  unpushed?: ProjectGitUnpushed | null
+}
+
+/**
+ * The scope floor a group's changes are measured from (flowgate.v02.0066): the group work base
+ * and the commit the comparison starts at. Each value is null when the server does not say.
+ */
+export interface GroupScopeFloor {
+  workBaseRef: string | null
+  scopeBaseSha: string | null
+  workBaseSha: string | null
+  workBaseSyncSha: string | null
+  workBaseState: string | null
 }
 
 export interface FlowChangeEntry {
   path: string
   // Raw git letter from the server: M / A / D / R / T / ... and '?' for untracked.
   status: string
+  // flowgate.v02.0066: line counts; left out when the server does not send them, null when
+  // it sends no number.
+  insertions?: number | null
+  deletions?: number | null
 }
 
 export interface FlowChangeSet {
@@ -167,6 +216,11 @@ export interface FlowChangeSet {
   // The branch the server actually compared against, or null when the answer did not say.
   baseBranch: string | null
   changes: FlowChangeEntry[]
+  // flowgate.v02.0066: left out when the server sends none of the floor fields.
+  floor?: GroupScopeFloor
+  // flowgate.v02.0066: how many uncommitted tool artifacts the server left out of the list
+  // (their paths are not kept). Left out when the server does not send the list.
+  toolArtifactCount?: number
 }
 
 export interface FlowDiffSide {
@@ -334,6 +388,12 @@ export interface FlowCanvasNode {
   nodeRun?: FlowCanvasNodeRun | null
   /** flowgate.v02.0053 T#5: the card's document lines (`card_documents`) of a Graph / draft node; absent elsewhere. */
   cardDocuments?: FlowCanvasCardDocument[]
+  /**
+   * flowgate.v02.0064 T#4 (P0006 §4.2.1 / §6.5): the node's card title state; null on a v0.1 free document / slot node
+   * and a v0.1 Flow. Absent when an older server sent none — read as null: its title cannot be edited and no version is
+   * compared.
+   */
+  titleState?: FlowCanvasTitleState | null
 }
 
 /**
@@ -344,20 +404,63 @@ export interface FlowCanvasCardDocument {
   /** requirement · delegation · plan · deploy · instruction · scenario · report. */
   slot: string
   docType: string | null
-  /** `human` (a person writes it) | `run` (a run fills it). */
+  /**
+   * `human` (a person writes it) | `run` (a run fills it) | `instruction_ai_or_human` (flowgate.v02.0056 O2: a
+   * run card's instruction line — its instruction AI or a person writes it).
+   */
   author: string | null
   docId: string | null
   title: string | null
   status: string | null
   docReviewStatus: string | null
+  /**
+   * flowgate.v02.0056 F2-2 (O3 0009-TR §4-1): the line's document has a body after its front matter (false
+   * without a document); absent when not sent. M and WP lines are always true (the v0.1 approval rule).
+   */
+  hasBody?: boolean
+  readonly bodyState?: string | null
+  /** flowgate.v02.0056 F2-2 (O3 §4-1): AI reviews of the line's document (`ai_review_history` length); absent when not sent. */
+  reviewCount?: number
+  /** flowgate.v02.0056 F2-2 (O3 §4-1): rejections with a reason (what the history window shows); absent when not sent. */
+  rejectionCount?: number
+  /** flowgate.v02.0056 F2-2 (O3 §4-1): reviewCount + rejectionCount — the history button's number; absent when not sent. */
+  historyCount?: number
 }
 
 /** P0008 §2.6 `node_run`: what the Inspector shows of a Graph node's run (status kept as the server sends it). */
 export interface FlowCanvasNodeRun {
+  /** Existing node_run.dispatch.error_code; no result is still an open card. */
+  dispatchErrorCode?: string | null
   status: string | null
   openedAt: string | null
   finishedAt: string | null
   resultDocId: string | null
+  /** flowgate.v02.0056 F2-1 (O1 0005-TR §4-2): the card waits for its approval; absent when not sent. */
+  awaitingApproval?: boolean
+  /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): `instruction` | `result` | null; absent when not sent. */
+  stage?: string | null
+  /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): the card run's instruction document; absent when not sent. */
+  instructionDocId?: string | null
+  /**
+   * flowgate.v02.0061 T#14: the node's attempt result integration (`pending` | `integrating` | `integrated` |
+   * `conflict` | `failed`, open key) and why; absent when not sent, null when the attempt has none.
+   */
+  integrationStatus?: string | null
+  integrationReason?: string | null
+  /** flowgate.v02.0061 T#14: the card is held (T#11 Hold); absent when not sent. */
+  hold?: boolean
+  /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
+  question?: boolean
+  /**
+   * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
+   * (`node_running`: open, or in review while its AI review works); absent when not sent.
+   */
+  nodeRunning?: boolean
+  /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
+  runningExecutionCount?: number
+  requestedExecutionCount?: number
+  /** flowgate.v02.0061 T#15: the node's current attempt (active, else last ended), null when none; absent when not sent. */
+  attemptId?: string | null
 }
 
 /** P0008 §2.6 `graph_node`: what a Graph node is, besides where it is drawn. */
@@ -369,6 +472,17 @@ export interface FlowCanvasGraphNode {
   assignee: FlowGraphAssignee | null
   /** The start node the Flow's existing root R / B document is bound to (D0004 §3.7). */
   rootBound: boolean
+}
+
+/**
+ * flowgate.v02.0064 T#4 (0064 P0006 §4.2.1): a Graph node's own card title state — the title a person (or later the AI)
+ * gave it, read with its `version` in one transaction. `version` 0 = no state yet (title null); it only grows.
+ */
+export interface FlowCanvasTitleState {
+  title: string | null
+  /** `human` | `ai` | null (open key). */
+  titleSource: string | null
+  version: number
 }
 
 export interface FlowGraphAssignee {
@@ -425,6 +539,18 @@ export interface FlowCanvasViewport {
   zoom: number
 }
 
+/**
+ * flowgate.v02.0061 TR0031 rev1: P0008 S1-3 `run` — the run the Canvas read shows (a Graph Flow's running / paused /
+ * stopping run on whatever revision it pinned, else its latest run on the latest revision), whatever the view.
+ */
+export interface FlowCanvasRun {
+  runId: string
+  status: string
+  revisionNo: number | null
+  /** flowgate.v02.0061 T#15: the run's event sequence (grows with every run event); absent when not sent. */
+  lastEventSeq?: number
+}
+
 /** GET /api/v1/flows/{flowId}/canvas. */
 export interface FlowCanvas {
   flowId: string
@@ -442,6 +568,8 @@ export interface FlowCanvas {
   /** flowgate.v02.0045 S3: the shown Graph definition, or null (no Graph nodes drawn). */
   view?: FlowCanvasView | null
   graph?: FlowCanvasGraphBlock | null
+  /** flowgate.v02.0061 TR0031 rev1: the run block — null = the read shows no run; absent = not sent. */
+  run?: FlowCanvasRun | null
 }
 
 /** PUT /api/v1/flows/{flowId}/canvas/layout input. `viewport: null` = unchanged. */
@@ -528,6 +656,8 @@ export interface FlowGraphDefinitionNode {
   paletteItemId: string | null
   label: string
   assignee: FlowGraphAssignee | null
+  /** flowgate.v02.0061 T#15: the card's Hold as the Graph read tells it (T#11 `hold`); absent = not told. */
+  hold?: boolean
 }
 
 export interface FlowGraphDefinitionEdge {
@@ -547,6 +677,8 @@ export interface FlowGraphDefinition {
 
 // flowgate.v02.0053 T#9 — the Graph run of a Flow (P0008 §7 S5: start / current / stop / resume). The top
 // band's 다음 단계 · 전체 실행 · 중지 drive it; the Canvas shows the node states it causes.
+// flowgate.v02.0061 T#14 — one run per Flow (`running` | `paused` | `stopping` | `idle`): the step / full command,
+// Pause, Stop and Resume (T#2 / T#7), with the idle reason, the execution counts and each node's integration / Hold.
 
 /** One node of a run (P0008 S5-4 `node_runs[]`). */
 export interface FlowRunNode {
@@ -554,6 +686,26 @@ export interface FlowRunNode {
   /** `pending` | `open` | `review` | `done` | `rejected` … (open key, as sent). */
   status: string
   resultDocId: string | null
+  /** flowgate.v02.0056 F2-1 (O1 0005-TR §4-2): the card waits for its approval; absent when not sent. */
+  awaitingApproval?: boolean
+  /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): `instruction` | `result` | null; absent when not sent. */
+  stage?: string | null
+  /** flowgate.v02.0061 T#14: the node attempt's result integration status (open key) or null; absent when not sent. */
+  integrationStatus?: string | null
+  /** flowgate.v02.0061 T#14: the card is held (T#11); absent when not sent. */
+  hold?: boolean
+  /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
+  question?: boolean
+  /**
+   * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
+   * (`node_running`: open, or in review while its AI review works); absent when not sent.
+   */
+  nodeRunning?: boolean
+  /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
+  runningExecutionCount?: number
+  requestedExecutionCount?: number
+  /** flowgate.v02.0061 T#15: the node's current attempt (active, else last ended), null when none; absent when not sent. */
+  attemptId?: string | null
 }
 
 /** A Graph run (P0008 S5-4). */
@@ -561,10 +713,74 @@ export interface FlowRun {
   runId: string
   flowId: string
   revisionNo: number | null
-  /** `running` | `stopped` | `completed` (open key, as sent). */
+  /** flowgate.v02.0061 T#14: `running` | `paused` | `stopping` | `idle` (open key, as sent). */
   status: string
+  /** flowgate.v02.0061 T#14: the run's last command, `step` | `full` (open key), or null when not sent. */
+  mode: string | null
+  /**
+   * flowgate.v02.0061 T#14: why an idle run is idle — `completed` | `no_targets` | `waiting_approval` |
+   * `blocked_rejected` | `error` | `stopped` | `merge_conflict` | `hold` | `step_done` (open key) — or null.
+   */
+  idleReason: string | null
+  /** flowgate.v02.0061 T#14: the run's running / requested AI executions and the Flow's limit (null: not sent). */
+  runningExecutionCount: number
+  requestedExecutionCount: number
+  executionLimit: number | null
   openNodeKeys: string[]
   /** Present when the server answered with the nodes (start / current / gate decision). */
   nodeRuns: FlowRunNode[] | null
   lastEventSeq: number
+  /**
+   * flowgate.v02.0056 F2-1 (O1 0005-TR §4-2): cards approved while the run was stopped whose successors wait for
+   * the run to go on ("멈춤 · 다음 카드 N개 대기"), and their node keys (sorted). 0 / [] when not sent.
+   */
+  pendingPropagationCount: number
+  pendingNodeKeys: string[]
+}
+
+/**
+ * flowgate.v02.0061 T#15 — what a Graph Time Machine did (T#13 `time_machine`): the operation, the server's impact
+ * (the node and every node below it that it took back) and what changed. Lists are [] and counts 0 when not sent.
+ */
+export interface FlowRunTimeMachine {
+  operationId: string | null
+  /** `completed` (open key, as sent), or null. */
+  operationStatus: string | null
+  nodeKey: string
+  /** The impact's node keys (the selected node and its downstream, by the server's execution history). */
+  impactNodeKeys: string[]
+  /** The nodes set back to pending. */
+  resetNodeKeys: string[]
+  /** The documents opened again. */
+  reopenedDocumentIds: string[]
+  /** The integration commits reverted on the group branch. */
+  revertedCommitCount: number
+  /** The attempts invalidated. */
+  invalidatedAttemptCount: number
+  revokedTokenCount: number
+  /** The run's idle reason after it, or null. */
+  idleReason: string | null
+}
+
+/** flowgate.v02.0061 T#15 — one reason a Graph Time Machine was refused (409 `graph_time_machine_blocked`). */
+export interface FlowRunTimeMachineReason {
+  code: string
+  /** The server's sentence (x-locale), or ''. */
+  message: string
+}
+
+/** flowgate.v02.0061 T#15 — a refused Graph Time Machine's assessment as sent in the refusal's params. */
+export interface FlowRunTimeMachineRefusal {
+  reasons: FlowRunTimeMachineReason[]
+  /** The impact's node keys the assessment found ([] when not sent). */
+  impactNodeKeys: string[]
+}
+
+/** flowgate.v02.0056 F2-1 (O1 0005-TR §4-1): what a card approval did. */
+export interface FlowRunApproval {
+  nodeKey: string
+  /** The card's documents in the order they are approved (instruction first, the result last). */
+  targetDocIds: string[]
+  /** The documents this approval approved. */
+  approvedDocIds: string[]
 }

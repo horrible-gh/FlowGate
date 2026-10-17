@@ -42,7 +42,9 @@ def decide_gate(group: dict, run_id: str, node_key: str, decision: str, comment:
     """-> 200 ``{"run": <run with node_runs>}`` (P0008 S6-1). Order of the checks:
 
     0. run missing (outside or re-read) -> 404 run_not_found
-    1. run not running -> 409 run_not_running (a stopped run takes no gate decision, L0009 §2.6.7)
+    1. run not running -> 409 run_not_running (a paused run takes no gate decision, L0009 §2.6.7); 0061 T#2: an
+       idle run takes it (an open gate is an idle run's ``waiting_approval``) and its propagation waits for the
+       next command
     2. ownership not graph -> 409 (as resume, L0009 §2.2.2)
     3. node not in the run's revision, or not a gate -> 409 node_not_gate
     4. snapshot cannot be restored -> 500 internal_error (L0009 E-33, nothing written)
@@ -55,7 +57,7 @@ def decide_gate(group: dict, run_id: str, node_key: str, decision: str, comment:
 
     def body_of(run: dict, jobs: list) -> dict:
         flow_id, revision_no = run["group_id"], int(run["revision_no"])
-        if run["status"] != "running":                                           # 1
+        if run["status"] not in (run_store.RUNNING, run_store.IDLE):             # 1
             raise GraphApiError(409, "run_not_running", {"run_id": run_id, "status": run["status"]})
         own = read_ownership(flow_id)                                             # 2
         if own.state != "graph":

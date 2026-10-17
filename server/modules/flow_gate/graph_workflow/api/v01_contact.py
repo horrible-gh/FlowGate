@@ -31,15 +31,31 @@ def guarded_assignment(doc: Optional[dict], call: Callable[[], Any], actor: Opti
 
 def guarded_root_conversion(doc: Optional[dict], call: Callable[[], Any], actor: Optional[str] = None) -> Any:
     """R↔B root-type conversion of ``doc``: guarded like a sequence save (``guarded_assignment``,
-    flowgate.v02.0048); inside that guard a card line holding the root follows the converted
-    document (flowgate.v02.0053 T#1)."""
-    return guarded_assignment(doc, lambda: _contact.follow_root_conversion(doc, call()), actor)
+    flowgate.v02.0048). ``call`` is ``documents.root_conversion.execute_root_conversion``, which joins
+    this guard and moves the card lines and draft cards itself (flowgate.v02.0053 T#1, 0064 T#3)."""
+    return guarded_assignment(doc, call, actor)
 
 
 def progress_refusal(doc: Optional[dict]) -> Optional[tuple[str, dict]]:
     """advance: ``(code, flat body)`` to answer with 409, or None to continue as v0.1."""
     refused = _contact.progress_refusal(doc)
     return (refused.error, refused.body()) if refused is not None else None
+
+
+def time_machine_refusal(doc: Optional[dict], request=None) -> Optional[JSONResponse]:
+    """0061 T#12: v0.1 reopen/restore stop before touching Graph-owned state.
+
+    Reuse the engine router's existing read-only ownership contact. v0.1 and
+    unassigned flows pass unchanged; conflicts retain the ownership-conflict code.
+    """
+    from . import envelope
+    refused = _contact.progress_refusal(doc)
+    if refused is None:
+        return None
+    body = refused.body()
+    code = "graph_engine_owned" if refused.error == "flow_owned_by_graph" else refused.error
+    body.update(error=code, code=code, message=envelope.message(code, request))
+    return JSONResponse(status_code=REFUSAL_STATUS, content=body)
 
 
 def after_inbox_registered(flow_id: Optional[str], doc_id: str, doc_type: str, token_id: Optional[str]) -> None:

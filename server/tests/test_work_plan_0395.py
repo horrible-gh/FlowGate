@@ -528,6 +528,11 @@ class _MockTxn:
         self._conn = conn
         self._last_cursor = None
 
+    @property
+    def cursor(self):
+        """The affected-row count a guarded write reads (0064 T-B1d: ``regenerate`` runs in the document's guard)."""
+        return self._last_cursor
+
     def execute(self, sql: str, params=None):
         self._last_cursor = self._conn.execute(sql, params or [])
         self._conn.commit()
@@ -545,9 +550,8 @@ class _MockTxn:
 
 
 @pytest.fixture(scope="module")
-def tmp_db():
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as fh:
-        db_path = fh.name
+def tmp_db(tmp_path_factory):
+    db_path = str(tmp_path_factory.mktemp("wp-db") / "work-plan.db")
     mock = _MockDB(db_path)
     for sql_file in sorted(_SCHEMA_DIR.glob("*.sql")):
         try:
@@ -1388,11 +1392,10 @@ def _inbox_client():
 def _token(tmp_path):
     from modules.flow_gate.services import token_service
 
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
-        result = token_service.issue(
-            project=PROJECT, group_id=GROUP, action_scope="new",
-            doc_ref=ROOT_DOC, issued_to="usr_wp_001",
-        )
+    result = token_service.issue(
+        project=PROJECT, group_id=GROUP, action_scope="new",
+        doc_ref=ROOT_DOC, issued_to="usr_wp_001",
+    )
     return result["raw_token"]
 
 

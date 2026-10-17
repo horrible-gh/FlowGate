@@ -6,11 +6,15 @@
        v02.0043: the Shell's menu targets go to the Menu Bar (item availability) and the open
        Flow among them to the Toolbar (dimmed and unavailable without one); the recent Project /
        Group / Flow lists go to the Menu Bar's recent submenus. flowgate.v02.0053 T#9: the open Flow's
-       server run status goes to the Toolbar's run dot. -->
+       server run status goes to the Toolbar's run dot (flowgate.v02.0056 F2-1: with its waiting cards).
+       flowgate.v02.0059 T#2: the menu targets also go to
+       the Toolbar's 정렬 / 배치 ▾ (the same availability as the Edit menu's 정렬 / 배치).
+       flowgate.v02.0061 T#14: the run phase goes to both (the run commands of each phase) and the run band (status,
+       command, idle reason, executions) to the Toolbar, in place of 0056's waiting cards line. -->
   <header class="designer-top" data-test="designer-top">
     <DesignerHeader @command="emit('command', $event)" @search="emit('search', $event)" />
     <DesignerMenuBar
-      :run-mode="runMode"
+      :run-phase="runPhase"
       :density="density"
       :window-state="windowState"
       :targets="targets"
@@ -22,14 +26,19 @@
       @open-recent="emit('open-recent', $event)"
     />
     <DesignerToolbar
-      :run-mode="runMode"
+      :run-phase="runPhase"
       :density="density"
       :zoom="zoom"
       :disabled="!targets.flow"
       :can-validate="canValidate"
-      :run-status="runStatus"
+      :can-undo="targets.canUndo !== false"
+      :can-redo="targets.canRedo !== false"
+      :select-mode="selectMode"
+      :targets="targets"
+      :run-band="runBand"
       @command="emit('command', $event)"
       @update:density="emit('update:density', $event)"
+      @update:zoom="emit('update:zoom', $event)"
     />
   </header>
 </template>
@@ -44,7 +53,8 @@ import {
   type DesignerMenuTargets,
   type DesignerRecentLists,
   type DesignerRecentRequest,
-  type DesignerRunMode,
+  type DesignerRunBand,
+  type DesignerRunPhase,
   type DesignerSearchRequest,
   type DesignerTopCommand,
   type DesignerWindowPanel,
@@ -54,7 +64,8 @@ import {
 
 withDefaults(
   defineProps<{
-    runMode: DesignerRunMode
+    /** flowgate.v02.0061 T#14: the open Flow's run phase. */
+    runPhase: DesignerRunPhase
     density: DesignerDensity
     /** Zoom of the active Flow's Canvas, in percent. */
     zoom: number
@@ -65,10 +76,12 @@ withDefaults(
     recent?: DesignerRecentLists
     /** flowgate.v02.0045 TR0020 rev2: the Toolbar's 검증 is available. */
     canValidate?: boolean
-    /** flowgate.v02.0053 T#9: the open Flow's server run status, or null. */
-    runStatus?: string | null
+    /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode is on (the Center session's). */
+    selectMode?: boolean
+    /** flowgate.v02.0061 T#14: the open Flow's run band (runBandView), or null. */
+    runBand?: DesignerRunBand | null
   }>(),
-  { recent: () => EMPTY_RECENT_LISTS, canValidate: false, runStatus: null },
+  { recent: () => EMPTY_RECENT_LISTS, canValidate: false, selectMode: false, runBand: null },
 )
 
 const emit = defineEmits<{
@@ -77,6 +90,8 @@ const emit = defineEmits<{
   'toggle-panel': [panel: DesignerWindowPanel]
   'show-tab': [tab: DesignerWindowTab]
   'update:density': [density: DesignerDensity]
+  /** A zoom preset of the Toolbar, in percent. */
+  'update:zoom': [percent: number]
   'open-recent': [request: DesignerRecentRequest]
 }>()
 </script>

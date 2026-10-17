@@ -12,6 +12,7 @@ the browser (P0005, notation rules).
 from __future__ import annotations
 
 from typing import Optional
+import functools
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
@@ -24,6 +25,8 @@ from modules.flow_gate.db import project_ai_leases as db_project_ai_leases
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import ai_invoke_service
 from modules.flow_gate.services import ai_group_service
+from modules.flow_gate.services import card_memo_hooks
+from modules.flow_gate.services import graph_execution_hooks
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import token_service
@@ -136,7 +139,7 @@ class AiInvokeStartRequest(BaseModel):
     # Parallel-invoke extras (group 0223): context the matching copy-mention flow
     # assembled in the browser, so the invoke prompt can stay byte-identical.
     selected_docs: Optional[list[str]] = None      # next_step_message reference docs
-    messages: Optional[list[str]] = None           # next_step_message / resolve_conflict user messages
+    messages: Optional[list[str]] = None           # next_step_message / resolve_conflict / edit user messages
     reject_reason: Optional[str] = None            # rework: live (possibly unsaved) reason
     design_types: Optional[list[str]] = None       # design_handoff selected types
     design_mode: Optional[str] = None              # design_handoff "batch" | "single"
@@ -306,7 +309,19 @@ def build_rework_mention(*, base: str, doc_ref: Optional[str], group_id: str,
     return "\n".join(leading) + "\n" + base if leading else base
 
 
+def _explicit_request(route):
+    """flowgate.v02.0061 T#7 (0017-TR question 439): a person's own AI request. A review / rework hop it asks of a
+    Graph attempt is the person's explicit review request, which the Graph takes on an idle run too
+    (``graph_execution_hooks.explicit_request``); nothing else about the route changes."""
+    @functools.wraps(route)
+    def handler(*args, **kwargs):
+        with graph_execution_hooks.explicit_request():
+            return route(*args, **kwargs)
+    return handler
+
+
 @router.post("/start")
+@_explicit_request
 def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     auth = _require_user(request)
     if isinstance(auth, JSONResponse):
@@ -706,6 +721,15 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             if not base:
                 return None
             return context + invoke_mention_service.SECTION_SEPARATOR + base
+        if body.action_scope == "edit":
+            # flowgate.v02.0056 T#3 (0002-CH turn 6 §4): the per-document AI invoke ([edit-AI invoke], reused by
+            # the v0.2 document tab) hands the person's comment to the AI as next_step_message does, and an AI
+            # working on a Designer card's document reads that card's memos turned on for AI reading.
+            base = _standard_mention(raw_token, scratch_dir)
+            if not base:
+                return None
+            base = card_memo_hooks.prepend_memo_section(base, group_id, doc_id=body.doc_ref)
+            return invoke_mention_service.prepend_messages_section(base, body.messages or [], locale)
         return _standard_mention(raw_token, scratch_dir)
 
     issue_builder = None
@@ -1117,6 +1141,7 @@ def get_active_all_ai_invoke(request: Request):
 
 
 @router.post("/resume")
+@_explicit_request
 def resume_ai_invoke(body: dict, request: Request):
     """Resume a user-paused continuous chain (group 0252 P0008 S5). Group-keyed:
     a paused chain has no live run to address."""

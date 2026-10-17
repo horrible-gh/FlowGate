@@ -266,6 +266,91 @@ def start_card_settings_integration():
         logger.warning(f"[startup] card settings integration registration failed: {exc}")
 
 
+def start_card_approval_integration():
+    """flowgate.v02.0056 T#1 (D0006 §2.1, §2.3): composition root of the card approval. Connects
+    ``flowgate.card_approval`` to the Graph workflow's card approval port (result binding): a node is done
+    only when every document of its card is approved. Unregistered, a result's approval moves its node on
+    alone, as before."""
+    try:
+        from flowgate.card_approval import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] card approval integration registration failed: {exc}")
+
+
+def start_card_memo_integration():
+    """flowgate.v02.0056 T#3 (D0006 §2.1, §2.3): composition root of the card memos. Connects
+    ``flowgate.card_memos`` to the AI mention builders' card memo port (a card's AI runs, the per-document AI
+    invoke, the Q&A answer). Unregistered, every mention is what it was before the memos."""
+    try:
+        from flowgate.card_memos import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] card memo integration registration failed: {exc}")
+
+
+def start_graph_policy_integration():
+    """flowgate.v02.0061 (R §2.1 시작점, §2.4 분기, §2.5 합류; D0006 §2.1, §2.3): composition root of the Graph
+    execution policies. Registers ``flowgate.graph_policies`` as the decided rules of the Graph workflow's slots:
+    ``start_node`` = ``root_start`` (a run opens the requirement / bug nodes with no incoming and an outgoing edge;
+    an isolated node and a path they do not reach are left out), ``edge_condition`` / ``parallelism`` =
+    ``fork_all`` / ``unbounded`` (every outgoing edge is followed, every reached node admitted) and ``join`` =
+    ``and_all`` (a node with several incoming edges opens once, after every predecessor is approved).
+    Unregistered, the four slots stay ``undecided``: a branch or a join is refused at confirmation and every run
+    at start, as before. The other slots a run needs (``completion``, ...) are not decided here."""
+    try:
+        from flowgate.graph_policies import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] graph policy integration registration failed: {exc}")
+
+
+def start_graph_validation_integration():
+    """flowgate.v02.0061 (0002-CH turn 13; D0006 §2.1, §2.3): composition root of the Graph pre-run validation.
+    Registers ``flowgate.graph_validation`` at the Graph workflow's validation port (``graph_service.check_draft``:
+    draft validation and confirmation): an isolated node and a path not starting from a requirement / bug node
+    are left out of a run (no issue), a left-out path joining the run path and a cycle are refused, a branch and
+    an AND join are allowed with the policies above. Unregistered, the Graph workflow's own validator runs as
+    before."""
+    try:
+        from flowgate.graph_validation import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] graph validation integration registration failed: {exc}")
+
+
+def start_graph_run_integration():
+    """flowgate.v02.0061 T#2 (0002-CH turn 29 / 31 / 33; D0006 §2.1, §2.3): composition root of the Graph run state.
+    Registers ``flowgate.graph_run`` at the Graph workflow's run state ports (``run_state_ports``): after a step a
+    running run with no work going on opens what its step / full command may still open, else goes idle with its
+    reason, and an idle run whose existing work goes on again is running again; the command a paused / idle run goes
+    on with and a step's targets. Unregistered, the ports fail closed: a run step rolls back."""
+    try:
+        from flowgate.graph_run import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] graph run integration registration failed: {exc}")
+
+
+def recover_graph_time_machine():
+    """flowgate.v02.0061 T#13: once the Graph ports are registered and before the Graph execution recovery replays
+    anything, every unfinished Graph Time Machine operation (started, Git applied, partially failed) goes on from its
+    journal: its interrupted Git step put back, its Git step resumed, then its DB step. Until it is finished the Flow
+    refuses its run commands, edits and Time Machine requests, and no execution of it is requested, admitted or
+    replayed, nor any integration woken or started."""
+    try:
+        from flowgate.graph_time_machine.operation import recover
+
+        recover()
+    except Exception as exc:
+        logger.warning(f"[startup] graph time machine recovery failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
@@ -279,6 +364,19 @@ def run_all():
     start_conversation_integration()
     start_card_document_integration()
     start_card_settings_integration()
+    start_card_approval_integration()
+    start_card_memo_integration()
+    start_graph_policy_integration()
+    start_graph_validation_integration()
+    start_graph_run_integration()
+    # T#4: all Graph ports are ready; orphan AI cleanup has already completed above.
+    recover_graph_time_machine()     # T#13: before any replay of the Flow's executions
+    try:
+        from flowgate.graph_run.execution import recover as recover_graph_executions
+
+        recover_graph_executions()
+    except Exception as exc:
+        logger.warning(f"[startup] graph execution recovery failed: {exc}")
     encrypt_ai_provider_keys()
     recover_ai_evaluations()
     start_snapshot_cleanup()

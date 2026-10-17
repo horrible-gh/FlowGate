@@ -37,7 +37,7 @@ from modules.flow_gate.services import token_service
 from modules.flow_gate.services import work_plan_attachment_service
 from modules.flow_gate.settings import ai_execution_policy_service
 from modules.flow_gate.settings import ai_settings_service
-from modules.flow_gate.services import chat_run_hooks
+from modules.flow_gate.services import chat_run_hooks, graph_execution_hooks
 from modules.flow_gate.storage import paths as storage_paths
 
 # Neither `chain` nor `worker` is imported as a sibling module here (both are also
@@ -228,7 +228,8 @@ def _is_project_scoped_run(action_scope: Optional[str], merge_id: Optional[int] 
 def _require_group_worktree(
     project_id: str, module: str, group_id: str, branch: str, locale: Optional[str] = None,
     action_scope: Optional[str] = None, merge_id: Optional[int] = None,
-) -> None:
+    graph_exec_id: Optional[str] = None,
+):
     """Refuse to launch a run that would execute in the base tree (0299 R0001).
 
     This is the root cause R0001 describes: AI workers sometimes work on the main branch
@@ -243,6 +244,9 @@ def _require_group_worktree(
     self-heal, then a 409 carrying the blocking cause. Non-integrated projects and
     group-less runs are untouched — they have no worktree to demand.
     """
+    if graph_exec_id:
+        from modules.flow_gate.services import graph_execution_hooks
+        return graph_execution_hooks.call("prepare_workspace", graph_exec_id, project_id, group_id)
     if not group_id or not project_id:
         return
     # A project-scoped run works in the base checkout on purpose — there is no group
@@ -470,6 +474,43 @@ def _reclaim_orphan_lease_token(lease_row: dict, reason: str) -> None:
     token_service.revoke(token_id, reason=reason)
 
 
+def _startup_recover_graph_leases() -> None:
+    """Before traffic or handoff replay, retire the previous process's Graph owners.
+
+    Graph workers have no group lease. Persist the same restart end record first,
+    then expire their execution lease so the existing Graph recovery (including
+    Stop) can fence/reset them without waiting for the heartbeat TTL. A run in
+    this process's registry is never treated as a restart orphan.
+    """
+    from datetime import timezone
+    from modules.flow_gate.db import groups as db_groups
+
+    store = db_connection.get_store()
+    if not store.table_exists("graph_attempt_runs"):
+        return
+    rows = store._fetch_all(
+        "SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
+        "WHERE e.status IN ('requested', 'running') AND e.ai_run_id IS NOT NULL", [])
+    for row in rows:
+        if _svc().get_run_record(row["ai_run_id"]) is not None:
+            continue
+        try:
+            group = db_groups.get_by_id(row["group_id"]) or {}
+            # Include admitted requests: replay must not reuse their previous AI id.
+            _svc()._record_orphaned_lease_run({
+                "run_id": row["ai_run_id"], "group_id": row["group_id"],
+                "project_id": group.get("project_id"), "acquired_at": row["created_at"],
+            }, "orphaned_by_restart")
+            if row["status"] == "running":
+                stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                store._execute(
+                    "UPDATE graph_attempt_runs SET lease_expires_at = ? WHERE exec_id = ? "
+                    "AND status = 'running' AND ai_run_id = ? AND lease_token = ?",
+                    [stamp, row["exec_id"], row["ai_run_id"], row["lease_token"]])
+        except Exception:
+            logger.warning("orphaned Graph execution recovery failed for %s", row["exec_id"], exc_info=True)
+
+
 def startup_recover_leases() -> int:
     """Reclaim AI-run leases orphaned by a server restart (0401 NR0003 / T0004 item 1).
 
@@ -503,6 +544,7 @@ def startup_recover_leases() -> int:
         logger.warning("[ai_invoke] startup reclaimed %d orphaned group lease(s)", len(victims))
     # 0406 T0022 work item 4: the same startup also recovers hop handoffs that were cut
     # off. It pairs with lease reclaim: one recovers the lock, the other the intent.
+    _startup_recover_graph_leases()
     _svc().startup_recover_handoffs()
     # 0661 T0004 F3: question items whose AI responder died with the previous process
     # become a visible 'failed / interrupted' the Q&A panel can re-dispatch, instead of a
@@ -794,6 +836,7 @@ def _refuse_frozen_group(group_id: str) -> None:
                           retryable=False)
 
 
+@graph_execution_hooks.admission
 def start_run(
     *,
     project_id: str,
@@ -857,6 +900,8 @@ def start_run(
     # the no-output restarts on the SAME provider, resolved exactly like the continuous pick
     # above. None (every other caller) keeps a single run one-shot, as before.
     node_restart_max_attempts: Optional[int] = None,
+    graph_exec_id: Optional[str] = None,
+    graph_attempt_id: Optional[str] = None,
     # 0414 P0007: the [검수] tab's two session-scoped maps — mode-aware worker item_seq ->
     # review count, and -> reviewer provider_id. They ride the RUN (never a token), exactly
     # like the provider/note maps, and are snapshotted into the paused row so a resume or a
@@ -927,12 +972,18 @@ def start_run(
     requested_continuation_instruction_mode = continuation_instruction_mode
     # 0417 D0007/P0008: stage selection precedes provider-chain selection. In particular,
     # an unaddressed rejection starts with the fixed rework provider, never the reviewer.
+    graph_loop_state = None
     if document_review_loop is not None:
-        document_review_loop = dict(document_review_loop)
-        document_review_loop.update(_svc().compute_review_baseline(doc_ref))
-        initial_stage = (
-            REWORK_HOP_KIND if document_review_loop["starts_with_rework"] else REVIEW_HOP_KIND
-        )
+        graph_loop_state = graph_execution_hooks.call("loop_state", graph_exec_id) if graph_exec_id else None
+        if graph_loop_state:
+            document_review_loop = dict(graph_loop_state["loop"])
+            initial_stage = document_review_loop["current_stage"]
+        else:
+            document_review_loop = dict(document_review_loop)
+            document_review_loop.update(_svc().compute_review_baseline(doc_ref))
+            initial_stage = (
+                REWORK_HOP_KIND if document_review_loop["starts_with_rework"] else REVIEW_HOP_KIND
+            )
         provider_id = review.resolve_loop_provider(document_review_loop, initial_stage)
         provider_pinned = True
     continuation_instruction_mode = normalize_continuation_instruction_mode(
@@ -1104,6 +1155,7 @@ def start_run(
     active = None if project_scoped else db_group_ai_leases.get_active(group_id)
     handoff_allowed = bool(
         active
+        and not graph_exec_id
         and active.get("state") == "releasing"
         and chain_id
         and active.get("chain_id") == chain_id
@@ -1117,15 +1169,21 @@ def start_run(
         )
         raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
                           run_id=active["run_id"])
+    # Claim the Graph launcher before preparing its worktree. A duplicate must
+    # lose admission before it can touch or fail the winner's workspace.
+    if graph_exec_id:
+        run_id = _svc()._next_run_id()
+        graph_attempt_id = graph_execution_hooks.call("admit", graph_exec_id, run_id, group_id, graph_attempt_id)
     # 0299 R0001: refuse before minting a token / creating scratch — a run that would
     # execute in the base tree must not start at all, and failing here keeps the
     # rollback trivial (nothing has been created yet). The doc's branch is only the
     # fallback-branch hint; the guard itself is about the group worktree.
-    _svc()._require_group_worktree(
+    graph_source_root = _svc()._require_group_worktree(
         project_id, module, group_id,
         (db_docs.get_by_id(doc_ref) or {}).get("branch") or "main",
         locale=template_provision.normalize_locale(continuation_locale),
         action_scope=action_scope,
+        **({"graph_exec_id": graph_exec_id} if graph_exec_id else {}),
         **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
     )
     # flowgate.default.0511 T0004: force the group worktree to the current
@@ -1133,11 +1191,12 @@ def start_run(
     # source-capable (read/read_write) AI invocation ever uses it. Placed here
     # — after the worktree is confirmed to exist, before any token/lease is
     # minted — so a sync failure blocks the run with nothing yet to unwind.
-    _svc()._ensure_initial_source_sync(
-        project_id, module, group_id, action_scope, doc_ref,
-        locale=continuation_locale,
-        **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
-    )
+    if not graph_exec_id:
+        _svc()._ensure_initial_source_sync(
+            project_id, module, group_id, action_scope, doc_ref,
+            locale=continuation_locale,
+            **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
+        )
 
     baseline_seq = db_docs.get_group_max_seq(group_id)
     # The -1 sentinel is accepted only at the original pre-decision admission. Once
@@ -1195,12 +1254,13 @@ def start_run(
 
     # Allocate and lease before token issuance/worker spawn. The DB primary key makes two
     # concurrent starts atomic across processes; an acquiring lease self-reclaims on expiry.
-    run_id = _svc()._next_run_id()
+    if not graph_exec_id:
+        run_id = _svc()._next_run_id()
     lease_chain_id = chain_id or run_id
     lease = None
-    if not project_scoped:
+    if not project_scoped and not graph_exec_id:
         try:
-            lease = db_group_ai_leases.acquire(
+            lease = graph_execution_hooks.call("legacy_acquire", db_group_ai_leases.acquire,
                 group_id=group_id,
                 project_id=project_id,
                 run_id=run_id,
@@ -1217,7 +1277,7 @@ def start_run(
             run_id = _svc()._next_run_id()
             lease_chain_id = chain_id or run_id
             try:
-                lease = db_group_ai_leases.acquire(
+                lease = graph_execution_hooks.call("legacy_acquire", db_group_ai_leases.acquire,
                     group_id=group_id,
                     project_id=project_id,
                     run_id=run_id,
@@ -1248,7 +1308,7 @@ def start_run(
             raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
                               run_id=active.get("run_id"))
 
-    if not project_scoped:
+    if not project_scoped and not graph_exec_id:
         admission_run_id.set(run_id)
 
     # The group lease is the serialization point: this check runs only after this request
@@ -1262,7 +1322,7 @@ def start_run(
             revision_no = int(doc.get("revision_no") or 0)
             completed = db_document_reviews.get_latest_for_revision(doc_ref, revision_no)
             if completed is not None and review_intent == "normal":
-                if not project_scoped:
+                if not project_scoped and not graph_exec_id:
                     db_group_ai_leases.release(
                         group_id, run_id, reason="review_admission_completed"
                     )
@@ -1276,7 +1336,7 @@ def start_run(
                 # registration time would let a concurrent append change what this rerun means.
                 review_admission_superseded_review_id = int(completed["id"])
             if completed is None and review_intent == "rerun":
-                if not project_scoped:
+                if not project_scoped and not graph_exec_id:
                     db_group_ai_leases.release(
                         group_id, run_id, reason="review_admission_no_completed_review"
                     )
@@ -1303,7 +1363,7 @@ def start_run(
                 # 0554 T0014 §5: a rework issue_builder (issue_rework_request) already revoked
                 # the token it minted before re-raising — this only has the group lease left to
                 # give back, mirroring the mention_unavailable/run_lease_lost cleanups below.
-                if not project_scoped:
+                if not project_scoped and not graph_exec_id:
                     db_group_ai_leases.release(
                         group_id, run_id, reason="admission_rollback_pre_instruction_attachment_invalid"
                     )
@@ -1317,7 +1377,7 @@ def start_run(
                 # run before minting anything — the Q responder builder does when its durable
                 # item claim fails (a person answered first). Nothing was issued, so only the
                 # group lease acquired above has to be given back before the refusal surfaces.
-                if not project_scoped:
+                if not project_scoped and not graph_exec_id:
                     db_group_ai_leases.release(
                         group_id, run_id, reason="admission_rollback_issue_builder_refused"
                     )
@@ -1362,7 +1422,7 @@ def start_run(
                 token_service.revoke(issue["token_id"], reason="ai_invoke_mention_unavailable")
             except Exception:
                 logger.warning("token revoke failed after mention_unavailable", exc_info=True)
-            if not project_scoped:
+            if not project_scoped and not graph_exec_id:
                 db_group_ai_leases.release(group_id, run_id, reason="admission_rollback_mention_unavailable")
             raise _http_error(409, "mention_unavailable",
                               "Could not build a worker mention for this document.")
@@ -1377,7 +1437,7 @@ def start_run(
                     token_service.revoke(issue["token_id"], reason="ai_invoke_conflict_prompt_too_large")
                 except Exception:
                     logger.warning("token revoke failed after conflict_prompt_too_large", exc_info=True)
-                if not project_scoped:
+                if not project_scoped and not graph_exec_id:
                     db_group_ai_leases.release(
                         group_id, run_id, reason="admission_rollback_conflict_prompt_too_large"
                     )
@@ -1393,9 +1453,9 @@ def start_run(
                 group_id, run_id, issue.get("token_id"), action_scope, issued_to,
                 _svc().RUN_TIMEOUT_CAP_SEC,
             )
-            if not project_scoped else None
+            if not project_scoped and not graph_exec_id else None
         )
-        if not project_scoped and lease is None:
+        if not project_scoped and not graph_exec_id and lease is None:
             try:
                 token_service.revoke(issue["token_id"], reason="ai_invoke_lease_lost")
             except Exception:
@@ -1405,7 +1465,7 @@ def start_run(
         # Only this request's still-acquiring lease may be released. Named failure paths
         # can have already revoked/released it; repeating those operations is harmless.
         current = None
-        if not project_scoped:
+        if not project_scoped and not graph_exec_id:
             try:
                 current = db_group_ai_leases.get_active(group_id)
             except Exception:
@@ -1413,7 +1473,7 @@ def start_run(
                                run_id, group_id, exc_info=True)
         owns_acquiring = bool(current and current.get("run_id") == run_id
                               and current.get("state") == "acquiring")
-        if project_scoped or owns_acquiring:
+        if project_scoped or graph_exec_id or owns_acquiring:
             if isinstance(issue, dict) and issue.get("token_id"):
                 try:
                     token_service.revoke(issue["token_id"], reason="ai_invoke_admission_rollback")
@@ -1468,7 +1528,7 @@ def start_run(
                 logger.warning(
                     "token revoke failed after pre_instruction_attachment_invalid", exc_info=True
                 )
-            if not project_scoped:
+            if not project_scoped and not graph_exec_id:
                 db_group_ai_leases.release(
                     group_id, run_id, reason="admission_rollback_pre_instruction_attachment_invalid"
                 )
@@ -1512,7 +1572,7 @@ def start_run(
     doc = db_docs.get_by_id(doc_ref) or {}
     # 0187 rev2: same group-worktree routing as the test runner — the invoked AI's
     # cwd and the pollution diff must watch the tree the group's CRUD writes to.
-    source_root = storage_paths.resolve_project_src_root(
+    source_root = graph_source_root if graph_exec_id else storage_paths.resolve_project_src_root(
         project_id, doc.get("branch") or "main", group_id=group_id
     )
 
@@ -1543,15 +1603,16 @@ def start_run(
         if hop_review_count else None
     )
     if document_review_loop is not None:
-        document_review_loop.update({
-            "round_no": 1,
-            "current_stage": (REWORK_HOP_KIND if document_review_loop["starts_with_rework"] else REVIEW_HOP_KIND),
-            "stop_reason": None,
-            "stop_detail": None,
-            "attempts_used": 0,
-            "started_at": started_at,
-            "deadline_at": _deadline_iso(started_at, int(document_review_loop["total_timeout_sec"])),
-        })
+        if not (graph_loop_state and document_review_loop.get("deadline_at")):
+            document_review_loop.update({
+                "round_no": 1,
+                "current_stage": initial_stage,
+                "stop_reason": None,
+                "stop_detail": None,
+                "attempts_used": 0,
+                "started_at": started_at,
+                "deadline_at": _deadline_iso(started_at, int(document_review_loop["total_timeout_sec"])),
+            })
         # T0011 §4 / 0486 NR0010 Finding 3: the loop's own per-stage budget (rework's
         # user-picked `rework_timeout_sec`, clamped to the loop's total deadline) replaces
         # the generic per-hop formula for this run's FIRST hop. The in-process stage
@@ -1570,6 +1631,9 @@ def start_run(
         mode == "single" and action_scope == "new" and node_restart_max_attempts is not None
     )
     run = {
+        "graph_exec_id": graph_exec_id,
+        "graph_attempt_id": graph_attempt_id,
+        "graph_review_run_ids": (graph_loop_state or {}).get("review_run_ids") or [],
         "run_id": run_id,
         "status": "running",
         "mode": mode,

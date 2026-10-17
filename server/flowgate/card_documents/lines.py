@@ -29,6 +29,16 @@ removed only through the existing v0.1 services (``legacy_adapter``).
   ``delegation`` is on (``flowgate.card_settings``): turning it on makes the line's empty draft,
   turning it off releases the line like a removed one (``set_delegation``), and a draft save keeps
   or makes the line by the same setting.
+- flowgate.v02.0056 T#2: whether a card document is written is decided by its body, not by the document
+  existing (``has_body``: a non-blank body after the front matter, the v0.1 approval's own rule). It is the
+  one judgement of the v0.2 cards: the instruction stage of a card run (``card_settings``), the card
+  approval's targets (``card_approval``) and the card document read all ask it.
+- flowgate.v02.0056 T#3: every line read (draft save, Canvas) carries whether its document is written
+  (``has_body``, that same judgement) and the count of its document's review history as the v0.1 document read
+  shows it — its AI reviews (``review_count``), its rejections (``rejection_count``) and both
+  (``history_count``). ``node_keys_showing`` names the cards whose lines show a document (the card memos an AI
+  working on that document reads). A person writes a line that has no document (``compose``; a node's result
+  is registered through its dispatch token, so the result binder takes it).
 """
 from __future__ import annotations
 
@@ -183,15 +193,17 @@ def set_delegation(group: dict, node: dict, on: bool, user_id: Optional[str], re
 
 # ── R↔B root conversion ──────────────────────────────────────────────────────
 
-def follow_root_conversion(flow_id: str, old_doc_id: str, converted: dict) -> None:
-    """The converter gave a root a new id and kind (``document_service.convert_root_document_type``,
-    inside the same Flow guard): the lines holding it follow — id, line kind (R/B) — and keep their
-    ownership. A line of the new kind the node already has keeps its kind and only takes the new id."""
+def follow_root_conversion(flow_id: str, old_doc_id: str, converted: dict) -> list[str]:
+    """The converter gave a root a new id and kind (``documents.root_conversion``, inside the same Flow
+    guard): the lines holding it follow — id, line kind (R/B) — and keep their ownership. A line of the
+    new kind the node already has keeps its kind and only takes the new id. Returns the node keys whose
+    requirement line now holds the converted root (their draft cards follow it, 0064 T#3)."""
     if not repository.available():
-        return
+        return []
     new_id, new_type = converted["doc_id"], str(converted.get("type_code") or "").upper()
     rows = repository.rows(flow_id)
     taken = {(r["node_key"], r["slot"], r["doc_type"]) for r in rows}
+    holders: list[str] = []
     for row in rows:
         if row["doc_id"] != old_doc_id:
             continue
@@ -199,6 +211,9 @@ def follow_root_conversion(flow_id: str, old_doc_id: str, converted: dict) -> No
         if doc_type in cs.ROOT_TYPES and new_type in cs.ROOT_TYPES and (row["node_key"], row["slot"], new_type) not in taken:
             doc_type = new_type
         repository.retarget(flow_id, row["node_key"], row["slot"], row["doc_type"], doc_type, new_id)
+        if row["slot"] == cs.REQUIREMENT:
+            holders.append(row["node_key"])
+    return list(dict.fromkeys(holders))
 
 
 # ── run results ──────────────────────────────────────────────────────────────
@@ -226,20 +241,90 @@ def adopt_result(flow_id: str, node_key: str, doc_id: Optional[str]) -> None:
 
 # ── reads ────────────────────────────────────────────────────────────────────
 
-def lines_by_node(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[str]] = None) -> dict[str, list[dict]]:
-    """``node_key -> [line]`` with each line's live document (the end of its supersede chain)."""
-    out: dict[str, list[dict]] = {}
+def _shown_rows(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[str]] = None) -> list[tuple]:
+    """``(row, shown)`` per stored line: its live document (the end of its supersede chain), or None."""
+    shown_rows = []
     for row in repository.rows(flow_id, node_keys):
         doc = docs_by_id.get(row["doc_id"])
         end = legacy.live_end(flow_id, doc, docs_by_id)[0] if doc else None
-        shown = end or (doc if doc and legacy.is_alive(doc, flow_id) else None)
+        shown_rows.append((row, end or (doc if doc and legacy.is_alive(doc, flow_id) else None)))
+    return shown_rows
+
+
+def lines_by_node(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[str]] = None) -> dict[str, list[dict]]:
+    """``node_key -> [line]`` with each line's live document (the end of its supersede chain), whether it is
+    written (``has_body``) and its review history counts (flowgate.v02.0056 T#3; 0 without a document)."""
+    shown_rows = _shown_rows(flow_id, docs_by_id, node_keys)
+    reviews = legacy.review_counts([shown["doc_id"] for _row, shown in shown_rows if shown])
+    out: dict[str, list[dict]] = {}
+    for row, shown in shown_rows:
+        review_count = reviews.get(shown["doc_id"], 0) if shown else 0
+        rejection_count = legacy.rejection_count(shown)
+        written, body_state = legacy.line_body_facts(shown)
         out.setdefault(row["node_key"], []).append({
-            "slot": row["slot"], "doc_type": row["doc_type"], "author": cs.author_of(row["slot"]),
+            "slot": row["slot"], "doc_type": row["doc_type"], "author": cs.author_of(row["slot"], row["doc_type"]),
             "doc_id": shown["doc_id"] if shown else None,
             "title": (shown or {}).get("title"), "status": (shown or {}).get("status"),
             "doc_review_status": (shown or {}).get("doc_review_status"),
+            "has_body": written, "body_state": body_state,
+            "review_count": review_count, "rejection_count": rejection_count,
+            "history_count": review_count + rejection_count,
         })
     return out
+
+
+def node_keys_showing(flow_id: str, doc_id: Optional[str]) -> list[str]:
+    """The cards (node keys) whose lines hold ``doc_id`` or show it as their live document."""
+    if not doc_id or not repository.available():
+        return []
+    rows = repository.rows(flow_id)
+    keys = [r["node_key"] for r in rows if r["doc_id"] == doc_id]
+    if any(r["doc_id"] != doc_id for r in rows):
+        docs = {d["doc_id"]: d for d in legacy.flow_documents(flow_id) if d.get("doc_id")}
+        for row in rows:
+            doc = docs.get(row["doc_id"])
+            end = legacy.live_end(flow_id, doc, docs)[0] if doc else None
+            if end is not None and end["doc_id"] == doc_id:
+                keys.append(row["node_key"])
+    return list(dict.fromkeys(keys))
+
+
+def card_line_doc_ids(flow_id: str, node_key: Optional[str], doc_id: Optional[str]) -> list[str]:
+    """``card_document_ports.card_line_doc_ids`` handler (0064 T-B1e, L0005 2.14): the documents the lines of the
+    card ``node_key`` show -- or, for an AI working on one document (a Q&A answer), of the cards whose lines show
+    ``doc_id`` (``node_keys_showing``, the cards the memo section reads) -- card by card in line order. The same
+    live documents the line read shows (``lines_by_node``); no body is read here."""
+    if not repository.available():
+        return []
+    keys = [node_key] if node_key else node_keys_showing(flow_id, doc_id)
+    if not keys:
+        return []
+    docs = {d["doc_id"]: d for d in legacy.flow_documents(flow_id) if d.get("doc_id")}
+    by_node: dict[str, list[str]] = {}
+    for row, shown in _shown_rows(flow_id, docs, keys):
+        if shown:
+            by_node.setdefault(row["node_key"], []).append(shown["doc_id"])
+    return [shown_id for key in keys for shown_id in by_node.get(key, [])]
+
+
+def has_body(doc: Optional[dict]) -> bool:
+    """``doc`` (its ``documents`` row) is written: its file holds a non-blank body after the front matter.
+
+    A line's untouched draft (the front matter a card writes on placement) and a document without a readable
+    file are not. The rule is the v0.1 approval's own (``legacy_adapter.approvable_body``), so a document
+    judged written is never refused by an approval as empty."""
+    return bool(doc) and legacy.approvable_body(doc)
+
+
+def line_document(flow_id: str, node_key: str, slot: str, node_type: Optional[str],
+                  doc_type: Optional[str]) -> Optional[dict]:
+    """The node's ``slot`` line of the kind ``node_type`` / ``doc_type`` gives it, with its live document
+    (``doc_id`` and its row ``document``, both None when the line has none left), or None when the card has
+    no such line."""
+    docs = {d["doc_id"]: d for d in legacy.flow_documents(flow_id) if d.get("doc_id")}
+    stored = lines_by_node(flow_id, docs, [node_key]).get(node_key, [])
+    line = next((line for line in cs.lines_of(node_type, doc_type, stored) if line["slot"] == slot), None)
+    return {**line, "document": docs.get(line["doc_id"]) if line["doc_id"] else None} if line else None
 
 
 class CardView:

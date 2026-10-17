@@ -46,6 +46,8 @@ vi.mock('@/features/document', async (importOriginal) => {
     ...actual,
     kindSwitchConvert: (...args: unknown[]) => convertCall(...args),
     reviewDocumentRead: (...args: unknown[]) => documentRead(...args),
+    // flowgate.v02.0064 T#4: the switch reads the document state with its judgement (P0006 §6.1).
+    kindSwitchPreviewRead: (...args: unknown[]) => documentRead(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
     // The other features sharing the Frame in the registry cases.
     documentDetailRead: (...args: unknown[]) => detailRead(...args),

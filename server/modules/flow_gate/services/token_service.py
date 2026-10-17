@@ -271,6 +271,12 @@ def issue(
             source_access, claim_deferred = _resolve_chat_source_access(
                 issued_to, token_id, created_at_str
             )
+            if source_access == "read_write" or claim_deferred:
+                # flowgate.v02.0061 T#14 (WP answer 2): an edit / edit-once chat of a Flow whose Graph run is
+                # running / paused / stopping is refused (409 graph_run_locked) before anything is written or
+                # claimed; a read chat is not. The judgement is flowgate.graph_run's (graph_execution_hooks).
+                from modules.flow_gate.services import graph_execution_hooks
+                graph_execution_hooks.call("chat_source_refusal", group_id, continuation_locale)
             data["source_access"] = source_access
         # The ordinary token also needs an atomic INSERT + event boundary: if
         # event writing fails, leaving a live row after removing its directory

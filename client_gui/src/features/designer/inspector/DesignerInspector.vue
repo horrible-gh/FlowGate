@@ -87,7 +87,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, provide, ref, toRaw } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import EmptyState from '../../../components/ui/EmptyState.vue'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
@@ -110,7 +110,8 @@ import {
    resolveInspectorTab,
   type InspectorTabKey,
 } from './inspectorTabs'
-import { toInspectorTarget } from './inspectorTarget'
+import { toInspectorTarget, withWrittenCardLines } from './inspectorTarget'
+import { cardLinesWritten, settleCardLinesWritten } from './openDocument'
 import { useInspectorEvents } from './useInspectorResource'
 
 const props = withDefaults(
@@ -141,7 +142,11 @@ provide(INSPECTOR_HOST, { request: (intent) => emit('host', intent) })
 const bodyElement = ref<HTMLElement | null>(null)
 provide(INSPECTOR_BODY, { element: bodyElement })
 
-const target = computed(() => toInspectorTarget(props.selection))
+// flowgate.v02.0056 F2-2: a card line written from here ([작성]) stands for the card's line until the Canvas read
+// shows its document; every read shown settles them (and opens a document a refused [작성] waits for).
+const readTarget = computed(() => toInspectorTarget(props.selection))
+const target = computed(() => withWrittenCardLines(readTarget.value, cardLinesWritten(readTarget.value)))
+watch(readTarget, (current) => settleCardLinesWritten(current), { immediate: true })
 
 /** Server events after which the header (the selected Flow's Canvas read) may be out of date. */
 const HEADER_REFRESH_EVENTS = ['doc_review_status_changed', 'ai_invoke_finished', 'document_explorer_refresh'] as const
@@ -152,6 +157,19 @@ useInspectorEvents(() => (props.unselected ? null : target.value), {
   resync: false,
   changed: () => emit('host', { kind: 'refresh-flow' }),
 })
+
+// A local document save sends no server event. Read the selected card's stored lines again,
+// including an instruction whose document differs from the Node's bound result document.
+function onDocumentContentChanged(event: Event): void {
+  const docId = (event as CustomEvent<{ doc_id?: string | null }>).detail?.doc_id
+  const current = props.unselected ? null : target.value
+  if (!docId || !current) return
+  if (current.docId !== docId && !current.cardDocuments.some((line) => line.docId === docId)) return
+  emit('host', { kind: 'refresh-flow', flowId: current.flowId })
+}
+
+onMounted(() => window.addEventListener('fg:document_content_changed', onDocumentContentChanged))
+onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', onDocumentContentChanged))
 
 const contributions = computed(() => contributionsFor(registry, target.value))
 const headerMetas = computed(() => contributions.value.filter((entry) => entry.headerMeta))

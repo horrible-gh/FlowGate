@@ -12,7 +12,6 @@ import {
   WORK_PLAN_OPERATION_CLASS,
   workPlanAvailability,
   workPlanCards,
-  workPlanEditKey,
   workPlanErrorKey,
   workPlanProgress,
 } from '@/features/designer/inspector/features/workPlan/workPlanModel'
@@ -79,23 +78,6 @@ describe('progress (flowgate.v02.0048 T#13)', () => {
   })
 })
 
-// --- Where the plan is edited ------------------------------------------------------------------------
-
-describe('edit line (flowgate.v02.0048 T#13)', () => {
-  it.each<[string, Record<string, unknown>, string]>([
-    ['editable', { editable: true }, 'edit.open'],
-    ['final approved', { editable: false, edit_locked_reason: 'final_approved' }, 'edit.final_approved'],
-    ['locked by status', { editable: false, edit_locked_reason: 'status' }, 'edit.locked'],
-    ['locked without a reason', { editable: false, edit_locked_reason: null }, 'edit.locked'],
-  ])('%s', (_name, fields, key) => {
-    expect(workPlanEditKey(plan(fields))).toBe(key)
-  })
-
-  it('no view: no line', () => {
-    expect(workPlanEditKey(null)).toBeNull()
-  })
-})
-
 // --- Operations and availability ----------------------------------------------------------------------
 
 describe('operations and availability (flowgate.v02.0048 T#13, D#1 §8.3 / §8.5)', () => {
@@ -157,21 +139,10 @@ describe('message keys (flowgate.v02.0048 T#13)', () => {
 
   const keys = [
     'title',
-    'rev',
-    'totals',
+    // flowgate.v02.0056 F1: the details' keys (rev, totals, assignment, per-card rows, open_hint, edit.*) are gone.
     'progress',
-    'assignments',
-    'assignment',
+    'no_cards',
     'unassigned',
-    'empty',
-    'review',
-    'started',
-    'provider_none',
-    'provider_server',
-    'open_hint',
-    'edit.open',
-    'edit.final_approved',
-    'edit.locked',
     'error.unreadable',
     'error.invalid',
     'error.forbidden',

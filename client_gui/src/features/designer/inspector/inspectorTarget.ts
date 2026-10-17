@@ -3,12 +3,15 @@
 // document bound to the selected Node, its card kind, its states and whether the Flow is read
 // only. Every Inspector part reads this one shape, so the rules here (card kind, read only) are
 // decided once and never again per feature.
+import { cardApprovalFailureView, cardStateView, type CardApprovalFailureView, type CardStateView } from '../center/graph/cardStateView'
 import type {
   FlowGraphCardDocument,
   FlowGraphNodeRun,
   FlowGraphNodeSlot,
   FlowGraphSelection,
 } from '../center/graph/flowGraph'
+
+export type { CardApprovalFailureView, CardStateView }
 
 /** Inspector card kinds (D#1 §4.3) — the one value set registrations may name. */
 export const INSPECTOR_CARD_KINDS = ['requirement', 'research', 'task', 'design', 'test', 'check', 'plan', 'other'] as const
@@ -75,6 +78,12 @@ export interface InspectorTarget {
   readonly ownership: string | null
   readonly viewMode: string | null
   readonly readOnly: InspectorReadOnly
+  /**
+   * flowgate.v02.0061 T#14: `run` while the Flow's Graph run is running, paused or stopping — its structure and card
+   * settings cannot change (the Center session's run lock); TR0031 rev1: `unknown` while the run's status is not
+   * confirmed (being read, or the read failed). Absent / null = not locked.
+   */
+  readonly editLock?: 'run' | 'unknown' | null
 }
 
 const CARD_KIND_BY_DOC_TYPE: ReadonlyMap<string, InspectorCardKind> = new Map(
@@ -138,6 +147,26 @@ export function inspectorCardNodeKey(target: Pick<InspectorTarget, 'nodeType' | 
   return target && target.nodeType !== null && !target.nodeId.startsWith(INSPECTOR_CLIENT_KEY_PREFIX) ? target.nodeId : null
 }
 
+/**
+ * flowgate.v02.0056 F2-2 — the target with the card lines written from the Inspector ([작성], O3 0009-TR §4-2) that
+ * the Canvas read does not show yet: a written line takes the place of its slot's line while that line has no
+ * document (or the card has no line of the slot); a line the read shows with a document stays as read. The same
+ * target when nothing changes.
+ */
+export function withWrittenCardLines(target: InspectorTarget | null, written: readonly InspectorCardDocument[]): InspectorTarget | null {
+  if (!target || !written.length) return target
+  let changed = false
+  const lines = target.cardDocuments.map((line) => {
+    const own = written.find((item) => item.slot === line.slot)
+    if (!own || line.docId !== null) return line
+    changed = true
+    return own
+  })
+  const added = written.filter((item) => !target.cardDocuments.some((line) => line.slot === item.slot))
+  if (!changed && !added.length) return target
+  return { ...target, cardDocuments: [...lines, ...added] }
+}
+
 /** Selection context -> InspectorTarget; null when nothing is selected. */
 export function toInspectorTarget(selection: FlowGraphSelection | null | undefined): InspectorTarget | null {
   if (!selection) return null
@@ -168,5 +197,21 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     ownership,
     viewMode,
     readOnly: inspectorReadOnly(ownership, viewMode),
+    editLock: selection.editLock ?? null,
   }
+}
+
+/**
+ * flowgate.v02.0056 F2-1 — the card state of a Graph card with a run (작업 중 · 승인 대기 · 승인됨 …), decided by the
+ * one rule the Canvas card uses too (center/graph/cardStateView.ts); null on a gate (✓ 확인 · ✕ 반려 is its own),
+ * a card not saved yet, a Node without a definition or without a run.
+ */
+export function inspectorCardState(target: Pick<InspectorTarget, 'nodeType' | 'nodeId' | 'nodeRun'> | null): CardStateView | null {
+  if (!target || target.nodeType === 'gate' || inspectorCardNodeKey(target) === null) return null
+  return cardStateView(target.nodeRun)
+}
+
+/** flowgate.v02.0056 F2-1 — how a refused [승인] is worded and handled (the Canvas' grouping, cardStateView.ts). */
+export function inspectorApprovalFailure(code: string | null, status: number | null, network: boolean): CardApprovalFailureView {
+  return cardApprovalFailureView(code, status, network)
 }

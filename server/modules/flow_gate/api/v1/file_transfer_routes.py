@@ -142,6 +142,11 @@ def _check_project_auth(request: Request, project_id: str):
     token_rec = verify_bearer(request)
     if isinstance(token_rec, JSONResponse):
         return token_rec
+    from modules.flow_gate.services import graph_source_hooks
+    try:
+        graph_source_hooks.reject_group_source(token_rec, "file_transfer")
+    except graph_source_hooks.GraphSourceError as exc:
+        return _err(409, exc.code, exc.message)
 
     if token_rec.get("_is_user_jwt"):
         user_id: str = token_rec["issued_to"]

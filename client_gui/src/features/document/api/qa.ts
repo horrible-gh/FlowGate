@@ -18,14 +18,19 @@
 // The AI answer hand-off (`answers/ai-request`, `answers/ai-mention`) and adding a question are not
 // wrapped (D#1 §10.2 T#7 row).
 //
+// flowgate.v02.0064 T-B5 (P0006 §5.1·§6.4) — every answer carries `author_name`: the person author's
+// name (`users.username`), null for an AI answer or a person the server could not find.
+//
 // flowgate.v02.0053 T#6 (0053 CH §2) — a person asks on the Q&A tab and an AI answers, so two more
 // existing v0.1 endpoints are wrapped (still no new server API):
 //   ask      POST /api/v1/q/{doc_id}/questions { asker_kind: 'human', questions: [{ body }] }
 //            -> { ok, doc_id, added_item_ids: [id] }
-//   ai       POST /api/v1/q/{doc_id}/items/{item_id}/answers/ai-request {} -> { ok, doc_id, item_id,
-//            run_id, status, provider }; the AI run posts its answer on the same question
+//   ai       POST /api/v1/q/{doc_id}/items/{item_id}/answers/ai-request { provider_id? } -> { ok, doc_id,
+//            item_id, run_id, status, provider }; the AI run posts its answer on the same question
 //            (author_kind 'ai'), which arrives as `qna_answer_registered`. Its admission refusals keep
 //            the ai-invoke envelope: a flat `code` (409 run_in_progress, no_enabled_provider …).
+//            flowgate.v02.0056 F1 (0056 CH §3): the caller names the AI (`provider_id`, the route's
+//            AiAnswerRequest body); without one the project's provider chain picks.
 //   `answers/ai-mention` (copy a mention for one's own worker) stays unwrapped.
 //
 // Refusals keep the server's shape and are thrown as they are; qaErrorOf reads them. The q routes
@@ -63,6 +68,8 @@ export interface QaAnswer {
   /** 'human' or 'ai' as the server sent it. */
   readonly authorKind: string
   readonly authorId: string | null
+  /** The person author's name (`author_name`); null for an AI or a person not found. */
+  readonly authorName: string | null
   /** Ids of the picked options (at most one today). */
   readonly selectedOptionIds: readonly string[]
   readonly provider: QaProvider | null
@@ -112,6 +119,7 @@ function toQaAnswer(raw: unknown): QaAnswer {
     body: typeof row.body === 'string' ? row.body : '',
     authorKind: text(row.author_kind) ?? '',
     authorId: text(row.author_id),
+    authorName: text(row.author_name),
     selectedOptionIds: list(row.selected_options).filter((id): id is string => typeof id === 'string'),
     provider: toQaProvider(row.author_provider),
     createdAt: text(row.created_at),
@@ -230,11 +238,14 @@ export function toQaAiRequestResult(raw: unknown): QaAiRequestResult {
   return { docId: text(row.doc_id), itemId: integer(row.item_id), runId: text(row.run_id), status: text(row.status) }
 }
 
-/** Asks an AI to answer one question (the project's provider chain; the answer lands on the question). */
-export async function qaRequestAiAnswer(docId: string, itemId: number): Promise<QaAiRequestResult> {
+/**
+ * Asks an AI to answer one question (the answer lands on the question): the named provider, else the
+ * project's provider chain.
+ */
+export async function qaRequestAiAnswer(docId: string, itemId: number, providerId: string | null = null): Promise<QaAiRequestResult> {
   const response = await postRequest<unknown>(
     `${API}/q/${encodeURIComponent(docId)}/items/${encodeURIComponent(String(itemId))}/answers/ai-request`,
-    {},
+    providerId ? { provider_id: providerId } : {},
   )
   return toQaAiRequestResult(response.data)
 }

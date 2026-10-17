@@ -20,7 +20,7 @@ import re as _re
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -30,6 +30,7 @@ from modules.flow_gate.db import conversation_turns as conv_turn_store
 from modules.flow_gate.db import mention_copies as db_mention_copies
 from modules.flow_gate.documents import attachments
 from modules.flow_gate.documents import document_service, document_types, template_service, url_import_service
+from modules.flow_gate.documents import live_root as _live_root
 from modules.flow_gate.documents.type_code import doc_code_seq_text
 from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact  # D#2 §4.2 (flowgate.v02.0048 T#10)
 from modules.flow_gate.documents.constants import (
@@ -186,6 +187,20 @@ def _is_relative_to(path: Path, base: Path) -> bool:
         return False
 
 
+class _BodyUnavailable(HTTPException):
+    """Keep the old detail string while adding a top-level reason at content routes."""
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(status_code=404, detail={
+            "file_path_missing": "Document file path is missing.",
+            "file_not_found": "Document file not found.",
+            "path_unresolved": "Not found",
+        }[reason])
+
+    def response(self) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": self.detail, "reason": self.reason})
+
+
 def _document_file_path(doc: dict) -> Path:
     """Resolve a document's stored file_path to a jailed absolute Path.
 
@@ -195,20 +210,20 @@ def _document_file_path(doc: dict) -> Path:
     """
     raw = (doc.get("file_path") or "").strip()
     if not raw:
-        raise HTTPException(status_code=404, detail="Document file path is missing.")
+        raise _BodyUnavailable("file_path_missing")
 
     project_id = doc.get("project_id")
     branch = (doc.get("branch") or "main") or "main"
-    resolved = storage_paths.resolve_storage_path(raw, project_id, branch=branch)
+    resolved, state = storage_paths.locate_storage_path(raw, project_id, branch=branch)
+    if state == "path_unresolved":
+        raise _BodyUnavailable(state)
     if resolved is None:
-        # Fall back to a best-effort jailed path so existing 404-on-missing-file
-        # behaviour at call sites (which separately check .is_file()) is preserved.
-        root = get_storage_root(project_id).resolve()
-        cand = (Path(raw) if (Path(raw).is_absolute() or _re.match(r"^[A-Za-z]:", raw))
-                else root / raw).resolve(strict=False)
-        if not storage_paths._within_allowed_roots(cand, project_id):
-            raise HTTPException(status_code=404, detail="Not found")
-        return cand
+        # Use the same normalized candidate order as reads, including /storage/
+        # legacy paths. A missing file remains writable only inside the jail.
+        for candidate, inside in storage_paths.storage_path_candidates(raw, project_id, branch):
+            if inside:
+                return candidate
+        raise _BodyUnavailable("path_unresolved")
     return resolved
 
 
@@ -273,6 +288,8 @@ def _latest_revision_body(doc_id: str, project_id: Optional[str]) -> Optional[st
     recorded in ``document_revisions``. When the live file is lost we can restore the
     last-saved body from the newest backup that still resolves to a real file. Returns
     None when there is no backup (e.g. revision_no=0 / pruned by delete_old).
+    A backup that cannot be read or is not UTF-8 is skipped for the next older one
+    (0064 T-B1d: one broken backup never stops the body diagnosis).
     """
     from modules.flow_gate.db import document_revisions as _db_rev
     try:
@@ -287,7 +304,7 @@ def _latest_revision_body(doc_id: str, project_id: Optional[str]) -> Optional[st
         if resolved is not None and resolved.is_file():
             try:
                 return resolved.read_text(encoding="utf-8")
-            except OSError:
+            except (OSError, UnicodeError):
                 continue
     return None
 
@@ -372,6 +389,21 @@ class DocumentUrlImportRequest(BaseModel):
 class RootTypeConvert(BaseModel):
     """Convert a workflow root document between R and B (NR0066.0003 §5)."""
     new_type: Literal["R", "B"]
+
+
+class RegenerateRequest(BaseModel):
+    """0064 T-B1d (P0006 §2.7): the method the body diagnosis showed. Without it the call is the old one."""
+    expected_method: Optional[str] = None
+
+
+class BodyRecoverySelection(BaseModel):
+    doc_id: str
+    expected_method: Optional[str] = None
+
+
+class BodyRecoveryRequest(BaseModel):
+    """0064 T-B1d (P0006 §2.8): the documents to recover, each with the method its diagnosis showed."""
+    selections: list[BodyRecoverySelection]
 
 
 
@@ -547,21 +579,17 @@ def _parse_doc_workflow(doc: dict) -> dict:
     if doc.get("type_code") not in WORKFLOW_ROOT_TYPES and doc.get("group_id") and doc.get("project_id"):
         from modules.flow_gate.db import documents as _db_docs
         try:
-            roots = [c for c in candidates if c.get("type_code") == "R"][:1]
+            # 0064 T#4 (L0005 2.10 P4): only a live root (R/B, not cancelled, not succeeded) is the parent.
+            live = _live_root.live_roots(candidates)
+            roots = [c for c in live if c.get("type_code") == "R"][:1]
             if not roots:
-                roots = [c for c in candidates if c.get("type_code") == "B"][:1]
+                roots = [c for c in live if c.get("type_code") == "B"][:1]
             if not roots and (_candidates_truncated or not candidates):
                 # The list was truncated or unreadable — absence cannot be concluded, so check.
-                roots = _db_docs.list_documents(
-                    project_id=doc["project_id"],
-                    group_id=doc["group_id"],
-                    type_code="R",
-                    limit=1,
-                ) or _db_docs.list_documents(
-                    project_id=doc["project_id"],
-                    group_id=doc["group_id"],
-                    type_code="B",
-                    limit=1,
+                roots = _db_docs.list_live_roots(
+                    doc["project_id"], doc["group_id"], "R", limit=1,
+                ) or _db_docs.list_live_roots(
+                    doc["project_id"], doc["group_id"], "B", limit=1,
                 )
             if roots:
                 parent_root = roots[0]
@@ -609,7 +637,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
     final_approved = (
         doc.get("doc_review_status") == "wf_done"
         or any(
-            c.get("type_code") in WORKFLOW_ROOT_TYPES
+            _live_root.is_live_root(c)                      # 0064 T#4 (L0005 2.10 P5)
             and c.get("doc_review_status") == "wf_done"
             for c in candidates
         )
@@ -635,6 +663,11 @@ def _parse_doc_workflow(doc: dict) -> dict:
         if doc.get("type_code") in WORKFLOW_ROOT_TYPES
         else out.get("parent_root_doc_id") or out.get("parent_r_doc_id")
     )
+    if _live_root.is_succeeded_root(doc):
+        # 0064 T#4 (L0005 2.10 P5): a succeeded root reads the head of the live root at its chain's end.
+        root_doc_id_for_head = _live_root.live_end_doc_id(
+            doc, {c["doc_id"]: c for c in candidates if c.get("doc_id")} if not _candidates_truncated else None,
+        ) or doc["doc_id"]
     seq_items: list = []
     _seq_found = False
     if root_doc_id_for_head:
@@ -731,7 +764,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
                 # explicit step, not a document: keep the head at AC/pending until
                 # the R doc is finalized (wf_done), then the workflow is done.
                 root_done = any(
-                    c.get("type_code") in WORKFLOW_ROOT_TYPES
+                    _live_root.is_live_root(c)              # 0064 T#4 (L0005 2.10 P5)
                     and c.get("doc_review_status") == "wf_done"
                     for c in candidates
                 )
@@ -2262,6 +2295,7 @@ def open_final_approval(
 def reopen_workflow(
     body: _ReopenBody,
     current_user: dict = Depends(get_current_user),
+    request: Request = None,
 ) -> dict:
     """Time-machine reopen: roll the workflow back to an earlier step.
 
@@ -2274,6 +2308,9 @@ def reopen_workflow(
     doc = _db_docs.get_by_id(body.doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
+    graph_refusal = _graph_contact.time_machine_refusal(doc, request)
+    if graph_refusal is not None:
+        return graph_refusal
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
     project_id = doc.get("project_id")
@@ -2445,6 +2482,7 @@ def _attach_tr_commit_restore(
 def restore_workflow(
     body: _RestoreBody,
     current_user: dict = Depends(get_current_user),
+    request: Request = None,
 ) -> dict:
     """Reverse time-machine restore: re-approve unchanged rollback steps."""
     from modules.flow_gate.db import documents as _db_docs
@@ -2455,6 +2493,9 @@ def restore_workflow(
     doc = _db_docs.get_by_id(body.doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
+    graph_refusal = _graph_contact.time_machine_refusal(doc, request)
+    if graph_refusal is not None:
+        return graph_refusal
     group_id = doc.get("group_id")
     project_id = doc.get("project_id")
     if not project_id or not group_id:
@@ -2736,6 +2777,47 @@ def get_document_content_rpc(
     return get_document_content(doc_id, current_user)
 
 
+@router.get("/body-diagnosis")
+@require_permission("perm_document_read")
+def diagnose_document_bodies(
+    group_id: Optional[str] = Query(None),
+    project_id: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Read-only body diagnosis of a Flow or a project (0064 T-B1d, L0005 2.11, P0006 §2.6).
+
+    Every unreadable document with its reason, the recommended recovery method and what recovering it may
+    lose. Nothing is written: no row, no file, no ``id_counter``. A static path, so it is registered before
+    ``/{doc_id}``.
+    """
+    from modules.flow_gate.documents import body_recovery
+
+    return body_recovery.diagnose_scope(group_id=group_id, project_id=project_id)
+
+
+@router.post("/body-recovery")
+@require_permission("perm_document_update")
+def recover_document_bodies(
+    body: BodyRecoveryRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Recover the selected documents one transaction each (0064 T-B1d, L0005 2.13, P0006 §2.8).
+
+    Each document is judged exactly as ``regenerate`` judges it; a refusal or a failure is that document's
+    result and the next one goes on. A well-formed request always answers 200.
+    """
+    from modules.flow_gate.documents import body_recovery
+
+    if not 1 <= len(body.selections) <= body_recovery.BULK_RECOVERY_MAX:
+        return JSONResponse(status_code=422, content={
+            "detail": body_recovery.SELECTION_COUNT_INVALID, "error": "selection_count_invalid"})
+    if any(s.expected_method is not None and s.expected_method not in body_recovery.METHODS
+           for s in body.selections):
+        raise HTTPException(status_code=422, detail=body_recovery.UNKNOWN_METHOD)
+    return body_recovery.recover_bulk([(s.doc_id, s.expected_method) for s in body.selections],
+                                      current_user["user_id"])
+
+
 @router.post("/mention-copy")
 @require_permission("perm_document_read")
 def record_mention_copy(
@@ -2912,6 +2994,8 @@ def save_test_spec(
     saved = update_document_content(
         doc_id, DocumentContentUpdate(content=content), current_user, request
     )
+    if isinstance(saved, JSONResponse):
+        return saved
     return {**saved, "ok": True, "cases": cases}
 
 
@@ -3119,13 +3203,28 @@ def _scope_fallback_body(doc: dict) -> Optional[str]:
 @require_permission("perm_document_read")
 def get_document(
     doc_id: str,
+    include: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """Fetch a single document."""
+    """Fetch a single document.
+
+    0064 T#4 (P0006 §3.1): ``converted_from`` / ``converted_to`` / ``live_root_doc_id`` are added, and with
+    ``include=root_conversion`` the R↔B conversion judgement for the other root type (a pure read). Without the
+    query the judgement is not computed.
+    """
     doc = document_service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     out = _parse_doc_workflow(doc)
+    from modules.flow_gate.documents import root_conversion as _root_conversion
+
+    out.update(_root_conversion.document_conversion_items(doc))
+    if "root_conversion" in {part.strip() for part in (include or "").split(",")}:
+        try:
+            out["root_conversion"] = _root_conversion.preview_root_conversion(doc)
+        except Exception:  # noqa: BLE001 — no guessed judgement: the screen falls back to the server's answer
+            _log.warning("root conversion preview failed: %s", doc_id, exc_info=True)
+            out["root_conversion"] = None
     try:
         out["download_available"] = bool(doc.get("file_path")) and _document_file_path(doc).is_file()
     except (HTTPException, OSError, ValueError):
@@ -3227,10 +3326,12 @@ def get_document_content(
             "conversation": _conversation_compat_block(doc_id, True),
         }
 
-    file_path = _document_file_path(doc)
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Document file not found.")
-    return {"content": file_path.read_text(encoding="utf-8")}
+    from modules.flow_gate.storage.body import file_body_read_state
+
+    state, content = file_body_read_state(doc)
+    if state != "readable":
+        return _BodyUnavailable(state).response()
+    return {"content": content}
 
 
 @router.patch("/{doc_id}/content")
@@ -3249,6 +3350,70 @@ def update_document_content(
     doc = document_service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    _save_write_checks(doc)
+
+    def save():
+        fresh = document_service.get_document(doc_id)
+        if fresh is None:
+            raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+        _save_write_checks(fresh)
+        target = _save_target(fresh)
+        existed = target.is_file()
+        relative = storage_paths.to_storage_relative(target, fresh.get("project_id"))
+        updated = document_service.update_document(
+            doc_id, {"file_path": relative}, actor_user_id=current_user["user_id"],
+        )
+        data = body.content.encode("utf-8")
+        from modules.flow_gate.storage.files import overwrite_file, write_new_file
+        from modules.flow_gate.storage.body import record_body_saved
+        from modules.flow_gate.db.connection import after_commit
+
+        if existed:
+            overwrite_file(target, data)
+        else:
+            write_new_file(target, data)
+        record_body_saved(fresh, source="console_save", file_path=relative, size=len(data))
+        after_commit(lambda: _broadcast_document_refresh(fresh))
+        if fresh.get("group_id"):
+            from modules.flow_gate.graph_workflow.services.canvas_events import (
+                CANVAS_REASON_DOCUMENTS, publish_canvas_changed,
+            )
+            publish_canvas_changed(project_id=fresh.get("project_id"), flow_id=fresh["group_id"],
+                                   reason=CANVAS_REASON_DOCUMENTS, actor_user_id=current_user["user_id"],
+                                   origin_client_id=None)
+        return {"data": updated, "content": body.content}
+
+    try:
+        return _run_body_save_guard(doc, save)
+    except _BodyUnavailable as exc:
+        return exc.response()
+
+
+def _run_body_save_guard(doc: dict, call):
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.graph_workflow.store import definition_store
+    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+
+    if doc.get("group_id") and definition_store.available():
+        return with_flow_guard(doc["group_id"], call)
+    with get_store().transaction():
+        return call()
+
+
+def _save_target(doc: dict) -> Path:
+    if (doc.get("file_path") or "").strip():
+        return _document_file_path(doc)
+    from modules.flow_gate.documents.body_recovery import standard_location
+
+    target = standard_location(doc)
+    import os
+
+    if os.path.lexists(target):
+        raise HTTPException(status_code=409, detail="file_exists_unrecorded")
+    return target
+
+
+def _save_write_checks(doc: dict) -> None:
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
     if str(doc.get("type_code") or "").upper() == "TR2":
@@ -3264,10 +3429,10 @@ def update_document_content(
     # 여기를 열어 두면 "저장 성공" 응답을 받고도 대화는 하나도 바뀌지 않는다.
     # 이관되지 않은 대화(pending/in_progress/failed)는 아직 파일이 정본이라 그대로 저장된다.
     # 봉투는 세션 계열 HTTPException(detail) 그대로 — 0344.0004-P §0-5.
-    if conversation_turn_service.is_full_body_edit_blocked(doc.get("type_code"), doc_id):
+    if conversation_turn_service.is_full_body_edit_blocked(doc.get("type_code"), doc["doc_id"]):
         raise HTTPException(
             status_code=409,
-            detail=conversation_turn_service.full_body_edit_message(doc_id),
+            detail=conversation_turn_service.full_body_edit_message(doc["doc_id"]),
         )
     final_approved = document_service.is_final_approved(doc)
     if not document_service.is_document_editable(doc, final_approved=final_approved):
@@ -3278,106 +3443,52 @@ def update_document_content(
         raise HTTPException(status_code=422, detail=detail)
 
 
-    file_path = _document_file_path(doc)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(body.content, encoding="utf-8")
-    # L0054.0002 correction: this is a real documents.file_path write (persisted via
-    # update_document), not a runtime-only path. Store it relative so a content edit
-    # does not silently re-introduce an absolute path (B0001 regression).
-    updated = document_service.update_document(
-        doc_id,
-        {"file_path": storage_paths.to_storage_relative(file_path, doc.get("project_id"))},
-        actor_user_id=current_user["user_id"],
-    )
-    return {"data": updated, "content": body.content}
-
-
 @router.post("/{doc_id}/regenerate")
 @require_permission("perm_document_update")
 def regenerate_document_file(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
-) -> dict:
-    """Recreate the Markdown file for a document whose stored file is missing (R0001).
+    body: Optional[RegenerateRequest] = Body(None),
+):
+    """Recover the body of a document whose file cannot be read (R0001; 0064 T-B1d, L0005 2.12, P0006 §2.7).
 
     This is a *recovery* operation, not a content edit, so it deliberately does NOT
     apply the editable/final-approval gate (NR0003 §5) — a missing file must be
-    recoverable regardless of workflow state (R0001 itself is ``closed``). Safety
-    instead comes from two guards: the document row must exist, and an existing file
-    is never clobbered (409).
+    recoverable regardless of workflow state (R0001 itself is ``closed``). An existing file
+    is never clobbered: a readable body answers 409 ``file_exists``, and a file another row
+    uses answers 409 ``target_in_use``.
 
-    Recovery source priority (NR0003 §3): the newest readable revision backup (restores
-    the last-saved body) → else a frontmatter stub synthesized from DB metadata (always
-    works, but the body is lost — surfaced as ``body_lost: true``).
+    0064 T-B1d: the method is the body diagnosis's (``body_recovery.diagnose_doc``): relink the
+    other root number's file or the standard location's file, the newest revision backup, the
+    card document's empty draft, else the metadata stub. Inside the document's guard the checks,
+    the body state and the diagnosis are taken again; ``expected_method`` (optional) that no longer
+    matches refuses with ``diagnosis_changed``. ``restored_from``, ``body_lost`` and ``content`` keep
+    their meaning; ``method``, ``body_loss`` and the file paths are added.
     """
-    doc = document_service.get_document(doc_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
-    _reject_if_group_disposed(doc)
-    _reject_if_group_ai_running(doc)
-    if str(doc.get("type_code") or "").upper() == "TR2":
-        raise HTTPException(
-            status_code=409,
-            detail="TR2 recovery requires its canonical JSON document.",
-        )
+    from modules.flow_gate.documents import body_recovery
 
-    target = _regenerate_target_path(doc)
-    if target.is_file():
-        # The file is present — there is nothing to recover, and overwriting it would
-        # destroy good data. Treat as a no-op conflict (NR0003 §7-3).
-        raise HTTPException(
-            status_code=409,
-            detail="Document file already exists; nothing to regenerate.",
-        )
-
-    project_id = doc.get("project_id")
-    body = _latest_revision_body(doc_id, project_id)
-    if body is not None:
-        restored_from = "revision"
-    elif str(doc.get("type_code") or "").upper() == WORK_PLAN_TYPE:
-        # The metadata stub below is Markdown frontmatter, which a work plan reader can
-        # only report as "this work plan cannot be opened as a table". Recover a valid but undecided
-        # plan instead: every countable type present, every count 0. The response still
-        # says body_lost, so nobody mistakes it for the plan that was there.
-        from modules.flow_gate.services import work_plan_service as _wp
-
-        restored_from = "metadata"
-        body = _wp.dumps(_wp.empty_recovery_body(project_id))
-    else:
-        restored_from = "metadata"
-        body = _build_next_empty_content(
-            project_id=project_id,
-            module=doc.get("module") or "none",
-            group_id=doc.get("group_id") or "",
-            type_code=doc.get("type_code") or "",
-            doc_code=_short_doc_code(doc),
-            title=doc.get("title") or "",
-            target_id=doc.get("target_id") or "",
-            next_type="",
-        )
-
+    expected = body.expected_method if isinstance(body, RegenerateRequest) else None
+    if expected is not None and expected not in body_recovery.METHODS:
+        raise HTTPException(status_code=422, detail=body_recovery.UNKNOWN_METHOD)
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body, encoding="utf-8")
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Storage error: {exc}") from exc
+        return body_recovery.recover_one(doc_id, expected, current_user["user_id"])
+    except body_recovery.RecoveryRefused as refused:
+        return _recovery_refused_response(refused)
 
-    # L0054.0002: persist the path relative so recovery never re-introduces an
-    # absolute path (B0001 regression).
-    updated = document_service.update_document(
-        doc_id,
-        {"file_path": storage_paths.to_storage_relative(target, project_id)},
-        actor_user_id=current_user["user_id"],
-    )
 
-    _broadcast_document_refresh(doc)
-
-    return {
-        "data": updated,
-        "restored_from": restored_from,
-        "body_lost": restored_from == "metadata",
-        "content": body,
-    }
+def _recovery_refused_response(refused) -> JSONResponse:
+    """P0006 §2.7: the existing envelopes stay — 404, the disposal 409, the AI run 423 and the TR2 409
+    without ``error``; the new refusals are a flat 409 ``{detail, error, evidence | diagnosis}``."""
+    if refused.cause is not None:
+        raise refused.cause
+    if refused.error in ("not_found", "tr2_not_supported"):
+        raise HTTPException(status_code=refused.status, detail=refused.detail)
+    content = {"detail": refused.detail, "error": refused.error}
+    if refused.error == "diagnosis_changed":
+        content["diagnosis"] = refused.evidence
+    elif refused.evidence is not None:
+        content["evidence"] = refused.evidence
+    return JSONResponse(status_code=refused.status, content=content)
 
 
 @router.patch("/{doc_id}/root-type")
@@ -3402,17 +3513,27 @@ def convert_root_type(
     and a revision is never rewritten. An unassigned Flow converts inside the Flow guard;
     a v0.1 Flow and a document without a group convert exactly as before.
     flowgate.v02.0053 T#1: in that guard a Designer card line holding the root follows the new id.
+    0064 T#3 (L0005 2.5~2.8, P0006 §3.2 / §3.5 / §3.6): ``root_conversion.execute_root_conversion`` is the
+    one entry point. Inside the guard it judges again, stages the new body file next to the original,
+    moves the attachment rows and files, the card lines and the draft cards, and removes the old files
+    only after the commit. The response adds ``conversion``; new refusals answer with a flat 409.
     """
+    from modules.flow_gate.documents import root_conversion
+
     doc = document_service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
     actor = current_user["user_id"]
-    result = _graph_contact.guarded_root_conversion(doc, lambda: document_service.convert_root_document_type(doc_id, body.new_type, actor_user_id=actor), actor)
+    try:
+        result = _graph_contact.guarded_root_conversion(
+            doc, lambda: root_conversion.execute_root_conversion(doc_id, body.new_type, actor), actor)
+    except root_conversion.ConversionRefused as refused:
+        return refused.response()
     if isinstance(result, JSONResponse):
         return result
-    return {"data": result}
+    return result
 
 
 

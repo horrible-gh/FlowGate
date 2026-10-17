@@ -46,7 +46,7 @@ from modules.flow_gate.services import path_exclusion_rules
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
-from modules.flow_gate.services import token_service
+from modules.flow_gate.services import token_service, graph_source_hooks
 # flowgate.v02.0053 T#2: the Designer card port of the step type judgement (stdlib only).
 from modules.flow_gate.services import worker_step_type_hooks
 from modules.flow_gate.storage.paths import src_root
@@ -232,7 +232,7 @@ def _reconcile_worker_grant_scopes(grant: dict) -> bool:
     if not token_rec:
         return False
     scopes = _scopes_for_worker_token(token_rec)
-    if not scopes:
+    if not scopes and not graph_source_hooks.binding(token_rec):
         return False
     grant_id = str(grant.get("grant_id") or "")
     try:
@@ -273,7 +273,7 @@ def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict
         return existing if _reconcile_worker_grant_scopes(existing) else None
 
     scopes = _scopes_for_worker_token(token_rec)
-    if not scopes:
+    if not scopes and not graph_source_hooks.binding(token_rec):
         return None
 
     group_id = token_rec.get("group_id") or ""
@@ -309,7 +309,7 @@ def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict
     # the kind judgement point — the backstop for a failed or
     # restarted H1 (decide-time) provisioning. Idempotent and never raises; on
     # failure source access simply keeps resolving to the fallback branch folder.
-    if group_id and "write" in scopes:
+    if group_id and "write" in scopes and not graph_source_hooks.binding(token_rec):
         try:
             from modules.flow_gate.services import git_service  # lazy — import cycle
 
@@ -657,6 +657,21 @@ def _read_worktree_expected_reasons(git_service) -> frozenset:
     })
 
 
+def _attempt_source_root(grant: dict, op: str):
+    token = _worker_token_for_grant(grant)
+    try:
+        if op in {"write", "patch", "remove"}:
+            # flowgate.v02.0061 T#7: a write / remove of a stopping run's or an inactive attempt's token is refused
+            # (409 graph_attempt_inactive, recorded) before its source root is resolved; reads keep their path.
+            graph_source_hooks.require_writable(token, "source_" + op)
+        if op == "resolve_base_dirty":
+            graph_source_hooks.reject_group_source(token, op)
+        return graph_source_hooks.source_root(
+            token, project_id=grant.get("project"), group_id=grant.get("group_id"))
+    except graph_source_hooks.GraphSourceError as exc:
+        raise _OpError(409, details={"code": exc.code, **exc.details}, message=exc.message) from exc
+
+
 def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
     """Resolve the project source root for the grant, or None (→ 503).
 
@@ -683,6 +698,9 @@ def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
     still unresolved a warning is logged so this is no longer the one traceless
     fallback path. Benign fallbacks (legacy grant / integration off) stay silent.
     """
+    attempt_root = _attempt_source_root(grant, op)
+    if attempt_root is not None:
+        return attempt_root
     project_id = grant.get("project")
     group_id = grant.get("group_id")
     token_rec = _worker_token_for_grant(grant)
@@ -764,6 +782,9 @@ def _resolve_root_for_mutation(grant: dict, op: str) -> Optional[Path]:
     one synchronous self-heal ensure_worktree retry. Legacy grants (no group_id)
     and non-integrated projects still fall back, unchanged.
     """
+    attempt_root = _attempt_source_root(grant, op)
+    if attempt_root is not None:
+        return attempt_root
     project_id = grant.get("project")
     group_id = grant.get("group_id")
     if not group_id:
@@ -1961,6 +1982,10 @@ def _fail_envelope(op: str, status: int, locale: str = "ko") -> dict:
 
 
 def _op_error_message(exc: _OpError, locale: str) -> str:
+    from modules.flow_gate.graph_workflow.api.graph_messages import SOURCE_MESSAGES
+    source_code = (exc.details or {}).get("code")
+    if source_code in SOURCE_MESSAGES:
+        return SOURCE_MESSAGES[source_code].get(locale) or SOURCE_MESSAGES[source_code]["ko"]
     code = ERROR_CODE_BY_STATUS[exc.status]
     messages = _ERROR_MESSAGES.get(locale) or _ERROR_MESSAGES[template_provision.FALLBACK_LOCALE]
     reason = (exc.details or {}).get("reason")
@@ -2043,13 +2068,18 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
 
     log_path, log_pattern = _log_targets(op, body)
     try:
+        # A document-only attempt always reports the source boundary, even for
+        # document kinds without CRUD scopes. This grants no additional scope.
+        attempt_root = _attempt_source_root(grant, op)
         if OP_SCOPE[op] not in db_grants.get_scopes(grant["grant_id"]):
             raise _OpError(403)
         _validate_paths(op, body)
         _validate_allowed_fields(op, body)
         _validate_required(op, body)
 
-        if op in _MUTATING_OPS:
+        if attempt_root is not None:
+            root = attempt_root
+        elif op in _MUTATING_OPS:
             # Always run the existing resolver first. It owns the long-standing
             # branch-merge claim, worktree self-heal and non-Git base fallback contracts.
             root = _resolve_root_for_mutation(grant, op)
@@ -2060,10 +2090,15 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
         if op in {"diff", "log", "merge_preview"} and "target_ref" not in body:
             body = {**body, "target_ref": _default_target_ref(grant, root)}
 
+        attempt_token = _worker_token_for_grant(grant)
+        attempt_bound = graph_source_hooks.binding(attempt_token)
         guarded_group_mutation = (
             op in {"write", "patch", "remove"} and bool(grant.get("group_id"))
         )
-        if guarded_group_mutation:
+        if op in {"write", "patch", "remove"} and attempt_bound:
+            with graph_source_hooks.mutation(attempt_token) as attempt_root:
+                extra, nbytes = _execute(op, body, attempt_root, grant)
+        elif guarded_group_mutation:
             # TR2 ownership exists only for Git-managed group worktrees. A non-integrated
             # project with a group_id intentionally keeps the pre-0641 base fallback path.
             from modules.flow_gate.db import git_integration as db_git
@@ -2114,11 +2149,16 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
                 extra, nbytes = _execute(op, body, root, grant)
         else:
             extra, nbytes = _execute(op, body, root, grant)
+    except graph_source_hooks.GraphSourceError as exc:
+        _log(grant, op, log_path, log_pattern, status=409)
+        return 409, _envelope(False, op, error={"code": exc.code, "message": exc.message, "details": exc.details})
     except _OpError as exc:
         _log(grant, op, log_path, log_pattern, status=exc.status)
         if exc.details is not None or exc.message is not None:
             policy_code = (exc.details or {}).get("code")
-            if policy_code in {"TR2_MANAGED_FILE", "SOURCE_PATH_ALIAS_NOT_ALLOWED"}:
+            if policy_code in {"TR2_MANAGED_FILE", "SOURCE_PATH_ALIAS_NOT_ALLOWED",
+                               "graph_git_required", "graph_worktree_unavailable",
+                               "graph_attempt_source_unsupported"}:
                 code = policy_code
             else:
                 code = ERROR_CODE_BY_STATUS[exc.status]

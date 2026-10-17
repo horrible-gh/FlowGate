@@ -423,7 +423,8 @@ function shown(panel: HTMLElement): string {
 }
 
 describe('work plan in the document window (flowgate.v02.0053 T#4)', () => {
-  it('shows the plan table — totals, quantity boxes, one row per Step by card — not the MD Viewer', async () => {
+  // flowgate.v02.0056 F1 (0056 CH §5): the totals tiles over the quantity boxes are gone (they repeated the boxes).
+  it('shows the plan table — quantity boxes, one row per Step by card, no totals tiles — not the MD Viewer', async () => {
     const panel = await open(PLAN)
     expect(q(panel, 'document-window-body')!.getAttribute('data-view')).toBe('work_plan')
     expect(q(panel, 'md-viewer')).toBeNull()
@@ -431,11 +432,8 @@ describe('work plan in the document window (flowgate.v02.0053 T#4)', () => {
     expect(planRead).toHaveBeenCalledWith(PLAN)
 
     const parts = (node: HTMLElement | null, ...classes: string[]) => classes.map((name) => text(node!.querySelector(`.${name}`)))
-    expect(['design', 'work', 'steps'].map((key) => parts(q(panel, `work-plan-total-${key}`), 'wp-tile-label', 'wp-tile-value'))).toEqual([
-      ['설계', '2장'],
-      ['작업', '1세트'],
-      ['단계', '4개'],
-    ])
+    expect(q(panel, 'work-plan-totals')).toBeNull()
+    expect(q(panel, 'work-plan-sheet')!.firstElementChild!.classList.contains('wp-section')).toBe(true)
     expect(qa(panel, 'work-plan-quantity').map((node) => parts(node, 'wp-quantity-name', 'wp-quantity-value', 'wp-quantity-unit'))).toEqual([
       ['기본 설계', '2', '장'],
       ['작업', '1', '세트'],

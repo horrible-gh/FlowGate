@@ -13,15 +13,23 @@
        it and an answered one 완료 (0052 T#1) — the asker kind is never read as a hand-off.
        The window's title line keeps its badge and buttons in view: the title shrinks with an
        ellipsis, the badge does not. Answering is not editing the question, so there is no 편집
-       badge; 읽기 전용 shows only when the Flow is read only (ownership conflict / revision view).
+       badge; 읽기 전용 shows only when the Flow is read only (ownership conflict).
        flowgate.v02.0053 T#6 (0053 CH §2) — the question line at the top: a person writes a question
-       and [+] (or Enter) registers it and asks an AI to answer; the answer shows under it like any
-       answer. The line is always there, and a document without questions shows only the line — no
-       "no questions" sentence. Why [+] is closed is its tooltip. A refusal is an icon on the line —
-       red ! when the question was not stored, amber △ when it was stored but no AI was asked — whose
-       name says which and whose tooltip (its accessible description) says why. -->
+       and [+] (or Enter) registers it. The line is always there, and a document without questions
+       shows only the line — no "no questions" sentence. Why [+] is closed is its tooltip. A refusal is a
+       red ! icon on the line whose name says what failed and whose tooltip says why.
+       flowgate.v02.0056 F1 (0056 CH §3) — registering never asks an AI by itself. Every open question
+       carries its own AI line under the answer form: an AI picker (the project's providers, the project
+       default picked first) and [AI 답변 요청]; the button shows the request on its way, a running chip
+       says the AI answer is awaited once the run started, and a refusal is an amber ! icon beside the
+       button with the reason as its tooltip. A person still answers directly, as before.
+       flowgate.v02.0063 — no reason sentence under a closed form; a Flow whose answers stay closed shows
+       no question line, answer form or AI line (qnaAvailability `visible`).
+       flowgate.v02.0064 T-B5 (P0006 §5.2·§6.4) — who answered reads one of four classes (person by name /
+       AI · provider / AI run not linked / AI no run information) plus unknown; the list shows the side only,
+       the window's answer adds the answer time and the run id when there is one. -->
   <div class="inspector-qna" data-test="inspector-qna" :data-status="status">
-    <div class="inspector-qna-ask" data-test="qna-ask">
+    <div v-if="availability.ask.visible" class="inspector-qna-ask" data-test="qna-ask">
       <Input
         class="inspector-qna-ask-field"
         :model-value="askBody"
@@ -40,28 +48,7 @@
         data-test="qna-ask-submit"
         @click="submitAsk"
       />
-      <span
-        v-if="askFailure"
-        class="inspector-qna-ask-failure"
-        role="img"
-        tabindex="0"
-        :aria-label="t(k(`ask_failed.${askFailure.stage}`))"
-        :title="t(k(askFailure.key))"
-        data-test="qna-ask-failure"
-        :data-stage="askFailure.stage"
-        :data-tone="askFailure.stage === 'ask' ? 'danger' : 'warning'"
-      >
-        <svg v-if="askFailure.stage === 'ask'" viewBox="0 0 16 16" aria-hidden="true" focusable="false" data-icon="error">
-          <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.5" />
-          <path d="M8 4.6v4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-          <circle cx="8" cy="11.3" r="0.95" fill="currentColor" />
-        </svg>
-        <svg v-else viewBox="0 0 16 16" aria-hidden="true" focusable="false" data-icon="warning">
-          <path d="M8 2.2 14.3 13.4H1.7Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
-          <path d="M8 6.4v3.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-          <circle cx="8" cy="11.6" r="0.85" fill="currentColor" />
-        </svg>
-      </span>
+      <InspectorFailureIcon v-if="askFailure" :name="t(k('ask_failed'))" :reason="t(k(askFailure.key))" data-test="qna-ask-failure" />
     </div>
     <InspectorPaneState v-if="status === 'loading' && !items" state="loading" />
     <InspectorPaneState v-else-if="errorKey && !items" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
@@ -90,6 +77,7 @@
             data-test="qna-item"
             :data-item="item.id"
             :data-state="item.state"
+            :data-awaiting="awaiting.has(item.id) ? 'true' : 'false'"
           >
             <div class="inspector-qna-row">
               <InspectorStatusChip class="inspector-qna-chip" :label="t(k(stateKey(item.state)))" :tone="toneOf(item.state)" data-test="qna-item-state" />
@@ -102,7 +90,7 @@
                   <span data-test="qna-item-asker" :data-side="item.asker.kind">{{ sideText(item.asker) }}</span>
                   <template v-if="lastAnswerOf(item)">
                     <span class="inspector-qna-sep" aria-hidden="true">·</span>
-                    <span class="inspector-qna-last" data-test="qna-answer" :data-side="lastAnswerOf(item)!.side.kind">
+                    <span class="inspector-qna-last" data-test="qna-answer" :data-side="lastAnswerOf(item)!.side.kind" :data-side-class="lastAnswerOf(item)!.side.sideClass">
                       <span aria-hidden="true">↳</span>
                       <span class="inspector-qna-last-body" data-test="qna-answer-body">{{ lastAnswerOf(item)!.body }}</span>
                       <span v-if="lastAnswerOf(item)!.picked.length" class="inspector-qna-by" data-test="qna-answer-picked">{{ t(k('picked'), { labels: lastAnswerOf(item)!.picked.join(', ') }) }}</span>
@@ -121,7 +109,7 @@
             </div>
 
             <!-- v7 `.q-ans`: the short inline answer under a question without an answer. -->
-            <div v-if="item.answerable" class="inspector-qna-answer" data-test="qna-answer-form">
+            <div v-if="item.answerable && availability.answer.visible" class="inspector-qna-answer" data-test="qna-answer-form">
               <div v-if="item.options.length" class="inspector-qna-options" role="group" :aria-label="t(k('options'))">
                 <Button
                   v-for="option in item.options"
@@ -150,12 +138,34 @@
                   variant="primary"
                   :disabled="!availability.answer.enabled || !canSend(item.id)"
                   :loading="busy === item.id"
+                  :title="answerTitle"
                   data-test="qna-answer-submit"
                   @click="submit(item.id)"
                 >{{ t(k('send')) }}</Button>
               </div>
-              <div v-if="availability.answer.reason" data-test="qna-answer-reason">
-                <InspectorReason :text="t(k(availability.answer.reason))" />
+              <!-- flowgate.v02.0056 F1: the AI line — pick an AI, ask it; the request state beside the button. -->
+              <div v-if="availability.ai_request.visible" class="inspector-qna-ai" data-test="qna-ai">
+                <Select
+                  class="inspector-qna-ai-pick"
+                  :model-value="aiPickOf(item.id)"
+                  :options="providerOptions"
+                  :placeholder="providerPlaceholder"
+                  :disabled="!availability.ai_request.enabled || !providers.length"
+                  :aria-label="t(k('ai_provider'))"
+                  data-test="qna-ai-provider"
+                  @update:model-value="(value: string) => setAiPick(item.id, value)"
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  :disabled="!availability.ai_request.enabled || !aiPickOf(item.id)"
+                  :loading="requesting === item.id"
+                  :title="aiTitle"
+                  data-test="qna-ai-request"
+                  @click="requestAiFor(item.id)"
+                >{{ t(k('ai_request')) }}</Button>
+                <InspectorStatusChip v-if="awaiting.has(item.id)" :label="t(k('ai_waiting'))" tone="running" dot data-test="qna-ai-waiting" />
+                <InspectorFailureIcon v-if="aiFailure && aiFailure.itemId === item.id" :name="t(k('ai_failed'))" :reason="t(k(aiFailure.key))" data-test="qna-ai-failure" />
               </div>
               <div v-if="failure && failure.itemId === item.id" data-test="qna-answer-failure">
                 <InspectorReason tone="danger" :text="t(k(failure.key))" />
@@ -198,19 +208,22 @@
           <div class="inspector-qna-window-head">
             <InspectorStatusChip :label="t(k(stateKey(windowItem(win.id)!.state)))" :tone="toneOf(windowItem(win.id)!.state)" data-test="qna-window-state" />
             <span class="inspector-qna-sub" data-test="qna-window-asker">{{ t(k('asked_by'), { side: sideText(windowItem(win.id)!.asker) }) }}</span>
+            <InspectorStatusChip v-if="awaiting.has(win.id)" :label="t(k('ai_waiting'))" tone="running" dot data-test="qna-window-ai-waiting" />
           </div>
           <p v-if="windowItem(win.id)!.title" class="inspector-qna-window-q">{{ windowItem(win.id)!.title }}</p>
           <p class="inspector-qna-text" data-test="qna-window-body">{{ windowItem(win.id)!.body }}</p>
 
           <ul v-if="windowItem(win.id)!.answers.length" class="inspector-qna-answers">
-            <li v-for="answer in windowItem(win.id)!.answers" :key="answer.key" data-test="qna-window-answer" :data-side="answer.side.kind">
-              <span class="inspector-qna-sub">{{ t(k('answered_by'), { side: sideText(answer.side) }) }}</span>
+            <li v-for="answer in windowItem(win.id)!.answers" :key="answer.key" data-test="qna-window-answer" :data-side="answer.side.kind" :data-side-class="answer.side.sideClass">
+              <span class="inspector-qna-sub" data-test="qna-window-answer-side">{{ t(k('answered_by'), { side: sideText(answer.side) }) }}</span>
+              <span v-if="answer.detail.answeredAt" class="inspector-qna-sub" data-test="qna-window-answer-at">{{ t(k('detail.answered_at'), { at: formatAt(answer.detail.answeredAt) }) }}</span>
+              <span v-if="answer.detail.runId" class="inspector-qna-sub" data-test="qna-window-answer-run">{{ t(k('detail.run_id'), { runId: answer.detail.runId }) }}</span>
               <span v-if="answer.picked.length" class="inspector-qna-sub">{{ t(k('picked'), { labels: answer.picked.join(', ') }) }}</span>
               <p class="inspector-qna-text">{{ answer.body }}</p>
             </li>
           </ul>
 
-          <div v-if="windowItem(win.id)!.answerable" class="inspector-qna-answer" data-test="qna-window-form">
+          <div v-if="windowItem(win.id)!.answerable && availability.answer.visible" class="inspector-qna-answer" data-test="qna-window-form">
             <div v-if="windowItem(win.id)!.options.length" class="inspector-qna-options" role="group" :aria-label="t(k('options'))">
               <Button
                 v-for="option in windowItem(win.id)!.options"
@@ -238,12 +251,32 @@
                 variant="primary"
                 :disabled="!availability.answer.enabled || !canSend(win.id)"
                 :loading="busy === win.id"
+                :title="answerTitle"
                 data-test="qna-window-submit"
                 @click="submit(win.id)"
               >{{ t(k('answer')) }}</Button>
             </div>
-            <div v-if="availability.answer.reason" data-test="qna-window-reason">
-              <InspectorReason :text="t(k(availability.answer.reason))" />
+            <div v-if="availability.ai_request.visible" class="inspector-qna-ai" data-test="qna-window-ai">
+              <Select
+                class="inspector-qna-ai-pick"
+                :model-value="aiPickOf(win.id)"
+                :options="providerOptions"
+                :placeholder="providerPlaceholder"
+                :disabled="!availability.ai_request.enabled || !providers.length"
+                :aria-label="t(k('ai_provider'))"
+                data-test="qna-window-ai-provider"
+                @update:model-value="(value: string) => setAiPick(win.id, value)"
+              />
+              <Button
+                size="sm"
+                variant="secondary"
+                :disabled="!availability.ai_request.enabled || !aiPickOf(win.id)"
+                :loading="requesting === win.id"
+                :title="aiTitle"
+                data-test="qna-window-ai-request"
+                @click="requestAiFor(win.id)"
+              >{{ t(k('ai_request')) }}</Button>
+              <InspectorFailureIcon v-if="aiFailure && aiFailure.itemId === win.id" :name="t(k('ai_failed'))" :reason="t(k(aiFailure.key))" data-test="qna-window-ai-failure" />
             </div>
             <div v-if="failure && failure.itemId === win.id" data-test="qna-window-failure">
               <InspectorReason tone="danger" :text="t(k(failure.key))" />
@@ -262,8 +295,10 @@ import { useI18n } from 'vue-i18n'
 import Button from '../../../../../components/ui/Button.vue'
 import Input from '../../../../../components/ui/Input.vue'
 import ModelessShell from '../../../../../components/ui/ModelessShell.vue'
+import Select, { type SelectOption } from '../../../../../components/ui/Select.vue'
 import Textarea from '../../../../../components/ui/Textarea.vue'
 import InspectorAddButton from '../../parts/InspectorAddButton.vue'
+import InspectorFailureIcon from '../../parts/InspectorFailureIcon.vue'
 import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
@@ -276,11 +311,31 @@ const props = defineProps<{
   target: InspectorTarget
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const k = (key: string) => `gui.inspector.qna.${key}`
 
-const { items, availability, status, errorKey, busy, failure, ready, answer, asking, askFailure, ask, reload } = useQna(() => props.target)
+const {
+  items,
+  availability,
+  status,
+  errorKey,
+  busy,
+  failure,
+  ready,
+  answer,
+  asking,
+  askFailure,
+  ask,
+  requesting,
+  awaiting,
+  aiFailure,
+  requestAi,
+  providers,
+  defaultProviderId,
+  providersStatus,
+  reload,
+} = useQna(() => props.target)
 
 // --- The question line (0053 T#6) ------------------------------------------------------------------
 
@@ -303,6 +358,40 @@ function onAskEnter(event: KeyboardEvent) {
   if (event.isComposing || event.keyCode === 229) return
   event.preventDefault()
   if (availability.value.ask.enabled && askReady.value) void submitAsk()
+}
+
+// --- The AI line (0056 F1) ------------------------------------------------------------------------
+
+const providerOptions = computed<SelectOption[]>(() => providers.value.map((provider) => ({ value: provider.id, label: provider.name })))
+
+/** The picker's empty wording: the list is on its way, or the project has no AI. */
+const providerPlaceholder = computed(() => (providersStatus.value === 'loading' ? t(k('ai_provider_loading')) : t(k('ai_provider_none'))))
+
+/** [AI 답변 요청]'s tooltip: why it is closed, else nothing beyond its label. */
+const aiTitle = computed(() => {
+  const reason = availability.value.ai_request.reason
+  if (reason) return t(k(reason))
+  return providers.value.length ? undefined : t(k('ai_reason.no_provider'))
+})
+
+// The AI picked per question (written by the picker only); the project's default until the user picks.
+const aiPicks = reactive<Record<number, string>>({})
+
+function aiPickOf(itemId: number): string {
+  const picked = aiPicks[itemId]
+  if (picked && providers.value.some((provider) => provider.id === picked)) return picked
+  const fallback = defaultProviderId.value ?? providers.value[0]?.id ?? ''
+  return providers.value.some((provider) => provider.id === fallback) ? fallback : ''
+}
+
+function setAiPick(itemId: number, providerId: string) {
+  aiPicks[itemId] = providerId
+}
+
+async function requestAiFor(itemId: number) {
+  const providerId = aiPickOf(itemId)
+  if (!providerId) return
+  await requestAi(itemId, providerId)
 }
 
 // --- The folded "완료" group (v7 qaPane: open when nothing is pending) ------------------------------
@@ -368,6 +457,7 @@ watch(
   () => props.target.docId,
   () => {
     for (const id of Object.keys(drafts)) delete drafts[Number(id)]
+    for (const id of Object.keys(aiPicks)) delete aiPicks[Number(id)]
     windows.value = []
     askBody.value = ''
   },
@@ -394,6 +484,9 @@ function canSend(itemId: number): boolean {
   return ready(itemId, bodyOf(itemId), pickedOf(itemId))
 }
 
+/** The send button's tooltip: why answering is closed, else nothing beyond its label. */
+const answerTitle = computed(() => (availability.value.answer.reason ? t(k(availability.value.answer.reason)) : undefined))
+
 async function submit(itemId: number) {
   if (await answer(itemId, bodyOf(itemId), pickedOf(itemId))) delete drafts[itemId]
 }
@@ -418,6 +511,12 @@ const readOnlyReason = computed(() => {
 
 function sideText(side: QnaSide): string {
   return t(k(side.key), side.params)
+}
+
+/** The answer time of the window's answer detail (0064 T-B5), in the UI locale; the raw value if unreadable. */
+function formatAt(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale.value)
 }
 
 const lastAnswerOf = (item: QnaItemView): QnaAnswerView | null => item.answers[item.answers.length - 1] ?? null
@@ -459,36 +558,6 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   min-width: 0;
   height: 28px;
   font-size: 12px;
-}
-
-/* A refused question (red) or a stored question whose AI request was refused (amber); why is the tooltip. */
-.inspector-qna-ask-failure {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  cursor: help;
-}
-
-.inspector-qna-ask-failure svg {
-  width: 16px;
-  height: 16px;
-}
-
-.inspector-qna-ask-failure[data-tone='danger'] {
-  color: var(--fg2-status-danger-fg);
-}
-
-.inspector-qna-ask-failure[data-tone='warning'] {
-  color: var(--fg2-status-warning-fg);
-}
-
-.inspector-qna-ask-failure:focus-visible {
-  outline: 2px solid var(--fg2-focus, #4c9aff);
-  outline-offset: 1px;
 }
 
 .inspector-qna-list,
@@ -618,6 +687,22 @@ function toneOf(state: QnaItemState): InspectorChipTone {
 
 .inspector-qna-send > :last-child {
   flex: 0 0 auto;
+}
+
+/* The AI line (0056 F1): the picker, [AI 답변 요청], then the waiting chip or the refusal icon. */
+.inspector-qna-ai {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.inspector-qna-ai-pick {
+  flex: 0 1 160px;
+  min-width: 96px;
+  height: 28px;
+  font-size: 11.5px;
 }
 
 .inspector-qna-line,

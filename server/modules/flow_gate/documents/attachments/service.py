@@ -193,15 +193,38 @@ def _prepare_upload(doc_id: str, part_count: int, actor: Optional[dict]) -> tupl
     return doc, room
 
 
+def _created_identity(dest: Path) -> Optional[tuple]:
+    """``(st_dev, st_ino)`` of a file just created with ``O_EXCL`` (its size and mtime still change)."""
+    from modules.flow_gate.storage.files import file_identity
+
+    identity = file_identity(dest)
+    return identity[:2] if identity is not None else None
+
+
+def _complete_identity(dest: Path) -> Optional[tuple]:
+    from modules.flow_gate.storage.files import file_identity
+
+    return file_identity(dest)
+
+
 def _rollback(done: list[dict]) -> None:
     """A9 — best effort. Never changes the error the caller is already returning.
 
     Files left behind are not in the registry, so they appear in no list, no download and
     no read, and §2-12 W3 keeps the numbering scan from calling them orphans.
+
+    0064 T#3: only the file this request created is removed — the path must still hold it
+    (``identity``, taken right after the ``O_EXCL`` create and again once it is complete).
     """
+    from modules.flow_gate.storage.files import is_same_file_as
+
     for item in done:
         try:
-            Path(item["abs_path"]).unlink()
+            path = Path(item["abs_path"])
+            identity = item.get("identity")
+            if identity is not None and not is_same_file_as(path, identity):
+                continue
+            path.unlink()
         except OSError:
             pass
 
@@ -261,7 +284,7 @@ async def upload_attachments(
             # "unlink every done item, the unfinished open part included". Filling the entry
             # in only after the stream completed is what left a 20 MiB carcass behind when
             # the part was cut at U2.
-            item: dict = {"abs_path": str(dest)}
+            item: dict = {"abs_path": str(dest), "identity": _created_identity(dest)}
             done.append(item)
             digest = hashlib.sha256()
             received = 0
@@ -298,6 +321,7 @@ async def upload_attachments(
                     pass
 
             request_total += received
+            item["identity"] = _complete_identity(dest) or item["identity"]
             item.update({
                 "original_filename": original_display_name(raw_name),
                 "filename": final_name,
@@ -308,7 +332,7 @@ async def upload_attachments(
             })
 
         rows = await anyio.to_thread.run_sync(
-            _commit_registry, doc_id, done, actor_id
+            _commit_registry, doc_id, done, actor_id, actor, room
         )
     except (AttachmentError, HTTPException):
         # HTTPException is the group-lock answer (423 GROUP_AI_RUN_LOCKED) the mutability
@@ -330,27 +354,66 @@ async def upload_attachments(
     return {"doc_id": doc_id, "attachments": rows, "count": len(rows)}
 
 
-def _commit_registry(doc_id: str, done: list[dict], actor_id: Optional[str]) -> list[dict]:
-    """A8 — one transaction for the whole request."""
+def _attachment_write_guard(doc_id: str, call: Callable[[], Any], operation: str) -> Any:
+    """0064 L0005 2.7.1 — an attachment write commits under the guard an R↔B conversion of ``doc_id`` holds.
+
+    That is the document's Flow guard, or the document's own row lock when it has no Flow. The document is
+    read again inside: a conversion that moved the document (new id, new room) before this write got the
+    guard leaves nothing to register on the old id and no row to delete there. Called inside a transaction
+    that is not that guard, the write is refused before ``call`` runs.
+    """
+    from modules.flow_gate.graph_workflow.services.flow_guard import GuardNotHeld, run_in_document_guard
+
+    try:
+        return run_in_document_guard(doc_id, call)
+    except GuardNotHeld as exc:
+        raise unexpected(exc, operation=operation, reason="unexpected", doc_id=doc_id)
+
+
+def _commit_registry(
+    doc_id: str,
+    done: list[dict],
+    actor_id: Optional[str],
+    actor: Optional[dict] = None,
+    room: Optional[Path] = None,
+) -> list[dict]:
+    """A8 — one transaction for the whole request, under the Flow guard (0064 L0005 2.7.1).
+
+    Inside it the document is read again and must still be mutable with the same room the files
+    were written to; otherwise the upload is refused and the caller removes its files (A9).
+    """
     from modules.flow_gate.db.connection import get_store
 
     store = get_store()
     uploaded_at = _now_rfc3339()
+
+    def register() -> None:
+        fresh = load_document(doc_id)
+        assert_mutable(fresh, actor, "attachment upload")
+        if room is not None and resolve_attach_dir(fresh).resolve(strict=False) != Path(room).resolve(strict=False):
+            raise AttachmentError(
+                409, "DOCUMENT_NOT_MUTABLE",
+                "The attachment folder of this document changed; upload again.",
+                doc_id=doc_id, reason="attachment_room_changed",
+            )
+        for item in done:
+            registry_insert(
+                doc_id=doc_id,
+                original_filename=item["original_filename"],
+                filename=item["filename"],
+                file_path=item["file_path"],
+                size=item["size"],
+                content_type=item["content_type"],
+                content_sha256=item["content_sha256"],
+                uploaded_by=actor_id,
+                uploaded_at=uploaded_at,
+                store=store,
+            )
+
     try:
-        with store.transaction():
-            for item in done:
-                registry_insert(
-                    doc_id=doc_id,
-                    original_filename=item["original_filename"],
-                    filename=item["filename"],
-                    file_path=item["file_path"],
-                    size=item["size"],
-                    content_type=item["content_type"],
-                    content_sha256=item["content_sha256"],
-                    uploaded_by=actor_id,
-                    uploaded_at=uploaded_at,
-                    store=store,
-                )
+        _attachment_write_guard(doc_id, register, "upload:guard")
+    except (AttachmentError, HTTPException):
+        raise
     except Exception as exc:
         raise unexpected(
             exc,
@@ -441,6 +504,14 @@ def delete_attachment(doc_id: str, name: str, actor: Optional[dict]) -> dict:
             "Reserved WorkPlan attachments are removed only by the WorkPlan lifecycle.",
             doc_id=doc_id, filename=name, reason="reserved_work_plan_attachment",
         )
+    # 0064 L0005 2.7.1: the lookup, the path checks, the unlink and the row removal run under the
+    # guard an R↔B conversion holds (Flow guard, or the row lock without a Flow), on the document as it is then.
+    return _attachment_write_guard(doc_id, lambda: _delete_locked(doc_id, name, actor), "delete:guard")
+
+
+def _delete_locked(doc_id: str, name: str, actor: Optional[dict]) -> dict:
+    doc = load_document(doc_id)
+    assert_mutable(doc, actor, "attachment delete")
     # X3 — every jail check, but a missing file is not an error here: X4 treats it as the
     # target state, which is what lets the next identical delete clear a ghost_row.
     row, path = resolve_registered_attachment(doc, name, require_file=False)
@@ -738,6 +809,11 @@ def copy_to_source(
     actor: Optional[dict],
 ) -> dict:
     """Copy one attachment into source; group worktree writes obey TR2 ownership."""
+    from modules.flow_gate.services import graph_source_hooks
+    try:
+        graph_source_hooks.reject_group_source(actor, "attachment_copy")
+    except graph_source_hooks.GraphSourceError as exc:
+        raise AttachmentError(409, exc.code, exc.message) from exc
     doc = load_document(doc_id)
     segments = _validate_target_path(target_path)
     assert_mutable(doc, actor, "attachment copy")

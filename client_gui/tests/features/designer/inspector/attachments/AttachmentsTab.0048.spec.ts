@@ -250,7 +250,9 @@ describe('attachments tab — reading (flowgate.v02.0048 T#8)', () => {
   it('a document without attachments shows the empty state; adding is still offered', async () => {
     rows.set(V01_DOC, [])
     const w = await mountTab(v01Target())
-    expect(w.find('[data-test="inspector-pane-state"][data-state="empty"]').text()).toBe('첨부 없음')
+    // 0017-CH (시안): the illustration with two lines, the blue [+ 파일 추가] under it.
+    expect(w.get('[data-test="attachments-empty"]').text()).toBe('첨부된 파일이 없습니다파일을 추가해 주세요.')
+    expect(w.get('[data-test="attachments-empty"]').find('svg').exists()).toBe(true)
     expect(isDisabled(addButton(w))).toBe(false)
   })
 
@@ -387,6 +389,18 @@ describe('attachments tab — open, add, delete (flowgate.v02.0048 T#8)', () => 
     expect(isDisabled(addButton(w))).toBe(true)
     expect(reasonText(w)).toBe('문서당 첨부 한도(200개)에 도달했습니다.')
     expect(isDisabled(deleteButton(w, 'f0.txt'))).toBe(false)
+  })
+
+  // flowgate.v02.0056 (0017-CH 시안): each file is a card line with its [제거]; the confirm step is unchanged.
+  it('the delete button of a file line is [제거]; the confirm step is unchanged', async () => {
+    const w = await mountTab(v01Target())
+    const button = deleteButton(w, '요구사항.xlsx')
+    expect(button.text()).toBe('제거')
+    await button.trigger('click')
+    expect(itemEl(w, '요구사항.xlsx').find('[data-test="attachments-confirm"]').text()).toContain('요구사항.xlsx 파일을 삭제할까요?')
+    expect(itemEl(w, '요구사항.xlsx').find('[data-test="attachments-delete-yes"]').exists()).toBe(true)
+    expect(itemEl(w, '요구사항.xlsx').find('[data-test="attachments-delete-no"]').exists()).toBe(true)
+    expect(deleteCall).not.toHaveBeenCalled()
   })
 
   it('delete asks first; cancel sends nothing', async () => {

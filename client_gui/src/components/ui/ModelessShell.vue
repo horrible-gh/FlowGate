@@ -253,10 +253,27 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseup', onResizeEnd)
 })
 
+// flowgate.v02.0067 T#1: `geometry()` / `setGeometry()` let a caller read and set the panel's place
+// and size after it was created (the initial props are read once) — the Git window fits itself to a
+// smaller viewport this way without re-creating its body. `setGeometry` takes the size as given, so
+// a caller may go below `minWidth` / `minHeight` to stay on a small screen; the position is clamped
+// as a drag would be.
+function geometry(): { x: number; y: number; width: number; height: number } {
+  return { x: x.value, y: y.value, width: width.value, height: height.value }
+}
+
+function setGeometry(next: { x: number; y: number; width: number; height: number }): void {
+  x.value = next.x
+  y.value = next.y
+  width.value = next.width
+  height.value = next.height
+  clampPosition()
+}
+
 // flowgate.v02.0053 T#3: the optional `actions` slot puts a caller's own titlebar buttons right before
 // minimize / close (the document window's ✎), and `bringToFront()` lets a caller raise a panel that is
 // already open (a second request for the same document). Both stay domain-free.
-defineExpose({ bringToFront })
+defineExpose({ bringToFront, geometry, setGeometry })
 </script>
 
 <style scoped>

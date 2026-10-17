@@ -6,24 +6,15 @@
 // too (D#1 §8.1). What the change means to the rest of the Designer — the header, the Canvas card,
 // the documents tab — travels as the server's own events through the hub, never by calling
 // another feature (D#1 §7.3).
-import { computed, ref, shallowRef, watch, type ComputedRef, type Ref } from 'vue'
-import {
-  reviewActivityRead,
-  reviewApprove,
-  reviewDocumentRead,
-  reviewErrorOf,
-  reviewReject,
-  reviewRunStart,
-  type ReviewDocument,
-  type ReviewTrCommit,
-} from '@/features/document'
+// flowgate.v02.0056 F2-1: approve / reject (and the TR commit line of an approval) are gone — see actionsModel.
+import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
+import { reviewActivityRead, reviewDocumentRead, reviewErrorOf, reviewRunStart, type ReviewDocument } from '@/features/document'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { useInspectorResource, type InspectorEventMatch } from '../../useInspectorResource'
 import {
   actionsAvailability,
   actionsFailureKey,
   actionsReviewStatus,
-  actionsTrCommitLine,
   type ActionsAvailability,
   type ActionsFailureKind,
   type ActionsOperation,
@@ -44,15 +35,8 @@ export interface ActionsState {
   readonly busy: Readonly<Ref<ActionsOperation | null>>
   /** Message key of the last refusal for this target, or null. */
   readonly failureKey: ComputedRef<string | null>
-  /** The TR commit line of the last approval for this target, or null. */
-  readonly notice: ComputedRef<ReturnType<typeof actionsTrCommitLine>>
-  approve(): Promise<boolean>
-  /** Rejects with the reason (trimmed; an empty reason is not sent). */
-  reject(reason: string): Promise<boolean>
   run(): Promise<boolean>
   rework(): Promise<boolean>
-  /** Forgets the last refusal (e.g. the reject dialog opens again). */
-  clearFailure(): void
 }
 
 export function useActions(target: () => InspectorTarget | null): ActionsState {
@@ -69,14 +53,12 @@ export function useActions(target: () => InspectorTarget | null): ActionsState {
 
   const busy = ref<ActionsOperation | null>(null)
   const failure = ref<ActionsFailureKind | null>(null)
-  const trCommit = shallowRef<ReviewTrCommit | null>(null)
 
-  // A refusal or a commit line belongs to the document it was answered for.
+  // A refusal belongs to the document it was answered for.
   watch(
     () => target()?.docId ?? null,
     () => {
       failure.value = null
-      trCommit.value = null
     },
   )
 
@@ -100,17 +82,15 @@ export function useActions(target: () => InspectorTarget | null): ActionsState {
     })
   })
 
-  async function perform(operation: ActionsOperation, call: (docId: string, flowId: string) => Promise<ReviewTrCommit | null>): Promise<boolean> {
+  async function perform(operation: ActionsOperation, call: (docId: string, flowId: string) => Promise<void>): Promise<boolean> {
     const current = target()
     if (!current?.docId || !availability.value[operation].enabled) return false
     const docId = current.docId
     busy.value = operation
     failure.value = null
-    trCommit.value = null
     let ok = false
     try {
-      const commit = await call(docId, current.flowId)
-      if (target()?.docId === docId) trCommit.value = commit
+      await call(docId, current.flowId)
       ok = true
     } catch (error) {
       if (target()?.docId === docId) failure.value = reviewErrorOf(error).kind
@@ -126,28 +106,13 @@ export function useActions(target: () => InspectorTarget | null): ActionsState {
     availability,
     busy,
     failureKey: computed(() => (failure.value ? actionsFailureKey(failure.value) : null)),
-    notice: computed(() => actionsTrCommitLine(trCommit.value)),
-    approve: () => perform('approve', async (docId) => (await reviewApprove(docId)).trCommit),
-    reject: (reason) => {
-      const text = reason.trim()
-      if (!text) return Promise.resolve(false)
-      return perform('reject', async (docId) => {
-        await reviewReject(docId, text)
-        return null
-      })
-    },
     run: () =>
       perform('run', async (docId, flowId) => {
         await reviewRunStart({ groupId: flowId, docId, scope: 'edit' })
-        return null
       }),
     rework: () =>
       perform('rework', async (docId, flowId) => {
         await reviewRunStart({ groupId: flowId, docId, scope: 'rework' })
-        return null
       }),
-    clearFailure: () => {
-      failure.value = null
-    },
   }
 }

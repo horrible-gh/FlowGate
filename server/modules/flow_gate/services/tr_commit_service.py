@@ -343,6 +343,16 @@ def on_document_approved(doc_id: str, document: Optional[dict] = None) -> Option
                 quiet=_is_quiet_skip("git_inactive", doc),
             )
 
+        # 0061 T#8: approval defers Graph history to the attempt's result commit.
+        # Do this before every Git/group/ledger gate, including historical attempts.
+        from modules.flow_gate.graph_workflow.store import run_store
+        if run_store.registered_document_attempt(group_id, doc_id):
+            return _payload(
+                committed=False, commit=None, subject=None,
+                skipped_reason="graph_attempt_deferred", artifacts=[],
+                reported_diff={"unreported": [], "missing": []}, quiet=True,
+            )
+
         # A Time Machine reopen preserves the original logical TR message as durable
         # ledger metadata, whether it uncommitted the prior round (a plain live rewind)
         # or left it in place because it is merged/pushed history (flowgate.default.0532
@@ -1482,6 +1492,11 @@ def commit_conflict_resolution(
     )
     result = dict(outcome.get("result") or {})
     kind, commit = result.get("kind"), result.get("commit")
+    if kind == db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE:
+        # 0061 T#9: the merge commit carries the attempt's result into the group branch; its ledger row is the
+        # attempt's result (T#8) and stays as it is. The Graph integration goes on from the session's close notice
+        # (``db_git.on_session_closed``): done, then the next integrations.
+        return {"ok": True, "result": result}
     row_id = result.get("ledger_row_id")
     row = db_ledger.get_by_id(int(row_id)) if row_id is not None else None
     written = False
@@ -1549,6 +1564,10 @@ def abort_conflict_resolution(group_id: str, merge_id: int) -> dict[str, Any]:
     """
     outcome = git_service.abort_tr_conflict(group_id, merge_id)
     result = dict(outcome.get("result") or {})
+    if result.get("kind") == db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE:
+        # 0061 T#9: no cancel was attempted on the attempt's ledger row; its integration failed (conflict_aborted)
+        # from the session's close notice.
+        return {"ok": True, "result": result}
     row_id = result.get("ledger_row_id")
     if row_id is not None:
         try:

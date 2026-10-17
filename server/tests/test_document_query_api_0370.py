@@ -138,9 +138,9 @@ class _MockTxn:
 
 
 @pytest.fixture(scope="module")
-def storage_root():
+def storage_root(tmp_path_factory):
     prev = os.environ.get("FLOWGATE_STORAGE_DIR")
-    root = tempfile.mkdtemp(prefix="fg_doc_query_0370_")
+    root = str(tmp_path_factory.mktemp("fg_doc_query_0370"))
     os.environ["FLOWGATE_STORAGE_DIR"] = root
     yield Path(root)
     if prev is None:
@@ -150,9 +150,8 @@ def storage_root():
 
 
 @pytest.fixture(scope="module")
-def tmp_db():
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = f.name
+def tmp_db(tmp_path_factory):
+    db_path = str(tmp_path_factory.mktemp("query-db") / "query.db")
     mock_db = _MockDB(db_path)
     for sql_file in sorted(_SCHEMA_DIR.glob("*.sql")):
         try:
@@ -266,11 +265,10 @@ def _client():
 def _bearer(tmp_path) -> str:
     from modules.flow_gate.services import token_service
 
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
-        issued = token_service.issue(
-            project=PROJECT, group_id=GROUP, action_scope="new",
-            doc_ref=None, issued_to="usr_test_001",
-        )
+    issued = token_service.issue(
+        project=PROJECT, group_id=GROUP, action_scope="new",
+        doc_ref=None, issued_to="usr_test_001",
+    )
     return issued["raw_token"]
 
 
@@ -495,7 +493,7 @@ def test_meta_of_an_unreadable_body_is_still_200(tmp_path):
     resp = _get(f"/api/v1/document/{doc_id}/meta", _bearer(tmp_path))
     assert resp.status_code == 200
     assert resp.json()["body"] == {
-        "present": False, "chars": 0, "lines": 0, "body_line_start": 1,
+        "state": "file_path_missing", "present": False, "chars": 0, "lines": 0, "body_line_start": 1,
         "section_total": 0, "content_sha256": None, "outline_url": None,
     }
 

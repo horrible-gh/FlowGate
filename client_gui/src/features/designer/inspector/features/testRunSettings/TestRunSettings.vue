@@ -1,6 +1,6 @@
 <template>
   <!-- flowgate.v02.0051 stage 2 — the 테스트 card's own settings (0035 v7 testSettings), built from the common
-       parts. flowgate.v02.0053 T#7 — the 실행 block only, after the settings feature's 지시서 · 검수 뒤 진행 ·
+       parts. flowgate.v02.0053 T#7 — the 실행 block only, after the settings feature's 지시서 ·
        시나리오 작성 (v7 order): 실행 방식 케이스별 — 시나리오에서 정함 and the Case counts by mode, with the v7
        mark that the manual · external result flow is not drawn. No code (TSC / TSR) on screen; the
        explanations are tooltips. `view` may be handed in for a fixture preview. -->

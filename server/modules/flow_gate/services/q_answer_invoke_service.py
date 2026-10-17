@@ -43,7 +43,9 @@ from fastapi import HTTPException
 from modules.flow_gate.db import answers as db_answers
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import question_items as db_question_items
-from modules.flow_gate.services import ai_invoke_service, q_service, token_service
+from modules.flow_gate.services import (
+    ai_invoke_service, ai_start_precheck, card_memo_hooks, q_service, token_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -262,19 +264,28 @@ def build_answer_mention(
     # 0661 T0004 F5: the hand-off to a human is a SEPARATE signal, never an answer body.
     # The normal path is to answer; this is the exception path, and the conditions are
     # spelled out so uncertainty, a failed tool call or a thin context never become a
-    # hand-off (T0004 "자동답변 우선 계약").
+    # hand-off (T0004 "자동답변 우선 계약"). flowgate.v02.0063: only infrastructure, a
+    # permission or an instruction whose intent cannot be told goes to a person; a logic
+    # question never does (the user operates through AI and cannot answer it).
     escalate_url = f"{api_base_url}/q/{doc_id}/items/{item_id}/escalate"
     lines.append("")
     lines.append("[사용자 판단 이관 — 예외 경로]")
     lines.append(
-        "정상 경로는 위 답변 등록입니다. 참조 문서·소스·기존 정책을 확인하고도 "
-        "**사람의 업무적 의사결정**(요구사항 선택, 승인/우선순위 판단 등)이 반드시 필요한 질의에 한해, "
-        "답변을 등록하지 말고 아래 이관 신호를 보내십시오."
+        "정상 경로는 위 답변 등록입니다. 참조 문서·소스·기존 정책을 확인해 직접 답하십시오. "
+        "아래 세 경우에 한해서만 답변을 등록하지 말고 아래 이관 신호를 보내십시오."
     )
+    lines.append("- 인프라: 서버, 배포 환경, 외부 계정·서비스처럼 문서와 소스로 알 수 없는 운영 환경 정보")
+    lines.append("- 권한: 사람이 승인하거나 부여해야 하는 접근·실행 권한")
+    lines.append("- 지시 자체가 모호해, 문서와 소스를 확인해도 무엇을 원하는지 정할 수 없는 경우")
     lines.append(
-        "단순한 확신 부족, 조사 시간 부족, 도구 호출 실패, 빈 출력은 이관 사유가 아닙니다 — "
+        "로직·구현 방식·코드 구조·설계 선택에 관한 질의는 절대 이관하지 마십시오. "
+        "문서와 소스를 근거로 직접 정해 답하십시오. "
+        "단순한 확신 부족, 조사 시간 부족, 도구 호출 실패, 빈 출력도 이관 사유가 아닙니다 — "
         "그런 경우에는 근거를 밝힌 최선의 답변을 등록하십시오."
     )
+    # 0064 T-B1e (D0004 §3.6, P0006 §2.9 ②): "an answer stating its grounds" includes the unread-body rules 3 and 4
+    # of the lookup block; one sentence points there, the three hand-off conditions above stay as they are.
+    lines.append("본문을 읽지 못한 문서가 있으면 [문서 조회 도구]의 본문 미열람 규칙 3·4항을 지키십시오.")
     lines.append(f"POST {escalate_url}")
     lines.append(f"Authorization: Bearer {raw_token}")
     lines.append("Content-Type: application/json")
@@ -333,12 +344,23 @@ def issue_answer_token(
         "token_id": issued["token_id"],
         "scratch_dir": issued["scratch_dir"],
         "expires_at": issued.get("expires_at"),
-        "mention": build_answer_mention(
-            doc=doc,
-            item=item,
-            raw_token=issued["raw_token"],
-            scratch_dir=issued["scratch_dir"],
-            api_base_url=api_base_url,
+        # flowgate.v02.0056 T#3: a question on a Designer card's document is answered with that card's memos
+        # turned on for AI reading in front (card_memo_hooks; none, or no handler: the mention as before).
+        # 0064 T-B1e: behind the memos, the documents of the answer that cannot be read (ai_start_precheck; all
+        # readable: the mention as before) -- the same section on the run and the [copy mention] path.
+        "mention": card_memo_hooks.prepend_memo_section(
+            ai_start_precheck.qna_mention(
+                build_answer_mention(
+                    doc=doc,
+                    item=item,
+                    raw_token=issued["raw_token"],
+                    scratch_dir=issued["scratch_dir"],
+                    api_base_url=api_base_url,
+                ),
+                doc, item, ai_run_id,
+            ),
+            doc.get("group_id"),
+            doc_id=doc.get("doc_id"),
         ),
     }
 

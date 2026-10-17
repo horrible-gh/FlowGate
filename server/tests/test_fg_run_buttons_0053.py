@@ -149,6 +149,11 @@ def test_next_step_opens_one_step_at_a_time(env, decided):
     assert _states(env)[t1] == "open"
     _finish(env, t1, 90)                                           # its card works on while stopped
     assert _states(env)[t2] == "pending"
+    # flowgate.v02.0056 T#1: stopped is not awaiting approval — the card is approved (done) and the run band
+    # shows "멈춤 · 다음 카드 N개 대기" from the run read
+    held = _current(env)
+    assert (held["pending_propagation_count"], held["pending_node_keys"]) == (1, [t1])
+    assert {n["node_key"]: n["awaiting_approval"] for n in held["node_runs"]}[t1] is False
 
     second = _next(env)                                            # resume -> the next card opens, stop again
     assert second["run_id"] == first["run_id"] and second["status"] == "stopped"

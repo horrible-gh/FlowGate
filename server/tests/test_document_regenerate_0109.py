@@ -11,6 +11,12 @@ POST /api/v1/documents/{doc_id}/regenerate as a *recovery* op (not a content edi
 
 These call the router function directly (mirrors test_predecessor_endpoint_0061), with a
 real temp storage root so path resolution / persistence is exercised end to end.
+
+0064 T-B1d (L0005 2.12): recovery now runs inside the document's guard and reads its evidence
+(revision backups, events, other rows using the target) from the DB, so the document lives in
+the real SQLite DB of ``test_fg_card_documents.db_path`` instead of mocked service calls. A file
+already at the target that no row uses is no longer a 409: it is kept beside as ``.orphan-*``
+and the recovery writes next to it; a readable body is the 409 ``file_exists``.
 """
 from __future__ import annotations
 
@@ -25,9 +31,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi import HTTPException  # noqa: E402
 
+from test_fg_card_documents import db_path  # noqa: E402,F401 — the real SQLite DB fixture
 from modules.flow_gate.documents.routers import documents as docs_mod  # noqa: E402
-from modules.flow_gate.documents import document_service  # noqa: E402
 from modules.flow_gate import process_service  # noqa: E402
+from modules.flow_gate.db import documents as db_docs  # noqa: E402
 from modules.flow_gate.db import document_revisions as db_rev  # noqa: E402
 from modules.flow_gate.storage import paths as storage_paths  # noqa: E402
 
@@ -40,6 +47,7 @@ _DOC = {
     "module": "default",
     "branch": "main",
     "type_code": "R",
+    "seq": 1,
     "title": "재생성 대상",
     "target_id": "",
     "status": "closed",  # NR0003 §5: recovery must work even for a closed doc
@@ -48,18 +56,22 @@ _DOC = {
 
 
 @pytest.fixture
-def storage(tmp_path, monkeypatch):
+def storage(tmp_path, monkeypatch, db_path):  # noqa: F811
+    from modules.flow_gate.db import _SqliteTxnAdapter
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.db import projects as db_projects
+
+    # The affected-row count the Flow guard bump reads (as test_fg_card_documents.env sets it up).
+    monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path))
     # Recovery must not depend on group/edit gates.
     monkeypatch.setattr(process_service, "is_group_disposed", lambda gid: False)
-    captured: dict = {}
-
-    def _update(doc_id, fields, actor_user_id=None):
-        captured["file_path"] = fields.get("file_path")
-        return {**_DOC, **fields, "doc_id": doc_id}
-
-    monkeypatch.setattr(document_service, "update_document", _update)
-    return tmp_path, captured
+    monkeypatch.setattr(docs_mod, "_broadcast_document_refresh", lambda doc: None)
+    db_projects.create({"project_id": "testprj", "project_name": "testprj"})
+    db_groups.create({"group_id": _DOC["group_id"], "project_id": "testprj", "module": "default",
+                      "title": "0109", "status": "OPEN"})
+    db_docs.create(dict(_DOC))
+    return tmp_path
 
 
 def _expected_target(tmp_path: Path) -> Path:
@@ -70,8 +82,7 @@ def _expected_target(tmp_path: Path) -> Path:
 
 
 def test_regenerate_from_metadata_when_no_backup(storage, monkeypatch):
-    tmp_path, captured = storage
-    monkeypatch.setattr(document_service, "get_document", lambda did: dict(_DOC))
+    tmp_path = storage
     monkeypatch.setattr(db_rev, "list_by_doc", lambda did: [])
 
     out = docs_mod.regenerate_document_file(_DOC["doc_id"], _USER)
@@ -86,12 +97,13 @@ def test_regenerate_from_metadata_when_no_backup(storage, monkeypatch):
     assert "doc_number: 0001-R" in body
     assert "title: 재생성 대상" in body
     # Persisted path is storage-relative (B0001 guard), not absolute.
-    assert captured["file_path"] == "documents/testprj/main/default/0109/0001-R_document.md"
+    expected = "documents/testprj/main/default/0109/0001-R_document.md"
+    assert db_docs.get_by_id(_DOC["doc_id"])["file_path"] == expected
+    assert out["data"]["status"] == "closed"
 
 
 def test_regenerate_restores_latest_revision_backup(storage, monkeypatch):
-    tmp_path, _ = storage
-    monkeypatch.setattr(document_service, "get_document", lambda did: dict(_DOC))
+    tmp_path = storage
 
     # Two backups; newest (revision_no DESC → first) must win.
     rev_dir = tmp_path / "documents" / "testprj" / "main" / "default" / "0109" / "revisions"
@@ -117,23 +129,38 @@ def test_regenerate_restores_latest_revision_backup(storage, monkeypatch):
 
 
 def test_regenerate_refuses_to_clobber_existing_file(storage, monkeypatch):
-    tmp_path, _ = storage
-    monkeypatch.setattr(document_service, "get_document", lambda did: dict(_DOC))
+    tmp_path = storage
+    monkeypatch.setattr(db_rev, "list_by_doc", lambda did: [])
+
+    target = _expected_target(tmp_path)
+    target.parent.mkdir(parents=True)
+    target.write_text("# precious existing content", encoding="utf-8")
+    db_docs.update(_DOC["doc_id"], {"file_path": storage_paths.to_storage_relative(target, "testprj")})
+
+    out = docs_mod.regenerate_document_file(_DOC["doc_id"], _USER)
+    assert out.status_code == 409
+    assert out.body == (b'{"detail":"Document file already exists; nothing to regenerate.",'
+                        b'"error":"file_exists"}')
+    # Untouched.
+    assert target.read_text(encoding="utf-8") == "# precious existing content"
+
+
+def test_regenerate_keeps_an_unrecorded_file_aside(storage, monkeypatch):
+    """0064 T-B1d: a file no row uses is moved aside, never overwritten or deleted."""
+    tmp_path = storage
     monkeypatch.setattr(db_rev, "list_by_doc", lambda did: [])
 
     target = _expected_target(tmp_path)
     target.parent.mkdir(parents=True)
     target.write_text("# precious existing content", encoding="utf-8")
 
-    with pytest.raises(HTTPException) as ei:
-        docs_mod.regenerate_document_file(_DOC["doc_id"], _USER)
-    assert ei.value.status_code == 409
-    # Untouched.
-    assert target.read_text(encoding="utf-8") == "# precious existing content"
+    out = docs_mod.regenerate_document_file(_DOC["doc_id"], _USER)
+    assert out["restored_from"] == "metadata"
+    [aside] = [p for p in target.parent.iterdir() if p.name.startswith(target.name + ".orphan-")]
+    assert aside.read_text(encoding="utf-8") == "# precious existing content"
 
 
 def test_regenerate_unknown_doc_returns_404(storage, monkeypatch):
-    monkeypatch.setattr(document_service, "get_document", lambda did: None)
     with pytest.raises(HTTPException) as ei:
         docs_mod.regenerate_document_file("testprj.default.0109.9999-R", _USER)
     assert ei.value.status_code == 404

@@ -316,7 +316,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
     it('the title line: the long title is the shrinking part with its full text as a tooltip; the badge stays apart', async () => {
       const long = '아주 긴 질문 제목 '.repeat(12).trim()
       threads.set(V01_DOC, threads.get(V01_DOC)!.map((entry) => (entry.id === 10 ? { ...entry, title: long } : entry)))
-      const w = await mountTab(v01Target({ readOnly: 'revision' }))
+      const w = await mountTab(v01Target({ readOnly: 'conflict' }))
       const win = await open(w, 10)
       const panel = win.closest('.ui-modeless-panel')!
       const sub = panel.querySelector<HTMLElement>('[data-test="qna-window-sub"]')!
@@ -327,10 +327,17 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       expect(sub.contains(mode)).toBe(false)
       expect(mode.parentElement).toBe(sub.parentElement)
       expect(mode.textContent).toBe('읽기 전용')
-      expect(mode.getAttribute('title')).toBe('확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 답변합니다.')
-      // The answer form stays in the read-only window (disabled with its reason), as before.
+      expect(mode.getAttribute('title')).toBe('Flow 소유가 충돌해 읽기 전용입니다.')
+      // flowgate.v02.0063: a Flow whose answers stay closed shows no answer form in the window.
+      expect(win.querySelector('[data-test="qna-window-form"]')).toBeNull()
+    })
+
+    it('a revision view answers in the window as the draft view does: no 읽기 전용 badge (0063)', async () => {
+      const w = await mountTab(v01Target({ readOnly: 'revision' }))
+      const win = await open(w, 13)
+      expect(document.body.querySelector('[data-test="qna-window-mode"]')).toBeNull()
       expect(win.querySelector('[data-test="qna-window-form"]')).not.toBeNull()
-      expect(win.querySelector<HTMLButtonElement>('[data-test="qna-window-submit"]')!.disabled).toBe(true)
+      expect(win.querySelector('[data-test="qna-window-ai"]')).not.toBeNull()
     })
 
     it('a read-only Flow opens the window read only with the reason; closing removes it; a Node change closes every window', async () => {
@@ -338,8 +345,8 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       const win = await open(w, 13)
       expect(document.body.querySelector('[data-test="qna-window-mode"]')?.textContent).toBe('읽기 전용')
       expect(document.body.querySelector('[data-test="qna-window-mode"]')?.getAttribute('title')).toBe('Flow 소유가 충돌해 읽기 전용입니다.')
-      expect(win.querySelector('[data-test="qna-window-reason"]')?.textContent).toBe('Flow 소유가 충돌해 읽기 전용입니다.')
-      expect(win.querySelector<HTMLButtonElement>('[data-test="qna-window-submit"]')!.disabled).toBe(true)
+      expect(win.querySelector('[data-test="qna-window-form"]')).toBeNull()
+      expect(win.querySelector('[data-test="qna-window-ai"]')).toBeNull()
       win.closest('.ui-modeless-panel')!.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click()
       await flushPromises()
       expect(windowOf(13)).toBeNull()
@@ -448,7 +455,7 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     running = true
     await send(w, 13)
     expect(isDisabled(submitOf(w, 13))).toBe(true)
-    expect(itemEl(w, 13).find('[data-test="qna-answer-reason"]').text()).toBe('AI 실행 중이라 답변할 수 없습니다.')
+    expect(submitOf(w, 13).attributes('title')).toBe('AI 실행 중이라 답변할 수 없습니다.')
   })
 
   it('while an answer waits for the server every answer is disabled and a second click sends nothing', async () => {
@@ -459,12 +466,12 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     await submitOf(w, 13).trigger('click')
     await flushPromises()
     expect(isDisabled(submitOf(w, 13))).toBe(true)
-    expect(itemEl(w, 10).find('[data-test="qna-answer-reason"]').text()).toBe('답변을 보내는 중입니다.')
+    expect(submitOf(w, 10).attributes('title')).toBe('답변을 보내는 중입니다.')
     await submitOf(w, 13).trigger('click')
     expect(qaAnswerCall).toHaveBeenCalledTimes(1)
     release()
     await flushPromises()
-    expect(itemEl(w, 10).find('[data-test="qna-answer-reason"]').exists()).toBe(false)
+    expect(submitOf(w, 10).attributes('title')).toBeUndefined()
   })
 
   it('after a saved answer the question cannot be sent again until the read after it is back', async () => {
@@ -477,7 +484,7 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     expect(qaAnswerCall).toHaveBeenCalledTimes(1)
     expect(itemEl(w, 13).attributes('data-state')).toBe('waiting')
     expect(isDisabled(submitOf(w, 13))).toBe(true)
-    expect(itemEl(w, 10).find('[data-test="qna-answer-reason"]').text()).toBe('답변을 보내는 중입니다.')
+    expect(submitOf(w, 10).attributes('title')).toBe('답변을 보내는 중입니다.')
     await submitOf(w, 13).trigger('click')
     await flushPromises()
     expect(qaAnswerCall).toHaveBeenCalledTimes(1)
@@ -485,7 +492,7 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     await flushPromises()
     expect(itemEl(w, 13).attributes('data-state')).toBe('answered')
     expect(itemEl(w, 13).find('[data-test="qna-answer-form"]').exists()).toBe(false)
-    expect(itemEl(w, 10).find('[data-test="qna-answer-reason"]').exists()).toBe(false)
+    expect(submitOf(w, 10).attributes('title')).toBeUndefined()
     expect(threads.get(V01_DOC)!.find((entry) => entry.id === 13)!.answers).toHaveLength(1)
   })
 
@@ -528,24 +535,31 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
 
 describe('Q&A tab — read-only Flows and the guard (flowgate.v02.0048 T#7)', () => {
   it.each([
-    ['ownership conflict', { readOnly: 'conflict' as const }, 'Flow 소유가 충돌해 읽기 전용입니다.'],
-    ['Graph revision view', { readOnly: 'revision' as const }, '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 답변합니다.'],
-  ])('%s: the questions are shown, answering is visible but disabled with the reason', async (_label, fields, reason) => {
+    ['ownership conflict', { readOnly: 'conflict' as const }],
+  ])('%s: the questions are shown; no question line, answer form or AI line (0063)', async (_label, fields) => {
     const w = await mountTab(v01Target(fields))
     expect(order(w)).toHaveLength(4)
-    expect(isDisabled(submitOf(w, 13))).toBe(true)
-    expect(isDisabled(itemEl(w, 13).find('textarea'))).toBe(true)
-    expect(isDisabled(itemEl(w, 10).find('[data-test="qna-option"]'))).toBe(true)
-    expect(itemEl(w, 13).find('[data-test="qna-answer-reason"]').text()).toBe(reason)
-    await submitOf(w, 13).trigger('click')
+    expect(w.find('[data-test="qna-ask"]').exists()).toBe(false)
+    expect(itemEl(w, 13).find('[data-test="qna-answer-form"]').exists()).toBe(false)
+    expect(itemEl(w, 10).find('[data-test="qna-ai"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('읽기 전용입니다')
     expect(qaAnswerCall).not.toHaveBeenCalled()
+  })
+
+  it('a Graph revision view answers as the draft view does (0063)', async () => {
+    const w = await mountTab(v01Target({ readOnly: 'revision' }))
+    await write(w, 13, '완료 기준')
+    expect(isDisabled(submitOf(w, 13))).toBe(false)
+    expect(isDisabled(itemEl(w, 10).find('[data-test="qna-option"]'))).toBe(false)
+    expect(itemEl(w, 10).find('[data-test="qna-ai"]').exists()).toBe(true)
+    await send(w, 13)
+    expect(qaAnswerCall).toHaveBeenCalledTimes(1)
   })
 
   it('the real conflict and Graph selections read the same way', async () => {
     threads.set(targetOf(SELECTIONS.conflict).docId!, [{ id: 31, seq: 1, title: 'c', body: '?', asker_kind: 'ai', options: [], asker_provider: null, answers: [] }])
     const conflict = await mountTab(targetOf(SELECTIONS.conflict))
-    expect(isDisabled(submitOf(conflict, 31))).toBe(true)
-    expect(itemEl(conflict, 31).find('[data-test="qna-answer-reason"]').text()).toBe('Flow 소유가 충돌해 읽기 전용입니다.')
+    expect(itemEl(conflict, 31).find('[data-test="qna-answer-form"]').exists()).toBe(false)
     conflict.unmount()
     wrapper = null
     threads.set(targetOf(SELECTIONS.graph).docId!, [{ id: 30, seq: 1, title: 'g', body: '?', asker_kind: 'ai', options: [], asker_provider: null, answers: [] }])
@@ -554,7 +568,7 @@ describe('Q&A tab — read-only Flows and the guard (flowgate.v02.0048 T#7)', ()
     await write(graph, 30, 'g')
     expect(isDisabled(submitOf(graph, 30))).toBe(false)
     await graph.setProps({ target: { ...targetOf(SELECTIONS.graph), readOnly: 'revision' } })
-    expect(itemEl(graph, 30).find('[data-test="qna-answer-reason"]').text()).toContain('읽기 전용')
+    expect(isDisabled(submitOf(graph, 30))).toBe(false)
   })
 
   it('an AI run in the Flow disables answering from the start', async () => {
@@ -562,13 +576,13 @@ describe('Q&A tab — read-only Flows and the guard (flowgate.v02.0048 T#7)', ()
     const w = await mountTab(v01Target())
     expect(activityRead).toHaveBeenCalledWith(V01_FLOW)
     expect(isDisabled(submitOf(w, 13))).toBe(true)
-    expect(itemEl(w, 13).find('[data-test="qna-answer-reason"]').text()).toBe('AI 실행 중이라 답변할 수 없습니다.')
+    expect(submitOf(w, 13).attributes('title')).toBe('AI 실행 중이라 답변할 수 없습니다.')
   })
 
-  it('a disposed group disables answering', async () => {
+  it('a disposed group shows no answer form (0063)', async () => {
     disposed = true
     const w = await mountTab(v01Target())
-    expect(itemEl(w, 13).find('[data-test="qna-answer-reason"]').text()).toBe('폐기된 그룹이라 답변할 수 없습니다.')
+    expect(itemEl(w, 13).find('[data-test="qna-answer-form"]').exists()).toBe(false)
   })
 
   it('a failed guard read does not block (the server decides)', async () => {
@@ -576,7 +590,7 @@ describe('Q&A tab — read-only Flows and the guard (flowgate.v02.0048 T#7)', ()
     const w = await mountTab(v01Target())
     await write(w, 13, 'x')
     expect(isDisabled(submitOf(w, 13))).toBe(false)
-    expect(itemEl(w, 13).find('[data-test="qna-answer-reason"]').exists()).toBe(false)
+    expect(submitOf(w, 13).attributes('title')).toBeUndefined()
   })
 })
 
@@ -640,13 +654,13 @@ describe('Q&A tab — server events (flowgate.v02.0048 T#7)', () => {
     stream.emit('ai_invoke_started', { groupId: V01_FLOW, docId: OTHER_DOC })
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
     await flushPromises()
-    expect(itemEl(w, 13).find('[data-test="qna-answer-reason"]').text()).toBe('AI 실행 중이라 답변할 수 없습니다.')
+    expect(submitOf(w, 13).attributes('title')).toBe('AI 실행 중이라 답변할 수 없습니다.')
     expect(qaReadCall).toHaveBeenCalledTimes(1)
     running = false
     stream.emit('ai_invoke_finished', { groupId: V01_FLOW, docId: OTHER_DOC })
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
     await flushPromises()
-    expect(itemEl(w, 13).find('[data-test="qna-answer-reason"]').exists()).toBe(false)
+    expect(submitOf(w, 13).attributes('title')).toBeUndefined()
     const before = activityRead.mock.calls.length
     stream.emit('ai_invoke_started', { groupId: 'flowgate.v02.0049', docId: 'flowgate.v02.0049.0007-TS' })
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
@@ -769,10 +783,11 @@ describe('Q&A tab in the Frame (real registry)', () => {
     expect(tabLabels(w).some((label) => label.startsWith('Q&A'))).toBe(true)
   })
 
-  it('no team handling, resume or AI answer request appears', async () => {
+  // flowgate.v02.0056 F1: the AI answer request is a per-question operation now ([AI 답변 요청], qnaAsk spec).
+  it('no team handling, resume or mention copy appears', async () => {
     const w = await mountFrame(SELECTIONS.v01)
     await openTab(w, 'Q&A')
     const text = w.text()
-    for (const word of ['팀 내 처리', '재개', 'AI 답변 요청', '멘트 복사', '위임']) expect(text).not.toContain(word)
+    for (const word of ['팀 내 처리', '재개', '멘트 복사', '위임']) expect(text).not.toContain(word)
   })
 })

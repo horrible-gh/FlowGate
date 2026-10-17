@@ -31,6 +31,21 @@ def get_by_username(username: str) -> Optional[dict]:
     )
 
 
+def usernames_by_ids(user_ids: list[str]) -> dict[str, str]:
+    """``{user_id: username}`` for the given ids in one query (flowgate.v02.0064 T-B5, DB0007 §2.6).
+
+    Ids with no row (a removed user) are simply absent from the result.
+    """
+    ids = sorted({uid for uid in user_ids if uid})
+    if not ids:
+        return {}
+    marks = ", ".join("?" for _ in ids)
+    rows = get_store()._fetch_all(
+        f"SELECT user_id, username FROM users WHERE user_id IN ({marks})", ids
+    )
+    return {row["user_id"]: row["username"] for row in rows if row.get("username")}
+
+
 def get_by_email(email: str) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM users WHERE email = ?", [email]

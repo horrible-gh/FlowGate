@@ -61,6 +61,7 @@ import re
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
@@ -1666,3 +1667,238 @@ def post_branch_merge_write_plan_token(
         )
     except GitServiceError as exc:
         return _guard(exc)
+
+
+# ── Group worktree manual index operations (0066 D#1 E1--E6) ──────────────
+
+class WorktreeRequestRoute(APIRoute):
+    """Bound E2--E6 bodies before JSON decoding, including chunked requests."""
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def bounded(request: Request):
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > 1024 * 1024:
+                    return JSONResponse(status_code=413, content={
+                        "ok": False, "error": {"code": "request_too_large",
+                                              "message": "Worktree request exceeds 1 MiB"}})
+                body.extend(chunk)
+            # Starlette's body cache is also used by FastAPI's JSON parser.
+            request._body = bytes(body)
+            return await handler(request)
+        return bounded
+
+
+_worktree_mutations = APIRouter(route_class=WorktreeRequestRoute)
+
+
+class WorktreePathsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    paths: list[str] | None = None
+    all: bool = False
+    worktree_token: str | None = None
+
+
+@router.get("/groups/{group_id}/git/worktree/status")
+def get_group_worktree_status(group_id: str, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import worktree_manual
+    try:
+        return {"ok": True, "result": worktree_manual.worktree_status(group_id)}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/worktree/stage")
+def post_group_worktree_stage(group_id: str, body: WorktreePathsBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import worktree_manual
+    try:
+        return {"ok": True, "result": worktree_manual.stage(group_id, **body.model_dump())}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/worktree/unstage")
+def post_group_worktree_unstage(group_id: str, body: WorktreePathsBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import worktree_manual
+    try:
+        return {"ok": True, "result": worktree_manual.unstage(group_id, **body.model_dump())}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class WorktreeCommitBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    message: str
+    worktree_token: str | None = None
+    index_token: str | None = None
+
+
+class WorktreeFilesBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    paths: list[str]
+    worktree_token: str | None = None
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/worktree/commit")
+def post_group_worktree_commit(group_id: str, body: WorktreeCommitBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import worktree_manual
+    try:
+        return {"ok": True, "result": worktree_manual.commit(group_id, **body.model_dump())}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/worktree/revert")
+def post_group_worktree_revert(group_id: str, body: WorktreeFilesBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import worktree_manual
+    try:
+        return {"ok": True, "result": worktree_manual.revert(group_id, **body.model_dump())}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/worktree/remove")
+def post_group_worktree_remove(group_id: str, body: WorktreeFilesBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import worktree_manual
+    try:
+        return {"ok": True, "result": worktree_manual.remove(group_id, **body.model_dump())}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class CommitSuggestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    provider_id: str | None = None
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/worktree/commit-message/suggest")
+def post_group_commit_suggest(group_id: str, body: CommitSuggestBody | None = None,
+                             user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import commit_suggest
+    try:
+        return {"ok": True, "result": commit_suggest.suggest(
+            group_id, provider_id=body.provider_id if body else None)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
+router.include_router(_worktree_mutations)
+
+
+# ── Manual merge, merge results, follow-up push, fetch-only (0066 D#1 E8--E12) ──
+
+def _manual_guard(exc: GitServiceError) -> JSONResponse:
+    """D#1 §3-1(3): no hidden path in any manual Git error detail."""
+    from modules.flow_gate.services.git import manual_path_policy
+    if exc.details:
+        exc.details = manual_path_policy.public_details(exc.details)
+    return _guard(exc)
+
+
+class ManualMergeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    target_branch: str | None = None
+    push: bool = False
+
+
+class MergeResultPushBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    merge_id: int | None = None
+    merge_commit: str | None = None
+
+
+class FetchRefsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    group_id: str | None = None
+
+
+@router.get("/groups/{group_id}/git/manual-merge")
+def get_group_manual_merge(group_id: str, target: Optional[str] = None, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import manual_merge
+    try:
+        return {"ok": True, "result": manual_merge.merge_view(group_id, target)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
+@router.post("/groups/{group_id}/git/manual-merge")
+def post_group_manual_merge(group_id: str, body: ManualMergeBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import manual_merge
+    try:
+        return {"ok": True, "result": manual_merge.request_merge(group_id, body.target_branch, body.push)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
+@router.get("/groups/{group_id}/git/merge-result")
+def get_group_merge_result(group_id: str, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import manual_merge
+    try:
+        return {"ok": True, "result": manual_merge.merge_results_view(group_id)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
+@router.post("/groups/{group_id}/git/merge-result/push")
+def post_group_merge_result_push(group_id: str, body: MergeResultPushBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import manual_merge
+    try:
+        return {"ok": True, "result": manual_merge.request_result_push(
+            group_id, body.merge_id, body.merge_commit)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
+@router.post("/projects/{project_id}/git/fetch-refs")
+def post_git_fetch_refs(
+    project_id: str,
+    body: FetchRefsBody | None = None,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    """Fetch-only refresh: remote-tracking refs move, nothing local does (D#1 §3-7)."""
+    from modules.flow_gate.services.git import remote_refresh
+    try:
+        return {"ok": True, "result": remote_refresh.fetch_refs(project_id, body.group_id if body else None)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)

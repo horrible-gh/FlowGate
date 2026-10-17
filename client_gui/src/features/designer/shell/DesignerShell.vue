@@ -16,18 +16,20 @@
        Body / CenterColumn resize handles; the Shell clamps each drag into the layout bounds. -->
   <div class="designer-shell" data-test="designer-shell" @keydown.esc="selectedPalette = null">
     <DesignerTop
-      :run-mode="top.runMode"
+      :run-phase="runPhase"
       :density="top.density"
       :zoom="zoom"
       :window-state="windowState"
       :targets="menuTargets"
       :recent="recent"
       :can-validate="center.activeCanValidate.value"
-      :run-status="runStatus"
+      :select-mode="center.selectMode.value"
+      :run-band="runBand"
       @command="onTopCommand"
       @toggle-panel="onTogglePanel"
       @show-tab="onShowTab"
-      @update:density="top.density = $event"
+      @update:density="onDensity"
+      @update:zoom="onZoomSelect"
       @open-recent="onOpenRecent"
     />
     <DesignerBody
@@ -59,6 +61,7 @@
           :center="center"
           :bottom-height="layout.bottomHeight"
           :placing="selectedPalette !== null"
+          :move-step="moveStep"
           @canvas-place="onCanvasPlace"
           @cancel-placement="selectedPalette = null"
           :unselected="!hasWorkTarget"
@@ -74,6 +77,7 @@
           :collapsed="layout.rightCollapsed"
           :unselected="!hasWorkTarget"
           :selected-palette-id="selectedPalette?.itemId ?? null"
+          :source-locked="sourceLocked"
           @update:tool="layout.activeRightTool = $event"
           @palette-select="selectedPalette = $event"
           @palette-drag-start="selectedPalette = null"
@@ -167,11 +171,42 @@
 // the Center session (center/run/flowRunControl.ts: start or resume, one step, stop); the buttons' state
 // (`top.runMode`) and the Toolbar's run dot follow the run the session read back, never the click alone.
 // A refused run shows one short toast (its reason in plain words, no code); nothing else is written.
+//
+// flowgate.v02.0059 T#2 (0011-CH contracts C / D) — 정렬 / 배치 acts on the open Flow's cards through the
+// Center session: the six 정렬 / two 균등 분배 commands arrange its selected cards and 자동 배치 lays every
+// movable card out by the server's auto placement rules, only when that command is chosen. Each is one entry
+// of the Flow's undo / redo, as a card drag is.
+//
+// flowgate.v02.0059 0017-T — the density (넓게 / 보통 / 좁게 / 자율형) is how finely a card drag moves: the
+// Toolbar radios and the View menu set the one value (`top.density`, screen state only), and its move step
+// (DENSITY_MOVE_STEP) goes to the Canvas, which applies it to the drags that follow — one card or the dragged
+// selection alike. Choosing a density moves no card, saves nothing, adds no undo entry, changes no zoom and
+// neither starts nor stops 자동 배치.
+//
+// flowgate.v02.0056 F2-1: a refused Canvas [승인] is a toast as well (its code's sentence and the server's message;
+// a refused document is named with why and the documents approved before it, and that toast stays until closed);
+// a stopped run with cards approved meanwhile shows "멈춤 · 다음 카드 N개 대기" in the band.
+//
+// flowgate.v02.0061 T#14: the run buttons follow the open Flow's run phase (idle / running / paused / stopping) and
+// each sends one command to the Center session — 다음 단계 / 전체 실행 (step / full), 일시정지, 재개, 중지; 재실행 is never
+// available. The band shows the run's status, command, idle reason and executions. The 0061 refusals whose wording is
+// the server's (graph_run_locked, graph_git_required, …) show the server's message in the same toast. While the Flow's
+// run locks it, the Conversation's AI source access mode cannot change (`sourceLocked`, WP answer 2) — its messages
+// and read use stay as they are; the Canvas / Inspector lock is the Center session's, a separate rule.
+//
+// flowgate.v02.0061 T#15: a card's Hold is written through the card settings (features/document) the Center source is
+// given (it is read with the Graph); a refused Hold 설정 / 해제 is a toast as well (with the server's message: graph_run_locked,
+// graph_hold_done_node, …).
+//
+// flowgate.v02.0066 T#6 — the Center Diff (0066 D#2 §2-4, §3-10) the Shell owned and the Workspace drew over the Flow
+// tabs and Canvas. flowgate.v02.0067 T#4 moved it into the Git part's own modeless (`Diff` tab, 0067-R §6): the Shell
+// no longer receives a Git diff intent and the Center never shows one.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { documentRead, settingsNodeHoldWrite } from '@/features/document'
 import { useProjectStore, type CreatedGroup } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
-import { createDesignerCenterSession, type CanvasNodeSpec } from '../center/designerCenterSession'
+import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
@@ -187,10 +222,15 @@ import {
   type ProjectExplorerFlowEvent,
 } from '../projectExplorer/projectExplorerTree'
 import {
+  DENSITY_MOVE_STEP,
+  arrangeSelectionMinimum,
   createDesignerTopState,
   isMenuCommandEnabled,
-  nextRunMode,
+  nextRunPhase,
+  runBandView,
+  runPhaseOf,
   zoomPercent,
+  type DesignerDensity,
   type DesignerMenuTargets,
   type DesignerRecentLists,
   type DesignerRecentRequest,
@@ -233,7 +273,9 @@ const projectId = computed<string | null>(() => projectStore.currentProjectId)
 // node of the Flow's Graph draft. The Shell is the only part that knows both: it tells the Center
 // session which node a drop means, so the Palette and the Canvas never know each other.
 const center = createDesignerCenterSession({
-  source: createServerFlowGraphSource(projectStore),
+  // flowgate.v02.0059 T#2: the document read lets 자동 배치 follow a v0.1 sequence root's supersede chain.
+  // flowgate.v02.0061 T#15: the card Hold of the card context menu goes through the card settings.
+  source: createServerFlowGraphSource(projectStore, documentRead, { write: settingsNodeHoldWrite }),
   readDrop: (transfer) => {
     const definition = readPaletteDragData(transfer)
     return definition ? paletteNodeSpec(definition) : null
@@ -245,6 +287,7 @@ const center = createDesignerCenterSession({
 const activeFlowRef = center.activeFlowRef
 
 const hasWorkTarget = computed(() => activeFlowRef.value !== null)
+
 const selectedPalette = ref<PaletteItemDefinition | null>(null)
 
 function onCanvasPlace(flowId: string, x: number, y: number) {
@@ -256,22 +299,21 @@ function onCanvasPlace(flowId: string, x: number, y: number) {
 
 watch(() => center.state.activeFlowId, () => { selectedPalette.value = null })
 
-// flowgate.v02.0053 T#9: the run buttons follow the server run of the open Flow (the Center session's).
-// While 다음 단계 / 전체 실행 is answered its button shows the run going; a running run keeps the button
-// that started it (전체 실행 when it was started elsewhere); a stopped or finished run shows none.
-const serverRunMode = computed(() => {
-  const state = center.activeRun.value
-  if (!state) return null
-  if (state.action === 'next' || state.action === 'all') return state.action
-  return state.run?.status === 'running' ? state.mode ?? 'all' : null
+// flowgate.v02.0053 T#9 / flowgate.v02.0061 T#14: the run buttons follow the server run of the open Flow (the Center
+// session's): its phase decides which two show; while a command is answered every run button waits (`runBusy`).
+// TR0031 rev1: the phase and the band follow the session's confirmed run status (the run read, else the Canvas read's);
+// until it is confirmed no run command is available (`runUnknown`).
+const runPhase = computed(() => {
+  if (!center.canRun) return top.runPhase
+  // Show the pending Stop immediately; the existing action guard prevents duplicate requests.
+  if (center.activeRun.value?.action === 'stop') return 'stopping'
+  return runPhaseOf(center.activeRunStatus.value.run?.status)
 })
-const runStatus = computed(() => (hasWorkTarget.value ? center.activeRun.value?.run?.status ?? null : null))
-
-if (center.canRun) {
-  watch(serverRunMode, (mode) => {
-    top.runMode = mode
-  })
-}
+// The band: status, command, idle reason, executions and the cards waiting for the next command (O1 §4-2's place).
+const runBand = computed(() => (hasWorkTarget.value ? runBandView(center.activeRunStatus.value.run) : null))
+// WP answer 2: the Conversation's source access mode waits while the open Flow's run is locked — TR0031 rev1: and while
+// its run status is not confirmed (the session's `unknown` lock). Messages, viewing, panning and zooming go on.
+const sourceLocked = computed(() => hasWorkTarget.value && center.activeRunMarks.value.lock !== null)
 
 const toasts = ref<ToastHostItem[]>([])
 let toastSeq = 0
@@ -280,10 +322,51 @@ function dismissToast(id: string | number) {
   toasts.value = toasts.value.filter((item) => item.id !== id)
 }
 
-/** A refused run in plain words: the code's own sentence, else the common one. */
-function runErrorText(code: string | null): string {
+/**
+ * flowgate.v02.0061 T#14: refusals whose wording is the server's (sent in the request's x-locale): their message as
+ * sent, when it says something.
+ */
+const SERVER_WORDED_ERRORS: ReadonlySet<string> = new Set([
+  'graph_run_locked',
+  'graph_git_required',
+  'graph_attempt_inactive',
+  'graph_hold_done_node',
+  'graph_time_machine_blocked',
+  'graph_engine_owned',
+])
+
+/** A refused run in plain words: the server's message for its 0061 codes, else the code's own sentence or the common one. */
+function runErrorText(error: FlowRunFailure): string {
+  const { code } = error
+  const message = error.message.trim()
+  if (code && SERVER_WORDED_ERRORS.has(code) && message && message !== code) return message
   const key = code ? `gui.designer.top.run_errors.${code}` : ''
   return key && te(key) ? t(key) : t('gui.designer.top.run_errors.other')
+}
+
+/**
+ * flowgate.v02.0056 F2-1: a refused Canvas [승인] — the code's sentence (cardStateView grouping), then the
+ * server's own message as it sent it (x-locale) when it says more, then what the refusal names: the refused
+ * document, why, and the documents approved before it (document_approval_refused, O1 4-1).
+ */
+function approvalErrorText(error: FlowRunFailure): string {
+  const head = t(error.approval?.labelKey ?? 'gui.designer.center.approval.failure.other')
+  const message = error.message.trim()
+  const parts = [message && message !== error.code && message !== head ? `${head} — ${message}` : head]
+  const refusal = error.refusal
+  if (refusal?.docId) parts.push(t('gui.designer.center.approval.refused_document', { doc: refusal.docId }))
+  if (refusal?.reason) parts.push(t('gui.designer.center.approval.refused_reason', { reason: refusal.reason }))
+  if (refusal?.approvedDocIds.length) parts.push(t('gui.designer.center.approval.approved_documents_named', { docs: refusal.approvedDocIds.join(', ') }))
+  return parts.join(' · ')
+}
+
+/** flowgate.v02.0061 T#15: a refused Hold 설정 / 해제 — the common sentence and the server's own message when it says more. */
+function holdErrorText(error: FlowRunFailure): string {
+  const head = t('gui.designer.center.card_menu.hold_failed')
+  const message = error.message.trim()
+  if (message && message !== error.code) return `${head} — ${message}`
+  const key = error.code ? `gui.designer.top.run_errors.${error.code}` : ''
+  return key && te(key) ? `${head} — ${t(key)}` : head
 }
 
 watch(
@@ -292,14 +375,18 @@ watch(
     const error = center.activeRun.value?.error
     if (!seq || !error) return
     toastSeq += 1
-    toasts.value = [...toasts.value.slice(-2), { id: `run-${toastSeq}`, message: runErrorText(error.code), tone: 'danger', duration: 4000 }]
+    const message = error.kind === 'approval' ? approvalErrorText(error) : error.kind === 'hold' ? holdErrorText(error) : runErrorText(error)
+    const tone = error.kind === 'approval' && error.approval?.keepButton ? 'warning' : 'danger'
+    // A refused document is read, not glanced at: that toast stays until it is closed.
+    const duration = error.kind === 'approval' && error.approval?.kind === 'refused' ? null : 4000
+    toasts.value = [...toasts.value.slice(-2), { id: `run-${toastSeq}`, message, tone, duration }]
   },
 )
 
 // The run buttons' UI state belongs to a target; it does not outlive it.
 watch(hasWorkTarget, (has) => {
   if (!has) {
-    top.runMode = null
+    top.runPhase = 'idle'
     selectedPalette.value = null
   }
 })
@@ -318,7 +405,9 @@ onMounted(() => {
 })
 
 // flowgate.v02.0045: send pending Canvas saves and close the Canvas change stream with the Shell.
-onBeforeUnmount(() => center.dispose())
+onBeforeUnmount(() => {
+  center.dispose()
+})
 
 // The Toolbar shows the zoom the active Canvas last reported (100% before it reports one).
 const zoom = computed(() => zoomPercent(center.activeView.value?.viewport?.zoom))
@@ -359,6 +448,16 @@ const menuTargets = computed<DesignerMenuTargets>(() => ({
   project: projectId.value !== null,
   group: explorerSelection.value?.kind === 'group',
   flow: hasWorkTarget.value,
+  // flowgate.v02.0059 T#2: the open Flow's structure edit history (Toolbar buttons and Edit menu); flowgate.v02.0061
+  // T#14: it waits while the Flow's run locks the structure.
+  canUndo: center.activeEdit.value?.canUndo === true && center.activeRunMarks.value.lock === null,
+  canRedo: center.activeEdit.value?.canRedo === true && center.activeRunMarks.value.lock === null,
+  // flowgate.v02.0061 T#14: a run command of the open Flow is being answered.
+  runBusy: !!center.activeRun.value?.action,
+  // flowgate.v02.0061 TR0031 rev1: the open Flow's run status is not confirmed yet (being read, or the read failed).
+  runUnknown: center.canRun && !center.activeRunStatus.value.known,
+  // flowgate.v02.0059 T#2: 정렬 (2+) / 균등 분배 (3+) need that many selected cards.
+  selectedCount: center.activeView.value?.selectedNodeIds.length ?? 0,
 }))
 
 // The recent lists the Menu Bar shows: every opened Project; the Groups / Flows of the current
@@ -499,9 +598,31 @@ function onOpenRecent(request: DesignerRecentRequest) {
   if (entry) openFlow({ projectId: pid, groupId: entry.groupId, flowId: entry.id, flowName: entry.name }, true)
 }
 
+/** Toolbar zoom preset (percent) for the open Flow's Canvas. */
+function onZoomSelect(percent: number) {
+  const flowId = center.state.activeFlowId
+  if (flowId === null || !isMenuCommandEnabled('view.zoom-reset', runPhase.value, menuTargets.value)) return
+  center.requestView(flowId, { kind: 'zoom-to', zoom: percent / 100 })
+}
+
+// flowgate.v02.0059 0017-T: the Toolbar radios and the View menu choose the one density. It only sets the step
+// later card drags move in; nothing on the Canvas changes when it is chosen.
+function onDensity(level: DesignerDensity) {
+  top.density = level
+}
+
+/** flowgate.v02.0059 0017-T: the step a card drag moves in at the chosen density (null = 자율형, none). */
+const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
+
 function onTopCommand(command: DesignerTopCommand) {
   // The parts disable what has no target; this is the same rule for a command that still arrives.
-  if (!isMenuCommandEnabled(command, top.runMode, menuTargets.value)) return
+  if (!isMenuCommandEnabled(command, runPhase.value, menuTargets.value)) return
+  // flowgate.v02.0059 T#2: 정렬 / 균등 분배 of the open Flow's selected cards (the command names the kind).
+  if (arrangeSelectionMinimum(command) !== null) {
+    const flowId = center.state.activeFlowId
+    if (flowId !== null) center.arrangeNodes(flowId, command.slice('edit.'.length) as ArrangeKind)
+    return
+  }
   switch (command) {
     case 'project.new':
       projectStore.openDialog({ create: true })
@@ -544,6 +665,43 @@ function onTopCommand(command: DesignerTopCommand) {
       if (flowId !== null) center.undoEdit(flowId)
       return
     }
+    // flowgate.v02.0059 T#2: 다시 실행 (Redo of an undone edit) — not the Run menu's 재실행 (run.rerun).
+    case 'edit.redo': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null) center.redoEdit(flowId)
+      return
+    }
+    // flowgate.v02.0059 T#1 (0011-CH contract A): [선택] toggles the Center session's selection mode;
+    // the Edit menu's 전체 선택 selects every card of the open Flow in that mode (same Selection).
+    case 'edit.select-mode':
+      center.setSelectMode(!center.selectMode.value)
+      return
+    case 'edit.select-all': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null) center.selectAll(flowId)
+      return
+    }
+    // flowgate.v02.0059 T#2: 자동 배치 of the open Flow by the server's rules and spacing (one undo entry).
+    // 0017-T: the density has no part in it.
+    case 'edit.auto-layout': {
+      const flowId = center.state.activeFlowId
+      if (flowId !== null) center.autoLayout(flowId)
+      return
+    }
+    // flowgate.v02.0059 T#1: the Toolbar and the View menu emit the same command; the Canvas of the
+    // open Flow does the fit / zoom and reports its Viewport, which the Toolbar's zoom value follows.
+    case 'view.fit':
+    case 'view.zoom-in':
+    case 'view.zoom-out':
+    case 'view.zoom-reset': {
+      const flowId = center.state.activeFlowId
+      if (flowId === null) return
+      if (command === 'view.fit') center.requestView(flowId, { kind: 'fit' })
+      else if (command === 'view.zoom-in') center.requestView(flowId, { kind: 'zoom-in' })
+      else if (command === 'view.zoom-out') center.requestView(flowId, { kind: 'zoom-out' })
+      else center.requestView(flowId, { kind: 'zoom-to', zoom: 1 })
+      return
+    }
     case 'run.validate': {
       const flowId = center.state.activeFlowId
       if (flowId !== null && center.activeCanValidate.value) void center.validateDraft(flowId)
@@ -553,27 +711,33 @@ function onTopCommand(command: DesignerTopCommand) {
     case 'run.all': {
       const flowId = center.state.activeFlowId
       if (flowId === null) return
-      // flowgate.v02.0053 T#9: the server run (the session confirms the draft first).
+      // flowgate.v02.0061 T#14: one step / full command on the server (the session confirms an idle Flow's draft first).
       if (center.canRun) {
         void center.runFlow(flowId, command === 'run.next' ? 'next' : 'all')
         return
       }
       const start = (go: boolean) => {
-        if (go && top.runMode === null) top.runMode = nextRunMode(top.runMode, command)
+        if (go && top.runPhase === 'idle') top.runPhase = nextRunPhase(top.runPhase, command)
       }
       const ready = center.prepareRun(flowId)
       if (typeof ready === 'boolean') start(ready)
       else void ready.then(start)
       return
     }
+    // flowgate.v02.0061 T#14: 일시정지 / 재개 / 중지 — one server call each (T#2 /pause, /resume, T#7 /stop).
+    case 'run.pause':
+    case 'run.resume':
     case 'run.stop': {
       const flowId = center.state.activeFlowId
-      if (flowId !== null && center.canRun) void center.stopRun(flowId)
-      else top.runMode = nextRunMode(top.runMode, command)
+      if (flowId !== null && center.canRun) {
+        if (command === 'run.pause') void center.pauseRun(flowId)
+        else if (command === 'run.resume') void center.resumeRun(flowId)
+        else void center.stopRun(flowId)
+      } else top.runPhase = nextRunPhase(top.runPhase, command)
       return
     }
     default:
-      top.runMode = nextRunMode(top.runMode, command)
+      top.runPhase = nextRunPhase(top.runPhase, command)
   }
 }
 </script>

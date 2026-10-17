@@ -5,6 +5,7 @@ context like the Graph routes; same envelope (P0008 §1.2 / §1.3), user JWT onl
     PATCH /api/v1/flows/{flow_id}/nodes/{node_key}/settings    {"field": <name>, "value": <value | null>}
 
 A PATCH changes exactly one value and answers the card's settings as they are now (null = default).
+0061 T#11: ``{"field": "hold", "value": true | false | null}`` sets / releases the card's Hold (``settings.write``).
 """
 from __future__ import annotations
 

@@ -47,12 +47,69 @@
 // (run/flowRunControl.ts). Each open Flow keeps its run state next to its Graph; the run is read with
 // every Graph read (a run event reads the Canvas again, flowCanvasEvents), so the buttons, the run dot and
 // the cards' colour dots show the server's run.
+//
+// flowgate.v02.0059 T#1 (0011-CH contract A): the Toolbar's [선택] mode (`selectMode`, one for the
+// Shell) lets a Flow's Selection hold several Nodes — the Canvas reports them (`selectNodes`) and
+// 전체 선택 (`selectAll`) takes every Node of the Flow and turns the mode on. Turning it off only drops
+// such multi-Node Selections; nothing else (Graph, draft, saved layout) changes. A Selection keeps its
+// Nodes across a `tmp_` key rename and loses the ones a re-read, an edit or its undo / redo took away.
+//
+// flowgate.v02.0059 T#2 (0011-CH contracts C / D): every action that moves cards — a drop of one card or of
+// the dragged selection (`moveNodes`), 정렬 / 분배 of the selected cards (`arrangeNodes`), 자동 배치 at a
+// spacing scale (`autoLayout`, the server's auto_layout rules) — puts the movable cards through one path
+// (Graph, layout save queue) and is one entry of the Flow's undo / redo, next to its structure edits. An
+// undone / redone move entry comes back through the same path; the draft is never saved for a move.
+// 자동 배치 takes the server's layout input: when the shown Graph leaves part of it out (documents the read
+// collapsed, a v0.1 root only its supersede chain tells — arrange/autoLayout.ts), the Flow is read whole
+// first and the cards move once that answers; only the Flow's latest 자동 배치 moves them, and none does
+// when the read fails. Nor does one whose answer comes after `cancelAutoLayout`, after the
+// session was disposed, or after a read replaced the Graph it was asked for (a retry, a change elsewhere, the
+// re-read of an ignored / failed save, a reset) — the cards stay where they are shown.
+//
+// flowgate.v02.0056 F2-1: a card's [승인] on the Canvas approves it through the same run control (with the
+// result the shown Graph has for the card); the Canvas is read again after the answer.
+//
+// flowgate.v02.0061 T#14: the run buttons are 다음 단계 / 전체 실행 (one step / full command), 일시정지 / 재개 and 중지
+// (run/flowRunControl.ts). While the Flow's run is running, paused or stopping its structure is locked here
+// (run/flowRunLock.ts): no Palette drop, connection, removal, undo / redo or 검증 — only viewing, panning, zooming and
+// moving cards. Whatever the run's status, a done / open / review node and the execution lines into it are never
+// removed and get no new line (the server's T#3 judgement). The Canvas gets the same marks to draw (`runMarks`).
+//
+// flowgate.v02.0061 TR0031 rev1: the lock follows the Flow's confirmed run status (`runStatus`) — the run read (or a
+// command's answer), else, while that read is pending or failed, the run status of the Flow's Canvas read. With neither
+// (a Flow whose Canvas and run are both still unread, or whose run read failed with no Canvas shown) the status is not
+// confirmed and the structure waits as if locked (`unknown`); a run last known locked stays locked. No run command goes
+// until the status is confirmed. The Graph's load only adds the protected / running nodes: its loading or error never
+// lifts the lock. The marks also carry the run read's node runs of the shown nodes (result integration, Hold).
+//
+// flowgate.v02.0061 T#15: a card's context menu (run/flowCardMenu.ts) — Hold 설정 / 해제 through the run control's
+// `hold` (the card setting only, never a run command; refused while the run locks the Flow, 설정 refused on a done
+// card) and, on a done card of a Graph-owned Flow whose run is idle, 되돌리기: a confirmation names the card it starts
+// from (`timeMachine`, phase `confirm`) — the cards below it are the server's to find by the run's execution history,
+// never by the shown Graph or its draft — then the run control's Graph Time Machine runs and the same dialog shows what
+// it did (the server's impact) or the server's reasons it was blocked. A confirmation is only good for what it was given
+// on: when the run, its execution history (the run's revision and event sequence, each node run's attempt) or the
+// revision changed meanwhile — also when the cards came back to the same states — [되돌리기] asks again instead of running.
+// Every card's Hold comes with the Graph read (`holds`, the source reads it beside each Canvas read: also cards the run
+// has no node run of), so a first read, a refresh and another tab's change (its Canvas change event reads the Flow
+// again) show it. A Hold 설정 / 해제 this tab answered is kept over every read sent before that answer; the reads the
+// answer itself sends (the run control's, after it was kept here) and every later one take over. Reads of a closed Flow
+// or another project are dropped like every Graph read, and so is a Hold answer for a tab closed (or opened again) or a
+// project changed since it was asked (the run control's `hold`).
+//
+// flowgate.v02.0064 T#4 (0062 D0005 §3.2 / §3.5, 0062 L0006 2.8, 0064 P0006 §6.5): a card's title is saved on its own
+// (`saveNodeTitle`) — never through the draft, so neither the draft version nor the undo / redo history changes. Per open
+// Flow the session keeps the title state each card shows (its version); a save answer and every Graph read go through
+// the same version order (graph/nodeTitle.ts), so a late answer or an old read never takes a newer title back. The
+// answer goes onto the shared Graph at once (the Canvas card and the Inspector header read it); another tab's save comes
+// as a Canvas change event (reason `title`) and is read again like any other. Title saves never hold a read back.
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
 import {
   createCanvasViewState,
   sameCanvasSize,
   sameViewport,
+  setViewSelection,
   type CanvasSize,
   type CanvasViewState,
   type CanvasViewport,
@@ -66,17 +123,85 @@ import {
   type FlowTab,
   type FlowTabsState,
 } from './flowTabs'
+import { arrangeSelection, type ArrangeKind } from './arrange/arrangeNodes'
+import { autoLayoutPlacements, loadLayoutBasis, needsLayoutBasis, type FlowLayoutBasis } from './arrange/autoLayout'
 import type { ConnectionCheck } from './edit/connectionRules'
 import { createDraftController, type DraftEditState } from './edit/draftController'
 import { CLIENT_KEY_PREFIX, editableRevision, type CanvasNodeSpec } from './edit/draftModel'
+import type { NodeMove, NodePlacement } from './edit/editHistory'
 import { fixtureFlowGraphSource } from './graph/fixtureFlowGraphSource'
 import { isEdgeProgressed } from './graph/edgeProgress'
-import type { FlowGraph, FlowGraphNode, FlowGraphSelection } from './graph/flowGraph'
-import type { FlowGraphSource, FlowLayoutChange } from './graph/flowGraphSource'
+import type { FlowGraph, FlowGraphNode, FlowGraphRun, FlowGraphSelection, FlowGraphTitleState } from './graph/flowGraph'
+import type { FlowGraphSource, FlowLayoutChange, FlowRunError, FlowRunInfo } from './graph/flowGraphSource'
+import { applyTitleState, takeTitleStates, type NodeTitleSaveOutcome } from './graph/nodeTitle'
 import { createLayoutSaveQueue } from './layoutSaveQueue'
-import { createFlowRunControl, type FlowRunMode, type FlowRunState } from './run/flowRunControl'
+import {
+  createFlowRunControl,
+  type FlowRunFailure,
+  type FlowRunMode,
+  type FlowRunState,
+  type FlowTimeMachineOutcome,
+} from './run/flowRunControl'
+import { flowCardMenu, type FlowCardMenuItem, type FlowCardMenuKey } from './run/flowCardMenu'
+import { NO_RUN_MARKS, flowRunMarks, isEdgeProtected, isRunLocked, type FlowEditLock, type FlowRunMarks } from './run/flowRunLock'
 
-export type { CanvasNodeSpec, FlowRunMode, FlowRunState }
+export type {
+  ArrangeKind,
+  CanvasNodeSpec,
+  FlowCardMenuItem,
+  FlowCardMenuKey,
+  FlowEditLock,
+  FlowRunFailure,
+  FlowRunMarks,
+  FlowRunMode,
+  FlowRunState,
+  FlowTimeMachineOutcome,
+  NodePlacement,
+  NodeTitleSaveOutcome,
+}
+
+/**
+ * flowgate.v02.0061 T#15: the Graph Time Machine dialog of a card — the confirmation (`confirm`), the request
+ * (`running`), and how it ended (`done` | `blocked` | `failed`, its `outcome`).
+ */
+export interface FlowTimeMachineDialog {
+  readonly seq: number
+  readonly flowId: string
+  readonly nodeId: string
+  readonly phase: 'confirm' | 'running' | 'done' | 'blocked' | 'failed'
+  /** What the confirmation was given on (the run, its node runs, the revision as this screen knows them). */
+  readonly basis: string
+  /**
+   * Why the confirmation must be given again before it runs: `changed` = its basis changed meanwhile, `unavailable` =
+   * the card cannot be rewound now (its menu item is disabled). Null: none.
+   */
+  readonly notice: 'changed' | 'unavailable' | null
+  readonly outcome: FlowTimeMachineOutcome | null
+}
+
+/** flowgate.v02.0061 TR0031 rev1: a Flow's run status as the screen acts on it. */
+export interface FlowRunStatus {
+  /** The run (null: none). Not `known`: the run last known, if any. */
+  readonly run: FlowRunInfo | null
+  /** Confirmed by the run read / a command's answer, or (that read pending or failed) by the Flow's Canvas read. */
+  readonly known: boolean
+}
+
+const KNOWN_NO_RUN: FlowRunStatus = Object.freeze({ run: null, known: true })
+
+/**
+ * flowgate.v02.0059 T#1: a view operation the Toolbar / View menu asks of a Flow's Canvas. Fit and
+ * the zoom steps need what only the Canvas knows (measured Nodes, its area, the pan bound), so the
+ * Canvas performs them and reports the result as its Viewport; a new `seq` makes a repeated
+ * request count again.
+ */
+export type CanvasViewOperation =
+  | { kind: 'fit' }
+  | { kind: 'zoom-in' }
+  | { kind: 'zoom-out' }
+  | { kind: 'zoom-to'; zoom: number }
+
+export type CanvasViewRequest = CanvasViewOperation & { readonly flowId: string; readonly seq: number }
 
 /** Graph read state of one open Flow. */
 export type FlowGraphLoad =
@@ -103,6 +228,13 @@ export interface DesignerCenterState {
   edits: Record<string, DraftEditState>
   /** flowgate.v02.0053 T#9: the server run per open Flow whose run was read or acted on. */
   runs: Record<string, FlowRunState>
+  /**
+   * flowgate.v02.0061 T#15: per open Flow, the card Holds its last shown Graph read told (by node key), with the Holds
+   * this tab wrote after that read was sent.
+   */
+  holds: Record<string, Record<string, boolean>>
+  /** flowgate.v02.0061 T#15: the open Graph Time Machine dialog, or null. */
+  timeMachine: FlowTimeMachineDialog | null
 }
 
 export interface DesignerCenterSession {
@@ -148,14 +280,41 @@ export interface DesignerCenterSession {
   refreshFlow(flowId: string): void
   /** Single selection of one Node, or none. */
   selectNode(flowId: string, nodeId: string | null): void
+  /** flowgate.v02.0059 T#1: the Selection becomes these Nodes of the Flow (the Canvas in 선택 mode). */
+  selectNodes(flowId: string, nodeIds: readonly string[]): void
+  /** flowgate.v02.0059 T#1: 전체 선택 — every Node of the Flow's ready Graph, in 선택 mode. Whether it ran. */
+  selectAll(flowId: string): boolean
+  /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode is on (area / click multi-selection). */
+  readonly selectMode: ComputedRef<boolean>
+  /** Turns [선택] mode on / off; off drops every Selection of more than one Node (and nothing else). */
+  setSelectMode(on: boolean): void
   /** Records the Viewport the Canvas (or the Minimap / a later Toolbar) reports. */
   recordViewport(flowId: string, viewport: CanvasViewport): void
   /** flowgate.v02.0049: the shown Canvas reports its area size (when shown and on every resize). */
   recordCanvasSize(size: CanvasSize): void
   /** flowgate.v02.0045: a user pan / zoom ended — record it and save it (per user, per Flow). */
   commitViewport(flowId: string, viewport: CanvasViewport): void
+  /** flowgate.v02.0059 T#1: the latest view operation asked of a Canvas (fit / zoom), or null. */
+  readonly viewRequest: ComputedRef<CanvasViewRequest | null>
+  /** Asks the open Flow's shown Canvas to fit / zoom; false when the Flow has no ready Graph. */
+  requestView(flowId: string, operation: CanvasViewOperation): boolean
   /** flowgate.v02.0045: a movable Node was dropped at (x, y) — move it and save its position. */
   moveNode(flowId: string, nodeId: string, x: number, y: number): void
+  /**
+   * flowgate.v02.0059 T#2: movable Nodes moved by one action (a drop of the dragged selection) — moved and
+   * saved like moveNode, one undo entry for all of them. Whether any Node moved.
+   */
+  moveNodes(flowId: string, placements: readonly NodePlacement[]): boolean
+  /** flowgate.v02.0059 T#2: 정렬 / 분배 of the Flow's selected Nodes (one undo entry). Whether any Node moved. */
+  arrangeNodes(flowId: string, kind: ArrangeKind): boolean
+  /**
+   * flowgate.v02.0059 T#2: 자동 배치 — the server's auto placement rules (auto_layout.py) with their spacing
+   * times `scale` (1 = the server's), for every movable Node (one undo entry). Whether any Node moved —
+   * at once, or once the Flow read whole answers when the shown Graph leaves part of the input out.
+   */
+  autoLayout(flowId: string, scale?: number): boolean | Promise<boolean>
+  /** flowgate.v02.0059 T#2: every 자동 배치 still reading the whole Flow moves nothing when it answers. */
+  cancelAutoLayout(): void
   /** flowgate.v02.0045: the Shell is going away — send pending saves and stop change reports. */
   dispose(): void
 
@@ -168,7 +327,10 @@ export interface DesignerCenterSession {
   connectNodes(flowId: string, source: string, target: string): boolean
   removeNode(flowId: string, nodeId: string): boolean
   removeEdge(flowId: string, edgeId: string): boolean
+  /** Takes back the Flow's last structure edit or card move (flowgate.v02.0059 T#2: one history). */
   undoEdit(flowId: string): boolean
+  /** flowgate.v02.0059 T#2: takes back the last undo of the Flow's structure edits / card moves. */
+  redoEdit(flowId: string): boolean
   validateDraft(flowId: string): Promise<void>
   confirmDraft(flowId: string): Promise<void>
   /**
@@ -187,10 +349,70 @@ export interface DesignerCenterSession {
   readonly canRun: boolean
   /** The active Flow's run state, or null (none read yet). */
   readonly activeRun: ComputedRef<DeepReadonly<FlowRunState> | null>
-  /** 다음 단계 (`next`) / 전체 실행 (`all`): confirms the draft, then starts or resumes. Whether it went. */
+  /** 다음 단계 (`next`) / 전체 실행 (`all`): confirms the draft (idle only), then one step / full command. */
   runFlow(flowId: string, mode: FlowRunMode): Promise<boolean>
-  /** 중지: stops the Flow's running run. Whether it stopped. */
+  /** 중지 (T#7 Stop) of the Flow's running or paused run. Whether the server took it. */
   stopRun(flowId: string): Promise<boolean>
+  /** flowgate.v02.0061 T#14: the source can pause a run (일시정지). */
+  readonly canPause: boolean
+  /** flowgate.v02.0061 T#14 일시정지 of the Flow's running run. */
+  pauseRun(flowId: string): Promise<boolean>
+  /** flowgate.v02.0061 T#14 재개 of the Flow's paused run (its own command). */
+  resumeRun(flowId: string): Promise<boolean>
+  /**
+   * flowgate.v02.0061 T#14: what the Flow's run means for its Canvas — the edit lock (running / paused / stopping),
+   * the protected nodes (done / open / review) and the nodes the work is going through now (running lines).
+   */
+  runMarks(flowId: string): FlowRunMarks
+  /** flowgate.v02.0061 T#14: the active Flow's run marks (TR0031 rev1: the lock also without a ready Graph). */
+  readonly activeRunMarks: ComputedRef<FlowRunMarks>
+  /** flowgate.v02.0061 TR0031 rev1: the Flow's confirmed run status (`known` false: not confirmed yet). */
+  runStatus(flowId: string): FlowRunStatus
+  /** flowgate.v02.0061 TR0031 rev1: the active Flow's run status (no active Flow: no run). */
+  readonly activeRunStatus: ComputedRef<FlowRunStatus>
+  /** flowgate.v02.0056 F2-1: the source can approve a card (the Canvas offers [승인]). */
+  readonly canApprove: boolean
+  /**
+   * flowgate.v02.0056 F2-1 — a Canvas card's [승인]: approves the card (O1 0005-TR §4-1) with the result its
+   * Canvas read shows. Whether it was approved; a refusal is the Flow's run `error` (kind `approval`).
+   */
+  approveNode(flowId: string, nodeId: string): Promise<boolean>
+
+  // flowgate.v02.0061 T#15 — a card's context menu (run/flowCardMenu.ts).
+  /** The items of the card's context menu now (empty: none). */
+  cardMenu(flowId: string, nodeId: string): FlowCardMenuItem[]
+  /** A menu item was chosen: Hold 설정 / 해제, or the Time Machine confirmation. Ignored when it is disabled now. */
+  chooseCardMenu(flowId: string, nodeId: string, key: FlowCardMenuKey): void
+  /**
+   * The card's Hold: this tab's Hold write a later read has not taken over yet, else the run's node run, else the Canvas
+   * node run, else the Graph read's; null = unknown.
+   */
+  cardHold(flowId: string, nodeId: string): boolean | null
+  /** cardHold of every card of the Flow's shown Graph whose Hold is known (by node id). */
+  cardHolds(flowId: string): ReadonlyMap<string, boolean>
+  /** Sets (true) / releases (false) the card's Hold. Whether it is so now. Never starts anything. */
+  setCardHold(flowId: string, nodeId: string, on: boolean): Promise<boolean>
+  /** The Graph Time Machine dialog, or null. */
+  readonly timeMachine: ComputedRef<DeepReadonly<FlowTimeMachineDialog> | null>
+  /** Opens the confirmation of a done card's Graph Time Machine. Whether it opened. */
+  askTimeMachine(flowId: string, nodeId: string): boolean
+  /**
+   * Runs the confirmed Graph Time Machine; the dialog then shows its outcome. Not when the card cannot be rewound now or
+   * the confirmation's basis changed: the confirmation stays (its `notice` says why) and must be given again. Whether
+   * it was done.
+   */
+  confirmTimeMachine(): Promise<boolean>
+  /** Closes the dialog (not while its request is answered). */
+  closeTimeMachine(): void
+
+  // flowgate.v02.0064 T#4 — a card's own title (graph/nodeTitle.ts).
+  /** The source saves card titles (the Canvas opens a card's title for editing). */
+  readonly canEditNodeTitles: boolean
+  /**
+   * Saves one card's title (the text as typed; the server normalizes and judges it). A saved answer newer than the title
+   * the Flow shows goes onto its shared Graph at once; a refusal names the server's code. Draft and history stay as they are.
+   */
+  saveNodeTitle(flowId: string, nodeId: string, title: string): Promise<NodeTitleSaveOutcome>
 }
 
 export interface DesignerCenterSessionOptions {
@@ -215,6 +437,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     views: {},
     edits: {},
     runs: {},
+    holds: {},
+    timeMachine: null,
   })
 
   // Latest read token per Flow id; a result whose token is no longer the latest is dropped.
@@ -228,11 +452,30 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   const staleFlows = new Set<string>()
   // Node moves per Flow; a read compares it to tell whether a move happened meanwhile.
   const moveCounts = new Map<string, number>()
+  // flowgate.v02.0059 T#2: the latest 자동 배치 asked per Flow; an earlier one still reading the whole Flow
+  // moves nothing.
+  const layoutRuns = new Map<string, number>()
+  let layoutRunSeq = 0
+  // flowgate.v02.0059 T#2: a new mark per Flow each time a read puts a Graph on screen (or its loading /
+  // error); a 자동 배치 whose input was read for an earlier one moves nothing.
+  const shownReads = new Map<string, number>()
+  let shownReadSeq = 0
+  function setShownLoad(flowId: string, load: FlowGraphLoad) {
+    shownReadSeq += 1
+    shownReads.set(flowId, shownReadSeq)
+    state.graphs[flowId] = load
+  }
   // flowgate.v02.0045 S3: the Graph definition a Graph Flow shows ('draft' | 'revision'), if chosen
   // (TR0020 rev3: chosen by readGraph itself, never by a button).
   const graphViews = new Map<string, string>()
   // flowgate.v02.0045 T0019: default nodes of just created Flows, until their Graph is first shown.
   const seeds = new Map<string, CanvasNodeSpec>()
+  // flowgate.v02.0064 T#4: per open Flow, the title state each card shows (by node id) — the version order's base.
+  const titleStates = new Map<string, Map<string, FlowGraphTitleState>>()
+  const titlesOf = (flowId: string) => {
+    if (!titleStates.has(flowId)) titleStates.set(flowId, new Map())
+    return titleStates.get(flowId)!
+  }
   let stopWatching: (() => void) | null = null
   let disposed = false
 
@@ -290,15 +533,19 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     projectId: () => state.projectId,
     graph: readyGraph,
     setGraph: (flowId, graph) => {
-      if (state.graphs[flowId]) state.graphs[flowId] = { status: 'ready', graph: markRaw(graph) }
+      if (!state.graphs[flowId]) return
+      state.graphs[flowId] = { status: 'ready', graph: markRaw(graph) }
+      // An edit, its undo or its redo may take selected Nodes away (flowgate.v02.0059 T#1).
+      keepShownSelection(flowId, graph)
     },
     renameSelection: (flowId, keyMap) => {
       const view = state.views[flowId]
-      if (view?.selectedNodeId && keyMap[view.selectedNodeId]) view.selectedNodeId = keyMap[view.selectedNodeId]
+      if (view) setViewSelection(view, view.selectedNodeIds.map((id) => keyMap[id] ?? id))
     },
     queuePosition: (flowId, nodeId, x, y) => {
       if (source.saveLayout) layoutQueue.queuePosition(flowId, nodeId, x, y)
     },
+    placeNodes: (flowId, placements) => placeNodes(flowId, placements).length > 0,
     keepPositions: (projectId, flowId, positions) => {
       if (!source.saveLayout) return
       if (projectId !== state.projectId) {
@@ -334,6 +581,233 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     refresh: (flowId) => refreshFlow(flowId),
   }, state.runs)
 
+  /**
+   * flowgate.v02.0061 TR0031 rev1: the run the Canvas read shows, with what the run last read adds when it is the same
+   * run (its band and node runs; event sequence decides which status is newer). A Canvas showing no run means no locked run.
+   */
+  function canvasRunInfo(shown: FlowGraphRun | null, last: FlowRunInfo | null): FlowRunInfo | null {
+    if (shown === null) return last && !isRunLocked(last) ? last : null
+    if (last?.runId === shown.runId) {
+      // A background Canvas read can predate a run command's response. Keep the newer server state.
+      if (last.lastEventSeq !== undefined && shown.lastEventSeq !== undefined && last.lastEventSeq >= shown.lastEventSeq) return last
+      return { ...last, status: shown.status, lastEventSeq: shown.lastEventSeq }
+    }
+    return { runId: shown.runId, status: shown.status, lastEventSeq: shown.lastEventSeq, openNodeKeys: [] }
+  }
+
+  // flowgate.v02.0061 TR0031 rev1: the run status the lock and the run commands follow (see the head of this file).
+  function runStatus(flowId: string): FlowRunStatus {
+    const run = state.runs[flowId]
+    const shown = readyGraph(flowId)?.run
+    if (!runControl.available) return shown ? { run: canvasRunInfo(shown, null), known: true } : KNOWN_NO_RUN
+    if (run?.readState === 'read') {
+      const last = run.run
+      // Conversely, a newer Canvas event must not be hidden by an older run response.
+      if (shown && last?.runId === shown.runId && shown.lastEventSeq !== undefined &&
+          last.lastEventSeq !== undefined && shown.lastEventSeq > last.lastEventSeq) {
+        return { run: canvasRunInfo(shown, last), known: true }
+      }
+      return { run: last, known: true }
+    }
+    if (shown !== undefined) return { run: canvasRunInfo(shown, run?.run ?? null), known: true }
+    return { run: run?.run ?? null, known: false }
+  }
+
+  // flowgate.v02.0061 T#14: the run's marks of a Flow's shown Graph (run/flowRunLock.ts); TR0031 rev1: the lock stays
+  // whatever the Graph's load (no ready Graph: the lock alone).
+  function runMarks(flowId: string): FlowRunMarks {
+    const { run, known } = runStatus(flowId)
+    return flowRunMarks(readyGraph(flowId), run, known)
+  }
+
+  /** flowgate.v02.0061 TR0031 rev1: a run command goes only on a confirmed status (the phase's own buttons). */
+  function whenKnown(flowId: string, go: (run: FlowRunInfo | null) => boolean): boolean {
+    const status = runStatus(flowId)
+    return status.known && go(status.run)
+  }
+
+  const editLock = (flowId: string): FlowEditLock => runMarks(flowId).lock
+
+  // ── flowgate.v02.0061 T#15: a card's context menu ─────────────────────────────────────────────────────────
+
+  const graphNode = (flowId: string, nodeId: string) => readyGraph(flowId)?.nodes.find((node) => node.id === nodeId) ?? null
+
+  // Per open Flow, the Hold writes this tab answered (by node id) with their mark; a Graph read sent after the mark
+  // takes over (takeHolds), one sent before it does not.
+  const holdWrites = new Map<string, Map<string, { mark: number; held: boolean }>>()
+  let holdWriteMark = 0
+
+  function holdOf(flowId: string, nodeId: string, marks: FlowRunMarks, node: FlowGraphNode | null): boolean | null {
+    const written = holdWrites.get(flowId)?.get(nodeId)
+    if (written) return written.held
+    const runNode = marks.nodeRuns.get(nodeId)
+    if (runNode && typeof runNode.hold === 'boolean') return runNode.hold
+    if (node?.nodeRun && typeof node.nodeRun.hold === 'boolean') return node.nodeRun.hold
+    return state.holds[flowId]?.[nodeId] ?? null
+  }
+
+  function cardHold(flowId: string, nodeId: string): boolean | null {
+    return holdOf(flowId, nodeId, runMarks(flowId), graphNode(flowId, nodeId))
+  }
+
+  function cardHolds(flowId: string): ReadonlyMap<string, boolean> {
+    const holds = new Map<string, boolean>()
+    const marks = runMarks(flowId)
+    for (const node of readyGraph(flowId)?.nodes ?? []) {
+      const held = holdOf(flowId, node.id, marks, node)
+      if (held !== null) holds.set(node.id, held)
+    }
+    return holds
+  }
+
+  /** A shown Graph read's card Holds become the Flow's; a Hold write answered after the read was sent stays over it. */
+  function takeHolds(flowId: string, read: Readonly<Record<string, boolean>> | undefined, writesAtSend: number) {
+    const holds: Record<string, boolean> = { ...(read ?? {}) }
+    const writes = holdWrites.get(flowId)
+    for (const [nodeId, written] of writes ?? []) {
+      if (written.mark <= writesAtSend) writes!.delete(nodeId)
+      else holds[nodeId] = written.held
+    }
+    state.holds[flowId] = holds
+  }
+
+  /** The card's state in the Flow's run (the run read first, else the Canvas node run), or null. */
+  function cardStatus(flowId: string, nodeId: string): string | null {
+    const runNode = runMarks(flowId).nodeRuns.get(nodeId)
+    if (runNode?.status) return runNode.status
+    return graphNode(flowId, nodeId)?.nodeRun?.status ?? null
+  }
+
+  /** A Graph node the server keeps (its card settings exist): not a `tmp_` card of the draft, not a v0.1 document card. */
+  const cardStored = (flowId: string, nodeId: string) =>
+    !source.isSample && !nodeId.startsWith(CLIENT_KEY_PREFIX) && !!graphNode(flowId, nodeId)?.definition
+
+  function cardMenu(flowId: string, nodeId: string): FlowCardMenuItem[] {
+    const graph = readyGraph(flowId)
+    if (!graph || !graphNode(flowId, nodeId)) return []
+    const { run, known } = runStatus(flowId)
+    const flowRun = state.runs[flowId]
+    return flowCardMenu({
+      nodeStatus: cardStatus(flowId, nodeId),
+      hold: cardHold(flowId, nodeId),
+      stored: cardStored(flowId, nodeId),
+      lock: runMarks(flowId).lock,
+      run,
+      known,
+      ownership: graph.ownership ?? null,
+      busy: !!flowRun?.action || flowRun?.approving != null || flowRun?.holding != null || state.timeMachine?.phase === 'running',
+      canHold: runControl.canHold,
+      canTimeMachine: runControl.canTimeMachine,
+    })
+  }
+
+  const menuItemEnabled = (flowId: string, nodeId: string, key: FlowCardMenuKey) =>
+    cardMenu(flowId, nodeId).some((menuItem) => menuItem.key === key && !menuItem.disabled)
+
+  async function setCardHold(flowId: string, nodeId: string, on: boolean): Promise<boolean> {
+    const projectId = state.projectId
+    if (projectId === null || !menuItemEnabled(flowId, nodeId, on ? 'hold_set' : 'hold_release')) return false
+    // The server's answer, told by the run control only while the request still belongs to this opening of the Flow and
+    // before it reads the Flow again: kept over the Graph reads sent before it, those re-reads (and later ones) take over.
+    const held = await runControl.hold(flowId, nodeId, on, (answered) => {
+      holdWriteMark += 1
+      if (!holdWrites.has(flowId)) holdWrites.set(flowId, new Map())
+      holdWrites.get(flowId)!.set(nodeId, { mark: holdWriteMark, held: answered })
+      state.holds[flowId] = { ...(state.holds[flowId] ?? {}), [nodeId]: answered }
+    })
+    return held !== null && held === on
+  }
+
+  let timeMachineSeq = 0
+
+  /**
+   * What the server's Time Machine assessment goes by, as this screen knows it: the run (status, idle reason, the
+   * revision it runs, its event sequence), its node runs (state, attempt, result integration, executions) — from the run
+   * read and from the Canvas read alike — and the revisions. The run's event sequence grows with every run event (a
+   * Time Machine and every node event too) and a rewound node opened again has a new attempt, so a history that changed
+   * and came back to the same states is a changed basis. Not the draft: the server never reads it.
+   */
+  function timeMachineBasis(flowId: string): string {
+    const { run, known } = runStatus(flowId)
+    const graph = readyGraph(flowId)
+    const shown = graph?.run ?? null
+    return JSON.stringify([
+      known,
+      run?.runId ?? null,
+      run?.status ?? null,
+      run?.idleReason ?? null,
+      run?.revisionNo ?? null,
+      run?.lastEventSeq ?? null,
+      (run?.nodeRuns ?? []).map((node) => [
+        node.nodeKey,
+        node.status,
+        node.attemptId ?? null,
+        node.integrationStatus ?? null,
+        node.runningExecutionCount ?? 0,
+        node.requestedExecutionCount ?? 0,
+      ]),
+      shown && [shown.runId, shown.status, shown.revisionNo ?? null, shown.lastEventSeq ?? null],
+      (graph?.nodes ?? []).filter((node) => node.nodeRun).map((node) => [node.id, node.nodeRun!.status, node.nodeRun!.attemptId ?? null]),
+      graph?.latestRevisionNo ?? null,
+      graph?.viewRevisionNo ?? null,
+    ])
+  }
+
+  function askTimeMachine(flowId: string, nodeId: string): boolean {
+    if (!readyGraph(flowId) || state.timeMachine?.phase === 'running' || !menuItemEnabled(flowId, nodeId, 'time_machine')) {
+      return false
+    }
+    timeMachineSeq += 1
+    state.timeMachine = {
+      seq: timeMachineSeq,
+      flowId,
+      nodeId,
+      phase: 'confirm',
+      basis: timeMachineBasis(flowId),
+      notice: null,
+      outcome: null,
+    }
+    return true
+  }
+
+  async function confirmTimeMachine(): Promise<boolean> {
+    const asked = state.timeMachine
+    if (!asked || asked.phase !== 'confirm') return false
+    const { seq, flowId, nodeId } = asked
+    // Given on what the screen knew then: a card that cannot be rewound now, or a changed basis, asks again.
+    if (!menuItemEnabled(flowId, nodeId, 'time_machine')) {
+      state.timeMachine = { ...asked, notice: 'unavailable' }
+      return false
+    }
+    const basis = timeMachineBasis(flowId)
+    if (basis !== asked.basis) {
+      state.timeMachine = { ...asked, basis, notice: 'changed' }
+      return false
+    }
+    state.timeMachine = { ...asked, phase: 'running', notice: null }
+    const outcome = await runControl.timeMachine(flowId, nodeId)
+    if (state.timeMachine?.seq !== seq) return outcome.kind === 'done'
+    const phase = outcome.kind === 'done' ? 'done' : outcome.kind === 'blocked' ? 'blocked' : 'failed'
+    state.timeMachine = { ...state.timeMachine, phase, outcome }
+    return outcome.kind === 'done'
+  }
+
+  function closeTimeMachine() {
+    if (state.timeMachine?.phase !== 'running') state.timeMachine = null
+  }
+
+  function chooseCardMenu(flowId: string, nodeId: string, key: FlowCardMenuKey) {
+    if (key === 'time_machine') askTimeMachine(flowId, nodeId)
+    else void setCardHold(flowId, nodeId, key === 'hold_set')
+  }
+
+  function checkConnection(flowId: string, source: string, target: string): ConnectionCheck {
+    const marks = runMarks(flowId)
+    if (marks.lock !== null) return { ok: false, reason: 'locked' }
+    if (marks.protectedNodeIds.has(target)) return { ok: false, reason: 'protected' }
+    return drafts.check(flowId, source, target)
+  }
+
   function changedElsewhere(projectId: string, flowId: string) {
     if (isOpen(projectId, flowId)) readWhenSaved(flowId)
   }
@@ -358,6 +832,14 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   // `background`: a refresh — a ready Graph stays on screen until the new one arrives, and a
   // failed refresh keeps it (the next change report or retry reads again).
+  /** flowgate.v02.0059 T#1: the Flow's Selection keeps only Nodes of the Graph now shown. */
+  function keepShownSelection(flowId: string, graph: FlowGraph) {
+    const view = state.views[flowId]
+    if (!view || view.selectedNodeIds.length === 0) return
+    const shown = new Set(graph.nodes.map((node) => node.id))
+    setViewSelection(view, view.selectedNodeIds.filter((id) => shown.has(id)))
+  }
+
   function readGraph(flowId: string, background = false) {
     const projectId = state.projectId
     if (projectId === null) return
@@ -365,9 +847,10 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     const token = readSeq
     pendingReads.set(flowId, token)
     const keepShown = background && state.graphs[flowId]?.status === 'ready'
-    if (!keepShown) state.graphs[flowId] = { status: 'loading' }
+    if (!keepShown) setShownLoad(flowId, { status: 'loading' })
     const isCurrent = () => pendingReads.get(flowId) === token && state.projectId === projectId
     const movesAtStart = moveCounts.get(flowId) ?? 0
+    const holdWritesAtSend = holdWriteMark
     const view = graphViews.get(flowId)
 
     let request: Promise<FlowGraph>
@@ -394,8 +877,10 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
           readGraph(flowId, true)
           return
         }
-        const shown = source.saveDraft ? editableRevision(graph) ?? graph : graph
-        state.graphs[flowId] = { status: 'ready', graph: markRaw(shown) }
+        // flowgate.v02.0064 T#4: a card keeps a newer title this tab already shows (a save answered after the read went).
+        const shown = takeTitleStates(source.saveDraft ? editableRevision(graph) ?? graph : graph, titlesOf(flowId))
+        setShownLoad(flowId, { status: 'ready', graph: markRaw(shown) })
+        takeHolds(flowId, graph.holds, holdWritesAtSend)
         drafts.graphLoaded(flowId, shown)
         // flowgate.v02.0053 T#9: the run goes with the Graph it moves (a run event reads both again).
         runControl.read(flowId)
@@ -411,9 +896,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
         if (view && view.viewport === null && graph.viewport) {
           view.viewport = { x: graph.viewport.x, y: graph.viewport.y, zoom: graph.viewport.zoom }
         }
-        if (view?.selectedNodeId && !graph.nodes.some((node) => node.id === view.selectedNodeId)) {
-          view.selectedNodeId = null
-        }
+        keepShownSelection(flowId, graph)
         if (outdated) readWhenSaved(flowId)
       },
       (error: unknown) => {
@@ -426,7 +909,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
           return
         }
         if (keepShown && state.graphs[flowId]?.status === 'ready') return
-        state.graphs[flowId] = { status: 'error', message: error instanceof Error ? error.message : '' }
+        setShownLoad(flowId, { status: 'error', message: error instanceof Error ? error.message : '' })
       },
     )
   }
@@ -438,14 +921,20 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     layoutQueue = createQueue(projectId)
     pendingReads.clear()
     moveCounts.clear()
+    layoutRuns.clear()
+    shownReads.clear()
     graphViews.clear()
     seeds.clear()
+    holdWrites.clear()
+    titleStates.clear()
     runControl.clear()
     state.projectId = projectId
     watchProject(projectId)
     applyTabs(EMPTY_FLOW_TABS)
     state.graphs = {}
     state.views = {}
+    state.holds = {}
+    state.timeMachine = null
   }
 
   function openFlow(request: CenterFlowOpenRequest, options: { seedNode?: CanvasNodeSpec } = {}) {
@@ -469,11 +958,17 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     applyTabs(closeFlowTab(tabsState(), flowId))
     pendingReads.delete(flowId)
     moveCounts.delete(flowId)
+    layoutRuns.delete(flowId)
+    shownReads.delete(flowId)
     graphViews.delete(flowId)
     seeds.delete(flowId)
+    holdWrites.delete(flowId)
+    titleStates.delete(flowId)
     runControl.forget(flowId)
     delete state.graphs[flowId]
     delete state.views[flowId]
+    delete state.holds[flowId]
+    if (state.timeMachine?.flowId === flowId) state.timeMachine = null
   }
 
   function retryGraph(flowId: string) {
@@ -487,7 +982,35 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   function selectNode(flowId: string, nodeId: string | null) {
     const view = state.views[flowId]
-    if (view && view.selectedNodeId !== nodeId) view.selectedNodeId = nodeId
+    if (view) setViewSelection(view, nodeId === null ? [] : [nodeId])
+  }
+
+  const selectMode = shallowRef(false)
+
+  function selectNodes(flowId: string, nodeIds: readonly string[]) {
+    const view = state.views[flowId]
+    if (!view) return
+    const graph = readyGraph(flowId)
+    const shown = graph ? new Set(graph.nodes.map((node) => node.id)) : null
+    setViewSelection(view, shown ? nodeIds.filter((id) => shown.has(id)) : nodeIds)
+  }
+
+  function selectAll(flowId: string): boolean {
+    const graph = readyGraph(flowId)
+    const view = state.views[flowId]
+    if (!graph || !view) return false
+    selectMode.value = true
+    setViewSelection(view, graph.nodes.map((node) => node.id))
+    return true
+  }
+
+  function setSelectMode(on: boolean) {
+    if (selectMode.value === on) return
+    selectMode.value = on
+    if (on) return
+    for (const view of Object.values(state.views)) {
+      if (view.selectedNodeIds.length > 1) setViewSelection(view, [])
+    }
   }
 
   function recordViewport(flowId: string, viewport: CanvasViewport) {
@@ -509,22 +1032,91 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     if (source.saveLayout) layoutQueue.queueViewport(flowId, viewport)
   }
 
-  function moveNode(flowId: string, nodeId: string, x: number, y: number) {
+  const viewRequest = shallowRef<CanvasViewRequest | null>(null)
+  let viewRequestSeq = 0
+
+  function requestView(flowId: string, operation: CanvasViewOperation): boolean {
+    if (state.graphs[flowId]?.status !== 'ready') return false
+    viewRequestSeq += 1
+    viewRequest.value = { ...operation, flowId, seq: viewRequestSeq }
+    return true
+  }
+
+  /**
+   * Puts movable Nodes of a ready Graph at new positions and saves them (a Node not movable, unknown or
+   * already there stays). flowgate.v02.0059 T#2: the one path of every move — a drop, 정렬 / 분배,
+   * 자동 배치, and an undone / redone move. The draft keeps the same positions. The moves made.
+   */
+  function placeNodes(flowId: string, placements: readonly NodePlacement[]): NodeMove[] {
     const load = state.graphs[flowId]
-    if (load?.status !== 'ready' || !Number.isFinite(x) || !Number.isFinite(y)) return
-    const node = load.graph.nodes.find((candidate) => candidate.id === nodeId)
-    if (!node || node.movable !== true || (node.x === x && node.y === y)) return
-    const nodes = load.graph.nodes.map((candidate) =>
-      candidate.id === nodeId ? { ...candidate, x, y, positionSource: 'saved' } : candidate,
-    )
+    if (load?.status !== 'ready') return []
+    const at = new Map(placements.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y)).map((p) => [p.nodeId, p] as const))
+    const moves: NodeMove[] = []
+    const nodes = load.graph.nodes.map((node) => {
+      const to = at.get(node.id)
+      if (!to || node.movable !== true || (node.x === to.x && node.y === to.y)) return node
+      moves.push({ nodeId: node.id, from: { x: node.x, y: node.y }, to: { x: to.x, y: to.y } })
+      return { ...node, x: to.x, y: to.y, positionSource: 'saved' }
+    })
+    if (moves.length === 0) return moves
     state.graphs[flowId] = { status: 'ready', graph: markRaw({ ...load.graph, nodes }) }
     moveCounts.set(flowId, (moveCounts.get(flowId) ?? 0) + 1)
-    // A node created here is stored with its position once its draft save answers its key.
-    if (source.saveLayout && !nodeId.startsWith(CLIENT_KEY_PREFIX)) layoutQueue.queuePosition(flowId, nodeId, x, y)
+    for (const { nodeId, to } of moves) {
+      // A node created here is stored with its position once its draft save answers its key.
+      if (source.saveLayout && !nodeId.startsWith(CLIENT_KEY_PREFIX)) layoutQueue.queuePosition(flowId, nodeId, to.x, to.y)
+    }
+    drafts.placed(flowId, moves.map(({ nodeId, to }) => ({ nodeId, ...to })))
+    return moves
+  }
+
+  /** flowgate.v02.0059 T#2: one action's moves — placed, and one entry of the Flow's undo / redo. */
+  function moveNodes(flowId: string, placements: readonly NodePlacement[]): boolean {
+    const moves = placeNodes(flowId, placements)
+    if (moves.length > 0) drafts.recordMove(flowId, moves)
+    return moves.length > 0
+  }
+
+  function arrangeNodes(flowId: string, kind: ArrangeKind): boolean {
+    const graph = readyGraph(flowId)
+    const view = state.views[flowId]
+    return !!graph && !!view && moveNodes(flowId, arrangeSelection(graph.nodes, view.selectedNodeIds, kind))
+  }
+
+  function layOut(flowId: string, scale: number, basis?: FlowLayoutBasis): boolean {
+    const graph = readyGraph(flowId)
+    return !!graph && moveNodes(flowId, autoLayoutPlacements(graph, scale, basis))
+  }
+
+  function autoLayout(flowId: string, scale = 1): boolean | Promise<boolean> {
+    const graph = readyGraph(flowId)
+    const projectId = state.projectId
+    if (disposed || !graph || projectId === null) return false
+    layoutRunSeq += 1
+    const run = layoutRunSeq
+    layoutRuns.set(flowId, run)
+    if (!needsLayoutBasis(graph) || !source.loadLayoutGraph) return layOut(flowId, scale)
+    const view = graphViews.get(flowId)
+    const shownAt = shownReads.get(flowId)
+    const readDocument = source.readDocumentLink
+      ? (docId: string) => source.readDocumentLink!(projectId, docId)
+      : undefined
+    // The answer belongs to the Graph shown when it was asked: not cancelled, the session alive, the tab open,
+    // and no read put another Graph (or its loading) on screen meanwhile.
+    const current = () =>
+      !disposed && layoutRuns.get(flowId) === run && shownReads.get(flowId) === shownAt && isOpen(projectId, flowId)
+    return loadLayoutBasis(() => source.loadLayoutGraph!(projectId, flowId, view), readDocument).then(
+      (basis) => current() && layOut(flowId, scale, basis),
+      () => false,
+    )
+  }
+
+  function cancelAutoLayout() {
+    layoutRuns.clear()
   }
 
   function dispose() {
     disposed = true
+    layoutRuns.clear()
     drafts.closeAll()
     layoutQueue.flushAll()
     stopWatching?.()
@@ -542,6 +1134,29 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     if (!draft?.editable || !draft.confirmable || !drafts.drawn(flowId)) return true
     if (state.edits[flowId]?.action) return false
     return drafts.confirm(flowId).then(() => state.edits[flowId]?.notice?.kind === 'confirmed')
+  }
+
+  // ── flowgate.v02.0064 T#4: a card's own title ───────────────────────────────────────────────────────────────
+
+  /** A title state answered for an open Flow's card: shown when newer than the one the card shows (see the file head). */
+  function showTitleState(flowId: string, nodeId: string, incoming: FlowGraphTitleState) {
+    const next = applyTitleState(readyGraph(flowId), nodeId, incoming, titlesOf(flowId))
+    if (next) state.graphs[flowId] = { status: 'ready', graph: markRaw(next) }
+  }
+
+  async function saveNodeTitle(flowId: string, nodeId: string, title: string): Promise<NodeTitleSaveOutcome> {
+    const projectId = state.projectId
+    if (projectId === null || !source.saveNodeTitle || !isOpen(projectId, flowId)) return { ok: false, code: null, message: '' }
+    let answered: FlowGraphTitleState
+    try {
+      answered = await source.saveNodeTitle(projectId, flowId, nodeId, title)
+    } catch (error) {
+      const refusal = error as FlowRunError | null
+      return { ok: false, code: refusal?.code ?? null, message: refusal?.message ?? '' }
+    }
+    // A Flow closed (or another project) meanwhile shows nothing of it; one opened again reads the stored title.
+    if (!disposed && isOpen(projectId, flowId)) showTitleState(flowId, nodeId, answered)
+    return { ok: true, titleState: answered }
   }
 
   const exposed = readonly(state)
@@ -578,8 +1193,9 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       const node = activeSelectedNode.value
       const id = exposed.activeFlowId
       const load = id === null ? undefined : (exposed.graphs[id] as FlowGraphLoad | undefined)
-      if (!node || exposed.projectId === null || load?.status !== 'ready') return null
-      return { projectId: exposed.projectId, graph: load.graph, node }
+      if (!node || id === null || exposed.projectId === null || load?.status !== 'ready') return null
+      // flowgate.v02.0061 T#14: the Inspector's card settings follow the run lock as the Canvas does.
+      return { projectId: exposed.projectId, graph: load.graph, node, editLock: editLock(id) }
     }),
     canvasSize: computed(() => canvasSize.value),
     setProject,
@@ -589,24 +1205,45 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     retryGraph,
     refreshFlow,
     selectNode,
+    selectNodes,
+    selectAll,
+    selectMode: computed(() => selectMode.value),
+    setSelectMode,
     recordViewport,
     recordCanvasSize,
     commitViewport,
-    moveNode,
+    viewRequest: computed(() => viewRequest.value),
+    requestView,
+    moveNode: (flowId, nodeId, x, y) => {
+      moveNodes(flowId, [{ nodeId, x, y }])
+    },
+    moveNodes,
+    arrangeNodes,
+    autoLayout,
+    cancelAutoLayout,
     dispose,
     activeEdit: computed(() => {
       const id = exposed.activeFlowId
       return id === null ? null : exposed.edits[id] ?? null
     }),
-    dropOnCanvas: drafts.drop,
-    checkConnection: drafts.check,
-    connectNodes: drafts.connect,
-    removeNode: drafts.removeNode,
+    dropOnCanvas: (flowId, transfer, x, y) => editLock(flowId) === null && drafts.drop(flowId, transfer, x, y),
+    checkConnection,
+    connectNodes: (flowId: string, source: string, target: string) =>
+      checkConnection(flowId, source, target).ok && drafts.connect(flowId, source, target),
+    removeNode: (flowId: string, nodeId: string) => {
+      const marks = runMarks(flowId)
+      return marks.lock === null && !marks.protectedNodeIds.has(nodeId) && drafts.removeNode(flowId, nodeId)
+    },
     removeEdge: (flowId: string, edgeId: string) => {
       const graph = readyGraph(flowId)
+      const marks = runMarks(flowId)
+      const edge = graph?.edges.find((candidate) => candidate.id === edgeId)
+      if (marks.lock !== null || (edge && isEdgeProtected(edge, marks.protectedNodeIds))) return false
       return !(graph && isEdgeProgressed(graph, edgeId)) && drafts.removeEdge(flowId, edgeId)
     },
-    undoEdit: drafts.undo,
+    // flowgate.v02.0061 T#14: the history holds structure edits, so it waits while the run is locked.
+    undoEdit: (flowId: string) => editLock(flowId) === null && drafts.undo(flowId),
+    redoEdit: (flowId: string) => editLock(flowId) === null && drafts.redo(flowId),
     validateDraft: drafts.validate,
     confirmDraft: drafts.confirm,
     prepareRun,
@@ -615,6 +1252,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       const draft = id === null ? null : readyGraph(id)?.draft
       const edit = id === null ? undefined : exposed.edits[id]
       const status = edit?.status ?? 'idle'
+      if (id === null || editLock(id) !== null) return false
       return !!draft?.editable && !edit?.action && status !== 'conflict' && (draft.version > 0 || status !== 'idle')
     }),
     reloadDraft: drafts.reload,
@@ -623,8 +1261,40 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       const id = exposed.activeFlowId
       return id === null ? null : exposed.runs[id] ?? null
     }),
-    runFlow: runControl.run,
-    stopRun: runControl.stop,
+    // TR0031 rev1: 다음 단계 / 전체 실행 only on a confirmed idle (or no) run; 일시정지 / 재개 / 중지 on a confirmed run.
+    runFlow: (flowId, mode) =>
+      whenKnown(flowId, (run) => !isRunLocked(run)) ? runControl.run(flowId, mode) : Promise.resolve(false),
+    stopRun: (flowId) => (whenKnown(flowId, (run) => run !== null) ? runControl.stop(flowId) : Promise.resolve(false)),
+    canPause: runControl.canPause,
+    pauseRun: (flowId) => (whenKnown(flowId, (run) => run !== null) ? runControl.pause(flowId) : Promise.resolve(false)),
+    resumeRun: (flowId) => (whenKnown(flowId, (run) => run !== null) ? runControl.resume(flowId) : Promise.resolve(false)),
+    runMarks,
+    activeRunMarks: computed(() => {
+      const id = exposed.activeFlowId
+      return id === null ? NO_RUN_MARKS : runMarks(id)
+    }),
+    runStatus,
+    activeRunStatus: computed(() => {
+      const id = exposed.activeFlowId
+      return id === null ? KNOWN_NO_RUN : runStatus(id)
+    }),
+    canApprove: runControl.canApprove,
+    approveNode: (flowId, nodeId) => {
+      const node = readyGraph(flowId)?.nodes.find((candidate) => candidate.id === nodeId)
+      if (!node?.nodeRun) return Promise.resolve(false)
+      return runControl.approve(flowId, nodeId, node.nodeRun.resultDocId ?? null)
+    },
+    cardMenu,
+    chooseCardMenu,
+    cardHold,
+    cardHolds,
+    setCardHold,
+    timeMachine: computed(() => exposed.timeMachine),
+    askTimeMachine,
+    confirmTimeMachine,
+    closeTimeMachine,
+    canEditNodeTitles: !source.isSample && !!source.saveNodeTitle,
+    saveNodeTitle,
   }
 }
 

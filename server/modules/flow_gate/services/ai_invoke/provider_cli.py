@@ -472,6 +472,42 @@ class _CliProcess:
             self.owner.close()
 
 
+def _execute_local(exec_id, cwd, prompt, env, *, command, run, decision, started, stopped):
+    """Local execution boundary: acquire, Popen/Job Object, cancel handle and exit result.
+
+    ``cwd`` is the already resolved process directory. Watchdog and output policy
+    remain with _cli_execute; a probe does not pass through this boundary.
+    """
+    from modules.flow_gate.services import graph_execution_hooks
+    if exec_id != run.get("graph_exec_id"):
+        raise ValueError("execution identity mismatch")
+    if graph_execution_hooks.call("launch", run) is False:
+        return None, None
+    cli = _CliProcess(run.get("run_id"))
+    try:
+        kwargs = _cli_popen_kwargs(decision, env)
+        kwargs["cwd"] = cwd
+        _audit_cli_launch(decision)
+        cli.launched_mono = time.monotonic()
+        if not cli.start(command, kwargs):
+            return cli, None
+        run["proc"] = cli.proc
+        # Cancellation may arrive between acquire and Popen.
+        if run["cancel_event"].is_set():
+            cli.terminate()
+        started(cli.proc)
+        return cli, cli.communicate(prompt.encode("utf-8"), max(1.0, _absolute_remaining_sec(run)))
+    finally:
+        try:
+            stopped()
+        finally:
+            try:
+                cli.close()
+            finally:
+                if run.get("proc") is cli.proc:
+                    run["proc"] = None
+
+
 def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
     """stdin-injected CLI run (claude/copilot/codex; args are forbidden — cp932
     truncation). Returns (classification, failure_detail)."""
@@ -511,53 +547,28 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         _audit_cli_launch(blocked)
         return "spawn_failed", f"CLI launch blocked: {reason}"
     eff_cmd = decision.pop("effective_command")
-    cli = _CliProcess(run.get("run_id"))
     watchdog_stop = watchdog_thread = None
-    try:
-        kwargs = _cli_popen_kwargs(decision, env)
-        _audit_cli_launch(decision)
-
-        launched = time.monotonic()
-        if not cli.start(eff_cmd, kwargs):
-            return "spawn_failed", "unable to start CLI process"
-        proc = cli.proc
-
-        run["proc"] = proc
-        # Close the cancel-vs-spawn race: a cancel that landed between admission and
-        # Popen saw proc=None and killed nothing — reap the child ourselves now.
-        if run["cancel_event"].is_set():
-            process_runner.kill_process_tree(proc)
-        # 0446 T0014 §3-1: the no-progress threshold is enforced BESIDE this wait, by the
-        # watchdog thread, because `communicate()` cannot be asked "is it still working?".
-        # What is left for the wait itself is the absolute ceiling — the one deadline that
-        # holds however well the worker is doing (§3-6) — so a run that keeps producing is
-        # no longer cut off at its threshold, and a run that produces nothing is still
-        # ended there, by the watchdog, long before this timeout could fire.
+    def started(proc):
+        nonlocal watchdog_stop, watchdog_thread
         watchdog_stop, watchdog_thread = _start_progress_watchdog(run, proc)
-        remaining = max(1.0, _absolute_remaining_sec(run))
-        stdout, stderr, timed_out, error = cli.communicate(prompt.encode("utf-8"), remaining)
-        if error is not None:
-            # e.g. stdin pipe broken before the child read the prompt
-            elapsed = time.monotonic() - launched
-            if (
-                elapsed < _svc().FAST_FAIL_WINDOW_SEC
-                and not oracle._work_landed(run)
-                # 0446 T0014 §4-3: a watchdog kill is a clock decision, never a provider
-                # startup failure — it must not send the chain to the next provider.
-                and run.get("watchdog_kill") is None
-            ):
-                return "spawn_failed", str(error)[:500]
-    finally:
-        # Setup failures (attach/resume, watchdog start, remaining-budget lookup)
-        # have exactly the same ownership boundary as normal communication.
-        try:
-            _stop_progress_watchdog(watchdog_stop, watchdog_thread, run.get("run_id"))
-        finally:
-            try:
-                cli.close()
-            finally:
-                if run.get("proc") is cli.proc:
-                    run["proc"] = None
+
+    def stopped():
+        _stop_progress_watchdog(watchdog_stop, watchdog_thread, run.get("run_id"))
+
+    handle, result = _execute_local(
+        run.get("graph_exec_id"), decision["spawn_cwd"], prompt, env,
+        command=eff_cmd, run=run, decision=decision, started=started, stopped=stopped,
+    )
+    if result is None:
+        return "spawn_failed", "Graph execution lease refused" if handle is None else "unable to start CLI process"
+    stdout, stderr, timed_out, error = result
+    proc = handle.proc
+    launched = handle.launched_mono
+    if error is not None:
+        elapsed = time.monotonic() - launched
+        if (elapsed < _svc().FAST_FAIL_WINDOW_SEC and not oracle._work_landed(run)
+                and run.get("watchdog_kill") is None):
+            return "spawn_failed", str(error)[:500]
 
     # 0446 T0014 §4-3: a watchdog kill ends `communicate()` NORMALLY — the child is
     # already gone, so there is no TimeoutExpired to catch and the local flag above is

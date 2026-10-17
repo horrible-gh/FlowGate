@@ -35,6 +35,12 @@ ALLOWED_OUTSIDE = {
         "modules.flow_gate.process_service", "modules.flow_gate.services.token_service",
         # S5 AI node start (D0004 §3.4, L0009 §2.6.6): the existing AI invoke and its mention, called only.
         "modules.flow_gate.services.ai_invoke_service", "modules.flow_gate.services.mention_service",
+        # flowgate.v02.0056 T#3: the card memo port the AI node start's mention asks (stdlib only, D0006 §2.3).
+        "modules.flow_gate.services.card_memo_hooks",
+        # flowgate.v02.0064 T-B1e: the body precheck the AI node start's mention asks (L0005 2.14), called only.
+        "modules.flow_gate.services.ai_start_precheck",
+        # flowgate.v02.0064 T-B4d: the card title port (inbox candidate) and the mention's title request wording.
+        "modules.flow_gate.services.node_title_hooks",
     ),
     "projection": (
         "modules.flow_gate.db.documents", "modules.flow_gate.db.groups", "modules.flow_gate.db.workflow_sequences",

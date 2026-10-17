@@ -8,8 +8,11 @@
 // read-only Flow file context the Designer File Explorer needs (project Git status, Flow
 // tree, Base-relative changes, one-file diff, AI activity) below. flowgate.v02.0033 widens the
 // Git status / AI activity normalization with the fields the Designer Git part reads and adds
-// the Base file and merge review file diff reads. archive/restore/source-path and Git
-// mutation endpoints are still not called here (the Git part's own api.ts owns those).
+// the Base file and merge review file diff reads. flowgate.v02.0066 adds the Base remote state
+// (ahead/behind, unpushed) of git/status and the scope floor / line counts / tool artifact count
+// of the group change list, and keeps the transport error of the change list and file diff.
+// archive/restore/source-path and Git mutation endpoints are still not called here (the Git
+// part's own api.ts owns those).
 
 import { extractApiErrorMessage, getRequest, postRequest } from '@shared/api'
 import type {
@@ -24,6 +27,7 @@ import type {
   FlowFileDiff,
   FlowFileNode,
   FlowFileTree,
+  GroupScopeFloor,
   GroupTreeNode,
   GroupTreeNodeKind,
   MergeReviewFileDiff,
@@ -31,6 +35,8 @@ import type {
   ProjectGitPendingPlan,
   ProjectGitPendingRow,
   ProjectGitStatus,
+  ProjectGitUnpushed,
+  ProjectGitUnpushedMerge,
   ProjectModule,
 } from './types'
 
@@ -229,6 +235,28 @@ interface RawGitStatus {
     // S2 working name; absent on a server without S2.
     total?: number | null
   } | null
+  // flowgate.v02.0066: Base against its remote (local refs only).
+  ahead_count?: number | null
+  behind_count?: number | null
+  unpushed?: RawGitUnpushed | null
+}
+
+interface RawGitUnpushed {
+  count?: number | null
+  commit_count?: number | null
+  measured?: boolean | null
+  remote_branch_missing?: boolean | null
+  local_commit_count?: number | null
+  merges?: Array<RawGitUnpushedMerge | null> | null
+}
+
+interface RawGitUnpushedMerge {
+  merge_commit?: string | null
+  group_id?: string | null
+  subject?: string | null
+  merged_at?: string | null
+  can_unmerge?: boolean | null
+  blocked_reason?: string | null
 }
 
 interface RawFileNode {
@@ -252,7 +280,14 @@ interface RawChangeSet {
   branch: string
   commit?: string | null
   base_branch?: string | null
-  changes?: { path: string; status: string }[] | null
+  changes?: { path: string; status: string; insertions?: number | null; deletions?: number | null }[] | null
+  // flowgate.v02.0066: the scope floor and the tool artifacts left out of the list.
+  work_base_ref?: string | null
+  scope_base_sha?: string | null
+  work_base_sha?: string | null
+  work_base_sync_sha?: string | null
+  work_base_state?: string | null
+  tool_artifacts?: string[] | null
 }
 
 interface RawFileDiff {
@@ -304,6 +339,34 @@ function toPendingRow(raw: RawGitPendingRow): ProjectGitPendingRow {
 const pathList = (files: string[] | null | undefined) =>
   (files ?? []).filter((f) => typeof f === 'string' && f).map(toSlashes)
 
+const countOrNull = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null
+
+// flowgate.v02.0066 — an unmeasured Base keeps its counts null, never 0 (0066 D#2 §4-2).
+function toUnpushed(raw: RawGitUnpushed | null | undefined): ProjectGitUnpushed | null {
+  if (!raw || typeof raw !== 'object') return null
+  const measured = raw.measured === true
+  return {
+    count: measured ? countOrNull(raw.count) : null,
+    commitCount: measured ? countOrNull(raw.commit_count) : null,
+    measured,
+    remoteBranchMissing: typeof raw.remote_branch_missing === 'boolean' ? raw.remote_branch_missing : null,
+    localCommitCount: countOrNull(raw.local_commit_count),
+    merges: (raw.merges ?? [])
+      .filter((m): m is RawGitUnpushedMerge => !!m && !!branchOrNull(m.merge_commit))
+      .map(
+        (m): ProjectGitUnpushedMerge => ({
+          mergeCommit: branchOrNull(m.merge_commit) as string,
+          groupId: branchOrNull(m.group_id),
+          subject: typeof m.subject === 'string' ? m.subject : null,
+          mergedAt: branchOrNull(m.merged_at),
+          canUnmerge: m.can_unmerge === true,
+          blockedReason: branchOrNull(m.blocked_reason),
+        }),
+      ),
+  }
+}
+
 function toGitStatus(raw: RawGitStatus): ProjectGitStatus {
   const untracked = raw.base_untracked ?? {}
   return {
@@ -328,6 +391,25 @@ function toGitStatus(raw: RawGitStatus): ProjectGitStatus {
       truncated: untracked.truncated === true,
       total: typeof untracked.total === 'number' && Number.isFinite(untracked.total) ? untracked.total : null,
     },
+    // flowgate.v02.0066: only what the server sends; an absent field stays out of the model.
+    ...('ahead_count' in raw ? { aheadCount: countOrNull(raw.ahead_count) } : {}),
+    ...('behind_count' in raw ? { behindCount: countOrNull(raw.behind_count) } : {}),
+    ...('unpushed' in raw ? { unpushed: toUnpushed(raw.unpushed) } : {}),
+  }
+}
+
+const FLOOR_FIELDS = ['work_base_ref', 'scope_base_sha', 'work_base_sha', 'work_base_sync_sha', 'work_base_state'] as const
+
+// flowgate.v02.0066 — the group scope floor of a /changes answer; undefined when the server
+// sends none of its fields (a server before the floor).
+function toScopeFloor(raw: RawChangeSet): GroupScopeFloor | undefined {
+  if (!FLOOR_FIELDS.some((key) => key in raw)) return undefined
+  return {
+    workBaseRef: branchOrNull(raw.work_base_ref),
+    scopeBaseSha: branchOrNull(raw.scope_base_sha),
+    workBaseSha: branchOrNull(raw.work_base_sha),
+    workBaseSyncSha: branchOrNull(raw.work_base_sync_sha),
+    workBaseState: branchOrNull(raw.work_base_state),
   }
 }
 
@@ -404,15 +486,26 @@ export async function fetchFlowChangeSet(
     const params = options.base ? { base: options.base } : {}
     const response = await getRequest<{ data: RawChangeSet }>(`${groupGitPath(projectId, groupId)}/changes`, params)
     const data = response.data.data
+    const floor = toScopeFloor(data)
     return {
       groupId: data.group_id,
       branch: data.branch,
       commit: data.commit ?? null,
       baseBranch: branchOrNull(data.base_branch),
-      changes: (data.changes ?? []).map((c) => ({ path: toSlashes(c.path), status: c.status })),
+      changes: (data.changes ?? []).map((c) => ({
+        path: toSlashes(c.path),
+        status: c.status,
+        ...('insertions' in c ? { insertions: countOrNull(c.insertions) } : {}),
+        ...('deletions' in c ? { deletions: countOrNull(c.deletions) } : {}),
+      })),
+      ...(floor ? { floor } : {}),
+      // Only the count: the artifact paths are not kept.
+      ...(Array.isArray(data.tool_artifacts) ? { toolArtifactCount: data.tool_artifacts.length } : {}),
     }
   } catch (error) {
-    throw new Error(extractApiErrorMessage(error, 'Failed to load the Flow changes.'))
+    // flowgate.v02.0066: the transport error stays as `cause` (a floor 409, 403, 404 or a
+    // network failure must be told apart); the message is unchanged.
+    throw loadError(error, 'Failed to load the Flow changes.')
   }
 }
 
@@ -445,7 +538,8 @@ export async function fetchFlowFileDiff(
       new: data.new,
     }
   } catch (error) {
-    throw new Error(extractApiErrorMessage(error, 'Failed to load the file diff.'))
+    // flowgate.v02.0066: `cause` keeps the transport error (floor 409 / 404 / 403 / network).
+    throw loadError(error, 'Failed to load the file diff.')
   }
 }
 

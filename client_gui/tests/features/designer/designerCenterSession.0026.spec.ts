@@ -202,18 +202,18 @@ describe('per-tab Viewport and Selection', () => {
     center.selectNode('b', 'b:n2')
     center.recordViewport('b', { x: 10, y: 20, zoom: 1.5 })
     center.activateFlow('a')
-    expect(center.activeView.value).toEqual({ viewport: null, selectedNodeId: null })
+    expect(center.activeView.value).toEqual({ viewport: null, selectedNodeIds: [], selectedNodeId: null })
     center.selectNode('a', 'a:n1')
     center.recordViewport('a', { x: -5, y: 0, zoom: 0.5 })
 
     center.activateFlow('b')
-    expect(center.activeView.value).toEqual({ viewport: { x: 10, y: 20, zoom: 1.5 }, selectedNodeId: 'b:n2' })
+    expect(center.activeView.value).toEqual({ viewport: { x: 10, y: 20, zoom: 1.5 }, selectedNodeIds: ['b:n2'], selectedNodeId: 'b:n2' })
     center.activateFlow('a')
-    expect(center.activeView.value).toEqual({ viewport: { x: -5, y: 0, zoom: 0.5 }, selectedNodeId: 'a:n1' })
+    expect(center.activeView.value).toEqual({ viewport: { x: -5, y: 0, zoom: 0.5 }, selectedNodeIds: ['a:n1'], selectedNodeId: 'a:n1' })
 
     center.closeFlow('a')
     center.openFlow(open('p', 'a'))
-    expect(center.activeView.value).toEqual({ viewport: null, selectedNodeId: null })
+    expect(center.activeView.value).toEqual({ viewport: null, selectedNodeIds: [], selectedNodeId: null })
   })
 
   it('selection is single; null clears it; actions on unknown tabs do nothing', () => {
@@ -243,12 +243,12 @@ describe('per-tab Viewport and Selection', () => {
     center.retryGraph('a')
     reads[1].resolve(graph('a', ['n1', 'n2', 'n3']))
     await flushPromises()
-    expect(center.activeView.value).toEqual({ viewport: { x: 3, y: 4, zoom: 0.75 }, selectedNodeId: 'a:n2' })
+    expect(center.activeView.value).toEqual({ viewport: { x: 3, y: 4, zoom: 0.75 }, selectedNodeIds: ['a:n2'], selectedNodeId: 'a:n2' })
 
     center.retryGraph('a')
     reads[2].resolve(graph('a', ['n1']))
     await flushPromises()
-    expect(center.activeView.value).toEqual({ viewport: { x: 3, y: 4, zoom: 0.75 }, selectedNodeId: null })
+    expect(center.activeView.value).toEqual({ viewport: { x: 3, y: 4, zoom: 0.75 }, selectedNodeIds: [], selectedNodeId: null })
   })
 })
 

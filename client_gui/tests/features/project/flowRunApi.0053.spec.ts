@@ -66,6 +66,9 @@ describe('run reads (P0008 S5-4)', () => {
         { nodeKey: 'gn_b', status: 'open', resultDocId: null },
       ],
       lastEventSeq: 4,
+      // flowgate.v02.0056 F2-1: none pending when the server sends none (flowRunApproval.0056).
+      pendingPropagationCount: 0,
+      pendingNodeKeys: [],
     })
   })
 

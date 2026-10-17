@@ -1064,6 +1064,34 @@ def _terminal_retry_result(state: dict, action: str) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class ExecuteOptions:
+    """How ``_finalize_execute`` runs (0066 D#1 §3-6(6)). The defaults are finalize's
+    own behavior; only the manual merge job changes them."""
+
+    snapshot_conversations: bool = True
+    absorb: bool = True
+    # "work_base": the no-work check counts from the group's work base (finalize);
+    # "target": from the local target branch the merge lands on (manual merge).
+    no_work_basis: str = "work_base"
+    # "discard": slot cleanup + ``discarded`` (finalize); "refuse": 409 nothing_to_merge.
+    no_work: str = "discard"
+    recheck_after_sync: bool = False
+    origin: Optional[str] = None
+    # Unpushed-merge recovery records its own completed attempt row (§3-6(7-1)).
+    record_recovery: bool = False
+    # "cleanup": ledger ``merged`` + slot cleanup (finalize); "keep": slot kept, ``none``.
+    on_success: str = "cleanup"
+
+
+DEFAULT_EXECUTE = ExecuteOptions()
+MANUAL_MERGE_EXECUTE = ExecuteOptions(
+    snapshot_conversations=False, absorb=False, no_work_basis="target", no_work="refuse",
+    recheck_after_sync=True, origin=merge_target.ORIGIN_MANUAL_MERGE, record_recovery=True,
+    on_success="keep",
+)
+
+
 def finalize(
     group_id: str,
     action: Optional[str],
@@ -1183,6 +1211,38 @@ def finalize(
         _gs._set_status(group_id, "waiting")
         return _finalize_result(group_id, project_id, "wait", "waiting")
 
+    return _finalize_execute(
+        group_id, action, commit_message, target_branch,
+        cfg=cfg, state=state, project_id=project_id, base_root=base_root, wt_path=wt_path,
+        requested_target=requested_target, provided_subject=provided_subject,
+        approval_context=approval_context, job_holder=job_holder,
+    )
+
+
+def _finalize_execute(
+    group_id: str,
+    action: str,
+    commit_message: Optional[str],
+    target_branch: Optional[str],
+    *,
+    cfg: dict,
+    state: dict,
+    project_id: str,
+    base_root: Path,
+    wt_path: Path,
+    requested_target: Optional[str],
+    provided_subject: str = "",
+    approval_context: Optional[ApprovalFinalizeContext] = None,
+    job_holder: Optional[str] = None,
+    options: Optional["ExecuteOptions"] = None,
+) -> dict:
+    """finalize's body after its gates (0066 D#1 §2-2: moved out unchanged).
+
+    ``options`` is None for finalize itself and for every legacy caller: that is the
+    exact pre-0066 behavior. The manual merge job (``manual_merge``) passes
+    ``MANUAL_MERGE_EXECUTE`` after its own admission (§3-6(6))."""
+    from modules.flow_gate.services import git_service as _gs
+    opts = options or DEFAULT_EXECUTE
     # 0594 T0012 §9.2 (1st check): resolve + validate the target and its workspace
     # ownership before waiting on the lock — the authoritative check repeats below.
     target: Optional[merge_target.MergeTargetContext] = None
@@ -1271,6 +1331,7 @@ def finalize(
     def finish_merged(
         merge_commit: Optional[str], wants_push: bool,
         attempt: Optional["merge_target.MergeTargetContext"] = None,
+        *, recovered: bool = False,
     ) -> dict:
         # The one terminal tail for a merge that is really in its target (and,
         # for `merge`, really on origin): a merge this request made, one it only
@@ -1286,6 +1347,28 @@ def finalize(
         # conflict session exists to consume the old checkpoint by merge_id.
         # The target is proven merged (and pushed when requested) at this point.
         _gs.db_git.consume_active_resolution_checkpoint(project_id, group_id)
+        if opts.on_success == "keep":
+            # 0066 D#1 §3-6(7): a manual merge is not the group's completion. The
+            # ledger goes back to ``none`` first, then the attempt row becomes the
+            # merge history E10/E11 read; the slot, work branch and floor stay.
+            assert attempt is not None
+            merge_sha = _rev_parse(base_root, merge_commit) if merge_commit else None
+            merge_target.finish_manual_attempt(
+                attempt, merge_commit=merge_commit, merge_commit_sha=merge_sha,
+                pushed=wants_push, recovered=recovered,
+            )
+            return {
+                "ok": True,
+                "result": {
+                    "action": action, "status": "merged", "group_status": "none",
+                    "worktree_kept": True, "merge_commit": merge_commit,
+                    "merge_commit_sha": merge_sha, "pushed": wants_push,
+                    "recovered": recovered, "merge_id": attempt.merge_id,
+                    "conflict_files": [], "target_branch": target_branch,
+                    "unmerge_supported": False,
+                    **_artifact_payload(excluded_artifacts, staged_new_file_count),
+                },
+            }
         if approval_context is not None:
             record_clean_approval_retry("merged", merge_commit)
             if ledger_merge_id is not None:
@@ -1337,7 +1420,7 @@ def finalize(
     # 0669 unit 6b: an approval already did both at freeze F2 (approval_freeze._absorb);
     # what it publishes is the frozen SHA, so nothing written to the worktree after
     # the freeze may be absorbed into it here.
-    if action != "push" and approval_context is None:
+    if action != "push" and approval_context is None and opts.snapshot_conversations:
         try:
             from modules.flow_gate.services import conversation_markdown_service
             conversation_markdown_service.snapshot_group_conversations(project_id, group_id)
@@ -1363,7 +1446,7 @@ def finalize(
                 "commit and push together, or archive before pushing",
                 details={"files": _dirty_files(wt_path)},
             )
-    elif _gs._dirty(wt_path):
+    elif opts.absorb and _gs._dirty(wt_path):
         # Count accepted untracked paths before staging consumes that state. The
         # classifier is shared with submission-time visibility and staging itself.
         staged_new_file_count = _worktree_untracked_summary_for_path(
@@ -1387,7 +1470,14 @@ def finalize(
         project_id, group_id, config=cfg,
     )
     source_ref = _gs._worktree_start_point(base_root, work_base_ref or base_branch)
+    if opts.no_work_basis == "target" and target is not None:
+        # 0066 D#1 §3-6(5) ②: a manual merge counts against the local target it lands on.
+        source_ref = f"refs/heads/{target.target_branch}"
     ahead = _ahead_of_base(base_root, source_ref, branch)
+    if ahead is None and opts.no_work == "refuse":
+        # A manual merge never guesses: an empty merge commit is worse than a refusal.
+        raise GitServiceError(409, "invalid_state", "commits to merge cannot be counted",
+                              details={"reason": "ahead_unmeasurable"})
     # 0607 T0004 §3.3/§3.4 (NR0003 §3 request B): ahead == 0 also describes a
     # branch whose merge commit is already in LOCAL base but never reached
     # origin — a merge whose result an earlier request lost. That is not "no
@@ -1405,6 +1495,13 @@ def finalize(
         )
         else None
     )
+    if unpushed_merge is not None and opts.record_recovery:
+        assert target is not None
+        return _finish_unpushed_merge_recovery(
+            group_id, project_id, target, action, branch, base_root, base_branch,
+            unpushed_merge, holder=holder, attempt_owner=attempt_owner, origin=opts.origin,
+            username=username, secret=secret, finish_merged=finish_merged,
+        )
     if unpushed_merge is not None:
         _log.warning(
             "finalize %s: branch %s is already merged into local %s by %s but "
@@ -1438,6 +1535,9 @@ def finalize(
             _rev_parse(base_root, unpushed_merge, short=True) or unpushed_merge[:7],
             wants_push,
         )
+    if ahead == 0 and opts.no_work == "refuse":
+        # 0066 D#1 §3-6(5) ②: no attempt row, no slot cleanup, no state change.
+        raise GitServiceError(409, "nothing_to_merge", "the target already contains this group's commits")
     if ahead == 0:
         # Approval-coupled no-work is only labelled here.  Slot teardown is
         # delayed until the AC/root transaction commits, so a failed approval
@@ -1513,7 +1613,9 @@ def finalize(
     # merges included — with the target pinned in it. Every exit below either
     # completes it, turns it into the conflict session, or closes it as failed.
     assert target is not None
-    attempt = merge_target.open_attempt(group_id, target, action, holder, attempt_owner)
+    attempt = merge_target.open_attempt(
+        group_id, target, action, holder, attempt_owner, origin=opts.origin,
+    )
     try:
         return _finalize_merge_attempt(
             group_id, project_id, cfg, attempt, action, branch, base_root,
@@ -1522,10 +1624,74 @@ def finalize(
             staged_new_file_count=staged_new_file_count,
             approval_context=approval_context,
             finish_merged=finish_merged,
+            recheck_after_sync=opts.recheck_after_sync,
         )
     except BaseException as exc:
         # Only an attempt still in progress is closed as failed — one that has
         # already become a conflict session or completed is left as it is.
+        merge_target.fail_attempt(attempt, {
+            "code": getattr(exc, "code", None) or type(exc).__name__,
+            "message": str(getattr(exc, "message", "") or exc)[:500],
+        })
+        raise
+
+
+def _finish_unpushed_merge_recovery(
+    group_id: str, project_id: str, target: "merge_target.MergeTargetContext", action: str,
+    branch: str, base_root: Path, base_branch: str, merge_commit: str, *,
+    holder: str, attempt_owner: str, origin: Optional[str], username, secret,
+    finish_merged: Callable[..., dict],
+) -> dict:
+    """0066 D#1 §3-6(7-1): the manual path's unpushed-merge recovery (finalize()'s own
+    recovery is unchanged). No new merge is made. The attempt row naming the old merge
+    commit is written BEFORE any fetch or push, so E10/E11 and a restart can find it, and
+    the merge is completed through that row."""
+    from modules.flow_gate.services import git_service as _gs
+    recorded = merge_target.recorded_manual_merge(group_id, target.target_branch, merge_commit)
+    if recorded is not None:
+        # The same merge already has its completed manual row: its push is E11's job.
+        raise GitServiceError(
+            409, "nothing_to_merge", "this merge is already recorded; push it from its merge result",
+            details={"reason": "already_recorded", "merge_id": recorded,
+                     "push_via": "merge_result_push"},
+        )
+    _log.warning(
+        "manual merge %s: branch %s is already merged into local %s by %s but not "
+        "recorded — completing that merge", group_id, branch, base_branch, merge_commit,
+    )
+    attempt = merge_target.open_attempt(
+        group_id, target, action, holder, attempt_owner,
+        origin=origin, recovery_merge_commit=merge_commit,
+    )
+    try:
+        wants_push = action == "merge"
+        already_published = False
+        if wants_push:
+            # Pruned: a Base branch deleted on origin must not look published through its
+            # stale tracking ref (finalize()'s own recovery branch is unchanged).
+            proc = _gs._run_git(
+                ["fetch", "--prune", "origin"],
+                cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+            )
+            if proc.returncode != 0:
+                raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+            already_published = _is_ancestor(
+                base_root, merge_commit, f"refs/remotes/origin/{base_branch}",
+            ) is True
+        if wants_push and not already_published:
+            push = _gs._run_git(
+                ["push", "origin", base_branch],
+                cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+            )
+            if push.returncode != 0:
+                # As in finalize: the merge predates this request and is never rewound.
+                _gs._set_status(group_id, "waiting")
+                raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(push.stderr))
+        return finish_merged(
+            _rev_parse(base_root, merge_commit, short=True) or merge_commit[:7],
+            wants_push, attempt, recovered=True,
+        )
+    except BaseException as exc:
         merge_target.fail_attempt(attempt, {
             "code": getattr(exc, "code", None) or type(exc).__name__,
             "message": str(getattr(exc, "message", "") or exc)[:500],
@@ -1539,6 +1705,7 @@ def _finalize_merge_attempt(
     excluded_artifacts: list[str], staged_new_file_count: int,
     approval_context: Optional[ApprovalFinalizeContext] = None,
     finish_merged: Callable[..., dict],
+    recheck_after_sync: bool = False,
 ) -> dict:
     """Run one pinned finalize attempt in its target root (lock held by caller).
 
@@ -1573,6 +1740,7 @@ def _finalize_merge_attempt(
         raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
     if approval_context is not None:
         approval_context.phase("fetched", {"merge_id": attempt.merge_id})
+    synced_from = _rev_parse(merge_root, "HEAD") if recheck_after_sync else None
     if _gs._ref_exists(merge_root, f"refs/remotes/origin/{target_branch}"):
         proc = _gs._run_git(["merge", "--ff-only", f"origin/{target_branch}"], cwd=merge_root)
         if proc.returncode != 0:
@@ -1585,6 +1753,19 @@ def _finalize_merge_attempt(
                 500, "target_diverged",
                 "target branch has local-only commits and cannot fast-forward",
                 details={"target_branch": target_branch},
+            )
+    if recheck_after_sync:
+        # 0066 D#1 §3-6(5) ③: what origin already had may contain the group's commits;
+        # merging now would record the fetched tip as this attempt's merge commit.
+        remaining = _ahead_of_base(merge_root, "HEAD", f"refs/heads/{branch}")
+        if remaining is None:
+            raise GitServiceError(409, "invalid_state", "commits to merge cannot be counted",
+                                  details={"reason": "ahead_unmeasurable"})
+        if remaining == 0:
+            raise GitServiceError(
+                409, "nothing_to_merge", "the target already contains this group's commits",
+                details={"reason": "target_synced_contains",
+                         "target_fast_forwarded": _rev_parse(merge_root, "HEAD") != synced_from},
             )
     # T0012 §6.3: pin the merge inputs BEFORE git merge so a crash between the merge
     # commit / push and the attempt close is reconciled by recovery, not guessed.

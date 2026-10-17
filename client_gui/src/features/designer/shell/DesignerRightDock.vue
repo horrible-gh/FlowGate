@@ -12,7 +12,11 @@
        dimmed and unavailable and the body is an empty frame — no part is shown or mounted
        until there is a target (confirmed initial-state design). A part mounted earlier stays
        mounted but gets no Project / Flow context while there is no target, so a Project switch
-       back to the initial state does not read Git / Conversation data for the new Project. -->
+       back to the initial state does not read Git / Conversation data for the new Project.
+       flowgate.v02.0061 T#14: `sourceLocked` (the open Flow's Graph run is running / paused / stopping) goes to the
+       Conversation, whose AI source access mode then cannot change.
+       flowgate.v02.0066 T#6 sent the Git part's `open-diff` and `git-center-diff-refresh` up to the Shell's Center
+       Diff; flowgate.v02.0067 T#4 shows that diff in the Git part's own modeless, so none of its intents goes up. -->
   <aside
     class="designer-right-dock"
     :class="{ 'is-unselected': unselected }"
@@ -43,10 +47,14 @@
         class="designer-right-pane is-fill"
         data-test="designer-right-pane-conversation"
       >
-        <ConversationPanel :project-id="partProjectId" :group-id="partFlow?.groupId ?? null" />
+        <ConversationPanel :project-id="partProjectId" :group-id="partFlow?.groupId ?? null" :source-locked="sourceLocked" />
       </div>
       <div v-if="mountedTools.git" v-show="!unselected && tool === 'git'" class="designer-right-pane" data-test="designer-right-pane-git">
-        <DesignerGitPanel :project-id="partProjectId" :flow="partFlow" :active="!collapsed && !unselected && tool === 'git'" />
+        <DesignerGitPanel
+          :project-id="partProjectId"
+          :flow="partFlow"
+          :active="!collapsed && !unselected && tool === 'git'"
+        />
       </div>
     </div>
   </aside>
@@ -72,8 +80,10 @@ const props = withDefaults(
     selectedPaletteId?: string | null
     /** No work target yet (0039 T#3): tabs unavailable, no part shown. */
     unselected?: boolean
+    /** flowgate.v02.0061 T#14: the open Flow's Graph run locks the Conversation's source access mode. */
+    sourceLocked?: boolean
   }>(),
-  { unselected: false, selectedPaletteId: null },
+  { unselected: false, selectedPaletteId: null, sourceLocked: false },
 )
 
 const emit = defineEmits<{

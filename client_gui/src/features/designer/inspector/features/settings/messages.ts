@@ -2,6 +2,9 @@
 // locales keep the same keys (structure.0048 B12). Reason keys use the shared names of D#1 §8.3 rule 6-2.
 // flowgate.v02.0053 T#7 — the v7 wording, tooltip length: the row line, the save button, the "saved" line and
 // the running-hop block are gone with v7; a reason or a refusal is a tooltip (no sentence in the tab).
+// flowgate.v02.0056 F2-1: the progress-after-review row's strings are gone with the setting (O1 0005-TR §1-1: a
+// card always goes on as its run mode says); the RUN card's 지시 AI (`instruction_ai`, O2 0007-TR §4-1) and the
+// reasons a value is refused are added.
 export default {
   ko: {
     instruction: {
@@ -10,13 +13,9 @@ export default {
       use: '사용',
       omit: '생략',
     },
-    after_review: {
-      label: '검수 뒤 진행',
-      hint: '사람 확인 필요는 자동 진행보다 우선',
-      follow: '실행 방식 따름',
-      human: '사람 확인 필요',
-      note_follow: '검수 통과면 자동 진행',
-      note_human: '여기서 멈춤 · 사람이 승인',
+    instruction_ai: {
+      label: '지시 AI',
+      hint: '지시서를 쓰는 AI · 비우면 실행 AI, 그다음 담당 AI가 씁니다',
     },
     review_basis: {
       type: '문서 타입 기본',
@@ -25,6 +24,7 @@ export default {
     option: {
       default: '프로젝트 기본 AI',
       run_default: '담당 AI',
+      instruction_default: '실행 AI 따름',
       review_default: '기본 검수 AI',
       missing: '{name} (없는 AI)',
       minutes: '{n}분',
@@ -79,6 +79,12 @@ export default {
       disposed: '폐기된 그룹입니다',
       unavailable: '서버에 카드 설정이 없습니다',
       invalid: '저장할 수 없는 값입니다',
+      invalid_reason: {
+        unknown_ai: '없는 AI 연결입니다',
+        not_a_text: '값이 비어 있거나 글자가 아닙니다',
+        invalid_text: '값이 너무 길거나 쓸 수 없는 글자가 있습니다',
+        not_a_setting_of_this_card: '이 카드에는 없는 설정입니다',
+      },
       forbidden: '권한이 없습니다',
       not_found: '카드를 찾을 수 없습니다',
       network: '서버에 연결하지 못했습니다',
@@ -99,13 +105,9 @@ export default {
       use: 'Use',
       omit: 'Omit',
     },
-    after_review: {
-      label: 'After review',
-      hint: '"Human check" wins over automatic progress',
-      follow: 'Follow run mode',
-      human: 'Human check',
-      note_follow: 'Goes on once the review passes',
-      note_human: 'Stops here · a person approves',
+    instruction_ai: {
+      label: 'Instruction AI',
+      hint: 'Writes the instruction · empty: run AI, then assigned AI',
     },
     review_basis: {
       type: 'Document type default',
@@ -114,6 +116,7 @@ export default {
     option: {
       default: 'Project default AI',
       run_default: 'Assigned AI',
+      instruction_default: 'Same as run AI',
       review_default: 'Default review AI',
       missing: '{name} (AI gone)',
       minutes: '{n} min',
@@ -166,6 +169,12 @@ export default {
       disposed: 'The group was disposed',
       unavailable: 'The server has no card settings',
       invalid: 'This value cannot be saved',
+      invalid_reason: {
+        unknown_ai: 'No such AI connection',
+        not_a_text: 'The value is empty or not text',
+        invalid_text: 'The value is too long or has characters that cannot be used',
+        not_a_setting_of_this_card: 'This card has no such setting',
+      },
       forbidden: 'No permission',
       not_found: 'The card was not found',
       network: 'Could not reach the server',
@@ -186,13 +195,9 @@ export default {
       use: '使用',
       omit: '省略',
     },
-    after_review: {
-      label: 'レビュー後の進行',
-      hint: '「人の確認が必要」は自動進行より優先',
-      follow: '実行方式に従う',
-      human: '人の確認が必要',
-      note_follow: 'レビュー合格で自動進行',
-      note_human: 'ここで停止 · 人が承認',
+    instruction_ai: {
+      label: '指示AI',
+      hint: '指示書を書く AI · 空なら実行 AI、次に担当 AI が書きます',
     },
     review_basis: {
       type: '文書タイプ既定',
@@ -201,6 +206,7 @@ export default {
     option: {
       default: 'プロジェクト既定 AI',
       run_default: '担当 AI',
+      instruction_default: '実行 AI に従う',
       review_default: '既定のレビュー AI',
       missing: '{name}(ない AI)',
       minutes: '{n}分',
@@ -253,6 +259,12 @@ export default {
       disposed: '破棄されたグループです',
       unavailable: 'サーバーにカード設定がありません',
       invalid: '保存できない値です',
+      invalid_reason: {
+        unknown_ai: '存在しない AI 接続です',
+        not_a_text: '値が空か文字ではありません',
+        invalid_text: '値が長すぎるか使えない文字があります',
+        not_a_setting_of_this_card: 'このカードにはない設定です',
+      },
       forbidden: '権限がありません',
       not_found: 'カードが見つかりません',
       network: 'サーバーに接続できませんでした',

@@ -72,7 +72,6 @@ def env(db_path, monkeypatch, tmp_path):
     from modules.flow_gate.db import _SqliteTxnAdapter
     from modules.flow_gate.graph_workflow.api import canvas_routes, envelope, graph_routes, run_routes
     from modules.flow_gate.graph_workflow.services import canvas_events, node_dispatch, run_events
-    from modules.flow_gate.services import token_service
 
     monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
     state = {"events": [], "db": db_path}
@@ -87,7 +86,8 @@ def env(db_path, monkeypatch, tmp_path):
     monkeypatch.setattr(envelope, "has_permission", lambda u, p, perm: True)
     monkeypatch.setattr(canvas_events, "broadcast_event_threadsafe", lambda ev: state["events"].append(ev) or 1)
     monkeypatch.setattr(run_events, "broadcast_event_threadsafe", lambda ev: state["events"].append(ev) or 1)
-    monkeypatch.setattr(token_service, "_scratch_dir", lambda project, token_id: tmp_path / "work" / token_id)
+    # Token scratch stays where token_scratch.create requires it: <storage root>/work/<project>/<token>.
+    monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path / "storage"))
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", "s5test")
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_s5test", "s5-test-pepper")
     old_starter = node_dispatch.set_ai_starter(None)
@@ -350,8 +350,11 @@ def test_start_binds_the_root_and_opens_the_next_node(env, decided):
 
 
 def test_a_rejected_root_starts_blocked_and_waits(env, decided):
+    """L0009 §2.6.5 kept for a bound root (flowgate.v02.0056 T#1, the answer to the TR's question): the
+    rejected root takes ``review_rejected`` at the start, is no card awaiting approval, nothing opens."""
     run = start(env, FH).json()["run"]
-    assert nodes_of(run)["gn_r"]["status"] == "rejected" and run["open_node_keys"] == []
+    root = nodes_of(run)["gn_r"]
+    assert (root["status"], root["awaiting_approval"], run["open_node_keys"]) == ("rejected", False, [])
     evs = [e.payload for e in env["events"]]
     assert [(p["node_key"], p["from"], p["to"], p["cause"], p["canvas_state"]) for p in evs[1:]] == [
         ("gn_r", "pending", "review", "root_bound_start", "blocked"),
@@ -415,8 +418,8 @@ def test_a_revision_replaces_the_result_and_a_chain_gap_is_walked(env, decided):
     start(env)
     d1 = _doc(FG, 2, "D")
     submit(FG, d1, "D", token_of(env))
-    decide_review(FG, d1, "reject", "rejected")
-    assert nodes_of(current(env))["gn_d"]["status"] == "rejected"
+    decide_review(FG, d1, "reject", "rejected")                      # flowgate.v02.0056 T#1: no node event
+    assert nodes_of(current(env))["gn_d"]["status"] == "review"
     d2 = _doc(FG, 3, "D", "rejected")                              # revision of d1, rejected, both unreported
     db_documents.set_superseded_by(d1, d2)
     d3 = _doc(FG, 4, "D", "pending_review")
@@ -424,7 +427,7 @@ def test_a_revision_replaces_the_result_and_a_chain_gap_is_walked(env, decided):
     submit(FG, d3, "D", None)                                      # gap d1 -> d2 -> d3: walk it
     node = nodes_of(current(env))["gn_d"]
     assert node["status"] == "review" and node["result_doc_id"] == d3
-    assert [c for _s, _t, k, c in run_events(env) if k == "gn_d"][-3:] == ["revised", "review_rejected", "revised"]
+    assert [c for _s, _t, k, c in run_events(env) if k == "gn_d"][-3:] == ["result_submitted", "revised", "revised"]
     d4 = _doc(FG, 5, "D")
     db_documents.set_superseded_by(d3, d4)
     submit(FG, d4, "D", None)                                      # direct revision (one hop)
@@ -446,10 +449,14 @@ def test_stop_and_resume(env, decided):
     decide_review(FG, d, "approve", "approved")                     # stopped: done, but nothing opens
     held = current(env)
     assert nodes_of(held)["gn_d"]["status"] == "done" and nodes_of(held)["gn_p"]["status"] == "pending"
+    # flowgate.v02.0056 T#1: the run band's "멈춤 · 다음 카드 N개 대기"; the approved card does not wait again
+    assert (held["pending_propagation_count"], held["pending_node_keys"]) == (1, ["gn_d"])
+    assert nodes_of(held)["gn_d"]["awaiting_approval"] is False
     assert _sql(env["db"], "SELECT status FROM graph_propagations WHERE node_key = 'gn_d'") == [{"status": "pending"}]
     resumed = control(env, run_id, "resume")
     assert resumed.status_code == 200 and resumed.json()["run"]["status"] == "running"
     assert resumed.json()["run"]["stopped_at"] is None and resumed.json()["run"]["open_node_keys"] == ["gn_p"]
+    assert (resumed.json()["run"]["pending_propagation_count"], resumed.json()["run"]["pending_node_keys"]) == (0, [])
     assert [c for *_x, c in run_events(env)][-3:] == ["user_resume", "opened", "dispatch_failed"]
     assert _sql(env["db"], "SELECT status FROM graph_propagations WHERE node_key = 'gn_d'") == [{"status": "done"}]
     twice = control(env, run_id, "resume")
@@ -611,7 +618,9 @@ def test_canvas_shows_the_run(env, decided):
     assert nodes["gn_d"]["state"] == "review" and nodes["gn_d"]["document"]["doc_id"] == d
     assert nodes["gn_d"]["node_run"] == {"status": "review", "opened_at": nodes["gn_d"]["node_run"]["opened_at"],
                                          "finished_at": None, "result_doc_id": d,
-                                         "dispatch": {"token_issued": True, "mention_id": None, "issued_to": "u_lee"}}
+                                         "dispatch": {"token_issued": True, "mention_id": None, "issued_to": "u_lee"},
+                                         "awaiting_approval": True,                       # a person's result
+                                         "stage": None, "instruction_doc_id": None}       # no AI: no card run stage
     assert nodes["gn_p"]["state"] == "draft" and nodes["gn_p"]["node_run"]["status"] == "pending"
     assert f"doc:{d}" not in nodes and f"doc:{FG}.0001-R" not in nodes          # results are absorbed
 

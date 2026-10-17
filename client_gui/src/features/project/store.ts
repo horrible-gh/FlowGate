@@ -40,12 +40,15 @@ import type {
   FlowCanvas,
   FlowCanvasLayoutInput,
   FlowCanvasLayoutResult,
+  FlowCanvasTitleState,
   FlowGraphConfirmResult,
   FlowGraphDefinition,
   FlowGraphDraftInput,
   FlowGraphDraftSaveResult,
   FlowGraphValidation,
   FlowRun,
+  FlowRunApproval,
+  FlowRunTimeMachine,
   MergeReviewFileDiff,
   Project,
   ProjectGitStatus,
@@ -68,14 +71,23 @@ import {
   fetchProjectGroupTree as fetchProjectGroupTreeApi,
   suggestProjectSlug,
 } from './api'
-import { fetchFlowCanvas, saveFlowCanvasLayout as saveFlowCanvasLayoutApi } from './flowCanvasApi'
+import { fetchFlowCanvas, nodeTitleSave, saveFlowCanvasLayout as saveFlowCanvasLayoutApi } from './flowCanvasApi'
 import {
   confirmFlowGraphRevision as confirmFlowGraphRevisionApi,
   fetchFlowGraph,
   saveFlowGraphDraft as saveFlowGraphDraftApi,
   validateFlowGraphDraft as validateFlowGraphDraftApi,
 } from './flowGraphApi'
-import { fetchCurrentFlowRun, resumeFlowRun as resumeFlowRunApi, startFlowRun as startFlowRunApi, stopFlowRun as stopFlowRunApi } from './flowRunApi'
+import {
+  approveFlowRunNode as approveFlowRunNodeApi,
+  fetchCurrentFlowRun,
+  pauseFlowRun as pauseFlowRunApi,
+  resumeFlowRun as resumeFlowRunApi,
+  startFlowRun as startFlowRunApi,
+  stopFlowRun as stopFlowRunApi,
+  timeMachineFlowRunNode as timeMachineFlowRunNodeApi,
+  type FlowRunCommand,
+} from './flowRunApi'
 import { subscribeFlowCanvasChanges as subscribeFlowCanvasChangesApi, type FlowCanvasChangeHandlers } from './flowCanvasEvents'
 import { subscribeProjectEvents as subscribeProjectEventsApi, type ProjectEventSubscription } from './projectEvents'
 import { clearStoredCurrentProjectId, writeStoredCurrentProjectId } from './currentProjectStorage'
@@ -413,6 +425,11 @@ export const useProjectStore = defineStore('project', () => {
     return saveFlowCanvasLayoutApi(flowId, input)
   }
 
+  // flowgate.v02.0064 T#4 (P0006 §4.2.2): one card's title save; the version order of what is shown is the Center's.
+  function saveFlowNodeTitle(flowId: string, nodeKey: string, title: string): Promise<FlowCanvasTitleState> {
+    return nodeTitleSave(flowId, nodeKey, title)
+  }
+
   // flowgate.v02.0045 S3+S4: the Graph definition saver (P0008 §5 / §6). Draft batching, version
   // tracking and key remapping belong to the Center session's draft editor.
   function loadFlowGraph(flowId: string): Promise<FlowGraphDefinition> {
@@ -437,8 +454,13 @@ export const useProjectStore = defineStore('project', () => {
     return fetchCurrentFlowRun(flowId)
   }
 
-  function startFlowRun(flowId: string): Promise<FlowRun> {
-    return startFlowRunApi(flowId)
+  // flowgate.v02.0061 T#14: the step / full command (다음 단계 / 전체 실행) and Pause.
+  function startFlowRun(flowId: string, mode?: FlowRunCommand): Promise<FlowRun> {
+    return startFlowRunApi(flowId, mode)
+  }
+
+  function pauseFlowRun(runId: string): Promise<FlowRun> {
+    return pauseFlowRunApi(runId)
   }
 
   function stopFlowRun(runId: string): Promise<FlowRun> {
@@ -447,6 +469,16 @@ export const useProjectStore = defineStore('project', () => {
 
   function resumeFlowRun(runId: string): Promise<FlowRun> {
     return resumeFlowRunApi(runId)
+  }
+
+  // flowgate.v02.0056 F2-1: a card's [승인] on the Canvas (O1 0005-TR §4-1); the run it answers goes to the band.
+  function approveFlowRunNode(runId: string, nodeKey: string, resultDocId: string | null): Promise<{ run: FlowRun; approval: FlowRunApproval }> {
+    return approveFlowRunNodeApi(runId, nodeKey, resultDocId)
+  }
+
+  // flowgate.v02.0061 T#15: the Graph Time Machine of a done card (its context menu); the run it answers goes to the band.
+  function timeMachineFlowRunNode(runId: string, nodeKey: string): Promise<{ run: FlowRun; timeMachine: FlowRunTimeMachine }> {
+    return timeMachineFlowRunNodeApi(runId, nodeKey)
   }
 
   // Other tabs' / devices' Canvas changes of one project (P0008 §8). Returns the unsubscribe.
@@ -526,14 +558,18 @@ export const useProjectStore = defineStore('project', () => {
     loadMergeReviewFileDiff,
     loadFlowCanvas,
     saveFlowCanvasLayout,
+    saveFlowNodeTitle,
     loadFlowGraph,
     saveFlowGraphDraft,
     validateFlowGraphDraft,
     confirmFlowGraphRevision,
     loadFlowRun,
     startFlowRun,
+    pauseFlowRun,
     stopFlowRun,
     resumeFlowRun,
+    approveFlowRunNode,
+    timeMachineFlowRunNode,
     subscribeFlowCanvasChanges,
     subscribeProjectEvents,
   }

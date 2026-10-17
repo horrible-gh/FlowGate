@@ -517,11 +517,15 @@ SESSION_KIND_GROUP_UPDATE = "group_update"
 # project (owner_type='branch_merge', migration 123). It walks the same resolver and the same
 # merge review as a finalize `merge` — never the commit-on-resolve path of `group_update`.
 SESSION_KIND_BRANCH_MERGE = "branch_merge"
+# flowgate.v02.0061 T#9: an approved Graph attempt's result merged into its group's worktree stopped on a conflict.
+# It lives in the group worktree like a TR revert / reapply and walks the same screen, resolver, review and
+# commit / abort presses (a TR kind); its context names the attempt, and its commit is the merge commit.
+SESSION_KIND_GRAPH_ATTEMPT_MERGE = "graph_attempt_merge"
 SESSION_KINDS = (
     SESSION_KIND_MERGE, SESSION_KIND_TR_REVERT, SESSION_KIND_TR_REAPPLY,
-    SESSION_KIND_GROUP_UPDATE, SESSION_KIND_BRANCH_MERGE,
+    SESSION_KIND_GROUP_UPDATE, SESSION_KIND_BRANCH_MERGE, SESSION_KIND_GRAPH_ATTEMPT_MERGE,
 )
-TR_SESSION_KINDS = (SESSION_KIND_TR_REVERT, SESSION_KIND_TR_REAPPLY)
+TR_SESSION_KINDS = (SESSION_KIND_TR_REVERT, SESSION_KIND_TR_REAPPLY, SESSION_KIND_GRAPH_ATTEMPT_MERGE)
 WORKTREE_SESSION_KINDS = (*TR_SESSION_KINDS, SESSION_KIND_GROUP_UPDATE)
 # Kinds that carry a pinned merge target and end in the human merge review gate.
 MERGE_REVIEW_SESSION_KINDS = (SESSION_KIND_MERGE, SESSION_KIND_BRANCH_MERGE)
@@ -839,6 +843,16 @@ def remaining_conflicts(merge_id: int) -> list[str]:
     return [r["path"] for r in rows]
 
 
+# flowgate.v02.0061 T#9: one notice for every session close (a commit, an abort, the TTL sweep, an orphan close,
+# a finalize / branch merge / group update end), after the row is written. A listener never fails the close.
+_close_listeners: list = []
+
+
+def on_session_closed(callback) -> None:
+    """``callback(merge_id, status)`` after each ``close_session``."""
+    _close_listeners.append(callback)
+
+
 def close_session(merge_id: int, status: str) -> None:
     if status not in ("done", "aborted"):
         raise ValueError(f"invalid session close status: {status!r}")
@@ -846,6 +860,11 @@ def close_session(merge_id: int, status: str) -> None:
         "UPDATE git_merge_session SET status = ?, closed_at = ? WHERE merge_id = ?",
         [status, now_iso(), merge_id],
     )
+    for callback in list(_close_listeners):
+        try:
+            callback(merge_id, status)
+        except Exception:
+            _log.warning("session close listener failed for merge %s", merge_id, exc_info=True)
 
 
 def sessions_by_group(group_id: str) -> list[dict]:

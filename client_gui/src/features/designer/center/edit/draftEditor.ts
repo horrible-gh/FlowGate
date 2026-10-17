@@ -11,10 +11,18 @@
 //   it, and that save's `onKeys` still reports the renames (the owner stores the new positions).
 // - flowgate.v02.0053 T#5: every stored save is reported (`onSaved`) with what the server answered,
 //   so the Center can show the card lines the save made without reading the Flow again.
+// - flowgate.v02.0059 T#2: an undone entry waits in a redo stack (same renames as the undo stack);
+//   a new edit empties it, a fresh read of the Flow empties both.
+// - flowgate.v02.0059 T#2 (0011-CH contract C): card moves go on the same stacks (editHistory.ts
+//   `move` entries, `record`); stepping one hands its positions to `onMove` (the Center's move path and
+//   layout save) and saves no draft. `place` keeps the draft's own positions where the cards are, so a
+//   removed card comes back where it was. An editor without `save` edits nothing: it keeps the move
+//   history of a Flow whose Graph is no editable draft.
 // Pure TypeScript, no Vue: the Center session mirrors `status` into its reactive state.
 import type { FlowDraftError, FlowDraftSaveResult } from '../graph/flowGraphSource'
 import { CLIENT_KEY_PREFIX, draftContent, remapDraft, type DraftModel } from './draftModel'
-import { applyCommand, applyCommands, remapCommand, reviveCommands, type EditCommand } from './graphEditCommands'
+import { createHistoryStacks, editEntry, moveEntry, movePlacements, remapEntry, renameEntry, type NodeMove, type NodePlacement } from './editHistory'
+import { applyCommand, applyCommandsWithUndo, reviveCommands, type EditCommand } from './graphEditCommands'
 
 export const DRAFT_SAVE_DELAY_MS = 400
 const UNDO_LIMIT = 100
@@ -23,13 +31,16 @@ const UNDO_LIMIT = 100
 export type DraftEditStatus = 'idle' | 'pending' | 'saving' | 'error' | 'conflict'
 
 export interface DraftEditorOptions {
-  save(version: number, content: ReturnType<typeof draftContent>): Promise<FlowDraftSaveResult>
+  /** Absent: a moves-only history (no structure edit applies). */
+  save?(version: number, content: ReturnType<typeof draftContent>): Promise<FlowDraftSaveResult>
   /** The draft (and undo) after a save renamed `tmp_` keys. */
   onKeys(keyMap: Readonly<Record<string, string>>): void
   /** flowgate.v02.0053 T#5: a save was stored (after `onKeys`); its answer carries the card lines. */
   onSaved?(result: FlowDraftSaveResult): void
   /** Status / model / undo availability changed. */
   onChange(): void
+  /** flowgate.v02.0059 T#2: puts the cards of a stepped move entry there; whether any card went. */
+  onMove?(placements: NodePlacement[]): boolean
   delayMs?: number
 }
 
@@ -40,16 +51,22 @@ export interface DraftEditor {
   /** The refusal code of a failed save (`error` / `conflict`), else null. */
   errorCode(): string | null
   canUndo(): boolean
+  canRedo(): boolean
   /** True while an edit is waiting or a save runs — a Graph read now could be older. */
   busy(): boolean
   /** `undoable: false` — the edit is saved but never offered to undo (a Flow's default node). */
   apply(command: EditCommand, undoable?: boolean): boolean
   undo(): boolean
+  redo(): boolean
+  /** flowgate.v02.0059 T#2: cards moved by one action — one undo entry (redo dropped). Whether it was kept. */
+  record(moves: readonly NodeMove[]): boolean
+  /** flowgate.v02.0059 T#2: the draft's nodes take these positions (no save, no history). */
+  place(placements: readonly NodePlacement[]): void
   /** Sends a waiting save now. */
   flush(): void
   /** Resolves when nothing waits or runs: true when the draft is saved, false when refused. */
   settled(): Promise<boolean>
-  /** A fresh read of the Flow: the draft as stored, its version, and no undo. */
+  /** A fresh read of the Flow: the draft as stored, its version, and no undo / redo. */
   reset(model: DraftModel, version: number): void
   newKey(): string
   dispose(): void
@@ -62,6 +79,10 @@ export function newClientKey(): string {
   return `${CLIENT_KEY_PREFIX}${Date.now().toString(36)}${keySeq.toString(36)}`
 }
 
+/** The key a command adds (a node / an edge), else null. */
+const addedKey = (command: EditCommand) =>
+  command.type === 'add_node' ? command.node.key : command.type === 'connect' ? command.edge.key : null
+
 const storedKeys = (model: DraftModel) =>
   new Set([...model.nodes, ...model.edges].filter((x) => !x.isNew).map((x) => x.key))
 
@@ -71,13 +92,14 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
   let saved = version
   let status: DraftEditStatus = 'idle'
   let errorCode: string | null = null
-  let undoStack: EditCommand[][] = []
+  const history = createHistoryStacks(UNDO_LIMIT)
   let timer: ReturnType<typeof setTimeout> | null = null
   let editSeq = 0
   let sentSeq = 0
   let inFlight = false
   let disposed = false
   let savedKeys = storedKeys(model)
+  let sentModel: DraftModel | null = null
   let waiters: Array<(ok: boolean) => void> = []
 
   const busy = () => timer !== null || inFlight || (editSeq !== sentSeq && status !== 'error' && status !== 'conflict')
@@ -104,13 +126,16 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
   }
 
   function send() {
-    if (inFlight || status === 'conflict' || editSeq === sentSeq) return
+    const save = options.save
+    if (!save || inFlight || status === 'conflict' || editSeq === sentSeq) return
     inFlight = true
     const seq = editSeq
+    const sent = current
+    sentModel = sent
     setStatus('saving')
     let request: Promise<FlowDraftSaveResult>
     try {
-      request = options.save(saved, draftContent(current))
+      request = save(saved, draftContent(sent))
     } catch (error) {
       request = Promise.reject(error)
     }
@@ -122,11 +147,13 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
         errorCode = null
         if (Object.keys(result.keyMap).length) {
           current = remapDraft(current, result.keyMap)
-          undoStack = undoStack.map((entry) => entry.map((c) => remapCommand(c, result.keyMap)))
+          history.map((entry) => remapEntry(entry, result.keyMap))
           options.onKeys(result.keyMap)
         }
         options.onSaved?.(result)
-        savedKeys = storedKeys(current)
+        // What the server holds now is what this save sent, not the (maybe newer) editor model.
+        savedKeys = storedKeys(remapDraft(sent, result.keyMap))
+        sentModel = null
         if (editSeq !== sentSeq) {
           send()
           return
@@ -136,6 +163,7 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
       },
       (error: FlowDraftError) => {
         inFlight = false
+        sentModel = null
         sentSeq = seq
         errorCode = (error && typeof error.code === 'string' && error.code) || 'save_failed'
         setStatus(errorCode === 'draft_version_conflict' ? 'conflict' : 'error')
@@ -152,12 +180,49 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
     send()
   }
 
-  function edit(next: DraftModel, undo: EditCommand[] | null) {
+  /** `made: 'new'` an edit of the user (redo is dropped), 'undo' / 'redo' a step through the history. */
+  function edit(next: DraftModel, made: 'new' | 'undo' | 'redo', entry: EditCommand[] | null = null) {
     current = next
-    if (undo) undoStack = [...undoStack.slice(-(UNDO_LIMIT - 1)), undo]
+    const item = entry ? editEntry(entry) : null
+    if (made === 'new') history.push(item)
+    else if (item) history.keep(made === 'undo' ? 'redo' : 'undo', item)
     editSeq += 1
     if (status === 'error') errorCode = null
     schedule()
+  }
+
+  /**
+   * Takes the last entry of a stack and applies it. A saved node / edge the entry re-adds has no
+   * stored key any more and comes back under a new one; the rest of the history follows the rename.
+   * A move entry puts its cards back / forward (`onMove`); one whose cards are all gone is dropped.
+   */
+  function step(from: 'undo' | 'redo'): boolean {
+    const original = history.top(from)
+    if (status === 'conflict' || !original) return false
+    history.take(from)
+    if (original.kind === 'move') {
+      const placed = options.onMove?.(movePlacements(original.moves, from)) === true
+      if (placed) history.keep(from === 'undo' ? 'redo' : 'undo', original)
+      options.onChange()
+      return placed
+    }
+    // A save on the wire deletes every stored key its model lacks: those keys are gone for a revive.
+    const serverKeys = sentModel ? new Set([...savedKeys].filter((k) => storedKeys(sentModel as DraftModel).has(k))) : savedKeys
+    const entry = reviveCommands(original.commands, serverKeys, newClientKey)
+    const applied = applyCommandsWithUndo(current, entry)
+    if (!applied) {
+      options.onChange()
+      return false
+    }
+    const renamed: Record<string, string> = {}
+    original.commands.forEach((command, i) => {
+      const was = addedKey(command)
+      const now = addedKey(entry[i])
+      if (was !== null && now !== null && was !== now) renamed[was] = now
+    })
+    if (Object.keys(renamed).length) history.map((e) => renameEntry(e, renamed))
+    edit(applied.model, from, applied.undo)
+    return true
   }
 
   return {
@@ -165,26 +230,28 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
     version: () => saved,
     status: () => status,
     errorCode: () => errorCode,
-    canUndo: () => undoStack.length > 0 && status !== 'conflict',
+    canUndo: () => history.size('undo') > 0 && status !== 'conflict',
+    canRedo: () => history.size('redo') > 0 && status !== 'conflict',
     busy,
     apply(command, undoable = true) {
-      if (status === 'conflict') return false
+      if (status === 'conflict' || !options.save) return false
       const applied = applyCommand(current, command)
       if (!applied) return false
-      edit(applied.model, undoable ? [...applied.undo] : null)
+      edit(applied.model, 'new', undoable ? [...applied.undo] : null)
       return true
     },
-    undo() {
-      if (status === 'conflict' || !undoStack.length) return false
-      const entry = reviveCommands(undoStack[undoStack.length - 1], savedKeys, newClientKey)
-      const next = applyCommands(current, entry)
-      undoStack = undoStack.slice(0, -1)
-      if (!next) {
-        options.onChange()
-        return false
-      }
-      edit(next, null)
+    undo: () => step('undo'),
+    redo: () => step('redo'),
+    record(moves) {
+      if (status === 'conflict' || !moves.length) return false
+      history.push(moveEntry([...moves]))
+      options.onChange()
       return true
+    },
+    place(placements) {
+      const at = new Map(placements.map((p) => [p.nodeId, p] as const))
+      if (!current.nodes.some((n) => at.has(n.key))) return
+      current = { ...current, nodes: current.nodes.map((n) => (at.has(n.key) ? { ...n, x: at.get(n.key)!.x, y: at.get(n.key)!.y } : n)) }
     },
     flush,
     settled() {
@@ -199,10 +266,11 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
       timer = null
       current = model
       saved = version
-      undoStack = []
+      history.clear()
       editSeq = sentSeq
       errorCode = null
       savedKeys = storedKeys(model)
+      sentModel = null
       setStatus('idle')
       settle(true)
     },

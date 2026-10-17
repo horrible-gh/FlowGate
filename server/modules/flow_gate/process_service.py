@@ -18,6 +18,7 @@ from . import template_provision
 from . import linter
 from .numbering import numbering_service
 from .storage import paths as storage_paths
+from .documents.live_root import is_live_root as _is_live_root
 from .db.document_type_labels import get_type_name, get_type_names_map
 from .services.git.credentials import GitServiceError
 import LogAssist.log as perf_log
@@ -2164,7 +2165,8 @@ def dispose_group(group_id: str, reason_option: str = "", reason_detail: str = "
     _ensure_group_discard_type()
 
     # Anchor the discard to the group's workflow root (like AC's target_id), when present.
-    root_doc = next(
+    # 0064 T#4 (L0005 2.10 P7): the first live root (a succeeded root is history); none -> as before.
+    root_doc = next((d for d in group_docs if _is_live_root(d)), None) or next(
         (d for d in group_docs if d.get("type_code") in WORKFLOW_ROOT_TYPES),
         None,
     )
@@ -2307,6 +2309,7 @@ def update_group(
     title: str | None = None,
     priority: str | None = None,
     module: str | None = None,
+    graph_execution_limit: int | None = None,
 ) -> dict:
     """Update group information (title/priority/module) and return {group_id, updated_at}."""
     group = db.get_group(group_id)
@@ -2314,6 +2317,10 @@ def update_group(
         return {"status": "error", "message": f"Group not found: {group_id}"}
 
     updates: dict = {}
+    if graph_execution_limit is not None:
+        if type(graph_execution_limit) is not int or graph_execution_limit < 1:
+            return {"status": "error", "message": "graph_execution_limit must be a positive integer."}
+        updates["graph_execution_limit"] = graph_execution_limit
     if title is not None:
         title = title.strip()
         if not title:
@@ -2329,13 +2336,19 @@ def update_group(
             "status": "success",
             "group_id": group_id,
             "updated_at": group.get("updated_at", ""),
+            "graph_execution_limit": group.get("graph_execution_limit", 4),
         }
 
-    updated = db_groups.update(group_id, updates)
+    if graph_execution_limit is not None:
+        from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+        updated = with_flow_guard(group_id, lambda: db_groups.update(group_id, updates))
+    else:
+        updated = db_groups.update(group_id, updates)
     return {
         "status": "success",
         "group_id": group_id,
         "updated_at": updated["updated_at"],
+        "graph_execution_limit": updated.get("graph_execution_limit", 4),
     }
 
 
@@ -5729,7 +5742,7 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None) -
         # discarded groups by default, mirroring the final-approved hide toggle.
         for doc_row in docs:
             doc = dict(doc_row)
-            if doc.get("type_code") in WORKFLOW_ROOT_TYPES and doc.get("doc_review_status") == "wf_done":
+            if _is_live_root(doc) and doc.get("doc_review_status") == "wf_done":    # 0064 T#4 (L0005 2.10 P8)
                 group_node["is_final_approved"] = True
             if doc.get("type_code") == _GROUP_DISCARD_TYPE:
                 group_node["is_discarded"] = True

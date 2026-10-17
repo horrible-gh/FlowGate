@@ -107,6 +107,37 @@ def resolve_run_provenance(
         return {}
 
 
+def resolve_persisted_run_provenance(ai_run_id: Optional[str]) -> dict[str, Any]:
+    """Provider evidence from the finished run's persisted row (flowgate.v02.0064 T-B5, L0005 2.18).
+
+    The second half of the memory-then-DB order ``inbox_routes._resolve_origin_provider_name``
+    already uses: a run that finished in an earlier process (or whose in-memory record is
+    gone) still left its one ``ai_invoke_runs`` row at finalize, and that row says which
+    provider actually ran. It does NOT say which provider was requested, so
+    ``requested_provider_id`` and ``fallback_used`` stay None -- "no evidence to decide",
+    never a guess. ``{}`` when there is no run id, the lookup fails, no row exists (a live
+    run has none yet) or the row carries no provider id.
+    """
+    if not ai_run_id:
+        return {}
+    try:
+        from modules.flow_gate.db import ai_invoke_runs as db_ai_invoke_runs
+        row = db_ai_invoke_runs.get(ai_run_id)
+        if not row or not row.get("provider_id"):
+            return {}
+        return {
+            "ai_run_id": ai_run_id,
+            "requested_provider_id": None,
+            "actual_provider_id": row.get("provider_id"),
+            "actual_provider_name": row.get("provider_name") or None,
+            "provider_source": row.get("selected_provider_source") or None,
+            "attempt_no": int(row.get("attempt_no") or 0) or None,
+            "fallback_used": None,
+        }
+    except Exception:
+        return {}
+
+
 def to_api_payload(snapshot: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     """The canonical public shape (0582 T0005 SS6): {ai_run_id, ai_provider_id, ai_provider_name}.
 

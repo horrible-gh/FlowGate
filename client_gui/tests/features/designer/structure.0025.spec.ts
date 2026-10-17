@@ -57,6 +57,9 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       /^\.\.\/palette\/paletteCatalog$/,
       /^@\/features\/conversation$/,
       /^@\/features\/git$/,
+      // flowgate.v02.0059 T#2 — the v0.1 document read (features/document public surface) the Shell hands to the
+      // server Graph source, so 자동 배치 can follow a v0.1 sequence root's supersede chain.
+      /^@\/features\/document$/,
       // flowgate.v02.0038 — top band: the Header / Menu Bar / Toolbar parts and their model.
       /^\.\.\/top\/Designer(Header|MenuBar|Toolbar)\.vue$/,
       /^\.\.\/top\/designerTop$/,
@@ -108,9 +111,10 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
     expect(read(file).match(/^ {2}designer:\s*\{/gm)).toHaveLength(1)
     const messages = (await import(`@/app/i18n/${locale}.ts`)).default as Record<string, Record<string, unknown>>
     // flowgate.v02.0030 added the Palette block, flowgate.v02.0036 the Inspector block,
-    // flowgate.v02.0038 the top band block, flowgate.v02.0043 the File menu dialogs block.
+    // flowgate.v02.0038 the top band block, flowgate.v02.0043 the File menu dialogs block,
+    // flowgate.v02.0064 T#4 the card inline title edit block (P0006 §6.5 `gui.designer.nodeTitle.*`).
     expect(Object.keys(messages.designer).sort()).toEqual([
-      'center', 'file_explorer', 'file_menu', 'inspector', 'palette', 'project_explorer', 'shell', 'top',
+      'center', 'file_explorer', 'file_menu', 'inspector', 'nodeTitle', 'palette', 'project_explorer', 'shell', 'top',
     ])
   })
 

@@ -8,22 +8,40 @@ types. The review stage (``review_stage``) also takes from here: the Flow's engi
 node an AI run or a result document belongs to, the project default reviewer, the v0.1 document review
 loop (started as the AI invoke route starts it, its review hops told the card's review basis, and its
 state) and the v0.1 approval as the unmanned chain makes it, followed by the Graph contact a person's
-approval reaches. The source tools' step type judgement takes the open run node a token was mapped to.
+approval reaches, and whether the AI run of a node still holds the Flow's group AI lease (flowgate.v02.0056
+T#1). The source tools' step type judgement takes the open run node a token was mapped to.
+flowgate.v02.0056 T#3: an AI run's node result is the one registered with that run's own tokens
+(``node_of_ai_run``), so the review stage never takes a result someone else registered as the run's.
+
+flowgate.v02.0056 T#2 (the instruction stage of a card run): which open node in its instruction stage an AI
+run worked for, the card instruction documents that node's tokens registered, and the Graph's own two steps
+that follow the stage — the result stage's start (``node_dispatch.start_result_stage``) and the stage's
+failure record (``node_dispatch.instruction_stage_failed``, the AI start failure path).
+
+flowgate.v02.0061 T#2: after the review stage followed a node's AI run, the Graph run is judged again
+(``run_service.settle_if_needed``, as before a run read).
+
+flowgate.v02.0063 (the card's question wait, ``question_wait``): an ended AI run as its durable row tells it, the node
+whose result writer ended with no result, the card's node row by its key, whether the Flow's AI is busy (the group
+lease or a Graph execution), the Graph's retry of a result writer and the wake of an idle run.
 """
 from __future__ import annotations
 
 import hashlib
 import logging
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from modules.flow_gate.db import ai_groups as db_ai_groups
 from modules.flow_gate.db import ai_invoke_document_review_loops as db_review_loops
 from modules.flow_gate.db import ai_providers as db_ai_providers
+from modules.flow_gate.db import group_ai_leases as db_leases
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.graph_workflow.api import envelope, v01_contact
 from modules.flow_gate.graph_workflow.projection.flow_snapshot import registered_doc_types
-from modules.flow_gate.graph_workflow.services import canvas_service, graph_service
+from modules.flow_gate.graph_workflow.projection.run_documents import registered_documents
+from modules.flow_gate.graph_workflow.services import canvas_service, card_settings_ports, graph_service, node_dispatch
 from modules.flow_gate.graph_workflow.services.engine_router import read_ownership
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
@@ -33,15 +51,19 @@ from modules.flow_gate.settings import ai_execution_policy_service
 __all__ = ["GraphApiError", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid",
            "run", "load_flow", "require_writable", "repeat_choices", "ai_exists", "team_exists",
            "node_running", "graph_owned", "project_of", "node_of_ai_run", "node_of_result", "open_node_of_token",
+           "node_ai_run_active", "instruction_node_of_ai_run", "registered_instructions", "start_result_stage",
+           "instruction_stage_failed", "attempt_of_ai_run", "attempt_owns", "attempt_hold", "active_run_id",
+           "invalidated_documents", "ai_run_record", "no_result_node_of_ai_run", "node_of_key", "nodes_of_ai_run",
+           "flow_ai_busy", "retry_result_stage", "wake_graph_run", "open_questions_of_ai_run", "open_ai_questions",
+           "askers_answered_by", "ask_responder",
            "default_reviewer", "last_rejection", "start_review_loop", "review_loop_row", "review_loop_active",
-           "approve"]
+           "approve", "settle_graph_run"]
 
 _log = logging.getLogger(__name__)
 
 OPEN_NODE_STATUS = "open"
 REVIEW_NODE_STATUS = "review"
 STOPPED_LOOP_STAGE = "stopped"
-API_BASE_URL = "/flowgate/api/v1"            # operator base, as the Graph node start uses
 LOCALE = "ko"
 APPROVE_PERMISSION = "document.approve"
 # The TR2 approval attempt key of a card approval (the unmanned chain's own is "auto:").
@@ -125,25 +147,72 @@ def _ai_node_in_review(run_row: dict, node_key: str) -> Optional[tuple[dict, str
         return None
     record = definition_store.revision(run_row["group_id"], int(run_row["revision_no"])) or {}
     node = next((n for n in record.get("nodes") or [] if n["node_key"] == node_key), None)
-    if node is None or node.get("assignee_kind") != "ai":
+    if node is None or not card_settings_ports.uses_ai(run_row["group_id"], node):
         return None
     return node, row["result_doc_id"]
 
 
 def node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[dict, str]]:
     """The AI node of the Flow's active run that this AI run wrote the result of (its tokens carry the
-    run id and were mapped to the node), when that node is in review: (node row, result doc id)."""
+    run id and were mapped to the node), when that node is in review: (node row, result doc id).
+
+    flowgate.v02.0056 T#3: the result must be the run's own — registered with one of those tokens, as their
+    ``token_consumed`` records show (the evidence the run reconciliation binds from). A result someone else
+    registered while the run went on (a person's, with the node's dispatch token) is not this run's to review
+    or approve: None, and it waits for the card approval."""
     run_row = run_store.active_run(flow_id)
     if run_row is None or not ai_run_id:
         return None
     mapped = get_store()._fetch_all(
-        "SELECT m.node_key FROM graph_run_token_map m JOIN tokens t ON t.token_id = m.token_id "
+        "SELECT m.node_key, m.token_id FROM graph_run_token_map m JOIN tokens t ON t.token_id = m.token_id "
         "WHERE m.run_id = ? AND t.ai_run_id = ?", [run_row["run_id"], ai_run_id])
-    for key in dict.fromkeys(r["node_key"] for r in mapped or []):
+    tokens: dict[str, list[str]] = {}
+    for r in mapped or []:
+        tokens.setdefault(r["node_key"], []).append(r["token_id"])
+    for key, token_ids in tokens.items():
         found = _ai_node_in_review(run_row, key)
-        if found is not None:
+        if found is not None and _registered_with(flow_id, found[1], token_ids):
             return found
     return None
+
+
+def _registered_with(flow_id: str, doc_id: str, token_ids: list[str]) -> bool:
+    """``doc_id`` was registered with one of ``token_ids`` (their ``token_consumed`` records)."""
+    return any(d["doc_id"] == doc_id for d in registered_documents(flow_id, token_ids))
+
+
+def _lease_held(lease: Optional[dict]) -> bool:
+    """An unexpired lease row (read only: the run reads that ask may sit inside a Flow guard, so the
+    expired row is left for the lease's own recovery instead of being reclaimed here)."""
+    if not lease or not lease.get("run_id") or not lease.get("expires_at"):
+        return False
+    try:
+        expires = datetime.fromisoformat(str(lease["expires_at"]))
+    except ValueError:
+        return False
+    return (expires if expires.tzinfo else expires.replace(tzinfo=timezone.utc)) > datetime.now(timezone.utc)
+
+
+def node_ai_run_active(flow_id: str, node_key: str) -> bool:
+    """Requested/running Graph executions keep the card working too: they use attempt leases,
+    not the legacy group lease. Retain the group-lease check for ordinary document AI runs."""
+    run_row = run_store.active_run(flow_id)
+    if run_row is None:
+        return False
+    attempt_id = run_store.active_attempt_id(run_row["run_id"], node_key)
+    if attempt_id:
+        from modules.flow_gate.services import graph_execution_hooks
+        counts = graph_execution_hooks.call("execution_wire", run_row["run_id"], flow_id, attempt_id) or {}
+        if counts.get("running_execution_count", 0) or counts.get("requested_execution_count", 0):
+            return True
+    lease = db_leases.get(flow_id)
+    if not _lease_held(lease):
+        return False
+    mapped = get_store()._fetch_one(
+        "SELECT m.node_key FROM graph_run_token_map m JOIN tokens t ON t.token_id = m.token_id "
+        "WHERE m.run_id = ? AND m.node_key = ? AND t.ai_run_id = ?",
+        [run_row["run_id"], node_key, lease["run_id"]])
+    return mapped is not None
 
 
 def node_of_result(flow_id: str, doc_id: Optional[str]) -> Optional[dict]:
@@ -157,7 +226,8 @@ def node_of_result(flow_id: str, doc_id: Optional[str]) -> Optional[dict]:
 def open_node_of_token(token_rec: dict) -> Optional[tuple[str, dict]]:
     """(Flow, the run revision's node row) of the node a token was mapped to (``graph_run_token_map``:
     the node's dispatch token, and every token its AI start or a retry of it minted), while that run is
-    its own Flow's active run and the node is still open; else None."""
+    its own Flow's active run and the node is still open; else None. The node row carries the node run's
+    card run stage as ``run_stage`` (flowgate.v02.0056 T#2)."""
     token_id, flow_id = token_rec.get("token_id"), token_rec.get("group_id")
     mapped = run_store.node_run_by_token(token_id) if token_id and flow_id else None
     if mapped is None:
@@ -170,7 +240,241 @@ def open_node_of_token(token_rec: dict) -> Optional[tuple[str, dict]]:
         return None
     record = definition_store.revision(flow_id, int(run_row["revision_no"])) or {}
     node = next((n for n in record.get("nodes") or [] if n["node_key"] == mapped["node_key"]), None)
-    return (flow_id, node) if node is not None else None
+    return (flow_id, {**node, "run_stage": row.get("stage")}) if node is not None else None
+
+
+# ── the instruction stage (flowgate.v02.0056 T#2) ────────────────────────────
+
+def instruction_node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[dict, dict]]:
+    """(the run revision's node row, its node run) of the AI node of the Flow's active run that this AI run
+    worked for (its tokens carry the run id and were mapped to the node) while that node is open in its
+    card's instruction stage; else None."""
+    run_row = run_store.active_run(flow_id)
+    if run_row is None or not ai_run_id:
+        return None
+    mapped = get_store()._fetch_all(
+        "SELECT m.node_key FROM graph_run_token_map m JOIN tokens t ON t.token_id = m.token_id "
+        "WHERE m.run_id = ? AND t.ai_run_id = ?", [run_row["run_id"], ai_run_id])
+    record = definition_store.revision(flow_id, int(run_row["revision_no"])) or {}
+    for key in dict.fromkeys(r["node_key"] for r in mapped or []):
+        row = next((r for r in run_store.node_runs(run_row["run_id"]) if r["node_key"] == key), None)
+        if row is None or row["status"] != OPEN_NODE_STATUS or row.get("stage") != node_dispatch.INSTRUCTION_STAGE:
+            continue
+        node = next((n for n in record.get("nodes") or [] if n["node_key"] == key), None)
+        if node is not None and card_settings_ports.uses_ai(flow_id, node):
+            return node, row
+    return None
+
+
+def registered_instructions(flow_id: str, run_id: str, node_key: str, doc_type: str) -> list[dict]:
+    """The live documents of ``doc_type`` registered with the node's tokens in the run, the latest first."""
+    docs = registered_documents(flow_id, run_store.token_ids(run_id, node_key))   # in registration order
+    wanted = str(doc_type or "").strip().upper()
+    return [d for d in reversed(docs) if str(d.get("type_code") or "").strip().upper() == wanted
+            and d.get("status") != "cancelled" and not d.get("superseded_by")]
+
+
+def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc_id: Optional[str],
+                       issued_to: str, attempt_id: Optional[str] = None, defer: Optional[list] = None) -> None:
+    node_dispatch.start_result_stage(flow_id, run_id, node_key, instruction_doc_id, issued_to, project_of(flow_id),
+                                     attempt_id=attempt_id, defer=defer)
+
+
+def instruction_stage_failed(flow_id: str, run_id: str, node_key: str, attempt_id: Optional[str] = None) -> None:
+    node_dispatch.instruction_stage_failed(flow_id, run_id, node_key, project_of(flow_id), attempt_id=attempt_id)
+
+
+def attempt_of_ai_run(run: dict) -> Optional[str]:
+    """0061 T#7: the attempt the AI run's Graph execution was made for (None: no Graph execution)."""
+    from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
+    return graph_execution_hooks.call("execution_attempt", run.get("graph_exec_id"))
+
+
+def attempt_owns(run_id: str, node_key: str, attempt_id: Optional[str], operation: str) -> bool:
+    """0061 T#7: that attempt is still the node's active one and may write (a refusal is recorded)."""
+    return node_dispatch.attempt_owns(run_id, node_key, attempt_id, operation)
+
+
+def attempt_hold(run_id: str, node_key: str, attempt_id: Optional[str], operation: str):
+    """0061 T#7: ``attempt_owns`` judged under the Stop gate's shared hold, kept for the ``with`` body (an automatic
+    approval and its commits). Yields whether the body may go on."""
+    return node_dispatch.attempt_hold(run_id, node_key, attempt_id, operation)
+
+
+def active_run_id(flow_id: str) -> Optional[str]:
+    run_row = run_store.active_run(flow_id)
+    return run_row["run_id"] if run_row else None
+
+
+def invalidated_documents(flow_id: str, node_key: str) -> set[str]:
+    """0061 T#7 (0017-TR question 440: kept as history, never the new attempt's evidence): the documents registered
+    (new or edit) with the tokens of the node's invalidated attempts in the Flow's active run — an attempt a Stop, a
+    lost lease or a failed worktree ended — and with none of the node's live tokens. A node opened again never takes
+    them as its instruction, its approval or its result."""
+    if not node_key or not get_store().table_exists("graph_node_attempts"):
+        return set()
+    run_row = run_store.active_run(flow_id)
+    if run_row is None:
+        return set()
+    tokens = run_store.invalidated_token_ids(run_row["run_id"], node_key)
+    if not tokens:
+        return set()
+    old = {d["doc_id"] for d in registered_documents(flow_id, tokens)}
+    live = run_store.token_ids(run_row["run_id"], node_key)
+    return old - {d["doc_id"] for d in registered_documents(flow_id, live)} if live and old else old
+
+
+# ── the question wait (flowgate.v02.0063) ────────────────────────────────────
+
+def ai_run_record(ai_run_id: str) -> Optional[dict]:
+    """An ended AI run as its durable row tells it, with the Graph execution it ran for (``graph_exec_id``) and, for a
+    review loop, its loop row (``document_review_loop``); None when no row was written."""
+    from modules.flow_gate.db import ai_invoke_runs as db_runs  # noqa: PLC0415
+
+    row = db_runs.get(ai_run_id) if ai_run_id else None
+    if not row:
+        return None
+    found = get_store()._fetch_one(
+        "SELECT exec_id FROM graph_attempt_runs WHERE ai_run_id = ? ORDER BY created_at DESC LIMIT 1",
+        [ai_run_id]) if get_store().table_exists("graph_attempt_runs") else None
+    return {**row, "run_id": ai_run_id, "graph_exec_id": (found or {}).get("exec_id"),
+            "document_review_loop": review_loop_row(ai_run_id)}
+
+
+def no_result_node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[dict, dict]]:
+    """(the run revision's node row, its node run) of the AI node of the Flow's active run whose active attempt's
+    latest execution is ``ai_run_id``'s result write and ended with no result (``write_failure`` ``no_result``)."""
+    from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
+
+    run_row = run_store.active_run(flow_id)
+    if run_row is None or not ai_run_id or not get_store().table_exists("graph_attempt_runs"):
+        return None
+    found = get_store()._fetch_one(
+        "SELECT a.node_key, a.attempt_id FROM graph_attempt_runs e JOIN graph_node_attempts a "
+        "ON a.attempt_id = e.attempt_id WHERE e.run_id = ? AND e.ai_run_id = ? AND e.kind = 'write' "
+        "AND a.status = 'active'", [run_row["run_id"], ai_run_id])
+    if found is None:
+        return None
+    latest = get_store()._fetch_one(
+        "SELECT ai_run_id FROM graph_attempt_runs WHERE attempt_id = ? ORDER BY created_at DESC, exec_id DESC LIMIT 1",
+        [found["attempt_id"]])
+    if (latest or {}).get("ai_run_id") != ai_run_id:
+        return None
+    row = next((r for r in run_store.node_runs(run_row["run_id"]) if r["node_key"] == found["node_key"]), None)
+    if row is None or graph_execution_hooks.call("write_failure", row) != "no_result":
+        return None
+    node = node_of_key(flow_id, found["node_key"])
+    return (node, row) if node is not None else None
+
+
+def node_of_key(flow_id: str, node_key: str) -> Optional[dict]:
+    """The node row of the Flow's active run revision with this key."""
+    run_row = run_store.active_run(flow_id)
+    if run_row is None:
+        return None
+    record = definition_store.revision(flow_id, int(run_row["revision_no"])) or {}
+    return next((n for n in record.get("nodes") or [] if n["node_key"] == node_key), None)
+
+
+def nodes_of_ai_run(flow_id: str, ai_run_id: str) -> list[dict]:
+    """The node rows of the Flow's active run revision this AI run worked for (its tokens were mapped to them)."""
+    run_row = run_store.active_run(flow_id)
+    if run_row is None or not ai_run_id:
+        return []
+    keys = sorted(run_store.nodes_of_ai_runs(run_row["run_id"], [ai_run_id]))
+    return [n for n in (node_of_key(flow_id, k) for k in keys) if n is not None]
+
+
+def open_questions_of_ai_run(flow_id: str, ai_run_id: Optional[str]) -> list[dict]:
+    """The questions ``ai_run_id`` asked in the Flow still unanswered, oldest first (``anchor_doc_id``: the document
+    they hang on). Raises on a failed read."""
+    from modules.flow_gate.services.ai_invoke.finalize import open_questions_raised_by_run  # noqa: PLC0415
+
+    return open_questions_raised_by_run(flow_id, ai_run_id)
+
+
+def open_ai_questions(flow_id: str) -> list[dict]:
+    """Every unanswered AI-asked question of the Flow, oldest first (``anchor_doc_id`` as above). Raises on a failed
+    read."""
+    from modules.flow_gate.db import question_items as db_question_items  # noqa: PLC0415
+    from modules.flow_gate.db import questions as db_questions  # noqa: PLC0415
+
+    found: list[dict] = []
+    for doc_id in db_questions.list_open_doc_ids_by_group(flow_id) or []:
+        container = db_questions.get_container_by_doc(doc_id)
+        for row in (db_question_items.list_unanswered(container["id"]) if container else None) or []:
+            if (row.get("asker_kind") or "") == "ai" and row.get("asker_ai_run_id"):
+                found.append({**row, "anchor_doc_id": doc_id})
+    found.sort(key=lambda row: int(row.get("id") or 0))
+    return found
+
+
+def askers_answered_by(responder_run_id: str) -> set[str]:
+    """The AI runs that asked the questions ``responder_run_id`` was the responder of."""
+    from modules.flow_gate.db import question_items as db_question_items  # noqa: PLC0415
+
+    return {item["asker_ai_run_id"] for item in db_question_items.list_by_responder_run(responder_run_id) or []
+            if item.get("asker_ai_run_id")}
+
+
+def ask_responder(anchor_doc_id: str, item_id: int, issued_to: str, provider_id: Optional[str],
+                  provider_source: str) -> Optional[dict]:
+    """Start the responder AI run of one question, as the Q&A panel's [AI 답변 요청] does
+    (``q_answer_invoke_service.dispatch_answer_run``; a refusal is recorded on the item and raised)."""
+    from modules.flow_gate.db import documents as db_documents  # noqa: PLC0415
+    from modules.flow_gate.graph_workflow.services.ai_node_starter import api_base_url  # noqa: PLC0415
+    from modules.flow_gate.services import q_answer_invoke_service  # noqa: PLC0415
+
+    doc = db_documents.get_by_id(anchor_doc_id)
+    if doc is None:
+        return None
+    item = q_answer_invoke_service.resolve_item(anchor_doc_id, item_id)
+    return q_answer_invoke_service.dispatch_answer_run(
+        doc={**doc, "doc_id": anchor_doc_id}, item=item, issued_to=issued_to, api_base_url=api_base_url(),
+        provider_id=provider_id, provider_source=provider_source, actor_user_id=issued_to)
+
+
+def flow_ai_busy(flow_id: str) -> bool:
+    """An AI run holds the Flow's group lease, or a Graph execution of the Flow is requested / running: a new ordinary
+    AI run (a question's responder) would be refused (``run_in_progress``) now."""
+    if _lease_held(db_leases.get(flow_id)):
+        return True
+    if not get_store().table_exists("graph_attempt_runs"):
+        return False
+    return get_store()._fetch_one(
+        "SELECT 1 AS present FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
+        "WHERE r.group_id = ? AND e.status IN ('requested', 'running') LIMIT 1", [flow_id]) is not None
+
+
+def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str,
+                       attempt_id: Optional[str] = None) -> bool:
+    return node_dispatch.retry_result_stage(flow_id, run_id, node_key, issued_to, project_of(flow_id),
+                                            attempt_id=attempt_id)
+
+
+def wake_graph_run(flow_id: str) -> bool:
+    """The Flow's run may take up a card's step again: it is running, or idle and woken to running here (cause
+    ``work_resumed``, reason ``question_answered``). False for a paused, stopping or stopped run and while a Time
+    Machine operation is unfinished: the card waits for the next command or a person."""
+    from flowgate.graph_time_machine.operation import busy  # noqa: PLC0415
+    from modules.flow_gate.graph_workflow.services import run_apply  # noqa: PLC0415
+
+    def body() -> bool:
+        run_row = run_store.active_run(flow_id)
+        if run_row is None:
+            return False
+        if run_row["status"] == run_store.RUNNING:
+            return True
+        if run_row["status"] != run_store.IDLE or run_row.get("idle_reason") == "stopped" or busy(flow_id):
+            return False
+        ctx = run_apply.load_context(run_row, project_of(flow_id), None)
+        if run_store.set_run_status(run_row["run_id"], run_store.IDLE, run_store.RUNNING) != 1:
+            return False
+        ctx.run["idle_reason"] = None
+        run_apply.emit_run_status(ctx, run_store.IDLE, run_store.RUNNING, "work_resumed", "question_answered")
+        return True
+
+    return bool(with_flow_guard(flow_id, body))
 
 
 def default_reviewer(project_id: Optional[str]) -> Optional[str]:
@@ -193,7 +497,9 @@ def last_rejection(doc_id: str) -> Optional[str]:
 
 
 def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issued_to: str,
-                      loop: dict, basis_note: Callable[[Optional[str]], str]) -> Optional[dict]:
+                      loop: dict, basis_note: Callable[[Optional[str]], str],
+                      node_key: Optional[str] = None, graph_exec_id: Optional[str] = None,
+                      attempt_id: Optional[str] = None) -> Optional[dict]:
     """Start the v0.1 document review loop on ``doc_id`` as the AI invoke route starts it (single
     run, ``action_scope`` review, its stage-aware issuer: a review token, an edit token for a
     rework hop). A refusal is logged and the result left to a person (returns None).
@@ -201,33 +507,55 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
     Every review hop's mention -- the first one, a retry's reissue and the review after a rework all
     come from this issuer -- opens with ``basis_note(the document's last rejection)``: the review
     basis the card chose, said with the last rejection as it is when the hop is issued. The engine
-    adds its own one-line criteria name only when it switches stages, never to the first hop."""
-    from modules.flow_gate.services import ai_invoke_service, invoke_mention_service  # noqa: PLC0415
+    adds its own one-line criteria name only when it switches stages, never to the first hop.
+
+    flowgate.v02.0056 T#3: every hop, review and rework, also carries the memos of the card ``node_key`` turned
+    on for AI reading (``card_memo_hooks``), read when the hop is issued.
+
+    flowgate.v02.0061 T#7: ``attempt_id`` — the attempt of the node's run whose end starts the loop — must still be
+    the one the document's node is worked on by (``execution.request_loop`` refuses and records otherwise)."""
+    from modules.flow_gate.services import ai_invoke_service, card_memo_hooks, invoke_mention_service  # noqa: PLC0415
     from modules.flow_gate.services import workflow_decision_service  # noqa: PLC0415
+    from modules.flow_gate.graph_workflow.services.ai_node_starter import api_base_url  # noqa: PLC0415
 
     def _issue(ai_run_id: Optional[str] = None) -> dict:
         if getattr(_issue, "loop_stage", None) == ai_invoke_service.REWORK_HOP_KIND:
-            return invoke_mention_service.issue_rework_request(
-                doc_id=doc_id, issued_to=issued_to, api_base_url=API_BASE_URL, locale=LOCALE, ai_run_id=ai_run_id)
+            issued = invoke_mention_service.issue_rework_request(
+                doc_id=doc_id, issued_to=issued_to, api_base_url=api_base_url(), locale=LOCALE, ai_run_id=ai_run_id)
+            from modules.flow_gate.services import graph_execution_hooks
+            live = ai_invoke_service.get_run_record(ai_run_id) if ai_run_id else None
+            graph_execution_hooks.call("map_token", (live or {}).get("graph_exec_id") or graph_exec_id, issued["token_id"])
+            return {**issued, "mention": card_memo_hooks.prepend_memo_section(
+                issued.get("mention") or "", flow_id, node_key=node_key)}
         issued = workflow_decision_service.request_review(
-            doc_id=doc_id, issued_to=issued_to, api_base_url=API_BASE_URL, ref_doc_ids=None, locale=LOCALE,
+            doc_id=doc_id, issued_to=issued_to, api_base_url=api_base_url(), ref_doc_ids=None, locale=LOCALE,
             ai_run_id=ai_run_id)
+        from modules.flow_gate.services import graph_execution_hooks
+        live = ai_invoke_service.get_run_record(ai_run_id) if ai_run_id else None
+        graph_execution_hooks.call("map_token", (live or {}).get("graph_exec_id") or graph_exec_id, issued["token_id"])
         mention = issued.get("mention") or ""
         if mention:
+            mention = card_memo_hooks.prepend_memo_section(mention, flow_id, node_key=node_key)
             mention = invoke_mention_service.prepend_messages_section(
                 mention, [basis_note(last_rejection(doc_id))], LOCALE)
         return {"raw_token": issued["token"], "token_id": issued["token_id"],
                 "scratch_dir": issued["scratch_dir"], "mention": mention}
 
+    from flowgate.graph_run import execution
     try:
+        graph_exec_id = execution.request_loop(project_id, flow_id, doc_id, issued_to, loop,
+                                                basis_note(last_rejection(doc_id)), node_key, graph_exec_id,
+                                                attempt_id=attempt_id)
         return ai_invoke_service.start_run(
+            graph_exec_id=graph_exec_id,
             project_id=project_id or "", module=_module_of(flow_id), group_id=flow_id, doc_ref=doc_id,
             action_scope="review", mode="single", continuation_target_seq=None, continuation_review_mode=False,
             continuation_instruction_mode=None, continuation_locale=None, issued_to=issued_to,
-            api_base_url=API_BASE_URL, mention_builder=lambda _raw, _scratch: None, issue_builder=_issue,
+            api_base_url=api_base_url(), mention_builder=lambda _raw, _scratch: None, issue_builder=_issue,
             document_review_loop=dict(loop),
         )
-    except Exception:  # noqa: BLE001 — the result stays in review for a person
+    except Exception as exc:  # noqa: BLE001 -- the result stays in review for a person
+        execution.start_failed(graph_exec_id, exc)
         _log.warning("card review loop start failed flow=%s doc=%s", flow_id, doc_id, exc_info=True)
         return None
 
@@ -302,3 +630,14 @@ def approve(flow_id: str, doc_id: str, actor_user_id: str) -> bool:
     tr_commit_service.on_document_approved(doc_id, result)
     v01_contact.after_review_decided(flow_id, doc_id, "approve")
     return True
+
+
+def settle_graph_run(flow_id: str) -> None:
+    """The Flow's Graph run is judged again (flowgate.v02.0061 T#2): running while the review its card stage started
+    works, idle when nothing works any more. Never raises (a failure only skips it, as before a run read)."""
+    from modules.flow_gate.graph_workflow.services import run_service  # noqa: PLC0415 — the run stack on use
+
+    try:
+        run_service.settle_if_needed(flow_id, project_of(flow_id))
+    except Exception:  # noqa: BLE001 — the stage's own end is not failed by the run's judgement
+        _log.warning("graph run settle after the card stage failed flow=%s", flow_id, exc_info=True)

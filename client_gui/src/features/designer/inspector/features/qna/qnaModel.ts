@@ -9,14 +9,23 @@
 // nobody. The tab number is that count, shown only when it is at least one.
 //
 // Operations (D#1 §8.3 rule 0): reading the questions is a query; answering is a change, so it is
-// disabled with one reason — ownership conflict, revision view, disposed group, AI running (the
+// disabled with one reason — ownership conflict, disposed group, AI running (the
 // server refuses a person's write with 423 while an AI run owns the group), then an answer in flight.
 // Not offered (D#1 §8.4): team handling, resuming after an answer, the AI answer request.
 //
 // flowgate.v02.0053 T#6 (0053 CH §2) — a person asks too: the question line at the top of the tab
-// registers a question (asker 'human') and asks an AI to answer it at once. Asking is a change with the
-// same reasons as answering, then a question already on its way. AI-asked questions are answered by
-// the user as before.
+// registers a question (asker 'human'). Asking is a change with the same reasons as answering, then a
+// question already on its way. AI-asked questions are answered by the user as before.
+// flowgate.v02.0056 F1 (0056 CH §3) — registering and asking an AI are two steps: an open question's
+// [AI 답변 요청] asks the chosen AI to answer it (`ai_request`), a change with the same reasons, then a
+// request already on its way.
+// flowgate.v02.0063 — a question is answered on its document, not on the Graph: a confirmed revision view
+// answers, asks and requests as the draft view does. A Flow whose answers stay closed (ownership conflict,
+// disposed group) does not show the question line, the answer form or the AI line at all.
+// flowgate.v02.0064 T-B5 (L0005 2.18, P0006 §5.2·§6.4) — who answered is one of four classes plus unknown:
+// a person (by the server's `author_name`), an AI with its recorded provider, an AI with a run id only
+// (실행 기록 연결 안 됨) and an AI with no run evidence (외부/미확인). The list shows the side; the ↗ window adds
+// the answer time and the run id when there is one. The item's `responder` is never read for this.
 import type { InspectorReadOnly } from '../../inspectorTarget'
 
 /** The parts of a question the rules read (the `@/features/document` QaItem). */
@@ -36,21 +45,28 @@ export interface QnaAnswerFacts {
   readonly id: number | null
   readonly body: string
   readonly authorKind: string
+  /** The person author's name the server sent (`author_name`); null / absent for an AI or unknown person. */
+  readonly authorName?: string | null
   readonly selectedOptionIds: readonly string[]
   readonly provider: QnaProviderFacts | null
+  /** When the answer was registered (`created_at`). */
+  readonly createdAt?: string | null
 }
 
 export interface QnaProviderFacts {
   readonly providerName: string | null
+  readonly providerId?: string | null
+  readonly runId?: string | null
 }
 
-export type QnaOperation = 'read' | 'answer' | 'ask'
+export type QnaOperation = 'read' | 'answer' | 'ask' | 'ai_request'
 
-/** Reading is a query; answering and asking change the server state (D#1 §8.3 rule 0). */
+/** Reading is a query; answering, asking and asking an AI change the server state (D#1 §8.3 rule 0). */
 export const QNA_OPERATION_CLASS: Readonly<Record<QnaOperation, 'change' | 'query'>> = {
   read: 'query',
   answer: 'change',
   ask: 'change',
+  ai_request: 'change',
 }
 
 /** A question has an answer (the counter or the answers the server sent). */
@@ -94,24 +110,57 @@ export function qnaSorted<T extends Pick<QnaItemFacts, 'id' | 'seq' | 'askerKind
   )
 }
 
-/** Who asked or answered, as a message key (under `gui.inspector.qna.`) and its parameters. */
+/**
+ * Who asked or answered (flowgate.v02.0064 T-B5, P0006 §5.2): the class, its message key (under
+ * `gui.inspector.qna.`) and the key's parameters.
+ *   human           a person — `side.human_named` with the server's `author_name`, else `side.human`
+ *   ai_named        an AI whose provider name (or id) the server recorded
+ *   ai_run_only     an AI whose run id is recorded but not its provider (실행 기록 연결 안 됨)
+ *   ai_no_evidence  an AI with no run evidence at all (실행 정보 없음 — 외부/미확인)
+ *   unknown         any other author kind
+ */
+export type QnaSideClass = 'human' | 'ai_named' | 'ai_run_only' | 'ai_no_evidence' | 'unknown'
+
 export interface QnaSide {
   readonly kind: 'ai' | 'human' | 'unknown'
+  readonly sideClass: QnaSideClass
   readonly key: string
   readonly params: Readonly<Record<string, string>>
 }
 
 /**
- * The side of an asker / author kind: a person, an AI with its provider when the server knows the
- * run, or an AI whose run is not known (an external worker) — never a guessed provider name.
+ * The side of an asker / author kind (L0005 2.18 `qna_side`): only the answer's own `author_provider`
+ * is read — never the item's `responder` — and a provider name is never guessed.
  */
-export function qnaSide(kind: string, provider: QnaProviderFacts | null): QnaSide {
-  if (kind === 'human') return { kind: 'human', key: 'side.human', params: {} }
-  if (kind === 'ai') {
-    const name = provider?.providerName ?? null
-    return name ? { kind: 'ai', key: 'side.ai_named', params: { name } } : { kind: 'ai', key: 'side.ai', params: {} }
+export function qnaSide(kind: string, provider: QnaProviderFacts | null, authorName: string | null = null): QnaSide {
+  if (kind === 'human') {
+    return authorName
+      ? { kind: 'human', sideClass: 'human', key: 'side.human_named', params: { name: authorName } }
+      : { kind: 'human', sideClass: 'human', key: 'side.human', params: {} }
   }
-  return { kind: 'unknown', key: 'side.unknown', params: { kind } }
+  if (kind === 'ai') {
+    const name = provider?.providerName || provider?.providerId || null
+    if (name) return { kind: 'ai', sideClass: 'ai_named', key: 'side.ai_named', params: { name } }
+    if (provider?.runId) return { kind: 'ai', sideClass: 'ai_run_only', key: 'side.ai_run_only', params: {} }
+    return { kind: 'ai', sideClass: 'ai_no_evidence', key: 'side.ai_no_evidence', params: {} }
+  }
+  return { kind: 'unknown', sideClass: 'unknown', key: 'side.unknown', params: { kind } }
+}
+
+/**
+ * What the answer's detail (the ↗ window) shows beside who answered (P0006 §5.2): when it was
+ * answered, and the AI run id when the server recorded one. The list shows the side only.
+ */
+export interface QnaAnswerDetail {
+  readonly answeredAt: string | null
+  readonly runId: string | null
+}
+
+export function qnaAnswerDetail(answer: Pick<QnaAnswerFacts, 'authorKind' | 'provider' | 'createdAt'>): QnaAnswerDetail {
+  return {
+    answeredAt: answer.createdAt ?? null,
+    runId: answer.authorKind === 'ai' ? answer.provider?.runId ?? null : null,
+  }
 }
 
 export interface QnaAnswerView {
@@ -120,6 +169,7 @@ export interface QnaAnswerView {
   readonly side: QnaSide
   /** Labels of the options this answer picked. */
   readonly picked: readonly string[]
+  readonly detail: QnaAnswerDetail
 }
 
 export interface QnaItemView {
@@ -149,8 +199,9 @@ export function qnaItemView(item: QnaItemFacts): QnaItemView {
     answers: item.answers.map((answer, index) => ({
       key: answer.id === null ? `i${index}` : `a${answer.id}`,
       body: answer.body,
-      side: qnaSide(answer.authorKind, answer.provider),
+      side: qnaSide(answer.authorKind, answer.provider, answer.authorName ?? null),
       picked: answer.selectedOptionIds.flatMap((id) => labels.get(id) ?? []),
+      detail: qnaAnswerDetail(answer),
     })),
     answerable: state !== 'answered',
   }
@@ -168,8 +219,10 @@ export interface QnaInput {
   readonly aiRunning: boolean
   /** An answer is waiting for the server. */
   readonly busy: boolean
-  /** A question (and its AI answer request) is waiting for the server. */
+  /** A question is waiting for the server. */
   readonly asking?: boolean
+  /** An AI answer request is waiting for the server. */
+  readonly requesting?: boolean
 }
 
 export interface QnaAvailabilityItem {
@@ -184,7 +237,6 @@ export type QnaAvailability = Readonly<Record<QnaOperation, QnaAvailabilityItem>
 /** Why answering is disabled: one reason, in the order of D#1 §8.3 rule 6-1. */
 export function qnaDisabledReason(input: QnaInput): string | null {
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
-  if (input.readOnly === 'revision') return 'reason.read_only_revision'
   if (input.groupDisposed) return 'reason.disposed'
   if (input.aiRunning) return 'reason.ai_running'
   if (input.busy) return 'reason.busy'
@@ -203,16 +255,32 @@ export function qnaAskDisabledReason(input: QnaInput): string | null {
 }
 
 /**
- * Reading is always possible; answering and asking are offered in every ownership (a document
- * feature, D#1 §8.3 rules 2-4) and disabled with the first reason that holds.
+ * Why asking an AI to answer is disabled, as a key under `ai_reason.`: the answering reasons up to the
+ * AI run, then a request on its way, then a question on its way, then an answer on its way.
+ */
+export function qnaAiDisabledReason(input: QnaInput): string | null {
+  const reason = qnaDisabledReason({ ...input, busy: false })
+  if (reason !== null) return reason.replace(/^reason\./, 'ai_reason.')
+  if (input.requesting) return 'ai_reason.requesting'
+  if (input.asking) return 'ai_reason.asking'
+  return input.busy ? 'ai_reason.busy' : null
+}
+
+/**
+ * Reading is always possible; answering, asking and asking an AI are offered in every ownership (a
+ * document feature, D#1 §8.3 rules 2-4) and disabled with the first reason that holds. 0063: they are not
+ * shown at all while the Flow's answers stay closed (ownership conflict, disposed group).
  */
 export function qnaAvailability(input: QnaInput): QnaAvailability {
   const reason = qnaDisabledReason(input)
   const ask = qnaAskDisabledReason(input)
+  const ai = qnaAiDisabledReason(input)
+  const shown = input.readOnly !== 'conflict' && !input.groupDisposed
   return {
     read: { visible: true, enabled: true, reason: null },
-    answer: { visible: true, enabled: reason === null, reason },
-    ask: { visible: true, enabled: ask === null, reason: ask },
+    answer: { visible: shown, enabled: reason === null, reason },
+    ask: { visible: shown, enabled: ask === null, reason: ask },
+    ai_request: { visible: shown, enabled: ai === null, reason: ai },
   }
 }
 
@@ -239,13 +307,14 @@ export function qnaFailureKey(kind: QnaFailureKind): string {
   return `failure.${kind}`
 }
 
-/**
- * Message key of a refused question: `ask` when the question itself was refused (nothing stored), `ai`
- * when the question is stored but the AI answer request was refused (it stays without an answer).
- */
-export function qnaAskFailureKey(stage: 'ask' | 'ai', kind: QnaFailureKind): string {
-  if (stage === 'ask') return kind === 'no_provider' ? 'ask_failure.other' : `ask_failure.${kind}`
-  return kind === 'running' || kind === 'no_provider' || kind === 'network' ? `ai_failure.${kind}` : 'ai_failure.other'
+/** Message key of a refused question (nothing stored). */
+export function qnaAskFailureKey(kind: QnaFailureKind): string {
+  return kind === 'no_provider' ? 'ask_failure.other' : `ask_failure.${kind}`
+}
+
+/** Message key of a refused AI answer request (the question stays without an answer). */
+export function qnaAiFailureKey(kind: QnaFailureKind): string {
+  return kind === 'invalid' || kind === 'other' ? 'ai_failure.other' : `ai_failure.${kind}`
 }
 
 /** Message key of a failed read of the questions. */

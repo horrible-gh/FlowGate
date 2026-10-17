@@ -7,7 +7,10 @@
        No shortcut is shown next to any item (0007-T §7). flowgate.v02.0039 T#3 / v02.0043: item
        availability follows the `targets` the Shell reports (Project context, chosen Group, open
        Flow — designerTop.ts isMenuCommandEnabled / isSubmenuEnabled); the Window menu, Help and
-       the menu titles themselves always open. -->
+       the menu titles themselves always open. flowgate.v02.0059 T#2: 편집 › 정렬 / 배치 is a submenu of the
+       six 정렬 and two 균등 분배 commands (the Toolbar's 정렬 / 배치 ▾ lists the same); each needs enough
+       selected cards (`targets.selectedCount`) and is shown unavailable otherwise.
+       flowgate.v02.0061 T#14: the Run menu follows the open Flow's run phase (`runPhase`) as the Toolbar does. -->
   <nav
     ref="root"
     class="designer-menubar"
@@ -50,7 +53,7 @@
             type="button"
             role="menuitem"
             class="designer-menu-item"
-            :disabled="!isMenuCommandEnabled(entry.command, runMode, targets)"
+            :disabled="!isMenuCommandEnabled(entry.command, runPhase, targets)"
             data-test="designer-menu-item"
             :data-command="entry.command"
             @click="choose(() => emit('command', entry.command))"
@@ -115,7 +118,25 @@
               :data-sub="subKey(entry)"
               @keydown.left.prevent.stop="closeSubmenu"
             >
-              <template v-if="entry.kind === 'density'">
+              <template v-if="entry.kind === 'arrange'">
+                <template v-for="(group, groupIndex) in DESIGNER_ARRANGE_GROUPS" :key="`arrange-${groupIndex}`">
+                  <div v-if="groupIndex > 0" class="designer-menu-sep" role="separator" />
+                  <button
+                    v-for="command in group"
+                    :key="command"
+                    type="button"
+                    role="menuitem"
+                    class="designer-menu-item"
+                    :disabled="!isMenuCommandEnabled(command, runPhase, targets)"
+                    data-test="designer-menu-item"
+                    :data-command="command"
+                    @click="choose(() => emit('command', command))"
+                  >
+                    <span class="designer-menu-mark" aria-hidden="true" />{{ t(`gui.designer.top.arrange.${command.slice(5)}`) }}
+                  </button>
+                </template>
+              </template>
+              <template v-else-if="entry.kind === 'density'">
                 <button
                   v-for="level in DESIGNER_DENSITIES"
                   :key="level"
@@ -160,6 +181,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, type ComponentPublicInstance
 import { useI18n } from 'vue-i18n'
 import {
   ALL_MENU_TARGETS,
+  DESIGNER_ARRANGE_GROUPS,
   DESIGNER_DENSITIES,
   DESIGNER_MENUS,
   EMPTY_RECENT_LISTS,
@@ -171,7 +193,7 @@ import {
   type DesignerMenuTargets,
   type DesignerRecentLists,
   type DesignerRecentRequest,
-  type DesignerRunMode,
+  type DesignerRunPhase,
   type DesignerTopCommand,
   type DesignerWindowPanel,
   type DesignerWindowState,
@@ -180,7 +202,8 @@ import {
 
 withDefaults(
   defineProps<{
-    runMode: DesignerRunMode
+    /** flowgate.v02.0061 T#14: the open Flow's run phase (the Run menu's availability). */
+    runPhase: DesignerRunPhase
     density: DesignerDensity
     windowState: DesignerWindowState
     /** Recent Project / Group / Flow entries, fed by the Shell (0043). */
@@ -211,7 +234,7 @@ function setTitleRef(key: DesignerMenuKey, el: Element | ComponentPublicInstance
   else titles.delete(key)
 }
 
-const subKey = (entry: DesignerMenuEntry) => (entry.kind === 'recent' ? `recent-${entry.recent}` : 'density')
+const subKey = (entry: DesignerMenuEntry) => (entry.kind === 'recent' ? `recent-${entry.recent}` : entry.kind)
 
 function open(key: DesignerMenuKey) {
   openKey.value = key

@@ -305,7 +305,28 @@ def _sweep_tr_session(session: dict, project_id: str) -> None:
     wt_path = _gs.src_root(project_name, branch) if (project_name and branch) else None
     if wt_path is None or not wt_path.is_dir():
         return   # slot gone — never guess, same rule as the base-checkout branch
-    if not _gs._revert_in_flight(wt_path):
+    # 0061 T#9: a Graph attempt's conflicted merge has a MERGE_HEAD, never a REVERT_HEAD. Its orphan and TTL closes
+    # both go through its abort under the group's G (no wait: a busy G is retried next cycle), which re-checks the
+    # session and the merge under the lock and closes it only once the merge state is gone.
+    if _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE:
+        in_flight = _gs._rev_parse(wt_path, "MERGE_HEAD") is not None
+        if in_flight:
+            if context.get("review_state") == _gs.TR_CONFLICT_REVIEW_RESOLVED:
+                if not _review_pending_ttl_expired(session):
+                    return
+            elif not _ttl_expired(session.get("touched_at") or session.get("created_at")):
+                return
+        try:
+            _gs.abort_tr_conflict(group_id, merge_id, no_wait=True)
+        except Exception:
+            _log.warning(
+                "graph attempt merge session sweep failed for merge %s", merge_id, exc_info=True
+            )
+            return
+        _emit_auto_aborted(project_id, group_id, merge_id, "ttl_expired" if in_flight else "orphan_recovered")
+        return
+    in_flight = _gs._revert_in_flight(wt_path)
+    if not in_flight:
         _gs.db_git.close_session(merge_id, "aborted")
         _gs._set_status(group_id, context.get("prev_status") or "waiting")
         _emit_auto_aborted(project_id, group_id, merge_id, "orphan_recovered")

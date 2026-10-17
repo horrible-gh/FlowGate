@@ -2926,6 +2926,12 @@ async function onTimeMachineConfirm(payload: TimeMachineStep) {
 // "AxiosError: Request failed with status code 409". Coded errors read the shared Git
 // error copy; anything else keeps the server's detail as before.
 function workflowActionErrorText(e: any): string {
+  // flowgate.v02.0061 T#15: a Graph-owned flow refuses reopen / restore (409, flat `{ error, code, message }`
+  // `graph_engine_owned`) — its reason is shown as the server sent it, not as the generic Git line.
+  const data = e?.response?.data
+  if (data?.code === 'graph_engine_owned' || data?.error === 'graph_engine_owned') {
+    return (typeof data.message === 'string' && data.message.trim()) || t('main.time_machine.graph_engine_owned')
+  }
   if (normalizeGitError(e).code) return resolveGitError(e, t)
   return e?.response?.data?.detail ?? String(e)
 }

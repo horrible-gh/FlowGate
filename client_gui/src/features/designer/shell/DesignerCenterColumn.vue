@@ -11,7 +11,7 @@
        Its Host intents are carried out here — select another Node, read the Flow again quietly —
        or, for a Tool Panel, passed up to the Shell. -->
   <div ref="columnRef" class="designer-center-column" data-test="designer-center-column">
-    <DesignerWorkspace :center="center" :unselected="unselected" :placing="placing" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" />
+    <DesignerWorkspace :center="center" :unselected="unselected" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" @show-tool="emit('show-tool', $event)" />
     <DesignerResizeHandle
       class="designer-center-resize"
       axis="y"
@@ -46,8 +46,10 @@ const props = withDefaults(
     bottomHeight: number
     placing?: boolean
     unselected?: boolean
+    /** flowgate.v02.0059 0017-T: the density's card drag step (the Shell's), for the Canvas; null = 자율형. */
+    moveStep?: number | null
   }>(),
-  { unselected: false, placing: false },
+  { unselected: false, placing: false, moveStep: null },
 )
 
 // Each drag step carries the column's own height, which the Shell's clamp keeps the Workspace's room in.

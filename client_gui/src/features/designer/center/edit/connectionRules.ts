@@ -10,7 +10,9 @@
 //   confirmation until the rule is decided (`rule_undecided`).
 import type { DraftModel } from './draftModel'
 
-export type ConnectionRefusal = 'not_editable' | 'duplicate'
+// flowgate.v02.0061 T#14 (the Center session's, not this pre-check's): `locked` — the Flow's run is running, paused or
+// stopping; `protected` — the target is a done / open / review node, whose incoming lines never change.
+export type ConnectionRefusal = 'not_editable' | 'duplicate' | 'locked' | 'protected'
 export type ConnectionWarning = 'branch' | 'join' | 'cycle'
 
 export type ConnectionCheck =

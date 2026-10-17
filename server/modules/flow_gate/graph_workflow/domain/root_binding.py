@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from .graph_model import ROOT_DOC_TYPES, Graph
+from .run_scope_ports import run_scope
 from .graph_validator import issue
 
 
@@ -62,7 +63,7 @@ def check_root_binding(
 
     ``current``: the Flow's binding record (``node_key``, ``doc_id``, ``doc_type``) or None.
     """
-    starts = set(graph.start_keys())
+    starts = set(run_scope(graph).starts)
     if ownership in ("graph", "conflict"):
         if current is None:
             return BindingCheck(status="not_needed")

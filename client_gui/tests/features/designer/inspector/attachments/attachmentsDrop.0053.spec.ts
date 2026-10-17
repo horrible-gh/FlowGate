@@ -2,8 +2,9 @@
  * flowgate.v02.0053 T#6 — the attachments tab's [+] and drag and drop (0053 CH §3), with
  * `@/features/document` mocked as a small server:
  *
- * - [+] is one icon button (no '＋ 추가' text, no '파일당 최대 nMB' line); its tooltip carries the size limit;
- * - a document without attachments shows only '첨부 없음' (v7) besides [+];
+ * - [+ 파일 추가] is one button (no '＋ 추가' text, no '파일당 최대 nMB' line); its tooltip carries the size limit;
+ * - a document without attachments shows the 0017-CH 시안 empty state (illustration · 첨부된 파일이 없습니다 ·
+ *   파일을 추가해 주세요.) above [+ 파일 추가]; files dragged over the tab raise the dashed drop area;
  * - files dragged over the tab highlight it (only a drag that carries files, only while adding is possible,
  *   and it stays through the children the pointer crosses); dropping them uploads them through the same
  *   upload API, client limits and refusals as picked files, then reads the list again;
@@ -179,27 +180,22 @@ async function drop(target: ReturnType<VueWrapper<any>['get']>, files: File[]) {
 
 // --- [+] -------------------------------------------------------------------------------------------
 
-describe('[+] alone (flowgate.v02.0053 T#6)', () => {
-  it('is one icon button: no ＋ 추가 text and no size line; the size limit is its tooltip', async () => {
+describe('[+ 파일 추가] (flowgate.v02.0053 T#6 · 0017-CH 시안)', () => {
+  it('is one button with the plus icon: no ＋ 추가 text and no size line; the size limit is its tooltip', async () => {
     const w = await mountTab(v01Target())
     const plus = addButton(w)
     expect(plus.element.tagName).toBe('BUTTON')
-    expect([plus.attributes('data-icon'), plus.attributes('aria-label'), plus.attributes('title'), plus.text()]).toEqual([
-      'add',
-      '파일 추가',
-      '파일 추가 · 파일당 최대 20MB',
-      '',
-    ])
+    expect([plus.attributes('title'), plus.text()]).toEqual(['파일 추가 · 파일당 최대 20MB', '파일 추가'])
     expect(plus.find('svg').exists()).toBe(true)
     const text = area(w).text()
-    for (const word of ['＋ 추가', '추가', '파일당 최대', 'MB 까지']) expect(text).not.toContain(word)
+    for (const word of ['＋ 추가', '파일당 최대', 'MB 까지']) expect(text).not.toContain(word)
   })
 
-  it('a document without attachments shows only 첨부 없음 besides [+]', async () => {
+  it('a document without attachments shows the empty illustration, two lines and [+ 파일 추가]', async () => {
     rows.set(V01_DOC, [])
     const w = await mountTab(v01Target())
-    expect(area(w).text()).toBe('첨부 없음')
-    expect(w.findAll('[data-test="inspector-pane-state"]')).toHaveLength(1)
+    expect(w.get('[data-test="attachments-empty"]').text()).toBe('첨부된 파일이 없습니다파일을 추가해 주세요.')
+    expect(w.findAll('[data-test="inspector-pane-state"]')).toHaveLength(0)
     expect(isDisabled(addButton(w))).toBe(false)
   })
 
@@ -243,9 +239,11 @@ describe('drag and drop on the attachments tab (flowgate.v02.0053 T#6)', () => {
     await area(w).trigger('dragenter', filesDrag())
     expect(area(w).attributes('data-drop')).toBe('active')
     expect(area(w).classes()).toContain('is-dropping')
+    expect(w.get('[data-test="attachments-drop"]').text()).toBe('여기에 파일을 놓으세요')
     await area(w).trigger('dragleave', filesDrag())
     expect(area(w).attributes('data-drop')).toBe('idle')
     expect(area(w).classes()).not.toContain('is-dropping')
+    expect(w.find('[data-test="attachments-drop"]').exists()).toBe(false)
   })
 
   it('the highlight stays while the pointer crosses the rows inside the tab', async () => {
@@ -289,12 +287,12 @@ describe('drag and drop on the attachments tab (flowgate.v02.0053 T#6)', () => {
     expect(names(w)).toEqual(['spec.md', 'c.txt'])
   })
 
-  it('a drop on an empty document uploads and 첨부 없음 gives way to the row', async () => {
+  it('a drop on an empty document uploads and the empty state gives way to the row', async () => {
     rows.set(V01_DOC, [])
     const w = await mountTab(v01Target())
     await drop(area(w), [file('first.txt')])
     expect(names(w)).toEqual(['first.txt'])
-    expect(area(w).text()).not.toContain('첨부 없음')
+    expect(w.find('[data-test="attachments-empty"]').exists()).toBe(false)
   })
 
   it('a drag of page text (no files) is not taken: no highlight, nothing sent', async () => {
@@ -431,7 +429,7 @@ describe('a card just placed: [+] and a drop upload (flowgate.v02.0053 T#6 완�
     await tabs().find((tab) => tab.text().startsWith('첨부'))!.trigger('click')
     await flushPromises()
     const w = wrapper
-    expect(area(w).text()).toBe('첨부 없음')
+    expect(w.find('[data-test="attachments-empty"]').exists()).toBe(true)
     expect(addButton(w).attributes('title')).toBe('파일 추가 · 파일당 최대 20MB')
 
     const input = w.get('[data-test="attachments-picker"]')
@@ -478,7 +476,7 @@ describe('a card just placed: [+] and a drop upload (flowgate.v02.0053 T#6 완�
   it('files dragged onto the free space under an empty tab (the body itself) highlight the tab, are not opened and upload', async () => {
     const w = await mountOnAttachments()
     const body = bodyOf(w)
-    expect(area(w).text()).toBe('첨부 없음')
+    expect(w.find('[data-test="attachments-empty"]').exists()).toBe(true)
     // The events land on the body, outside the tab's own box.
     expect(area(w).element.contains(body.element)).toBe(false)
 

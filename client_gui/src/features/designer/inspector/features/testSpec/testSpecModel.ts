@@ -414,7 +414,8 @@ export function testSpecDocumentState(reviewStatus: string | null, docStatus: st
   const status = docStatus?.trim() ?? ''
   if (!status) return null
   if (status === 'closed') return { key: 'slot_state.closed', raw: status, tone: 'neutral' }
-  return { key: 'slot_state.writing', raw: status, tone: 'info' }
+  // flowgate.v02.0056 F1: a document being written asks nothing of the operator — a neutral state draws no badge.
+  return { key: 'slot_state.writing', raw: status, tone: 'neutral' }
 }
 
 const RUN_TONES: Readonly<Record<TestSpecTone, TestSpecSlotTone>> = { info: 'running', success: 'success', danger: 'danger', warning: 'warning', neutral: 'neutral' }
