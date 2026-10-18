@@ -6,9 +6,12 @@
  * the view, 취소 drops it; unsaved text is asked about once (취소 / close). A report before its run (no file
  * yet) opens as an empty document and edits the same way. Several windows stack; the same document twice is
  * one window.
+ * flowgate.v02.0070 T#4 (B4) — an exact window (the 「전환 전 문서」 link): that very id, its title and body — no supersede
+ * chain read — read only ([닫기] alone, no diagnosis), with its opener's part under the body; a usual open still follows.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { defineComponent, h } from 'vue'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import {
@@ -17,10 +20,13 @@ import {
   documentWindowList,
   openDocumentWindow,
 } from '@/features/documentWindow'
+import { setCurrentUser } from '@/core/auth/currentUser'
 
 const recordRead = vi.fn()
 const contentRead = vi.fn()
 const contentSave = vi.fn()
+const diagnose = vi.fn()
+const recoverBody = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/document')>()
   return {
@@ -28,6 +34,8 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentRead: (...args: unknown[]) => recordRead(...args),
     documentContentRead: (...args: unknown[]) => contentRead(...args),
     documentContentSave: (...args: unknown[]) => contentSave(...args),
+    bodyRecoveryDiagnose: (...args: unknown[]) => diagnose(...args),
+    bodyRecoveryRecover: (...args: unknown[]) => recoverBody(...args),
   }
 })
 
@@ -39,16 +47,24 @@ const REPORT = 'flowgate.v02.0053.0007-TR'
 const EMPTY_REPORT = 'flowgate.v02.0053.0009-TR'
 const ORDER = 'flowgate.v02.0053.0008-T'
 const GONE = 'flowgate.v02.0053.0099-TR'
+/** flowgate.v02.0070 T#3: a document whose body cannot be read (file not found), and one the person may not edit. */
+const UNREADABLE = 'flowgate.v02.0053.0010-R'
+const LOCKED = 'flowgate.v02.0053.0011-R'
 
 const FRONT = '---\ntitle: 작업레포트 — T#2\n---'
 
 /** The stored files (doc_id → body); a missing entry is a file not written yet. */
 const files = new Map<string, string>()
 const RECORDS: Record<string, unknown> = {
-  [REPORT]: { doc_id: REPORT, type_code: 'TR', title: '작업레포트 — T#2', status: 'open', doc_review_status: 'pending_review' },
-  [EMPTY_REPORT]: { doc_id: EMPTY_REPORT, type_code: 'TR', title: '레포트', status: 'draft', doc_review_status: null },
-  [ORDER]: { doc_id: ORDER, type_code: 'T', title: '작업지시 — T#3', status: 'closed', doc_review_status: 'approved' },
+  [REPORT]: { doc_id: REPORT, type_code: 'TR', title: '작업레포트 — T#2', status: 'open', doc_review_status: 'pending_review', is_editable: true },
+  [EMPTY_REPORT]: { doc_id: EMPTY_REPORT, type_code: 'TR', title: '레포트', status: 'draft', doc_review_status: null, is_editable: true },
+  [ORDER]: { doc_id: ORDER, type_code: 'T', title: '작업지시 — T#3', status: 'closed', doc_review_status: 'approved', is_editable: true },
+  [UNREADABLE]: { doc_id: UNREADABLE, type_code: 'R', title: '요구사항', status: 'draft', doc_review_status: null, is_editable: true },
+  [LOCKED]: { doc_id: LOCKED, type_code: 'R', title: '잠긴 요구사항', status: 'draft', doc_review_status: null, is_editable: false },
 }
+/** Documents whose body read answers "unreadable" (file not found), and whose read fails outright. */
+const unreadable = new Set<string>()
+const failing = new Set<string>()
 
 const axiosError = (status: number) => ({ isAxiosError: true, response: { status, data: { detail: 'x' } } })
 
@@ -60,16 +76,25 @@ beforeEach(() => {
   files.clear()
   files.set(REPORT, `${FRONT}\n# 결과\n\n본문입니다.\n`)
   files.set(ORDER, '# 지시\n')
+  files.set(LOCKED, '# 잠김\n')
+  unreadable.clear()
+  failing.clear()
   recordRead.mockReset()
   contentRead.mockReset()
   contentSave.mockReset()
+  diagnose.mockReset()
+  recoverBody.mockReset()
+  setCurrentUser({ username: 'worker', email: null, isAdmin: false })
   recordRead.mockImplementation(async (docId: string) => {
     if (!RECORDS[docId]) throw axiosError(404)
     return toDocumentRecord(RECORDS[docId])
   })
-  contentRead.mockImplementation(async (docId: string) =>
-    files.has(docId) ? { docId, content: files.get(docId)!, missing: false } : { docId, content: '', missing: true },
-  )
+  contentRead.mockImplementation(async (docId: string) => {
+    if (failing.has(docId)) throw axiosError(500)
+    if (unreadable.has(docId)) return { docId, content: '', missing: true, state: 'unreadable', reason: 'file_not_found' }
+    return files.has(docId) ? { docId, content: files.get(docId)!, missing: false } : { docId, content: '', missing: true }
+  })
+  diagnose.mockResolvedValue({ items: [] })
   contentSave.mockImplementation(async (docId: string, content: string) => {
     files.set(docId, content)
   })
@@ -80,6 +105,7 @@ afterEach(() => {
   wrapper?.unmount()
   wrapper = null
   closeAllDocumentWindows()
+  setCurrentUser(null)
   document.body.querySelectorAll('.ui-modal-overlay').forEach((node) => node.remove())
 })
 
@@ -106,6 +132,9 @@ async function type(node: HTMLElement | null, value: string) {
 const confirmButtons = () => [...document.body.querySelectorAll<HTMLElement>('.ui-confirm-actions .ui-btn')]
 const confirmTitle = () => document.body.querySelector('.ui-confirm-title')?.textContent ?? null
 const windows = () => documentWindowList().map((win) => [win.docId, win.mode])
+/** The view footer's buttons in order (flowgate.v02.0070 T#3). */
+const footer = (panel: HTMLElement) =>
+  [...q(panel, 'document-window-viewer-bar')!.querySelectorAll('button')].map((button) => button.getAttribute('data-test'))
 
 async function open(docId: string, mode: 'view' | 'edit' = 'view') {
   openDocumentWindow(docId, mode)
@@ -114,7 +143,7 @@ async function open(docId: string, mode: 'view' | 'edit' = 'view') {
 }
 
 describe('document window — view (flowgate.v02.0053 T#3)', () => {
-  it('opens in this tab as a modeless window: name · state dot · ✎ · minimize · close, the MD Viewer as body', async () => {
+  it('opens in this tab as a modeless window: name · state dot · copy · minimize · close, the MD Viewer as body', async () => {
     const panel = await open(REPORT)
     expect(q(panel, 'document-window-title')!.textContent).toBe('작업레포트 — T#2')
     const dot = q(panel, 'document-window-dot')!
@@ -124,8 +153,10 @@ describe('document window — view (flowgate.v02.0053 T#3)', () => {
     const order = [...titlebar.querySelectorAll('[data-test="document-window-title"], [data-test="document-window-dot"], button')].map(
       (node) => node.getAttribute('data-test') ?? node.getAttribute('aria-label'),
     )
-    expect(order).toEqual(['document-window-title', 'document-window-dot', 'document-window-edit', 'Minimize', 'Close'])
-    expect(q(panel, 'document-window-edit')!.getAttribute('title')).toBe('편집')
+    // flowgate.v02.0056 F1 moved the view's [편집] to the footer; the title line keeps the body copy.
+    expect(order).toEqual(['document-window-title', 'document-window-dot', 'md-viewer-copy', 'Minimize', 'Close'])
+    expect(footer(panel)).toEqual(['document-window-edit', 'document-window-close'])
+    expect(q(panel, 'document-window-edit')!.textContent!.trim()).toBe('편집')
     expect(q(panel, 'document-window-body')!.getAttribute('data-view')).toBe('markdown')
     expect(q(panel, 'md-viewer-content')!.querySelector('h1')!.textContent).toBe('결과')
     // No browser tab wording, no v0.1 screen, no sign-in talk anywhere in the window.
@@ -153,10 +184,10 @@ describe('document window — view (flowgate.v02.0053 T#3)', () => {
     expect(windows()).toEqual([])
   })
 
-  it('a document that no longer exists: a short note in place of the body, ✎ disabled', async () => {
+  it('a document that no longer exists: a short note in place of the body, only [닫기]', async () => {
     const panel = await open(GONE)
     expect(q(panel, 'document-window-gone')!.textContent).toBe('문서를 찾을 수 없습니다')
-    expect(q(panel, 'document-window-edit')!.hasAttribute('disabled')).toBe(true)
+    expect(footer(panel)).toEqual(['document-window-close'])
   })
 })
 
@@ -272,7 +303,8 @@ describe('document window — a report before its run (flowgate.v02.0053 T#3)', 
   it('opens as an empty document (no text at all) and ✎ / 저장 work the same: the save writes its file', async () => {
     const panel = await open(EMPTY_REPORT)
     expect(q(panel, 'md-viewer-content')!.textContent).toBe('')
-    expect(q(panel, 'document-window')!.textContent!.trim()).toBe('')
+    expect(q(panel, 'document-window-body')!.textContent!.trim()).toBe('')
+    expect(footer(panel)).toEqual(['document-window-edit', 'document-window-close'])
     expect(q(panel, 'document-window-dot')!.getAttribute('data-tone')).toBe('neutral')
     await click(q(panel, 'document-window-edit'))
     const area = q(panel, 'document-window-textarea') as HTMLTextAreaElement
@@ -288,5 +320,154 @@ describe('document window — a report before its run (flowgate.v02.0053 T#3)', 
     const panel = await open(EMPTY_REPORT, 'edit')
     expect((q(panel, 'document-window-textarea') as HTMLTextAreaElement).value).toBe('')
     expect(q(panel, 'document-window-save')!.hasAttribute('disabled')).toBe(false)
+  })
+})
+
+// flowgate.v02.0070 T#3 (B3, 0003-NR §3): the body shows a short state block only; the footer at the bottom right
+// is the one action group, by state — unreadable: [복구] (diagnosed recoverable) [본문 다시 입력] [닫기] and no
+// [편집]; readable / empty: [편집] [닫기]; not editable (no sign-in, not editable, gone): [닫기]; editing: the
+// editor bar. [복구] runs only on its click.
+describe('document window — the view footer by the body state (flowgate.v02.0070 T#3)', () => {
+  const diagnosed = (method: string, recoverable: boolean) =>
+    diagnose.mockResolvedValue({ items: [{ docId: UNREADABLE, method, recoverable }] })
+
+  it('readable: [편집] [닫기]; a person who may not edit gets [닫기] only', async () => {
+    expect(footer(await open(REPORT))).toEqual(['document-window-edit', 'document-window-close'])
+    expect(footer(await open(LOCKED))).toEqual(['document-window-close'])
+    setCurrentUser(null)
+    closeAllDocumentWindows()
+    expect(footer(await open(REPORT))).toEqual(['document-window-close'])
+  })
+
+  it('an empty document: the empty view with [편집] only when allowed, no diagnosis', async () => {
+    const panel = await open(EMPTY_REPORT)
+    expect(q(panel, 'document-window-body')!.textContent!.trim()).toBe('')
+    expect(footer(panel)).toEqual(['document-window-edit', 'document-window-close'])
+    expect(diagnose).not.toHaveBeenCalled()
+  })
+
+  it('unreadable, diagnosed recoverable: [복구] [본문 다시 입력] [닫기], no [편집], no button in the body; 복구 only on click', async () => {
+    unreadable.add(UNREADABLE)
+    diagnosed('regenerate_stub', true)
+    const panel = await open(UNREADABLE)
+    expect(footer(panel)).toEqual(['document-window-recover', 'document-window-reenter', 'document-window-close'])
+    expect([...q(panel, 'document-window-viewer-bar')!.querySelectorAll('button')].map((b) => b.textContent!.trim()))
+      .toEqual(['복구', '본문 다시 입력', '닫기'])
+    expect(q(panel, 'md-viewer-unreadable')!.querySelectorAll('button')).toHaveLength(0)
+    expect(q(panel, 'md-viewer-unreadable')!.textContent).toContain('파일 없음 · AI도 이 문서를 읽지 못합니다.')
+    expect(diagnose).toHaveBeenCalledWith({ groupId: 'flowgate.v02.0053' })
+    expect(recoverBody).not.toHaveBeenCalled()
+
+    unreadable.delete(UNREADABLE)
+    files.set(UNREADABLE, '# 복구됨\n')
+    recoverBody.mockResolvedValue({ docId: UNREADABLE, status: 'recovered', method: 'regenerate_stub', bodyLoss: 'none', refusal: null })
+    await click(q(panel, 'document-window-recover'))
+    expect(recoverBody).toHaveBeenCalledTimes(1)
+    expect(recoverBody).toHaveBeenCalledWith(UNREADABLE, 'regenerate_stub')
+    expect(q(panel, 'md-viewer-content')!.querySelector('h1')!.textContent).toBe('복구됨')
+    expect(q(panel, 'md-viewer-recover-notice')!.textContent).toBe('본문을 복구했습니다.')
+    expect(footer(panel)).toEqual(['document-window-edit', 'document-window-close'])
+  })
+
+  it('unreadable, not recoverable: the guide line and [본문 다시 입력] [닫기]; it opens the editor (취소 · 저장 · 닫기)', async () => {
+    unreadable.add(UNREADABLE)
+    diagnosed('read_error_manual', false)
+    const panel = await open(UNREADABLE)
+    expect(footer(panel)).toEqual(['document-window-reenter', 'document-window-close'])
+    expect(q(panel, 'md-viewer-recover-guide')!.textContent).toBe(i18n.global.t('gui.document.recover.guide.read_error_manual'))
+    await click(q(panel, 'document-window-reenter'))
+    expect(windows()).toEqual([[UNREADABLE, 'edit']])
+    expect(q(panel, 'document-window-viewer-bar')).toBeNull()
+    expect([...q(panel, 'document-window-close')!.parentElement!.querySelectorAll('button')].map((b) => b.getAttribute('data-test')))
+      .toEqual(['document-window-cancel', 'document-window-save', 'document-window-close'])
+  })
+
+  it('unreadable when no diagnosis answers: [본문 다시 입력] [닫기]', async () => {
+    unreadable.add(UNREADABLE)
+    diagnose.mockRejectedValue(axiosError(500))
+    expect(footer(await open(UNREADABLE))).toEqual(['document-window-reenter', 'document-window-close'])
+  })
+
+  it('unreadable without the right to edit: [닫기] only, and no diagnosis is read', async () => {
+    unreadable.add(LOCKED)
+    diagnosed('regenerate_stub', true)
+    const panel = await open(LOCKED)
+    expect(q(panel, 'md-viewer-unreadable')).not.toBeNull()
+    expect(footer(panel)).toEqual(['document-window-close'])
+    expect(diagnose).not.toHaveBeenCalled()
+  })
+
+  it('a failed read: the body keeps its retry and the footer has [닫기] only', async () => {
+    failing.add(REPORT)
+    const panel = await open(REPORT)
+    expect(q(panel, 'md-viewer-retry')).not.toBeNull()
+    expect(footer(panel)).toEqual(['document-window-close'])
+    failing.delete(REPORT)
+    await click(q(panel, 'md-viewer-retry'))
+    expect(footer(panel)).toEqual(['document-window-edit', 'document-window-close'])
+  })
+})
+
+describe('exact window (flowgate.v02.0070 T#4, B4)', () => {
+  const OLD = 'flowgate.v02.0053.0012-R'
+  const NEW = 'flowgate.v02.0053.0013-B'
+  const Part = defineComponent({ props: { docId: String }, setup: (props) => () => h('span', { 'data-test': 'aside-part' }, props.docId) })
+
+  beforeEach(() => {
+    RECORDS[OLD] = { doc_id: OLD, type_code: 'R', title: '옛 요구사항', status: 'draft', doc_review_status: null, is_editable: true, superseded_by: NEW }
+    RECORDS[NEW] = { doc_id: NEW, type_code: 'B', title: '버그', status: 'draft', doc_review_status: null, is_editable: true }
+    files.set(OLD, '# 옛 본문\n')
+    files.set(NEW, '# 새 본문\n')
+  })
+
+  const exactPanel = () => {
+    const panel = panels().find((node) => node.querySelector('[data-test="document-window"][data-exact="true"]'))
+    if (!panel) throw new Error('no exact window')
+    return panel
+  }
+  async function openExact(docId: string, aside: boolean = true) {
+    openDocumentWindow(docId, 'view', { exact: true, aside: aside ? { component: Part, props: { docId } } : null })
+    await flushPromises()
+    return exactPanel()
+  }
+
+  it('a usual open still follows superseded_by to the new document', async () => {
+    openDocumentWindow(OLD)
+    await flushPromises()
+    const panel = panelOf(OLD)
+    expect(q(panel, 'document-window')!.getAttribute('data-shown')).toBe(NEW)
+    expect(q(panel, 'document-window-title')!.textContent).toBe('버그')
+    expect(q(panel, 'document-window-aside')).toBeNull()
+  })
+
+  it('shows that very id read only: its title and body, [닫기] alone, its opener part; the chain is not read', async () => {
+    const panel = await openExact(OLD)
+    expect(q(panel, 'document-window')!.getAttribute('data-shown')).toBe(OLD)
+    expect(q(panel, 'document-window-title')!.textContent).toBe('옛 요구사항')
+    expect(q(panel, 'md-viewer-content')!.querySelector('h1')!.textContent).toBe('옛 본문')
+    expect(footer(panel)).toEqual(['document-window-close'])
+    expect(recordRead.mock.calls.map((call) => call[0])).toEqual([OLD])
+    expect(contentRead.mock.calls.every((call) => call[0] === OLD)).toBe(true)
+    expect(q(panel, 'document-window-aside')!.textContent).toBe(OLD)
+    expect(windows()).toEqual([[OLD, 'view']])
+    await click(q(panel, 'document-window-close'))
+    expect(windows()).toEqual([])
+  })
+
+  it('an unreadable old body offers no 복구 / 본문 다시 입력 and reads no diagnosis', async () => {
+    unreadable.add(OLD)
+    diagnose.mockResolvedValue({ items: [{ docId: OLD, method: 'regenerate_stub', recoverable: true }] })
+    const panel = await openExact(OLD, false)
+    expect(q(panel, 'md-viewer-unreadable')).not.toBeNull()
+    expect(footer(panel)).toEqual(['document-window-close'])
+    expect(diagnose).not.toHaveBeenCalled()
+  })
+
+  it('the exact and the usual window of one id stand side by side', async () => {
+    await openExact(OLD)
+    openDocumentWindow(OLD)
+    await flushPromises()
+    expect(panels()).toHaveLength(2)
+    expect(documentWindowList().map((win) => [win.id, win.shown])).toEqual([[`exact:${OLD}`, OLD], [OLD, NEW]])
   })
 })

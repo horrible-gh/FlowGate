@@ -3,7 +3,11 @@
 // and calls `request`. The intent travels Frame -> Bottom Dock -> Center column (-> Shell), so no
 // feature ever touches the Shell or the Center session itself. New intents are not added by a
 // feature set (D#1 §5.7 last rule).
+// flowgate.v02.0070 T#1 (B1): one way back with an answer — `saveTitle`, the card title save of the Inspector header,
+// for the Flow and card the edit was opened on (not the selection at answer time). The Center column carries it to the
+// session's saveNodeTitle; absent = titles are not saved here (no edit opens).
 import type { InjectionKey, Ref } from 'vue'
+import type { NodeTitleSaveOutcome } from '../center/graph/nodeTitle'
 
 export type InspectorHostIntent =
   /** Select another Node of the same Flow ("→ 해당 카드"). */
@@ -19,6 +23,8 @@ export type InspectorHostIntent =
 
 export interface InspectorHost {
   request(intent: InspectorHostIntent): void
+  /** Save a card's own title (the raw text; the server normalizes and decides). Absent = no title is saved. */
+  readonly saveTitle?: (flowId: string, nodeKey: string, raw: string) => Promise<NodeTitleSaveOutcome>
 }
 
 export const INSPECTOR_HOST: InjectionKey<InspectorHost> = Symbol('flowgate.inspectorHost')

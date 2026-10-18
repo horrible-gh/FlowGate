@@ -12,18 +12,7 @@ export default {
     // flowgate.v02.0051 — the v7 종류 배지 ▾ and its menu.
     badge_hint: '종류 전환: 그룹의 첫 실행 전까지',
     menu_title: '종류 (그룹 첫 실행 전까지)',
-    confirm: {
-      title: '종류 전환',
-      message: '{from} 문서를 {to} 문서로 바꿉니다. 문서 번호({from_code} → {to_code})가 바뀌고, Canvas를 다시 읽은 뒤 선택이 풀립니다.',
-      submit: '전환',
-      cancel: '취소',
-      // flowgate.v02.0064 T#4 (P0006 §6.1): a root with child documents is succeeded by a new document.
-      succession: {
-        title: '종류 전환 — 새 문서로 이어 가기',
-        body: '새 {to} 문서 {to_code}를 만들어 이 {from} 문서를 이어 갑니다. · 원래 {from} 문서 {from_code}와 하위 문서 {children}건, 승인·실행 이력은 그대로 남습니다. · 이후 작업은 새 {to} 문서를 기준으로 합니다.',
-        expected: '(예상 번호 {code}, 실행 시 확정)',
-      },
-    },
+    // flowgate.v02.0070 (0015-T T2): a pick switches at once — no confirmation strings (number swap or succession).
     reason: {
       read_only_conflict: '소유 충돌 Flow라 바꿀 수 없습니다.',
       read_only_revision: 'Graph revision 보기에서는 바꿀 수 없습니다. draft 보기로 옮기세요.',
@@ -62,17 +51,6 @@ export default {
     switch_hint: 'Turns this {from} into a {to}. The document number changes.',
     badge_hint: 'Kind switch: until the group first runs',
     menu_title: 'Kind (until the group first runs)',
-    confirm: {
-      title: 'Kind switch',
-      message: 'Turns this {from} into a {to}. The document number changes ({from_code} → {to_code}); the Canvas is read again and the selection is cleared.',
-      submit: 'Switch',
-      cancel: 'Cancel',
-      succession: {
-        title: 'Kind switch — continue in a new document',
-        body: 'Creates a new {to} {to_code} that continues this {from}. · The original {from} {from_code}, its {children} child documents and the approval and run history stay as they are. · Work continues on the new {to}.',
-        expected: '(expected number {code}, fixed when the switch runs)',
-      },
-    },
     reason: {
       read_only_conflict: 'This Flow has an ownership conflict and cannot be changed.',
       read_only_revision: 'A Graph revision view cannot be changed. Switch to the draft view.',
@@ -111,17 +89,6 @@ export default {
     switch_hint: 'この{from}文書を{to}文書に変えます。文書番号が変わります。',
     badge_hint: '種類の切り替え: グループの初回実行まで',
     menu_title: '種類（グループの初回実行まで）',
-    confirm: {
-      title: '種類の切り替え',
-      message: 'この{from}文書を{to}文書に変えます。文書番号({from_code} → {to_code})が変わり、Canvasを読み直したあと選択が解除されます。',
-      submit: '切り替え',
-      cancel: 'キャンセル',
-      succession: {
-        title: '種類の切り替え — 新しい文書で引き継ぐ',
-        body: '新しい{to}文書 {to_code} を作成し、この{from}文書を引き継ぎます。・元の{from}文書 {from_code} と下位文書 {children}件、承認・実行の履歴はそのまま残ります。・以降の作業は新しい{to}文書を基準にします。',
-        expected: '(予定番号 {code}、実行時に確定)',
-      },
-    },
     reason: {
       read_only_conflict: '所有が競合しているフローのため変更できません。',
       read_only_revision: 'Graph revision 表示では変更できません。draft 表示に切り替えてください。',

@@ -145,7 +145,10 @@ describe('0064 MdViewer [복구]', () => {
     expect(api.getRequest).toHaveBeenCalledWith('/api/v1/documents/body-diagnosis', { group_id: FLOW })
     api.postRequest.mockResolvedValue({ data: { method: 'regenerate_card_draft', body_loss: 'possible', body_lost: true } })
     api.getRequest.mockResolvedValue({ data: { content: '---\ntitle: 조사 · 지시서\n---\n' } })
-    await el(w, 'md-viewer-recover').trigger('click')
+    // flowgate.v02.0070 T#3 (B3): the viewer reports recoverable; the window footer's [복구] calls recover().
+    expect(w.vm.status).toEqual({ state: 'unreadable', recoverable: true, recovering: false })
+    expect(api.postRequest).not.toHaveBeenCalled()
+    await w.vm.recover()
     await flushPromises()
     expect(api.postRequest).toHaveBeenCalledWith(`/api/v1/documents/${encodeURIComponent(DOC)}/regenerate`,
       { expected_method: 'regenerate_card_draft' })
@@ -159,16 +162,15 @@ describe('0064 MdViewer [복구]', () => {
   ])('shows only guidance for %s', async (method, key) => {
     unreadable([item({ method, recoverable: false, body_loss: null })])
     const w = await viewer()
-    expect(el(w, 'md-viewer-recover').exists()).toBe(false)
+    expect(w.vm.status).toEqual({ state: 'unreadable', recoverable: false, recovering: false })
     expect(el(w, 'md-viewer-recover-guide').text()).toBe(i18n.global.t(key))
-    expect(el(w, 'md-viewer-reenter').exists()).toBe(true)
   })
 
   it('shows a refusal and diagnoses again', async () => {
     unreadable([item()])
     const w = await viewer()
     api.postRequest.mockRejectedValue(failure(409, { detail: '…', error: 'diagnosis_changed', diagnosis: {} }))
-    await el(w, 'md-viewer-recover').trigger('click')
+    await w.vm.recover()
     await flushPromises()
     expect(el(w, 'md-viewer-recover-notice').text()).toBe(i18n.global.t('gui.document.recover.refusal.diagnosis_changed'))
     expect(api.getRequest.mock.calls.filter(([url]) => String(url).includes('/body-diagnosis'))).toHaveLength(2)
@@ -178,7 +180,7 @@ describe('0064 MdViewer [복구]', () => {
   it('offers nothing and reads no diagnosis without permission', async () => {
     unreadable([item()])
     const w = await viewer(false)
-    expect(el(w, 'md-viewer-recover').exists()).toBe(false)
+    expect(w.vm.status.recoverable).toBe(false)
     expect(api.getRequest.mock.calls.some(([url]) => String(url).includes('/body-diagnosis'))).toBe(false)
   })
 })

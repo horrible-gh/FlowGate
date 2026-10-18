@@ -5,14 +5,20 @@
  * flowgate.v02.0052 묶음 A — the single status pill: one user-facing label (the Canvas state first),
  * a `· sub` only for a server state that says something else, never an internal value as text, the
  * server values in the tooltip and the data attributes.
+ * flowgate.v02.0070 T#4 (B4) — one kind display (flowNodeKindView) for the Canvas card head and the header: a requirement
+ * Node with a B document is 버그 (bug glyph, red accent) in both, an R one 요구사항; a title that only repeats it hides.
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { h } from 'vue'
+import FlowNodeCard from '@/features/designer/center/canvas/FlowNodeCard.vue'
+import { flowNodeKindDisplay, flowNodeKindView } from '@/features/designer/center/canvas/flowNodeKinds'
+import type { FlowGateNodeData } from '@/features/designer/center/canvas/vueFlowMapping'
+import type { FlowGraphNode } from '@/features/designer/center/graph/flowGraph'
 import InspectorHeader from '@/features/designer/inspector/InspectorHeader.vue'
-import { prepareInspectorI18n, SELECTIONS, targetOf } from './support/inspectorSupport'
+import { prepareInspectorI18n, SELECTIONS, selectionOf, targetOf, UNASSIGNED_GRAPH, UNASSIGNED_REQ_NODE } from './support/inspectorSupport'
 
 const i18n = prepareInspectorI18n()
 
@@ -270,7 +276,10 @@ describe('InspectorHeader (flowgate.v02.0051)', () => {
     expect(rule).toMatch(/\.inspector-header \{[^}]*flex-wrap: wrap;[^}]*height: auto;/)
     expect(rule).toMatch(/\.inspector-header::after \{[^}]*flex: 0 0 100%;[^}]*order: 1;/)
     expect(rule).toMatch(/\.inspector-header-read-only,\s*\.inspector-header-pill,\s*\.inspector-header-actions \{\s*order: 2;/)
-    expect(rule).toMatch(/\.inspector-header-title \{[^}]*min-width: 48px;/)
+    // flowgate.v02.0070 T#1 rev1: the item keeping that room is the title area (the title, or its input, with the note
+    // right of it) — editing asks the line for no more than the title, so the ✎ 메모 and ⋯ stay on the title line.
+    expect(rule).toMatch(/\.inspector-header-title-area\.is-editing,\s*\.inspector-header-title-area \{[^}]*flex: 4 1 0;[^}]*min-width: 48px;/)
+    expect(rule).not.toMatch(/min-width: 96px/)
   })
 
   it('follows the locale', () => {
@@ -278,5 +287,59 @@ describe('InspectorHeader (flowgate.v02.0051)', () => {
     const w = mountHeader(SELECTIONS.conflict)
     expect(get(w, 'designer-inspector-memo').text()).toBe('✎ Memo')
     expect(get(w, 'designer-inspector-read-only').text()).toBe('Read only')
+  })
+})
+
+describe('one kind display for the Canvas card head and the header (flowgate.v02.0070 T#4, B4)', () => {
+  const B_NODE: FlowGraphNode = {
+    ...UNASSIGNED_REQ_NODE,
+    id: 'doc:flowgate.v02.0050.0001-B',
+    docType: 'B',
+    document: { ...UNASSIGNED_REQ_NODE.document!, docId: 'flowgate.v02.0050.0001-B', typeCode: 'B' },
+  }
+
+  let card: VueWrapper<any> | null = null
+  afterEach(() => {
+    card?.unmount()
+    card = null
+  })
+
+  const mountCard = (node: FlowGraphNode, title = node.title) => {
+    const data: FlowGateNodeData = { kind: node.kind, docType: node.docType, title, state: node.state, selected: false }
+    card = mount(FlowNodeCard, { props: { id: node.id, data }, global: { plugins: [i18n], stubs: { Handle: true } } })
+    return card
+  }
+
+  it.each([
+    ['R', UNASSIGNED_REQ_NODE, '요구사항', '#3b82f6'],
+    ['B', B_NODE, '버그', '#ef4444'],
+  ] as const)('a %s root: the card head and the header show the same name, glyph and accent', (_type, node, name, accent) => {
+    const c = mountCard(node)
+    const header = mountHeader(selectionOf({ ...UNASSIGNED_GRAPH, nodes: [node] }, node.id))
+    expect(c.get('[data-test="designer-canvas-node-kind"]').text()).toBe(name)
+    expect(get(header, 'designer-inspector-kind').text()).toBe(name)
+    expect(c.get('.flow-node-icon path').attributes('d')).toBe(header.get('.inspector-header-icon path').attributes('d'))
+    const cardEl = c.get('[data-test="designer-canvas-node"]')
+    expect((cardEl.element as HTMLElement).style.getPropertyValue('--flow-node-accent')).toBe(accent)
+    expect((get(header, 'designer-inspector-header').element as HTMLElement).style.getPropertyValue('--inspector-kind-accent')).toBe(accent)
+    // The key stays the requirement kind (data-kind) on both.
+    expect(cardEl.attributes('data-kind')).toBe('requirement')
+    expect(get(header, 'designer-inspector-header').attributes('data-kind')).toBe('requirement')
+  })
+
+  it('a card title that only repeats the 버그 name is not shown again; its own title is', () => {
+    expect(mountCard(B_NODE, '버그').find('[data-test="designer-canvas-node-title"]').exists()).toBe(false)
+    card!.unmount()
+    expect(mountCard(B_NODE, '로그인 실패').get('[data-test="designer-canvas-node-title"]').text()).toBe('로그인 실패')
+  })
+
+  it('flowNodeKindView: (kind, document type) -> name key, glyph, accent; only a requirement Node turns 버그', () => {
+    expect(flowNodeKindView('requirement', 'B')).toMatchObject({ key: 'requirement', labelKey: 'gui.designer.inspector.header.kind_bug', accent: '#ef4444' })
+    expect(flowNodeKindView('requirement', ' b ').labelKey).toBe('gui.designer.inspector.header.kind_bug')
+    expect(flowNodeKindView('requirement', 'R')).toEqual({ ...flowNodeKindDisplay('requirement'), labelKey: 'gui.designer.center.node_kinds.requirement' })
+    expect(flowNodeKindView('requirement', null).labelKey).toBe('gui.designer.center.node_kinds.requirement')
+    expect(flowNodeKindView('requirement', 'B').icon).not.toBe(flowNodeKindDisplay('requirement').icon)
+    expect(flowNodeKindView('task', 'B')).toEqual({ ...flowNodeKindDisplay('task'), labelKey: 'gui.designer.center.node_kinds.task' })
+    expect(flowNodeKindView('design', 'D').labelKey).toBe('gui.designer.palette.items.basic_design')
   })
 })

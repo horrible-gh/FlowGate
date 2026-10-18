@@ -26,6 +26,12 @@
 // a person (by the server's `author_name`), an AI with its recorded provider, an AI with a run id only
 // (실행 기록 연결 안 됨) and an AI with no run evidence (외부/미확인). The list shows the side; the ↗ window adds
 // the answer time and the run id when there is one. The item's `responder` is never read for this.
+// flowgate.v02.0070 T#5 (B5) — a question is answered after its context is checked: the Inspector list shows and opens
+// the questions only; the ↗ window shows the document id, the full question, who asked and when, then the answer form.
+// Answering, picking and asking an AI need a body that can be checked (`qnaBodyContext`): the document's card line says
+// its body is there and reads, and the document is not history (an earlier document opened exactly, a superseded one).
+// Otherwise they are not offered — the window says why in one line (history: its 읽기 전용 badge) — and the questions
+// and their answers stay readable. Asking a question is not changed.
 import type { InspectorReadOnly } from '../../inspectorTarget'
 
 /** The parts of a question the rules read (the `@/features/document` QaItem). */
@@ -39,6 +45,8 @@ export interface QnaItemFacts {
   readonly answerCount: number
   readonly answers: readonly QnaAnswerFacts[]
   readonly provider: QnaProviderFacts | null
+  /** When the question was registered (`created_at`); the API has no time the question changed. */
+  readonly createdAt?: string | null
 }
 
 export interface QnaAnswerFacts {
@@ -183,9 +191,13 @@ export interface QnaItemView {
   readonly answers: readonly QnaAnswerView[]
   /** An answer form is offered (the question has no answer yet). */
   readonly answerable: boolean
+  /** flowgate.v02.0070 T#5: when the question was registered, or null. */
+  readonly createdAt: string | null
+  /** flowgate.v02.0070 T#5: the document the question belongs to (the read's doc_id, the full id), or null. */
+  readonly docId: string | null
 }
 
-export function qnaItemView(item: QnaItemFacts): QnaItemView {
+export function qnaItemView(item: QnaItemFacts, docId: string | null = null): QnaItemView {
   const labels = new Map(item.options.map((option) => [option.id, option.label]))
   const state = qnaItemState(item)
   return {
@@ -204,12 +216,74 @@ export function qnaItemView(item: QnaItemFacts): QnaItemView {
       detail: qnaAnswerDetail(answer),
     })),
     answerable: state !== 'answered',
+    createdAt: item.createdAt ?? null,
+    docId,
   }
 }
 
-/** The tab's list: every question in display order. */
-export function qnaView(items: readonly QnaItemFacts[]): QnaItemView[] {
-  return qnaSorted(items).map(qnaItemView)
+/** The tab's list: every question of the document `docId` in display order. */
+export function qnaView(items: readonly QnaItemFacts[], docId: string | null = null): QnaItemView[] {
+  return qnaSorted(items).map((item) => qnaItemView(item, docId))
+}
+
+/**
+ * flowgate.v02.0070 T#5 (B5): whether the body of the questions' document can be checked before answering.
+ *   readable     the document's card line says it has a body, and the body reads
+ *   unreadable   the body read failed (the line's `body_state`, the slot rows' rule — judged by the caller)
+ *   unconfirmed  not known to have a body: no document, no card line of the document, no body (blank) or not sent;
+ *                or not known whether a later document supersedes it (the document read not back, or failed)
+ *   history      an earlier document read as history (T#4 exact window), or one a later document superseded
+ */
+export type QnaBodyContext = 'readable' | 'unreadable' | 'unconfirmed' | 'history'
+
+/** The body facts of a card line (the Canvas `card_documents` line the slot rows read). */
+export interface QnaBodyLine {
+  readonly docId: string | null
+  readonly docType: string | null
+  readonly hasBody?: boolean
+  /** The line's body read failed (`body_state` the slot rows warn on: features/document cardLineWarns). */
+  readonly unreadable: boolean
+}
+
+/**
+ * Line types that always have a body (the slot rows' SLOT_ALWAYS_FILLED_TYPES, parts/slotStateView.ts: M and WP); a
+ * model imports no part, so it keeps its own copy.
+ */
+export const QNA_ALWAYS_BODY_TYPES: readonly string[] = ['M', 'WP']
+
+export interface QnaBodyFacts {
+  readonly docId: string | null
+  /** The target card's lines; the one holding `docId` decides. */
+  readonly lines: readonly QnaBodyLine[]
+  /** The questions are read as history (T#4). */
+  readonly history?: boolean
+  /**
+   * The document read says a later document supersedes it (`superseded_by`); null: not known — the read is not back or
+   * failed — so the document is not confirmed current (unconfirmed). Absent: no such condition.
+   */
+  readonly superseded?: boolean | null
+}
+
+export function qnaBodyContext(facts: QnaBodyFacts): QnaBodyContext {
+  if (facts.history || facts.superseded === true) return 'history'
+  const line = facts.docId ? facts.lines.find((candidate) => candidate.docId === facts.docId) : undefined
+  if (!line) return 'unconfirmed'
+  if (line.unreadable) return 'unreadable'
+  // A blank line (has_body false) and a line whose body was not sent are not known to have a body; M / WP always have one.
+  if (line.hasBody !== true && !QNA_ALWAYS_BODY_TYPES.includes(line.docType?.trim().toUpperCase() ?? '')) return 'unconfirmed'
+  // A body that reads, of a document not yet known not to be superseded, is not confirmed current.
+  return facts.superseded === null ? 'unconfirmed' : 'readable'
+}
+
+const BODY_BLOCK_REASONS: Readonly<Record<Exclude<QnaBodyContext, 'readable'>, string>> = {
+  unreadable: 'reason.body_unreadable',
+  unconfirmed: 'reason.body_unconfirmed',
+  history: 'reason.history',
+}
+
+/** Why answering and asking an AI are not offered for the body context, or null (a readable body, or none given). */
+export function qnaBodyBlockReason(context: QnaBodyContext | undefined): string | null {
+  return context === undefined || context === 'readable' ? null : BODY_BLOCK_REASONS[context]
 }
 
 export interface QnaInput {
@@ -223,6 +297,8 @@ export interface QnaInput {
   readonly asking?: boolean
   /** An AI answer request is waiting for the server. */
   readonly requesting?: boolean
+  /** flowgate.v02.0070 T#5: the body context (qnaBodyContext); absent = no body condition (useQna always gives it). */
+  readonly body?: QnaBodyContext
 }
 
 export interface QnaAvailabilityItem {
@@ -270,18 +346,27 @@ export function qnaAiDisabledReason(input: QnaInput): string | null {
  * Reading is always possible; answering, asking and asking an AI are offered in every ownership (a
  * document feature, D#1 §8.3 rules 2-4) and disabled with the first reason that holds. 0063: they are not
  * shown at all while the Flow's answers stay closed (ownership conflict, disposed group).
+ * flowgate.v02.0070 T#5: nor are answering and asking an AI while the body cannot be checked — not shown, with the body
+ * reason (qnaBodyLine); asking a question stays as it is.
  */
 export function qnaAvailability(input: QnaInput): QnaAvailability {
   const reason = qnaDisabledReason(input)
   const ask = qnaAskDisabledReason(input)
   const ai = qnaAiDisabledReason(input)
   const shown = input.readOnly !== 'conflict' && !input.groupDisposed
+  const body = shown ? qnaBodyBlockReason(input.body) : null
   return {
     read: { visible: true, enabled: true, reason: null },
-    answer: { visible: shown, enabled: reason === null, reason },
+    answer: body ? { visible: false, enabled: false, reason: body } : { visible: shown, enabled: reason === null, reason },
     ask: { visible: shown, enabled: ask === null, reason: ask },
-    ai_request: { visible: shown, enabled: ai === null, reason: ai },
+    ai_request: body ? { visible: false, enabled: false, reason: body } : { visible: shown, enabled: ai === null, reason: ai },
   }
+}
+
+/** flowgate.v02.0070 T#5: the one line the ↗ window shows instead of the form (the body cannot be checked), or null. */
+export function qnaBodyLine(availability: QnaAvailability): string | null {
+  const reason = availability.answer.reason
+  return reason === 'reason.body_unreadable' || reason === 'reason.body_unconfirmed' ? reason : null
 }
 
 /** A question may be sent: text that is not only blanks. */

@@ -78,12 +78,25 @@ function isKnown<T extends string>(list: readonly T[], value: string): value is 
 }
 
 /**
+ * v7 (0035 insp.js iconOf / colorOf): a 버그 (B) root — a requirement Node whose document is a B — takes the bug
+ * glyph and the red accent. flowgate.v02.0070 T#4 (B4): one rule for the Canvas card head and the Inspector header.
+ */
+const BUG_KIND = { icon: 'M8 8a4 4 0 0 1 8 0v7a4 4 0 0 1-8 0Z M4 12h4M16 12h4M5 7l3 2M19 7l-3 2M5 18l3-2M19 18l-3-2', accent: '#ef4444' }
+
+/** i18n key of the 버그 name (the requirement kind with a B document). */
+const BUG_LABEL_KEY = 'gui.designer.inspector.header.kind_bug'
+
+const isBugRoot = (key: FlowNodeKindKey, docType?: string | null) => key === 'requirement' && designDocType(docType) === 'B'
+
+/**
  * Display of a Node kind. flowgate.v02.0045 TR0020 rev2: a 설계 Node with a known document type
  * (D / P / L / DB) takes that type's own glyph, so the four 설계 cards are told apart at a glance
- * while they keep the one 설계 purple.
+ * while they keep the one 설계 purple. flowgate.v02.0070 T#4: a requirement Node with a B document
+ * is drawn as a 버그 (its key stays 'requirement').
  */
 export function flowNodeKindDisplay(kind: string, docType?: string | null): FlowNodeKindDisplay {
   const key: FlowNodeKindKey = isKnown(FLOW_NODE_KINDS, kind) ? kind : 'unknown'
+  if (isBugRoot(key, docType)) return { key, ...BUG_KIND }
   const designIcon = key === 'design' ? DESIGN_DOC_TYPE_ICONS[designDocType(docType)] : undefined
   return { key, ...KIND_TABLE[key], ...(designIcon ? { icon: designIcon } : {}) }
 }
@@ -116,8 +129,23 @@ const designDocType = (docType?: string | null) => (docType ? docType.trim().toU
 /** i18n key of the name a Node card shows for its kind (and document type). */
 export function flowNodeKindLabelKey(kind: string, docType?: string | null): string {
   const key = flowNodeKindDisplay(kind).key
+  if (isBugRoot(key, docType)) return BUG_LABEL_KEY
   const designLabel = key === 'design' ? DESIGN_DOC_TYPE_LABELS[designDocType(docType)] : undefined
   return designLabel ? `gui.designer.palette.items.${designLabel}` : `gui.designer.center.node_kinds.${key}`
+}
+
+export interface FlowNodeKindView extends FlowNodeKindDisplay {
+  /** i18n key of the kind name. */
+  labelKey: string
+}
+
+/**
+ * flowgate.v02.0070 T#4 (B4) — the one kind display of a Node (kind, document type): name key, glyph and accent.
+ * The Canvas card head and the Inspector header both take it, so a 요구사항 switched to a 버그 shows the same kind
+ * in both. The card's own title is not part of it.
+ */
+export function flowNodeKindView(kind: string, docType?: string | null): FlowNodeKindView {
+  return { ...flowNodeKindDisplay(kind, docType), labelKey: flowNodeKindLabelKey(kind, docType) }
 }
 
 /** null when the Node has no state or an unknown state key (the state is then omitted). */

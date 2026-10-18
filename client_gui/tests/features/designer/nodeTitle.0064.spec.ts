@@ -9,8 +9,11 @@
  *   never through the draft — no draft save, no undo / redo entry, the draft version as it was; a late answer or an old
  *   read never takes a newer title back; an edit, an undo and a redo of the structure keep the title; a refusal names the
  *   server's code and changes nothing; a reread after the save keeps it (새로고침 유지);
- * - the Inspector header shows the shared title only — the same new title after a Canvas save or another tab's save
- *   read again, and no title input of its own (document and custom cards alike).
+ * - the Inspector header shows the shared title — the same new title after a save or another tab's save read again;
+ * - flowgate.v02.0070 T#1 (B1): the title is edited in the Inspector header, not on the card — the Canvas mapping carries
+ *   no title edit state any more; the session's selection says whether the selected card's title opens now
+ *   (`titleEdit`, the same rule with the run read's node run) and the Inspector target passes it on (`canEditTitle`,
+ *   `titleLock`); without the host's saver the header shows the title only.
  */
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -194,24 +197,29 @@ describe('which card titles open (D0005 §3.2 잠금 표, P0006 §6.5)', () => {
     expect(nodeTitleEdit(graph, runCard({ status: 'review', nodeRunning: true }), null)).toEqual(running)
   })
 
-  it('through the Canvas mapping: a draft card waiting for approval in the run read opens; one whose AI review started is locked', () => {
+  it('through the Inspector target: a draft card waiting for approval in the run read opens; one whose AI review started is locked (0070 T#1)', () => {
     const graph = graphOf([card('n_a'), card('n_b'), card('n_c', { nodeRun: nodeRun({ status: 'review', awaitingApproval: true, nodeRunning: false }) })])
-    const marks = (nodeRuns: Array<[string, Facts]>) => ({
-      ...NO_RUN_MARKS,
-      nodeRuns: new Map(nodeRuns.map(([key, facts]) => [key, { nodeKey: key, status: 'review', ...facts } as FlowRunNodeInfo])),
-    })
-    const data = (m: ReturnType<typeof marks>) => toVueFlowNodes(graph, null, new Map(), { titles: true, marks: m }).map((n) => [n.id, n.data.titleEditable, n.data.titleLock])
-    expect(data(marks([['n_a', { awaitingApproval: true, nodeRunning: false }], ['n_b', { awaitingApproval: false, integrationStatus: 'pending', nodeRunning: false }]])))
-      .toEqual([['n_a', true, undefined], ['n_b', true, undefined], ['n_c', true, undefined]])
-    expect(data(marks([['n_a', { awaitingApproval: false, nodeRunning: true }], ['n_c', { awaitingApproval: false, nodeRunning: true }]])))
-      .toEqual([['n_a', undefined, 'running'], ['n_b', true, undefined], ['n_c', undefined, 'running']])
+    const target = (id: string, runNode?: Facts & { nodeKey?: string }) => {
+      const node = graph.nodes.find((n) => n.id === id)!
+      const { canEditTitle, titleLock, titleState } = toInspectorTarget({ projectId: 'p', graph, node, titleEdit: nodeTitleEdit(graph, node, runNode) })!
+      return [id, canEditTitle, titleLock, titleState]
+    }
+    expect(target('n_a', { status: 'review', awaitingApproval: true, nodeRunning: false })).toEqual(['n_a', true, null, ts(null, 0)])
+    expect(target('n_b', { status: 'review', awaitingApproval: false, integrationStatus: 'pending', nodeRunning: false })).toEqual(['n_b', true, null, ts(null, 0)])
+    expect(target('n_a', { status: 'review', awaitingApproval: false, nodeRunning: true })).toEqual(['n_a', false, 'running', ts(null, 0)])
+    expect(target('n_c', { status: 'review', awaitingApproval: false, nodeRunning: true })).toEqual(['n_c', false, 'running', ts(null, 0)])
+    // A selection without `titleEdit` (a source that saves no titles) never opens.
+    const node = graph.nodes[0]
+    expect(toInspectorTarget({ projectId: 'p', graph, node })).toMatchObject({ canEditTitle: false, titleLock: null })
   })
 
-  it('the Canvas mapping carries it only when the Canvas saves titles', () => {
+  it('the Canvas mapping carries no title edit state any more: a card only shows its title (0070 T#1)', () => {
     const graph = graphOf([card('n_a'), card('n_b', { nodeRun: { status: 'open', openedAt: null, finishedAt: null, resultDocId: null, nodeRunning: true } }), card('doc:free', { titleState: null })])
-    const data = (titles?: boolean) => toVueFlowNodes(graph, null, new Map(), titles === undefined ? {} : { titles }).map((n) => [n.id, n.data.titleEditable, n.data.titleLock])
-    expect(data()).toEqual([['n_a', undefined, undefined], ['n_b', undefined, undefined], ['doc:free', undefined, undefined]])
-    expect(data(true)).toEqual([['n_a', true, undefined], ['n_b', undefined, 'running'], ['doc:free', undefined, undefined]])
+    const marks = { ...NO_RUN_MARKS, nodeRuns: new Map([['n_a', { nodeKey: 'n_a', status: 'review', nodeRunning: false } as FlowRunNodeInfo]]) }
+    for (const n of toVueFlowNodes(graph, null, new Map(), { marks })) {
+      expect(n.data, n.id).not.toHaveProperty('titleEditable')
+      expect(n.data, n.id).not.toHaveProperty('titleLock')
+    }
   })
 })
 
@@ -284,7 +292,7 @@ describe('the Center session saves a card title on its own (D0005 §3.2 / §3.5)
     expect(source.loadGraph).toHaveBeenCalledTimes(1)
   })
 
-  it('the Inspector header shows the shared title only, and follows the save (V-P-27, V-P-25 client part)', async () => {
+  it('the Inspector header shows the shared title and follows the save (V-P-27, V-P-25 client part)', async () => {
     const { center, answers } = setup(TWO())
     await flushPromises()
     for (const [nodeId, before, after] of [['n_2e7f', '요구사항', '로그인 개선 요구 정리'], ['n_c0f2', '외부 승인', '외부 승인 대기 현황']] as const) {
@@ -297,7 +305,9 @@ describe('the Center session saves a card title on its own (D0005 §3.2 / §3.5)
       await pending
       await header.setProps({ target: toInspectorTarget(center.activeSelection.value)! })
       expect(header.get('[data-test="designer-inspector-title"]').text()).toBe(after)
-      // The header has no title input or edit entry of its own.
+      // 0070 T#1: the selection says the title opens, but without the host's saver the header shows it only.
+      expect(toInspectorTarget(center.activeSelection.value)?.canEditTitle).toBe(true)
+      await header.get('[data-test="designer-inspector-title"]').trigger('click')
       expect(header.findAll('input, textarea, [contenteditable]')).toHaveLength(0)
       expect(header.find('[data-test^="designer-canvas-node-title"]').exists()).toBe(false)
       header.unmount()
@@ -407,5 +417,16 @@ describe('the Center session saves a card title on its own (D0005 §3.2 / §3.5)
   it('a source without titles (the sample source) opens no title', () => {
     const center = createDesignerCenterSession()
     expect(center.canEditNodeTitles).toBe(false)
+  })
+
+  it('the selection says whether the selected card’s title opens now, by the Canvas rule (0070 T#1)', async () => {
+    const running = card('n_c0f2', { x: 300, nodeRun: { status: 'open', openedAt: null, finishedAt: null, resultDocId: null, nodeRunning: true } }, 'custom')
+    const { center } = setup(graphOf([card('n_2e7f'), running]))
+    await flushPromises()
+    center.selectNode(F, 'n_2e7f')
+    expect(center.activeSelection.value?.titleEdit).toEqual({ editable: true, lock: null })
+    center.selectNode(F, 'n_c0f2')
+    expect(center.activeSelection.value?.titleEdit).toEqual({ editable: false, lock: 'running' })
+    expect(toInspectorTarget(center.activeSelection.value)).toMatchObject({ canEditTitle: false, titleLock: 'running' })
   })
 })

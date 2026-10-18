@@ -121,7 +121,7 @@ describe('설계 card lines (designCardModel)', () => {
 })
 
 describe('요구사항 / 버그 card line (requirementCardModel)', () => {
-  it('R is the 요구사항 line, B the 버그 리포트 line; without a document the line has none (no ＋)', () => {
+  it('R is the 요구사항 line, B the 버그 line (0015-T T3); without a document the line has none (no ＋)', () => {
     expect(requirementCardSlots(REQ)[0]).toMatchObject({ name: 'requirement', id: REQ.docId, open: 'enabled' })
     expect(requirementCardSlots(REQ)[0].state).toEqual({ key: 'slot_state.writing', raw: 'draft', tone: 'neutral' })
     expect(requirementCardSlots(facts(REQ, 'B'))[0].name).toBe('bug')
@@ -288,11 +288,16 @@ describe('card documents tab parts', () => {
     expect(w.text()).not.toContain('＋')
   })
 
-  it('RequirementSlots: 요구사항 for R, no badge while it is being written (0056 F1); 버그 리포트 for B', () => {
+  it('RequirementSlots: 요구사항 for R, no badge while it is being written (0056 F1); 버그 for B (0015-T T3)', () => {
     const w = mount(RequirementSlots, { props: { target: REQ }, global })
     expect(w.get('[data-test="inspector-slot-name"]').text()).toBe('요구사항')
     expect(w.find('[data-test="inspector-slot-state"]').exists()).toBe(false)
-    expect(mount(RequirementSlots, { props: { target: facts(REQ, 'B') }, global }).get('[data-test="inspector-slot-name"]').text()).toBe('버그 리포트')
+    expect(mount(RequirementSlots, { props: { target: facts(REQ, 'B') }, global }).get('[data-test="inspector-slot-name"]').text()).toBe('버그')
+    i18n.global.locale.value = 'en'
+    expect(mount(RequirementSlots, { props: { target: facts(REQ, 'B') }, global }).get('[data-test="inspector-slot-name"]').text()).toBe('Bug')
+    i18n.global.locale.value = 'ja'
+    expect(mount(RequirementSlots, { props: { target: facts(REQ, 'B') }, global }).get('[data-test="inspector-slot-name"]').text()).toBe('バグ')
+    i18n.global.locale.value = 'ko'
   })
 
   it('DesignSlots: no "설명 대기" note; 지시서 · 레포트 with the rejected report in red', () => {

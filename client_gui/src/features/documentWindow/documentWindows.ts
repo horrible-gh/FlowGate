@@ -8,17 +8,43 @@
 // flowgate.v02.0056 F1 — the review history windows (0056 CH §2) are a second list kept the same way: one
 // 검수·반려 이력 window per document, opened from the history button of a document line, cascaded apart
 // from the document windows so both stay visible.
-import { reactive } from 'vue'
+// flowgate.v02.0070 T#4 (B4) — an exact window (`exact`): the document of that very id, as history — it never follows
+// the supersede chain and is read only (no 편집 / 본문 다시 입력 / 복구). The 「전환 전 문서」 link opens the document an
+// R↔B succession came from this way, so the old id is shown instead of the new document it was succeeded by. An exact
+// window is a window of its own (`id` = `exact:<docId>`): a usual open of the same document opens the usual window, and
+// an exact open never brings back a usual one. Its opener may put a part under the body (`aside`, e.g. the old
+// document's Q&A history).
+import { markRaw, reactive, type Component } from 'vue'
 import { closeAllDocumentAiWindows } from './documentAiWindows'
 import { closeAllSlotWriteWindows } from './slotWriteWindows'
 
 export type DocumentWindowMode = 'view' | 'edit'
 
+/** flowgate.v02.0070 T#4 — a part an exact window draws under its body, with the props it is given. */
+export interface DocumentWindowAside {
+  readonly component: Component
+  readonly props?: Readonly<Record<string, unknown>>
+}
+
+/** flowgate.v02.0070 T#4 — how a document window opens. */
+export interface DocumentWindowOpenOptions {
+  /** That very document, as history: no supersede chain, read only (no edit / re-enter / recover). */
+  readonly exact?: boolean
+  /** An exact window's part under the body (ignored on a usual window). */
+  readonly aside?: DocumentWindowAside | null
+}
+
 export interface DocumentWindowState {
-  /** The document the window was opened for (its identity). */
+  /** The window's identity: `docId`, or `exact:<docId>` for an exact window. */
+  readonly id: string
+  /** The document the window was opened for. */
   readonly docId: string
-  /** The document it shows and edits: `docId`, or the end of its supersede chain. */
+  /** The document it shows and edits: `docId`, or the end of its supersede chain (never followed when `exact`). */
   shown: string
+  /** flowgate.v02.0070 T#4: shows exactly `docId`, read only. */
+  readonly exact: boolean
+  /** The exact window's part under the body, or null. */
+  readonly aside: DocumentWindowAside | null
   mode: DocumentWindowMode
   minimized: boolean
   readonly x: number
@@ -55,10 +81,15 @@ export function documentWindowList(): readonly DocumentWindowState[] {
   return windows
 }
 
-/** The window opened for a document, else the window showing it, or undefined. */
+/** The usual window opened for a document, else the usual window showing it, or undefined (exact windows are not). */
 export function documentWindowOf(docId: string): DocumentWindowState | undefined {
-  return windows.find((win) => win.docId === docId) ?? windows.find((win) => win.shown === docId)
+  return windows.find((win) => !win.exact && win.docId === docId) ?? windows.find((win) => !win.exact && win.shown === docId)
 }
+
+const exactId = (docId: string) => `exact:${docId}`
+
+/** The window of that identity (`docId` for a usual window, DocumentWindowState.id). */
+const windowById = (id: string) => windows.find((win) => win.id === id)
 
 function bringBack(win: DocumentWindowState, mode: DocumentWindowMode): void {
   win.minimized = false
@@ -70,16 +101,30 @@ function bringBack(win: DocumentWindowState, mode: DocumentWindowMode): void {
  * Opens a document's window: `view` shows the document, `edit` goes straight to its editor. A window
  * already open for the document is restored and brought to the front; `edit` turns it to the editor,
  * `view` leaves an editor that is open as it is (its unsaved text stays).
+ * flowgate.v02.0070 T#4: `exact` opens (or brings back) the document's exact window instead — always the view.
  */
-export function openDocumentWindow(docId: string, mode: DocumentWindowMode = 'view'): void {
+export function openDocumentWindow(docId: string, mode: DocumentWindowMode = 'view', options: DocumentWindowOpenOptions = {}): void {
   if (!docId) return
-  const open = documentWindowOf(docId)
+  const exact = options.exact === true
+  const open = exact ? windowById(exactId(docId)) : documentWindowOf(docId)
   if (open) {
-    bringBack(open, mode)
+    bringBack(open, exact ? 'view' : mode)
     return
   }
   const offset = (cascade++ % CASCADE_STEPS) * CASCADE_PX
-  windows.push({ docId, shown: docId, mode, minimized: false, x: ORIGIN_X + offset, y: ORIGIN_Y + offset, raise: 0 })
+  const aside = exact && options.aside ? { ...options.aside, component: markRaw(options.aside.component) } : null
+  windows.push({
+    id: exact ? exactId(docId) : docId,
+    docId,
+    shown: docId,
+    exact,
+    aside,
+    mode: exact ? 'view' : mode,
+    minimized: false,
+    x: ORIGIN_X + offset,
+    y: ORIGIN_Y + offset,
+    raise: 0,
+  })
 }
 
 /**
@@ -88,10 +133,10 @@ export function openDocumentWindow(docId: string, mode: DocumentWindowMode = 'vi
  * turns it to its editor, as a second open request would). Returns whether this window stays.
  */
 export function followDocumentWindow(docId: string, shown: string, mode: DocumentWindowMode = 'view'): boolean {
-  const win = windows.find((item) => item.docId === docId)
-  if (!win) return false
+  const win = windowById(docId)
+  if (!win || win.exact) return false
   if (win.shown === shown) return true
-  const other = windows.find((item) => item !== win && (item.docId === shown || item.shown === shown))
+  const other = windows.find((item) => item !== win && !item.exact && (item.docId === shown || item.shown === shown))
   if (!other) {
     win.shown = shown
     return true
@@ -101,19 +146,20 @@ export function followDocumentWindow(docId: string, shown: string, mode: Documen
   return false
 }
 
-export function setDocumentWindowMode(docId: string, mode: DocumentWindowMode): void {
-  const open = windows.find((win) => win.docId === docId)
-  if (open) open.mode = mode
+/** `id`: the window's identity (a document id for its usual window); an exact window stays in its view. */
+export function setDocumentWindowMode(id: string, mode: DocumentWindowMode): void {
+  const open = windowById(id)
+  if (open && !open.exact) open.mode = mode
 }
 
-export function setDocumentWindowMinimized(docId: string, minimized: boolean): void {
-  const open = windows.find((win) => win.docId === docId)
+export function setDocumentWindowMinimized(id: string, minimized: boolean): void {
+  const open = windowById(id)
   if (open) open.minimized = minimized
 }
 
-/** Closes a document's window (the window asks about unsaved text before it calls this). */
-export function closeDocumentWindow(docId: string): void {
-  const index = windows.findIndex((win) => win.docId === docId)
+/** Closes a window by its identity (the window asks about unsaved text before it calls this). */
+export function closeDocumentWindow(id: string): void {
+  const index = windows.findIndex((win) => win.id === id)
   if (index !== -1) windows.splice(index, 1)
 }
 

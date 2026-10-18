@@ -17,8 +17,8 @@ export default {
       action: "복구",
       done: "본문을 복구했습니다.",
       loss: {
-        possible: "본문 유실 가능 — 문서 주인에게 다시 입력을 안내하세요.",
-        lost: "본문 유실 — 문서 주인에게 다시 입력을 안내하세요.",
+        possible: "본문 일부를 확인할 수 없습니다.",
+        lost: "본문을 확인할 수 없습니다.",
       },
       guide: {
         fix_storage_root: "기준 위치 설정을 확인하세요. 다른 저장 기준 위치에서 이 문서의 파일이 발견되었습니다.",
@@ -503,7 +503,8 @@ export default {
         history_count: '검수·반려 이력 {n}건',
         // flowgate.v02.0056 F2-2 — a card line's document without a body yet (O3 has_body), the row actions and the
         // history button's hover text with the AI review / rejection split.
-        blank: '비어 있음',
+        // flowgate.v02.0070 T#4 (B4): drawn in the line, told from 문서 없음 (a document that has no body).
+        blank: '본문 비어 있음',
         actions: {
           write: '작성',
           ai_invoke: 'AI 호출',
