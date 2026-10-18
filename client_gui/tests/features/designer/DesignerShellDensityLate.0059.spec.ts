@@ -180,25 +180,28 @@ async function shownDensity(w: VueWrapper<any>) {
   return [radio, menu]
 }
 
-/** 자동 배치 from the Toolbar's 정렬 / 배치 ▾ or from the Edit menu. */
+/** 자동 배치 from the Toolbar's 정렬 / 배치 ▾ or from the Edit menu (flowgate.v02.0068 T#2: 가로 자동정렬). */
 async function autoLayoutCommand(w: VueWrapper<any>, from: 'toolbar' | 'menu') {
   if (from === 'toolbar') {
     await w.get('[data-tool="arrange"]').trigger('click')
-    await w.get('[data-test="designer-arrange-menu"] [data-arrange="edit.auto-layout"]').trigger('click')
+    await w.get('[data-test="designer-arrange-menu"] [data-arrange="edit.auto-layout-horizontal"]').trigger('click')
   } else {
     await w.get('[data-test="designer-menu"][data-menu="edit"]').trigger('click')
-    await w.get('[data-test="designer-menu-pop"][data-menu="edit"] [data-test="designer-menu-item"][data-command="edit.auto-layout"]').trigger('click')
+    await w.get('[data-test="designer-menu-sub"][data-sub="arrange"]').trigger('click')
+    await w.get('[data-test="designer-menu-pop"][data-menu="edit"] [data-test="designer-menu-item"][data-command="edit.auto-layout-horizontal"]').trigger('click')
   }
   await settle()
 }
 
 const waitSaves = () => new Promise((resolve) => setTimeout(resolve, 450))
 
+// flowgate.v02.0068 T#2: the last column is where 가로 자동정렬 puts the cards — Legacy: the root (the chain) at (0, 0)
+// and the two documents in one row below it (0005-L §2.6).
 const CASES = [
   ['toolbar', 'the whole Flow read', 'Docs', 'whole', [DOCS.R, DOCS.D], [[2000, 1500], [2300, 1540]], [[0, 0], [520, 0]]],
   ['menu', 'the whole Flow read', 'Docs', 'whole', [DOCS.R, DOCS.D], [[2000, 1500], [2300, 1540]], [[0, 0], [520, 0]]],
-  ['toolbar', 'the root document read', 'Legacy', 'document', LEGACY, [[2000, 1500], [2300, 1540], [2600, 1580]], [[0, 0], [260, 180], [520, 180]]],
-  ['menu', 'the root document read', 'Legacy', 'document', LEGACY, [[2000, 1500], [2300, 1540], [2600, 1580]], [[0, 0], [260, 180], [520, 180]]],
+  ['toolbar', 'the root document read', 'Legacy', 'document', LEGACY, [[2000, 1500], [2300, 1540], [2600, 1580]], [[0, 0], [0, 200], [260, 200]]],
+  ['menu', 'the root document read', 'Legacy', 'document', LEGACY, [[2000, 1500], [2300, 1540], [2600, 1580]], [[0, 0], [0, 200], [260, 200]]],
 ] as const
 
 describe('Designer Shell — the density never starts, cancels or rescales 자동 배치 (flowgate.v02.0059 0017-T)', () => {

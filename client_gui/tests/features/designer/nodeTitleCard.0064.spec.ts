@@ -656,6 +656,7 @@ describe('the Center column carries the header’s title save to the session', (
       activeSelectedNode: { value: null },
       activeGraphLoad: { value: null },
       activeView: { value: null },
+      activeNodeSizes: { value: null },
       canvasSize: { value: null },
       state: { activeFlowId: 'other.flow' },
     })

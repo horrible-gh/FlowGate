@@ -127,7 +127,10 @@ import {
   type FlowTabsState,
 } from './flowTabs'
 import { arrangeSelection, type ArrangeKind } from './arrange/arrangeNodes'
-import { autoLayoutPlacements, loadLayoutBasis, needsLayoutBasis, type FlowLayoutBasis } from './arrange/autoLayout'
+import { loadLayoutBasis, needsLayoutBasis, type FlowLayoutBasis } from './arrange/autoLayout'
+// 0068 T0011: validate the directional candidate before one move/history/save operation.
+import { checkDirectionalLayout, planDirectionalLayout, type LayoutRefusal } from './arrange/directionalLayout'
+import type { LayoutDirection } from './arrange/layoutInput'
 import type { ConnectionCheck } from './edit/connectionRules'
 import { createDraftController, type DraftEditState } from './edit/draftController'
 import { CLIENT_KEY_PREFIX, editableRevision, type CanvasNodeSpec } from './edit/draftModel'
@@ -159,8 +162,25 @@ export type {
   FlowRunMode,
   FlowRunState,
   FlowTimeMachineOutcome,
+  LayoutDirection,
+  LayoutRefusal,
   NodePlacement,
   NodeTitleSaveOutcome,
+}
+
+/** flowgate.v02.0068 T#2: a card's size as the Canvas measured it. */
+export interface CanvasNodeSize {
+  readonly width: number
+  readonly height: number
+}
+
+/** A rejected directional layout; each notice is shown once by the Shell. */
+export interface LayoutNotice {
+  readonly seq: number
+  readonly kind: 'invalid'
+  readonly reason: LayoutRefusal
+  readonly flowId: string
+  readonly flowName: string | null
 }
 
 /**
@@ -311,11 +331,17 @@ export interface DesignerCenterSession {
   /** flowgate.v02.0059 T#2: 정렬 / 분배 of the Flow's selected Nodes (one undo entry). Whether any Node moved. */
   arrangeNodes(flowId: string, kind: ArrangeKind): boolean
   /**
-   * flowgate.v02.0059 T#2: 자동 배치 — the server's auto placement rules (auto_layout.py) with their spacing
-   * times `scale` (1 = the server's), for every movable Node (one undo entry). Whether any Node moved —
-   * at once, or once the Flow read whole answers when the shown Graph leaves part of the input out.
+   * flowgate.v02.0068 T#2: 가로 / 세로 자동정렬 of every movable shown Node (one undo entry), at spacing scale 1.
+   * Whether any Node moved — at once, or once the Flow read whole answers when the shown Graph leaves part of the
+   * input out. A refused candidate moves nothing and gives a `layoutNotice`.
    */
-  autoLayout(flowId: string, scale?: number): boolean | Promise<boolean>
+  autoLayout(flowId: string, direction: LayoutDirection): boolean | Promise<boolean>
+  /** flowgate.v02.0068 T#2: the sizes the Canvas measured for the Flow's shown cards (by node id). */
+  recordNodeSizes(flowId: string, sizes: Readonly<Record<string, CanvasNodeSize>>): void
+  /** flowgate.v02.0068 T#2: the active Flow's measured card sizes (the MiniMap draws with them). */
+  readonly activeNodeSizes: ComputedRef<Readonly<Record<string, CanvasNodeSize>> | null>
+  /** flowgate.v02.0068 T#2: the latest layout notice (the Shell shows it once), or null. */
+  readonly layoutNotice: ComputedRef<LayoutNotice | null>
   /** flowgate.v02.0059 T#2: every 자동 배치 still reading the whole Flow moves nothing when it answers. */
   cancelAutoLayout(): void
   /** flowgate.v02.0045: the Shell is going away — send pending saves and stop change reports. */
@@ -459,6 +485,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   // moves nothing.
   const layoutRuns = new Map<string, number>()
   let layoutRunSeq = 0
+  // flowgate.v02.0068 T#2: the cards' measured sizes per Flow, as the Canvas reports them (recordNodeSizes).
+  const nodeSizes = shallowRef<Readonly<Record<string, Readonly<Record<string, CanvasNodeSize>>>>>({})
   // flowgate.v02.0059 T#2: a new mark per Flow each time a read puts a Graph on screen (or its loading /
   // error); a 자동 배치 whose input was read for an earlier one moves nothing.
   const shownReads = new Map<string, number>()
@@ -484,6 +512,13 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   const isOpen = (projectId: string, flowId: string) =>
     state.projectId === projectId && findFlowTab(tabsState(), flowId) !== null
+
+  const layoutNoticeRef = shallowRef<LayoutNotice | null>(null)
+  let layoutNoticeSeq = 0
+  function notifyLayout(notice: Omit<LayoutNotice, 'seq'>) {
+    layoutNoticeSeq += 1
+    layoutNoticeRef.value = { ...notice, seq: layoutNoticeSeq }
+  }
 
   // Bound to the project it was created for, so a save still waiting when the project changes
   // goes out (and re-reads) for that project, not the new one.
@@ -922,6 +957,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     layoutQueue.flushAll()
     drafts.closeAll()
     layoutQueue = createQueue(projectId)
+    nodeSizes.value = {}
     pendingReads.clear()
     moveCounts.clear()
     layoutRuns.clear()
@@ -963,6 +999,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     moveCounts.delete(flowId)
     layoutRuns.delete(flowId)
     shownReads.delete(flowId)
+    if (nodeSizes.value[flowId]) nodeSizes.value = Object.fromEntries(Object.entries(nodeSizes.value).filter(([id]) => id !== flowId))
     graphViews.delete(flowId)
     seeds.delete(flowId)
     holdWrites.delete(flowId)
@@ -1085,19 +1122,35 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     return !!graph && !!view && moveNodes(flowId, arrangeSelection(graph.nodes, view.selectedNodeIds, kind))
   }
 
-  function layOut(flowId: string, scale: number, basis?: FlowLayoutBasis): boolean {
+  /**
+   * flowgate.v02.0068 T#2 (0005-L §2.8): the plan, its check and — accepted — one move of every card. `sizes`: the
+   * measured sizes when the command was given. A refusal moves nothing and is told once.
+   */
+  function layOut(flowId: string, direction: LayoutDirection, sizes: Readonly<Record<string, CanvasNodeSize>>, basis?: FlowLayoutBasis): boolean {
     const graph = readyGraph(flowId)
-    return !!graph && moveNodes(flowId, autoLayoutPlacements(graph, scale, basis))
+    if (!graph) return false
+    const plan = planDirectionalLayout(graph, basis, direction, (nodeId) => sizes[nodeId])
+    if (plan.candidate.length === 0) return false
+    const refusal = checkDirectionalLayout(plan)
+    if (refusal !== null) {
+      console.warn(`[designer] auto layout refused: ${refusal}`)
+      notifyLayout({ kind: 'invalid', reason: refusal, flowId, flowName: null })
+      return false
+    }
+    if (plan.remainingPierces > 0) console.info(`[designer] auto layout kept ${plan.remainingPierces} unavoidable edge crossing(s)`)
+    return moveNodes(flowId, plan.candidate)
   }
 
-  function autoLayout(flowId: string, scale = 1): boolean | Promise<boolean> {
+  function autoLayout(flowId: string, direction: LayoutDirection): boolean | Promise<boolean> {
     const graph = readyGraph(flowId)
     const projectId = state.projectId
     if (disposed || !graph || projectId === null) return false
     layoutRunSeq += 1
     const run = layoutRunSeq
     layoutRuns.set(flowId, run)
-    if (!needsLayoutBasis(graph) || !source.loadLayoutGraph) return layOut(flowId, scale)
+    // The sizes of the moment the command is given (0005-L §2.1).
+    const sizes = nodeSizes.value[flowId] ?? {}
+    if (!needsLayoutBasis(graph) || !source.loadLayoutGraph) return layOut(flowId, direction, sizes)
     const view = graphViews.get(flowId)
     const shownAt = shownReads.get(flowId)
     const readDocument = source.readDocumentLink
@@ -1108,13 +1161,18 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     const current = () =>
       !disposed && layoutRuns.get(flowId) === run && shownReads.get(flowId) === shownAt && isOpen(projectId, flowId)
     return loadLayoutBasis(() => source.loadLayoutGraph!(projectId, flowId, view), readDocument).then(
-      (basis) => current() && layOut(flowId, scale, basis),
+      (basis) => current() && layOut(flowId, direction, sizes, basis),
       () => false,
     )
   }
 
   function cancelAutoLayout() {
     layoutRuns.clear()
+  }
+
+  function recordNodeSizes(flowId: string, sizes: Readonly<Record<string, CanvasNodeSize>>) {
+    if (!state.views[flowId]) return
+    nodeSizes.value = { ...nodeSizes.value, [flowId]: { ...sizes } }
   }
 
   function dispose() {
@@ -1228,6 +1286,12 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     arrangeNodes,
     autoLayout,
     cancelAutoLayout,
+    recordNodeSizes,
+    activeNodeSizes: computed(() => {
+      const id = exposed.activeFlowId
+      return id === null ? null : nodeSizes.value[id] ?? null
+    }),
+    layoutNotice: computed(() => layoutNoticeRef.value),
     dispose,
     activeEdit: computed(() => {
       const id = exposed.activeFlowId

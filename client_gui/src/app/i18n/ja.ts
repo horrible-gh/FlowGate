@@ -601,7 +601,8 @@ export default {
         paste: '貼り付け',
         delete: '削除',
         arrange: '整列 / 配置',
-        auto_layout: '自動配置',
+        auto_layout_horizontal: '横方向に自動整列',
+        auto_layout_vertical: '縦方向に自動整列',
         select_all: 'すべて選択',
         run_next: '次のステップを実行',
         run_all: 'すべて実行',
@@ -697,6 +698,17 @@ export default {
         graph_time_machine_in_progress: 'Graph Time Machine の操作が完了していません。',
         graph_engine_owned: 'このフローは Graph エンジンの担当です。',
         other: '実行できませんでした。',
+      },
+      layout_notices: {
+        invalid: '自動整列を適用しませんでした。カードは移動していません。',
+        invalid_reasons: {
+          missing: '配置するカードが抜けています。',
+          duplicate: '同じカードが二度配置されました。',
+          invalid_coordinate: '座標が無効です。',
+          overlap: 'カードが重なります。',
+          direction: '接続線が整列方向の面でつながりません。',
+          pierce: '接続線が別のカードを通過します。',
+        },
       },
     },
     // flowgate.v02.0043 — File menu dialogs (グループを開く… / フローを開く… / 新規グループ / 新規フロー).

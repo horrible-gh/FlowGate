@@ -96,6 +96,7 @@ import {
   viewportAt,
   viewportRect,
   type MiniMapFit,
+  type MiniMapNodeSizes,
   type WorldRect,
 } from './minimapGeometry'
 
@@ -106,8 +107,10 @@ const props = withDefaults(
     viewport: CanvasViewport | null
     canvasSize: CanvasSize | null
     selectedNodeId?: string | null
+    /** flowgate.v02.0068 T#2: the cards' measured sizes (the Canvas's), by node id; null = the card size. */
+    nodeSizes?: MiniMapNodeSizes | null
   }>(),
-  { selectedNodeId: null },
+  { selectedNodeId: null, nodeSizes: null },
 )
 
 const emit = defineEmits<{
@@ -154,11 +157,11 @@ watch(svgEl, (el) => {
 }, { flush: 'post', immediate: true })
 onBeforeUnmount(() => resizeObserver?.disconnect())
 
-const nodeShapes = computed(() => (props.graph ? miniMapNodes(props.graph) : []))
+const nodeShapes = computed(() => (props.graph ? miniMapNodes(props.graph, props.nodeSizes) : []))
 // The same execution Edges the Canvas draws (reference / dangling / self edges are left out there).
 const edgeLines = computed(() => {
   if (!props.graph) return []
-  return miniMapEdges(props.graph, new Set(toVueFlowEdges(props.graph).map((edge) => edge.id)))
+  return miniMapEdges(props.graph, new Set(toVueFlowEdges(props.graph).map((edge) => edge.id)), props.nodeSizes)
 })
 const currentViewport = computed(() => props.viewport ?? DEFAULT_CANVAS_VIEWPORT)
 const view = computed(() => (nodeShapes.value.length ? viewportRect(currentViewport.value, props.canvasSize) : null))

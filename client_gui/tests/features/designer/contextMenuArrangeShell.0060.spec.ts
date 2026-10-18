@@ -175,8 +175,12 @@ async function editArrange(w: VueWrapper<any>) {
   await w.get('[data-test="designer-menu"][data-menu="edit"]').trigger('click')
   await w.get('[data-test="designer-menu-sub"][data-sub="arrange"]').trigger('click')
   const pop = w.get('[data-test="designer-menu-subpop"][data-sub="arrange"]')
-  const rows = pop.findAll('[data-command]').map((el) => [el.attributes('data-command'), el.text().trim(), isDisabled(el)])
-  const separators = pop.findAll('[role="separator"]').length
+  // 0068 T0011 adds an automatic layout group to Edit only; compare the unchanged manual groups.
+  const items = pop.findAll('[data-command]')
+  const automatic = items.filter((el) => el.attributes('data-command')!.startsWith('edit.auto-layout-'))
+  expect(automatic.map((el) => el.attributes('data-command'))).toEqual(['edit.auto-layout-horizontal', 'edit.auto-layout-vertical'])
+  const rows = items.filter((el) => !automatic.includes(el)).map((el) => [el.attributes('data-command'), el.text().trim(), isDisabled(el)])
+  const separators = pop.findAll('[role="separator"]').length - 1
   await w.get('[data-test="designer-menu"][data-menu="edit"]').trigger('click')
   return { rows, separators }
 }

@@ -611,7 +611,8 @@ export default {
         paste: '붙여넣기',
         delete: '삭제',
         arrange: '정렬 / 배치',
-        auto_layout: '자동 배치',
+        auto_layout_horizontal: '가로 자동정렬',
+        auto_layout_vertical: '세로 자동정렬',
         select_all: '전체 선택',
         run_next: '다음 단계 실행',
         run_all: '전체 실행',
@@ -707,6 +708,17 @@ export default {
         graph_time_machine_in_progress: 'Graph Time Machine 작업이 끝나지 않았습니다.',
         graph_engine_owned: '이 흐름은 Graph 엔진이 담당합니다.',
         other: '실행하지 못했습니다.',
+      },
+      layout_notices: {
+        invalid: '자동정렬을 적용하지 않았습니다. 카드는 움직이지 않았습니다.',
+        invalid_reasons: {
+          missing: '배치할 카드가 빠졌습니다.',
+          duplicate: '같은 카드가 두 번 배치되었습니다.',
+          invalid_coordinate: '좌표가 유효하지 않습니다.',
+          overlap: '카드가 서로 겹칩니다.',
+          direction: '연결선이 정렬 방향의 면으로 이어지지 않습니다.',
+          pierce: '연결선이 다른 카드를 지나갑니다.',
+        },
       },
     },
     // flowgate.v02.0043 — File menu dialogs (Group 열기… / Flow 열기… / 새 Group / 새 Flow).

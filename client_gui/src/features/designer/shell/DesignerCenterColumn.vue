@@ -93,6 +93,8 @@ const minimap = computed(() => {
     graph: load?.status === 'ready' ? (load.graph as FlowGraph) : null,
     viewport: center.activeView.value?.viewport ?? null,
     canvasSize: center.canvasSize.value,
+    // flowgate.v02.0068 T#2: the lines join the sides the Canvas joins, at the cards' measured sizes.
+    nodeSizes: center.activeNodeSizes.value,
   }
 })
 

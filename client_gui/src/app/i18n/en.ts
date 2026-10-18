@@ -601,7 +601,8 @@ export default {
         paste: 'Paste',
         delete: 'Delete',
         arrange: 'Align / Arrange',
-        auto_layout: 'Auto Layout',
+        auto_layout_horizontal: 'Auto Layout (Horizontal)',
+        auto_layout_vertical: 'Auto Layout (Vertical)',
         select_all: 'Select All',
         run_next: 'Run Next Step',
         run_all: 'Run All',
@@ -697,6 +698,17 @@ export default {
         graph_time_machine_in_progress: 'A Graph Time Machine operation is unfinished.',
         graph_engine_owned: 'This flow is owned by the Graph engine.',
         other: 'It could not run.',
+      },
+      layout_notices: {
+        invalid: 'Auto layout was not applied. No card moved.',
+        invalid_reasons: {
+          missing: 'A card to place was missing.',
+          duplicate: 'A card was placed twice.',
+          invalid_coordinate: 'A position was not valid.',
+          overlap: 'Cards would overlap.',
+          direction: 'A line would not join the sides of the layout direction.',
+          pierce: 'A line would cross another card.',
+        },
       },
     },
     // flowgate.v02.0043 — File menu dialogs (Open Group… / Open Flow… / New Group / New Flow).

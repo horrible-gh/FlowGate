@@ -2,8 +2,13 @@
 // back to the Canvas. Everything is in Canvas World coordinates (FlowGraph x / y); the Canvas
 // Viewport (x, y = World translation in screen pixels, zoom) and the Canvas size come from the
 // Center session — the MiniMap keeps no Graph or Viewport of its own.
+//
+// flowgate.v02.0068 T#2 (0004-D §0.1, 0005-L §2.9): a line joins the same sides the Canvas joins — the Canvas's
+// edgeAnchors over the two cards (their measured size when the Canvas reported one, else the card size) — so a
+// Flow laid out top to bottom shows its lines from bottom to top here too. Same positions and sizes: same sides.
 import type { CanvasSize, CanvasViewport } from '../center/canvasView'
-import type { FlowGraph } from '../center/graph/flowGraph'
+import { edgeAnchors } from '../center/canvas/edgeGeometry'
+import type { FlowGraph, FlowGraphNode } from '../center/graph/flowGraph'
 
 /** Size of one Node card on the Canvas (FlowNodeCard: 176 x 92). */
 export const MINIMAP_NODE_WIDTH = 176
@@ -39,37 +44,39 @@ export interface MiniMapFit {
   readonly offsetY: number
 }
 
-export function miniMapNodes(graph: FlowGraph): MiniMapNodeShape[] {
+/** flowgate.v02.0068 T#2: a card's size as the Canvas measured it, by node id (absent: not measured). */
+export type MiniMapNodeSizes = Readonly<Record<string, { readonly width: number; readonly height: number }>>
+
+/** A Node as a World rectangle: its position and measured size, else the card size. */
+function nodeBox(node: FlowGraphNode, sizes?: MiniMapNodeSizes | null): WorldRect {
+  const size = sizes?.[node.id]
+  const measured = !!size && size.width > 0 && size.height > 0
+  return { x: node.x, y: node.y, width: measured ? size.width : MINIMAP_NODE_WIDTH, height: measured ? size.height : MINIMAP_NODE_HEIGHT }
+}
+
+export function miniMapNodes(graph: FlowGraph, sizes?: MiniMapNodeSizes | null): MiniMapNodeShape[] {
   return graph.nodes.map((node) => ({
     id: node.id,
     kind: node.kind,
     docType: node.docType ?? null,
-    x: node.x,
-    y: node.y,
-    width: MINIMAP_NODE_WIDTH,
-    height: MINIMAP_NODE_HEIGHT,
+    ...nodeBox(node, sizes),
   }))
 }
 
 /**
  * The execution Edges the Canvas draws (the same ids its vueFlowMapping keeps), as lines between
  * the facing sides of their two Nodes. `edgeIds`: the Edge ids the Canvas draws.
+ * flowgate.v02.0068 T#2: the sides and points are the Canvas's (edgeAnchors), up / down as well as left / right.
  */
-export function miniMapEdges(graph: FlowGraph, edgeIds: ReadonlySet<string>): MiniMapEdgeLine[] {
+export function miniMapEdges(graph: FlowGraph, edgeIds: ReadonlySet<string>, sizes?: MiniMapNodeSizes | null): MiniMapEdgeLine[] {
   const byId = new Map(graph.nodes.map((node) => [node.id, node]))
   const lines: MiniMapEdgeLine[] = []
   for (const edge of graph.edges) {
     const source = byId.get(edge.source)
     const target = byId.get(edge.target)
     if (!edgeIds.has(edge.id) || !source || !target) continue
-    const forward = target.x >= source.x
-    lines.push({
-      id: edge.id,
-      x1: source.x + (forward ? MINIMAP_NODE_WIDTH : 0),
-      y1: source.y + MINIMAP_NODE_HEIGHT / 2,
-      x2: target.x + (forward ? 0 : MINIMAP_NODE_WIDTH),
-      y2: target.y + MINIMAP_NODE_HEIGHT / 2,
-    })
+    const a = edgeAnchors(nodeBox(source, sizes), nodeBox(target, sizes))
+    lines.push({ id: edge.id, x1: a.sourceX, y1: a.sourceY, x2: a.targetX, y2: a.targetY })
   }
   return lines
 }

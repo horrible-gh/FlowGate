@@ -65,6 +65,12 @@ describe('features/designer/center structure (flowgate.v02.0026)', () => {
         'edit/draftActions.ts',
         'arrange/arrangeNodes.ts',
         'arrange/autoLayout.ts',
+        // flowgate.v02.0068 T#2: 가로 / 세로 자동정렬 (0005-L §2.1 ~ §2.8) in its own files next to the server port.
+        'arrange/directionalLayout.ts',
+        'arrange/edgeCurve.ts',
+        'arrange/layoutBands.ts',
+        'arrange/layoutInput.ts',
+        'arrange/layoutLanes.ts',
       ].sort(),
     )
   })

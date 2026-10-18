@@ -462,44 +462,54 @@ describe('자동 배치 on the real Canvas read path gives the server coordinate
     expect(SERVER_CANVAS['p.ui.0013'].collapsed.collapsed.hidden_counts).toEqual({ conversation: 1 })
   })
 
+  // flowgate.v02.0068 T#2 (0004-D §4): the explicit 자동정렬 is no longer the server's own placement — the read and
+  // the server's input (the whole Flow, the supersede chain) stay the same; the last column is where 가로 자동정렬
+  // puts the shown cards (0005-L §2.6: the chain first, the documents in one row below it, a hidden document keeping
+  // its slot and its real place as an obstacle).
   it.each([
-    ['p.ui.0011', 'a v0.1 root with no slot is the chain: (0, 0), its documents after the hidden conversation', 1, []],
-    ['p.ui.0012', 'a lone slot (root cancelled) is the chain: (0, 0)', 0, []],
-    ['p.ui.0013', 'documents R, CH, D with CH hidden: R (0, 0), D (520, 0)', 1, []],
+    ['p.ui.0011', 'a v0.1 root with no slot is the chain: (0, 0), its documents below, D past the hidden conversation', 1, [],
+      { 'doc:p.ui.0011.0001-R': [0, 0], 'doc:p.ui.0011.0002-NR': [0, 200], 'doc:p.ui.0011.0004-D': [780, 200] }],
+    ['p.ui.0012', 'a lone slot (root cancelled) is the chain: (0, 0)', 0, [],
+      { slot_21: [0, 0], 'doc:p.ui.0012.0002-D': [0, 200] }],
+    ['p.ui.0013', 'documents R, CH, D with CH hidden: R (0, 0), D (520, 0)', 1, [],
+      { 'doc:p.ui.0013.0001-R': [0, 0], 'doc:p.ui.0013.0003-D': [520, 0] }],
     ['p.ui.0014', 'a root replaced twice: found through the supersede chain, (0, 0)', 1,
-      ['p.ui.0014.0001-R', 'p.ui.0014.0002-R', 'p.ui.0014.0005-R']],
-    ['p.ui.0015', 'a cancelled root: the first document that replaced another stays a document', 1, ['p.ui.0015.0001-R']],
-    ['p.ui.0016', 'root + two slots, two conversations hidden between the documents', 1, []],
-  ] as const)('%s: %s', async (flowId, _title, whole, documents) => {
+      ['p.ui.0014.0001-R', 'p.ui.0014.0002-R', 'p.ui.0014.0005-R'],
+      { 'doc:p.ui.0014.0005-R': [0, 0], 'doc:p.ui.0014.0003-D': [0, 200], 'doc:p.ui.0014.0004-D': [260, 200] }],
+    ['p.ui.0015', 'a cancelled root: the first document that replaced another stays a document', 1, ['p.ui.0015.0001-R'],
+      { 'doc:p.ui.0015.0003-D': [0, 0], 'doc:p.ui.0015.0004-NR': [260, 0] }],
+    ['p.ui.0016', 'root + two slots, two conversations hidden between the documents', 1, [],
+      { 'doc:p.ui.0016.0001-R': [0, 0], slot_61: [260, 0], slot_62: [520, 0], 'doc:p.ui.0016.0005-TR': [780, 200], 'doc:p.ui.0016.0006-NR': [1040, 200] }],
+  ] as const)('%s: %s', async (flowId, _title, whole, documents, laidOut) => {
     const { center, positions, scatter } = await openSession(flowId)
     const server = serverPositions(flowId)
     expect(positions()).toEqual(server)
     expect(reads.filter((read) => /\/canvas$/.test(read.url)).map((read) => read.collapse)).toEqual(['conversation'])
     expect(scatter()).toBe(true)
     expect(positions()).not.toEqual(server)
-    expect(await center.autoLayout(flowId)).toBe(true)
-    expect(positions()).toEqual(server)
+    expect(await center.autoLayout(flowId, 'horizontal')).toBe(true)
+    expect(positions()).toEqual(laidOut)
     expect(wholeReads()).toBe(whole)
     expect(documentReads()).toEqual(documents)
-    // One 실행 취소 takes the 자동 배치 back.
+    // One 실행 취소 takes the 자동정렬 back.
     expect(center.undoEdit(flowId)).toBe(true)
-    expect(positions()).not.toEqual(server)
+    expect(positions()).not.toEqual(laidOut)
   })
 
-  it('the reviewer case in numbers: R (0, 0) and D (520, 0) beside the hidden CH, at scale 1 and at 1.5', async () => {
+  it('the reviewer case in numbers: R (0, 0) and D (520, 0) beside the hidden CH, horizontal; R (0, 0) and D (0, 352) vertical', async () => {
     const { center, positions, scatter } = await openSession('p.ui.0013')
     scatter()
-    await center.autoLayout('p.ui.0013')
+    await center.autoLayout('p.ui.0013', 'horizontal')
     expect(positions()).toEqual({ 'doc:p.ui.0013.0001-R': [0, 0], 'doc:p.ui.0013.0003-D': [520, 0] })
-    await center.autoLayout('p.ui.0013', 1.5)
-    expect(positions()).toEqual({ 'doc:p.ui.0013.0001-R': [0, 0], 'doc:p.ui.0013.0003-D': [780, 0] })
+    await center.autoLayout('p.ui.0013', 'vertical')
+    expect(positions()).toEqual({ 'doc:p.ui.0013.0001-R': [0, 0], 'doc:p.ui.0013.0003-D': [0, 352] })
   })
 
   it('a shown Graph that leaves nothing out is laid out at once, with no further read', async () => {
     const { center, positions, scatter } = await openSession('p.ui.0012')
     scatter()
-    expect(center.autoLayout('p.ui.0012')).toBe(true)
-    expect(positions()).toEqual({ slot_21: [0, 0], 'doc:p.ui.0012.0002-D': [260, 180] })
+    expect(center.autoLayout('p.ui.0012', 'horizontal')).toBe(true)
+    expect(positions()).toEqual({ slot_21: [0, 0], 'doc:p.ui.0012.0002-D': [0, 200] })
     expect(wholeReads()).toBe(0)
   })
 
@@ -507,15 +517,15 @@ describe('자동 배치 on the real Canvas read path gives the server coordinate
     const { center, positions, scatter } = await openSession('p.ui.0013')
     scatter()
     const before = positions()
-    const wide = center.autoLayout('p.ui.0013', 1.5)
-    const normal = center.autoLayout('p.ui.0013', 1)
+    const wide = center.autoLayout('p.ui.0013', 'vertical')
+    const normal = center.autoLayout('p.ui.0013', 'horizontal')
     expect(await wide).toBe(false)
     expect(await normal).toBe(true)
     expect(positions()).toEqual({ 'doc:p.ui.0013.0001-R': [0, 0], 'doc:p.ui.0013.0003-D': [520, 0] })
     center.undoEdit('p.ui.0013')
     expect(positions()).toEqual(before)
     failWholeRead = true
-    expect(await center.autoLayout('p.ui.0013')).toBe(false)
+    expect(await center.autoLayout('p.ui.0013', 'horizontal')).toBe(false)
     expect(positions()).toEqual(before)
   })
 })

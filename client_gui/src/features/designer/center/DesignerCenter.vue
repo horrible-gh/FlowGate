@@ -66,6 +66,7 @@
           @viewport-change="center.recordViewport(activeTab.flowId, $event)"
           @viewport-commit="center.commitViewport(activeTab.flowId, $event)"
           @canvas-resize="center.recordCanvasSize($event)"
+          @node-sizes="center.recordNodeSizes(activeTab.flowId, $event)"
           @nodes-move="center.moveNodes(activeTab.flowId, $event)"
           :editable="load.graph.draft?.editable === true && marks.lock === null"
           :marks="marks"

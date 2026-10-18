@@ -376,8 +376,10 @@ describe('정렬 / 균등 분배 of the selected cards', () => {
     expect(enabled(2)).toEqual(commands.slice(0, 6))
     expect(enabled(3)).toEqual(commands)
     expect(isMenuCommandEnabled('edit.align-left', null, { project: true, group: false, flow: false, selectedCount: 5 })).toBe(false)
-    // 자동 배치 needs the open Flow only.
-    expect(isMenuCommandEnabled('edit.auto-layout', null, { ...ALL_MENU_TARGETS, selectedCount: 0 })).toBe(true)
-    expect(isMenuCommandEnabled('edit.auto-layout', null, { project: true, group: false, flow: false })).toBe(false)
+    // 자동 배치 needs the open Flow only. flowgate.v02.0068 T#2: it is 가로 / 세로 자동정렬 now.
+    for (const command of ['edit.auto-layout-horizontal', 'edit.auto-layout-vertical'] as const) {
+      expect(isMenuCommandEnabled(command, null, { ...ALL_MENU_TARGETS, selectedCount: 0 })).toBe(true)
+      expect(isMenuCommandEnabled(command, null, { project: true, group: false, flow: false })).toBe(false)
+    }
   })
 })

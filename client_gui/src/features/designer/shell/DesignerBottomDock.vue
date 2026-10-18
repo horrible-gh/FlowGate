@@ -29,6 +29,7 @@
         :graph="minimap.graph"
         :viewport="minimap.viewport"
         :canvas-size="minimap.canvasSize"
+        :node-sizes="minimap.nodeSizes ?? null"
         :selected-node-id="selectedNode?.id ?? null"
         @viewport-change="emit('minimap-viewport', $event, false)"
         @viewport-commit="emit('minimap-viewport', $event, true)"
@@ -50,6 +51,8 @@ interface BottomDockMiniMap {
   graph: FlowGraph | null
   viewport: CanvasViewport | null
   canvasSize: CanvasSize | null
+  /** flowgate.v02.0068 T#2: the cards' measured sizes (absent / null: the card size). */
+  nodeSizes?: Readonly<Record<string, { readonly width: number; readonly height: number }>> | null
 }
 
 withDefaults(

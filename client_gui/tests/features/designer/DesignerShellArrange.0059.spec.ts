@@ -187,7 +187,9 @@ async function editMenu(w: VueWrapper<any>) {
 }
 
 async function editCommand(w: VueWrapper<any>, command: string) {
-  await (await editMenu(w)).get(`[data-test="designer-menu-item"][data-command="${command}"]`).trigger('click')
+  const menu = await editMenu(w)
+  if (command.startsWith('edit.auto-layout-')) await menu.get('[data-sub="arrange"]').trigger('click')
+  await menu.get(`[data-test="designer-menu-item"][data-command="${command}"]`).trigger('click')
   await settle()
 }
 
@@ -231,8 +233,8 @@ describe('Designer Shell — 정렬 / 배치, 배치 밀도 and their 실행 취
     expect(cardsAt(w)).toEqual([[0, 0], [300, 120], [90, 400]])
     let menu = await openArrange(w)
     const items = () => menu.findAll('[data-test="designer-arrange-item"]')
-    // No card selected: only 자동 배치 can be chosen.
-    expect(items().filter((el) => !disabled(el)).map((el) => el.attributes('data-arrange'))).toEqual(['edit.auto-layout'])
+    // No card selected: only 자동 배치 (flowgate.v02.0068 T#2: 가로 / 세로 자동정렬) can be chosen.
+    expect(items().filter((el) => !disabled(el)).map((el) => el.attributes('data-arrange'))).toEqual(['edit.auto-layout-horizontal', 'edit.auto-layout-vertical'])
     await w.get('[data-tool="arrange"]').trigger('click')
     expect(w.find('[data-test="designer-arrange-menu"]').exists()).toBe(false)
 
@@ -264,7 +266,7 @@ describe('Designer Shell — 정렬 / 배치, 배치 밀도 and their 실행 취
       await (await editMenu(w)).get('[data-test="designer-menu-sub"][data-sub="arrange"]').trigger('click')
       return w.get('[data-test="designer-menu-subpop"][data-sub="arrange"]')
     }
-    expect((await sub()).findAll('[data-command]').every(disabled)).toBe(true)
+    expect((await sub()).findAll('[data-command]').filter((el) => !el.attributes('data-command')!.startsWith('edit.auto-layout-')).every(disabled)).toBe(true)
     await w.get('[data-test="designer-menu"][data-menu="edit"]').trigger('click')
     await editCommand(w, 'edit.select-all')
     await (await sub()).get('[data-command="edit.distribute-horizontal"]').trigger('click')
@@ -304,17 +306,22 @@ describe('Designer Shell — 정렬 / 배치, 배치 밀도 and their 실행 취
     expect(storedPositions()).toEqual({})
   })
 
+  // flowgate.v02.0068 T#2: 가로 / 세로 자동정렬. The three documents carry no document number, so their order is
+  // their title (D, N, R card); one row of free documents (horizontal) or one column (vertical).
   it('자동 배치 (Toolbar ▾ and Edit menu) lays the cards out at the server spacing whatever the density', async () => {
     const w = await mountShell()
     await openFlow(w, 'Canvas')
-    for (const [level, from] of [['wide', 'menu'], ['free', 'toolbar'], ['normal', 'menu'], ['narrow', 'toolbar']] as const) {
+    const LAID = { horizontal: [[520, 0], [260, 0], [0, 0]], vertical: [[0, 352], [0, 176], [0, 0]] }
+    for (const [level, from, dir] of [
+      ['wide', 'menu', 'horizontal'], ['free', 'toolbar', 'vertical'], ['normal', 'menu', 'vertical'], ['narrow', 'toolbar', 'horizontal'],
+    ] as const) {
       await chooseDensity(w, level, from === 'menu' ? 'toolbar' : 'menu')
-      if (from === 'menu') await editCommand(w, 'edit.auto-layout')
+      if (from === 'menu') await editCommand(w, `edit.auto-layout-${dir}`)
       else {
-        await (await openArrange(w)).get('[data-arrange="edit.auto-layout"]').trigger('click')
+        await (await openArrange(w)).get(`[data-arrange="edit.auto-layout-${dir}"]`).trigger('click')
         await settle()
       }
-      expect(cardsAt(w)).toEqual([[0, 0], [260, 0], [520, 0]])
+      expect(cardsAt(w)).toEqual(LAID[dir])
       expect(await shownDensity(w)).toEqual([level, level])
       await tool(w, 'edit.undo').trigger('click')
       await settle()
