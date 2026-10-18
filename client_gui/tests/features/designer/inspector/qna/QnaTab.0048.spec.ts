@@ -10,15 +10,20 @@
  * flowgate.v02.0052 묶음 A — the v7 shape: one line per question with the last answer in its small
  * line, the inline answer line (field + 보내기) under every question without an answer, the folded
  * 완료 group (open when nothing is pending), and the ↗ modeless window with the full form.
+ * flowgate.v02.0070 T#5 (B5) — the list only shows and opens (question, state, who asked, 열기): every answer is
+ * written in the ↗ window, under the document id, who asked and when, and the full question. The targets carry the
+ * card line of their document with a body (`bodyLine`); a body that is unreadable, blank, not sent or without a card
+ * line, and a superseded document, offer no answer — the window shows one line (or 읽기 전용) and stays readable.
  */
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { effectScope } from 'vue'
 import type { FlowGraphSelection } from '@/features/designer/center/graph/flowGraph'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
 import QnaTab from '@/features/designer/inspector/features/qna/QnaTab.vue'
-import { QNA_EVENTS, QNA_GUARD_EVENTS } from '@/features/designer/inspector/features/qna/useQna'
-import type { InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
+import { QNA_EVENTS, QNA_GUARD_EVENTS, useQna } from '@/features/designer/inspector/features/qna/useQna'
+import type { InspectorCardDocument, InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
 import { INSPECTOR_REFRESH_COALESCE_MS } from '@/features/designer/inspector/useInspectorResource'
 import { SELECTIONS, V01_GRAPH, V01_TASK_NODE, prepareInspectorI18n, selectionOf, targetOf } from '../support/inspectorSupport'
 import { installProjectEventStream, removeProjectEventStream, type ProjectEventStream } from '../support/projectEventStream'
@@ -26,6 +31,7 @@ import { installProjectEventStream, removeProjectEventStream, type ProjectEventS
 // The calls are mocked; normalization and error reading stay real.
 const qaReadCall = vi.fn()
 const qaAnswerCall = vi.fn()
+const qaAiCall = vi.fn()
 const activityRead = vi.fn()
 const documentRead = vi.fn()
 const detailRead = vi.fn()
@@ -36,6 +42,7 @@ vi.mock('@/features/document', async (importOriginal) => {
     ...actual,
     qaRead: (...args: unknown[]) => qaReadCall(...args),
     qaAnswer: (...args: unknown[]) => qaAnswerCall(...args),
+    qaRequestAiAnswer: (...args: unknown[]) => qaAiCall(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
     reviewDocumentRead: (...args: unknown[]) => documentRead(...args),
     // The documents tab and the header actions share the Frame in the registry cases.
@@ -64,7 +71,11 @@ interface ServerItem {
   options: { id: string; label: string }[]
   asker_provider: Record<string, unknown> | null
   answers: Record<string, unknown>[]
+  created_at?: string
 }
+
+/** flowgate.v02.0070 T#5: when question 10 was registered. */
+const ASKED_AT = '2026-10-18T09:00:00+09:00'
 
 const threads = new Map<string, ServerItem[]>()
 let running = false
@@ -109,6 +120,7 @@ function seed() {
       ],
       asker_provider: { ai_run_id: 'aiv_1', ai_provider_id: 'p1', ai_provider_name: 'Claude Opus 5.5' },
       answers: [],
+      created_at: ASKED_AT,
     },
     {
       id: 11,
@@ -165,7 +177,7 @@ beforeEach(() => {
   running = false
   disposed = false
   answerSeq = 100
-  for (const mock of [qaReadCall, qaAnswerCall, activityRead, documentRead, detailRead, relationsRead]) mock.mockReset()
+  for (const mock of [qaReadCall, qaAnswerCall, qaAiCall, activityRead, documentRead, detailRead, relationsRead]) mock.mockReset()
   seed()
   serve()
 })
@@ -183,19 +195,57 @@ async function mountTab(target: InspectorTarget) {
   return wrapper
 }
 
-const v01Target = (fields: Partial<InspectorTarget> = {}): InspectorTarget => ({ ...targetOf(SELECTIONS.v01), ...fields })
+/** flowgate.v02.0070 T#5: the card line of a document whose body is there (answering needs one); `fields` change it. */
+const bodyLine = (docId: string, fields: Partial<InspectorCardDocument> = {}): InspectorCardDocument => ({
+  slot: 'report',
+  docType: 'TR',
+  author: 'run',
+  docId,
+  title: docId,
+  status: 'open',
+  docReviewStatus: 'approved',
+  hasBody: true,
+  bodyState: null,
+  ...fields,
+})
+
+/** The v0.1 target with its document's card line (a body to check), unless `fields` give the lines. */
+const v01Target = (fields: Partial<InspectorTarget> = {}): InspectorTarget => {
+  const docId = fields.docId === undefined ? V01_DOC : fields.docId
+  return { ...targetOf(SELECTIONS.v01), cardDocuments: docId ? [bodyLine(docId)] : [], ...fields }
+}
+const withBody = (target: InspectorTarget): InspectorTarget => ({ ...target, cardDocuments: target.docId ? [bodyLine(target.docId)] : [] })
 
 const itemEl = (w: VueWrapper<any>, id: number) => w.find(`[data-test="qna-item"][data-item="${id}"]`)
 const order = (w: VueWrapper<any>) => w.findAll('[data-test="qna-item"]').map((el) => [Number(el.attributes('data-item')), el.attributes('data-state')])
-const submitOf = (w: VueWrapper<any>, id: number) => itemEl(w, id).find('[data-test="qna-answer-submit"]')
-const isDisabled = (el: ReturnType<VueWrapper<any>['find']>) => el.attributes('disabled') !== undefined
+const isDisabled = (el: { attributes(name: string): string | undefined }) => el.attributes('disabled') !== undefined
+
+// flowgate.v02.0070 T#5: a question is answered in its ↗ window (teleported to the body).
+const windowOf = (id: number) => document.body.querySelector<HTMLElement>(`[data-test="qna-window"][data-item="${id}"]`)
+const windowText = (id: number, test: string) => windowOf(id)?.querySelector(`[data-test="${test}"]`)?.textContent ?? null
+const inWindow = (id: number, selector: string) => new DOMWrapper(windowOf(id)!).find(selector)
+const submitOf = (id: number) => inWindow(id, '[data-test="qna-window-submit"]')
+const fieldOf = (id: number) => windowOf(id)!.querySelector<HTMLTextAreaElement>('textarea[data-test="qna-window-body-input"]')!
+
+/** Opens the question's window with its 열기 button (a window already open stays). */
+async function open(w: VueWrapper<any>, id: number): Promise<HTMLElement> {
+  if (!windowOf(id)) {
+    await itemEl(w, id).find('[data-test="qna-open"]').trigger('click')
+    await flushPromises()
+  }
+  const win = windowOf(id)
+  if (!win) throw new Error(`window ${id} not opened`)
+  return win
+}
 
 async function write(w: VueWrapper<any>, id: number, text: string) {
-  await itemEl(w, id).find('textarea[data-test="qna-answer-body-input"]').setValue(text)
+  await open(w, id)
+  await inWindow(id, 'textarea[data-test="qna-window-body-input"]').setValue(text)
 }
 
 async function send(w: VueWrapper<any>, id: number) {
-  await submitOf(w, id).trigger('click')
+  await open(w, id)
+  await submitOf(id).trigger('click')
   await flushPromises()
 }
 
@@ -235,36 +285,40 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
     expect(itemEl(w, 11).attributes('style') ?? '').not.toContain('display: none')
   })
 
+  // flowgate.v02.0070 T#5: who answered is read in the ↗ window; the list line keeps who asked only.
   it('shows who asked and who answered — never a guessed provider', async () => {
     const w = await mountTab(v01Target())
+    expect(itemEl(w, 11).find('[data-test="qna-answer"]').exists()).toBe(false)
+    await open(w, 11)
+    expect(windowText(11, 'qna-window-answer-side')).toBe('답: 사람')
     expect(itemEl(w, 10).find('[data-test="qna-item-asker"]').text()).toBe('AI · Claude Opus 5.5')
     expect(itemEl(w, 13).find('[data-test="qna-item-asker"]').text()).toBe('AI(실행 정보 없음)')
     expect(itemEl(w, 12).find('[data-test="qna-item-asker"]').text()).toBe('사용자')
-    expect(itemEl(w, 11).find('[data-test="qna-answer-side"]').text()).toBe('답: 사용자')
-    expect(itemEl(w, 11).find('[data-test="qna-answer-body"]').text()).toBe('ok')
-    expect(itemEl(w, 10).find('[data-test="qna-answer"]').exists()).toBe(false)
+    expect(windowOf(11)!.querySelector('[data-test="qna-window-answer"] .inspector-qna-text')?.textContent).toBe('ok')
   })
 
-  it('an answered question has no answer form; an unanswered one (AI or person asked) has one', async () => {
+  // flowgate.v02.0070 T#5 (B5): the list is for looking over and opening; the form is the ↗ window's.
+  it('the list has no options, answer field, send or AI line; an unanswered question’s window has the form, an answered one’s none', async () => {
     const w = await mountTab(v01Target())
-    expect(itemEl(w, 11).find('[data-test="qna-answer-form"]').exists()).toBe(false)
-    for (const id of [10, 12, 13]) expect(itemEl(w, id).find('[data-test="qna-answer-form"]').exists(), String(id)).toBe(true)
-    expect(itemEl(w, 10).findAll('[data-test="qna-option"]').map((el) => el.text())).toEqual(['코드 품질', '성능'])
-    expect(itemEl(w, 13).findAll('[data-test="qna-option"]')).toHaveLength(0)
+    for (const id of [10, 11, 12, 13]) {
+      for (const test of ['qna-answer-form', 'qna-option', 'qna-answer-body-input', 'qna-answer-submit', 'qna-ai', 'qna-ai-request', 'qna-answer']) {
+        expect(itemEl(w, id).find(`[data-test="${test}"]`).exists(), `${id} ${test}`).toBe(false)
+      }
+      expect(itemEl(w, id).find('[data-test="qna-open"]').exists(), String(id)).toBe(true)
+    }
+    for (const id of [10, 12, 13]) {
+      await open(w, id)
+      expect(windowOf(id)!.querySelector('[data-test="qna-window-form"]'), String(id)).not.toBeNull()
+    }
+    expect([...windowOf(10)!.querySelectorAll('[data-test="qna-window-option"]')].map((el) => el.textContent)).toEqual(['코드 품질', '성능'])
+    expect(windowOf(13)!.querySelectorAll('[data-test="qna-window-option"]')).toHaveLength(0)
+    await open(w, 11)
+    expect(windowOf(11)!.querySelector('[data-test="qna-window-form"]')).toBeNull()
+    expect(qaAnswerCall).not.toHaveBeenCalled()
   })
 
   // flowgate.v02.0052 묶음 A — v7 ↗ (0035 insp.js openQA): the question in a modeless window.
   describe('the ↗ window', () => {
-    const windowOf = (id: number) => document.body.querySelector<HTMLElement>(`[data-test="qna-window"][data-item="${id}"]`)
-    const windowText = (id: number, test: string) => windowOf(id)?.querySelector(`[data-test="${test}"]`)?.textContent ?? null
-
-    async function open(w: VueWrapper<any>, id: number) {
-      await itemEl(w, id).find('[data-test="qna-open"]').trigger('click')
-      await flushPromises()
-      const win = windowOf(id)
-      if (!win) throw new Error(`window ${id} not opened`)
-      return win
-    }
 
     // flowgate.v02.0053 T#5 (0053 CH): the button that opens a question's window is the same document icon as
     // the document lines (tooltip 열기), not ↗.
@@ -280,12 +334,19 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       await open(w, 10)
       expect(windowText(10, 'qna-window-body')).toBe('어느 범위를 조사할까요?')
       expect(windowText(10, 'qna-window-asker')).toBe('질문: AI · Claude Opus 5.5')
+      // flowgate.v02.0070 T#5: the context above the form — the full document id and when it was asked.
+      expect(windowText(10, 'qna-window-doc')).toBe(`문서: ${V01_DOC}`)
+      expect(windowText(10, 'qna-window-asked-at')).toBe(`질문 시각: ${new Date(ASKED_AT).toLocaleString('ko')}`)
+      expect(windowOf(10)!.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
+      expect(windowOf(10)!.querySelector('[data-test="qna-window-options"]')).toBeNull()
       expect(windowOf(10)!.querySelector('[data-test="qna-window-form"]')).not.toBeNull()
       expect(windowOf(10)!.querySelectorAll('[data-test="qna-window-option"]')).toHaveLength(2)
       expect(document.body.querySelector('[data-test="qna-window-mode"]')).toBeNull()
       expect(windowText(10, 'qna-window-state')).toBe('미답변')
       await open(w, 11)
       expect(windowText(11, 'qna-window-body')).toBe('범위를 가정했습니다.')
+      // No registration time sent: none shown (the API has no time the question changed).
+      expect(windowOf(11)!.querySelector('[data-test="qna-window-asked-at"]')).toBeNull()
       expect(windowOf(11)!.querySelectorAll('[data-test="qna-window-answer"]')).toHaveLength(1)
       expect(windowOf(11)!.querySelector('[data-test="qna-window-form"]')).toBeNull()
       // An answered question of a writable Flow is not "read only" either.
@@ -296,14 +357,13 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       expect(document.body.querySelectorAll('[data-test="qna-window"]')).toHaveLength(2)
     })
 
-    it('an answer sent from the window reaches the server and the form closes; the inline draft is the same draft', async () => {
+    it('an answer sent from the window reaches the server and the form closes', async () => {
       const w = await mountTab(v01Target())
       const win = await open(w, 13)
       const field = win.querySelector<HTMLTextAreaElement>('textarea[data-test="qna-window-body-input"]')!
       field.value = ' 창에서 답변 '
       field.dispatchEvent(new Event('input'))
       await flushPromises()
-      expect((itemEl(w, 13).find('textarea').element as HTMLTextAreaElement).value).toBe(' 창에서 답변 ')
       win.querySelector<HTMLButtonElement>('[data-test="qna-window-submit"]')!.click()
       await flushPromises()
       expect(qaAnswerCall).toHaveBeenCalledWith({ docId: V01_DOC, itemId: 13, body: '창에서 답변', selectedOptionIds: [] })
@@ -355,6 +415,109 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       await flushPromises()
       expect(document.body.querySelectorAll('[data-test="qna-window"]')).toHaveLength(0)
     })
+
+    // flowgate.v02.0070 T#5 (B5): answering needs a body that can be checked.
+    describe('the body of the document (flowgate.v02.0070 T#5)', () => {
+      const UNREADABLE = '본문을 읽을 수 없어 답변할 수 없습니다.'
+      const UNCONFIRMED = '본문을 확인할 수 없어 답변할 수 없습니다.'
+
+      it.each([
+        ['an unreadable body', [bodyLine(V01_DOC, { bodyState: 'file_not_found' })], UNREADABLE],
+        ['a blank body', [bodyLine(V01_DOC, { hasBody: false })], UNCONFIRMED],
+        ['a body not sent', [bodyLine(V01_DOC, { hasBody: undefined })], UNCONFIRMED],
+        ['only another document’s card line', [bodyLine(OTHER_DOC)], UNCONFIRMED],
+        ['no card line', [], UNCONFIRMED],
+      ])('%s: one line instead of the options, field, send and AI line; the question, options and answers stay readable', async (_label, lines, text) => {
+        const w = await mountTab(v01Target({ cardDocuments: lines }))
+        const win = await open(w, 10)
+        for (const test of ['qna-window-form', 'qna-window-option', 'qna-window-body-input', 'qna-window-submit', 'qna-window-ai']) {
+          expect(win.querySelector(`[data-test="${test}"]`), test).toBeNull()
+        }
+        expect(windowText(10, 'qna-window-blocked')).toBe(text)
+        expect(windowText(10, 'qna-window-body')).toBe('어느 범위를 조사할까요?')
+        expect(windowText(10, 'qna-window-doc')).toBe(`문서: ${V01_DOC}`)
+        expect(windowText(10, 'qna-window-options')).toBe('선택지: 코드 품질, 성능')
+        expect(document.body.querySelector('[data-test="qna-window-mode"]')).toBeNull()
+        // An answered question keeps its answers; nothing to answer, so no line.
+        const done = await open(w, 11)
+        expect(done.querySelectorAll('[data-test="qna-window-answer"]')).toHaveLength(1)
+        expect(done.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
+        // Asking a question is not this rule's.
+        expect(w.find('[data-test="qna-ask"]').exists()).toBe(true)
+        expect(qaAnswerCall).not.toHaveBeenCalled()
+      })
+
+      it('a document a later one superseded is history: 읽기 전용 with the reason, no form and no line; reading stays', async () => {
+        documentRead.mockImplementation(async (docId: string) => toReviewDocument({ ...rowOf(docId), superseded_by: 'flowgate.v02.0048.0015-TR' }))
+        const w = await mountTab(v01Target())
+        const win = await open(w, 10)
+        expect(win.querySelector('[data-test="qna-window-form"]')).toBeNull()
+        expect(win.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
+        const mode = document.body.querySelector('[data-test="qna-window-mode"]')!
+        expect(mode.textContent).toBe('읽기 전용')
+        expect(mode.getAttribute('title')).toBe('이전 문서의 이력이라 답변할 수 없습니다.')
+        expect(windowText(10, 'qna-window-body')).toBe('어느 범위를 조사할까요?')
+        expect(windowText(10, 'qna-window-options')).toBe('선택지: 코드 품질, 성능')
+      })
+
+      it('the body read again with the Canvas opens the form: the window follows the target', async () => {
+        const w = await mountTab(v01Target({ cardDocuments: [bodyLine(V01_DOC, { hasBody: false })] }))
+        const win = await open(w, 13)
+        expect(win.querySelector('[data-test="qna-window-form"]')).toBeNull()
+        await w.setProps({ target: v01Target() })
+        await flushPromises()
+        expect(windowOf(13)!.querySelector('[data-test="qna-window-form"]')).not.toBeNull()
+        expect(windowOf(13)!.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
+      })
+
+      // The document read says whether a later document supersedes this one: until it is back as current, nothing is answered.
+      it('the document read not back: one line, no form; back as current, the form opens', async () => {
+        let release: () => void = () => {}
+        documentRead.mockImplementationOnce((docId: string) => new Promise((resolve) => (release = () => resolve(toReviewDocument(rowOf(docId))))))
+        const w = await mountTab(v01Target())
+        const win = await open(w, 13)
+        for (const test of ['qna-window-form', 'qna-window-body-input', 'qna-window-submit', 'qna-window-ai']) {
+          expect(win.querySelector(`[data-test="${test}"]`), test).toBeNull()
+        }
+        expect(windowText(13, 'qna-window-blocked')).toBe(UNCONFIRMED)
+        expect(windowText(13, 'qna-window-body')).toBe('완료 기준은?')
+        expect(w.find('[data-test="qna-ask"]').exists()).toBe(true)
+        release()
+        await flushPromises()
+        expect(windowOf(13)!.querySelector('[data-test="qna-window-form"]')).not.toBeNull()
+        expect(windowOf(13)!.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
+        expect(qaAnswerCall).not.toHaveBeenCalled()
+      })
+
+      it('a failed document read: one line until a read again finds the document current', async () => {
+        documentRead.mockRejectedValueOnce(networkError())
+        const w = await mountTab(v01Target())
+        await open(w, 13)
+        expect(windowOf(13)!.querySelector('[data-test="qna-window-form"]')).toBeNull()
+        expect(windowText(13, 'qna-window-blocked')).toBe(UNCONFIRMED)
+        expect(windowText(13, 'qna-window-body')).toBe('완료 기준은?')
+        vi.useFakeTimers()
+        stream.open()
+        stream.emit('document_explorer_refresh', { groupId: V01_FLOW })
+        await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
+        await flushPromises()
+        expect(windowOf(13)!.querySelector('[data-test="qna-window-form"]')).not.toBeNull()
+        expect(windowOf(13)!.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
+      })
+
+      it('a failed AI activity read keeps the superseded document read: 읽기 전용, no form; asking stays', async () => {
+        activityRead.mockRejectedValue(networkError())
+        documentRead.mockImplementation(async (docId: string) => toReviewDocument({ ...rowOf(docId), superseded_by: 'flowgate.v02.0048.0015-TR' }))
+        const w = await mountTab(v01Target())
+        const win = await open(w, 13)
+        expect(win.querySelector('[data-test="qna-window-form"]')).toBeNull()
+        expect(win.querySelector('[data-test="qna-window-ai"]')).toBeNull()
+        expect(win.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
+        expect(document.body.querySelector('[data-test="qna-window-mode"]')?.textContent).toBe('읽기 전용')
+        expect(windowText(13, 'qna-window-body')).toBe('완료 기준은?')
+        expect(w.find('[data-test="qna-ask"]').exists()).toBe(true)
+      })
+    })
   })
 
   it('a document without questions shows only the question line — no empty sentence (0053 T#6)', async () => {
@@ -388,40 +551,44 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
 describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
   it('blank prose cannot be sent; trimmed prose is sent, then the questions and the guard are read again', async () => {
     const w = await mountTab(v01Target())
-    expect(isDisabled(submitOf(w, 13))).toBe(true)
+    await open(w, 13)
+    expect(isDisabled(submitOf(13))).toBe(true)
     await write(w, 13, '   ')
-    expect(isDisabled(submitOf(w, 13))).toBe(true)
+    expect(isDisabled(submitOf(13))).toBe(true)
     await write(w, 13, '  테스트 통과가 완료 기준입니다. ')
-    expect(isDisabled(submitOf(w, 13))).toBe(false)
+    expect(isDisabled(submitOf(13))).toBe(false)
     await send(w, 13)
     expect(qaAnswerCall).toHaveBeenCalledWith({ docId: V01_DOC, itemId: 13, body: '테스트 통과가 완료 기준입니다.', selectedOptionIds: [] })
     expect(qaReadCall).toHaveBeenCalledTimes(2)
     expect(activityRead).toHaveBeenCalledTimes(2)
     expect(documentRead).toHaveBeenCalledTimes(2)
     expect(itemEl(w, 13).attributes('data-state')).toBe('answered')
-    expect(itemEl(w, 13).find('[data-test="qna-answer-form"]').exists()).toBe(false)
-    expect(itemEl(w, 13).find('[data-test="qna-answer-body"]').text()).toBe('테스트 통과가 완료 기준입니다.')
+    expect(windowOf(13)!.querySelector('[data-test="qna-window-form"]')).toBeNull()
+    expect(windowOf(13)!.querySelector('[data-test="qna-window-answer"] .inspector-qna-text')?.textContent).toBe('테스트 통과가 완료 기준입니다.')
   })
 
   it('a picked option alone can be sent; picking again takes it back; the answer shows the pick', async () => {
     const w = await mountTab(v01Target())
-    const options = () => itemEl(w, 10).findAll('[data-test="qna-option"]')
+    await open(w, 10)
+    const options = () => new DOMWrapper(windowOf(10)!).findAll('[data-test="qna-window-option"]')
     await options()[1].trigger('click')
     expect(options()[1].attributes('aria-pressed')).toBe('true')
     await options()[1].trigger('click')
     expect(options()[1].attributes('aria-pressed')).toBe('false')
-    expect(isDisabled(submitOf(w, 10))).toBe(true)
+    expect(isDisabled(submitOf(10))).toBe(true)
     await options()[0].trigger('click')
-    expect(isDisabled(submitOf(w, 10))).toBe(false)
+    expect(isDisabled(submitOf(10))).toBe(false)
     await send(w, 10)
     expect(qaAnswerCall).toHaveBeenCalledWith({ docId: V01_DOC, itemId: 10, body: '', selectedOptionIds: ['o1'] })
-    expect(itemEl(w, 10).find('[data-test="qna-answer-picked"]').text()).toBe('선택: 코드 품질')
-    expect(itemEl(w, 10).find('[data-test="qna-answer-body"]').text()).toBe('코드 품질')
+    const answerEl = windowOf(10)!.querySelector('[data-test="qna-window-answer"]')!
+    expect(answerEl.textContent).toContain('선택: 코드 품질')
+    expect(answerEl.querySelector('.inspector-qna-text')?.textContent).toBe('코드 품질')
   })
 
   it('an option and prose are sent together', async () => {
     const w = await mountTab(v01Target())
-    await itemEl(w, 10).findAll('[data-test="qna-option"]')[1].trigger('click')
+    await open(w, 10)
+    await new DOMWrapper(windowOf(10)!).findAll('[data-test="qna-window-option"]')[1].trigger('click')
     await write(w, 10, '응답 시간 위주')
     await send(w, 10)
     expect(qaAnswerCall).toHaveBeenCalledWith({ docId: V01_DOC, itemId: 10, body: '응답 시간 위주', selectedOptionIds: ['o2'] })
@@ -439,13 +606,14 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     const w = await mountTab(v01Target())
     await write(w, 13, '완료 기준')
     refusals.set('answer', refusal)
+    await open(w, 10)
     await send(w, 13)
-    expect(itemEl(w, 13).find('[data-test="qna-answer-failure"]').text()).toBe(text)
-    expect(itemEl(w, 10).find('[data-test="qna-answer-failure"]').exists()).toBe(false)
+    expect(windowText(13, 'qna-window-failure')?.trim()).toBe(text)
+    expect(windowOf(10)!.querySelector('[data-test="qna-window-failure"]')).toBeNull()
     expect(qaReadCall).toHaveBeenCalledTimes(2)
     expect(activityRead).toHaveBeenCalledTimes(2)
     expect(itemEl(w, 13).attributes('data-state')).toBe('waiting')
-    expect((itemEl(w, 13).find('textarea').element as HTMLTextAreaElement).value).toBe('완료 기준')
+    expect(fieldOf(13).value).toBe('완료 기준')
   })
 
   it('after a 423 the guard read again finds the run: answering is disabled with its reason', async () => {
@@ -454,45 +622,47 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     refusals.set('answer', axiosError(423, { error: { code: 'GROUP_AI_RUN_LOCKED' } }))
     running = true
     await send(w, 13)
-    expect(isDisabled(submitOf(w, 13))).toBe(true)
-    expect(submitOf(w, 13).attributes('title')).toBe('AI 실행 중이라 답변할 수 없습니다.')
+    expect(isDisabled(submitOf(13))).toBe(true)
+    expect(submitOf(13).attributes('title')).toBe('AI 실행 중이라 답변할 수 없습니다.')
   })
 
   it('while an answer waits for the server every answer is disabled and a second click sends nothing', async () => {
     let release: () => void = () => {}
     qaAnswerCall.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(toQaAnswerResult({ ok: true })))))
     const w = await mountTab(v01Target())
+    await open(w, 10)
     await write(w, 13, '완료 기준')
-    await submitOf(w, 13).trigger('click')
+    await submitOf(13).trigger('click')
     await flushPromises()
-    expect(isDisabled(submitOf(w, 13))).toBe(true)
-    expect(submitOf(w, 10).attributes('title')).toBe('답변을 보내는 중입니다.')
-    await submitOf(w, 13).trigger('click')
+    expect(isDisabled(submitOf(13))).toBe(true)
+    expect(submitOf(10).attributes('title')).toBe('답변을 보내는 중입니다.')
+    await submitOf(13).trigger('click')
     expect(qaAnswerCall).toHaveBeenCalledTimes(1)
     release()
     await flushPromises()
-    expect(submitOf(w, 10).attributes('title')).toBeUndefined()
+    expect(submitOf(10).attributes('title')).toBeUndefined()
   })
 
   it('after a saved answer the question cannot be sent again until the read after it is back', async () => {
     const w = await mountTab(v01Target())
     let releaseRead: () => void = () => {}
     qaReadCall.mockImplementationOnce((docId: string) => new Promise((resolve) => (releaseRead = () => resolve(toQaThread(treeOf(docId))))))
+    await open(w, 10)
     await write(w, 13, '완료 기준')
     await send(w, 13)
     // Saved on the server; the questions shown are still the read from before the answer.
     expect(qaAnswerCall).toHaveBeenCalledTimes(1)
     expect(itemEl(w, 13).attributes('data-state')).toBe('waiting')
-    expect(isDisabled(submitOf(w, 13))).toBe(true)
-    expect(submitOf(w, 10).attributes('title')).toBe('답변을 보내는 중입니다.')
-    await submitOf(w, 13).trigger('click')
+    expect(isDisabled(submitOf(13))).toBe(true)
+    expect(submitOf(10).attributes('title')).toBe('답변을 보내는 중입니다.')
+    await submitOf(13).trigger('click')
     await flushPromises()
     expect(qaAnswerCall).toHaveBeenCalledTimes(1)
     releaseRead()
     await flushPromises()
     expect(itemEl(w, 13).attributes('data-state')).toBe('answered')
-    expect(itemEl(w, 13).find('[data-test="qna-answer-form"]').exists()).toBe(false)
-    expect(submitOf(w, 10).attributes('title')).toBeUndefined()
+    expect(windowOf(13)!.querySelector('[data-test="qna-window-form"]')).toBeNull()
+    expect(submitOf(10).attributes('title')).toBeUndefined()
     expect(threads.get(V01_DOC)!.find((entry) => entry.id === 13)!.answers).toHaveLength(1)
   })
 
@@ -504,12 +674,12 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     expect(qaAnswerCall).toHaveBeenCalledTimes(1)
     expect(itemEl(w, 13).attributes('data-state')).toBe('waiting')
     await write(w, 13, '완료 기준 다시')
-    expect(isDisabled(submitOf(w, 13))).toBe(true)
-    await submitOf(w, 13).trigger('click')
+    expect(isDisabled(submitOf(13))).toBe(true)
+    await submitOf(13).trigger('click')
     await flushPromises()
     expect(qaAnswerCall).toHaveBeenCalledTimes(1)
     await write(w, 12, '필요합니다')
-    expect(isDisabled(submitOf(w, 12))).toBe(false)
+    expect(isDisabled(submitOf(12))).toBe(false)
     // The read again (here the retry) shows the answer.
     await w.find('[data-test="inspector-pane-retry"]').trigger('click')
     await flushPromises()
@@ -522,12 +692,13 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     qaAnswerCall.mockImplementationOnce(() => new Promise((_resolve, fail) => (reject = fail)))
     const w = await mountTab(v01Target())
     await write(w, 13, '완료 기준')
-    await submitOf(w, 13).trigger('click')
+    await submitOf(13).trigger('click')
     await w.setProps({ target: v01Target({ docId: OTHER_DOC, nodeId: `doc:${OTHER_DOC}` }) })
     reject(qRefusal(409, 'disposed'))
     await flushPromises()
     expect(order(w)).toEqual([[20, 'waiting']])
-    expect(w.find('[data-test="qna-answer-failure"]').exists()).toBe(false)
+    await open(w, 20)
+    expect(document.body.querySelector('[data-test="qna-window-failure"]')).toBeNull()
   })
 })
 
@@ -540,57 +711,129 @@ describe('Q&A tab — read-only Flows and the guard (flowgate.v02.0048 T#7)', ()
     const w = await mountTab(v01Target(fields))
     expect(order(w)).toHaveLength(4)
     expect(w.find('[data-test="qna-ask"]').exists()).toBe(false)
-    expect(itemEl(w, 13).find('[data-test="qna-answer-form"]').exists()).toBe(false)
-    expect(itemEl(w, 10).find('[data-test="qna-ai"]').exists()).toBe(false)
     expect(w.text()).not.toContain('읽기 전용입니다')
+    await open(w, 13)
+    await open(w, 10)
+    expect(windowOf(13)!.querySelector('[data-test="qna-window-form"]')).toBeNull()
+    expect(windowOf(10)!.querySelector('[data-test="qna-window-ai"]')).toBeNull()
+    // 0063: no reason sentence either (0070 T#5's line is the body's only).
+    expect(windowOf(13)!.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
     expect(qaAnswerCall).not.toHaveBeenCalled()
   })
 
   it('a Graph revision view answers as the draft view does (0063)', async () => {
     const w = await mountTab(v01Target({ readOnly: 'revision' }))
     await write(w, 13, '완료 기준')
-    expect(isDisabled(submitOf(w, 13))).toBe(false)
-    expect(isDisabled(itemEl(w, 10).find('[data-test="qna-option"]'))).toBe(false)
-    expect(itemEl(w, 10).find('[data-test="qna-ai"]').exists()).toBe(true)
+    expect(isDisabled(submitOf(13))).toBe(false)
+    await open(w, 10)
+    expect(isDisabled(inWindow(10, '[data-test="qna-window-option"]'))).toBe(false)
+    expect(windowOf(10)!.querySelector('[data-test="qna-window-ai"]')).not.toBeNull()
     await send(w, 13)
     expect(qaAnswerCall).toHaveBeenCalledTimes(1)
   })
 
   it('the real conflict and Graph selections read the same way', async () => {
     threads.set(targetOf(SELECTIONS.conflict).docId!, [{ id: 31, seq: 1, title: 'c', body: '?', asker_kind: 'ai', options: [], asker_provider: null, answers: [] }])
-    const conflict = await mountTab(targetOf(SELECTIONS.conflict))
-    expect(itemEl(conflict, 31).find('[data-test="qna-answer-form"]').exists()).toBe(false)
+    const conflict = await mountTab(withBody(targetOf(SELECTIONS.conflict)))
+    await open(conflict, 31)
+    expect(windowOf(31)!.querySelector('[data-test="qna-window-form"]')).toBeNull()
     conflict.unmount()
     wrapper = null
     threads.set(targetOf(SELECTIONS.graph).docId!, [{ id: 30, seq: 1, title: 'g', body: '?', asker_kind: 'ai', options: [], asker_provider: null, answers: [] }])
-    const graph = await mountTab(targetOf(SELECTIONS.graph))
+    const graph = await mountTab(withBody(targetOf(SELECTIONS.graph)))
     // Graph draft view: a document feature, answering is open (blank prose keeps the button off).
     await write(graph, 30, 'g')
-    expect(isDisabled(submitOf(graph, 30))).toBe(false)
-    await graph.setProps({ target: { ...targetOf(SELECTIONS.graph), readOnly: 'revision' } })
-    expect(isDisabled(submitOf(graph, 30))).toBe(false)
+    expect(isDisabled(submitOf(30))).toBe(false)
+    await graph.setProps({ target: { ...withBody(targetOf(SELECTIONS.graph)), readOnly: 'revision' } })
+    expect(isDisabled(submitOf(30))).toBe(false)
   })
 
   it('an AI run in the Flow disables answering from the start', async () => {
     running = true
     const w = await mountTab(v01Target())
     expect(activityRead).toHaveBeenCalledWith(V01_FLOW)
-    expect(isDisabled(submitOf(w, 13))).toBe(true)
-    expect(submitOf(w, 13).attributes('title')).toBe('AI 실행 중이라 답변할 수 없습니다.')
+    await open(w, 13)
+    expect(isDisabled(submitOf(13))).toBe(true)
+    expect(submitOf(13).attributes('title')).toBe('AI 실행 중이라 답변할 수 없습니다.')
   })
 
   it('a disposed group shows no answer form (0063)', async () => {
     disposed = true
     const w = await mountTab(v01Target())
-    expect(itemEl(w, 13).find('[data-test="qna-answer-form"]').exists()).toBe(false)
+    await open(w, 13)
+    expect(windowOf(13)!.querySelector('[data-test="qna-window-form"]')).toBeNull()
   })
 
-  it('a failed guard read does not block (the server decides)', async () => {
+  it('a failed AI activity read does not block (the server decides) once the document read is back as current', async () => {
     activityRead.mockRejectedValue(networkError())
     const w = await mountTab(v01Target())
     await write(w, 13, 'x')
-    expect(isDisabled(submitOf(w, 13))).toBe(false)
-    expect(submitOf(w, 13).attributes('title')).toBeUndefined()
+    expect(isDisabled(submitOf(13))).toBe(false)
+    expect(submitOf(13).attributes('title')).toBeUndefined()
+  })
+})
+
+// flowgate.v02.0070 T#5: the send functions themselves wait for the document read — not only the window's form.
+describe('Q&A sending — the document read first (flowgate.v02.0070 T#5)', () => {
+  const superseded = async (docId: string) => toReviewDocument({ ...rowOf(docId), superseded_by: 'flowgate.v02.0048.0015-TR' })
+
+  async function withQna(run: (state: ReturnType<typeof useQna>) => Promise<void>) {
+    const scope = effectScope()
+    const target = v01Target()
+    const state = scope.run(() => useQna(() => target))!
+    try {
+      await flushPromises()
+      await run(state)
+    } finally {
+      scope.stop()
+    }
+  }
+
+  it.each([
+    ['the document read not back', () => documentRead.mockImplementation(() => new Promise(() => {})), 'reason.body_unconfirmed'],
+    ['the document read failed', () => documentRead.mockRejectedValue(networkError()), 'reason.body_unconfirmed'],
+    ['the AI activity read failed and the document read says superseded', () => {
+      activityRead.mockRejectedValue(networkError())
+      documentRead.mockImplementation(superseded)
+    }, 'reason.history'],
+  ] as const)('%s: answering, picking and asking an AI send nothing; reading and asking stay', async (_label, arrange, reason) => {
+    arrange()
+    await withQna(async (state) => {
+      expect(state.items.value?.map((item) => item.id)).toEqual([10, 13, 12, 11])
+      expect(state.availability.value.answer).toEqual({ visible: false, enabled: false, reason })
+      expect(state.availability.value.ai_request).toEqual({ visible: false, enabled: false, reason })
+      expect(state.availability.value.ask.enabled).toBe(true)
+      expect(await state.answer(13, '완료 기준', [])).toBe(false)
+      expect(await state.answer(10, '', ['o1'])).toBe(false)
+      expect(await state.requestAi(13, null)).toBe(false)
+      expect(qaAnswerCall).not.toHaveBeenCalled()
+      expect(qaAiCall).not.toHaveBeenCalled()
+    })
+  })
+
+  it('back as current the answer is sent; a failed document read after it closes answering again until one is back', async () => {
+    await withQna(async (state) => {
+      expect(state.availability.value.answer.enabled).toBe(true)
+      documentRead.mockRejectedValueOnce(networkError())
+      expect(await state.answer(13, '완료 기준', [])).toBe(true)
+      expect(qaAnswerCall).toHaveBeenCalledTimes(1)
+      expect(state.availability.value.answer).toEqual({ visible: false, enabled: false, reason: 'reason.body_unconfirmed' })
+      expect(await state.answer(12, '필요합니다', [])).toBe(false)
+      expect(qaAnswerCall).toHaveBeenCalledTimes(1)
+      await state.reload()
+      expect(state.availability.value.answer.enabled).toBe(true)
+    })
+  })
+
+  it('a superseded document read stays when a later document read fails', async () => {
+    documentRead.mockImplementationOnce(superseded).mockRejectedValue(networkError())
+    await withQna(async (state) => {
+      expect(state.availability.value.answer.reason).toBe('reason.history')
+      await state.reload()
+      expect(state.availability.value.answer.reason).toBe('reason.history')
+      expect(await state.answer(13, '완료 기준', [])).toBe(false)
+      expect(qaAnswerCall).not.toHaveBeenCalled()
+    })
   })
 })
 
@@ -631,7 +874,8 @@ describe('Q&A tab — server events (flowgate.v02.0048 T#7)', () => {
     await flushPromises()
     expect(qaReadCall).toHaveBeenCalledTimes(2)
     expect(itemEl(w, 13).attributes('data-state')).toBe('answered')
-    expect(itemEl(w, 13).find('[data-test="qna-answer-side"]').text()).toBe('답: AI · Codex')
+    await open(w, 13)
+    expect(windowText(13, 'qna-window-answer-side')).toBe('답: AI · Codex')
   })
 
   it('a Q&A frame without doc_id follows the default rule: the target Flow reads again, another Flow does not', async () => {
@@ -649,18 +893,19 @@ describe('Q&A tab — server events (flowgate.v02.0048 T#7)', () => {
   it('ai_invoke_started / finished of the Flow read the guard again: disabled, then enabled', async () => {
     vi.useFakeTimers()
     const w = await mountTab(v01Target())
+    await open(w, 13)
     stream.open()
     running = true
     stream.emit('ai_invoke_started', { groupId: V01_FLOW, docId: OTHER_DOC })
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
     await flushPromises()
-    expect(submitOf(w, 13).attributes('title')).toBe('AI 실행 중이라 답변할 수 없습니다.')
+    expect(submitOf(13).attributes('title')).toBe('AI 실행 중이라 답변할 수 없습니다.')
     expect(qaReadCall).toHaveBeenCalledTimes(1)
     running = false
     stream.emit('ai_invoke_finished', { groupId: V01_FLOW, docId: OTHER_DOC })
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
     await flushPromises()
-    expect(submitOf(w, 13).attributes('title')).toBeUndefined()
+    expect(submitOf(13).attributes('title')).toBeUndefined()
     const before = activityRead.mock.calls.length
     stream.emit('ai_invoke_started', { groupId: 'flowgate.v02.0049', docId: 'flowgate.v02.0049.0007-TS' })
     await vi.advanceTimersByTimeAsync(INSPECTOR_REFRESH_COALESCE_MS)
@@ -701,7 +946,8 @@ describe('Q&A tab — Node change (flowgate.v02.0048 T#7)', () => {
     await flushPromises()
     await w.setProps({ target: v01Target() })
     await flushPromises()
-    expect((itemEl(w, 13).find('textarea').element as HTMLTextAreaElement).value).toBe('')
+    await open(w, 13)
+    expect(fieldOf(13).value).toBe('')
   })
 })
 
@@ -737,7 +983,8 @@ describe('Q&A tab in the Frame (real registry)', () => {
 
   it('answering in the tab lowers the number; a qna event raises it again', async () => {
     vi.useFakeTimers()
-    const w = await mountFrame(SELECTIONS.v01)
+    // flowgate.v02.0070 T#5: the Node's card line says its document has a body.
+    const w = await mountFrame({ ...SELECTIONS.v01, node: { ...SELECTIONS.v01.node, cardDocuments: [bodyLine(V01_DOC)] } })
     stream.open()
     await openTab(w, 'Q&A')
     await write(w, 13, '완료 기준')

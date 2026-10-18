@@ -15,8 +15,10 @@
  * - asking and requesting close while something is on its way, on a read-only Flow, a disposed group or an
  *   AI run, with the reason as the tooltip; the AI-asks / person-answers flow stays as it was;
  * - in the real Frame, a card just placed registers a question and gets the AI answer on request.
+ * flowgate.v02.0070 T#5 (B5) — the AI line (and the answer form) is in the question's ↗ window only, offered while the
+ * document's card line says it has a body: the targets carry such a line (`bodyLine`); the list keeps 열기.
  */
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FlowGraph, FlowGraphCardDocument, FlowGraphNode } from '@/features/designer/center/graph/flowGraph'
@@ -244,23 +246,52 @@ async function mountTab(target: InspectorTarget) {
   return wrapper
 }
 
-const v01Target = (fields: Partial<InspectorTarget> = {}): InspectorTarget => ({ ...targetOf(SELECTIONS.v01), ...fields })
+/** flowgate.v02.0070 T#5: the card line of a document whose body is there (answering and asking an AI need one). */
+const bodyLine = (docId: string): FlowGraphCardDocument => ({
+  slot: 'report',
+  docType: 'TR',
+  author: 'run',
+  docId,
+  title: docId,
+  status: 'open',
+  docReviewStatus: null,
+  hasBody: true,
+  bodyState: null,
+})
+
+/** The v0.1 target with its document's card line (a body to check), unless `fields` give the lines. */
+const v01Target = (fields: Partial<InspectorTarget> = {}): InspectorTarget => {
+  const docId = fields.docId === undefined ? V01_DOC : fields.docId
+  return { ...targetOf(SELECTIONS.v01), cardDocuments: docId ? [bodyLine(docId)] : [], ...fields }
+}
 const emptyTarget = () => v01Target({ docId: OTHER_DOC, docType: 'TR', nodeId: `doc:${OTHER_DOC}` })
 
 const askInput = (w: VueWrapper<any>) => w.get('input[data-test="qna-ask-input"]')
 const askButton = (w: VueWrapper<any>) => w.get('[data-test="qna-ask-submit"]')
-const isDisabled = (el: ReturnType<VueWrapper<any>['get']>) => el.attributes('disabled') !== undefined
+const isDisabled = (el: { attributes(name: string): string | undefined }) => el.attributes('disabled') !== undefined
 const itemEl = (w: VueWrapper<any>, id: number) => w.find(`[data-test="qna-item"][data-item="${id}"]`)
 const ids = (w: VueWrapper<any>) => w.findAll('[data-test="qna-item"]').map((el) => Number(el.attributes('data-item')))
 const askFailure = (w: VueWrapper<any>) => w.find('[data-test="qna-ask-failure"]')
 const inputValue = (w: VueWrapper<any>) => (askInput(w).element as HTMLInputElement).value
-const aiButton = (w: VueWrapper<any>, id: number) => itemEl(w, id).get('[data-test="qna-ai-request"]')
-const aiPicker = (w: VueWrapper<any>, id: number) => itemEl(w, id).get('select[data-test="qna-ai-provider"]')
-const aiFailure = (w: VueWrapper<any>, id: number) => itemEl(w, id).find('[data-test="qna-ai-failure"]')
-const aiWaiting = (w: VueWrapper<any>, id: number) => itemEl(w, id).find('[data-test="qna-ai-waiting"]')
+// flowgate.v02.0070 T#5: the AI line is in the question's ↗ window (teleported to the body); open it first.
+const windowOf = (id: number) => document.body.querySelector<HTMLElement>(`[data-test="qna-window"][data-item="${id}"]`)
+const inWindow = (id: number) => new DOMWrapper(windowOf(id) ?? document.createElement('div'))
+const aiButton = (_w: VueWrapper<any>, id: number) => inWindow(id).get('[data-test="qna-window-ai-request"]')
+const aiPicker = (_w: VueWrapper<any>, id: number) => inWindow(id).get('select[data-test="qna-window-ai-provider"]')
+const aiFailure = (_w: VueWrapper<any>, id: number) => inWindow(id).find('[data-test="qna-window-ai-failure"]')
+const aiWaiting = (_w: VueWrapper<any>, id: number) => inWindow(id).find('[data-test="qna-window-ai-waiting"]')
+
+/** Opens the question's window with its 열기 button (a window already open stays). */
+async function open(w: VueWrapper<any>, id: number) {
+  if (!windowOf(id)) {
+    await itemEl(w, id).get('[data-test="qna-open"]').trigger('click')
+    await flushPromises()
+  }
+  if (!windowOf(id)) throw new Error(`window ${id} not opened`)
+}
 
 /** A refusal icon: its name, its description (the tooltip) and the text it draws. */
-function iconView(el: ReturnType<VueWrapper<any>['find']>) {
+function iconView(el: { attributes(name: string): string | undefined; text(): string }) {
   return { role: el.attributes('role'), focusable: el.attributes('tabindex'), name: el.attributes('aria-label'), description: el.attributes('title'), text: el.text() }
 }
 
@@ -271,6 +302,7 @@ async function ask(w: VueWrapper<any>, text: string) {
 }
 
 async function requestAi(w: VueWrapper<any>, id: number) {
+  await open(w, id)
   await aiButton(w, id).trigger('click')
   await flushPromises()
 }
@@ -334,7 +366,8 @@ describe('asking: register the question only (flowgate.v02.0056 F1)', () => {
     expect(itemEl(w, 31).get('[data-test="qna-item-asker"]').attributes('data-side')).toBe('human')
     expect(inputValue(w)).toBe('')
     expect(askFailure(w).exists()).toBe(false)
-    // The registered question offers its AI line and waits for nobody yet.
+    // The registered question offers its AI line (in its window) and waits for nobody yet.
+    await open(w, 31)
     expect(aiButton(w, 31).exists()).toBe(true)
     expect(aiWaiting(w, 31).exists()).toBe(false)
     expect(isDisabled(askInput(w))).toBe(false)
@@ -389,16 +422,19 @@ describe('asking: register the question only (flowgate.v02.0056 F1)', () => {
 
   it('the AI-asks / person-answers flow stays: an AI question is answered by the user as before', async () => {
     const w = await mountTab(v01Target())
-    expect(itemEl(w, 10).find('[data-test="qna-answer-form"]').exists()).toBe(true)
-    await itemEl(w, 10).get('textarea[data-test="qna-answer-body-input"]').setValue('코드 품질만')
-    await itemEl(w, 10).get('[data-test="qna-answer-submit"]').trigger('click')
+    // flowgate.v02.0070 T#5: answered in the question's window.
+    expect(itemEl(w, 10).find('[data-test="qna-answer-form"]').exists()).toBe(false)
+    await open(w, 10)
+    expect(windowOf(10)!.querySelector('[data-test="qna-window-form"]')).not.toBeNull()
+    await inWindow(10).get('textarea[data-test="qna-window-body-input"]').setValue('코드 품질만')
+    await inWindow(10).get('[data-test="qna-window-submit"]').trigger('click')
     await flushPromises()
     expect(qaAnswerCall).toHaveBeenCalledWith({ docId: V01_DOC, itemId: 10, body: '코드 품질만', selectedOptionIds: [] })
     expect(qaAskCall).not.toHaveBeenCalled()
     expect(qaAiCall).not.toHaveBeenCalled()
     expect(itemEl(w, 10).attributes('data-state')).toBe('answered')
     // An answered question has no AI line.
-    expect(itemEl(w, 10).find('[data-test="qna-ai"]').exists()).toBe(false)
+    expect(windowOf(10)!.querySelector('[data-test="qna-window-ai"]')).toBeNull()
   })
 })
 
@@ -408,6 +444,7 @@ describe('the AI line of an open question: pick an AI, ask it, see its answer (f
   it('every open question has the picker (the project AIs, the default first) and [AI 답변 요청]', async () => {
     const w = await mountTab(v01Target())
     expect(choicesRead).toHaveBeenCalledWith('flowgate')
+    await open(w, 10)
     const picker = aiPicker(w, 10)
     expect(picker.findAll('option').map((option) => [option.attributes('value'), option.text()])).toEqual([
       ['', '쓸 수 있는 AI 없음'],
@@ -426,6 +463,7 @@ describe('the AI line of an open question: pick an AI, ask it, see its answer (f
     const w = await mountTab(emptyTarget())
     stream.open()
     await ask(w, '완료 기준은?')
+    await open(w, 31)
     await aiPicker(w, 31).setValue('p2')
     calls.length = 0
     await requestAi(w, 31)
@@ -442,10 +480,12 @@ describe('the AI line of an open question: pick an AI, ask it, see its answer (f
     const item = itemEl(w, 31)
     expect(item.attributes('data-state')).toBe('answered')
     expect(item.attributes('data-awaiting')).toBe('false')
-    expect(item.get('[data-test="qna-answer-body"]').text()).toBe('테스트 통과가 완료 기준입니다.')
-    expect(item.get('[data-test="qna-answer"]').attributes('data-side')).toBe('ai')
-    expect(item.get('[data-test="qna-answer-side"]').text()).toBe('답: AI · Codex')
-    expect(item.find('[data-test="qna-answer-form"]').exists()).toBe(false)
+    // flowgate.v02.0070 T#5: the answer is read in the window.
+    const answer = inWindow(31).get('[data-test="qna-window-answer"]')
+    expect(answer.get('.inspector-qna-text').text()).toBe('테스트 통과가 완료 기준입니다.')
+    expect(answer.attributes('data-side')).toBe('ai')
+    expect(inWindow(31).get('[data-test="qna-window-answer-side"]').text()).toBe('답: AI · Codex')
+    expect(windowOf(31)!.querySelector('[data-test="qna-window-form"]')).toBeNull()
   })
 
   it('without a pick the project default AI is asked', async () => {
@@ -484,6 +524,7 @@ describe('the AI line of an open question: pick an AI, ask it, see its answer (f
         }),
     )
     const w = await mountTab(v01Target())
+    await open(w, 10)
     await aiButton(w, 10).trigger('click')
     await flushPromises()
     expect(isDisabled(aiButton(w, 10))).toBe(true)
@@ -531,6 +572,7 @@ describe('the AI line of an open question: pick an AI, ask it, see its answer (f
   it('a project without an AI: the picker is empty and closed, the button closed with the reason', async () => {
     choicesRead.mockImplementation(async () => toSettingsChoices({ providers: [], default_provider_id: null }))
     const w = await mountTab(v01Target())
+    await open(w, 10)
     const picker = aiPicker(w, 10)
     expect(isDisabled(picker)).toBe(true)
     expect(picker.findAll('option').map((option) => option.text())).toEqual(['쓸 수 있는 AI 없음'])
@@ -540,10 +582,13 @@ describe('the AI line of an open question: pick an AI, ask it, see its answer (f
     expect(qaAiCall).not.toHaveBeenCalled()
   })
 
-  it('the ↗ window carries the same AI line and the waiting chip', async () => {
+  // flowgate.v02.0070 T#5: the AI line is the window's only; the list line keeps its waiting mark.
+  it('the ↗ window carries the AI line and the waiting chip; the list line has no AI line and says it waits', async () => {
     vi.useFakeTimers()
     const w = await mountTab(v01Target())
     stream.open()
+    expect(itemEl(w, 10).find('[data-test="qna-ai"]').exists()).toBe(false)
+    expect(itemEl(w, 10).find('[data-test="qna-ai-request"]').exists()).toBe(false)
     await itemEl(w, 10).get('[data-test="qna-open"]').trigger('click')
     await flushPromises()
     const win = document.body.querySelector('[data-test="qna-window"][data-item="10"]')!
@@ -552,11 +597,22 @@ describe('the AI line of an open question: pick an AI, ask it, see its answer (f
     await flushPromises()
     expect(qaAiCall).toHaveBeenCalledWith(V01_DOC, 10, 'p1')
     expect(win.querySelector('[data-test="qna-window-ai-waiting"]')?.textContent).toBe('AI 답변 대기 중')
-    expect(aiWaiting(w, 10).exists()).toBe(true)
+    expect(itemEl(w, 10).attributes('data-awaiting')).toBe('true')
+  })
+
+  it('a document whose body cannot be checked offers no AI line: the window says why in one line', async () => {
+    const w = await mountTab(v01Target({ cardDocuments: [{ ...bodyLine(V01_DOC), hasBody: false }] }))
+    await open(w, 10)
+    expect(windowOf(10)!.querySelector('[data-test="qna-window-ai"]')).toBeNull()
+    expect(windowOf(10)!.querySelector('[data-test="qna-window-blocked"]')?.textContent).toBe('본문을 확인할 수 없어 답변할 수 없습니다.')
+    expect(qaAiCall).not.toHaveBeenCalled()
+    // Asking a question stays open.
+    expect(isDisabled(askInput(w))).toBe(false)
   })
 
   it('en / ja: the AI line wording', async () => {
     const w = await mountTab(v01Target())
+    await open(w, 10)
     i18n.global.locale.value = 'en'
     await flushPromises()
     expect(aiButton(w, 10).text()).toBe('Ask an AI')
@@ -628,14 +684,16 @@ describe('asking and requesting: closed with the reason as the tooltip', () => {
     disposed = dispose
     const w = await mountTab(v01Target(fields))
     expect(w.find('[data-test="qna-ask"]').exists()).toBe(false)
-    expect(itemEl(w, 10).find('[data-test="qna-ai"]').exists()).toBe(false)
-    expect(itemEl(w, 10).find('[data-test="qna-ai-provider"]').exists()).toBe(false)
+    await open(w, 10)
+    expect(windowOf(10)!.querySelector('[data-test="qna-window-ai"]')).toBeNull()
+    expect(windowOf(10)!.querySelector('[data-test="qna-window-ai-provider"]')).toBeNull()
   })
 
   it('a revision view asks and requests as the draft view does (0063)', async () => {
     const w = await mountTab(v01Target({ readOnly: 'revision' }))
     expect(isDisabled(askInput(w))).toBe(false)
     expect(askButton(w).attributes('title')).toBe('질문 등록')
+    await open(w, 10)
     expect(isDisabled(aiButton(w, 10))).toBe(false)
   })
 
@@ -643,6 +701,7 @@ describe('asking and requesting: closed with the reason as the tooltip', () => {
     vi.useFakeTimers()
     running = true
     const w = await mountTab(v01Target())
+    await open(w, 10)
     stream.open()
     expect(isDisabled(askInput(w))).toBe(true)
     expect(askButton(w).attributes('title')).toBe('AI 실행 중이라 질문할 수 없습니다.')
@@ -660,12 +719,14 @@ describe('asking and requesting: closed with the reason as the tooltip', () => {
   it('the unsent question and the AI picks belong to their document', async () => {
     const w = await mountTab(v01Target())
     await askInput(w).setValue('쓰던 질문')
+    await open(w, 10)
     await aiPicker(w, 10).setValue('p2')
     await w.setProps({ target: emptyTarget() })
     await flushPromises()
     expect(inputValue(w)).toBe('')
     await w.setProps({ target: v01Target() })
     await flushPromises()
+    await open(w, 10)
     expect((aiPicker(w, 10).element as HTMLSelectElement).value).toBe('p1')
   })
 
@@ -689,7 +750,7 @@ describe('a card just placed: ask on the Q&A tab, request the AI answer and see 
   const FLOW = 'flowgate.v02.0060'
   const INSTRUCTION = `${FLOW}.0009-T`
 
-  const line = (slot: string, docType: string, docId: string, author: 'human' | 'run'): FlowGraphCardDocument => ({
+  const line = (slot: string, docType: string, docId: string, author: 'human' | 'run', hasBody?: boolean): FlowGraphCardDocument => ({
     slot,
     docType,
     author,
@@ -697,6 +758,7 @@ describe('a card just placed: ask on the Q&A tab, request the AI answer and see 
     title: `카드 · ${slot}`,
     status: 'draft',
     docReviewStatus: null,
+    ...(hasBody === undefined ? {} : { hasBody }),
   })
 
   /** A 작업 card as the shown Graph has it right after the save answered its key and T#1's documents. */
@@ -711,7 +773,8 @@ describe('a card just placed: ask on the Q&A tab, request the AI answer and see 
     structureEditable: true,
     definition: { nodeType: 'document', docType: 'T', paletteItemId: null, label: '새 카드', assignee: null, rootBound: false },
     document: { docId: INSTRUCTION, typeCode: 'T', seq: null, title: '카드 · instruction', docReviewStatus: null, status: 'draft', supersedes: [] },
-    cardDocuments: [line('instruction', 'T', INSTRUCTION, 'human'), line('report', 'TR', `${FLOW}.0010-TR`, 'run')],
+    // flowgate.v02.0070 T#5: the instruction is written (a body to check) — an AI answer is asked only then.
+    cardDocuments: [line('instruction', 'T', INSTRUCTION, 'human', true), line('report', 'TR', `${FLOW}.0010-TR`, 'run')],
   })
 
   const graphOf = (node: FlowGraphNode): FlowGraph => ({
@@ -747,7 +810,7 @@ describe('a card just placed: ask on the Q&A tab, request the AI answer and see 
     expect(aiWaiting(w, 31).exists()).toBe(true)
     await aiAnswerArrives(INSTRUCTION, '단위 테스트가 모두 통과하면 완료입니다.')
     expect(itemEl(w, 31).attributes('data-state')).toBe('answered')
-    expect(itemEl(w, 31).get('[data-test="qna-answer-body"]').text()).toBe('단위 테스트가 모두 통과하면 완료입니다.')
-    expect(itemEl(w, 31).get('[data-test="qna-answer-side"]').text()).toBe('답: AI · Claude Opus 5.5')
+    expect(inWindow(31).get('[data-test="qna-window-answer"] .inspector-qna-text').text()).toBe('단위 테스트가 모두 통과하면 완료입니다.')
+    expect(inWindow(31).get('[data-test="qna-window-answer-side"]').text()).toBe('답: AI · Claude Opus 5.5')
   })
 })

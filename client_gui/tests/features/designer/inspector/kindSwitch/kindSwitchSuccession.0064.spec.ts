@@ -44,7 +44,8 @@ vi.mock('@/features/document', async (importOriginal) => {
     kindSwitchOriginRead: (...args: unknown[]) => originRead(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
     qaRead: (...args: unknown[]) => qaRead(...args),
-    reviewDocumentRead: async () => ({ groupDisposed: false }),
+    // flowgate.v02.0070 T#5: the document read answering waits for (a current document: superseded by none).
+    reviewDocumentRead: async () => ({ groupDisposed: false, record: { supersededBy: null } }),
     settingsChoicesRead: async () => ({ providers: [], defaultProviderId: null }),
   }
 })
@@ -331,19 +332,28 @@ describe('the document a succeeded root came from (P0006 §3.3, in the Frame wit
     expect(qaRead).toHaveBeenCalledWith(ROOT_R)
     expect(wrapper.findAll('[data-test="qna-item"]').map((item) => item.attributes('data-item'))).toEqual(['11', '12'])
     for (const test of ['qna-ask', 'qna-answer-form', 'qna-ai', 'qna-option']) expect(find(test).exists(), test).toBe(false)
-    expect(wrapper.get('[data-test="qna-item"][data-item="12"] [data-test="qna-answer-body"]').text()).toBe('로그인')
     await wrapper.get('[data-test="qna-item"][data-item="11"] [data-test="qna-open"]').trigger('click')
     await flushPromises()
     expect(document.body.querySelector('[data-test="qna-window"]')?.getAttribute('data-item')).toBe('11')
     expect(document.body.querySelector('[data-test="qna-window-body"]')?.textContent).toBe('범위가 어디까지입니까?')
     expect(document.body.querySelector('[data-test="qna-window-form"]')).toBeNull()
     expect(document.body.querySelector('[data-test="qna-window-mode"]')?.textContent).toBe('읽기 전용')
-    // The same tab of the live document keeps its forms.
+    // flowgate.v02.0070 T#5: the stored options stay readable; no body line in history (the badge says it).
+    expect(document.body.querySelector('[data-test="qna-window-options"]')?.textContent).toBe('선택지: 전체')
+    expect(document.body.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
+    // flowgate.v02.0070 T#5: answers are read in the ↗ window (the list line keeps who asked only).
+    await wrapper.get('[data-test="qna-item"][data-item="12"] [data-test="qna-open"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-test="qna-window"][data-item="12"] [data-test="qna-window-answer"] .inspector-qna-text')?.textContent).toBe('로그인')
+    // The same tab of the live document keeps its forms — in the ↗ window, with its document's body there (0070 T#5).
     wrapper.unmount()
-    wrapper = mount(QnaTab, { attachTo: document.body, props: { target }, global: { plugins: [i18n, pinia] } })
+    const live = { ...target, cardDocuments: [{ slot: 'requirement', docType: 'R', author: 'human', docId: ROOT_R, title: ROOT_R, status: 'open', docReviewStatus: null, hasBody: true, bodyState: null }] }
+    wrapper = mount(QnaTab, { attachTo: document.body, props: { target: live }, global: { plugins: [i18n, pinia] } })
     await flushPromises()
     expect(find('qna-ask').exists()).toBe(true)
-    expect(find('qna-answer-form').exists()).toBe(true)
+    await wrapper.get('[data-test="qna-item"][data-item="11"] [data-test="qna-open"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-test="qna-window"][data-item="11"] [data-test="qna-window-form"]')).not.toBeNull()
   })
 })
 
