@@ -12,7 +12,8 @@
        click there is how the user makes the first selection (0001-R §2). The Explorer search
        is available whenever a Project is open (flowgate.v02.0044).
        flowgate.v02.0043: the Shell's Explorer state request (File menu: Group / Flow 열기,
-       Group 닫기) and refresh token (a new Group / Flow) pass through to the Project Explorer. -->
+       Group 닫기) and refresh token (a new Group / Flow) pass through to the Project Explorer.
+       flowgate.v02.0060 T#2: the File Explorer's refresh token (a context menu command changed the worktree) passes too. -->
   <aside
     class="designer-left-dock"
     :class="{ 'is-collapsed': collapsed, 'is-unselected': unselected }"
@@ -62,6 +63,7 @@
         v-show="mode === 'file'"
         :project-id="projectId"
         :flow="activeFlow"
+        :refresh-token="fileRefreshToken"
       />
     </div>
   </aside>
@@ -90,8 +92,10 @@ const props = withDefaults(
     explorerRequest?: ExplorerStateRequest | null
     /** Bumped to make the Project Explorer re-read its tree (0043). */
     refreshToken?: number
+    /** Bumped to make the File Explorer re-read the open Flow's worktree (0060 T#2). */
+    fileRefreshToken?: number
   }>(),
-  { unselected: false, explorerRequest: null, refreshToken: 0 },
+  { unselected: false, explorerRequest: null, refreshToken: 0, fileRefreshToken: 0 },
 )
 
 const emit = defineEmits<{

@@ -1,4 +1,6 @@
 /**
+ * flowgate.v02.0060 T#2 (WP 0012, 2-B): the 11 2-B items are connected in the Shell; here only their states — their
+ * windows and requests are contextMenuServerActions.0060.
  * flowgate.v02.0060 T#2 — the Designer context menu in the real Designer Shell (0006-D rev2 §9.3 ① ② ③ ⑤, §3.4):
  * the host installed by the Shell, the project tree / File Explorer / Flow tab / Palette entry points with their real
  * data, the commands reaching the Shell's existing paths (File › 새 Group, the 새 Flow dialog with the right-clicked
@@ -201,8 +203,9 @@ describe('Designer context menu in the Shell — ① project tree', () => {
     expect(document.querySelector<HTMLSelectElement>('[data-test="designer-flow-create-group"]')!.value).toBe('module:p:api')
   })
 
-  // Q item 459: shown before 2-B, disabled as 연결 예정 — 삭제 stays the dispose (DC) meaning and calls nothing here.
-  it('a Flow row opens its menu: 이름 변경 / 삭제 are 연결 예정 (disabled); nothing is called, nothing opens', async () => {
+  // Q item 459 / T#2 (2-B): 이름 변경 / 삭제 are connected now — 삭제 is the dispose (DC) meaning and only opens its
+  // confirmation (contextMenuServerActions.0060); the right click itself selects or opens nothing.
+  it('a Flow row opens its menu: 이름 변경 / 삭제 are enabled (T#2); choosing 삭제 opens its confirmation only — nothing is called', async () => {
     const w = await mountShell()
     await doubleClick(w, 'UI 개선')
     const selected = selectedRows(w)
@@ -210,11 +213,12 @@ describe('Designer context menu in the Shell — ① project tree', () => {
     await settle()
     expect(event.defaultPrevented).toBe(true)
     expect(itemTexts()).toEqual(['✎ 이름 변경', '× 삭제'])
-    expect(states()).toEqual([['flow.rename', 'true', '연결 예정'], ['flow.delete', 'true', '연결 예정']])
+    expect(states()).toEqual([['flow.rename', 'false', ''], ['flow.delete', 'false', '']])
     expect(item('flow.delete').classList.contains('danger')).toBe(true)
-    for (const entry of items()) press(entry)
+    item('flow.delete').click()
     await settle()
-    expect(menuEl()).not.toBeNull()
+    expect(menuEl()).toBeNull()
+    expect(document.querySelector('[data-test="dma-flow.delete"]')).not.toBeNull()
     expect(postRequest).not.toHaveBeenCalled()
     expect(w.findAll('[data-test="designer-flow-tab"]')).toHaveLength(0)
     expect(selectedRows(w)).toEqual(selected)
@@ -285,10 +289,12 @@ describe('Designer context menu in the Shell — ② File Explorer', () => {
     expect(rowPaths(w)).toEqual(['src', 'src/app.ts'])
     rightClick(folder(w, 'src'))
     await settle()
+    // T#2: the 2-B items are connected; this Flow's slot is not writable (git/status slots: []), so canMutate is false and
+    // the write items are disabled by their own condition (no 연결 예정 reason) — 다운로드 needs read permission only.
     expect(states()).toEqual([
-      ['folder.open', 'true', ''], ['folder.newFolder', 'true', '연결 예정'], ['folder.newFile', 'true', '연결 예정'],
-      ['folder.rename', 'true', '미구현'], ['folder.download', 'true', '연결 예정'], ['folder.upload', 'true', '연결 예정'],
-      ['folder.git', 'false', ''], ['folder.delete', 'true', '연결 예정'],
+      ['folder.open', 'true', ''], ['folder.newFolder', 'true', ''], ['folder.newFile', 'true', ''],
+      ['folder.rename', 'true', '미구현'], ['folder.download', 'false', ''], ['folder.upload', 'true', ''],
+      ['folder.git', 'false', ''], ['folder.delete', 'true', ''],
     ])
     item('folder.open').click()
     await settle()
@@ -296,8 +302,9 @@ describe('Designer context menu in the Shell — ② File Explorer', () => {
     expect(rowPaths(w)).toEqual(['src', 'src/app.ts'])
   })
 
-  // Q item 459: the file row and the root folder (the blank tree) open their mockup menus; nothing runs from them yet.
-  it('a file row opens its menu (열기 / 이름 변경 / Git 되돌리기 / 이력 미구현, 다운로드 / Git 수정 확인 / 삭제 연결 예정); nothing is called', async () => {
+  // Q item 459: the file row and the root folder (the blank tree) open their mockup menus. T#2: the 2-B items follow their
+  // own conditions (a read-only Flow here, a file without a change) — the 미구현 ones request nothing.
+  it('a file row opens its menu (열기 / 이름 변경 / Git 되돌리기 / 이력 미구현; 다운로드 enabled, 수정 확인 / 삭제 by condition); nothing is called', async () => {
     const w = await fileExplorer()
     await w.get('[data-test="dfx-folder-row"][data-path="src"]').trigger('click')
     await settle()
@@ -306,16 +313,16 @@ describe('Designer context menu in the Shell — ② File Explorer', () => {
     expect(onFile.defaultPrevented).toBe(true)
     expect(itemTexts()).toEqual(['↗ 열기', '✎ 이름 변경', '↓ 다운로드', '⑂ Git ›', '× 삭제'])
     expect(states()).toEqual([
-      ['file.open', 'true', '미구현'], ['file.rename', 'true', '미구현'], ['file.download', 'true', '연결 예정'],
-      ['file.git', 'false', ''], ['file.delete', 'true', '연결 예정'],
+      ['file.open', 'true', '미구현'], ['file.rename', 'true', '미구현'], ['file.download', 'false', ''],
+      ['file.git', 'false', ''], ['file.delete', 'true', ''],
     ])
     item('file.git').dispatchEvent(new MouseEvent('mouseenter'))
     await settle()
     const sub = Array.from(document.querySelectorAll<HTMLElement>('[data-designer-context-menu] [data-level="1"] [role="menuitem"]'))
     expect(sub.map((entry) => [entry.dataset.key, entry.getAttribute('aria-disabled'), entry.title])).toEqual([
-      ['file.git.changes', 'true', '연결 예정'], ['file.git.revert', 'true', '미구현'], ['file.git.history', 'true', '미구현'],
+      ['file.git.changes', 'true', ''], ['file.git.revert', 'true', '미구현'], ['file.git.history', 'true', '미구현'],
     ])
-    for (const entry of [...sub, ...items().filter((entry) => entry.dataset.key !== 'file.git')]) press(entry)
+    for (const entry of [...sub, ...items().filter((entry) => !['file.git', 'file.download'].includes(entry.dataset.key!))]) press(entry)
     await settle()
     expect(menuEl()).not.toBeNull()
     expect(postRequest).not.toHaveBeenCalled()
@@ -323,16 +330,16 @@ describe('Designer context menu in the Shell — ② File Explorer', () => {
     expect(w.findAll('[data-test="dfx-file-row"][aria-selected="true"]')).toHaveLength(0)
   })
 
-  it('the blank tree is the root folder: no 열기 / 이름 변경 / 삭제, the rest 연결 예정 / 미구현; nothing is called', async () => {
+  it('the blank tree is the root folder: no 열기 / 이름 변경 / 삭제; the write items off on a read-only Flow; nothing is called', async () => {
     const w = await fileExplorer()
     const onBlank = rightClick(w.get('.dfx-body').element)
     await settle()
     expect(onBlank.defaultPrevented).toBe(true)
     expect(itemTexts()).toEqual(['＋ 새 폴더', '＋ 새 파일', '↓ 다운로드', '↑ 업로드', '⑂ Git ›'])
     expect(states().map(([key, off]) => [key, off])).toEqual([
-      ['folder.newFolder', 'true'], ['folder.newFile', 'true'], ['folder.download', 'true'], ['folder.upload', 'true'], ['folder.git', 'false'],
+      ['folder.newFolder', 'true'], ['folder.newFile', 'true'], ['folder.download', 'false'], ['folder.upload', 'true'], ['folder.git', 'false'],
     ])
-    for (const entry of items().filter((entry) => entry.dataset.key !== 'folder.git')) press(entry)
+    for (const entry of items().filter((entry) => !['folder.git', 'folder.download'].includes(entry.dataset.key!))) press(entry)
     await settle()
     expect(menuEl()).not.toBeNull()
     expect(postRequest).not.toHaveBeenCalled()

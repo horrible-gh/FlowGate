@@ -49,12 +49,18 @@ export const firstConnected = [
 
 
 // flowgate.v02.0060 T#1 (WP 0012 [B], [C]): 13 run (1차 11 + 정렬 2), 11 연결 예정 (2-B), 16 미구현 — 40.
+// `connectedNow` stays the 13 client paths: the part contract (and a host that lends no server path) shows the 11 2-B
+// commands as 연결 예정 with it.
 export const arrangeConnected = ['canvas.arrange', 'multi.arrange'] as const
 export const connectedNow = [...firstConnected, ...arrangeConnected] as const
 export const plannedCommands = [
   'group.rename', 'flow.rename', 'flow.delete', 'folder.newFolder', 'folder.newFile', 'folder.download',
   'folder.upload', 'folder.delete', 'file.download', 'file.git.changes', 'file.delete',
 ] as const
+// flowgate.v02.0060 T#2 (0006-D §4.3 2-B): the Designer Shell connects the 11 through their existing server contracts —
+// 24 run, 16 미구현.
+export const serverConnected = plannedCommands
+export const connectedAll = [...connectedNow, ...serverConnected] as const
 export const unimplementedCommands = [
   'project.info', 'group.info', 'folder.rename', 'folder.git.changes', 'folder.git.revert', 'folder.git.history',
   'file.open', 'file.rename', 'file.git.revert', 'file.git.history', 'canvas.paste', 'node.detail', 'node.copy',

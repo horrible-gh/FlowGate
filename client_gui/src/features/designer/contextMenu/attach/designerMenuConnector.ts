@@ -14,17 +14,25 @@
 // so one menu is ever open on a card.
 //
 // flowgate.v02.0060 T#1 (WP 0012, Q item 459): the 11 first-step commands (§5.3 1차 연결) and 정렬 · 배치 / 정렬 are
-// connected (CONNECTED_COMMANDS, 13); every other item of the mockup's 40 is shown disabled where the mockup puts it —
+// connected (CLIENT_COMMANDS, 13); every other item of the mockup's 40 is shown disabled where the mockup puts it —
 // 연결 예정 for the 11 2-B commands, 미구현 for the 16 others — and never reaches an execute path here (no request,
 // no API call). So the Flow row, the file row, the root folder and a card of a multi-selection open their menus now.
 // The multi-selection menu takes no single card command and no run item (§3.6), and changes no selection. 정렬 · 배치
 // and 정렬 open the Edit menu's 정렬 / 배치 commands (the Shell's DESIGNER_ARRANGE_GROUPS, its isMenuCommandEnabled
 // and its onTopCommand → center.arrangeNodes); no arrange logic of its own.
 //
+// flowgate.v02.0060 T#2 (WP 0012, 0006-D rev2 §4.3 2-B): the 11 2-B commands are connected through the existing server
+// contracts the Shell lends (`server`, features/project → the v0.1 routes): 이름 변경 (Group / Flow), Flow 삭제 = the
+// existing dispose (DC), 새 폴더 / 새 파일, 폴더 다운로드 / 업로드 / 삭제, 파일 다운로드 / Git › 수정 확인 / 삭제. A chosen
+// one opens its window (DesignerMenuActions) with the target the menu saw; right before the request the window builds the
+// menu again from now, so a target that left its scope or an item no longer enabled (canMutate, virtual deleted node,
+// read permission, Git state) runs nothing. The connector itself still calls no API. Without `server` (a host that lends
+// none) the 11 stay 연결 예정. Flow 삭제 never deletes permanently; no document or branch delete exists here.
+//
 // The areas reach this through `provide` / `inject` under DESIGNER_CONTEXT_MENU (no import of this folder), so an
 // area mounted outside the Designer Shell keeps its old behaviour.
 
-import { onBeforeUnmount, provide, shallowRef, watch } from 'vue'
+import { markRaw, onBeforeUnmount, provide, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { DesignerCenterSession } from '../../center/designerCenterSession'
 import type { FlowGraph } from '../../center/graph/flowGraph'
@@ -56,6 +64,9 @@ import type {
   Point,
   ProjectTarget,
 } from '../types'
+import DesignerMenuActions, { type DesignerMenuActionsHandle } from './DesignerMenuActions.vue'
+import type { DesignerMenuServerDeps, MenuActionTarget, PendingMenuAction } from './menuActions'
+export type { DesignerMenuServerDeps, MenuActionResult } from './menuActions'
 
 /** The injection key the five areas use (`inject(Symbol.for('flowgate.designer.contextMenu'), null)`). */
 export const DESIGNER_CONTEXT_MENU = Symbol.for('flowgate.designer.contextMenu')
@@ -67,8 +78,16 @@ export const FIRST_STEP_COMMANDS: readonly MenuCommand[] = Object.freeze([
 ])
 /** T#1 (WP 0012 [B]): 정렬 · 배치 / 정렬 through the Edit menu's 정렬 / 배치 commands. */
 export const ARRANGE_COMMANDS: readonly MenuCommand[] = Object.freeze(['canvas.arrange', 'multi.arrange'])
-/** The commands that run (13); the rest of the 40 are shown disabled as 연결 예정 / 미구현. */
-export const CONNECTED_COMMANDS: readonly MenuCommand[] = Object.freeze([...FIRST_STEP_COMMANDS, ...ARRANGE_COMMANDS])
+/** The commands that run on client paths alone (13: 1차 11 + 정렬 2). */
+export const CLIENT_COMMANDS: readonly MenuCommand[] = Object.freeze([...FIRST_STEP_COMMANDS, ...ARRANGE_COMMANDS])
+/** T#2 (0006-D §4.3 2-B): the 11 existing server contracts, run through the windows and the Shell's `server`. */
+export const SERVER_COMMANDS: readonly MenuCommand[] = Object.freeze([
+  'group.rename', 'flow.rename', 'flow.delete', 'folder.newFolder', 'folder.newFile', 'folder.download',
+  'folder.upload', 'folder.delete', 'file.download', 'file.git.changes', 'file.delete',
+])
+/** The commands that run (24); the other 16 of the 40 are shown disabled as 미구현. */
+export const CONNECTED_COMMANDS: readonly MenuCommand[] = Object.freeze([...CLIENT_COMMANDS, ...SERVER_COMMANDS])
+const SERVER_SET: ReadonlySet<string> = new Set(SERVER_COMMANDS)
 
 const RUN_COMMANDS: Readonly<Record<FlowCardMenuKey, CardRunCommand>> = {
   hold_set: 'node.run.holdSet',
@@ -146,6 +165,8 @@ export interface DesignerContextMenuDeps {
   readonly selectPalette: (definition: PaletteItemDefinition) => void
   /** 정렬 · 배치 / 정렬 (T#1). */
   readonly arrange: DesignerArrangeDeps
+  /** T#2: the 2-B server paths (absent: the 11 stay 연결 예정). */
+  readonly server?: DesignerMenuServerDeps
   /** Anything whose change hides an area (Dock collapse, Explorer mode, Tool tab): the menu closes. */
   readonly layout?: () => unknown
 }
@@ -156,7 +177,8 @@ interface OpenMenu {
   readonly build: () => MenuModel | null
   /** False once the target is gone or its scope changed (closes the menu, nothing runs). */
   readonly alive: () => boolean
-  readonly execute: (request: CommandRequest) => void
+  /** `recheck`: the menu built again from now still has this item (for a window that runs later). */
+  readonly execute: (request: CommandRequest, recheck: () => boolean) => void
   used: boolean
 }
 
@@ -169,6 +191,14 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   const { center } = deps
   /** The menu the host shows now, with what it was built from (replaced on every open). */
   const open = shallowRef<OpenMenu | null>(null)
+  /** What runs: the 2-B commands only while the Shell lends their server paths. */
+  const connected: readonly MenuCommand[] = deps.server ? CONNECTED_COMMANDS : CLIENT_COMMANDS
+  /** T#2: the one 2-B window open now (a new one replaces it). */
+  const pending = shallowRef<PendingMenuAction | null>(null)
+  let actionSeq = 0
+  function openAction(target: MenuActionTarget, stillValid: () => boolean) {
+    pending.value = { seq: ++actionSeq, target, stillValid }
+  }
 
   // ── shared ────────────────────────────────────────────────────────────────────────────────────
 
@@ -176,7 +206,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     event: MouseEvent,
     build: () => MenuModel | null,
     alive: () => boolean,
-    execute: (request: CommandRequest) => void,
+    execute: (request: CommandRequest, recheck: () => boolean) => void,
     fallback?: HTMLElement | null,
   ): boolean {
     const opened = openContextMenu(event, host, build(), fallback ?? undefined)
@@ -193,7 +223,8 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     if (!entry.alive()) return
     const now = entry.build()
     if (!now || now.request(requestKey(request)) === null) return
-    entry.execute(request)
+    const key = requestKey(request)
+    entry.execute(request, () => entry.alive() && (entry.build()?.request(key) ?? null) !== null)
   }
 
   // ── ① project tree ────────────────────────────────────────────────────────────────────────────
@@ -206,13 +237,20 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     const build = () => live() ? projectTreeMenu({
       target,
       available: { currentProject: deps.projectId() === target.projectId },
-      connected: CONNECTED_COMMANDS,
+      connected,
     }) : null
-    return show(event, build, live, (request) => {
+    return show(event, build, live, (request, recheck) => {
       const scope = request.target as ProjectTarget
       if (!live() || deps.projectId() !== scope.projectId) return
       if (request.command === 'project.newGroup') deps.openGroupCreate()
       else if (request.command === 'group.newFlow' && scope.kind === 'group') deps.openFlowCreate(scope.groupId)
+      else if (!SERVER_SET.has(request.command)) return
+      // T#2: 이름 변경 (Group / Flow) and Flow 삭제 (the existing dispose, DC) open their windows on this row.
+      else if (request.command === 'group.rename' && scope.kind === 'group') {
+        openAction({ kind: 'group.rename', projectId: scope.projectId, groupId: scope.groupId }, recheck)
+      } else if ((request.command === 'flow.rename' || request.command === 'flow.delete') && scope.kind === 'flow') {
+        openAction({ kind: request.command, projectId: scope.projectId, groupId: scope.groupId, flowId: scope.flowId }, recheck)
+      }
     }, fallback)
   }
 
@@ -221,12 +259,29 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   function file(event: MouseEvent, entry: FileMenuEntry): boolean {
     const build = () => {
       const available = entry.available()
-      return available ? fileExplorerMenu({ target: entry.target, available, connected: CONNECTED_COMMANDS }) : null
+      return available ? fileExplorerMenu({ target: entry.target, available, connected }) : null
     }
     const flowAt = center.state.activeFlowId
     const alive = () => center.state.activeFlowId === flowAt && entry.available() !== null
-    return show(event, build, alive, (request) => {
-      if (request.command === 'folder.open') entry.expand?.()
+    return show(event, build, alive, (request, recheck) => {
+      if (request.command === 'folder.open') {
+        entry.expand?.()
+        return
+      }
+      if (!SERVER_SET.has(request.command)) return
+      // T#2: the Flow worktree commands open their windows with the node the menu saw (파일 다운로드 runs at once).
+      const scope = request.target as FileTarget
+      if (scope.kind === 'folder' && request.command.startsWith('folder.')) {
+        openAction({
+          kind: request.command as Extract<MenuActionTarget, { root: boolean }>['kind'],
+          projectId: scope.projectId, flowId: scope.flowId, path: scope.path, root: scope.root,
+        }, recheck)
+      } else if (scope.kind === 'file' && request.command.startsWith('file.')) {
+        openAction({
+          kind: request.command as 'file.download' | 'file.git.changes' | 'file.delete',
+          projectId: scope.projectId, flowId: scope.flowId, path: scope.path,
+        }, recheck)
+      }
     }, entry.fallback)
   }
 
@@ -237,7 +292,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   function tab(event: MouseEvent, flowId: string | null, fallback?: HTMLElement | null): boolean {
     const target = { kind: 'tab' as const, flowId, tabIds: openTabIds() }
     const projectAt = deps.projectId()
-    const build = () => flowTabMenu({ target, available: { openTabIds: openTabIds() }, connected: CONNECTED_COMMANDS })
+    const build = () => flowTabMenu({ target, available: { openTabIds: openTabIds() }, connected })
     const alive = () => deps.projectId() === projectAt && (flowId === null || openTabIds().includes(flowId))
     return show(event, build, alive, (request) => {
       // The tab ids of this moment, each closed through the session's one close (its pending saves included).
@@ -296,7 +351,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     })
   }
 
-  const CANVAS_CONNECTED: readonly MenuItemCommand[] = Object.freeze([...CONNECTED_COMMANDS, ...Object.values(RUN_COMMANDS)])
+  const CANVAS_CONNECTED: readonly MenuItemCommand[] = Object.freeze([...connected, ...Object.values(RUN_COMMANDS)])
 
   /** The Canvas menu of the entry from the state of now (the card kind from the selection of now). */
   function buildCanvas(entry: CanvasMenuEntry, screen: Point): MenuModel | null {
@@ -394,7 +449,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     const definition = { ...entry.definition }
     const target = { kind: 'palette' as const, definitionId: definition.itemId }
     const flowAt = center.state.activeFlowId
-    const build = () => paletteMenu({ target, available: { canPlace: canPlace() }, connected: CONNECTED_COMMANDS })
+    const build = () => paletteMenu({ target, available: { canPlace: canPlace() }, connected })
     const alive = () => center.state.activeFlowId === flowAt && (entry.alive?.() ?? true)
     return show(event, build, alive, (request) => {
       if (request.command === 'palette.addCard' && center.state.activeFlowId !== null) deps.selectPalette(definition)
@@ -417,10 +472,24 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   // Another project or active Flow, or an area hidden.
   watch(() => [deps.projectId(), center.state.activeFlowId, deps.layout?.()], () => host.close())
 
-  onBeforeUnmount(() => host.close())
+  // Another project closes a 2-B window (its target belongs to the project it was opened in).
+  watch(() => deps.projectId(), () => { pending.value = null })
+
+  onBeforeUnmount(() => {
+    host.close()
+    pending.value = null
+  })
 
   const api: DesignerContextMenuApi = { project, file, tab, canvas, guardCanvas, palette }
   provide(DESIGNER_CONTEXT_MENU, api)
-  return { host, run, api }
+  /** T#2: the 2-B windows the Shell mounts (`<component :is="dialogs" :actions="actions" />`) and their state. */
+  const actions: DesignerMenuActionsHandle | null = deps.server ? {
+    pending,
+    server: deps.server,
+    close: (seq) => {
+      if (pending.value?.seq === seq) pending.value = null
+    },
+  } : null
+  return { host, run, api, actions, dialogs: markRaw(DesignerMenuActions) }
 }
 

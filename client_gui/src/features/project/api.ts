@@ -13,8 +13,20 @@
 // of the group change list, and keeps the transport error of the change list and file diff.
 // archive/restore/source-path and Git mutation endpoints are still not called here (the Git
 // part's own api.ts owns those).
+// flowgate.v02.0060 T#2 adds the existing server contracts the Designer context menu runs (0006-D rev2 §4.3 2-B):
+// Group title (PATCH modules), Flow title (PUT groups), Flow dispose (DC), and the Flow worktree's folder / file
+// create, download, upload and delete — each with the Flow's group_id, never a Base fallback. No permanent delete,
+// document delete or branch delete is called.
 
-import { extractApiErrorMessage, getRequest, postRequest } from '@shared/api'
+import api, {
+  downloadBlobRequest,
+  extractApiErrorMessage,
+  getRequest,
+  patchRequest,
+  postFormRequest,
+  postRequest,
+  putRequest,
+} from '@shared/api'
 import type {
   BaseFileDiff,
   CreateFlowInput,
@@ -38,6 +50,9 @@ import type {
   ProjectGitUnpushed,
   ProjectGitUnpushedMerge,
   ProjectModule,
+  SourceDownload,
+  SourceMutationRefusal,
+  SourceUploadResult,
 } from './types'
 
 interface RawProjectModule {
@@ -673,5 +688,242 @@ export async function createFlow(input: CreateFlowInput): Promise<CreatedFlow> {
     return { id: response.data.group_id, title: input.title }
   } catch (error) {
     throw new Error(extractApiErrorMessage(error, 'Failed to create the flow.'))
+  }
+}
+
+// ── Group / Flow / source file commands (flowgate.v02.0060 T#2, 0006-D rev2 §4.3 2-B) ──────────────────────────
+// The same server contracts the v0.1 explorer calls (CreateFileFolderModal, FileTreeNode, useFileUpload,
+// GroupTreeNode / DocHeader dispose, module / group edit). Each Flow worktree call sends the Flow's group_id, so
+// the server resolves that worktree or refuses (no silent Base fallback). A refusal is thrown as an Error whose
+// `refusal` says what the screen shows; `cause` keeps the transport error.
+
+const projectPath = (projectId: string) => `/api/v1/projects/${encodeURIComponent(projectId)}`
+
+/** The server code and message of a refused call, from the shapes these routes answer with. */
+function refusalParts(error: unknown): { status: number | null; code: string | null; text: string } {
+  const response = (error as { response?: { status?: number; data?: unknown } } | null)?.response
+  const data = response?.data && typeof response.data === 'object' ? (response.data as Record<string, any>) : null
+  const nested = data?.error && typeof data.error === 'object' ? data.error : data?.detail && typeof data.detail === 'object' ? data.detail : null
+  const code = nested?.code ?? data?.code ?? null
+  const text = [nested?.message, typeof data?.detail === 'string' ? data.detail : null, data?.message]
+    .filter((part): part is string => typeof part === 'string')
+    .join(' ')
+  return { status: typeof response?.status === 'number' ? response.status : null, code: typeof code === 'string' ? code : null, text }
+}
+
+/**
+ * The transport error under a thrown one: itself when it has the HTTP response, else the first `cause` that has it
+ * (the loaders' `loadError` keeps the transport error there). The error itself when none has a response (network).
+ */
+function transportError(error: unknown): unknown {
+  let current: unknown = error
+  for (let depth = 0; depth < 5 && current && typeof current === 'object'; depth += 1) {
+    if ((current as { response?: unknown }).response) return current
+    current = (current as { cause?: unknown }).cause
+  }
+  return error
+}
+
+/**
+ * What a refused Group / Flow / source command (or a failed read of the 수정 확인 window) means on screen. The server's
+ * text is only read, never shown.
+ */
+export function sourceMutationRefusal(error: unknown): SourceMutationRefusal {
+  const own = (error as { refusal?: SourceMutationRefusal } | null)?.refusal
+  if (own) return own
+  const transport = transportError(error)
+  const hasResponse = !!(transport as { response?: unknown } | null)?.response
+  const { status, code, text } = refusalParts(transport)
+  const lower = text.toLowerCase()
+  const reason: SourceMutationRefusal['reason'] = !hasResponse
+    ? 'network'
+    : code === 'TR2_MANAGED_FILE'
+      ? 'managed'
+      : code === 'SOURCE_MUTATION_BUSY' || code === 'GROUP_AI_RUN_LOCKED' || status === 423
+        ? 'locked'
+        : code === 'SOURCE_WORKTREE_UNAVAILABLE' || code === 'WORKTREE_UNAVAILABLE' || lower.includes('worktree is unavailable') || lower.includes('worktree is not available')
+          ? 'worktree'
+          : lower.includes('group_disposed') || lower.includes('already disposed')
+            ? 'disposed'
+            : status === 403 || code === 'FORBIDDEN'
+              ? 'forbidden'
+              : status === 413 || code === 'PAYLOAD_TOO_LARGE'
+                ? 'too_large'
+                : lower.includes('already exists')
+                  ? 'exists'
+                  : status === 404 || /NOT_FOUND$/.test(code ?? '') || lower.includes('not found')
+                    ? 'not_found'
+                    : status === 400 || status === 409 || status === 422
+                      ? 'invalid'
+                      : 'failed'
+  return { reason, status, code }
+}
+
+function refused(error: unknown, fallback: string): Error {
+  const wrapped = new Error(extractApiErrorMessage(error, fallback)) as Error & { cause?: unknown; refusal?: SourceMutationRefusal }
+  wrapped.cause = error
+  wrapped.refusal = sourceMutationRefusal(error)
+  return wrapped
+}
+
+/**
+ * PATCH /api/v1/projects/{pid}/modules/{name} — a Group's display name (v0.1 module title). The module key
+ * (`name`) and so the Group id stay as they are (server T559: slug immutable).
+ */
+export async function renameGroup(projectId: string, moduleName: string, title: string): Promise<void> {
+  try {
+    await patchRequest(`${projectPath(projectId)}/modules/${encodeURIComponent(moduleName)}`, { title })
+  } catch (error) {
+    throw refused(error, 'Failed to rename the group.')
+  }
+}
+
+/** PUT /api/v1/groups/{gid} with the title only — a Flow's display name (its id stays; a disposed Flow is 409). */
+export async function renameFlow(flowId: string, title: string): Promise<void> {
+  try {
+    await putRequest(`/api/v1/groups/${encodeURIComponent(flowId)}`, { title })
+  } catch (error) {
+    throw refused(error, 'Failed to rename the flow.')
+  }
+}
+
+/**
+ * POST /api/v1/groups/{gid}/dispose — the existing Flow dispose (DC): a file-less DC document and the
+ * group_disposed event, then the server cleans the Flow's worktree / work branch. The reason goes as
+ * `reason_detail`, as the v0.1 dispose confirm sends it. The route answers 200 with `status: 'error'` for a Flow
+ * that is gone or already disposed; that is a refusal too.
+ */
+export async function disposeFlow(flowId: string, reason: string): Promise<void> {
+  let answer: { status?: string; message?: string } | null = null
+  try {
+    answer = (await postRequest<{ status?: string; message?: string }>(`/api/v1/groups/${encodeURIComponent(flowId)}/dispose`, {
+      reason_detail: reason,
+    })).data ?? null
+  } catch (error) {
+    throw refused(error, 'Failed to dispose the flow.')
+  }
+  if (answer?.status === 'error') {
+    const message = (answer.message ?? '').toLowerCase()
+    const reasonOf: SourceMutationRefusal['reason'] = message.includes('already disposed')
+      ? 'disposed'
+      : message.includes('not found') ? 'not_found' : 'failed'
+    const wrapped = new Error('Failed to dispose the flow.') as Error & { refusal?: SourceMutationRefusal }
+    wrapped.refusal = { reason: reasonOf, status: 200, code: null }
+    throw wrapped
+  }
+}
+
+/**
+ * POST /api/v1/storage/folder | /storage/file — an empty folder / file named `name` under `parentPath` ('' = the
+ * root) of the Flow's worktree. Refusals come back as HTTP 400 with `{status: 'error', message, code?}`.
+ */
+export async function createSourceEntry(
+  projectId: string,
+  flowId: string,
+  kind: 'folder' | 'file',
+  parentPath: string,
+  name: string,
+): Promise<void> {
+  try {
+    await postRequest(`/api/v1/storage/${kind}`, { project_id: projectId, parent_path: parentPath, name, group_id: flowId })
+  } catch (error) {
+    throw refused(error, kind === 'folder' ? 'Failed to create the folder.' : 'Failed to create the file.')
+  }
+}
+
+function filenameOf(disposition: unknown, fallback: string): string {
+  if (typeof disposition !== 'string') return fallback
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded[1])
+    } catch {
+      // A malformed encoded name falls through to the plain one.
+    }
+  }
+  const plain = /filename="([^"]+)"/i.exec(disposition)
+  return plain ? plain[1] : fallback
+}
+
+/** A refusal of a blob request arrives as a blob too: read it back into the JSON envelope before classifying. */
+async function readBlobRefusal(error: unknown): Promise<void> {
+  const response = (error as { response?: { data?: unknown } } | null)?.response
+  const data = response?.data
+  if (!response || typeof Blob === 'undefined' || !(data instanceof Blob)) return
+  try {
+    response.data = JSON.parse(await blobText(data))
+  } catch {
+    // Not JSON: the status alone is read.
+  }
+}
+
+function blobText(blob: Blob): Promise<string> {
+  if (typeof blob.text === 'function') return blob.text()
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(blob)
+  })
+}
+
+/**
+ * GET /api/v1/projects/{pid}/files/download (file) | /files/download-zip (folder, empty folders not included) —
+ * from the Flow's worktree (`group_id`). `path` '.' is the worktree root.
+ */
+export async function downloadSourceEntry(
+  projectId: string,
+  flowId: string,
+  kind: 'folder' | 'file',
+  path: string,
+  fallbackName: string,
+): Promise<SourceDownload> {
+  try {
+    const response = await downloadBlobRequest(`${projectPath(projectId)}/files/${kind === 'file' ? 'download' : 'download-zip'}`, {
+      path,
+      group_id: flowId,
+    })
+    return { filename: filenameOf(response.headers?.['content-disposition'], fallbackName), blob: response.data }
+  } catch (error) {
+    await readBlobRefusal(error)
+    throw refused(error, 'Failed to download.')
+  }
+}
+
+/**
+ * POST /api/v1/projects/{pid}/files/upload — multipart `files[]` under `target_path` ('' = the root) of the Flow's
+ * worktree. The server overwrites an existing file and checks every path before writing any (one batch).
+ */
+export async function uploadSourceFiles(
+  projectId: string,
+  flowId: string,
+  targetPath: string,
+  files: readonly File[],
+): Promise<SourceUploadResult> {
+  const form = new FormData()
+  form.append('target_path', targetPath)
+  form.append('group_id', flowId)
+  for (const file of files) form.append('files[]', file, file.name)
+  try {
+    const response = await postFormRequest<Partial<SourceUploadResult>>(`${projectPath(projectId)}/files/upload`, form)
+    const data = response.data ?? {}
+    return {
+      uploaded: Array.isArray(data.uploaded) ? data.uploaded.map((u) => ({ path: toSlashes(u.path), size: u.size })) : [],
+      skipped: Array.isArray(data.skipped) ? data.skipped.map((u) => ({ path: toSlashes(u.path), reason: u.reason })) : [],
+    }
+  } catch (error) {
+    throw refused(error, 'Failed to upload.')
+  }
+}
+
+/**
+ * DELETE /api/v1/projects/{pid}/files {path, type, group_id} — one file, or a folder with everything under it, in
+ * the Flow's worktree. The server refuses the root, a type mismatch, a managed path under it and a busy group.
+ */
+export async function deleteSourceEntry(projectId: string, flowId: string, kind: 'folder' | 'file', path: string): Promise<void> {
+  try {
+    await api.delete(`${projectPath(projectId)}/files`, { data: { path, type: kind, group_id: flowId } })
+  } catch (error) {
+    throw refused(error, 'Failed to delete.')
   }
 }

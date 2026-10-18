@@ -2,9 +2,11 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
-  ARRANGE_COMMANDS, CONNECTED_COMMANDS, DESIGNER_CONTEXT_MENU, FIRST_STEP_COMMANDS,
+  ARRANGE_COMMANDS, CLIENT_COMMANDS, CONNECTED_COMMANDS, DESIGNER_CONTEXT_MENU, FIRST_STEP_COMMANDS, SERVER_COMMANDS,
 } from '@/features/designer/contextMenu/attach/designerMenuConnector'
-import { arrangeConnected, connectedNow, firstConnected, plannedCommands, unimplementedCommands } from './contextMenuFixtures.0060'
+import {
+  arrangeConnected, connectedAll, connectedNow, firstConnected, serverConnected, unimplementedCommands,
+} from './contextMenuFixtures.0060'
 
 const root = resolve(__dirname, '../../../src')
 const partRoot = join(root, 'features/designer/contextMenu')
@@ -60,29 +62,60 @@ describe('independent Designer context menu boundaries (0060)', () => {
     expect(injecting.sort()).toEqual(AREA_FILES)
     expect(DESIGNER_CONTEXT_MENU).toBe(Symbol.for('flowgate.designer.contextMenu'))
   })
+  // flowgate.v02.0060 T#2: the attach folder also holds the 2-B windows (DesignerMenuActions.vue), their pure model
+  // (menuActions.ts) and strings (actionMessages.ts). Still no store, API or transport: the server paths are the ones the
+  // Shell lends (`server`), so no route string, Base / Git revert path or delete beyond the two file-tree ones is here.
   it('keeps the connectors on the Center session, Graph rules and the Palette catalog — no store, API or transport', () => {
     const files = readdirSync(attachRoot).filter((name) => /\.(ts|vue)$/.test(name))
-    expect(files).toEqual(['designerMenuConnector.ts'])
+    expect([...files].sort()).toEqual(['DesignerMenuActions.vue', 'actionMessages.ts', 'designerMenuConnector.ts', 'menuActions.ts'].sort())
     for (const file of files) {
       const source = readFileSync(join(attachRoot, file), 'utf8')
       for (const specifier of importsOf(source)) expect(specifier, file).toMatch(
-        /^(?:vue|vue-i18n|\.\.\/[A-Za-z]+|\.\.\/\.\.\/center\/(?:designerCenterSession|graph\/flowGraph|graph\/edgeProgress|run\/flowRunLock|run\/flowCardMenu)|\.\.\/\.\.\/palette\/paletteCatalog)$/,
+        /^(?:vue|vue-i18n|\.\.\/[A-Za-z]+|\.\/(?:DesignerMenuActions\.vue|menuActions|actionMessages)|\.\.\/\.\.\/\.\.\/\.\.\/components\/ui\/[A-Za-z]+\.vue|\.\.\/\.\.\/center\/(?:designerCenterSession|graph\/flowGraph|graph\/edgeProgress|run\/flowRunLock|run\/flowCardMenu)|\.\.\/\.\.\/palette\/paletteCatalog)$/,
       )
-      expect(source, file).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|defineStore|localStorage|sessionStorage|postRequest|getRequest)\b|\bimport\s*\(/)
-      // Git 되돌리기 / Flow 폐기 have no path here: no Base or dispose route is reachable from the menu.
-      expect(source, file).not.toMatch(/dispose\(|base-revert|revertAll|untracked/)
+      expect(source, file).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|defineStore|localStorage|sessionStorage|postRequest|getRequest|axios)\b|\bimport\s*\(|@\/features\/project|\/api\/v1/)
+      // Git 되돌리기 has no path here: no Base or group restore route is reachable from the menu.
+      expect(source, file).not.toMatch(/dispose\(|base-revert|revertAll|untracked|git\/branches/)
     }
   })
-  // flowgate.v02.0060 T#1 (WP 0012 [B], [C]): 13 connected = 1차 11 + 정렬 · 배치 / 정렬; the other 27 are shown disabled.
-  it('connects exactly 13 commands: the 11 first-step ones and the two 정렬 (T#1)', () => {
+  // flowgate.v02.0060 T#2: the 11 run through the existing contracts only (features/project api.ts), with group_id.
+  it('runs the 11 2-B commands through the existing server contracts only — no new route, no permanent / document / branch delete', () => {
+    const api = readFileSync(join(root, 'features/project/api.ts'), 'utf8')
+    const added = api.slice(api.indexOf('// ── Group / Flow / source file commands'))
+    const routes = [...added.matchAll(/(patchRequest|putRequest|postRequest|postFormRequest|downloadBlobRequest|api\.delete)(?:<[^(]*>)?\(\s*`([^`]+)`/g)]
+      .map((m) => `${m[1]} ${m[2]}`)
+    expect(routes).toEqual([
+      'patchRequest ${projectPath(projectId)}/modules/${encodeURIComponent(moduleName)}',
+      'putRequest /api/v1/groups/${encodeURIComponent(flowId)}',
+      'postRequest /api/v1/groups/${encodeURIComponent(flowId)}/dispose',
+      'postRequest /api/v1/storage/${kind}',
+      "downloadBlobRequest ${projectPath(projectId)}/files/${kind === 'file' ? 'download' : 'download-zip'}",
+      'postFormRequest ${projectPath(projectId)}/files/upload',
+      'api.delete ${projectPath(projectId)}/files',
+    ])
+    expect(added.match(/group_id: flowId/g)).toHaveLength(3)
+    expect(added).toMatch(/form\.append\('group_id', flowId\)/)
+    expect(api).not.toMatch(/git\/branches|\/documents\/[^`'"]*delete|hard_delete|api\.delete\(`\/api\/v1\/groups/i)
+    const shell = readFileSync(join(root, 'features/designer/shell/DesignerShell.vue'), 'utf8')
+    expect(shell).toMatch(/server: menuServer/)
+    expect(shell.match(/<component :is="contextMenu\.dialogs"/g)).toHaveLength(1)
+  })
+  // flowgate.v02.0060 T#1 (WP 0012 [B], [C]): 13 connected = 1차 11 + 정렬 · 배치 / 정렬; T#2 adds the 11 2-B commands (24).
+  it('connects 24 commands: the 11 first-step ones, the two 정렬 (T#1) and the 11 2-B server ones (T#2)', () => {
     expect([...FIRST_STEP_COMMANDS].sort()).toEqual([...firstConnected].sort())
     expect([...ARRANGE_COMMANDS].sort()).toEqual([...arrangeConnected].sort())
-    expect([...CONNECTED_COMMANDS].sort()).toEqual([...connectedNow].sort())
-    expect(CONNECTED_COMMANDS).toHaveLength(13)
+    expect([...CLIENT_COMMANDS].sort()).toEqual([...connectedNow].sort())
+    expect([...SERVER_COMMANDS].sort()).toEqual([...serverConnected].sort())
+    expect([...CONNECTED_COMMANDS].sort()).toEqual([...connectedAll].sort())
+    expect(CONNECTED_COMMANDS).toHaveLength(24)
   })
-  it('has no execute path for the 27 연결 예정 / 미구현 commands (no request leaves for them, no API is reachable)', () => {
+  it('has no execute path for the 16 미구현 commands (no request leaves for them, no API is reachable)', () => {
     const source = readFileSync(join(attachRoot, 'designerMenuConnector.ts'), 'utf8')
-    for (const command of [...plannedCommands, ...unimplementedCommands]) expect(source, command).not.toContain(`'${command}'`)
+    for (const command of unimplementedCommands) expect(source, command).not.toContain(`'${command}'`)
+    for (const file of ['DesignerMenuActions.vue', 'menuActions.ts']) {
+      const other = readFileSync(join(attachRoot, file), 'utf8')
+      for (const command of unimplementedCommands) expect(other, `${file} ${command}`).not.toContain(`'${command}'`)
+    }
     // 정렬 runs the Edit menu path lent by the Shell; the connector has no arrange logic and does not import the top menu.
     expect(source).not.toMatch(/arrangeSelection|arrangeNodes\(|from '\.\.\/\.\.\/top\//)
     const shell = readFileSync(join(root, 'features/designer/shell/DesignerShell.vue'), 'utf8')

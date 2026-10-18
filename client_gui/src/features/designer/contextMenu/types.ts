@@ -7,6 +7,8 @@
 // flowgate.v02.0060 T#1 (WP 0012, Q item 459): all 40 items are shown where the mockup puts them; one the area has
 // not connected is shown disabled and says why — '연결 예정' (PLANNED_COMMANDS, the 2-B existing server contracts) or
 // '미구현' (everything else) — and never requests.
+// flowgate.v02.0060 T#2 (0006-D §4.3 2-B): the Designer connects the 11 PLANNED_COMMANDS through their existing server
+// contracts (flow.delete = the existing dispose, DC); a host that lends no server path still shows them '연결 예정'.
 
 export const COMMANDS = [
   'project.newGroup', 'project.info', 'group.newFlow', 'group.rename', 'group.info',

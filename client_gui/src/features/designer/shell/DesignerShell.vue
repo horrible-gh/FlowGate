@@ -15,7 +15,8 @@
        flowgate.v02.0046: the left / right Dock widths and the bottom Dock height follow the
        Body / CenterColumn resize handles; the Shell clamps each drag into the layout bounds.
        flowgate.v02.0060 T#2: the one Designer context menu (contextMenu/) is installed here — its host and view, and the
-       connectors the five areas reach through inject; a chosen command runs through the paths below. -->
+       connectors the five areas reach through inject; a chosen command runs through the paths below.
+       flowgate.v02.0060 T#2 (2-B): the windows of its 11 existing server commands are mounted here too (the connector's). -->
   <div class="designer-shell" data-test="designer-shell" @keydown.esc="selectedPalette = null">
     <DesignerTop
       :run-phase="runPhase"
@@ -51,6 +52,7 @@
           :unselected="!hasWorkTarget"
           :explorer-request="explorerRequest"
           :refresh-token="explorerRefreshToken"
+          :file-refresh-token="fileRefreshToken"
           @update:mode="layout.activeLeftMode = $event"
           @collapse="layout.leftCollapsed = true"
           @expand="layout.leftCollapsed = false"
@@ -110,6 +112,7 @@
       @created="onFlowCreated"
     />
     <DesignerContextMenu :host="contextMenu.host" @request="contextMenu.run" />
+    <component :is="contextMenu.dialogs" v-if="contextMenu.actions" :actions="contextMenu.actions" />
     <ToastHost :toasts="toasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
   </div>
 </template>
@@ -211,6 +214,14 @@
 // 새 Group = File › 새 Group, 새 플로우 = the 새 Flow dialog with the right-clicked Group given explicitly (the Explorer
 // selection and the menu's default Group stay as they are), 전체 선택 = Edit › 전체 선택, 카드 추가 (Palette card) = the
 // Palette selection the next Canvas click places. The Center session's commands are the connectors' own.
+//
+// flowgate.v02.0060 T#2 (0006-D rev2 §4.3 2-B) — the context menu's 11 existing server commands run through the
+// features/project store (the v0.1 contracts; no new API): Group / Flow 이름 변경, Flow 삭제 = the existing dispose (DC),
+// and the open Flow worktree's 새 폴더 / 새 파일 / 다운로드 / 업로드 / 삭제 / 수정 확인 (with the project Base read from the
+// project's Git status). After a success the existing refresh paths show it: the Project Explorer re-reads its tree
+// (refreshToken), the recent lists keep the new name (a disposed Flow leaves them), an open tab takes the new name
+// through the Center's open path (the active tab stays), a disposed Flow's tab closes through the Center's close, and
+// the File Explorer re-reads (its refreshToken). A refusal changes nothing; the window shows it.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { documentRead, settingsNodeHoldWrite } from '@/features/document'
@@ -223,7 +234,7 @@ import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue
 import DesignerOpenDialog from '../fileMenu/DesignerOpenDialog.vue'
 import { paletteNodeSpec, readPaletteDragData, PALETTE_DRAG_MIME, type PaletteItemDefinition } from '../palette/paletteCatalog'
 import DesignerContextMenu from '../contextMenu/DesignerContextMenu.vue'
-import { useDesignerContextMenu } from '../contextMenu/attach/designerMenuConnector'
+import { useDesignerContextMenu, type DesignerMenuServerDeps, type MenuActionResult } from '../contextMenu/attach/designerMenuConnector'
 import {
   buildExplorerProject,
   projectNodeId,
@@ -497,6 +508,8 @@ function requestExplorer(request: Omit<ExplorerStateRequest, 'seq'>) {
 
 // Bumped after a Group / Flow was created so the Explorer re-reads the tree it shows.
 const explorerRefreshToken = ref(0)
+// flowgate.v02.0060 T#2: bumped after a context menu command changed the open Flow's worktree (the File Explorer re-reads).
+const fileRefreshToken = ref(0)
 
 // The display tree of the current Project as the Explorer derives it, from the store's cache
 // (the Explorer has read it by the time a Group / Flow can be opened). Null before that.
@@ -763,6 +776,109 @@ function onTopCommand(command: DesignerTopCommand) {
 
 // flowgate.v02.0060 T#2: the Designer context menu and what its commands run through (see the head comment).
 // flowgate.v02.0060 T#1 (WP 0012): its 정렬 · 배치 / 정렬 are this Edit menu's 정렬 / 배치 — the same commands, rule and path.
+// flowgate.v02.0060 T#2: the 2-B server paths (see the head comment). Each answers a result; a refusal is the store's.
+async function attempt<T>(work: () => Promise<T>): Promise<MenuActionResult<T>> {
+  try {
+    return { ok: true, value: await work() }
+  } catch (error) {
+    return { ok: false, refusal: projectStore.sourceRefusal(error) }
+  }
+}
+
+function explorerGroup(pid: string, groupId: string) {
+  return explorerProject(pid)?.groups.find((group) => group.id === groupId) ?? null
+}
+
+/** A renamed Flow's open tab takes the new name through the Center's open path; the active tab stays the active one. */
+function renameFlowTab(pid: string, flowId: string, name: string) {
+  if (!center.state.tabs.some((tab) => tab.flowId === flowId)) return
+  const active = center.state.activeFlowId
+  center.openFlow({ projectId: pid, flowId, flowName: name })
+  if (active !== null && active !== flowId) center.activateFlow(active)
+}
+
+function menuToast(message: string, tone: 'success' | 'warning' | 'danger') {
+  toastSeq += 1
+  toasts.value = [...toasts.value.slice(-2), { id: `menu-${toastSeq}`, message, tone, duration: 4000 }]
+}
+
+const menuServer: DesignerMenuServerDeps = {
+  group: (pid, groupId) => {
+    const group = explorerGroup(pid, groupId)
+    return group ? { name: group.name, moduleName: group.moduleName } : null
+  },
+  flow: (pid, flowId) => explorerProject(pid)?.groups.flatMap((group) => group.flows).find((flow) => flow.id === flowId)?.name ?? null,
+  renameGroup: async (pid, groupId, title) => {
+    const group = explorerGroup(pid, groupId)
+    if (!group) return { ok: false, refusal: { reason: 'not_found', status: null, code: null } }
+    const result = await attempt(() => projectStore.renameGroup(pid, group.moduleName, title))
+    if (result.ok) {
+      projectStore.renameRecent('group', groupId, title)
+      explorerRefreshToken.value += 1
+    }
+    return result
+  },
+  renameFlow: async (pid, _groupId, flowId, title) => {
+    const result = await attempt(() => projectStore.renameFlow(pid, flowId, title))
+    if (result.ok) {
+      projectStore.renameRecent('flow', flowId, title)
+      renameFlowTab(pid, flowId, title)
+      explorerRefreshToken.value += 1
+    }
+    return result
+  },
+  disposeFlow: async (pid, _groupId, flowId, reason) => {
+    const result = await attempt(() => projectStore.disposeFlow(pid, flowId, reason))
+    if (result.ok) {
+      projectStore.forgetRecentFlow(flowId)
+      // The disposed Flow's open tab and Canvas close through the Center's own close (its pending saves included).
+      center.closeFlow(flowId)
+      explorerRefreshToken.value += 1
+    }
+    return result
+  },
+  createEntry: async (pid, flowId, kind, parentPath, name) => {
+    const result = await attempt(() => projectStore.createSourceEntry(pid, flowId, kind, parentPath, name))
+    if (result.ok) fileRefreshToken.value += 1
+    return result
+  },
+  download: (pid, flowId, kind, path, fallbackName) => attempt(() => projectStore.downloadSourceEntry(pid, flowId, kind, path, fallbackName)),
+  // Only a hint for the upload window: the tree read leaves out ignored and unreadable files (the window always asks).
+  fileNames: (pid, flowId, path) => attempt(async () => {
+    const tree = await projectStore.loadFlowFileTree(pid, flowId)
+    const prefix = path ? `${path}/` : ''
+    return tree.nodes
+      .filter((node) => node.type === 'file' && node.path.startsWith(prefix) && !node.path.slice(prefix.length).includes('/'))
+      .map((node) => node.name)
+  }),
+  upload: async (pid, flowId, targetPath, files) => {
+    const result = await attempt(() => projectStore.uploadSourceFiles(pid, flowId, targetPath, files))
+    if (result.ok) fileRefreshToken.value += 1
+    return result
+  },
+  remove: async (pid, flowId, kind, path) => {
+    const result = await attempt(() => projectStore.deleteSourceEntry(pid, flowId, kind, path))
+    if (result.ok) fileRefreshToken.value += 1
+    return result
+  },
+  // The comparison standard is the project Base (as the File Explorer's change list): read, sent, and checked in the answer.
+  fileDiff: async (pid, flowId, path) => {
+    let base: string | null = null
+    try {
+      base = (await projectStore.loadProjectGitStatus(pid))?.baseBranch ?? null
+    } catch {
+      base = null
+    }
+    if (!base) return { ok: false, refusal: { reason: 'base_unavailable', status: null, code: null } }
+    const compareBase = base
+    const read = await attempt(() => projectStore.loadFlowFileDiff(pid, flowId, path, { base: compareBase }))
+    if (!read.ok) return read
+    if (read.value.baseBranch !== compareBase) return { ok: false, refusal: { reason: 'base_mismatch', status: null, code: null } }
+    return { ok: true, value: { base: compareBase, status: read.value.status, old: read.value.old, new: read.value.new } }
+  },
+  notify: menuToast,
+}
+
 const isArrangeCommand = (command: string): command is DesignerArrangeCommand =>
   DESIGNER_ARRANGE_GROUPS.some((group) => (group as readonly string[]).includes(command))
 const contextMenu = useDesignerContextMenu({
@@ -788,6 +904,7 @@ const contextMenu = useDesignerContextMenu({
       if (isArrangeCommand(command) && center.state.activeFlowId === flowId) onTopCommand(command)
     },
   },
+  server: menuServer,
   layout: () => [layout.leftCollapsed, layout.rightCollapsed, layout.activeLeftMode, layout.activeRightTool],
 })
 </script>
