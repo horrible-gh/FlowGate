@@ -187,13 +187,17 @@ describe('refusals', () => {
 describe('strings', () => {
   const lookup = (tree: unknown, key: string) => key.split('.').reduce<unknown>((node, part) => (node as Record<string, unknown> | undefined)?.[part], tree)
   const KEYS = [
-    'label', 'kinds.R', 'kinds.B', 'switch', 'switch_hint', 'confirm.title', 'confirm.message', 'confirm.submit', 'confirm.cancel', 'done',
+    'label', 'kinds.R', 'kinds.B', 'switch', 'switch_hint', 'done',
     'reason.read_only_conflict', 'reason.read_only_revision', 'reason.disposed', 'reason.ai_running', 'reason.busy',
     ...FAILURES.map(kindSwitchFailureKey),
   ]
 
   it.each(['ko', 'en', 'ja'] as const)('%s has every key the rules and the screen use', (locale) => {
     for (const key of KEYS) expect(typeof lookup(messages[locale], key), `${locale} ${key}`).toBe('string')
+  })
+
+  it.each(['ko', 'en', 'ja'] as const)('%s keeps no confirmation strings (0015-T T2: a pick switches at once)', (locale) => {
+    expect(lookup(messages[locale], 'confirm')).toBeUndefined()
   })
 
   it('no undecided-feature words (B14)', () => {

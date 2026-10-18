@@ -14,8 +14,8 @@ export default {
       action: "Recover",
       done: "The body was recovered.",
       loss: {
-        possible: "The body may have been lost — ask the document owner to enter it again.",
-        lost: "The body was lost — ask the document owner to enter it again.",
+        possible: "Part of the body cannot be confirmed.",
+        lost: "The body cannot be confirmed.",
       },
       guide: {
         fix_storage_root: "Check the storage root setting. This document's file was found under another storage root.",

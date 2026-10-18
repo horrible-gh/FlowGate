@@ -145,9 +145,10 @@ describe('InspectorSlotRow', () => {
     expect(failed.get('[data-test="inspector-slot"]').classes()).toContain('is-danger')
   })
 
-  // flowgate.v02.0070 T#2 (B2): `name · [state badge] · ⚠ · 이력 · 열기` — the unreadable mark is a small icon at the
-  // head of the buttons, its words only in the tooltip and the aria-label; the state badge stays in the value.
-  it('an unreadable body: a small ⚠ before the buttons, named by aria-label and tooltip, not words before the state', () => {
+  // flowgate.v02.0070 T#2 (B2): the unreadable mark is a small icon, its words only in the tooltip and the aria-label.
+  // 0015-T T4: `name · [state badge] ⚠ · summary · 이력 · 열기` — the ⚠ sits with the document's state (right after the
+  // badge, or right after the name when there is none); the buttons column holds only the buttons.
+  it('an unreadable body: a small ⚠ beside the state, named by aria-label and tooltip; the buttons are only buttons', () => {
     const w = mount(InspectorSlotRow, {
       props: { name: '요구사항', id: 'doc-r', bodyState: 'file_not_found', openable: true, state: { label: '승인됨', tone: 'success' } },
       slots: { default: () => [h('button', { 'data-test': 'history' }, 'history'), h('button', { 'data-test': 'open' }, 'open')] },
@@ -160,10 +161,10 @@ describe('InspectorSlotRow', () => {
     expect(mark.attributes('title')).toBe('파일 없음')
     expect(mark.classes()).toContain('inspector-slot-unreadable')
     const buttons = w.get('[data-test="inspector-slot-buttons"]').element
-    expect(mark.element.parentElement).toBe(buttons)
-    expect([...buttons.children].map((el) => el.getAttribute('data-test'))).toEqual(['inspector-slot-unreadable', 'history', 'open'])
+    expect([...buttons.children].map((el) => el.getAttribute('data-test'))).toEqual(['history', 'open'])
     const value = w.get('.inspector-slot-value')
-    expect(value.find('[data-test="inspector-slot-unreadable"]').exists()).toBe(false)
+    expect(mark.element.parentElement).toBe(value.element)
+    expect([...value.element.children].map((el) => el.getAttribute('data-test'))).toEqual(['inspector-slot-state', 'inspector-slot-unreadable'])
     expect(value.get('[data-test="inspector-slot-state"]').text()).toBe('승인됨')
     expect(w.text()).not.toContain('본문 읽기 불가')
     // On a narrow list a warning line keeps its badge and ⚠ · buttons whole: what follows the badge (the summary, the
@@ -176,18 +177,26 @@ describe('InspectorSlotRow', () => {
     expect(summed.get('[data-test="inspector-slot"]').classes()).toContain('is-state-first')
     expect([...summed.get('.inspector-slot-value').element.children].map((el) => el.getAttribute('data-test'))).toEqual([
       'inspector-slot-state',
+      'inspector-slot-unreadable',
       'inspector-slot-summary',
       'inspector-slot-progress',
     ])
-    expect(summed.find('[data-test="inspector-slot-unreadable"]').exists()).toBe(true)
     const slotted = mount(InspectorSlotRow, {
       props: { name: '시나리오', id: 'doc-ts', bodyState: 'file_not_found', state: { label: '검수 대기', tone: 'warning' } },
       slots: { summary: () => h('span', { 'data-test': 'own-summary' }, 'Git 정상') },
       global,
     })
     expect(slotted.get('[data-test="inspector-slot"]').classes()).toContain('is-state-first')
-    expect([...slotted.get('.inspector-slot-value').element.children].map((el) => el.getAttribute('data-test'))).toEqual(['inspector-slot-state', 'own-summary'])
-    expect(slotted.get('[data-test="inspector-slot-buttons"]').element.firstElementChild?.getAttribute('data-test')).toBe('inspector-slot-unreadable')
+    expect([...slotted.get('.inspector-slot-value').element.children].map((el) => el.getAttribute('data-test'))).toEqual([
+      'inspector-slot-state',
+      'inspector-slot-unreadable',
+      'own-summary',
+    ])
+    expect(slotted.find('[data-test="inspector-slot-buttons"] [data-test="inspector-slot-unreadable"]').exists()).toBe(false)
+    // No state badge (a neutral state): the ⚠ comes right after the name, first in the value.
+    const plain = mount(InspectorSlotRow, { props: { name: '지시서', id: 'doc-t', bodyState: 'path_unresolved', state: { label: '작성 중', tone: 'neutral' } }, global })
+    expect([...plain.get('.inspector-slot-value').element.children].map((el) => el.getAttribute('data-test'))).toEqual(['inspector-slot-unreadable'])
+    expect(plain.get('[data-test="inspector-slot-unreadable"]').attributes('title')).toBe('경로 해석 실패')
     const readable = mount(InspectorSlotRow, { props: { name: '요구사항', id: 'doc-r', state: { label: '승인됨', tone: 'success' } }, global })
     expect(readable.get('[data-test="inspector-slot"]').classes()).not.toContain('is-state-first')
     i18n.global.locale.value = 'en'

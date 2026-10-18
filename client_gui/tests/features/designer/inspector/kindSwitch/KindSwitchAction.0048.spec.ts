@@ -10,6 +10,8 @@
  * flowgate.v02.0051 stage 2: the switch is drawn as the v7 header 종류 배지 ▾ (headerKind) — the badge opens
  * a menu, picking the other kind opens the same confirmation; a disabled switch carries its reason as the
  * badge's hover text instead of a line.
+ * flowgate.v02.0070 (0015-T T2): picking the other kind switches at once — no 종류 전환 confirmation, and no read awaited
+ * before the call: a read still pending (or settling after the part is gone / the selection cleared) starts nothing.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -161,14 +163,14 @@ const B_NODE: FlowGraphNode = {
 const TARGET_B = targetOf(selectionOf({ ...UNASSIGNED_GRAPH, nodes: [B_NODE] }, B_NODE.id))
 
 const find = (test: string) => wrapper!.find(`[data-test="${test}"]`)
-/** flowgate.v02.0051 stage 2: the switch is the v7 header 종류 배지 ▾ — the badge opens a menu, the other kind opens the confirmation. */
+/** flowgate.v02.0051 stage 2: the switch is the v7 header 종류 배지 ▾ — the badge opens a menu; 0015-T T2: the other kind switches. */
 const openButton = () => find('kind-switch-open')
 const line = () => find('kind-switch-line')
 const confirmButtons = () => [...document.body.querySelectorAll<HTMLButtonElement>('.ui-confirm-actions button')]
 const confirmText = () => document.body.querySelector('.ui-confirm-message')?.textContent ?? ''
 const menuItem = (kind: 'R' | 'B') => document.body.querySelector<HTMLButtonElement>(`[data-test="kind-switch-item-${kind}"]`)
 
-/** Opens the badge menu and picks the other kind: the confirmation opens (when the switch is usable). */
+/** Opens the badge menu and picks the other kind: the switch is asked at once (when it is usable). */
 async function pickOther() {
   await openButton().trigger('click')
   await flushPromises()
@@ -177,14 +179,13 @@ async function pickOther() {
   await flushPromises()
 }
 
-async function confirmSwitch() {
+/** 0015-T T2: a pick of the other kind is the switch — no confirmation opens on the way. */
+async function switchKind() {
   await pickOther()
-  const [, submit] = confirmButtons()
-  submit.click()
-  await flushPromises()
+  expect(confirmButtons()).toEqual([])
 }
 
-describe('the switch button and its confirmation', () => {
+describe('the switch button and its menu', () => {
   it('an unassigned R root shows the 요구사항 ▾ badge whose menu offers 버그, and reads its guards', async () => {
     await mountSwitch(TARGET_R)
     expect(openButton().text()).toBe('요구사항 ▾')
@@ -210,17 +211,66 @@ describe('the switch button and its confirmation', () => {
     expect(openButton().attributes('data-to')).toBe('R')
   })
 
-  it('picking the other kind asks first; cancel sends nothing', async () => {
+  it('picking the other kind switches at once: no 종류 전환 confirmation (0015-T T2)', async () => {
     await mountSwitch(TARGET_R)
     await pickOther()
-    expect(confirmText()).toBe('요구사항 문서를 버그 문서로 바꿉니다. 문서 번호(0001-R → 0001-B)가 바뀌고, Canvas를 다시 읽은 뒤 선택이 풀립니다.')
-    const [cancel, submit] = confirmButtons()
-    expect([cancel.textContent?.trim(), submit.textContent?.trim()]).toEqual(['취소', '전환'])
-    cancel.click()
+    expect(confirmButtons()).toEqual([])
+    expect(confirmText()).toBe('')
+    expect(document.body.textContent).not.toContain('문서 번호(0001-R → 0001-B)가 바뀌고')
+    expect(convertCall).toHaveBeenCalledTimes(1)
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
+    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+  })
+
+  it('a pick while the state is still being read does not wait for it: the switch is asked at once (0015-T T2)', async () => {
+    let answer!: () => void
+    documentRead.mockImplementationOnce((docId: string) => {
+      // The state as it was when read (the switch removes the old id from the server meanwhile).
+      const row = toReviewDocument(rowOf(docId))
+      return new Promise((resolve) => (answer = () => resolve(row)))
+    })
+    await mountSwitch(TARGET_R)
+    await pickOther()
+    expect(convertCall).toHaveBeenCalledTimes(1)
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
+    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+    answer()
     await flushPromises()
     expect(confirmButtons()).toEqual([])
+    expect(convertCall).toHaveBeenCalledTimes(1)
+    expect(intents).toHaveLength(1)
+  })
+
+  it('a failed state read blocks nothing: the server judges the switch (0015-T T2)', async () => {
+    documentRead.mockRejectedValue(networkError())
+    await mountSwitch(TARGET_R)
+    await pickOther()
+    expect(confirmButtons()).toEqual([])
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
+  })
+
+  it.each(['answers', 'fails'] as const)('the part unmounted while the state is read: the read that %s afterwards starts nothing', async (end) => {
+    let settle!: () => void
+    documentRead.mockImplementationOnce((docId: string) => new Promise((resolve, reject) => (settle = () => (end === 'answers' ? resolve(toReviewDocument(rowOf(docId))) : reject(networkError())))))
+    await mountSwitch(TARGET_R)
+    wrapper!.unmount()
+    wrapper = null
+    settle()
+    await flushPromises()
     expect(convertCall).not.toHaveBeenCalled()
     expect(intents).toEqual([])
+  })
+
+  it('a Node change while the state is read: its answer starts nothing on the Node left behind', async () => {
+    let answer!: () => void
+    docs.set(ROOT_B, { typeCode: 'B', disposed: false })
+    documentRead.mockImplementationOnce((docId: string) => new Promise((resolve) => (answer = () => resolve(toReviewDocument(rowOf(docId))))))
+    await mountSwitch(TARGET_R)
+    await wrapper!.setProps({ target: TARGET_B })
+    answer()
+    await flushPromises()
+    expect(convertCall).not.toHaveBeenCalled()
+    expect(confirmButtons()).toEqual([])
   })
 
   it('en / ja strings', async () => {
@@ -239,7 +289,7 @@ describe('a switch (D#2 §3.4)', () => {
     await mountSwitch(TARGET_R)
     documentRead.mockClear()
     activityRead.mockClear()
-    await confirmSwitch()
+    await switchKind()
 
     expect(convertCall).toHaveBeenCalledTimes(1)
     expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
@@ -260,7 +310,7 @@ describe('a switch (D#2 §3.4)', () => {
 
   it('the Canvas gives the new identity: the switch follows it and offers the way back', async () => {
     await mountSwitch(TARGET_R)
-    await confirmSwitch()
+    await switchKind()
     await wrapper!.setProps({ target: TARGET_B })
     await flushPromises()
     expect(line().exists()).toBe(false)
@@ -268,7 +318,7 @@ describe('a switch (D#2 §3.4)', () => {
     expect(openButton().attributes('disabled')).toBeUndefined()
     expect(documentRead).toHaveBeenLastCalledWith(ROOT_B)
 
-    await confirmSwitch()
+    await switchKind()
     expect(convertCall).toHaveBeenLastCalledWith(ROOT_B, 'R')
     expect(docs.get(ROOT_R)?.typeCode).toBe('R')
     expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }, { kind: 'refresh-flow', flowId: FLOW }])
@@ -278,7 +328,7 @@ describe('a switch (D#2 §3.4)', () => {
     let answer!: (value: unknown) => void
     convertCall.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)))
     await mountSwitch(TARGET_R)
-    await confirmSwitch()
+    await switchKind()
     expect(find('inspector-kind-switch').attributes('data-busy')).toBe('true')
     expect(openButton().attributes('disabled')).toBeDefined()
     await openButton().trigger('click')
@@ -311,7 +361,7 @@ describe('refusals: a reason, the state read again, the Canvas too when the Flow
     documentRead.mockClear()
     activityRead.mockClear()
     refusal = error
-    await confirmSwitch()
+    await switchKind()
     expect(convertCall).toHaveBeenCalledTimes(1)
     expect(line().attributes('data-kind')).toBe('failure')
     expect(line().text()).toBe(text)
@@ -323,16 +373,14 @@ describe('refusals: a reason, the state read again, the Canvas too when the Flow
     expect(openButton().attributes('disabled')).toBeUndefined()
   })
 
-  it('a refusal disappears when the confirmation opens again, and a retry succeeds', async () => {
+  it('a refusal disappears when the other kind is picked again, and the retry succeeds', async () => {
     await mountSwitch(TARGET_R)
     refusal = networkError()
-    await confirmSwitch()
+    await switchKind()
     expect(line().attributes('data-kind')).toBe('failure')
-    await pickOther()
-    expect(line().exists()).toBe(false)
-    confirmButtons()[1].click()
-    await flushPromises()
+    await switchKind()
     expect(line().attributes('data-kind')).toBe('done')
+    expect(convertCall).toHaveBeenCalledTimes(2)
   })
 
   it('a refusal of the Node left behind is not shown on the new one', async () => {
@@ -340,7 +388,7 @@ describe('refusals: a reason, the state read again, the Canvas too when the Flow
     convertCall.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)))
     docs.set(ROOT_B, { typeCode: 'B', disposed: false })
     await mountSwitch(TARGET_R)
-    await confirmSwitch()
+    await switchKind()
     await wrapper!.setProps({ target: TARGET_B })
     fail(axiosError(409, { detail: 'Cannot convert root type: child documents already reference it.' }))
     await flushPromises()
@@ -435,9 +483,23 @@ describe('in the Frame (real registry)', () => {
     expect(wrapper!.findAll('[data-test="designer-inspector-kind"]')).toHaveLength(0)
   })
 
+  it.each(['answers', 'fails'] as const)('the selection cleared on the Canvas while the state is read: the read that %s afterwards sends nothing (0015-T T2)', async (end) => {
+    let settle!: () => void
+    documentRead.mockImplementation((docId: string) => new Promise((resolve, reject) => (settle = () => (end === 'answers' ? resolve(toReviewDocument(rowOf(docId))) : reject(networkError())))))
+    await mountFrame(SELECTIONS.unassigned)
+    expect(find('kind-switch-open').exists()).toBe(true)
+    await wrapper!.setProps({ selection: null })
+    await flushPromises()
+    expect(find('inspector-kind-switch').exists()).toBe(false)
+    settle()
+    await flushPromises()
+    expect(convertCall).not.toHaveBeenCalled()
+    expect(wrapper!.emitted('host')).toBeUndefined()
+  })
+
   it('a host intent leaves the Frame as its `host` event', async () => {
     await mountFrame(SELECTIONS.unassigned)
-    await confirmSwitch()
+    await switchKind()
     expect(wrapper!.emitted('host')).toEqual([[{ kind: 'refresh-flow', flowId: FLOW }]])
   })
 

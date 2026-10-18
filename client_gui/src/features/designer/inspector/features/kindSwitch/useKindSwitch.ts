@@ -18,9 +18,11 @@
 // active one, and no other Flow's Canvas or selection is touched (rev2).
 //
 // flowgate.v02.0064 T#4 (P0006 §3.1 / §6.1): the document state is read with the server's judgement
-// (kindSwitchPreviewRead): `preview` tells the confirmation a number swap from a succession (the new or
-// expected number, the child count); a refused judgement disables the switch with its reason; no judgement
-// yet blocks nothing. The link to the document a succeeded root came from is features/kindSwitchOrigin.
+// (kindSwitchPreviewRead): `preview` is that judgement (a number swap or a succession); a refused judgement
+// disables the switch with its reason; no judgement yet blocks nothing. The link to the document a succeeded
+// root came from is features/kindSwitchOrigin.
+// flowgate.v02.0070 (0015-T T2): picking the other kind runs the switch at once, a number swap and a succession
+// alike — no confirmation and no read awaited before the call; the server judges and runs it.
 import { computed, inject, ref, shallowRef, watch, type ComputedRef, type Ref } from 'vue'
 import {
   kindSwitchConvert,
@@ -68,7 +70,7 @@ export interface KindSwitchState {
   readonly preview: ComputedRef<KindSwitchPreviewJudgement | null>
   /** Switches the target root to the other kind; true when the server switched it. */
   run(): Promise<boolean>
-  /** Forgets the last refusal (e.g. the confirmation opens again). */
+  /** Forgets the last refusal (e.g. the other kind is picked again). */
   clearFailure(): void
 }
 

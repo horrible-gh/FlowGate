@@ -24,7 +24,11 @@
        head of the buttons (before 이력 · 열기), no bigger than the state badge; its words are the tooltip and the
        aria-label. The line reads `name · [state badge] · ⚠ · buttons`, and only the name ellipsises: on a narrow
        list such a line (`is-state-first`) keeps its badge, ⚠ and buttons whole; its summary gives way first, then
-       the name (264px: the start of the name and … stay beside ⚠ · AI 호출 · 이력 · 열기 · ✎). -->
+       the name (264px: the start of the name and … stay beside ⚠ · AI 호출 · 이력 · 열기 · ✎).
+       flowgate.v02.0070 (0015-T T4) — the ⚠ belongs to the document's state, not to the buttons: it sits right after
+       the state badge (right after the name when the line draws no badge), and the buttons column holds only the
+       buttons. The line reads `name · [state badge] ⚠ · summary · buttons`; on a narrow list the badge and ⚠ stay
+       whole, the summary gives way first, then the name. -->
   <div
     class="inspector-slot"
     :class="[`inspector-slot--${kind}`, { 'is-empty': empty, 'is-blank': blank && !empty, 'is-focus': focus, 'is-danger': danger, 'is-state-first': warns }]"
@@ -56,6 +60,7 @@
         :data-tone="view.tone"
         :data-kind="view.kind"
       >{{ view.text }}</span>
+      <span v-if="warns" class="inspector-slot-unreadable" role="img" :aria-label="t('gui.document.bodyState.unreadable')" :title="t(`gui.document.bodyState.${bodyState}`)" data-test="inspector-slot-unreadable">⚠</span>
       <template v-if="!empty">
         <slot name="summary">
           <span v-if="summary" class="inspector-slot-summary" :title="summary" :data-test="testIds?.summary ?? 'inspector-slot-summary'">{{ summary }}</span>
@@ -73,7 +78,6 @@
       </template>
     </span>
     <span class="inspector-slot-buttons" data-test="inspector-slot-buttons">
-      <span v-if="warns" class="inspector-slot-unreadable" role="img" :aria-label="t('gui.document.bodyState.unreadable')" :title="t(`gui.document.bodyState.${bodyState}`)" data-test="inspector-slot-unreadable">⚠</span>
       <slot />
     </span>
   </div>
@@ -155,10 +159,10 @@ const clamped = computed(() => Math.max(0, Math.min(100, Math.round(props.progre
 const authorKey = computed(() => slotAuthorKey(props.author))
 
 /**
- * The line's document body cannot be read: the small ⚠ before the buttons. flowgate.v02.0070 T#2 (B2): such a line
- * is also `is-state-first` — its buttons are fixed icons (the warning comes from a card's document line, which has
- * no shrinking nav), so on a narrow list the badge, ⚠ and buttons keep their width, the summary gives way first and
- * then the name.
+ * The line's document body cannot be read: the small ⚠ after the state badge (0015-T T4). flowgate.v02.0070 T#2 (B2):
+ * such a line is also `is-state-first` — its buttons are fixed icons (the warning comes from a card's document line,
+ * which has no shrinking nav), so on a narrow list the badge, ⚠ and buttons keep their width, the summary gives way
+ * first and then the name.
  */
 const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyState }))
 </script>
@@ -186,9 +190,9 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
     grid-template-columns: 72px minmax(0, 1fr) minmax(0, max-content);
   }
 
-  /* flowgate.v02.0070 T#2 (B2): a warning line keeps its badge and ⚠ · [AI 호출] · 이력 · 열기 · ✎ whole; the name
-     ellipsises below 72px. Whatever follows the badge (the summary, its slot, the progress bar) gives way first:
-     it takes no room of its own (no gap, zero width), only what is left after the name. */
+  /* flowgate.v02.0070 T#2 (B2): a warning line keeps its badge ⚠ and [AI 호출] · 이력 · 열기 · ✎ whole; the name
+     ellipsises below 72px. Whatever follows the badge and ⚠ (the summary, its slot, the progress bar) gives way
+     first: it takes no room of its own (no gap, zero width), only what is left after the name. */
   .inspector-slot.is-state-first {
     grid-template-columns: minmax(0, 72px) minmax(min-content, 1fr) max-content;
   }
@@ -197,7 +201,7 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
     gap: 0;
   }
 
-  .inspector-slot.is-state-first .inspector-slot-value > :deep(:not(.inspector-slot-state)) {
+  .inspector-slot.is-state-first .inspector-slot-value > :deep(:not(.inspector-slot-state, .inspector-slot-unreadable)) {
     flex: 1 1 0;
     width: 0;
     min-width: 0;
@@ -206,8 +210,13 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
   }
 
   /* The gap, drawn inside the part that follows (so a part with no room costs none). */
-  .inspector-slot.is-state-first .inspector-slot-value > :deep(* + *) {
+  .inspector-slot.is-state-first .inspector-slot-value > :deep(* + :not(.inspector-slot-unreadable)) {
     text-indent: 8px;
+  }
+
+  /* The ⚠ keeps its own room, close to the badge it qualifies. */
+  .inspector-slot.is-state-first .inspector-slot-value > * + .inspector-slot-unreadable {
+    margin-left: 4px;
   }
 
   .inspector-slot.is-state-first .inspector-slot-value > :deep(* + .inspector-slot-progress) {
@@ -258,12 +267,18 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
 }
 
 /* flowgate.v02.0070 T#2 (B2): the unreadable-body mark — a glyph the size of the state badge's words, in the
-   warning colour; it never gives way, so the state badge before it stays the line's main state. */
+   warning colour; it never gives way, so the state badge before it stays the line's main state.
+   0015-T T4: it follows the badge (or the name) in the value, closer than the value's usual gap. */
 .inspector-slot-unreadable {
   flex: 0 0 auto;
   color: var(--fg2-status-warning-fg);
   font-size: 10.5px;
   line-height: 1;
+  cursor: help;
+}
+
+.inspector-slot-value > * + .inspector-slot-unreadable {
+  margin-left: -4px;
 }
 
 /* The state badge (0056 F1): a short word with the tone colours of InspectorStatusChip; drawn only when
