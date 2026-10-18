@@ -10,7 +10,10 @@
        stays what an operator acts on — how many cards the workflow started, and a warning when Steps
        have no AI assigned. The `rev n · Step n` line summary is gone as well. -->
   <section class="inspector-work-plan" data-test="inspector-work-plan" :data-status="status" :data-has-document="hasDocument ? 'true' : 'false'">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="edit" @history="historyLine" @action="actionLine" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="edit" @history="historyLine" @action="actionLine">
+      <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
+      <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" /></template>
+    </InspectorSlotList>
 
     <div v-if="hasDocument" :key="target.docId ?? undefined" class="inspector-work-plan-status" data-test="work-plan-status">
       <InspectorPaneState v-if="status === 'loading' && !view" state="loading" />
@@ -35,7 +38,7 @@ import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { INSPECTOR_HOST } from '../../inspectorHost'
-import { cardLineRow, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
+import { cardLineRow, DocumentIoGroup, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
 import { workPlanSlotFocus, workPlanSlotState } from './workPlanModel'
 import { useWorkPlan } from './useWorkPlan'
 

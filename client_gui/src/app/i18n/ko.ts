@@ -611,7 +611,8 @@ export default {
         paste: '붙여넣기',
         delete: '삭제',
         arrange: '정렬 / 배치',
-        auto_layout: '자동 배치',
+        auto_layout_horizontal: '가로 자동정렬',
+        auto_layout_vertical: '세로 자동정렬',
         select_all: '전체 선택',
         run_next: '다음 단계 실행',
         run_all: '전체 실행',
@@ -707,6 +708,17 @@ export default {
         graph_time_machine_in_progress: 'Graph Time Machine 작업이 끝나지 않았습니다.',
         graph_engine_owned: '이 흐름은 Graph 엔진이 담당합니다.',
         other: '실행하지 못했습니다.',
+      },
+      layout_notices: {
+        invalid: '자동정렬을 적용하지 않았습니다. 카드는 움직이지 않았습니다.',
+        invalid_reasons: {
+          missing: '배치할 카드가 빠졌습니다.',
+          duplicate: '같은 카드가 두 번 배치되었습니다.',
+          invalid_coordinate: '좌표가 유효하지 않습니다.',
+          overlap: '카드가 서로 겹칩니다.',
+          direction: '연결선이 정렬 방향의 면으로 이어지지 않습니다.',
+          pierce: '연결선이 다른 카드를 지나갑니다.',
+        },
       },
     },
     // flowgate.v02.0043 — File menu dialogs (Group 열기… / Flow 열기… / 새 Group / 새 Flow).
@@ -1340,6 +1352,47 @@ export default {
     },
   },
   // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.
+  // flowgate.v02.0068 T#1 — the document upload / download of the Inspector's document lines and the document
+  // window's header (one coordinator; its notices are toasts).
+  document_io: {
+    upload: '업로드',
+    download: '다운로드',
+    upload_hint: '파일 내용으로 문서 전체를 교체',
+    download_hint: '서버에 저장된 문서를 파일로 받기',
+    disabled: {
+      uploading: '업로드 처리 중',
+      downloading: '다운로드 중',
+      forbidden: '권한 없음',
+      locked: '편집 불가 상태',
+      no_file: '파일 없음',
+    },
+    notice: {
+      upload_hold: '저장하지 않은 편집 내용이 있습니다. 먼저 저장하거나 취소한 뒤 다시 업로드하세요.',
+      upload_type: 'Markdown 또는 텍스트 파일만 업로드할 수 있습니다.',
+      upload_too_large: '파일이 너무 커서 업로드할 수 없습니다.',
+      upload_read_failed: '파일을 읽지 못했습니다.',
+      upload_empty: '빈 파일은 업로드하지 않습니다.',
+      upload_done: '파일 내용으로 문서를 교체했습니다.',
+      download_unsaved_excluded: '저장하지 않은 변경은 내려받은 파일에 포함되지 않았습니다.',
+      save: {
+        locked: '업로드하지 못했습니다: 지금은 수정할 수 없는 문서입니다.',
+        file_exists_unrecorded: '업로드하지 못했습니다: 문서 위치에 기록되지 않은 파일이 있습니다.',
+        busy: '업로드하지 못했습니다: 실행 중이거나 잠긴 문서입니다.',
+        forbidden: '업로드하지 못했습니다: 권한이 없습니다.',
+        gone: '업로드하지 못했습니다: 문서를 찾을 수 없습니다.',
+        network: '서버에 연결하지 못해 업로드 결과를 확인하지 못했습니다. 열린 창은 서버에 저장된 내용으로 맞췄습니다.',
+        save: '업로드하지 못했습니다.',
+      },
+      download: {
+        forbidden: '내려받지 못했습니다: 권한이 없습니다.',
+        gone: '내려받지 못했습니다: 문서를 찾을 수 없습니다.',
+        no_file: '내려받지 못했습니다: 저장된 파일이 없습니다.',
+        invalid_id: '내려받지 못했습니다: 문서 ID가 올바르지 않습니다.',
+        network: '서버에 연결하지 못해 내려받지 못했습니다.',
+        download_failed: '내려받지 못했습니다.',
+      },
+    },
+  },
   document_window: {
     untitled: '문서',
     edit: '편집',

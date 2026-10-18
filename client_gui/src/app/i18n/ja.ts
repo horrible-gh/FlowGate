@@ -601,7 +601,8 @@ export default {
         paste: '貼り付け',
         delete: '削除',
         arrange: '整列 / 配置',
-        auto_layout: '自動配置',
+        auto_layout_horizontal: '横方向に自動整列',
+        auto_layout_vertical: '縦方向に自動整列',
         select_all: 'すべて選択',
         run_next: '次のステップを実行',
         run_all: 'すべて実行',
@@ -697,6 +698,17 @@ export default {
         graph_time_machine_in_progress: 'Graph Time Machine の操作が完了していません。',
         graph_engine_owned: 'このフローは Graph エンジンの担当です。',
         other: '実行できませんでした。',
+      },
+      layout_notices: {
+        invalid: '自動整列を適用しませんでした。カードは移動していません。',
+        invalid_reasons: {
+          missing: '配置するカードが抜けています。',
+          duplicate: '同じカードが二度配置されました。',
+          invalid_coordinate: '座標が無効です。',
+          overlap: 'カードが重なります。',
+          direction: '接続線が整列方向の面でつながりません。',
+          pierce: '接続線が別のカードを通過します。',
+        },
       },
     },
     // flowgate.v02.0043 — File menu dialogs (グループを開く… / フローを開く… / 新規グループ / 新規フロー).
@@ -1330,6 +1342,47 @@ export default {
     },
   },
   // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.
+  // flowgate.v02.0068 T#1 — the document upload / download of the Inspector's document lines and the document
+  // window's header (one coordinator; its notices are toasts).
+  document_io: {
+    upload: 'アップロード',
+    download: 'ダウンロード',
+    upload_hint: 'ファイルの内容で文書全体を置き換え',
+    download_hint: 'サーバーに保存された文書をファイルで受け取る',
+    disabled: {
+      uploading: 'アップロード処理中',
+      downloading: 'ダウンロード中',
+      forbidden: '権限なし',
+      locked: '編集できない状態',
+      no_file: 'ファイルなし',
+    },
+    notice: {
+      upload_hold: '保存していない編集内容があります。先に保存またはキャンセルしてから、もう一度アップロードしてください。',
+      upload_type: 'Markdown またはテキストファイルのみアップロードできます。',
+      upload_too_large: 'ファイルが大きすぎるためアップロードできません。',
+      upload_read_failed: 'ファイルを読み込めませんでした。',
+      upload_empty: '空のファイルはアップロードしません。',
+      upload_done: 'ファイルの内容で文書を置き換えました。',
+      download_unsaved_excluded: '保存していない変更はダウンロードしたファイルに含まれていません。',
+      save: {
+        locked: 'アップロードできませんでした: 現在は変更できない文書です。',
+        file_exists_unrecorded: 'アップロードできませんでした: 文書の位置に記録されていないファイルがあります。',
+        busy: 'アップロードできませんでした: 実行中またはロック中の文書です。',
+        forbidden: 'アップロードできませんでした: 権限がありません。',
+        gone: 'アップロードできませんでした: 文書が見つかりません。',
+        network: 'サーバーに接続できず、アップロード結果を確認できませんでした。開いているウィンドウはサーバーに保存された内容に合わせました。',
+        save: 'アップロードできませんでした。',
+      },
+      download: {
+        forbidden: 'ダウンロードできませんでした: 権限がありません。',
+        gone: 'ダウンロードできませんでした: 文書が見つかりません。',
+        no_file: 'ダウンロードできませんでした: 保存されたファイルがありません。',
+        invalid_id: 'ダウンロードできませんでした: 文書 ID が正しくありません。',
+        network: 'サーバーに接続できず、ダウンロードできませんでした。',
+        download_failed: 'ダウンロードできませんでした。',
+      },
+    },
+  },
   document_window: {
     untitled: '文書',
     edit: '編集',

@@ -43,7 +43,8 @@ export type DesignerTopCommand =
   | 'edit.delete'
   /** flowgate.v02.0059 T#2: 정렬 / 균등 분배 of the selected cards (DESIGNER_ARRANGE_GROUPS). */
   | DesignerArrangeCommand
-  | 'edit.auto-layout'
+  /** flowgate.v02.0068 T#2: 가로 / 세로 자동정렬 (DESIGNER_AUTO_LAYOUT_COMMANDS). */
+  | DesignerAutoLayoutCommand
   | 'edit.select-all'
   /** flowgate.v02.0059 T#1: the Toolbar's [선택] toggle (area / click multi-selection on the Canvas). */
   | 'edit.select-mode'
@@ -84,6 +85,24 @@ export const DESIGNER_ARRANGE_GROUPS: readonly (readonly DesignerArrangeCommand[
   ['edit.align-top', 'edit.align-middle', 'edit.align-bottom'],
   ['edit.distribute-horizontal', 'edit.distribute-vertical'],
 ]
+
+/**
+ * flowgate.v02.0068 T#2 (0004-D §6.3): 자동정렬 by direction — the former single 자동 배치 is these two, after the
+ * 정렬 / 분배 groups in the Toolbar's 정렬 / 배치 ▾ and in the Edit menu. The direction is the command's only: no last
+ * direction is kept or shown.
+ */
+export type DesignerAutoLayoutCommand = 'edit.auto-layout-horizontal' | 'edit.auto-layout-vertical'
+
+export const DESIGNER_AUTO_LAYOUT_COMMANDS: readonly DesignerAutoLayoutCommand[] = ['edit.auto-layout-horizontal', 'edit.auto-layout-vertical']
+
+/** Shared order for Edit > Arrange and the Toolbar dropdown. */
+export const DESIGNER_LAYOUT_GROUPS: readonly (readonly DesignerTopCommand[])[] = [...DESIGNER_ARRANGE_GROUPS, DESIGNER_AUTO_LAYOUT_COMMANDS]
+
+/** The direction a 자동정렬 command lays the Flow out in, or null for any other command. */
+export function autoLayoutDirectionOf(cmd: DesignerTopCommand): 'horizontal' | 'vertical' | null {
+  if (cmd === 'edit.auto-layout-horizontal') return 'horizontal'
+  return cmd === 'edit.auto-layout-vertical' ? 'vertical' : null
+}
 
 /** How many selected cards a 정렬 (2) / 균등 분배 (3) command needs. */
 export function arrangeSelectionMinimum(cmd: DesignerTopCommand): number | null {
@@ -236,7 +255,6 @@ export const DESIGNER_MENUS: readonly DesignerMenu[] = [
       item('edit.delete', 'delete'),
       separator,
       { kind: 'arrange', label: 'arrange' },
-      item('edit.auto-layout', 'auto_layout'),
       separator,
       item('edit.select-all', 'select_all'),
     ],

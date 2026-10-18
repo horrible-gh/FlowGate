@@ -223,7 +223,7 @@ describe('Designer top band — Menu Bar', () => {
     const w = await mountShell()
     // flowgate.v02.0059 T#2: 정렬 / 배치 is a submenu (›) of the 정렬 / 분배 commands.
     expect(itemTexts(await openMenu(w, 'edit')).map((text) => text.replace('›', '').trim())).toEqual([
-      '실행 취소', '다시 실행', '잘라내기', '복사', '붙여넣기', '삭제', '정렬 / 배치', '자동 배치', '전체 선택',
+      '실행 취소', '다시 실행', '잘라내기', '복사', '붙여넣기', '삭제', '정렬 / 배치', '전체 선택',
     ])
     expect(itemTexts(await openMenu(w, 'run'))).toEqual(['다음 단계 실행', '전체 실행', '실행 중지', '재실행', 'Flow 검증'])
     expect(itemTexts(await openMenu(w, 'view')).map((text) => text.replace('›', '').trim())).toEqual([
@@ -552,7 +552,7 @@ describe('Designer top band — part events', () => {
   it('the Toolbar 정렬 / 배치 ▾ and the Edit menu 정렬 / 배치 list and emit the same commands', async () => {
     const targets = { ...ALL_MENU_TARGETS, selectedCount: 3 }
     const toolbar = mount(DesignerToolbar, {
-      props: { runMode: null, density: 'normal', zoom: 100, targets },
+      props: { runPhase: 'idle', density: 'normal', zoom: 100, targets },
       attachTo: document.body,
       global: { plugins: [i18n] },
     })
@@ -560,23 +560,24 @@ describe('Designer top band — part events', () => {
     await toolbar.get('[data-tool="arrange"]').trigger('click')
     expect(toolbar.get('[data-tool="arrange"]').attributes('aria-expanded')).toBe('true')
     const toolbarItems = toolbar.findAll('[data-test="designer-arrange-item"]')
-    expect(toolbarItems.map((el) => el.attributes('data-arrange'))).toEqual([...DESIGNER_ARRANGE_GROUPS.flat(), 'edit.auto-layout'])
+    // flowgate.v02.0068 T#2: 자동 배치 is 가로 / 세로 자동정렬.
+    expect(toolbarItems.map((el) => el.attributes('data-arrange'))).toEqual([...DESIGNER_ARRANGE_GROUPS.flat(), 'edit.auto-layout-horizontal', 'edit.auto-layout-vertical'])
     expect(toolbarItems.map((el) => el.text())).toEqual([
-      '왼쪽 정렬', '가로 가운데 정렬', '오른쪽 정렬', '위쪽 정렬', '세로 가운데 정렬', '아래쪽 정렬', '가로 균등 분배', '세로 균등 분배', '자동 배치',
+      '왼쪽 정렬', '가로 가운데 정렬', '오른쪽 정렬', '위쪽 정렬', '세로 가운데 정렬', '아래쪽 정렬', '가로 균등 분배', '세로 균등 분배', '가로 자동정렬', '세로 자동정렬',
     ])
     await toolbar.get('[data-arrange="edit.align-left"]').trigger('click')
     expect(toolbar.emitted('command')).toEqual([['edit.align-left']])
     expect(toolbar.find('[data-test="designer-arrange-menu"]').exists()).toBe(false)
 
     const menubar = mount(DesignerMenuBar, {
-      props: { runMode: null, density: 'normal', windowState: WINDOW, targets },
+      props: { runPhase: 'idle', density: 'normal', windowState: WINDOW, targets },
       attachTo: document.body,
       global: { plugins: [i18n] },
     })
     await menubar.get('[data-menu="edit"]').trigger('click')
     await menubar.get('[data-sub="arrange"]').trigger('click')
     const sub = menubar.get('[data-test="designer-menu-subpop"][data-sub="arrange"]')
-    expect(sub.findAll('[data-command]').map((el) => el.attributes('data-command'))).toEqual(DESIGNER_ARRANGE_GROUPS.flat())
+    expect(sub.findAll('[data-command]').map((el) => el.attributes('data-command'))).toEqual([...DESIGNER_ARRANGE_GROUPS.flat(), 'edit.auto-layout-horizontal', 'edit.auto-layout-vertical'])
     await sub.get('[data-command="edit.align-left"]').trigger('click')
     expect(menubar.emitted('command')).toEqual([['edit.align-left']])
     toolbar.unmount()

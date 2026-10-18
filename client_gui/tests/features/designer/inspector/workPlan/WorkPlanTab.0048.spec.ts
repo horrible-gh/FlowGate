@@ -541,7 +541,8 @@ describe('WP summary in the Frame (real registry)', () => {
     expect(section.findAll('input, select, textarea').length).toBe(0)
     // flowgate.v02.0053 T#3 / T#5: the name opens the plan (a button), then the history button (0056 F1), the
     // document icon and ✎ — and nothing after the lines.
-    expect(section.findAll('button').map((button) => button.attributes('data-test'))).toEqual(['inspector-slot-name', 'inspector-slot-history', 'inspector-slot-open', 'inspector-slot-edit'])
+    // flowgate.v02.0068 T#1 (D §0-1 / §6.1): the plan's document line has [업로드][다운로드] before its buttons.
+    expect(section.findAll('button').map((button) => button.attributes('data-test'))).toEqual(['inspector-slot-name', 'document-io-upload', 'document-io-download', 'inspector-slot-history', 'inspector-slot-open', 'inspector-slot-edit'])
     // flowgate.v02.0051 stage 2: the v7 lines — the plan with its state, the deploy result empty.
     // flowgate.v02.0053 T#5: no type code in a name; flowgate.v02.0056 F1: a line without a document says why.
     expect(section.findAll('[data-test="inspector-slot-name"]').map((name) => name.text())).toEqual(['작업계획', '전개'])

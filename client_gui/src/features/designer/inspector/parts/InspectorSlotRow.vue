@@ -17,6 +17,10 @@
        flowgate.v02.0056 F2-2 — a line whose document has no body yet (`blank`, O3 0009-TR §4-1 has_body).
        flowgate.v02.0056 (0017-CH) — no author words, and a blank line has no words either: a dashed frame and a
        dim name (the list draws its hollow document icon); "비어 있음" is the line's hover text.
+       flowgate.v02.0068 T#1 — a line may carry a group before its buttons (the `io` slot: the document's
+       [업로드][다운로드]), in its own column. When the line is narrow the name gives way first (its column
+       shrinks to 72px); at a slot list of 360px or less the group goes to a second row of the line, at the right,
+       and the line grows — no button is hidden.
        flowgate.v02.0070 T#4 (B4) — the three line states are told apart in the line: no document (`empty`) — a dashed
        frame and "문서 없음"; a document without a body (`blank`) — a solid frame, a dim name and "본문 비어 있음" in the
        same muted words; an unreadable body — the small ⚠ below.
@@ -31,7 +35,7 @@
        whole, the summary gives way first, then the name. -->
   <div
     class="inspector-slot"
-    :class="[`inspector-slot--${kind}`, { 'is-empty': empty, 'is-blank': blank && !empty, 'is-focus': focus, 'is-danger': danger, 'is-state-first': warns }]"
+    :class="[`inspector-slot--${kind}`, { 'is-empty': empty, 'is-blank': blank && !empty, 'is-focus': focus, 'is-danger': danger, 'has-io': !!$slots.io, 'is-state-first': warns }]"
     :title="view.kind === 'blank' ? view.title : undefined"
     data-test="inspector-slot"
     :data-kind="kind"
@@ -76,6 +80,9 @@
           data-test="inspector-slot-progress"
         ><i :style="{ width: `${clamped}%` }" /></span>
       </template>
+    </span>
+    <span v-if="$slots.io" class="inspector-slot-io" data-test="inspector-slot-io">
+      <slot name="io" />
     </span>
     <span class="inspector-slot-buttons" data-test="inspector-slot-buttons">
       <slot />
@@ -225,6 +232,40 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
 
   .inspector-slot.is-state-first .inspector-slot-progress {
     max-width: 120px;
+  }
+}
+
+/* flowgate.v02.0068 T#1 — a line with the [업로드][다운로드] group: its own column before the buttons. */
+.inspector-slot.has-io {
+  grid-template-columns: minmax(72px, 120px) minmax(0, 1fr) max-content minmax(0, max-content);
+}
+
+.inspector-slot-io {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* 360px or less: the name is at its minimum already, so the group moves to a second row (right aligned)
+   and the line grows; the buttons keep their place in the first row. */
+@container (max-width: 360px) {
+  .inspector-slot.has-io {
+    grid-template-columns: 72px minmax(0, 1fr) minmax(0, max-content);
+    row-gap: 4px;
+    height: auto;
+    min-height: 38px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .inspector-slot.has-io .inspector-slot-io {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+
+  .inspector-slot.has-io .inspector-slot-io :deep(.document-io-divider) {
+    display: none;
   }
 }
 

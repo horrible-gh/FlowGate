@@ -113,7 +113,7 @@ import {
   type InspectorTabKey,
 } from './inspectorTabs'
 import { toInspectorTarget, withWrittenCardLines, type NodeTitleSaveOutcome } from './inspectorTarget'
-import { cardLinesWritten, settleCardLinesWritten } from './openDocument'
+import { cardLinesWritten, forgetDocumentIo, leaveDocumentIo, settleCardLinesWritten } from './openDocument'
 import { useInspectorEvents } from './useInspectorResource'
 
 const props = withDefaults(
@@ -179,6 +179,20 @@ function onDocumentContentChanged(event: Event): void {
 
 onMounted(() => window.addEventListener('fg:document_content_changed', onDocumentContentChanged))
 onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', onDocumentContentChanged))
+
+// flowgate.v02.0068 T#1: the Frame lives as long as the Designer — its end is the Designer's end for the document
+// upload / download (uploads of this Designer end quietly); another project forgets the buttons' document state.
+let lastIoProject: string | null = null
+watch(
+  () => readTarget.value?.projectId ?? null,
+  (project) => {
+    if (project === null) return
+    if (lastIoProject !== null && project !== lastIoProject) forgetDocumentIo()
+    lastIoProject = project
+  },
+  { immediate: true },
+)
+onBeforeUnmount(leaveDocumentIo)
 
 const contributions = computed(() => contributionsFor(registry, target.value))
 const headerMetas = computed(() => contributions.value.filter((entry) => entry.headerMeta))

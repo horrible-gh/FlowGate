@@ -155,6 +155,8 @@
 // and `nodes-move` (movable Nodes were dropped — flowgate.v02.0059 T#2: one event per drop). Never calls an API, changes the session, edits
 // the Graph or handles tabs. flowgate.v02.0049: `canvas-resize` — the Canvas area size Vue Flow
 // measured (it watches the resize itself), when shown and on every change, for the MiniMap.
+// flowgate.v02.0068 T#2: `node-sizes` — the size Vue Flow measured for each card (the size nodeRect gives the
+// Edges), when measured and on every change, for 자동정렬 and the MiniMap's lines.
 //
 // flowgate.v02.0045 S3 (editable draft only): `canvas-drop` (the drag data and the drop point in
 // Graph coordinates — what was dropped is for the session to tell), `node-connect` (a connection
@@ -281,6 +283,8 @@ const emit = defineEmits<{
   'viewport-change': [viewport: CanvasViewport]
   'viewport-commit': [viewport: CanvasViewport]
   'canvas-resize': [size: CanvasSize]
+  /** flowgate.v02.0068 T#2: every measured card's size, by node id. */
+  'node-sizes': [sizes: Record<string, { width: number; height: number }>]
   /** flowgate.v02.0059 T#2: one drop — the position of every dropped Node (one undo entry). */
   'nodes-move': [moves: { nodeId: string; x: number; y: number }[]]
   'canvas-drop': [drop: { transfer: DataTransfer; x: number; y: number }]
@@ -694,6 +698,15 @@ watch(
   () => {
     const size = flow.value?.dimensions.value
     if (size && size.width > 0 && size.height > 0) emit('canvas-resize', { width: size.width, height: size.height })
+  },
+)
+
+// flowgate.v02.0068 T#2: the measured card sizes go up whenever one changes.
+const measuredNodes = () => (flow.value?.getNodes?.value ?? []).filter((node) => node.dimensions.width > 0 && node.dimensions.height > 0)
+watch(
+  () => measuredNodes().map((node) => `${node.id}:${node.dimensions.width}x${node.dimensions.height}`).join('|'),
+  (key) => {
+    if (key) emit('node-sizes', Object.fromEntries(measuredNodes().map((node) => [node.id, { width: node.dimensions.width, height: node.dimensions.height }])))
   },
 )
 

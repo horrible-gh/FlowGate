@@ -104,7 +104,7 @@
               :data-arrange="command"
               @click="chooseArrange(command)"
             >
-              {{ command === 'edit.auto-layout' ? t('gui.designer.top.items.auto_layout') : t(`gui.designer.top.arrange.${command.slice(5)}`) }}
+              {{ autoLayoutDirectionOf(command) ? t(`gui.designer.top.items.auto_layout_${autoLayoutDirectionOf(command)}`) : t(`gui.designer.top.arrange.${command.slice(5)}`) }}
             </button>
           </template>
         </div>
@@ -195,8 +195,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ALL_MENU_TARGETS,
-  DESIGNER_ARRANGE_GROUPS,
+  DESIGNER_LAYOUT_GROUPS,
   DESIGNER_DENSITIES,
+  autoLayoutDirectionOf,
   isMenuCommandEnabled,
   type DesignerDensity,
   type DesignerMenuTargets,
@@ -285,7 +286,8 @@ const runButtons = computed(() =>
 
 // flowgate.v02.0059 T#2: 정렬 / 배치 ▾ — the Edit menu's 정렬 / 배치 commands, then 자동 배치. The drop-down
 // is placed under its button in the viewport (fixed), so the Toolbar's own scrolling never clips it.
-const ARRANGE_MENU: readonly (readonly DesignerTopCommand[])[] = [...DESIGNER_ARRANGE_GROUPS, ['edit.auto-layout']]
+// flowgate.v02.0068 T#2: 자동 배치 is 가로 자동정렬 / 세로 자동정렬 (0004-D §6.3), one group after a separator.
+const ARRANGE_MENU = DESIGNER_LAYOUT_GROUPS
 const arrangeOpen = ref(false)
 const arrangeRoot = ref<HTMLElement | null>(null)
 const arrangeButton = ref<HTMLButtonElement | null>(null)

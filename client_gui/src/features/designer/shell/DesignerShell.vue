@@ -182,6 +182,7 @@
 // Center session: the six 정렬 / two 균등 분배 commands arrange its selected cards and 자동 배치 lays every
 // movable card out by the server's auto placement rules, only when that command is chosen. Each is one entry
 // of the Flow's undo / redo, as a card drag is.
+// 0068 T0011: direction commands and a notice when candidate validation rejects a layout.
 //
 // flowgate.v02.0059 0017-T — the density (넓게 / 보통 / 좁게 / 자율형) is how finely a card drag moves: the
 // Toolbar radios and the View menu set the one value (`top.density`, screen state only), and its move step
@@ -248,6 +249,7 @@ import {
   DENSITY_MOVE_STEP,
   DESIGNER_ARRANGE_GROUPS,
   arrangeSelectionMinimum,
+  autoLayoutDirectionOf,
   createDesignerTopState,
   isMenuCommandEnabled,
   nextRunPhase,
@@ -405,6 +407,27 @@ watch(
     // A refused document is read, not glanced at: that toast stays until it is closed.
     const duration = error.kind === 'approval' && error.approval?.kind === 'refused' ? null : 4000
     toasts.value = [...toasts.value.slice(-2), { id: `run-${toastSeq}`, message, tone, duration }]
+  },
+)
+
+// A rejected candidate does not move cards; show its reason once.
+watch(
+  () => center.layoutNotice.value?.seq ?? 0,
+  (seq) => {
+    const notice = center.layoutNotice.value
+    if (!seq || !notice) return
+    const base = 'gui.designer.top.layout_notices'
+    const message = `${t(`${base}.invalid`)} ${t(`${base}.invalid_reasons.${notice.reason}`)}`
+    toastSeq += 1
+    toasts.value = [
+      ...toasts.value.slice(-2),
+      {
+        id: `layout-${toastSeq}`,
+        message,
+        tone: 'warning',
+        duration: 6000,
+      },
+    ]
   },
 )
 
@@ -714,11 +737,13 @@ function onTopCommand(command: DesignerTopCommand) {
       if (flowId !== null) center.selectAll(flowId)
       return
     }
-    // flowgate.v02.0059 T#2: 자동 배치 of the open Flow by the server's rules and spacing (one undo entry).
-    // 0017-T: the density has no part in it.
-    case 'edit.auto-layout': {
+    // flowgate.v02.0059 T#2: 자동 배치 of the open Flow (one undo entry). 0017-T: the density has no part in it.
+    // flowgate.v02.0068 T#2: 가로 / 세로 자동정렬 — the direction goes with the command only (spacing scale 1).
+    case 'edit.auto-layout-horizontal':
+    case 'edit.auto-layout-vertical': {
       const flowId = center.state.activeFlowId
-      if (flowId !== null) center.autoLayout(flowId)
+      const direction = autoLayoutDirectionOf(command)
+      if (flowId !== null && direction !== null) center.autoLayout(flowId, direction)
       return
     }
     // flowgate.v02.0059 T#1: the Toolbar and the View menu emit the same command; the Canvas of the

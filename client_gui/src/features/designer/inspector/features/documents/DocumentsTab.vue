@@ -6,13 +6,16 @@
        A thin container: useDocuments reads, documentsModel decides what is shown.
        flowgate.v02.0052 묶음 A — no prose line in the body: where writing and editing happen is the
        ↗ 열기 button's hover text (v7 keeps explanations in tooltips).
-       flowgate.v02.0053 T#5 (0053 CH) — every open button is the document icon (tooltip: open_hint). -->
+       flowgate.v02.0053 T#5 (0053 CH) — every open button is the document icon (tooltip: open_hint).
+       flowgate.v02.0068 T#1 — a line of a document (the current one, a superseded one that reads) has the
+       document's [업로드][다운로드] before its open button. -->
   <div v-if="view" class="inspector-documents" data-test="inspector-documents" :data-status="status">
     <section class="inspector-documents-current" data-test="documents-current" :data-doc="view.current.docId">
       <div class="inspector-documents-line">
         <span v-if="view.current.typeCode" class="inspector-documents-type" data-test="documents-current-type">{{ view.current.typeCode }}</span>
         <span v-if="view.current.seq !== null" class="inspector-documents-seq" data-test="documents-current-seq">#{{ view.current.seq }}</span>
         <span class="inspector-documents-title" :title="view.current.title" data-test="documents-current-title">{{ view.current.title }}</span>
+        <DocumentIoGroup :doc-id="view.current.docId"  :project-id="target.projectId" :group-id="target.flowId" />
         <InspectorOpenButton
           v-if="availability.open.visible"
           :disabled="!availability.open.enabled"
@@ -87,6 +90,7 @@
             <span v-if="item.seq !== null" class="inspector-documents-seq">#{{ item.seq }}</span>
             <span class="inspector-documents-title" :title="item.title ?? item.docId">{{ item.title ?? item.docId }}</span>
             <InspectorStatusChip v-if="item.reviewStatus" :label="reviewText(item.reviewStatus)" :tone="item.reviewTone" />
+            <DocumentIoGroup v-if="item.state !== 'missing'" :doc-id="item.docId"  :project-id="target.projectId" :group-id="target.flowId" />
             <InspectorOpenButton
               v-if="availability.open.visible"
               :disabled="!availability.open.enabled"
@@ -104,6 +108,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { DocumentIoGroup } from '../../openDocument'
 import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'

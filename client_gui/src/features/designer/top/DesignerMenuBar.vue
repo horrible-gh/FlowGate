@@ -119,7 +119,7 @@
               @keydown.left.prevent.stop="closeSubmenu"
             >
               <template v-if="entry.kind === 'arrange'">
-                <template v-for="(group, groupIndex) in DESIGNER_ARRANGE_GROUPS" :key="`arrange-${groupIndex}`">
+                <template v-for="(group, groupIndex) in DESIGNER_LAYOUT_GROUPS" :key="`arrange-${groupIndex}`">
                   <div v-if="groupIndex > 0" class="designer-menu-sep" role="separator" />
                   <button
                     v-for="command in group"
@@ -132,7 +132,7 @@
                     :data-command="command"
                     @click="choose(() => emit('command', command))"
                   >
-                    <span class="designer-menu-mark" aria-hidden="true" />{{ t(`gui.designer.top.arrange.${command.slice(5)}`) }}
+                    <span class="designer-menu-mark" aria-hidden="true" />{{ autoLayoutDirectionOf(command) ? t(`gui.designer.top.items.auto_layout_${autoLayoutDirectionOf(command)}`) : t(`gui.designer.top.arrange.${command.slice(5)}`) }}
                   </button>
                 </template>
               </template>
@@ -181,10 +181,11 @@ import { nextTick, onBeforeUnmount, onMounted, ref, type ComponentPublicInstance
 import { useI18n } from 'vue-i18n'
 import {
   ALL_MENU_TARGETS,
-  DESIGNER_ARRANGE_GROUPS,
+  DESIGNER_LAYOUT_GROUPS,
   DESIGNER_DENSITIES,
   DESIGNER_MENUS,
   EMPTY_RECENT_LISTS,
+  autoLayoutDirectionOf,
   isMenuCommandEnabled,
   isSubmenuEnabled,
   type DesignerDensity,

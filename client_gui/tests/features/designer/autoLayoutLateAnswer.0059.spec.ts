@@ -111,20 +111,24 @@ async function openSession(flowId: string, flow: ServerFlow) {
   return { center, shown, positions, scatter }
 }
 
+// flowgate.v02.0068 T#2: the last column is where 가로 자동정렬 puts the shown cards (0005-L §2.6: after the chain,
+// the documents in one row below it; a hidden document keeps its slot and its real place).
 const HELD_READS = [
-  ['the whole Flow read (a hidden conversation)', 'p.ui.0021', () => documentsFlow('p.ui.0021'), 'whole'],
-  ['the root document read (a replaced v0.1 root)', 'p.ui.0022', () => replacedRootFlow('p.ui.0022'), 'document'],
+  ['the whole Flow read (a hidden conversation)', 'p.ui.0021', () => documentsFlow('p.ui.0021'), 'whole',
+    { 'doc:p.ui.0021.0001-R': [0, 0], 'doc:p.ui.0021.0003-D': [520, 0] }],
+  ['the root document read (a replaced v0.1 root)', 'p.ui.0022', () => replacedRootFlow('p.ui.0022'), 'document',
+    { 'doc:p.ui.0022.0005-R': [0, 0], 'doc:p.ui.0022.0003-D': [0, 200], 'doc:p.ui.0022.0004-D': [260, 200] }],
 ] as const
 
 describe('a late 자동 배치 answer moves nothing once it no longer belongs to the shown Graph (flowgate.v02.0059 T#2)', () => {
-  it.each(HELD_READS)('cancelAutoLayout (자율형) while waiting on %s', async (_title, flowId, flow, held) => {
+  it.each(HELD_READS)('cancelAutoLayout (자율형) while waiting on %s', async (_title, flowId, flow, held, laidOut) => {
     const { center, positions, scatter } = await openSession(flowId, flow())
     expect(scatter()).toBe(true)
     await settleSaves()
     const scattered = positions()
     const savesBefore = savesOf(flowId).length
     server.hold[held] = true
-    const pending = center.autoLayout(flowId, 1.5)
+    const pending = center.autoLayout(flowId, 'vertical')
     await flushPromises()
     expect(server.heldCount()).toBe(1)
     center.cancelAutoLayout()
@@ -137,10 +141,10 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     expect(center.undoEdit(flowId)).toBe(true)
     expect(positions()).toEqual(serverShown(server.flows[flowId]))
     expect(center.undoEdit(flowId)).toBe(false)
-    // A 자동 배치 asked afterwards still lays the cards out (scale 1).
+    // A 자동정렬 asked afterwards still lays the cards out.
     expect(scatter()).toBe(true)
-    expect(await center.autoLayout(flowId)).toBe(true)
-    expect(positions()).toEqual(serverShown(server.flows[flowId]))
+    expect(await center.autoLayout(flowId, 'horizontal')).toBe(true)
+    expect(positions()).toEqual(laidOut)
   })
 
   it.each(HELD_READS)('dispose while waiting on %s: the waiting user save still goes out, the answer changes nothing', async (_title, flowId, flow, held) => {
@@ -148,7 +152,7 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     server.hold[held] = true
     expect(scatter()).toBe(true)
     const scattered = positions()
-    const pending = center.autoLayout(flowId, 1.5)
+    const pending = center.autoLayout(flowId, 'vertical')
     await flushPromises()
     expect(server.heldCount()).toBe(1)
     center.dispose()
@@ -164,7 +168,7 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     expect(stored(flowId)).toEqual(scattered)
     expect(center.undoEdit(flowId)).toBe(false)
     // Nothing more after dispose.
-    expect(center.autoLayout(flowId)).toBe(false)
+    expect(center.autoLayout(flowId, 'horizontal')).toBe(false)
   })
 
   // The reviewer's case: R, CH (hidden), D 0003; the read meanwhile shows D 0004 in place of D 0003. The old
@@ -190,7 +194,7 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     expect(scatter()).toBe(true)
     await settleSaves()
     server.hold.whole = true
-    const pending = center.autoLayout(flowId)
+    const pending = center.autoLayout(flowId, 'horizontal')
     await flushPromises()
     // The held read is the Flow as it was asked (R, CH, D 0003); the server has D 0004 since.
     expect(server.heldCount()).toBe(1)
@@ -212,9 +216,9 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     // The re-read reset the history; the late answer added nothing to it.
     expect(center.undoEdit(flowId)).toBe(false)
 
-    // The next 자동 배치 reads the new Flow whole: D 0004 back at (520, 0).
+    // The next 자동정렬 reads the new Flow whole: D 0004 back at (520, 0).
     expect(scatter()).toBe(true)
-    expect(await center.autoLayout(flowId)).toBe(true)
+    expect(await center.autoLayout(flowId, 'horizontal')).toBe(true)
     expect(positions()).toEqual(replaced)
   })
 
@@ -222,7 +226,7 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     const flowId = 'p.ui.0024'
     const { center, positions, scatter } = await openSession(flowId, documentsFlow(flowId))
     server.hold.whole = true
-    const pending = center.autoLayout(flowId)
+    const pending = center.autoLayout(flowId, 'horizontal')
     await flushPromises()
     expect(server.heldCount()).toBe(1)
     server.flows[flowId] = assignedFlow(flowId)
@@ -238,8 +242,9 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     expect(savesOf(flowId)).toHaveLength(0)
     expect(center.undoEdit(flowId)).toBe(false)
     expect(scatter()).toBe(true)
-    expect(await center.autoLayout(flowId)).toBe(true)
-    expect(positions()).toEqual(assigned)
+    expect(await center.autoLayout(flowId, 'horizontal')).toBe(true)
+    // flowgate.v02.0068 T#2: the chain R -> slot, then the shown document below it (its slot 0 is the hidden CH's).
+    expect(positions()).toEqual({ [`doc:${flowId}.0001-R`]: [0, 0], slot_31: [260, 0], [`doc:${flowId}.0003-D`]: [520, 200] })
   })
 
   it('with nothing in between, the late answer still lays the cards out and saves them', async () => {
@@ -248,7 +253,7 @@ describe('a late 자동 배치 answer moves nothing once it no longer belongs to
     expect(scatter()).toBe(true)
     await settleSaves()
     server.hold.whole = true
-    const pending = center.autoLayout(flowId)
+    const pending = center.autoLayout(flowId, 'horizontal')
     await flushPromises()
     expect(server.heldCount()).toBe(1)
     server.release()

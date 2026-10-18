@@ -11,7 +11,10 @@
        so a test card without a bound document shows and opens them too; the 지시서 line is hidden when the
        card's settings omit the instruction (useTestCard). The details (and their reads) need a document. -->
   <section class="inspector-test-spec" data-test="inspector-test-spec" :data-status="status" :data-form="form">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="editLine" @history="historyLine" @action="actionLine" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="editLine" @history="historyLine" @action="actionLine">
+      <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
+      <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" /></template>
+    </InspectorSlotList>
 
     <details v-if="target.docId" :key="target.docId" class="inspector-test-spec-details" data-test="test-spec-details">
       <summary>{{ t('gui.designer.inspector.pane.details') }}</summary>
@@ -118,7 +121,7 @@ import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { INSPECTOR_HOST } from '../../inspectorHost'
-import { cardLineRow, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
+import { cardLineRow, DocumentIoGroup, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
 import { testSpecSlots, testSpecVerdictKey, type TestSpecSlot } from './testSpecModel'
 import { useTestCard } from './useTestCard'
 import { useTestSpec } from './useTestSpec'

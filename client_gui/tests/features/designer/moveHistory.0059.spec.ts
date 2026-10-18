@@ -362,14 +362,15 @@ describe('Center session — moves in the Flow undo / redo', () => {
     expect([at('doc:r'), at('gn_a'), at('gn_b'), at('doc:fixed')]).toEqual([[0, 0], [40, 0], [300, 0], [900, 0]])
     center.undoEdit('f1')
     expect([at('doc:r'), at('gn_a'), at('gn_b')]).toEqual([[0, 0], [40, 320], [300, 380]])
-    // 자동 배치 by the server's documents projection rules: documents on one row, draft nodes from y=320.
-    expect(center.autoLayout('f1')).toBe(true)
-    expect([at('doc:r'), at('gn_a'), at('gn_b'), at('doc:fixed')]).toEqual([[0, 0], [0, 320], [0, 460], [900, 0]])
-    expect(center.autoLayout('f1')).toBe(false)                              // already laid out: no entry
-    expect(center.autoLayout('f1', 1.5)).toBe(true)
-    expect([at('gn_a'), at('gn_b')]).toEqual([[0, 480], [0, 690]])
+    // flowgate.v02.0068 T#2: 가로 자동정렬 of the documents projection — the unconnected draft cards first (B, A by
+    // label), then the free documents in a row below them; the fixed card stays.
+    expect(center.autoLayout('f1', 'horizontal')).toBe(true)
+    expect([at('doc:r'), at('gn_a'), at('gn_b'), at('doc:fixed')]).toEqual([[0, 200], [260, 0], [0, 0], [900, 0]])
+    expect(center.autoLayout('f1', 'horizontal')).toBe(false)                // already laid out: no entry
+    expect(center.autoLayout('f1', 'vertical')).toBe(true)
+    expect([at('gn_a'), at('gn_b')]).toEqual([[0, 176], [0, 0]])
     center.undoEdit('f1')
-    expect([at('gn_a'), at('gn_b')]).toEqual([[0, 320], [0, 460]])
+    expect([at('gn_a'), at('gn_b')]).toEqual([[260, 0], [0, 0]])
     center.undoEdit('f1')
     expect([at('doc:r'), at('gn_a'), at('gn_b')]).toEqual([[0, 0], [40, 320], [300, 380]])
   })
