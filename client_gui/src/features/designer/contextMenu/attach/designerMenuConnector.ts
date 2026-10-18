@@ -31,8 +31,12 @@
 //
 // The areas reach this through `provide` / `inject` under DESIGNER_CONTEXT_MENU (no import of this folder), so an
 // area mounted outside the Designer Shell keeps its old behaviour.
+//
+// flowgate.v02.0060 0017-T: while the Designer is mounted the browser's own menu never shows (the mockup v2 rule; the
+// entry's native-menu block on the document) — a place with no target, a target with no item and an excluded one show
+// nothing; only editable areas keep the browser menu. The menu targets and their items are not changed by this.
 
-import { markRaw, onBeforeUnmount, provide, shallowRef, watch } from 'vue'
+import { markRaw, onBeforeUnmount, onMounted, provide, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { DesignerCenterSession } from '../../center/designerCenterSession'
 import type { FlowGraph } from '../../center/graph/flowGraph'
@@ -46,7 +50,7 @@ import {
   type PaletteItemDefinition,
 } from '../../palette/paletteCatalog'
 import { canvasMenu, canvasNodeTarget, type ArrangeChoice, type CardRunItem } from '../canvasMenu'
-import { openContextMenu } from '../entry'
+import { attachNativeMenuBlock, openContextMenu } from '../entry'
 import { fileExplorerMenu, type FileAvailability } from '../fileExplorerMenu'
 import { flowTabMenu } from '../flowTabMenu'
 import { attachRightButtonGuard } from '../gesture'
@@ -475,7 +479,13 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   // Another project closes a 2-B window (its target belongs to the project it was opened in).
   watch(() => deps.projectId(), () => { pending.value = null })
 
+  // 0017-T: the browser's own menu stays shut in the Designer (editable areas excepted), released with the Shell.
+  let releaseNativeBlock: (() => void) | null = null
+  onMounted(() => { releaseNativeBlock = attachNativeMenuBlock(document) })
+
   onBeforeUnmount(() => {
+    releaseNativeBlock?.()
+    releaseNativeBlock = null
     host.close()
     pending.value = null
   })

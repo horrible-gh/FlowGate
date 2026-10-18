@@ -737,14 +737,15 @@ describe('Designer context menu — Palette (0006-D §9.3 ⑤)', () => {
     expect(calls.palette).toEqual([])
   })
 
-  it('the blank Palette is no target: no menu, the browser menu stays, an open menu closes', async () => {
+  // 0017-T: no target shows no menu at all — the browser's own menu is blocked too (a separate rule, entry.ts).
+  it('the blank Palette is no target: no menu, no browser menu, an open menu closes', async () => {
     const { w } = await mountHarness()
     rightClick(pane(w))
     await settle()
     expect(menuEl()).not.toBeNull()
     const event = rightClick(w.get('[data-test="designer-palette"]').element)
     await settle()
-    expect(event.defaultPrevented).toBe(false)
+    expect(event.defaultPrevented).toBe(true)
     expect(menuEl()).toBeNull()
   })
 })

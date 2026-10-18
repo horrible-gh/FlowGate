@@ -371,13 +371,14 @@ describe('Designer context menu in the Shell — ③ ④ ⑤ and the close rules
     await settle()
     expect(card().attributes('aria-pressed')).toBe('true')
     expect(w.get('[data-test="designer-canvas"]').classes()).toContain('is-placing')
+    // 0017-T: the blank Palette shows nothing — neither the Designer menu nor the browser's own.
     const blank = rightClick(w.get('[data-test="designer-palette"]').element)
     await settle()
     expect(menuEl()).toBeNull()
-    expect(blank.defaultPrevented).toBe(false)
+    expect(blank.defaultPrevented).toBe(true)
   })
 
-  it('a Minimap right click only closes the open menu', async () => {
+  it('a Minimap right click only closes the open menu (and shows no browser menu, 0017-T)', async () => {
     const w = await mountShell()
     await openFlow(w, 'Canvas')
     rightClick(w.get('.vue-flow__pane').element)
@@ -386,7 +387,7 @@ describe('Designer context menu in the Shell — ③ ④ ⑤ and the close rules
     const onMap = rightClick(w.get('[data-test="designer-minimap"]').element)
     await settle()
     expect(menuEl()).toBeNull()
-    expect(onMap.defaultPrevented).toBe(false)
+    expect(onMap.defaultPrevented).toBe(true)
   })
 
   it('Escape closes the menu only: the Palette selection waiting for placement stays', async () => {
