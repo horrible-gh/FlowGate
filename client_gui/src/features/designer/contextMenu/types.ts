@@ -2,8 +2,11 @@
 // names of the 11 menu kinds, the target snapshots, the item contract (action / one-level submenu /
 // separator) and the command request a chosen item turns into. Pure types: no store, API, session
 // or shell. `flow.delete` means the existing dispose (DC) request and `*.git.revert` the
-// "restore the Flow worktree's uncommitted changes to the group HEAD" request — both stay unwired
-// (hidden) until a later T connects them; no permanent-delete or Base-restore command exists.
+// "restore the Flow worktree's uncommitted changes to the group HEAD" request — both stay unwired until a
+// later T connects them; no permanent-delete or Base-restore command exists.
+// flowgate.v02.0060 T#1 (WP 0012, Q item 459): all 40 items are shown where the mockup puts them; one the area has
+// not connected is shown disabled and says why — '연결 예정' (PLANNED_COMMANDS, the 2-B existing server contracts) or
+// '미구현' (everything else) — and never requests.
 
 export const COMMANDS = [
   'project.newGroup', 'project.info', 'group.newFlow', 'group.rename', 'group.info',
@@ -17,6 +20,11 @@ export const COMMANDS = [
   'edge.disconnect', 'palette.addCard',
 ] as const
 export type MenuCommand = typeof COMMANDS[number]
+/** 0006-D §5.3 후속 연결 (2-B): an existing server contract a later T connects — '연결 예정' until then. */
+export const PLANNED_COMMANDS: readonly MenuCommand[] = Object.freeze([
+  'group.rename', 'flow.rename', 'flow.delete', 'folder.newFolder', 'folder.newFile', 'folder.download',
+  'folder.upload', 'folder.delete', 'file.download', 'file.git.changes', 'file.delete',
+])
 /** flowgate.v02.0060 T#2 — the card's existing run menu (0061 T#15: Hold 설정 / 해제, 되돌리기) shown inside the card
  * menu, so one menu stays open on a card. Not part of the mockup's 40; they keep their own rules and path. */
 export const CARD_RUN_COMMANDS = ['node.run.holdSet', 'node.run.holdRelease', 'node.run.timeMachine'] as const
@@ -56,7 +64,9 @@ export interface CardDefinition {
   readonly accent: string
   readonly custom: boolean
 }
-export type DisabledReason = 'unlinked' | 'unavailable' | 'no-worktree' | 'denied'
+/** Git state reasons, and the two reasons of an item not connected (Q 459): 'planned' (연결 예정) / 'unimplemented' (미구현). */
+export type DisabledReason = 'unlinked' | 'unavailable' | 'no-worktree' | 'denied' | 'planned' | 'unimplemented'
+export type UnconnectedReason = Extract<DisabledReason, 'planned' | 'unimplemented'>
 interface ItemDisplay {
   readonly key: string
   readonly labelKey?: string
@@ -70,17 +80,20 @@ export interface MenuAction extends ItemDisplay {
   readonly kind: 'action'
   readonly command: MenuItemCommand
   readonly definition?: CardDefinition
-}
-export interface MenuSubmenu extends ItemDisplay {
-  readonly kind: 'submenu'
-  readonly children: readonly MenuAction[]
+  /** 정렬 · 배치 / 정렬 (T#1): the Edit › 정렬 / 배치 command this child of the submenu stands for. */
+  readonly arrange?: string
 }
 export interface MenuSeparator { readonly kind: 'separator'; readonly key: string }
+export interface MenuSubmenu extends ItemDisplay {
+  readonly kind: 'submenu'
+  readonly children: readonly (MenuAction | MenuSeparator)[]
+}
 export type MenuItem = MenuAction | MenuSubmenu | MenuSeparator
 export interface CommandRequest<T extends MenuTarget = MenuTarget> {
   readonly command: MenuItemCommand
   readonly target: T
   readonly definition?: CardDefinition
+  readonly arrange?: string
 }
 export interface MenuModel<T extends MenuTarget = MenuTarget> {
   readonly target: T

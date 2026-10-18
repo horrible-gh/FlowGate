@@ -10,9 +10,16 @@
 // open) and the item must still be enabled — the snapshot's availability is never the reason to run. Each command
 // runs through the existing path (the Shell's create dialogs and Edit › 전체 선택, the Center session's closeFlow /
 // dropOnCanvas / removeNode / removeEdge / chooseCardMenu, the File Explorer's folder expansion, the Palette
-// selection the Canvas click places). Only the 11 first-step commands are connected (§5.3 1차 연결); the 2-B
-// commands, the DEFERRED ones and Git 되돌리기 stay hidden. The card's existing run menu (0061 T#15) is carried into
-// the single card menu so one menu is ever open on a card; a card of a multi-selection opens no menu (§3.6).
+// selection the Canvas click places). The card's existing run menu (0061 T#15) is carried into the single card menu
+// so one menu is ever open on a card.
+//
+// flowgate.v02.0060 T#1 (WP 0012, Q item 459): the 11 first-step commands (§5.3 1차 연결) and 정렬 · 배치 / 정렬 are
+// connected (CONNECTED_COMMANDS, 13); every other item of the mockup's 40 is shown disabled where the mockup puts it —
+// 연결 예정 for the 11 2-B commands, 미구현 for the 16 others — and never reaches an execute path here (no request,
+// no API call). So the Flow row, the file row, the root folder and a card of a multi-selection open their menus now.
+// The multi-selection menu takes no single card command and no run item (§3.6), and changes no selection. 정렬 · 배치
+// and 정렬 open the Edit menu's 정렬 / 배치 commands (the Shell's DESIGNER_ARRANGE_GROUPS, its isMenuCommandEnabled
+// and its onTopCommand → center.arrangeNodes); no arrange logic of its own.
 //
 // The areas reach this through `provide` / `inject` under DESIGNER_CONTEXT_MENU (no import of this folder), so an
 // area mounted outside the Designer Shell keeps its old behaviour.
@@ -30,7 +37,7 @@ import {
   paletteItemDefinition,
   type PaletteItemDefinition,
 } from '../../palette/paletteCatalog'
-import { canvasMenu, canvasNodeTarget, type CardRunItem } from '../canvasMenu'
+import { canvasMenu, canvasNodeTarget, type ArrangeChoice, type CardRunItem } from '../canvasMenu'
 import { openContextMenu } from '../entry'
 import { fileExplorerMenu, type FileAvailability } from '../fileExplorerMenu'
 import { flowTabMenu } from '../flowTabMenu'
@@ -53,11 +60,15 @@ import type {
 /** The injection key the five areas use (`inject(Symbol.for('flowgate.designer.contextMenu'), null)`). */
 export const DESIGNER_CONTEXT_MENU = Symbol.for('flowgate.designer.contextMenu')
 
-/** §5.3 1차 연결 (2-A): the only commands that are shown. */
+/** §5.3 1차 연결 (2-A). */
 export const FIRST_STEP_COMMANDS: readonly MenuCommand[] = Object.freeze([
   'project.newGroup', 'group.newFlow', 'folder.open', 'tab.close', 'tab.closeOthers', 'tab.closeAll',
   'canvas.addCard', 'canvas.selectAll', 'node.delete', 'edge.disconnect', 'palette.addCard',
 ])
+/** T#1 (WP 0012 [B]): 정렬 · 배치 / 정렬 through the Edit menu's 정렬 / 배치 commands. */
+export const ARRANGE_COMMANDS: readonly MenuCommand[] = Object.freeze(['canvas.arrange', 'multi.arrange'])
+/** The commands that run (13); the rest of the 40 are shown disabled as 연결 예정 / 미구현. */
+export const CONNECTED_COMMANDS: readonly MenuCommand[] = Object.freeze([...FIRST_STEP_COMMANDS, ...ARRANGE_COMMANDS])
 
 const RUN_COMMANDS: Readonly<Record<FlowCardMenuKey, CardRunCommand>> = {
   hold_set: 'node.run.holdSet',
@@ -109,6 +120,16 @@ export interface DesignerContextMenuApi {
   palette(event: MouseEvent, entry: PaletteMenuEntry): boolean
 }
 
+/** The Edit menu's 정렬 / 배치, lent by the Shell (its command names, rule and path). */
+export interface DesignerArrangeDeps {
+  /** DESIGNER_ARRANGE_GROUPS: the commands in order, one group per separator. */
+  readonly groups: readonly (readonly string[])[]
+  /** isMenuCommandEnabled(command, runPhase, menuTargets) of now. */
+  readonly enabled: (command: string) => boolean
+  /** onTopCommand(command) on the active Flow, which runs center.arrangeNodes with that kind. */
+  readonly run: (flowId: string, command: string) => void
+}
+
 /** What the Shell lends the connectors: its state reads and the existing paths the commands run through. */
 export interface DesignerContextMenuDeps {
   readonly center: DesignerCenterSession
@@ -123,6 +144,8 @@ export interface DesignerContextMenuDeps {
   readonly openFlowCreate: (groupId: string) => void
   /** The Palette item becomes the Palette selection the next Canvas click places. */
   readonly selectPalette: (definition: PaletteItemDefinition) => void
+  /** 정렬 · 배치 / 정렬 (T#1). */
+  readonly arrange: DesignerArrangeDeps
   /** Anything whose change hides an area (Dock collapse, Explorer mode, Tool tab): the menu closes. */
   readonly layout?: () => unknown
 }
@@ -138,7 +161,7 @@ interface OpenMenu {
 }
 
 const requestKey = (request: CommandRequest) =>
-  request.definition ? `${request.command}:${request.definition.itemId}` : request.command
+  request.definition ? `${request.command}:${request.definition.itemId}` : request.arrange ? `${request.command}:${request.arrange}` : request.command
 
 export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   const { t, te } = useI18n()
@@ -183,7 +206,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     const build = () => live() ? projectTreeMenu({
       target,
       available: { currentProject: deps.projectId() === target.projectId },
-      connected: FIRST_STEP_COMMANDS,
+      connected: CONNECTED_COMMANDS,
     }) : null
     return show(event, build, live, (request) => {
       const scope = request.target as ProjectTarget
@@ -198,7 +221,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   function file(event: MouseEvent, entry: FileMenuEntry): boolean {
     const build = () => {
       const available = entry.available()
-      return available ? fileExplorerMenu({ target: entry.target, available, connected: FIRST_STEP_COMMANDS }) : null
+      return available ? fileExplorerMenu({ target: entry.target, available, connected: CONNECTED_COMMANDS }) : null
     }
     const flowAt = center.state.activeFlowId
     const alive = () => center.state.activeFlowId === flowAt && entry.available() !== null
@@ -214,7 +237,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   function tab(event: MouseEvent, flowId: string | null, fallback?: HTMLElement | null): boolean {
     const target = { kind: 'tab' as const, flowId, tabIds: openTabIds() }
     const projectAt = deps.projectId()
-    const build = () => flowTabMenu({ target, available: { openTabIds: openTabIds() }, connected: FIRST_STEP_COMMANDS })
+    const build = () => flowTabMenu({ target, available: { openTabIds: openTabIds() }, connected: CONNECTED_COMMANDS })
     const alive = () => deps.projectId() === projectAt && (flowId === null || openTabIds().includes(flowId))
     return show(event, build, alive, (request) => {
       // The tab ids of this moment, each closed through the session's one close (its pending saves included).
@@ -250,6 +273,15 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     return DEFAULT_PALETTE_ITEMS.map((item) => paletteItemDefinition(item, t(`gui.designer.palette.items.${item.labelKey}`)))
   }
 
+  /** The Edit menu's 정렬 / 배치 of now: its groups, its words (gui.designer.top.arrange.*) and its rule. */
+  function arrangeChoices(): ArrangeChoice[][] {
+    return deps.arrange.groups.map((group) => group.map((command) => ({
+      command,
+      label: t(`gui.designer.top.arrange.${command.slice('edit.'.length)}`),
+      disabled: !deps.arrange.enabled(command),
+    })))
+  }
+
   /** The card's existing run menu (0061 T#15) worded as FlowCanvas worded it. */
   function runItems(flowId: string, nodeId: string): CardRunItem[] {
     return center.cardMenu(flowId, nodeId).map((entry: FlowCardMenuItem) => {
@@ -264,7 +296,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     })
   }
 
-  const CANVAS_CONNECTED: readonly MenuItemCommand[] = Object.freeze([...FIRST_STEP_COMMANDS, ...Object.values(RUN_COMMANDS)])
+  const CANVAS_CONNECTED: readonly MenuItemCommand[] = Object.freeze([...CONNECTED_COMMANDS, ...Object.values(RUN_COMMANDS)])
 
   /** The Canvas menu of the entry from the state of now (the card kind from the selection of now). */
   function buildCanvas(entry: CanvasMenuEntry, screen: Point): MenuModel | null {
@@ -280,13 +312,15 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
         available: { editable, hasSaveTarget: editable, canSelectAll: deps.canSelectAll(), graphReady: true },
         connected: CANVAS_CONNECTED,
         definitions: cardDefinitions(),
+        arrange: arrangeChoices(),
       })
     }
     if (entry.kind === 'node') {
       const node = entry.nodeId ? graph.nodes.find((candidate) => candidate.id === entry.nodeId) : undefined
       if (!node) return null
       target = canvasNodeTarget(entry.flowId, node.id, view.selectedNodeIds)
-      // A card of a multi-selection takes no single card command, its run menu included (§3.6): no item, no menu.
+      // A card of a multi-selection takes no single card command, its run menu included (§3.6); its menu is the
+      // multi-selection's (정렬 runs on the selection, the rest 미구현).
       return canvasMenu({
         target,
         available: {
@@ -296,6 +330,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
         },
         connected: CANVAS_CONNECTED,
         runItems: target.kind === 'node' ? runItems(entry.flowId, node.id) : [],
+        arrange: target.kind === 'multi' ? arrangeChoices() : [],
       })
     }
     const edge = entry.edgeId ? graph.edges.find((candidate) => candidate.id === entry.edgeId) : undefined
@@ -327,6 +362,9 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
         const definition = JSON.stringify(request.definition)
         const transfer = { getData: (type: string) => (type === PALETTE_DRAG_MIME ? definition : '') }
         center.dropOnCanvas(scope.flowId, transfer, scope.canvas.x, scope.canvas.y)
+      } else if ((request.command === 'canvas.arrange' && scope.kind === 'canvas') || (request.command === 'multi.arrange' && scope.kind === 'multi')) {
+        // The Edit menu's 정렬 / 배치 on the active Flow's selection — the one seen at open (alive checked it).
+        if (request.arrange) deps.arrange.run(scope.flowId, request.arrange)
       } else if (request.command === 'canvas.selectAll') {
         deps.selectAll(scope.flowId)
       } else if (request.command === 'node.delete' && scope.kind === 'node') {
@@ -356,7 +394,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     const definition = { ...entry.definition }
     const target = { kind: 'palette' as const, definitionId: definition.itemId }
     const flowAt = center.state.activeFlowId
-    const build = () => paletteMenu({ target, available: { canPlace: canPlace() }, connected: FIRST_STEP_COMMANDS })
+    const build = () => paletteMenu({ target, available: { canPlace: canPlace() }, connected: CONNECTED_COMMANDS })
     const alive = () => center.state.activeFlowId === flowAt && (entry.alive?.() ?? true)
     return show(event, build, alive, (request) => {
       if (request.command === 'palette.addCard' && center.state.activeFlowId !== null) deps.selectPalette(definition)

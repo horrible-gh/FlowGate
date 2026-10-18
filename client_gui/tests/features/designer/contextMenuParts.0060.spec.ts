@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CARD_RUN_COMMANDS, COMMANDS, type MenuItem, type MenuTarget } from '@/features/designer/contextMenu/types'
+import { CARD_RUN_COMMANDS, COMMANDS, PLANNED_COMMANDS, type MenuItem, type MenuTarget } from '@/features/designer/contextMenu/types'
 import { action, makeMenu, separator, visibleItems } from '@/features/designer/contextMenu/model'
 import { canvasMenu, canvasNodeTarget } from '@/features/designer/contextMenu/canvasMenu'
 import { projectTreeMenu } from '@/features/designer/contextMenu/projectTreeMenu'
@@ -7,7 +7,10 @@ import { fileExplorerMenu } from '@/features/designer/contextMenu/fileExplorerMe
 import { flowTabMenu } from '@/features/designer/contextMenu/flowTabMenu'
 import { paletteMenu } from '@/features/designer/contextMenu/paletteMenu'
 import { contextMenuMessages } from '@/features/designer/contextMenu/messages'
-import { actions, definitions, fileAvailable, firstConnected, modelFor, targets } from './contextMenuFixtures.0060'
+import {
+  actions, arrangeChoices, arrangeGroups, connectedNow, definitions, fileAvailable, firstConnected, modelFor,
+  plannedCommands, targets, unimplementedCommands,
+} from './contextMenuFixtures.0060'
 
 // Expected sequence comes from the attached mockup, including separator positions.
 const sequences = [
@@ -25,7 +28,9 @@ const sequences = [
   ['palette.addCard'],
 ]
 const outline = (items: readonly MenuItem[]) => items.map((item) =>
-  item.kind === 'separator' ? '|' : item.kind === 'submenu' ? item.children.map((child) => child.key) : item.key)
+  item.kind === 'separator' ? '|' : item.kind === 'submenu' ? item.children.map((child) => child.kind === 'separator' ? '|' : child.key) : item.key)
+/** [command, disabled, reason] of every action (submenu children included). */
+const states = (items: readonly MenuItem[]) => actions(items).map((item) => [item.command, !!item.disabled, item.disabledReason ?? null])
 const glyphs = ['＋|ⓘ', '＋|✎ⓘ', '✎|×', '↗|＋＋|✎↓↑⑂|×', '↗|✎↓⑂|×', '×⊟☒', '＋|▣▢|≡', 'ⓘ|▣|×', '⚙|▣≡|×', '⌁', '＋']
 
 describe('five independent menu parts / eleven kinds (0060)', () => {
@@ -51,7 +56,9 @@ describe('five independent menu parts / eleven kinds (0060)', () => {
     expect(all.size).toBe(40)
     expect([...all].join(' ')).not.toMatch(/permanent|base|untracked/)
   })
-  it('all five parts default to no connected commands', () => {
+  // flowgate.v02.0060 T#1 (Q item 459, replacing "연결되지 않은 명령은 숨김"): nothing connected → every mockup item stays
+  // where the mockup puts it, disabled with its reason, and requests nothing.
+  it('with no connected command every part still shows the whole mockup, all disabled with 연결 예정 / 미구현 (Q 459)', () => {
     const models = [
       projectTreeMenu({ target: { kind: 'project', projectId: 'p' }, available: { currentProject: true } }),
       fileExplorerMenu({ target: { kind: 'folder', projectId: 'p', flowId: 'f', path: '', root: true, commit: null }, available: fileAvailable }),
@@ -59,18 +66,54 @@ describe('five independent menu parts / eleven kinds (0060)', () => {
       canvasMenu({ target: { kind: 'node', flowId: 'f', nodeId: 'n' }, available: { editable: true } }),
       paletteMenu({ target: { kind: 'palette', definitionId: 'task' }, available: { canPlace: true } }),
     ]
-    expect(models.map((m) => m.items)).toEqual([[], [], [], [], []])
-    for (const target of targets) expect(modelFor(target, []).items).toEqual([])
-  })
-  it('keeps deferred entries hidden in both rollout command lists', () => {
-    const later = [...firstConnected, 'group.rename', 'flow.rename', 'flow.delete', 'folder.newFolder', 'folder.newFile',
-      'folder.download', 'folder.upload', 'folder.delete', 'file.download', 'file.git.changes', 'file.delete'] as const
-    for (const kind of ['flow', 'file', 'multi']) expect(modelFor(targets.find((t) => t.kind === kind)!, firstConnected).items).toEqual([])
-    for (const list of [firstConnected, later]) {
-      const visible = targets.flatMap((target) => actions(modelFor(target, list).items).map((a) => a.command))
-      expect(visible.some((command) => /revert|history|^multi\./.test(command))).toBe(false)
+    expect(models.map((m) => outline(m.items))).toEqual([
+      ['project.newGroup', '|', 'project.info'],
+      ['folder.newFolder', 'folder.newFile', '|', 'folder.download', 'folder.upload', ['folder.git.changes', 'folder.git.revert', 'folder.git.history']],
+      ['tab.close', 'tab.closeOthers', 'tab.closeAll'],
+      ['node.detail', '|', 'node.copy', '|', 'node.delete'],
+      ['palette.addCard'],
+    ])
+    for (const target of targets) {
+      const model = modelFor(target, [])
+      expect(outline(model.items)).toEqual(outline(modelFor(target).items))
+      for (const item of actions(model.items)) {
+        expect(item.disabled, item.key).toBe(true)
+        expect(item.disabledReason, item.key).toBe((plannedCommands as readonly string[]).includes(item.command) ? 'planned' : 'unimplemented')
+        expect(model.request(item.key)).toBeNull()
+      }
     }
-    expect(new Set(later).size).toBe(22)
+  })
+  it('T#1 states of the 40: 13 run, 11 연결 예정, 16 미구현; the 2-B list is the part contract', () => {
+    expect([...PLANNED_COMMANDS].sort()).toEqual([...plannedCommands].sort())
+    expect(new Set([...connectedNow, ...plannedCommands, ...unimplementedCommands]).size).toBe(40)
+    expect([...connectedNow, ...plannedCommands, ...unimplementedCommands].sort()).toEqual([...COMMANDS].sort())
+    const shown = targets.flatMap((target) => states(modelFor(target, connectedNow).items))
+    const byCommand = new Map(shown.map(([command, , reason]) => [command, reason]))
+    expect(byCommand.size).toBe(40)
+    expect([...byCommand].filter(([, reason]) => reason === null).map(([c]) => c).sort()).toEqual([...connectedNow].sort())
+    expect([...byCommand].filter(([, reason]) => reason === 'planned').map(([c]) => c).sort()).toEqual([...plannedCommands].sort())
+    expect([...byCommand].filter(([, reason]) => reason === 'unimplemented').map(([c]) => c).sort()).toEqual([...unimplementedCommands].sort())
+    // Not one of the 27 requests anything; Git 되돌리기 / 이력 and the multi-selection items included.
+    for (const target of targets) {
+      const model = modelFor(target, connectedNow)
+      for (const item of actions(model.items).filter((entry) => !(connectedNow as readonly string[]).includes(entry.command))) {
+        expect(item.disabled).toBe(true)
+        expect(model.request(item.key)).toBeNull()
+      }
+    }
+  })
+  it('the Flow, file and multi-selection menus are not empty any more; their unconnected items request nothing', () => {
+    for (const kind of ['flow', 'file', 'multi']) {
+      const model = modelFor(targets.find((t) => t.kind === kind)!, connectedNow)
+      expect(model.items.length).toBeGreaterThan(0)
+    }
+    expect(states(modelFor(targets[2], connectedNow).items)).toEqual([['flow.rename', true, 'planned'], ['flow.delete', true, 'planned']])
+    expect(states(modelFor(targets[4], connectedNow).items)).toEqual([
+      ['file.open', true, 'unimplemented'], ['file.rename', true, 'unimplemented'], ['file.download', true, 'planned'],
+      ['file.git.changes', true, 'planned'], ['file.git.revert', true, 'unimplemented'], ['file.git.history', true, 'unimplemented'],
+      ['file.delete', true, 'planned'],
+    ])
+    expect(modelFor(targets[4], connectedNow).items.find((item) => item.kind === 'submenu')).toMatchObject({ disabled: false })
   })
   it('hides root folder open/rename/delete and empty parents, tidies separators', () => {
     const root = { kind: 'folder', projectId: 'p', flowId: 'f', path: '', root: true, commit: null } as const
@@ -78,11 +121,19 @@ describe('five independent menu parts / eleven kinds (0060)', () => {
     expect(commands).not.toContain('folder.open')
     expect(commands).not.toContain('folder.rename')
     expect(commands).not.toContain('folder.delete')
-    expect(modelFor(root, firstConnected).items).toEqual([])
+    // Q 459: the root folder keeps its mockup items (the 2-B ones 연결 예정), still without 열기 / 이름 변경 / 삭제.
+    expect(states(modelFor(root, connectedNow).items)).toEqual([
+      ['folder.newFolder', true, 'planned'], ['folder.newFile', true, 'planned'], ['folder.download', true, 'planned'],
+      ['folder.upload', true, 'planned'], ['folder.git.changes', true, 'unimplemented'], ['folder.git.revert', true, 'unimplemented'],
+      ['folder.git.history', true, 'unimplemented'],
+    ])
     const items = [separator('a'), action('node.copy', 'copy', '▣'), separator('b'), separator('c'),
       action('node.delete', 'delete', '×'), separator('d')]
     expect(outline(visibleItems(items, ['node.copy', 'node.delete']))).toEqual(['node.copy', '|', 'node.delete'])
-    expect(outline(visibleItems(items, ['node.delete']))).toEqual(['node.delete'])
+    // A mockup item not connected stays (disabled); only an item outside the 40 (a run item) is hidden.
+    expect(outline(visibleItems(items, ['node.delete']))).toEqual(['node.copy', '|', 'node.delete'])
+    const run = [action('node.delete', 'delete', '×'), separator('r'), action('node.run.holdSet', '', '⏸')]
+    expect(outline(visibleItems(run, ['node.delete']))).toEqual(['node.delete'])
   })
   it.each([
     ['project', { currentProject: false }, ['project.newGroup']],
@@ -179,17 +230,22 @@ describe('five independent menu parts / eleven kinds (0060)', () => {
       expect(selected).toEqual(before)
       if (target.kind === 'multi') {
         expect(target.selectedNodeIds).toEqual(before)
-        expect(modelFor(target, firstConnected).items).toEqual([])
+        // Q 459: the multi-selection menu opens; only 정렬 runs (on the selection), no single card command.
+        expect(states(modelFor(target, connectedNow).items)).toEqual([
+          ['multi.editSettings', true, 'unimplemented'], ['multi.copy', true, 'unimplemented'], ['multi.arrange', false, null],
+          ['multi.delete', true, 'unimplemented'],
+        ])
       }
     }
   })
   it.each(['ko', 'en', 'ja'] as const)('has local i18n labels for every item in %s', (locale) => {
     const messages = contextMenuMessages[locale]
     for (const target of targets) {
-      for (const item of modelFor(target).items) {
+      for (const item of [...modelFor(target).items, ...modelFor(target, []).items]) {
         if (item.kind === 'separator') continue
         expect(messages).toHaveProperty(item.labelKey!)
-        if (item.kind === 'submenu') for (const child of item.children) if (!child.label) expect(messages).toHaveProperty(child.labelKey!)
+        if (item.disabledReason) expect(messages.reasons).toHaveProperty(item.disabledReason)
+        if (item.kind === 'submenu') for (const child of item.children) if (child.kind === 'action' && !child.label) expect(messages).toHaveProperty(child.labelKey!)
       }
     }
   })
@@ -214,25 +270,102 @@ describe('card run items in the card menu (T#2)', () => {
   })
   it('appends them after a separator on a single card, worded by the caller', () => {
     const single = canvasMenu({ target: targets[7] as never, available, connected, runItems })
-    expect(single.items.map((item) => item.kind === 'separator' ? '|' : item.key)).toEqual(['node.delete', '|', 'node.run.holdSet', 'node.run.timeMachine'])
+    expect(single.items.map((item) => item.kind === 'separator' ? '|' : item.key))
+      .toEqual(['node.detail', '|', 'node.copy', '|', 'node.delete', '|', 'node.run.holdSet', 'node.run.timeMachine'])
     expect(actions(single.items).map((item) => [item.label ?? null, item.disabled, item.danger])).toEqual([
-      [null, false, true], ['Hold 설정', false, false], ['되돌리기 — 완료', true, true],
+      [null, true, false], [null, true, false], [null, false, true], ['Hold 설정', false, false], ['되돌리기 — 완료', true, true],
     ])
     expect(single.request('node.run.holdSet')).toEqual({ command: 'node.run.holdSet', target: targets[7] })
     expect(single.request('node.run.timeMachine')).toBeNull()
   })
-  it('never adds them to a card of a multi-selection: no single card command there, so no item and no menu (§3.6)', () => {
-    const multi = canvasMenu({ target: targets[8] as never, available, connected, runItems })
-    expect(multi.items).toEqual([])
+  it('never adds them to a card of a multi-selection: its menu is the multi-selection one, no single card command (§3.6)', () => {
+    const multi = canvasMenu({ target: targets[8] as never, available, connected: [...connected, ...connectedNow], runItems, arrange: arrangeChoices() })
+    expect(outline(multi.items)).toEqual(['multi.editSettings', '|', 'multi.copy',
+      ['multi.arrange:edit.align-left', 'multi.arrange:edit.align-center', 'multi.arrange:edit.align-right', '|',
+        'multi.arrange:edit.align-top', 'multi.arrange:edit.align-middle', 'multi.arrange:edit.align-bottom', '|',
+        'multi.arrange:edit.distribute-horizontal', 'multi.arrange:edit.distribute-vertical'], '|', 'multi.delete'])
+    expect(actions(multi.items).some((item) => item.command.startsWith('node.'))).toBe(false)
     expect(multi.request('node.run.holdSet')).toBeNull()
     expect(multi.request('node.run.timeMachine')).toBeNull()
+    expect(multi.request('node.delete')).toBeNull()
   })
   it('never adds them to the blank Canvas or a line, nor shows them unless connected', () => {
     for (const target of [targets[6], targets[9]]) {
       const model = canvasMenu({ target: target as never, available: { ...available, canSelectAll: true, graphReady: true, hasSaveTarget: true }, connected, runItems, definitions })
       expect(actions(model.items).some((item) => item.command.startsWith('node.run.'))).toBe(false)
     }
-    expect(canvasMenu({ target: targets[7] as never, available, connected: firstConnected, runItems }).items.map((item) => item.key)).toEqual(['node.delete'])
+    expect(canvasMenu({ target: targets[7] as never, available, connected: firstConnected, runItems }).items.map((item) => item.key))
+      .toEqual(['node.detail', 'node-copy', 'node.copy', 'node-delete', 'node.delete'])
   })
 })
 
+
+// flowgate.v02.0060 T#1 (WP 0012 [B]): 정렬 · 배치 / 정렬 open the Edit menu's 정렬 / 배치 commands.
+describe('정렬 · 배치 / 정렬 as the Edit menu 정렬 / 배치 submenu (T#1)', () => {
+  const canvas = targets[6]
+  const multi = targets[8]
+  const build = (target: MenuTarget, disabled?: (command: string) => boolean) =>
+    canvasMenu({ target: target as never, connected: connectedNow, definitions, arrange: arrangeChoices(disabled),
+      available: { editable: true, hasSaveTarget: true, canSelectAll: true, graphReady: true } })
+  const sub = (target: MenuTarget, disabled?: (command: string) => boolean) =>
+    build(target, disabled).items.find((item) => item.kind === 'submenu' && item.key.endsWith('.arrange'))!
+  it.each([['canvas', canvas, 'canvas.arrange', 'arrangeLayout'], ['multi', multi, 'multi.arrange', 'arrange']] as const)(
+    '%s: › and the 8 commands in DESIGNER_ARRANGE_GROUPS order, a separator between groups, the words given', (_kind, target, command, labelKey) => {
+      const parent = sub(target)
+      expect(parent).toMatchObject({ kind: 'submenu', key: command, labelKey, icon: '≡', disabled: false })
+      if (parent.kind !== 'submenu') throw new Error('not a submenu')
+      expect(parent.children.map((child) => child.kind === 'separator' ? '|' : child.label)).toEqual([
+        'align-left', 'align-center', 'align-right', '|', 'align-top', 'align-middle', 'align-bottom', '|',
+        'distribute-horizontal', 'distribute-vertical',
+      ])
+      const model = build(target)
+      for (const group of arrangeGroups) {
+        for (const kind of group) expect(model.request(`${command}:${kind}`)).toEqual({ command, target, arrange: kind })
+      }
+      expect(model.request(command)).toBeNull()
+    })
+  it('takes each enabled state from the caller (the Edit menu rule): 2 cards -> 정렬 only, fewer -> parent disabled', () => {
+    const two = (c: string) => c.startsWith('edit.distribute-')
+    for (const target of [canvas, multi]) {
+      const parent = sub(target, two)
+      expect(parent.disabled).toBe(false)
+      expect(actions([parent]).filter((child) => child.disabled).map((child) => child.arrange)).toEqual(['edit.distribute-horizontal', 'edit.distribute-vertical'])
+      expect(build(target, two).request(`${target.kind}.arrange:edit.distribute-vertical`)).toBeNull()
+      expect(sub(target, () => true).disabled).toBe(true)
+      expect(build(target, () => true).request(`${target.kind}.arrange:edit.align-left`)).toBeNull()
+    }
+  })
+  it('without the groups keeps the mockup single item; not connected it is 미구현', () => {
+    const plain = canvasMenu({ target: canvas as never, connected: connectedNow, available: { editable: true } })
+    expect(actions(plain.items).find((item) => item.command === 'canvas.arrange')).toMatchObject({ kind: 'action', key: 'canvas.arrange', icon: '≡' })
+    const unconnected = canvasMenu({ target: canvas as never, connected: firstConnected, arrange: arrangeChoices(), available: { editable: true } })
+    const parent = unconnected.items.find((item) => item.key === 'canvas.arrange')!
+    expect(parent).toMatchObject({ kind: 'submenu', disabled: false })
+    expect(actions([parent]).every((child) => child.disabled && child.disabledReason === 'unimplemented')).toBe(true)
+    expect(unconnected.request('canvas.arrange:edit.align-left')).toBeNull()
+  })
+  it('a single card and a line have no 정렬 (the mockup has none there)', () => {
+    for (const target of [targets[7], targets[9]]) {
+      const model = canvasMenu({ target: target as never, connected: connectedNow, arrange: arrangeChoices(),
+        available: { editable: true, structureEditable: true, definitionExists: true } })
+      expect(actions(model.items).some((item) => item.command.endsWith('.arrange'))).toBe(false)
+    }
+  })
+})
+
+// flowgate.v02.0060 T#1: the Git parent follows the Git state read, not its children being 연결 예정 / 미구현.
+describe('Git parent of the file / folder menu (T#1)', () => {
+  it('linked: the parent opens even though every child is 연결 예정 / 미구현', () => {
+    for (const target of [targets[3], targets[4]]) {
+      const parent = modelFor(target, connectedNow).items.find((item) => item.kind === 'submenu')!
+      expect(parent).toMatchObject({ disabled: false })
+      expect(actions([parent]).every((child) => child.disabled)).toBe(true)
+    }
+  })
+  it.each(['unlinked', 'unavailable', 'no-worktree', 'denied'])('Git %s: the parent is disabled with that reason', (git) => {
+    for (const target of [targets[3], targets[4]]) {
+      const parent = modelFor(target, connectedNow, { git }).items.find((item) => item.kind === 'submenu')!
+      expect(parent).toMatchObject({ disabled: true, disabledReason: git })
+    }
+  })
+})

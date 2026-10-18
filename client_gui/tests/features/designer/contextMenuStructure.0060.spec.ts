@@ -1,8 +1,10 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { DESIGNER_CONTEXT_MENU, FIRST_STEP_COMMANDS } from '@/features/designer/contextMenu/attach/designerMenuConnector'
-import { firstConnected } from './contextMenuFixtures.0060'
+import {
+  ARRANGE_COMMANDS, CONNECTED_COMMANDS, DESIGNER_CONTEXT_MENU, FIRST_STEP_COMMANDS,
+} from '@/features/designer/contextMenu/attach/designerMenuConnector'
+import { arrangeConnected, connectedNow, firstConnected, plannedCommands, unimplementedCommands } from './contextMenuFixtures.0060'
 
 const root = resolve(__dirname, '../../../src')
 const partRoot = join(root, 'features/designer/contextMenu')
@@ -71,8 +73,22 @@ describe('independent Designer context menu boundaries (0060)', () => {
       expect(source, file).not.toMatch(/dispose\(|base-revert|revertAll|untracked/)
     }
   })
-  it('connects exactly the 11 first-step commands (§5.3 1차 연결); 2-B, DEFERRED and Git 되돌리기 stay hidden', () => {
+  // flowgate.v02.0060 T#1 (WP 0012 [B], [C]): 13 connected = 1차 11 + 정렬 · 배치 / 정렬; the other 27 are shown disabled.
+  it('connects exactly 13 commands: the 11 first-step ones and the two 정렬 (T#1)', () => {
     expect([...FIRST_STEP_COMMANDS].sort()).toEqual([...firstConnected].sort())
+    expect([...ARRANGE_COMMANDS].sort()).toEqual([...arrangeConnected].sort())
+    expect([...CONNECTED_COMMANDS].sort()).toEqual([...connectedNow].sort())
+    expect(CONNECTED_COMMANDS).toHaveLength(13)
+  })
+  it('has no execute path for the 27 연결 예정 / 미구현 commands (no request leaves for them, no API is reachable)', () => {
+    const source = readFileSync(join(attachRoot, 'designerMenuConnector.ts'), 'utf8')
+    for (const command of [...plannedCommands, ...unimplementedCommands]) expect(source, command).not.toContain(`'${command}'`)
+    // 정렬 runs the Edit menu path lent by the Shell; the connector has no arrange logic and does not import the top menu.
+    expect(source).not.toMatch(/arrangeSelection|arrangeNodes\(|from '\.\.\/\.\.\/top\//)
+    const shell = readFileSync(join(root, 'features/designer/shell/DesignerShell.vue'), 'utf8')
+    expect(shell).toMatch(/groups: DESIGNER_ARRANGE_GROUPS/)
+    expect(shell).toMatch(/isMenuCommandEnabled\(command, runPhase\.value, menuTargets\.value\)/)
+    expect(shell).toMatch(/onTopCommand\(command\)/)
   })
   it('reuses overlay focus/z-index and theme variables with locally owned translations', () => {
     const host = readFileSync(join(partRoot, 'host.ts'), 'utf8')
@@ -92,5 +108,31 @@ describe('independent Designer context menu boundaries (0060)', () => {
     const used = [...view.matchAll(/var\((--fg2-[\w-]+)/g)].map((m) => m[1])
     expect(used.length).toBeGreaterThan(0)
     for (const token of used) expect(defined, token).toContain(token)
+  })
+  // flowgate.v02.0060 T#1 (auxiliary to the browser comparison, WP 0012 [D]): the source CSS carries the mockup's sizes.
+  it('carries the mockup .fg-ctx sizes in the source CSS (min 186 / max 236, 5px padding, 33px items, 16px icon column)', () => {
+    const view = readFileSync(join(partRoot, 'DesignerContextMenu.vue'), 'utf8')
+    const css = view.split('<style scoped>')[1]
+    const rule = (selector: string) => {
+      const match = new RegExp(selector.replace(/[.[\]="]/g, (c) => '\\' + c) + '\\s*\\{([^}]*)\\}').exec(css)
+      if (!match) throw new Error('no rule ' + selector)
+      return match[1].replace(/\s+/g, ' ')
+    }
+    expect(rule('.designer-context-panel')).toContain('min-width: min(186px, calc(100vw - 16px))')
+    expect(rule('.designer-context-panel')).toContain('max-width: min(236px, calc(100vw - 16px))')
+    expect(rule('.designer-context-panel')).toContain('max-height: calc(100vh - 16px)')
+    expect(rule('.designer-context-panel')).toContain('padding: 5px')
+    expect(rule('.designer-context-panel')).toContain('border-radius: var(--fg2-control-radius-lg)')
+    expect(rule('.designer-context-panel')).toContain('box-shadow: 0 14px 38px')
+    expect(rule('.designer-context-item')).toContain('gap: 10px')
+    expect(rule('.designer-context-item')).toContain('min-height: 33px')
+    expect(rule('.designer-context-item')).toContain('padding: 7px 9px')
+    expect(rule('.designer-context-item')).toContain('border-radius: 5px')
+    expect(rule('.designer-context-item[aria-disabled="true"]')).toContain('opacity: 0.4')
+    expect(rule('.designer-context-icon')).toContain('flex: 0 0 16px')
+    expect(rule('.designer-context-icon')).toContain('font-size: 13px')
+    expect(rule('.designer-context-label')).toContain('white-space: nowrap')
+    expect(rule('.designer-context-separator')).toContain('height: 1px')
+    expect(rule('.designer-context-separator')).toContain('margin: 5px')
   })
 })

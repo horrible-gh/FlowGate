@@ -3,7 +3,7 @@ import { attachRightButtonGuard, isRelayedPress } from '@/features/designer/cont
 import { createDesignerMenuHost } from '@/features/designer/contextMenu/host'
 import { openContextMenu } from '@/features/designer/contextMenu/entry'
 import { canvasNodeTarget } from '@/features/designer/contextMenu/canvasMenu'
-import { firstConnected, modelFor, targets } from './contextMenuFixtures.0060'
+import { connectedNow, modelFor, targets } from './contextMenuFixtures.0060'
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -58,7 +58,7 @@ describe('independent right-button canvas guard (0060)', () => {
       const host = createDesignerMenuHost()
       const target = kind === 'canvas' ? targets[6] : kind === 'handle' ? targets[9]
         : canvasNodeTarget('f', kind === 'multi' ? 'n' : 'outside', state.selectedNodeIds)
-      listen(inside, 'contextmenu', (event) => { openContextMenu(event as MouseEvent, host, modelFor(target, firstConnected)) })
+      listen(inside, 'contextmenu', (event) => { openContextMenu(event as MouseEvent, host, modelFor(target, connectedNow)) })
       const events = drag(inside, 2)
       expect(graphHandler).not.toHaveBeenCalled()
       expect(events.every((event) => !event.defaultPrevented)).toBe(true)
@@ -66,8 +66,9 @@ describe('independent right-button canvas guard (0060)', () => {
       expect(popupMouse).toHaveBeenCalledTimes(1)
       expect(isRelayedPress(popupPointer.mock.calls[0][0])).toBe(true)
       const menuEvent = send(inside, 'contextmenu', 2, 0)
-      expect(menuEvent.defaultPrevented).toBe(kind !== 'multi')
-      expect(!!host.current.value).toBe(kind !== 'multi')
+      // flowgate.v02.0060 T#1 (Q item 459): a multi-selected card opens its menu too (consumed), state unchanged.
+      expect(menuEvent.defaultPrevented).toBe(true)
+      expect(!!host.current.value).toBe(true)
       host.close()
       expect(JSON.stringify(state)).toBe(before)
     },

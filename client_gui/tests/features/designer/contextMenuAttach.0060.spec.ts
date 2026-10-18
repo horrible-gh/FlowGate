@@ -4,6 +4,9 @@
  * (Flow tabs + Vue Flow Canvas), the real Palette and the real menu view. Checks the Canvas / tab / Palette entry
  * points, the first-step commands through the existing session paths, the all-disabled menus, the multi-selection
  * rule, the re-check before running, the invalidation and the right-button guard on the Canvas root.
+ * flowgate.v02.0060 T#1 (WP 0012, Q item 459): every mockup item is shown — the 27 not connected disabled with their
+ * reason (no request, no session call) — the multi-selection card opens its menu (no single card command, no run item,
+ * selection kept), and 정렬 · 배치 / 정렬 run the Edit menu's 정렬 / 배치 (the same rule, one arrangeNodes, one undo).
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, h, ref, type PropType, type Ref } from 'vue'
@@ -19,6 +22,8 @@ import DesignerContextMenu from '@/features/designer/contextMenu/DesignerContext
 import { useDesignerContextMenu } from '@/features/designer/contextMenu/attach/designerMenuConnector'
 import PalettePanel from '@/features/designer/palette/PalettePanel.vue'
 import { paletteNodeSpec, readPaletteDragData, type PaletteItemDefinition } from '@/features/designer/palette/paletteCatalog'
+import { DESIGNER_ARRANGE_GROUPS, isMenuCommandEnabled, type DesignerArrangeCommand } from '@/features/designer/top/designerTop'
+import type { ArrangeKind } from '@/features/designer/center/arrange/arrangeNodes'
 
 registerAppMessages(i18n)
 
@@ -122,6 +127,8 @@ interface Calls {
   groupCreate: number
   flowCreate: string[]
   palette: PaletteItemDefinition[]
+  /** 정렬 · 배치 / 정렬 reaching the Edit menu path (flowId, command). */
+  arrange: Array<[string, string]>
 }
 
 const Harness = defineComponent({
@@ -143,6 +150,22 @@ const Harness = defineComponent({
       openGroupCreate: () => { props.calls.groupCreate += 1 },
       openFlowCreate: (groupId) => { props.calls.flowCreate.push(groupId) },
       selectPalette: (picked) => { props.calls.palette.push(picked) },
+      // The Shell's Edit menu 정렬 / 배치 as DesignerShell lends it (rule: isMenuCommandEnabled with the open Flow and
+      // its selected count; path: onTopCommand -> center.arrangeNodes). The Shell itself: contextMenuArrangeShell.0060.
+      arrange: {
+        groups: DESIGNER_ARRANGE_GROUPS,
+        enabled: (command) => {
+          const flowId = props.center.state.activeFlowId
+          return isMenuCommandEnabled(command as DesignerArrangeCommand, 'idle', {
+            project: true, group: false, flow: flowId !== null,
+            selectedCount: flowId ? props.center.state.views[flowId]?.selectedNodeIds.length ?? 0 : 0,
+          })
+        },
+        run: (flowId, command) => {
+          props.calls.arrange.push([flowId, command])
+          if (props.center.state.activeFlowId === flowId) props.center.arrangeNodes(flowId, command.slice('edit.'.length) as ArrangeKind)
+        },
+      },
       layout: () => props.layout.value,
     })
     harnessMenu = menu
@@ -185,7 +208,7 @@ async function mountHarness(options: { editable?: boolean; flows?: string[]; can
   })
   center.setProject('p')
   for (const flowId of options.flows ?? ['f1']) center.openFlow({ projectId: 'p', flowId, flowName: flowId.toUpperCase() })
-  const calls: Calls = { selectAll: [], groupCreate: 0, flowCreate: [], palette: [] }
+  const calls: Calls = { selectAll: [], groupCreate: 0, flowCreate: [], palette: [], arrange: [] }
   const layout = ref('left:open')
   wrapper = mount(Harness, {
     props: { center, calls, canSelectAll: () => options.canSelectAll ?? true, layout },
@@ -203,6 +226,8 @@ const items = (level = 0) =>
 const itemTexts = (level = 0) =>
   items(level).map((entry) => Array.from(entry.querySelectorAll('span')).map((cell) => cell.textContent!.trim()).join(' '))
 const item = (key: string, level = 0) => items(level).find((entry) => entry.dataset.key === key)!
+/** [key, aria-disabled, tooltip] of each item of a panel. */
+const states = (level = 0) => items(level).map((entry) => [entry.dataset.key, entry.getAttribute('aria-disabled'), entry.title])
 const graphOf = (center: DesignerCenterSession, flowId = 'f1') => {
   const load = center.state.graphs[flowId]
   if (load?.status !== 'ready') throw new Error('graph not ready')
@@ -238,14 +263,16 @@ function invariants(center: DesignerCenterSession, flowId = 'f1') {
 }
 
 describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
-  it('blank Canvas: 카드 추가 › (9 built-in cards) and 전체 선택 only; opening changes nothing', async () => {
+  it('blank Canvas: the mockup menu — 카드 추가 › (9 built-in cards), 붙여넣기 (미구현), 전체 선택, 정렬 · 배치 ›; opening changes nothing', async () => {
     const { w, center } = await mountHarness()
     const before = invariants(center)
     const event = rightClick(pane(w), 120, 90)
     await settle()
     expect(event.defaultPrevented).toBe(true)
-    expect(itemTexts()).toEqual(['＋ 카드 추가 ›', '▢ 전체 선택'])
-    expect(menuEl()!.querySelectorAll('[data-level="0"] [role="separator"]')).toHaveLength(1)
+    expect(itemTexts()).toEqual(['＋ 카드 추가 ›', '▣ 붙여넣기', '▢ 전체 선택', '≡ 정렬 · 배치 ›'])
+    // No card selected: the Edit menu refuses every 정렬 / 배치, so the parent is disabled (no reason: a condition).
+    expect(states()).toEqual([['canvas.addCard', 'false', ''], ['canvas.paste', 'true', '미구현'], ['canvas.selectAll', 'false', ''], ['canvas.arrange', 'true', '']])
+    expect(menuEl()!.querySelectorAll('[data-level="0"] [role="separator"]')).toHaveLength(2)
     item('canvas.addCard').dispatchEvent(new MouseEvent('mouseenter'))
     await settle()
     expect(itemTexts(1)).toEqual(['기본 설계', '프로토콜', '로직', 'DB설계', '조사', '작업계획', '작업', '테스트', '확인'].map((label) => `＋ ${label}`))
@@ -304,7 +331,8 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     rightClick(card(w, 'gn_c'))
     await settle()
     expect(invariants(center)).toBe(before)
-    expect(itemTexts()).toEqual(['× 삭제'])
+    expect(itemTexts()).toEqual(['ⓘ 상세 보기', '▣ 복사', '× 삭제'])
+    expect(states()).toEqual([['node.detail', 'true', '미구현'], ['node.copy', 'true', '미구현'], ['node.delete', 'false', '']])
     expect(item('node.delete').classList.contains('danger')).toBe(true)
     item('node.delete').click()
     await settle()
@@ -318,17 +346,21 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     const { w, center } = await mountHarness()
     const trigger = document.createElement('button')
     document.body.appendChild(trigger)
-    for (const [element, key] of [[card(w, 'gn_lock'), 'node.delete'], [line(w, 'ge_ab'), 'edge.disconnect']] as const) {
+    for (const [element, keys] of [[card(w, 'gn_lock'), ['node.detail', 'node.copy', 'node.delete']], [line(w, 'ge_ab'), ['edge.disconnect']]] as const) {
       trigger.focus()
       const before = invariants(center)
       const event = rightClick(element)
       await settle()
       expect(event.defaultPrevented).toBe(true)
-      expect(items().map((entry) => [entry.dataset.key, entry.getAttribute('aria-disabled')])).toEqual([[key, 'true']])
-      expect(document.activeElement).toBe(item(key))
-      item(key).click()
-      item(key).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-      item(key).dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+      expect(items().map((entry) => [entry.dataset.key, entry.getAttribute('aria-disabled')])).toEqual(keys.map((key) => [key, 'true']))
+      // All disabled: the first shown item takes the focus (0006-D §6.2).
+      expect(document.activeElement).toBe(item(keys[0]))
+      for (const key of keys) {
+        item(key).click()
+        item(key).focus()
+        item(key).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        item(key).dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+      }
       await settle()
       expect(menuEl()).not.toBeNull()
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
@@ -362,22 +394,44 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     expect(graphOf(center).nodes).toHaveLength(4)
   })
 
-  it('multi-selection: a selected card opens no menu and keeps the selection; a card outside is the single card menu', async () => {
-    const { w, center } = await mountHarness()
+  // Q item 459 replaces "다중선택 카드는 메뉴 없음·신호 미소비" (D §3.6): the menu opens and consumes the signal; the rest of
+  // §3.6 stays — no single card command (and no run item), the selection, select mode and cards unchanged.
+  it('multi-selection: a selected card opens the multi menu (no single card command) and keeps the selection; a card outside is the single card menu', async () => {
+    const { w, center, calls } = await mountHarness()
     center.setSelectMode(true)
     center.selectNodes('f1', ['gn_a', 'gn_b'])
     await settle()
     const before = invariants(center)
+    const removeNode = vi.spyOn(center, 'removeNode')
     const event = rightClick(card(w, 'gn_b'))
     await settle()
-    expect(menuEl()).toBeNull()
-    expect(event.defaultPrevented).toBe(false)
+    expect(menuEl()).not.toBeNull()
+    expect(event.defaultPrevented).toBe(true)
+    expect(itemTexts()).toEqual(['⚙ 공통설정 편집', '▣ 복사', '≡ 정렬 ›', '× 삭제'])
+    expect(states()).toEqual([
+      ['multi.editSettings', 'true', '미구현'], ['multi.copy', 'true', '미구현'], ['multi.arrange', 'false', ''], ['multi.delete', 'true', '미구현'],
+    ])
+    expect(items().some((entry) => /^node\./.test(entry.dataset.key!))).toBe(false)
+    for (const key of ['multi.editSettings', 'multi.copy', 'multi.delete']) {
+      item(key).click()
+      item(key).focus()
+      item(key).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      item(key).dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    }
+    await settle()
+    expect(menuEl()).not.toBeNull()
+    expect(removeNode).not.toHaveBeenCalled()
+    expect(calls.arrange).toEqual([])
     expect(invariants(center)).toBe(before)
     expect(graphOf(center).nodes).toHaveLength(4)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await settle()
+    expect(invariants(center)).toBe(before)
+    removeNode.mockRestore()
 
     rightClick(card(w, 'gn_c'))
     await settle()
-    expect(itemTexts()).toEqual(['× 삭제'])
+    expect(itemTexts()).toEqual(['ⓘ 상세 보기', '▣ 복사', '× 삭제'])
     item('node.delete').click()
     await settle()
     expect(graphOf(center).nodes.map((node) => node.id).sort()).toEqual(['gn_a', 'gn_b', 'gn_lock'])
@@ -455,24 +509,24 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     rightClick(card(w, 'gn_c'))
     await settle()
     const keys = items().map((entry) => entry.dataset.key)
-    expect(keys).toEqual(['node.delete', 'node.run.holdSet'])
-    expect(menuEl()!.querySelectorAll('[data-level="0"] [role="separator"]')).toHaveLength(1)
+    expect(keys).toEqual(['node.detail', 'node.copy', 'node.delete', 'node.run.holdSet'])
+    expect(menuEl()!.querySelectorAll('[data-level="0"] [role="separator"]')).toHaveLength(3)
     expect(item('node.run.holdSet').textContent).toContain(i18n.global.t('gui.designer.center.card_menu.hold_set'))
     item('node.run.holdSet').click()
     await settle()
     expect(holds).toEqual([['gn_c', true]])
   })
 
-  it('multi-selection on a server source (Hold, Time Machine): a selected card opens no menu, runs nothing (§3.6)', async () => {
+  it('multi-selection on a server source (Hold, Time Machine): a selected card opens the multi menu without run items, runs nothing (§3.6)', async () => {
     const { w, center, holds, runs, source } = await mountHarness({ server: true })
     // The source does offer the run menu: a single card shows it (gn_a is done, 되돌리기 can run).
     rightClick(card(w, 'gn_a'))
     await settle()
-    expect(items().map((entry) => entry.dataset.key)).toEqual(['node.delete', 'node.run.holdSet', 'node.run.timeMachine'])
+    expect(items().map((entry) => entry.dataset.key)).toEqual(['node.detail', 'node.copy', 'node.delete', 'node.run.holdSet', 'node.run.timeMachine'])
     expect(item('node.run.timeMachine').getAttribute('aria-disabled')).not.toBe('true')
     rightClick(card(w, 'gn_c'))
     await settle()
-    expect(items().map((entry) => entry.dataset.key)).toEqual(['node.delete', 'node.run.holdSet'])
+    expect(items().map((entry) => entry.dataset.key)).toEqual(['node.detail', 'node.copy', 'node.delete', 'node.run.holdSet'])
     expect(item('node.run.holdSet').getAttribute('aria-disabled')).not.toBe('true')
 
     center.setSelectMode(true)
@@ -483,8 +537,13 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     for (const id of ['gn_a', 'gn_c']) {
       const event = rightClick(card(w, id))
       await settle()
+      expect(event.defaultPrevented).toBe(true)
+      expect(items().map((entry) => entry.dataset.key)).toEqual(['multi.editSettings', 'multi.copy', 'multi.arrange', 'multi.delete'])
+      for (const key of ['multi.editSettings', 'multi.copy', 'multi.delete']) item(key).click()
+      await settle()
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await settle()
       expect(menuEl()).toBeNull()
-      expect(event.defaultPrevented).toBe(false)
     }
     expect(invariants(center)).toBe(before)
     expect(graphOf(center).nodes).toHaveLength(4)
@@ -512,7 +571,7 @@ describe('Designer context menu — ① project tree row against the tree (0006-
     }
     expect(open()).toBe(true)
     await settle()
-    expect(items().map((entry) => entry.dataset.key)).toEqual(['group.newFlow'])
+    expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'true', '연결 예정'], ['group.info', 'true', '미구현']])
     // Gone from the tree and chosen in the same tick (before the open menu's check reacts): nothing runs.
     inTree.value = false
     item('group.newFlow').click()
@@ -687,6 +746,184 @@ describe('Designer context menu — Palette (0006-D §9.3 ⑤)', () => {
     await settle()
     expect(event.defaultPrevented).toBe(false)
     expect(menuEl()).toBeNull()
+  })
+})
+
+// flowgate.v02.0060 T#1 (WP 0012 [B]): 정렬 · 배치 (blank Canvas) / 정렬 (multi-selected card) = Edit › 정렬 / 배치.
+describe('Designer context menu — 정렬 · 배치 / 정렬 through the Edit menu 정렬 / 배치 (T#1)', () => {
+  const ORDER = DESIGNER_ARRANGE_GROUPS.flat()
+  const words = (command: string) => i18n.global.t(`gui.designer.top.arrange.${command.slice(5)}`)
+  async function openSub(w: VueWrapper<any>, target: Element, parent: string) {
+    rightClick(target)
+    await settle()
+    item(parent).dispatchEvent(new MouseEvent('mouseenter'))
+    await settle()
+  }
+  /** What the Edit menu rule says for each 정렬 / 배치 command right now. */
+  const rule = (center: DesignerCenterSession) => ORDER.map((command) => [command, !isMenuCommandEnabled(command, 'idle', {
+    project: true, group: false, flow: center.state.activeFlowId !== null, selectedCount: center.state.views.f1.selectedNodeIds.length,
+  })])
+
+  it('the blank Canvas submenu: the 8 commands in DESIGNER_ARRANGE_GROUPS order, 2 separators, the Edit menu words and rule', async () => {
+    const { w, center } = await mountHarness()
+    for (const selection of [['gn_a', 'gn_b'], ['gn_a', 'gn_b', 'gn_c']]) {
+      center.setSelectMode(true)
+      center.selectNodes('f1', selection)
+      await settle()
+      await openSub(w, pane(w), 'canvas.arrange')
+      expect(items(1).map((entry) => entry.dataset.key)).toEqual(ORDER.map((command) => `canvas.arrange:${command}`))
+      expect(itemTexts(1).map((text) => text.trim())).toEqual(ORDER.map((command) => words(command)))
+      expect(document.querySelectorAll('[data-designer-context-menu] [data-level="1"] [role="separator"]')).toHaveLength(2)
+      expect(items(1).map((entry, i) => [ORDER[i], entry.getAttribute('aria-disabled') === 'true'])).toEqual(rule(center))
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await settle()
+    }
+    // 3 cards: every command on (2 cards: 균등 분배 off, checked against the same rule above).
+    expect(rule(center).filter(([, off]) => off)).toEqual([])
+  })
+
+  it('fewer than 2 selected cards: 정렬 · 배치 is disabled and its submenu does not open', async () => {
+    const { w, center, calls } = await mountHarness()
+    for (const selection of [[], ['gn_a']]) {
+      center.selectNodes('f1', selection)
+      await settle()
+      await openSub(w, pane(w), 'canvas.arrange')
+      expect(item('canvas.arrange').getAttribute('aria-disabled')).toBe('true')
+      item('canvas.arrange').click()
+      await settle()
+      expect(document.querySelector('[data-designer-context-menu] [data-level="1"]')).toBeNull()
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await settle()
+    }
+    expect(calls.arrange).toEqual([])
+  })
+
+  it('a chosen command runs arrangeNodes once on the selection, as one undo; selection and select mode stay', async () => {
+    const { w, center, calls } = await mountHarness()
+    center.setSelectMode(true)
+    center.selectNodes('f1', ['gn_a', 'gn_lock'])
+    await settle()
+    const arrange = vi.spyOn(center, 'arrangeNodes')
+    // By card id: an undone move may put the cards back in another array order.
+    const positions = () => graphOf(center).nodes.map((node) => [node.id, node.x, node.y]).sort((x, y) => String(x[0]).localeCompare(String(y[0])))
+    const before = positions()
+    await openSub(w, pane(w), 'canvas.arrange')
+    item('canvas.arrange:edit.align-top', 1).click()
+    await settle()
+    expect(menuEl()).toBeNull()
+    expect(calls.arrange).toEqual([['f1', 'edit.align-top']])
+    expect(arrange.mock.calls).toEqual([['f1', 'align-top']])
+    expect(positions()).toEqual([['gn_a', 0, 0], ['gn_b', 300, 0], ['gn_c', 600, 0], ['gn_lock', 0, 0]])
+    expect(center.state.views.f1.selectedNodeIds).toEqual(['gn_a', 'gn_lock'])
+    expect(center.selectMode.value).toBe(true)
+    expect(center.undoEdit('f1')).toBe(true)
+    expect(positions()).toEqual(before)
+    expect(center.state.edits.f1?.canUndo ?? false).toBe(false)
+    arrange.mockRestore()
+  })
+
+  it('정렬 of a multi-selected card: the Edit menu commands on that selection; a selection change after opening runs nothing', async () => {
+    const { w, center, calls } = await mountHarness()
+    center.setSelectMode(true)
+    center.selectNodes('f1', ['gn_a', 'gn_b', 'gn_c'])
+    await settle()
+    const arrange = vi.spyOn(center, 'arrangeNodes')
+    await openSub(w, card(w, 'gn_b'), 'multi.arrange')
+    expect(items(1).map((entry) => entry.dataset.key)).toEqual(ORDER.map((command) => `multi.arrange:${command}`))
+    expect(items(1).every((entry) => entry.getAttribute('aria-disabled') === 'false')).toBe(true)
+    const stale = item('multi.arrange:edit.distribute-horizontal', 1)
+    center.selectNodes('f1', ['gn_a', 'gn_b'])
+    await settle()
+    expect(menuEl()).toBeNull()
+    stale.click()
+    await settle()
+    expect(arrange).not.toHaveBeenCalled()
+    expect(calls.arrange).toEqual([])
+
+    // 2 selected: 균등 분배 waits for 3 (the Edit menu rule) — disabled, it requests nothing.
+    await openSub(w, card(w, 'gn_b'), 'multi.arrange')
+    expect(items(1).filter((entry) => entry.getAttribute('aria-disabled') === 'true').map((entry) => entry.dataset.key))
+      .toEqual(['multi.arrange:edit.distribute-horizontal', 'multi.arrange:edit.distribute-vertical'])
+    item('multi.arrange:edit.distribute-horizontal', 1).click()
+    await settle()
+    expect(arrange).not.toHaveBeenCalled()
+    item('multi.arrange:edit.align-right', 1).click()
+    await settle()
+    expect(arrange.mock.calls).toEqual([['f1', 'align-right']])
+    expect(graphOf(center).nodes.filter((node) => ['gn_a', 'gn_b'].includes(node.id)).map((node) => node.x)).toEqual([300, 300])
+    expect(center.state.views.f1.selectedNodeIds).toEqual(['gn_a', 'gn_b'])
+    expect(center.selectMode.value).toBe(true)
+    arrange.mockRestore()
+  })
+
+  it('a not active Flow\'s menu never arranges: switching the Flow closes it', async () => {
+    const { w, center, calls } = await mountHarness({ flows: ['f1', 'f2'] })
+    center.activateFlow('f1')
+    await settle()
+    center.setSelectMode(true)
+    center.selectNodes('f1', ['gn_a', 'gn_b'])
+    await settle()
+    await openSub(w, pane(w), 'canvas.arrange')
+    const stale = item('canvas.arrange:edit.align-left', 1)
+    center.activateFlow('f2')
+    await settle()
+    expect(menuEl()).toBeNull()
+    stale.click()
+    await settle()
+    expect(calls.arrange).toEqual([])
+  })
+})
+
+// flowgate.v02.0060 T#1 (WP 0012 [C]): the 27 disabled items never reach the session.
+describe('Designer context menu — 연결 예정 / 미구현 items request nothing (T#1)', () => {
+  it('붙여넣기 / 상세 보기 / 복사 on the Canvas: click, Enter, Space change nothing and call no session path', async () => {
+    const { w, center, calls, drafts } = await mountHarness()
+    const spies = (['dropOnCanvas', 'removeNode', 'removeEdge', 'selectAll', 'arrangeNodes', 'chooseCardMenu', 'closeFlow'] as const)
+      .map((name) => vi.spyOn(center, name))
+    for (const [target, keys] of [[pane(w), ['canvas.paste']], [card(w, 'gn_c'), ['node.detail', 'node.copy']]] as const) {
+      const before = invariants(center)
+      rightClick(target)
+      await settle()
+      for (const key of keys) {
+        expect(item(key).getAttribute('aria-disabled')).toBe('true')
+        expect(item(key).title).toBe('미구현')
+        item(key).click()
+        item(key).focus()
+        item(key).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        item(key).dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+      }
+      await settle()
+      expect(menuEl()).not.toBeNull()
+      expect(invariants(center)).toBe(before)
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await settle()
+    }
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled()
+    expect(calls).toEqual({ selectAll: [], groupCreate: 0, flowCreate: [], palette: [], arrange: [] })
+    expect(drafts).toEqual([])
+    expect(graphOf(center).nodes).toHaveLength(4)
+  })
+  it('a Flow row (이름 변경 / 삭제 연결 예정) and a project 정보 (미구현) run nothing', async () => {
+    const { calls } = await mountHarness()
+    const row = document.createElement('div')
+    document.body.appendChild(row)
+    for (const [ref, keys, reasons] of [
+      [{ kind: 'flow', projectId: 'p', groupId: 'module:p:ui', flowId: 'p.ui.0001' }, ['flow.rename', 'flow.delete'], ['연결 예정', '연결 예정']],
+      [{ kind: 'project', projectId: 'p' }, ['project.newGroup', 'project.info'], ['', '미구현']],
+    ] as const) {
+      row.addEventListener('contextmenu', (event) => { harnessMenu!.api.project(event, ref, row, () => true) }, { once: true })
+      const event = rightClick(row)
+      await settle()
+      expect(event.defaultPrevented).toBe(true)
+      expect(items().map((entry) => [entry.dataset.key, entry.title])).toEqual(keys.map((key, i) => [key, reasons[i]]))
+      for (const key of keys) if (item(key).getAttribute('aria-disabled') === 'true') item(key).click()
+      await settle()
+      expect(menuEl()).not.toBeNull()
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await settle()
+    }
+    expect(item('flow.delete') ?? null).toBeNull()
+    expect(calls).toEqual({ selectAll: [], groupCreate: 0, flowCreate: [], palette: [], arrange: [] })
   })
 })
 

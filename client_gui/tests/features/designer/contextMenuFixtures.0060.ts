@@ -1,5 +1,5 @@
 import { DEFAULT_PALETTE_ITEMS, paletteItemDefinition } from '@/features/designer/palette/paletteCatalog'
-import { COMMANDS, type MenuItem, type MenuTarget } from '@/features/designer/contextMenu/types'
+import { COMMANDS, type MenuAction, type MenuItem, type MenuTarget } from '@/features/designer/contextMenu/types'
 import { projectTreeMenu } from '@/features/designer/contextMenu/projectTreeMenu'
 import { fileExplorerMenu, type FileAvailability } from '@/features/designer/contextMenu/fileExplorerMenu'
 import { flowTabMenu } from '@/features/designer/contextMenu/flowTabMenu'
@@ -40,10 +40,32 @@ export function modelFor(target: MenuTarget, connected = COMMANDS as readonly ty
         canSelectAll: true, graphReady: true, structureEditable: true, definitionExists: true, progressed: false, ...overrides } })
   }
 }
-export const actions = (items: readonly MenuItem[]) => items.flatMap((item) =>
-  item.kind === 'separator' ? [] : item.kind === 'submenu' ? [...item.children] : [item])
+export const actions = (items: readonly MenuItem[]): MenuAction[] => items.flatMap((item) =>
+  item.kind === 'separator' ? [] : item.kind === 'submenu' ? item.children.filter((child): child is MenuAction => child.kind === 'action') : [item])
 export const firstConnected = [
   'project.newGroup', 'group.newFlow', 'folder.open', 'tab.close', 'tab.closeOthers', 'tab.closeAll',
   'canvas.addCard', 'canvas.selectAll', 'node.delete', 'edge.disconnect', 'palette.addCard',
 ] as const
 
+
+// flowgate.v02.0060 T#1 (WP 0012 [B], [C]): 13 run (1차 11 + 정렬 2), 11 연결 예정 (2-B), 16 미구현 — 40.
+export const arrangeConnected = ['canvas.arrange', 'multi.arrange'] as const
+export const connectedNow = [...firstConnected, ...arrangeConnected] as const
+export const plannedCommands = [
+  'group.rename', 'flow.rename', 'flow.delete', 'folder.newFolder', 'folder.newFile', 'folder.download',
+  'folder.upload', 'folder.delete', 'file.download', 'file.git.changes', 'file.delete',
+] as const
+export const unimplementedCommands = [
+  'project.info', 'group.info', 'folder.rename', 'folder.git.changes', 'folder.git.revert', 'folder.git.history',
+  'file.open', 'file.rename', 'file.git.revert', 'file.git.history', 'canvas.paste', 'node.detail', 'node.copy',
+  'multi.editSettings', 'multi.copy', 'multi.delete',
+] as const
+/** The Edit menu's 정렬 / 배치 (designerTop DESIGNER_ARRANGE_GROUPS) as the connector hands it to the Canvas part. */
+export const arrangeGroups = [
+  ['edit.align-left', 'edit.align-center', 'edit.align-right'],
+  ['edit.align-top', 'edit.align-middle', 'edit.align-bottom'],
+  ['edit.distribute-horizontal', 'edit.distribute-vertical'],
+] as const
+export function arrangeChoices(disabled: (command: string) => boolean = () => false) {
+  return arrangeGroups.map((group) => group.map((command) => ({ command, label: command.slice(5), disabled: disabled(command) })))
+}

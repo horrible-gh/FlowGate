@@ -4,6 +4,8 @@
  * data, the commands reaching the Shell's existing paths (File › 새 Group, the 새 Flow dialog with the right-clicked
  * Group), what must not open a menu, and the Minimap / Escape rules. Scaffold as DesignerShellSelection.0059: the real
  * Shell, project store, Center session and server Graph source; only `@shared/api` is mocked.
+ * flowgate.v02.0060 T#1 (WP 0012, Q item 459): every mockup item shows — the ones not connected disabled with
+ * 연결 예정 / 미구현 (tooltip) and no API call — so the Flow row, the file row and the root folder open their menus.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -146,6 +148,14 @@ const menuEl = () => document.querySelector<HTMLElement>('[data-designer-context
 const items = () => Array.from(document.querySelectorAll<HTMLElement>('[data-designer-context-menu] [data-level="0"] [role="menuitem"]'))
 const itemTexts = () => items().map((entry) => Array.from(entry.querySelectorAll('span')).map((cell) => cell.textContent!.trim()).join(' '))
 const item = (key: string) => items().find((entry) => entry.dataset.key === key)!
+/** [key, aria-disabled, tooltip] of each shown item. */
+const states = () => items().map((entry) => [entry.dataset.key, entry.getAttribute('aria-disabled'), entry.title])
+/** Choose a disabled item every way (click, Enter, Space). */
+function press(entry: HTMLElement) {
+  entry.click()
+  entry.focus()
+  for (const key of ['Enter', ' ']) entry.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+}
 const selectedRows = (w: VueWrapper<any>) =>
   w.findAll('[data-explorer-row][aria-selected="true"]').map((r) => r.find('[data-test="project-explorer-label"]').text())
 const expandedRows = (w: VueWrapper<any>) =>
@@ -159,7 +169,8 @@ describe('Designer context menu in the Shell — ① project tree', () => {
     const event = rightClick(explorerRow(w, 'Alpha').element)
     await settle()
     expect(event.defaultPrevented).toBe(true)
-    expect(itemTexts()).toEqual(['＋ 새 그룹'])
+    expect(itemTexts()).toEqual(['＋ 새 그룹', 'ⓘ 프로젝트 정보'])
+    expect(states()).toEqual([['project.newGroup', 'false', ''], ['project.info', 'true', '미구현']])
     expect(selectedRows(w)).toEqual(selected)
     expect(expandedRows(w)).toEqual(expanded)
     item('project.newGroup').click()
@@ -174,7 +185,7 @@ describe('Designer context menu in the Shell — ① project tree', () => {
     expect(selectedRows(w)).toEqual(['서버'])
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
-    expect(itemTexts()).toEqual(['＋ 새 플로우'])
+    expect(itemTexts()).toEqual(['＋ 새 플로우', '✎ 이름 변경', 'ⓘ 정보'])
     item('group.newFlow').click()
     await settle()
     const select = document.querySelector<HTMLSelectElement>('[data-test="designer-flow-create-group"]')!
@@ -190,15 +201,23 @@ describe('Designer context menu in the Shell — ① project tree', () => {
     expect(document.querySelector<HTMLSelectElement>('[data-test="designer-flow-create-group"]')!.value).toBe('module:p:api')
   })
 
-  it('a Flow row opens no menu before 2-B (no rename / dispose): the browser menu stays and nothing is called', async () => {
+  // Q item 459: shown before 2-B, disabled as 연결 예정 — 삭제 stays the dispose (DC) meaning and calls nothing here.
+  it('a Flow row opens its menu: 이름 변경 / 삭제 are 연결 예정 (disabled); nothing is called, nothing opens', async () => {
     const w = await mountShell()
     await doubleClick(w, 'UI 개선')
+    const selected = selectedRows(w)
     const event = rightClick(explorerRow(w, 'Canvas').element)
     await settle()
-    expect(menuEl()).toBeNull()
-    expect(event.defaultPrevented).toBe(false)
+    expect(event.defaultPrevented).toBe(true)
+    expect(itemTexts()).toEqual(['✎ 이름 변경', '× 삭제'])
+    expect(states()).toEqual([['flow.rename', 'true', '연결 예정'], ['flow.delete', 'true', '연결 예정']])
+    expect(item('flow.delete').classList.contains('danger')).toBe(true)
+    for (const entry of items()) press(entry)
+    await settle()
+    expect(menuEl()).not.toBeNull()
     expect(postRequest).not.toHaveBeenCalled()
     expect(w.findAll('[data-test="designer-flow-tab"]')).toHaveLength(0)
+    expect(selectedRows(w)).toEqual(selected)
   })
 
   it('a Group removed by a tree re-read closes its menu: no 새 Flow dialog opens and nothing is created', async () => {
@@ -207,7 +226,7 @@ describe('Designer context menu in the Shell — ① project tree', () => {
     await openFlow(w, 'Canvas')
     rightClick(explorerRow(w, '서버').element)
     await settle()
-    expect(itemTexts()).toEqual(['＋ 새 플로우'])
+    expect(itemTexts()).toEqual(['＋ 새 플로우', '✎ 이름 변경', 'ⓘ 정보'])
     const stale = item('group.newFlow')
     // The Project's tree is read again without that Group (removed elsewhere).
     const answer = getRequest.getMockImplementation()!
@@ -228,7 +247,7 @@ describe('Designer context menu in the Shell — ① project tree', () => {
     // A Group still in the tree keeps its menu.
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
-    expect(itemTexts()).toEqual(['＋ 새 플로우'])
+    expect(itemTexts()).toEqual(['＋ 새 플로우', '✎ 이름 변경', 'ⓘ 정보'])
   })
 })
 
@@ -252,7 +271,8 @@ describe('Designer context menu in the Shell — ② File Explorer', () => {
     await settle()
     expect(event.defaultPrevented).toBe(true)
     expect(rowPaths(w)).toEqual(['src'])
-    expect(itemTexts()).toEqual(['↗ 열기'])
+    expect(itemTexts()).toEqual(['↗ 열기', '＋ 새 폴더', '＋ 새 파일', '✎ 이름 변경', '↓ 다운로드', '↑ 업로드', '⑂ Git ›', '× 삭제'])
+    expect(menuEl()!.querySelectorAll('[data-level="0"] [role="separator"]')).toHaveLength(3)
     item('folder.open').click()
     await settle()
     expect(rowPaths(w)).toEqual(['src', 'src/app.ts'])
@@ -265,25 +285,56 @@ describe('Designer context menu in the Shell — ② File Explorer', () => {
     expect(rowPaths(w)).toEqual(['src', 'src/app.ts'])
     rightClick(folder(w, 'src'))
     await settle()
-    expect(items().map((entry) => [entry.dataset.key, entry.getAttribute('aria-disabled')])).toEqual([['folder.open', 'true']])
+    expect(states()).toEqual([
+      ['folder.open', 'true', ''], ['folder.newFolder', 'true', '연결 예정'], ['folder.newFile', 'true', '연결 예정'],
+      ['folder.rename', 'true', '미구현'], ['folder.download', 'true', '연결 예정'], ['folder.upload', 'true', '연결 예정'],
+      ['folder.git', 'false', ''], ['folder.delete', 'true', '연결 예정'],
+    ])
     item('folder.open').click()
     await settle()
     expect(menuEl()).not.toBeNull()
     expect(rowPaths(w)).toEqual(['src', 'src/app.ts'])
   })
 
-  it('a file row and the blank tree (root folder) open no menu; the file row still blocks the browser menu', async () => {
+  // Q item 459: the file row and the root folder (the blank tree) open their mockup menus; nothing runs from them yet.
+  it('a file row opens its menu (열기 / 이름 변경 / Git 되돌리기 / 이력 미구현, 다운로드 / Git 수정 확인 / 삭제 연결 예정); nothing is called', async () => {
     const w = await fileExplorer()
     await w.get('[data-test="dfx-folder-row"][data-path="src"]').trigger('click')
     await settle()
     const onFile = rightClick(w.get('[data-test="dfx-file-row"][data-path="src/app.ts"]').element)
     await settle()
-    expect(menuEl()).toBeNull()
     expect(onFile.defaultPrevented).toBe(true)
+    expect(itemTexts()).toEqual(['↗ 열기', '✎ 이름 변경', '↓ 다운로드', '⑂ Git ›', '× 삭제'])
+    expect(states()).toEqual([
+      ['file.open', 'true', '미구현'], ['file.rename', 'true', '미구현'], ['file.download', 'true', '연결 예정'],
+      ['file.git', 'false', ''], ['file.delete', 'true', '연결 예정'],
+    ])
+    item('file.git').dispatchEvent(new MouseEvent('mouseenter'))
+    await settle()
+    const sub = Array.from(document.querySelectorAll<HTMLElement>('[data-designer-context-menu] [data-level="1"] [role="menuitem"]'))
+    expect(sub.map((entry) => [entry.dataset.key, entry.getAttribute('aria-disabled'), entry.title])).toEqual([
+      ['file.git.changes', 'true', '연결 예정'], ['file.git.revert', 'true', '미구현'], ['file.git.history', 'true', '미구현'],
+    ])
+    for (const entry of [...sub, ...items().filter((entry) => entry.dataset.key !== 'file.git')]) press(entry)
+    await settle()
+    expect(menuEl()).not.toBeNull()
+    expect(postRequest).not.toHaveBeenCalled()
+    // The row keeps its own selection / open intent: the right click selected nothing and opened no diff or tab.
+    expect(w.findAll('[data-test="dfx-file-row"][aria-selected="true"]')).toHaveLength(0)
+  })
+
+  it('the blank tree is the root folder: no 열기 / 이름 변경 / 삭제, the rest 연결 예정 / 미구현; nothing is called', async () => {
+    const w = await fileExplorer()
     const onBlank = rightClick(w.get('.dfx-body').element)
     await settle()
-    expect(menuEl()).toBeNull()
-    expect(onBlank.defaultPrevented).toBe(false)
+    expect(onBlank.defaultPrevented).toBe(true)
+    expect(itemTexts()).toEqual(['＋ 새 폴더', '＋ 새 파일', '↓ 다운로드', '↑ 업로드', '⑂ Git ›'])
+    expect(states().map(([key, off]) => [key, off])).toEqual([
+      ['folder.newFolder', 'true'], ['folder.newFile', 'true'], ['folder.download', 'true'], ['folder.upload', 'true'], ['folder.git', 'false'],
+    ])
+    for (const entry of items().filter((entry) => entry.dataset.key !== 'folder.git')) press(entry)
+    await settle()
+    expect(menuEl()).not.toBeNull()
     expect(postRequest).not.toHaveBeenCalled()
   })
 })
@@ -354,7 +405,7 @@ describe('Designer context menu in the Shell — ③ ④ ⑤ and the close rules
     rightClick(w.get('.vue-flow__pane').element)
     await settle()
     expect(items().map((entry) => [entry.dataset.key, entry.getAttribute('aria-disabled')])).toEqual([
-      ['canvas.addCard', 'false'], ['canvas.selectAll', 'false'],
+      ['canvas.addCard', 'false'], ['canvas.paste', 'true'], ['canvas.selectAll', 'false'], ['canvas.arrange', 'true'],
     ])
     item('canvas.selectAll').click()
     await settle()

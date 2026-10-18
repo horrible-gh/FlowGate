@@ -235,6 +235,7 @@ import {
 } from '../projectExplorer/projectExplorerTree'
 import {
   DENSITY_MOVE_STEP,
+  DESIGNER_ARRANGE_GROUPS,
   arrangeSelectionMinimum,
   createDesignerTopState,
   isMenuCommandEnabled,
@@ -242,6 +243,7 @@ import {
   runBandView,
   runPhaseOf,
   zoomPercent,
+  type DesignerArrangeCommand,
   type DesignerDensity,
   type DesignerMenuTargets,
   type DesignerRecentLists,
@@ -760,6 +762,9 @@ function onTopCommand(command: DesignerTopCommand) {
 }
 
 // flowgate.v02.0060 T#2: the Designer context menu and what its commands run through (see the head comment).
+// flowgate.v02.0060 T#1 (WP 0012): its 정렬 · 배치 / 정렬 are this Edit menu's 정렬 / 배치 — the same commands, rule and path.
+const isArrangeCommand = (command: string): command is DesignerArrangeCommand =>
+  DESIGNER_ARRANGE_GROUPS.some((group) => (group as readonly string[]).includes(command))
 const contextMenu = useDesignerContextMenu({
   center,
   projectId: () => projectId.value,
@@ -775,6 +780,13 @@ const contextMenu = useDesignerContextMenu({
   },
   selectPalette: (definition) => {
     selectedPalette.value = definition
+  },
+  arrange: {
+    groups: DESIGNER_ARRANGE_GROUPS,
+    enabled: (command) => isArrangeCommand(command) && isMenuCommandEnabled(command, runPhase.value, menuTargets.value),
+    run: (flowId, command) => {
+      if (isArrangeCommand(command) && center.state.activeFlowId === flowId) onTopCommand(command)
+    },
   },
   layout: () => [layout.leftCollapsed, layout.rightCollapsed, layout.activeLeftMode, layout.activeRightTool],
 })
