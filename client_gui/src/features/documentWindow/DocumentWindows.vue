@@ -3,7 +3,7 @@
        flowgate.v02.0056 F1 — and every open 검수·반려 이력 window (DocumentHistoryWindow).
        flowgate.v02.0056 F2-2 — and every [작성] window of a card line (SlotWriteWindow) and AI call window of a
        document (DocumentAiWindow). -->
-  <DocumentWindow v-for="win in windows" :key="win.docId" :win="win" />
+  <DocumentWindow v-for="win in windows" :key="win.id" :win="win" />
   <DocumentHistoryWindow v-for="win in historyWindows" :key="`history:${win.docId}`" :win="win" />
   <SlotWriteWindow v-for="win in writeWindows" :key="`write:${win.key}`" :win="win" />
   <DocumentAiWindow v-for="win in aiWindows" :key="`ai:${win.docId}`" :win="win" />

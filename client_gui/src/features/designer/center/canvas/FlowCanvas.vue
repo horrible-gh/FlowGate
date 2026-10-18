@@ -27,6 +27,8 @@
        flowgate.v02.0060 T#2: inside the Designer (its context menu injected) a right click on a card, a line or the blank
        Canvas goes to the Designer context menu, which also carries the card's menu above; the right button's press and
        its held move / release never reach Vue Flow (the menu's gesture guard on this root). -->
+       flowgate.v02.0064 T#4: keys typed into any text field never reach the Canvas keys (remove, undo, Escape).
+       flowgate.v02.0070 T#1 (B1): a card only shows its title; it is edited in the Inspector header. -->
   <div
     ref="canvasEl"
     class="flow-canvas"
@@ -110,8 +112,6 @@
         <FlowNodeCard
           :id="nodeProps.id"
           :data="nodeProps.data"
-          :save-title="saveTitle"
-          :connecting="connecting"
           @approve="emit('node-approve', $event)"
           @conflict="emit('node-conflict', $event)"
         />
@@ -234,7 +234,6 @@ import FlowNodeCard from './FlowNodeCard.vue'
 import { toVueFlowEdges, toVueFlowNodes } from './vueFlowMapping'
 import { NO_RUN_MARKS, type FlowRunMarks } from '../run/flowRunLock'
 import type { FlowCardMenuItem, FlowCardMenuKey } from '../run/flowCardMenu'
-import type { NodeTitleSaveOutcome } from '../graph/nodeTitle'
 
 const props = withDefaults(
   defineProps<{
@@ -271,10 +270,8 @@ const props = withDefaults(
     cardMenu?: ((nodeId: string) => readonly FlowCardMenuItem[]) | null
     /** flowgate.v02.0061 T#15: each card's Hold as the session judges it (by node id); absent = from the node runs. */
     holds?: ReadonlyMap<string, boolean>
-    /** flowgate.v02.0064 T#4: saves a card's title (the session's); null = no card title opens for editing. */
-    saveTitle?: ((nodeId: string, title: string) => Promise<NodeTitleSaveOutcome>) | null
   }>(),
-  { selectedNodeIds: () => [], selectMode: false, viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [], moveStep: null, canApprove: false, approvingNodeId: null, marks: () => NO_RUN_MARKS, cardMenu: null, saveTitle: null },
+  { selectedNodeIds: () => [], selectMode: false, viewRequest: null, editable: false, placing: false, canConnect: null, issues: () => [], moveStep: null, canApprove: false, approvingNodeId: null, marks: () => NO_RUN_MARKS, cardMenu: null },
 )
 
 const emit = defineEmits<{
@@ -334,7 +331,6 @@ const nodes = computed(() =>
     approvingNodeId: props.approvingNodeId,
     marks: props.marks,
     holds: props.holds,
-    titles: props.saveTitle !== null,
   }),
 )
 const edges = computed(() => toVueFlowEdges(props.graph, issueMap.value, selectedEdgeId.value, props.marks))
@@ -643,15 +639,11 @@ function onEdgeDoubleClick({ edge }: EdgeMouseEvent) {
   removeEdge(edge.id)
 }
 
-/**
- * flowgate.v02.0064 T#4: a key typed into a text field, or anywhere in a card's title edit (its input and its ✓ / ×
- * buttons), is that field's, never the Canvas's.
- */
+/** flowgate.v02.0064 T#4: a key typed into a text field is that field's, never the Canvas's. */
 function fromTextEntry(event: KeyboardEvent): boolean {
   const target = event.target as HTMLElement | null
   if (!target) return false
-  return /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable ||
-    !!target.closest?.('.flow-node-title-editor')
+  return /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable
 }
 
 function onKeydown(event: KeyboardEvent) {

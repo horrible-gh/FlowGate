@@ -103,10 +103,21 @@ describe('MdViewer (flowgate.v02.0053 T#3)', () => {
     expect(w.text()).toBe('')
   })
 
+  // flowgate.v02.0070 T#3 (B3): the window footer picks its actions from the state the viewer reports.
+  it.each([
+    ['# 본문', 'body'],
+    ['---\ntitle: 빈 문서\n---\n', 'empty'],
+  ] as const)('reports a readable body %j as %s for the window footer', async (content, state) => {
+    contentRead.mockResolvedValue({ docId: DOC, content, missing: false })
+    const w = await mountViewer()
+    expect(w.vm.status).toEqual({ state, recoverable: false, recovering: false })
+  })
+
   it('a failed read shows a short reason and a retry that reads again', async () => {
     contentRead.mockRejectedValueOnce(axiosError(500))
     const w = await mountViewer()
     expect(el(w, 'md-viewer-error').text()).toContain('불러오지 못했습니다')
+    expect(w.vm.status.state).toBe('error')
     contentRead.mockResolvedValue({ docId: DOC, content: '# 다시 읽음', missing: false })
     await el(w, 'md-viewer-retry').trigger('click')
     await flushPromises()

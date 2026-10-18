@@ -1,12 +1,16 @@
 /**
  * flowgate.v02.0064 T#4 — the kind switch with the server's judgement (P0006 §3.1 / §3.3 / §3.5 / §6.1):
  * the document state is read with `include=root_conversion` (kindSwitchPreviewRead, mocked as a small
- * server here); a number swap keeps the short confirmation, a succession names the new document — or its
- * expected number, fixed when the switch runs — and the child documents; a refused judgement disables the
- * badge with its reason while a judgement not read yet blocks nothing; the new refusals are shown with
+ * server here); a refused judgement disables the badge with its reason while a judgement not read yet blocks nothing; the new refusals are shown with
  * their reason (a superseded root also reads the Canvas again); a succeeded document links the document it
  * came from — a header part of its own (features/kindSwitchOrigin) read without the judgement, kept on every
  * ownership: the new document's workflow decision turns its Flow v01 and the link stays (rework).
+ * flowgate.v02.0070 T#4 (B4) — the link opens that exact id as history (openDocument `exact`, not the document it is
+ * succeeded by), read only, with the old id's questions under the body: the Q&A tab's list read as history (no question
+ * line, answer form or AI line; its ↗ window says 읽기 전용).
+ * flowgate.v02.0070 (0015-T T2) — picking the other kind runs the switch at once (R -> B and B -> R), without a
+ * confirmation, whether the server judged a number swap, a succession (also a chained one) or nothing yet; the pick
+ * awaits no read before the call, so a pick never runs after the part is gone or the Node changed.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -14,6 +18,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FlowGraph, FlowGraphNode } from '@/features/designer/center/graph/flowGraph'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
 import KindSwitchAction from '@/features/designer/inspector/features/kindSwitch/KindSwitchAction.vue'
+import QnaTab from '@/features/designer/inspector/features/qna/QnaTab.vue'
+import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
 import {
   kindSwitchAvailability,
   kindSwitchRefreshesFlow,
@@ -29,6 +35,7 @@ const convertCall = vi.fn()
 const previewRead = vi.fn()
 const originRead = vi.fn()
 const activityRead = vi.fn()
+const qaRead = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/document')>()
   return {
@@ -37,6 +44,10 @@ vi.mock('@/features/document', async (importOriginal) => {
     kindSwitchPreviewRead: (...args: unknown[]) => previewRead(...args),
     kindSwitchOriginRead: (...args: unknown[]) => originRead(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
+    qaRead: (...args: unknown[]) => qaRead(...args),
+    // flowgate.v02.0070 T#5: the document read answering waits for (a current document: superseded by none).
+    reviewDocumentRead: async () => ({ groupDisposed: false, record: { supersededBy: null } }),
+    settingsChoicesRead: async () => ({ providers: [], defaultProviderId: null }),
   }
 })
 const opened = vi.fn()
@@ -45,8 +56,10 @@ vi.mock('@/features/designer/inspector/openDocument', async (importOriginal) => 
   openDocument: (...args: unknown[]) => opened(...args),
 }))
 
-const { toKindSwitchPreview, toReviewActivity, toKindSwitchResult } =
+const { toKindSwitchPreview, toReviewActivity, toKindSwitchResult, toQaThread } =
   await vi.importActual<typeof import('@/features/document')>('@/features/document')
+const { openDocument: realOpenDocument } =
+  await vi.importActual<typeof import('@/features/designer/inspector/openDocument')>('@/features/designer/inspector/openDocument')
 
 const i18n = prepareInspectorI18n()
 
@@ -84,7 +97,7 @@ beforeEach(() => {
   convertedFrom = null
   refusal = null
   intents = []
-  for (const mock of [convertCall, previewRead, originRead, activityRead, opened]) mock.mockReset()
+  for (const mock of [convertCall, previewRead, originRead, activityRead, opened, qaRead]) mock.mockReset()
   previewRead.mockImplementation(async (docId: string) => toKindSwitchPreview(rowOf(docId)))
   originRead.mockImplementation(async (docId: string) => toKindSwitchPreview(rowOf(docId)).convertedFrom)
   activityRead.mockImplementation(async (groupId: string) => toReviewActivity({ ok: true, active: false, group_id: groupId }))
@@ -114,8 +127,7 @@ async function mountSwitch(target: InspectorTarget = targetOf(SELECTIONS.unassig
 
 const find = (test: string) => wrapper!.find(`[data-test="${test}"]`)
 const openButton = () => find('kind-switch-open')
-const confirmButtons = () => [...document.body.querySelectorAll<HTMLButtonElement>('.ui-confirm-actions button')]
-const confirmText = () => document.body.querySelector('.ui-confirm-message')?.textContent ?? ''
+const confirmButtons = () => [...document.body.querySelectorAll<HTMLButtonElement>('.ui-confirm-actions button, [role="dialog"] button')]
 
 async function pickOther() {
   await openButton().trigger('click')
@@ -125,51 +137,108 @@ async function pickOther() {
   await flushPromises()
 }
 
-describe('the confirmation follows the judgement (P0006 §6.1)', () => {
-  it('a number swap keeps the short confirmation, with the judged number', async () => {
-    judgement = judged('number_swap')
-    await mountSwitch()
+/** The unassigned root as its B document (the way back: B -> R). */
+const B_ROOT_NODE: FlowGraphNode = { ...UNASSIGNED_REQ_NODE, id: `doc:${ROOT_B}`, docType: 'B', document: { ...UNASSIGNED_REQ_NODE.document!, docId: ROOT_B, typeCode: 'B' } }
+const TARGET_B = targetOf(selectionOf({ ...UNASSIGNED_GRAPH, nodes: [B_ROOT_NODE] }, B_ROOT_NODE.id))
+
+/** A read that answers when the test says so (or fails). */
+function heldRead() {
+  let answer!: () => void
+  let fail!: () => void
+  previewRead.mockImplementationOnce((docId: string) => new Promise((resolve, reject) => {
+    answer = () => resolve(toKindSwitchPreview(rowOf(docId)))
+    fail = () => reject(axiosError(503, {}))
+  }))
+  return { answer: () => answer(), fail: () => fail() }
+}
+
+describe('a pick switches at once, whatever the judgement (0015-T T2, P0006 §6.1)', () => {
+  it.each([
+    ['number_swap', 'R -> B', {}],
+    ['succession', 'R -> B', { child_count: 3 }],
+    ['number_swap', 'B -> R', { target_type: 'R', new_doc_id: ROOT_R }],
+    ['succession', 'B -> R', { target_type: 'R', new_doc_id: ROOT_R, child_count: 2 }],
+  ] as const)('a judged %s (%s) calls the existing switch once, with no confirmation, and reads the Canvas again', async (decision, way, extra) => {
+    judgement = judged(decision, extra)
+    const back = way === 'B -> R'
+    await mountSwitch(back ? TARGET_B : targetOf(SELECTIONS.unassigned))
+    expect(previewRead).toHaveBeenCalledWith(back ? ROOT_B : ROOT_R)
     await pickOther()
-    expect(previewRead).toHaveBeenCalledWith(ROOT_R)
-    expect(confirmText()).toBe('요구사항 문서를 버그 문서로 바꿉니다. 문서 번호(0001-R → 0001-B)가 바뀌고, Canvas를 다시 읽은 뒤 선택이 풀립니다.')
+    expect(confirmButtons()).toEqual([])
+    expect(document.body.textContent).not.toContain('새 문서로 이어 가기')
+    expect(convertCall).toHaveBeenCalledTimes(1)
+    expect(convertCall).toHaveBeenCalledWith(back ? ROOT_B : ROOT_R, back ? 'R' : 'B')
+    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+    expect(find('kind-switch-line').attributes('data-kind')).toBe('done')
   })
 
-  it('a succession names the new document, the child documents and what stays', async () => {
-    judgement = judged('succession', { child_count: 3 })
-    await mountSwitch()
-    await pickOther()
-    expect(document.body.textContent).toContain('종류 전환 — 새 문서로 이어 가기')
-    expect(confirmText()).toBe(
-      '새 버그 문서 0001-B를 만들어 이 요구사항 문서를 이어 갑니다. · 원래 요구사항 문서 0001-R와 하위 문서 3건, 승인·실행 이력은 그대로 남습니다. · 이후 작업은 새 버그 문서를 기준으로 합니다.',
-    )
-  })
-
-  it('an expected number says it is fixed when the switch runs', async () => {
+  it('a chained succession: the done line names the number the server gave', async () => {
     judgement = judged('succession', { new_doc_id: `${FLOW}.0005-B`, new_doc_exact: false, chained: true })
+    convertCall.mockImplementationOnce(async (docId: string) =>
+      toKindSwitchResult({ data: rowOf(`${FLOW}.0005-B`, 'B'), conversion: { mode: 'succession', old_doc_id: docId, new_doc_id: `${FLOW}.0005-B`, child_count: 3 } }, docId),
+    )
     await mountSwitch()
     await pickOther()
-    expect(confirmText()).toContain('새 버그 문서 (예상 번호 0005-B, 실행 시 확정)를 만들어')
-    const [, submit] = confirmButtons()
-    submit.click()
-    await flushPromises()
+    expect(confirmButtons()).toEqual([])
     expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
+    expect(find('kind-switch-line').text()).toBe('버그 문서(0005-B)로 바꿨습니다. Canvas를 다시 읽는 중입니다.')
+  })
+
+  it('a pick while the judgement is still being read does not wait for it: the switch is asked at once', async () => {
+    judgement = judged('succession', { child_count: 3 })
+    const held = heldRead()
+    await mountSwitch()
+    await pickOther()
+    expect(convertCall).toHaveBeenCalledTimes(1)
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
+    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+    held.answer()
+    await flushPromises()
+    expect(confirmButtons()).toEqual([])
+    expect(convertCall).toHaveBeenCalledTimes(1)
+    expect(intents).toHaveLength(1)
+  })
+
+  it.each(['answers', 'fails'] as const)('the part gone while the judgement is read: the read that %s afterwards starts nothing', async (end) => {
+    judgement = judged('succession', { child_count: 3 })
+    const held = heldRead()
+    await mountSwitch()
+    wrapper!.unmount()
+    wrapper = null
+    if (end === 'answers') held.answer()
+    else held.fail()
+    await flushPromises()
+    expect(convertCall).not.toHaveBeenCalled()
+    expect(intents).toEqual([])
+    expect(confirmButtons()).toEqual([])
+  })
+
+  it.each(['answers', 'fails'] as const)('picked, then the part gone before the judgement %s: only the switch asked at the pick, nothing after', async (end) => {
+    judgement = judged('succession', { child_count: 3 })
+    const held = heldRead()
+    await mountSwitch()
+    await pickOther()
+    // The switch was asked at the pick itself, while the part was still shown.
+    expect(convertCall).toHaveBeenCalledTimes(1)
+    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+    wrapper!.unmount()
+    wrapper = null
+    if (end === 'answers') held.answer()
+    else held.fail()
+    await flushPromises()
+    expect(convertCall).toHaveBeenCalledTimes(1)
     expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
   })
 
-  it('en / ja carry the same succession strings', async () => {
-    judgement = judged('succession', { child_count: 2, new_doc_exact: false, new_doc_id: `${FLOW}.0004-B` })
-    i18n.global.locale.value = 'en'
+  it('another Node while the judgement is read: its answer starts nothing on the Node left behind', async () => {
+    judgement = judged('succession', { child_count: 3 })
+    const held = heldRead()
     await mountSwitch()
-    await pickOther()
-    expect(confirmText()).toContain('(expected number 0004-B, fixed when the switch runs)')
-    expect(confirmText()).toContain('its 2 child documents')
-    wrapper!.unmount()
-    document.body.innerHTML = ''
-    i18n.global.locale.value = 'ja'
-    await mountSwitch()
-    await pickOther()
-    expect(confirmText()).toContain('(予定番号 0004-B、実行時に確定)')
-    expect(confirmText()).toContain('下位文書 2件')
+    await wrapper!.setProps({ target: TARGET_B })
+    held.answer()
+    await flushPromises()
+    expect(convertCall).not.toHaveBeenCalled()
+    expect(intents).toEqual([])
   })
 })
 
@@ -196,7 +265,9 @@ describe('the judgement and the badge', () => {
     await mountSwitch()
     expect(openButton().attributes('disabled')).toBeUndefined()
     await pickOther()
-    expect(confirmText()).toContain('문서 번호(0001-R → 0001-B)')
+    // 0015-T T2: no confirmation — the server judges the switch itself.
+    expect(confirmButtons()).toEqual([])
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
   })
 
   it('a judgement for the other kind is not used', async () => {
@@ -217,8 +288,6 @@ describe('refusals when the switch runs (P0006 §3.5)', () => {
     refusal = axiosError(409, { error: code, detail: 'x', doc_id: ROOT_R })
     await mountSwitch()
     await pickOther()
-    confirmButtons()[1].click()
-    await flushPromises()
     const line = find('kind-switch-line')
     expect(line.attributes('data-kind')).toBe('failure')
     expect(line.text()).toBe(i18n.global.t(`gui.inspector.kindSwitch.failure.${kind}`))
@@ -253,7 +322,8 @@ describe('the document a succeeded root came from (P0006 §3.3, in the Frame wit
     expect(find('inspector-kind-switch').exists()).toBe(switchShown)
     expect(originRead).toHaveBeenCalledWith(ROOT_B)
     await links()[0].trigger('click')
-    expect(opened).toHaveBeenCalledWith(ROOT_R)
+    // flowgate.v02.0070 T#4: that exact id, as history, with the target it was pressed on (for its Q&A).
+    expect(opened).toHaveBeenCalledWith(ROOT_R, 'view', { exact: true, target: expect.objectContaining({ docId: ROOT_B, flowId: FLOW }) })
   })
 
   it('stays when the new document takes its workflow decision (unassigned -> v01)', async () => {
@@ -264,7 +334,7 @@ describe('the document a succeeded root came from (P0006 §3.3, in the Frame wit
     expect(find('inspector-kind-switch').exists()).toBe(false)
     expect(links()).toHaveLength(1)
     await links()[0].trigger('click')
-    expect(opened).toHaveBeenCalledWith(ROOT_R)
+    expect(opened).toHaveBeenCalledWith(ROOT_R, 'view', { exact: true, target: expect.objectContaining({ docId: ROOT_B }) })
   })
 
   it('is absent without a succession, on any ownership', async () => {
@@ -280,6 +350,67 @@ describe('the document a succeeded root came from (P0006 §3.3, in the Frame wit
     await mountSwitch(targetOf(bOn({ ownership: 'unassigned', viewMode: 'draft' })))
     expect(find('inspector-kind-switch').exists()).toBe(true)
     expect(find('kind-switch-converted-from').exists()).toBe(false)
+  })
+
+  // --- flowgate.v02.0070 T#4 (B4): the old id as history, with its Q&A ---------------------------------------
+
+  const thread = (docId: string) =>
+    toQaThread({
+      qa: {
+        doc_id: docId,
+        status: 'pending',
+        items: [
+          { id: 11, seq: 1, title: '기능 범위', body: '범위가 어디까지입니까?', asker_kind: 'ai', options: [{ id: 'a', label: '전체' }], answers: [] },
+          { id: 12, seq: 2, title: '우선순위', body: '먼저 할 것은?', asker_kind: 'human', answer_count: 1, answers: [{ id: 1, body: '로그인', author_kind: 'human', author_name: '홍길동' }] },
+        ],
+      },
+    })
+
+  it('opens the exact window of the old id (not the B it is succeeded by), carrying the Q&A tab as its history', () => {
+    try {
+      realOpenDocument(ROOT_R, 'view', { exact: true, target: targetOf(bOn({ ownership: 'v01', viewMode: null })) })
+      const [win] = documentWindowList()
+      expect(win).toMatchObject({ id: `exact:${ROOT_R}`, docId: ROOT_R, shown: ROOT_R, exact: true, mode: 'view' })
+      expect(win.aside?.component).toBe(QnaTab)
+      expect(win.aside?.props).toMatchObject({ history: true, target: { docId: ROOT_R, flowId: FLOW } })
+      // Without options a document opens as before: the usual window, following its chain, no part.
+      realOpenDocument(ROOT_R)
+      expect(documentWindowList()[1]).toMatchObject({ id: ROOT_R, exact: false, aside: null })
+    } finally {
+      closeAllDocumentWindows()
+    }
+  })
+
+  it('the history reads the old id: its questions and answers, no question line, answer form or AI line; ↗ says 읽기 전용', async () => {
+    qaRead.mockImplementation(async (docId: string) => thread(docId))
+    const target = { ...targetOf(bOn({ ownership: 'unassigned', viewMode: 'draft' })), docId: ROOT_R }
+    wrapper = mount(QnaTab, { attachTo: document.body, props: { target, history: true }, global: { plugins: [i18n, pinia] } })
+    await flushPromises()
+    expect(qaRead).toHaveBeenCalledWith(ROOT_R)
+    expect(wrapper.findAll('[data-test="qna-item"]').map((item) => item.attributes('data-item'))).toEqual(['11', '12'])
+    for (const test of ['qna-ask', 'qna-answer-form', 'qna-ai', 'qna-option']) expect(find(test).exists(), test).toBe(false)
+    await wrapper.get('[data-test="qna-item"][data-item="11"] [data-test="qna-open"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-test="qna-window"]')?.getAttribute('data-item')).toBe('11')
+    expect(document.body.querySelector('[data-test="qna-window-body"]')?.textContent).toBe('범위가 어디까지입니까?')
+    expect(document.body.querySelector('[data-test="qna-window-form"]')).toBeNull()
+    expect(document.body.querySelector('[data-test="qna-window-mode"]')?.textContent).toBe('읽기 전용')
+    // flowgate.v02.0070 T#5: the stored options stay readable; no body line in history (the badge says it).
+    expect(document.body.querySelector('[data-test="qna-window-options"]')?.textContent).toBe('선택지: 전체')
+    expect(document.body.querySelector('[data-test="qna-window-blocked"]')).toBeNull()
+    // flowgate.v02.0070 T#5: answers are read in the ↗ window (the list line keeps who asked only).
+    await wrapper.get('[data-test="qna-item"][data-item="12"] [data-test="qna-open"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-test="qna-window"][data-item="12"] [data-test="qna-window-answer"] .inspector-qna-text')?.textContent).toBe('로그인')
+    // The same tab of the live document keeps its forms — in the ↗ window, with its document's body there (0070 T#5).
+    wrapper.unmount()
+    const live = { ...target, cardDocuments: [{ slot: 'requirement', docType: 'R', author: 'human', docId: ROOT_R, title: ROOT_R, status: 'open', docReviewStatus: null, hasBody: true, bodyState: null }] }
+    wrapper = mount(QnaTab, { attachTo: document.body, props: { target: live }, global: { plugins: [i18n, pinia] } })
+    await flushPromises()
+    expect(find('qna-ask').exists()).toBe(true)
+    await wrapper.get('[data-test="qna-item"][data-item="11"] [data-test="qna-open"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-test="qna-window"][data-item="11"] [data-test="qna-window-form"]')).not.toBeNull()
   })
 })
 

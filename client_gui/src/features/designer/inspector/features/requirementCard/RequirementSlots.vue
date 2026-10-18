@@ -2,7 +2,7 @@
   <!-- flowgate.v02.0051 stage 2 — the 요구사항 / 버그 card's documents tab body (0035 v7 req.draft /
        req.ok). A thin container: requirementCardModel decides the lines; the document icon (or the line's
        name) opens a document in its window, ✎ straight in its editor. No server call.
-       flowgate.v02.0053 T#5 (0053 CH) — 요구사항 (버그 리포트 on a bug) · AI 위임 while AI 위임 is on. -->
+       flowgate.v02.0053 T#5 (0053 CH) — 요구사항 (버그 on a bug) · AI 위임 while AI 위임 is on. -->
   <section class="inspector-requirement-card" data-test="inspector-requirement-card" :data-doc-type="target.docType ?? ''">
     <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action" />
   </section>

@@ -33,7 +33,8 @@ export interface SlotStateInput {
 export interface SlotStateView {
   /**
    * badge: a text badge; empty: why the line has no document; blank (flowgate.v02.0056 F2-2): the line's document
-   * has no body yet (no text — the row's shape says it; "비어 있음" the hover text); none: nothing is drawn.
+   * has no body yet (flowgate.v02.0070 T#4: "본문 비어 있음" in the same muted words as 문서 없음, so the two are told
+   * apart in the line); none: nothing is drawn.
    */
   readonly kind: 'badge' | 'empty' | 'blank' | 'none'
   readonly tone: SlotStateTone | 'none'
@@ -64,6 +65,8 @@ export function slotStateTitle(state: SlotStateInput): string {
  * its state — an empty document asks to be written before anything else.
  * flowgate.v02.0056 (0017-CH) — and no words either: the row shows it by its shape (dashed frame, dim name, hollow
  * document icon); "비어 있음" is only the hover text.
+ * flowgate.v02.0070 T#4 (B4): a dashed line without words could not be told from a line without a document, so the
+ * blank line now says "본문 비어 있음" where the badge would be (muted words, like 문서 없음); unreadable stays the ⚠.
  */
 export function slotStateView(
   state: SlotStateInput | null | undefined,
@@ -75,7 +78,7 @@ export function slotStateView(
     const text = emptyText ?? ''
     return { kind: 'empty', tone: 'none', text, title: text || undefined, quiet: false }
   }
-  if (blankText) return { kind: 'blank', tone: 'none', text: '', title: blankText, quiet: false }
+  if (blankText) return { kind: 'blank', tone: 'none', text: blankText, title: blankText, quiet: false }
   if (!state || !SLOT_STATE_SHOWN_TONES.includes(state.tone)) return NONE
   return { kind: 'badge', tone: state.tone, text: state.label, title: slotStateTitle(state), quiet: state.tone === 'success' }
 }

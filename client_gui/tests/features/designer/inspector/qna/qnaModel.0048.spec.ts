@@ -4,6 +4,8 @@
  * answered, answering availability with the read-only rows (ownership conflict, revision view),
  * disposed, AI running and an answer in flight, an answer's readiness, and the reason / failure /
  * error keys in the three locales.
+ * flowgate.v02.0070 T#5 (B5) — the body context (card line × history × superseded), answering and asking an AI closed
+ * by it with the window's one line, the item view's created_at and document id, and the new keys in the three locales.
  */
 import { describe, expect, it } from 'vitest'
 import qnaMessages from '@/features/designer/inspector/features/qna/messages'
@@ -12,6 +14,8 @@ import {
   qnaAnswerReady,
   qnaAnswered,
   qnaAvailability,
+  qnaBodyContext,
+  qnaBodyLine,
   qnaDisabledReason,
   qnaErrorKey,
   qnaFailureKey,
@@ -23,6 +27,8 @@ import {
   qnaView,
   qnaWaitingCount,
   qnaWaitingForUser,
+  type QnaBodyContext,
+  type QnaBodyFacts,
   type QnaFailureKind,
   type QnaInput,
   type QnaItemFacts,
@@ -208,5 +214,78 @@ describe('keys and wording (flowgate.v02.0048 T#7)', () => {
       'side.unknown',
     ]
     for (const key of keys) expect(typeof lookup(qnaMessages[locale] as Record<string, unknown>, key), `${locale} ${key}`).toBe('string')
+  })
+})
+
+describe('the body of the document before answering (flowgate.v02.0070 T#5)', () => {
+  const DOC = 'flowgate.v02.0070.0001-B'
+  const line = (fields: Record<string, unknown> = {}) => ({ docId: DOC, docType: 'B', hasBody: true, unreadable: false, ...fields })
+  const base: QnaInput = { readOnly: null, groupDisposed: false, aiRunning: false, busy: false }
+
+  it.each([
+    ['its card line has a body', { lines: [line()] }, 'readable'],
+    ['an M line (always a body) whose has_body was not sent', { lines: [line({ docType: 'M', hasBody: undefined })] }, 'readable'],
+    ['the body read failed', { lines: [line({ unreadable: true })] }, 'unreadable'],
+    ['the body read failed on a line without a body', { lines: [line({ unreadable: true, hasBody: false })] }, 'unreadable'],
+    ['a blank document', { lines: [line({ hasBody: false })] }, 'unconfirmed'],
+    ['has_body not sent', { lines: [line({ hasBody: undefined })] }, 'unconfirmed'],
+    ['only another document’s line', { lines: [line({ docId: 'flowgate.v02.0070.0002-N' })] }, 'unconfirmed'],
+    ['no card line', { lines: [] }, 'unconfirmed'],
+    ['no document', { docId: null, lines: [line({ docId: null })] }, 'unconfirmed'],
+    ['history (an earlier document opened exactly)', { lines: [line()], history: true }, 'history'],
+    ['a superseded document', { lines: [line()], superseded: true }, 'history'],
+    ['history wins over an unreadable body', { lines: [line({ unreadable: true })], history: true }, 'history'],
+    // The document read: back and not superseded (false), or not known (null: not back, or failed).
+    ['a body of a document read as current', { lines: [line()], superseded: false }, 'readable'],
+    ['a body of a document not known to be current (its read not back or failed)', { lines: [line()], superseded: null }, 'unconfirmed'],
+    ['an M line of a document not known to be current', { lines: [line({ docType: 'M', hasBody: undefined })], superseded: null }, 'unconfirmed'],
+    ['an unreadable body while the document read is not back', { lines: [line({ unreadable: true })], superseded: null }, 'unreadable'],
+    ['history while the document read is not back', { lines: [line()], history: true, superseded: null }, 'history'],
+  ] as const)('%s -> %s', (_label, facts, context) => {
+    expect(qnaBodyContext({ docId: DOC, ...(facts as Partial<QnaBodyFacts>) } as QnaBodyFacts)).toBe(context)
+  })
+
+  it.each([
+    ['readable', null, null],
+    ['unreadable', 'reason.body_unreadable', 'reason.body_unreadable'],
+    ['unconfirmed', 'reason.body_unconfirmed', 'reason.body_unconfirmed'],
+    ['history', 'reason.history', null],
+  ] as const)('body %s: answering and asking an AI closed with %s (the window line %s); asking a question as before', (body, reason, windowLine) => {
+    const availability = qnaAvailability({ ...base, body: body as QnaBodyContext })
+    const closed = reason === null ? { visible: true, enabled: true, reason: null } : { visible: false, enabled: false, reason }
+    expect(availability.answer).toEqual(closed)
+    expect(availability.ai_request).toEqual(closed)
+    expect(availability.ask).toEqual({ visible: true, enabled: true, reason: null })
+    expect(availability.read).toEqual({ visible: true, enabled: true, reason: null })
+    expect(qnaBodyLine(availability)).toBe(windowLine)
+  })
+
+  it('no body given (a rule table) adds no condition; a Flow whose answers stay closed keeps its own reason and no line', () => {
+    expect(qnaAvailability(base).answer).toEqual({ visible: true, enabled: true, reason: null })
+    for (const fields of [{ readOnly: 'conflict' as const }, { groupDisposed: true }]) {
+      const availability = qnaAvailability({ ...base, ...fields, body: 'unreadable' })
+      expect(availability.answer.visible).toBe(false)
+      expect(availability.answer.reason).toBe(qnaDisabledReason({ ...base, ...fields }))
+      expect(qnaBodyLine(availability)).toBeNull()
+    }
+  })
+
+  it('a readable body keeps the other reasons (an AI run, an answer in flight)', () => {
+    expect(qnaAvailability({ ...base, aiRunning: true, body: 'readable' }).answer).toEqual({ visible: true, enabled: false, reason: 'reason.ai_running' })
+    expect(qnaAvailability({ ...base, busy: true, body: 'readable' }).ai_request).toEqual({ visible: true, enabled: false, reason: 'ai_reason.busy' })
+  })
+
+  it('the item view carries when the question was registered and the document it belongs to', () => {
+    const [view] = qnaView([item({ id: 1, createdAt: '2026-10-18T09:00:00+09:00' })], DOC)
+    expect([view.createdAt, view.docId]).toEqual(['2026-10-18T09:00:00+09:00', DOC])
+    expect(qnaItemView(item({ id: 2 }))).toMatchObject({ createdAt: null, docId: null })
+  })
+
+  it.each(['ko', 'en', 'ja'] as const)('the window context and the body reasons have %s wording', (locale) => {
+    const lookup = (messages: Record<string, unknown>, key: string) =>
+      key.split('.').reduce<unknown>((node, part) => (node && typeof node === 'object' ? (node as Record<string, unknown>)[part] : undefined), messages)
+    for (const key of ['reason.body_unreadable', 'reason.body_unconfirmed', 'reason.history', 'detail.doc', 'detail.asked_at', 'options_list']) {
+      expect(typeof lookup(qnaMessages[locale] as Record<string, unknown>, key), `${locale} ${key}`).toBe('string')
+    }
   })
 })

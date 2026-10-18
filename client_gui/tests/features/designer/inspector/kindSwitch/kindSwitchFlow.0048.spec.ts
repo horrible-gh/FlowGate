@@ -264,7 +264,7 @@ async function activate(center: Center, flowId: string) {
 
 const find = (test: string) => wrapper!.find(`[data-test="${test}"]`)
 
-/** flowgate.v02.0051 stage 2: the switch is the header 종류 배지 ▾ — open its menu, pick the other kind, then confirm. */
+/** flowgate.v02.0051 stage 2: the switch is the header 종류 배지 ▾ — open its menu and pick the other kind (0015-T T2: no confirmation). */
 async function pickOther() {
   await find('kind-switch-open').trigger('click')
   await flushPromises()
@@ -273,11 +273,10 @@ async function pickOther() {
   await flushPromises()
 }
 
-async function confirmSwitch() {
+/** flowgate.v02.0070 (0015-T T2): picking the other kind is the switch — no confirmation opens on the way. */
+async function switchKind() {
   await pickOther()
-  const [, submit] = [...document.body.querySelectorAll<HTMLButtonElement>('.ui-confirm-actions button')]
-  submit.click()
-  await flushPromises()
+  expect(document.body.querySelectorAll('.ui-confirm-actions button')).toHaveLength(0)
 }
 
 describe('unassigned Flow: the switch, the Canvas and the Inspector agree (D#2 §3.4)', () => {
@@ -289,7 +288,7 @@ describe('unassigned Flow: the switch, the Canvas and the Inspector agree (D#2 �
     expect(find('kind-switch-open').text()).toBe('요구사항 ▾')
     expect(loadFlowCanvas).toHaveBeenCalledTimes(1)
 
-    await confirmSwitch()
+    await switchKind()
     expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
     // refresh-flow -> the session read the Canvas again: the root is now the B document.
     expect(loadFlowCanvas).toHaveBeenCalledTimes(2)
@@ -312,7 +311,7 @@ describe('unassigned Flow: the switch, the Canvas and the Inspector agree (D#2 �
     expect(find('kind-switch-open').attributes('data-to')).toBe('R')
     expect(find('kind-switch-open').text()).toBe('버그 ▾')
 
-    await confirmSwitch()
+    await switchKind()
     expect(convertCall).toHaveBeenLastCalledWith(ROOT_B, 'R')
     expect(loadFlowCanvas).toHaveBeenCalledTimes(3)
     expect(canvasNodes(center)).toEqual([{ id: `doc:${ROOT_R}`, docType: 'R', docId: ROOT_R }])
@@ -325,7 +324,7 @@ describe('unassigned Flow: the switch, the Canvas and the Inspector agree (D#2 �
     const { center, loadFlowCanvas } = await openFlow()
     await select(center, `doc:${ROOT_R}`)
     server.refusal = axiosError(423, { error: { code: 'GROUP_AI_RUN_LOCKED' } })
-    await confirmSwitch()
+    await switchKind()
     expect(loadFlowCanvas).toHaveBeenCalledTimes(1)
     expect(center.activeSelection.value?.node.id).toBe(`doc:${ROOT_R}`)
     expect(find('kind-switch-line').text()).toBe('AI 실행 중이라 거절되었습니다. 상태를 다시 읽었습니다.')
@@ -335,7 +334,7 @@ describe('unassigned Flow: the switch, the Canvas and the Inspector agree (D#2 �
     const { center, loadFlowCanvas } = await openFlow()
     await select(center, `doc:${ROOT_R}`)
     server.refusal = axiosError(409, { detail: 'Cannot convert root type: child documents already reference it.' })
-    await confirmSwitch()
+    await switchKind()
     expect(loadFlowCanvas).toHaveBeenCalledTimes(2)
     expect(canvasNodes(center)).toEqual([{ id: `doc:${ROOT_R}`, docType: 'R', docId: ROOT_R }])
     expect(center.activeSelection.value?.node.id).toBe(`doc:${ROOT_R}`)
@@ -366,8 +365,6 @@ describe('a stale Canvas: the Flow became a Graph Flow meanwhile', () => {
     await select(center, `doc:${ROOT_R}`)
     server.ownership = 'graph'
     await pickOther()
-    const [, submit] = [...document.body.querySelectorAll<HTMLButtonElement>('.ui-confirm-actions button')]
-    submit.click()
     // The refusal is read before the Canvas answer moves the selection.
     await vi.waitFor(() => expect(convertCall).toHaveBeenCalledTimes(1))
     await flushPromises()
@@ -387,7 +384,7 @@ describe("another Flow tab is activated while the switch waits (refresh-flow nam
     const { center, loadFlowCanvas } = await openFlow()
     await select(center, `doc:${ROOT_R}`)
     const release = holdNextSwitch()
-    await confirmSwitch()
+    await switchKind()
     expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
 
     await openOther(center)
@@ -430,7 +427,7 @@ describe("another Flow tab is activated while the switch waits (refresh-flow nam
     const { center, loadFlowCanvas } = await openFlow()
     await select(center, `doc:${ROOT_R}`)
     const release = holdNextSwitch()
-    await confirmSwitch()
+    await switchKind()
 
     await openOther(center)
     expect(center.activeSelection.value).toBeNull()
@@ -461,7 +458,7 @@ describe("another Flow tab is activated while the switch waits (refresh-flow nam
     await select(center, `doc:${ROOT_R}`)
     server.ownership = 'graph'
     const release = holdNextSwitch()
-    await confirmSwitch()
+    await switchKind()
 
     await openOther(center)
     await select(center, `doc:${OTHER_ROOT}`, OTHER)
@@ -489,7 +486,7 @@ describe("another Flow tab is activated while the switch waits (refresh-flow nam
     const { center, loadFlowCanvas } = await openFlow()
     await select(center, `doc:${ROOT_R}`)
     const release = holdNextSwitch()
-    await confirmSwitch()
+    await switchKind()
     center.selectNode(FLOW, null)
     await flushPromises()
     expect(find('inspector-kind-switch').exists()).toBe(false)
@@ -504,7 +501,7 @@ describe("another Flow tab is activated while the switch waits (refresh-flow nam
     const { center, loadFlowCanvas } = await openFlow()
     await select(center, `doc:${ROOT_R}`)
     const release = holdNextSwitch()
-    await confirmSwitch()
+    await switchKind()
     await openOther(center)
     const otherGraph = graphOf(center, OTHER)
     center.closeFlow(FLOW)

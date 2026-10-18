@@ -78,7 +78,7 @@ export const REQ_DRAFT = target(
   }),
 )
 
-/** 버그 · 작성 중 (unassigned Flow): the same root as a B document — bug glyph, red accent, 버그 리포트 line. */
+/** 버그 · 작성 중 (unassigned Flow): the same root as a B document — bug glyph, red accent, 버그 line. */
 export const REQ_BUG = target(
   graphOf(FLOW, 'unassigned', {
     id: `doc:${FLOW}.0001-B`,

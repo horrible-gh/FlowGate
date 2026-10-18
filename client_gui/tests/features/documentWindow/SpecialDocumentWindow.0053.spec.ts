@@ -21,6 +21,7 @@ import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import { DocumentWindows, closeAllDocumentWindows, closeDocumentWindow, openDocumentWindow } from '@/features/documentWindow'
 import { DOCUMENT_WINDOW_POLL_MS, DOCUMENT_WINDOW_REFRESH_COALESCE_MS } from '@/features/documentWindow/useDocumentWindowEvents'
+import { setCurrentUser } from '@/core/auth/currentUser'
 
 const recordRead = vi.fn()
 const contentRead = vi.fn()
@@ -353,9 +354,11 @@ beforeEach(() => {
   testAnswers.set(LEGACY, { ok: true, kind: 'TS', doc_id: LEGACY, contract_version: 1 })
   testAnswers.set(EMPTY_SPEC, { ok: true, kind: 'TS', doc_id: EMPTY_SPEC, contract_version: null, can_start_spec: true })
   for (const mock of [recordRead, contentRead, contentSave, planRead, testRead]) mock.mockReset()
+  // flowgate.v02.0070 T#3: the view footer offers [편집] only to a signed-in person on an editable document.
+  setCurrentUser({ username: 'worker', email: null, isAdmin: false })
   recordRead.mockImplementation(async (docId: string) => {
     if (!RECORDS[docId]) throw axiosError(404)
-    return toDocumentRecord(RECORDS[docId])
+    return toDocumentRecord({ is_editable: true, ...(RECORDS[docId] as object) })
   })
   contentRead.mockImplementation(async (docId: string) =>
     files.has(docId) ? { docId, content: files.get(docId)!, missing: false } : { docId, content: '', missing: true },
@@ -380,6 +383,7 @@ afterEach(() => {
   wrapper?.unmount()
   wrapper = null
   closeAllDocumentWindows()
+  setCurrentUser(null)
   vi.useRealTimers()
   document.body.querySelectorAll('.ui-modal-overlay').forEach((node) => node.remove())
 })

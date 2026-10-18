@@ -4,6 +4,8 @@
  * - slotStateView / slotFill / slotLineCard decide once: no document → "문서 없음" + [작성]; a document without a body
  *   → "비어 있음" (no words since 0017-CH: a dashed line with a hollow document icon, "비어 있음" its hover text;
  *   opened straight in its editor); else a usual line. M and WP lines are never "비어 있음";
+ *   flowgate.v02.0070 T#4 (B4): a dashed line without words could not be told from 문서 없음 — the blank line now says
+ *   "본문 비어 있음" in the same muted words, in a solid frame (the dashed frame is the line without a document's);
  * - the history button carries `history_count`, its hover text the AI review / rejection split;
  * - [작성] opens the line's write window and nothing is made until [저장]: the 201 line stands for the row at once,
  *   the Canvas is read again (refresh-flow), a result bound to the running card is the F2-1 승인 대기 after it;
@@ -174,22 +176,33 @@ describe('the slot rules (parts/slotStateView, flowgate.v02.0056 F2-2)', () => {
     expect(slotLineCard({ id: 'd', empty: false }, undefined, changeable)).toEqual({ cardSlot: null, blank: false, historyCount: null, historyDetail: null, actions: [] })
   })
 
-  it('slotStateView: a blank line draws no badge and no words (its hover text says it); an empty line still wins', () => {
-    expect(slotStateView({ label: '검수 대기', tone: 'warning' }, false, null, '비어 있음')).toEqual({ kind: 'blank', tone: 'none', text: '', title: '비어 있음', quiet: false })
+  // flowgate.v02.0070 T#4: the blank wording is drawn now (before: text '').
+  it('slotStateView: a blank line draws no badge, its words instead (also its hover text); an empty line still wins', () => {
+    expect(slotStateView({ label: '검수 대기', tone: 'warning' }, false, null, '본문 비어 있음')).toEqual({ kind: 'blank', tone: 'none', text: '본문 비어 있음', title: '본문 비어 있음', quiet: false })
     expect(slotStateView(null, true, '문서 없음', '비어 있음')).toMatchObject({ kind: 'empty', text: '문서 없음' })
     expect(slotStateView({ label: '검수 대기', tone: 'warning' }, false, null, null)).toMatchObject({ kind: 'badge' })
   })
 })
 
 describe('the three states on the documents tab (flowgate.v02.0056 F2-2)', () => {
-  it('비어 있음: no words — a dashed line, the hollow document icon, the hover text; the name and the icon open the editor', async () => {
+  // flowgate.v02.0070 T#4 (B4): told from 문서 없음 by its words — before, no words and the same dashed frame.
+  it('본문 비어 있음: the muted words where the badge would be, the hollow document icon; the name and the icon open the editor', async () => {
     await mountFrame(TASK)
     const instruction = row('instruction')
     expect(instruction.attributes('data-blank')).toBe('true')
     expect(instruction.classes()).toContain('is-blank')
-    expect(instruction.attributes('title')).toBe('비어 있음')
-    expect(instruction.find('[data-test="inspector-slot-state"]').exists()).toBe(false)
-    expect(instruction.text()).not.toContain('비어 있음')
+    expect(instruction.classes()).not.toContain('is-empty')
+    expect(instruction.attributes('title')).toBe('본문 비어 있음')
+    const words = instruction.get('[data-test="inspector-slot-state"]')
+    expect(words.text()).toBe('본문 비어 있음')
+    expect(words.attributes('data-kind')).toBe('blank')
+    expect(words.classes()).toContain('is-empty-text')
+    // The line without a document on the same card says 문서 없음 — the two never read the same.
+    const report = row('report')
+    expect(report.get('[data-test="inspector-slot-state"]').text()).toBe('문서 없음')
+    expect(report.get('[data-test="inspector-slot-state"]').attributes('data-kind')).toBe('empty')
+    expect(report.classes()).toContain('is-empty')
+    expect(report.classes()).not.toContain('is-blank')
     expect(instruction.get('[data-test="inspector-slot-open"]').attributes('data-icon')).toBe('document-blank')
     await instruction.get('[data-test="inspector-slot-name"]').trigger('click')
     expect(documentWindowList().map((win) => [win.docId, win.mode])).toEqual([[doc('0011', 'T'), 'edit']])

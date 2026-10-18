@@ -16,6 +16,8 @@
 // flowgate.v02.0064 T-B5 (P0006 §5.2) — who answered: a person by name (else 사람), an AI with its provider, an
 // AI whose run is not linked to a record, an AI with no run information (external/unconfirmed); the ↗ window's
 // answer detail adds the answer time and the run id (detail.*).
+// flowgate.v02.0070 T#5 (B5) — the ↗ window's context above the form (detail.doc, detail.asked_at) and why answering is
+// not offered while the body cannot be checked (reason.body_*: the window's one line; reason.history: its 읽기 전용 tooltip).
 export default {
   ko: {
     question: 'Q{seq}',
@@ -36,11 +38,14 @@ export default {
     detail: {
       answered_at: '답변 시각: {at}',
       run_id: '실행 번호: {runId}',
+      doc: '문서: {docId}',
+      asked_at: '질문 시각: {at}',
     },
     asked_by: '질문: {side}',
     answered_by: '답: {side}',
     picked: '선택: {labels}',
     options: '선택지',
+    options_list: '선택지: {labels}',
     answer_placeholder: '답변을 입력하거나 선택지를 고릅니다.',
     answer_short_placeholder: '짧게 답변…',
     answer: '💬 답변',
@@ -64,6 +69,9 @@ export default {
       disposed: '폐기된 그룹이라 답변할 수 없습니다.',
       ai_running: 'AI 실행 중이라 답변할 수 없습니다.',
       busy: '답변을 보내는 중입니다.',
+      body_unreadable: '본문을 읽을 수 없어 답변할 수 없습니다.',
+      body_unconfirmed: '본문을 확인할 수 없어 답변할 수 없습니다.',
+      history: '이전 문서의 이력이라 답변할 수 없습니다.',
     },
     ask_reason: {
       read_only_conflict: 'Flow 소유가 충돌해 읽기 전용입니다.',
@@ -135,11 +143,14 @@ export default {
     detail: {
       answered_at: 'Answered at: {at}',
       run_id: 'Run: {runId}',
+      doc: 'Document: {docId}',
+      asked_at: 'Asked at: {at}',
     },
     asked_by: 'Asked by: {side}',
     answered_by: 'Answer: {side}',
     picked: 'Picked: {labels}',
     options: 'Options',
+    options_list: 'Options: {labels}',
     answer_placeholder: 'Write an answer or pick an option.',
     answer_short_placeholder: 'Short answer…',
     answer: '💬 Answer',
@@ -163,6 +174,9 @@ export default {
       disposed: 'The group was disposed; answering is not possible.',
       ai_running: 'An AI run is in progress; answering is not possible.',
       busy: 'Sending the answer.',
+      body_unreadable: 'The body cannot be read; answering is not possible.',
+      body_unconfirmed: 'The body cannot be checked; answering is not possible.',
+      history: 'History of an earlier document; answering is not possible.',
     },
     ask_reason: {
       read_only_conflict: 'Read only: the Flow ownership is in conflict.',
@@ -234,11 +248,14 @@ export default {
     detail: {
       answered_at: '回答日時: {at}',
       run_id: '実行番号: {runId}',
+      doc: '文書: {docId}',
+      asked_at: '質問日時: {at}',
     },
     asked_by: '質問: {side}',
     answered_by: '答: {side}',
     picked: '選択: {labels}',
     options: '選択肢',
+    options_list: '選択肢: {labels}',
     answer_placeholder: '回答を入力するか選択肢を選びます。',
     answer_short_placeholder: '短く回答…',
     answer: '💬 回答',
@@ -262,6 +279,9 @@ export default {
       disposed: '破棄されたグループのため回答できません。',
       ai_running: 'AI 実行中のため回答できません。',
       busy: '回答を送信しています。',
+      body_unreadable: '本文を読めないため回答できません。',
+      body_unconfirmed: '本文を確認できないため回答できません。',
+      history: '以前の文書の履歴のため回答できません。',
     },
     ask_reason: {
       read_only_conflict: 'フローの所有が競合しているため読み取り専用です。',
