@@ -1329,6 +1329,47 @@ export default {
     },
   },
   // flowgate.v02.0053 T#3 — the document window (features/documentWindow): title line, editor, MD Viewer.
+  // flowgate.v02.0068 T#1 — the document upload / download of the Inspector's document lines and the document
+  // window's header (one coordinator; its notices are toasts).
+  document_io: {
+    upload: 'Upload',
+    download: 'Download',
+    upload_hint: 'Replace the whole document with the file content',
+    download_hint: 'Download the document stored on the server',
+    disabled: {
+      uploading: 'Upload in progress',
+      downloading: 'Downloading',
+      forbidden: 'No permission',
+      locked: 'Not editable now',
+      no_file: 'No file',
+    },
+    notice: {
+      upload_hold: 'There are unsaved edits. Save or cancel them first, then upload again.',
+      upload_type: 'Only Markdown or text files can be uploaded.',
+      upload_too_large: 'The file is too large to upload.',
+      upload_read_failed: 'Could not read the file.',
+      upload_empty: 'An empty file is not uploaded.',
+      upload_done: 'The document was replaced with the file content.',
+      download_unsaved_excluded: 'Unsaved changes are not included in the downloaded file.',
+      save: {
+        locked: 'Upload failed: the document cannot be changed now.',
+        file_exists_unrecorded: 'Upload failed: an unrecorded file is at the document location.',
+        busy: 'Upload failed: the document is running or locked.',
+        forbidden: 'Upload failed: no permission.',
+        gone: 'Upload failed: the document was not found.',
+        network: 'Could not reach the server to confirm the upload. Open windows now show what the server stores.',
+        save: 'Upload failed.',
+      },
+      download: {
+        forbidden: 'Download failed: no permission.',
+        gone: 'Download failed: the document was not found.',
+        no_file: 'Download failed: there is no stored file.',
+        invalid_id: 'Download failed: the document ID is not valid.',
+        network: 'Could not reach the server to download.',
+        download_failed: 'Download failed.',
+      },
+    },
+  },
   document_window: {
     untitled: 'Document',
     edit: 'Edit',

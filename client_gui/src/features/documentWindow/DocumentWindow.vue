@@ -27,6 +27,8 @@
       </span>
     </template>
     <template #actions>
+      <!-- flowgate.v02.0068 T#1 — [업로드][다운로드] │ before the copy / edit icon; hidden while minimized. -->
+      <DocumentIoGroup v-if="!win.minimized" :doc-id="ioDocId" :project-id="record?.projectId ?? chain[0]?.projectId" :group-id="record?.groupId ?? chain[0]?.groupId" />
       <span v-if="!editing" ref="copyTarget" class="document-window-copy-action" />
       <IconButton
         v-else
@@ -63,6 +65,8 @@
           spellcheck="false"
           :aria-label="t(k('editor'))"
           :disabled="saving"
+          :readonly="guardedHere"
+          :aria-readonly="guardedHere ? 'true' : undefined"
           data-test="document-window-textarea"
           @keydown.ctrl.s.prevent="save"
           @keydown.meta.s.prevent="save"
@@ -89,8 +93,9 @@
           <Button
             size="sm"
             variant="primary"
-            :disabled="editLoading || editLoadErrorKey !== null"
+            :disabled="editLoading || editLoadErrorKey !== null || guardedHere"
             :loading="saving"
+            :title="guardedHere ? t('gui.document_io.disabled.uploading') : undefined"
             data-test="document-window-save"
             @click="save"
           >{{ t(k('save')) }}</Button>
@@ -98,7 +103,14 @@
         </div>
       </div>
       <div v-if="!editing" class="document-window-viewer-bar">
-        <Button size="sm" variant="primary" :disabled="gone" data-test="document-window-edit" @click="startEdit">{{ t(k('edit')) }}</Button>
+        <Button
+          size="sm"
+          variant="primary"
+          :disabled="gone || guardedHere"
+          :title="guardedHere ? t('gui.document_io.disabled.uploading') : undefined"
+          data-test="document-window-edit"
+          @click="startEdit"
+        >{{ t(k('edit')) }}</Button>
         <Button size="sm" variant="secondary" data-test="document-window-close" @click="requestClose">{{ t(k('close')) }}</Button>
       </div>
     </div>
@@ -133,7 +145,14 @@
 // follows the opened document's supersede chain (readDocumentChain) and the window then shows, edits and
 // saves the end of it (`win.shown`) — unless its editor holds unsaved text, which keeps its document until
 // it is saved or dropped. Two windows never show the same document (followDocumentWindow).
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+// flowgate.v02.0068 T#1 — the header's [업로드][다운로드] (DocumentIoGroup) act on the document shown, or the one the
+// editor edits. The window registers its edit state with the registry (documentEditRegistry, L §2.11 / §2.13):
+// while its document is guarded by an upload, [편집] and [저장] are disabled and an open editor is read only; an
+// editor read pending when the guard starts is a late answer, and an editor read asked for during the guard waits
+// for its end; the upload's reflect reads the view's body, or a clean editor's frontmatter, base and text, from
+// the new stored body. The read starts in the same turn and the editor shows "불러오는 중" (no input, no save)
+// until it answers — also when the upload stopped waiting for it.
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { normalizeApiInput } from '@shared/apiErrors'
 import { useCurrentUser } from '@/core/auth/currentUser'
@@ -148,7 +167,9 @@ import Button from '@/components/ui/Button.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
+import DocumentIoGroup from './DocumentIoGroup.vue'
 import DocumentWindowBody from './DocumentWindowBody.vue'
+import { documentIoGuarded, registerDocumentEditEntry, type DocumentEditorState, type DocumentReflectResult } from './documentEditRegistry'
 import {
   documentDot,
   documentReadErrorKey,
@@ -225,13 +246,21 @@ const editLoadErrorKey = ref<string | null>(null)
 const saving = ref(false)
 const saveErrorKey = ref<string | null>(null)
 /** The document the editor's text was read from (and is saved to). */
-let editDocId = props.win.shown
+const editDocId = ref(props.win.shown)
 let editSequence = 0
+/** An editor read was deferred or dropped for an upload guard: read once the guard ends. */
+let needReload = false
+
+/** What the upload buttons act on: the edited document while editing, else the one shown. */
+const ioDocId = computed(() => (editing.value ? editDocId.value : props.win.shown))
+/** An upload guards this window's document (or a save the previous Designer sent has not answered). */
+const guardedHere = computed(() => documentIoGuarded(ioDocId.value))
 
 const dirty = computed(() => editing.value && !editLoading.value && editLoadErrorKey.value === null && draft.value !== loadedBody.value)
 
 function resetEditor(): void {
   editSequence += 1
+  needReload = false
   frontmatter.value = ''
   loadedBody.value = ''
   draft.value = ''
@@ -241,33 +270,55 @@ function resetEditor(): void {
   saveErrorKey.value = null
 }
 
-/** Reads the stored body fresh for the editor (the v0.1 editor reads it again on every open). */
+/**
+ * Reads the stored body fresh for the editor (the v0.1 editor reads it again on every open). While the shown
+ * document is guarded the read waits for the guard's end (the editor shows "불러오는 중").
+ */
 async function loadEditor(): Promise<void> {
+  if (documentIoGuarded(props.win.shown)) {
+    editSequence += 1
+    editDocId.value = props.win.shown
+    editLoading.value = true
+    needReload = true
+    return
+  }
+  await readEditor(true)
+}
+
+/**
+ * The editor read itself. From its first line the editor shows "불러오는 중" (no input, save disabled, not
+ * dirty); only the latest read may fill it: frontmatter, base and text together, clean.
+ */
+async function readEditor(focus: boolean): Promise<'ok' | 'failed' | 'superseded'> {
   const seq = ++editSequence
   const docId = props.win.shown
-  editDocId = docId
+  editDocId.value = docId
   editLoading.value = true
   editLoadErrorKey.value = null
   saveErrorKey.value = null
   try {
     const read = await documentContentRead(docId)
-    if (seq !== editSequence) return
+    if (seq !== editSequence) return 'superseded'
     const source = splitDocumentSource(read.content)
     frontmatter.value = source.frontmatter
     loadedBody.value = source.body
     draft.value = source.body
     editLoading.value = false
-    await nextTick()
-    editorRef.value?.focus()
+    if (focus) {
+      await nextTick()
+      editorRef.value?.focus()
+    }
+    return 'ok'
   } catch (error) {
-    if (seq !== editSequence) return
+    if (seq !== editSequence) return 'superseded'
     editLoading.value = false
     editLoadErrorKey.value = documentReadErrorKey(documentErrorOf(error).kind)
+    return 'failed'
   }
 }
 
 function startEdit(): void {
-  if (gone.value) return
+  if (gone.value || guardedHere.value) return
   setDocumentWindowMode(props.win.docId, 'edit')
 }
 
@@ -277,8 +328,8 @@ function toView(): void {
 }
 
 async function save(): Promise<void> {
-  if (!editing.value || saving.value || editLoading.value || editLoadErrorKey.value !== null) return
-  const docId = editDocId
+  if (!editing.value || saving.value || editLoading.value || editLoadErrorKey.value !== null || guardedHere.value) return
+  const docId = editDocId.value
   saving.value = true
   saveErrorKey.value = null
   try {
@@ -359,6 +410,53 @@ watch(
     if (editing.value && !holdShown.value) void loadEditor()
   },
 )
+
+// --- Upload guard and reflect (flowgate.v02.0068 T#1) -------------------------------------------------
+
+function editorState(): DocumentEditorState {
+  if (!editing.value) return 'none'
+  if (editLoading.value) return 'loading'
+  return editLoadErrorKey.value !== null ? 'error' : 'ready'
+}
+
+/** The upload asks this window to show the new stored body (its read starts before this returns). */
+function reflect(docId: string): Promise<DocumentReflectResult> {
+  if (editing.value && (dirty.value || saving.value)) {
+    // The guard keeps a window of the document clean; unsaved text is never replaced.
+    console.warn('[documentIo] reflect skipped: the editor holds unsaved text', docId)
+    return Promise.resolve('skipped')
+  }
+  if (editing.value) {
+    needReload = false
+    return readEditor(false).then((result) => (result === 'superseded' ? 'skipped' : result))
+  }
+  body.value?.refresh({ docId: props.win.shown, revisionNo: null })
+  void readRecord()
+  return Promise.resolve('ok')
+}
+
+const unregisterEdit = registerDocumentEditEntry({
+  related: () => (editing.value ? [...new Set([props.win.shown, editDocId.value])] : [props.win.shown]),
+  editor: editorState,
+  dirty: () => dirty.value,
+  saving: () => saving.value,
+  onGuard: () => {
+    // A surviving clean editor must read after release even if the Designer leaves during saving.
+    // Its old text stays read-only until release starts the deferred read synchronously.
+    if (!editing.value || dirty.value || saving.value) return
+    if (editLoading.value) editSequence += 1
+    needReload = true
+  },
+  onRelease: () => {
+    if (!needReload || documentIoGuarded(ioDocId.value)) return
+    needReload = false
+    if (!editing.value || dirty.value || saving.value) return
+    void loadEditor()
+  },
+  reflect,
+})
+
+onBeforeUnmount(unregisterEdit)
 
 // --- Lifecycle -------------------------------------------------------------------------------------
 

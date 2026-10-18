@@ -8,3 +8,17 @@ export * from './documentWindows'
 export * from './documentWindowModel'
 export * from './slotWriteWindows'
 export * from './documentAiWindows'
+// flowgate.v02.0068 T#1 — the document upload / download: the coordinator (documentIo), the edit state registry it
+// guards with, and the connected [업로드][다운로드] group the Inspector's document lines draw.
+export { default as DocumentIoGroup } from './DocumentIoGroup.vue'
+export {
+  documentIoButtons,
+  documentIoDownload,
+  documentIoDraw,
+  documentIoLeave,
+  documentIoForget,
+  documentIoNotices,
+  documentIoUpload,
+  dismissDocumentIoNotice,
+} from './documentIo'
+export { documentIoGuarded } from './documentEditRegistry'

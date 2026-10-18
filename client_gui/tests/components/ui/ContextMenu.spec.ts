@@ -1,7 +1,10 @@
-import { mount } from '@vue/test-utils'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import ContextMenu from '@/components/ui/ContextMenu.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
+
+// Also clean up after an assertion fails, before removing Teleport nodes.
+enableAutoUnmount(afterEach)
 
 // T0010 §8/§13.3: contextmenu-event open, pointer-position placement, viewport clamp,
 // outside click / ESC close, keyboard nav, first-item focus, focus return, Teleport,

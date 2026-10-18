@@ -224,8 +224,15 @@ describe('documents tab — real-shaped data of the fixtures', () => {
     const w = await mountTab(targetOf(SELECTIONS.v01))
     expect(w.text()).not.toMatch(/작성\s*$|결과 슬롯|지시서/)
     // flowgate.v02.0053 T#5: every open button is the document icon (no ↗, its wording the tooltip).
+    // flowgate.v02.0068 T#1 (D §0-1 / §6.1): a document line has [업로드][다운로드] before its open button.
+    const io = [
+      ['', undefined, '파일 내용으로 문서 전체를 교체'],
+      ['', undefined, '서버에 저장된 문서를 파일로 받기'],
+    ]
     expect(w.findAll('button').map((button) => [button.text(), button.attributes('data-icon'), button.attributes('title')])).toEqual([
+      ...io,
       ['', 'document', '문서 열기'],
+      ...io,
       ['', 'document', '문서 열기'],
     ])
   })

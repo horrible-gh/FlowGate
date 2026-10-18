@@ -13,7 +13,15 @@
 // document's AI call window (§4-3). The lines written there stand for the card's lines until the Canvas read
 // shows them (cardLinesWritten / settleCardLinesWritten, used by the Frame), and a line tells an AI run on its
 // document (cardLineRow).
+// flowgate.v02.0068 T#1 — a document's [업로드][다운로드] go through the one coordinator of the document window
+// feature too: the lines draw its group (DocumentIoGroup, handed to the slot list's `io` slot), an edit request
+// for a document an upload guards opens its window in the view (0068 L §2.13), and the Frame tells when the
+// Designer is left or the project changes (leaveDocumentIo / forgetDocumentIo).
 import {
+  DocumentIoGroup,
+  documentIoForget,
+  documentIoGuarded,
+  documentIoLeave,
   documentAiRunning,
   openDocumentAiWindow,
   openDocumentHistoryWindow,
@@ -29,9 +37,25 @@ import { slotLineCard, type SlotLineCard } from './parts/slotStateView'
 
 export type OpenDocumentMode = DocumentWindowMode
 
-/** Opens the document in its document window: `view` (default) or straight to the editor (`edit`). */
+/**
+ * Opens the document in its document window: `view` (default) or straight to the editor (`edit`). While an
+ * upload guards the document an edit request opens (or brings back) the window in the view.
+ */
 export function openDocument(docId: string, mode: OpenDocumentMode = 'view'): void {
-  if (docId) openDocumentWindow(docId, mode)
+  if (docId) openDocumentWindow(docId, mode === 'edit' && documentIoGuarded(docId) ? 'view' : mode)
+}
+
+/** flowgate.v02.0068 T#1 — the [업로드][다운로드] group of one document (a document line's `io` slot). */
+export { DocumentIoGroup }
+
+/** flowgate.v02.0068 T#1 — the Designer is left: running uploads / downloads end quietly (L §2.11). */
+export function leaveDocumentIo(): void {
+  documentIoLeave()
+}
+
+/** flowgate.v02.0068 T#1 — another project: what the buttons knew about documents is read again (L §2.15). */
+export function forgetDocumentIo(): void {
+  documentIoForget()
 }
 
 /** Opens the document's review history (AI reviews · rejections · AI responses) in its own window. */

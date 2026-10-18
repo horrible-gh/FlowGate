@@ -21,7 +21,10 @@
        [AI 호출], an `action` event with the key) and its history number with the AI review / rejection split
        for the history button's hover text (`historyDetail`).
        flowgate.v02.0056 (0017-CH) — [AI 호출] is a robot icon button (its words the tooltip, a spinner while it runs).
-       A blank line's document icon is the hollow outline (no "비어 있음" words). -->
+       A blank line's document icon is the hollow outline (no "비어 있음" words).
+       flowgate.v02.0068 T#1 — the `io` scoped slot (`{ line, docId }`): drawn before the buttons of a line that has
+       a document — a document line with an id, not empty, not a nav line. The card feature puts the document's
+       [업로드][다운로드] group there; result and nav lines and lines without a document get none. -->
   <div class="inspector-slot-list" data-test="inspector-slot-list">
     <InspectorSlotRow
       v-for="line in slots"
@@ -46,6 +49,9 @@
     >
       <template v-if="$slots.summary" #summary>
         <slot name="summary" :line="line" />
+      </template>
+      <template v-if="$slots.io && hasDocument(line)" #io>
+        <slot name="io" :line="line" :doc-id="line.id!" />
       </template>
       <InspectorReviewBadge
         v-if="line.review"
@@ -208,6 +214,11 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+/** flowgate.v02.0068 T#1: a line that stands for a document of its own (the upload / download group's lines). */
+function hasDocument(line: InspectorSlotView): boolean {
+  return (line.kind ?? 'document') === 'document' && !!line.id && !line.empty && !line.nav
+}
 
 /** Opening a line: a line whose document has no body yet opens straight in its editor (flowgate.v02.0056 F2-2). */
 function open(line: InspectorSlotView) {

@@ -25,7 +25,16 @@
 //
 // The response is the documents row plus workflow / review extras; only the fields below are
 // taken, snake_case -> camelCase. The v0.1 response shape is not changed.
-import { getRequest, patchRequest } from '@shared/api'
+//
+// flowgate.v02.0068 T#1 — document upload / download (D §3.1, L §2.14 / §2.15). The upload / download
+// buttons read the same document as `documentRead` and keep, besides the record (`is_editable` included),
+// the server's `download_available` when it is a boolean (`toDocumentInfo` / `documentInfoRead`; the
+// record shape other readers compare stays as it is). An upload is the content save above. The download
+// is the existing canonical Markdown download (document-read permission):
+//   download   GET /api/v1/document/{doc_id}/download   (403 / 404 no document or no file / 422 / 500)
+// The file comes as a blob (the request carries the bearer header); a refusal also arrives as a blob and
+// is read back into the JSON envelope before it is thrown, so documentErrorOf reads its status.
+import { downloadBlobRequest, getRequest, patchRequest } from '@shared/api'
 import { normalizeApiInput } from '@shared/apiErrors'
 import { documentErrorOf } from '../documentError'
 
@@ -83,6 +92,25 @@ export function toDocumentRecord(raw: unknown): DocumentRecord {
 export async function documentRead(docId: string): Promise<DocumentRecord> {
   const response = await getRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}`)
   return toDocumentRecord(response.data)
+}
+
+/** A document as the upload / download buttons judge it (flowgate.v02.0068, L §2.15). */
+export interface DocumentInfo extends DocumentRecord {
+  /** The server has a readable Markdown file to download; absent when it did not say (as a boolean). */
+  readonly downloadAvailable?: boolean
+}
+
+/** The v0.1 document response -> DocumentInfo: the record plus `download_available` when it is a boolean. */
+export function toDocumentInfo(raw: unknown): DocumentInfo {
+  const record = toDocumentRecord(raw)
+  const value = (raw as Raw).download_available
+  return typeof value === 'boolean' ? { ...record, downloadAvailable: value } : record
+}
+
+/** Reads one document for the upload / download buttons. Transport errors are thrown as they are. */
+export async function documentInfoRead(docId: string): Promise<DocumentInfo> {
+  const response = await getRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}`)
+  return toDocumentInfo(response.data)
 }
 
 /** One rejection of a document (`rejection_history` item). */
@@ -191,4 +219,47 @@ export async function documentContentRead(docId: string): Promise<DocumentConten
 /** Saves a document's whole body (frontmatter included). Errors are thrown as they are. */
 export async function documentContentSave(docId: string, content: string): Promise<void> {
   await patchRequest<unknown>(`${API}/documents/content`, { doc_id: docId, content })
+}
+
+/** A downloaded document file (flowgate.v02.0068): the server's canonical Markdown and its file name. */
+export interface DocumentDownload {
+  readonly blob: Blob
+  /** The `Content-Disposition` header as sent, or null (the caller picks the file name). */
+  readonly disposition: string | null
+}
+
+/** Downloads a document's stored Markdown as the server keeps it. Errors are thrown as they are. */
+export async function documentDownload(docId: string): Promise<DocumentDownload> {
+  try {
+    const response = await downloadBlobRequest(`${API}/document/${encodeURIComponent(docId)}/download`)
+    const headers = (response.headers ?? {}) as Record<string, unknown>
+    const disposition = headers['content-disposition']
+    return { blob: response.data, disposition: typeof disposition === 'string' && disposition ? disposition : null }
+  } catch (error) {
+    await readDownloadRefusal(error)
+    throw error
+  }
+}
+
+async function readDownloadRefusal(error: unknown): Promise<void> {
+  const response = error && typeof error === 'object' ? (error as Raw).response : null
+  if (!response || typeof response !== 'object') return
+  const holder = response as Raw
+  const data = holder.data
+  if (typeof Blob === 'undefined' || !(data instanceof Blob)) return
+  try {
+    holder.data = JSON.parse(await blobText(data))
+  } catch {
+    // Not JSON: the status alone is read.
+  }
+}
+
+function blobText(blob: Blob): Promise<string> {
+  if (typeof blob.text === 'function') return blob.text()
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(blob)
+  })
 }

@@ -7,7 +7,10 @@
        flowgate.v02.0053 T#5 (0053 CH) — a Custom card shows 지시서 · 레포트 like 조사 · 작업 (its 지시서 line hidden
        when its settings omit the instruction, useGateCard); a document line's name has no type code. -->
   <section v-if="lines.length" class="inspector-gate-card" data-test="inspector-gate-card" :data-shape="shape">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action" />
+    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
+      <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
+      <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" /></template>
+    </InspectorSlotList>
   </section>
 </template>
 
@@ -15,7 +18,7 @@
 import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { INSPECTOR_HOST } from '../../inspectorHost'
-import { cardLineRow, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
+import { cardLineRow, DocumentIoGroup, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
 import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import { gateCardShape, gateCardSlots, type GateSlot } from './gateCardModel'
