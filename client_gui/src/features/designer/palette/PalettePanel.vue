@@ -3,7 +3,9 @@
        Palette). It owns only its own content: the category sections, the cards and the add
        dialog. The surrounding Tool Panel (팔레트 / 대화 / Git tabs, header, collapse, width) mounts
        it and owns all of that chrome (R0001 §4). It never drops, places or creates a Node: it
-       hands the Designer a select intent and a drag intent (R0001 §2.3). -->
+       hands the Designer a select intent and a drag intent (R0001 §2.3).
+       flowgate.v02.0060 T#2: inside the Designer a right click on a card goes to the Designer context menu with that
+       card's definition (its 카드 추가 selects it only when chosen); the blank Palette is no menu target. -->
   <section class="designer-palette" data-test="designer-palette" :aria-label="t('gui.designer.palette.label')">
     <div
       v-for="(section, index) in sections"
@@ -40,6 +42,7 @@
           :selected="(selectedItemId === undefined ? selectedId : selectedItemId) === item.id"
           @select="onSelect(item)"
           @dragstart="onDragStart(item, $event)"
+          @contextmenu="onContext(item, $event)"
         />
       </div>
     </div>
@@ -49,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, inject, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PaletteAddDialog from './PaletteAddDialog.vue'
 import PaletteCard from './PaletteCard.vue'
@@ -116,6 +119,22 @@ function onDragStart(item: PaletteItem, event: DragEvent) {
   const definition = definitionOf(item)
   if (event.dataTransfer) writePaletteDragData(event.dataTransfer, definition)
   emit('drag-start', definition, event)
+}
+
+/** flowgate.v02.0060 T#2: the Designer context menu's Palette side, provided by the Designer Shell; null elsewhere. */
+interface PaletteContextMenu {
+  palette(event: MouseEvent, entry: { definition: PaletteItemDefinition; alive?: () => boolean; fallback?: HTMLElement | null }): boolean
+}
+const contextMenu = inject<PaletteContextMenu | null>(Symbol.for('flowgate.designer.contextMenu'), null)
+
+/** A right click on a card: the menu only — nothing is selected until its 카드 추가 is chosen. */
+function onContext(item: PaletteItem, event: MouseEvent) {
+  if (!contextMenu) return
+  contextMenu.palette(event, {
+    definition: definitionOf(item),
+    alive: () => allItems.value.some((shown) => shown.id === item.id),
+    fallback: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+  })
 }
 
 function onAdd(item: CustomPaletteItem) {

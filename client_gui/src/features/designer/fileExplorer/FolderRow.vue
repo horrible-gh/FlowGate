@@ -10,7 +10,7 @@
     @keydown.space.prevent="$emit('toggle', row.node)"
     @keydown.right.prevent="!row.expanded && $emit('toggle', row.node)"
     @keydown.left.prevent="row.expanded && $emit('toggle', row.node)"
-    @contextmenu.prevent="$emit('context', row.node, $event)"
+    @contextmenu="$emit('context', row.node, $event); $event.preventDefault()"
   >
     <template #lead>
       <TreeCaret :expanded="row.expanded" :has-children="row.hasChildren" @toggle="$emit('toggle', row.node)" />

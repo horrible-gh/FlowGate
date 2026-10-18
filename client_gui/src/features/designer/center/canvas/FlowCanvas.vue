@@ -22,6 +22,11 @@
        pan / zoom), and a dragged card lands on one of its dots; 자율형 has no lattice and shows no grid.
        flowgate.v02.0061 T#15: a right click on a card opens its context menu (the shared ContextMenu, `card-menu` gives
        the items) — Hold 설정 / 해제 and, on a done card, 되돌리기; the chosen item goes up as `node-menu`.
+       flowgate.v02.0064 T#4: with `save-title` a card's title opens for inline editing (FlowNodeCard) — never while a
+       connection is dragged; keys typed into any text field never reach the Canvas keys (remove, undo, Escape).
+       flowgate.v02.0060 T#2: inside the Designer (its context menu injected) a right click on a card, a line or the blank
+       Canvas goes to the Designer context menu, which also carries the card's menu above; the right button's press and
+       its held move / release never reach Vue Flow (the menu's gesture guard on this root). -->
        flowgate.v02.0064 T#4: keys typed into any text field never reach the Canvas keys (remove, undo, Escape).
        flowgate.v02.0070 T#1 (B1): a card only shows its title; it is edited in the Inspector header. -->
   <div
@@ -43,6 +48,7 @@
     @dragover="onDragOver"
     @drop="onDrop"
     @keydown="onKeydown"
+    @contextmenu="onCanvasContextMenu"
   >
     <!-- Dot grid drawn here (no extra Vue Flow package); it follows pan / zoom. 0018-TR rework: its dots are
          the move step's lattice points (canvasView.ts canvasDotGrid). -->
@@ -100,6 +106,7 @@
       @edge-click="onEdgeClick"
       @edge-double-click="onEdgeDoubleClick"
       @node-context-menu="onNodeContextMenu"
+      @edge-context-menu="onEdgeContextMenu"
     >
       <template #node-flowgate="nodeProps">
         <FlowNodeCard
@@ -190,7 +197,7 @@
 // to the pointer (the others keep their offset to it), a drop pushed back inside the origin moves in whole steps,
 // and the dot grid draws exactly those points (canvasView.ts canvasDotGrid) — a new step redraws the grid only.
 import '@vue-flow/core/dist/style.css'
-import { computed, ref, shallowRef, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   VueFlow,
@@ -475,6 +482,10 @@ const cardMenuItems = computed<ContextMenuItem[]>(() => {
 })
 
 function onNodeContextMenu({ event, node }: NodeMouseEvent) {
+  if (contextMenu) {
+    if ('clientX' in event) contextMenu.canvas(event, { flowId: props.flowId, kind: 'node', nodeId: node.id, fallback: canvasEl.value })
+    return
+  }
   if (!props.cardMenu || !('clientX' in event) || props.cardMenu(node.id).length === 0) return
   event.preventDefault()
   selectedEdgeId.value = null
@@ -485,6 +496,39 @@ function onNodeContextMenu({ event, node }: NodeMouseEvent) {
 function onCardMenuSelect(entry: ContextMenuItem) {
   const nodeId = menuNodeId.value
   if (nodeId !== null) emit('node-menu', nodeId, entry.key as FlowCardMenuKey)
+}
+
+// ── flowgate.v02.0060 T#2: the Designer context menu ─────────────────────────────────────────────
+
+/** The Designer context menu's Canvas side (contextMenu/attach), provided by the Designer Shell; null elsewhere. */
+interface CanvasContextMenu {
+  canvas(
+    event: MouseEvent,
+    entry: { flowId: string; kind: 'canvas' | 'node' | 'edge'; nodeId?: string; edgeId?: string; canvas?: { x: number; y: number }; fallback?: HTMLElement | null },
+  ): boolean
+  guardCanvas(element: HTMLElement): () => void
+}
+const contextMenu = inject<CanvasContextMenu | null>(Symbol.for('flowgate.designer.contextMenu'), null)
+let releaseGuard: (() => void) | null = null
+
+onMounted(() => {
+  if (contextMenu && canvasEl.value) releaseGuard = contextMenu.guardCanvas(canvasEl.value)
+})
+onBeforeUnmount(() => {
+  releaseGuard?.()
+  releaseGuard = null
+})
+
+function onEdgeContextMenu({ event, edge }: EdgeMouseEvent) {
+  if (contextMenu && 'clientX' in event) contextMenu.canvas(event, { flowId: props.flowId, kind: 'edge', edgeId: edge.id, fallback: canvasEl.value })
+}
+
+/** Anywhere else on the Canvas: the blank Canvas at the Graph point under the pointer (a card or line took it first). */
+function onCanvasContextMenu(event: MouseEvent) {
+  if (!contextMenu || !flow.value) return
+  const point = flow.value.screenToFlowCoordinate({ x: event.clientX, y: event.clientY })
+  const canvas = { x: Math.max(0, Math.round(point.x)), y: Math.max(0, Math.round(point.y)) }
+  contextMenu.canvas(event, { flowId: props.flowId, kind: 'canvas', canvas, fallback: canvasEl.value })
 }
 
 // ── flowgate.v02.0045 T0019: Edge selection and removal ───────────────────────────────────────
