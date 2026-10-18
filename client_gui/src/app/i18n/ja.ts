@@ -14,8 +14,8 @@ export default {
       action: "復旧",
       done: "本文を復旧しました。",
       loss: {
-        possible: "本文が失われた可能性があります — 文書の担当者に再入力を依頼してください。",
-        lost: "本文が失われました — 文書の担当者に再入力を依頼してください。",
+        possible: "本文の一部を確認できません。",
+        lost: "本文を確認できません。",
       },
       guide: {
         fix_storage_root: "保存先の基準設定を確認してください。別の基準位置でこの文書のファイルが見つかりました。",
@@ -496,7 +496,8 @@ export default {
         history_count: 'レビュー・差し戻し履歴 {n}件',
         // flowgate.v02.0056 F2-2 — a card line's document without a body yet (O3 has_body), the row actions and the
         // history button's hover text with the AI review / rejection split.
-        blank: '空です',
+        // flowgate.v02.0070 T#4 (B4): drawn in the line, told from 文書なし (a document that has no body).
+        blank: '本文が空です',
         actions: {
           write: '作成',
           ai_invoke: 'AI 呼び出し',

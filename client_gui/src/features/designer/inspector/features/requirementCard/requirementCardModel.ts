@@ -1,5 +1,5 @@
 // flowgate.v02.0051 stage 2 — the 요구사항 / 버그 card's own lines (0035 v7 req.*): one document slot,
-// 요구사항 or 버그 리포트 by the document type. Pure functions over the target; nothing reads the server.
+// 요구사항 or 버그 by the document type. Pure functions over the target; nothing reads the server.
 // flowgate.v02.0053 T#5 (0053 CH) — 요구사항 · AI 위임 (only while AI 위임 is on): the lines are the card's
 // documents the server keeps (T#1 / T#2 card lines). The AI 위임 engine is not in this range — its line is
 // the empty record document the setting made, opened like any other.
@@ -14,7 +14,7 @@ export interface RequirementSlotState {
 }
 
 export interface RequirementSlot {
-  /** `document`: the root document line (요구사항 / 버그 리포트); `delegation`: the AI 위임 line. */
+  /** `document`: the root document line (요구사항 / 버그); `delegation`: the AI 위임 line. */
   readonly key: 'document' | 'delegation'
   readonly kind: 'document' | 'result'
   /** Which name the line carries. */
@@ -62,7 +62,7 @@ export function requirementSlotFocus(state: RequirementSlotState | null): boolea
   return state !== null && (state.raw === 'pending_review' || state.raw === 'rejected')
 }
 
-/** The line name: 버그 리포트 for a B document, 요구사항 otherwise. */
+/** The line name: 버그 for a B document, 요구사항 otherwise. */
 export function requirementSlotName(docType: string | null | undefined): RequirementSlot['name'] {
   return docType?.trim().toUpperCase() === 'B' ? 'bug' : 'requirement'
 }

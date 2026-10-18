@@ -5,7 +5,7 @@
        document (DocumentAiWindow).
        flowgate.v02.0068 T#1 — and the notices of the document upload / download (one toast host for the
        Inspector's lines and the windows' headers). -->
-  <DocumentWindow v-for="win in windows" :key="win.docId" :win="win" />
+  <DocumentWindow v-for="win in windows" :key="win.id" :win="win" />
   <DocumentHistoryWindow v-for="win in historyWindows" :key="`history:${win.docId}`" :win="win" />
   <SlotWriteWindow v-for="win in writeWindows" :key="`write:${win.key}`" :win="win" />
   <DocumentAiWindow v-for="win in aiWindows" :key="`ai:${win.docId}`" :win="win" />

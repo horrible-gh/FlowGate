@@ -408,7 +408,7 @@ const CHIPS: readonly { tone: InspectorChipTone; label: string }[] = [
 /** The card parts drawn from a target alone (no server read), one sample per document state. */
 const CARD_SAMPLES = [
   { caption: '요구사항 · 작성 중 (unassigned · 문서 있음)', component: RequirementSlots, target: REQ_DRAFT },
-  { caption: '버그 · 작성 중 — 줄 이름이 버그 리포트', component: RequirementSlots, target: REQ_BUG },
+  { caption: '버그 · 작성 중 — 줄 이름이 버그', component: RequirementSlots, target: REQ_BUG },
   { caption: '요구사항 (Graph Node · 문서 없음) — 빈 줄 · ＋ 비활성', component: RequirementSlots, target: REQ_NO_DOCUMENT },
   { caption: '조사 · 지시서 (N) 승인 (v0.1) — 레포트는 “실행 후”', component: ResearchSlots, target: RESEARCH_N },
   { caption: '조사 · 레포트 (NR) 검수 대기 (v0.1) — 레포트 줄 강조, 지시서는 연결 전', component: ResearchSlots, target: RESEARCH_NR_REVIEW },

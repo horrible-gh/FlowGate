@@ -1,16 +1,18 @@
 <template>
   <!-- flowgate.v02.0048 T#10 — the R↔B kind switch (D#1 §10.2 종류 전환 row, D#2 §3.4): on an unassigned
-       Flow's requirement / bug root, the root turns into the other kind after a confirmation (the doc_id
-       changes). A thin container: useKindSwitch reads and calls, kindSwitchModel decides what is shown
+       Flow's requirement / bug root, the root turns into the other kind (the doc_id
+       changes; no confirmation since 0070, below). A thin container: useKindSwitch reads and calls, kindSwitchModel decides what is shown
        and usable. A refused switch shows why and the state is read again.
        flowgate.v02.0051 stage 2 — drawn as the v7 header 종류 배지 ▾ (0035 insp.js kindBadge): the badge
        itself is the trigger, its menu lists 📄 요구사항 / 🐞 버그 with ✓ on the current kind, and picking
-       the other opens the confirmation. A switch that is not usable now shows the locked badge with the
+       the other switches. A switch that is not usable now shows the locked badge with the
        reason as its hover text (v7 `.kind-badge.locked`).
-       flowgate.v02.0064 T#4 (P0006 §6.1): the confirmation follows the server's judgement — a number swap keeps
-       the short confirmation, a succession names the new document (or its expected number, fixed when the switch
-       runs), the child documents and that the original and its history stay. The link of a succeeded document to
-       the document it came from ("전환 전 문서") is not the switch's: features/kindSwitchOrigin, on every ownership. -->
+       flowgate.v02.0064 T#4 (P0006 §6.1): the server judges the switch (a number swap or a succession); a refused
+       judgement locks the badge with its reason. The link of a succeeded document to the document it came from
+       ("전환 전 문서") is not the switch's: features/kindSwitchOrigin, on every ownership.
+       flowgate.v02.0070 (0015-T T2): picking 요구사항 ↔ 버그 in the menu asks the server at once — no confirmation,
+       for a number swap and a succession alike (the same PATCH root-type; the server decides how it runs). The
+       pick waits for nothing before the call, so a pick never runs after the Node or this part is gone. -->
   <div
     v-if="availability.switch.visible && to"
     class="inspector-kind-switch"
@@ -58,24 +60,13 @@
     <span v-if="line" class="inspector-kind-switch-line" :title="line.text" data-test="kind-switch-line" :data-kind="line.kind">
       <InspectorReason :text="line.text" :tone="line.tone" />
     </span>
-
-    <ConfirmDialog
-      :open="confirmOpen"
-      :title="confirmTitle"
-      :message="confirmMessage"
-      :confirm-label="t(k('confirm.submit'))"
-      :cancel-label="t(k('confirm.cancel'))"
-      @confirm="submit"
-      @cancel="closeConfirm"
-    />
   </div>
   <span v-else class="inspector-kind-badge is-static" data-test="designer-inspector-kind">{{ names.from }}</span>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import ConfirmDialog from '../../../../../components/ui/ConfirmDialog.vue'
 import Dropdown from '../../../../../components/ui/Dropdown.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
@@ -92,7 +83,7 @@ const k = (key: string) => `gui.inspector.kindSwitch.${key}`
 
 const KINDS: readonly KindSwitchKind[] = ['R', 'B']
 
-const { availability, to, busy, failureKey, done, preview, run, clearFailure } = useKindSwitch(() => props.target)
+const { availability, to, busy, failureKey, done, run, clearFailure } = useKindSwitch(() => props.target)
 
 /** The current kind: the one the switch leaves; the document type when there is no switch. */
 const from = computed<KindSwitchKind | null>(() => {
@@ -102,32 +93,13 @@ const from = computed<KindSwitchKind | null>(() => {
   return type === 'B' ? 'B' : type === 'R' ? 'R' : null
 })
 
-/** The kind names the strings use ({from} / {to}). */
+/** The kind names the strings use ({from}). */
 const names = computed(() => ({
   from: from.value ? t(k(`kinds.${from.value}`)) : '',
-  to: to.value ? t(k(`kinds.${to.value}`)) : '',
 }))
 
 /** `…0001-R` -> `0001-R`: the document number the switch changes. */
 const codeOf = (docId: string | null) => (docId ?? '').split('.').pop() ?? ''
-
-/** A succession judged by the server (the confirmation names the new document and the children). */
-const succession = computed(() => (preview.value?.decision === 'succession' ? preview.value : null))
-
-const confirmTitle = computed(() => t(k(succession.value ? 'confirm.succession.title' : 'confirm.title')))
-
-const confirmMessage = computed(() => {
-  const fromCode = codeOf(props.target.docId)
-  const judged = succession.value
-  if (judged) {
-    const newCode = codeOf(judged.newDocId)
-    const toCode = judged.newDocExact ? newCode : t(k('confirm.succession.expected'), { code: newCode })
-    return t(k('confirm.succession.body'), { ...names.value, from_code: fromCode, to_code: toCode, children: judged.childCount })
-  }
-  const swapped = preview.value?.decision === 'number_swap' && preview.value.newDocId ? codeOf(preview.value.newDocId) : null
-  const toCode = swapped ?? (to.value ? fromCode.replace(/-[RB]$/i, `-${to.value}`) : fromCode)
-  return t(k('confirm.message'), { ...names.value, from_code: fromCode, to_code: toCode })
-})
 
 /** Hover text of the badge: the disabled reason, else the v7 hint ("종류 전환: 그룹의 첫 실행 전까지"). */
 const badgeTitle = computed(() => {
@@ -146,36 +118,13 @@ const line = computed(() => {
   return null
 })
 
-const confirmOpen = ref(false)
-
+/** The other kind was picked: the switch is asked at once, with no confirmation and nothing awaited first. */
 function pick(kind: KindSwitchKind, close: () => void) {
   close()
-  if (kind === from.value || kind !== to.value) return
-  openConfirm()
-}
-
-function openConfirm() {
-  if (!availability.value.switch.enabled) return
+  if (kind === from.value || kind !== to.value || !availability.value.switch.enabled) return
   clearFailure()
-  confirmOpen.value = true
+  void run()
 }
-
-function closeConfirm() {
-  confirmOpen.value = false
-}
-
-async function submit() {
-  confirmOpen.value = false
-  await run()
-}
-
-// Another Node: its confirmation does not follow.
-watch(
-  () => props.target.nodeId,
-  () => {
-    confirmOpen.value = false
-  },
-)
 </script>
 
 <style scoped>

@@ -65,6 +65,9 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       /^\.\.\/top\/designerTop$/,
       // flowgate.v02.0043 — File menu dialogs (Group / Flow 열기, 새 Group / Flow).
       /^\.\.\/fileMenu\/Designer[A-Za-z]+Dialog\.vue$/,
+      // flowgate.v02.0060 T#2 — the Designer context menu (0006-D rev2 §4.2): its view and the host / area connectors.
+      /^\.\.\/contextMenu\/DesignerContextMenu\.vue$/,
+      /^\.\.\/contextMenu\/attach\/designerMenuConnector$/,
       // flowgate.v02.0046 — Dock resize handles: the shared single-axis drag interaction.
       /^\.\.\/\.\.\/\.\.\/core\/interaction\/axisResize$/,
     ]

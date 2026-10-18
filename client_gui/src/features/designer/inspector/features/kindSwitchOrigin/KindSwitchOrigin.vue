@@ -1,14 +1,16 @@
 <template>
   <!-- flowgate.v02.0064 T#4 rework (P0006 §3.3) — the header meta part of a document made by an R↔B succession:
        "전환 전 문서: 0001-R" opens the document it came from (useKindSwitchOrigin: the plain document read, no switch
-       judgement, whatever the Flow's ownership); a document that was not succeeded shows nothing. -->
+       judgement, whatever the Flow's ownership); a document that was not succeeded shows nothing.
+       flowgate.v02.0070 T#4 (B4): it opens that exact id as history (openDocument `exact`) — not the document the old one
+       is succeeded by — read only, with the old document's Q&A history under its body. -->
   <button
     v-if="convertedFrom"
     type="button"
     class="inspector-kind-switch-from"
     data-test="kind-switch-converted-from"
     :data-doc="convertedFrom.docId"
-    @click="openDocument(convertedFrom.docId)"
+    @click="openDocument(convertedFrom.docId, 'view', { exact: true, target })"
   >{{ t('gui.inspector.kindSwitchOrigin.converted_from', { doc: codeOf(convertedFrom.docId) }) }}</button>
 </template>
 

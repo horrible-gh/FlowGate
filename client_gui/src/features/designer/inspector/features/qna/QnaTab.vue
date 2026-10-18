@@ -27,7 +27,15 @@
        no question line, answer form or AI line (qnaAvailability `visible`).
        flowgate.v02.0064 T-B5 (P0006 §5.2·§6.4) — who answered reads one of four classes (person by name /
        AI · provider / AI run not linked / AI no run information) plus unknown; the list shows the side only,
-       the window's answer adds the answer time and the run id when there is one. -->
+       the window's answer adds the answer time and the run id when there is one.
+       flowgate.v02.0070 T#4 (B4) — `history`: the questions of a document read as history (the document an R↔B
+       succession came from, in its exact document window): the same list and ↗ windows, read only — no question
+       line, answer form or AI line, and the ↗ window says 읽기 전용.
+       flowgate.v02.0070 T#5 (B5) — the list is for looking over and opening: each line keeps the question (one line,
+       ellipsis), its state, who asked and [열기] — no options, answer field, send or AI line. The ↗ window is where a
+       question is answered: the document id (full), who asked and when, the full question, the answers, then the
+       stored options, the answer field, send and the AI line. While the body cannot be checked (unreadable, not known,
+       history) the window shows one line instead of them (history: the 읽기 전용 badge); reading stays. -->
   <div class="inspector-qna" data-test="inspector-qna" :data-status="status">
     <div v-if="availability.ask.visible" class="inspector-qna-ask" data-test="qna-ask">
       <Input
@@ -88,15 +96,6 @@
                 </span>
                 <small class="inspector-qna-small">
                   <span data-test="qna-item-asker" :data-side="item.asker.kind">{{ sideText(item.asker) }}</span>
-                  <template v-if="lastAnswerOf(item)">
-                    <span class="inspector-qna-sep" aria-hidden="true">·</span>
-                    <span class="inspector-qna-last" data-test="qna-answer" :data-side="lastAnswerOf(item)!.side.kind" :data-side-class="lastAnswerOf(item)!.side.sideClass">
-                      <span aria-hidden="true">↳</span>
-                      <span class="inspector-qna-last-body" data-test="qna-answer-body">{{ lastAnswerOf(item)!.body }}</span>
-                      <span v-if="lastAnswerOf(item)!.picked.length" class="inspector-qna-by" data-test="qna-answer-picked">{{ t(k('picked'), { labels: lastAnswerOf(item)!.picked.join(', ') }) }}</span>
-                      <span class="inspector-qna-by" data-test="qna-answer-side">{{ t(k('answered_by'), { side: sideText(lastAnswerOf(item)!.side) }) }}</span>
-                    </span>
-                  </template>
                 </small>
               </div>
               <!-- flowgate.v02.0053 T#5 (0053 CH): the same document icon as the document lines (tooltip 열기). -->
@@ -107,77 +106,14 @@
                 @click="openWindow(item.id)"
               />
             </div>
-
-            <!-- v7 `.q-ans`: the short inline answer under a question without an answer. -->
-            <div v-if="item.answerable && availability.answer.visible" class="inspector-qna-answer" data-test="qna-answer-form">
-              <div v-if="item.options.length" class="inspector-qna-options" role="group" :aria-label="t(k('options'))">
-                <Button
-                  v-for="option in item.options"
-                  :key="option.id"
-                  size="sm"
-                  :variant="pickedId(item.id) === option.id ? 'primary' : 'secondary'"
-                  :aria-pressed="pickedId(item.id) === option.id"
-                  :disabled="!availability.answer.enabled"
-                  data-test="qna-option"
-                  :data-option="option.id"
-                  @click="pick(item.id, option.id)"
-                >{{ option.label }}</Button>
-              </div>
-              <div class="inspector-qna-send">
-                <Textarea
-                  class="inspector-qna-field"
-                  :model-value="bodyOf(item.id)"
-                  :rows="1"
-                  :placeholder="t(k('answer_short_placeholder'))"
-                  :disabled="!availability.answer.enabled"
-                  data-test="qna-answer-body-input"
-                  @update:model-value="(value: string) => setBody(item.id, value)"
-                />
-                <Button
-                  size="sm"
-                  variant="primary"
-                  :disabled="!availability.answer.enabled || !canSend(item.id)"
-                  :loading="busy === item.id"
-                  :title="answerTitle"
-                  data-test="qna-answer-submit"
-                  @click="submit(item.id)"
-                >{{ t(k('send')) }}</Button>
-              </div>
-              <!-- flowgate.v02.0056 F1: the AI line — pick an AI, ask it; the request state beside the button. -->
-              <div v-if="availability.ai_request.visible" class="inspector-qna-ai" data-test="qna-ai">
-                <Select
-                  class="inspector-qna-ai-pick"
-                  :model-value="aiPickOf(item.id)"
-                  :options="providerOptions"
-                  :placeholder="providerPlaceholder"
-                  :disabled="!availability.ai_request.enabled || !providers.length"
-                  :aria-label="t(k('ai_provider'))"
-                  data-test="qna-ai-provider"
-                  @update:model-value="(value: string) => setAiPick(item.id, value)"
-                />
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  :disabled="!availability.ai_request.enabled || !aiPickOf(item.id)"
-                  :loading="requesting === item.id"
-                  :title="aiTitle"
-                  data-test="qna-ai-request"
-                  @click="requestAiFor(item.id)"
-                >{{ t(k('ai_request')) }}</Button>
-                <InspectorStatusChip v-if="awaiting.has(item.id)" :label="t(k('ai_waiting'))" tone="running" dot data-test="qna-ai-waiting" />
-                <InspectorFailureIcon v-if="aiFailure && aiFailure.itemId === item.id" :name="t(k('ai_failed'))" :reason="t(k(aiFailure.key))" data-test="qna-ai-failure" />
-              </div>
-              <div v-if="failure && failure.itemId === item.id" data-test="qna-answer-failure">
-                <InspectorReason tone="danger" :text="t(k(failure.key))" />
-              </div>
-            </div>
           </li>
         </template>
       </ul>
     </template>
 
     <!-- v7 ↗ (0035 insp.js openQA / openWin): one modeless window per opened question — the full
-         question, every answer and the full answer form; several may be open at once. -->
+         question, every answer and the full answer form; several may be open at once.
+         flowgate.v02.0070 T#5: the only place a question is answered, after its context above the form. -->
     <ModelessShell
       v-for="(win, index) in windows"
       :key="win.id"
@@ -208,10 +144,18 @@
           <div class="inspector-qna-window-head">
             <InspectorStatusChip :label="t(k(stateKey(windowItem(win.id)!.state)))" :tone="toneOf(windowItem(win.id)!.state)" data-test="qna-window-state" />
             <span class="inspector-qna-sub" data-test="qna-window-asker">{{ t(k('asked_by'), { side: sideText(windowItem(win.id)!.asker) }) }}</span>
+            <span v-if="windowItem(win.id)!.createdAt" class="inspector-qna-sub" data-test="qna-window-asked-at">{{ t(k('detail.asked_at'), { at: formatAt(windowItem(win.id)!.createdAt!) }) }}</span>
             <InspectorStatusChip v-if="awaiting.has(win.id)" :label="t(k('ai_waiting'))" tone="running" dot data-test="qna-window-ai-waiting" />
           </div>
+          <span v-if="windowItem(win.id)!.docId" class="inspector-qna-sub inspector-qna-window-doc" data-test="qna-window-doc">{{ t(k('detail.doc'), { docId: windowItem(win.id)!.docId }) }}</span>
           <p v-if="windowItem(win.id)!.title" class="inspector-qna-window-q">{{ windowItem(win.id)!.title }}</p>
           <p class="inspector-qna-text" data-test="qna-window-body">{{ windowItem(win.id)!.body }}</p>
+          <!-- flowgate.v02.0070 T#5: the stored options stay readable where they cannot be picked. -->
+          <span
+            v-if="windowItem(win.id)!.options.length && !(windowItem(win.id)!.answerable && availability.answer.visible)"
+            class="inspector-qna-sub"
+            data-test="qna-window-options"
+          >{{ t(k('options_list'), { labels: windowItem(win.id)!.options.map((option) => option.label).join(', ') }) }}</span>
 
           <ul v-if="windowItem(win.id)!.answers.length" class="inspector-qna-answers">
             <li v-for="answer in windowItem(win.id)!.answers" :key="answer.key" data-test="qna-window-answer" :data-side="answer.side.kind" :data-side-class="answer.side.sideClass">
@@ -282,6 +226,7 @@
               <InspectorReason tone="danger" :text="t(k(failure.key))" />
             </div>
           </div>
+          <p v-else-if="windowItem(win.id)!.answerable && bodyLine" class="inspector-qna-text inspector-qna-sub" data-test="qna-window-blocked">{{ t(k(bodyLine)) }}</p>
         </template>
         <InspectorPaneState v-else state="empty" :message="t(k('window.gone'))" />
       </div>
@@ -304,11 +249,13 @@ import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorStatusChip, { type InspectorChipTone } from '../../parts/InspectorStatusChip.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { qnaAskReady, type QnaAnswerView, type QnaItemState, type QnaItemView, type QnaSide } from './qnaModel'
+import { qnaAskReady, qnaBodyLine, type QnaAvailability, type QnaItemState, type QnaItemView, type QnaSide } from './qnaModel'
 import { useQna } from './useQna'
 
 const props = defineProps<{
   target: InspectorTarget
+  /** flowgate.v02.0070 T#4: read only history — the questions and answers are read, nothing is asked or answered. */
+  history?: boolean
 }>()
 
 const { t, locale } = useI18n()
@@ -317,7 +264,7 @@ const k = (key: string) => `gui.inspector.qna.${key}`
 
 const {
   items,
-  availability,
+  availability: liveAvailability,
   status,
   errorKey,
   busy,
@@ -335,7 +282,19 @@ const {
   defaultProviderId,
   providersStatus,
   reload,
-} = useQna(() => props.target)
+} = useQna(() => props.target, { history: () => props.history === true })
+
+/**
+ * History: only reading is offered. Answering and the AI line close in the model (0070 T#5 body context `history`);
+ * the question line closes here (asking is not this rule's).
+ */
+const HISTORY_CLOSED = { visible: false, enabled: false, reason: null } as const
+const availability = computed<QnaAvailability>(() =>
+  props.history ? { ...liveAvailability.value, ask: HISTORY_CLOSED } : liveAvailability.value,
+)
+
+/** flowgate.v02.0070 T#5: the window's one line while the body cannot be checked, or null. */
+const bodyLine = computed(() => qnaBodyLine(availability.value))
 
 // --- The question line (0053 T#6) ------------------------------------------------------------------
 
@@ -445,7 +404,7 @@ interface Draft {
 }
 
 // Unsent answers per question of the shown document (written by the handlers only, never in render).
-// The inline line and the ↗ window of one question share its draft.
+// flowgate.v02.0070 T#5: only the ↗ window writes one.
 const drafts = reactive<Record<number, Draft>>({})
 
 function draftOf(itemId: number): Draft {
@@ -501,10 +460,14 @@ function windowSub(item: QnaItemView): string {
   return item.seq === null ? title : `${t(k('question'), { seq: item.seq })} · ${title}`
 }
 
-/** The Flow is read only (the first reason answering is closed on): the window says so. */
+/**
+ * The Flow is read only (the first reason answering is closed on), or the questions are history (T#4; 0070 T#5: a
+ * superseded document too): the window says so.
+ */
 const readOnlyReason = computed(() => {
+  if (props.history) return 'window.view'
   const reason = availability.value.answer.reason
-  return reason !== null && reason.startsWith('reason.read_only_') ? reason : null
+  return reason !== null && (reason.startsWith('reason.read_only_') || reason === 'reason.history') ? reason : null
 })
 
 // --- Display ---------------------------------------------------------------------------------------
@@ -518,8 +481,6 @@ function formatAt(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale.value)
 }
-
-const lastAnswerOf = (item: QnaItemView): QnaAnswerView | null => item.answers[item.answers.length - 1] ?? null
 
 /** The first line of a question without a title. */
 function firstLine(body: string): string {
@@ -637,56 +598,16 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   white-space: nowrap;
 }
 
-.inspector-qna-last {
-  display: inline-flex;
-  gap: 4px;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.inspector-qna-last-body {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* v7 `.qa-by`. */
-.inspector-qna-by {
-  flex: 0 0 auto;
-  color: #c9b6ff;
-}
-
 .inspector-qna-open {
   flex: 0 0 auto;
 }
 
-/* v7 `.q-ans`: a short field and the send button in one line; the options above it. */
+/* The window's answer form: the options, the field, send, the AI line. */
 .inspector-qna-answer {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-}
-
-.inspector-qna-send {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.inspector-qna-send .inspector-qna-field {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 28px;
-  height: 28px;
-  padding: 4px 9px;
-  resize: none;
-  line-height: 18px;
-}
-
-.inspector-qna-send > :last-child {
-  flex: 0 0 auto;
 }
 
 /* The AI line (0056 F1): the picker, [AI 답변 요청], then the waiting chip or the refusal icon. */
@@ -811,6 +732,11 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+/* The full document id, wrapped rather than cut. */
+.inspector-qna-window-doc {
+  overflow-wrap: anywhere;
 }
 
 .inspector-qna-window-q {

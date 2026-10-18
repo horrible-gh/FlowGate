@@ -9,7 +9,7 @@
     @dblclick="open"
     @keydown.enter.prevent="open"
     @keydown.space.prevent="$emit('select', row.node)"
-    @contextmenu.prevent="$emit('context', row.node, $event)"
+    @contextmenu="$emit('context', row.node, $event); $event.preventDefault()"
   >
     <template #lead>
       <span class="dfx-caret-spacer" aria-hidden="true" />

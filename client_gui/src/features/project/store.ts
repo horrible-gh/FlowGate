@@ -21,6 +21,11 @@
 // lists (recentStorage.ts), closing the current Project, opening a recent Project the way the
 // Dialog's "열기" does, a Dialog open that asks for the create child, and the Group / Flow
 // creates (api.ts) that invalidate the cached group tree of their Project.
+//
+// flowgate.v02.0060 T#2 adds the Designer context menu's existing server commands (0006-D rev2 §4.3 2-B): Group / Flow
+// rename and Flow dispose (each invalidating the Project's cached tree, and keeping the recent lists' names — a
+// disposed Flow leaves the recent Flow list), and the Flow worktree's folder / file create, download, upload and
+// delete. Stateless pass-throughs like the loaders: the dialogs own their own submit / stale guards.
 
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
@@ -55,11 +60,18 @@ import type {
   RecentFlow,
   RecentGroup,
   RecentProject,
+  SourceDownload,
+  SourceMutationRefusal,
+  SourceUploadResult,
 } from './types'
 import {
   createFlow as createFlowApi,
   createGroup as createGroupApi,
   createProject as createProjectApi,
+  createSourceEntry as createSourceEntryApi,
+  deleteSourceEntry as deleteSourceEntryApi,
+  disposeFlow as disposeFlowApi,
+  downloadSourceEntry as downloadSourceEntryApi,
   fetchActiveProjects as fetchActiveProjectsApi,
   fetchBaseFileDiff,
   fetchFlowAiActivity,
@@ -69,7 +81,11 @@ import {
   fetchMergeReviewFileDiff,
   fetchProjectGitStatus,
   fetchProjectGroupTree as fetchProjectGroupTreeApi,
+  renameFlow as renameFlowApi,
+  sourceMutationRefusal,
+  renameGroup as renameGroupApi,
   suggestProjectSlug,
+  uploadSourceFiles as uploadSourceFilesApi,
 } from './api'
 import { fetchFlowCanvas, nodeTitleSave, saveFlowCanvasLayout as saveFlowCanvasLayoutApi } from './flowCanvasApi'
 import {
@@ -249,6 +265,26 @@ export const useProjectStore = defineStore('project', () => {
     writeRecentFlows(recentFlows.value)
   }
 
+  // flowgate.v02.0060 T#2: a renamed Group / Flow keeps its place in the recent lists with the new name; a disposed
+  // Flow leaves the recent Flow list (it can no longer be opened from there).
+  function renameRecent(kind: 'group' | 'flow', id: string, name: string): void {
+    if (kind === 'group') {
+      if (!recentGroups.value.some((entry) => entry.id === id)) return
+      recentGroups.value = recentGroups.value.map((entry) => (entry.id === id ? { ...entry, name } : entry))
+      writeRecentGroups(recentGroups.value)
+      return
+    }
+    if (!recentFlows.value.some((entry) => entry.id === id)) return
+    recentFlows.value = recentFlows.value.map((entry) => (entry.id === id ? { ...entry, name } : entry))
+    writeRecentFlows(recentFlows.value)
+  }
+
+  function forgetRecentFlow(id: string): void {
+    if (!recentFlows.value.some((entry) => entry.id === id)) return
+    recentFlows.value = recentFlows.value.filter((entry) => entry.id !== id)
+    writeRecentFlows(recentFlows.value)
+  }
+
   // The only place currentProjectId is ever assigned from a Dialog-driven "open" action
   // (D0004 §3.4). Row selection alone must never call this — that distinction lives in the
   // future ProjectDialog's Dialog-local `selected` state, not in this store.
@@ -366,6 +402,45 @@ export const useProjectStore = defineStore('project', () => {
     const created = await createFlowApi(input)
     invalidateGroupTree(input.projectId)
     return created
+  }
+
+  // ── Designer context menu server commands (flowgate.v02.0060 T#2) ───────────────────────────────
+  // A Group / Flow name or a dispose changes the Project's tree: its cached trees are dropped (the Explorer re-reads
+  // with its refreshToken). A refusal is thrown as the api.ts Error with its `refusal`; nothing is dropped then.
+  async function renameGroup(projectId: string, moduleName: string, title: string): Promise<void> {
+    await renameGroupApi(projectId, moduleName, title)
+    invalidateGroupTree(projectId)
+  }
+
+  async function renameFlow(projectId: string, flowId: string, title: string): Promise<void> {
+    await renameFlowApi(flowId, title)
+    invalidateGroupTree(projectId)
+  }
+
+  async function disposeFlow(projectId: string, flowId: string, reason: string): Promise<void> {
+    await disposeFlowApi(flowId, reason)
+    invalidateGroupTree(projectId)
+  }
+
+  function createSourceEntry(projectId: string, flowId: string, kind: 'folder' | 'file', parentPath: string, name: string): Promise<void> {
+    return createSourceEntryApi(projectId, flowId, kind, parentPath, name)
+  }
+
+  function downloadSourceEntry(projectId: string, flowId: string, kind: 'folder' | 'file', path: string, fallbackName: string): Promise<SourceDownload> {
+    return downloadSourceEntryApi(projectId, flowId, kind, path, fallbackName)
+  }
+
+  function uploadSourceFiles(projectId: string, flowId: string, targetPath: string, files: readonly File[]): Promise<SourceUploadResult> {
+    return uploadSourceFilesApi(projectId, flowId, targetPath, files)
+  }
+
+  function deleteSourceEntry(projectId: string, flowId: string, kind: 'folder' | 'file', path: string): Promise<void> {
+    return deleteSourceEntryApi(projectId, flowId, kind, path)
+  }
+
+  /** What a refused command (or a failed read) means on screen: the api.ts classification (never the server's text). */
+  function sourceRefusal(error: unknown): SourceMutationRefusal {
+    return sourceMutationRefusal(error)
   }
 
   /** The existing identifier suggestion (POST /slug/romanize) for a Group key. */
@@ -539,6 +614,8 @@ export const useProjectStore = defineStore('project', () => {
     closeCurrentProject,
     recordRecentGroup,
     recordRecentFlow,
+    renameRecent,
+    forgetRecentFlow,
     requestExplicitOpen,
     takeExplicitOpen,
     openDialog,
@@ -548,6 +625,14 @@ export const useProjectStore = defineStore('project', () => {
     fetchGroupTree,
     createGroup,
     createFlow,
+    renameGroup,
+    renameFlow,
+    disposeFlow,
+    createSourceEntry,
+    downloadSourceEntry,
+    uploadSourceFiles,
+    deleteSourceEntry,
+    sourceRefusal,
     suggestSlug,
     loadProjectGitStatus,
     loadFlowFileTree,

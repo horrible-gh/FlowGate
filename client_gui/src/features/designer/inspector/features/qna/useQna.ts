@@ -14,8 +14,15 @@
 // arrives with `qna_answer_registered` and shows under the question like any answer. Until it does the
 // question is `awaiting` (the run the request started is still live); a refusal is kept per question.
 // The AI choices are the project's providers (settingsChoicesRead — the same read the settings tab uses).
+// flowgate.v02.0070 T#5 (B5) — answering and asking an AI also need the body of the document to be checked
+// (qnaBodyContext): the target card's line of the document (the Canvas read the slot rows show; its body state judged by
+// cardLineWarns, the slot rows' rule), whether the questions are read as history, and `superseded_by` of the guard's
+// document read. No other read is added. The guard's AI activity and its document are read apart: until the document
+// read is back (or while its last read failed) the document is not confirmed current and nothing is answered, and a
+// failed activity read does not drop a `superseded_by` the document read gave.
 import { computed, reactive, ref, watch, type ComputedRef, type Ref } from 'vue'
 import {
+  cardLineWarns,
   qaAnswer,
   qaAsk,
   qaErrorOf,
@@ -37,6 +44,7 @@ import {
   qnaAskFailureKey,
   qnaAskReady,
   qnaAvailability,
+  qnaBodyContext,
   qnaErrorKey,
   qnaFailureKey,
   qnaTabCount,
@@ -54,9 +62,19 @@ export const QNA_GUARD_EVENTS = ['ai_invoke_started', 'ai_invoke_finished', 'doc
 /** A guard event of any document of the target Flow, or of the target document itself. */
 export const qnaGuardMatches: InspectorEventMatch = (frame, scope) => frame.groupId === scope.flowId || (scope.docId !== null && frame.docId === scope.docId)
 
-interface QnaGuard {
+interface QnaActivityGuard {
   readonly aiRunning: boolean
+}
+
+interface QnaDocumentGuard {
   readonly groupDisposed: boolean
+  /** flowgate.v02.0070 T#5: a later document supersedes the target document. */
+  readonly superseded: boolean
+}
+
+export interface QnaOptions {
+  /** flowgate.v02.0070 T#4/T#5: the questions are read as history — nothing is answered or asked of an AI. */
+  readonly history?: () => boolean
 }
 
 export interface QnaFailure {
@@ -104,19 +122,28 @@ export interface QnaState {
   reload(): Promise<void>
 }
 
-export function useQna(target: () => InspectorTarget | null): QnaState {
+export function useQna(target: () => InspectorTarget | null, options: QnaOptions = {}): QnaState {
   const thread = useInspectorResource<QaThread>({ target, read: qaRead, events: QNA_EVENTS })
-  const guard = useInspectorResource<QnaGuard>({
+  const activityGuard = useInspectorResource<QnaActivityGuard>({
     target,
-    read: async (docId) => {
+    read: async () => {
       const flowId = target()?.flowId
       if (!flowId) throw new Error('no target Flow')
-      const [activity, document] = await Promise.all([reviewActivityRead(flowId), reviewDocumentRead(docId)])
-      return { aiRunning: activity.active, groupDisposed: document.groupDisposed }
+      return { aiRunning: (await reviewActivityRead(flowId)).active }
     },
     events: QNA_GUARD_EVENTS,
     matches: qnaGuardMatches,
   })
+  const documentGuard = useInspectorResource<QnaDocumentGuard>({
+    target,
+    read: async (docId) => {
+      const document = await reviewDocumentRead(docId)
+      return { groupDisposed: document.groupDisposed, superseded: document.record.supersededBy !== null }
+    },
+    events: QNA_GUARD_EVENTS,
+    matches: qnaGuardMatches,
+  })
+  const reloadGuard = () => Promise.all([activityGuard.reload(), documentGuard.reload()])
   // The AI choices belong to the project (read once per project, like the settings tab's choices).
   const choices = useInspectorResource<SettingsChoices>({
     target: () => {
@@ -159,17 +186,43 @@ export function useQna(target: () => InspectorTarget | null): QnaState {
     return read && current && read.docId === current.docId ? read : null
   })
 
-  const items = computed(() => (readThread.value ? qnaView(readThread.value.items) : null))
+  const items = computed(() => (readThread.value ? qnaView(readThread.value.items, readThread.value.docId) : null))
+
+  // flowgate.v02.0070 T#5: superseded, or not (false), or not known (null) — the document read is not back, or its last
+  // read failed. A superseded document once read stays so.
+  const superseded = computed<boolean | null>(() => {
+    const read = documentGuard.data.value
+    if (read?.superseded === true) return true
+    return read !== null && documentGuard.status.value !== 'error' ? false : null
+  })
+
+  // flowgate.v02.0070 T#5: whether the body can be checked — the card line's state as the slot rows judge it.
+  const bodyContext = computed(() => {
+    const current = target()
+    return qnaBodyContext({
+      docId: current?.docId ?? null,
+      lines: (current?.cardDocuments ?? []).map((line) => ({
+        docId: line.docId,
+        docType: line.docType,
+        hasBody: line.hasBody,
+        unreadable: cardLineWarns(line),
+      })),
+      history: options.history?.() === true,
+      superseded: superseded.value,
+    })
+  })
 
   const availability = computed(() =>
     qnaAvailability({
       readOnly: target()?.readOnly ?? null,
-      // An unanswered guard read does not block: the server refuses on the same facts.
-      groupDisposed: guard.data.value?.groupDisposed === true,
-      aiRunning: guard.data.value?.aiRunning === true,
+      // An unanswered guard read does not block here: the server refuses on the same facts (0070 T#5: the document
+      // read not back closes answering through the body context).
+      groupDisposed: documentGuard.data.value?.groupDisposed === true,
+      aiRunning: activityGuard.data.value?.aiRunning === true,
       busy: busy.value !== null,
       asking: asking.value,
       requesting: requesting.value !== null,
+      body: bodyContext.value,
     }),
   )
 
@@ -182,7 +235,7 @@ export function useQna(target: () => InspectorTarget | null): QnaState {
 
   // The run is over: whatever it answered is in the thread; nothing waits any more.
   watch(
-    () => guard.data.value?.aiRunning === true,
+    () => activityGuard.data.value?.aiRunning === true,
     (running, before) => {
       if (before && !running) requested.clear()
     },
@@ -210,7 +263,7 @@ export function useQna(target: () => InspectorTarget | null): QnaState {
       }
       // Success or refusal, the questions and the guard are read again from the server; answering
       // stays closed until that read is back, so the old form cannot send the same answer twice.
-      await Promise.all([thread.reload(), guard.reload()])
+      await Promise.all([thread.reload(), reloadGuard()])
     } finally {
       busy.value = null
     }
@@ -234,7 +287,7 @@ export function useQna(target: () => InspectorTarget | null): QnaState {
       }
       // Success or refusal, the questions and the guard are read again; asking stays closed until that
       // read is back.
-      await Promise.all([thread.reload(), guard.reload()])
+      await Promise.all([thread.reload(), reloadGuard()])
     } finally {
       asking.value = false
     }
@@ -259,7 +312,7 @@ export function useQna(target: () => InspectorTarget | null): QnaState {
       }
       // Success or refusal, the questions and the guard (the AI run just started) are read again;
       // requesting stays closed until that read is back.
-      await Promise.all([thread.reload(), guard.reload()])
+      await Promise.all([thread.reload(), reloadGuard()])
     } finally {
       requesting.value = null
     }
@@ -287,7 +340,7 @@ export function useQna(target: () => InspectorTarget | null): QnaState {
     defaultProviderId: computed(() => choices.data.value?.defaultProviderId ?? null),
     providersStatus: choices.status,
     reload: async () => {
-      await Promise.all([thread.reload(), guard.reload()])
+      await Promise.all([thread.reload(), reloadGuard()])
     },
   }
 }

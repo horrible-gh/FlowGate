@@ -328,6 +328,41 @@ export interface CreatedFlow {
   title: string
 }
 
+// ── Group / Flow / source file commands (flowgate.v02.0060 T#2, 0006-D rev2 §4.3 2-B) ──────────────
+// The existing server contracts the Designer context menu runs: Group title (module PATCH), Flow title (group PUT),
+// Flow dispose (DC), the Flow worktree's folder / file create, download, upload and delete. A refused call is
+// described by `SourceMutationRefusal` — what the screen says, never the server's own text.
+
+/** Why the server refused a Group / Flow / source command (status and code are kept for a tooltip only). */
+export interface SourceMutationRefusal {
+  reason:
+    | 'disposed'
+    | 'not_found'
+    | 'forbidden'
+    | 'locked'
+    | 'managed'
+    | 'exists'
+    | 'invalid'
+    | 'worktree'
+    | 'too_large'
+    | 'network'
+    | 'failed'
+  status: number | null
+  code: string | null
+}
+
+/** A downloaded worktree file or folder ZIP: the bytes and the name the server gave them. */
+export interface SourceDownload {
+  filename: string
+  blob: Blob
+}
+
+/** POST /projects/{pid}/files/upload answer: the paths written and the ones the server skipped (with its reason). */
+export interface SourceUploadResult {
+  uploaded: Array<{ path: string; size: number }>
+  skipped: Array<{ path: string; reason: string }>
+}
+
 // ── Flow Canvas (flowgate.v02.0045 S1+S2) ────────────────────────────────────────────
 // The Canvas read / layout save contract of P0008 §2·§3·§4, camelCase. kind / state /
 // ownership / identitySource / origin are open keys: a value this build does not know is

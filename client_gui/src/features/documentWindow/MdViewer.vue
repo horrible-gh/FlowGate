@@ -5,15 +5,15 @@
       <span>{{ t(k('error')) }}</span>
       <IconButton :label="t(k('retry'))" :title="t(k('retry'))" variant="secondary" size="sm" data-test="md-viewer-retry" @click="loadContent()">↻</IconButton>
     </div>
-    <div v-else-if="unreadableReason" class="md-viewer__unreadable" role="alert" data-test="md-viewer-unreadable">
-      <p>⚠ {{ t(`gui.document.bodyState.${unreadableReason}`) }}</p>
-      <p>{{ t('gui.document.bodyState.aiUnreadable') }}</p>
-      <p v-if="canReenter && recoverGuide" data-test="md-viewer-recover-guide">{{ t(recoverGuide) }}</p>
-      <div v-if="canReenter" class="md-viewer__actions">
-        <IconButton v-if="recoverMethod" :label="t('gui.document.recover.action')" :title="t('gui.document.recover.action')" variant="secondary" size="sm" :disabled="recovering" data-test="md-viewer-recover" @click="recover">{{ t('gui.document.recover.action') }}</IconButton>
-        <IconButton :label="t('gui.document.bodyState.reenter')" :title="t('gui.document.bodyState.reenter')" variant="secondary" size="sm" data-test="md-viewer-reenter" @click="emit('reenter')">{{ t('gui.document.bodyState.reenter') }}</IconButton>
+    <!-- flowgate.v02.0070 T#3 (B3): one short state block — the icon, the reason with the AI warning on one line,
+         at most one line of guidance. [복구] / [본문 다시 입력] are the window footer's (`status`, `recover`). -->
+    <div v-else-if="unreadableReason" class="md-viewer__state" role="alert" data-test="md-viewer-unreadable">
+      <span class="md-viewer__state-icon" aria-hidden="true">⚠</span>
+      <div class="md-viewer__state-text">
+        <p class="md-viewer__state-message">{{ t(`gui.document.bodyState.${unreadableReason}`) }} · {{ t('gui.document.bodyState.aiUnreadable') }}</p>
+        <p v-if="recoverNotice" class="md-viewer__state-detail" data-test="md-viewer-recover-notice">{{ t(recoverNotice) }}</p>
+        <p v-else-if="canReenter && recoverGuide" class="md-viewer__state-detail" data-test="md-viewer-recover-guide">{{ t(recoverGuide) }}</p>
       </div>
-      <p v-if="recoverNotice" data-test="md-viewer-recover-notice">{{ t(recoverNotice) }}</p>
     </div>
     <template v-else>
       <p v-if="recoverNotice" class="md-viewer__notice" role="status" data-test="md-viewer-recover-notice">{{ t(recoverNotice) }}</p>
@@ -51,6 +51,8 @@
 //   flowgate.v02.0064 T-B1d (P0006 §6.2): the same users get [복구] with the method the body diagnosis of the
 //   document's Flow shows (sent as `expected_method`); a method that cannot be recovered shows its guidance
 //   instead, and the result says when the body may be (or is) lost.
+//   flowgate.v02.0070 T#3 (B3): [복구] and [본문 다시 입력] moved to the window footer; the viewer exposes the
+//   body's `status` (with the diagnosed recoverability) and `recover`, and keeps the short state block only.
 // - The copy button is an icon with a tooltip (⧉ the body without its frontmatter); a failed copy marks
 //   the button instead of the v0.1 fallback modal. Strings live under `gui.document_window.viewer`; colors
 //   are the v0.2 dark theme. flowgate.v02.0056 F1 (0056 CH §5): the v0.1 "copy with header" (⎘, the
@@ -71,6 +73,7 @@ import {
 } from '@/features/document'
 import IconButton from '@/components/ui/IconButton.vue'
 import { copyToClipboard } from '@/core/interaction/clipboard'
+import type { DocumentBodyStatus } from './documentWindowModel'
 
 const props = defineProps<{
   docId: string | null
@@ -81,7 +84,6 @@ const props = defineProps<{
   canReenter?: boolean
 }>()
 
-const emit = defineEmits<{ reenter: [] }>()
 const { t, locale } = useI18n()
 const k = (key: string) => `gui.document_window.viewer.${key}`
 
@@ -101,6 +103,13 @@ const copyMdState = ref<CopyState>('idle')
 const renderedContent = ref('')
 
 const hasBody = computed(() => stripLeadingNextHeader(stripFrontmatter(content.value || '')).trim() !== '')
+
+/** The body's state for the window footer (flowgate.v02.0070 T#3); the diagnosis only decides `recoverable`. */
+const status = computed<DocumentBodyStatus>(() => ({
+  state: loading.value ? 'loading' : error.value ? 'error' : unreadableReason.value ? 'unreadable' : hasBody.value ? 'body' : 'empty',
+  recoverable: recoverMethod.value !== null,
+  recovering: recovering.value,
+}))
 
 // gfm: GitHub-Flavored Markdown (tables, etc.) — v0.1 R0001 #3.
 const mdRenderer = new Marked({ gfm: true })
@@ -390,18 +399,35 @@ defineExpose({
   content,
   loadContent,
   requestContentRefresh,
+  status,
+  recover,
 })
 </script>
 
 <style scoped>
-.md-viewer__unreadable {
-  padding: 16px;
+/* The viewer's own padding frames the block; no second padding and no buttons inside it. */
+.md-viewer__state {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   color: var(--fg2-status-warning-fg);
 }
 
-.md-viewer__actions {
-  display: flex;
-  gap: 8px;
+.md-viewer__state-icon {
+  flex: none;
+}
+
+.md-viewer__state-text {
+  min-width: 0;
+}
+
+.md-viewer__state-text p {
+  margin: 0;
+}
+
+.md-viewer__state-detail {
+  color: var(--fg2-muted);
+  font-size: 12px;
 }
 
 .md-viewer__notice {

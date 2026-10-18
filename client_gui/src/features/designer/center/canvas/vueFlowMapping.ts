@@ -42,14 +42,12 @@
 // flowgate.v02.0061 T#15: the session may give every card's Hold as it judges it (`holds`: its Hold writes, the run's
 // and the Canvas node runs, the Graph read — also of cards the run has no node run of); then that is the card's Hold.
 //
-// flowgate.v02.0064 T#4: when the Canvas saves card titles (`titles`), a card says whether its title opens for editing
-// now and, when it does not because the card runs, that it is locked (graph/nodeTitle.ts nodeTitleEdit) — by the run
-// read's node run of the card (the latest) as a whole, else by its Canvas node run.
+// flowgate.v02.0070 T#1 (B1): a card no longer edits its title (the Inspector header does), so the card data carries
+// no title edit state.
 import type { Edge, Node } from '@vue-flow/core'
 import { cardStateView, type CardStateView } from '../graph/cardStateView'
 import { progressedEdgeIds } from '../graph/edgeProgress'
 import { lineWarns, type FlowGraph } from '../graph/flowGraph'
-import { nodeTitleEdit, type NodeTitleLock } from '../graph/nodeTitle'
 import { NO_RUN_MARKS, isEdgeProtected, type FlowRunMarks } from '../run/flowRunLock'
 
 /** Custom node / edge type key: FlowCanvas renders it with FlowNodeCard / FlowEdgePath. */
@@ -85,10 +83,6 @@ export interface FlowGateNodeData {
   /** flowgate.v02.0063: the card's document holds a question still unanswered (the [Q] mark). */
   question?: boolean
   bodyUnreadable?: boolean
-  /** flowgate.v02.0064 T#4: a click on the card's title opens its inline edit now. */
-  titleEditable?: boolean
-  /** flowgate.v02.0064 T#4: why it does not — the card runs (an edit open then closes with a note). */
-  titleLock?: NodeTitleLock
 }
 
 /** flowgate.v02.0061 T#14: integration states the card chip names (an integrated / absent one says nothing). */
@@ -132,8 +126,6 @@ export interface VueFlowNodeOptions extends Partial<FlowGateApprovalOptions> {
   marks?: FlowRunMarks
   /** flowgate.v02.0061 T#15: each card's Hold as the session judges it (by node id); absent = from the node runs. */
   holds?: ReadonlyMap<string, boolean>
-  /** flowgate.v02.0064 T#4: the Canvas saves card titles (inline edit); absent = no title opens. */
-  titles?: boolean
 }
 
 export function toVueFlowNodes(
@@ -172,11 +164,6 @@ export function toVueFlowNodes(
     if (hold === true) data.hold = true
     const question = runNode && typeof runNode.question === 'boolean' ? runNode.question : node.nodeRun?.question
     if (question === true) data.question = true
-    if (options.titles) {
-      const title = nodeTitleEdit(graph, node, runNode)
-      if (title.editable) data.titleEditable = true
-      if (title.lock) data.titleLock = title.lock
-    }
     const mapped: FlowGateVueFlowNode = {
       id: node.id,
       type: FLOWGATE_NODE_TYPE,

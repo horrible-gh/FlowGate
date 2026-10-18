@@ -23,6 +23,8 @@ export { useProjectStore } from './store'
 // flowgate.v02.0066 T#5 adds the Base remote state of git/status (ProjectGitUnpushed*) and the
 // group scope floor of the change list (GroupScopeFloor) the Designer Git tab reads.
 // flowgate.v02.0064 T#4 adds a Graph node's card title state (FlowCanvasTitleState), saved through the store loader.
+// flowgate.v02.0060 T#2 adds the source command models (refusal, download, upload result) the Designer context menu
+// runs through the store.
 // flowgate.v02.0048 T#2 adds the subscription and frame shapes of the store's project event
 // subscription (subscribeProjectEvents, the hub the Canvas subscription also runs on).
 export type { FlowCanvasChangeHandlers } from './flowCanvasEvents'
@@ -94,5 +96,8 @@ export type {
   RecentFlow,
   RecentGroup,
   RecentProject,
+  SourceDownload,
+  SourceMutationRefusal,
+  SourceUploadResult,
 } from './types'
 export { default as ProjectDialog } from './ProjectDialog.vue'

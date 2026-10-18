@@ -2,7 +2,10 @@
   <!-- flowgate.v02.0023 — Designer Project Explorer (R0001 / D0002 §3).
        Shows the current Project as Project > Group > Flow and reports selection /
        activation upward. It never opens tabs, touches the Canvas, or owns the left dock's
-       tab switch / collapse / resize — those belong to the Designer around it. -->
+       tab switch / collapse / resize — those belong to the Designer around it.
+       flowgate.v02.0060 T#2: inside the Designer a right click on a row goes to the Designer context menu with that
+       row's real ids (Project / Group / Flow) and a check of that row against the latest tree (a re-read that removed
+       it closes the menu); the selection, expansion and active Flow stay as they are. -->
   <section class="project-explorer" :aria-label="t('gui.designer.project_explorer.title')" data-test="project-explorer">
     <!-- No visible title row: the surrounding Dock tab already names this view
          (0025 T0006 §2/§6). Search and refresh share one compact row. -->
@@ -93,6 +96,7 @@
           @select-group="onSelectGroup"
           @select-flow="onSelectFlow"
           @activate-flow="onActivateFlow"
+          @context="onContext"
         />
         <EmptyState
           v-else
@@ -106,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, inject, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Alert from '../../../components/ui/Alert.vue'
 import Button from '../../../components/ui/Button.vue'
@@ -311,6 +315,39 @@ function onSelectFlow(flow: ExplorerFlow) {
   selection.value = { kind: 'flow', id: flow.id }
   const payload = flowEvent(flow)
   if (payload) emit('select-flow', payload)
+}
+
+// flowgate.v02.0060 T#2: the Designer context menu's project tree side, provided by the Designer Shell; null elsewhere.
+type ContextRowRef =
+  | { kind: 'project'; projectId: string }
+  | { kind: 'group'; projectId: string; groupId: string }
+  | { kind: 'flow'; projectId: string; groupId: string; flowId: string }
+interface ProjectContextMenu {
+  project(event: MouseEvent, row: ContextRowRef, fallback?: HTMLElement | null, alive?: () => boolean): boolean
+}
+const contextMenu = inject<ProjectContextMenu | null>(Symbol.for('flowgate.designer.contextMenu'), null)
+
+/** The row is still in the latest tree of the Project (a search hiding it aside): a re-read may have removed it. */
+function rowInTree(row: ContextRowRef): boolean {
+  const tree = displayProject.value
+  if (!tree || projectId.value !== row.projectId) return false
+  if (row.kind === 'project') return true
+  const group = tree.groups.find((candidate) => candidate.id === row.groupId)
+  return !!group && (row.kind === 'group' || group.flows.some((flow) => flow.id === row.flowId))
+}
+
+/** A right click on a row (the innermost row first): only the menu opens, nothing is selected or toggled. */
+function onContext(event: MouseEvent, row: { kind: 'project' } | { kind: 'group'; group: ExplorerGroup } | { kind: 'flow'; flow: ExplorerFlow }) {
+  const pid = projectId.value
+  if (!contextMenu || !pid) return
+  const fallback = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  const target: ContextRowRef = row.kind === 'project'
+    ? { kind: 'project', projectId: pid }
+    : row.kind === 'group'
+      ? { kind: 'group', projectId: pid, groupId: row.group.id }
+      : { kind: 'flow', projectId: pid, groupId: row.flow.groupId, flowId: row.flow.id }
+  // The menu checks the row against the tree while it is open and again right before a command runs.
+  contextMenu.project(event, target, fallback, () => rowInTree(target))
 }
 
 // Double click / Enter. The Flow is also selected (the user pointed at it), but whether it

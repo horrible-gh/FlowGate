@@ -22,7 +22,9 @@
        take input over the whole tab (the attachments file drop); a `fill` tab's section takes the body's
        free height.
        flowgate.v02.0053 T#9: one more header place — the ✎ 메모 part (`headerMemo`, the first that applies);
-       without one the header keeps its dim, disabled ✎ 메모. -->
+       without one the header keeps its dim, disabled ✎ 메모.
+       flowgate.v02.0070 T#1 (B1): the host also carries the card title save (`save-title`, the Center column's) — the
+       header edits the card's title in its title area and saves it through the host. -->
   <section
     class="designer-inspector"
     data-test="designer-inspector"
@@ -110,7 +112,7 @@ import {
    resolveInspectorTab,
   type InspectorTabKey,
 } from './inspectorTabs'
-import { toInspectorTarget, withWrittenCardLines } from './inspectorTarget'
+import { toInspectorTarget, withWrittenCardLines, type NodeTitleSaveOutcome } from './inspectorTarget'
 import { cardLinesWritten, forgetDocumentIo, leaveDocumentIo, settleCardLinesWritten } from './openDocument'
 import { useInspectorEvents } from './useInspectorResource'
 
@@ -122,8 +124,10 @@ const props = withDefaults(
     unselected?: boolean
     /** The feature registry; tests swap in a fixture registry. */
     registry?: InspectorRegistry
+    /** flowgate.v02.0070 T#1: saves a card's own title (the session's); null = no title edit opens. */
+    saveTitle?: ((flowId: string, nodeKey: string, raw: string) => Promise<NodeTitleSaveOutcome>) | null
   }>(),
-  { unselected: false, registry: () => inspectorRegistry },
+  { unselected: false, registry: () => inspectorRegistry, saveTitle: null },
 )
 
 const emit = defineEmits<{ host: [intent: InspectorHostIntent] }>()
@@ -136,7 +140,12 @@ const { t } = i18n
 const registry = toRaw(props.registry)
 installInspectorMessages(i18n, registry)
 
-provide(INSPECTOR_HOST, { request: (intent) => emit('host', intent) })
+provide(INSPECTOR_HOST, {
+  request: (intent) => emit('host', intent),
+  get saveTitle() {
+    return props.saveTitle ?? undefined
+  },
+})
 
 // flowgate.v02.0053 T#6: the tab Content element, for parts that take input over the whole tab.
 const bodyElement = ref<HTMLElement | null>(null)

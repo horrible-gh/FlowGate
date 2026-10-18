@@ -3,15 +3,19 @@
 // document bound to the selected Node, its card kind, its states and whether the Flow is read
 // only. Every Inspector part reads this one shape, so the rules here (card kind, read only) are
 // decided once and never again per feature.
+// flowgate.v02.0070 T#1 (B1): the card's own title state and whether it may be edited now (the session's titleEdit) —
+// the Inspector header edits the title; the title text rules it checks before sending are the Canvas's (nodeTitle.ts).
 import { cardApprovalFailureView, cardStateView, type CardApprovalFailureView, type CardStateView } from '../center/graph/cardStateView'
 import type {
   FlowGraphCardDocument,
   FlowGraphNodeRun,
   FlowGraphNodeSlot,
   FlowGraphSelection,
+  FlowGraphTitleState,
 } from '../center/graph/flowGraph'
 
 export type { CardApprovalFailureView, CardStateView }
+export { NODE_TITLE_MAX_CHARS, checkNodeTitle, type NodeTitleSaveOutcome } from '../center/graph/nodeTitle'
 
 /** Inspector card kinds (D#1 §4.3) — the one value set registrations may name. */
 export const INSPECTOR_CARD_KINDS = ['requirement', 'research', 'task', 'design', 'test', 'check', 'plan', 'other'] as const
@@ -84,6 +88,12 @@ export interface InspectorTarget {
    * confirmed (being read, or the read failed). Absent / null = not locked.
    */
   readonly editLock?: 'run' | 'unknown' | null
+  /** flowgate.v02.0070 T#1: the card's own title state as shown (its version), or null / absent (none). */
+  readonly titleState?: FlowGraphTitleState | null
+  /** flowgate.v02.0070 T#1: the card's title may be edited now (the Canvas's rule, graph/nodeTitle.ts). Absent = no. */
+  readonly canEditTitle?: boolean
+  /** flowgate.v02.0070 T#1: why it may not — the card runs (an open edit then closes with the lock note). */
+  readonly titleLock?: 'running' | null
 }
 
 const CARD_KIND_BY_DOC_TYPE: ReadonlyMap<string, InspectorCardKind> = new Map(
@@ -198,6 +208,9 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     viewMode,
     readOnly: inspectorReadOnly(ownership, viewMode),
     editLock: selection.editLock ?? null,
+    titleState: node.titleState ?? null,
+    canEditTitle: selection.titleEdit?.editable === true,
+    titleLock: selection.titleEdit?.lock ?? null,
   }
 }
 
