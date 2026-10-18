@@ -23,15 +23,38 @@ import {
   writtenCardLines,
   type DocumentWindowMode,
 } from '@/features/documentWindow'
+import QnaTab from './features/qna/QnaTab.vue'
 import type { InspectorHost } from './inspectorHost'
 import { inspectorCardNodeKey, type InspectorCardDocument, type InspectorTarget } from './inspectorTarget'
 import { slotLineCard, type SlotLineCard } from './parts/slotStateView'
 
 export type OpenDocumentMode = DocumentWindowMode
 
+/** flowgate.v02.0070 T#4 (B4) — how a document opens; without options it opens as before (following its chain). */
+export interface OpenDocumentOptions {
+  /**
+   * That very id as history (the 「전환 전 문서」 link): the window does not follow the document's supersede chain and is
+   * read only (no edit / re-enter / recover).
+   */
+  readonly exact?: boolean
+  /**
+   * With `exact`: the target the link was pressed on (its project and Flow). The window then shows that document's
+   * questions under its body — the Q&A tab's list and ↗ windows read as history (no asking, answering or AI request).
+   */
+  readonly target?: InspectorTarget | null
+}
+
 /** Opens the document in its document window: `view` (default) or straight to the editor (`edit`). */
-export function openDocument(docId: string, mode: OpenDocumentMode = 'view'): void {
-  if (docId) openDocumentWindow(docId, mode)
+export function openDocument(docId: string, mode: OpenDocumentMode = 'view', options?: OpenDocumentOptions): void {
+  if (!docId) return
+  if (!options?.exact) {
+    openDocumentWindow(docId, mode)
+    return
+  }
+  const target = options.target ?? null
+  // The questions of the document itself (only its project / Flow / id are read from the target).
+  const aside = target ? { component: QnaTab, props: { target: { ...target, docId }, history: true } } : null
+  openDocumentWindow(docId, 'view', { exact: true, aside })
 }
 
 /** Opens the document's review history (AI reviews · rejections · AI responses) in its own window. */

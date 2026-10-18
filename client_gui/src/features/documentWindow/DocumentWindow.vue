@@ -9,7 +9,7 @@
     :min-width="360"
     :min-height="240"
     :minimized="win.minimized"
-    @update:minimized="(value: boolean) => setDocumentWindowMinimized(win.docId, value)"
+    @update:minimized="(value: boolean) => setDocumentWindowMinimized(win.id, value)"
     @close="requestClose"
   >
     <template #header>
@@ -42,7 +42,14 @@
       >✎</IconButton>
     </template>
 
-    <div class="document-window" data-test="document-window" :data-doc="win.docId" :data-shown="win.shown" :data-mode="win.mode">
+    <div
+      class="document-window"
+      data-test="document-window"
+      :data-doc="win.docId"
+      :data-shown="win.shown"
+      :data-mode="win.mode"
+      :data-exact="win.exact ? 'true' : undefined"
+    >
       <div v-if="gone" class="document-window-note" data-test="document-window-gone">{{ t(k('error.gone')) }}</div>
 
       <!-- The body view depends on the document's type (T#4): it is chosen once the title line read answered. -->
@@ -97,6 +104,10 @@
           <Button size="sm" variant="secondary" :disabled="saving" data-test="document-window-close" @click="requestClose">{{ t(k('close')) }}</Button>
         </div>
       </div>
+      <!-- flowgate.v02.0070 T#4 (B4): an exact window's part from its opener (the old document's Q&A history). -->
+      <div v-if="win.aside && !editing && recordSettled && !gone" class="document-window-aside" data-test="document-window-aside">
+        <component :is="win.aside.component" v-bind="win.aside.props ?? {}" />
+      </div>
       <!-- flowgate.v02.0070 T#3 (B3): the view's one action group, by the body's state (documentViewerActions) —
            unreadable: [복구]? [본문 다시 입력] [닫기]; readable or empty: [편집] [닫기]; not editable: [닫기]. -->
       <div v-if="!editing" class="document-window-viewer-bar" data-test="document-window-viewer-bar">
@@ -144,6 +155,10 @@
 // follows the opened document's supersede chain (readDocumentChain) and the window then shows, edits and
 // saves the end of it (`win.shown`) — unless its editor holds unsaved text, which keeps its document until
 // it is saved or dropped. Two windows never show the same document (followDocumentWindow).
+// flowgate.v02.0070 T#4 (B4): an exact window (`win.exact`, the 「전환 전 문서」 link) reads only its own document — no
+// supersede chain, so the old id stays the shown one — and is read only: the footer has [닫기] alone (the T#3 rule
+// for a person who may not edit), the body diagnoses nothing to recover, and the editor never opens. Its opener's
+// part (`win.aside`) sits under the body.
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { normalizeApiInput } from '@shared/apiErrors'
@@ -204,7 +219,7 @@ async function readRecord(): Promise<void> {
   const docId = props.win.docId
   const seq = ++recordSequence
   try {
-    const read = await readDocumentChain(docId, documentRead)
+    const read = props.win.exact ? [await documentRead(docId)] : await readDocumentChain(docId, documentRead)
     if (seq !== recordSequence) return
     chain.value = read
     gone.value = false
@@ -220,7 +235,9 @@ async function readRecord(): Promise<void> {
 /** The title line is the shown document's. */
 const record = computed(() => chain.value.find((item) => item.docId === props.win.shown) ?? chain.value[0] ?? null)
 const { user } = useCurrentUser()
-const canReenter = computed(() => !!user.value && record.value?.isEditable === true && !record.value?.groupDisposed && record.value?.typeCode !== 'TR2')
+const canReenter = computed(
+  () => !props.win.exact && !!user.value && record.value?.isEditable === true && !record.value?.groupDisposed && record.value?.typeCode !== 'TR2',
+)
 const liveDocId = computed(() => chain.value[chain.value.length - 1]?.docId ?? null)
 
 const title = computed(() => record.value?.title || t(k('untitled')))
@@ -283,8 +300,8 @@ const bodyStatus = computed(() => body.value?.status ?? null)
 const viewerActions = computed(() => documentViewerActions(bodyStatus.value, canReenter.value && !gone.value))
 
 function startEdit(): void {
-  if (gone.value) return
-  setDocumentWindowMode(props.win.docId, 'edit')
+  if (gone.value || props.win.exact) return
+  setDocumentWindowMode(props.win.id, 'edit')
 }
 
 /** [복구]: only on this click, with the existing recovery API and the diagnosed method (MdViewer.recover). */
@@ -294,7 +311,7 @@ function recover(): void {
 
 function toView(): void {
   resetEditor()
-  setDocumentWindowMode(props.win.docId, 'view')
+  setDocumentWindowMode(props.win.id, 'view')
 }
 
 async function save(): Promise<void> {
@@ -332,13 +349,13 @@ function requestCancel(): void {
 function requestClose(): void {
   if (saving.value || confirming.value !== null) return
   if (dirty.value) confirming.value = 'close'
-  else closeDocumentWindow(props.win.docId)
+  else closeDocumentWindow(props.win.id)
 }
 
 function confirmDiscard(): void {
   const asked = confirming.value
   confirming.value = null
-  if (asked === 'close') closeDocumentWindow(props.win.docId)
+  if (asked === 'close') closeDocumentWindow(props.win.id)
   else if (asked === 'cancel') toView()
 }
 
@@ -369,7 +386,7 @@ const holdShown = computed(() => editing.value && (dirty.value || saving.value))
 // The chain reached another document: show it (the body reads it as its id changes), or give way to the
 // window that already has it.
 watch([liveDocId, holdShown], ([live, hold]) => {
-  if (live === null || hold || live === props.win.shown) return
+  if (live === null || hold || live === props.win.shown || props.win.exact) return
   followDocumentWindow(props.win.docId, live, props.win.mode)
 })
 
@@ -462,6 +479,15 @@ defineExpose({ dirty })
   height: calc(100% + 24px);
   min-height: 0;
   margin: -12px -14px;
+}
+
+/* flowgate.v02.0070 T#4: the exact window's part under the body (its own scroll, at most half the window). */
+.document-window-aside {
+  flex: none;
+  max-height: 45%;
+  overflow: auto;
+  padding: 10px 12px;
+  border-top: 1px solid var(--fg2-line);
 }
 
 .document-window-note {

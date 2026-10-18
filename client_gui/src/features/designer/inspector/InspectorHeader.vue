@@ -198,7 +198,7 @@ import { computed, inject, nextTick, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Dropdown from '../../../components/ui/Dropdown.vue'
 import IconButton from '../../../components/ui/IconButton.vue'
-import { flowNodeKindDisplay, flowNodeKindLabelKey, flowNodeStateDisplay } from '../center/canvas/flowNodeKinds'
+import { flowNodeKindView, flowNodeStateDisplay } from '../center/canvas/flowNodeKinds'
 import { INSPECTOR_HOST } from './inspectorHost'
 import { NODE_TITLE_MAX_CHARS, checkNodeTitle, type InspectorTarget, type NodeTitleSaveOutcome } from './inspectorTarget'
 
@@ -208,17 +208,9 @@ const props = defineProps<{
 
 const { t, te } = useI18n()
 
-/** v7 (0035 insp.js iconOf / colorOf): a 버그 (B) root takes the bug glyph and the red accent. */
-const BUG_KIND = { icon: 'M8 8a4 4 0 0 1 8 0v7a4 4 0 0 1-8 0Z M4 12h4M16 12h4M5 7l3 2M19 7l-3 2M5 18l3-2M19 18l-3-2', accent: '#ef4444' }
-
-const isBug = computed(() => props.target.docType?.trim().toUpperCase() === 'B')
-const kind = computed(() => {
-  const base = flowNodeKindDisplay(props.target.nodeKind, props.target.docType)
-  return isBug.value && base.key === 'requirement' ? { ...base, ...BUG_KIND } : base
-})
-const kindLabelKey = computed(() =>
-  isBug.value && kind.value.key === 'requirement' ? 'gui.designer.inspector.header.kind_bug' : flowNodeKindLabelKey(props.target.nodeKind, props.target.docType),
-)
+/** flowgate.v02.0070 T#4 (B4): the Canvas card's kind display (a 버그 (B) root: the bug glyph, red accent and name). */
+const kind = computed(() => flowNodeKindView(props.target.nodeKind, props.target.docType))
+const kindLabelKey = computed(() => kind.value.labelKey)
 const state = computed(() => flowNodeStateDisplay(props.target.canvasState))
 
 type PillTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'

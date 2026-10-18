@@ -27,7 +27,10 @@
        no question line, answer form or AI line (qnaAvailability `visible`).
        flowgate.v02.0064 T-B5 (P0006 §5.2·§6.4) — who answered reads one of four classes (person by name /
        AI · provider / AI run not linked / AI no run information) plus unknown; the list shows the side only,
-       the window's answer adds the answer time and the run id when there is one. -->
+       the window's answer adds the answer time and the run id when there is one.
+       flowgate.v02.0070 T#4 (B4) — `history`: the questions of a document read as history (the document an R↔B
+       succession came from, in its exact document window): the same list and ↗ windows, read only — no question
+       line, answer form or AI line, and the ↗ window says 읽기 전용. -->
   <div class="inspector-qna" data-test="inspector-qna" :data-status="status">
     <div v-if="availability.ask.visible" class="inspector-qna-ask" data-test="qna-ask">
       <Input
@@ -304,11 +307,13 @@ import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorStatusChip, { type InspectorChipTone } from '../../parts/InspectorStatusChip.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { qnaAskReady, type QnaAnswerView, type QnaItemState, type QnaItemView, type QnaSide } from './qnaModel'
+import { qnaAskReady, type QnaAnswerView, type QnaAvailability, type QnaItemState, type QnaItemView, type QnaSide } from './qnaModel'
 import { useQna } from './useQna'
 
 const props = defineProps<{
   target: InspectorTarget
+  /** flowgate.v02.0070 T#4: read only history — the questions and answers are read, nothing is asked or answered. */
+  history?: boolean
 }>()
 
 const { t, locale } = useI18n()
@@ -317,7 +322,7 @@ const k = (key: string) => `gui.inspector.qna.${key}`
 
 const {
   items,
-  availability,
+  availability: liveAvailability,
   status,
   errorKey,
   busy,
@@ -336,6 +341,14 @@ const {
   providersStatus,
   reload,
 } = useQna(() => props.target)
+
+/** History: only reading is offered (hidden, so no form can send; the general answer guard is not this tab's). */
+const HISTORY_CLOSED = { visible: false, enabled: false, reason: null } as const
+const availability = computed<QnaAvailability>(() =>
+  props.history
+    ? { read: liveAvailability.value.read, answer: HISTORY_CLOSED, ask: HISTORY_CLOSED, ai_request: HISTORY_CLOSED }
+    : liveAvailability.value,
+)
 
 // --- The question line (0053 T#6) ------------------------------------------------------------------
 
@@ -501,8 +514,9 @@ function windowSub(item: QnaItemView): string {
   return item.seq === null ? title : `${t(k('question'), { seq: item.seq })} · ${title}`
 }
 
-/** The Flow is read only (the first reason answering is closed on): the window says so. */
+/** The Flow is read only (the first reason answering is closed on), or the questions are history: the window says so. */
 const readOnlyReason = computed(() => {
+  if (props.history) return 'window.view'
   const reason = availability.value.answer.reason
   return reason !== null && reason.startsWith('reason.read_only_') ? reason : null
 })

@@ -17,6 +17,9 @@
        flowgate.v02.0056 F2-2 — a line whose document has no body yet (`blank`, O3 0009-TR §4-1 has_body).
        flowgate.v02.0056 (0017-CH) — no author words, and a blank line has no words either: a dashed frame and a
        dim name (the list draws its hollow document icon); "비어 있음" is the line's hover text.
+       flowgate.v02.0070 T#4 (B4) — the three line states are told apart in the line: no document (`empty`) — a dashed
+       frame and "문서 없음"; a document without a body (`blank`) — a solid frame, a dim name and "본문 비어 있음" in the
+       same muted words; an unreadable body — the small ⚠ below.
        flowgate.v02.0070 T#2 (B2) — an unreadable body is no longer words before the state: it is a small ⚠ at the
        head of the buttons (before 이력 · 열기), no bigger than the state badge; its words are the tooltip and the
        aria-label. The line reads `name · [state badge] · ⚠ · buttons`, and only the name ellipsises: on a narrow
@@ -376,9 +379,9 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
   color: #9cb1c7;
 }
 
-/* 0017-CH: a document without a body — told by its shape, not by words. */
+/* 0017-CH: a document without a body. flowgate.v02.0070 T#4 (B4): the dashed frame is the line without a document's;
+   a blank line keeps the usual frame (the document is there) and says "본문 비어 있음" in the muted words. */
 .inspector-slot.is-blank {
-  border-style: dashed;
   border-color: #33506e;
   background: transparent;
 }

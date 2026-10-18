@@ -496,7 +496,8 @@ export default {
         history_count: 'Review history · {n}',
         // flowgate.v02.0056 F2-2 — a card line's document without a body yet (O3 has_body), the row actions and the
         // history button's hover text with the AI review / rejection split.
-        blank: 'Empty',
+        // flowgate.v02.0070 T#4 (B4): drawn in the line, told from No document (a document that has no body).
+        blank: 'Body empty',
         actions: {
           write: 'Write',
           ai_invoke: 'Call AI',

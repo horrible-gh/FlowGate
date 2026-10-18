@@ -149,7 +149,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Handle, Position } from '@vue-flow/core'
-import { FLOW_NODE_HOLD_ICON, flowNodeKindDisplay, flowNodeKindLabelKey, flowNodeStateDisplay } from './flowNodeKinds'
+import { FLOW_NODE_HOLD_ICON, flowNodeKindView, flowNodeStateDisplay } from './flowNodeKinds'
 import type { FlowGateNodeData } from './vueFlowMapping'
 
 const props = defineProps<{
@@ -173,8 +173,9 @@ const LINK_SIDES = [
 
 const { t } = useI18n()
 
-const kind = computed(() => flowNodeKindDisplay(props.data.kind, props.data.docType))
-const kindLabelKey = computed(() => flowNodeKindLabelKey(props.data.kind, props.data.docType))
+// flowgate.v02.0070 T#4 (B4): the same kind display as the Inspector header (a B root is a 버그).
+const kind = computed(() => flowNodeKindView(props.data.kind, props.data.docType))
+const kindLabelKey = computed(() => kind.value.labelKey)
 const state = computed(() => flowNodeStateDisplay(props.data.state))
 
 // Presentation only: retain the shared card state and approval rules.

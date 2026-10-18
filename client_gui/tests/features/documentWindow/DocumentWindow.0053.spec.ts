@@ -6,9 +6,12 @@
  * the view, 취소 drops it; unsaved text is asked about once (취소 / close). A report before its run (no file
  * yet) opens as an empty document and edits the same way. Several windows stack; the same document twice is
  * one window.
+ * flowgate.v02.0070 T#4 (B4) — an exact window (the 「전환 전 문서」 link): that very id, its title and body — no supersede
+ * chain read — read only ([닫기] alone, no diagnosis), with its opener's part under the body; a usual open still follows.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { defineComponent, h } from 'vue'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import {
@@ -402,5 +405,69 @@ describe('document window — the view footer by the body state (flowgate.v02.00
     failing.delete(REPORT)
     await click(q(panel, 'md-viewer-retry'))
     expect(footer(panel)).toEqual(['document-window-edit', 'document-window-close'])
+  })
+})
+
+describe('exact window (flowgate.v02.0070 T#4, B4)', () => {
+  const OLD = 'flowgate.v02.0053.0012-R'
+  const NEW = 'flowgate.v02.0053.0013-B'
+  const Part = defineComponent({ props: { docId: String }, setup: (props) => () => h('span', { 'data-test': 'aside-part' }, props.docId) })
+
+  beforeEach(() => {
+    RECORDS[OLD] = { doc_id: OLD, type_code: 'R', title: '옛 요구사항', status: 'draft', doc_review_status: null, is_editable: true, superseded_by: NEW }
+    RECORDS[NEW] = { doc_id: NEW, type_code: 'B', title: '버그', status: 'draft', doc_review_status: null, is_editable: true }
+    files.set(OLD, '# 옛 본문\n')
+    files.set(NEW, '# 새 본문\n')
+  })
+
+  const exactPanel = () => {
+    const panel = panels().find((node) => node.querySelector('[data-test="document-window"][data-exact="true"]'))
+    if (!panel) throw new Error('no exact window')
+    return panel
+  }
+  async function openExact(docId: string, aside: boolean = true) {
+    openDocumentWindow(docId, 'view', { exact: true, aside: aside ? { component: Part, props: { docId } } : null })
+    await flushPromises()
+    return exactPanel()
+  }
+
+  it('a usual open still follows superseded_by to the new document', async () => {
+    openDocumentWindow(OLD)
+    await flushPromises()
+    const panel = panelOf(OLD)
+    expect(q(panel, 'document-window')!.getAttribute('data-shown')).toBe(NEW)
+    expect(q(panel, 'document-window-title')!.textContent).toBe('버그')
+    expect(q(panel, 'document-window-aside')).toBeNull()
+  })
+
+  it('shows that very id read only: its title and body, [닫기] alone, its opener part; the chain is not read', async () => {
+    const panel = await openExact(OLD)
+    expect(q(panel, 'document-window')!.getAttribute('data-shown')).toBe(OLD)
+    expect(q(panel, 'document-window-title')!.textContent).toBe('옛 요구사항')
+    expect(q(panel, 'md-viewer-content')!.querySelector('h1')!.textContent).toBe('옛 본문')
+    expect(footer(panel)).toEqual(['document-window-close'])
+    expect(recordRead.mock.calls.map((call) => call[0])).toEqual([OLD])
+    expect(contentRead.mock.calls.every((call) => call[0] === OLD)).toBe(true)
+    expect(q(panel, 'document-window-aside')!.textContent).toBe(OLD)
+    expect(windows()).toEqual([[OLD, 'view']])
+    await click(q(panel, 'document-window-close'))
+    expect(windows()).toEqual([])
+  })
+
+  it('an unreadable old body offers no 복구 / 본문 다시 입력 and reads no diagnosis', async () => {
+    unreadable.add(OLD)
+    diagnose.mockResolvedValue({ items: [{ docId: OLD, method: 'regenerate_stub', recoverable: true }] })
+    const panel = await openExact(OLD, false)
+    expect(q(panel, 'md-viewer-unreadable')).not.toBeNull()
+    expect(footer(panel)).toEqual(['document-window-close'])
+    expect(diagnose).not.toHaveBeenCalled()
+  })
+
+  it('the exact and the usual window of one id stand side by side', async () => {
+    await openExact(OLD)
+    openDocumentWindow(OLD)
+    await flushPromises()
+    expect(panels()).toHaveLength(2)
+    expect(documentWindowList().map((win) => [win.id, win.shown])).toEqual([[`exact:${OLD}`, OLD], [OLD, NEW]])
   })
 })

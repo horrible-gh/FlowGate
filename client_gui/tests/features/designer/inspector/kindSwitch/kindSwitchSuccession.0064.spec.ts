@@ -7,6 +7,9 @@
  * their reason (a superseded root also reads the Canvas again); a succeeded document links the document it
  * came from — a header part of its own (features/kindSwitchOrigin) read without the judgement, kept on every
  * ownership: the new document's workflow decision turns its Flow v01 and the link stays (rework).
+ * flowgate.v02.0070 T#4 (B4) — the link opens that exact id as history (openDocument `exact`, not the document it is
+ * succeeded by), read only, with the old id's questions under the body: the Q&A tab's list read as history (no question
+ * line, answer form or AI line; its ↗ window says 읽기 전용).
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -14,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FlowGraph, FlowGraphNode } from '@/features/designer/center/graph/flowGraph'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
 import KindSwitchAction from '@/features/designer/inspector/features/kindSwitch/KindSwitchAction.vue'
+import QnaTab from '@/features/designer/inspector/features/qna/QnaTab.vue'
+import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
 import {
   kindSwitchAvailability,
   kindSwitchRefreshesFlow,
@@ -29,6 +34,7 @@ const convertCall = vi.fn()
 const previewRead = vi.fn()
 const originRead = vi.fn()
 const activityRead = vi.fn()
+const qaRead = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/document')>()
   return {
@@ -37,6 +43,9 @@ vi.mock('@/features/document', async (importOriginal) => {
     kindSwitchPreviewRead: (...args: unknown[]) => previewRead(...args),
     kindSwitchOriginRead: (...args: unknown[]) => originRead(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
+    qaRead: (...args: unknown[]) => qaRead(...args),
+    reviewDocumentRead: async () => ({ groupDisposed: false }),
+    settingsChoicesRead: async () => ({ providers: [], defaultProviderId: null }),
   }
 })
 const opened = vi.fn()
@@ -45,8 +54,10 @@ vi.mock('@/features/designer/inspector/openDocument', async (importOriginal) => 
   openDocument: (...args: unknown[]) => opened(...args),
 }))
 
-const { toKindSwitchPreview, toReviewActivity, toKindSwitchResult } =
+const { toKindSwitchPreview, toReviewActivity, toKindSwitchResult, toQaThread } =
   await vi.importActual<typeof import('@/features/document')>('@/features/document')
+const { openDocument: realOpenDocument } =
+  await vi.importActual<typeof import('@/features/designer/inspector/openDocument')>('@/features/designer/inspector/openDocument')
 
 const i18n = prepareInspectorI18n()
 
@@ -84,7 +95,7 @@ beforeEach(() => {
   convertedFrom = null
   refusal = null
   intents = []
-  for (const mock of [convertCall, previewRead, originRead, activityRead, opened]) mock.mockReset()
+  for (const mock of [convertCall, previewRead, originRead, activityRead, opened, qaRead]) mock.mockReset()
   previewRead.mockImplementation(async (docId: string) => toKindSwitchPreview(rowOf(docId)))
   originRead.mockImplementation(async (docId: string) => toKindSwitchPreview(rowOf(docId)).convertedFrom)
   activityRead.mockImplementation(async (groupId: string) => toReviewActivity({ ok: true, active: false, group_id: groupId }))
@@ -253,7 +264,8 @@ describe('the document a succeeded root came from (P0006 §3.3, in the Frame wit
     expect(find('inspector-kind-switch').exists()).toBe(switchShown)
     expect(originRead).toHaveBeenCalledWith(ROOT_B)
     await links()[0].trigger('click')
-    expect(opened).toHaveBeenCalledWith(ROOT_R)
+    // flowgate.v02.0070 T#4: that exact id, as history, with the target it was pressed on (for its Q&A).
+    expect(opened).toHaveBeenCalledWith(ROOT_R, 'view', { exact: true, target: expect.objectContaining({ docId: ROOT_B, flowId: FLOW }) })
   })
 
   it('stays when the new document takes its workflow decision (unassigned -> v01)', async () => {
@@ -264,7 +276,7 @@ describe('the document a succeeded root came from (P0006 §3.3, in the Frame wit
     expect(find('inspector-kind-switch').exists()).toBe(false)
     expect(links()).toHaveLength(1)
     await links()[0].trigger('click')
-    expect(opened).toHaveBeenCalledWith(ROOT_R)
+    expect(opened).toHaveBeenCalledWith(ROOT_R, 'view', { exact: true, target: expect.objectContaining({ docId: ROOT_B }) })
   })
 
   it('is absent without a succession, on any ownership', async () => {
@@ -280,6 +292,58 @@ describe('the document a succeeded root came from (P0006 §3.3, in the Frame wit
     await mountSwitch(targetOf(bOn({ ownership: 'unassigned', viewMode: 'draft' })))
     expect(find('inspector-kind-switch').exists()).toBe(true)
     expect(find('kind-switch-converted-from').exists()).toBe(false)
+  })
+
+  // --- flowgate.v02.0070 T#4 (B4): the old id as history, with its Q&A ---------------------------------------
+
+  const thread = (docId: string) =>
+    toQaThread({
+      qa: {
+        doc_id: docId,
+        status: 'pending',
+        items: [
+          { id: 11, seq: 1, title: '기능 범위', body: '범위가 어디까지입니까?', asker_kind: 'ai', options: [{ id: 'a', label: '전체' }], answers: [] },
+          { id: 12, seq: 2, title: '우선순위', body: '먼저 할 것은?', asker_kind: 'human', answer_count: 1, answers: [{ id: 1, body: '로그인', author_kind: 'human', author_name: '홍길동' }] },
+        ],
+      },
+    })
+
+  it('opens the exact window of the old id (not the B it is succeeded by), carrying the Q&A tab as its history', () => {
+    try {
+      realOpenDocument(ROOT_R, 'view', { exact: true, target: targetOf(bOn({ ownership: 'v01', viewMode: null })) })
+      const [win] = documentWindowList()
+      expect(win).toMatchObject({ id: `exact:${ROOT_R}`, docId: ROOT_R, shown: ROOT_R, exact: true, mode: 'view' })
+      expect(win.aside?.component).toBe(QnaTab)
+      expect(win.aside?.props).toMatchObject({ history: true, target: { docId: ROOT_R, flowId: FLOW } })
+      // Without options a document opens as before: the usual window, following its chain, no part.
+      realOpenDocument(ROOT_R)
+      expect(documentWindowList()[1]).toMatchObject({ id: ROOT_R, exact: false, aside: null })
+    } finally {
+      closeAllDocumentWindows()
+    }
+  })
+
+  it('the history reads the old id: its questions and answers, no question line, answer form or AI line; ↗ says 읽기 전용', async () => {
+    qaRead.mockImplementation(async (docId: string) => thread(docId))
+    const target = { ...targetOf(bOn({ ownership: 'unassigned', viewMode: 'draft' })), docId: ROOT_R }
+    wrapper = mount(QnaTab, { attachTo: document.body, props: { target, history: true }, global: { plugins: [i18n, pinia] } })
+    await flushPromises()
+    expect(qaRead).toHaveBeenCalledWith(ROOT_R)
+    expect(wrapper.findAll('[data-test="qna-item"]').map((item) => item.attributes('data-item'))).toEqual(['11', '12'])
+    for (const test of ['qna-ask', 'qna-answer-form', 'qna-ai', 'qna-option']) expect(find(test).exists(), test).toBe(false)
+    expect(wrapper.get('[data-test="qna-item"][data-item="12"] [data-test="qna-answer-body"]').text()).toBe('로그인')
+    await wrapper.get('[data-test="qna-item"][data-item="11"] [data-test="qna-open"]').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-test="qna-window"]')?.getAttribute('data-item')).toBe('11')
+    expect(document.body.querySelector('[data-test="qna-window-body"]')?.textContent).toBe('범위가 어디까지입니까?')
+    expect(document.body.querySelector('[data-test="qna-window-form"]')).toBeNull()
+    expect(document.body.querySelector('[data-test="qna-window-mode"]')?.textContent).toBe('읽기 전용')
+    // The same tab of the live document keeps its forms.
+    wrapper.unmount()
+    wrapper = mount(QnaTab, { attachTo: document.body, props: { target }, global: { plugins: [i18n, pinia] } })
+    await flushPromises()
+    expect(find('qna-ask').exists()).toBe(true)
+    expect(find('qna-answer-form').exists()).toBe(true)
   })
 })
 

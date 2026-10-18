@@ -496,7 +496,8 @@ export default {
         history_count: 'レビュー・差し戻し履歴 {n}件',
         // flowgate.v02.0056 F2-2 — a card line's document without a body yet (O3 has_body), the row actions and the
         // history button's hover text with the AI review / rejection split.
-        blank: '空です',
+        // flowgate.v02.0070 T#4 (B4): drawn in the line, told from 文書なし (a document that has no body).
+        blank: '本文が空です',
         actions: {
           write: '作成',
           ai_invoke: 'AI 呼び出し',
