@@ -3,12 +3,15 @@
        raises activate / close requests. ui/Tabs cannot hold a close button per tab, so this
        follows the same tab pattern (tablist, aria-selected, roving tabindex, arrow keys with
        wrap-around and focus following) with [tab button][close button] side by side — never a
-       button inside a button. Overflowing tabs scroll sideways inside the strip only. -->
+       button inside a button. Overflowing tabs scroll sideways inside the strip only.
+       flowgate.v02.0060 T#2: inside the Designer a right click on a tab (that tab's id — it is not activated) or on the
+       strip's blank part goes to the Designer context menu (닫기 / 다른 탭 닫기 / 전체 닫기). -->
   <div
     class="flow-tab-strip"
     role="tablist"
     :aria-label="t('gui.designer.center.tabs_label')"
     data-test="designer-flow-tabs"
+    @contextmenu="contextMenu?.tab($event, null)"
   >
     <div
       v-for="tab in tabs"
@@ -18,6 +21,7 @@
       role="presentation"
       data-test="designer-flow-tab"
       :data-flow-id="tab.flowId"
+      @contextmenu="contextMenu?.tab($event, tab.flowId, buttonRefs.get(tab.flowId) ?? null)"
     >
       <button
         :ref="(el) => setButtonRef(tab.flowId, el)"
@@ -50,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, watch } from 'vue'
+import { inject, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import IconButton from '../../../components/ui/IconButton.vue'
 
@@ -70,6 +74,12 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+/** flowgate.v02.0060 T#2: the Designer context menu's tab side, provided by the Designer Shell; null elsewhere. */
+interface TabContextMenu {
+  tab(event: MouseEvent, flowId: string | null, fallback?: HTMLElement | null): boolean
+}
+const contextMenu = inject<TabContextMenu | null>(Symbol.for('flowgate.designer.contextMenu'), null)
 
 const buttonRefs = new Map<string, HTMLButtonElement>()
 

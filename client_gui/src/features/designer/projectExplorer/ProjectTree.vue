@@ -1,7 +1,9 @@
 <template>
   <!-- Assembles Project > Group > Flow from the already-derived display tree (D0002 §4).
        Expansion/selection/active state comes in as props; every row event goes straight
-       back up — no Project/Group/Flow business logic lives here. -->
+       back up — no Project/Group/Flow business logic lives here.
+       flowgate.v02.0060 T#2: a right click on a row goes up as `context` with the row it hit (the innermost row's
+       handler runs first; the Explorer decides). Nothing is selected, activated or toggled by it. -->
   <ul
     ref="rootEl"
     class="explorer-tree"
@@ -16,6 +18,7 @@
       :selected="isSelected('project', project.id)"
       @select="emit('select-project', $event)"
       @toggle="emit('toggle', $event)"
+      @contextmenu="emit('context', $event, { kind: 'project' })"
     >
       <li
         v-if="project.groups.length === 0"
@@ -31,6 +34,7 @@
         :selected="isSelected('group', group.id)"
         @select="emit('select-group', $event)"
         @toggle="emit('toggle', $event)"
+        @contextmenu="emit('context', $event, { kind: 'group', group })"
       >
         <li
           v-if="group.flows.length === 0"
@@ -46,6 +50,7 @@
           :active="flow.id === activeFlowId"
           @select="emit('select-flow', $event)"
           @activate="emit('activate-flow', $event)"
+          @contextmenu="emit('context', $event, { kind: 'flow', flow })"
         />
       </GroupRow>
     </ProjectRow>
@@ -59,6 +64,9 @@ import FlowRow from './FlowRow.vue'
 import GroupRow from './GroupRow.vue'
 import ProjectRow from './ProjectRow.vue'
 import type { ExplorerFlow, ExplorerGroup, ExplorerProject, ExplorerSelection } from './projectExplorerTree'
+
+/** flowgate.v02.0060 T#2: the row a right click hit. */
+type ExplorerContextRow = { kind: 'project' } | { kind: 'group'; group: ExplorerGroup } | { kind: 'flow'; flow: ExplorerFlow }
 
 const props = defineProps<{
   project: ExplorerProject
@@ -74,6 +82,7 @@ const emit = defineEmits<{
   'select-group': [group: ExplorerGroup]
   'select-flow': [flow: ExplorerFlow]
   'activate-flow': [flow: ExplorerFlow]
+  context: [event: MouseEvent, row: ExplorerContextRow]
 }>()
 
 const { t } = useI18n()

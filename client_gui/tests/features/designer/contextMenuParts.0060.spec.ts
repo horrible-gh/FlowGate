@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { COMMANDS, type MenuItem, type MenuTarget } from '@/features/designer/contextMenu/types'
+import { CARD_RUN_COMMANDS, COMMANDS, type MenuItem, type MenuTarget } from '@/features/designer/contextMenu/types'
 import { action, makeMenu, separator, visibleItems } from '@/features/designer/contextMenu/model'
 import { canvasMenu, canvasNodeTarget } from '@/features/designer/contextMenu/canvasMenu'
 import { projectTreeMenu } from '@/features/designer/contextMenu/projectTreeMenu'
@@ -197,6 +197,42 @@ describe('five independent menu parts / eleven kinds (0060)', () => {
     const model = makeMenu(targets[0], [{ kind: 'submenu', key: 'x', icon: '⑂', disabled: true,
       children: [action('project.info', 'info', 'ⓘ')] }], COMMANDS)
     expect(model.request('project.info')).toBeNull()
+  })
+})
+
+// flowgate.v02.0060 T#2: the card's existing run menu (0061 T#15) carried into the single card menu only (§3.6).
+describe('card run items in the card menu (T#2)', () => {
+  const runItems = [
+    { command: 'node.run.holdSet' as const, label: 'Hold 설정', disabled: false, danger: false },
+    { command: 'node.run.timeMachine' as const, label: '되돌리기 — 완료', disabled: true, danger: true },
+  ]
+  const connected = [...firstConnected, ...CARD_RUN_COMMANDS]
+  const available = { editable: true, structureEditable: true, definitionExists: true }
+  it('keeps the 40 mockup commands apart from the three run commands', () => {
+    expect(COMMANDS).toHaveLength(40)
+    expect(CARD_RUN_COMMANDS.filter((command) => (COMMANDS as readonly string[]).includes(command))).toEqual([])
+  })
+  it('appends them after a separator on a single card, worded by the caller', () => {
+    const single = canvasMenu({ target: targets[7] as never, available, connected, runItems })
+    expect(single.items.map((item) => item.kind === 'separator' ? '|' : item.key)).toEqual(['node.delete', '|', 'node.run.holdSet', 'node.run.timeMachine'])
+    expect(actions(single.items).map((item) => [item.label ?? null, item.disabled, item.danger])).toEqual([
+      [null, false, true], ['Hold 설정', false, false], ['되돌리기 — 완료', true, true],
+    ])
+    expect(single.request('node.run.holdSet')).toEqual({ command: 'node.run.holdSet', target: targets[7] })
+    expect(single.request('node.run.timeMachine')).toBeNull()
+  })
+  it('never adds them to a card of a multi-selection: no single card command there, so no item and no menu (§3.6)', () => {
+    const multi = canvasMenu({ target: targets[8] as never, available, connected, runItems })
+    expect(multi.items).toEqual([])
+    expect(multi.request('node.run.holdSet')).toBeNull()
+    expect(multi.request('node.run.timeMachine')).toBeNull()
+  })
+  it('never adds them to the blank Canvas or a line, nor shows them unless connected', () => {
+    for (const target of [targets[6], targets[9]]) {
+      const model = canvasMenu({ target: target as never, available: { ...available, canSelectAll: true, graphReady: true, hasSaveTarget: true }, connected, runItems, definitions })
+      expect(actions(model.items).some((item) => item.command.startsWith('node.run.'))).toBe(false)
+    }
+    expect(canvasMenu({ target: targets[7] as never, available, connected: firstConnected, runItems }).items.map((item) => item.key)).toEqual(['node.delete'])
   })
 })
 

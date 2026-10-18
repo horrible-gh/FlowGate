@@ -4,7 +4,7 @@
 // items. The target is frozen at build time, so later changes to the caller's state (selection,
 // tabs, card definitions) never reach the snapshot a request carries.
 
-import type { ConnectedCommands, MenuAction, MenuCommand, MenuItem, MenuModel, MenuTarget, MenuSubmenu } from './types'
+import type { ConnectedCommands, MenuAction, MenuItem, MenuItemCommand, MenuModel, MenuTarget, MenuSubmenu } from './types'
 
 /** Inputs are plain records/arrays. Copy before freezing, including selection and card definitions. */
 export function snapshot<T>(value: T): T {
@@ -15,7 +15,7 @@ export function snapshot<T>(value: T): T {
   return value
 }
 export const separator = (key: string): MenuItem => ({ kind: 'separator', key })
-export function action(command: MenuCommand, labelKey: string, icon: string, disabled = false, danger = false): MenuAction {
+export function action(command: MenuItemCommand, labelKey: string, icon: string, disabled = false, danger = false): MenuAction {
   return { kind: 'action', key: command, command, labelKey, icon, disabled, danger }
 }
 export function submenu(key: string, labelKey: string, icon: string, children: readonly MenuAction[]): MenuSubmenu {

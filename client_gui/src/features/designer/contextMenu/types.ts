@@ -17,7 +17,12 @@ export const COMMANDS = [
   'edge.disconnect', 'palette.addCard',
 ] as const
 export type MenuCommand = typeof COMMANDS[number]
-export type ConnectedCommands = ReadonlySet<MenuCommand> | readonly MenuCommand[]
+/** flowgate.v02.0060 T#2 — the card's existing run menu (0061 T#15: Hold 설정 / 해제, 되돌리기) shown inside the card
+ * menu, so one menu stays open on a card. Not part of the mockup's 40; they keep their own rules and path. */
+export const CARD_RUN_COMMANDS = ['node.run.holdSet', 'node.run.holdRelease', 'node.run.timeMachine'] as const
+export type CardRunCommand = typeof CARD_RUN_COMMANDS[number]
+export type MenuItemCommand = MenuCommand | CardRunCommand
+export type ConnectedCommands = ReadonlySet<MenuItemCommand> | readonly MenuItemCommand[]
 export interface Point { readonly x: number; readonly y: number }
 export type ProjectTarget =
   | { readonly kind: 'project'; readonly projectId: string }
@@ -63,7 +68,7 @@ interface ItemDisplay {
 }
 export interface MenuAction extends ItemDisplay {
   readonly kind: 'action'
-  readonly command: MenuCommand
+  readonly command: MenuItemCommand
   readonly definition?: CardDefinition
 }
 export interface MenuSubmenu extends ItemDisplay {
@@ -73,7 +78,7 @@ export interface MenuSubmenu extends ItemDisplay {
 export interface MenuSeparator { readonly kind: 'separator'; readonly key: string }
 export type MenuItem = MenuAction | MenuSubmenu | MenuSeparator
 export interface CommandRequest<T extends MenuTarget = MenuTarget> {
-  readonly command: MenuCommand
+  readonly command: MenuItemCommand
   readonly target: T
   readonly definition?: CardDefinition
 }

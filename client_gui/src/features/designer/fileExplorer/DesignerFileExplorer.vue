@@ -15,7 +15,7 @@
     <template v-else>
       <FileScopeHeader :group-label="groupLabel" :branch="flow.branch" :readonly="!canMutate" :busy="busy" />
 
-      <div class="dfx-body">
+      <div class="dfx-body" @contextmenu="onBlankContext">
         <LoadingState v-if="loading && !nodes.length" size="sm" :label="t('gui.designer.file_explorer.loading')" />
         <ErrorState v-else-if="error" compact :title="t('gui.designer.file_explorer.load_failed')" data-test="dfx-load-error">
           <template #action>
@@ -92,7 +92,12 @@
 // `canMutate` with every intent. It folds in the readonly/busy props, the slot's
 // live-worktree flag and the Flow's AI activity, and is false whenever any of them could
 // not be confirmed for the current scope (fail closed).
-import { computed, ref, watch } from 'vue'
+//
+// flowgate.v02.0060 T#2: inside the Designer a right click on a folder / file row, or on the blank tree area (the
+// root folder), also goes to the Designer context menu with that node's real path and type and what this explorer
+// knows of it now (expansion, canMutate, read permission, a virtual deleted node). Its 열기 unfolds the folder through
+// the same expansion a click uses — open only, never closing. The rows keep the browser menu blocked as before.
+import { computed, inject, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useProjectStore, type FlowFileNode, type FlowRef } from '@/features/project'
 import Alert from '../../../components/ui/Alert.vue'
@@ -225,6 +230,86 @@ function openDiffNode(node: FlowFileNode, status: ChangeStatus) {
 
 function onContext(node: FlowFileNode, event: MouseEvent) {
   emit('context', { ...intent(node), event })
+  openContextMenu(event, node)
+}
+
+// ── flowgate.v02.0060 T#2: the Designer context menu ───────────────────────────────────────────
+
+/** The Designer context menu's File Explorer side, provided by the Designer Shell; null elsewhere. */
+interface FileContextMenu {
+  file(event: MouseEvent, entry: {
+    target:
+      | { kind: 'folder'; projectId: string; flowId: string; path: string; commit: string | null; root: boolean }
+      | { kind: 'file'; projectId: string; flowId: string; path: string; commit: string | null; change: string | null }
+    available: () => {
+      expanded?: boolean
+      canMutate: boolean
+      virtualDeleted: boolean
+      canRead: boolean
+      git: 'linked' | 'unavailable'
+      hasChanges?: boolean
+    } | null
+    expand?: () => boolean
+    fallback?: HTMLElement | null
+  }): boolean
+}
+const contextMenu = inject<FileContextMenu | null>(Symbol.for('flowgate.designer.contextMenu'), null)
+
+/** The node as the tree shows it now (a refresh may have removed it), by path and type. */
+function shownNode(path: string, type: FlowFileNode['type']): FlowFileNode | null {
+  return visible.value.nodes.find((node) => normalizePath(node.path) === path && node.type === type) ?? null
+}
+
+/** What the menu needs to know of the node now; null once the tree no longer shows it. */
+function menuAvailability(path: string, type: FlowFileNode['type']) {
+  const node = shownNode(path, type)
+  if (!node) return null
+  return {
+    expanded: expandedPaths.value.has(path) || visible.value.reveal.has(node.id),
+    canMutate: canMutate.value,
+    // A path the Flow deleted and committed is shown as a read-only virtual node (changedViewNodes).
+    virtualDeleted: !nodes.value.some((real) => real.id === node.id),
+    canRead: node.permissions.includes('read'),
+    git: changes.value.kind === 'ready' ? 'linked' as const : 'unavailable' as const,
+    hasChanges: !!statuses.value?.[path],
+  }
+}
+
+function openContextMenu(event: MouseEvent, node: FlowFileNode) {
+  const projectId = resolvedProjectId.value
+  const flowId = props.flow?.groupId
+  if (!contextMenu || !projectId || !flowId) return
+  const path = normalizePath(node.path)
+  const scope = { projectId, flowId, path, commit: commit.value }
+  const target = node.type === 'folder'
+    ? { ...scope, kind: 'folder' as const, root: false }
+    : { ...scope, kind: 'file' as const, change: statuses.value?.[path] ?? null }
+  const fallback = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  contextMenu.file(event, {
+    target,
+    available: () => (props.flow?.groupId === flowId ? menuAvailability(path, node.type) : null),
+    expand: () => {
+      const shown = shownNode(path, 'folder')
+      if (!shown || expandedPaths.value.has(path) || visible.value.reveal.has(shown.id)) return false
+      toggleFolder(shown)
+      return true
+    },
+    fallback,
+  })
+}
+
+/** The blank tree area is the root folder (no 열기 / 이름 변경 / 삭제 there). */
+function onBlankContext(event: MouseEvent) {
+  const projectId = resolvedProjectId.value
+  const flowId = props.flow?.groupId
+  if (!contextMenu || !projectId || !flowId) return
+  contextMenu.file(event, {
+    target: { kind: 'folder', projectId, flowId, path: '', commit: commit.value, root: true },
+    available: () => (props.flow?.groupId === flowId
+      ? { canMutate: canMutate.value, virtualDeleted: false, canRead: true, git: changes.value.kind === 'ready' ? 'linked' : 'unavailable' }
+      : null),
+    fallback: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+  })
 }
 
 // A different Flow (or project) is a different tree: drop view state tied to the old one.

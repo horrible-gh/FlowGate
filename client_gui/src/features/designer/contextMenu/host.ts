@@ -7,7 +7,7 @@ import { readonly, shallowRef } from 'vue'
 import { allocateOverlayZIndex } from '../../../core/overlay/zIndex'
 import { captureFocusedElement, returnFocusTo } from '../../../core/overlay/focusReturn'
 import { makeMenu, snapshot } from './model'
-import { COMMANDS, type MenuModel, type Point } from './types'
+import { CARD_RUN_COMMANDS, COMMANDS, type MenuModel, type Point } from './types'
 
 export interface MenuSession {
   readonly generation: number
@@ -33,7 +33,7 @@ export function createDesignerMenuHost() {
   return {
     current: readonly(current),
     open(model: MenuModel, position: Point, fallbackFocus: HTMLElement | null = null): number | null {
-      const saved = makeMenu(model.target, model.items, COMMANDS)
+      const saved = makeMenu(model.target, model.items, [...COMMANDS, ...CARD_RUN_COMMANDS])
       if (!saved.items.some((item) => item.kind !== 'separator')) { close(); return null }
       // A replacement must not capture the old menu button as its return target.
       const focused = captureFocusedElement()

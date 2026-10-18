@@ -13,7 +13,9 @@
        flowgate.v02.0043: the File menu is connected — its dialogs (Group / Flow 열기, 새 Group /
        Flow) are mounted here and act on the same Project context, Explorer and Center.
        flowgate.v02.0046: the left / right Dock widths and the bottom Dock height follow the
-       Body / CenterColumn resize handles; the Shell clamps each drag into the layout bounds. -->
+       Body / CenterColumn resize handles; the Shell clamps each drag into the layout bounds.
+       flowgate.v02.0060 T#2: the one Designer context menu (contextMenu/) is installed here — its host and view, and the
+       connectors the five areas reach through inject; a chosen command runs through the paths below. -->
   <div class="designer-shell" data-test="designer-shell" @keydown.esc="selectedPalette = null">
     <DesignerTop
       :run-phase="runPhase"
@@ -103,10 +105,11 @@
     <DesignerFlowCreateDialog
       :open="dialog === 'flow-new'"
       :project-id="projectId"
-      :group-id="flowCreateGroupId"
+      :group-id="flowCreateGroup ?? flowCreateGroupId"
       @close="dialog = null"
       @created="onFlowCreated"
     />
+    <DesignerContextMenu :host="contextMenu.host" @request="contextMenu.run" />
     <ToastHost :toasts="toasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
   </div>
 </template>
@@ -201,6 +204,13 @@
 // flowgate.v02.0066 T#6 — the Center Diff (0066 D#2 §2-4, §3-10) the Shell owned and the Workspace drew over the Flow
 // tabs and Canvas. flowgate.v02.0067 T#4 moved it into the Git part's own modeless (`Diff` tab, 0067-R §6): the Shell
 // no longer receives a Git diff intent and the Center never shows one.
+//
+// flowgate.v02.0060 T#2 (0006-D rev2 2단계-A) — the Designer context menu: one host for the whole Designer and the
+// connectors of the project tree, File Explorer, Flow tabs, Canvas and Palette cards (contextMenu/attach). A right
+// click only reads state; a chosen command is checked again and runs through the path that already exists here —
+// 새 Group = File › 새 Group, 새 플로우 = the 새 Flow dialog with the right-clicked Group given explicitly (the Explorer
+// selection and the menu's default Group stay as they are), 전체 선택 = Edit › 전체 선택, 카드 추가 (Palette card) = the
+// Palette selection the next Canvas click places. The Center session's commands are the connectors' own.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { documentRead, settingsNodeHoldWrite } from '@/features/document'
@@ -212,6 +222,8 @@ import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
 import DesignerOpenDialog from '../fileMenu/DesignerOpenDialog.vue'
 import { paletteNodeSpec, readPaletteDragData, PALETTE_DRAG_MIME, type PaletteItemDefinition } from '../palette/paletteCatalog'
+import DesignerContextMenu from '../contextMenu/DesignerContextMenu.vue'
+import { useDesignerContextMenu } from '../contextMenu/attach/designerMenuConnector'
 import {
   buildExplorerProject,
   projectNodeId,
@@ -581,6 +593,12 @@ function defaultFlowNode(): CanvasNodeSpec {
   }
 }
 
+// flowgate.v02.0060 T#2: the Group a context menu's 새 플로우 named, for that dialog only (null = the default above).
+const flowCreateGroup = ref<string | null>(null)
+watch(dialog, (next) => {
+  if (next !== 'flow-new') flowCreateGroup.value = null
+})
+
 function onOpenRecent(request: DesignerRecentRequest) {
   if (request.kind === 'project') {
     const entry = projectStore.recentProjects.find((p) => p.id === request.id)
@@ -740,6 +758,26 @@ function onTopCommand(command: DesignerTopCommand) {
       top.runPhase = nextRunPhase(top.runPhase, command)
   }
 }
+
+// flowgate.v02.0060 T#2: the Designer context menu and what its commands run through (see the head comment).
+const contextMenu = useDesignerContextMenu({
+  center,
+  projectId: () => projectId.value,
+  canSelectAll: () => isMenuCommandEnabled('edit.select-all', runPhase.value, menuTargets.value),
+  selectAll: (flowId) => {
+    if (center.state.activeFlowId === flowId) onTopCommand('edit.select-all')
+  },
+  openGroupCreate: () => onTopCommand('group.new'),
+  openFlowCreate: (groupId) => {
+    if (!projectId.value) return
+    flowCreateGroup.value = groupId
+    dialog.value = 'flow-new'
+  },
+  selectPalette: (definition) => {
+    selectedPalette.value = definition
+  },
+  layout: () => [layout.leftCollapsed, layout.rightCollapsed, layout.activeLeftMode, layout.activeRightTool],
+})
 </script>
 
 <style scoped>
