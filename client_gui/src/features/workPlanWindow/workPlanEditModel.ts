@@ -15,13 +15,17 @@
 //
 // Rows are named by an identity that never changes while the window is open: the card's card_id, or a temporary
 // id for a card the server has not named yet, plus the row's role (`main` | `result`). A Step's key (`T#1`) is
-// renumbered whenever a card moves, so it never names a row (0649 T#3). The Step window (T#2) edits a row through
-// this identity (stepDraftOf / applyStepDraft).
+// renumbered whenever a card moves, so it never names a row (0649 T#3). The Step window (T#2) and the review popover
+// (0073 T#2) edit a row through this identity (stepDraftOf / applyStepDraft, setStepReview).
 //
 // flowgate.v02.0073 T#1 — the window does not show the DS and T2 types (WORK_PLAN_HIDDEN_TYPES): no quantity box, no
 // card, not in the shown totals. That is a filter of what is drawn only: their quantities, counted types and Steps stay
 // in the body and go back whole, [apply to all] still reaches their unlocked Steps, and a card move among the shown
 // cards leaves every hidden card in its slot (moveShownCard). A type's icon is the Designer Palette's (workPlanTypeIcon).
+//
+// flowgate.v02.0073 T#2 — a row's review is set in one place, the main window's review popover (setStepReview); the
+// Step window edits the pre-instruction and its attachment only (WorkPlanStepDraft has no review), so neither can
+// write over what the other set.
 import type { SelectOption } from '@/components/ui/Select.vue'
 import { DEFAULT_PALETTE_ITEMS } from '@/features/designer/palette/paletteCatalog'
 
@@ -540,12 +544,46 @@ export function applyDefaults(draft: WorkPlanDraft, displayName: (providerId: st
   return { ...draft, cards, body: { ...draft.body, steps: cards.flatMap((card) => card.steps) } }
 }
 
-// --- The Step window boundary (T#2) ---------------------------------------------------------------------
+// --- A row's review (0073 T#2: the main window's review popover) ---------------------------------------------
 
-/** What the Step window edits of one row: its review and its pre-instruction. */
+/**
+ * Sets a row's review count and reviewer (null = the project's default reviewer at run time), as a person's value.
+ * A count of 0 clears the reviewer (the server refuses a reviewer without review — reviewer_not_allowed). A locked Step
+ * takes none; the same values give the draft back unchanged. Only this row's review changes.
+ */
+export function setStepReview(
+  draft: WorkPlanDraft,
+  rowId: string,
+  reviewCount: number,
+  reviewerProviderId: string | null,
+  displayName: (providerId: string) => string | null,
+): WorkPlanDraft {
+  const row = rowOf(draft, rowId)
+  if (!row || row.step.locked || !Number.isInteger(reviewCount)) return draft
+  const reviewer = reviewCount === 0 ? null : reviewerProviderId
+  if ((row.step.review_count ?? 0) === reviewCount && (row.step.reviewer_provider_id ?? null) === reviewer) return draft
+  return replaceStep(draft, row, {
+    ...row.step,
+    review_count: reviewCount,
+    reviewer_provider_id: reviewer,
+    reviewer_provider_display_name: reviewer ? displayName(reviewer) : null,
+    origin: 'human',
+  })
+}
+
+/**
+ * The review count picker's options: the server's choices in its order (review_count_choices — 0 none, -1 until
+ * approved, n times), then the row's own count when the server no longer offers it (kept so the picker shows it).
+ */
+export function reviewCountOptions(choices: readonly number[], current: number, label: (count: number) => string): SelectOption[] {
+  const counts = choices.includes(current) ? [...choices] : [...choices, current]
+  return counts.map((count) => ({ value: String(count), label: label(count) }))
+}
+
+// --- The Step window boundary (T#2)---------------------------------------------------------------------
+
+/** What the Step window edits of one row: its pre-instruction and attachment (the review is the popover's). */
 export interface WorkPlanStepDraft {
-  readonly reviewCount: number
-  readonly reviewerProviderId: string | null
   readonly preInstructionText: string | null
   readonly preInstructionAttachment: Readonly<Record<string, unknown>> | null
 }
@@ -555,8 +593,6 @@ export function stepDraftOf(draft: WorkPlanDraft, rowId: string): WorkPlanStepDr
   const row = rowOf(draft, rowId)
   if (!row || row.step.locked) return null
   return {
-    reviewCount: row.step.review_count ?? 0,
-    reviewerProviderId: row.step.reviewer_provider_id ?? null,
     preInstructionText: row.step.pre_instruction_text ?? null,
     preInstructionAttachment: row.step.pre_instruction_attachment ? clone(row.step.pre_instruction_attachment) : null,
   }
@@ -565,31 +601,24 @@ export function stepDraftOf(draft: WorkPlanDraft, rowId: string): WorkPlanStepDr
 export type WorkPlanStepApply = { readonly status: 'applied'; readonly draft: WorkPlanDraft } | { readonly status: 'gone' | 'locked' | 'not_eligible' }
 
 /**
- * Puts the Step window's values on its row only (no other row changes). A review count of 0 clears the reviewer
- * (the server refuses a reviewer without review — reviewer_not_allowed); a result Step takes no pre-instruction.
+ * Puts the Step window's values on its row only (no other row changes, and the row's review stays as it is). A result
+ * Step takes no pre-instruction; values equal to the row's give the draft back unchanged.
  */
-export function applyStepDraft(
-  draft: WorkPlanDraft,
-  rowId: string,
-  values: WorkPlanStepDraft,
-  displayName: (providerId: string) => string | null,
-): WorkPlanStepApply {
+export function applyStepDraft(draft: WorkPlanDraft, rowId: string, values: WorkPlanStepDraft): WorkPlanStepApply {
   const row = rowOf(draft, rowId)
   if (!row) return { status: 'gone' }
   if (row.step.locked) return { status: 'locked' }
-  const eligible = instructionEligible(row.step)
-  if (!eligible && (values.preInstructionText || values.preInstructionAttachment)) return { status: 'not_eligible' }
-  const reviewer = values.reviewCount === 0 ? null : values.reviewerProviderId
+  if (!instructionEligible(row.step)) {
+    return values.preInstructionText || values.preInstructionAttachment ? { status: 'not_eligible' } : { status: 'applied', draft }
+  }
+  const sameText = (row.step.pre_instruction_text ?? null) === values.preInstructionText
+  const sameFile = JSON.stringify(row.step.pre_instruction_attachment ?? null) === JSON.stringify(values.preInstructionAttachment ?? null)
+  if (sameText && sameFile) return { status: 'applied', draft }
   const step: WorkPlanEditStep = {
     ...row.step,
-    review_count: values.reviewCount,
-    reviewer_provider_id: reviewer,
-    reviewer_provider_display_name: reviewer ? displayName(reviewer) : null,
-  }
-  if (eligible) {
-    step.pre_instruction_text = values.preInstructionText
-    step.pre_instruction_attachment = values.preInstructionAttachment ? clone(values.preInstructionAttachment) as Record<string, unknown> : null
-    step.origin = 'human'
+    pre_instruction_text: values.preInstructionText,
+    pre_instruction_attachment: values.preInstructionAttachment ? clone(values.preInstructionAttachment) as Record<string, unknown> : null,
+    origin: 'human',
   }
   return { status: 'applied', draft: replaceStep(draft, row, step) }
 }

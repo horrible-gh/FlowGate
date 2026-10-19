@@ -10,6 +10,10 @@
  * flowgate.v02.0073 T#1 — DS / T2 are not drawn (quantity boxes, cards, the shown totals), and that is all: the body
  * keeps them whole, [apply to all] still reaches their unlocked Steps, a move among the shown cards (the screen's
  * positions) leaves every hidden card in its slot with its key; a type's icon is the Designer Palette's.
+ * flowgate.v02.0073 T#2 — a row's review is set by the review popover only (setStepReview: that row, 0 clears the
+ * reviewer, a locked Step takes none; the picker's counts are the server's); the Step window's draft is the
+ * pre-instruction and attachment only, so its apply never touches a review; the popover's place stays on screen
+ * (every path clamped — also for a button off the viewport's side).
  */
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_PALETTE_ITEMS } from '@/features/designer/palette/paletteCatalog'
@@ -29,10 +33,12 @@ import {
   planQuantity,
   providerOptions,
   quantityBoxes,
+  reviewCountOptions,
   rowsOf,
   savedDraft,
   setStepNote,
   setStepProvider,
+  setStepReview,
   shownCardsOf,
   stepDraftOf,
   stepKeyShown,
@@ -46,6 +52,7 @@ import {
   workPlanTypeIcon,
   type WorkPlanDraft,
 } from '@/features/workPlanWindow/workPlanEditModel'
+import { REVIEW_POPOVER_MARGIN, reviewPopoverPlace } from '@/features/workPlanWindow/workPlanReviewPopover'
 import { DOC, hiddenPlanBody, hiddenSteps, planBody, readAnswer } from './workPlanFixtures'
 
 const STARTED = new Set(['c_d1'])
@@ -236,11 +243,103 @@ describe('per-Step values and defaults', () => {
   })
 })
 
+describe('a row’s review (0073 T#2, the review popover)', () => {
+  it('sets that row’s count and reviewer only, as a person’s value; the reviewer name is the AI’s', () => {
+    const d = setStepReview(draft(), 'c_t2|main', 2, 'aip_opus', name)
+    const steps = bodyOf(d).steps
+    expect(steps[3]).toMatchObject({ review_count: 2, reviewer_provider_id: 'aip_opus', reviewer_provider_display_name: 'Opus', origin: 'human' })
+    expect(steps[3]).toMatchObject({ pre_instruction_text: null, note: null, provider_id: 'aip_old' })
+    expect(steps.filter((_, i) => i !== 3)).toEqual(baseSteps().filter((_, i) => i !== 3))
+    const project = setStepReview(draft(), 'c_t2|main', -1, null, name)
+    expect(bodyOf(project).steps[3]).toMatchObject({ review_count: -1, reviewer_provider_id: null, reviewer_provider_display_name: null })
+  })
+
+  it('a count of 0 clears the reviewer (the server refuses one without review)', () => {
+    const d = setStepReview(draft(), 'c_t1|main', 0, 'aip_opus', name)
+    expect(bodyOf(d).steps[1]).toMatchObject({ review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null, pre_instruction_text: '사전 지시' })
+  })
+
+  it('a result Step takes a review; a locked or missing row, a non-integer count or the same values change nothing', () => {
+    const report = setStepReview(draft(), 'c_t1|result', 3, 'aip_sonnet', name)
+    expect(bodyOf(report).steps[2]).toMatchObject({ key: 'TR#1', review_count: 3, reviewer_provider_id: 'aip_sonnet', reviewer_provider_display_name: 'Sonnet' })
+    const base = draft()
+    expect(setStepReview(base, 'c_ts1|result', 1, null, name)).toBe(base)
+    expect(setStepReview(base, 'gone|main', 1, null, name)).toBe(base)
+    expect(setStepReview(base, 'c_t1|main', 1.5, null, name)).toBe(base)
+    expect(setStepReview(base, 'c_t1|main', 1, 'aip_sonnet', name)).toBe(base)
+  })
+
+  it('follows the row after a card move (the key changes, the row does not)', () => {
+    const moved = moveCard(draft(), 2, 1, STARTED)
+    if (moved.status !== 'moved') throw new Error('not moved')
+    const d = setStepReview(moved.draft, 'c_t2|main', 1, 'aip_opus', name)
+    const t2 = bodyOf(d).steps.find((s) => s.card_id === 'c_t2' && s.pair_role === 'instruction')
+    expect(t2).toMatchObject({ key: 'T#1', review_count: 1, reviewer_provider_id: 'aip_opus' })
+    expect(bodyOf(d).steps.find((s) => s.card_id === 'c_t1' && s.pair_role === 'instruction')).toMatchObject({ review_count: 1, reviewer_provider_id: 'aip_sonnet' })
+  })
+
+  it('count options: the server’s choices in order, and the row’s own count when no longer offered', () => {
+    const label = (n: number) => (n === 0 ? '검수 없음' : n < 0 ? '승인될 때까지' : `${n}회`)
+    expect(reviewCountOptions([0, 1, 2, 3, -1], 2, label)).toEqual([
+      { value: '0', label: '검수 없음' },
+      { value: '1', label: '1회' },
+      { value: '2', label: '2회' },
+      { value: '3', label: '3회' },
+      { value: '-1', label: '승인될 때까지' },
+    ])
+    expect(reviewCountOptions([0, 1], 5, label).map((o) => o.value)).toEqual(['0', '1', '5'])
+  })
+})
+
+describe('the review popover’s place (0073 T#2)', () => {
+  const viewport = { width: 1000, height: 700 }
+  const size = { width: 280, height: 220 }
+  const m = REVIEW_POPOVER_MARGIN
+
+  it('beside the button inside its window first (right, then left), its top on the button’s', () => {
+    const button = { left: 300, top: 200, right: 400, bottom: 230 }
+    expect(reviewPopoverPlace(button, size, viewport, { left: 100, top: 50, right: 900, bottom: 650 })).toEqual({ left: 406, top: 200 })
+    expect(reviewPopoverPlace(button, size, viewport, { left: 0, top: 50, right: 600, bottom: 650 })).toEqual({ left: 14, top: 200 })
+  })
+
+  it('under the button (right edges aligned) when no side fits; over it when there is no room under', () => {
+    const narrow = { left: 200, top: 50, right: 560, bottom: 650 }
+    expect(reviewPopoverPlace({ left: 300, top: 200, right: 400, bottom: 230 }, size, viewport, narrow)).toEqual({ left: 120, top: 236 })
+    expect(reviewPopoverPlace({ left: 300, top: 600, right: 400, bottom: 630 }, size, viewport, narrow)).toEqual({ left: 120, top: 374 })
+  })
+
+  it('always inside the viewport: clamped to the margins, a popover larger than the viewport at the top-left margin', () => {
+    const at = reviewPopoverPlace({ left: 0, top: 690, right: 40, bottom: 700 }, size, { width: 300, height: 400 })
+    expect(at.left).toBeGreaterThanOrEqual(m)
+    expect(at.left + size.width).toBeLessThanOrEqual(300 - m)
+    expect(at.top).toBeGreaterThanOrEqual(m)
+    expect(at.top + size.height).toBeLessThanOrEqual(400 - m)
+    expect(reviewPopoverPlace({ left: 10, top: 10, right: 20, bottom: 20 }, { width: 500, height: 500 }, { width: 300, height: 300 })).toEqual({ left: m, top: m })
+  })
+
+  it('a button off the viewport’s left or right (scrolled, its window dragged out) still gets a popover inside the viewport', () => {
+    const plan = { left: 0, top: 0, right: 820, bottom: 640 }
+    expect(reviewPopoverPlace({ left: -150, top: 200, right: -50, bottom: 230 }, size, viewport, plan)).toEqual({ left: m, top: 236 })
+    expect(reviewPopoverPlace({ left: 1100, top: 200, right: 1200, bottom: 230 }, size, viewport, { left: 900, top: 0, right: 1400, bottom: 640 })).toEqual({ left: 712, top: 236 })
+    expect(reviewPopoverPlace({ left: 1100, top: 200, right: 1200, bottom: 230 }, size, viewport)).toEqual({ left: 712, top: 236 })
+    // every path, every horizontal position of the button: left within [m, viewport − width − m]
+    for (let x = -600; x <= 1600; x += 25) {
+      for (const bounds of [null, plan, { left: x - 100, top: 0, right: x + 700, bottom: 640 }]) {
+        for (const y of [100, 600]) {
+          const at = reviewPopoverPlace({ left: x, top: y, right: x + 100, bottom: y + 30 }, size, viewport, bounds)
+          expect(at.left).toBeGreaterThanOrEqual(m)
+          expect(at.left + size.width).toBeLessThanOrEqual(viewport.width - m)
+          expect(at.top).toBeGreaterThanOrEqual(m)
+          expect(at.top + size.height).toBeLessThanOrEqual(viewport.height - m)
+        }
+      }
+    }
+  })
+})
+
 describe('the Step window boundary (T#2)', () => {
-  it('a copy of the row values; locked or missing rows give none', () => {
+  it('a copy of the row’s pre-instruction values (no review: 0073 T#2); locked or missing rows give none', () => {
     expect(stepDraftOf(draft(), 'c_t1|main')).toEqual({
-      reviewCount: 1,
-      reviewerProviderId: 'aip_sonnet',
       preInstructionText: '사전 지시',
       preInstructionAttachment: { doc_id: DOC, filename: 'r_1.txt', original_filename: 'brief.txt', content_sha256: 'a'.repeat(64) },
     })
@@ -248,27 +347,30 @@ describe('the Step window boundary (T#2)', () => {
     expect(stepDraftOf(draft(), 'nope|main')).toBeNull()
   })
 
-  it('apply puts the values on that row only; review 0 clears the reviewer', () => {
-    const result = applyStepDraft(draft(), 'c_t2|main', { reviewCount: 0, reviewerProviderId: 'aip_opus', preInstructionText: '새 지시', preInstructionAttachment: null }, name)
+  it('apply puts the values on that row only and leaves its review as it is', () => {
+    const reviewed = setStepReview(draft(), 'c_t2|main', 2, 'aip_opus', name)
+    const result = applyStepDraft(reviewed, 'c_t2|main', { preInstructionText: '새 지시', preInstructionAttachment: null })
     expect(result.status).toBe('applied')
     if (result.status !== 'applied') return
     const steps = bodyOf(result.draft).steps
-    expect(steps[3]).toMatchObject({ review_count: 0, reviewer_provider_id: null, pre_instruction_text: '새 지시' })
+    expect(steps[3]).toMatchObject({ review_count: 2, reviewer_provider_id: 'aip_opus', pre_instruction_text: '새 지시', origin: 'human' })
     expect(steps.filter((_, i) => i !== 3)).toEqual(baseSteps().filter((_, i) => i !== 3))
   })
 
-  it('a result Step takes a review but no pre-instruction; a moved card keeps its row', () => {
-    expect(applyStepDraft(draft(), 'c_t1|result', { reviewCount: 2, reviewerProviderId: null, preInstructionText: 'x', preInstructionAttachment: null }, name).status).toBe('not_eligible')
-    const review = applyStepDraft(draft(), 'c_t1|result', { reviewCount: 2, reviewerProviderId: 'aip_sonnet', preInstructionText: null, preInstructionAttachment: null }, name)
-    expect(review.status).toBe('applied')
+  it('a result Step takes no pre-instruction; unchanged values give the draft back; a moved card keeps its row', () => {
+    expect(applyStepDraft(draft(), 'c_t1|result', { preInstructionText: 'x', preInstructionAttachment: null }).status).toBe('not_eligible')
+    const base = draft()
+    expect(applyStepDraft(base, 'c_t1|result', { preInstructionText: null, preInstructionAttachment: null })).toEqual({ status: 'applied', draft: base })
+    const same = applyStepDraft(base, 'c_t1|main', stepDraftOf(base, 'c_t1|main')!)
+    expect(same.status === 'applied' && same.draft).toBe(base)
     const moved = moveCard(draft(), 2, 1, STARTED)
     if (moved.status !== 'moved') throw new Error('not moved')
-    const applied = applyStepDraft(moved.draft, 'c_t1|main', { reviewCount: 3, reviewerProviderId: null, preInstructionText: '그대로', preInstructionAttachment: null }, name)
+    const applied = applyStepDraft(moved.draft, 'c_t1|main', { preInstructionText: '그대로', preInstructionAttachment: null })
     if (applied.status !== 'applied') throw new Error('not applied')
     const t1 = bodyOf(applied.draft).steps.find((s) => s.card_id === 'c_t1' && s.pair_role === 'instruction')
-    expect(t1).toMatchObject({ key: 'T#2', review_count: 3, pre_instruction_text: '그대로' })
-    expect(applyStepDraft(draft(), 'c_ts1|result', { reviewCount: 1, reviewerProviderId: null, preInstructionText: null, preInstructionAttachment: null }, name).status).toBe('locked')
-    expect(applyStepDraft(draft(), 'gone|main', { reviewCount: 1, reviewerProviderId: null, preInstructionText: null, preInstructionAttachment: null }, name).status).toBe('gone')
+    expect(t1).toMatchObject({ key: 'T#2', review_count: 1, reviewer_provider_id: 'aip_sonnet', pre_instruction_text: '그대로', pre_instruction_attachment: null })
+    expect(applyStepDraft(draft(), 'c_ts1|result', { preInstructionText: null, preInstructionAttachment: null }).status).toBe('locked')
+    expect(applyStepDraft(draft(), 'gone|main', { preInstructionText: null, preInstructionAttachment: null }).status).toBe('gone')
   })
 
   it('a legacy body without card ids gets the same row ids on every read, and none is sent', () => {

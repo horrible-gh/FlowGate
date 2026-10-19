@@ -209,9 +209,25 @@
                   data-test="wp-edit-step-provider"
                   @update:model-value="(value: string) => editor.setStepProvider(row.rowId, value || null)"
                 />
-                <span class="wpe-review" :class="{ 'is-active': !row.step.locked && (row.step.review_count ?? 0) !== 0 }" data-test="wp-edit-step-review">
-                  {{ row.step.locked ? '—' : reviewSummary(row.step) }}
-                </span>
+                <span v-if="row.step.locked" class="wpe-review wpe-muted" data-test="wp-edit-step-review">—</span>
+                <Button
+                  v-else
+                  size="sm"
+                  variant="secondary"
+                  class="wpe-review"
+                  :class="{ 'is-active': (row.step.review_count ?? 0) !== 0, 'is-open': reviewOpenRow === row.rowId }"
+                  :disabled="inputsLocked"
+                  :title="t('review.open', { n: row.no })"
+                  aria-haspopup="dialog"
+                  :aria-expanded="reviewOpenRow === row.rowId ? 'true' : 'false'"
+                  :aria-controls="reviewOpenRow === row.rowId ? reviewPopover?.popoverId : undefined"
+                  data-test="wp-edit-step-review"
+                  @pointerdown="reviewPopover?.press(row.rowId)"
+                  @click="openReview($event, row.rowId)"
+                >
+                  <span class="wpe-review-text" data-test="wp-edit-step-review-summary">{{ reviewSummary(row.step) }}</span>
+                  <span class="wpe-caret" aria-hidden="true">▾</span>
+                </Button>
                 <span class="wpe-note">
                   <Input
                     v-if="!row.step.locked"
@@ -252,6 +268,7 @@
           >{{ t('card.drop_end') }}</li>
         </ol>
       </section>
+      <WorkPlanReviewPopover ref="reviewPopover" :editor="editor" />
     </template>
   </div>
 </template>
@@ -259,12 +276,14 @@
 <script setup lang="ts">
 // flowgate.v02.0072 T#1 — the editing body of the work plan edit window (WorkPlanEditWindow): ① the quantity boxes
 // with −/+ (0..20), ② the plan defaults — default AI, default note, [모두 적용], ③ the Steps by card: per row the AI
-// picker (v0.2 Select over the project's AIs read with the plan), the review summary, the one-line note with its
+// picker (v0.2 Select over the project's AIs read with the plan), the review button, the one-line note with its
 // server limit, the pre-instruction mark, and ✎. Cards move with ▲▼ or by dragging the grip; a started card is
 // pinned. Everything changes the editor's draft only — the server save is the window's [저장].
 // ✎ never opens anything here (no inline drawer): it emits `edit-step` with the row's identity and the window hands
-// it to the Step window (T#2). Review, pre-instruction and attachment are edited there, so this body only shows
-// their summary.
+// it to the Step window (T#2). Pre-instruction and attachment are edited there, so this body only marks them.
+// flowgate.v02.0073 T#2 — the review is edited here, in one place: a row's review button shows its value (검수 없음,
+// 2회 · Opus) and opens the window's review popover (WorkPlanReviewPopover: count, reviewer, [완료]) for that row;
+// folding that row's card or minimizing the window (`minimized`) closes it.
 // The body has no colors of its own: v0.2 Button / IconButton / Select / Input and the theme tokens; a type's icon is
 // the Designer Palette's (WorkPlanTypeIcon).
 //
@@ -284,6 +303,7 @@ import Select from '@/components/ui/Select.vue'
 import { renderWpFieldError, type WpFieldError } from '@shared/workPlanErrors'
 import { documentTypeNameKey, workPlanQuantityNameKey } from '@/features/documentWindow/specialDocumentModel'
 import type { WorkPlanCapabilityFinding } from '@/features/document'
+import WorkPlanReviewPopover from './WorkPlanReviewPopover.vue'
 import WorkPlanTypeIcon from './WorkPlanTypeIcon.vue'
 import { workPlanWindowMessages } from './messages'
 import type { WorkPlanEditor } from './useWorkPlanEditor'
@@ -310,6 +330,8 @@ const props = defineProps<{
   editor: WorkPlanEditor
   /** A Step window is registered (T#2): ✎ is enabled. */
   stepEditAvailable: boolean
+  /** The window is minimized (its body is not shown): the review popover closes. */
+  minimized?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -381,7 +403,8 @@ const cardBodyId = (cardId: string) => `${bodyPrefix}-${cardId.replace(/[^\w-]/g
 
 function toggleCard(cardId: string): void {
   const next = new Set(opened.value)
-  if (!next.delete(cardId)) next.add(cardId)
+  if (next.delete(cardId)) closeReviewIn(cardId)
+  else next.add(cardId)
   opened.value = next
 }
 
@@ -407,6 +430,28 @@ function reviewSummary(step: WorkPlanEditStep): string {
   const reviewer = step.reviewer_provider_id ? props.editor.providerName(step.reviewer_provider_id, step.reviewer_provider_display_name) : t('review.project_default')
   return t('review.summary', { count: reviewCountLabel(count), reviewer })
 }
+
+const reviewPopover = ref<InstanceType<typeof WorkPlanReviewPopover> | null>(null)
+const reviewOpenRow = computed(() => reviewPopover.value?.openRowId ?? null)
+
+function openReview(event: MouseEvent, rowId: string): void {
+  reviewPopover.value?.toggle(rowId, event.currentTarget as HTMLElement)
+}
+
+// The popover goes with its button: the button's card folding (v-show hides the row, the popover is on <body>), from
+// the keyboard too, where no press outside closes it.
+function closeReviewIn(cardId: string): void {
+  const open = reviewOpenRow.value
+  if (open && shownCards.value.find((shown) => shown.card.id === cardId)?.rows.some((row) => row.rowId === open)) reviewPopover.value?.close()
+}
+
+// ... and the window minimizing (its body hidden).
+watch(
+  () => props.minimized,
+  (minimized) => {
+    if (minimized) reviewPopover.value?.close()
+  },
+)
 
 function pencilTitle(row: WorkPlanRowRef): string {
   if (row.step.locked) return t('pencil.locked')
@@ -811,12 +856,25 @@ function onDragEnd(): void {
   overflow: hidden;
   color: var(--fg2-muted);
   font-size: 11.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.wpe-review.is-active {
+.wpe-review.is-active,
+.wpe-review.is-open {
   color: var(--fg2-text);
+}
+
+.wpe-review :deep(.ui-btn-content) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wpe-review-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wpe-mark {

@@ -1,20 +1,14 @@
 <template>
   <ModelessShell ref="shell" :open="true" :initial-x="win.x" :initial-y="win.y" :initial-width="600" :initial-height="580"
     :min-width="380" :min-height="300" :minimized="win.minimized" @update:minimized="win.minimized = $event" @close="requestClose">
-    <template #header><span>{{ t('title') }} · {{ target?.stepKey ?? '—' }} <span v-if="dirty" :title="t('dirty')">●</span></span></template>
+    <template #header><span data-test="wp-step-title">{{ t('title') }} · {{ target ? t('heading', { card: cardLabel, doc: docLabel }) : '—' }} <span v-if="dirty" :title="t('dirty')">●</span></span></template>
     <div class="step-window" data-test="wp-step-window" :data-row="target?.rowId" :data-window="win.id">
       <div class="step-scroll">
-        <p v-if="target" class="step-caption" data-test="wp-step-heading">{{ t('step', { type: typeLabel, key: target.stepKey, n: target.stepNo }) }}</p>
+        <p v-if="target" class="step-caption" data-test="wp-step-heading">{{ t('step', { card: cardLabel, doc: docLabel, n: target.stepNo }) }}</p>
         <p v-if="!target" class="step-warning" role="alert" data-test="wp-step-gone">{{ t('gone') }}</p>
         <p v-else-if="win.session.locked()" class="step-warning" role="status" data-test="wp-step-lock" :data-reason="win.session.lockReason()">
           {{ win.session.lockReason() ? pt(`lock.${win.session.lockReason()}`) : t('busy') }}
         </p>
-        <div class="step-review">
-          <label>{{ t('review') }}<Select data-test="wp-step-review" :model-value="String(win.draft.reviewCount)" :options="reviewOptions" :disabled="blocked"
-            @update:model-value="setValue('reviewCount', Number($event))" /></label>
-          <label>{{ t('reviewer') }}<Select data-test="wp-step-reviewer" :model-value="win.draft.reviewerProviderId ?? ''" :options="reviewerOptions"
-            :disabled="blocked || win.draft.reviewCount === 0" @update:model-value="setValue('reviewerProviderId', $event || null)" /></label>
-        </div>
         <p v-if="target?.pairRole === 'result'" class="step-caption" data-test="wp-step-result">{{ t('result') }}</p>
         <template v-else>
           <label>{{ t('instruction') }}<Textarea data-test="wp-step-text" :model-value="win.draft.preInstructionText ?? ''" :rows="8" :disabled="blocked"
@@ -54,8 +48,8 @@ import { useI18n } from 'vue-i18n'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import Button from '@/components/ui/Button.vue'
-import Select from '@/components/ui/Select.vue'
 import Textarea from '@/components/ui/Textarea.vue'
+import { documentTypeNameKey, workPlanQuantityNameKey } from '@/features/documentWindow/specialDocumentModel'
 import type { WorkPlanStepDraft } from './workPlanEditModel'
 import { workPlanStepMessages } from './stepMessages'
 import { workPlanWindowMessages } from './messages'
@@ -66,7 +60,7 @@ const props = defineProps<{ win: WorkPlanStepWindow }>()
 const messages = { ko: { ...workPlanWindowMessages.ko, ...workPlanStepMessages.ko }, en: { ...workPlanWindowMessages.en, ...workPlanStepMessages.en }, ja: { ...workPlanWindowMessages.ja, ...workPlanStepMessages.ja } }
 const { t } = useI18n({ useScope: 'local', messages, inheritLocale: true })
 const pt = t
-const { t: gt, te: gte } = useI18n({ useScope: 'global' })
+const { t: gt } = useI18n({ useScope: 'global' })
 const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const confirming = ref(false)
@@ -75,19 +69,14 @@ const dirty = computed(() => workPlanStepDirty(props.win))
 const blocked = computed(() => workPlanStepBlocked(props.win))
 const validation = computed(() => workPlanStepValidation(props.win))
 const charCount = computed(() => Array.from(props.win.draft.preInstructionText ?? '').length)
-const typeLabel = computed(() => {
-  const code = target.value?.type ?? ''
-  const key = `gui.document_window.types.${code}`
-  return gte(key) ? gt(key) : code
+// 0073 T#2: the row is named as the main window names it — its card (작업 1) and document (작업 지시서), never the
+// Step key; the review is set in the main window's review popover, so this window has no review controls.
+const cardLabel = computed(() => {
+  const current = target.value
+  if (!current) return ''
+  return t('card.name', { name: gt(`gui.document_window.${workPlanQuantityNameKey({ type: current.cardType, unit: current.cardUnit })}`), n: current.cardOrdinal })
 })
-const reviewOptions = computed(() => props.win.session.reviewCountChoices().map((count) => ({ value: String(count), label: count === 0 ? t('none') : count === -1 ? t('unlimited') : t('times', { n: count }) })))
-const reviewerOptions = computed(() => {
-  const options = props.win.session.reviewerOptions(t('default_reviewer'), (name) => t('unavailable', { name }))
-  const selected = props.win.draft.reviewerProviderId
-  // A reviewer chosen only in this child may disappear from the refreshed project list.
-  if (selected && !options.some((option) => option.value === selected)) options.push({ value: selected, label: t('unavailable', { name: selected }) })
-  return options
-})
+const docLabel = computed(() => gt(`gui.document_window.${documentTypeNameKey(target.value?.type ?? null)}`))
 function setValue<K extends keyof WorkPlanStepDraft>(key: K, value: WorkPlanStepDraft[K]): void { setWorkPlanStepValue(props.win, key, value) }
 function requestClose(): void {
   if (dirty.value || props.win.uploading) confirming.value = true
@@ -107,7 +96,6 @@ watch(() => props.win.session.snapshot(), () => syncWorkPlanStep(props.win), { d
 .step-window { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 12px; }
 .step-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
 .step-caption { margin: 0; color: var(--fg2-muted); font-size: 12px; line-height: 1.5; }
-.step-review { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
 .step-warning { margin: 0; padding: 8px; border: 1px solid var(--fg2-line); color: var(--fg2-status-warning-fg); font-size: 12px; overflow-wrap: anywhere; }
 .step-attachment { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--fg2-line); font-size: 12px; }

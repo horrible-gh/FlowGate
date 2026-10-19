@@ -1,4 +1,6 @@
 // 0072 T#2: isolated Step drafts. Only apply() changes the parent; only the parent saves the WP.
+// 0073 T#2: a Step draft is the pre-instruction and its attachment only — the review is set in the parent's review
+// popover, so the baseline / snapshot check and apply() never see it and cannot write an old review back.
 import { markRaw, reactive } from 'vue'
 import { workPlanUploadInstruction, workPlanSaveFailureOf } from '@/features/document'
 import type { WorkPlanStepDraft } from './workPlanEditModel'
@@ -38,7 +40,6 @@ export function workPlanStepBlocked(win: WorkPlanStepWindow): boolean {
   return win.closed || win.uploading || !win.session.alive() || !win.session.target() || !win.session.snapshot() || win.session.locked()
 }
 export function workPlanStepValidation(win: WorkPlanStepWindow): string | null {
-  if (!win.session.reviewCountChoices().includes(win.draft.reviewCount)) return 'review_invalid'
   // Python's server limit counts Unicode code points (not UTF-16 code units).
   if (Array.from(win.draft.preInstructionText ?? '').length > win.session.preInstructionMaxChars()) return 'text_limit'
   return null
@@ -70,9 +71,8 @@ export function installWorkPlanStepEditor(): () => void {
 
 export function setWorkPlanStepValue<K extends keyof WorkPlanStepDraft>(win: WorkPlanStepWindow, key: K, value: WorkPlanStepDraft[K]): void {
   if (workPlanStepBlocked(win)) return
-  if (key === 'reviewerProviderId' && win.draft.reviewCount === 0) return
-  if ((key === 'preInstructionText' || key === 'preInstructionAttachment') && win.session.target()?.pairRole === 'result') return
-  win.draft = { ...win.draft, [key]: value, ...(key === 'reviewCount' && value === 0 ? { reviewerProviderId: null } : {}) }
+  if (win.session.target()?.pairRole === 'result') return
+  win.draft = { ...win.draft, [key]: value }
   win.issue = null
   win.detail = null
 }

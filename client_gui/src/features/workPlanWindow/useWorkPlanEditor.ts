@@ -17,8 +17,12 @@
 //   in another tab locks the window without a save first, and its end unlocks it.
 // - The window registers with the document edit registry (as the document windows do), so an upload of this
 //   document waits while it holds unsaved edits, and a finished upload is read again here.
-// - The Step window (T#2) edits one row through `stepSession(rowId)`: a copy of the row's review / pre-instruction
-//   values, and `apply` that puts its values on that row only (parent dirty; the server PUT stays the parent's).
+// - The Step window (T#2) edits one row through `stepSession(rowId)`: a copy of the row's pre-instruction values,
+//   and `apply` that puts its values on that row only (parent dirty; the server PUT stays the parent's).
+// - flowgate.v02.0073 T#2: a row's review is set by the main window's review popover (`setStepReview`, the server's
+//   review_count_choices, the reviewer picker `reviewerOptions`) straight on the draft; the Step window no longer
+//   carries it, so a Step window's save or cancel never writes over a review set meanwhile. Its target names the row
+//   by its card and document (cardType / cardOrdinal) and its place among the shown rows — the Step key stays inside.
 // - Card moves take the screen's positions among the shown cards (flowgate.v02.0073 T#1: DS / T2 cards are not drawn);
 //   the model puts the shown cards back into their slots of the plan, so a hidden card keeps its place.
 import { computed, onScopeDispose, ref, shallowRef, watch, type ComputedRef, type Ref, type ShallowRef } from 'vue'
@@ -54,9 +58,12 @@ import {
   setDefaultProvider as setDefaultProviderIn,
   setStepNote as setStepNoteIn,
   setStepProvider as setStepProviderIn,
+  setStepReview as setStepReviewIn,
+  shownCardsOf,
   stepDraftOf,
   toWorkPlanEditView,
   unassignedSteps,
+  unitOf,
   workPlanLockReason,
   type WorkPlanDraft,
   type WorkPlanEditView,
@@ -94,11 +101,16 @@ export interface WorkPlanStepEditTarget {
   readonly docId: string
   /** The row's identity (card id | role); follows a new card's id after a save. */
   readonly rowId: string
+  /** The Step key now (renumbered by card moves; for the upload API and tests — never shown to a person). */
   readonly stepKey: string
-  /** 1-based position in the plan. */
+  /** 1-based position among the shown rows (the main window's row number; the whole plan's for a hidden row). */
   readonly stepNo: number
   readonly type: string
   readonly pairRole: WorkPlanPairRole
+  /** The card the row is on, as the main window names it: its head type, unit and ordinal (작업 1, 기본 설계 1). */
+  readonly cardType: string
+  readonly cardUnit: 'sheet' | 'set'
+  readonly cardOrdinal: number
 }
 
 export type WorkPlanStepApplyStatus = 'applied' | 'gone' | 'locked' | 'not_eligible'
@@ -107,24 +119,21 @@ export type WorkPlanStepApplyStatus = 'applied' | 'gone' | 'locked' | 'not_eligi
 export interface WorkPlanStepEditSession {
   /** The row now, or null when it is gone (its card removed, the plan read again without it, the window closed). */
   target(): WorkPlanStepEditTarget | null
-  /** A copy of the row's review / pre-instruction values, or null (gone / locked Step). */
+  /** A copy of the row's pre-instruction values, or null (gone / locked Step). */
   snapshot(): WorkPlanStepDraft | null
-  /** Puts the values on this row only; the parent becomes dirty and saves them with its [저장]. */
+  /** Puts the values on this row only; the parent becomes dirty (when they differ) and saves them with its [저장]. */
   apply(values: WorkPlanStepDraft): WorkPlanStepApplyStatus
   /** The parent cannot be changed now (any lock reason, a save running, a capability confirmation pending). */
   locked(): boolean
   lockReason(): WorkPlanLockReason | null
   /** The parent window is still open. */
   alive(): boolean
-  reviewCountChoices(): readonly number[]
   preInstructionMaxChars(): number
   attachmentMaxBytes(): number
   /** The stored Step key accepted by the upload API; null until a new card is saved by its parent. */
   attachmentStepKey(): string | null
   /** Refresh after an upload refusal without discarding either editor's draft. */
   refreshLocks(refusal?: WorkPlanRefusal): void
-  /** The reviewer picker's options (empty = the project's default reviewer at run time). */
-  reviewerOptions(emptyLabel: string, unavailable: (name: string) => string): SelectOption[]
 }
 
 export interface WorkPlanEditorOptions {
@@ -183,6 +192,12 @@ export interface WorkPlanEditor {
   cardStarted(cardId: string): boolean
   setStepProvider(rowId: string, providerId: string | null): void
   setStepNote(rowId: string, note: string): void
+  /** The review popover: a count the server offers (or the row's own), and a reviewer (null = project default). */
+  setStepReview(rowId: string, reviewCount: number, reviewerProviderId: string | null): void
+  /** The review counts the server takes (GET review_count_choices). */
+  reviewCountChoices(): readonly number[]
+  /** The reviewer picker's options (empty = the project's default reviewer at run time). */
+  reviewerOptions(emptyLabel: string, unavailable: (name: string) => string): SelectOption[]
   setDefaultProvider(providerId: string | null): void
   setDefaultNote(note: string): void
   applyDefaults(): void
@@ -485,6 +500,20 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     edit((d) => setStepNoteIn(d, rowId, note))
   }
 
+  const reviewCountChoices = (): readonly number[] => view.value?.reviewCountChoices ?? [0]
+
+  function setStepReview(rowId: string, reviewCount: number, reviewerProviderId: string | null): void {
+    const current = draft.value
+    const row = current ? rowOf(current, rowId) : null
+    // Only what the picker offers: the server's counts, or the row's own count kept as it is.
+    if (!row || (!reviewCountChoices().includes(reviewCount) && reviewCount !== (row.step.review_count ?? 0))) return
+    edit((d) => setStepReviewIn(d, rowId, reviewCount, reviewerProviderId, (id) => nameOf(id)))
+  }
+
+  function reviewerOptions(emptyLabel: string, unavailable: (name: string) => string): SelectOption[] {
+    return pickerOptions((draft.value?.cards ?? []).flatMap((card) => card.steps.map((step) => step.reviewer_provider_id)), emptyLabel, unavailable)
+  }
+
   function setDefaultProvider(providerId: string | null): void {
     edit((d) => setDefaultProviderIn(d, providerId))
   }
@@ -512,7 +541,19 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     if (!current || !alive.value) return null
     const row = rowOf(current, resolve(rowId))
     if (!row) return null
-    return { docId: options.docId(), rowId: row.rowId, stepKey: row.step.key, stepNo: row.no, type: row.step.type, pairRole: row.step.pair_role }
+    const head = current.cards[row.cardIndex].steps[0]
+    const shown = shownCardsOf(current).flatMap((card) => card.rows).find((item) => item.rowId === row.rowId)
+    return {
+      docId: options.docId(),
+      rowId: row.rowId,
+      stepKey: row.step.key,
+      stepNo: shown?.no ?? row.no,
+      type: row.step.type,
+      pairRole: row.step.pair_role,
+      cardType: head.type,
+      cardUnit: unitOf(current.body, head.type),
+      cardOrdinal: head.ordinal,
+    }
   }
 
   function stepSession(rowId: string): WorkPlanStepEditSession {
@@ -530,16 +571,17 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
       apply(values) {
         if (!alive.value || !draft.value || !valid.value) return 'gone'
         if (inputsLocked.value) return 'locked'
-        const result = applyStepDraft(draft.value, resolve(rowId), values, (id) => nameOf(id))
+        const result = applyStepDraft(draft.value, resolve(rowId), values)
         if (result.status !== 'applied') return result.status
-        draft.value = result.draft
-        dirty.value = true
+        if (result.draft !== draft.value) {
+          draft.value = result.draft
+          dirty.value = true
+        }
         return 'applied'
       },
       locked: () => !alive.value || inputsLocked.value,
       lockReason: () => lockReason.value,
       alive: () => alive.value,
-      reviewCountChoices: () => view.value?.reviewCountChoices ?? [0],
       preInstructionMaxChars: () => view.value?.preInstructionMaxChars ?? 20000,
       attachmentMaxBytes: () => view.value?.attachmentMaxBytes ?? 0,
       refreshLocks: (reason) => {
@@ -555,8 +597,6 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
         const stored = draftOf(view.value.body).cards.find((item) => item.id === card.id)
         return stored?.steps.find((step) => step.pair_role === row.step.pair_role)?.key ?? null
       },
-      reviewerOptions: (emptyLabel, unavailable) =>
-        pickerOptions((draft.value?.cards ?? []).flatMap((card) => card.steps.map((step) => step.reviewer_provider_id)), emptyLabel, unavailable),
     }
   }
 
@@ -620,6 +660,9 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     cardStarted: (cardId) => started().has(cardId),
     setStepProvider,
     setStepNote,
+    setStepReview,
+    reviewCountChoices,
+    reviewerOptions,
     setDefaultProvider,
     setDefaultNote,
     applyDefaults,

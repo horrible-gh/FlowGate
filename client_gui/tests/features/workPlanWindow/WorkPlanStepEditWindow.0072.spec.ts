@@ -1,5 +1,8 @@
 // 0072 T#2: real parent/child ModelessShells, mocked HTTP at the transport boundary.
 // Reserved-file state models the existing successful-PUT cleanup contract; no server writes.
+// 0073 T#2: the Step window has no review controls and never names the Step key; a review set in the parent's review
+// popover is kept through the Step window's save and cancel (its draft carries no review); an Esc in the Step window
+// is the Step window's, never the popover's.
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { reactive } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,7 +12,7 @@ import { closeAllDocumentAiWindows } from '@/features/documentWindow'
 import { documentIoConflict } from '@/features/documentWindow/documentEditRegistry'
 import { closeAllWorkPlanEditWindows, openWorkPlanEditWindow, WorkPlanEditWindows } from '@/features/workPlanWindow'
 import { workPlanUploadInstruction } from '@/features/document'
-import { saveWorkPlanStep, setWorkPlanStepValue, uploadWorkPlanStepFile, workPlanStepWindowList, workPlanStepPending } from '@/features/workPlanWindow/workPlanStepEditWindows'
+import { saveWorkPlanStep, setWorkPlanStepValue, uploadWorkPlanStepFile, workPlanStepDirty, workPlanStepWindowList, workPlanStepPending } from '@/features/workPlanWindow/workPlanStepEditWindows'
 import { DOC, planBody, readAnswer } from './workPlanFixtures'
 
 const api = vi.hoisted(() => ({ getRequest: vi.fn(), putRequest: vi.fn(), postFormRequest: vi.fn() }))
@@ -187,24 +190,30 @@ describe('separate draft and modeless window', () => {
     expect(api.putRequest).not.toHaveBeenCalled()
   })
 
-  it('review counts follow the server; zero clears the reviewer; result steps only edit review', async () => {
-    await open('c_t1|result')
+  it('no review controls; the title names the card and document, never the Step key; a result step changes nothing', async () => {
+    await open()
+    const panel = () => child().closest<HTMLElement>('.ui-modeless-panel')!
+    expect(q('wp-step-review', child())).toBeNull()
+    expect(q('wp-step-reviewer', child())).toBeNull()
+    expect(child().querySelectorAll('select')).toHaveLength(0)
+    expect(q('wp-step-title', panel()).textContent).toContain('단계 편집 · 작업 1 · 작업 지시서')
+    expect(q('wp-step-heading', child()).textContent).toBe('작업 1 · 작업 지시서 · 2번째 단계')
+    expect(panel().textContent).not.toMatch(/T#1|TR#1|검수/)
+    await click(q('wp-step-cancel', child()))
+    await pencil('c_t1|result')
+    expect(q('wp-step-heading', child()).textContent).toBe('작업 1 · 작업 레포트 · 3번째 단계')
+    expect(panel().textContent).not.toMatch(/T#1|TR#1|검수/)
     expect(q('wp-step-text', child())).toBeNull()
     expect(q('wp-step-file', child())).toBeNull()
     expect(q('wp-step-result', child())).toBeTruthy()
-    expect([...((q('wp-step-review', child())) as HTMLSelectElement).options].map(o => o.value)).toEqual(['0', '1', '2', '3', '-1'])
-    await pick(q('wp-step-review', child()), '-1')
-    await pick(q('wp-step-reviewer', child()), 'aip_sonnet')
-    await pick(q('wp-step-review', child()), '0')
-    expect(disabled(q('wp-step-reviewer', child()))).toBe(true)
-    expect(win().draft.reviewerProviderId).toBeNull()
     setWorkPlanStepValue(win(), 'preInstructionText', 'forbidden')
     await uploadWorkPlanStepFile(win(), new File(['x'], 'no.txt'))
     expect(win().draft.preInstructionText).toBeNull()
     expect(api.postFormRequest).not.toHaveBeenCalled()
     await click(q('wp-step-save', child()))
-    await click(q('wp-edit-save'))
-    expect(lastBody!.steps.find((s: any) => s.key === 'TR#1')).toMatchObject({ review_count: 0, reviewer_provider_id: null, pre_instruction_text: null, pre_instruction_attachment: null })
+    expect(workPlanStepWindowList()).toHaveLength(0)
+    expect(q('wp-edit-dirty')).toBeNull()
+    expect(api.putRequest).not.toHaveBeenCalled()
   })
 
   it('checks Unicode code points at the exact text limit without silently truncating', async () => {
@@ -456,13 +465,15 @@ describe('reserved attachment lifecycle', () => {
     expect(api.putRequest).not.toHaveBeenCalled()
   })
 
-  it('a selected reviewer remains visible if removed from the registered providers while the child is dirty', async () => {
+  it('a reviewer picked in the review popover stays visible, marked, once it leaves the registered providers', async () => {
     await open()
-    await pick(q('wp-step-reviewer', child()), 'aip_opus')
+    await click(q('wp-edit-step-review', row('c_t1|main')))
+    await pick(q('wp-edit-review-ai', q('wp-edit-review-popover')), 'aip_opus')
     answer = { ...answer, registered_providers: [] }
     await refresh()
-    expect(inputValue(q('wp-step-reviewer', child()))).toBe('aip_opus')
-    expect(q('wp-step-reviewer', child()).textContent).toContain('aip_opus (사용 불가)')
+    const picker = q('wp-edit-review-ai', q('wp-edit-review-popover'))
+    expect(inputValue(picker)).toBe('aip_opus')
+    expect(picker.textContent).toContain('aip_opus (사용 불가)')
   })
 
   it('oversized file is rejected before POST, while the exact byte limit is accepted', async () => {
@@ -538,5 +549,98 @@ describe('reserved attachment lifecycle', () => {
     expect(win().draft.preInstructionAttachment?.original_filename).toBe('brief.txt')
     api.postFormRequest.mockResolvedValueOnce({ data: { reference: { ...refFile(), filename: 'ordinary.txt' } } })
     await expect(workPlanUploadInstruction(DOC, 'T#1', new File(['x'], 'x.txt'))).rejects.toThrow()
+  })
+})
+
+describe('the review popover and the Step window (0073 T#2)', () => {
+  const popover = () => q('wp-edit-review-popover')
+  async function review(id: string, count: string, reviewer?: string) {
+    await click(q('wp-edit-step-review', row(id)))
+    await pick(q('wp-edit-review-count', popover()), count)
+    if (reviewer !== undefined) await pick(q('wp-edit-review-ai', popover()), reviewer)
+    await click(q('wp-edit-review-done', popover()))
+  }
+
+  it('a review set while the Step window is dirty survives its save: no conflict, the review is not written back', async () => {
+    await open()
+    await type(q('wp-step-text', child()), 'child text')
+    await review('c_t1|main', '3', 'aip_opus')
+    expect(popover()).toBeNull()
+    expect(win().draft).toEqual({ preInstructionText: 'child text', preInstructionAttachment: win().baseline.preInstructionAttachment })
+    await click(q('wp-step-save', child()))
+    expect(workPlanStepWindowList()).toHaveLength(0)
+    await click(q('wp-edit-save'))
+    expect(api.putRequest).toHaveBeenCalledTimes(1)
+    expect(lastBody!.steps[1]).toMatchObject({ key: 'T#1', review_count: 3, reviewer_provider_id: 'aip_opus', reviewer_provider_display_name: 'Opus', pre_instruction_text: 'child text' })
+  })
+
+  it('cancelling the Step window keeps the popover review and drops only the child text', async () => {
+    await open()
+    await type(q('wp-step-text', child()), 'discard me')
+    await review('c_t1|main', '0')
+    await click(q('wp-step-cancel', child()))
+    await confirm()
+    expect(workPlanStepWindowList()).toHaveLength(0)
+    expect(q('wp-edit-step-review-summary', row('c_t1|main')).textContent).toBe('검수 없음')
+    await click(q('wp-edit-save'))
+    expect(lastBody!.steps[1]).toMatchObject({ review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null, pre_instruction_text: '사전 지시' })
+  })
+
+  it('a clean Step window stays clean when the review changes; saving it applies nothing and the review stays', async () => {
+    await open('c_t2|main')
+    await review('c_t2|main', '2', 'aip_sonnet')
+    expect(workPlanStepDirty(win())).toBe(false)
+    await click(q('wp-step-save', child()))
+    expect(win()).toBeUndefined()
+    await pencil('c_t2|main')
+    expect(win().draft.preInstructionText).toBeNull()
+    await click(q('wp-step-cancel', child()))
+    await click(q('wp-edit-save'))
+    expect(lastBody!.steps[3]).toMatchObject({ key: 'T#2', review_count: 2, reviewer_provider_id: 'aip_sonnet', pre_instruction_text: null })
+  })
+
+  it('Esc in the Step window stays the Step window’s: it asks about its unsaved text, the popover behind takes neither the key nor the focus', async () => {
+    await open()
+    await type(q('wp-step-text', child()), 'child text')
+    const reviewButton = q('wp-edit-step-review', row('c_t1|main'))
+    const before = q('wp-edit-step-review-summary', row('c_t1|main')).textContent
+    await click(reviewButton)
+    expect(popover()).not.toBeNull()
+    // an Esc in the other window (the popover still open)
+    const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    q('wp-step-text', child()).dispatchEvent(esc)
+    await flushPromises()
+    expect(esc.defaultPrevented).toBe(false)
+    expect(document.body.querySelector('.ui-confirm-title')).not.toBeNull()
+    expect(workPlanStepWindowList()).toHaveLength(1)
+    expect(popover()).toBeNull()
+    expect(document.activeElement).not.toBe(reviewButton)
+    await confirm(false)
+    expect(workPlanStepWindowList()).toHaveLength(1)
+    expect(win().draft.preInstructionText).toBe('child text')
+
+    // Tab to the other window: the popover closes, the focus stays where it went; that window's Esc is its own
+    await click(reviewButton)
+    expect(popover()).not.toBeNull()
+    const text = q('wp-step-text', child())
+    text.focus()
+    await flushPromises()
+    expect(popover()).toBeNull()
+    expect(document.activeElement).toBe(text)
+    text.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(document.body.querySelector('.ui-confirm-title')).not.toBeNull()
+    await confirm()
+    expect(workPlanStepWindowList()).toHaveLength(0)
+    // the plan window and its review are untouched
+    expect(q('wp-edit-step-review-summary', row('c_t1|main')).textContent).toBe(before)
+  })
+
+  it('a result row’s review is set in the popover while its Step window is open; that window applies nothing', async () => {
+    await open('c_t1|result')
+    await review('c_t1|result', '-1', 'aip_sonnet')
+    await click(q('wp-step-save', child()))
+    await click(q('wp-edit-save'))
+    expect(lastBody!.steps[2]).toMatchObject({ key: 'TR#1', review_count: -1, reviewer_provider_id: 'aip_sonnet', pre_instruction_text: null, pre_instruction_attachment: null })
   })
 })

@@ -24,7 +24,7 @@
 
     <div class="wp-window" data-test="wp-edit-window" :data-doc="win.docId">
       <div class="wp-window-scroll">
-        <WorkPlanEditBody :editor="editor" :step-edit-available="workPlanStepEditAvailable()" @edit-step="editStep" @reload="requestReload" />
+        <WorkPlanEditBody :editor="editor" :step-edit-available="workPlanStepEditAvailable()" :minimized="win.minimized" @edit-step="editStep" @reload="requestReload" />
       </div>
       <div class="wp-window-bar">
         <p
