@@ -1,6 +1,7 @@
 // 0072 T#2: isolated Step drafts. Only apply() changes the parent; only the parent saves the WP.
 // 0073 T#2: a Step draft is the pre-instruction and its attachment only — the review is set in the parent's review
 // popover, so the baseline / snapshot check and apply() never see it and cannot write an old review back.
+// 0073 T#3: a drop on the attachment area goes through the picker's checks and upload (dropWorkPlanStepFiles).
 import { markRaw, reactive } from 'vue'
 import { workPlanUploadInstruction, workPlanSaveFailureOf } from '@/features/document'
 import type { WorkPlanStepDraft } from './workPlanEditModel'
@@ -92,6 +93,20 @@ export function saveWorkPlanStep(win: WorkPlanStepWindow): boolean {
   if (result !== 'applied') { win.issue = result; return false }
   closeWorkPlanStepWindow(win)
   return true
+}
+
+/**
+ * 0073 T#3: files dropped on the attachment area. One file takes the same path as the file picker
+ * (uploadWorkPlanStepFile: its result / save-first / size checks and upload); a Step holds one attachment,
+ * so a drop of several files is refused instead of silently keeping one of them.
+ */
+export async function dropWorkPlanStepFiles(win: WorkPlanStepWindow, files: ArrayLike<File>): Promise<void> {
+  if (files.length === 0) return
+  if (files.length > 1) {
+    if (!workPlanStepBlocked(win) && win.session.target()?.pairRole !== 'result') { win.issue = 'one_file'; win.detail = null }
+    return
+  }
+  await uploadWorkPlanStepFile(win, files[0])
 }
 
 export async function uploadWorkPlanStepFile(win: WorkPlanStepWindow, file: File): Promise<void> {
