@@ -7,18 +7,25 @@
  *   a started card is never removed or moved, nothing goes in front of it;
  * - [apply to all] copies the default AI / note onto every unlocked Step, nothing else;
  * - the Step window boundary edits one row by identity, never another; a save trades temporary ids for the server's.
+ * flowgate.v02.0073 T#1 — DS / T2 are not drawn (quantity boxes, cards, the shown totals), and that is all: the body
+ * keeps them whole, [apply to all] still reaches their unlocked Steps, a move among the shown cards (the screen's
+ * positions) leaves every hidden card in its slot with its key; a type's icon is the Designer Palette's.
  */
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_PALETTE_ITEMS } from '@/features/designer/palette/paletteCatalog'
 import {
   applyDefaults,
   applyQuantity,
   applyStepDraft,
   bodyOf,
   canMoveCardBy,
+  canMoveShownCardBy,
   draftOf,
   editBodyOf,
   errorsByRow,
+  hiddenRowIds,
   moveCard,
+  moveShownCard,
   planQuantity,
   providerOptions,
   quantityBoxes,
@@ -26,16 +33,20 @@ import {
   savedDraft,
   setStepNote,
   setStepProvider,
+  shownCardsOf,
   stepDraftOf,
+  stepKeyShown,
   stepPlace,
   toWorkPlanEditView,
   totalsOf,
+  unassignedByShown,
   unassignedSteps,
   workPlanLockReason,
   workPlanRowId,
+  workPlanTypeIcon,
   type WorkPlanDraft,
 } from '@/features/workPlanWindow/workPlanEditModel'
-import { DOC, planBody, readAnswer } from './workPlanFixtures'
+import { DOC, hiddenPlanBody, hiddenSteps, planBody, readAnswer } from './workPlanFixtures'
 
 const STARTED = new Set(['c_d1'])
 const name = (id: string) => ({ aip_opus: 'Opus', aip_sonnet: 'Sonnet' })[id] ?? null
@@ -99,9 +110,9 @@ describe('the body goes back whole', () => {
     expect(unassignedSteps(d)).toBe(2)
   })
 
-  it('quantity boxes: the counted types in body order, then known types it does not count', () => {
+  it('quantity boxes: the counted types in body order, then known types it does not count — DS / T2 not drawn (0073 T#1)', () => {
     const body = editBodyOf({ ...planBody(), counted_types: ['T', 'D'], quantities: { T: { unit: 'set', count: 2 }, D: { unit: 'sheet', count: 1 } } })
-    expect(quantityBoxes(body).map((b) => `${b.type}:${b.count}`)).toEqual(['T:2', 'D:1', 'DS:0', 'P:0', 'L:0', 'DB:0', 'N:0', 'T2:0', 'TS:0'])
+    expect(quantityBoxes(body).map((b) => `${b.type}:${b.count}`)).toEqual(['T:2', 'D:1', 'P:0', 'L:0', 'DB:0', 'N:0', 'TS:0'])
   })
 
   it('the place of a Step: n/total sheets, n sheet, n-th set', () => {
@@ -288,7 +299,122 @@ describe('the Step window boundary (T#2)', () => {
   })
 })
 
+describe('DS / T2 are not drawn; the body keeps them (0073 T#1)', () => {
+  const hiddenDraft = () => draftOf(editBodyOf(hiddenPlanBody()))
+  const ids = (d: WorkPlanDraft) => d.cards.map((c) => c.id)
+
+  it('the boxes leave DS / T2 out; quantities, counted_types and Steps go back untouched', () => {
+    const d = hiddenDraft()
+    expect(quantityBoxes(d.body).map((b) => b.type)).toEqual(['D', 'P', 'L', 'DB', 'N', 'T', 'TS'])
+    expect(bodyOf(d)).toEqual(hiddenPlanBody())
+    expect(bodyOf(d).quantities).toMatchObject({ DS: { unit: 'sheet', count: 1 }, T2: { unit: 'set', count: 1 } })
+    expect(bodyOf(d).counted_types).toEqual(['DS', 'D', 'P', 'L', 'DB', 'N', 'T', 'T2', 'TS'])
+  })
+
+  it('shown cards: draft.cards index ↔ shown position; rows numbered among the shown rows', () => {
+    const shown = shownCardsOf(hiddenDraft())
+    expect(shown.map((s) => [s.card.id, s.index, s.position])).toEqual([['c_d1', 1, 0], ['c_t1', 2, 1], ['c_t2', 4, 2], ['c_ts1', 5, 3]])
+    expect(shown.flatMap((s) => s.rows.map((r) => `${r.no}:${r.step.key}`))).toEqual(['1:D#1', '2:T#1', '3:TR#1', '4:T#2', '5:TR#2', '6:TS#1', '7:TSR#1'])
+    expect(shown[2].rows[0]).toMatchObject({ rowId: 'c_t2|main', cardIndex: 4, stepIndex: 0 })
+    expect([...hiddenRowIds(hiddenDraft())]).toEqual(['c_ds1|main', 'c_t21|main', 'c_t21|result'])
+  })
+
+  it('the shown totals leave DS / T2 out; unassigned (the server count) keeps them, split by what is shown', () => {
+    const d = hiddenDraft()
+    expect(totalsOf(d)).toEqual({ designSheets: 1, workSets: 3, steps: 7 })
+    // T#1, TR#2 shown; DS#1, TR2#1 hidden
+    expect(unassignedSteps(d)).toBe(4)
+    expect(unassignedByShown(d)).toEqual({ shown: 2, hidden: 2 })
+  })
+
+  it('a Step key of a finding: hidden types are not shown, by the Step or by the type sent', () => {
+    const d = hiddenDraft()
+    expect(stepKeyShown(d, 'T#1')).toBe(true)
+    expect(stepKeyShown(d, 'DS#1')).toBe(false)
+    expect(stepKeyShown(d, 'TR2#1')).toBe(false)
+    expect(stepKeyShown(d, 'T2#9', 'T2')).toBe(false)
+    expect(stepKeyShown(d, 'TR2#9', 'TR2')).toBe(false)
+    expect(stepKeyShown(d, 'T#9', 'T')).toBe(true)
+    expect(stepKeyShown(d, 'X#9')).toBe(true)
+  })
+
+  it('▲ of a shown card: the shown cards change places, every hidden card keeps its slot and key', () => {
+    const before = hiddenDraft()
+    const result = moveShownCard(before, 2, 1, STARTED)
+    expect(result.status).toBe('moved')
+    if (result.status !== 'moved') return
+    expect(ids(result.draft)).toEqual(['c_ds1', 'c_d1', 'c_t2', 'c_t21', 'c_t1', 'c_ts1'])
+    const body = bodyOf(result.draft)
+    expect(body.steps.map((s) => `${s.card_id}:${s.key}>${s.pair_key ?? '-'}`)).toEqual([
+      'c_ds1:DS#1>-', 'c_d1:D#1>-', 'c_t2:T#1>TR#1', 'c_t2:TR#1>T#1', 'c_t21:T2#1>TR2#1', 'c_t21:TR2#1>T2#1',
+      'c_t1:T#2>TR#2', 'c_t1:TR#2>T#2', 'c_ts1:TS#1>TSR#1', 'c_ts1:TSR#1>TS#1',
+    ])
+    expect(hiddenSteps(body)).toEqual(hiddenSteps(hiddenPlanBody()))
+    expect(body.quantities).toEqual(hiddenPlanBody().quantities)
+    expect(body.counted_types).toEqual(hiddenPlanBody().counted_types)
+    // a drop at the end: shown position 1 → last
+    const end = moveShownCard(before, 1, 3, STARTED)
+    if (end.status !== 'moved') throw new Error('not moved')
+    expect(ids(end.draft)).toEqual(['c_ds1', 'c_d1', 'c_t2', 'c_t21', 'c_ts1', 'c_t1'])
+    expect(hiddenSteps(bodyOf(end.draft))).toEqual(hiddenSteps(hiddenPlanBody()))
+  })
+
+  it('started cards stay pinned among the shown cards, a hidden started card too', () => {
+    const d = hiddenDraft()
+    expect(moveShownCard(d, 0, 2, STARTED).status).toBe('started')
+    expect(moveShownCard(d, 1, 0, STARTED).status).toBe('before_started')
+    expect(canMoveShownCardBy(d, 1, -1, STARTED)).toBe(false)
+    expect(canMoveShownCardBy(d, 1, 1, STARTED)).toBe(true)
+    expect(canMoveShownCardBy(d, 3, 1, STARTED)).toBe(false)
+    expect(canMoveShownCardBy(d, 4, -1, STARTED)).toBe(false)
+    // the hidden T2 card started: nothing may land in front of it, nor pass it
+    const t2Started = new Set(['c_d1', 'c_t21'])
+    expect(moveShownCard(d, 2, 1, t2Started).status).toBe('before_started')
+    expect(moveShownCard(d, 1, 2, t2Started).status).toBe('before_started')
+    expect(canMoveShownCardBy(d, 1, 1, t2Started)).toBe(false)
+    const after = moveShownCard(d, 3, 2, t2Started)
+    if (after.status !== 'moved') throw new Error('not moved')
+    expect(ids(after.draft)).toEqual(['c_ds1', 'c_d1', 'c_t1', 'c_t21', 'c_ts1', 'c_t2'])
+  })
+
+  it('with no hidden card a shown move is the plain card move', () => {
+    const moves: Array<[number, number]> = [[2, 1], [1, 3], [3, 1], [1, 0], [0, 2], [1, 1]]
+    for (const [from, to] of moves) {
+      expect(moveShownCard(draft(), from, to, STARTED)).toEqual(moveCard(draft(), from, to, STARTED))
+    }
+    for (let index = 0; index < 4; index++) {
+      for (const delta of [-1, 1]) expect(canMoveShownCardBy(draft(), index, delta, STARTED)).toBe(canMoveCardBy(draft(), index, delta, STARTED))
+    }
+  })
+
+  it('[apply to all] still reaches the unlocked hidden Steps (scenario B); review, pre-instruction, x_* stay', () => {
+    const d = applyDefaults(hiddenDraft(), name)
+    const steps = bodyOf(d).steps
+    for (const s of steps.filter((item) => !item.locked)) expect(s).toMatchObject({ provider_id: 'aip_opus', provider_display_name: 'Opus', note: '기본 메모', origin: 'human' })
+    const hidden = hiddenSteps(bodyOf(d))
+    expect(hidden.map((s) => s.key)).toEqual(['DS#1', 'T2#1', 'TR2#1'])
+    expect(hidden[0]).toMatchObject({ provider_id: 'aip_opus', note: '기본 메모', x_hidden: { kept: true } })
+    expect(hidden[1]).toMatchObject({ provider_id: 'aip_opus', review_count: 2, reviewer_provider_id: 'aip_opus', pre_instruction_text: '반영 사전 지시' })
+    expect(steps.find((s) => s.key === 'TSR#1')).toEqual((hiddenPlanBody().steps as Array<Record<string, unknown>>).find((s) => s.key === 'TSR#1'))
+    expect(bodyOf(d).quantities).toEqual(hiddenPlanBody().quantities)
+  })
+
+  it('the icon of a type is the Palette item’s; a result is `file` in its instruction’s accent', () => {
+    const palette = (docType: string) => DEFAULT_PALETTE_ITEMS.find((item) => item.docType === docType)!
+    expect(workPlanTypeIcon('D')).toEqual({ icon: 'monitor', accent: palette('D').accent })
+    expect(workPlanTypeIcon('P')).toEqual({ icon: 'flow', accent: palette('P').accent })
+    expect(workPlanTypeIcon('N')).toEqual({ icon: 'search', accent: palette('N').accent })
+    expect(workPlanTypeIcon('T')).toEqual({ icon: 'pencil', accent: palette('T').accent })
+    expect(workPlanTypeIcon('TS')).toEqual({ icon: 'test', accent: palette('TS').accent })
+    expect(workPlanTypeIcon('TR')).toEqual({ icon: 'file', accent: palette('T').accent })
+    expect(workPlanTypeIcon('NR')).toEqual({ icon: 'file', accent: palette('N').accent })
+    expect(workPlanTypeIcon('TSR')).toEqual({ icon: 'file', accent: palette('TS').accent })
+    expect(workPlanTypeIcon('X')).toEqual({ icon: 'document', accent: null })
+  })
+})
+
 describe('lock reason and save errors', () => {
+
   it('first reason first', () => {
     const base = { external: null, aiRunning: false, uploadGuarded: false, editable: true, editLockedReason: null }
     expect(workPlanLockReason(base)).toBeNull()

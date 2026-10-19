@@ -96,3 +96,43 @@ export function readAnswer(over: Record<string, unknown> = {}): Record<string, u
     ...over,
   }
 }
+
+/**
+ * flowgate.v02.0073 T#1 — the plan with a 설계 지시 (DS) sheet first and a 반영 지시 (T2) set between the two work
+ * sets: types the window does not draw, carrying values and an x_* field that every save must keep as they are.
+ * Card order (draft.cards): c_ds1, c_d1, c_t1, c_t21, c_t2, c_ts1 — shown: c_d1, c_t1, c_t2, c_ts1.
+ */
+export function hiddenPlanBody(): Record<string, unknown> {
+  const body = planBody() as Record<string, any>
+  body.quantities.DS = { unit: 'sheet', count: 1 }
+  body.quantities.T2 = { unit: 'set', count: 1 }
+  const [d1, t1, tr1, ...rest] = body.steps
+  body.steps = [
+    step({ key: 'DS#1', card_id: 'c_ds1', type: 'DS', ordinal: 1, pair_role: 'single', note: '설계 지시', x_hidden: { kept: true } }),
+    d1,
+    t1,
+    tr1,
+    step({
+      key: 'T2#1',
+      card_id: 'c_t21',
+      type: 'T2',
+      ordinal: 1,
+      pair_key: 'TR2#1',
+      pair_role: 'instruction',
+      provider_id: 'aip_sonnet',
+      provider_display_name: 'Sonnet',
+      review_count: 2,
+      reviewer_provider_id: 'aip_opus',
+      reviewer_provider_display_name: 'Opus',
+      pre_instruction_text: '반영 사전 지시',
+    }),
+    step({ key: 'TR2#1', card_id: 'c_t21', type: 'TR2', ordinal: 1, pair_key: 'T2#1', pair_role: 'result' }),
+    ...rest,
+  ]
+  return body
+}
+
+/** The Steps of the hidden types in a body, in order. */
+export function hiddenSteps(body: Record<string, any>): Array<Record<string, unknown>> {
+  return (body.steps as Array<Record<string, unknown>>).filter((s) => ['DS', 'T2', 'TR2'].includes(s.type as string))
+}

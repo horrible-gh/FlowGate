@@ -17,7 +17,13 @@
 // id for a card the server has not named yet, plus the row's role (`main` | `result`). A Step's key (`T#1`) is
 // renumbered whenever a card moves, so it never names a row (0649 T#3). The Step window (T#2) edits a row through
 // this identity (stepDraftOf / applyStepDraft).
+//
+// flowgate.v02.0073 T#1 — the window does not show the DS and T2 types (WORK_PLAN_HIDDEN_TYPES): no quantity box, no
+// card, not in the shown totals. That is a filter of what is drawn only: their quantities, counted types and Steps stay
+// in the body and go back whole, [apply to all] still reaches their unlocked Steps, and a card move among the shown
+// cards leaves every hidden card in its slot (moveShownCard). A type's icon is the Designer Palette's (workPlanTypeIcon).
 import type { SelectOption } from '@/components/ui/Select.vue'
+import { DEFAULT_PALETTE_ITEMS } from '@/features/designer/palette/paletteCatalog'
 
 // --- Server constants (documents/constants.py, work_plan_service.py) -----------------------------------
 
@@ -31,6 +37,19 @@ export const WORK_PLAN_PAIR: Readonly<Record<string, string>> = { N: 'NR', T: 'T
 export const WORK_PLAN_LOCKED_TYPES: ReadonlySet<string> = new Set(['TSR'])
 export const WORK_PLAN_COUNT_MIN = 0
 export const WORK_PLAN_COUNT_MAX = 20
+
+/** Types the window does not draw (0073 T#1); a T2 card carries its TR2 result with it. Display only. */
+export const WORK_PLAN_HIDDEN_TYPES: ReadonlySet<string> = new Set(['DS', 'T2'])
+
+/** The instruction type of a result type (TR → T), else the type itself. */
+function instructionTypeOf(type: string): string {
+  return Object.keys(WORK_PLAN_PAIR).find((instruction) => WORK_PLAN_PAIR[instruction] === type) ?? type
+}
+
+/** The window draws Steps of this type (a result follows its instruction). */
+export function typeShown(type: string): boolean {
+  return !WORK_PLAN_HIDDEN_TYPES.has(instructionTypeOf(type))
+}
 
 // --- The body ------------------------------------------------------------------------------------------
 
@@ -238,11 +257,14 @@ export function unitOf(body: WorkPlanEditBody, type: string): 'sheet' | 'set' {
   return body.quantities[type]?.unit === 'set' ? 'set' : 'sheet'
 }
 
-/** The boxes shown: the body's counted types in its order, then the known types it does not count yet (0). */
+/**
+ * The boxes shown: the body's counted types in its order, then the known types it does not count yet (0) — without
+ * the hidden types (0073 T#1), whose quantities stay in the body as they are.
+ */
 export function quantityBoxes(body: WorkPlanEditBody): WorkPlanQuantityBox[] {
   const order = [...body.counted_types]
   for (const type of [...WORK_PLAN_SHEET_TYPES, ...WORK_PLAN_SET_TYPES]) if (!order.includes(type)) order.push(type)
-  return order.map((type) => ({ type, unit: unitOf(body, type), count: body.quantities[type]?.count ?? 0 }))
+  return order.filter(typeShown).map((type) => ({ type, unit: unitOf(body, type), count: body.quantities[type]?.count ?? 0 }))
 }
 
 export interface WorkPlanQuantityPlan {
@@ -372,6 +394,111 @@ export function canMoveCardBy(draft: WorkPlanDraft, index: number, delta: number
   return to > lastStartedIndex(rest, started)
 }
 
+// --- The shown cards (0073 T#1) ------------------------------------------------------------------------------
+
+/** The window draws this card (its head Step's type is not hidden). */
+export function cardShown(card: WorkPlanCard): boolean {
+  return typeShown(card.steps[0].type)
+}
+
+/** A card the window draws: `index` is its place in draft.cards, `position` its place among the shown cards. */
+export interface WorkPlanShownCard {
+  readonly card: WorkPlanCard
+  readonly index: number
+  readonly position: number
+  /** Its rows; `no` counts the shown rows only (1-based). */
+  readonly rows: readonly WorkPlanRowRef[]
+}
+
+/** The shown cards in plan order with their rows numbered among the shown rows. */
+export function shownCardsOf(draft: WorkPlanDraft): WorkPlanShownCard[] {
+  const out: WorkPlanShownCard[] = []
+  let no = 0
+  draft.cards.forEach((card, index) => {
+    if (!cardShown(card)) return
+    const rows = card.steps.map((step, stepIndex) => {
+      no += 1
+      return { rowId: workPlanRowId(card.id, rowRoleOf(step)), cardIndex: index, stepIndex, step, no }
+    })
+    out.push({ card, index, position: out.length, rows })
+  })
+  return out
+}
+
+/** Row ids of the cards the window does not draw. */
+export function hiddenRowIds(draft: WorkPlanDraft): Set<string> {
+  return new Set(rowsOf(draft).filter((row) => !cardShown(draft.cards[row.cardIndex])).map((row) => row.rowId))
+}
+
+/** A Step key (a server finding's) names a Step the window draws; an unknown key is judged by its type when given. */
+export function stepKeyShown(draft: WorkPlanDraft, key: string, type: string | null = null): boolean {
+  const row = rowsOf(draft).find((item) => item.step.key === key)
+  if (row) return cardShown(draft.cards[row.cardIndex])
+  return type === null || typeShown(type)
+}
+
+/**
+ * Started cards stay pinned: the moved card lands after every other started card, and no other card changes sides
+ * with a started one (that can only happen around a hidden card, which keeps its slot while the shown cards shift).
+ */
+function keepsStarted(before: readonly WorkPlanCard[], after: readonly WorkPlanCard[], moving: WorkPlanCard, started: ReadonlySet<string>): boolean {
+  const rest = after.filter((card) => card !== moving)
+  if (after.indexOf(moving) <= lastStartedIndex(rest, started)) return false
+  const was = new Map(before.map((card, index) => [card, index]))
+  const now = new Map(after.map((card, index) => [card, index]))
+  for (const pinned of after) {
+    if (!cardStarted(pinned, started)) continue
+    for (const card of after) {
+      if (card === pinned || card === moving) continue
+      if ((was.get(pinned)! < was.get(card)!) !== (now.get(pinned)! < now.get(card)!)) return false
+    }
+  }
+  return true
+}
+
+type ShownMovePlan = { readonly status: 'moved'; readonly cards: WorkPlanCard[] } | { readonly status: 'started' | 'before_started' | 'unchanged' }
+
+function planShownMove(draft: WorkPlanDraft, from: number, to: number, started: ReadonlySet<string>): ShownMovePlan {
+  const slots = draftShownSlots(draft)
+  const slot = slots[from]
+  if (slot === undefined) return { status: 'unchanged' }
+  const moving = draft.cards[slot]
+  if (cardStarted(moving, started)) return { status: 'started' }
+  const order = slots.filter((_, position) => position !== from).map((index) => draft.cards[index])
+  const target = Math.max(0, Math.min(order.length, to))
+  order.splice(target, 0, moving)
+  const cards = [...draft.cards]
+  slots.forEach((index, position) => {
+    cards[index] = order[position]
+  })
+  if (!keepsStarted(draft.cards, cards, moving, started)) return { status: 'before_started' }
+  if (target === from) return { status: 'unchanged' }
+  return { status: 'moved', cards }
+}
+
+/** draft.cards indexes of the shown cards in order: the slots the shown cards fill. */
+function draftShownSlots(draft: WorkPlanDraft): number[] {
+  return draft.cards.flatMap((card, index) => (cardShown(card) ? [index] : []))
+}
+
+/**
+ * Moves the shown card at shown position `from` so it lands at shown position `to` of the shown list without it
+ * (the screen's indexes). The shown cards are put back into the slots the shown cards held, so every hidden card keeps
+ * its place in draft.cards — and, its type's order unchanged, its key. With no hidden card this is moveCard.
+ */
+export function moveShownCard(draft: WorkPlanDraft, from: number, to: number, started: ReadonlySet<string>): WorkPlanMoveResult {
+  const plan = planShownMove(draft, from, to, started)
+  return plan.status === 'moved' ? { status: 'moved', draft: withCards(draft, plan.cards) } : plan
+}
+
+/** The ▲ (-1) / ▼ (+1) of the shown card at shown position `position` can be pressed. */
+export function canMoveShownCardBy(draft: WorkPlanDraft, position: number, delta: number, started: ReadonlySet<string>): boolean {
+  const to = position + delta
+  const count = draftShownSlots(draft).length
+  if (position < 0 || position >= count || to < 0 || to >= count) return false
+  return planShownMove(draft, position, to, started).status === 'moved'
+}
+
 // --- Per-Step values and the plan defaults -----------------------------------------------------------------
 
 /** Sets a row's AI (null = unassigned). A locked Step takes none. */
@@ -488,21 +615,59 @@ export function savedDraft(before: WorkPlanDraft, saved: WorkPlanEditBody): { dr
 
 // --- Summary ---------------------------------------------------------------------------------------------
 
-/** Steps that are not locked and have no AI (the server's unassigned_step_count). */
+const unassigned = (step: WorkPlanEditStep) => !step.locked && !step.provider_id
+
+/** Steps that are not locked and have no AI (the server's unassigned_step_count; hidden types included). */
 export function unassignedSteps(draft: WorkPlanDraft): number {
-  return draft.cards.flatMap((card) => card.steps).filter((step) => !step.locked && !step.provider_id).length
+  return draft.cards.flatMap((card) => card.steps).filter(unassigned).length
 }
 
+/** unassignedSteps split by what the window draws (0073 T#1): the shown Steps, and the hidden ones. */
+export function unassignedByShown(draft: WorkPlanDraft): { shown: number; hidden: number } {
+  let shown = 0
+  let hidden = 0
+  for (const card of draft.cards) {
+    const n = card.steps.filter(unassigned).length
+    if (cardShown(card)) shown += n
+    else hidden += n
+  }
+  return { shown, hidden }
+}
+
+/**
+ * The summary line in what the window draws (0073 T#1): the hidden types' sheets / sets and Steps are not counted.
+ * The body (quantities, counted_types, Steps) is not changed by this.
+ */
 export function totalsOf(draft: WorkPlanDraft): { designSheets: number; workSets: number; steps: number } {
   let designSheets = 0
   let workSets = 0
   for (const type of draft.body.counted_types) {
     const box = draft.body.quantities[type]
-    if (!box) continue
+    if (!box || !typeShown(type)) continue
     if (unitOf(draft.body, type) === 'set') workSets += box.count
     else designSheets += box.count
   }
-  return { designSheets, workSets, steps: draft.cards.reduce((sum, card) => sum + card.steps.length, 0) }
+  return { designSheets, workSets, steps: draft.cards.filter(cardShown).reduce((sum, card) => sum + card.steps.length, 0) }
+}
+
+// --- Type icons (0073 T#1) -----------------------------------------------------------------------------------
+
+export interface WorkPlanTypeIcon {
+  /** A Palette glyph key (designer/palette/paletteIcons.ts paletteIconPath). */
+  readonly icon: string
+  /** The Palette accent of the type, or null (no Palette item: the window's muted color). */
+  readonly accent: string | null
+}
+
+/**
+ * The icon of a Step type as the Designer Palette draws it (DEFAULT_PALETTE_ITEMS, no table of its own); a result
+ * type (NR / TR / TR2 / TSR) is the `file` glyph in its instruction's accent, a type with no Palette item `document`.
+ */
+export function workPlanTypeIcon(type: string): WorkPlanTypeIcon {
+  const instruction = instructionTypeOf(type)
+  const item = DEFAULT_PALETTE_ITEMS.find((entry) => entry.docType === instruction)
+  if (instruction !== type) return { icon: 'file', accent: item?.accent ?? null }
+  return item ? { icon: item.icon, accent: item.accent } : { icon: 'document', accent: null }
 }
 
 /** The Step's place among its type (v0.1 stepDocParts): n/total sheets, n sheet, or the n-th set. */

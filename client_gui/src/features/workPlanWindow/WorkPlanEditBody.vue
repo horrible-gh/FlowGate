@@ -32,7 +32,7 @@
           <span>{{ t('capability.title') }}</span>
           <ul class="wpe-findings">
             <li v-for="finding in capability" :key="finding.stepKey" data-test="wp-edit-capability-item">
-              {{ t('capability.item', { key: finding.stepKey, name: finding.providerName ?? finding.providerId ?? '?', missing: finding.missing.join(', ') }) }}
+              {{ t('capability.item', { key: findingLabel(finding), name: finding.providerName ?? finding.providerId ?? '?', missing: finding.missing.join(', ') }) }}
             </li>
           </ul>
         </div>
@@ -44,8 +44,9 @@
       <div v-if="failure && failure.kind !== 'conflict'" class="wpe-banner is-danger" role="alert" data-test="wp-edit-failure" :data-kind="failure.kind">
         <div class="wpe-banner-text">
           <span>{{ t(`failure.${failure.kind}`) }}<template v-if="failure.message && failure.kind !== 'validation'"> — {{ failure.message }}</template></span>
-          <ul v-if="topErrors.length" class="wpe-findings">
+          <ul v-if="topErrors.length || hiddenErrors.length" class="wpe-findings">
             <li v-for="(error, index) in topErrors" :key="index" data-test="wp-edit-top-error">{{ renderError(error) }}</li>
+            <li v-for="(error, index) in hiddenErrors" :key="`hidden-${index}`" data-test="wp-edit-hidden-error">{{ t('hidden_step') }} — {{ renderError(error) }}</li>
           </ul>
         </div>
       </div>
@@ -66,6 +67,7 @@
             :data-type="box.type"
             :data-count="box.count"
           >
+            <WorkPlanTypeIcon :type="box.type" />
             <span class="wpe-box-name">{{ quantityName(box) }}</span>
             <span class="wpe-stepper">
               <IconButton
@@ -120,46 +122,70 @@
         </Button>
       </section>
 
-      <!-- ③ steps by card -->
+      <!-- ③ steps by card: one section per shown card, folded by default -->
       <section class="wpe-section" data-test="wp-edit-steps">
         <header class="wpe-heading">
           <h4>{{ t('steps') }}</h4>
-          <span v-if="unassigned > 0" class="wpe-warning" data-test="wp-edit-unassigned">{{ t('unassigned', { n: unassigned }) }}</span>
+          <span v-if="unassignedSplit.shown > 0" class="wpe-warning" data-test="wp-edit-unassigned">{{ t('unassigned', { n: unassignedSplit.shown }) }}</span>
+          <span v-if="unassignedSplit.hidden > 0" class="wpe-warning" data-test="wp-edit-unassigned-hidden">{{ t('unassigned_hidden', { n: unassignedSplit.hidden }) }}</span>
           <span class="wpe-muted">{{ t('steps_total', { n: totals.steps }) }}</span>
         </header>
-        <p v-if="draft.cards.length === 0" class="wpe-line" data-test="wp-edit-empty">{{ t('empty') }}</p>
+        <p v-if="shownCards.length === 0" class="wpe-line" data-test="wp-edit-empty">{{ t('empty') }}</p>
         <ol v-else class="wpe-cards" :class="{ 'is-dragging': dragged !== null }">
           <li
-            v-for="(card, cardIndex) in draft.cards"
-            :key="card.id"
+            v-for="shown in shownCards"
+            :key="shown.card.id"
             class="wpe-card"
-            :class="{ 'is-started': editor.cardStarted(card.id), 'is-drag-over': dragged !== null && dragOver === card.id && dragged !== card.id }"
+            :class="{ 'is-open': isOpen(shown.card.id), 'is-started': editor.cardStarted(shown.card.id), 'is-drag-over': dragged !== null && dragOver === shown.card.id && dragged !== shown.card.id }"
             data-test="wp-edit-card"
-            :data-card="card.id"
-            :data-started="editor.cardStarted(card.id) ? 'true' : 'false'"
-            @dragover.prevent="onDragOver(card.id)"
-            @drop.prevent="onDrop(cardIndex)"
+            :data-card="shown.card.id"
+            :data-started="editor.cardStarted(shown.card.id) ? 'true' : 'false'"
+            :data-expanded="isOpen(shown.card.id) ? 'true' : 'false'"
+            @dragover.prevent="onDragOver(shown.card.id)"
+            @drop.prevent="onDrop(shown.position)"
           >
-            <span class="wpe-grip">
-              <span
-                class="wpe-handle"
-                :class="{ 'is-disabled': !canDrag(card.id) }"
-                :draggable="canDrag(card.id)"
-                :title="editor.cardStarted(card.id) ? t('card.started') : t('card.drag')"
-                data-test="wp-edit-card-handle"
-                @dragstart="onDragStart($event, card.id)"
-                @dragend="onDragEnd"
-              ><span aria-hidden="true">{{ editor.cardStarted(card.id) ? '🔒' : '⠿' }}</span></span>
-              <IconButton size="sm" :label="t('card.up')" :title="t('card.up')" :disabled="!editor.canMoveCardBy(cardIndex, -1)" data-test="wp-edit-card-up" @click="editor.moveCardBy(cardIndex, -1)">
-                <span aria-hidden="true">▲</span>
-              </IconButton>
-              <IconButton size="sm" :label="t('card.down')" :title="t('card.down')" :disabled="!editor.canMoveCardBy(cardIndex, 1)" data-test="wp-edit-card-down" @click="editor.moveCardBy(cardIndex, 1)">
-                <span aria-hidden="true">▼</span>
-              </IconButton>
-            </span>
-            <div class="wpe-rows">
+            <div class="wpe-card-header" data-test="wp-edit-card-header" @click="toggleCard(shown.card.id)">
+              <span class="wpe-card-controls" @click.stop>
+                <span
+                  class="wpe-handle"
+                  :class="{ 'is-disabled': !canDrag(shown.card.id) }"
+                  :draggable="canDrag(shown.card.id)"
+                  :title="editor.cardStarted(shown.card.id) ? t('card.started') : t('card.drag')"
+                  data-test="wp-edit-card-handle"
+                  @dragstart="onDragStart($event, shown.card.id)"
+                  @dragend="onDragEnd"
+                ><span aria-hidden="true">{{ editor.cardStarted(shown.card.id) ? '🔒' : '⠿' }}</span></span>
+              </span>
+              <button
+                type="button"
+                class="wpe-card-toggle"
+                :aria-expanded="isOpen(shown.card.id) ? 'true' : 'false'"
+                :aria-controls="cardBodyId(shown.card.id)"
+                :title="isOpen(shown.card.id) ? t('card.collapse') : t('card.expand')"
+                data-test="wp-edit-card-toggle"
+              >
+                <span class="wpe-caret" aria-hidden="true">{{ isOpen(shown.card.id) ? '▾' : '▸' }}</span>
+                <WorkPlanTypeIcon :type="shown.card.steps[0].type" />
+                <span class="wpe-card-name" data-test="wp-edit-card-name">{{ cardName(shown.card) }}</span>
+                <span v-if="!isOpen(shown.card.id)" class="wpe-card-summary" data-test="wp-edit-card-summary">
+                  <span v-for="row in shown.rows" :key="row.rowId" class="wpe-card-doc" data-test="wp-edit-card-doc">
+                    {{ typeName(row.step.type) }} <span class="wpe-muted">{{ stepAiLabel(row.step) }}</span>
+                  </span>
+                </span>
+              </button>
+              <span v-if="cardHasErrors(shown)" class="wpe-card-error" role="img" :aria-label="t('card.has_errors')" :title="t('card.has_errors')" data-test="wp-edit-card-error">!</span>
+              <span class="wpe-card-controls" @click.stop>
+                <IconButton size="sm" :label="t('card.up')" :title="t('card.up')" :disabled="!editor.canMoveCardBy(shown.position, -1)" data-test="wp-edit-card-up" @click="editor.moveCardBy(shown.position, -1)">
+                  <span aria-hidden="true">▲</span>
+                </IconButton>
+                <IconButton size="sm" :label="t('card.down')" :title="t('card.down')" :disabled="!editor.canMoveCardBy(shown.position, 1)" data-test="wp-edit-card-down" @click="editor.moveCardBy(shown.position, 1)">
+                  <span aria-hidden="true">▼</span>
+                </IconButton>
+              </span>
+            </div>
+            <div v-show="isOpen(shown.card.id)" :id="cardBodyId(shown.card.id)" class="wpe-rows" data-test="wp-edit-card-body">
               <div
-                v-for="row in rowsOfCard(card, cardIndex)"
+                v-for="row in shown.rows"
                 :key="row.rowId"
                 class="wpe-row"
                 :class="{ 'is-result': row.step.pair_role === 'result', 'is-locked': row.step.locked, 'has-error': !!rowErrors[row.rowId]?.length }"
@@ -169,7 +195,7 @@
               >
                 <span class="wpe-no">{{ row.no }}</span>
                 <span class="wpe-type" data-test="wp-edit-step-type">
-                  {{ gt(`gui.document_window.${documentTypeNameKey(row.step.type)}`) }}
+                  {{ typeName(row.step.type) }}
                   <small class="wpe-muted">{{ placeOf(row.step) }}</small>
                 </span>
                 <span v-if="row.step.locked" class="wpe-provider wpe-muted" data-test="wp-edit-step-server">{{ t('provider.server') }}</span>
@@ -222,7 +248,7 @@
             :class="{ 'is-drag-over': dragOver === DROP_END }"
             data-test="wp-edit-card-drop-end"
             @dragover.prevent="dragOver = DROP_END"
-            @drop.prevent="onDrop(draft.cards.length)"
+            @drop.prevent="onDrop(shownCards.length)"
           >{{ t('card.drop_end') }}</li>
         </ol>
       </section>
@@ -239,8 +265,17 @@
 // ✎ never opens anything here (no inline drawer): it emits `edit-step` with the row's identity and the window hands
 // it to the Step window (T#2). Review, pre-instruction and attachment are edited there, so this body only shows
 // their summary.
-// The body has no colors or icons of its own: v0.2 Button / IconButton / Select / Input and the theme tokens.
-import { computed, ref } from 'vue'
+// The body has no colors of its own: v0.2 Button / IconButton / Select / Input and the theme tokens; a type's icon is
+// the Designer Palette's (WorkPlanTypeIcon).
+//
+// flowgate.v02.0073 T#1 — DS and T2 are not drawn (no quantity box, no card; the summary counts what is drawn) while
+// the body keeps them whole. Each shown card is a section: its header has the drag grip, the type icon, the card's
+// name (its quantity name and ordinal, e.g. 작업 1 — never a Step key) and ▲▼; it starts folded, and a click on the
+// header folds / unfolds it (screen state only, allowed while locked). Folded, it lists its documents and their AIs.
+// ▲▼ and drops use the positions among the shown cards (the editor's moveCard), so hidden cards keep their place.
+// Assumptions (no contract in R0001 / the mockup, NR §7(b)): hidden Steps are never named by their key — their
+// unassigned count is a separate line, a capability finding or a field error of one says "표시하지 않는 단계".
+import { computed, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import IconButton from '@/components/ui/IconButton.vue'
@@ -248,21 +283,27 @@ import Input from '@/components/ui/Input.vue'
 import Select from '@/components/ui/Select.vue'
 import { renderWpFieldError, type WpFieldError } from '@shared/workPlanErrors'
 import { documentTypeNameKey, workPlanQuantityNameKey } from '@/features/documentWindow/specialDocumentModel'
+import type { WorkPlanCapabilityFinding } from '@/features/document'
+import WorkPlanTypeIcon from './WorkPlanTypeIcon.vue'
 import { workPlanWindowMessages } from './messages'
 import type { WorkPlanEditor } from './useWorkPlanEditor'
 import {
   WORK_PLAN_COUNT_MAX as COUNT_MAX,
   WORK_PLAN_COUNT_MIN as COUNT_MIN,
+  hiddenRowIds,
   quantityBoxes,
-  rowRoleOf,
+  shownCardsOf,
   stepHasInstruction,
+  stepKeyShown,
   stepPlace,
   totalsOf,
-  workPlanRowId,
+  unassignedByShown,
+  unitOf,
   type WorkPlanCard,
   type WorkPlanEditStep,
   type WorkPlanQuantityBox,
   type WorkPlanRowRef,
+  type WorkPlanShownCard,
 } from './workPlanEditModel'
 
 const props = defineProps<{
@@ -281,11 +322,19 @@ const emit = defineEmits<{
 const { t } = useI18n({ useScope: 'local', messages: workPlanWindowMessages, inheritLocale: true })
 const { t: gt } = useI18n({ useScope: 'global' })
 
-const { phase, loadError, unreadableRaw, view, draft, saving, reloading, lockReason, inputsLocked, failure, rowErrors, topErrors, capability, externalRevision, unassigned } =
+const { phase, loadError, unreadableRaw, view, draft, saving, reloading, lockReason, inputsLocked, failure, rowErrors, topErrors, capability, externalRevision } =
   props.editor
 
 const boxes = computed(() => (draft.value ? quantityBoxes(draft.value.body) : []))
 const totals = computed(() => (draft.value ? totalsOf(draft.value) : { designSheets: 0, workSets: 0, steps: 0 }))
+const shownCards = computed(() => (draft.value ? shownCardsOf(draft.value) : []))
+const unassignedSplit = computed(() => (draft.value ? unassignedByShown(draft.value) : { shown: 0, hidden: 0 }))
+/** Field errors of Steps that are not drawn: listed on top without their key. */
+const hiddenErrors = computed(() => {
+  if (!draft.value) return []
+  const hidden = hiddenRowIds(draft.value)
+  return Object.entries(rowErrors.value).flatMap(([rowId, errors]) => (hidden.has(rowId) ? errors : []))
+})
 
 const usedProviders = computed(() => (draft.value ? [draft.value.body.defaults.provider_id, ...draft.value.cards.flatMap((card) => card.steps.map((step) => step.provider_id))] : []))
 const unavailable = (name: string) => t('provider.unavailable', { name })
@@ -301,11 +350,50 @@ function placeOf(step: WorkPlanEditStep): string {
   return gt(`gui.document_window.work_plan.${place.key}`, { n: place.n, total: place.total })
 }
 
-/** The rows of one card with their plan position (the card's index gives the rows before it). */
-function rowsOfCard(card: WorkPlanCard, cardIndex: number): WorkPlanRowRef[] {
-  const before = draft.value ? draft.value.cards.slice(0, cardIndex).reduce((sum, item) => sum + item.steps.length, 0) : 0
-  return card.steps.map((step, stepIndex) => ({ rowId: workPlanRowId(card.id, rowRoleOf(step)), cardIndex, stepIndex, step, no: before + stepIndex + 1 }))
+function typeName(type: string): string {
+  return gt(`gui.document_window.${documentTypeNameKey(type)}`)
 }
+
+/** A card's name: its quantity name and ordinal (조사 1, 작업 1, 기본 설계 1). */
+function cardName(card: WorkPlanCard): string {
+  const head = card.steps[0]
+  const unit = draft.value ? unitOf(draft.value.body, head.type) : 'sheet'
+  return t('card.name', { name: gt(`gui.document_window.${workPlanQuantityNameKey({ type: head.type, unit })}`), n: head.ordinal })
+}
+
+function stepAiLabel(step: WorkPlanEditStep): string {
+  if (step.locked) return t('provider.server')
+  return step.provider_id ? props.editor.providerName(step.provider_id, step.provider_display_name) : t('provider.unassigned')
+}
+
+function findingLabel(finding: WorkPlanCapabilityFinding): string {
+  return draft.value && !stepKeyShown(draft.value, finding.stepKey, finding.stepType) ? t('hidden_step') : finding.stepKey
+}
+
+// --- folding the card sections (screen state only) -------------------------------------------------------------
+
+/** Per window: two windows may show the same card ids. */
+const bodyPrefix = `wpe-card-body-${Math.random().toString(36).slice(2, 10)}`
+const opened = shallowRef<ReadonlySet<string>>(new Set())
+
+const isOpen = (cardId: string) => opened.value.has(cardId)
+const cardBodyId = (cardId: string) => `${bodyPrefix}-${cardId.replace(/[^\w-]/g, '_')}`
+
+function toggleCard(cardId: string): void {
+  const next = new Set(opened.value)
+  if (!next.delete(cardId)) next.add(cardId)
+  opened.value = next
+}
+
+function cardHasErrors(shown: WorkPlanShownCard): boolean {
+  return shown.rows.some((row) => !!rowErrors.value[row.rowId]?.length)
+}
+
+// A save's field errors open the cards they are on, so the marked rows can be seen.
+watch(rowErrors, () => {
+  const withErrors = shownCards.value.filter(cardHasErrors).map((shown) => shown.card.id)
+  if (withErrors.some((id) => !opened.value.has(id))) opened.value = new Set([...opened.value, ...withErrors])
+})
 
 function reviewCountLabel(count: number): string {
   if (count === 0) return t('review.none')
@@ -357,16 +445,17 @@ function onDragOver(cardId: string): void {
   if (dragged.value !== null) dragOver.value = cardId
 }
 
-/** Drop = the dragged card goes in front of the card at `targetIndex` (cards.length = the end). */
-function onDrop(targetIndex: number): void {
+/** Drop = the dragged card goes in front of the shown card at shown position `target` (the shown count = the end). */
+function onDrop(target: number): void {
   const id = dragged.value
   dragged.value = null
   dragOver.value = null
-  if (id === null || !draft.value) return
-  const from = draft.value.cards.findIndex((card) => card.id === id)
+  if (id === null) return
+  const from = shownCards.value.findIndex((shown) => shown.card.id === id)
   if (from < 0) return
-  props.editor.moveCard(from, targetIndex > from ? targetIndex - 1 : targetIndex)
+  props.editor.moveCard(from, target > from ? target - 1 : target)
 }
+
 
 function onDragEnd(): void {
   dragged.value = null
@@ -509,7 +598,7 @@ function onDragEnd(): void {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 6px 4px 10px;
+  padding: 4px 6px;
   border: 1px solid var(--fg2-line);
   border-radius: var(--fg2-control-radius-sm);
 }
@@ -578,8 +667,8 @@ function onDragEnd(): void {
 
 .wpe-card {
   display: flex;
-  align-items: stretch;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
   padding: 4px 6px;
   border: 1px solid var(--fg2-line);
   border-radius: var(--fg2-control-radius-sm);
@@ -594,12 +683,73 @@ function onDragEnd(): void {
   border-color: var(--fg2-focus);
 }
 
-.wpe-grip {
+.wpe-card-header {
   display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.wpe-card-controls {
+  display: inline-flex;
   flex: none;
-  flex-direction: column;
   align-items: center;
   gap: 2px;
+  cursor: default;
+}
+
+.wpe-card-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wpe-card-toggle:focus-visible {
+  border-radius: var(--fg2-control-radius-sm);
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: 1px;
+}
+
+.wpe-caret {
+  flex: none;
+  width: 10px;
+  color: var(--fg2-muted);
+}
+
+.wpe-card-name {
+  flex: none;
+  font-weight: 650;
+}
+
+.wpe-card-summary {
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg2-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.wpe-card-doc {
+  flex: none;
+}
+
+.wpe-card-error {
+  flex: none;
+  color: var(--fg2-status-danger-fg);
+  font-weight: 700;
 }
 
 .wpe-handle {
@@ -615,11 +765,12 @@ function onDragEnd(): void {
 
 .wpe-rows {
   display: flex;
-  flex: 1;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  padding: 2px 0 2px 4px;
 }
+
 
 .wpe-row {
   display: flex;

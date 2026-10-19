@@ -19,6 +19,8 @@
 //   document waits while it holds unsaved edits, and a finished upload is read again here.
 // - The Step window (T#2) edits one row through `stepSession(rowId)`: a copy of the row's review / pre-instruction
 //   values, and `apply` that puts its values on that row only (parent dirty; the server PUT stays the parent's).
+// - Card moves take the screen's positions among the shown cards (flowgate.v02.0073 T#1: DS / T2 cards are not drawn);
+//   the model puts the shown cards back into their slots of the plan, so a hidden card keeps its place.
 import { computed, onScopeDispose, ref, shallowRef, watch, type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import {
   workPlanEditRead,
@@ -38,11 +40,11 @@ import {
   applyQuantity,
   applyStepDraft,
   bodyOf,
-  canMoveCardBy as canMoveBy,
+  canMoveShownCardBy,
   draftOf,
   editBodyOf,
   errorsByRow,
-  moveCard as moveCardIn,
+  moveShownCard,
   planQuantity,
   providerName,
   providerOptions,
@@ -174,9 +176,10 @@ export interface WorkPlanEditor {
   setQuantity(type: string, next: number): void
   confirmQuantity(): void
   cancelQuantity(): void
+  /** `from` / `to` are positions among the shown cards (the screen's), not draft.cards indexes. */
   moveCard(from: number, to: number): void
-  moveCardBy(index: number, delta: number): void
-  canMoveCardBy(index: number, delta: number): boolean
+  moveCardBy(position: number, delta: number): void
+  canMoveCardBy(position: number, delta: number): boolean
   cardStarted(cardId: string): boolean
   setStepProvider(rowId: string, providerId: string | null): void
   setStepNote(rowId: string, note: string): void
@@ -457,18 +460,18 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
   function moveCard(from: number, to: number): void {
     const current = draft.value
     if (!current || inputsLocked.value) return
-    const result = moveCardIn(current, from, to, started())
+    const result = moveShownCard(current, from, to, started())
     if (result.status === 'moved') edit(() => result.draft)
     else if (result.status === 'started') notice.value = { key: 'move_started', tone: 'warning' }
     else if (result.status === 'before_started') notice.value = { key: 'move_before_started', tone: 'warning' }
   }
 
-  function canMoveCardBy(index: number, delta: number): boolean {
-    return !!draft.value && !inputsLocked.value && canMoveBy(draft.value, index, delta, started())
+  function canMoveCardBy(position: number, delta: number): boolean {
+    return !!draft.value && !inputsLocked.value && canMoveShownCardBy(draft.value, position, delta, started())
   }
 
-  function moveCardBy(index: number, delta: number): void {
-    if (canMoveCardBy(index, delta)) moveCard(index, index + delta)
+  function moveCardBy(position: number, delta: number): void {
+    if (canMoveCardBy(position, delta)) moveCard(position, position + delta)
   }
 
   const nameOf = (providerId: string, snapshot: string | null = null) =>

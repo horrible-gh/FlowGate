@@ -15,6 +15,12 @@
  * - a quantity decrease that removes Steps with values and closing with unsaved edits ask first;
  * - external changes: a clean window takes the new plan, a dirty one keeps its edits and says a newer revision exists;
  * - ✎ opens nothing inside the window: without a Step window it is disabled; with one it gets the row and a session.
+ * flowgate.v02.0073 T#1:
+ * - DS / T2 are not drawn (no box, card, key or type name; the summary counts what is drawn), yet a save after editing
+ *   and moving the shown cards sends their Steps, quantities and counted_types as read (scenario A); a capability
+ *   finding or a field error of a hidden Step does not name it;
+ * - each card is a section folded by default: a header click folds / unfolds it (also while locked), ▲▼ and the grip
+ *   do not; its header has the card name and the Palette icon; a save's field errors open their card.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -33,7 +39,7 @@ import {
   type WorkPlanStepEditSession,
   type WorkPlanStepEditTarget,
 } from '@/features/workPlanWindow'
-import { DOC, FLOW, planBody, readAnswer } from './workPlanFixtures'
+import { DOC, FLOW, hiddenPlanBody, hiddenSteps, planBody, readAnswer } from './workPlanFixtures'
 
 const api = vi.hoisted(() => ({ getRequest: vi.fn(), putRequest: vi.fn(), postRequest: vi.fn() }))
 
@@ -96,6 +102,8 @@ const qa = (id: string, root: ParentNode = document.body) => [...root.querySelec
 const text = (node: Element | null | undefined) => node?.textContent?.replace(/\s+/g, ' ').trim() ?? null
 const row = (rowId: string) => document.body.querySelector<HTMLElement>(`[data-test="wp-edit-step"][data-row="${rowId}"]`)
 const box = (type: string) => document.body.querySelector<HTMLElement>(`[data-test="wp-edit-quantity"][data-type="${type}"]`)
+const card = (cardId: string) => document.body.querySelector<HTMLElement>(`[data-test="wp-edit-card"][data-card="${cardId}"]`)
+
 
 async function click(node: HTMLElement | null) {
   if (!node) throw new Error('nothing to click')
@@ -715,5 +723,135 @@ describe('the Step window boundary (✎, T#2)', () => {
     pending = false
     await click(confirmButtons()[1])
     expect(closed).toEqual([DOC])
+  })
+})
+
+describe('DS / T2 are not drawn; the save keeps them (0073 T#1)', () => {
+  beforeEach(() => {
+    answer = readAnswer({ body: hiddenPlanBody() })
+  })
+
+  it('no box, card, key or type name of DS / T2 is drawn; the summary counts what is drawn', async () => {
+    await open()
+    expect(box('DS')).toBeNull()
+    expect(box('T2')).toBeNull()
+    expect(qa('wp-edit-quantity').map((b) => b.dataset.type)).toEqual(['D', 'P', 'L', 'DB', 'N', 'T', 'TS'])
+    expect(qa('wp-edit-card').map((c) => c.dataset.card)).toEqual(['c_d1', 'c_t1', 'c_t2', 'c_ts1'])
+    expect(qa('wp-edit-step').map((r) => r.dataset.step)).toEqual(['D#1', 'T#1', 'TR#1', 'T#2', 'TR#2', 'TS#1', 'TSR#1'])
+    expect(text(q('wp-edit-totals'))).toBe('설계 1장 · 작업 3세트 · 단계 7개')
+    expect(text(q('wp-edit-unassigned'))).toBe('담당 AI 미지정 2개')
+    expect(text(q('wp-edit-unassigned-hidden'))).toBe('표시하지 않는 단계 2개도 담당 AI가 없습니다')
+    const shown = text(q('wp-edit-window')) ?? ''
+    for (const hidden of ['DS#1', 'T2#1', 'TR2#1', '설계 지시서', '반영 지시서', '반영안']) expect(shown).not.toContain(hidden)
+  })
+
+  it('editing and moving the shown cards, then [저장]: DS / T2 Steps, quantities and counted_types go as read (scenario A)', async () => {
+    await open()
+    await type(q('wp-edit-step-note', row('c_t1|main')!) as HTMLInputElement, '보이는 행')
+    await click(q('wp-edit-card-up', card('c_t2')!))
+    expect(qa('wp-edit-card').map((c) => c.dataset.card)).toEqual(['c_d1', 'c_t2', 'c_t1', 'c_ts1'])
+    expect(card('c_t2')?.dataset.expanded).toBe('false')
+    await click(q('wp-edit-save'))
+    const sent = lastPut().body
+    expect(sent.steps.map((s: any) => s.card_id)).toEqual(['c_ds1', 'c_d1', 'c_t2', 'c_t2', 'c_t21', 'c_t21', 'c_t1', 'c_t1', 'c_ts1', 'c_ts1'])
+    expect(hiddenSteps(sent)).toEqual(hiddenSteps(hiddenPlanBody()))
+    expect(sent.quantities).toEqual(hiddenPlanBody().quantities)
+    expect(sent.counted_types).toEqual(hiddenPlanBody().counted_types)
+    expect(sent.x_origin_note).toEqual({ kept: true })
+    expect(sent.steps.find((s: any) => s.card_id === 'c_t1' && s.pair_role === 'instruction')).toMatchObject({ key: 'T#2', note: '보이는 행' })
+    expect(sent.steps.find((s: any) => s.card_id === 'c_t2' && s.pair_role === 'instruction')).toMatchObject({ key: 'T#1', provider_id: 'aip_old' })
+  })
+
+  it('a capability finding or a field error of a hidden Step does not name it', async () => {
+    api.putRequest.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 422, data: { code: 'provider_capability_confirmation_required', findings: [{ step_key: 'TR2#1', step_type: 'TR2', provider_id: 'aip_sonnet', provider_name: 'Sonnet', missing_capabilities: ['source_write'] }] } },
+    })
+    await open()
+    await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '변경')
+    await click(q('wp-edit-save'))
+    expect(text(q('wp-edit-capability-item'))).toBe('표시하지 않는 단계 · Sonnet: source_write')
+    await click(q('wp-edit-capability-confirm'))
+    expect(lastPut().capability_warning_acks).toEqual(['TR2#1'])
+
+    api.putRequest.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 422, data: { code: 'validation_failed', message: 'invalid', errors: [{ loc: 'steps[0].note', key: 'DS#1', code: 'unknown_server_code', params: {}, msg: '숨은 단계 오류' }] } },
+    })
+    await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '다시 변경')
+    await click(q('wp-edit-save'))
+    expect(q('wp-edit-failure')?.dataset.kind).toBe('validation')
+    expect(text(q('wp-edit-hidden-error'))).toBe('표시하지 않는 단계 — 숨은 단계 오류')
+    expect(q('wp-edit-top-error')).toBeNull()
+    expect(text(q('wp-edit-window'))).not.toContain('DS#1')
+  })
+})
+
+describe('card sections (0073 T#1)', () => {
+  it('folded by default: the card name, the Palette icon and the documents with their AIs', async () => {
+    await open()
+    expect(qa('wp-edit-card').every((c) => c.dataset.expanded === 'false')).toBe(true)
+    const t1 = card('c_t1')!
+    expect(q('wp-edit-card-body', t1)?.style.display).toBe('none')
+    expect(text(q('wp-edit-card-name', t1))).toBe('작업 1')
+    expect(text(q('wp-edit-card-name', card('c_t2')!))).toBe('작업 2')
+    expect(text(q('wp-edit-card-name', card('c_d1')!))).toBe('기본 설계 1')
+    expect(text(q('wp-edit-card-name', card('c_ts1')!))).toBe('테스트 1')
+    // one item per document; the space between items is the summary's CSS gap, not text
+    expect(qa('wp-edit-card-doc', q('wp-edit-card-summary', t1)!).map(text)).toEqual(['작업 지시서 담당 미지정', '작업 레포트 Opus'])
+    expect(qa('wp-edit-card-doc', q('wp-edit-card-summary', card('c_ts1')!)!).map(text)).toEqual(['테스트 시나리오 Sonnet', '테스트 레포트 서버가 만듭니다'])
+    expect(q('wp-edit-type-icon', q('wp-edit-card-header', t1)!)?.dataset.icon).toBe('pencil')
+    expect(q('wp-edit-type-icon', q('wp-edit-card-header', card('c_d1')!)!)?.dataset.icon).toBe('monitor')
+    expect(q('wp-edit-type-icon', box('N')!)?.dataset.icon).toBe('search')
+    expect(q('wp-edit-type-icon', box('TS')!)?.dataset.icon).toBe('test')
+    // the document rows have no move control of their own
+    expect(q('wp-edit-card-up', q('wp-edit-card-body', t1)!)).toBeNull()
+    expect(qa('wp-edit-card-up', t1)).toHaveLength(1)
+  })
+
+  it('a header click unfolds / folds; ▲▼ and the grip do not; each card on its own', async () => {
+    await open()
+    const t1 = card('c_t1')!
+    await click(q('wp-edit-card-toggle', t1))
+    expect(t1.dataset.expanded).toBe('true')
+    expect(q('wp-edit-card-toggle', t1)?.getAttribute('aria-expanded')).toBe('true')
+    expect(q('wp-edit-card-body', t1)?.style.display).toBe('')
+    expect(q('wp-edit-card-summary', t1)).toBeNull()
+    expect(card('c_t2')?.dataset.expanded).toBe('false')
+    await click(q('wp-edit-card-header', t1))
+    expect(t1.dataset.expanded).toBe('false')
+    await click(q('wp-edit-card-down', t1))
+    expect(qa('wp-edit-card').map((c) => c.dataset.card)).toEqual(['c_d1', 'c_t2', 'c_t1', 'c_ts1'])
+    expect(card('c_t1')?.dataset.expanded).toBe('false')
+    await click(q('wp-edit-card-handle', card('c_t1')!))
+    expect(card('c_t1')?.dataset.expanded).toBe('false')
+    await click(q('wp-edit-card-toggle', card('c_ts1')!))
+    expect(card('c_ts1')?.dataset.expanded).toBe('true')
+    expect(text(q('wp-edit-card-name', card('c_t1')!))).toBe('작업 2')
+  })
+
+  it('folding works while the plan is locked', async () => {
+    answer = readAnswer({ editable: false, edit_locked_reason: 'final_approved' })
+    await open()
+    expect(q('wp-edit-lock')?.dataset.reason).toBe('final_approved')
+    await click(q('wp-edit-card-toggle', card('c_t1')!))
+    expect(card('c_t1')?.dataset.expanded).toBe('true')
+    expect((q('wp-edit-step-provider', row('c_t1|main')!) as HTMLSelectElement).disabled).toBe(true)
+    await click(q('wp-edit-card-toggle', card('c_t1')!))
+    expect(card('c_t1')?.dataset.expanded).toBe('false')
+  })
+
+  it('a save’s field errors open their card and mark its header', async () => {
+    api.putRequest.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 422, data: { code: 'validation_failed', message: 'invalid', errors: [{ loc: 'steps[3].note', key: 'T#2', code: 'note_too_long', params: { max: 200 }, msg: 'too long' }] } },
+    })
+    await open()
+    await type(q('wp-edit-step-note', row('c_t2|main')!) as HTMLInputElement, 'x')
+    await click(q('wp-edit-save'))
+    expect(card('c_t2')?.dataset.expanded).toBe('true')
+    expect(q('wp-edit-card-error', card('c_t2')!)).not.toBeNull()
+    expect(card('c_t1')?.dataset.expanded).toBe('false')
+    expect(q('wp-edit-card-error', card('c_t1')!)).toBeNull()
   })
 })
