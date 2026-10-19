@@ -21,6 +21,25 @@
         <span v-if="dirty" class="wp-window-dirty" :title="t('dirty')" data-test="wp-edit-dirty">●</span>
       </span>
     </template>
+    <template #actions>
+      <span class="wp-window-json" data-test="wp-edit-json" @mousedown.stop>
+        <IconButton
+          size="sm"
+          :label="t('json.import')"
+          :title="importBlocked ? t(`json.blocked.${importBlocked}`) : t('json.import')"
+          :disabled="importBlocked !== null"
+          data-test="wp-edit-json-import"
+          @click="openImport"
+        ><svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true" focusable="false"><path :d="UPLOAD_PATH" /></svg></IconButton>
+        <IconButton size="sm" :label="t('json.export')" :title="t('json.export')" :disabled="!draft" data-test="wp-edit-json-export" @click="exportJson">
+          <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true" focusable="false"><path :d="DOWNLOAD_PATH" /></svg>
+        </IconButton>
+        <IconButton size="sm" :label="t('json.raw')" :title="t('json.raw')" :disabled="!draft" data-test="wp-edit-json-raw" @click="jsonMode = 'raw'">
+          <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true" focusable="false"><path :d="CODE_PATH" /></svg>
+        </IconButton>
+        <span class="wp-window-divider" role="separator" aria-orientation="vertical" />
+      </span>
+    </template>
 
     <div class="wp-window" data-test="wp-edit-window" :data-doc="win.docId">
       <div class="wp-window-scroll">
@@ -74,6 +93,17 @@
     @confirm="editor.confirmQuantity()"
     @cancel="editor.cancelQuantity()"
   />
+  <WorkPlanJsonWindow
+    v-if="jsonMode && draft"
+    :key="jsonMode"
+    :editor="editor"
+    :mode="jsonMode"
+    :doc-title="docTitle"
+    :step-pending="workPlanStepEditsPending(win.docId)"
+    :x="win.x + 40"
+    :y="win.y + 40"
+    @close="jsonMode = null"
+  />
 </template>
 
 <script setup lang="ts">
@@ -89,15 +119,23 @@
 //   record events read the Flow's live AI run again too (the lock follows a run started elsewhere).
 // - ✎ of a row hands the row to the Step window (T#2) with a session on this window's editor; the Step window is a
 //   separate ModelessShell, never a drawer here.
+// - flowgate.v02.0073 T#4: the title bar's JSON buttons (client only, no server API): [JSON 가져오기] opens the JSON
+//   window in import mode (off while locked or while a Step window holds edits), [JSON 내보내기] saves the draft as a
+//   .json file (the body the save would send), [JSON 원문 보기] opens the JSON window read only. One JSON window per
+//   plan window; it closes with it. Not the Inspector's document upload / download (DocumentIoGroup, 0068).
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import IconButton from '@/components/ui/IconButton.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
+import { documentIoSaveFile } from '@/features/documentWindow/documentIo'
 import { useDocumentWindowEvents } from '@/features/documentWindow/useDocumentWindowEvents'
 import WorkPlanEditBody from './WorkPlanEditBody.vue'
+import WorkPlanJsonWindow from './WorkPlanJsonWindow.vue'
 import { workPlanWindowMessages } from './messages'
 import { useWorkPlanEditor } from './useWorkPlanEditor'
+import { workPlanJsonFileName } from './workPlanJson'
 import {
   closeWorkPlanEditWindow,
   discardWorkPlanStepEdits,
@@ -128,7 +166,35 @@ const editor = useWorkPlanEditor({
   external: () => props.win.request.external?.() ?? null,
   saved: (revisionNo) => props.win.request.saved?.(revisionNo),
 })
-const { view, dirty, saving, canSave, notice, pendingQuantity } = editor
+const { view, draft, dirty, saving, canSave, notice, pendingQuantity } = editor
+
+/** Phosphor Icons `upload-simple` / `download-simple` / `code` (regular, 256 viewBox; MIT — client/shared/iconData). */
+const UPLOAD_PATH =
+  'M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0ZM93.66,77.66,120,51.31V144a8,8,0,0,0,16,0V51.31l26.34,26.35a8,8,0,0,0,11.32-11.32l-40-40a8,8,0,0,0-11.32,0l-40,40A8,8,0,0,0,93.66,77.66Z'
+const DOWNLOAD_PATH =
+  'M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z'
+const CODE_PATH =
+  'M69.12,94.15,28.5,128l40.62,33.85a8,8,0,1,1-10.24,12.29l-48-40a8,8,0,0,1,0-12.29l48-40a8,8,0,0,1,10.24,12.3Zm176,27.7-48-40a8,8,0,1,0-10.24,12.3L227.5,128l-40.62,33.85a8,8,0,1,0,10.24,12.29l48-40a8,8,0,0,0,0-12.29ZM162.73,32.48a8,8,0,0,0-10.25,4.79l-64,176a8,8,0,0,0,4.79,10.26A8.14,8.14,0,0,0,96,224a8,8,0,0,0,7.52-5.27l64-176A8,8,0,0,0,162.73,32.48Z'
+
+/** The JSON window open over this one (import / raw), or null. */
+const jsonMode = ref<'import' | 'raw' | null>(null)
+
+/** Why [JSON 가져오기] is off: the plan is locked (or not read), or a Step window holds edits. */
+const importBlocked = computed<'locked' | 'step_pending' | null>(() => {
+  if (editor.inputsLocked.value) return 'locked'
+  return workPlanStepEditsPending(props.win.docId) ? 'step_pending' : null
+})
+
+function openImport(): void {
+  if (importBlocked.value === null) jsonMode.value = 'import'
+}
+
+/** [JSON 내보내기]: the draft as the save would send it, unsaved edits included. */
+function exportJson(): void {
+  const text = editor.exportJson()
+  if (text === null) return
+  documentIoSaveFile(new Blob([text], { type: 'application/json;charset=utf-8' }), workPlanJsonFileName(props.win.docId))
+}
 
 const docTitle = computed(() => view.value?.title || props.win.request.title || props.win.docId)
 const stateLabel = computed(() => {
@@ -239,6 +305,24 @@ onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', 
 .wp-window-dirty {
   color: var(--fg2-status-warning-fg);
   font-size: 10px;
+}
+
+.wp-window-json {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.wp-window-json svg {
+  width: 15px;
+  height: 15px;
+}
+
+.wp-window-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--fg2-line);
 }
 
 .wp-window {

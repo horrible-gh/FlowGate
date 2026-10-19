@@ -25,6 +25,10 @@
 //   by its card and document (cardType / cardOrdinal) and its place among the shown rows — the Step key stays inside.
 // - Card moves take the screen's positions among the shown cards (flowgate.v02.0073 T#1: DS / T2 cards are not drawn);
 //   the model puts the shown cards back into their slots of the plan, so a hidden card keeps its place.
+// - flowgate.v02.0073 T#4: JSON on the client only (workPlanJson). `exportJson` is the draft as the save would send it;
+//   `importJson` puts a checked JSON in the draft's place as an edit (dirty; nothing is sent — the save is the one PUT,
+//   whose server check is the final one). Not while locked or while a Step window holds edits; the Step windows open
+//   on the plan it replaces lose their row (the plan epoch moves, as on a read of another plan).
 import { computed, onScopeDispose, ref, shallowRef, watch, type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import {
   workPlanEditRead,
@@ -72,6 +76,7 @@ import {
   type WorkPlanRefusal,
   type WorkPlanStepDraft,
 } from './workPlanEditModel'
+import { readWorkPlanJson, workPlanJsonText, type WorkPlanJsonIssue } from './workPlanJson'
 
 export type WorkPlanEditorPhase = 'loading' | 'ready' | 'unreadable' | 'error'
 
@@ -85,9 +90,16 @@ export interface WorkPlanEditorNotice {
     | 'quantity_unsupported'
     | 'move_started'
     | 'move_before_started'
+    | 'imported'
+    | 'imported_unchanged'
   readonly params?: Readonly<Record<string, string | number>>
   readonly tone: 'success' | 'warning'
 }
+
+/** What a JSON import did (0073 T#4): taken (dirty), the same plan, refused for the lock or a Step window, or invalid. */
+export type WorkPlanJsonImportResult =
+  | { readonly status: 'imported' | 'unchanged' | 'locked' | 'step_pending' }
+  | { readonly status: 'invalid'; readonly issues: readonly WorkPlanJsonIssue[] }
 
 /** A quantity decrease waiting for its confirmation (it removes Steps that carry values). */
 export interface WorkPlanPendingQuantity {
@@ -205,6 +217,10 @@ export interface WorkPlanEditor {
   providerName(providerId: string, snapshot?: string | null): string
   stepTarget(rowId: string): WorkPlanStepEditTarget | null
   stepSession(rowId: string): WorkPlanStepEditSession
+  /** The draft as JSON (the body the save would send, unsaved edits included), or null before a plan is read. */
+  exportJson(): string | null
+  /** Puts a JSON plan in the draft's place (checked first); the window becomes dirty, [저장] sends it. */
+  importJson(text: string): WorkPlanJsonImportResult
   dismissNotice(): void
   /** The window is closing: sessions report not alive, late answers are dropped. */
   dispose(): void
@@ -600,6 +616,32 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     }
   }
 
+  function exportJson(): string | null {
+    return draft.value ? workPlanJsonText(draft.value) : null
+  }
+
+  function importJson(text: string): WorkPlanJsonImportResult {
+    const current = draft.value
+    if (!current || inputsLocked.value) return { status: 'locked' }
+    // A Step window's edits are for a row of this plan: they are saved or dropped first.
+    if (options.stepPending?.()) return { status: 'step_pending' }
+    const read = readWorkPlanJson(text, current, started())
+    if (!read.ok) return { status: 'invalid', issues: read.issues }
+    const next = draftOf(read.body)
+    if (JSON.stringify(bodyOf(next)) === JSON.stringify(bodyOf(current))) {
+      notice.value = { key: 'imported_unchanged', tone: 'success' }
+      return { status: 'unchanged' }
+    }
+    draft.value = next
+    dirty.value = true
+    pendingQuantity.value = null
+    clearSaveState()
+    // Another plan: the Step windows open on the replaced one lose their row.
+    planEpoch.value += 1
+    notice.value = { key: 'imported', tone: 'success' }
+    return { status: 'imported' }
+  }
+
   // An upload of this document waits while the window holds unsaved edits; a finished one is read again here.
   const unregister = registerDocumentEditEntry({
     related: () => [options.docId()],
@@ -670,6 +712,8 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     providerName: nameOf,
     stepTarget,
     stepSession,
+    exportJson,
+    importJson,
     dismissNotice: () => {
       notice.value = null
     },
