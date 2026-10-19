@@ -465,12 +465,15 @@ describe('locks that change while the window is open', () => {
     expect(text(q('wp-edit-revision'))).toBe('r5')
     expect(q('wp-edit-dirty')).toBeNull()
     expect(note('c_d1|main').value).toBe('설계')
-    expect(session.snapshot()).toMatchObject({ reviewCount: 1, reviewerProviderId: 'aip_sonnet' })
+    expect(session.snapshot()).toBeNull()
+    expect(session.apply(reviewTwice)).toBe('gone')
+    const reopened = await stepSessionOf('c_t1|main')
+    expect(reopened.snapshot()).toMatchObject({ reviewCount: 1, reviewerProviderId: 'aip_sonnet' })
 
-    // the plan read again is editable: typing and the Step window's apply count, and are saved on its revision
+    // Reload discarded the old child. A newly opened session can edit the new revision.
     expect(note('c_d1|main').disabled).toBe(false)
     await type(note('c_d1|main'), '응답 후 입력')
-    expect(session.apply(reviewTwice)).toBe('applied')
+    expect(reopened.apply(reviewTwice)).toBe('applied')
     await click(q('wp-edit-save'))
     expect(api.putRequest).toHaveBeenCalledTimes(2)
     expect(lastPut().base_revision_no).toBe(5)
@@ -655,7 +658,8 @@ describe('empty, unreadable, missing', () => {
 })
 
 describe('the Step window boundary (✎, T#2)', () => {
-  it('without a Step window ✎ is disabled with its reason; it never opens a drawer here', async () => {
+  it('without a Step handler ✎ is disabled with its reason; it never opens a drawer here', async () => {
+    setWorkPlanStepEditHandler(null)
     await open()
     const pencil = q('wp-edit-step-edit', row('c_t1|main')!) as HTMLButtonElement
     expect(pencil.disabled).toBe(true)

@@ -127,3 +127,8 @@ export function requestWorkPlanStepEdit(target: WorkPlanStepEditTarget, session:
 export function workPlanStepEditsPending(docId: string): boolean {
   return stepHandler.value?.pending?.(docId) === true
 }
+
+/** Explicit reload discards child drafts after the parent's confirmation. */
+export function discardWorkPlanStepEdits(docId: string): void {
+  stepHandler.value?.parentClosed?.(docId)
+}

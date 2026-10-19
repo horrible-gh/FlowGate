@@ -35,6 +35,7 @@
           data-test="wp-edit-notice"
           :data-key="notice.key"
         >{{ t(`notice.${notice.key}`, { ...(notice.params ?? {}) }) }}</p>
+        <p v-else-if="workPlanStepEditsPending(win.docId)" class="wp-window-notice" data-test="wp-edit-child-pending">{{ t('step_pending') }}</p>
         <p v-else-if="dirty" class="wp-window-notice" data-test="wp-edit-unsaved">{{ t('dirty') }}</p>
         <Button size="sm" variant="ghost" data-test="wp-edit-close" @click="requestClose">{{ t('close') }}</Button>
         <Button size="sm" variant="primary" :disabled="!canSave" :loading="saving" data-test="wp-edit-save" @click="editor.save()">
@@ -99,6 +100,7 @@ import { workPlanWindowMessages } from './messages'
 import { useWorkPlanEditor } from './useWorkPlanEditor'
 import {
   closeWorkPlanEditWindow,
+  discardWorkPlanStepEdits,
   requestWorkPlanStepEdit,
   setWorkPlanEditWindowMinimized,
   workPlanGroupOf,
@@ -122,6 +124,7 @@ const groupId = () => props.win.request.groupId ?? workPlanGroupOf(props.win.doc
 const editor = useWorkPlanEditor({
   docId: () => props.win.docId,
   groupId,
+  stepPending: () => workPlanStepEditsPending(props.win.docId),
   external: () => props.win.request.external?.() ?? null,
   saved: (revisionNo) => props.win.request.saved?.(revisionNo),
 })
@@ -148,11 +151,12 @@ function requestClose(): void {
 
 function reload(): void {
   confirming.value = null
+  discardWorkPlanStepEdits(props.win.docId)
   void editor.load()
 }
 
 function requestReload(): void {
-  if (dirty.value) confirming.value = 'reload'
+  if (dirty.value || workPlanStepEditsPending(props.win.docId)) confirming.value = 'reload'
   else reload()
 }
 

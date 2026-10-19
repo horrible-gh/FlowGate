@@ -19,7 +19,7 @@
 //   document waits while it holds unsaved edits, and a finished upload is read again here.
 // - The Step window (T#2) edits one row through `stepSession(rowId)`: a copy of the row's review / pre-instruction
 //   values, and `apply` that puts its values on that row only (parent dirty; the server PUT stays the parent's).
-import { computed, onScopeDispose, ref, shallowRef, type ComputedRef, type Ref, type ShallowRef } from 'vue'
+import { computed, onScopeDispose, ref, shallowRef, watch, type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import {
   workPlanEditRead,
   workPlanErrorOf,
@@ -117,6 +117,10 @@ export interface WorkPlanStepEditSession {
   reviewCountChoices(): readonly number[]
   preInstructionMaxChars(): number
   attachmentMaxBytes(): number
+  /** The stored Step key accepted by the upload API; null until a new card is saved by its parent. */
+  attachmentStepKey(): string | null
+  /** Refresh after an upload refusal without discarding either editor's draft. */
+  refreshLocks(refusal?: WorkPlanRefusal): void
   /** The reviewer picker's options (empty = the project's default reviewer at run time). */
   reviewerOptions(emptyLabel: string, unavailable: (name: string) => string): SelectOption[]
 }
@@ -127,6 +131,8 @@ export interface WorkPlanEditorOptions {
   groupId(): string | null
   /** The opener's verdict: read only (ownership conflict / revision view) or the Flow's run lock; null = none. */
   external(): 'read_only' | 'run_locked' | null
+  /** Child drafts / in-flight reserved uploads must survive refresh and must precede a parent PUT. */
+  stepPending?(): boolean
   /** Told after every successful save. */
   saved?(revisionNo: number): void
 }
@@ -206,7 +212,9 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
   const notice = shallowRef<WorkPlanEditorNotice | null>(null)
   /** Old row id → the id it has now (a new card named by a save). */
   const aliases = new Map<string, string>()
-  let alive = true
+  const sessionStops = new Set<() => void>()
+  const alive = ref(true)
+  const planEpoch = ref(0)
   // Request order: only the latest read may set the view.
   let generation = 0
   /** The Flow's live AI run read on its way (one at a time). */
@@ -236,7 +244,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
       reloading.value ||
       capability.value !== null,
   )
-  const canSave = computed(() => dirty.value && !inputsLocked.value)
+  const canSave = computed(() => dirty.value && !inputsLocked.value && !options.stepPending?.())
   const unassigned = computed(() => (draft.value ? unassignedSteps(draft.value) : 0))
   const started = () => view.value?.startedCardIds ?? new Set<string>()
 
@@ -255,6 +263,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
   }
 
   function take(next: WorkPlanEditView): void {
+    if (draft.value && JSON.stringify(bodyOf(draft.value)) !== JSON.stringify(next.body)) planEpoch.value += 1
     view.value = next
     // A plan read anew may be editable again; a discarded Flow is not (the read does not say so).
     if (refused.value !== 'disposed') refused.value = null
@@ -277,11 +286,11 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     readActivity()
     try {
       const answer = await workPlanEditRead(options.docId())
-      if (seq !== generation || !alive) return false
+      if (seq !== generation || !alive.value) return false
       take(toWorkPlanEditView(answer))
       return true
     } catch (error) {
-      if (seq !== generation || !alive) return false
+      if (seq !== generation || !alive.value) return false
       const kind = workPlanErrorOf(error).kind
       view.value = null
       draft.value = null
@@ -307,12 +316,12 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
       if (phase.value !== 'ready' && phase.value !== 'loading') await load()
       return
     }
-    if (!dirty.value) {
+    if (!dirty.value && !options.stepPending?.()) {
       const seq = ++generation
       try {
         const answer = await workPlanEditRead(options.docId())
         // A person may have started editing while the read was on its way: their edit wins.
-        if (seq !== generation || !alive || dirty.value || saving.value) return
+        if (seq !== generation || !alive.value || dirty.value || options.stepPending?.() || saving.value) return
         take(toWorkPlanEditView(answer))
       } catch {
         // A failed background read keeps what is shown; the next signal reads again.
@@ -328,7 +337,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     try {
       const fresh = toWorkPlanEditView(await workPlanEditRead(options.docId()))
       const current = view.value
-      if (seq !== generation || !alive || current === null) return
+      if (seq !== generation || !alive.value || current === null) return
       // The new lock verdict and started cards count now; the body and its revision stay the window's.
       view.value = { ...fresh, revisionNo: current.revisionNo, body: current.body }
       externalRevision.value = fresh.revisionNo !== current.revisionNo ? fresh.revisionNo : null
@@ -340,7 +349,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
   async function send(acks: readonly string[]): Promise<'saved' | 'capability' | 'failed' | 'blocked'> {
     const current = view.value
     const sending = draft.value
-    if (!current || !sending || saving.value || reloading.value || phase.value !== 'ready' || lockReason.value !== null) return 'blocked'
+    if (!current || !sending || saving.value || reloading.value || phase.value !== 'ready' || lockReason.value !== null || options.stepPending?.()) return 'blocked'
     let reread = false
     saving.value = true
     clearSaveState()
@@ -349,7 +358,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     generation += 1
     try {
       const answer = await workPlanSave(options.docId(), { baseRevisionNo: current.revisionNo, body: bodyOf(sending), capabilityWarningAcks: acks })
-      if (!alive) return 'saved'
+      if (!alive.value) return 'saved'
       const revisionNo = typeof answer.revision_no === 'number' ? answer.revision_no : current.revisionNo + 1
       const savedBody = editBodyOf(answer.body ?? bodyOf(sending))
       const { draft: next, renamed } = savedDraft(sending, savedBody)
@@ -372,7 +381,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
       options.saved?.(revisionNo)
       return 'saved'
     } catch (error) {
-      if (!alive) return 'failed'
+      if (!alive.value) return 'failed'
       const reason = workPlanSaveFailureOf(error)
       if (reason.kind === 'capability') {
         capability.value = reason.findings
@@ -395,7 +404,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
       return 'failed'
     } finally {
       saving.value = false
-      if (reread && alive) void readVerdict()
+      if (reread && alive.value) void readVerdict()
     }
   }
 
@@ -497,18 +506,26 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
 
   function stepTarget(rowId: string): WorkPlanStepEditTarget | null {
     const current = draft.value
-    if (!current || !alive) return null
+    if (!current || !alive.value) return null
     const row = rowOf(current, resolve(rowId))
     if (!row) return null
     return { docId: options.docId(), rowId: row.rowId, stepKey: row.step.key, stepNo: row.no, type: row.step.type, pairRole: row.step.pair_role }
   }
 
   function stepSession(rowId: string): WorkPlanStepEditSession {
+    const epoch = planEpoch.value
+    const valid = ref(true)
+    // Deletion is permanent for this session, even if a quantity restore reuses the card id.
+    // A server reload replacing the body cannot rebind legacy key-based identities either.
+    const stop = watch(() => [planEpoch.value, stepTarget(rowId)] as const, ([nextEpoch, target]) => {
+      if (nextEpoch !== epoch || target === null) valid.value = false
+    }, { flush: 'sync' })
+    sessionStops.add(stop)
     return {
-      target: () => stepTarget(rowId),
-      snapshot: () => (draft.value && alive ? stepDraftOf(draft.value, resolve(rowId)) : null),
+      target: () => valid.value ? stepTarget(rowId) : null,
+      snapshot: () => (draft.value && alive.value && valid.value ? stepDraftOf(draft.value, resolve(rowId)) : null),
       apply(values) {
-        if (!alive || !draft.value) return 'gone'
+        if (!alive.value || !draft.value || !valid.value) return 'gone'
         if (inputsLocked.value) return 'locked'
         const result = applyStepDraft(draft.value, resolve(rowId), values, (id) => nameOf(id))
         if (result.status !== 'applied') return result.status
@@ -516,12 +533,25 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
         dirty.value = true
         return 'applied'
       },
-      locked: () => !alive || inputsLocked.value,
+      locked: () => !alive.value || inputsLocked.value,
       lockReason: () => lockReason.value,
-      alive: () => alive,
+      alive: () => alive.value,
       reviewCountChoices: () => view.value?.reviewCountChoices ?? [0],
       preInstructionMaxChars: () => view.value?.preInstructionMaxChars ?? 20000,
       attachmentMaxBytes: () => view.value?.attachmentMaxBytes ?? 0,
+      refreshLocks: (reason) => {
+        if (reason) refused.value = reason
+        readActivity()
+        void readVerdict()
+      },
+      attachmentStepKey: () => {
+        if (!valid.value || !alive.value || !draft.value || !view.value) return null
+        const row = rowOf(draft.value, resolve(rowId))
+        if (!row || row.step.locked || row.step.pair_role === 'result') return null
+        const card = draft.value.cards[row.cardIndex]
+        const stored = draftOf(view.value.body).cards.find((item) => item.id === card.id)
+        return stored?.steps.find((step) => step.pair_role === row.step.pair_role)?.key ?? null
+      },
       reviewerOptions: (emptyLabel, unavailable) =>
         pickerOptions((draft.value?.cards ?? []).flatMap((card) => card.steps.map((step) => step.reviewer_provider_id)), emptyLabel, unavailable),
     }
@@ -531,19 +561,21 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
   const unregister = registerDocumentEditEntry({
     related: () => [options.docId()],
     editor: () => (phase.value === 'ready' ? 'ready' : phase.value === 'loading' ? 'loading' : 'error'),
-    dirty: () => dirty.value,
+    dirty: () => dirty.value || options.stepPending?.() === true,
     saving: () => saving.value,
     onGuard: () => {},
     onRelease: () => {},
     reflect: async () => {
-      if (dirty.value || saving.value) return 'skipped'
+      if (dirty.value || options.stepPending?.() || saving.value) return 'skipped'
       return (await load()) ? 'ok' : 'failed'
     },
   })
 
   function dispose(): void {
-    if (!alive) return
-    alive = false
+    if (!alive.value) return
+    alive.value = false
+    for (const stop of sessionStops) stop()
+    sessionStops.clear()
     generation += 1
     unregister()
   }

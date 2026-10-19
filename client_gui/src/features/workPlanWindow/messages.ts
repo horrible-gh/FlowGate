@@ -6,6 +6,7 @@
 
 const ko = {
   title: '작업계획',
+  step_pending: '단계 창의 변경을 저장하거나 취소한 뒤 작업계획을 저장하세요. 업로드 중이면 완료까지 기다려 주세요.',
   dirty: '저장하지 않은 변경',
   revision: 'r{n}',
   loading: '작업계획을 불러오는 중...',
@@ -123,6 +124,7 @@ const ko = {
 
 const en: typeof ko = {
   title: 'Work plan',
+  step_pending: 'Save or cancel the Step edits before saving this plan. Wait for any upload to finish.',
   dirty: 'Unsaved changes',
   revision: 'r{n}',
   loading: 'Loading the work plan...',
@@ -240,6 +242,7 @@ const en: typeof ko = {
 
 const ja: typeof ko = {
   title: '作業計画',
+  step_pending: '段階の変更を保存または取り消してから、作業計画を保存してください。アップロード中は完了をお待ちください。',
   dirty: '未保存の変更',
   revision: 'r{n}',
   loading: '作業計画を読み込んでいます...',

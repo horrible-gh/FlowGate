@@ -22,7 +22,7 @@
 // `{ code: 'wp_unreadable', reason, revision_no, … }` at the top level of the body when the stored plan cannot
 // be read as a table (the v0.1 editor offers its raw view and revision restore).
 import { normalizeApiError } from '@shared/apiErrors'
-import { getRequest, putRequest } from '@shared/api'
+import { getRequest, putRequest, postFormRequest } from '@shared/api'
 
 const API = '/api/v1'
 
@@ -378,4 +378,21 @@ export function workPlanSaveFailureOf(error: unknown): WorkPlanSaveFailure {
   if (status === 403) return { ...base, kind: 'forbidden' }
   if (status === 404) return { ...base, kind: 'not_found' }
   return { ...base, kind: 'other' }
+}
+
+// 0072 T#2: upload reserves a file only. Its reference enters the plan on the parent's PUT;
+// successful PUT cleans unreferenced reserved files. There is no per-file delete endpoint.
+export async function workPlanUploadInstruction(docId: string, stepKey: string, file: File): Promise<Record<string, unknown>> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('step_key', stepKey)
+  const response = await postFormRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}/work-plan/pre-instruction-attachments`, form)
+  const reference = record(record(response.data).reference)
+  if (reference.doc_id !== docId || typeof reference.filename !== 'string'
+    || !reference.filename.startsWith('__wp_pre_instruction__')
+    || typeof reference.original_filename !== 'string'
+    || typeof reference.content_sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(reference.content_sha256)) {
+    throw new Error('Invalid pre-instruction attachment reference')
+  }
+  return { ...reference }
 }
