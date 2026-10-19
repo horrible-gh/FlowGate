@@ -25,3 +25,5 @@ export { documentIoGuarded } from './documentEditRegistry'
 // flowgate.v02.0072 T#3 — the work plan edit window (features/workPlanWindow; DocumentWindows mounts its host): openers
 // outside the window features (the Inspector's openDocument.ts) open it through this surface like the other in-tab windows.
 export { openWorkPlanEditWindow, type WorkPlanEditRequest } from '@/features/workPlanWindow/workPlanEditWindows'
+// flowgate.v02.0074 T#2 — and the opener a work plan window asked for by the document [업로드] (its JSON import) gets.
+export { setWorkPlanEditOpener, type WorkPlanEditOpener } from '@/features/workPlanWindow/workPlanEditWindows'

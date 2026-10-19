@@ -13,6 +13,8 @@
  * is, and no undecided wording.
  * flowgate.v02.0072 T#3: the documents area is the one 「작업계획」 line (no 전개 line), and the line opens the plan in the
  * v0.2 work plan edit window (features/workPlanWindow) — not the document window; `wpOpened()` lists those windows.
+ * flowgate.v02.0074 T#2: the plan line's [업로드] stays and opens that window's [JSON 가져오기] (no file pick, no PATCH);
+ * off with the window's reason in a read-only Flow.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -50,6 +52,7 @@ const detailRead = vi.fn()
 const relationsRead = vi.fn()
 const qaReadCall = vi.fn()
 const attachmentsReadCall = vi.fn()
+const contentSave = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/document')>()
   return {
@@ -62,6 +65,8 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentRelationsRead: (...args: unknown[]) => relationsRead(...args),
     qaRead: (...args: unknown[]) => qaReadCall(...args),
     attachmentsRead: (...args: unknown[]) => attachmentsReadCall(...args),
+    // flowgate.v02.0074 T#2: the plan line's [업로드] never saves the content.
+    documentContentSave: (...args: unknown[]) => contentSave(...args),
   }
 })
 
@@ -169,7 +174,7 @@ beforeEach(() => {
   server.clear()
   refusals.length = 0
   holds.clear()
-  for (const mock of [planRead, activityRead, documentRead, detailRead, relationsRead, qaReadCall, attachmentsReadCall]) mock.mockReset()
+  for (const mock of [planRead, activityRead, documentRead, detailRead, relationsRead, qaReadCall, attachmentsReadCall, contentSave]) mock.mockReset()
   seed()
   serve()
   closeAllDocumentWindows()
@@ -631,5 +636,33 @@ describe('WP summary in the Frame (real registry)', () => {
     expect(section.findAll('[data-test="inspector-slot-name"]').map((name) => name.text())).toEqual(['작업계획'])
     expect(section.findAll('[data-test="inspector-slot-state"]').map((state) => state.text())).toEqual(['승인됨'])
     expect(section.text()).not.toContain('전개')
+  })
+
+  // flowgate.v02.0074 T#2 (D#1 §6.3 / §7.5): the plan line keeps its [업로드] icon; it opens the plan window's [JSON 가져오기]
+  // — never the file pick and the content save (PATCH).
+  it('the plan line’s [업로드] opens the plan window asking for its JSON import; no file pick, no PATCH', async () => {
+    // the plan's own Flow (its id names it), editable and not running
+    const w = await mountFrame(planSelection('v01', WP_NODE))
+    const upload = planLine(w).get('[data-test="document-io-upload"]')
+    expect(upload.attributes('disabled')).toBeUndefined()
+    expect(upload.attributes('title')).toBe('JSON 가져오기')
+    await upload.trigger('click')
+    await flushPromises()
+    expect(workPlanEditWindowList().map((win) => [win.docId, win.request.initialMode])).toEqual([[WP_DOC, 'import']])
+    expect(contentSave).not.toHaveBeenCalled()
+    expect(document.body.querySelector('input[type="file"]')).toBeNull()
+    expect(opened()).toEqual([])
+  })
+
+  it('the Flow runs: the plan line’s [업로드] stays, off with the plan window’s reason; pressing it does nothing', async () => {
+    const w = await mountFrame({ ...planSelection('v01', WP_NODE), editLock: 'run' })
+    const upload = planLine(w).get('[data-test="document-io-upload"]')
+    expect(upload.attributes('disabled')).toBeDefined()
+    expect(upload.attributes('data-reason')).toBe('locked')
+    expect(upload.attributes('title')).toBe('지금은 작업계획을 편집할 수 없어 가져올 수 없습니다.')
+    await upload.trigger('click')
+    await flushPromises()
+    expect(wpOpened()).toEqual([])
+    expect(contentSave).not.toHaveBeenCalled()
   })
 })

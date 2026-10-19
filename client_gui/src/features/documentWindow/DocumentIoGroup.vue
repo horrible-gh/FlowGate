@@ -4,8 +4,9 @@
   <DocumentIoButtons
     :upload="view.upload"
     :download="view.download"
+    :upload-title="uploadTitle"
     :data-doc="docId"
-    @upload="documentIoUpload(docId)"
+    @upload="documentIoUpload(docId, { context: { projectId, groupId } })"
     @download="documentIoDownload(docId)"
   />
 </template>
@@ -14,10 +15,23 @@
 // The document is read for the buttons when the group draws it (the first time, after a re-selection or a
 // re-open, or another document), and again on its project events — a frame about the document or a refresh
 // of its Flow — and on a reconnect (L §2.15 re-check path). No polling of its own.
+// flowgate.v02.0074 T#2: a work plan's [업로드] opens its window's [JSON 가져오기] (the coordinator decides, for every place
+// that draws this group); its tooltip is the plan window's own wording — 「JSON 가져오기」 or why the import is off.
 import { computed, getCurrentInstance, onScopeDispose, shallowRef, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '@/features/project'
+import { workPlanWindowMessages } from '@/features/workPlanWindow/messages'
 import DocumentIoButtons from './DocumentIoButtons.vue'
-import { documentIoButtons, documentIoDownload, documentIoDraw, documentIoInfo, documentIoInfoGeneration, documentIoRefresh, documentIoUpload } from './documentIo'
+import {
+  documentIoButtons,
+  documentIoDownload,
+  documentIoDraw,
+  documentIoInfo,
+  documentIoInfoGeneration,
+  documentIoIsWorkPlan,
+  documentIoRefresh,
+  documentIoUpload,
+} from './documentIo'
 import { DOCUMENT_WINDOW_EVENTS, DOCUMENT_WINDOW_REFRESH_COALESCE_MS, documentWindowEventMatches, documentWindowFlowEventMatches } from './useDocumentWindowEvents'
 
 const props = defineProps<{
@@ -29,6 +43,17 @@ const props = defineProps<{
 }>()
 
 const view = computed(() => documentIoButtons(props.docId))
+
+const { t: gt } = useI18n({ useScope: 'global' })
+const { t: wt } = useI18n({ useScope: 'local', messages: workPlanWindowMessages, inheritLocale: true })
+/** A work plan's upload tooltip (no new wording: the plan window's and the group's own); null for any other document. */
+const uploadTitle = computed<string | null>(() => {
+  if (!documentIoIsWorkPlan(props.docId)) return null
+  const reason = view.value.upload.reason
+  if (reason === 'locked' || reason === 'step_pending') return wt(`json.blocked.${reason}`)
+  if (reason === 'forbidden') return gt('gui.document_io.disabled.forbidden')
+  return wt('json.import')
+})
 
 watch([() => props.docId, documentIoInfoGeneration], ([docId]) => documentIoDraw(docId), { immediate: true })
 

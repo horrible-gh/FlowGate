@@ -125,6 +125,9 @@
 //   plan window; it closes with it. Not the Inspector's document upload / download (DocumentIoGroup, 0068).
 // - flowgate.v02.0074 T#1 (R §2.2): the title bar shows no totals and no r{n}; the totals are the 작업 순서 line's
 //   (wp-edit-step-totals) only. The revision still drives the save (base_revision_no, 409) and the newer-version banner.
+// - flowgate.v02.0074 T#2: the document [업로드] of the plan (any DocumentIoGroup) is this window's [JSON 가져오기]: a request
+//   with initialMode 'import' opens the import window once the plan is read; the window tells its dirty state for the
+//   plan's .json download.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
@@ -143,6 +146,7 @@ import {
   closeWorkPlanEditWindow,
   discardWorkPlanStepEdits,
   requestWorkPlanStepEdit,
+  setWorkPlanEditWindowDirty,
   setWorkPlanEditWindowMinimized,
   workPlanGroupOf,
   workPlanStepEditAvailable,
@@ -198,6 +202,27 @@ const importBlocked = computed<'locked' | 'step_pending' | null>(() => {
 function openImport(): void {
   if (importBlocked.value === null) jsonMode.value = 'import'
 }
+
+// flowgate.v02.0074 T#2 (D#1 §6.3): a request with initialMode 'import' (the document [업로드] of this plan) opens [JSON
+// 가져오기] once the plan is read (over the raw view too) — once per request, the raise it came with. Blocked then, the
+// window stays as it is and its [JSON 가져오기] tooltip says why; a read that failed opens nothing.
+let importAsked: number | null = null
+watch(
+  () => [props.win.request.initialMode, props.win.raise, editor.phase.value, draft.value] as const,
+  () => {
+    if (props.win.request.initialMode !== 'import' || importAsked === props.win.raise) return
+    if (!draft.value) {
+      if (editor.phase.value === 'error' || editor.phase.value === 'unreadable') importAsked = props.win.raise
+      return
+    }
+    importAsked = props.win.raise
+    if (importBlocked.value === null) jsonMode.value = 'import'
+  },
+  { immediate: true },
+)
+
+// flowgate.v02.0074 T#2: the plan's download (documentIo) says unsaved edits here are not in its file.
+watch(dirty, (value) => setWorkPlanEditWindowDirty(props.win.docId, value), { immediate: true })
 
 /** [JSON 내보내기]: the draft as the save would send it, unsaved edits included. */
 function exportJson(): void {

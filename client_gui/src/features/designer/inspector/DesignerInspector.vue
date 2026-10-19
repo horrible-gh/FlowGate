@@ -95,7 +95,7 @@ import EmptyState from '../../../components/ui/EmptyState.vue'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
 import type { FlowGraphSelection } from '../center/graph/flowGraph'
 import InspectorHeader from './InspectorHeader.vue'
-import { INSPECTOR_BODY, INSPECTOR_HOST, type InspectorHostIntent } from './inspectorHost'
+import { INSPECTOR_BODY, INSPECTOR_HOST, type InspectorHost, type InspectorHostIntent } from './inspectorHost'
 import {
   contributionsFor,
   inspectorRegistry,
@@ -119,7 +119,9 @@ import {
   leaveDocumentIo,
   noteWorkPlanOpener,
   provideWorkPlanFlowRunLock,
+  setWorkPlanEditOpener,
   settleCardLinesWritten,
+  workPlanOpener,
   type WorkPlanFlowRunLock,
 } from './openDocument'
 import { useInspectorEvents } from './useInspectorResource'
@@ -153,12 +155,13 @@ const { t } = i18n
 const registry = toRaw(props.registry)
 installInspectorMessages(i18n, registry)
 
-provide(INSPECTOR_HOST, {
+const host: InspectorHost = {
   request: (intent) => emit('host', intent),
   get saveTitle() {
     return props.saveTitle ?? undefined
   },
-})
+}
+provide(INSPECTOR_HOST, host)
 
 // flowgate.v02.0053 T#6: the tab Content element, for parts that take input over the whole tab.
 const bodyElement = ref<HTMLElement | null>(null)
@@ -187,6 +190,9 @@ onBeforeUnmount(
     return current?.flowId === flowId ? (current.editLock ?? null) : 'unknown'
   }),
 )
+// flowgate.v02.0074 T#2: a work plan window the document [업로드] asks for (its JSON import) gets the same opener as the
+// 작업계획 line's: the Flow's verdict and, after a save, this host's read of the Flow's Canvas.
+onBeforeUnmount(setWorkPlanEditOpener((_docId, flowId) => workPlanOpener(flowId, host)))
 
 /** Server events after which the header (the selected Flow's Canvas read) may be out of date. */
 const HEADER_REFRESH_EVENTS = ['doc_review_status_changed', 'ai_invoke_finished', 'document_explorer_refresh'] as const

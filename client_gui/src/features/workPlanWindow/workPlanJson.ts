@@ -28,7 +28,15 @@ import {
 
 /** The draft as JSON text (pretty, one trailing newline): what the export file and the raw view hold. */
 export function workPlanJsonText(draft: WorkPlanDraft): string {
-  return `${JSON.stringify(bodyOf(draft), null, 2)}\n`
+  return workPlanBodyJsonText(bodyOf(draft))
+}
+
+/**
+ * flowgate.v02.0074 T#2 — a plan body as JSON text, in the export's format (two-space indent, one trailing newline). The
+ * Inspector's WP download (documentIo) writes the server's stored body with it as it came, never through a draft.
+ */
+export function workPlanBodyJsonText(body: unknown): string {
+  return `${JSON.stringify(body, null, 2)}\n`
 }
 
 /** The export file's name: the document id, made safe for a file name. */

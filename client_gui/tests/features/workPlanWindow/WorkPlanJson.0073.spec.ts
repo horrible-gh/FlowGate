@@ -12,6 +12,9 @@
  *   JSON says why in names (no type code) and changes nothing; locked, or with a Step window holding edits, there is
  *   no import (the export and the raw view stay); a file still being read when the import window is cancelled,
  *   closed or turned into the raw view is dropped (rejection rej_01M59PPF5FTF5KK4).
+ * - flowgate.v02.0074 T#2: the document [업로드] of the plan opens this window's import (a new window once the plan is
+ *   read, an open one reused; blocked or unread: no import window; saved by [저장] only), and the document [다운로드]
+ *   file — the stored plan, not the draft — read back into the same revision is no change.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,7 +22,16 @@ import { ref } from 'vue'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import { DocumentWindows, closeAllDocumentAiWindows } from '@/features/documentWindow'
-import { closeAllWorkPlanEditWindows, openWorkPlanEditWindow, setWorkPlanStepEditHandler } from '@/features/workPlanWindow'
+import { documentIoDownload, documentIoNotices, resetDocumentIo } from '@/features/documentWindow/documentIo'
+import {
+  closeAllWorkPlanEditWindows,
+  openWorkPlanEditImport,
+  openWorkPlanEditWindow,
+  setWorkPlanEditOpener,
+  setWorkPlanStepEditHandler,
+  workPlanEditWindowList,
+  workPlanEditWindowOf,
+} from '@/features/workPlanWindow'
 import { bodyOf, draftOf, editBodyOf, rowOf, setStepNote, stepHasInstruction, type WorkPlanDraft } from '@/features/workPlanWindow/workPlanEditModel'
 import { readWorkPlanJson, workPlanJsonFileName, workPlanJsonText } from '@/features/workPlanWindow/workPlanJson'
 import { DOC, hiddenPlanBody, hiddenSteps, planBody, readAnswer } from './workPlanFixtures'
@@ -620,5 +632,143 @@ describe('the JSON buttons of the plan window (0073 T#4)', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+// --- flowgate.v02.0074 T#2: the document [업로드] / [다운로드] of the plan ------------------------------------------------
+
+describe('the document [업로드] opens this window’s [JSON 가져오기]; the [다운로드] file reads back unchanged (0074 T#2)', () => {
+  const opener = vi.fn((_docId: string, _flowId: string) => ({ external: () => null, saved: () => {} }))
+
+  beforeEach(() => {
+    resetDocumentIo()
+    opener.mockClear()
+    setWorkPlanEditOpener(opener)
+  })
+
+  afterEach(() => {
+    setWorkPlanEditOpener(null)
+    resetDocumentIo()
+  })
+
+  /** The plan's .json as the document [다운로드] saves it (the server's stored body). */
+  async function downloaded(): Promise<string> {
+    const files: Blob[] = []
+    await documentIoDownload(DOC, { save: (blob) => void files.push(blob) })
+    expect(files).toHaveLength(1)
+    return readBlob(files[0])
+  }
+
+  it('a new window opens the import window once the plan is read — once per request; nothing is sent', async () => {
+    openWorkPlanEditImport(DOC, { projectId: 'flowgate', groupId: null })
+    expect(opener).toHaveBeenCalledWith(DOC, 'flowgate.v02.0072')
+    await flushPromises()
+    expect(workPlanEditWindowList()).toHaveLength(1)
+    expect(q('wp-edit-window')).not.toBeNull()
+    expect(q('wp-json-window')?.dataset.mode).toBe('import')
+
+    await click(q('wp-json-cancel'))
+    expect(q('wp-json-window')).toBeNull()
+    await type(q('wp-edit-step-note', row('c_t2|main')!), '편집')
+    expect(q('wp-json-window')).toBeNull()
+    expect(api.putRequest).not.toHaveBeenCalled()
+  })
+
+  it('an open window is reused (one window, its external · saved kept, raised); over the raw view the import opens', async () => {
+    const external = () => null
+    const saved = vi.fn()
+    await open({ external, saved })
+    await click(q('wp-edit-json-raw'))
+    expect(q('wp-json-window')?.dataset.mode).toBe('raw')
+
+    openWorkPlanEditImport(DOC, { projectId: 'flowgate', groupId: null })
+    await flushPromises()
+    expect(workPlanEditWindowList()).toHaveLength(1)
+    const win = workPlanEditWindowOf(DOC)!
+    expect(win.raise).toBe(1)
+    expect(win.request.external).toBe(external)
+    expect(win.request.saved).toBe(saved)
+    expect(opener).not.toHaveBeenCalled()
+    expect(document.body.querySelectorAll('[data-test="wp-edit-window"]')).toHaveLength(1)
+    expect(q('wp-json-window')?.dataset.mode).toBe('import')
+
+    // asked again after it was closed: it opens again (a new request)
+    await click(q('wp-json-cancel'))
+    openWorkPlanEditImport(DOC, { projectId: 'flowgate', groupId: null })
+    await flushPromises()
+    expect(win.raise).toBe(2)
+    expect(q('wp-json-window')?.dataset.mode).toBe('import')
+  })
+
+  it('blocked when asked (locked, a Step window holding edits): no import window; the button says why', async () => {
+    const external = ref<'read_only' | 'run_locked' | null>('run_locked')
+    await open({ external: () => external.value })
+    openWorkPlanEditImport(DOC, { projectId: 'flowgate', groupId: null })
+    await flushPromises()
+    expect(q('wp-json-window')).toBeNull()
+    const importButton = q('wp-edit-json-import') as HTMLButtonElement
+    expect(importButton.disabled).toBe(true)
+    expect(importButton.title).toBe('지금은 작업계획을 편집할 수 없어 가져올 수 없습니다.')
+    // the request was handled: the lock ending opens nothing by itself
+    external.value = null
+    await flushPromises()
+    expect(q('wp-json-window')).toBeNull()
+
+    setWorkPlanStepEditHandler({ open: () => {}, pending: () => true })
+    openWorkPlanEditImport(DOC, { projectId: 'flowgate', groupId: null })
+    await flushPromises()
+    expect(q('wp-json-window')).toBeNull()
+    expect((q('wp-edit-json-import') as HTMLButtonElement).title).toBe('단계 상세 편집 창의 변경을 저장하거나 취소한 뒤 가져오세요.')
+  })
+
+  it('a plan that could not be read opens no import window', async () => {
+    api.getRequest.mockImplementation(async (path: string) => {
+      if (path === WP_PATH) throw { isAxiosError: true, response: { status: 404, data: { detail: 'x' } } }
+      if (path === '/api/v1/ai-invoke/active') return { data: { active: false } }
+      throw new Error(`unexpected GET ${path}`)
+    })
+    openWorkPlanEditImport(DOC, { projectId: 'flowgate', groupId: null })
+    await flushPromises()
+    expect(q('wp-edit-window')).not.toBeNull()
+    expect(q('wp-json-window')).toBeNull()
+  })
+
+  it('the import only replaces the draft; [저장] is the one PUT with base_revision_no', async () => {
+    openWorkPlanEditImport(DOC, { projectId: 'flowgate', groupId: null })
+    await flushPromises()
+    await typeArea(q('wp-json-input'), json((b) => (b.steps[6].note = '업로드로 가져옴')))
+    await click(q('wp-json-apply'))
+    expect(q('wp-edit-dirty')).not.toBeNull()
+    expect(workPlanEditWindowOf(DOC)?.dirty).toBe(true)
+    expect(api.putRequest).not.toHaveBeenCalled()
+    await click(q('wp-edit-save'))
+    expect(api.putRequest).toHaveBeenCalledTimes(1)
+    expect(lastPut().base_revision_no).toBe(2)
+    expect(lastPut().body.steps[6].note).toBe('업로드로 가져옴')
+    expect(workPlanEditWindowOf(DOC)?.dirty).toBe(false)
+  })
+
+  it('round trip: the downloaded .json put back into the same revision’s window is no change (not dirty)', async () => {
+    const text = await downloaded()
+    expect(text).toBe(`${JSON.stringify(answer.body, null, 2)}\n`)
+    openWorkPlanEditImport(DOC, { projectId: 'flowgate', groupId: null })
+    await flushPromises()
+    await typeArea(q('wp-json-input'), text)
+    await click(q('wp-json-apply'))
+    expect(q('wp-json-window')).toBeNull()
+    expect(q('wp-edit-notice')?.dataset.key).toBe('imported_unchanged')
+    expect(q('wp-edit-dirty')).toBeNull()
+    expect(workPlanEditWindowOf(DOC)?.dirty).toBe(false)
+    expect((q('wp-edit-save') as HTMLButtonElement).disabled).toBe(true)
+    expect(api.putRequest).not.toHaveBeenCalled()
+  })
+
+  it('the download is the stored plan, not the window’s unsaved draft, and says so once', async () => {
+    await open()
+    await type(q('wp-edit-step-note', row('c_t2|main')!), '저장 안 한 메모')
+    expect(workPlanEditWindowOf(DOC)?.dirty).toBe(true)
+    const text = await downloaded()
+    expect(JSON.parse(text)).toEqual(hiddenPlanBody())
+    expect(documentIoNotices().map((item) => item.key)).toEqual(['download_unsaved_excluded'])
   })
 })

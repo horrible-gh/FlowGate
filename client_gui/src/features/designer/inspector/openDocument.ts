@@ -37,9 +37,11 @@ import {
   openDocumentWindow,
   openSlotWriteWindow,
   openWorkPlanEditWindow,
+  setWorkPlanEditOpener,
   settleWrittenCardLines,
   writtenCardLines,
   type DocumentWindowMode,
+  type WorkPlanEditRequest,
 } from '@/features/documentWindow'
 import QnaTab from './features/qna/QnaTab.vue'
 import type { InspectorHost } from './inspectorHost'
@@ -144,10 +146,24 @@ export function openWorkPlan(target: InspectorTarget, docId: string, host: Inspe
     projectId: target.projectId,
     groupId: flowId,
     title: line?.title || null,
-    external: () => workPlanFlowLock(flowId),
-    saved: () => host?.request({ kind: 'refresh-flow', flowId }),
+    ...workPlanOpener(flowId, host),
   })
 }
+
+/**
+ * flowgate.v02.0074 T#2 — what the Inspector tells a work plan window of the Flow: the Flow's verdict (workPlanFlowLock)
+ * and, after a save, the host's read of that Flow's Canvas. openWorkPlan and the opener the Frame registers for a window
+ * asked for by the document [업로드] (setWorkPlanEditOpener) both hand it.
+ */
+export function workPlanOpener(flowId: string, host: InspectorHost | null): Pick<WorkPlanEditRequest, 'external' | 'saved'> {
+  return {
+    external: () => workPlanFlowLock(flowId),
+    saved: () => host?.request({ kind: 'refresh-flow', flowId }),
+  }
+}
+
+/** flowgate.v02.0074 T#2 — the Frame registers its opener while it lives (the undo is returned). */
+export { setWorkPlanEditOpener }
 
 /** flowgate.v02.0068 T#1 — the [업로드][다운로드] group of one document (a document line's `io` slot). */
 export { DocumentIoGroup }
