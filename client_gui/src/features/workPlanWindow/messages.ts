@@ -7,7 +7,7 @@
 const ko = {
   title: '작업계획',
   columns: { document: '문서', provider: '작업 AI', review: '검수', note: '한줄 멘트', detail: '상세' },
-  document: { instruction: '지시서', report: '레포트', design: '설계 문서', scenario: '테스트 시나리오', test_report: '테스트 레포트', position: '{n}번째 단계' },
+  document: { instruction: '지시서', report: '레포트', design_instruction: '설계 지시', design: '설계서', scenario: '테스트 시나리오', test_report: '테스트 레포트', position: '{n}번째 단계' },
   step_pending: '단계 창의 변경을 저장하거나 취소한 뒤 작업계획을 저장하세요. 업로드 중이면 완료까지 기다려 주세요.',
   dirty: '저장하지 않은 변경',
   loading: '작업계획을 불러오는 중...',
@@ -177,7 +177,7 @@ const ko = {
 const en: typeof ko = {
   title: 'Work plan',
   columns: { document: 'Document', provider: 'Work AI', review: 'Review', note: 'One-line note', detail: 'Edit' },
-  document: { instruction: 'Instruction', report: 'Report', design: 'Design document', scenario: 'Test scenario', test_report: 'Test report', position: 'Step {n}' },
+  document: { instruction: 'Instruction', report: 'Report', design_instruction: 'Design instruction', design: 'Design document', scenario: 'Test scenario', test_report: 'Test report', position: 'Step {n}' },
   step_pending: 'Save or cancel the Step edits before saving this plan. Wait for any upload to finish.',
   dirty: 'Unsaved changes',
   loading: 'Loading the work plan...',
@@ -347,7 +347,7 @@ const en: typeof ko = {
 const ja: typeof ko = {
   title: '作業計画',
   columns: { document: '文書', provider: '作業AI', review: '検収', note: '一行メモ', detail: '詳細' },
-  document: { instruction: '指示書', report: 'レポート', design: '設計文書', scenario: 'テストシナリオ', test_report: 'テストレポート', position: '第{n}段階' },
+  document: { instruction: '指示書', report: 'レポート', design_instruction: '設計指示', design: '設計書', scenario: 'テストシナリオ', test_report: 'テストレポート', position: '第{n}段階' },
   step_pending: '段階の変更を保存または取り消してから、作業計画を保存してください。アップロード中は完了をお待ちください。',
   dirty: '未保存の変更',
   loading: '作業計画を読み込んでいます...',

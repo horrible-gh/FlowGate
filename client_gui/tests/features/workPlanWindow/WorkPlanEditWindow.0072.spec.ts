@@ -47,7 +47,8 @@ import {
   type WorkPlanStepEditSession,
   type WorkPlanStepEditTarget,
 } from '@/features/workPlanWindow'
-import { DOC, FLOW, hiddenPlanBody, hiddenSteps, planBody, readAnswer } from './workPlanFixtures'
+import { workPlanDocumentNameKey } from '@/features/workPlanWindow/workPlanPresentation'
+import { DOC, FLOW, hiddenPlanBody, hiddenSteps, planBody, readAnswer, step } from './workPlanFixtures'
 
 const api = vi.hoisted(() => ({ getRequest: vi.fn(), putRequest: vi.fn(), postRequest: vi.fn() }))
 
@@ -1127,5 +1128,78 @@ describe('flowgate.v02.0074 T#1', () => {
     expect(lastPut().base_revision_no).toBe(2)
     expect(saved).toHaveBeenCalledWith(3)
     expect(text(q('wp-edit-heading'))).not.toMatch(/\br\d+\b/)
+  })
+})
+
+// flowgate.v02.0074 T#3 (R §3, D#1 §7.6): a design sheet is named 「설계 지시」 (DS) / 「설계서」 (D / P / L / DB) — the
+// names of the Designer 설계 card's lines — never 「설계 문서」 or 「설계 지시서」; the other rows keep their names.
+describe('flowgate.v02.0074 T#3 — 설계 지시 / 설계서', () => {
+  const docs = (cardId: string) => qa('wp-edit-card-doc', q('wp-edit-card-summary', card(cardId)!)!).map(text)
+
+  it('the key: DS is 설계 지시, D / P / L / DB 설계서; instruction · result · TS · TSR as before', () => {
+    expect(workPlanDocumentNameKey('DS', 'single')).toBe('document.design_instruction')
+    for (const design of ['D', 'P', 'L', 'DB']) expect(workPlanDocumentNameKey(design, 'single')).toBe('document.design')
+    expect(workPlanDocumentNameKey('N', 'instruction')).toBe('document.instruction')
+    expect(workPlanDocumentNameKey('T', 'instruction')).toBe('document.instruction')
+    expect(workPlanDocumentNameKey('TR', 'result')).toBe('document.report')
+    expect(workPlanDocumentNameKey('TS', 'instruction')).toBe('document.scenario')
+    expect(workPlanDocumentNameKey('TSR', 'result')).toBe('document.test_report')
+  })
+
+  it('every design sheet row, its card summary and its review popover say 설계서; work · test rows keep their names', async () => {
+    const body = planBody() as Record<string, any>
+    body.quantities.P = { unit: 'sheet', count: 1 }
+    body.quantities.L = { unit: 'sheet', count: 1 }
+    body.quantities.DB = { unit: 'sheet', count: 1 }
+    body.steps.splice(
+      1,
+      0,
+      step({ key: 'P#1', card_id: 'c_p1', type: 'P', ordinal: 1 }),
+      step({ key: 'L#1', card_id: 'c_l1', type: 'L', ordinal: 1 }),
+      step({ key: 'DB#1', card_id: 'c_db1', type: 'DB', ordinal: 1 }),
+    )
+    answer = readAnswer({ body, step_execution_status: [] })
+    await open()
+    for (const [cardId, name] of [['c_d1', '기본 설계 1'], ['c_p1', '프로토콜 1'], ['c_l1', '로직 1'], ['c_db1', '데이터베이스 설계 1']]) {
+      expect(text(q('wp-edit-card-name', card(cardId)!))).toBe(name)
+      expect(docs(cardId)).toEqual(['설계서'])
+      expect(text(q('wp-edit-step-type', row(`${cardId}|main`)!))).toContain('설계서')
+    }
+    expect(docs('c_t1')).toEqual(['지시서', '레포트'])
+    expect(docs('c_ts1')).toEqual(['테스트 시나리오', '테스트 레포트'])
+    await click(q('wp-edit-step-review', row('c_d1|main')!))
+    expect(text(q('wp-edit-review-context', q('wp-edit-review-popover')!))).toBe('기본 설계 1 · 설계서')
+    const shown = text(q('wp-edit-window')) ?? ''
+    for (const word of ['설계 문서', '설계 지시서']) expect(shown).not.toContain(word)
+  })
+
+  it('en / ja: Design document / 設計書 on the design row', async () => {
+    for (const [locale, name] of [['en', 'Design document'], ['ja', '設計書']] as const) {
+      i18n.global.locale.value = locale
+      await open()
+      expect(docs('c_d1')).toEqual([name])
+      closeAllWorkPlanEditWindows()
+      await flushPromises()
+    }
+  })
+
+  it('DS stays hidden: no 설계 지시 is drawn, and the save still keeps the DS Step as read', async () => {
+    answer = readAnswer({ body: hiddenPlanBody() })
+    await open()
+    expect(box('DS')).toBeNull()
+    expect(qa('wp-edit-step').map((r) => r.dataset.step)).not.toContain('DS#1')
+    expect(docs('c_d1')).toEqual(['설계서'])
+    expect(text(q('wp-edit-window'))).not.toContain('설계 지시')
+    await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '설계 행')
+    await click(q('wp-edit-save'))
+    expect(hiddenSteps(lastPut().body)).toEqual(hiddenSteps(hiddenPlanBody()))
+  })
+
+  it('the global DS type name is 「설계 지시」 (ko) · 「設計指示」 (ja) · Design instruction (en)', () => {
+    const named = (locale: 'ko' | 'ja' | 'en') => {
+      i18n.global.locale.value = locale
+      return i18n.global.t('gui.document_window.types.DS')
+    }
+    expect([named('ko'), named('ja'), named('en')]).toEqual(['설계 지시', '設計指示', 'Design instruction'])
   })
 })

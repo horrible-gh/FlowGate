@@ -75,7 +75,7 @@ function designLine(key: DesignSlot['key'], types: readonly string[], facts: Des
   return emptyLine(key, key === 'report' ? 'empty.after_run' : facts.docId !== null ? 'empty.unconnected' : null)
 }
 
-/** The card's lines: 지시서 (unless the settings omit it) · 레포트. */
+/** The card's lines: 설계 지시 (unless the settings omit it) · 설계서 (flowgate.v02.0074 T#3 names). */
 export function designCardSlots(facts: DesignCardFacts, instructionOmitted = false): readonly DesignSlot[] {
   const report = designLine('report', DESIGN_REPORT_TYPES, facts)
   return instructionOmitted ? [report] : [designLine('instruction', DESIGN_INSTRUCTION_TYPES, facts), report]

@@ -5,7 +5,8 @@
  *
  * - every card kind shows the lines of the table — 요구사항 · AI 위임 (only while on), 작업계획 (flowgate.v02.0072 T#3: the
  *   전개 line is not shown; the plan opens in the work plan edit window),
- *   설계 (기본 · 프로토콜 · 로직 · DB) · 조사 · 작업 · Custom: 지시서 · 레포트, 테스트: 지시서 · 시나리오 · 레포트;
+ *   설계 (기본 · 프로토콜 · 로직 · DB): 설계 지시 · 설계서 (flowgate.v02.0074 T#3, R §3), 조사 · 작업 · Custom: 지시서 · 레포트,
+ *   테스트: 지시서 · 시나리오 · 레포트;
  * - each line is `name · [state] · [history] · [document icon] · ✎`: the name and the document icon (tooltip
  *   열기) open the document window, ✎ opens it straight in the editor — the report too, before any run; a
  *   draft draws no state badge (flowgate.v02.0056 F1), and the history button opens the 검수·반려 이력 window;
@@ -105,7 +106,7 @@ const CARDS: readonly PlacedCard[] = [
     card: `설계 ${type}`,
     section: 'designCard',
     node: placed(`gn_${type.toLowerCase()}`, 'document', type, [line('instruction', 'DS', doc('0005', 'DS'), 'human'), line('report', type, doc('0006', type), 'run')]),
-    names: ['지시서', '레포트'],
+    names: ['설계 지시', '설계서'],
   })),
   { card: '조사', section: 'researchCard', node: placed('gn_n', 'document', 'N', [line('instruction', 'N', doc('0007', 'N'), 'human'), line('report', 'NR', doc('0008', 'NR'), 'run')]), names: ['지시서', '레포트'] },
   { card: '작업', section: 'taskCard', node: placed('gn_t', 'document', 'T', [line('instruction', 'T', doc('0009', 'T'), 'human'), line('report', 'TR', doc('0010', 'TR'), 'run')]), names: ['지시서', '레포트'] },
@@ -250,7 +251,8 @@ describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () =
 describe('the 지시서 line follows the card settings (flowgate.v02.0053 T#5, v7)', () => {
   const omitting = { cardKind: 'run', locked: false, fields: { instruction: { value: 'omit', stored: 'omit', default: 'use', choices: ['use', 'omit'] } } }
 
-  it.each(CARDS.filter((card) => card.names[0] === '지시서'))('$card: instruction omitted -> no 지시서 line', async ({ node, names }) => {
+  // flowgate.v02.0074 T#3: every card with an instruction line, whatever its name (설계: 설계 지시).
+  it.each(CARDS.filter((card) => card.node.cardDocuments!.some((own) => own.slot === 'instruction')))('$card: instruction omitted -> no 지시서 line', async ({ node, names }) => {
     settingsNodeRead.mockResolvedValue(omitting)
     const w = await mountFrame(node)
     expect(settingsNodeRead).toHaveBeenCalledWith(FLOW, node.id)

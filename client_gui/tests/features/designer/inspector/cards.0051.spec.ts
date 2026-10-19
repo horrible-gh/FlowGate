@@ -7,6 +7,7 @@
  * flowgate.v02.0053 T#5: the lines are `name · state dot · [document icon] · ✎` with no type code, no
  * "아직 없음" and no ＋; the 설계 card is 지시서 · 레포트 without the "설명 대기" note; a Custom card is 지시서 ·
  * 레포트. The cards built from card lines are checked in cardLines.0053.spec.ts.
+ * flowgate.v02.0074 T#3 (R §3): the 설계 card's two lines are named 설계 지시 · 설계서; 조사 · 작업 keep 지시서 · 레포트.
  */
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -106,7 +107,7 @@ describe('작업 card lines (taskCardModel)', () => {
 })
 
 describe('설계 card lines (designCardModel)', () => {
-  it('지시서 · 레포트 like 조사 · 작업: a bound D fills the report line; the DS instruction is not linked', () => {
+  it('instruction · report lines like 조사 · 작업: a bound D fills the report line; the DS instruction is not linked', () => {
     const [instruction, report] = designCardSlots(DESIGN_CONFLICT)
     expect(instruction).toMatchObject({ key: 'instruction', empty: true, emptyKey: 'empty.unconnected', open: 'none' })
     expect(report).toMatchObject({ key: 'report', id: DESIGN_CONFLICT.docId, focus: true, open: 'enabled' })
@@ -299,14 +300,30 @@ describe('card documents tab parts', () => {
     i18n.global.locale.value = 'ko'
   })
 
-  it('DesignSlots: no "설명 대기" note; 지시서 · 레포트 with the rejected report in red', () => {
+  it('DesignSlots: no "설명 대기" note; 설계 지시 · 설계서 with the rejected report in red', () => {
     const w = mount(DesignSlots, { props: { target: DESIGN_CONFLICT }, global })
     expect(w.find('[data-test="inspector-tbd"]').exists()).toBe(false)
     expect(w.text()).not.toContain('설계 카드는 아직 비워 두었습니다.')
     const rows = slotRows(w)
-    expect(rows.map((row) => row.get('[data-test="inspector-slot-name"]').text())).toEqual(['지시서', '레포트'])
+    expect(rows.map((row) => row.get('[data-test="inspector-slot-name"]').text())).toEqual(['설계 지시', '설계서'])
     expect(rows[1].get('[data-test="inspector-slot-state"]').attributes('title')).toBe('반려됨')
     expect(rows[1].classes()).toContain('is-danger')
+  })
+
+  // flowgate.v02.0074 T#3 (R §3): the 설계 card names its two documents as the work plan edit window does; the
+  // 조사 · 작업 cards keep 지시서 · 레포트, in every locale.
+  it.each([
+    ['ko', ['설계 지시', '설계서'], ['지시서', '레포트']],
+    ['en', ['Design instruction', 'Design document'], ['Instruction', 'Report']],
+    ['ja', ['設計指示', '設計書'], ['指示書', 'レポート']],
+  ] as const)('%s: DesignSlots names its lines %j; ResearchSlots · TaskSlots keep %j', (locale, design, other) => {
+    i18n.global.locale.value = locale
+    const names = (w: ReturnType<typeof mount>) => slotRows(w).map((row) => row.get('[data-test="inspector-slot-name"]').text())
+    expect(names(mount(DesignSlots, { props: { target: DESIGN_CONFLICT }, global }))).toEqual([...design])
+    expect(names(mount(DesignSlots, { props: { target: facts(DESIGN_CONFLICT, 'D', NO_DOCUMENT) }, global }))).toEqual([...design])
+    expect(names(mount(ResearchSlots, { props: { target: facts(V01_TR, 'NR') }, global }))).toEqual([...other])
+    expect(names(mount(TaskSlots, { props: { target: facts(V01_TR, 'T') }, global }))).toEqual([...other])
+    for (const word of ['설계 문서', '설계 지시서', '設計指示書']) expect(mount(DesignSlots, { props: { target: DESIGN_CONFLICT }, global }).text()).not.toContain(word)
   })
 
   it('GateSlots / GateActions: the 확인 결과 line and the two actions disabled with the reason before a run; nothing on a non-gate without a document', () => {
