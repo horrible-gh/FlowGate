@@ -4,7 +4,8 @@
 // "where to edit") are gone with the details; what stays under the lines is the progress and the warning.
 export default {
   ko: {
-    // flowgate.v02.0051 stage 2 — the v7 slot lines, header actions and author badge.
+    // flowgate.v02.0051 stage 2 — the v7 slot lines and header actions.
+    // flowgate.v02.0074 T#1 — the author badge (R §1.2) and the no-cards text (R §1.1) are gone.
     slot: {
       plan: '작업계획',
       deploy: '전개',
@@ -18,13 +19,8 @@ export default {
       redeploy: '⇉ 재전개 ▾',
       unconnected: 'WP 전개는 아직 연결되지 않았습니다 (0048 D#1 §8.4).',
     },
-    author: {
-      human: '작성 사람',
-      human_title: '사람 WP: 사람이 쓰고 사람이 전개합니다. AI가 쓴 계획은 아직 없습니다.',
-    },
     title: '작업계획',
     progress: '시작한 카드 {started}/{cards}',
-    no_cards: '계획에 카드가 없습니다',
     unassigned: '담당 AI 미지정 Step {count}개',
     error: {
       unreadable: '이 작업계획은 표로 읽을 수 없습니다. 문서를 열어 원문을 확인하세요.',
@@ -49,13 +45,8 @@ export default {
       redeploy: '⇉ Redeploy ▾',
       unconnected: 'Deploying a work plan is not connected yet (0048 D#1 §8.4).',
     },
-    author: {
-      human: 'By person',
-      human_title: 'Human WP: a person writes and deploys it. No AI-written plan exists yet.',
-    },
     title: 'Work plan',
     progress: 'Cards started {started}/{cards}',
-    no_cards: 'The plan has no cards',
     unassigned: '{count} Step(s) without an AI',
     error: {
       unreadable: 'This work plan cannot be read as a table. Open the document for the raw text.',
@@ -80,13 +71,8 @@ export default {
       redeploy: '⇉ 再展開 ▾',
       unconnected: 'WP の展開はまだ連携されていません（0048 D#1 §8.4）。',
     },
-    author: {
-      human: '作成 人',
-      human_title: '人の WP: 人が書いて人が展開します。AI が書いた計画はまだありません。',
-    },
     title: '作業計画',
     progress: '開始したカード {started}/{cards}',
-    no_cards: '計画にカードがありません',
     unassigned: '担当 AI 未指定の Step {count}件',
     error: {
       unreadable: 'この作業計画は表として読めません。文書を開いて原文を確認してください。',

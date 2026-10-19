@@ -131,8 +131,7 @@
           <span v-if="unassignedSplit.shown > 0" class="wpe-warning" data-test="wp-edit-unassigned">{{ t('unassigned', { n: unassignedSplit.shown }) }}</span>
           <span v-if="unassignedSplit.hidden > 0" class="wpe-warning" data-test="wp-edit-unassigned-hidden">{{ t('unassigned_hidden', { n: unassignedSplit.hidden }) }}</span>
         </header>
-        <p v-if="shownCards.length === 0" class="wpe-line" data-test="wp-edit-empty">{{ t('empty') }}</p>
-        <div v-else class="wpe-table">
+        <div v-if="shownCards.length > 0" class="wpe-table">
           <div v-show="anyOpen" class="wpe-columns" data-test="wp-edit-columns" aria-hidden="true">
             <span>{{ t('columns.document') }}</span><span>{{ t('columns.provider') }}</span><span>{{ t('columns.review') }}</span><span>{{ t('columns.note') }}</span><span>{{ t('columns.detail') }}</span>
           </div>
@@ -292,6 +291,7 @@
 // folding that row's card or minimizing the window (`minimized`) closes it.
 // The body has no colors of its own: v0.2 Button / IconButton / Select / Input and the theme tokens; a type's icon is
 // the Designer Palette's (WorkPlanTypeIcon).
+// flowgate.v02.0074 T#1 (R §2.1): with every quantity at 0 the 작업 순서 section is its header only — no text says so.
 //
 // flowgate.v02.0073 T#1 — DS and T2 are not drawn (no quantity box, no card; the summary counts what is drawn) while
 // the body keeps them whole. Each shown card is a section: its header has the drag grip, the type icon, the card's

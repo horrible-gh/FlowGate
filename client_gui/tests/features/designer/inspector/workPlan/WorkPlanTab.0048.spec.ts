@@ -17,7 +17,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { FlowGraphSelection } from '@/features/designer/center/graph/flowGraph'
+import type { FlowGraphNode, FlowGraphSelection } from '@/features/designer/center/graph/flowGraph'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
 import WorkPlanTab from '@/features/designer/inspector/features/workPlan/WorkPlanTab.vue'
 import { WORK_PLAN_EVENTS } from '@/features/designer/inspector/features/workPlan/useWorkPlan'
@@ -279,10 +279,13 @@ describe('WP summary — reading (flowgate.v02.0048 T#13, 0056 F1)', () => {
     expect(el(w, 'work-plan-unassigned').exists()).toBe(false)
   })
 
-  it('a plan without Steps: no cards', async () => {
+  // flowgate.v02.0074 T#1 (R §1.1): no cards is a wordless dashed block, not a sentence.
+  it('a plan without Steps: no cards — the wordless dashed block', async () => {
     wp().steps = []
     const w = await mountTab(target())
-    expect(textOf(w, 'work-plan-progress')).toBe('계획에 카드가 없습니다')
+    expect(textOf(w, 'work-plan-progress')).toBe('')
+    expect(el(w, 'work-plan-progress').classes()).toContain('is-empty')
+    expect(el(w, 'work-plan-progress').attributes('aria-hidden')).toBe('true')
     expect(el(w, 'work-plan-progress').attributes('data-cards')).toBe('0')
   })
 
@@ -295,6 +298,77 @@ describe('WP summary — reading (flowgate.v02.0048 T#13, 0056 F1)', () => {
     i18n.global.locale.value = 'ja'
     w = await mountTab(target())
     expect(textOf(w, 'work-plan-progress')).toBe('開始したカード 1/4')
+  })
+})
+
+// --- flowgate.v02.0074 T#1 — the empty states ---------------------------------------------------------
+
+describe('flowgate.v02.0074 T#1', () => {
+  const OLD_NO_CARDS = ['계획에 카드가 없습니다', 'The plan has no cards', '計画にカードがありません']
+
+  /** A placed WP card whose plan line has no document yet (the line offers [작성]). */
+  function emptyPlanCard(): InspectorTarget {
+    const node: FlowGraphNode = {
+      ...WP_EMPTY_NODE,
+      id: 'gn_wp_empty',
+      definition: { nodeType: 'document', docType: 'WP', paletteItemId: null, label: '작업계획', assignee: null, rootBound: false },
+      cardDocuments: [{ slot: 'plan', docType: 'WP', author: 'human', docId: null, title: '작업계획', status: null, docReviewStatus: null }],
+    }
+    return targetOf(selectionOf({ ...PLAN_FLOWS.v01, nodes: [...PLAN_FLOWS.v01.nodes, node] }, node.id))
+  }
+
+  it('(a) no document: the plan line is empty with [작성]; no status, no progress', async () => {
+    const w = await mountTab(emptyPlanCard())
+    expect(planLine(w).classes()).toContain('is-empty')
+    expect(planLine(w).attributes('data-empty')).toBe('true')
+    expect(planLine(w).find('[data-test="inspector-slot-action"][data-action="write"]').exists()).toBe(true)
+    expect(el(w, 'work-plan-status').exists()).toBe(false)
+    expect(el(w, 'work-plan-progress').exists()).toBe(false)
+    expect(planRead).not.toHaveBeenCalled()
+  })
+
+  it('(b) no cards: a normal plan line, the wordless dashed block, no text and no pane state', async () => {
+    wp().steps = []
+    for (const locale of ['ko', 'en', 'ja'] as const) {
+      i18n.global.locale.value = locale
+      const w = await mountTab(target())
+      expect(planLine(w).classes()).not.toContain('is-empty')
+      expect(planLine(w).attributes('data-empty')).toBe('false')
+      expect(planLine(w).get('[data-test="inspector-slot-name"]').text()).toBe(i18n.global.t('gui.inspector.workPlan.slot.plan'))
+      for (const name of ['inspector-slot-open', 'inspector-slot-history', 'document-io-upload', 'document-io-download']) {
+        expect(planLine(w).find(`[data-test="${name}"]`).exists(), name).toBe(true)
+      }
+      const progress = el(w, 'work-plan-progress')
+      expect(progress.classes()).toContain('is-empty')
+      expect(progress.attributes('data-cards')).toBe('0')
+      expect(progress.attributes('aria-hidden')).toBe('true')
+      expect(progress.text()).toBe('')
+      const text = el(w, 'inspector-work-plan').text()
+      for (const old of OLD_NO_CARDS) expect(text).not.toContain(old)
+      expect(paneState(w).exists()).toBe(false)
+      w.unmount()
+      wrapper = null
+    }
+    i18n.global.locale.value = 'ko'
+    expect(i18n.global.te('gui.inspector.workPlan.no_cards')).toBe(false)
+  })
+
+  it('(c) a failed read: the error with a retry, no dashed block; the plan line still opens', async () => {
+    refusals.push(axiosError(500, { detail: 'boom' }))
+    const w = await mountTab(target())
+    expect(paneState(w).attributes('data-state')).toBe('error')
+    expect(el(w, 'inspector-pane-retry').exists()).toBe(true)
+    expect(w.find('[data-test="work-plan-progress"].is-empty').exists()).toBe(false)
+    expect(el(w, 'work-plan-progress').exists()).toBe(false)
+    await planLine(w).get('[data-test="inspector-slot-open"]').trigger('click')
+    await flushPromises()
+    expect(wpOpened()).toEqual([WP_DOC])
+  })
+
+  it('the plan line has no ✎ (one way in: the document icon / the name)', async () => {
+    const w = await mountTab(target())
+    expect(planLine(w).find('[data-test="inspector-slot-edit"]').exists()).toBe(false)
+    expect(planLine(w).find('[data-test="inspector-slot-open"]').exists()).toBe(true)
   })
 })
 
@@ -472,14 +546,14 @@ describe('WP summary in the Frame (real registry)', () => {
 
   const tabLabels = (w: W) => w.findAll('[data-test="designer-inspector-tabs"] [role="tab"]').map((tab) => tab.text())
 
-  // flowgate.v02.0051 stage 2: plan cards with or without a document; the documents tab, the ⇉ 전개 header
-  // actions (drawn disabled) and the 작성 사람 badge.
-  it('registers key workPlan, order 410, plan cards with or without a document: documents tab, header action and meta', () => {
+  // flowgate.v02.0051 stage 2: plan cards with or without a document; the documents tab and the ⇉ 전개 header
+  // actions (drawn disabled). flowgate.v02.0074 T#1 (R §1.2): no header meta (the 작성 사람 badge is gone).
+  it('registers key workPlan, order 410, plan cards with or without a document: documents tab and header action, no meta', () => {
     const entry = inspectorRegistry.entries.find((candidate) => candidate.key === 'workPlan')!
     expect(entry).toMatchObject({ key: 'workPlan', order: 410, cardKinds: ['plan'], requiresDocument: false })
     expect(entry.tab?.key).toBe('documents')
     expect(entry.headerAction).toBeDefined()
-    expect(entry.headerMeta).toBeDefined()
+    expect(entry.headerMeta).toBeUndefined()
     expect(entry.ownerships ?? []).toEqual([])
   })
 
@@ -543,15 +617,15 @@ describe('WP summary in the Frame (real registry)', () => {
     expect(el(w2, 'inspector-work-plan').exists()).toBe(false)
   })
 
-  it('no Step editing in the WP summary; the only operations are the slot line’s (name / history / open / ✎)', async () => {
+  it('no Step editing in the WP summary; the only operations are the slot line’s (name / history / open)', async () => {
     const w = await mountFrame(planSelection('v01', WP_NODE))
     const section = el(w, 'inspector-work-plan')
     for (const word of ['재계획', '⟳', '위임', '메모', 'AI 전달', '연동 전']) expect(section.text()).not.toContain(word)
     expect(section.findAll('input, select, textarea').length).toBe(0)
-    // flowgate.v02.0053 T#3 / T#5: the name opens the plan (a button), then the history button (0056 F1), the
-    // document icon and ✎ — and nothing after the lines.
+    // flowgate.v02.0053 T#3 / T#5: the name opens the plan (a button), then the history button (0056 F1) and the
+    // document icon — and nothing after the lines. flowgate.v02.0074 T#1 (R §1.3): no ✎ (one way in).
     // flowgate.v02.0068 T#1 (D §0-1 / §6.1): the plan's document line has [업로드][다운로드] before its buttons.
-    expect(section.findAll('button').map((button) => button.attributes('data-test'))).toEqual(['inspector-slot-name', 'document-io-upload', 'document-io-download', 'inspector-slot-history', 'inspector-slot-open', 'inspector-slot-edit'])
+    expect(section.findAll('button').map((button) => button.attributes('data-test'))).toEqual(['inspector-slot-name', 'document-io-upload', 'document-io-download', 'inspector-slot-history', 'inspector-slot-open'])
     // flowgate.v02.0051 stage 2: the v7 lines — the plan with its state; flowgate.v02.0072 T#3: the 전개 line is gone.
     // flowgate.v02.0053 T#5: no type code in a name.
     expect(section.findAll('[data-test="inspector-slot-name"]').map((name) => name.text())).toEqual(['작업계획'])

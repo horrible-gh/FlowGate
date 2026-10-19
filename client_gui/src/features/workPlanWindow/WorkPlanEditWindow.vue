@@ -16,8 +16,6 @@
       <span class="wp-window-heading" data-test="wp-edit-heading">
         <span class="wp-window-tile" aria-hidden="true"><svg viewBox="0 0 24 24"><path :d="paletteIconPath('file')" /></svg></span>
         <span class="wp-window-kind" :title="docTitle" data-test="wp-edit-title">{{ t('title') }}</span>
-        <span v-if="draft" class="wp-window-doc" data-test="wp-edit-title-totals">{{ t('title_totals', summary) }}</span>
-        <span v-if="view" class="wp-window-rev" data-test="wp-edit-revision">{{ t('revision', { n: view.revisionNo }) }}</span>
         <span v-if="view?.docReviewStatus" class="wp-window-state" data-test="wp-edit-state">{{ stateLabel }}</span>
         <span v-if="dirty" class="wp-window-dirty" :title="t('dirty')" data-test="wp-edit-dirty">●</span>
       </span>
@@ -125,6 +123,8 @@
 //   window in import mode (off while locked or while a Step window holds edits), [JSON 내보내기] saves the draft as a
 //   .json file (the body the save would send), [JSON 원문 보기] opens the JSON window read only. One JSON window per
 //   plan window; it closes with it. Not the Inspector's document upload / download (DocumentIoGroup, 0068).
+// - flowgate.v02.0074 T#1 (R §2.2): the title bar shows no totals and no r{n}; the totals are the 작업 순서 line's
+//   (wp-edit-step-totals) only. The revision still drives the save (base_revision_no, 409) and the newer-version banner.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
@@ -139,7 +139,6 @@ import WorkPlanJsonWindow from './WorkPlanJsonWindow.vue'
 import { workPlanWindowMessages } from './messages'
 import { useWorkPlanEditor } from './useWorkPlanEditor'
 import { workPlanJsonFileName } from './workPlanJson'
-import { shownCardsOf, totalsOf } from './workPlanEditModel'
 import {
   closeWorkPlanEditWindow,
   discardWorkPlanStepEdits,
@@ -175,7 +174,6 @@ const editor = useWorkPlanEditor({
   saved: (revisionNo) => props.win.request.saved?.(revisionNo),
 })
 const { view, draft, dirty, saving, canSave, notice, pendingQuantity } = editor
-const summary = computed(() => ({ cards: draft.value ? shownCardsOf(draft.value).length : 0, n: draft.value ? totalsOf(draft.value).steps : 0 }))
 
 /** Phosphor Icons `upload-simple` / `download-simple` / `code` (regular, 256 viewBox; MIT — client/shared/iconData). */
 const UPLOAD_PATH =
@@ -325,21 +323,11 @@ onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', 
 }
 
 .wp-window-kind,
-.wp-window-rev,
 .wp-window-state,
 .wp-window-dirty {
   flex: 0 0 auto;
 }
 
-.wp-window-doc {
-  overflow: hidden;
-  color: var(--fg2-muted);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.wp-window-rev,
 .wp-window-state {
   color: var(--fg2-muted);
   font-size: 11px;

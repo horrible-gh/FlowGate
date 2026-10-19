@@ -153,7 +153,9 @@ describe('opening (modeless, read once)', () => {
     expect(api.getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/active', { group_id: FLOW })
     expect(q('wp-edit-window')?.dataset.doc).toBe(DOC)
     expect(text(q('wp-edit-heading'))).toContain('작업계획')
-    expect(text(q('wp-edit-revision'))).toBe('r2')
+    // flowgate.v02.0074 T#1 (R §2.2): no totals and no r{n} in the title bar; revision 2 is the save's base (below).
+    expect(q('wp-edit-revision')).toBeNull()
+    expect(q('wp-edit-title-totals')).toBeNull()
     expect(box('T')?.dataset.count).toBe('2')
     expect(box('D')?.dataset.count).toBe('1')
     expect(qa('wp-edit-card').map((card) => card.dataset.card)).toEqual(['c_d1', 'c_t1', 'c_t2', 'c_ts1'])
@@ -220,7 +222,8 @@ describe('modeless behavior (ModelessShell)', () => {
 
 describe('editing and the one save', () => {
   it('per-row AI and note make the window dirty; [저장] PUTs the whole body with base_revision_no', async () => {
-    await open()
+    const saved = vi.fn()
+    await open({ saved })
     await pick(q('wp-edit-step-provider', row('c_t1|main')!), 'aip_sonnet')
     await type(q('wp-edit-step-note', row('c_t2|result')!) as HTMLInputElement, '보고서 메모')
     expect(q('wp-edit-dirty')).not.toBeNull()
@@ -236,8 +239,14 @@ describe('editing and the one save', () => {
     expected.steps[4] = { ...expected.steps[4], note: '보고서 메모', origin: 'human' }
     expect(payload.body).toEqual(expected)
     expect(q('wp-edit-dirty')).toBeNull()
-    expect(text(q('wp-edit-revision'))).toBe('r3')
+    // flowgate.v02.0074 T#1: no r{n} shown; the saved revision 3 reaches the opener and is the next save's base.
+    expect(q('wp-edit-revision')).toBeNull()
+    expect(saved).toHaveBeenCalledWith(3)
     expect(q('wp-edit-notice')?.dataset.key).toBe('saved_unassigned')
+    await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '두 번째 저장')
+    await click(q('wp-edit-save'))
+    expect(api.putRequest).toHaveBeenCalledTimes(2)
+    expect(lastPut().base_revision_no).toBe(3)
   })
 
   it('a new card gets no AI even with a default AI set; [모두 적용] fills every unlocked Step', async () => {
@@ -315,9 +324,13 @@ describe('what a save may answer', () => {
     await click(q('wp-edit-conflict-reload'))
     expect(text(document.body.querySelector('.ui-confirm-title'))).toBe('저장하지 않은 변경을 버리고 다시 읽을까요?')
     await click(confirmButtons()[1])
-    expect(text(q('wp-edit-revision'))).toBe('r5')
+    // flowgate.v02.0074 T#1: no r{n} shown; the read revision 5 is the next save's base.
+    expect(q('wp-edit-revision')).toBeNull()
     expect(q('wp-edit-dirty')).toBeNull()
     expect(q('wp-edit-conflict')).toBeNull()
+    await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '다시 읽은 뒤')
+    await click(q('wp-edit-save'))
+    expect(lastPut().base_revision_no).toBe(5)
   })
 
   it('422 field errors are shown on their rows (by identity) and on top', async () => {
@@ -478,7 +491,8 @@ describe('locks that change while the window is open', () => {
     gate = null
     await flushPromises()
     expect(q('wp-edit-reloading')).toBeNull()
-    expect(text(q('wp-edit-revision'))).toBe('r5')
+    // flowgate.v02.0074 T#1: no r{n} shown; revision 5 is the base of the save below.
+    expect(q('wp-edit-revision')).toBeNull()
     expect(q('wp-edit-dirty')).toBeNull()
     expect(note('c_d1|main').value).toBe('설계')
     expect(session.snapshot()).toBeNull()
@@ -624,14 +638,15 @@ describe('closing and external changes', () => {
     answer = readAnswer({ revision_no: 3, body: { ...planBody(), defaults: { provider_id: null, note: '바뀜' } } })
     window.dispatchEvent(new CustomEvent('fg:document_content_changed', { detail: { doc_id: DOC } }))
     await flushPromises()
-    expect(text(q('wp-edit-revision'))).toBe('r3')
+    // flowgate.v02.0074 T#1: no r{n} shown; revision 3 is the base of the save below.
+    expect(q('wp-edit-revision')).toBeNull()
     expect((q('wp-edit-default-note') as HTMLInputElement).value).toBe('바뀜')
 
     await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '내 변경')
     answer = readAnswer({ revision_no: 4 })
     window.dispatchEvent(new CustomEvent('fg:document_content_changed', { detail: { doc_id: DOC } }))
     await flushPromises()
-    expect(text(q('wp-edit-revision'))).toBe('r3')
+    expect(q('wp-edit-revision')).toBeNull()
     expect(text(q('wp-edit-external'))).toContain('r4')
     expect((q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement).value).toBe('내 변경')
     await click(q('wp-edit-save'))
@@ -647,13 +662,17 @@ describe('closing and external changes', () => {
 })
 
 describe('empty, unreadable, missing', () => {
-  it('a plan with every quantity 0 shows the empty line; raising a quantity adds Steps', async () => {
+  // flowgate.v02.0074 T#1 (R §2.1): no sentence for every quantity 0 — the 작업 순서 section is its header only.
+  it('a plan with every quantity 0 shows no text; raising a quantity adds Steps', async () => {
     const empty = planBody() as Record<string, any>
     for (const box of Object.values(empty.quantities) as Array<{ count: number }>) box.count = 0
     empty.steps = []
     answer = readAnswer({ body: empty, step_execution_status: [] })
     await open()
-    expect(q('wp-edit-empty')).not.toBeNull()
+    expect(q('wp-edit-empty')).toBeNull()
+    expect(document.body.querySelector('.wpe-table')).toBeNull()
+    expect(q('wp-edit-card')).toBeNull()
+    expect(text(q('wp-edit-window'))).not.toContain('모든 수량이 0')
     await click(q('wp-edit-quantity-inc', box('N')!))
     expect(qa('wp-edit-step').map((r) => r.dataset.step)).toEqual(['N#1', 'NR#1'])
   })
@@ -800,7 +819,7 @@ describe('card sections (0073 T#1)', () => {
   it('compact document labels keep edits attached to the correct card and preserve hidden data', async () => {
     answer = readAnswer({ body: hiddenPlanBody() })
     await open()
-    expect(text(q('wp-edit-title-totals'))).toBe('카드 4개 · 실행 단계 7개')
+    expect(q('wp-edit-title-totals')).toBeNull()
     expect(text(q('wp-edit-step-totals'))).toBe('카드 4개 · 7단계')
     expect(qa('wp-edit-columns')[0]?.children).toHaveLength(5)
     // every card folded: card headers only, the column titles come with the first open card
@@ -1092,5 +1111,21 @@ describe('the review popover (0073 T#2)', () => {
     await click(confirmButtons()[1])
     expect(row('c_t2|main')).toBeNull()
     expect(popover()).toBeNull()
+  })
+})
+
+describe('flowgate.v02.0074 T#1', () => {
+  it('the totals are in one place, no r{n} is shown; the revision still drives the save', async () => {
+    const saved = vi.fn()
+    await open({ saved })
+    expect(qa('wp-edit-step-totals')).toHaveLength(1)
+    expect(q('wp-edit-title-totals')).toBeNull()
+    expect(q('wp-edit-revision')).toBeNull()
+    expect(text(q('wp-edit-heading'))).not.toMatch(/\br\d+\b/)
+    await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '한 번')
+    await click(q('wp-edit-save'))
+    expect(lastPut().base_revision_no).toBe(2)
+    expect(saved).toHaveBeenCalledWith(3)
+    expect(text(q('wp-edit-heading'))).not.toMatch(/\br\d+\b/)
   })
 })

@@ -148,7 +148,8 @@ const windows = () => documentWindowList().map((win) => [win.docId, win.mode])
 const TYPE_CODE = /\b(?:R|B|M|WP|DS|D|P|L|DB|N|NR|T|TR|T2|TR2|TS|TSC|TSR|AC)\b/
 
 describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () => {
-  it.each(CARDS)('$card: the lines of the table, each without a badge while drafted, with the history button, the document icon and ✎', async ({ node, section, names, docs }) => {
+  // flowgate.v02.0074 T#1 (R §1.3): the 작업계획 line has no ✎ — its document icon / name are the one way in.
+  it.each(CARDS)('$card: the lines of the table, each without a badge while drafted, with the history button, the document icon and ✎ (작업계획: no ✎)', async ({ card, node, section, names, docs }) => {
     const w = await mountFrame(node)
     // flowgate.v02.0056 F2-2: the card's memos follow its lines in a draft (unassigned) Flow too.
     expect(w.findAll('[data-test="designer-inspector-section"]').map((part) => part.attributes('data-key'))).toEqual([section, 'cardMemo'])
@@ -166,7 +167,8 @@ describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () =
       expect(TYPE_CODE.test(name.text())).toBe(false)
       const open = row.get('[data-test="inspector-slot-open"]')
       expect([open.attributes('data-icon'), open.attributes('title'), open.text()]).toEqual(['document', '열기', ''])
-      expect(row.get('[data-test="inspector-slot-edit"]').attributes('title')).toBe('편집')
+      if (card === '작업계획') expect(row.find('[data-test="inspector-slot-edit"]').exists()).toBe(false)
+      else expect(row.get('[data-test="inspector-slot-edit"]').attributes('title')).toBe('편집')
     }
     const body = w.get('[data-test="designer-inspector-body"]').text()
     for (const word of ['아직 없음', '↗', '설명 대기', '설계 카드는 아직 비워 두었습니다', '작성 필요', '＋']) expect(body).not.toContain(word)
@@ -189,10 +191,11 @@ describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () =
     expect(windows()).toEqual([[last.attributes('data-doc'), 'edit']])
   })
 
-  it('작업계획: the name, the document icon and ✎ open the plan in its one work plan edit window, no document window', async () => {
+  it('작업계획: the name and the document icon open the plan in its one work plan edit window, no document window; no ✎', async () => {
     const w = await mountFrame(CARDS.find((card) => card.card === '작업계획')!.node)
     const plan = lines(w)[0]
-    for (const button of ['inspector-slot-name', 'inspector-slot-open', 'inspector-slot-edit']) {
+    expect(plan.find('[data-test="inspector-slot-edit"]').exists()).toBe(false)
+    for (const button of ['inspector-slot-name', 'inspector-slot-open']) {
       await plan.get(`[data-test="${button}"]`).trigger('click')
       expect(workPlanEditWindowList().map((win) => win.docId), button).toEqual([doc('0003', 'WP')])
       expect(windows()).toEqual([])
@@ -287,5 +290,15 @@ describe('the 지시서 line follows the card settings (flowgate.v02.0053 T#5, v
     answer(omitting)
     await flushPromises()
     expect(lines(w).map((row) => row.get('[data-test="inspector-slot-name"]').text())).toEqual(['지시서', '레포트'])
+  })
+})
+
+describe('flowgate.v02.0074 T#1', () => {
+  it('the 작업계획 card shows no 작성 사람 badge (R §1.2); its ⇉ 전개 actions stay', async () => {
+    const w = await mountFrame(CARDS.find((card) => card.card === '작업계획')!.node)
+    const header = w.get('[data-test="designer-inspector-header"]')
+    expect(w.find('[data-test="work-plan-author"]').exists()).toBe(false)
+    expect(header.text()).not.toContain('작성 사람')
+    expect(header.find('[data-test="work-plan-deploy"]').exists()).toBe(true)
   })
 })

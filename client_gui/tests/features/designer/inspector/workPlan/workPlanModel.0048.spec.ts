@@ -140,8 +140,8 @@ describe('message keys (flowgate.v02.0048 T#13)', () => {
   const keys = [
     'title',
     // flowgate.v02.0056 F1: the details' keys (rev, totals, assignment, per-card rows, open_hint, edit.*) are gone.
+    // flowgate.v02.0074 T#1: no_cards is gone too (no cards is a wordless dashed block).
     'progress',
-    'no_cards',
     'unassigned',
     'error.unreadable',
     'error.invalid',
@@ -160,9 +160,11 @@ describe('message keys (flowgate.v02.0048 T#13)', () => {
   // the deploy strings exist with the reason they are inactive, and nothing names a replan or a memo.
   it.each(['ko', 'en', 'ja'] as const)('%s wording: ⇉ 전개 / 재전개 are worded with their inactive reason; no replan, delegation or memo wording', (locale) => {
     const messages = workPlanMessages[locale] as Record<string, unknown>
-    for (const key of ['deploy.deploy', 'deploy.redeploy', 'deploy.unconnected', 'slot.plan', 'slot.deploy', 'slot_empty.deploy', 'author.human']) {
+    for (const key of ['deploy.deploy', 'deploy.redeploy', 'deploy.unconnected', 'slot.plan', 'slot.deploy', 'slot_empty.deploy']) {
       expect(typeof lookup(messages, key), `${locale} ${key}`).toBe('string')
     }
+    // flowgate.v02.0074 T#1 (R §1.1 · §1.2): no author badge and no no-cards text.
+    for (const key of ['author', 'author.human', 'no_cards']) expect(lookup(messages, key), `${locale} ${key}`).toBeUndefined()
     const words = JSON.stringify(messages)
     for (const word of ['재계획', '위임', '메모', 'AI 전달', 'replan', 'delegat', '再計画']) expect(words).not.toContain(word)
   })

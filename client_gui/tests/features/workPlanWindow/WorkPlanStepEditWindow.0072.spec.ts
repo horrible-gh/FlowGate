@@ -340,8 +340,12 @@ describe('identity and external state', () => {
     await confirm()
     expect(workPlanStepWindowList()).toHaveLength(0)
     expect(session.target()).toBeNull()
-    expect(q('wp-edit-revision').textContent).toBe('r7')
+    // flowgate.v02.0074 T#1 (R §2.2): no r{n} shown; the read revision 7 is the next parent save's base.
+    expect(document.querySelector('[data-test="wp-edit-revision"]')).toBeNull()
     expect(api.putRequest).not.toHaveBeenCalled()
+    await type(q('wp-edit-step-note', row('c_d1|main')), 'after reload')
+    await click(q('wp-edit-save'))
+    expect(api.putRequest.mock.calls.at(-1)![1].base_revision_no).toBe(7)
   })
 
   it.each(['read_only', 'run_locked'] as const)('a new %s lock keeps the child draft but blocks input/apply/upload', async (reason) => {

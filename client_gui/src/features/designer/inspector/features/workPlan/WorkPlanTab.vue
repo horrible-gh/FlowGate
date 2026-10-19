@@ -4,17 +4,19 @@
        flowgate.v02.0051 stage 2 — the v7 작업계획 card (0035 plan.m.*): the 작업계획 (WP) slot line and the
        전개 result line (empty "전개 전": no deploy API), built from the common slot list part.
        flowgate.v02.0053 T#5 (0053 CH) — 작업계획 · 전개 are the card's documents (made when it was placed): both
-       open (document icon or name) and ✎; no type code in a name.
+       open (document icon or name); no type code in a name.
        flowgate.v02.0056 F1 (0056 CH §5) — the 0048 details (rev, totals, provider assignment, one row per
        card, "Step 편집은 …") are gone: the plan itself shows them in its document window. Under the lines
        stays what an operator acts on — how many cards the workflow started, and a warning when Steps
        have no AI assigned. The `rev n · Step n` line summary is gone as well.
        flowgate.v02.0072 T#3 — the documents area is the one 「작업계획」 line (the 전개 document line is gone; the header's
-       ⇉ 전개 actions stay as they were). Its document icon / name and ✎ open the plan in the v0.2 work plan edit window
+       ⇉ 전개 actions stay as they were). Its document icon / name open the plan in the v0.2 work plan edit window
        (features/workPlanWindow through openDocument.ts: quantities, Steps, ✎ → the Step window), not the document
-       window; the line's history, [업로드][다운로드], [작성] (no document yet) and [AI 호출] stay the card line's. -->
+       window; the line's history, [업로드][다운로드], [작성] (no document yet) and [AI 호출] stay the card line's.
+       flowgate.v02.0074 T#1 (R §1.1 · §1.3) — one way in: the line has no ✎ (the document icon / name open it), and a
+       plan with no cards shows a wordless dashed block where the progress goes (no "카드 없음" text). -->
   <section class="inspector-work-plan" data-test="inspector-work-plan" :data-status="status" :data-has-document="hasDocument ? 'true' : 'false'">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="edit" @history="historyLine" @action="actionLine">
+    <InspectorSlotList :slots="lines" @open="openLine" @history="historyLine" @action="actionLine">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
       <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" /></template>
     </InspectorSlotList>
@@ -24,9 +26,10 @@
       <InspectorPaneState v-else-if="errorKey && !view" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
       <template v-else-if="view">
         <InspectorPaneState v-if="errorKey" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
-        <span class="inspector-work-plan-progress" data-test="work-plan-progress" :data-started="progress.started" :data-cards="progress.cards">
-          {{ progress.cards ? t(k('progress'), { ...progress }) : t(k('no_cards')) }}
+        <span v-if="progress.cards" class="inspector-work-plan-progress" data-test="work-plan-progress" :data-started="progress.started" :data-cards="progress.cards">
+          {{ t(k('progress'), { ...progress }) }}
         </span>
+        <span v-else class="inspector-work-plan-progress is-empty" data-test="work-plan-progress" :data-started="progress.started" data-cards="0" aria-hidden="true"></span>
         <span v-if="view.unassignedSteps" class="inspector-work-plan-warning" role="status" data-test="work-plan-unassigned">
           <span aria-hidden="true">⚠</span>{{ t(k('unassigned'), { count: view.unassignedSteps }) }}
         </span>
@@ -65,11 +68,6 @@ const hasDocument = computed(() => props.target.docId !== null)
  * Flow is: ownership conflict, revision view, its run lock).
  */
 function openLine(line: InspectorSlotView) {
-  if (line.id) openWorkPlan(props.target, line.id, host)
-}
-
-/** ✎: the same work plan edit window (it is the plan's editor; one window per plan, brought back when open). */
-function edit(line: InspectorSlotView) {
   if (line.id) openWorkPlan(props.target, line.id, host)
 }
 
@@ -144,6 +142,14 @@ const lines = computed<InspectorSlotView[]>(() => {
 .inspector-work-plan-progress {
   color: var(--fg2-muted);
   font-size: 11.5px;
+}
+
+/* flowgate.v02.0074 T#1 (R §1.1): no cards yet — a wordless dashed block (the .inspector-pane-disabled dashed token). */
+.inspector-work-plan-progress.is-empty {
+  flex: 1 1 100%;
+  min-height: 18px;
+  border: 1px dashed #2b4562;
+  border-radius: 8px;
 }
 
 .inspector-work-plan-warning {

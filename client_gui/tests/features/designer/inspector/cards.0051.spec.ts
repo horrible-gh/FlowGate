@@ -29,7 +29,6 @@ import TestRunSettings from '@/features/designer/inspector/features/testRunSetti
 import { testRunSettingsView } from '@/features/designer/inspector/features/testRunSettings/testRunSettingsModel'
 import { testSpecSlots, type TestSpecViewFacts } from '@/features/designer/inspector/features/testSpec/testSpecModel'
 import WorkPlanActions from '@/features/designer/inspector/features/workPlan/WorkPlanActions.vue'
-import WorkPlanOrigin from '@/features/designer/inspector/features/workPlan/WorkPlanOrigin.vue'
 import { workPlanDeployActions, workPlanSlotState } from '@/features/designer/inspector/features/workPlan/workPlanModel'
 import type { InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
 import InspectorRunMenu from '@/features/designer/inspector/parts/InspectorRunMenu.vue'
@@ -333,7 +332,7 @@ describe('card documents tab parts', () => {
 })
 
 describe('card header parts', () => {
-  it('WorkPlanActions: ⇉ 전개 · ⇉ 재전개 ▾ disabled with the reason; WorkPlanOrigin: 작성 사람', () => {
+  it('WorkPlanActions: ⇉ 전개 · ⇉ 재전개 ▾ disabled with the reason', () => {
     const w = mount(WorkPlanActions, { props: { target: facts(REQ, 'WP') }, global })
     const buttons = w.findAll('button')
     expect(buttons.map((button) => button.text())).toEqual(['⇉ 전개', '⇉ 재전개 ▾'])
@@ -341,8 +340,6 @@ describe('card header parts', () => {
       expect(button.attributes('disabled')).toBeDefined()
       expect(button.attributes('title')).toBe('WP 전개는 아직 연결되지 않았습니다 (0048 D#1 §8.4).')
     }
-    const origin = mount(WorkPlanOrigin, { props: { target: facts(REQ, 'WP') }, global })
-    expect(origin.get('[data-test="work-plan-author"]').text()).toBe('작성 사람')
   })
 
   // flowgate.v02.0052 T#3: run control lives in the top Menu Bar / Toolbar (실행 중지 · 재실행); the card
