@@ -113,6 +113,21 @@ async function file(name = 'new.txt', size = 2) {
 function reject(status: number, data: Record<string, unknown>) { return { isAxiosError: true, response: { status, data } } }
 
 describe('separate draft and modeless window', () => {
+  it('the compact editor keeps unsaved text and attachment edits through review changes', async () => {
+    await open()
+    expect(q('wp-step-status', child()).textContent).toBe('변경 없음')
+    await type(q('wp-step-text', child()), 'compact draft')
+    expect(q('wp-step-status', child()).textContent).toBe('미저장')
+    await file('compact.txt')
+    await click(q('wp-edit-step-review', row('c_t1|main')))
+    await pick(q('wp-edit-review-count'), '3')
+    await click(q('wp-edit-review-done'))
+    await click(q('wp-step-save', child()))
+    expect(api.putRequest).not.toHaveBeenCalled()
+    await click(q('wp-edit-save'))
+    expect(lastBody!.steps[1]).toMatchObject({ review_count: 3, pre_instruction_text: 'compact draft', pre_instruction_attachment: { original_filename: 'compact.txt' } })
+  })
+
   it('pencil opens a sibling shell; moving/resizing it leaves the parent in place', async () => {
     await open()
     const parent = q('wp-edit-window').closest<HTMLElement>('.ui-modeless-panel')!
@@ -199,12 +214,16 @@ describe('separate draft and modeless window', () => {
     expect(q('wp-step-review', child())).toBeNull()
     expect(q('wp-step-reviewer', child())).toBeNull()
     expect(child().querySelectorAll('select')).toHaveLength(0)
-    expect(q('wp-step-title', panel()).textContent).toContain('단계 편집 · 작업 1 · 작업 지시서')
-    expect(q('wp-step-heading', child()).textContent).toBe('작업 1 · 작업 지시서 · 2번째 단계')
+    expect(q('wp-step-title', panel()).textContent).toContain('작업 1 · 지시서')
+    expect(q('wp-step-title', panel()).textContent).toContain('단계 편집')
+    expect(q('wp-step-heading', child()).textContent).toContain('지시서')
+    expect(q('wp-step-heading', child()).textContent).toContain('2번째 단계')
+    expect(q('wp-step-heading', child()).textContent).not.toContain('작업 1')
     expect(panel().textContent).not.toMatch(/T#1|TR#1|검수/)
     await click(q('wp-step-cancel', child()))
     await pencil('c_t1|result')
-    expect(q('wp-step-heading', child()).textContent).toBe('작업 1 · 작업 레포트 · 3번째 단계')
+    expect(q('wp-step-heading', child()).textContent).toContain('레포트')
+    expect(q('wp-step-heading', child()).textContent).toContain('3번째 단계')
     expect(panel().textContent).not.toMatch(/T#1|TR#1|검수/)
     expect(q('wp-step-text', child())).toBeNull()
     expect(q('wp-step-file', child())).toBeNull()

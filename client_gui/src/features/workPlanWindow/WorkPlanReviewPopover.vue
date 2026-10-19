@@ -12,6 +12,7 @@
       :style="style"
     >
       <div class="wpr-head">
+        <svg class="wpr-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="paletteIconPath('shield')" /></svg>
         <strong class="wpr-title">{{ t('review.title') }}</strong>
         <span class="wpr-context" data-test="wp-edit-review-context">{{ context }}</span>
       </div>
@@ -67,11 +68,13 @@ import Button from '@/components/ui/Button.vue'
 import Select from '@/components/ui/Select.vue'
 import { allocateOverlayZIndex } from '@/core/overlay/zIndex'
 import { usePopover } from '@/features/conversation/popover'
-import { documentTypeNameKey, workPlanQuantityNameKey } from '@/features/documentWindow/specialDocumentModel'
+import { workPlanQuantityNameKey } from '@/features/documentWindow/specialDocumentModel'
 import { workPlanWindowMessages } from './messages'
 import type { WorkPlanEditor } from './useWorkPlanEditor'
 import { reviewCountOptions, rowOf, unitOf } from './workPlanEditModel'
 import { reviewPopoverPlace } from './workPlanReviewPopover'
+import { paletteIconPath } from '@/features/designer/palette/paletteIcons'
+import { workPlanDocumentNameKey } from './workPlanPresentation'
 
 const props = defineProps<{ editor: WorkPlanEditor }>()
 
@@ -108,7 +111,7 @@ const context = computed(() => {
   const head = draft.value.cards[current.cardIndex].steps[0]
   const unit = unitOf(draft.value.body, head.type)
   const card = t('card.name', { name: gt(`gui.document_window.${workPlanQuantityNameKey({ type: head.type, unit })}`), n: head.ordinal })
-  return t('review.context', { card, doc: gt(`gui.document_window.${documentTypeNameKey(current.step.type)}`) })
+  return t('review.context', { card, doc: t(workPlanDocumentNameKey(current.step.type, current.step.pair_role)) })
 })
 
 function setCount(value: string): void {
@@ -130,7 +133,7 @@ function place(): void {
     return
   }
   const bounds = trigger.closest('.ui-modeless-panel')?.getBoundingClientRect() ?? null
-  const size = { width: root.value?.offsetWidth || 280, height: root.value?.offsetHeight || 220 }
+  const size = { width: root.value?.offsetWidth || 286, height: root.value?.offsetHeight || 220 }
   const at = reviewPopoverPlace(trigger.getBoundingClientRect(), size, { width: window.innerWidth, height: window.innerHeight }, bounds)
   style.value = { left: `${at.left}px`, top: `${at.top}px`, zIndex: String(zIndex) }
 }
@@ -220,8 +223,12 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: 280px;
-  padding: 12px;
+  box-sizing: border-box;
+  width: 286px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 13px;
   border: 1px solid var(--fg2-line-strong);
   border-radius: var(--fg2-overlay-radius);
   background: var(--fg2-panel);
@@ -232,18 +239,25 @@ defineExpose({
 
 .wpr-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
+.wpr-icon { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; color: var(--fg2-cyan); }
+
 .wpr-title {
-  flex: none;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wpr-context {
-  min-width: 0;
+  flex: none;
+  max-width: 60%;
   overflow: hidden;
   color: var(--fg2-muted);
   font-size: 11px;

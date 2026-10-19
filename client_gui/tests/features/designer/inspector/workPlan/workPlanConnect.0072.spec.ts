@@ -214,7 +214,7 @@ describe('the 작업계획 line opens the work plan edit window (flowgate.v02.00
     await mountAll(selection(WP_CARD))
     await openFromLine()
     expect(workPlanEditWindowList()[0].request).toMatchObject({ docId: DOC, projectId: 'flowgate', groupId: FLOW, title: '작업계획 — 설계 1장 · 작업 2세트' })
-    expect(q('wp-edit-heading')!.textContent).toContain('작업계획 — 설계 1장 · 작업 2세트')
+    expect(q('wp-edit-title')!.getAttribute('title')).toBe('작업계획 — 설계 1장 · 작업 2세트')
     expect(q('wp-edit-revision')!.textContent).toBe('r2')
   })
 })

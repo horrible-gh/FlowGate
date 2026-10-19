@@ -2,10 +2,10 @@
   <ModelessShell
     ref="shell"
     :open="true"
-    :initial-x="win.x"
-    :initial-y="win.y"
-    :initial-width="820"
-    :initial-height="640"
+    :initial-x="Math.min(win.x, Math.max(0, viewportWidth - initialWidth - 16))"
+    :initial-y="Math.min(win.y, Math.max(0, viewportHeight - initialHeight - 16))"
+    :initial-width="initialWidth"
+    :initial-height="initialHeight"
     :min-width="560"
     :min-height="320"
     :minimized="win.minimized"
@@ -14,8 +14,9 @@
   >
     <template #header>
       <span class="wp-window-heading" data-test="wp-edit-heading">
-        <span class="wp-window-kind">{{ t('title') }}</span>
-        <span class="wp-window-doc" :title="docTitle">{{ docTitle }}</span>
+        <span class="wp-window-tile" aria-hidden="true"><svg viewBox="0 0 24 24"><path :d="paletteIconPath('file')" /></svg></span>
+        <span class="wp-window-kind" :title="docTitle" data-test="wp-edit-title">{{ t('title') }}</span>
+        <span v-if="draft" class="wp-window-doc" data-test="wp-edit-title-totals">{{ t('title_totals', summary) }}</span>
         <span v-if="view" class="wp-window-rev" data-test="wp-edit-revision">{{ t('revision', { n: view.revisionNo }) }}</span>
         <span v-if="view?.docReviewStatus" class="wp-window-state" data-test="wp-edit-state">{{ stateLabel }}</span>
         <span v-if="dirty" class="wp-window-dirty" :title="t('dirty')" data-test="wp-edit-dirty">●</span>
@@ -55,10 +56,11 @@
           :data-key="notice.key"
         >{{ t(`notice.${notice.key}`, { ...(notice.params ?? {}) }) }}</p>
         <p v-else-if="workPlanStepEditsPending(win.docId)" class="wp-window-notice" data-test="wp-edit-child-pending">{{ t('step_pending') }}</p>
-        <p v-else-if="dirty" class="wp-window-notice" data-test="wp-edit-unsaved">{{ t('dirty') }}</p>
+        <p v-else-if="dirty" class="wp-window-notice is-unsaved" data-test="wp-edit-unsaved">{{ t('dirty') }}</p>
+        <span v-else class="wp-window-notice" />
         <Button size="sm" variant="ghost" data-test="wp-edit-close" @click="requestClose">{{ t('close') }}</Button>
         <Button size="sm" variant="primary" :disabled="!canSave" :loading="saving" data-test="wp-edit-save" @click="editor.save()">
-          {{ saving ? t('saving') : t('save') }}
+          <span class="wp-window-save"><svg v-if="!saving" viewBox="0 0 24 24" aria-hidden="true"><path :d="SAVE_PATH" /></svg>{{ saving ? t('saving') : t('save') }}</span>
         </Button>
       </div>
     </div>
@@ -129,6 +131,7 @@ import Button from '@/components/ui/Button.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
+import { paletteIconPath } from '@/features/designer/palette/paletteIcons'
 import { documentIoSaveFile } from '@/features/documentWindow/documentIo'
 import { useDocumentWindowEvents } from '@/features/documentWindow/useDocumentWindowEvents'
 import WorkPlanEditBody from './WorkPlanEditBody.vue'
@@ -136,6 +139,7 @@ import WorkPlanJsonWindow from './WorkPlanJsonWindow.vue'
 import { workPlanWindowMessages } from './messages'
 import { useWorkPlanEditor } from './useWorkPlanEditor'
 import { workPlanJsonFileName } from './workPlanJson'
+import { shownCardsOf, totalsOf } from './workPlanEditModel'
 import {
   closeWorkPlanEditWindow,
   discardWorkPlanStepEdits,
@@ -154,6 +158,10 @@ const props = defineProps<{
 const { t } = useI18n({ useScope: 'local', messages: workPlanWindowMessages, inheritLocale: true })
 const { t: gt, te: gte } = useI18n({ useScope: 'global' })
 
+const viewportWidth = window.innerWidth
+const viewportHeight = window.innerHeight
+const initialWidth = Math.min(1100, Math.max(320, viewportWidth - 32))
+const initialHeight = Math.min(840, Math.max(280, viewportHeight - 64))
 const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 const confirming = ref<'close' | 'reload' | null>(null)
 
@@ -167,6 +175,7 @@ const editor = useWorkPlanEditor({
   saved: (revisionNo) => props.win.request.saved?.(revisionNo),
 })
 const { view, draft, dirty, saving, canSave, notice, pendingQuantity } = editor
+const summary = computed(() => ({ cards: draft.value ? shownCardsOf(draft.value).length : 0, n: draft.value ? totalsOf(draft.value).steps : 0 }))
 
 /** Phosphor Icons `upload-simple` / `download-simple` / `code` (regular, 256 viewBox; MIT — client/shared/iconData). */
 const UPLOAD_PATH =
@@ -175,6 +184,9 @@ const DOWNLOAD_PATH =
   'M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z'
 const CODE_PATH =
   'M69.12,94.15,28.5,128l40.62,33.85a8,8,0,1,1-10.24,12.29l-48-40a8,8,0,0,1,0-12.29l48-40a8,8,0,0,1,10.24,12.3Zm176,27.7-48-40a8,8,0,1,0-10.24,12.3L227.5,128l-40.62,33.85a8,8,0,1,0,10.24,12.29l48-40a8,8,0,0,0,0-12.29ZM162.73,32.48a8,8,0,0,0-10.25,4.79l-64,176a8,8,0,0,0,4.79,10.26A8.14,8.14,0,0,0,96,224a8,8,0,0,0,7.52-5.27l64-176A8,8,0,0,0,162.73,32.48Z'
+
+/** Lucide `save` (ISC) — [저장]'s mark, as in the confirmed mockup. */
+const SAVE_PATH = 'M5 3h11l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M7 3v5h8 M7 21v-7h10v7'
 
 /** The JSON window open over this one (import / raw), or null. */
 const jsonMode = ref<'import' | 'raw' | null>(null)
@@ -196,7 +208,7 @@ function exportJson(): void {
   documentIoSaveFile(new Blob([text], { type: 'application/json;charset=utf-8' }), workPlanJsonFileName(props.win.docId))
 }
 
-const docTitle = computed(() => view.value?.title || props.win.request.title || props.win.docId)
+const docTitle = computed(() => view.value?.title || props.win.request.title || t('title'))
 const stateLabel = computed(() => {
   const state = view.value?.docReviewStatus ?? ''
   const key = `gui.document_window.state.${state}`
@@ -280,6 +292,38 @@ onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', 
   max-width: 100%;
 }
 
+.wp-window-tile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border-radius: var(--fg2-control-radius-sm);
+  background: color-mix(in srgb, var(--fg2-cyan) 22%, transparent);
+  color: var(--fg2-cyan);
+}
+
+.wp-window-tile svg,
+.wp-window-save svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.wp-window-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wp-window-kind {
+  font-weight: 700;
+}
+
 .wp-window-kind,
 .wp-window-rev,
 .wp-window-state,
@@ -358,6 +402,21 @@ onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', 
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.wp-window-notice.is-unsaved {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.wp-window-notice.is-unsaved::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg2-status-warning-fg);
 }
 
 .wp-window-notice.is-success {
