@@ -46,7 +46,8 @@ describe('inspectorSettingsKind (flowgate.v02.0053 T#7)', () => {
     ['document', 'B', 'requirement'],
     ['gate', null, 'check'],
     ['custom', null, 'run'],
-    ['document', 'WP', null],
+    // flowgate.v02.0072 T#3: a Graph work plan card keeps the plan settings.
+    ['document', 'WP', 'plan'],
     ['document', 'NR', null],
     ['document', 'TR', null],
     ['document', 'XYZ', null],
@@ -72,7 +73,9 @@ describe('inspectorSettingsKind (flowgate.v02.0053 T#7)', () => {
     expect(inspectorSettingsKind({ ...v01Step, slot: null })).toBeNull()
     expect(inspectorSettingsKind({ ...v01Step, cardKind: 'test' })).toBe('test')
     expect(inspectorSettingsKind({ ...v01Step, cardKind: 'test', slot: null })).toBeNull()
+    // flowgate.v02.0072 T#3: a v0.1 Flow's work plan Node has no store (only a Graph WP card keeps plan settings).
     expect(inspectorSettingsKind({ ...v01Step, cardKind: 'plan' })).toBeNull()
+    expect(inspectorSettingsKind({ ...v01Step, cardKind: 'plan', slot: null })).toBeNull()
     expect(inspectorSettingsKind({ ...v01Step, cardKind: 'requirement', slot: null })).toBe('requirement')
     expect(inspectorSettingsKind({ ...v01Step, cardKind: 'check', slot: null })).toBe('check')
   })
@@ -97,12 +100,12 @@ describe('settingsKinds (registry condition)', () => {
   })
 
   it('an unknown kind is a contract violation naming the folder', () => {
-    const modules = registrationModules([registration({ key: 'a', order: 1, headerMeta: PART, settingsKinds: ['run', 'plan' as never] })])
-    expect(registrationViolations(modules)).toEqual(["features/a: settingsKinds has unknown value 'plan'"])
+    const modules = registrationModules([registration({ key: 'a', order: 1, headerMeta: PART, settingsKinds: ['run', 'deploy' as never] })])
+    expect(registrationViolations(modules)).toEqual(["features/a: settingsKinds has unknown value 'deploy'"])
   })
 
   it('the four settings parts declare their kinds', () => {
-    expect(entry('settings').settingsKinds).toEqual(['run', 'test'])
+    expect(entry('settings').settingsKinds).toEqual(['run', 'test', 'plan'])
     expect(entry('testRunSettings').settingsKinds).toEqual(['test'])
     expect(entry('requirementSettings').settingsKinds).toEqual(['requirement'])
     expect(entry('checkSettings').settingsKinds).toEqual(['check'])
@@ -119,7 +122,8 @@ describe('settingsKinds (registry condition)', () => {
     ['요구사항', 'document', 'R', ['requirementSettings']],
     ['버그', 'document', 'B', ['requirementSettings']],
     ['확인', 'gate', null, ['checkSettings']],
-    ['작업계획', 'document', 'WP', []],
+    // flowgate.v02.0072 T#3: the settings tab draws the WP card's switch and run block.
+    ['작업계획', 'document', 'WP', ['settings']],
   ] as const)('a just placed %s card gets its settings parts', (_name, nodeType, docType, parts) => {
     expect(partsOf(card(nodeType, docType))).toEqual(parts)
     // in every ownership, done or not

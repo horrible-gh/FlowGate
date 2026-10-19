@@ -113,7 +113,15 @@ import {
   type InspectorTabKey,
 } from './inspectorTabs'
 import { toInspectorTarget, withWrittenCardLines, type NodeTitleSaveOutcome } from './inspectorTarget'
-import { cardLinesWritten, forgetDocumentIo, leaveDocumentIo, settleCardLinesWritten } from './openDocument'
+import {
+  cardLinesWritten,
+  forgetDocumentIo,
+  leaveDocumentIo,
+  noteWorkPlanOpener,
+  provideWorkPlanFlowRunLock,
+  settleCardLinesWritten,
+  type WorkPlanFlowRunLock,
+} from './openDocument'
 import { useInspectorEvents } from './useInspectorResource'
 
 const props = withDefaults(
@@ -126,8 +134,13 @@ const props = withDefaults(
     registry?: InspectorRegistry
     /** flowgate.v02.0070 T#1: saves a card's own title (the session's); null = no title edit opens. */
     saveTitle?: ((flowId: string, nodeKey: string, raw: string) => Promise<NodeTitleSaveOutcome>) | null
+    /**
+     * flowgate.v02.0072 TR0012 rev1: any Flow's run lock as the Center session knows it now (its run marks); null = only
+     * the selection tells it (its own Flow; any other Flow is not confirmed).
+     */
+    flowRunLock?: WorkPlanFlowRunLock | null
   }>(),
-  { unselected: false, registry: () => inspectorRegistry, saveTitle: null },
+  { unselected: false, registry: () => inspectorRegistry, saveTitle: null, flowRunLock: null },
 )
 
 const emit = defineEmits<{ host: [intent: InspectorHostIntent] }>()
@@ -155,7 +168,25 @@ provide(INSPECTOR_BODY, { element: bodyElement })
 // shows its document; every read shown settles them (and opens a document a refused [작성] waits for).
 const readTarget = computed(() => toInspectorTarget(props.selection))
 const target = computed(() => withWrittenCardLines(readTarget.value, cardLinesWritten(readTarget.value)))
-watch(readTarget, (current) => settleCardLinesWritten(current), { immediate: true })
+// flowgate.v02.0072 T#3: and the shown target's read-only verdict for the work plan windows of its Flow.
+watch(
+  readTarget,
+  (current) => {
+    settleCardLinesWritten(current)
+    noteWorkPlanOpener(current)
+  },
+  { immediate: true },
+)
+// flowgate.v02.0072 TR0012 rev1: an open work plan window follows its own Flow's run lock whatever is selected — no
+// card, another card or another Flow. Read from the session while the Frame lives; once it ends nothing tells it and
+// the windows stay locked.
+onBeforeUnmount(
+  provideWorkPlanFlowRunLock((flowId) => {
+    if (props.flowRunLock) return props.flowRunLock(flowId)
+    const current = readTarget.value
+    return current?.flowId === flowId ? (current.editLock ?? null) : 'unknown'
+  }),
+)
 
 /** Server events after which the header (the selected Flow's Canvas read) may be out of date. */
 const HEADER_REFRESH_EVENTS = ['doc_review_status_changed', 'ai_invoke_finished', 'document_explorer_refresh'] as const

@@ -7,7 +7,9 @@
        change leaves as `update:field`. `locked` is the running card (v7 `.set-locked`).
        flowgate.v02.0053 T#7 — `layout="scenario"` is the 테스트 card's 시나리오 작성 block (v7 testSettings
        "케이스 작성", its TSC mark left out): 작성 AI | 검수 AI · 검수 횟수, no fold. A field whose change the
-       server refused carries its reason: a red ! icon beside the control, the reason its tooltip. -->
+       server refused carries its reason: a red ! icon beside the control, the reason its tooltip.
+       flowgate.v02.0072 T#3 — `labels`: the caller may name an item its own way (the WP card's 작업 AI); the layout,
+       the controls and the fold stay the same. -->
   <InspectorBlock
     :title="t(k(layout === 'scenario' ? 'scenario_title' : 'title'))"
     :locked="locked"
@@ -95,8 +97,10 @@ const props = withDefaults(
     locked?: boolean
     advancedOpen?: boolean
     layout?: 'run' | 'scenario'
+    /** Item names given by the caller instead of the common ones (absent = the common name). */
+    labels?: Partial<Readonly<Record<InspectorRunSettingsField, string>>>
   }>(),
-  { locked: false, advancedOpen: false, layout: 'run' },
+  { locked: false, advancedOpen: false, layout: 'run', labels: () => ({}) },
 )
 
 const emit = defineEmits<{ 'update:field': [field: InspectorRunSettingsField, value: string]; 'update:advancedOpen': [open: boolean] }>()
@@ -107,8 +111,10 @@ const k = (key: string) => `gui.designer.inspector.run_settings.${key}`
 
 const columns = computed(() => (props.layout === 'scenario' ? SCENARIO_COLUMNS : RUN_COLUMNS))
 
-/** The scenario block's AI writes the scenario (작성 AI). */
+/** The scenario block's AI writes the scenario (작성 AI); a name the caller gives wins. */
 function labelOf(name: InspectorRunSettingsField): string {
+  const own = props.labels[name]
+  if (own) return own
   return t(k(props.layout === 'scenario' && name === 'run_ai' ? 'writer_ai' : name))
 }
 

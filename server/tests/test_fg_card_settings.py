@@ -264,7 +264,8 @@ def test_card_kinds_and_their_settings_follow_the_v7_blocks():
     assert (f.card_kind("custom", None), f.card_kind("document", "TS"), f.card_kind("document", "r"),
             f.card_kind("document", "B"), f.card_kind("gate", None)) == (f.RUN, f.TEST, f.REQUIREMENT,
                                                                        f.REQUIREMENT, f.CHECK)
-    assert f.card_kind("document", "WP") is None and f.card_kind("document", "TSR") is None
+    # flowgate.v02.0072 T#3: a work plan card keeps the plan settings (values only).
+    assert f.card_kind("document", "WP") == f.PLAN and f.card_kind("document", "TSR") is None
     names = {kind: [x.name for x in f.fields_of(kind)] for kind in f.CARD_KINDS}
     assert names == {
         f.RUN: RUN_FIELDS,
@@ -272,6 +273,8 @@ def test_card_kinds_and_their_settings_follow_the_v7_blocks():
         f.REQUIREMENT: ["delegation", "scope", "team", "limit_max_nodes", "limit_total_reviews",
                         "limit_retries_per_card", "limit_replans"],
         f.CHECK: ["usage", "merge_mode", "merge_target", "push", "keep_branch"],
+        f.PLAN: ["pre_instruction_auto", "run_ai", "restart", "review_ai", "review_count", "time_limit",
+                 "review_basis"],
     }
 
 
@@ -361,9 +364,10 @@ def test_each_card_kind_keeps_its_own_settings(env):
         gate = setting(env, FB, km["tmp_g"], field, value)
     assert gate["card_kind"] == "check" and shown(gate) == {
         "usage": "end", "merge_mode": "merge", "merge_target": "release/v0.2", "push": True, "keep_branch": False}
-    plan = get_settings(env, FB, km["tmp_wp"])
-    assert (plan["card_kind"], plan["fields"]) == (None, {})
-    refused = setting(env, FB, km["tmp_wp"], "restart", 1, expect=422)
+    # flowgate.v02.0072 T#3: a work plan card keeps the plan settings; a run card's instruction is not one of them.
+    plan = setting(env, FB, km["tmp_wp"], "restart", 1)
+    assert plan["card_kind"] == "plan" and shown(plan)["restart"] == 1
+    refused = setting(env, FB, km["tmp_wp"], "instruction", "omit", expect=422)
     assert refused["error"]["params"]["errors"][0]["reason"] == "not_a_setting_of_this_card"
     assert get_settings(env, FB, km["tmp_x"])["card_kind"] == "run"       # a palette [+] card: like work
 

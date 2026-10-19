@@ -71,6 +71,8 @@ provide(Symbol.for('flowgate.designer.bottomDockInspector'), {
   saveTitle: props.center.canEditNodeTitles
     ? (flowId: string, nodeId: string, title: string) => props.center.saveNodeTitle(flowId, nodeId, title)
     : null,
+  // flowgate.v02.0072 TR0012 rev1: a work plan window follows its own Flow's run lock, also when another Flow is active.
+  flowRunLock: (flowId: string) => props.center.runMarks(flowId).lock,
   host(intent: { readonly kind: string; readonly nodeId?: string; readonly tool?: string; readonly flowId?: string }) {
     const flowId = props.center.state.activeFlowId
     if (intent.kind === 'select-node' && flowId !== null && intent.nodeId) props.center.selectNode(flowId, intent.nodeId)

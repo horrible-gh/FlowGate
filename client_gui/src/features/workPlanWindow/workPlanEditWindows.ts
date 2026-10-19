@@ -1,7 +1,7 @@
 // flowgate.v02.0072 T#1 — the work plan edit windows of this tab, kept the way the document windows are
 // (documentWindows.ts / slotWriteWindows.ts): module state, one window per work plan document, opening it again brings
-// it back (and, when it was minimized, restores it). Nothing opens one yet — the WP card's 「작업계획」 line is
-// connected in T#3 (openWorkPlanEditWindow); the App Shell mounts WorkPlanEditWindows once (through DocumentWindows).
+// it back (and, when it was minimized, restores it). flowgate.v02.0072 T#3: the WP card's 「작업계획」 line opens it (the
+// Inspector's openDocument.ts openWorkPlan); the App Shell mounts WorkPlanEditWindows once (through DocumentWindows).
 //
 // The Step window boundary (T#2). A Step row's ✎ does not open anything inside this window (no inline drawer): the
 // window hands the row to the Step window's handler, registered here by the Step window feature

@@ -13,6 +13,15 @@ export default {
       use: '사용',
       omit: '생략',
     },
+    // flowgate.v02.0072 T#3 — the WP card: the AI 사전 지시서 작성 switch (a card value; no writer runs from it yet,
+    // and off deletes no Step's 사전 지시서) and the run block's 작업 AI.
+    pre_instruction: {
+      label: 'AI 사전 지시서 작성',
+      hint: '카드에만 저장 · 자동 작성은 아직 연결되지 않음 · 꺼도 단계의 사전 지시서는 지워지지 않음',
+    },
+    plan: {
+      run_ai: '작업 AI',
+    },
     instruction_ai: {
       label: '지시 AI',
       hint: '지시서를 쓰는 AI · 비우면 실행 AI, 그다음 담당 AI가 씁니다',
@@ -84,6 +93,7 @@ export default {
         not_a_text: '값이 비어 있거나 글자가 아닙니다',
         invalid_text: '값이 너무 길거나 쓸 수 없는 글자가 있습니다',
         not_a_setting_of_this_card: '이 카드에는 없는 설정입니다',
+        not_a_boolean: '켜기 / 끄기 값이 아닙니다',
       },
       forbidden: '권한이 없습니다',
       not_found: '카드를 찾을 수 없습니다',
@@ -104,6 +114,13 @@ export default {
       hint: 'When omitted, the documents tab shows no instruction line',
       use: 'Use',
       omit: 'Omit',
+    },
+    pre_instruction: {
+      label: 'Write AI pre-instructions',
+      hint: 'Card value · no auto writer yet · off keeps pre-instructions',
+    },
+    plan: {
+      run_ai: 'Work AI',
     },
     instruction_ai: {
       label: 'Instruction AI',
@@ -174,6 +191,7 @@ export default {
         not_a_text: 'The value is empty or not text',
         invalid_text: 'The value is too long or has characters that cannot be used',
         not_a_setting_of_this_card: 'This card has no such setting',
+        not_a_boolean: 'Not an on / off value',
       },
       forbidden: 'No permission',
       not_found: 'The card was not found',
@@ -194,6 +212,13 @@ export default {
       hint: '省略すると文書タブに指示書の行が出ません',
       use: '使用',
       omit: '省略',
+    },
+    pre_instruction: {
+      label: 'AI事前指示書の作成',
+      hint: 'カードにのみ保存 · 自動作成は未接続 · オフでもステップの事前指示書は消えません',
+    },
+    plan: {
+      run_ai: '作業AI',
     },
     instruction_ai: {
       label: '指示AI',
@@ -264,6 +289,7 @@ export default {
         not_a_text: '値が空か文字ではありません',
         invalid_text: '値が長すぎるか使えない文字があります',
         not_a_setting_of_this_card: 'このカードにはない設定です',
+        not_a_boolean: 'オン / オフの値ではありません',
       },
       forbidden: '権限がありません',
       not_found: 'カードが見つかりません',
