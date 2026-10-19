@@ -6,7 +6,7 @@
 // The Step window boundary (T#2). A Step row's ✎ does not open anything inside this window (no inline drawer): the
 // window hands the row to the Step window's handler, registered here by the Step window feature
 // (setWorkPlanStepEditHandler). The handler gets the row's target and a session bound to the parent window's editor
-// (useWorkPlanEditor.stepSession): read a copy of the row's review / pre-instruction values, put edited values back on
+// (useWorkPlanEditor.stepSession): read a copy of the row's pre-instruction values (0073 T#2: not its review), put edited values back on
 // that row only, and ask whether the parent is locked or still open. The final server save stays the parent's [저장].
 // While no handler is registered, ✎ is shown disabled with its reason.
 import { reactive, shallowRef } from 'vue'

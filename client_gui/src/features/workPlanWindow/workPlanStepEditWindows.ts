@@ -1,4 +1,7 @@
 // 0072 T#2: isolated Step drafts. Only apply() changes the parent; only the parent saves the WP.
+// 0073 T#2: a Step draft is the pre-instruction and its attachment only — the review is set in the parent's review
+// popover, so the baseline / snapshot check and apply() never see it and cannot write an old review back.
+// 0073 T#3: a drop on the attachment area goes through the picker's checks and upload (dropWorkPlanStepFiles).
 import { markRaw, reactive } from 'vue'
 import { workPlanUploadInstruction, workPlanSaveFailureOf } from '@/features/document'
 import type { WorkPlanStepDraft } from './workPlanEditModel'
@@ -38,7 +41,6 @@ export function workPlanStepBlocked(win: WorkPlanStepWindow): boolean {
   return win.closed || win.uploading || !win.session.alive() || !win.session.target() || !win.session.snapshot() || win.session.locked()
 }
 export function workPlanStepValidation(win: WorkPlanStepWindow): string | null {
-  if (!win.session.reviewCountChoices().includes(win.draft.reviewCount)) return 'review_invalid'
   // Python's server limit counts Unicode code points (not UTF-16 code units).
   if (Array.from(win.draft.preInstructionText ?? '').length > win.session.preInstructionMaxChars()) return 'text_limit'
   return null
@@ -70,9 +72,8 @@ export function installWorkPlanStepEditor(): () => void {
 
 export function setWorkPlanStepValue<K extends keyof WorkPlanStepDraft>(win: WorkPlanStepWindow, key: K, value: WorkPlanStepDraft[K]): void {
   if (workPlanStepBlocked(win)) return
-  if (key === 'reviewerProviderId' && win.draft.reviewCount === 0) return
-  if ((key === 'preInstructionText' || key === 'preInstructionAttachment') && win.session.target()?.pairRole === 'result') return
-  win.draft = { ...win.draft, [key]: value, ...(key === 'reviewCount' && value === 0 ? { reviewerProviderId: null } : {}) }
+  if (win.session.target()?.pairRole === 'result') return
+  win.draft = { ...win.draft, [key]: value }
   win.issue = null
   win.detail = null
 }
@@ -92,6 +93,20 @@ export function saveWorkPlanStep(win: WorkPlanStepWindow): boolean {
   if (result !== 'applied') { win.issue = result; return false }
   closeWorkPlanStepWindow(win)
   return true
+}
+
+/**
+ * 0073 T#3: files dropped on the attachment area. One file takes the same path as the file picker
+ * (uploadWorkPlanStepFile: its result / save-first / size checks and upload); a Step holds one attachment,
+ * so a drop of several files is refused instead of silently keeping one of them.
+ */
+export async function dropWorkPlanStepFiles(win: WorkPlanStepWindow, files: ArrayLike<File>): Promise<void> {
+  if (files.length === 0) return
+  if (files.length > 1) {
+    if (!workPlanStepBlocked(win) && win.session.target()?.pairRole !== 'result') { win.issue = 'one_file'; win.detail = null }
+    return
+  }
+  await uploadWorkPlanStepFile(win, files[0])
 }
 
 export async function uploadWorkPlanStepFile(win: WorkPlanStepWindow, file: File): Promise<void> {
