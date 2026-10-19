@@ -22,7 +22,7 @@
 // `{ code: 'wp_unreadable', reason, revision_no, … }` at the top level of the body when the stored plan cannot
 // be read as a table (the v0.1 editor offers its raw view and revision restore).
 import { normalizeApiError } from '@shared/apiErrors'
-import { getRequest } from '@shared/api'
+import { getRequest, putRequest, postFormRequest } from '@shared/api'
 
 const API = '/api/v1'
 
@@ -239,4 +239,160 @@ export function toWorkPlanDocument(raw: unknown): WorkPlanDocument {
 export async function workPlanDocumentRead(docId: string): Promise<WorkPlanDocument> {
   const response = await getRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}/work-plan`)
   return toWorkPlanDocument(response.data)
+}
+
+// flowgate.v02.0072 T#1 — the v0.2 work plan edit window (features/workPlanWindow) edits the plan through the same
+// v0.1 endpoints, no new server API (documents/routers/work_plan.py):
+//   read  GET /api/v1/documents/{doc_id}/work-plan -> the read view above; the editor keeps the answer whole, because
+//         the body goes back as it came (wp_version 2, every field and top-level extension the server keeps).
+//   save  PUT /api/v1/documents/{doc_id}/work-plan { base_revision_no, body, capability_warning_acks? } -> { revision_no,
+//         body (card ids assigned), title, totals, assignment_summary, unassigned_step_count, warnings }.
+// The save's refusals (save_work_plan): 409 `wp_revision_conflict` (top level: updated_by, updated_at); 409 `detail`
+// (the Flow was disposed); 422 `validation_failed` with `errors[] { loc, key, code, params, msg }`; 422
+// `provider_capability_confirmation_required` with `findings[]` (sent again with every finding's step_key acknowledged);
+// 422 `detail` (not editable: final approval / status); 423 (the Flow's AI run holds it); 403 / 404 as usual.
+
+/** The whole read answer of `GET …/work-plan` (an object; the editor reads it with toWorkPlanEditView). */
+export async function workPlanEditRead(docId: string): Promise<Record<string, unknown>> {
+  const response = await getRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}/work-plan`)
+  return record(response.data)
+}
+
+export interface WorkPlanSaveRequest {
+  readonly baseRevisionNo: number
+  /** The plan body as it is sent (wp_version 2). */
+  readonly body: unknown
+  /** The step keys of the capability findings the person confirmed; left out when empty. */
+  readonly capabilityWarningAcks?: readonly string[]
+}
+
+/** Saves the whole plan body (`PUT …/work-plan`, optimistic on base_revision_no); the answer as it is. */
+export async function workPlanSave(docId: string, request: WorkPlanSaveRequest): Promise<Record<string, unknown>> {
+  const payload: Record<string, unknown> = { base_revision_no: request.baseRevisionNo, body: request.body }
+  if (request.capabilityWarningAcks?.length) payload.capability_warning_acks = [...request.capabilityWarningAcks]
+  const response = await putRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}/work-plan`, payload)
+  return record(response.data)
+}
+
+/**
+ * One field error of a refused save, as the server sends it (`work_plan_service.render_errors`: loc, the Step key or
+ * null, code, params, msg) — the same shape `@shared/workPlanErrors` renders (this layer imports the transport only).
+ */
+export interface WorkPlanFieldError {
+  readonly loc: string
+  readonly key: string | null
+  readonly code: string
+  readonly params: Readonly<Record<string, unknown>>
+  readonly msg: string
+}
+
+/** One T/TR Step whose AI cannot modify source or run tests (the save waits for a confirmation). */
+export interface WorkPlanCapabilityFinding {
+  readonly stepKey: string
+  readonly stepType: string | null
+  readonly providerId: string | null
+  readonly providerName: string | null
+  readonly missing: readonly string[]
+}
+
+/**
+ * conflict: someone saved first (409 wp_revision_conflict); validation: field errors (422 errors[]); capability: the
+ * findings wait for a confirmation (422); not_editable: final approval or status (422 detail); disposed: the Flow was
+ * discarded (409 detail); ai_running: the Flow's AI run holds it (423); forbidden / not_found / network / other.
+ */
+export type WorkPlanSaveFailureKind =
+  | 'conflict'
+  | 'validation'
+  | 'capability'
+  | 'not_editable'
+  | 'disposed'
+  | 'ai_running'
+  | 'forbidden'
+  | 'not_found'
+  | 'network'
+  | 'other'
+
+export interface WorkPlanSaveFailure {
+  readonly kind: WorkPlanSaveFailureKind
+  readonly status: number | null
+  /** The server's own words (`message`, or a string `detail`), or null. */
+  readonly message: string | null
+  /** validation: the field errors as the server sent them (rendered with renderWorkPlanFieldError). */
+  readonly errors: readonly WorkPlanFieldError[]
+  /** capability: the findings to confirm. */
+  readonly findings: readonly WorkPlanCapabilityFinding[]
+  /** conflict: who saved and when, as the server says. */
+  readonly updatedBy: string | null
+  readonly updatedAt: string | null
+}
+
+function fieldErrors(value: unknown): WorkPlanFieldError[] {
+  return list(value).map((entry) => {
+    const row = record(entry)
+    return {
+      loc: typeof row.loc === 'string' ? row.loc : '',
+      key: text(row.key),
+      code: typeof row.code === 'string' ? row.code : '',
+      params: record(row.params),
+      msg: typeof row.msg === 'string' ? row.msg : '',
+    }
+  })
+}
+
+function capabilityFindings(value: unknown): WorkPlanCapabilityFinding[] {
+  const out: WorkPlanCapabilityFinding[] = []
+  for (const entry of list(value)) {
+    const row = record(entry)
+    const stepKey = text(row.step_key)
+    if (stepKey === null) continue
+    out.push({
+      stepKey,
+      stepType: text(row.step_type),
+      providerId: text(row.provider_id),
+      providerName: text(row.provider_name),
+      missing: list(row.missing_capabilities).flatMap((item) => (text(item) ? [item as string] : [])),
+    })
+  }
+  return out
+}
+
+/** What a failed save threw, as a kind the window can act on. */
+export function workPlanSaveFailureOf(error: unknown): WorkPlanSaveFailure {
+  const normalized = normalizeApiError(error)
+  const data = record(record(record(error).response).data)
+  const status = normalized.status
+  const code = text(data.code) ?? normalized.code
+  const message = text(data.message) ?? text(data.detail)
+  const base = { status, message, errors: [] as WorkPlanFieldError[], findings: [] as WorkPlanCapabilityFinding[], updatedBy: null, updatedAt: null }
+  if (normalized.network) return { ...base, kind: 'network' }
+  if (status === 409 && code === 'wp_revision_conflict') {
+    return { ...base, kind: 'conflict', updatedBy: text(data.updated_by), updatedAt: text(data.updated_at) }
+  }
+  if (status === 422 && code === 'provider_capability_confirmation_required') {
+    return { ...base, kind: 'capability', findings: capabilityFindings(data.findings) }
+  }
+  if (status === 422 && Array.isArray(data.errors)) return { ...base, kind: 'validation', errors: fieldErrors(data.errors) }
+  if (status === 422) return { ...base, kind: 'not_editable' }
+  if (status === 409) return { ...base, kind: 'disposed' }
+  if (status === 423) return { ...base, kind: 'ai_running' }
+  if (status === 403) return { ...base, kind: 'forbidden' }
+  if (status === 404) return { ...base, kind: 'not_found' }
+  return { ...base, kind: 'other' }
+}
+
+// 0072 T#2: upload reserves a file only. Its reference enters the plan on the parent's PUT;
+// successful PUT cleans unreferenced reserved files. There is no per-file delete endpoint.
+export async function workPlanUploadInstruction(docId: string, stepKey: string, file: File): Promise<Record<string, unknown>> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('step_key', stepKey)
+  const response = await postFormRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}/work-plan/pre-instruction-attachments`, form)
+  const reference = record(record(response.data).reference)
+  if (reference.doc_id !== docId || typeof reference.filename !== 'string'
+    || !reference.filename.startsWith('__wp_pre_instruction__')
+    || typeof reference.original_filename !== 'string'
+    || typeof reference.content_sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(reference.content_sha256)) {
+    throw new Error('Invalid pre-instruction attachment reference')
+  }
+  return { ...reference }
 }

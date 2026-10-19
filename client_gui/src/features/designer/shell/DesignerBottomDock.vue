@@ -6,7 +6,8 @@
        Minimap stays on screen dimmed and unavailable (confirmed initial-state design).
        flowgate.v02.0048 T#1 (D#1 §4.2 / §5.7): the Inspector gets the selection context and its
        Host intents are passed up unchanged — the Dock knows no Inspector feature.
-       flowgate.v02.0070 T#1: so is the card title save the Center column gives (the Inspector header's). -->
+       flowgate.v02.0070 T#1: so is the card title save the Center column gives (the Inspector header's).
+       flowgate.v02.0072 TR0012 rev1: and the session's run lock of any Flow (the work plan windows'). -->
   <section
     class="designer-bottom-dock"
     data-test="designer-bottom-dock"
@@ -16,6 +17,7 @@
       :selection="inspector?.selection() ?? null"
       :unselected="unselected"
       :save-title="inspector?.saveTitle ?? null"
+      :flow-run-lock="inspector?.flowRunLock ?? null"
       @host="inspector?.host($event)"
     />
     <aside
@@ -79,6 +81,8 @@ interface BottomDockInspector {
   readonly host: (intent: { readonly kind: string; readonly nodeId?: string; readonly tool?: string }) => void
   /** flowgate.v02.0070 T#1: the card title save (the session's, for the Flow and card given); null = none. */
   readonly saveTitle?: DesignerCenterSession['saveNodeTitle'] | null
+  /** flowgate.v02.0072 TR0012 rev1: any open Flow's run lock now (the session's run marks), for the work plan windows. */
+  readonly flowRunLock?: ((flowId: string) => 'run' | 'unknown' | null) | null
 }
 const inspector = inject<BottomDockInspector | null>(Symbol.for('flowgate.designer.bottomDockInspector'), null)
 

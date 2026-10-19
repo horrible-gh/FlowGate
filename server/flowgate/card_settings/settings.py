@@ -17,6 +17,10 @@ answer what a node's AI start takes from its card.
   with or without a run, and a ``graph_node_state_changed`` too when the Flow's run has the node.
 - The requirement card's AI delegation on / off adds / removes the card's AI delegation document
   line (``card_documents.lines.set_delegation``), in the same guard.
+- flowgate.v02.0072 T#3: a work plan card (WP) reads and writes its plan settings (``fields.PLAN``: the AI
+  pre-instruction writing switch and the run block) by the same GET / PATCH, locks and failures. They are values
+  only: nothing here touches the plan document (its Steps' AI, review AI, pre-instructions and attachments), and
+  ``run_settings`` / ``uses_ai`` hand nothing on for the plan kind.
 - ``run_settings`` is the Graph's ``card_settings_ports.run_settings`` handler: only stored values are
   handed on, so a card with nothing stored starts exactly as before. ``result_type`` is its
   ``result_type`` handler: the type an AI node's result is bound as (the dispatch told the AI the same).

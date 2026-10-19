@@ -9,6 +9,8 @@
   <DocumentHistoryWindow v-for="win in historyWindows" :key="`history:${win.docId}`" :win="win" />
   <SlotWriteWindow v-for="win in writeWindows" :key="`write:${win.key}`" :win="win" />
   <DocumentAiWindow v-for="win in aiWindows" :key="`ai:${win.docId}`" :win="win" />
+  <!-- flowgate.v02.0072 T#1 — and every work plan edit window (features/workPlanWindow; opened from the WP card in T#3). -->
+  <WorkPlanEditWindows />
   <ToastHost :toasts="ioToasts" :dismiss-label="t('gui.document_window.close')" @dismiss="(id) => dismissDocumentIoNotice(Number(id))" />
 </template>
 
@@ -16,6 +18,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
+import WorkPlanEditWindows from '@/features/workPlanWindow/WorkPlanEditWindows.vue'
 import DocumentAiWindow from './DocumentAiWindow.vue'
 import DocumentHistoryWindow from './DocumentHistoryWindow.vue'
 import DocumentWindow from './DocumentWindow.vue'

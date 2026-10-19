@@ -8,7 +8,11 @@
        flowgate.v02.0056 F1 (0056 CH §5) — the 0048 details (rev, totals, provider assignment, one row per
        card, "Step 편집은 …") are gone: the plan itself shows them in its document window. Under the lines
        stays what an operator acts on — how many cards the workflow started, and a warning when Steps
-       have no AI assigned. The `rev n · Step n` line summary is gone as well. -->
+       have no AI assigned. The `rev n · Step n` line summary is gone as well.
+       flowgate.v02.0072 T#3 — the documents area is the one 「작업계획」 line (the 전개 document line is gone; the header's
+       ⇉ 전개 actions stay as they were). Its document icon / name and ✎ open the plan in the v0.2 work plan edit window
+       (features/workPlanWindow through openDocument.ts: quantities, Steps, ✎ → the Step window), not the document
+       window; the line's history, [업로드][다운로드], [작성] (no document yet) and [AI 호출] stay the card line's. -->
   <section class="inspector-work-plan" data-test="inspector-work-plan" :data-status="status" :data-has-document="hasDocument ? 'true' : 'false'">
     <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="edit" @history="historyLine" @action="actionLine">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
@@ -38,7 +42,7 @@ import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { INSPECTOR_HOST } from '../../inspectorHost'
-import { cardLineRow, DocumentIoGroup, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
+import { cardLineRow, DocumentIoGroup, openCardLineAction, openDocumentHistory, openWorkPlan } from '../../openDocument'
 import { workPlanSlotFocus, workPlanSlotState } from './workPlanModel'
 import { useWorkPlan } from './useWorkPlan'
 
@@ -56,14 +60,17 @@ const { view, progress, status, errorKey, reload } = useWorkPlan(() => props.tar
 
 const hasDocument = computed(() => props.target.docId !== null)
 
-/** The document icon (or the name): the line's document window (flowgate.v02.0053 T#5). */
+/**
+ * The document icon (or the name): flowgate.v02.0072 T#3 — the plan's work plan edit window (read only there when the
+ * Flow is: ownership conflict, revision view, its run lock).
+ */
 function openLine(line: InspectorSlotView) {
-  if (line.id) openDocument(line.id)
+  if (line.id) openWorkPlan(props.target, line.id, host)
 }
 
-/** ✎: the line's document window, straight in its editor (flowgate.v02.0053 T#3). */
+/** ✎: the same work plan edit window (it is the plan's editor; one window per plan, brought back when open). */
 function edit(line: InspectorSlotView) {
-  if (line.id) openDocument(line.id, 'edit')
+  if (line.id) openWorkPlan(props.target, line.id, host)
 }
 
 /** The history button: the line's 검수·반려 이력 window (flowgate.v02.0056 F1). */
@@ -86,8 +93,9 @@ function stateOf(reviewStatus: string | null, docStatus: string | null) {
 }
 
 /**
- * The v7 lines: the plan document and its deployment record — the card's documents (made when the card
- * was placed, flowgate.v02.0053 T#5), else the bound plan; a line without a document says why.
+ * The plan line: the card's plan document (made when the card was placed, flowgate.v02.0053 T#5), else the bound
+ * plan; a line without a document says why. flowgate.v02.0072 T#3: the one document line (R0001 §1.2, 0005-NR §1 —
+ * the 전개 line is not shown).
  */
 const lines = computed<InspectorSlotView[]>(() => {
   const target = props.target
@@ -106,23 +114,9 @@ const lines = computed<InspectorSlotView[]>(() => {
           open: 'enabled',
         }
       : { key: 'plan', name: t(k('slot.plan')), empty: true }
-  const ownDeploy = target.cardDocuments.find((line) => line.slot === 'deploy')
-  const deployState = ownDeploy ? stateOf(ownDeploy.docReviewStatus, ownDeploy.status) : null
-  const deploy: InspectorSlotView = ownDeploy?.docId
-    ? {
-        key: 'deploy',
-        kind: 'result',
-        name: t(k('slot.deploy')),
-        id: ownDeploy.docId,
-        state: deployState?.view ?? null,
-        focus: workPlanSlotFocus(deployState?.state ?? null),
-        danger: deployState?.state?.tone === 'danger',
-        open: 'enabled',
-      }
-    : { key: 'deploy', kind: 'result', name: t(k('slot.deploy')), empty: true, emptyText: t(k('slot_empty.deploy')) }
-  // flowgate.v02.0056 F2-2: 문서 없음 [작성] · the history number · [AI 호출] of the card's own lines (a WP / M line is
+  // flowgate.v02.0056 F2-2: 문서 없음 [작성] · the history number · [AI 호출] of the card's own line (a WP / M line is
   // never "비어 있음" — O3 §4-1 has_body is always true there).
-  return [plan, deploy].map((line) => ({ ...line, ...cardLineRow(target, line, line.key!) }))
+  return [{ ...plan, ...cardLineRow(target, plan, 'plan') }]
 })
 </script>
 

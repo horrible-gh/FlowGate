@@ -7,6 +7,8 @@
 // flowgate.v02.0053 T#7 — every card with run or test settings (inspectorSettingsKind): a Graph card in any
 // ownership — 조사 · 작업 · 설계 · Custom · 테스트, just placed or done — and, as before, a v0.1 Flow's
 // sequence step. No document is required (a card just placed has its own, a step not started none).
+// flowgate.v02.0072 T#3 — and every Graph work plan (WP) card: the AI 사전 지시서 작성 switch above the same run settings
+// block (작업 AI · 재시작 | 검수 AI · 검수 횟수 · 고급 ▾), kept by the card itself like the others.
 import type { InspectorRegistration } from '../../inspectorRegistry'
 import SettingsTab from './SettingsTab.vue'
 import messages from './messages'
@@ -14,7 +16,7 @@ import messages from './messages'
 const registration: InspectorRegistration = {
   key: 'settings',
   order: 900,
-  settingsKinds: ['run', 'test'],
+  settingsKinds: ['run', 'test', 'plan'],
   requiresDocument: false,
   tab: { key: 'settings', component: SettingsTab },
   messages,

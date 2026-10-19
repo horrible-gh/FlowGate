@@ -16,12 +16,35 @@
        then the assigned AI).
        flowgate.v02.0061 T#14: a Graph card is also locked (the same 🔒 실행 중 line, every control off) while its Flow's
        run is running, paused or stopping (`target.editLock`), without waiting for the settings read to say so.
-       TR0031 rev1: also while the run's status is not confirmed (`unknown`; the lock line then says so). -->
+       TR0031 rev1: also while the run's status is not confirmed (`unknown`; the lock line then says so).
+       flowgate.v02.0072 T#3: a Graph work plan (WP) card — the [switch] AI 사전 지시서 작성 line, then the same 실행 설정
+       block with its AI named 작업 AI (작업 AI · 재시작 | 검수 AI · 검수 횟수 · 고급 ▾ 실행 제한 시간 · 검수 기준). Each change
+       is one card setting saved at once, with the same lock, failure icon and read failure as every card. The switch is
+       a card value: nothing writes a pre-instruction from it yet (its tooltip says so) and off deletes no Step's
+       pre-instruction; the 작업 / 검수 AI are the card's, not the plan's Steps' AI. -->
   <div class="inspector-settings" data-test="inspector-settings" :data-source="source" :data-kind="kind" :data-status="status">
     <InspectorReadFailure v-if="errorKey" :reason="t(k(errorKey))" @retry="reload" />
     <template v-else>
       <InspectorLockNote v-if="locked" :text="lockText" />
-      <InspectorBlock :locked="locked" class="inspector-settings-line" data-test="settings-instruction">
+      <InspectorBlock v-if="kind === 'plan'" :locked="locked" class="inspector-settings-line" data-test="settings-pre-instruction">
+        <div class="inspector-settings-switch">
+          <Toggle
+            :model-value="preInstruction.on"
+            :disabled="preInstruction.disabled"
+            :aria-label="t(k('pre_instruction.label'))"
+            data-test="settings-pre-instruction-switch"
+            @update:model-value="onPreInstruction"
+          />
+          <span class="inspector-settings-switch-label" :title="preInstruction.hint" data-test="settings-pre-instruction-label">{{ t(k('pre_instruction.label')) }}</span>
+          <InspectorFailureIcon
+            v-if="failureOf('pre_instruction_auto')"
+            :name="t(k('failed'))"
+            :reason="failureOf('pre_instruction_auto')!"
+            data-field="pre_instruction_auto"
+          />
+        </div>
+      </InspectorBlock>
+      <InspectorBlock v-else :locked="locked" class="inspector-settings-line" data-test="settings-instruction">
         <InspectorControlRow :label="t(k('instruction.label'))" :hint="t(k('instruction.hint'))">
           <InspectorSegment
             :model-value="segment('instruction').value"
@@ -56,6 +79,7 @@
       <InspectorRunSettings
         :layout="kind === 'test' ? 'scenario' : 'run'"
         :fields="runFields"
+        :labels="runLabels"
         :locked="locked"
         :advanced-open="advancedOpen"
         @update:advanced-open="advancedOpen = $event"
@@ -69,6 +93,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '../../../../../components/ui/Select.vue'
+import Toggle from '../../../../../components/ui/Toggle.vue'
 import InspectorBlock from '../../parts/InspectorBlock.vue'
 import InspectorControlRow from '../../parts/InspectorControlRow.vue'
 import InspectorFailureIcon from '../../parts/InspectorFailureIcon.vue'
@@ -88,6 +113,7 @@ import {
   cardSettingsInstructionAiShown,
   cardSettingsIsAiField,
   cardSettingsReviewOff,
+  cardSettingsSwitchOn,
   cardSettingsText,
   cardSettingsValue,
   cardSettingsValueOf,
@@ -107,7 +133,10 @@ const k = (key: string) => `gui.inspector.settings.${key}`
 
 /** card = a Graph card (T#2 card settings); sequence = a v0.1 Flow's Node (its sequence row). */
 const source = computed<'card' | 'sequence'>(() => (props.target.nodeType !== null ? 'card' : 'sequence'))
-const kind = computed(() => (inspectorSettingsKind(props.target) === 'test' ? 'test' : 'run'))
+const kind = computed<'run' | 'test' | 'plan'>(() => {
+  const settingsKind = inspectorSettingsKind(props.target)
+  return settingsKind === 'test' || settingsKind === 'plan' ? settingsKind : 'run'
+})
 
 const card = useCardSettings(() => (source.value === 'card' ? props.target : null))
 const sequence = useSettings(() => (source.value === 'sequence' ? props.target : null))
@@ -190,9 +219,24 @@ function sequenceField(field: CardSettingsField): FieldView {
 
 const views = computed(() => {
   const out = {} as Record<CardSettingsField, FieldView>
-  for (const field of CARD_SETTINGS_FIELDS.run) out[field] = source.value === 'card' ? cardField(field) : sequenceField(field)
+  const fields = kind.value === 'plan' ? CARD_SETTINGS_FIELDS.plan : CARD_SETTINGS_FIELDS.run
+  for (const field of fields) out[field] = source.value === 'card' ? cardField(field) : sequenceField(field)
   return out
 })
+
+/** flowgate.v02.0072 T#3 — the WP card's AI 사전 지시서 작성 switch: its value, whether it may change, its tooltip. */
+const preInstruction = computed(() => {
+  const view = views.value.pre_instruction_auto
+  const on = cardSettingsSwitchOn(cardSettingsValue(card.node.value, card.pending.value, 'pre_instruction_auto'))
+  const hint = t(k('pre_instruction.hint'))
+  return { on, disabled: !view || view.disabled, hint: view?.reason ? `${t(k(view.reason))} · ${hint}` : hint }
+})
+
+/** The switch sends its one value (true / false) at once; nothing else changes with it (no plan document write). */
+function onPreInstruction(on: boolean) {
+  if (preInstruction.value.disabled) return
+  void card.change('pre_instruction_auto', on)
+}
 
 function segment(field: 'instruction') {
   const view = views.value[field]
@@ -205,9 +249,10 @@ function segmentOptions(field: 'instruction', values: readonly string[]): Inspec
 }
 
 /** flowgate.v02.0056 F2-1: the 지시 AI row — a RUN card (Graph) whose instruction is used (the value shown). */
-const instructionAiShown = computed(
-  () => source.value === 'card' && cardSettingsInstructionAiShown(kind.value, cardSettingsValue(card.node.value, card.pending.value, 'instruction')),
-)
+const instructionAiShown = computed(() => {
+  const shownKind = kind.value
+  return source.value === 'card' && shownKind !== 'plan' && cardSettingsInstructionAiShown(shownKind, cardSettingsValue(card.node.value, card.pending.value, 'instruction'))
+})
 
 /**
  * Why the server refused the field's last change (the ! icon's tooltip), or null. flowgate.v02.0056 F2-1: on the
@@ -223,6 +268,9 @@ function failureOf(field: CardSettingsField): string | null {
 }
 
 const RUN_BLOCK_FIELDS: readonly InspectorRunSettingsField[] = ['run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis']
+
+/** flowgate.v02.0072 T#3 — the WP card names its run AI 작업 AI; the other cards keep the common names. */
+const runLabels = computed<Partial<Record<InspectorRunSettingsField, string>>>(() => (kind.value === 'plan' ? { run_ai: t(k('plan.run_ai')) } : {}))
 
 const runFields = computed<InspectorRunSettingsFields>(() => {
   const out: Partial<Record<InspectorRunSettingsField, InspectorRunSettingsFields[InspectorRunSettingsField]>> = {}
@@ -269,6 +317,22 @@ function reload() {
    their own 8px apart (InspectorBlock). */
 .inspector-settings-line {
   padding: 6px 12px;
+}
+
+/* flowgate.v02.0072 T#3: the WP card's switch line — the switch first, its name right of it. */
+.inspector-settings-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: #94a8bd;
+}
+
+.inspector-settings-switch-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
 }
 
 /* flowgate.v02.0056 F2-1: the 지시 AI select, as tall as the run settings' selects. */

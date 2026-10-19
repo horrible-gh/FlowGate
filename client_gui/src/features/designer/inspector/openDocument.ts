@@ -17,6 +17,15 @@
 // feature too: the lines draw its group (DocumentIoGroup, handed to the slot list's `io` slot), an edit request
 // for a document an upload guards opens its window in the view (0068 L §2.13), and the Frame tells when the
 // Designer is left or the project changes (leaveDocumentIo / forgetDocumentIo).
+// flowgate.v02.0072 T#3 — a work plan card's 「작업계획」 line opens the plan in the v0.2 work plan edit window
+// (features/workPlanWindow, T#1, reached through the document window surface; its Step ✎ opens the T#2 Step window),
+// not in the document window: open and ✎ alike, one window per plan, opening it again brings it back. The window
+// reads its Flow's verdict: read only as the Inspector last showed the Flow (the ownership conflict / revision view —
+// the Frame notes it on every target it shows, noteWorkPlanOpener), and the Flow's run lock as the Designer knows it
+// now (TR0012 rev1: the Frame's reader, provideWorkPlanFlowRunLock), whatever is selected — no card, another card or
+// another Flow. A run status not confirmed, or no Designer to tell it, locks the window too. A save of the plan asks
+// the Designer to read that Flow's Canvas again.
+import { reactive, shallowRef } from 'vue'
 import {
   DocumentIoGroup,
   documentIoForget,
@@ -27,6 +36,7 @@ import {
   openDocumentHistoryWindow,
   openDocumentWindow,
   openSlotWriteWindow,
+  openWorkPlanEditWindow,
   settleWrittenCardLines,
   writtenCardLines,
   type DocumentWindowMode,
@@ -66,6 +76,77 @@ export function openDocument(docId: string, mode: OpenDocumentMode = 'view', opt
   // The questions of the document itself (only its project / Flow / id are read from the target).
   const aside = target ? { component: QnaTab, props: { target: { ...target, docId }, history: true } } : null
   openDocumentWindow(docId, 'view', { exact: true, aside })
+}
+
+/** flowgate.v02.0072 T#3 — what an opener tells the work plan edit window: read only, the Flow's run lock, or nothing. */
+export type WorkPlanOpenerLock = 'read_only' | 'run_locked' | null
+
+/** The opener's verdict of a target: read only (conflict / revision view) wins over the run lock (also `unknown`). */
+export function workPlanOpenerLock(target: Pick<InspectorTarget, 'readOnly' | 'editLock'>): WorkPlanOpenerLock {
+  if (target.readOnly !== null) return 'read_only'
+  return target.editLock ? 'run_locked' : null
+}
+
+/**
+ * flowgate.v02.0072 TR0012 rev1 — a Flow's run lock as the Designer knows it now (the Center session's run marks): `run`
+ * (running / paused / stopping), `unknown` (not confirmed: being read, failed, or the Flow is not open) or null.
+ */
+export type WorkPlanFlowRunLock = (flowId: string) => 'run' | 'unknown' | null
+
+/** Whether the Inspector last showed each Flow read only (reactive: an open window follows it). */
+const workPlanReadOnlyFlows = reactive(new Map<string, boolean>())
+
+/** The Frame's reader of the Flows' run locks while it is mounted (reactive: an open window follows it). */
+const workPlanRunLockReader = shallowRef<WorkPlanFlowRunLock | null>(null)
+
+/** flowgate.v02.0072 T#3 — the Frame notes the read-only verdict of every target it shows (by its Flow). */
+export function noteWorkPlanOpener(target: InspectorTarget | null): void {
+  if (!target) return
+  const readOnly = target.readOnly !== null
+  if (workPlanReadOnlyFlows.get(target.flowId) !== readOnly) workPlanReadOnlyFlows.set(target.flowId, readOnly)
+}
+
+/**
+ * flowgate.v02.0072 TR0012 rev1 — the Frame tells the work plan windows every Flow's run lock, not only the selected
+ * one's. Returns the undo (the Frame's end: the run status is then not known, and the windows stay locked).
+ */
+export function provideWorkPlanFlowRunLock(reader: WorkPlanFlowRunLock): () => void {
+  workPlanRunLockReader.value = reader
+  return () => {
+    if (workPlanRunLockReader.value === reader) workPlanRunLockReader.value = null
+  }
+}
+
+/** What an open work plan window of the Flow reads now: read only, else the Flow's run lock (`unknown` locks too). */
+export function workPlanFlowLock(flowId: string): WorkPlanOpenerLock {
+  if (workPlanReadOnlyFlows.get(flowId) === true) return 'read_only'
+  const reader = workPlanRunLockReader.value
+  return reader === null || reader(flowId) !== null ? 'run_locked' : null
+}
+
+/** Forgets the noted verdicts (another project, tests). */
+export function forgetWorkPlanOpeners(): void {
+  workPlanReadOnlyFlows.clear()
+}
+
+/**
+ * flowgate.v02.0072 T#3 — opens (or brings back) the work plan edit window of the target's plan document. A save
+ * reads the Flow's Canvas again (the host's refresh-flow); the card's summary also reads the plan again on the
+ * server's refresh events.
+ */
+export function openWorkPlan(target: InspectorTarget, docId: string, host: InspectorHost | null): void {
+  if (!docId) return
+  noteWorkPlanOpener(target)
+  const flowId = target.flowId
+  const line = target.cardDocuments.find((item) => item.docId === docId)
+  openWorkPlanEditWindow({
+    docId,
+    projectId: target.projectId,
+    groupId: flowId,
+    title: line?.title || null,
+    external: () => workPlanFlowLock(flowId),
+    saved: () => host?.request({ kind: 'refresh-flow', flowId }),
+  })
 }
 
 /** flowgate.v02.0068 T#1 — the [업로드][다운로드] group of one document (a document line's `io` slot). */

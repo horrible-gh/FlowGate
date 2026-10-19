@@ -30,8 +30,9 @@ describe('requiresSlot (registry condition)', () => {
   // a v0.1 Node keeps them as a sequence step), see settingsKinds.0053; the slot rule stays inside it.
   it('the settings registration declares settings kinds instead', () => {
     expect(settingsRegistration.requiresSlot).toBeUndefined()
-    expect(settingsRegistration.settingsKinds).toEqual(['run', 'test'])
-    expect(inspectorRegistry.entries.find((entry) => entry.key === 'settings')?.settingsKinds).toEqual(['run', 'test'])
+    // flowgate.v02.0072 T#3: and the Graph work plan card (plan).
+    expect(settingsRegistration.settingsKinds).toEqual(['run', 'test', 'plan'])
+    expect(inspectorRegistry.entries.find((entry) => entry.key === 'settings')?.settingsKinds).toEqual(['run', 'test', 'plan'])
   })
 
   it('a registration with requiresSlot applies only to a target with a slot', () => {

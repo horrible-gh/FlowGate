@@ -227,7 +227,8 @@ describe('the three states on the documents tab (flowgate.v02.0056 F2-2)', () =>
     frame = null
     const plan = { ...card('gn_wp', 'WP', [line('plan', 'WP', doc('0003', 'WP'), { hasBody: false }), line('deploy', 'M', doc('0004', 'M'), { hasBody: false })]), kind: 'plan' }
     await mountFrame(plan)
-    expect(rows().map((item) => item.attributes('data-blank') ?? 'false')).toEqual(['false', 'false'])
+    // flowgate.v02.0072 T#3: the WP card shows its 작업계획 line only (no 전개 document line).
+    expect(rows().map((item) => item.attributes('data-blank') ?? 'false')).toEqual(['false'])
   })
 
   it('the history button carries history_count; its hover text has the AI review / rejection split', async () => {

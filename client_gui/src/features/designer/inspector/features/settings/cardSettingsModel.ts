@@ -14,6 +14,11 @@
 // run AI then the assignee AI, sent as null);
 // restart and review count are the server's repeat choices (-1 until done / until it passes, 0 none, n);
 // the time limit is minutes; the review basis is type / last.
+//
+// flowgate.v02.0072 T#3 — plan: a Graph work plan (WP) card's settings — the AI 사전 지시서 작성 switch
+// (`pre_instruction_auto`, true / false, off by default) and the same run block (run_ai shown as 작업 AI, restart,
+// review_ai, review_count, time_limit, review_basis). They are the card's values only: not the plan's Steps' AI /
+// review AI inside the WP document, nothing runs from them yet, and the switch deletes no Step's pre-instruction.
 import type { InspectorReadOnly } from '../../inspectorTarget'
 import { settingsReviewCountKey, type SettingsOption } from './settingsModel'
 
@@ -39,11 +44,18 @@ export type CardSettingsField =
   | 'review_count'
   | 'time_limit'
   | 'review_basis'
+  | 'pre_instruction_auto'
 
 /** The fields of each kind, in v7 order. */
-export const CARD_SETTINGS_FIELDS: Readonly<Record<'run' | 'test', readonly CardSettingsField[]>> = {
+export const CARD_SETTINGS_FIELDS: Readonly<Record<'run' | 'test' | 'plan', readonly CardSettingsField[]>> = {
   run: ['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis'],
   test: ['instruction', 'run_ai', 'review_ai', 'review_count'],
+  plan: ['pre_instruction_auto', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis'],
+}
+
+/** flowgate.v02.0072 T#3 — a switch's value as shown: on only for a stored (or sent) true. */
+export function cardSettingsSwitchOn(value: unknown): boolean {
+  return value === true
 }
 
 /** Fields whose value is a number (sent as one). */
@@ -182,7 +194,7 @@ export function cardSettingsReviewOff(reviewCount: unknown): boolean {
 export type CardSettingsFailureKind = 'locked' | 'disposed' | 'unavailable' | 'invalid' | 'forbidden' | 'not_found' | 'network' | 'other'
 
 /** 422 reasons a refused value has its own sentence for (O2 0007-TR §4-1). */
-export const CARD_SETTINGS_INVALID_REASONS: readonly string[] = ['unknown_ai', 'not_a_text', 'invalid_text', 'not_a_setting_of_this_card']
+export const CARD_SETTINGS_INVALID_REASONS: readonly string[] = ['unknown_ai', 'not_a_text', 'invalid_text', 'not_a_setting_of_this_card', 'not_a_boolean']
 
 /**
  * Message key of a refused change (the tooltip of the field's ! icon). flowgate.v02.0056 F2-1: a refused value

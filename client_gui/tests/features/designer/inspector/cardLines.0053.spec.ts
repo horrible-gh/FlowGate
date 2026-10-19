@@ -3,7 +3,8 @@
  * The real Frame and registry on a draft node as the server answers it after the save (its card lines and,
  * for the Inspector's document tabs, the first line a person writes as the node's document):
  *
- * - every card kind shows the lines of the table — 요구사항 · AI 위임 (only while on), 작업계획 · 전개,
+ * - every card kind shows the lines of the table — 요구사항 · AI 위임 (only while on), 작업계획 (flowgate.v02.0072 T#3: the
+ *   전개 line is not shown; the plan opens in the work plan edit window),
  *   설계 (기본 · 프로토콜 · 로직 · DB) · 조사 · 작업 · Custom: 지시서 · 레포트, 테스트: 지시서 · 시나리오 · 레포트;
  * - each line is `name · [state] · [history] · [document icon] · ✎`: the name and the document icon (tooltip
  *   열기) open the document window, ✎ opens it straight in the editor — the report too, before any run; a
@@ -16,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
 import type { FlowGraph, FlowGraphCardDocument, FlowGraphNode } from '@/features/designer/center/graph/flowGraph'
 import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
+import { closeAllWorkPlanEditWindows, workPlanEditWindowList } from '@/features/workPlanWindow'
 import { prepareInspectorI18n, selectionOf } from './support/inspectorSupport'
 
 const settingsNodeRead = vi.hoisted(() => vi.fn())
@@ -49,6 +51,7 @@ afterEach(() => {
   wrapper?.unmount()
   wrapper = null
   closeAllDocumentWindows()
+  closeAllWorkPlanEditWindows()
   document.body.innerHTML = ''
 })
 
@@ -84,6 +87,8 @@ interface PlacedCard {
   readonly section: string
   readonly node: FlowGraphNode
   readonly names: readonly string[]
+  /** flowgate.v02.0072 T#3: the documents of the lines shown, when not every card line is shown (the WP card). */
+  readonly docs?: readonly string[]
 }
 
 /** Every kind of card the palette places, with the lines T#1 makes for it. */
@@ -95,7 +100,7 @@ const CARDS: readonly PlacedCard[] = [
     node: placed('gn_r2', 'document', 'R', [line('requirement', 'R', doc('0001', 'R'), 'human'), line('delegation', 'M', doc('0002', 'M'), 'run')]),
     names: ['요구사항', 'AI 위임'],
   },
-  { card: '작업계획', section: 'workPlan', node: placed('gn_wp', 'document', 'WP', [line('plan', 'WP', doc('0003', 'WP'), 'human'), line('deploy', 'M', doc('0004', 'M'), 'run')]), names: ['작업계획', '전개'] },
+  { card: '작업계획', section: 'workPlan', node: placed('gn_wp', 'document', 'WP', [line('plan', 'WP', doc('0003', 'WP'), 'human'), line('deploy', 'M', doc('0004', 'M'), 'run')]), names: ['작업계획'], docs: [doc('0003', 'WP')] },
   ...['D', 'P', 'L', 'DB'].map((type) => ({
     card: `설계 ${type}`,
     section: 'designCard',
@@ -143,13 +148,13 @@ const windows = () => documentWindowList().map((win) => [win.docId, win.mode])
 const TYPE_CODE = /\b(?:R|B|M|WP|DS|D|P|L|DB|N|NR|T|TR|T2|TR2|TS|TSC|TSR|AC)\b/
 
 describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () => {
-  it.each(CARDS)('$card: the lines of the table, each without a badge while drafted, with the history button, the document icon and ✎', async ({ node, section, names }) => {
+  it.each(CARDS)('$card: the lines of the table, each without a badge while drafted, with the history button, the document icon and ✎', async ({ node, section, names, docs }) => {
     const w = await mountFrame(node)
     // flowgate.v02.0056 F2-2: the card's memos follow its lines in a draft (unassigned) Flow too.
     expect(w.findAll('[data-test="designer-inspector-section"]').map((part) => part.attributes('data-key'))).toEqual([section, 'cardMemo'])
     const shown = lines(w)
     expect(shown.map((row) => row.get('[data-test="inspector-slot-name"]').text())).toEqual([...names])
-    expect(shown.map((row) => row.attributes('data-doc'))).toEqual(node.cardDocuments!.map((own) => own.docId))
+    expect(shown.map((row) => row.attributes('data-doc'))).toEqual(docs ?? node.cardDocuments!.map((own) => own.docId))
     for (const row of shown) {
       expect(row.attributes('data-empty')).toBe('false')
       // flowgate.v02.0056 F1: a document being written asks nothing of the operator — no badge.
@@ -167,7 +172,8 @@ describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () =
     for (const word of ['아직 없음', '↗', '설명 대기', '설계 카드는 아직 비워 두었습니다', '작성 필요', '＋']) expect(body).not.toContain(word)
   })
 
-  it.each(CARDS)('$card: the name and the document icon open each line in its window; ✎ straight in the editor', async ({ node }) => {
+  // flowgate.v02.0072 T#3: the WP card's 작업계획 line opens the work plan edit window instead (below).
+  it.each(CARDS.filter((card) => card.card !== '작업계획'))('$card: the name and the document icon open each line in its window; ✎ straight in the editor', async ({ node }) => {
     const w = await mountFrame(node)
     const shown = lines(w)
     const first = shown[0]
@@ -181,6 +187,16 @@ describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () =
     closeAllDocumentWindows()
     await last.get('[data-test="inspector-slot-edit"]').trigger('click')
     expect(windows()).toEqual([[last.attributes('data-doc'), 'edit']])
+  })
+
+  it('작업계획: the name, the document icon and ✎ open the plan in its one work plan edit window, no document window', async () => {
+    const w = await mountFrame(CARDS.find((card) => card.card === '작업계획')!.node)
+    const plan = lines(w)[0]
+    for (const button of ['inspector-slot-name', 'inspector-slot-open', 'inspector-slot-edit']) {
+      await plan.get(`[data-test="${button}"]`).trigger('click')
+      expect(workPlanEditWindowList().map((win) => win.docId), button).toEqual([doc('0003', 'WP')])
+      expect(windows()).toEqual([])
+    }
   })
 
   it('a requirement card shows AI 위임 only while the server keeps its line (the setting is on)', async () => {

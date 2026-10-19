@@ -116,8 +116,10 @@ export function inspectorReadOnly(ownership: string | null | undefined, viewMode
 /**
  * flowgate.v02.0053 T#7 — what the settings tab holds for a Node, by the kinds the server keeps card settings
  * by (T#2 `fields.card_kind`): run (조사 · 작업 · 설계 · Custom), test, requirement, check.
+ * flowgate.v02.0072 T#3 — and plan: a Graph work plan (WP) card keeps the plan settings (the AI 사전 지시서 작성
+ * switch and the run block, values only).
  */
-export const INSPECTOR_SETTINGS_KINDS = ['run', 'test', 'requirement', 'check'] as const
+export const INSPECTOR_SETTINGS_KINDS = ['run', 'test', 'requirement', 'check', 'plan'] as const
 
 export type InspectorSettingsKind = (typeof INSPECTOR_SETTINGS_KINDS)[number]
 
@@ -126,8 +128,9 @@ const SETTINGS_RUN_TYPES: readonly string[] = ['N', 'T', 'T2', 'D', 'P', 'L', 'D
 
 /**
  * The settings kind of a Node, or null (no settings tab). A Graph card (a definition node) has the kind the
- * server keeps its settings by: a Custom card runs, a gate is a check, a document card goes by its own
- * (definition) type — not by the result its run bound (N → NR, T → TR), so a done card keeps its form.
+ * server keeps its settings by: a Custom card runs, a gate is a check, a work plan card is a plan, a document card
+ * goes by its own (definition) type — not by the result its run bound (N → NR, T → TR), so a done card keeps its
+ * form. A v0.1 Flow's work plan Node has no store, so no settings tab.
  * A Node without a definition (a v0.1 Flow's document Node) keeps what 0048 / 0051 gave it: a run or test
  * card as a v0.1 sequence step (its slot), the requirement and check cards drawn without a store.
  */
@@ -141,6 +144,7 @@ export function inspectorSettingsKind(
     const type = (target.cardDocType ?? target.docType)?.trim().toUpperCase() ?? ''
     if (type === 'R' || type === 'B') return 'requirement'
     if (type === 'TS') return 'test'
+    if (type === 'WP') return 'plan'
     return SETTINGS_RUN_TYPES.includes(type) ? 'run' : null
   }
   if (target.cardKind === 'requirement' || target.cardKind === 'check') return target.cardKind

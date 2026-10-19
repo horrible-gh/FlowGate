@@ -9,7 +9,13 @@ Pure. The 0053 CH agreement (§4 "settings as drawn") and the v7 settings blocks
   document (0549 contract 2), so the card stores nothing for it;
 - requirement cards (R / B): AI delegation off / on, its scope, AI Team and the safety limits —
   values only, no delegation engine (0053 CH: out of this scope);
-- check cards (gate): usage, Git apply mode, merge target, push, keep branch.
+- check cards (gate): usage, Git apply mode, merge target, push, keep branch;
+- work plan cards (WP, flowgate.v02.0072 T#3): the AI pre-instruction writing switch, and the run block the
+  v7 plan settings draw (work AI, restart, review AI, review count, the advanced time limit and review basis) —
+  values only. No engine reads them yet: the plan card is no AI run of its own (``run_plan`` / ``after_result``
+  hand nothing on, ``settings.uses_ai`` stays false), no pre-instruction writer exists, and they are not the
+  Steps' own AI / review AI inside the WP document body (``provider_id`` / ``reviewer_provider_id``), which
+  nothing here reads or changes. Turning the switch off deletes no Step's pre-instruction.
 
 A field with no stored value shows its default. The default is what the engine does without the
 setting today, so storing nothing and storing the default run the same way. ``None`` as a default
@@ -55,8 +61,8 @@ from typing import Any, Callable, Iterable, Optional
 
 from flowgate.card_documents.slots import CUSTOM_DOC_TYPES, instruction_and_report
 
-RUN, TEST, REQUIREMENT, CHECK = "run", "test", "requirement", "check"
-CARD_KINDS = (RUN, TEST, REQUIREMENT, CHECK)
+RUN, TEST, REQUIREMENT, CHECK, PLAN = "run", "test", "requirement", "check", "plan"
+CARD_KINDS = (RUN, TEST, REQUIREMENT, CHECK, PLAN)
 
 # Value kinds.
 CHOICE, AI, REPEAT, MINUTES, LIMIT, TEAM, BRANCH, FLAG = (
@@ -86,6 +92,7 @@ LOOP_REWORK_TIMEOUTS_SEC = (1800, 3600, 7200)
 LOOP_TOTAL_TIMEOUT_SEC = 14400
 LOOP_FAILURE_RESTARTS = (-1, 0, 1, 2)
 _ROOT_TYPES = frozenset({"R", "B"})
+_PLAN_TYPES = frozenset({"WP"})
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 
 
@@ -102,13 +109,15 @@ _INSTRUCTION_AI = Field("instruction_ai", AI)    # None: the run AI, else the no
 _RUN_AI = Field("run_ai", AI)                    # None: the node's assignee AI
 _REVIEW_AI = Field("review_ai", AI)              # None: the project's default reviewer
 _REVIEW_COUNT = Field("review_count", REPEAT, 0)
+_RESTART = Field("restart", REPEAT, 0)           # a single node run is one-shot today
+_TIME_LIMIT = Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMIT_MINUTES)
+_REVIEW_BASIS = Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA))
+# flowgate.v02.0072 T#3: the work plan card's AI pre-instruction writing switch. Off by default: nothing writes a
+# pre-instruction by itself today, so storing nothing and storing off mean the same.
+PRE_INSTRUCTION_AUTO = Field("pre_instruction_auto", FLAG, False)
 _FIELDS = {
     RUN: (
-        _INSTRUCTION, _INSTRUCTION_AI, _RUN_AI,
-        Field("restart", REPEAT, 0),             # a single node run is one-shot today
-        _REVIEW_AI, _REVIEW_COUNT,
-        Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMIT_MINUTES),
-        Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA)),
+        _INSTRUCTION, _INSTRUCTION_AI, _RUN_AI, _RESTART, _REVIEW_AI, _REVIEW_COUNT, _TIME_LIMIT, _REVIEW_BASIS,
     ),
     TEST: (_INSTRUCTION, _RUN_AI, _REVIEW_AI, _REVIEW_COUNT),
     REQUIREMENT: (
@@ -127,6 +136,7 @@ _FIELDS = {
         Field("push", FLAG),
         Field("keep_branch", FLAG),
     ),
+    PLAN: (PRE_INSTRUCTION_AUTO, _RUN_AI, _RESTART, _REVIEW_AI, _REVIEW_COUNT, _TIME_LIMIT, _REVIEW_BASIS),
 }
 
 
@@ -145,7 +155,8 @@ class InvalidValue(ValueError):
 
 
 def card_kind(node_type: Optional[str], doc_type: Optional[str]) -> Optional[str]:
-    """The settings kind of a card, or None (a work plan card or an unknown type has no settings)."""
+    """The settings kind of a card, or None (an unknown type has no settings). flowgate.v02.0072 T#3: a work plan
+    card keeps the plan settings (values only, see the head of this module)."""
     if node_type == "custom":
         return RUN                               # a palette [+] card works like research / work
     if node_type == "gate":
@@ -157,6 +168,8 @@ def card_kind(node_type: Optional[str], doc_type: Optional[str]) -> Optional[str
         return REQUIREMENT
     if t == "TS":
         return TEST
+    if t in _PLAN_TYPES:
+        return PLAN
     return RUN if t in _RUN_DOC_TYPES else None
 
 
