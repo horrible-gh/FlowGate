@@ -150,10 +150,12 @@ afterEach(() => {
 })
 
 describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
-  it('A: shows only screens whose view is registered (시스템 › 사용자), no Workspace/retired/"준비 중" entry', async () => {
+  it('A: shows only screens whose view is registered (내 설정 2개, 시스템 › 사용자), no Workspace/retired/"준비 중" entry', async () => {
     setCurrentUser(ADMIN)
     const hub = await enterDirectly('/settings')
-    expect(hub.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['system'])
+    expect(hub.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['me', 'system'])
+    expect(hub.get('[data-scope-card="me"] a').attributes('href')).toBe('/app/settings/me/account')
+    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '보안 · 세션'])
     expect(hub.get('[data-scope-card="system"] a').attributes('href')).toBe('/app/settings/system/users')
     expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['사용자'])
     expectNoRetiredOrInertEntries(hub)
@@ -161,7 +163,7 @@ describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
     hub.unmount()
 
     const page = await enterDirectly('/settings/system/users')
-    expect(page.findAll('[data-scope]').map((t) => t.attributes('data-scope'))).toEqual(['system'])
+    expect(page.findAll('[data-scope]').map((t) => t.attributes('data-scope'))).toEqual(['me', 'system'])
     expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['users'])
     expect(page.find('.subnav-group').exists()).toBe(false)
     for (const href of hrefs(page)) expect(href).not.toMatch(/\/settings\/(workspaces|system\/security)/)
@@ -170,12 +172,13 @@ describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
     }
   })
 
-  it.each(NON_ADMINS)('%s: no 프로젝트 / 전체 프로젝트 / 시스템 link, no disabled card', async (_label, person) => {
+  it.each(NON_ADMINS)('%s: 내 설정 2개 only — no 프로젝트 / 전체 프로젝트 / 시스템 link, no disabled card', async (_label, person) => {
     setCurrentUser(person)
     const hub = await enterDirectly('/settings')
-    expect(hub.findAll('[data-scope-card]')).toHaveLength(0)
+    expect(hub.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['me'])
+    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '보안 · 세션'])
     expect(hrefs(hub).filter((href) => /\/settings\/(system|project)/.test(href))).toEqual([])
-    expect(hub.find('[data-testid="settings-hub-empty"]').exists()).toBe(true)
+    expect(hub.find('[data-testid="settings-hub-empty"]').exists()).toBe(false)
     expectNoRetiredOrInertEntries(hub)
     expect(settingsRequests()).toEqual([])
   })

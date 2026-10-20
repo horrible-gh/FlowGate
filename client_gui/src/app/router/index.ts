@@ -30,9 +30,10 @@ const placeholderRoutes: RouteRecordRaw[] = PLACEHOLDER_NAV_KEYS.map((key) => ({
 // /app/settings is 환경 설정 (flowgate.v02.0076 T#1, D §1.2): every screen is a lazily loaded
 // child of SettingsLayout. `meta.settingsAccess: 'admin'` marks the 프로젝트/시스템 screens that only
 // a system administrator is shown (the access guard also treats every /settings/project… and
-// /settings/system… path that way). D §1.2's other URLs — me/account, me/security,
-// system/general, system/agents, system/projects, project and project/:projectId/{general,paths,git}
-// — are registered by the steps that build their views; until then they, the retired
+// /settings/system… path that way). 내 설정's me/account and me/security (T#2) are open to every
+// signed-in person. D §1.2's other URLs — system/general, system/agents, system/projects, project
+// and project/:projectId/{general,paths,git} — are registered by the steps that build their
+// views; until then they, the retired
 // /settings/workspaces[/…] and /settings/system/security, and any other unknown /settings/* path
 // are replaced by the overview (installSettingsAccessGuard). The settings menus list a screen
 // only once its route below exists.
@@ -42,6 +43,16 @@ const settingsRoute: RouteRecordRaw = {
   meta: { navKey: 'settings' },
   children: [
     { path: '', name: 'settings', component: () => import('@/features/settings/views/SettingsHubView.vue') },
+    {
+      path: 'me/account',
+      name: 'settings-me-account',
+      component: () => import('@/features/settings/views/MeAccountSettingsView.vue'),
+    },
+    {
+      path: 'me/security',
+      name: 'settings-me-security',
+      component: () => import('@/features/settings/views/MeSecuritySettingsView.vue'),
+    },
     {
       path: 'system/users',
       name: 'settings-system-users',
