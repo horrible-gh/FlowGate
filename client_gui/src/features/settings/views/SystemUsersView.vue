@@ -27,6 +27,14 @@
         </ErrorState>
 
         <template v-else-if="data">
+          <!-- A failed re-read with a list on screen: the list is the last one read, not the current state. -->
+          <div v-if="error" class="fgs-refresh-error" data-testid="users-refresh-error">
+            <ErrorState compact :title="t('gui.settings.users.refresh_failed')" :message="error">
+              <template #action>
+                <Button variant="secondary" data-testid="users-refresh-retry" :disabled="loading" @click="load">{{ t('gui.common.retry') }}</Button>
+              </template>
+            </ErrorState>
+          </div>
           <div class="fgs-glance">
             <div class="fgs-tile">
               <span class="fgs-tico"><SettingsIcon name="users" /></span>
@@ -61,13 +69,6 @@
                 <div class="lbl"><SettingsIcon name="shieldno" size="sm" />{{ t('gui.settings.users.tfa_missing') }}</div>
               </div>
             </button>
-            <button type="button" class="fgs-tile" :class="{ on: noWorkspaceOnly }" data-testid="tile-nows" @click="noWorkspaceOnly = !noWorkspaceOnly">
-              <span class="fgs-tico warn"><SettingsIcon name="grid" /></span>
-              <div class="tbody">
-                <div class="big">{{ data.summary.no_workspace }}</div>
-                <div class="lbl">{{ t('gui.settings.users.no_workspace') }}</div>
-              </div>
-            </button>
           </div>
 
           <div class="fgs-bar">
@@ -91,16 +92,14 @@
             <span class="fgs-vsep" />
             <button type="button" class="fgs-chip" :class="{ on: adminOnly }" @click="adminOnly = !adminOnly"><SettingsIcon name="star" size="sm" />{{ t('gui.settings.users.admin') }}</button>
             <button type="button" class="fgs-chip warn" :class="{ on: tfaMissingOnly }" data-testid="chip-2fa" @click="tfaMissingOnly = !tfaMissingOnly"><SettingsIcon name="shieldno" size="sm" />{{ t('gui.settings.users.tfa_missing_short') }}</button>
-            <button type="button" class="fgs-chip warn" :class="{ on: noWorkspaceOnly }" @click="noWorkspaceOnly = !noWorkspaceOnly"><SettingsIcon name="grid" size="sm" />{{ t('gui.settings.users.no_workspace') }}</button>
           </div>
 
-          <div class="fgs-dtable" style="--cols: minmax(240px, 1.7fr) 110px 90px 100px 90px 110px 24px">
+          <div class="fgs-dtable" style="--cols: minmax(240px, 1.7fr) 110px 90px 100px 110px 24px">
             <div class="fgs-dtr head">
               <div>{{ t('gui.settings.users.col_user') }}</div>
               <div>{{ t('gui.settings.users.col_permission') }}</div>
               <div>{{ t('gui.settings.detail.col_state') }}</div>
               <div>{{ t('gui.settings.users.col_tfa') }}</div>
-              <div>{{ t('gui.settings.scope.workspace') }}</div>
               <div>{{ t('gui.settings.users.col_last_login') }}</div>
               <div />
             </div>
@@ -126,7 +125,6 @@
                 <span v-else-if="row.tfa_enabled" class="tfa ok" :title="t('gui.settings.users.tfa_on')"><SettingsIcon name="shieldok" /></span>
                 <span v-else class="tfa no" :title="t('gui.settings.users.tfa_off')"><SettingsIcon name="shieldno" />{{ t('gui.settings.users.tfa_off') }}</span>
               </div>
-              <div><span class="cnt" :class="{ zero: !row.workspaces.length }"><SettingsIcon name="grid" size="sm" />{{ row.workspaces.length }}</span></div>
               <div class="fgs-muted">{{ relativeTime(row.last_login_at, locale) }}</div>
               <div class="fgs-chev"><SettingsIcon name="chev" /></div>
             </div>
@@ -180,20 +178,6 @@
               </button>
             </div>
             <div class="fgs-actrow">
-              <span class="fgs-tico sm teal"><SettingsIcon name="grid" /></span>
-              <b>{{ t('gui.settings.scope.workspace') }}</b>
-              <span class="fgs-spacer" />
-              <div class="wschips">
-                <RouterLink
-                  v-for="ws in selected.workspaces"
-                  :key="ws.workspace_id"
-                  :to="`/settings/workspaces/${encodeURIComponent(ws.workspace_id)}`"
-                  class="wschip"
-                >{{ ws.name }}</RouterLink>
-                <span v-if="!selected.workspaces.length" class="cnt zero">{{ t('gui.settings.none') }}</span>
-              </div>
-            </div>
-            <div class="fgs-actrow">
               <span class="fgs-tico sm"><SettingsIcon name="clock" /></span>
               <b>{{ t('gui.settings.users.col_last_login') }}</b>
               <span class="fgs-spacer" />
@@ -206,9 +190,6 @@
               <span class="fgs-muted">{{ shortDate(selected.created_at) }}</span>
             </div>
           </div>
-          <button type="button" class="linkrow" disabled :title="t('gui.settings.not_ready')">
-            <SettingsIcon name="log" />{{ t('gui.settings.users.activity') }}<span class="fgs-muted">{{ t('gui.settings.not_ready') }}</span>
-          </button>
         </div>
         <div class="dr-ft">
           <button v-if="selected.state === 'invited'" type="button" class="fgs-btn sm" :disabled="busy" data-testid="drawer-resend" @click="resend">
@@ -282,13 +263,6 @@
         </div>
         <span v-if="form.is_admin" class="fgs-hint"><SettingsIcon name="shield" size="sm" />{{ t('gui.settings.users.admin_tfa_hint') }}</span>
       </div>
-      <div class="fgs-formfield">
-        <label for="new-user-ws">{{ t('gui.settings.scope.workspace') }}</label>
-        <select id="new-user-ws" v-model="form.workspace_id" class="fgs-input" data-testid="new-user-ws">
-          <option :value="null">{{ t('gui.settings.users.later') }}</option>
-          <option v-for="ws in data?.workspaces ?? []" :key="ws.workspace_id" :value="ws.workspace_id">{{ ws.name }} · {{ t('gui.settings.roles.member') }}</option>
-        </select>
-      </div>
       <p v-if="formError" class="fgs-error" role="alert">{{ formError }}</p>
       <template #footer>
         <div class="fgs-modal-actions">
@@ -318,13 +292,20 @@
 </template>
 
 <script setup lang="ts">
-// 시안 13 시스템 › 사용자: every system user with state, 2FA, workspaces and last sign-in;
-// filters and summary tiles; a detail drawer for system-admin on/off (the last administrator
-// cannot lose it), 2FA reset, password reset / new invitation, disable / cancel invitation /
-// enable; and user creation by invitation link or temporary password. The server has no mail
-// transport, so the one-time link or password is shown here for the administrator to hand over.
+// 시안 13 시스템 › 사용자: every system user with state, 2FA and last sign-in; filters and summary
+// tiles; a detail drawer for system-admin on/off (the last administrator cannot lose it), 2FA
+// reset, password reset / new invitation, disable / cancel invitation / enable; and user creation
+// by invitation link or temporary password. The server has no mail transport, so the one-time link
+// or password is shown here for the administrator to hand over.
+//
+// flowgate.v02.0076 T#3 (D §2.7): only the existing /system/users routes. Workspace is gone from
+// this screen — no tile, filter, column, drawer chips or create-time picker — and the create body
+// carries no workspace_id (not even an empty one). The server still reports memberships and keeps
+// them; nothing here removes one. The disabled "활동 기록 · 준비 중" row is gone as well. The
+// last-administrator and self-disable guards stay the server's (409 last_admin /
+// cannot_disable_self); the drawer's lock is only a hint.
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -367,14 +348,21 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const busy = ref(false)
 
-async function load() {
+/**
+ * GET /system/users. False when it failed: the error is kept (shown above a list already on screen,
+ * or instead of the list on first load) and the list on screen is the last one read. Retrying
+ * repeats only this GET, never a change.
+ */
+async function load(): Promise<boolean> {
   loading.value = true
   error.value = null
   try {
     data.value = await listSystemUsers()
     if (selected.value) selected.value = data.value.users.find((u) => u.user_id === selected.value?.user_id) ?? null
+    return true
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
+    return false
   } finally {
     loading.value = false
   }
@@ -385,7 +373,6 @@ const query = ref('')
 const stateFilter = ref<'' | UserState>('')
 const adminOnly = ref(false)
 const tfaMissingOnly = ref(false)
-const noWorkspaceOnly = ref(false)
 
 const stateChips = computed(() => [
   { value: '' as const, label: t('gui.settings.filter_all'), dot: '' },
@@ -403,8 +390,7 @@ const filtered = computed(() => {
     (!q || `${u.username} ${u.email ?? ''}`.toLowerCase().includes(q))
     && (!stateFilter.value || u.state === stateFilter.value)
     && (!adminOnly.value || u.is_admin)
-    && (!tfaMissingOnly.value || (!u.tfa_enabled && u.state !== 'disabled'))
-    && (!noWorkspaceOnly.value || (!u.workspaces.length && u.state !== 'disabled')),
+    && (!tfaMissingOnly.value || (!u.tfa_enabled && u.state !== 'disabled')),
   )
 })
 
@@ -431,10 +417,10 @@ watch(() => route.hash, applyHash)
 
 function exportUsers() {
   const csv = toCsv(
-    ['name', 'email', 'system_admin', 'state', 'two_factor', 'workspaces', 'last_login_at', 'created_at'],
+    ['name', 'email', 'system_admin', 'state', 'two_factor', 'last_login_at', 'created_at'],
     filtered.value.map((u) => [
       u.username, u.email, u.is_admin ? 'yes' : 'no', u.state, u.tfa_enabled ? 'on' : 'off',
-      u.workspaces.map((w) => w.name).join(' | '), u.last_login_at, u.created_at,
+      u.last_login_at, u.created_at,
     ]),
   )
   downloadCsv('users.csv', csv)
@@ -473,10 +459,23 @@ async function runPending() {
   }
 }
 
-async function refreshWith(row: SystemUser | UserCredentialResult) {
-  await load()
+/**
+ * Re-read the list after a change. A change is reported done only when this re-read succeeds; when
+ * it fails the outcome is unconfirmed: no success notice, a warning instead, the drawer (showing
+ * the old state) closes and the re-read error stays above the list.
+ */
+async function reloadAfterChange(): Promise<boolean> {
+  if (await load()) return true
+  selected.value = null
+  pushToast(t('gui.settings.users.refresh_unconfirmed'), 'warning')
+  return false
+}
+
+async function refreshWith(row: SystemUser | UserCredentialResult): Promise<boolean> {
+  if (!(await reloadAfterChange())) return false
   const id = 'user' in row ? row.user.user_id : row.user_id
   selected.value = data.value?.users.find((u) => u.user_id === id) ?? null
+  return true
 }
 
 function askAdmin(next: boolean) {
@@ -491,8 +490,7 @@ function askAdmin(next: boolean) {
       : [{ icon: 'user', text: t('gui.settings.users.effect_regular') }],
     label: next ? t('gui.settings.users.assign') : t('gui.settings.users.unassign'),
     run: async () => {
-      await refreshWith(await setSystemAdmin(row.user_id, next))
-      pushToast(t('gui.settings.users.admin_changed'))
+      if (await refreshWith(await setSystemAdmin(row.user_id, next))) pushToast(t('gui.settings.users.admin_changed'))
     },
   }
 }
@@ -510,8 +508,7 @@ function askTfaReset() {
     ],
     label: t('gui.settings.users.reset'),
     run: async () => {
-      await refreshWith(await resetTfa(row.user_id))
-      pushToast(t('gui.settings.users.tfa_reset_done'))
+      if (await refreshWith(await resetTfa(row.user_id))) pushToast(t('gui.settings.users.tfa_reset_done'))
     },
   }
 }
@@ -531,8 +528,7 @@ function askDisable() {
     ],
     label: invite ? t('gui.settings.users.cancel_invite') : t('gui.settings.users.disable'),
     run: async () => {
-      await refreshWith(await disableSystemUser(row.user_id))
-      pushToast(t('gui.settings.users.disabled_done'))
+      if (await refreshWith(await disableSystemUser(row.user_id))) pushToast(t('gui.settings.users.disabled_done'))
     },
   }
 }
@@ -562,8 +558,7 @@ async function enable() {
   if (!row) return
   busy.value = true
   try {
-    await refreshWith(await enableSystemUser(row.user_id))
-    pushToast(t('gui.settings.users.enabled_done'))
+    if (await refreshWith(await enableSystemUser(row.user_id))) pushToast(t('gui.settings.users.enabled_done'))
   } catch (err) {
     pushToast(err instanceof Error ? err.message : String(err), 'danger')
   } finally {
@@ -589,10 +584,10 @@ async function resend() {
 // ── create ──
 const createOpen = ref(false)
 const formError = ref<string | null>(null)
-const form = reactive<CreateUserInput>({ name: '', email: '', start: 'invite', is_admin: false, workspace_id: null })
+const form = reactive<CreateUserInput>({ name: '', email: '', start: 'invite', is_admin: false })
 
 function openCreate() {
-  Object.assign(form, { name: '', email: '', start: 'invite', is_admin: false, workspace_id: null })
+  Object.assign(form, { name: '', email: '', start: 'invite', is_admin: false })
   formError.value = null
   createOpen.value = true
 }
@@ -601,11 +596,12 @@ async function submitCreate() {
   busy.value = true
   formError.value = null
   try {
-    const result = await createSystemUser({ ...form, name: form.name.trim(), email: form.email.trim() })
+    const result = await createSystemUser({ name: form.name.trim(), email: form.email.trim(), start: form.start, is_admin: form.is_admin })
     createOpen.value = false
+    // The invite link / temporary password is shown once whatever the re-read does: it is the
+    // server's answer and cannot be fetched again. The "created" notice waits for the re-read.
     credential.value = result
-    pushToast(t('gui.settings.users.created', { name: result.user.username }))
-    await load()
+    if (await reloadAfterChange()) pushToast(t('gui.settings.users.created', { name: result.user.username }))
   } catch (err) {
     formError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -639,6 +635,10 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.fgs-refresh-error {
+  margin-bottom: 12px;
+}
+
 .avstack {
   display: flex;
 }
@@ -699,16 +699,6 @@ onMounted(async () => {
 .tfa.ok { color: #71ddb2; }
 .tfa.no { color: #e2c76f; }
 .tfa.off { color: #5d6b7e; }
-
-.cnt {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #b9c9da;
-  font-size: 13px;
-}
-
-.cnt.zero { color: #e2c76f; }
 
 .drawerback {
   position: fixed;
@@ -787,46 +777,6 @@ onMounted(async () => {
   gap: 8px;
   padding: 14px 22px;
   border-top: 1px solid var(--fg2-line);
-}
-
-.wschips {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.wschip {
-  border: 1px solid #2c6e73;
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 11px;
-  color: #8be3cf;
-  background: #0f2e33;
-}
-
-.linkrow {
-  width: 100%;
-  margin-top: 12px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid var(--fg2-line);
-  border-radius: 10px;
-  background: transparent;
-  color: #a7bad0;
-  padding: 12px 14px;
-  font: inherit;
-  font-size: 13px;
-}
-
-.linkrow:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.linkrow .fgs-muted {
-  margin-left: auto;
 }
 
 .confirm {

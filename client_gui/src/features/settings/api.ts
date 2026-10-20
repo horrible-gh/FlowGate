@@ -13,7 +13,10 @@ import type {
   ProjectCreatePolicy,
   ResourceType,
   SecurityPolicy,
+  ScratchUnit,
   SecurityResponse,
+  SystemSettingRow,
+  SystemStorageRoot,
   SystemUser,
   SystemUsersResponse,
   UserCredentialResult,
@@ -113,8 +116,14 @@ export const revokeResource = (id: string, resourceType: ResourceType, resourceI
 export const listSystemUsers = () =>
   call(() => getRequest<SystemUsersResponse>(`${API}/system/users`), 'load_failed')
 
+/** Only the four fields the server reads; workspace_id is never sent (flowgate.v02.0076 T#3). */
 export const createSystemUser = (input: CreateUserInput) =>
-  call(() => postRequest<UserCredentialResult>(`${API}/system/users`, input), 'save_failed')
+  call(
+    () => postRequest<UserCredentialResult>(`${API}/system/users`, {
+      name: input.name, email: input.email, start: input.start, is_admin: input.is_admin,
+    }),
+    'save_failed',
+  )
 
 export const setSystemAdmin = (id: string, isAdmin: boolean) =>
   call(() => putRequest<SystemUser>(`${user(id)}/admin`, { is_admin: isAdmin }), 'save_failed')
@@ -133,6 +142,33 @@ export const resetPassword = (id: string) =>
 
 export const resetTfa = (id: string) =>
   call(() => postRequest<SystemUser>(`${user(id)}/tfa-reset`, {}), 'save_failed')
+
+// ── System › 일반 (flowgate.v02.0076 T#3, D §2.5) ─────────────────────────────
+// Two read contracts — the Root of GET /system/storage-root (never /system/settings/storage-root)
+// and the rows of GET /system/settings — and two separate saves on PATCH /system/settings: the
+// Scratch value/unit pair together in one request (the server writes it in one transaction), and
+// ai_repeat_count_max alone. Nothing else rides along; storage_root is never in `updates`.
+
+export const getSystemStorageRoot = () =>
+  call(() => getRequest<SystemStorageRoot>(`${API}/system/storage-root`), 'load_failed')
+
+export const getSystemSettings = async () =>
+  (await call(() => getRequest<{ settings?: SystemSettingRow[] }>(`${API}/system/settings`), 'load_failed')).settings
+
+/** Both keys as the strings the API stores — never converted to minutes. */
+export const saveScratchRetention = async (value: string, unit: ScratchUnit) =>
+  (await call(
+    () => patchRequest<{ updated?: SystemSettingRow[] }>(`${API}/system/settings`, {
+      updates: { scratch_ttl_value: value, scratch_ttl_unit: unit },
+    }),
+    'save_failed',
+  )).updated
+
+export const saveRepeatCountMax = async (value: string) =>
+  (await call(
+    () => patchRequest<{ updated?: SystemSettingRow[] }>(`${API}/system/settings`, { updates: { ai_repeat_count_max: value } }),
+    'save_failed',
+  )).updated
 
 // ── System › 보안 (시안 14) ───────────────────────────────────────────────────
 

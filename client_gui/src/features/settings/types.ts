@@ -133,12 +133,13 @@ export interface SystemUsersResponse {
   workspaces: { workspace_id: string; name: string }[]
 }
 
+/** POST /system/users. flowgate.v02.0076 T#3: the screen no longer picks a workspace, so the
+ *  body carries no workspace_id at all (not even an empty one); the server's field stays. */
 export interface CreateUserInput {
   name: string
   email: string
   start: 'invite' | 'password'
   is_admin: boolean
-  workspace_id: string | null
 }
 
 /** A one-time credential the administrator hands over: an invitation link or a temporary
@@ -178,3 +179,25 @@ export interface SecurityResponse {
   people: SecurityPerson[]
   signed_out?: number
 }
+
+// ── 시스템 › 일반 (flowgate.v02.0076 T#3, D §2.5) ─────────────────────────────
+
+/** GET /system/storage-root (storage/paths.describe_storage_root). Read only here. */
+export interface SystemStorageRoot {
+  project_id: string | null
+  /** The stored system_settings.storage_root; null when unset. */
+  configured_value: string | null
+  project_override: string | null
+  effective_value: string
+  effective_source: 'env' | 'project_override' | 'system_setting' | 'default'
+  env_override: boolean
+}
+
+/** One row of GET /system/settings `settings` and PATCH `updated`. */
+export interface SystemSettingRow {
+  setting_key: string
+  setting_value: string | null
+  value_type: string
+}
+
+export type ScratchUnit = 'minute' | 'hour' | 'day'
