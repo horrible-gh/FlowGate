@@ -13,7 +13,7 @@ v0.2 환경 설정 (flowgate.v02.0020, approved mockups 11~14; reorganised by fl
 - Menus (`settingsMenu.ts`): the hub cards, the scope tabs of `SettingsShell` and the 시스템
   sub-navigation list a screen only once its route is registered, so nothing is shown as
   "준비 중" or disabled. Registered today: the overview, 내 설정 › 계정 · 화면 / 보안 · 세션 and
-  시스템 › 일반 / 사용자.
+  시스템 › 일반 / 시스템 Agent / 사용자.
 - 시스템 › 일반 (`SystemGeneralSettingsView`; flowgate.v02.0076 T#3, D §2.5), administrators only:
   - 저장 Root: GET `/api/v1/system/storage-root` (configured_value / effective_value /
     effective_source / env_override), read only — no input, save or move, and `storage_root` is
@@ -27,7 +27,37 @@ v0.2 환경 설정 (flowgate.v02.0020, approved mockups 11~14; reorganised by fl
     again takes it away.
   - 미저장 이탈 보호 (D §3.2): with an unsaved input or a save still out, a move to another route
     asks first (계속 편집 cancels it, no request) and a refresh / tab close gets the browser's
-    question. Losing the session or the administrator role is never held by it.
+    question. Losing the session or the administrator role is never held by it. The rule lives in
+    `components/useUnsavedLeaveGuard.ts`, shared with 시스템 Agent.
+- 시스템 › 시스템 Agent (`SystemAgentSettingsView`; flowgate.v02.0076 T#4, D §2.6), administrators
+  only, on the single `/api/v1/system/agents` family (`api/v1/agent_routes.py`, the one the old
+  `client/src/settings` AgentsView used):
+  - GET `/system/agents` (the list answer carries each Agent's detail); POST `/system/agents` for a
+    local (`connection_mode` null, optional executable path) or remote (`agent_pull`, no path)
+    Agent with the ai_cli / ai_api / storage capabilities (settings only — no storage, AI-job or
+    personal-Agent control); PATCH `/system/agents/{aid}` with only the changed name / path /
+    capabilities, or `enabled` alone for 사용 중지 · 다시 사용 (never `location`).
+  - POST `…/enrollments` and `…/credential/revoke` send the route's Empty body `{}`; DELETE only for
+    an Agent without registration history (the server answers 409 otherwise).
+  - State shown as the GET reports it: enabled, registration / credential / enrollment status,
+    online (local = not applicable), last heartbeat, protocol version · compatibility, agent
+    version, OS / architecture, configured / reported / effective capabilities. Online is not
+    "can run" or "running".
+  - 토큰 발급 · 자격 해지 · 삭제 · 사용 중지 are confirmed first with their impact (cancel = no
+    request; no second request while one is out). A change is done only when its answer and the
+    list re-read agree; a refusal (403 / 409 / 503 …) keeps its message and the re-read list.
+  - The enrollment token is held in the view's memory from the 201 answer only, and dropped on
+    another Agent, a change, revoke, delete or leaving. Never logged, stored, put in the URL or a
+    toast. `/agent/enrollments` and `/agent/heartbeat` (the Agent runtime) are never called.
+  - Every request belongs to the epoch it was sent in; leaving the screen, a lost token, another
+    person or a lost administrator role ends it. An answer arriving after that is dropped: no
+    token kept, no re-read, no notice.
+  - The form keeps the confirmed values apart from the typed ones. A re-read moves untouched fields
+    to the server's new value (another administrator's change is never sent back) and keeps the
+    touched ones; PATCH carries the touched fields only.
+  - Unsaved name / path / capability or create input is guarded like 시스템 › 일반, also when
+    switching to another Agent or starting 새 Agent inside the screen. 저장하지 않고 나가기 throws
+    the typed values away: cancelling 새 Agent shows the confirmed values again.
 - 시스템 › 사용자 (`SystemUsersView`, `/api/v1/system/users…`): T#3 removed the Workspace tile,
   filter, column, drawer chips and create-time picker; the create body has no `workspace_id`.
   After every change the list is read again; only when that GET succeeds is the change reported

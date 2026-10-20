@@ -273,14 +273,15 @@ afterEach(() => {
 })
 
 describe('V01 (시스템 부분) — 일반 joins the menus', () => {
-  it('A: hub 시스템 card opens 일반 and lists 일반 · 사용자; the sub-navigation is the same two', async () => {
+  // 시스템 Agent (T#4) sits between them in D §1.2 order.
+  it('A: hub 시스템 card opens 일반 and lists 일반 · 시스템 Agent · 사용자; the sub-navigation is the same three', async () => {
     const hub = await open('/settings')
     expect(hub.get('[data-scope-card="system"] a').attributes('href')).toBe('/app/settings/system/general')
-    expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '사용자'])
+    expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 Agent', '사용자'])
     expect(net.requests).toEqual([])
     hub.unmount()
     const page = await open('/settings/system/general')
-    expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'users'])
+    expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'users'])
     expect(page.get('.subnav [data-subnav="general"]').attributes('aria-current')).toBe('page')
     expect(page.find('.disabled, [aria-disabled="true"]').exists()).toBe(false)
     expect(page.text()).not.toContain('준비 중')

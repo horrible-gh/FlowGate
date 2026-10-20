@@ -31,9 +31,10 @@ const placeholderRoutes: RouteRecordRaw[] = PLACEHOLDER_NAV_KEYS.map((key) => ({
 // child of SettingsLayout. `meta.settingsAccess: 'admin'` marks the 프로젝트/시스템 screens that only
 // a system administrator is shown (the access guard also treats every /settings/project… and
 // /settings/system… path that way). 내 설정's me/account and me/security (T#2) are open to every
-// signed-in person. 시스템 › 일반 (system/general, T#3) and 사용자 are administrator screens. D §1.2's
-// other URLs — system/agents, system/projects, project and project/:projectId/{general,paths,git} —
-// are registered by the steps that build their views; until then they, the retired
+// signed-in person. 시스템 › 일반 (system/general, T#3), 시스템 Agent (system/agents, T#4) and 사용자 are
+// administrator screens. D §1.2's other URLs — system/projects, project and
+// project/:projectId/{general,paths,git} — are registered by the steps that build their views;
+// until then they, the retired
 // /settings/workspaces[/…] and /settings/system/security, and any other unknown /settings/* path
 // are replaced by the overview (installSettingsAccessGuard). The settings menus list a screen
 // only once its route below exists.
@@ -57,6 +58,12 @@ const settingsRoute: RouteRecordRaw = {
       path: 'system/general',
       name: 'settings-system-general',
       component: () => import('@/features/settings/views/SystemGeneralSettingsView.vue'),
+      meta: { settingsAccess: 'admin' },
+    },
+    {
+      path: 'system/agents',
+      name: 'settings-system-agents',
+      component: () => import('@/features/settings/views/SystemAgentSettingsView.vue'),
       meta: { settingsAccess: 'admin' },
     },
     {

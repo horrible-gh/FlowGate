@@ -27,6 +27,7 @@ vi.mock('@shared/api', async (importOriginal) => {
         })
       }
       if (method === 'GET' && path === '/api/v1/system/users') return { data: net.users }
+      if (method === 'GET' && path === '/api/v1/system/agents') return { data: { agents: [] } }
       throw Object.assign(new Error(`unexpected request in test: ${method} ${path}`), { response: { status: 500 } })
     })
   return {
@@ -67,6 +68,7 @@ const controlsIn = (root: string) => document.querySelectorAll(FORM_CONTROLS.map
 // The routed screen only: the App Shell's own Topbar has a search input of its own.
 function expectNoManagementDom(): void {
   expect($('[data-panel="users"]')).toBeNull()
+  expect($('[data-panel="system-agents"]')).toBeNull()
   expect($('.settings-shell-view')).toBeNull()
   expect(controlsIn('.gui-route-content')).toHaveLength(0)
 }
@@ -153,7 +155,22 @@ describe('V03 실제 초기 진입 — main.ts shows a neutral loading state unt
     expect(managementRequests()).toEqual(['GET /api/v1/system/users'])
   }, 15000)
 
-  it.each(LOADING_URLS.filter((url) => url !== '/settings/system/users'))(
+  // flowgate.v02.0076 T#4 registered 시스템 Agent: like 사용자, its view and its one GET start only now.
+  it('/settings/system/agents, answer A → the view mounts and starts its GET only after the answer', async () => {
+    const router = await startApp('/settings/system/agents')
+    expectStartupLoadingOnly(router, '/settings/system/agents')
+
+    net.me!.resolve({ data: ADMIN_ME })
+    await waitUntil(() => $('[data-panel="system-agents"]') !== null)
+    expect(router.currentRoute.value.fullPath).toBe('/settings/system/agents')
+    expect(location()).toBe('/app/settings/system/agents')
+    expect($('[data-testid="app-startup-loading"]')).toBeNull()
+    expect($('.gui-app-shell [data-panel="system-agents"]')).not.toBeNull()
+    expect(net.requests[0]).toBe('GET /auth/me')
+    expect(managementRequests()).toEqual(['GET /api/v1/system/agents'])
+  }, 15000)
+
+  it.each(LOADING_URLS.filter((url) => url !== '/settings/system/users' && url !== '/settings/system/agents'))(
     '%s, answer A → no view is registered for it yet, so the overview; no request',
     async (url) => {
       const router = await startApp(url)

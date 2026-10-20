@@ -35,6 +35,7 @@ vi.mock('@shared/api', async (importOriginal) => {
       if (method === 'GET' && path === '/api/v1/system/users') return { data: net.users }
       if (method === 'GET' && path === '/api/v1/system/storage-root') return { data: net.root }
       if (method === 'GET' && path === '/api/v1/system/settings') return { data: net.settings }
+      if (method === 'GET' && path === '/api/v1/system/agents') return { data: { agents: [] } }
       throw Object.assign(new Error(`unexpected request in test: ${method} ${path}`), { response: { status: 500 } })
     })
   return {
@@ -111,6 +112,7 @@ const settingsRequests = () => net.requests.filter((r) => r !== 'GET /auth/me')
 function expectNoManagementDom(w: VueWrapper): void {
   expect(w.find('[data-panel="users"]').exists()).toBe(false)
   expect(w.find('[data-panel="system-general"]').exists()).toBe(false)
+  expect(w.find('[data-panel="system-agents"]').exists()).toBe(false)
   expect(w.find('.settings-shell-view').exists()).toBe(false)
   expect(w.findAll('form, input, select, textarea, table').length).toBe(0)
 }
@@ -161,21 +163,21 @@ afterEach(() => {
 })
 
 describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
-  it('A: shows only screens whose view is registered (내 설정 2개, 시스템 › 일반 · 사용자), no Workspace/retired/"준비 중" entry', async () => {
+  it('A: shows only screens whose view is registered (내 설정 2개, 시스템 › 일반 · 시스템 Agent · 사용자), no Workspace/retired/"준비 중" entry', async () => {
     setCurrentUser(ADMIN)
     const hub = await enterDirectly('/settings')
     expect(hub.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['me', 'system'])
     expect(hub.get('[data-scope-card="me"] a').attributes('href')).toBe('/app/settings/me/account')
     expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '보안 · 세션'])
     expect(hub.get('[data-scope-card="system"] a').attributes('href')).toBe('/app/settings/system/general')
-    expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '사용자'])
+    expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 Agent', '사용자'])
     expectNoRetiredOrInertEntries(hub)
     expect(settingsRequests()).toEqual([]) // the overview loads no page data
     hub.unmount()
 
     const page = await enterDirectly('/settings/system/users')
     expect(page.findAll('[data-scope]').map((t) => t.attributes('data-scope'))).toEqual(['me', 'system'])
-    expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'users'])
+    expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'users'])
     expect(page.find('.subnav-group').exists()).toBe(false)
     for (const href of hrefs(page)) expect(href).not.toMatch(/\/settings\/(workspaces|system\/security)/)
     for (const key of ['storage', 'environment', 'logs', 'security', 'info', 'workspace']) {
@@ -232,7 +234,7 @@ describe('V02 비관리자 direct URL — replaced by the overview before any vi
 
 describe('V03 권한 로딩 — neutral loading only until /auth/me answers', () => {
   const LOADING_URLS = ['/settings/system/agents', '/settings/system/projects', '/settings/project/p1/paths', '/settings/project/p1/git', '/settings/system/users', '/settings/system/general']
-  const REGISTERED = ['/settings/system/users', '/settings/system/general']
+  const REGISTERED = ['/settings/system/users', '/settings/system/general', '/settings/system/agents']
 
   async function enterWhileLoading(url: string): Promise<VueWrapper> {
     void loadCurrentUser().catch(() => undefined)
@@ -275,6 +277,15 @@ describe('V03 권한 로딩 — neutral loading only until /auth/me answers', ()
     expect(router.currentRoute.value.fullPath).toBe('/settings/system/general')
     expect(w.find('[data-panel="system-general"]').exists()).toBe(true)
     expect(net.requests).toEqual(['GET /auth/me', 'GET /api/v1/system/storage-root', 'GET /api/v1/system/settings'])
+  })
+
+  it('system/agents, answer A → the view mounts only now and starts its one GET', async () => {
+    const w = await enterWhileLoading('/settings/system/agents')
+    net.me!.resolve({ data: { username: 'admin', email: 'admin@flowgate.local', is_admin: true } })
+    await flushPromises()
+    expect(router.currentRoute.value.fullPath).toBe('/settings/system/agents')
+    expect(w.find('[data-panel="system-agents"]').exists()).toBe(true)
+    expect(net.requests).toEqual(['GET /auth/me', 'GET /api/v1/system/agents'])
   })
 
   it.each(LOADING_URLS.filter((url) => !REGISTERED.includes(url)))(

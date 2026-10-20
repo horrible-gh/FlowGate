@@ -5,6 +5,7 @@ import { deleteRequest, extractApiErrorMessage, getRequest, patchRequest, postRe
 import { normalizeApiError } from '@shared/apiErrors'
 import i18n from '@shared/i18n'
 import type {
+  AgentEnrollment,
   AiMode,
   CreateUserInput,
   MemberCandidate,
@@ -15,6 +16,9 @@ import type {
   SecurityPolicy,
   ScratchUnit,
   SecurityResponse,
+  SystemAgent,
+  SystemAgentChanges,
+  SystemAgentCreate,
   SystemSettingRow,
   SystemStorageRoot,
   SystemUser,
@@ -28,6 +32,7 @@ import type {
 const API = '/api/v1'
 const ws = (id: string) => `${API}/workspaces/${encodeURIComponent(id)}`
 const user = (id: string) => `${API}/system/users/${encodeURIComponent(id)}`
+const agent = (id: string) => `${API}/system/agents/${encodeURIComponent(id)}`
 
 export class SettingsRequestError extends Error {
   constructor(message: string, readonly code: string | null) {
@@ -169,6 +174,48 @@ export const saveRepeatCountMax = async (value: string) =>
     () => patchRequest<{ updated?: SystemSettingRow[] }>(`${API}/system/settings`, { updates: { ai_repeat_count_max: value } }),
     'save_failed',
   )).updated
+
+// ── System › 시스템 Agent (flowgate.v02.0076 T#4, D §2.6) ─────────────────────
+// Only the /system/agents management family of api/v1/agent_routes.py (the one the old
+// client/src/settings AgentsView used). The Agent runtime routes /agent/enrollments and
+// /agent/heartbeat are never called from here. Errors come as {"ok":false,"error":{"code"}} and go
+// through the same code → gui.settings.errors.<code> mapping. Bodies are built field by field so
+// nothing else rides along: PATCH never carries location / connection_mode, and the two actions
+// without input send the route's Empty model as {} (the body itself is required).
+
+export const listSystemAgents = async () =>
+  (await call(() => getRequest<{ agents?: SystemAgent[] }>(`${API}/system/agents`), 'load_failed')).agents
+
+export const createSystemAgent = (input: SystemAgentCreate) =>
+  call(
+    () => postRequest<SystemAgent>(`${API}/system/agents`, {
+      name: input.name,
+      enabled: input.enabled,
+      location: input.location,
+      connection_mode: input.connection_mode,
+      local_executable_path: input.local_executable_path,
+      configured_capabilities: { ...input.configured_capabilities },
+    }),
+    'save_failed',
+  )
+
+export const updateSystemAgent = (id: string, changes: SystemAgentChanges) => {
+  const body: SystemAgentChanges = {}
+  if (changes.name !== undefined) body.name = changes.name
+  if (changes.enabled !== undefined) body.enabled = changes.enabled
+  if (changes.local_executable_path !== undefined) body.local_executable_path = changes.local_executable_path
+  if (changes.configured_capabilities !== undefined) body.configured_capabilities = { ...changes.configured_capabilities }
+  return call(() => patchRequest<SystemAgent>(agent(id), body), 'save_failed')
+}
+
+export const issueAgentEnrollment = (id: string) =>
+  call(() => postRequest<AgentEnrollment>(`${agent(id)}/enrollments`, {}), 'action_failed')
+
+export const revokeAgentCredential = (id: string) =>
+  call(() => postRequest<SystemAgent>(`${agent(id)}/credential/revoke`, {}), 'action_failed')
+
+export const deleteSystemAgent = (id: string) =>
+  call(() => deleteRequest<unknown>(agent(id)), 'action_failed')
 
 // ── System › 보안 (시안 14) ───────────────────────────────────────────────────
 

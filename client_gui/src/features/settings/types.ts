@@ -201,3 +201,59 @@ export interface SystemSettingRow {
 }
 
 export type ScratchUnit = 'minute' | 'hour' | 'day'
+
+// ── 시스템 › 시스템 Agent (flowgate.v02.0076 T#4, D §2.6) ─────────────────────
+
+export type AgentLocation = 'local' | 'remote'
+export type AgentCapability = 'ai_cli' | 'ai_api' | 'storage'
+export type AgentCapabilities = Record<AgentCapability, boolean>
+
+/** One Agent of GET /system/agents (services/agent_registry.detail); also the answer of POST, PATCH
+ *  and credential/revoke. Holds no secret: the enrollment token is only in AgentEnrollment. */
+export interface SystemAgent {
+  agent_id: string
+  name: string
+  enabled: boolean
+  location: AgentLocation
+  /** 'agent_pull' for remote, null for local. */
+  connection_mode: 'agent_pull' | null
+  local_executable_path: string | null
+  configured_capabilities: AgentCapabilities
+  /** null until the Agent reported (heartbeat); local never reports. */
+  reported_capabilities: Record<AgentCapability, boolean | null>
+  effective_capabilities: AgentCapabilities
+  registration_status: 'registered' | 'revoked' | 'unregistered'
+  credential_status: 'active' | 'revoked' | 'none'
+  has_registration_history: boolean
+  enrollment_status: 'pending' | 'none'
+  enrollment_expires_at: string | null
+  online_status: 'online' | 'offline' | 'not_applicable'
+  last_seen_at: string | null
+  agent_version: string | null
+  protocol_version: number | null
+  protocol_compatibility: 'unknown' | 'compatible' | 'incompatible'
+  last_rejected_protocol_version: number | null
+  last_protocol_rejection_at: string | null
+  os: string | null
+  architecture: string | null
+}
+
+/** POST /system/agents: every field (the route has no defaults). */
+export interface SystemAgentCreate {
+  name: string
+  enabled: boolean
+  location: AgentLocation
+  connection_mode: 'agent_pull' | null
+  local_executable_path: string | null
+  configured_capabilities: AgentCapabilities
+}
+
+/** PATCH /system/agents/{aid}: only the changed fields; location / connection_mode are never sent. */
+export type SystemAgentChanges = Partial<Pick<SystemAgent, 'name' | 'enabled' | 'local_executable_path' | 'configured_capabilities'>>
+
+/** POST /system/agents/{aid}/enrollments (201): the token exists only in this answer. */
+export interface AgentEnrollment {
+  agent_id: string
+  enrollment_token: string
+  expires_at: string
+}

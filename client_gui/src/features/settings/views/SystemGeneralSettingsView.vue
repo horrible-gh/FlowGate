@@ -202,9 +202,9 @@
 // 미저장 이탈 보호 (D §3.2): while an editor holds an unsaved input or a save is still out, leaving
 // by the app (another route) asks first and a refresh / tab close gets the browser's own question.
 // It never holds the screen once the session or the administrator role is gone (sign-out, a lost
-// token, the role taken away): those moves go through at once.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { onBeforeRouteLeave, useRoute } from 'vue-router'
+// token, the role taken away): those moves go through at once (../components/useUnsavedLeaveGuard,
+// shared with 시스템 Agent since T#4).
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -214,7 +214,7 @@ import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import { useSystemNav } from '../components/systemNav'
-import { currentSettingsAccess } from '../access'
+import { useUnsavedLeaveGuard } from '../components/useUnsavedLeaveGuard'
 import { getSystemSettings, getSystemStorageRoot, saveRepeatCountMax, saveScratchRetention } from '../api'
 import type { ScratchUnit, SystemSettingRow, SystemStorageRoot } from '../types'
 
@@ -227,7 +227,6 @@ const REPEAT_MIN = 1
 const REPEAT_MAX = 30
 
 const { t } = useI18n()
-const route = useRoute()
 const systemNav = useSystemNav()
 
 const crumbs = computed(() => [
@@ -456,55 +455,12 @@ watch(repeatValue, () => {
 })
 
 // ── 미저장 이탈 보호 ──
-const leaveOpen = ref(false)
-let leaveAnswer: ((leave: boolean) => void) | null = null
-
 const unsaved = computed(() => scratchDirty.value || repeatDirty.value || scratchSaving.value || repeatSaving.value)
-
-// The same token check the auth guard makes (core/router/guard).
-const hasToken = () => !!(window.__accessToken__ || sessionStorage.getItem('fg_access_token'))
-
-/** Hold a move only while this administrator screen is still theirs and something is unsaved. */
-function holdsLeave(at: Parameters<typeof currentSettingsAccess>[0]): boolean {
-  return unsaved.value && hasToken() && currentSettingsAccess(at).kind === 'allow'
-}
-
-function answerLeave(leave: boolean) {
-  leaveOpen.value = false
-  const answer = leaveAnswer
-  leaveAnswer = null
-  answer?.(leave)
-}
-
-onBeforeRouteLeave((_to, from) => {
-  if (!holdsLeave(from)) return true
-  answerLeave(false) // an older, unanswered move is superseded by this one
-  leaveOpen.value = true
-  return new Promise<boolean>((resolve) => {
-    leaveAnswer = resolve
-  })
-})
-
-// The session or the role went away while the question is open: let the move go at once.
-watch(() => currentSettingsAccess(route).kind, (kind) => {
-  if (kind !== 'allow') answerLeave(true)
-})
-
-function onBeforeUnload(event: BeforeUnloadEvent) {
-  if (!holdsLeave(route)) return
-  event.preventDefault()
-  event.returnValue = ''
-}
+const { open: leaveOpen, answer: answerLeave } = useUnsavedLeaveGuard(() => unsaved.value)
 
 onMounted(() => {
-  window.addEventListener('beforeunload', onBeforeUnload)
   void loadRoot()
   void loadSettings()
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('beforeunload', onBeforeUnload)
-  answerLeave(true) // the view is going anyway (e.g. the layout hid it); never leave a move hanging
 })
 </script>
 
