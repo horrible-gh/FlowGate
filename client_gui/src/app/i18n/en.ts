@@ -2762,7 +2762,7 @@ export default {
       agent_not_found: 'The agent was not found.',
       enrollment_not_allowed: 'Only an enabled remote agent can get an enrollment token.',
       agent_has_registration_history: 'An agent with registration history cannot be deleted.',
-      temporarily_unavailable: 'The agent secret service is unavailable right now. Try again later.',
+      temporarily_unavailable: 'The Agent secret (FLOWGATE_AGENT_PEPPER) is not configured on the server. Retrying will not help: ask the server administrator to check the secret settings and restart the server.',
       validation_failed: 'The input is not valid.',
     },
   },

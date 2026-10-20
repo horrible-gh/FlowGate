@@ -53,6 +53,10 @@ services:
       FLOWGATE_GIT_ENCRYPT_KEY: ${FLOWGATE_GIT_ENCRYPT_KEY:-}
       FLOWGATE_TOTP_ENCRYPT_KEY: ${FLOWGATE_TOTP_ENCRYPT_KEY:-}
       FLOWGATE_AI_ENCRYPT_KEY: ${FLOWGATE_AI_ENCRYPT_KEY:-}
+      # Agent Registry HMAC pepper (0078 T0004). Generated once like the keys above,
+      # unless Agents are already registered (then the original must be restored);
+      # changing it invalidates every registered Agent credential.
+      FLOWGATE_AGENT_PEPPER: ${FLOWGATE_AGENT_PEPPER:-}
     volumes:
       - flowgate-data:/data
 

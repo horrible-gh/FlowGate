@@ -169,6 +169,20 @@ fi
 if env_unset FLOWGATE_AI_ENCRYPT_KEY; then
     set_env FLOWGATE_AI_ENCRYPT_KEY "$(gen_b64_key)"
 fi
+# Agent Registry pepper (0078 T0004). Every Agent enrollment token and credential
+# is stored as an HMAC keyed by it; it existed in no install path, so token issue
+# answered 503 on every fresh install. Generate once, never rotate — but only when
+# no Agent is registered yet: a credential stored under a lost original pepper never
+# matches a new one, so in that case the original has to be restored by hand.
+if env_unset FLOWGATE_AGENT_PEPPER; then
+    if "$ROOT/.venv/bin/python" "$ROOT/server/check_agent_pepper.py" --quiet; then
+        set_env FLOWGATE_AGENT_PEPPER "$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+        echo "[i] Generated FLOWGATE_AGENT_PEPPER in $ENV_FILE (back it up; never change it)."
+    else
+        echo "[!] FLOWGATE_AGENT_PEPPER was NOT generated (reason above). Agent token issue,"
+        echo "    enrollment and heartbeat answer 503 until it is set in $ENV_FILE and the service restarts."
+    fi
+fi
 
 # Listen address — read by server/stg.py, which the systemd unit runs.
 set_env FLOWGATE_PORT "$FLOWGATE_PORT"
@@ -189,7 +203,7 @@ else
     set_env ALLOWED_ORIGIN ''
     echo "[i] ALLOWED_ORIGIN is unset — cross-origin browser requests are blocked."
     echo "    The installed client is same-origin and unaffected. Set ALLOWED_ORIGIN in $ENV_FILE"
-NaN
+    echo "    to your service URL to allow a separately-hosted client, or to '*' to allow any origin."
 fi
 
 echo "==> Client: build → dist"

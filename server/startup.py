@@ -135,6 +135,31 @@ def encrypt_ai_provider_keys():
         logger.warning(f"[startup] AI provider api_key encryption failed: {exc}")
 
 
+def check_agent_pepper():
+    """0078 T0004: name a missing FLOWGATE_AGENT_PEPPER at boot instead of at the first 503.
+
+    Without it every Agent token issue / enrollment / heartbeat answers 503. When live
+    Agent credentials exist the original value was lost: say that it must be restored
+    by hand, since a new one never authenticates them. Never logs the value itself.
+    """
+    import os
+    if os.environ.get("FLOWGATE_AGENT_PEPPER"):
+        return
+    message = ("[startup] FLOWGATE_AGENT_PEPPER is not set: Agent token issue, enrollment and "
+               "heartbeat answer 503 until it is configured (server/.env or the container secrets) "
+               "and the server restarts.")
+    try:
+        from modules.flow_gate.db.connection import get_store
+        row = get_store()._fetch_one("SELECT COUNT(*) AS n FROM agent_credentials WHERE revoked_at IS NULL", [])
+        live = int((row or {}).get("n") or 0)
+        if live:
+            message += (f" {live} registered Agent credential(s) exist: restore the ORIGINAL value "
+                        "(manual recovery) — a newly generated one will not authenticate them.")
+    except Exception as exc:
+        message += f" (registered Agent check failed: {type(exc).__name__})"
+    logger.warning(message)
+
+
 def record_deployment():
     """0468 T0013: durable SHA/version/JST process-start marker."""
     try:
@@ -393,6 +418,7 @@ def run_all():
     except Exception as exc:
         logger.warning(f"[startup] graph execution recovery failed: {exc}")
     encrypt_ai_provider_keys()
+    check_agent_pepper()
     recover_ai_evaluations()
     start_snapshot_cleanup()
     remove_retired_source_bundle_storage()
