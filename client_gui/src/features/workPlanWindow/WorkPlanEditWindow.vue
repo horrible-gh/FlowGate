@@ -52,7 +52,7 @@
           role="status"
           data-test="wp-edit-notice"
           :data-key="notice.key"
-        >{{ t(`notice.${notice.key}`, { ...(notice.params ?? {}) }) }}</p>
+        >{{ t(`notice.${notice.key}`, { ...(notice.params ?? {}) }) }}<template v-if="notice.detail"> — {{ t(notice.detail) }}</template></p>
         <p v-else-if="workPlanStepEditsPending(win.docId)" class="wp-window-notice" data-test="wp-edit-child-pending">{{ t('step_pending') }}</p>
         <p v-else-if="dirty" class="wp-window-notice is-unsaved" data-test="wp-edit-unsaved">{{ t('dirty') }}</p>
         <span v-else class="wp-window-notice" />
@@ -150,6 +150,7 @@ import {
   setWorkPlanEditWindowMinimized,
   workPlanGroupOf,
   workPlanStepEditAvailable,
+  workPlanStepEditOpen,
   workPlanStepEditsPending,
   type WorkPlanEditWindowState,
 } from './workPlanEditWindows'
@@ -176,6 +177,7 @@ const editor = useWorkPlanEditor({
   stepPending: () => workPlanStepEditsPending(props.win.docId),
   external: () => props.win.request.external?.() ?? null,
   saved: (revisionNo) => props.win.request.saved?.(revisionNo),
+  stepOpen: (rowId) => workPlanStepEditOpen(props.win.docId, rowId),
 })
 const { view, draft, dirty, saving, canSave, notice, pendingQuantity } = editor
 

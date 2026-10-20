@@ -5,11 +5,12 @@
 // flowgate.v02.0056 F1 (0056 CH §5) — the "where the plan is edited" line is gone with the tab's details.
 //
 // Operations (D#1 §8.3 rule 0): this section only reads — reading and ↗ 열기 are queries, possible in every
-// ownership and view, read-only ones included. Editing the plan is the v0.1 WorkPlanEditor's (↗ 열기); the
+// ownership and view, read-only ones included. Editing the plan is the work plan edit window's (↗ 열기); the
 // section has no change operation, so no reason ever disables anything here.
-// Not offered (D#1 §8.4, §10.2): Step editing, ⇉ / 재전개 / ⟳ 재계획 and their applied state (WP 전개), the
-// AI-written plan and its origin badge.
-import type { InspectorReadOnly } from '../../inspectorTarget'
+// flowgate.v02.0074 T#5: the header's deploy buttons are the card's one change operation (workPlanDeployActions
+// below; whether a plan is deployed is told by the status read's counts only, the card keeps no state of its own).
+// Not offered: Step editing here, a re-plan, the AI-written plan and its origin badge.
+import type { InspectorReadOnly, InspectorTarget } from '../../inspectorTarget'
 
 /** The parts of a WP Step the summary reads (`WorkPlanStep` of `@/features/document`). */
 export interface WorkPlanStepFacts {
@@ -135,10 +136,26 @@ export function workPlanAvailability(input: WorkPlanInput): WorkPlanAvailability
 }
 
 // --- flowgate.v02.0051 stage 2 — the v7 작업계획 card shape (0035 plan.m.*) --------------------------------
+// flowgate.v02.0074 T#5 (D#1 §6.1 · §3.6.1) — the header's [전개] and [재전개 ▾] (its two items 「추가분 전개」 add ·
+// 「정리 포함 재전개」 cleanup) deploy the plan onto the Flow's Graph draft through the T#4 API (`GET …/work-plan/deploy`
+// for the counts, preview, then the execution with the preview's baseline). Which one is usable follows the counts of
+// the status read: no deployed card and at least one target → [전개]; a deployed card → [재전개 ▾], whose 「추가분
+// 전개」 needs a target and whose 「정리 포함 재전개」 needs nothing more (a plan saved with every quantity at 0 cleans up).
 
-export type WorkPlanDeployOperation = 'deploy' | 'redeploy'
+export type WorkPlanDeployOperation = 'deploy' | 'redeploy' | 'add' | 'cleanup'
 
+/** The two header buttons (the menu items `add` · `cleanup` sit under `redeploy`). */
 export const WORK_PLAN_DEPLOY_OPERATIONS: readonly WorkPlanDeployOperation[] = ['deploy', 'redeploy']
+
+/** The [재전개 ▾] menu items, in order. */
+export const WORK_PLAN_REDEPLOY_ITEMS: readonly ('add' | 'cleanup')[] = ['add', 'cleanup']
+
+/** The deploy mode each runnable operation sends. */
+export const WORK_PLAN_DEPLOY_MODE_OF: Readonly<Record<'deploy' | 'add' | 'cleanup', 'first' | 'add' | 'cleanup'>> = {
+  deploy: 'first',
+  add: 'add',
+  cleanup: 'cleanup',
+}
 
 export interface WorkPlanDeployItem {
   readonly visible: boolean
@@ -147,13 +164,133 @@ export interface WorkPlanDeployItem {
   readonly reason: string | null
 }
 
+/** The parts of the status read (`WorkPlanDeployStatus` of `@/features/document`) the rules read. */
+export interface WorkPlanDeployStatusFacts {
+  readonly ownership: string | null
+  readonly deployable: boolean
+  readonly reason: string | null
+  readonly deployedCount: number
+  readonly targetCount: number
+}
+
+export interface WorkPlanDeployInput {
+  readonly target: Pick<InspectorTarget, 'docId' | 'readOnly' | 'editLock' | 'ownership'> | null
+  /** The last status read of the target's plan, or null (not read yet, or it failed). */
+  readonly status: WorkPlanDeployStatusFacts | null
+  /** The last status read failed. */
+  readonly statusFailed: boolean
+  /** A preview or an execution is on its way. */
+  readonly busy: boolean
+}
+
+/** Ownerships whose Flow a deploy may write (the server's `unassigned` / `graph`). */
+const DEPLOY_OWNERSHIPS: ReadonlySet<string> = new Set(['unassigned', 'graph'])
+
+/** The status read's refusal code -> its reason key. */
+const STATUS_REASONS: Readonly<Record<string, string>> = {
+  flow_owned_by_v01: 'reason.owned_by_v01',
+  flow_ownership_conflict: 'reason.ownership_conflict',
+  wp_not_editable: 'reason.not_editable',
+  flow_disposed: 'reason.disposed',
+  graph_run_locked: 'reason.run_locked',
+  GROUP_AI_RUN_LOCKED: 'reason.ai_running',
+  wp_not_on_card: 'reason.not_on_card',
+}
+
+function ownershipReason(ownership: string | null | undefined): string | null {
+  if (!ownership || DEPLOY_OWNERSHIPS.has(ownership)) return null
+  if (ownership === 'v01') return 'reason.owned_by_v01'
+  if (ownership === 'conflict') return 'reason.ownership_conflict'
+  return 'reason.unavailable'
+}
+
+/** Why no deploy can run now (the rules every operation shares), or null. */
+export function workPlanDeployCommonReason(input: WorkPlanDeployInput): string | null {
+  const target = input.target
+  if (!target || target.docId === null) return 'reason.no_document'
+  if (target.readOnly === 'conflict') return 'reason.ownership_conflict'
+  if (target.readOnly === 'revision') return 'reason.read_only_revision'
+  if (target.editLock === 'run') return 'reason.run_locked'
+  if (target.editLock) return 'reason.run_unknown'
+  // The latest read failed: an earlier answer kept on screen does not count (its counts may have moved).
+  const status = input.statusFailed ? null : input.status
+  const ownership = ownershipReason(status?.ownership ?? target.ownership)
+  if (ownership) return ownership
+  if (input.statusFailed) return 'reason.status_failed'
+  if (status === null) return 'reason.loading'
+  if (!status.deployable) return (status.reason && STATUS_REASONS[status.reason]) || 'reason.unavailable'
+  if (input.busy) return 'reason.busy'
+  return null
+}
+
+const item = (reason: string | null): WorkPlanDeployItem => ({ visible: true, enabled: reason === null, reason })
+
 /**
- * ⇉ 전개 · ⇉ 재전개 ▾: both are drawn on every plan card and neither is usable — deploying a plan onto
- * the Canvas has no Inspector API (D#1 §8.4). Shown disabled with that reason (0051-R §2.3).
+ * [전개] · [재전개 ▾] and its 「추가분 전개」 · 「정리 포함 재전개」: every one off with the common reason (no plan document,
+ * read only, the run lock, a v0.1 / conflicting Flow, a plan that cannot be edited, the status read failed, a deploy on
+ * its way); otherwise by the counts.
  */
-export function workPlanDeployActions(_input: { readonly hasDocument: boolean }): Readonly<Record<WorkPlanDeployOperation, WorkPlanDeployItem>> {
-  const item: WorkPlanDeployItem = { visible: true, enabled: false, reason: 'deploy.unconnected' }
-  return { deploy: item, redeploy: item }
+export function workPlanDeployActions(input: WorkPlanDeployInput): Readonly<Record<WorkPlanDeployOperation, WorkPlanDeployItem>> {
+  const common = workPlanDeployCommonReason(input)
+  if (common !== null || input.status === null) {
+    const off = item(common ?? 'reason.loading')
+    return { deploy: off, redeploy: off, add: off, cleanup: off }
+  }
+  const { deployedCount, targetCount } = input.status
+  const deployed = deployedCount > 0
+  const redeploy = item(deployed ? null : 'reason.not_deployed')
+  return {
+    deploy: item(deployed ? 'reason.deployed' : targetCount < 1 ? 'reason.no_targets' : null),
+    redeploy,
+    add: redeploy.enabled ? item(targetCount < 1 ? 'reason.no_targets' : null) : redeploy,
+    cleanup: redeploy,
+  }
+}
+
+const BLOCKERS: ReadonlySet<string> = new Set([
+  'wp_card_has_successor',
+  'deploy_chain_nonlinear',
+  'deploy_position_blocked',
+  'deploy_draft_invalid',
+  'deploy_already_deployed',
+  'deploy_not_deployed',
+])
+
+/** The one-line key of a preview's first blocker: its own words, a refusal's reason, else the generic one. */
+export function workPlanDeployBlockerKey(code: string | null | undefined): string {
+  if (!code) return 'failure.blocked'
+  if (BLOCKERS.has(code)) return `blocker.${code}`
+  return STATUS_REASONS[code] ?? 'failure.blocked'
+}
+
+/** The one-line key of a failed deploy call (`WorkPlanDeployFailureKind` of `@/features/document`). */
+export function workPlanDeployFailureKey(kind: string): string {
+  switch (kind) {
+    case 'forbidden':
+    case 'not_found':
+    case 'not_a_work_plan':
+    case 'not_editable':
+    case 'ai_running':
+    case 'owned_by_v01':
+    case 'ownership_conflict':
+    case 'run_locked':
+    case 'not_on_card':
+    case 'disposed':
+    case 'unreadable':
+    case 'wp_changed':
+    case 'attachment_unreadable':
+    case 'already_deployed':
+    case 'not_deployed':
+    case 'draft_conflict':
+    case 'blocked':
+    case 'preview_stale':
+    case 'target_changed':
+    case 'restore_incomplete':
+    case 'network':
+      return `failure.${kind}`
+    default:
+      return 'failure.other'
+  }
 }
 
 export type WorkPlanSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'

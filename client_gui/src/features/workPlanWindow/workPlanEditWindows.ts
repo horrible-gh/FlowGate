@@ -59,6 +59,8 @@ export interface WorkPlanStepEditHandler {
   pending?(docId: string): boolean
   /** The parent window of the document closed: its Step windows close too. */
   parentClosed?(docId: string): void
+  /** A Step window of that row is open (flowgate.v02.0074 T#5: the row's 「지시 생략」 waits for it). */
+  openRow?(docId: string, rowId: string): boolean
 }
 
 const CASCADE_STEPS = 6
@@ -185,6 +187,11 @@ export function requestWorkPlanStepEdit(target: WorkPlanStepEditTarget, session:
 /** Step windows of the document hold edits not applied to the parent yet. */
 export function workPlanStepEditsPending(docId: string): boolean {
   return stepHandler.value?.pending?.(docId) === true
+}
+
+/** A Step window of the row is open (reactive). */
+export function workPlanStepEditOpen(docId: string, rowId: string): boolean {
+  return stepHandler.value?.openRow?.(docId, rowId) === true
 }
 
 /** Explicit reload discards child drafts after the parent's confirmation. */

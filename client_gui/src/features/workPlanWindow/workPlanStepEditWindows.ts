@@ -37,6 +37,10 @@ export function workPlanStepDirty(win: WorkPlanStepWindow): boolean { return !eq
 export function workPlanStepPending(docId: string): boolean {
   return (uploads.get(docId) ?? 0) > 0 || windows.some((win) => win.docId === docId && workPlanStepDirty(win))
 }
+/** A Step window of that row is open (0074 T#5: the row's 「지시 생략」 waits for it). */
+export function workPlanStepOpen(docId: string, rowId: string): boolean {
+  return windows.some((win) => win.docId === docId && !win.closed && win.session.target()?.rowId === rowId)
+}
 export function workPlanStepBlocked(win: WorkPlanStepWindow): boolean {
   return win.closed || win.uploading || !win.session.alive() || !win.session.target() || !win.session.snapshot() || win.session.locked()
 }
@@ -67,7 +71,7 @@ export function closeWorkPlanStepWindows(docId?: string): void {
   for (const win of [...windows]) if (!docId || win.docId === docId) closeWorkPlanStepWindow(win)
 }
 export function installWorkPlanStepEditor(): () => void {
-  return setWorkPlanStepEditHandler({ open: openWorkPlanStepWindow, pending: workPlanStepPending, parentClosed: closeWorkPlanStepWindows })
+  return setWorkPlanStepEditHandler({ open: openWorkPlanStepWindow, pending: workPlanStepPending, parentClosed: closeWorkPlanStepWindows, openRow: workPlanStepOpen })
 }
 
 export function setWorkPlanStepValue<K extends keyof WorkPlanStepDraft>(win: WorkPlanStepWindow, key: K, value: WorkPlanStepDraft[K]): void {

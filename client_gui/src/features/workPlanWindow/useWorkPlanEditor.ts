@@ -29,13 +29,31 @@
 //   `importJson` puts a checked JSON in the draft's place as an edit (dirty; nothing is sent — the save is the one PUT,
 //   whose server check is the final one). Not while locked or while a Step window holds edits; the Step windows open
 //   on the plan it replaces lose their row (the plan epoch moves, as on a read of another plan).
+// - flowgate.v02.0074 T#5 (D#1 §3.7 · §6.2): 「지시 생략」 of a row (`omitStep`, its rules workPlanOmitState). The deploy
+//   status (`GET …/work-plan/deploy`) is read when the plan is read and after every save; a plan that cannot deploy (or
+//   whose status read failed) offers no 「지시 생략」. One click, one at a time, in order: the fixed text on the row's
+//   pre-instruction through the Step window's own path (applyStepDraft, origin human), the one PUT of this window (a
+//   refusal puts the row and the window back as they were, the save's failure says why — a capability confirmation is
+//   not given on the person's behalf: it is a failed save too), then the deploy of the saved revision: a status read for
+//   the mode (first with no deployed card, else add), a preview, and the execution with that preview's baseline (nothing
+//   runs on a blocker or no change). Only the answer's own entry for the row's card says how it went (omitCardVerdict):
+//   written is the success; kept / another type / placed twice / an unregistered type / not shown are told as such, from
+//   the execution or from a preview with no change. A deploy that fails after the save (or whose answer does not show the
+//   row's card) leaves that row's button as 「전개 재시도」 — each row its own, until a deploy answer settles its card or the
+//   row is gone: the preview and the execution again (a new preview each time), never the save.
 import { computed, onScopeDispose, ref, shallowRef, watch, type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import {
+  workPlanDeployExecute,
+  workPlanDeployFailureOf,
+  workPlanDeployPreview,
+  workPlanDeployStatus,
   workPlanEditRead,
   workPlanErrorOf,
   workPlanSave,
   workPlanSaveFailureOf,
   type WorkPlanCapabilityFinding,
+  type WorkPlanDeployFailureKind,
+  type WorkPlanDeployStatus,
   type WorkPlanErrorKind,
   type WorkPlanSaveFailure,
 } from '@/features/document'
@@ -44,10 +62,12 @@ import type { SelectOption } from '@/components/ui/Select.vue'
 import { documentAiActivityOf, readDocumentAiActivity } from '@/features/documentWindow/documentAiWindows'
 import { documentIoGuarded, registerDocumentEditEntry } from '@/features/documentWindow/documentEditRegistry'
 import {
+  WORK_PLAN_OMIT_TEXT,
   applyDefaults as applyDefaultsTo,
   applyQuantity,
   applyStepDraft,
   bodyOf,
+  omitCardVerdict,
   canMoveShownCardBy,
   draftOf,
   editBodyOf,
@@ -69,9 +89,13 @@ import {
   unassignedSteps,
   unitOf,
   workPlanLockReason,
+  workPlanOmitState,
   type WorkPlanDraft,
+  type WorkPlanOmitCardVerdict,
+  type WorkPlanOmitDeployCard,
   type WorkPlanEditView,
   type WorkPlanLockReason,
+  type WorkPlanOmitState,
   type WorkPlanPairRole,
   type WorkPlanRefusal,
   type WorkPlanStepDraft,
@@ -92,8 +116,44 @@ export interface WorkPlanEditorNotice {
     | 'move_before_started'
     | 'imported'
     | 'imported_unchanged'
+    | 'omitted'
+    | 'omit_kept'
+    | 'omit_mismatch'
+    | 'omit_duplicate'
+    | 'omit_unregistered'
+    | 'omit_unconfirmed'
+    | 'omit_no_change'
+    | 'omit_deploy_failed'
   readonly params?: Readonly<Record<string, string | number>>
   readonly tone: 'success' | 'warning'
+  /** A second message key (this window's) said after the first, e.g. why a deploy failed. */
+  readonly detail?: string
+}
+
+/**
+ * How a 「지시 생략」 ended: deployed (its card's instruction line written), the line kept as it was (instruction_kept),
+ * the card of another type (kept_type_mismatch), placed more than once (kept_duplicate) or of an unregistered type
+ * (skipped_type), the answer not showing the card (unconfirmed, 「전개 재시도」 offered), nothing to deploy, the save
+ * refused (the row back as it was), saved but not deployed (「전개 재시도」 offered), or not started (off now).
+ */
+export type WorkPlanOmitOutcome =
+  | 'omitted'
+  | 'kept'
+  | 'mismatch'
+  | 'duplicate'
+  | 'unregistered'
+  | 'unconfirmed'
+  | 'no_change'
+  | 'save_failed'
+  | 'deploy_failed'
+  | 'blocked'
+
+/** A card the deploy answer settled without writing the row's instruction: its warning and outcome. */
+const OMIT_SETTLED: Readonly<Record<'kept' | 'mismatch' | 'duplicate' | 'unregistered', { key: WorkPlanEditorNotice['key']; outcome: WorkPlanOmitOutcome }>> = {
+  kept: { key: 'omit_kept', outcome: 'kept' },
+  mismatch: { key: 'omit_mismatch', outcome: 'mismatch' },
+  duplicate: { key: 'omit_duplicate', outcome: 'duplicate' },
+  unregistered: { key: 'omit_unregistered', outcome: 'unregistered' },
 }
 
 /** What a JSON import did (0073 T#4): taken (dirty), the same plan, refused for the lock or a Step window, or invalid. */
@@ -158,6 +218,8 @@ export interface WorkPlanEditorOptions {
   stepPending?(): boolean
   /** Told after every successful save. */
   saved?(revisionNo: number): void
+  /** The row's Step window is open (its 「지시 생략」 waits for it). */
+  stepOpen?(rowId: string): boolean
 }
 
 export interface WorkPlanEditor {
@@ -221,9 +283,41 @@ export interface WorkPlanEditor {
   exportJson(): string | null
   /** Puts a JSON plan in the draft's place (checked first); the window becomes dirty, [저장] sends it. */
   importJson(text: string): WorkPlanJsonImportResult
+  /** The plan's deploy status read (when the plan is read and after a save), or null (not read, or it failed). */
+  readonly deployStatus: Readonly<ShallowRef<WorkPlanDeployStatus | null>>
+  /** The row whose 「지시 생략」 is on its way, or null. */
+  readonly omitting: Readonly<Ref<string | null>>
+  /** Whether the row offers 「지시 생략」 (or 「전개 재시도」) now, and why not. */
+  omitState(rowId: string): WorkPlanOmitState
+  /** 「지시 생략」 of the row (or its 「전개 재시도」): write, save once, deploy. */
+  omitStep(rowId: string): Promise<WorkPlanOmitOutcome>
   dismissNotice(): void
   /** The window is closing: sessions report not alive, late answers are dropped. */
   dispose(): void
+}
+
+/** The deploy failures this window names (deploy_failure.*); any other is `other`. */
+const OMIT_DEPLOY_FAILURES: ReadonlySet<WorkPlanDeployFailureKind> = new Set<WorkPlanDeployFailureKind>([
+  'forbidden',
+  'ai_running',
+  'owned_by_v01',
+  'ownership_conflict',
+  'run_locked',
+  'not_on_card',
+  'not_editable',
+  'disposed',
+  'wp_changed',
+  'attachment_unreadable',
+  'draft_conflict',
+  'blocked',
+  'preview_stale',
+  'target_changed',
+  'restore_incomplete',
+  'network',
+])
+
+function omitDeployFailure(kind: WorkPlanDeployFailureKind): string {
+  return OMIT_DEPLOY_FAILURES.has(kind) ? kind : 'other'
 }
 
 export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEditor {
@@ -253,6 +347,12 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
   let generation = 0
   /** The Flow's live AI run read on its way (one at a time). */
   let activityRead: Promise<unknown> | null = null
+  const deployStatus = shallowRef<WorkPlanDeployStatus | null>(null)
+  const omitting = ref<string | null>(null)
+  /** The rows whose 「지시 생략」 was saved but not deployed: each one's button offers 「전개 재시도」. */
+  const omitRetry = shallowRef<ReadonlySet<string>>(new Set())
+  // Request order of the deploy status reads: only the latest sets what is shown.
+  let deploySeq = 0
 
   const aiRunning = computed(() => {
     const groupId = options.groupId()
@@ -322,6 +422,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
       const answer = await workPlanEditRead(options.docId())
       if (seq !== generation || !alive.value) return false
       take(toWorkPlanEditView(answer))
+      void readDeployStatus()
       return true
     } catch (error) {
       if (seq !== generation || !alive.value) return false
@@ -413,6 +514,8 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
         ? { key: 'saved_unassigned', params: { revision: revisionNo, n: left }, tone: 'warning' }
         : { key: 'saved', params: { revision: revisionNo }, tone: 'success' }
       options.saved?.(revisionNo)
+      // 「지시 생략」 reads the status itself, for its deploy.
+      if (omitting.value === null) void readDeployStatus()
       return 'saved'
     } catch (error) {
       if (!alive.value) return 'failed'
@@ -616,6 +719,155 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     }
   }
 
+  /** Reads the plan's deploy status; the latest read sets what is shown. Resolves to this read's answer (null: it failed). */
+  async function readDeployStatus(): Promise<WorkPlanDeployStatus | null> {
+    const seq = ++deploySeq
+    try {
+      const status = await workPlanDeployStatus(options.docId())
+      if (seq === deploySeq && alive.value) deployStatus.value = status
+      return alive.value ? status : null
+    } catch {
+      if (seq === deploySeq && alive.value) deployStatus.value = null
+      return null
+    }
+  }
+
+  const retrying = (id: string) => [...omitRetry.value].some((stored) => resolve(stored) === id)
+
+  function setRetry(id: string, on: boolean): void {
+    const next = new Set([...omitRetry.value].map(resolve))
+    if (on) next.add(id)
+    else next.delete(id)
+    omitRetry.value = next
+  }
+
+  /** Drops the 「전개 재시도」 of every row whose card this deploy answer settled (or whose row is gone). */
+  function settleRetries(cards: readonly WorkPlanOmitDeployCard[], settled: (verdict: WorkPlanOmitCardVerdict) => boolean): void {
+    const current = draft.value
+    if (omitRetry.value.size === 0) return
+    const next = new Set<string>()
+    for (const stored of omitRetry.value) {
+      const id = resolve(stored)
+      const row = current ? rowOf(current, id) : null
+      if (current && row && !settled(omitCardVerdict(cards, current.cards[row.cardIndex].id))) next.add(id)
+    }
+    omitRetry.value = next
+  }
+
+  // A row gone from the plan (a quantity, an import, a read again) takes its 「전개 재시도」 with it.
+  watch(draft, (current) => {
+    if (omitRetry.value.size === 0) return
+    const kept = [...omitRetry.value].map(resolve).filter((id) => current !== null && rowOf(current, id) !== null)
+    if (kept.length !== omitRetry.value.size) omitRetry.value = new Set(kept)
+  })
+
+  function omitState(rowId: string): WorkPlanOmitState {
+    const current = draft.value
+    const id = resolve(rowId)
+    const row = current && alive.value ? rowOf(current, id) : null
+    if (!row) return { visible: false, enabled: false, action: 'omit', reason: null }
+    return workPlanOmitState({
+      step: row.step,
+      lockReason: lockReason.value,
+      inputsLocked: inputsLocked.value,
+      dirty: dirty.value || options.stepPending?.() === true,
+      stepOpen: options.stepOpen?.(id) === true,
+      deployable: deployStatus.value?.deployable === true,
+      busy: omitting.value !== null,
+      retry: retrying(id),
+    })
+  }
+
+  async function omitStep(rowId: string): Promise<WorkPlanOmitOutcome> {
+    const state = omitState(rowId)
+    if (!state.enabled) return 'blocked'
+    const id = resolve(rowId)
+    omitting.value = id
+    notice.value = null
+    try {
+      if (state.action === 'omit') {
+        const before = draft.value as WorkPlanDraft
+        const applied = applyStepDraft(before, id, { preInstructionText: WORK_PLAN_OMIT_TEXT, preInstructionAttachment: null })
+        if (applied.status !== 'applied' || applied.draft === before) return 'blocked'
+        draft.value = applied.draft
+        dirty.value = true
+        const saved = await send([])
+        if (saved !== 'saved') {
+          if (!alive.value) return 'save_failed'
+          // The row is empty again and the window as clean as it was; the save's failure (shown as for [저장]) says why.
+          const findings = capability.value
+          draft.value = before
+          dirty.value = false
+          if (saved === 'capability') {
+            // Not confirmed on the person's behalf: a failed save.
+            capability.value = null
+            failure.value = { kind: 'capability', status: 422, message: null, errors: [], findings: findings ?? [], updatedBy: null, updatedAt: null }
+          }
+          return saved === 'blocked' ? 'blocked' : 'save_failed'
+        }
+      }
+      if (!alive.value) return 'deploy_failed'
+      return await deployOmitted(resolve(id))
+    } finally {
+      omitting.value = null
+    }
+  }
+
+  /** The deploy of a saved 「지시 생략」: the saved revision, the mode by the deployed cards, the preview's baseline. */
+  async function deployOmitted(id: string): Promise<WorkPlanOmitOutcome> {
+    const docId = options.docId()
+    const current = draft.value
+    const row = current ? rowOf(current, id) : null
+    const cardId = current && row ? current.cards[row.cardIndex].id : null
+    const revisionNo = view.value?.revisionNo ?? null
+    const failed = (detail: string): WorkPlanOmitOutcome => {
+      setRetry(id, true)
+      notice.value = { key: 'omit_deploy_failed', tone: 'warning', detail }
+      return 'deploy_failed'
+    }
+    if (cardId === null || revisionNo === null) return failed('deploy_failure.other')
+    try {
+      const status = await readDeployStatus()
+      if (!alive.value) return 'deploy_failed'
+      if (status === null) return failed('deploy_failure.status')
+      const preview = await workPlanDeployPreview(docId, status.deployedCount > 0 ? 'add' : 'first', revisionNo)
+      if (!alive.value) return 'deploy_failed'
+      if (preview.blockers.length > 0) return failed('deploy_failure.blocked')
+      if (preview.noChange || !preview.executable) {
+        // Nothing runs; the preview still says why for the row's card (its line kept, another type, …).
+        const verdict = omitCardVerdict(preview.cards, cardId)
+        settleRetries(preview.cards, (other) => other !== 'written' && other !== 'unconfirmed')
+        setRetry(id, false)
+        if (verdict === 'written' || verdict === 'unconfirmed') {
+          notice.value = { key: 'omit_no_change', tone: 'warning' }
+          return 'no_change'
+        }
+        notice.value = { key: OMIT_SETTLED[verdict].key, tone: 'warning' }
+        return OMIT_SETTLED[verdict].outcome
+      }
+      const result = await workPlanDeployExecute(docId, preview)
+      if (!alive.value) return 'unconfirmed'
+      void readDeployStatus()
+      // The request went through; whether the row's instruction was written is its card's own entry.
+      settleRetries(result.cards, (other) => other !== 'unconfirmed')
+      const verdict = omitCardVerdict(result.cards, cardId)
+      if (verdict === 'unconfirmed') {
+        setRetry(id, true)
+        notice.value = { key: 'omit_unconfirmed', tone: 'warning' }
+        return 'unconfirmed'
+      }
+      if (verdict !== 'written') {
+        notice.value = { key: OMIT_SETTLED[verdict].key, tone: 'warning' }
+        return OMIT_SETTLED[verdict].outcome
+      }
+      notice.value = { key: 'omitted', tone: 'success' }
+      return 'omitted'
+    } catch (error) {
+      if (!alive.value) return 'deploy_failed'
+      return failed(`deploy_failure.${omitDeployFailure(workPlanDeployFailureOf(error).kind)}`)
+    }
+  }
+
   function exportJson(): string | null {
     return draft.value ? workPlanJsonText(draft.value) : null
   }
@@ -662,6 +914,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     for (const stop of sessionStops) stop()
     sessionStops.clear()
     generation += 1
+    deploySeq += 1
     unregister()
   }
 
@@ -714,6 +967,10 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     stepSession,
     exportJson,
     importJson,
+    deployStatus,
+    omitting,
+    omitState,
+    omitStep,
     dismissNotice: () => {
       notice.value = null
     },

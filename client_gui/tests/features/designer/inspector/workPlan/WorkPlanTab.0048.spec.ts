@@ -15,6 +15,8 @@
  * v0.2 work plan edit window (features/workPlanWindow) — not the document window; `wpOpened()` lists those windows.
  * flowgate.v02.0074 T#2: the plan line's [업로드] stays and opens that window's [JSON 가져오기] (no file pick, no PATCH);
  * off with the window's reason in a read-only Flow.
+ * flowgate.v02.0074 T#5: the header's deploy buttons read the deploy status (mocked: a plan not deployed yet); a Node
+ * without a document reads none and keeps them disabled.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, type Pinia } from 'pinia'
@@ -53,6 +55,7 @@ const relationsRead = vi.fn()
 const qaReadCall = vi.fn()
 const attachmentsReadCall = vi.fn()
 const contentSave = vi.fn()
+const deployStatusRead = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/document')>()
   return {
@@ -67,10 +70,12 @@ vi.mock('@/features/document', async (importOriginal) => {
     attachmentsRead: (...args: unknown[]) => attachmentsReadCall(...args),
     // flowgate.v02.0074 T#2: the plan line's [업로드] never saves the content.
     documentContentSave: (...args: unknown[]) => contentSave(...args),
+    // flowgate.v02.0074 T#5: the header's deploy buttons.
+    workPlanDeployStatus: (...args: unknown[]) => deployStatusRead(...args),
   }
 })
 
-const { toWorkPlanView, toReviewActivity, toReviewDocument, toDocumentDetail, toQaThread, toAttachmentsList } =
+const { toWorkPlanView, toWorkPlanDeployStatus, toReviewActivity, toReviewDocument, toDocumentDetail, toQaThread, toAttachmentsList } =
   await vi.importActual<typeof import('@/features/document')>('@/features/document')
 
 const i18n = prepareInspectorI18n()
@@ -174,9 +179,13 @@ beforeEach(() => {
   server.clear()
   refusals.length = 0
   holds.clear()
-  for (const mock of [planRead, activityRead, documentRead, detailRead, relationsRead, qaReadCall, attachmentsReadCall, contentSave]) mock.mockReset()
+  for (const mock of [planRead, activityRead, documentRead, detailRead, relationsRead, qaReadCall, attachmentsReadCall, contentSave, deployStatusRead]) mock.mockReset()
   seed()
   serve()
+  deployStatusRead.mockImplementation(async (docId: string) => toWorkPlanDeployStatus({
+    doc_id: docId, flow_id: FLOW, wp_node_key: 'gn_wp', ownership: 'graph', wp_revision_no: 3, deployable: true, reason: null,
+    deployed_count: 0, target_count: 2, missing_count: 2, orphan_count: 0, mismatch_count: 0, cards: [], modes: { first: true, add: false, cleanup: false },
+  }))
   closeAllDocumentWindows()
   closeAllWorkPlanEditWindows()
   browserTabs = []
@@ -602,7 +611,11 @@ describe('WP summary in the Frame (real registry)', () => {
     expect(section.findAll('[data-test="inspector-slot"]').map((line) => line.attributes('data-empty'))).toEqual(['true'])
     expect(planRead).not.toHaveBeenCalled()
     expect(el(w, 'work-plan-status').exists()).toBe(false)
+    // flowgate.v02.0074 T#5: the IconButton keeps the disabled attribute in the DOM; no status read without a document.
     expect(el(w, 'work-plan-deploy').attributes('disabled')).toBeDefined()
+    expect(el(w, 'work-plan-deploy').attributes('title')).toBe('전개 — 작업계획 문서가 없습니다')
+    expect(el(w, 'work-plan-redeploy').attributes('disabled')).toBeDefined()
+    expect(deployStatusRead).not.toHaveBeenCalled()
   })
 
   it('a failed WP read stays in the summary section', async () => {
