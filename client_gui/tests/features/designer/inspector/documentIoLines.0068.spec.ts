@@ -7,6 +7,8 @@
  *   bound document) and the presses go through the coordinator for that id;
  * - an edit request (✎) while an upload guards the document opens its window in the view;
  * - the display part: accessible names, the enabled hint, a disabled reason, the progress spinner.
+ * - flowgate.v02.0074 T#2: a WP card's plan line — [다운로드] saves the stored plan body as `<docId>.json`, [업로드] asks for
+ *   the plan window's [JSON 가져오기] (no file pick, no content save).
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -17,12 +19,15 @@ import InspectorSlotList, { type InspectorSlotView } from '@/features/designer/i
 import { closeAllDocumentWindows, documentWindowList } from '@/features/documentWindow'
 import DocumentIoButtons from '@/features/documentWindow/DocumentIoButtons.vue'
 import { documentIoGuarded, resetDocumentEditRegistry } from '@/features/documentWindow/documentEditRegistry'
-import { documentIoUpload, resetDocumentIo } from '@/features/documentWindow/documentIo'
+import { documentIoReadFile, documentIoUpload, resetDocumentIo } from '@/features/documentWindow/documentIo'
+import { closeAllWorkPlanEditWindows, workPlanEditWindowList } from '@/features/workPlanWindow/workPlanEditWindows'
 import { prepareInspectorI18n, selectionOf } from './support/inspectorSupport'
 
 const settingsNodeRead = vi.hoisted(() => vi.fn())
 const infoRead = vi.hoisted(() => vi.fn())
 const download = vi.hoisted(() => vi.fn())
+const planEditRead = vi.hoisted(() => vi.fn())
+const contentSave = vi.hoisted(() => vi.fn())
 
 vi.mock('@shared/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@shared/api')>()
@@ -37,6 +42,8 @@ vi.mock('@/features/document', async (importOriginal) => {
     settingsNodeRead,
     documentInfoRead: (...args: unknown[]) => infoRead(...args),
     documentDownload: (...args: unknown[]) => download(...args),
+    workPlanEditRead: (...args: unknown[]) => planEditRead(...args),
+    documentContentSave: (...args: unknown[]) => contentSave(...args),
   }
 })
 
@@ -216,6 +223,75 @@ describe('card document lines on the Frame', () => {
     closeAllDocumentWindows()
     await row.get('[data-test="inspector-slot-edit"]').trigger('click')
     expect(documentWindowList().map((win) => [win.docId, win.mode])).toEqual([[id, 'edit']])
+  })
+
+  // flowgate.v02.0074 T#2 (D#1 §6.3 / §7.5, R §1.4): the WP card's plan line — the same group, a work plan's presses.
+  describe('a work plan card’s plan line (0074 T#2)', () => {
+    const plan = doc('0006', 'WP')
+
+    function planNode(): FlowGraphNode {
+      return {
+        id: 'gn_wp',
+        kind: 'plan',
+        title: '작업계획',
+        state: 'done',
+        docType: 'WP',
+        x: 0,
+        y: 0,
+        document: { docId: plan, typeCode: 'WP', seq: 6, title: '작업계획', docReviewStatus: 'approved', status: 'open', supersedes: [] },
+        slot: null,
+        nodeRun: null,
+      }
+    }
+
+    const planRow = (w: VueWrapper<any>) => w.get('[data-test="inspector-slot"][data-slot="plan"]')
+
+    beforeEach(() => {
+      infoRead.mockImplementation(async (docId: string) => ({ docId, typeCode: docId === plan ? 'WP' : 'T', title: '', isEditable: true, downloadAvailable: true }))
+      planEditRead.mockReset().mockResolvedValue({ ok: true, doc_id: plan, revision_no: 4, stored_path: 'x.json', body: { wp_version: 2, binding: 'advisory', steps: [] } })
+      contentSave.mockReset()
+    })
+
+    afterEach(() => {
+      closeAllWorkPlanEditWindows()
+    })
+
+    it('[다운로드]: the stored plan body as <docId>.json (application/json) — not the Markdown download', async () => {
+      const w = await mountFrame(planNode())
+      const row = planRow(w)
+      expect(row.get('[data-test="document-io"]').attributes('data-doc')).toBe(plan)
+      const blobs: Blob[] = []
+      Object.assign(URL, {
+        createObjectURL: vi.fn((blob: Blob) => {
+          blobs.push(blob)
+          return 'blob:x'
+        }),
+        revokeObjectURL: vi.fn(),
+      })
+      const names: string[] = []
+      const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+        names.push(this.download)
+      })
+      await row.get('[data-test="document-io-download"]').trigger('click')
+      await flushPromises()
+      expect(planEditRead).toHaveBeenCalledWith(plan)
+      expect(download).not.toHaveBeenCalled()
+      expect(names).toEqual([`${plan}.json`])
+      expect(blobs[0].type).toBe('application/json;charset=utf-8')
+      expect(await documentIoReadFile(blobs[0])).toBe(`${JSON.stringify({ wp_version: 2, binding: 'advisory', steps: [] }, null, 2)}\n`)
+      anchorClick.mockRestore()
+    })
+
+    it('[업로드] (kept, titled 「JSON 가져오기」): asks for the plan window’s import — no file pick, no content save', async () => {
+      const w = await mountFrame(planNode())
+      const upload = planRow(w).get('[data-test="document-io-upload"]')
+      expect(upload.attributes('title')).toBe('JSON 가져오기')
+      await upload.trigger('click')
+      await flushPromises()
+      expect(workPlanEditWindowList().map((win) => [win.docId, win.request.groupId, win.request.initialMode])).toEqual([[plan, FLOW, 'import']])
+      expect(document.body.querySelector('input[type="file"]')).toBeNull()
+      expect(contentSave).not.toHaveBeenCalled()
+    })
   })
 })
 

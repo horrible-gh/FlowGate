@@ -8,6 +8,10 @@ import type { WorkPlanStepDraft } from './workPlanEditModel'
 import type { WorkPlanStepEditSession, WorkPlanStepEditTarget } from './useWorkPlanEditor'
 import { setWorkPlanStepEditHandler } from './workPlanEditWindows'
 
+/** The Step window edits a pre-instruction: an instruction Step, or a design card's 설계서 (its own editing text). */
+export const workPlanStepHasEditor = (target: WorkPlanStepEditTarget | null | undefined) =>
+  !!target && (target.pairRole !== 'result' || ['D', 'P', 'L', 'DB'].includes(target.type))
+
 export interface WorkPlanStepWindow {
   id: number
   docId: string
@@ -37,6 +41,10 @@ export function workPlanStepDirty(win: WorkPlanStepWindow): boolean { return !eq
 export function workPlanStepPending(docId: string): boolean {
   return (uploads.get(docId) ?? 0) > 0 || windows.some((win) => win.docId === docId && workPlanStepDirty(win))
 }
+/** A Step window of that row is open (0074 T#5: the row's 「지시 생략」 waits for it). */
+export function workPlanStepOpen(docId: string, rowId: string): boolean {
+  return windows.some((win) => win.docId === docId && !win.closed && win.session.target()?.rowId === rowId)
+}
 export function workPlanStepBlocked(win: WorkPlanStepWindow): boolean {
   return win.closed || win.uploading || !win.session.alive() || !win.session.target() || !win.session.snapshot() || win.session.locked()
 }
@@ -48,7 +56,13 @@ export function workPlanStepValidation(win: WorkPlanStepWindow): string | null {
 
 export function openWorkPlanStepWindow(target: WorkPlanStepEditTarget, session: WorkPlanStepEditSession): void {
   const current = windows.find((win) => win.docId === target.docId && win.session.target()?.rowId === target.rowId)
-  if (current) { current.minimized = false; current.raise += 1; return }
+  if (current) {
+    // Reopening this exact stage preserves its unsaved text and upload state.
+    current.session = markRaw(session)
+    current.minimized = false
+    current.raise += 1
+    return
+  }
   const draft = session.snapshot()
   if (!draft || !session.target()) return
   const id = ++seq
@@ -67,12 +81,12 @@ export function closeWorkPlanStepWindows(docId?: string): void {
   for (const win of [...windows]) if (!docId || win.docId === docId) closeWorkPlanStepWindow(win)
 }
 export function installWorkPlanStepEditor(): () => void {
-  return setWorkPlanStepEditHandler({ open: openWorkPlanStepWindow, pending: workPlanStepPending, parentClosed: closeWorkPlanStepWindows })
+  return setWorkPlanStepEditHandler({ open: openWorkPlanStepWindow, pending: workPlanStepPending, parentClosed: closeWorkPlanStepWindows, openRow: workPlanStepOpen })
 }
 
 export function setWorkPlanStepValue<K extends keyof WorkPlanStepDraft>(win: WorkPlanStepWindow, key: K, value: WorkPlanStepDraft[K]): void {
   if (workPlanStepBlocked(win)) return
-  if (win.session.target()?.pairRole === 'result') return
+  if (!workPlanStepHasEditor(win.session.target())) return
   win.draft = { ...win.draft, [key]: value }
   win.issue = null
   win.detail = null
@@ -103,14 +117,14 @@ export function saveWorkPlanStep(win: WorkPlanStepWindow): boolean {
 export async function dropWorkPlanStepFiles(win: WorkPlanStepWindow, files: ArrayLike<File>): Promise<void> {
   if (files.length === 0) return
   if (files.length > 1) {
-    if (!workPlanStepBlocked(win) && win.session.target()?.pairRole !== 'result') { win.issue = 'one_file'; win.detail = null }
+    if (!workPlanStepBlocked(win) && workPlanStepHasEditor(win.session.target())) { win.issue = 'one_file'; win.detail = null }
     return
   }
   await uploadWorkPlanStepFile(win, files[0])
 }
 
 export async function uploadWorkPlanStepFile(win: WorkPlanStepWindow, file: File): Promise<void> {
-  if (workPlanStepBlocked(win) || win.session.target()?.pairRole === 'result') return
+  if (workPlanStepBlocked(win) || !workPlanStepHasEditor(win.session.target())) return
   const stepKey = win.session.attachmentStepKey()
   if (!stepKey) { win.issue = 'save_parent_first'; return }
   const limit = win.session.attachmentMaxBytes()

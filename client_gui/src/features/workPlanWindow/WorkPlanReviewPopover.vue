@@ -71,7 +71,7 @@ import { usePopover } from '@/features/conversation/popover'
 import { workPlanQuantityNameKey } from '@/features/documentWindow/specialDocumentModel'
 import { workPlanWindowMessages } from './messages'
 import type { WorkPlanEditor } from './useWorkPlanEditor'
-import { reviewCountOptions, rowOf, unitOf } from './workPlanEditModel'
+import { reviewCountOptions, rowOf, unitOf, cardType } from './workPlanEditModel'
 import { reviewPopoverPlace } from './workPlanReviewPopover'
 import { paletteIconPath } from '@/features/designer/palette/paletteIcons'
 import { workPlanDocumentNameKey } from './workPlanPresentation'
@@ -109,8 +109,9 @@ const context = computed(() => {
   const current = row.value
   if (!current || !draft.value) return ''
   const head = draft.value.cards[current.cardIndex].steps[0]
-  const unit = unitOf(draft.value.body, head.type)
-  const card = t('card.name', { name: gt(`gui.document_window.${workPlanQuantityNameKey({ type: head.type, unit })}`), n: head.ordinal })
+  const type = cardType(draft.value.cards[current.cardIndex])
+  const unit = unitOf(draft.value.body, type)
+  const card = t('card.name', { name: gt(`gui.document_window.${workPlanQuantityNameKey({ type, unit })}`), n: head.ordinal })
   return t('review.context', { card, doc: t(workPlanDocumentNameKey(current.step.type, current.step.pair_role)) })
 })
 

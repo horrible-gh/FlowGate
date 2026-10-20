@@ -94,6 +94,18 @@ def _request_document(flow_id, doc_id, kind, payload, existing=None, attempt_id=
             if not row or row["attempt_id"] != attempt["attempt_id"] or row["status"] != "requested":
                 raise ledger.LeaseLost("execution is no longer requested")
             return existing
+        # A prewritten instruction skips its writer and hands ownership to its review.
+        # Cancel only the still-requested instruction writer of this exact attempt/document.
+        if payload.get("type") == "loop":
+            pending = run_store._one("SELECT * FROM graph_attempt_runs WHERE attempt_id = ? AND status = 'requested'",
+                                     [attempt["attempt_id"]])
+            if pending:
+                prior = json.loads(pending["request_json"])
+                row = run_store._one("SELECT instruction_doc_id, stage FROM graph_node_runs WHERE run_id = ? AND node_key = ?",
+                                     [attempt["run_id"], attempt["node_key"]]) or {}
+                if (prior.get("job", {}).get("stage") == "instruction" and row.get("stage") == "instruction"
+                        and row.get("instruction_doc_id") == doc_id):
+                    ledger.cancel(pending["exec_id"], None, "requested")
         result = ledger.request(attempt["attempt_id"], attempt["run_id"], kind, payload)
         # An explicit review may start while its card was idle awaiting a person.
         run = run_store.run_by_id(attempt["run_id"])

@@ -4,8 +4,9 @@
  * mounted; `@shared/api` is the boundary: the plan's GET / PUT and the Flow's AI run read answer, every other read of
  * the Frame's features is offline.
  *
- * - the documents area is one line; its name, document icon and ✎ open the one edit window of the plan (no document
- *   window); asking again brings it back (minimized → restored), no second window;
+ * - the documents area is one line; its name and document icon open the one edit window of the plan (no document
+ *   window; flowgate.v02.0074 T#1: the line has no ✎); asking again brings it back (minimized → restored), no second
+ *   window;
  * - Step ✎ → Step window → [저장] applies to the parent (dirty, no PUT) → parent [저장] is one PUT of the whole body
  *   with base_revision_no → the Designer is asked to read the Flow again; a card moved before the Step [저장] keeps
  *   the Step's edit on its own card; a 409 keeps the applied edit and a reload reads the server again; a 422 field
@@ -188,7 +189,7 @@ async function openFromLine(button = 'inspector-slot-name') {
 // --- Opening ---------------------------------------------------------------------------------------------
 
 describe('the 작업계획 line opens the work plan edit window (flowgate.v02.0072 T#3)', () => {
-  it('one document line; name, document icon and ✎ open the one edit window of the plan — never the document window', async () => {
+  it('one document line; name and document icon open the one edit window of the plan — never the document window', async () => {
     await mountAll(selection(WP_CARD))
     const lines = q('inspector-work-plan')!.querySelectorAll('[data-test="inspector-slot"]')
     expect([...lines].map((item) => item.querySelector('[data-test="inspector-slot-name"]')!.textContent!.trim())).toEqual(['작업계획'])
@@ -197,7 +198,9 @@ describe('the 작업계획 line opens the work plan edit window (flowgate.v02.00
     expect(wpOpened()).toEqual([DOC])
     expect(q('wp-edit-window')!.dataset.doc).toBe(DOC)
     expect(wpGets()).toBe(before + 1)
-    for (const button of ['inspector-slot-open', 'inspector-slot-edit']) {
+    // flowgate.v02.0074 T#1 (R §1.3): no ✎ on the line — the document icon is the other way in.
+    expect(planLine().querySelector('[data-test="inspector-slot-edit"]')).toBeNull()
+    for (const button of ['inspector-slot-open']) {
       await openFromLine(button)
       expect(wpOpened(), button).toEqual([DOC])
     }
@@ -215,7 +218,8 @@ describe('the 작업계획 line opens the work plan edit window (flowgate.v02.00
     await openFromLine()
     expect(workPlanEditWindowList()[0].request).toMatchObject({ docId: DOC, projectId: 'flowgate', groupId: FLOW, title: '작업계획 — 설계 1장 · 작업 2세트' })
     expect(q('wp-edit-title')!.getAttribute('title')).toBe('작업계획 — 설계 1장 · 작업 2세트')
-    expect(q('wp-edit-revision')!.textContent).toBe('r2')
+    // flowgate.v02.0074 T#1 (R §2.2): no r{n} in the title bar; revision 2 is the next PUT's base (below).
+    expect(q('wp-edit-revision')).toBeNull()
   })
 })
 
@@ -239,8 +243,13 @@ describe('Step window → parent dirty → parent save and read again (flowgate.
     expect(lastBody!.steps.find((s: any) => s.key === 'T#1').pre_instruction_text).toBe('인스펙터에서 연 단계')
     expect(lastBody!.x_origin_note).toEqual({ kept: true })
     expect(q('wp-edit-dirty')).toBeNull()
-    expect(q('wp-edit-revision')!.textContent).toBe('r3')
+    // flowgate.v02.0074 T#1: no r{n} shown; the saved revision 3 is the base of the next save.
+    expect(q('wp-edit-revision')).toBeNull()
     expect(intents).toContainEqual({ kind: 'refresh-flow', flowId: FLOW })
+    await type(q('wp-edit-step-note', row('c_t2|main')), '두 번째 저장')
+    await click(q('wp-edit-save'))
+    expect(api.putRequest).toHaveBeenCalledTimes(2)
+    expect(api.putRequest.mock.calls[1][1]).toMatchObject({ base_revision_no: 3 })
   })
 
   it('a card moved while its Step window is open: the Step [저장] still edits its own card', async () => {
@@ -271,8 +280,12 @@ describe('Step window → parent dirty → parent save and read again (flowgate.
     answer = { ...answer, revision_no: 5 }
     await click(q('wp-edit-conflict-reload'))
     await click(document.body.querySelectorAll<HTMLElement>('.ui-confirm-actions button')[1])
-    expect(q('wp-edit-revision')!.textContent).toBe('r5')
+    // flowgate.v02.0074 T#1: no r{n} shown; the read revision 5 is the base of the next save.
+    expect(q('wp-edit-revision')).toBeNull()
     expect(q('wp-edit-dirty')).toBeNull()
+    await type(q('wp-edit-step-note', row('c_t2|main')), '다시 읽은 뒤')
+    await click(q('wp-edit-save'))
+    expect(api.putRequest.mock.calls.at(-1)![1]).toMatchObject({ base_revision_no: 5 })
   })
 
   it('422: a field error stays on its row and the edit is kept', async () => {
@@ -308,7 +321,7 @@ describe('read only and run lock from the opener (flowgate.v02.0072 T#3)', () =>
 
   it('the Flow’s run lock locks the window; when the run ends the window may edit again', async () => {
     const w = await mountAll(selection(WP_CARD, { editLock: 'run' }))
-    await openFromLine('inspector-slot-edit')
+    await openFromLine('inspector-slot-open')
     expect(q('wp-edit-lock')!.dataset.reason).toBe('run_locked')
     expect(disabled(q('wp-edit-step-note', row('c_t2|main')))).toBe(true)
     await w.setProps({ selection: selection(WP_CARD, { editLock: null }) })
@@ -582,5 +595,30 @@ describe('the open window follows its own Flow’s run, whatever is selected (fl
     await click(q('wp-edit-save'))
     expect(api.putRequest).not.toHaveBeenCalled()
     expect(noteValue()).toBe('확인 전 편집')
+  })
+})
+
+// --- flowgate.v02.0074 T#1 --------------------------------------------------------------------------------
+
+describe('flowgate.v02.0074 T#1', () => {
+  it('one way in (R §1.3): an editable Flow has no ✎; the document icon opens the plan editable', async () => {
+    await mountAll(selection(WP_CARD))
+    expect(planLine().querySelector('[data-test="inspector-slot-edit"]')).toBeNull()
+    await openFromLine('inspector-slot-open')
+    expect(wpOpened()).toEqual([DOC])
+    expect(q('wp-edit-lock')).toBeNull()
+  })
+
+  it('a revision view: the document icon opens it read only', async () => {
+    await mountAll(selection(WP_CARD, { viewMode: 'revision' }))
+    await openFromLine('inspector-slot-open')
+    expect(q('wp-edit-lock')!.dataset.reason).toBe('read_only')
+  })
+
+  it('the Flow’s run lock: the document icon opens it run locked', async () => {
+    await mountAll(selection(WP_CARD, { editLock: 'run' }))
+    expect(planLine().querySelector('[data-test="inspector-slot-edit"]')).toBeNull()
+    await openFromLine('inspector-slot-open')
+    expect(q('wp-edit-lock')!.dataset.reason).toBe('run_locked')
   })
 })

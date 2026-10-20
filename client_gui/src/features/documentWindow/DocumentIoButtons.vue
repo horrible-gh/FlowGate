@@ -5,10 +5,10 @@
        parts the group from the buttons after it. A disabled button stays (its reason is the tooltip, on the
        wrapper too: a disabled button hears no pointer). Presses do not reach a draggable title bar. -->
   <span class="document-io-group" data-test="document-io" @mousedown.stop>
-    <span class="document-io-slot" :title="uploadTitle">
+    <span class="document-io-slot" :title="uploadTip">
       <IconButton
         :label="t(k('upload'))"
-        :title="uploadTitle"
+        :title="uploadTip"
         variant="secondary"
         size="sm"
         class="document-io-button"
@@ -58,6 +58,8 @@ const DOWNLOAD_PATH =
 const props = defineProps<{
   upload: DocumentIoButtonView
   download: DocumentIoButtonView
+  /** flowgate.v02.0074 T#2: the upload's tooltip as given (a work plan's, translated by the group); else the hint / reason. */
+  uploadTitle?: string | null
 }>()
 
 const emit = defineEmits<{ upload: []; download: [] }>()
@@ -70,7 +72,7 @@ function titleOf(view: DocumentIoButtonView, hint: string): string {
   return view.reason ? t(k(`disabled.${view.reason}`)) : t(k(hint))
 }
 
-const uploadTitle = computed(() => titleOf(props.upload, 'upload_hint'))
+const uploadTip = computed(() => props.uploadTitle ?? titleOf(props.upload, 'upload_hint'))
 const downloadTitle = computed(() => titleOf(props.download, 'download_hint'))
 </script>
 

@@ -111,8 +111,11 @@ export interface DocumentIoInfo {
   readonly uploadDenied: boolean
 }
 
-/** Tooltip key under `gui.document_io.disabled` of a disabled button. */
-export type DocumentIoDisabledKey = 'uploading' | 'downloading' | 'forbidden' | 'locked' | 'no_file'
+/**
+ * Tooltip key under `gui.document_io.disabled` of a disabled button. `step_pending` is a work plan's upload only (its
+ * Step windows hold edits; the tooltip is the plan window's own wording, not a key here).
+ */
+export type DocumentIoDisabledKey = 'uploading' | 'downloading' | 'forbidden' | 'locked' | 'no_file' | 'step_pending'
 
 export interface DocumentIoButtonView {
   readonly enabled: boolean
@@ -143,6 +146,23 @@ function downloadReason(info: DocumentIoInfo, downloading: boolean): DocumentIoD
   if (info.state === 'GONE') return 'no_file'
   if (info.state === 'READY' && info.record?.downloadAvailable === false) return 'no_file'
   return null
+}
+
+/**
+ * flowgate.v02.0074 T#2 (D#1 §6.3 c) — a work plan's upload, which opens its window's [JSON 가져오기]: refused (DENIED, or
+ * an upload refused with 403), locked (GONE, READY and not editable, or the opener's verdict read only / run locked),
+ * Step windows holding edits, else usable. Locks inside an open window (an AI run, a read, a save) are the window's.
+ */
+export function documentIoWorkPlanUploadReason(
+  info: DocumentIoInfo,
+  external: 'read_only' | 'run_locked' | null,
+  stepPending: boolean,
+): DocumentIoDisabledKey | null {
+  if (info.state === 'DENIED' || info.uploadDenied) return 'forbidden'
+  if (info.state === 'GONE') return 'locked'
+  if (info.state === 'READY' && !editable(info.record)) return 'locked'
+  if (external !== null) return 'locked'
+  return stepPending ? 'step_pending' : null
 }
 
 /**

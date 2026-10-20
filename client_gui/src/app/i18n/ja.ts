@@ -1515,7 +1515,8 @@ export default {
     },
     // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
     types: {
-      DS: '設計指示書',
+      // flowgate.v02.0074 T#3 (D#1 §7.6): 「設計指示」 everywhere, as ko.
+      DS: '設計指示',
       D: '基本設計',
       P: 'プロトコル',
       L: 'ロジック',

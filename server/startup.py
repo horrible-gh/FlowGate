@@ -337,6 +337,20 @@ def start_graph_run_integration():
         logger.warning(f"[startup] graph run integration registration failed: {exc}")
 
 
+def start_work_plan_deploy_integration():
+    """flowgate.v02.0074 T0017: composition root of the work plan deploy's card start port. Registers
+    ``flowgate.work_plan_deploy`` at ``work_plan_card_starts``: the WP read marks a plan card started when its
+    deployed Graph card ran, and the WP saves refuse to change that card's instruction choice, as the deploy does.
+    Unregistered, only the v0.1 sequence's started cards are known to the WP read and saves (the deploy keeps its
+    own check)."""
+    try:
+        from flowgate.work_plan_deploy import integration
+
+        integration.register()
+    except Exception as exc:
+        logger.warning(f"[startup] work plan deploy integration registration failed: {exc}")
+
+
 def recover_graph_time_machine():
     """flowgate.v02.0061 T#13: once the Graph ports are registered and before the Graph execution recovery replays
     anything, every unfinished Graph Time Machine operation (started, Git applied, partially failed) goes on from its
@@ -369,6 +383,7 @@ def run_all():
     start_graph_policy_integration()
     start_graph_validation_integration()
     start_graph_run_integration()
+    start_work_plan_deploy_integration()
     # T#4: all Graph ports are ready; orphan AI cleanup has already completed above.
     recover_graph_time_machine()     # T#13: before any replay of the Flow's executions
     try:

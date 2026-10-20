@@ -1482,6 +1482,7 @@ export default {
         card_id_missing: "An existing card is missing its card_id. Keep sending a card's card_id unchanged even after moving or renumbering it.",
         card_id_unknown: 'card_id {value} is not in the previous body. Send a new card without card_id and the server assigns one.',
         card_id_type_changed: 'The card type of card_id {value} cannot change.',
+        instruction_mode_started: 'The instruction omission of card_id {value} cannot change: the card already started.',
       },
       // T0007 rev1 §1 — maps `empty_selection`'s `what_key` param to the current UI locale.
       // Keys are paired with work_plan_service._EMPTY_SELECTION_WHAT.

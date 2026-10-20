@@ -140,8 +140,8 @@ describe('message keys (flowgate.v02.0048 T#13)', () => {
   const keys = [
     'title',
     // flowgate.v02.0056 F1: the details' keys (rev, totals, assignment, per-card rows, open_hint, edit.*) are gone.
+    // flowgate.v02.0074 T#1: no_cards is gone too (no cards is a wordless dashed block).
     'progress',
-    'no_cards',
     'unassigned',
     'error.unreadable',
     'error.invalid',
@@ -158,11 +158,32 @@ describe('message keys (flowgate.v02.0048 T#13)', () => {
 
   // flowgate.v02.0051 stage 2 (B14 as turn 7 reset it): an undecided feature may be worded and drawn inactive;
   // the deploy strings exist with the reason they are inactive, and nothing names a replan or a memo.
+  // flowgate.v02.0074 T#5: the deploy is connected — no `deploy.unconnected`; the 재전개 ▾ items, the reasons (no target,
+  // deployed, not deployed and the common ones), the blockers, the failures and the cleanup dialog are worded.
   it.each(['ko', 'en', 'ja'] as const)('%s wording: ⇉ 전개 / 재전개 are worded with their inactive reason; no replan, delegation or memo wording', (locale) => {
     const messages = workPlanMessages[locale] as Record<string, unknown>
-    for (const key of ['deploy.deploy', 'deploy.redeploy', 'deploy.unconnected', 'slot.plan', 'slot.deploy', 'slot_empty.deploy', 'author.human']) {
+    const deployKeys = [
+      'deploy.label', 'deploy.deploy', 'deploy.redeploy', 'deploy.add', 'deploy.cleanup',
+      'reason.no_targets', 'reason.deployed', 'reason.not_deployed',
+      'reason.no_document', 'reason.read_only_revision', 'reason.run_locked', 'reason.run_unknown', 'reason.owned_by_v01',
+      'reason.ownership_conflict', 'reason.not_editable', 'reason.disposed', 'reason.ai_running', 'reason.not_on_card',
+      'reason.unavailable', 'reason.status_failed', 'reason.loading', 'reason.busy',
+      'blocker.wp_card_has_successor', 'blocker.deploy_chain_nonlinear', 'blocker.deploy_position_blocked', 'blocker.deploy_draft_invalid',
+      'blocker.deploy_already_deployed', 'blocker.deploy_not_deployed',
+      'outcome.deployed', 'outcome.no_change',
+      'cleanup_dialog.title', 'cleanup_dialog.counts', 'cleanup_dialog.submit', 'cleanup_dialog.cancel',
+    ]
+    for (const kind of ['forbidden', 'not_found', 'not_a_work_plan', 'not_editable', 'ai_running', 'owned_by_v01', 'ownership_conflict',
+      'run_locked', 'not_on_card', 'disposed', 'unreadable', 'wp_changed', 'attachment_unreadable', 'already_deployed', 'not_deployed',
+      'draft_conflict', 'blocked', 'preview_stale', 'target_changed', 'restore_incomplete', 'network', 'other']) deployKeys.push(`failure.${kind}`)
+    for (const key of [...deployKeys, 'slot.plan', 'slot.deploy', 'slot_empty.deploy']) {
       expect(typeof lookup(messages, key), `${locale} ${key}`).toBe('string')
     }
+    expect(lookup(messages, 'deploy.unconnected'), `${locale} deploy.unconnected`).toBeUndefined()
+    // Menu items, the dialog and the failures are short single lines.
+    for (const key of deployKeys) expect(String(lookup(messages, key)), `${locale} ${key}`).not.toContain('\n')
+    // flowgate.v02.0074 T#1 (R §1.1 · §1.2): no author badge and no no-cards text.
+    for (const key of ['author', 'author.human', 'no_cards']) expect(lookup(messages, key), `${locale} ${key}`).toBeUndefined()
     const words = JSON.stringify(messages)
     for (const word of ['재계획', '위임', '메모', 'AI 전달', 'replan', 'delegat', '再計画']) expect(words).not.toContain(word)
   })

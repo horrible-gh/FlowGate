@@ -43,7 +43,7 @@ from .canvas_service import follow_supersede
 from . import card_document_ports, graph_validation_ports, run_state_ports
 from .engine_router import Ownership, block, confirm_block_reason, read_ownership, require_graph_editable
 from .errors import GraphApiError
-from .flow_guard import with_flow_guard, with_read_snapshot
+from .flow_guard import held_guard, with_flow_guard, with_read_snapshot
 
 _KEY_ALPHABET = string.digits + string.ascii_lowercase
 _KEY_LENGTH = 12
@@ -201,9 +201,23 @@ def _resolve(req: dr.DraftRequest, taken: set[str]) -> tuple[list[dict], list[di
 
 def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optional[str]) -> dict:
     """P0008 S3-1~S3-4 ``PUT /flows/{flow_id}/graph/draft``."""
-    flow_id, project_id = group["group_id"], group.get("project_id")
+    flow_id = group["group_id"]
     require_writable(flow_id)
-    registered = registered_doc_types(project_id)
+    registered = registered_doc_types(group.get("project_id"))
+    return with_flow_guard(flow_id, lambda: write_draft(group, user_id, req, client_id, registered))
+
+
+def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, client_id: Optional[str],
+                registered: set[str]) -> dict:
+    """The draft save inside the caller's Flow guard of ``group`` (flowgate.v02.0074 T#4, D0006 §2 초안 저장 내부 함수).
+
+    ``save_draft`` runs it in a guard of its own; the work plan deploy runs it in the guard that also writes its
+    cards' settings and instructions, so the draft, the card lines and those writes commit together or not at all.
+    Every check and write of a draft save is here (ownership, run lock, version CAS, protected nodes, keys, card
+    documents); the Canvas event is queued after the commit, so a rolled-back caller announces nothing.
+    """
+    flow_id, project_id = group["group_id"], group.get("project_id")
+    assert held_guard() == ("flow", flow_id), "write_draft runs inside the Flow guard of its Flow"
 
     def body() -> dict:
         own = read_ownership(flow_id)
@@ -251,7 +265,7 @@ def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optio
                 "removed_node_keys": removed_nodes, "removed_edge_ids": removed_edges,
                 "card_documents": card_documents}
 
-    return with_flow_guard(flow_id, body)
+    return body()
 
 
 def validate_draft(group: dict, user_id: str, draft_version: int) -> dict:

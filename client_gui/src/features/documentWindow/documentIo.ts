@@ -13,6 +13,10 @@
 // - The buttons' state per document (info): the document read's answer, kept per document; READY is reused
 //   when a line or a window draws the document again, every other state is read again.
 // Notices are a queue of this tab, shown by DocumentWindows (one toast host for both screens).
+// flowgate.v02.0074 T#2 (D#1 §6.3 / §7.5, R §1.4) — a work plan (WP) is told apart here, by its type, for every place
+// that draws the group (an Inspector line, the document window's header): its download is the server's stored plan body
+// as `<docId>.json` (GET …/work-plan, `body` only, the plan window's export format), never the Markdown file; its upload
+// is the plan window's [JSON 가져오기] (opened, nothing saved here), never the content save.
 import { reactive, ref } from 'vue'
 import { normalizeApiInput } from '@shared/apiErrors'
 import {
@@ -21,8 +25,18 @@ import {
   documentErrorOf,
   documentInfoRead,
   documentRead,
+  workPlanEditRead,
+  workPlanErrorOf,
   type DocumentDownload,
 } from '@/features/document'
+import {
+  openWorkPlanEditImport,
+  workPlanEditOpenerOf,
+  workPlanEditUnsaved,
+  workPlanGroupOf,
+  workPlanStepEditsPending,
+} from '@/features/workPlanWindow/workPlanEditWindows'
+import { workPlanBodyJsonText, workPlanJsonFileName } from '@/features/workPlanWindow/workPlanJson'
 import {
   documentIoAlive,
   documentIoBusy,
@@ -56,6 +70,7 @@ import {
   documentIoTooLarge,
   documentIoUploadText,
   documentIoView,
+  documentIoWorkPlanUploadReason,
   type DocumentIoDownloadNotice,
   type DocumentIoInfo,
   type DocumentIoInfoState,
@@ -167,9 +182,30 @@ export function documentIoForget(): void {
   infoGeneration.value += 1
 }
 
+/**
+ * flowgate.v02.0074 T#2 — the document is a work plan: its read type when READY, else (being read, refused, gone, failed)
+ * its id `<project>.<module>.<group>.<nnnn>-WP` (case-insensitive), so a press before or without the read never takes
+ * the generic path.
+ */
+export function documentIoIsWorkPlan(docId: string): boolean {
+  const info = documentIoInfo(docId)
+  if (info.state === 'READY') return (info.record?.typeCode ?? '').trim().toUpperCase() === 'WP'
+  return /-WP$/i.test(docId)
+}
+
+/** A work plan's upload: usable or why not (reactive: the opener's verdict and the Step windows are followed). */
+function workPlanUploadReason(docId: string) {
+  const external = workPlanEditOpenerOf(docId, workPlanGroupOf(docId) ?? '').external?.() ?? null
+  return documentIoWorkPlanUploadReason(documentIoInfo(docId), external, workPlanStepEditsPending(docId))
+}
+
 /** Both buttons of the document: usable or why not, and their progress (reactive). */
 export function documentIoButtons(docId: string): DocumentIoView {
-  return documentIoView(documentIoInfo(docId), documentIoBusy(docId), documentIoDownloading(docId))
+  const view = documentIoView(documentIoInfo(docId), documentIoBusy(docId), documentIoDownloading(docId))
+  if (!documentIoIsWorkPlan(docId)) return view
+  // A work plan's upload opens its window's import: no progress of its own.
+  const reason = workPlanUploadReason(docId)
+  return { ...view, upload: { enabled: reason === null, busy: false, reason } }
 }
 
 // A saved body (here or in the document window) is read again by the lines and windows that show it.
@@ -249,6 +285,8 @@ export interface DocumentIoUploadOptions {
   readonly pick?: (accept: string) => Promise<File | null>
   /** The file reader (documentIoReadFile). */
   readonly read?: (file: File) => Promise<string>
+  /** flowgate.v02.0074 T#2: the drawing group's project and Flow, for a work plan window it opens (else the read's). */
+  readonly context?: { readonly projectId: string | null; readonly groupId: string | null }
 }
 
 type SaveOutcome = { readonly ok: true } | { readonly ok: false; readonly error: unknown }
@@ -269,9 +307,28 @@ function orphanSettled(token: DocumentIoToken, outcome: SaveOutcome): void {
   documentIoResume(token.docId)
 }
 
+/**
+ * flowgate.v02.0074 T#2 (D#1 §6.3) — a work plan's upload: its window opens (an open one is reused) asking for [JSON
+ * 가져오기]. No file pick, no guard, no save here — the plan is saved by the window's [저장] (one PUT with
+ * base_revision_no) only. Blocked (the button's reason), nothing happens.
+ */
+function workPlanUpload(docId: string, options: DocumentIoUploadOptions): void {
+  if (workPlanUploadReason(docId) !== null) return
+  const record = documentIoInfo(docId).record
+  openWorkPlanEditImport(docId, {
+    projectId: options.context?.projectId ?? record?.projectId ?? null,
+    groupId: options.context?.groupId ?? record?.groupId ?? null,
+  })
+}
+
 /** Replaces the document's whole stored body with a file's text (the document id is fixed here). */
 export async function documentIoUpload(docId: string, options: DocumentIoUploadOptions = {}): Promise<void> {
-  if (!docId || documentIoBusy(docId)) return
+  if (!docId) return
+  if (documentIoIsWorkPlan(docId)) {
+    workPlanUpload(docId, options)
+    return
+  }
+  if (documentIoBusy(docId)) return
   // Check 1: unsaved or saving text of the document stays; the upload waits for it.
   if (documentIoConflict(docId)) {
     notify('upload_hold', 'warning')
@@ -372,9 +429,71 @@ async function downloadNotice(error: unknown, docId: string): Promise<DocumentIo
   }
 }
 
+const isPlanBody = (value: unknown): boolean => !!value && typeof value === 'object' && !Array.isArray(value)
+
+/** Message key under `gui.document_io.notice.download` for a failed work plan read (no new keys). */
+function workPlanDownloadNotice(error: unknown): DocumentIoDownloadNotice {
+  switch (workPlanErrorOf(error).kind) {
+    case 'forbidden':
+      return 'forbidden'
+    case 'not_found':
+      return 'gone'
+    case 'network':
+      return 'network'
+    default:
+      // unreadable (409 wp_unreadable: recovered in the plan window), invalid (422), other
+      return 'download_failed'
+  }
+}
+
+/**
+ * flowgate.v02.0074 T#2 (R §1.4) — a work plan's download: the server's stored plan (GET …/work-plan), its `body` only
+ * (not the read view around it), as the plan window's export writes it (workPlanBodyJsonText), `<docId>.json`,
+ * application/json. Unsaved edits of its window or Step windows are not in it and are told. A failure saves no file and
+ * falls back to nothing (no Markdown file, no raw text); it never ends with a rejected promise.
+ */
+async function workPlanDownload(docId: string, options: DocumentIoDownloadOptions): Promise<void> {
+  if (documentIoDownloading(docId)) return
+  const token = documentIoNewToken(docId)
+  documentIoStartDownload(token)
+  try {
+    let body: unknown
+    try {
+      body = (await workPlanEditRead(docId)).body
+    } catch (error) {
+      if (token.epoch !== documentIoEpoch()) return
+      const key = workPlanDownloadNotice(error)
+      if (key === 'forbidden') mark(docId, { state: 'DENIED' })
+      else if (key === 'gone') mark(docId, { state: 'GONE' })
+      notify(`download.${key}`, 'danger')
+      return
+    }
+    if (token.epoch !== documentIoEpoch()) return // answered after the Designer was left: no file, no notice
+    if (!isPlanBody(body)) {
+      notify('download.download_failed', 'danger')
+      return
+    }
+    try {
+      const blob = new Blob([workPlanBodyJsonText(body)], { type: 'application/json;charset=utf-8' })
+      ;(options.save ?? documentIoSaveFile)(blob, workPlanJsonFileName(docId))
+    } catch {
+      notify('download.download_failed', 'danger')
+      return
+    }
+    if (workPlanEditUnsaved(docId) || documentIoUnsaved(docId)) notify('download_unsaved_excluded', 'warning')
+    if (token.epoch === documentIoEpoch()) documentIoRefresh(docId)
+  } catch {
+    // Defensive: a download never ends with a rejected promise.
+  } finally {
+    documentIoEndDownload(token)
+  }
+}
+
 /** Saves the document's stored Markdown as a file (the server's file, never the editor's text). */
 export async function documentIoDownload(docId: string, options: DocumentIoDownloadOptions = {}): Promise<void> {
-  if (!docId || documentIoDownloading(docId)) return
+  if (!docId) return
+  if (documentIoIsWorkPlan(docId)) return workPlanDownload(docId, options)
+  if (documentIoDownloading(docId)) return
   const token = documentIoNewToken(docId)
   documentIoStartDownload(token)
   try {

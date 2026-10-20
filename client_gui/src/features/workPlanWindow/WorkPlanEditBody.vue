@@ -131,8 +131,7 @@
           <span v-if="unassignedSplit.shown > 0" class="wpe-warning" data-test="wp-edit-unassigned">{{ t('unassigned', { n: unassignedSplit.shown }) }}</span>
           <span v-if="unassignedSplit.hidden > 0" class="wpe-warning" data-test="wp-edit-unassigned-hidden">{{ t('unassigned_hidden', { n: unassignedSplit.hidden }) }}</span>
         </header>
-        <p v-if="shownCards.length === 0" class="wpe-line" data-test="wp-edit-empty">{{ t('empty') }}</p>
-        <div v-else class="wpe-table">
+        <div v-if="shownCards.length > 0" class="wpe-table">
           <div v-show="anyOpen" class="wpe-columns" data-test="wp-edit-columns" aria-hidden="true">
             <span>{{ t('columns.document') }}</span><span>{{ t('columns.provider') }}</span><span>{{ t('columns.review') }}</span><span>{{ t('columns.note') }}</span><span>{{ t('columns.detail') }}</span>
           </div>
@@ -159,7 +158,7 @@
                   data-test="wp-edit-card-toggle"
                 >
                   <svg class="wpe-icon wpe-caret" :class="{ 'is-open': isOpen(shown.card.id) }" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
-                  <WorkPlanTypeIcon :type="shown.card.steps[0].type" />
+                  <WorkPlanTypeIcon :type="cardType(shown.card)" />
                   <span class="wpe-card-name" data-test="wp-edit-card-name">{{ cardName(shown.card) }}</span>
                   <span class="wpe-card-summary" data-test="wp-edit-card-summary">
                     <span v-for="row in shown.rows" :key="row.rowId" class="wpe-card-doc" data-test="wp-edit-card-doc">
@@ -169,6 +168,13 @@
                 </button>
                 <span v-if="cardHasErrors(shown)" class="wpe-card-error" role="img" :aria-label="t('card.has_errors')" :title="t('card.has_errors')" data-test="wp-edit-card-error">!</span>
                 <span class="wpe-card-controls" @click.stop>
+                  <label v-if="instructionModeEligible(shown.card.steps[0])" class="wpe-instruction-mode">
+                    <input type="checkbox" data-test="wp-edit-instruction-mode"
+                      :checked="instructionOmitted(shown.card.steps[0])"
+                      :disabled="inputsLocked || editor.cardStarted(shown.card.id)"
+                      @change="editor.setInstructionMode(shown.card.id + '|main', ($event.target as HTMLInputElement).checked)" />
+                    {{ t('omit.toggle') }}
+                  </label>
                   <span
                     class="wpe-handle"
                     :class="{ 'is-disabled': !canDrag(shown.card.id) }"
@@ -247,6 +253,17 @@
                     </small>
                   </span>
                   <span class="wpe-pencil">
+                    <IconButton
+                      v-if="omitOf(row).visible"
+                      size="sm"
+                      :label="omitTitle(row)"
+                      :title="omitTitle(row)"
+                      :disabled="!omitOf(row).enabled"
+                      :aria-busy="omitting === row.rowId ? 'true' : undefined"
+                      data-test="wp-edit-step-omit"
+                      :data-action="omitOf(row).action"
+                      @click="editor.omitStep(row.rowId)"
+                    ><svg class="wpe-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="omitOf(row).action === 'retry' ? REFRESH_PATH : OMIT_PATH" /></svg></IconButton>
                     <span v-if="stepHasInstruction(row.step)" class="wpe-mark" :title="t('instruction')" data-test="wp-edit-step-instruction" />
                     <IconButton
                       size="sm"
@@ -292,6 +309,7 @@
 // folding that row's card or minimizing the window (`minimized`) closes it.
 // The body has no colors of its own: v0.2 Button / IconButton / Select / Input and the theme tokens; a type's icon is
 // the Designer Palette's (WorkPlanTypeIcon).
+// flowgate.v02.0074 T#1 (R §2.1): with every quantity at 0 the 작업 순서 section is its header only — no text says so.
 //
 // flowgate.v02.0073 T#1 — DS and T2 are not drawn (no quantity box, no card; the summary counts what is drawn) while
 // the body keeps them whole. Each shown card is a section: its header has the drag grip, the type icon, the card's
@@ -300,6 +318,15 @@
 // ▲▼ and drops use the positions among the shown cards (the editor's moveCard), so hidden cards keep their place.
 // Assumptions (no contract in R0001 / the mockup, NR §7(b)): hidden Steps are never named by their key — their
 // unassigned count is a separate line, a capability finding or a field error of one says "표시하지 않는 단계".
+// flowgate.v02.0074 T#5 (D#1 §6.2): an N / T instruction row and a D / P / L / DB row carry one more icon left of ✎,
+// 「지시 생략」 (「설계 지시 생략」 on a design row): the editor writes the fixed text, saves once and deploys
+// (useWorkPlanEditor.omitStep). Its tooltip names it and, when it is off, why in a word (내용 있음 · 먼저 저장 · 전개 불가 · the
+// window's lock); after a saved but failed deploy it is 「전개 재시도」. The row's last column holds the two icons.
+// flowgate.v02.0074 T0017 (card-owned stages, server/flowgate/work_plan_deploy/CARD_STAGES.md): a D / P / L / DB card is
+// two Steps like an N / T card — its 「설계 지시」 (type DS, pair_role instruction) above its 「설계서」 (pair_role result).
+// Each row has its own AI, review, note and ✎; the 설계 지시 row also has 「설계 지시 생략」 (✓✓). Every card with an
+// instruction has the header's 「지시서 생략」 check: on, its instruction row and summary entry go and are not counted;
+// the result row stays, and nothing of the instruction Step is erased.
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
@@ -322,6 +349,10 @@ import {
   quantityBoxes,
   shownCardsOf,
   stepHasInstruction,
+  designInstructionStep,
+  cardType,
+  instructionModeEligible,
+  instructionOmitted,
   stepKeyShown,
   totalsOf,
   unassignedByShown,
@@ -351,11 +382,13 @@ const emit = defineEmits<{
 const { t } = useI18n({ useScope: 'local', messages: workPlanWindowMessages, inheritLocale: true })
 const { t: gt } = useI18n({ useScope: 'global' })
 
-const { phase, loadError, unreadableRaw, view, draft, saving, reloading, lockReason, inputsLocked, failure, rowErrors, topErrors, capability, externalRevision } =
+const { phase, loadError, unreadableRaw, view, draft, saving, reloading, lockReason, inputsLocked, failure, rowErrors, topErrors, capability, externalRevision, omitting } =
   props.editor
 
-/** Lucide `rotate-ccw` (ISC) — the defaults row's mark, as in the confirmed mockup. */
+/** Lucide `rotate-ccw` (ISC) — the defaults row's mark, as in the confirmed mockup; also 「전개 재시도」. */
 const REFRESH_PATH = 'M3 12a9 9 0 1 0 3-6.7L3 8 M3 3v5h5'
+/** Lucide `check-check` (ISC) — 「지시 생략」. */
+const OMIT_PATH = 'M18 6 7 17l-5-5 M22 10l-7.5 7.5L13 16'
 
 const boxes = computed(() => (draft.value ? quantityBoxes(draft.value.body) : []))
 const totals = computed(() => (draft.value ? totalsOf(draft.value) : { designSheets: 0, workSets: 0, steps: 0 }))
@@ -377,14 +410,15 @@ function quantityName(box: WorkPlanQuantityBox): string {
 }
 
 function documentName(step: WorkPlanEditStep): string {
-  return t(workPlanDocumentNameKey(step.type, step.pair_role))
+  return designInstructionStep(step) ? t('document.design_instruction') : t(workPlanDocumentNameKey(step.type, step.pair_role))
 }
 
 /** A card's name: its quantity name and ordinal (조사 1, 작업 1, 기본 설계 1). */
 function cardName(card: WorkPlanCard): string {
   const head = card.steps[0]
-  const unit = draft.value ? unitOf(draft.value.body, head.type) : 'sheet'
-  return t('card.name', { name: gt(`gui.document_window.${workPlanQuantityNameKey({ type: head.type, unit })}`), n: head.ordinal })
+  const type = cardType(card)
+  const unit = draft.value ? unitOf(draft.value.body, type) : 'sheet'
+  return t('card.name', { name: gt(`gui.document_window.${workPlanQuantityNameKey({ type, unit })}`), n: head.ordinal })
 }
 
 function findingLabel(finding: WorkPlanCapabilityFinding): string {
@@ -459,6 +493,14 @@ watch(
   },
 )
 
+const omitOf = (row: WorkPlanRowRef) => props.editor.omitState(row.rowId)
+
+function omitTitle(row: WorkPlanRowRef): string {
+  const state = omitOf(row)
+  const name = state.action === 'retry' ? t('omit.retry') : t(designInstructionStep(row.step) || row.step.pair_role === 'single' ? 'omit.design' : 'omit.instruction')
+  return state.reason ? `${name} — ${t(state.reason)}` : name
+}
+
 function pencilTitle(row: WorkPlanRowRef): string {
   if (row.step.locked) return t('pencil.locked')
   if (!props.stepEditAvailable) return t('pencil.unavailable')
@@ -515,6 +557,7 @@ function onDragEnd(): void {
 </script>
 
 <style scoped>
+.wpe-instruction-mode { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; white-space: nowrap; }
 .wpe {
   display: flex;
   flex-direction: column;
@@ -635,7 +678,7 @@ function onDragEnd(): void {
 .wpe-count { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: var(--fg2-muted); font-size: 10px; pointer-events: none; }
 .wpe-count.is-over { color: var(--fg2-status-danger-fg); }
 .wpe-table { overflow-x: auto; }
-.wpe-columns, .wpe-row { display: grid; grid-template-columns: minmax(175px, 1.25fr) minmax(140px, .95fr) minmax(160px, .9fr) minmax(130px, 1fr) 32px; align-items: center; gap: 8px; padding: 6px 10px; }
+.wpe-columns, .wpe-row { display: grid; grid-template-columns: minmax(175px, 1.25fr) minmax(140px, .95fr) minmax(160px, .9fr) minmax(130px, 1fr) 66px; align-items: center; gap: 8px; padding: 6px 10px; }
 .wpe-columns { min-width: 760px; padding: 6px 11px 8px; border-bottom: 1px solid var(--fg2-line); color: var(--fg2-muted); font-size: 10.5px; }
 .wpe-cards { display: flex; flex-direction: column; gap: 9px; min-width: 760px; margin: 0; padding: 7px 0 0; list-style: none; }
 .wpe-card { overflow: hidden; border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-control-radius); transition: border-color .14s ease; }
@@ -673,7 +716,7 @@ function onDragEnd(): void {
 .wpe-review :deep(.ui-btn-content) { display: flex; align-items: center; gap: 6px; min-width: 0; width: 100%; }
 .wpe-review-text { flex: 1; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .wpe-review-chevron { width: 12px; height: 12px; }
-.wpe-pencil { position: relative; display: flex; justify-content: center; }
+.wpe-pencil { position: relative; display: flex; justify-content: flex-end; gap: 4px; }
 .wpe-pencil :deep(button) { width: 31px; height: 31px; border: 1px solid var(--fg2-status-info-border, var(--fg2-line-strong)); border-radius: var(--fg2-control-radius); background: var(--fg2-status-info-bg, transparent); color: var(--fg2-status-info-fg, inherit); }
 .wpe-pencil :deep(button:disabled) { border-color: var(--fg2-line); background: transparent; color: var(--fg2-muted); }
 .wpe-mark { position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: var(--fg2-status-success-fg); pointer-events: none; }
@@ -681,7 +724,7 @@ function onDragEnd(): void {
 .wpe-drop-end { padding: 6px; border: 1px dashed var(--fg2-line); border-radius: var(--fg2-control-radius-sm); color: var(--fg2-muted); text-align: center; }
 @container (max-width: 900px) {
   .wpe-boxes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .wpe-columns, .wpe-row { grid-template-columns: minmax(140px, 1.15fr) 133px 160px minmax(110px, 1fr) 32px; gap: 5px; }
+  .wpe-columns, .wpe-row { grid-template-columns: minmax(140px, 1.15fr) 133px 160px minmax(110px, 1fr) 66px; gap: 5px; }
   .wpe-columns, .wpe-cards { min-width: 620px; }
   .wpe-defaults { grid-template-columns: 90px 160px minmax(120px, 1fr); }
   .wpe-defaults > :last-child { grid-column: 3; justify-self: end; }

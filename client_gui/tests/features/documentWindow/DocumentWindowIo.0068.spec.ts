@@ -6,6 +6,8 @@
  * view), the late editor read dropped, the reflect into a clean editor (frontmatter, base and text — a later save
  * edits the uploaded body), the release on every end, other documents untouched, the fixed target across a
  * supersede, the editor kept loading after the reflect time limit; the download of the stored file.
+ * flowgate.v02.0074 T#2: a work plan's header — [다운로드] the stored plan body as `<docId>.json`, [업로드] the plan window's
+ * [JSON 가져오기] (off as locked without the Designer's opener); other documents as before.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -20,13 +22,18 @@ import {
   setDocumentWindowMinimized,
 } from '@/features/documentWindow'
 import { documentIoGuarded, resetDocumentEditRegistry } from '@/features/documentWindow/documentEditRegistry'
-import { documentIoDownload, documentIoLeave, documentIoNotices, documentIoUpload, resetDocumentIo } from '@/features/documentWindow/documentIo'
+import { documentIoDownload, documentIoLeave, documentIoNotices, documentIoReadFile, documentIoUpload, resetDocumentIo } from '@/features/documentWindow/documentIo'
+import { setCurrentUser } from '@/core/auth/currentUser'
+import { closeAllWorkPlanEditWindows, setWorkPlanEditOpener, workPlanEditWindowList } from '@/features/workPlanWindow/workPlanEditWindows'
+import { DOC as WP_DOC, FLOW as WP_FLOW, hiddenPlanBody, readAnswer } from '../workPlanWindow/workPlanFixtures'
 
 const recordRead = vi.fn()
 const contentRead = vi.fn()
 const contentSave = vi.fn()
 const infoRead = vi.fn()
 const download = vi.fn()
+const planEditRead = vi.fn()
+const planDocRead = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/document')>()
   return {
@@ -36,10 +43,13 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentContentSave: (...args: unknown[]) => contentSave(...args),
     documentInfoRead: (...args: unknown[]) => infoRead(...args),
     documentDownload: (...args: unknown[]) => download(...args),
+    // flowgate.v02.0074 T#2: a work plan's download, edit window and body view read the plan
+    workPlanEditRead: (...args: unknown[]) => planEditRead(...args),
+    workPlanDocumentRead: (...args: unknown[]) => planDocRead(...args),
   }
 })
 
-const { toDocumentInfo, toDocumentRecord } = await vi.importActual<typeof import('@/features/document')>('@/features/document')
+const { toDocumentInfo, toDocumentRecord, toWorkPlanDocument } = await vi.importActual<typeof import('@/features/document')>('@/features/document')
 
 registerAppMessages(i18n)
 
@@ -622,5 +632,100 @@ describe('Q3 review regression — clean editor survives Designer exit during sa
       expect(files.get(DOC)).toBe(NEW)
       expect(contentSave).toHaveBeenLastCalledWith(DOC, NEW)
     }
+  })
+})
+
+// --- flowgate.v02.0074 T#2: a work plan in the window's header ----------------------------------------------------------
+
+describe('a work plan’s header [업로드][다운로드] (flowgate.v02.0074 T#2, D#1 §6.3 / §7.5)', () => {
+  const PLAN = WP_DOC
+
+  function capture() {
+    const blobs: Blob[] = []
+    const names: string[] = []
+    Object.assign(URL, {
+      createObjectURL: vi.fn((blob: Blob) => {
+        blobs.push(blob)
+        return 'blob:wp'
+      }),
+      revokeObjectURL: vi.fn(),
+    })
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download)
+    })
+    return { blobs, names, restore: () => anchorClick.mockRestore() }
+  }
+
+  beforeEach(() => {
+    records[PLAN] = { doc_id: PLAN, type_code: 'WP', title: '작업계획', status: 'open', is_editable: true, project_id: 'flowgate', group_id: WP_FLOW }
+    planEditRead.mockReset().mockImplementation(async () => readAnswer({ body: hiddenPlanBody() }))
+    planDocRead.mockReset().mockImplementation(async () => toWorkPlanDocument(readAnswer({ body: hiddenPlanBody() })))
+  })
+
+  afterEach(() => {
+    setWorkPlanEditOpener(null)
+    closeAllWorkPlanEditWindows()
+    setCurrentUser(null)
+  })
+
+  it('[다운로드]: the stored plan’s body only as <docId>.json, application/json — not the Markdown download', async () => {
+    const { blobs, names, restore } = capture()
+    try {
+      await open(PLAN)
+      await click(q(titlebar(PLAN), 'document-io-download'))
+      await vi.waitFor(() => expect(names).toHaveLength(1))
+      expect(planEditRead).toHaveBeenCalledWith(PLAN)
+      expect(download).not.toHaveBeenCalled()
+      expect(names).toEqual([`${PLAN}.json`])
+      expect(blobs[0].type).toBe('application/json;charset=utf-8')
+      const text = await documentIoReadFile(blobs[0])
+      expect(text).toBe(`${JSON.stringify(hiddenPlanBody(), null, 2)}\n`)
+      expect(JSON.parse(text)).not.toHaveProperty('revision_no')
+      expect(notices()).toEqual([])
+    } finally {
+      restore()
+    }
+  })
+
+  it('[업로드] (with the Designer’s opener): the plan window’s [JSON 가져오기]; no file pick, no PATCH', async () => {
+    setWorkPlanEditOpener(() => ({ external: () => null }))
+    await open(PLAN)
+    const up = q(titlebar(PLAN), 'document-io-upload') as HTMLButtonElement
+    expect(up.disabled).toBe(false)
+    expect(up.getAttribute('title')).toBe('JSON 가져오기')
+    await click(up)
+    expect(workPlanEditWindowList().map((win) => [win.docId, win.request.projectId, win.request.groupId, win.request.initialMode])).toEqual([
+      [PLAN, 'flowgate', WP_FLOW, 'import'],
+    ])
+    expect(contentSave).not.toHaveBeenCalled()
+    // the plan window opens on its import (its own JSON file input); the document upload's Markdown picker never does
+    await vi.waitFor(() => expect(document.body.querySelector('[data-test="wp-json-window"]')?.getAttribute('data-mode')).toBe('import'))
+    expect(document.body.querySelector('input[type="file"][accept=".md,text/markdown,text/plain"]')).toBeNull()
+  })
+
+  it('without a Designer to tell the Flow’s verdict the [업로드] stays, off as locked', async () => {
+    await open(PLAN)
+    const up = q(titlebar(PLAN), 'document-io-upload') as HTMLButtonElement
+    expect(up.disabled).toBe(true)
+    expect(up.dataset.reason).toBe('locked')
+    expect(up.getAttribute('title')).toBe('지금은 작업계획을 편집할 수 없어 가져올 수 없습니다.')
+    await click(up)
+    expect(workPlanEditWindowList()).toHaveLength(0)
+    expect(contentSave).not.toHaveBeenCalled()
+  })
+
+  it('recorded, not changed (T#2 out of scope, Q): the plan’s body view still offers the text [편집]', async () => {
+    setCurrentUser({ username: 'worker', email: null, isAdmin: false })
+    await open(PLAN)
+    expect(editButton(PLAN)).not.toBeNull()
+  })
+
+  it('a document that is not a work plan keeps the hint, the file pick and the PATCH', async () => {
+    await open(DOC)
+    expect(q(titlebar(DOC), 'document-io-upload')!.getAttribute('title')).toBe('파일 내용으로 문서 전체를 교체')
+    await upload(DOC, NEW)
+    expect(contentSave).toHaveBeenCalledWith(DOC, NEW)
+    expect(planEditRead).not.toHaveBeenCalled()
+    expect(workPlanEditWindowList()).toHaveLength(0)
   })
 })

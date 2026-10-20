@@ -12,7 +12,7 @@
         <p v-else-if="win.session.locked()" class="step-warning" role="status" data-test="wp-step-lock" :data-reason="win.session.lockReason()">
           {{ win.session.lockReason() ? pt(`lock.${win.session.lockReason()}`) : t('busy') }}
         </p>
-        <p v-if="target?.pairRole === 'result'" class="step-caption" data-test="wp-step-result">{{ t('result') }}</p>
+        <p v-if="target && !workPlanStepHasEditor(target)" class="step-caption" data-test="wp-step-result">{{ t('result') }}</p>
         <template v-else>
           <label class="step-instruction">{{ t('instruction') }}
             <span class="step-text-wrap">
@@ -80,7 +80,7 @@ import { workPlanStepMessages } from './stepMessages'
 import { workPlanDocumentNameKey } from './workPlanPresentation'
 import { workPlanWindowMessages } from './messages'
 import { closeWorkPlanStepWindow, dropWorkPlanStepFiles, saveWorkPlanStep, setWorkPlanStepValue, syncWorkPlanStep,
-  uploadWorkPlanStepFile, workPlanStepBlocked, workPlanStepDirty, workPlanStepValidation, type WorkPlanStepWindow } from './workPlanStepEditWindows'
+  uploadWorkPlanStepFile, workPlanStepHasEditor, workPlanStepBlocked, workPlanStepDirty, workPlanStepValidation, type WorkPlanStepWindow } from './workPlanStepEditWindows'
 
 const props = defineProps<{ win: WorkPlanStepWindow }>()
 const messages = { ko: { ...workPlanWindowMessages.ko, ...workPlanStepMessages.ko }, en: { ...workPlanWindowMessages.en, ...workPlanStepMessages.en }, ja: { ...workPlanWindowMessages.ja, ...workPlanStepMessages.ja } }

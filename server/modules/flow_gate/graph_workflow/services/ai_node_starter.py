@@ -144,6 +144,13 @@ def start_ai_invoke(job: dict) -> dict:
             head_type=job.get("result_doc_type") or job["doc_type"], head_status="pending", parent_doc=parent,
             api_base_url=api_base_url(), raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,
         )
+        from modules.flow_gate.services import invoke_mention_service
+        stored = job.get("card_settings") or {}
+        stage_note = stored.get("instruction_note" if job.get("stage") == "instruction" else "run_note")
+        stage_prompt = stored.get("run_pre_instruction") if job.get("stage") == "result" else None
+        messages = [value for value in (stage_note, stage_prompt) if value]
+        if messages:
+            mention = invoke_mention_service.prepend_messages_section(mention or "", messages, job.get("locale") or "ko")
         mention = ai_start_precheck.node_mention(mention or "", job, ai_run_id)    # 0064 T-B1e: memos go in front of it
         mention = card_memo_hooks.prepend_memo_section(mention or "", flow_id, node_key=job["node_key"])
         if title_requested:                     # 0064 T-B4d: worded at the provider boundary, at the very end

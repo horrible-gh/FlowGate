@@ -57,6 +57,7 @@ from flowgate.card_approval.routes import router as _card_approval_router
 # flowgate.v02.0056 T#3: a card line's write and the v0.2 card memos (server/flowgate/card_documents, card_memos).
 from flowgate.card_documents.routes import router as _card_documents_router
 from flowgate.card_memos.routes import router as _card_memos_router
+from flowgate.work_plan_deploy.routes import router as _work_plan_deploy_router
 # flowgate.v02.0061 T#13: the Graph Time Machine (server/flowgate/graph_time_machine).
 from flowgate.graph_time_machine.routes import router as _graph_time_machine_router
 from modules.flow_gate.api.v1.chat_command_routes import router as _chat_command_router
@@ -256,6 +257,7 @@ app.include_router(_card_settings_router, prefix=f"{CONTEXT}", tags=["CardSettin
 app.include_router(_card_approval_router, prefix=f"{CONTEXT}", tags=["CardApproval"])
 app.include_router(_card_documents_router, prefix=f"{CONTEXT}", tags=["CardDocuments"])
 app.include_router(_card_memos_router, prefix=f"{CONTEXT}", tags=["CardMemos"])
+app.include_router(_work_plan_deploy_router, prefix=f"{CONTEXT}", tags=["WorkPlanDeploy"])
 app.include_router(_graph_time_machine_router, prefix=f"{CONTEXT}", tags=["GraphTimeMachine"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])
 # Every mutation route must carry an inventory classification. Group routes also name

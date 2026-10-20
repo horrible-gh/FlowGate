@@ -1482,6 +1482,7 @@ export default {
         card_id_missing: '既存カードの card_id がありません。カードを移動・再採番しても card_id はそのまま送ってください。',
         card_id_unknown: '直前の本文にない card_id({value})です。新しいカードは card_id なしで送るとサーバーが付与します。',
         card_id_type_changed: 'card_id({value})のカードタイプは変更できません。',
+        instruction_mode_started: '実行を開始したカード(card_id {value})は指示書省略の設定を変更できません。',
       },
       // T0007 rev1 §1 — `empty_selection` の `what_key` param を現在の UI locale に写す表。
       // キーは work_plan_service._EMPTY_SELECTION_WHAT と対にする。

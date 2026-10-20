@@ -177,3 +177,84 @@ def overwrite_file(abs_path, data: bytes) -> None:
         tmp.replace(path)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+# ── restorable replacement (flowgate.v02.0074 T#4, D0006 §3.6.5) ─────────────
+
+KEEP_SUFFIX = ".keep-{pid}-{utc_ms}"
+
+
+class FileChanged(GraphApiError):
+    """The path no longer holds the file a write judged (someone replaced it in between)."""
+
+    def __init__(self, path):
+        super().__init__(409, "file_changed", {})
+        self.path = Path(path)
+
+
+class ReplacedFile:
+    """An existing file replaced by ``replace_restorably``: its original is kept aside until the write commits."""
+
+    def __init__(self, path: Path, keep: Path, original: tuple, replaced: Optional[tuple]):
+        self.path, self.keep, self.original, self.replaced = path, keep, original, replaced
+        self.restored = False
+
+    def restore(self) -> bool:
+        """Put the original back while the path still holds the file this replacement wrote. True: the path holds
+        the original again (also when it already did). False: the path holds something else now; the kept original
+        stays where it is (``keep``) for an operator."""
+        if self.restored:
+            return True
+        if not is_same_file_as(self.path, self.replaced):
+            _log.warning("replaced file not restored, the path changed again: %s (original kept at %s)",
+                         self.path, self.keep)
+            return False
+        os.replace(self.keep, self.path)
+        self.restored = True
+        return True
+
+    def release(self) -> None:
+        """The write committed: the kept original is no longer needed."""
+        if self.restored:
+            return
+        try:
+            self.keep.unlink(missing_ok=True)
+        except OSError:
+            _log.warning("kept original not removed: %s", self.keep, exc_info=True)
+
+
+def replace_restorably(abs_path, data: bytes, expected_identity: Optional[tuple]) -> ReplacedFile:
+    """Replace the existing file at ``abs_path`` with ``data`` so that the replacement can be undone byte for byte.
+
+    The path must still hold the very file ``expected_identity`` was taken of (``file_identity``), else
+    ``FileChanged`` and nothing moves. The original is kept beside it first — a second name of the same file (a hard
+    link, so the original keeps its identity) or, where links are not possible, a copy — and the new bytes are
+    written to a temporary file that then takes the path. ``ReplacedFile.restore`` puts the original back (identity
+    checked), ``release`` drops the kept original after the commit. Nothing here is registered with the transaction:
+    the caller decides when to restore and under which lock (``cleanup_runner``).
+    """
+    path = Path(abs_path)
+    if expected_identity is None or not is_same_file_as(path, expected_identity):
+        raise FileChanged(path)
+    keep = _side_path(path, KEEP_SUFFIX)
+    try:
+        os.link(path, keep)
+    except OSError:
+        import shutil
+
+        shutil.copy2(path, keep)
+    original = file_identity(keep)
+    tmp = _side_path(path, TEMP_SUFFIX)
+    try:
+        if not is_same_file_as(path, expected_identity):
+            keep.unlink(missing_ok=True)
+            raise FileChanged(path)
+        with tmp.open("xb") as stream:
+            stream.write(data)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        if is_same_file_as(path, expected_identity):
+            keep.unlink(missing_ok=True)     # the original never left the path: nothing to keep
+        raise
+    return ReplacedFile(path, keep, original, file_identity(path))

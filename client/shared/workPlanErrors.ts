@@ -75,6 +75,8 @@ const KNOWN_CODES: ReadonlySet<string> = new Set([
   'card_id_missing',
   'card_id_unknown',
   'card_id_type_changed',
+  // flowgate.v02.0074 T0017 — a started card's instruction omission is locked on save.
+  'instruction_mode_started',
 ])
 
 // Keys `empty_selection`'s `what_key` param can carry (mirrors work_plan_service's

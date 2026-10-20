@@ -1,3 +1,4 @@
+import { pairedDesignBody } from '../../../src/features/workPlanWindow/workPlanEditModel'
 /**
  * flowgate.v02.0072 T#1 — the v0.2 work plan edit window (features/workPlanWindow), mounted by DocumentWindows with
  * `@shared/api` mocked (no server):
@@ -47,7 +48,8 @@ import {
   type WorkPlanStepEditSession,
   type WorkPlanStepEditTarget,
 } from '@/features/workPlanWindow'
-import { DOC, FLOW, hiddenPlanBody, hiddenSteps, planBody, readAnswer } from './workPlanFixtures'
+import { workPlanDocumentNameKey } from '@/features/workPlanWindow/workPlanPresentation'
+import { DOC, FLOW, hiddenPlanBody, hiddenSteps, planBody, readAnswer, step } from './workPlanFixtures'
 
 const api = vi.hoisted(() => ({ getRequest: vi.fn(), putRequest: vi.fn(), postRequest: vi.fn() }))
 
@@ -153,11 +155,13 @@ describe('opening (modeless, read once)', () => {
     expect(api.getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/active', { group_id: FLOW })
     expect(q('wp-edit-window')?.dataset.doc).toBe(DOC)
     expect(text(q('wp-edit-heading'))).toContain('작업계획')
-    expect(text(q('wp-edit-revision'))).toBe('r2')
+    // flowgate.v02.0074 T#1 (R §2.2): no totals and no r{n} in the title bar; revision 2 is the save's base (below).
+    expect(q('wp-edit-revision')).toBeNull()
+    expect(q('wp-edit-title-totals')).toBeNull()
     expect(box('T')?.dataset.count).toBe('2')
     expect(box('D')?.dataset.count).toBe('1')
     expect(qa('wp-edit-card').map((card) => card.dataset.card)).toEqual(['c_d1', 'c_t1', 'c_t2', 'c_ts1'])
-    expect(qa('wp-edit-step').map((r) => r.dataset.step)).toEqual(['D#1', 'T#1', 'TR#1', 'T#2', 'TR#2', 'TS#1', 'TSR#1'])
+    expect(qa('wp-edit-step').map((r) => r.dataset.step)).toEqual(['DSD#1', 'D#1', 'T#1', 'TR#1', 'T#2', 'TR#2', 'TS#1', 'TSR#1'])
     expect(text(q('wp-edit-step-type', row('c_t1|main')!))).toContain('지시서')
     expect(text(q('wp-edit-step-review-summary', row('c_t1|main')!))).toBe('1회 · Sonnet')
     expect(q('wp-edit-step-instruction', row('c_t1|main')!)).not.toBeNull()
@@ -220,7 +224,8 @@ describe('modeless behavior (ModelessShell)', () => {
 
 describe('editing and the one save', () => {
   it('per-row AI and note make the window dirty; [저장] PUTs the whole body with base_revision_no', async () => {
-    await open()
+    const saved = vi.fn()
+    await open({ saved })
     await pick(q('wp-edit-step-provider', row('c_t1|main')!), 'aip_sonnet')
     await type(q('wp-edit-step-note', row('c_t2|result')!) as HTMLInputElement, '보고서 메모')
     expect(q('wp-edit-dirty')).not.toBeNull()
@@ -234,10 +239,16 @@ describe('editing and the one save', () => {
     const expected = planBody() as Record<string, any>
     expected.steps[1] = { ...expected.steps[1], provider_id: 'aip_sonnet', provider_display_name: 'Sonnet', origin: 'human' }
     expected.steps[4] = { ...expected.steps[4], note: '보고서 메모', origin: 'human' }
-    expect(payload.body).toEqual(expected)
+    expect(payload.body).toEqual(pairedDesignBody(expected as any))
     expect(q('wp-edit-dirty')).toBeNull()
-    expect(text(q('wp-edit-revision'))).toBe('r3')
+    // flowgate.v02.0074 T#1: no r{n} shown; the saved revision 3 reaches the opener and is the next save's base.
+    expect(q('wp-edit-revision')).toBeNull()
+    expect(saved).toHaveBeenCalledWith(3)
     expect(q('wp-edit-notice')?.dataset.key).toBe('saved_unassigned')
+    await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '두 번째 저장')
+    await click(q('wp-edit-save'))
+    expect(api.putRequest).toHaveBeenCalledTimes(2)
+    expect(lastPut().base_revision_no).toBe(3)
   })
 
   it('a new card gets no AI even with a default AI set; [모두 적용] fills every unlocked Step', async () => {
@@ -274,7 +285,7 @@ describe('editing and the one save', () => {
     expect(row('c_t2|main')?.dataset.step).toBe('T#1')
     await click(q('wp-edit-save'))
     expect(lastPut().body.steps.map((s: any) => `${s.card_id}:${s.key}`)).toEqual([
-      'c_d1:D#1', 'c_t2:T#1', 'c_t2:TR#1', 'c_t1:T#2', 'c_t1:TR#2', 'c_ts1:TS#1', 'c_ts1:TSR#1',
+      'c_d1:DSD#1', 'c_d1:D#1', 'c_t2:T#1', 'c_t2:TR#1', 'c_t1:T#2', 'c_t1:TR#2', 'c_ts1:TS#1', 'c_ts1:TSR#1',
     ])
   })
 
@@ -315,9 +326,13 @@ describe('what a save may answer', () => {
     await click(q('wp-edit-conflict-reload'))
     expect(text(document.body.querySelector('.ui-confirm-title'))).toBe('저장하지 않은 변경을 버리고 다시 읽을까요?')
     await click(confirmButtons()[1])
-    expect(text(q('wp-edit-revision'))).toBe('r5')
+    // flowgate.v02.0074 T#1: no r{n} shown; the read revision 5 is the next save's base.
+    expect(q('wp-edit-revision')).toBeNull()
     expect(q('wp-edit-dirty')).toBeNull()
     expect(q('wp-edit-conflict')).toBeNull()
+    await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '다시 읽은 뒤')
+    await click(q('wp-edit-save'))
+    expect(lastPut().base_revision_no).toBe(5)
   })
 
   it('422 field errors are shown on their rows (by identity) and on top', async () => {
@@ -478,9 +493,10 @@ describe('locks that change while the window is open', () => {
     gate = null
     await flushPromises()
     expect(q('wp-edit-reloading')).toBeNull()
-    expect(text(q('wp-edit-revision'))).toBe('r5')
+    // flowgate.v02.0074 T#1: no r{n} shown; revision 5 is the base of the save below.
+    expect(q('wp-edit-revision')).toBeNull()
     expect(q('wp-edit-dirty')).toBeNull()
-    expect(note('c_d1|main').value).toBe('설계')
+    expect(note('c_d1|main').value).toBe('')
     expect(session.snapshot()).toBeNull()
     expect(session.apply(reviewTwice)).toBe('gone')
     const reopened = await stepSessionOf('c_t1|main')
@@ -494,7 +510,7 @@ describe('locks that change while the window is open', () => {
     expect(api.putRequest).toHaveBeenCalledTimes(2)
     expect(lastPut().base_revision_no).toBe(5)
     expect(lastPut().body.steps[0].note).toBe('응답 후 입력')
-    expect(lastPut().body.steps[1]).toMatchObject({ pre_instruction_text: '바꾼 지시', review_count: 1, reviewer_provider_id: 'aip_sonnet' })
+    expect(lastPut().body.steps.find((s: any) => s.key === 'T#1')).toMatchObject({ pre_instruction_text: '바꾼 지시', review_count: 1, reviewer_provider_id: 'aip_sonnet' })
   })
 
   it('422 not editable: the lock state is read again after the save; the edits stay, the window locks, nothing more is sent', async () => {
@@ -624,14 +640,15 @@ describe('closing and external changes', () => {
     answer = readAnswer({ revision_no: 3, body: { ...planBody(), defaults: { provider_id: null, note: '바뀜' } } })
     window.dispatchEvent(new CustomEvent('fg:document_content_changed', { detail: { doc_id: DOC } }))
     await flushPromises()
-    expect(text(q('wp-edit-revision'))).toBe('r3')
+    // flowgate.v02.0074 T#1: no r{n} shown; revision 3 is the base of the save below.
+    expect(q('wp-edit-revision')).toBeNull()
     expect((q('wp-edit-default-note') as HTMLInputElement).value).toBe('바뀜')
 
     await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '내 변경')
     answer = readAnswer({ revision_no: 4 })
     window.dispatchEvent(new CustomEvent('fg:document_content_changed', { detail: { doc_id: DOC } }))
     await flushPromises()
-    expect(text(q('wp-edit-revision'))).toBe('r3')
+    expect(q('wp-edit-revision')).toBeNull()
     expect(text(q('wp-edit-external'))).toContain('r4')
     expect((q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement).value).toBe('내 변경')
     await click(q('wp-edit-save'))
@@ -647,13 +664,17 @@ describe('closing and external changes', () => {
 })
 
 describe('empty, unreadable, missing', () => {
-  it('a plan with every quantity 0 shows the empty line; raising a quantity adds Steps', async () => {
+  // flowgate.v02.0074 T#1 (R §2.1): no sentence for every quantity 0 — the 작업 순서 section is its header only.
+  it('a plan with every quantity 0 shows no text; raising a quantity adds Steps', async () => {
     const empty = planBody() as Record<string, any>
     for (const box of Object.values(empty.quantities) as Array<{ count: number }>) box.count = 0
     empty.steps = []
     answer = readAnswer({ body: empty, step_execution_status: [] })
     await open()
-    expect(q('wp-edit-empty')).not.toBeNull()
+    expect(q('wp-edit-empty')).toBeNull()
+    expect(document.body.querySelector('.wpe-table')).toBeNull()
+    expect(q('wp-edit-card')).toBeNull()
+    expect(text(q('wp-edit-window'))).not.toContain('모든 수량이 0')
     await click(q('wp-edit-quantity-inc', box('N')!))
     expect(qa('wp-edit-step').map((r) => r.dataset.step)).toEqual(['N#1', 'NR#1'])
   })
@@ -669,7 +690,7 @@ describe('empty, unreadable, missing', () => {
     expect(q('wp-edit-error')?.dataset.kind).toBe('not_found')
     readFailure = null
     await click(q('wp-edit-retry'))
-    expect(qa('wp-edit-step')).toHaveLength(7)
+    expect(qa('wp-edit-step')).toHaveLength(8)
   })
 })
 
@@ -691,7 +712,7 @@ describe('the Step window boundary (✎, T#2)', () => {
     expect(document.body.querySelectorAll('.ui-modeless-panel')).toHaveLength(1)
     expect(opened).toHaveLength(1)
     const { target, session } = opened[0]
-    expect(target).toEqual({ docId: DOC, rowId: 'c_t1|main', stepKey: 'T#1', stepNo: 2, type: 'T', pairRole: 'instruction', cardType: 'T', cardUnit: 'set', cardOrdinal: 1 })
+    expect(target).toEqual({ docId: DOC, rowId: 'c_t1|main', stepKey: 'T#1', stepNo: 3, type: 'T', pairRole: 'instruction', cardType: 'T', cardUnit: 'set', cardOrdinal: 1 })
     // 0073 T#2: the session carries no review — the review is the main window's popover's
     expect(session.snapshot()).toEqual({ preInstructionText: '사전 지시', preInstructionAttachment: (planBody().steps as any[])[1].pre_instruction_attachment })
     expect('reviewCountChoices' in session).toBe(false)
@@ -703,8 +724,8 @@ describe('the Step window boundary (✎, T#2)', () => {
     expect(api.putRequest).not.toHaveBeenCalled()
     await click(q('wp-edit-save'))
     const sent = lastPut().body.steps
-    expect(sent[1]).toMatchObject({ review_count: 1, reviewer_provider_id: 'aip_sonnet', reviewer_provider_display_name: 'Sonnet', pre_instruction_text: '바꾼 지시', pre_instruction_attachment: null })
-    expect(sent.filter((_: unknown, i: number) => i !== 1)).toEqual((planBody().steps as unknown[]).filter((_, i) => i !== 1))
+    expect(sent.find((s: any) => s.key === 'T#1')).toMatchObject({ review_count: 1, reviewer_provider_id: 'aip_sonnet', reviewer_provider_display_name: 'Sonnet', pre_instruction_text: '바꾼 지시', pre_instruction_attachment: null })
+    expect(sent.filter((s: any) => s.key !== 'T#1')).toEqual(pairedDesignBody(planBody() as any).steps.filter((s: any) => s.key !== 'T#1'))
 
     // a new card's row: the session keeps working after the save names it
     await click(q('wp-edit-quantity-inc', box('N')!))
@@ -746,7 +767,7 @@ describe('DS / T2 are not drawn; the save keeps them (0073 T#1)', () => {
     expect(box('T2')).toBeNull()
     expect(qa('wp-edit-quantity').map((b) => b.dataset.type)).toEqual(['D', 'P', 'L', 'DB', 'N', 'T', 'TS'])
     expect(qa('wp-edit-card').map((c) => c.dataset.card)).toEqual(['c_d1', 'c_t1', 'c_t2', 'c_ts1'])
-    expect(qa('wp-edit-step').map((r) => r.dataset.step)).toEqual(['D#1', 'T#1', 'TR#1', 'T#2', 'TR#2', 'TS#1', 'TSR#1'])
+    expect(qa('wp-edit-step').map((r) => r.dataset.step)).toEqual(['DSD#1', 'D#1', 'T#1', 'TR#1', 'T#2', 'TR#2', 'TS#1', 'TSR#1'])
     expect(text(q('wp-edit-totals'))).toBe('설계 1장 · 업무 3세트')
     expect(text(q('wp-edit-unassigned'))).toBe('담당 AI 미지정 2개')
     expect(text(q('wp-edit-unassigned-hidden'))).toBe('표시하지 않는 단계 2개도 담당 AI가 없습니다')
@@ -762,7 +783,7 @@ describe('DS / T2 are not drawn; the save keeps them (0073 T#1)', () => {
     expect(card('c_t2')?.dataset.expanded).toBe('false')
     await click(q('wp-edit-save'))
     const sent = lastPut().body
-    expect(sent.steps.map((s: any) => s.card_id)).toEqual(['c_ds1', 'c_d1', 'c_t2', 'c_t2', 'c_t21', 'c_t21', 'c_t1', 'c_t1', 'c_ts1', 'c_ts1'])
+    expect(sent.steps.map((s: any) => s.card_id)).toEqual(['c_ds1', 'c_d1', 'c_d1', 'c_t2', 'c_t2', 'c_t21', 'c_t21', 'c_t1', 'c_t1', 'c_ts1', 'c_ts1'])
     expect(hiddenSteps(sent)).toEqual(hiddenSteps(hiddenPlanBody()))
     expect(sent.quantities).toEqual(hiddenPlanBody().quantities)
     expect(sent.counted_types).toEqual(hiddenPlanBody().counted_types)
@@ -800,8 +821,8 @@ describe('card sections (0073 T#1)', () => {
   it('compact document labels keep edits attached to the correct card and preserve hidden data', async () => {
     answer = readAnswer({ body: hiddenPlanBody() })
     await open()
-    expect(text(q('wp-edit-title-totals'))).toBe('카드 4개 · 실행 단계 7개')
-    expect(text(q('wp-edit-step-totals'))).toBe('카드 4개 · 7단계')
+    expect(q('wp-edit-title-totals')).toBeNull()
+    expect(text(q('wp-edit-step-totals'))).toBe('카드 4개 · 8단계')
     expect(qa('wp-edit-columns')[0]?.children).toHaveLength(5)
     // every card folded: card headers only, the column titles come with the first open card
     expect(qa('wp-edit-columns')[0]?.style.display).toBe('none')
@@ -878,7 +899,7 @@ describe('card sections (0073 T#1)', () => {
     setWorkPlanStepEditHandler({ open: (target) => opened.push(target) })
     await open()
     await click(q('wp-edit-step-edit', row('c_t1|result')!))
-    expect(opened[0]).toMatchObject({ rowId: 'c_t1|result', stepNo: 3, type: 'TR', cardType: 'T', cardUnit: 'set', cardOrdinal: 1 })
+    expect(opened[0]).toMatchObject({ rowId: 'c_t1|result', stepNo: 4, type: 'TR', cardType: 'T', cardUnit: 'set', cardOrdinal: 1 })
   })
 
   it('a save’s field errors open their card and mark its header', async () => {
@@ -970,8 +991,8 @@ describe('the review popover (0073 T#2)', () => {
     await click(q('wp-edit-save'))
     expect(api.putRequest).toHaveBeenCalledTimes(1)
     const sent = lastPut().body.steps
-    expect(sent[3]).toMatchObject({ key: 'T#2', review_count: -1, reviewer_provider_id: 'aip_sonnet', reviewer_provider_display_name: 'Sonnet' })
-    expect(sent.filter((_: unknown, i: number) => i !== 3)).toEqual((planBody().steps as unknown[]).filter((_, i) => i !== 3))
+    expect(sent.find((s: any) => s.key === 'T#2')).toMatchObject({ key: 'T#2', review_count: -1, reviewer_provider_id: 'aip_sonnet', reviewer_provider_display_name: 'Sonnet' })
+    expect(sent.filter((s: any) => s.key !== 'T#2')).toEqual(pairedDesignBody(planBody() as any).steps.filter((s: any) => s.key !== 'T#2'))
   })
 
   it('[완료], a press outside and Esc close it — Esc never closes the window; the same button closes it, another row’s moves it', async () => {
@@ -1092,5 +1113,94 @@ describe('the review popover (0073 T#2)', () => {
     await click(confirmButtons()[1])
     expect(row('c_t2|main')).toBeNull()
     expect(popover()).toBeNull()
+  })
+})
+
+describe('flowgate.v02.0074 T#1', () => {
+  it('the totals are in one place, no r{n} is shown; the revision still drives the save', async () => {
+    const saved = vi.fn()
+    await open({ saved })
+    expect(qa('wp-edit-step-totals')).toHaveLength(1)
+    expect(q('wp-edit-title-totals')).toBeNull()
+    expect(q('wp-edit-revision')).toBeNull()
+    expect(text(q('wp-edit-heading'))).not.toMatch(/\br\d+\b/)
+    await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '한 번')
+    await click(q('wp-edit-save'))
+    expect(lastPut().base_revision_no).toBe(2)
+    expect(saved).toHaveBeenCalledWith(3)
+    expect(text(q('wp-edit-heading'))).not.toMatch(/\br\d+\b/)
+  })
+})
+
+// flowgate.v02.0074 T#3 (R §3, D#1 §7.6): a design sheet is named 「설계 지시」 (DS) / 「설계서」 (D / P / L / DB) — the
+// names of the Designer 설계 card's lines — never 「설계 문서」 or 「설계 지시서」; the other rows keep their names.
+describe('flowgate.v02.0074 T#3 — 설계 지시 / 설계서', () => {
+  const docs = (cardId: string) => qa('wp-edit-card-doc', q('wp-edit-card-summary', card(cardId)!)!).map(text)
+
+  it('the key: DS is 설계 지시, D / P / L / DB 설계서; instruction · result · TS · TSR as before', () => {
+    expect(workPlanDocumentNameKey('DS', 'single')).toBe('document.design_instruction')
+    for (const design of ['D', 'P', 'L', 'DB']) expect(workPlanDocumentNameKey(design, 'single')).toBe('document.design')
+    expect(workPlanDocumentNameKey('N', 'instruction')).toBe('document.instruction')
+    expect(workPlanDocumentNameKey('T', 'instruction')).toBe('document.instruction')
+    expect(workPlanDocumentNameKey('TR', 'result')).toBe('document.report')
+    expect(workPlanDocumentNameKey('TS', 'instruction')).toBe('document.scenario')
+    expect(workPlanDocumentNameKey('TSR', 'result')).toBe('document.test_report')
+  })
+
+  it('every design sheet row, its card summary and its review popover say 설계서; work · test rows keep their names', async () => {
+    const body = planBody() as Record<string, any>
+    body.quantities.P = { unit: 'sheet', count: 1 }
+    body.quantities.L = { unit: 'sheet', count: 1 }
+    body.quantities.DB = { unit: 'sheet', count: 1 }
+    body.steps.splice(
+      1,
+      0,
+      step({ key: 'P#1', card_id: 'c_p1', type: 'P', ordinal: 1 }),
+      step({ key: 'L#1', card_id: 'c_l1', type: 'L', ordinal: 1 }),
+      step({ key: 'DB#1', card_id: 'c_db1', type: 'DB', ordinal: 1 }),
+    )
+    answer = readAnswer({ body, step_execution_status: [] })
+    await open()
+    for (const [cardId, name] of [['c_d1', '기본 설계 1'], ['c_p1', '프로토콜 1'], ['c_l1', '로직 1'], ['c_db1', '데이터베이스 설계 1']]) {
+      expect(text(q('wp-edit-card-name', card(cardId)!))).toBe(name)
+      expect(docs(cardId)).toEqual(['설계 지시', '설계서'])
+      expect(text(q('wp-edit-step-type', row(`${cardId}|result`)!))).toContain('설계서')
+    }
+    expect(docs('c_t1')).toEqual(['지시서', '레포트'])
+    expect(docs('c_ts1')).toEqual(['테스트 시나리오', '테스트 레포트'])
+    await click(q('wp-edit-step-review', row('c_d1|result')!))
+    expect(text(q('wp-edit-review-context', q('wp-edit-review-popover')!))).toBe('기본 설계 1 · 설계서')
+    const shown = text(q('wp-edit-window')) ?? ''
+    for (const word of ['설계 문서', '설계 지시서']) expect(shown).not.toContain(word)
+  })
+
+  it('en / ja: Design document / 設計書 on the design row', async () => {
+    for (const [locale, name] of [['en', 'Design document'], ['ja', '設計書']] as const) {
+      i18n.global.locale.value = locale
+      await open()
+      expect(docs('c_d1')).toEqual([locale === 'en' ? 'Design instruction' : '設計指示', name])
+      closeAllWorkPlanEditWindows()
+      await flushPromises()
+    }
+  })
+
+  it('legacy DS stays unchanged while the design card exposes its own instruction', async () => {
+    answer = readAnswer({ body: hiddenPlanBody() })
+    await open()
+    expect(box('DS')).toBeNull()
+    expect(qa('wp-edit-step').map((r) => r.dataset.step)).not.toContain('DS#1')
+    expect(docs('c_d1')).toEqual(['설계 지시', '설계서'])
+    expect(text(q('wp-edit-window'))).toContain('설계 지시')
+    await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '설계 행')
+    await click(q('wp-edit-save'))
+    expect(hiddenSteps(lastPut().body)).toEqual(hiddenSteps(hiddenPlanBody()))
+  })
+
+  it('the global DS type name is 「설계 지시」 (ko) · 「設計指示」 (ja) · Design instruction (en)', () => {
+    const named = (locale: 'ko' | 'ja' | 'en') => {
+      i18n.global.locale.value = locale
+      return i18n.global.t('gui.document_window.types.DS')
+    }
+    expect([named('ko'), named('ja'), named('en')]).toEqual(['설계 지시', '設計指示', 'Design instruction'])
   })
 })

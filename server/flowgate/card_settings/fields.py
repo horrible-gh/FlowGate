@@ -118,6 +118,9 @@ PRE_INSTRUCTION_AUTO = Field("pre_instruction_auto", FLAG, False)
 _FIELDS = {
     RUN: (
         _INSTRUCTION, _INSTRUCTION_AI, _RUN_AI, _RESTART, _REVIEW_AI, _REVIEW_COUNT, _TIME_LIMIT, _REVIEW_BASIS,
+        Field("instruction_review_ai", AI), Field("instruction_review_count", REPEAT, 0),
+        Field("instruction_note", "stage_text", ""), Field("run_note", "stage_text", ""),
+        Field("run_pre_instruction", "stage_text", ""),
     ),
     TEST: (_INSTRUCTION, _RUN_AI, _REVIEW_AI, _REVIEW_COUNT),
     REQUIREMENT: (
@@ -186,6 +189,10 @@ def field_of(kind: Optional[str], name: str) -> Optional[Field]:
 def check_value(field: Field, value: Any, *, repeat_choices: Iterable[int],
                 team_exists: Callable[[str], bool], ai_exists: Callable[[str], bool]) -> Any:
     """The value to store (normalized), or ``InvalidValue``. ``None`` is never passed here."""
+    if field.kind == "stage_text":
+        if not isinstance(value, str) or len(value) > 100_000 or "\x00" in value:
+            raise InvalidValue("invalid_text")
+        return value
     if field.kind == CHOICE:
         if not isinstance(value, str) or value not in field.choices:
             raise InvalidValue("not_a_choice")

@@ -216,7 +216,7 @@
 
     <!-- 10. Stage 2 — card header items -->
     <section v-if="shown('card-headers')" id="card-headers" class="preview-section">
-      <h2>2단계 · 카드별 헤더 부품 <small>종류 배지 ▾ (KindSwitchAction) · ⇉ 전개 / ⇉ 재전개 ▾ (WorkPlanActions) · 작성 사람 (WorkPlanOrigin) · ✓ 확인 / ✕ 반려 (GateActions) · ⋯ 메뉴 항목 (InspectorRunMenu)</small></h2>
+      <h2>2단계 · 카드별 헤더 부품 <small>종류 배지 ▾ (KindSwitchAction) · ⇉ 전개 / ⇉ 재전개 ▾ (WorkPlanActions) · ✓ 확인 / ✕ 반려 (GateActions) · ⋯ 메뉴 항목 (InspectorRunMenu)</small></h2>
 
       <p class="preview-caption">요구사항 (unassigned · 문서 있음) — 종류 배지 ▾: 실제 부품. 이 화면에서는 클릭을 막아 두었습니다(서버 호출 없음). 누르면 📄 요구사항 ✓ / 🐞 버그 메뉴 → 확인 대화상자</p>
       <div class="preview-frame preview-inert">
@@ -226,10 +226,9 @@
         </InspectorHeader>
       </div>
 
-      <p class="preview-caption">작업계획 (unassigned · WP 작성 중) — 메타: 작성 사람 · 액션: ⇉ 전개 / ⇉ 재전개 ▾ (비활성: 전개 API 없음)</p>
+      <p class="preview-caption">작업계획 (unassigned · WP 작성 중) — 액션: ⇉ 전개 / ⇉ 재전개 ▾ (비활성: 전개 API 없음)</p>
       <div class="preview-frame">
         <InspectorHeader :target="PLAN_WP">
-          <template #meta><WorkPlanOrigin :target="PLAN_WP" /></template>
           <template #actions><WorkPlanActions :target="PLAN_WP" /></template>
         </InspectorHeader>
       </div>
@@ -322,7 +321,6 @@ import ResearchSlots from '@/features/designer/inspector/features/researchCard/R
 import TaskSlots from '@/features/designer/inspector/features/taskCard/TaskSlots.vue'
 import TestRunSettings from '@/features/designer/inspector/features/testRunSettings/TestRunSettings.vue'
 import WorkPlanActions from '@/features/designer/inspector/features/workPlan/WorkPlanActions.vue'
-import WorkPlanOrigin from '@/features/designer/inspector/features/workPlan/WorkPlanOrigin.vue'
 import { createInspectorRegistry, type InspectorRegistration } from '@/features/designer/inspector/inspectorRegistry'
 import InspectorBlock from '@/features/designer/inspector/parts/InspectorBlock.vue'
 import InspectorControlRow from '@/features/designer/inspector/parts/InspectorControlRow.vue'

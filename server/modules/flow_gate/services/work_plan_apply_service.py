@@ -718,6 +718,38 @@ def started_card_ids(doc: dict, plan: dict) -> list[str]:
     return list((classification or {}).get("started_card_ids") or [])
 
 
+def graph_started_card_ids(doc: dict) -> set[str]:
+    """The plan's cards whose deployed v0.2 Graph card already ran, or whose run facts cannot be read (T0017).
+
+    The deploy's own judgement (``work_plan_card_starts`` port, ``flowgate.work_plan_deploy``): the card's node by
+    its ``wp_source`` and that node's run history, also after the run lock is released. Read errors propagate.
+    """
+    from modules.flow_gate.services import work_plan_card_starts
+
+    return {card for card, ran in work_plan_card_starts.card_starts(doc).items() if ran is not False}
+
+
+def instruction_mode_lock_errors(doc: dict, previous: Optional[dict], plan: dict) -> list[dict]:
+    """The field errors of a save that changes a started card's instruction choice (T0017), or [].
+
+    Started is the v0.1 sequence's (``started_card_ids``) or the v0.2 Graph's (``graph_started_card_ids``). A save
+    that changes no instruction choice reads neither; when the facts cannot be read every changed card counts as
+    started, as the deploy protects a card it cannot judge.
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    changes = wp.instruction_mode_changes(previous, plan)
+    if not changes:
+        return []
+    try:
+        locked = set(started_card_ids(doc, previous or plan)) | graph_started_card_ids(doc)
+    except Exception as exc:  # noqa: BLE001 — unreadable run facts protect the card
+        import LogAssist.log as logger
+        logger.warning(f"[work-plan] started card lookup failed, instruction choice kept: {exc}")
+        locked = {step["card_id"] for _index, step in changes}
+    return wp.instruction_mode_started_errors(changes, locked)
+
+
 def _legacy_acknowledged(acknowledged_codes: Optional[Iterable[str]]) -> bool:
     from modules.flow_gate.services import work_plan_card_identity
 

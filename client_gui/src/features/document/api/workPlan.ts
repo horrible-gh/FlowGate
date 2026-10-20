@@ -22,7 +22,7 @@
 // `{ code: 'wp_unreadable', reason, revision_no, … }` at the top level of the body when the stored plan cannot
 // be read as a table (the v0.1 editor offers its raw view and revision restore).
 import { normalizeApiError } from '@shared/apiErrors'
-import { getRequest, putRequest, postFormRequest } from '@shared/api'
+import { getRequest, postFormRequest, postRequest, putRequest } from '@shared/api'
 
 const API = '/api/v1'
 
@@ -395,4 +395,362 @@ export async function workPlanUploadInstruction(docId: string, stepKey: string, 
     throw new Error('Invalid pre-instruction attachment reference')
   }
   return { ...reference }
+}
+
+// flowgate.v02.0074 T#5 — the WP→v0.2 card deploy (T#4 server `flowgate/work_plan_deploy/routes.py`, D#1 §5; contract
+// 0014-TR §2), same transport and normalization as the reads above:
+//   status   GET  /api/v1/documents/{doc_id}/work-plan/deploy          -> flow_id, wp_node_key, ownership, wp_revision_no,
+//            deployable, reason, deployed / target / missing / orphan / mismatch _count, cards[], modes { first, add, cleanup }
+//   preview  POST …/work-plan/deploy/preview { mode, wp_revision_no }   -> cards[], blockers[], writes, no_change, executable,
+//            counts, baseline { wp_revision_no, plan_digest, draft_version, base_revision_no, remove_node_keys }
+//   execute  POST …/work-plan/deploy { mode, ...baseline }              -> cards[], no_change, draft_version,
+//            created_node_keys, removed_node_keys, key_map, counts
+// The execution only takes a preview: its baseline goes back as the server sent it (a frozen copy kept here, never
+// rebuilt from the normalized fields), with the preview's mode. A baseline the client made itself is refused before
+// anything is sent. Refusals are `{ ok: false, code, message, ...params }` with the HTTP status (workPlanDeployFailureOf).
+
+export type WorkPlanDeployMode = 'first' | 'add' | 'cleanup'
+
+const keys = (value: unknown): string[] => list(value).flatMap((item) => (text(item) ? [item as string] : []))
+const flag = (value: unknown): boolean => value === true
+const nonNegative = (value: unknown): number | null => (typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null)
+
+/** A deployed card of the plan as the status read lists it. */
+export interface WorkPlanDeployedCard {
+  readonly cardId: string
+  readonly nodeKey: string
+  readonly docType: string | null
+  /** Its node and document type match the plan's card, and it is the only card for that card id. */
+  readonly valid: boolean
+  /** The plan still has the card id. */
+  readonly inPlan: boolean
+}
+
+export interface WorkPlanDeployCounts {
+  readonly deployedCount: number
+  readonly targetCount: number
+  readonly missingCount: number
+  readonly orphanCount: number
+  readonly mismatchCount: number
+}
+
+/** `GET …/work-plan/deploy`: whether the plan can deploy now and its counts. */
+export interface WorkPlanDeployStatus extends WorkPlanDeployCounts {
+  readonly docId: string
+  readonly flowId: string | null
+  /** The plan's card on the Graph, or null (the plan is not on a card). */
+  readonly wpNodeKey: string | null
+  /** `unassigned` | `graph` | `v01` | `conflict` (open set), or null. */
+  readonly ownership: string | null
+  readonly wpRevisionNo: number
+  readonly deployable: boolean
+  /** The refusal code when not deployable (`wp_not_editable`, `flow_owned_by_v01`, `graph_run_locked`, …), else null. */
+  readonly reason: string | null
+  readonly cards: readonly WorkPlanDeployedCard[]
+  readonly modes: Readonly<Record<WorkPlanDeployMode, boolean>>
+}
+
+function deployCounts(raw: unknown): WorkPlanDeployCounts {
+  const data = record(raw)
+  return {
+    deployedCount: whole(data.deployed_count) ?? 0,
+    targetCount: whole(data.target_count) ?? 0,
+    missingCount: whole(data.missing_count) ?? 0,
+    orphanCount: whole(data.orphan_count) ?? 0,
+    mismatchCount: whole(data.mismatch_count) ?? 0,
+  }
+}
+
+export function toWorkPlanDeployStatus(raw: unknown): WorkPlanDeployStatus {
+  const data = record(raw)
+  const modes = record(data.modes)
+  const cards: WorkPlanDeployedCard[] = []
+  for (const entry of list(data.cards)) {
+    const row = record(entry)
+    const cardId = text(row.card_id)
+    const nodeKey = text(row.node_key)
+    if (cardId === null || nodeKey === null) continue
+    cards.push({ cardId, nodeKey, docType: text(row.doc_type), valid: flag(row.valid), inPlan: flag(row.in_plan) })
+  }
+  return {
+    docId: text(data.doc_id) ?? '',
+    flowId: text(data.flow_id),
+    wpNodeKey: text(data.wp_node_key),
+    ownership: text(data.ownership),
+    wpRevisionNo: whole(data.wp_revision_no) ?? 0,
+    deployable: flag(data.deployable),
+    reason: flag(data.deployable) ? null : text(data.reason),
+    ...deployCounts(data),
+    cards,
+    modes: { first: flag(modes.first), add: flag(modes.add), cleanup: flag(modes.cleanup) },
+  }
+}
+
+/** Reads whether the plan can deploy and its counts (read permission). */
+export async function workPlanDeployStatus(docId: string): Promise<WorkPlanDeployStatus> {
+  const response = await getRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}/work-plan/deploy`)
+  return toWorkPlanDeployStatus(response.data)
+}
+
+/** One card of a preview or an execution. */
+export interface WorkPlanDeployCardResult {
+  readonly cardId: string
+  readonly docType: string | null
+  readonly nodeKey: string | null
+  /** `create` | `already_deployed` | `kept_type_mismatch` | `kept_duplicate` | `remove` | `kept_orphan` | `skipped_type`. */
+  readonly result: string
+  readonly reason: string | null
+  /** `instruction_write` | `instruction_kept` | null. */
+  readonly instruction: string | null
+  readonly instructionReason: string | null
+  /** Settings the preview leaves out (the execution keeps their defaults). */
+  readonly settingsSkipped: ReadonlyArray<{ readonly field: string; readonly reason: string }>
+}
+
+/**
+ * Why a deploy would not run: `wp_card_has_successor` · `deploy_chain_nonlinear` · `deploy_position_blocked` ·
+ * `deploy_draft_invalid`, a mode mismatch, or in a preview a refusal (ownership, locks, …) under its code.
+ */
+export interface WorkPlanDeployBlocker {
+  readonly code: string
+  readonly nodeKey: string | null
+  readonly nodeKeys: readonly string[]
+  readonly edgeIds: readonly string[]
+  /** deploy_draft_invalid: the draft save's field errors. */
+  readonly errors: ReadonlyArray<{ readonly field: string; readonly reason: string }>
+  /** Every field the server sent with it. */
+  readonly params: Readonly<Record<string, unknown>>
+}
+
+/** The preview's baseline (read only). Only a preview answer makes one; the execution sends the server's own copy. */
+export interface WorkPlanDeployBaseline {
+  readonly wpRevisionNo: number | null
+  readonly planDigest: string | null
+  readonly draftVersion: number | null
+  readonly baseRevisionNo: number | null
+  /** cleanup: the cards the preview showed for removal. */
+  readonly removeNodeKeys: readonly string[]
+}
+
+export interface WorkPlanDeployPreview {
+  readonly mode: WorkPlanDeployMode
+  readonly cards: readonly WorkPlanDeployCardResult[]
+  readonly blockers: readonly WorkPlanDeployBlocker[]
+  readonly writes: boolean
+  readonly noChange: boolean
+  readonly executable: boolean
+  readonly counts: WorkPlanDeployCounts
+  readonly baseline: WorkPlanDeployBaseline
+}
+
+export interface WorkPlanDeployResult {
+  readonly mode: WorkPlanDeployMode
+  readonly cards: readonly WorkPlanDeployCardResult[]
+  readonly noChange: boolean
+  readonly draftVersion: number | null
+  readonly createdNodeKeys: readonly string[]
+  readonly removedNodeKeys: readonly string[]
+  /** card id -> the node key it was placed as. */
+  readonly keyMap: Readonly<Record<string, string>>
+  readonly counts: WorkPlanDeployCounts
+}
+
+function pairs(value: unknown): Array<{ field: string; reason: string }> {
+  return list(value).map((entry) => {
+    const row = record(entry)
+    return { field: typeof row.field === 'string' ? row.field : '', reason: typeof row.reason === 'string' ? row.reason : '' }
+  })
+}
+
+function deployCards(value: unknown): WorkPlanDeployCardResult[] {
+  const out: WorkPlanDeployCardResult[] = []
+  for (const entry of list(value)) {
+    const row = record(entry)
+    const cardId = text(row.card_id)
+    if (cardId === null) continue
+    out.push({
+      cardId,
+      docType: text(row.doc_type),
+      nodeKey: text(row.node_key),
+      result: text(row.result) ?? '',
+      reason: text(row.reason),
+      instruction: text(row.instruction),
+      instructionReason: text(row.instruction_reason),
+      settingsSkipped: pairs(row.settings_skipped),
+    })
+  }
+  return out
+}
+
+export function toWorkPlanDeployBlockers(value: unknown): WorkPlanDeployBlocker[] {
+  const out: WorkPlanDeployBlocker[] = []
+  for (const entry of list(value)) {
+    const row = record(entry)
+    const code = text(row.code)
+    if (code === null) continue
+    out.push({ code, nodeKey: text(row.node_key), nodeKeys: keys(row.node_keys), edgeIds: keys(row.edge_ids), errors: pairs(row.errors), params: { ...row } })
+  }
+  return out
+}
+
+/** The server's own baseline of each preview (a frozen copy), by the baseline object handed out. */
+const SERVER_BASELINES = new WeakMap<WorkPlanDeployBaseline, Readonly<Record<string, unknown>>>()
+
+function issueBaseline(raw: unknown): WorkPlanDeployBaseline {
+  const sent = JSON.parse(JSON.stringify(record(raw))) as Record<string, unknown>
+  if (Array.isArray(sent.remove_node_keys)) Object.freeze(sent.remove_node_keys)
+  const baseline: WorkPlanDeployBaseline = Object.freeze({
+    wpRevisionNo: nonNegative(sent.wp_revision_no),
+    planDigest: typeof sent.plan_digest === 'string' ? sent.plan_digest : null,
+    draftVersion: nonNegative(sent.draft_version),
+    baseRevisionNo: nonNegative(sent.base_revision_no),
+    removeNodeKeys: Object.freeze(keys(sent.remove_node_keys)),
+  })
+  SERVER_BASELINES.set(baseline, Object.freeze(sent))
+  return baseline
+}
+
+export function toWorkPlanDeployPreview(raw: unknown, mode: WorkPlanDeployMode): WorkPlanDeployPreview {
+  const data = record(raw)
+  return Object.freeze({
+    mode,
+    cards: deployCards(data.cards),
+    blockers: toWorkPlanDeployBlockers(data.blockers),
+    writes: flag(data.writes),
+    noChange: flag(data.no_change),
+    executable: flag(data.executable),
+    counts: deployCounts(data.counts),
+    baseline: issueBaseline(data.baseline),
+  })
+}
+
+export function toWorkPlanDeployResult(raw: unknown, mode: WorkPlanDeployMode): WorkPlanDeployResult {
+  const data = record(raw)
+  const keyMap: Record<string, string> = {}
+  for (const [cardId, nodeKey] of Object.entries(record(data.key_map))) if (text(nodeKey)) keyMap[cardId] = nodeKey as string
+  return {
+    mode,
+    cards: deployCards(data.cards),
+    noChange: flag(data.no_change),
+    draftVersion: nonNegative(data.draft_version),
+    createdNodeKeys: keys(data.created_node_keys),
+    removedNodeKeys: keys(data.removed_node_keys),
+    keyMap,
+    counts: deployCounts(data.counts),
+  }
+}
+
+/** What the deploy of `mode` would do now, and the baseline its execution must carry (write permission). */
+export async function workPlanDeployPreview(docId: string, mode: WorkPlanDeployMode, wpRevisionNo: number): Promise<WorkPlanDeployPreview> {
+  const response = await postRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}/work-plan/deploy/preview`, { mode, wp_revision_no: wpRevisionNo })
+  return toWorkPlanDeployPreview(response.data, mode)
+}
+
+/** Runs the deploy a preview showed: its mode and its baseline exactly as the server sent them. */
+export async function workPlanDeployExecute(docId: string, preview: Pick<WorkPlanDeployPreview, 'mode' | 'baseline'>): Promise<WorkPlanDeployResult> {
+  const baseline = SERVER_BASELINES.get(preview.baseline)
+  if (!baseline) throw new Error('A work plan deploy runs only with the baseline of its preview.')
+  const response = await postRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}/work-plan/deploy`, { mode: preview.mode, ...baseline })
+  return toWorkPlanDeployResult(response.data, preview.mode)
+}
+
+/**
+ * forbidden 403; not_found 404 wp_not_found; not_a_work_plan 422; not_editable 422 wp_not_editable (`reason`); invalid 422
+ * (the request); ai_running 423 GROUP_AI_RUN_LOCKED (the middleware's too); 409: owned_by_v01 · ownership_conflict ·
+ * run_locked (graph_run_locked) · not_on_card · disposed (flow_disposed) · unreadable (wp_unreadable) · wp_changed ·
+ * attachment_unreadable · already_deployed · not_deployed · draft_conflict (draft_version_conflict) · blocked
+ * (deploy_blocked, its blockers kept) · preview_stale · target_changed (instruction_target_changed); 500
+ * restore_incomplete (deploy_restore_incomplete, its doc_ids kept); network / other.
+ */
+export type WorkPlanDeployFailureKind =
+  | 'forbidden'
+  | 'not_found'
+  | 'not_a_work_plan'
+  | 'not_editable'
+  | 'invalid'
+  | 'ai_running'
+  | 'owned_by_v01'
+  | 'ownership_conflict'
+  | 'run_locked'
+  | 'not_on_card'
+  | 'disposed'
+  | 'unreadable'
+  | 'wp_changed'
+  | 'attachment_unreadable'
+  | 'already_deployed'
+  | 'not_deployed'
+  | 'draft_conflict'
+  | 'blocked'
+  | 'preview_stale'
+  | 'target_changed'
+  | 'restore_incomplete'
+  | 'network'
+  | 'other'
+
+export interface WorkPlanDeployFailure {
+  readonly kind: WorkPlanDeployFailureKind
+  readonly status: number | null
+  readonly code: string | null
+  /** The server's own words, or null. */
+  readonly message: string | null
+  /** not_editable: final_approved | status …; wp_changed: plan_digest when the plan file changed. */
+  readonly reason: string | null
+  /** blocked: the blockers as sent. */
+  readonly blockers: readonly WorkPlanDeployBlocker[]
+  /** restore_incomplete: the documents left with their kept original. */
+  readonly docIds: readonly string[]
+  /** attachment_unreadable: the card whose pre-instruction file failed. */
+  readonly cardId: string | null
+  /**
+   * The baseline no longer matches the server (draft_version_conflict · deploy_preview_stale · wp_changed): a new
+   * preview is needed — the old baseline is never sent again.
+   */
+  readonly stale: boolean
+}
+
+const DEPLOY_CONFLICTS: Readonly<Record<string, WorkPlanDeployFailureKind>> = {
+  flow_owned_by_v01: 'owned_by_v01',
+  flow_ownership_conflict: 'ownership_conflict',
+  graph_run_locked: 'run_locked',
+  wp_not_on_card: 'not_on_card',
+  flow_disposed: 'disposed',
+  wp_unreadable: 'unreadable',
+  wp_changed: 'wp_changed',
+  wp_attachment_unreadable: 'attachment_unreadable',
+  deploy_already_deployed: 'already_deployed',
+  deploy_not_deployed: 'not_deployed',
+  draft_version_conflict: 'draft_conflict',
+  deploy_blocked: 'blocked',
+  deploy_preview_stale: 'preview_stale',
+  instruction_target_changed: 'target_changed',
+}
+
+const DEPLOY_STALE: ReadonlySet<WorkPlanDeployFailureKind> = new Set(['draft_conflict', 'preview_stale', 'wp_changed'])
+
+/** What a failed deploy call (status, preview or execution) threw, as a kind the caller says in one line. */
+export function workPlanDeployFailureOf(error: unknown): WorkPlanDeployFailure {
+  const normalized = normalizeApiError(error)
+  const data = record(record(record(error).response).data)
+  const status = normalized.status
+  const code = text(data.code)?.trim() ?? normalized.code
+  let kind: WorkPlanDeployFailureKind
+  if (normalized.network) kind = 'network'
+  else if (status === 423 || code === 'GROUP_AI_RUN_LOCKED') kind = 'ai_running'
+  else if (status === 403) kind = 'forbidden'
+  else if (status === 404) kind = 'not_found'
+  else if (status === 422) kind = code === 'not_a_work_plan' ? 'not_a_work_plan' : code === 'wp_not_editable' ? 'not_editable' : 'invalid'
+  else if (status === 409 && code !== null && DEPLOY_CONFLICTS[code]) kind = DEPLOY_CONFLICTS[code]
+  else if (status === 500 && code === 'deploy_restore_incomplete') kind = 'restore_incomplete'
+  else kind = 'other'
+  return {
+    kind,
+    status,
+    code: code || null,
+    message: text(data.message) ?? text(data.detail),
+    reason: text(data.reason),
+    blockers: kind === 'blocked' ? toWorkPlanDeployBlockers(data.blockers) : [],
+    docIds: kind === 'restore_incomplete' ? keys(data.doc_ids) : [],
+    cardId: kind === 'attachment_unreadable' ? text(data.card_id) : null,
+    stale: DEPLOY_STALE.has(kind),
+  }
 }

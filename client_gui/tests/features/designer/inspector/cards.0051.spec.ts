@@ -7,9 +7,12 @@
  * flowgate.v02.0053 T#5: the lines are `name · state dot · [document icon] · ✎` with no type code, no
  * "아직 없음" and no ＋; the 설계 card is 지시서 · 레포트 without the "설명 대기" note; a Custom card is 지시서 ·
  * 레포트. The cards built from card lines are checked in cardLines.0053.spec.ts.
+ * flowgate.v02.0074 T#3 (R §3): the 설계 card's two lines are named 설계 지시 · 설계서; 조사 · 작업 keep 지시서 · 레포트.
+ * flowgate.v02.0074 T#5: the 작업계획 card's header buttons deploy the plan (workPlanDeployActions over the status read; the
+ * status read is mocked here, the deploy flow itself is checked in workPlan/workPlanDeploy.0074.spec.ts).
  */
-import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CheckSettings from '@/features/designer/inspector/features/checkSettings/CheckSettings.vue'
 import { checkSettingsView } from '@/features/designer/inspector/features/checkSettings/checkSettingsModel'
 import DesignSlots from '@/features/designer/inspector/features/designCard/DesignSlots.vue'
@@ -29,11 +32,16 @@ import TestRunSettings from '@/features/designer/inspector/features/testRunSetti
 import { testRunSettingsView } from '@/features/designer/inspector/features/testRunSettings/testRunSettingsModel'
 import { testSpecSlots, type TestSpecViewFacts } from '@/features/designer/inspector/features/testSpec/testSpecModel'
 import WorkPlanActions from '@/features/designer/inspector/features/workPlan/WorkPlanActions.vue'
-import WorkPlanOrigin from '@/features/designer/inspector/features/workPlan/WorkPlanOrigin.vue'
 import { workPlanDeployActions, workPlanSlotState } from '@/features/designer/inspector/features/workPlan/workPlanModel'
 import type { InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
 import InspectorRunMenu from '@/features/designer/inspector/parts/InspectorRunMenu.vue'
 import { prepareInspectorI18n, SELECTIONS, targetOf } from './support/inspectorSupport'
+
+const deployStatusRead = vi.hoisted(() => vi.fn())
+vi.mock('@/features/document', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/features/document')>()
+  return { ...actual, workPlanDeployStatus: (...args: unknown[]) => deployStatusRead(...args) }
+})
 
 const i18n = prepareInspectorI18n()
 
@@ -107,7 +115,7 @@ describe('작업 card lines (taskCardModel)', () => {
 })
 
 describe('설계 card lines (designCardModel)', () => {
-  it('지시서 · 레포트 like 조사 · 작업: a bound D fills the report line; the DS instruction is not linked', () => {
+  it('instruction · report lines like 조사 · 작업: a bound D fills the report line; the DS instruction is not linked', () => {
     const [instruction, report] = designCardSlots(DESIGN_CONFLICT)
     expect(instruction).toMatchObject({ key: 'instruction', empty: true, emptyKey: 'empty.unconnected', open: 'none' })
     expect(report).toMatchObject({ key: 'report', id: DESIGN_CONFLICT.docId, focus: true, open: 'enabled' })
@@ -193,9 +201,21 @@ describe('Graph gate (gateCardModel)', () => {
 
 describe('작업계획 card (workPlanModel, stage 2)', () => {
   it('⇉ 전개 · ⇉ 재전개 ▾ are drawn and disabled with the reason; the plan state follows the document', () => {
-    const actions = workPlanDeployActions({ hasDocument: true })
-    expect(actions.deploy).toEqual({ visible: true, enabled: false, reason: 'deploy.unconnected' })
-    expect(actions.redeploy).toEqual({ visible: true, enabled: false, reason: 'deploy.unconnected' })
+    const status = { ownership: 'unassigned', deployable: true, reason: null, deployedCount: 0, targetCount: 2 }
+    const target = facts(REQ, 'WP')
+    // flowgate.v02.0074 T#5: not deployed, two targets -> [전개] only; [재전개 ▾] and its items say why not.
+    const fresh = workPlanDeployActions({ target, status, statusFailed: false, busy: false })
+    expect(fresh.deploy).toEqual({ visible: true, enabled: true, reason: null })
+    expect(fresh.redeploy).toEqual({ visible: true, enabled: false, reason: 'reason.not_deployed' })
+    expect(fresh.add.enabled).toBe(false)
+    expect(fresh.cleanup.enabled).toBe(false)
+    // deployed -> [재전개 ▾] with both items; [전개] says it is deployed.
+    const deployed = workPlanDeployActions({ target, status: { ...status, deployedCount: 2 }, statusFailed: false, busy: false })
+    expect(deployed.deploy).toEqual({ visible: true, enabled: false, reason: 'reason.deployed' })
+    expect([deployed.redeploy.enabled, deployed.add.enabled, deployed.cleanup.enabled]).toEqual([true, true, true])
+    // no document: every one off with the same reason (a Node without a plan keeps the buttons drawn).
+    const none = workPlanDeployActions({ target: facts(REQ, 'WP', NO_DOCUMENT), status: null, statusFailed: false, busy: false })
+    for (const item of Object.values(none)) expect(item).toEqual({ visible: true, enabled: false, reason: 'reason.no_document' })
     expect(workPlanSlotState('approved', 'open')).toMatchObject({ raw: 'approved', tone: 'success' })
     expect(workPlanSlotState(null, 'draft')).toMatchObject({ key: 'slot_state.writing', tone: 'neutral' })
   })
@@ -300,14 +320,30 @@ describe('card documents tab parts', () => {
     i18n.global.locale.value = 'ko'
   })
 
-  it('DesignSlots: no "설명 대기" note; 지시서 · 레포트 with the rejected report in red', () => {
+  it('DesignSlots: no "설명 대기" note; 설계 지시 · 설계서 with the rejected report in red', () => {
     const w = mount(DesignSlots, { props: { target: DESIGN_CONFLICT }, global })
     expect(w.find('[data-test="inspector-tbd"]').exists()).toBe(false)
     expect(w.text()).not.toContain('설계 카드는 아직 비워 두었습니다.')
     const rows = slotRows(w)
-    expect(rows.map((row) => row.get('[data-test="inspector-slot-name"]').text())).toEqual(['지시서', '레포트'])
+    expect(rows.map((row) => row.get('[data-test="inspector-slot-name"]').text())).toEqual(['설계 지시', '설계서'])
     expect(rows[1].get('[data-test="inspector-slot-state"]').attributes('title')).toBe('반려됨')
     expect(rows[1].classes()).toContain('is-danger')
+  })
+
+  // flowgate.v02.0074 T#3 (R §3): the 설계 card names its two documents as the work plan edit window does; the
+  // 조사 · 작업 cards keep 지시서 · 레포트, in every locale.
+  it.each([
+    ['ko', ['설계 지시', '설계서'], ['지시서', '레포트']],
+    ['en', ['Design instruction', 'Design document'], ['Instruction', 'Report']],
+    ['ja', ['設計指示', '設計書'], ['指示書', 'レポート']],
+  ] as const)('%s: DesignSlots names its lines %j; ResearchSlots · TaskSlots keep %j', (locale, design, other) => {
+    i18n.global.locale.value = locale
+    const names = (w: ReturnType<typeof mount>) => slotRows(w).map((row) => row.get('[data-test="inspector-slot-name"]').text())
+    expect(names(mount(DesignSlots, { props: { target: DESIGN_CONFLICT }, global }))).toEqual([...design])
+    expect(names(mount(DesignSlots, { props: { target: facts(DESIGN_CONFLICT, 'D', NO_DOCUMENT) }, global }))).toEqual([...design])
+    expect(names(mount(ResearchSlots, { props: { target: facts(V01_TR, 'NR') }, global }))).toEqual([...other])
+    expect(names(mount(TaskSlots, { props: { target: facts(V01_TR, 'T') }, global }))).toEqual([...other])
+    for (const word of ['설계 문서', '설계 지시서', '設計指示書']) expect(mount(DesignSlots, { props: { target: DESIGN_CONFLICT }, global }).text()).not.toContain(word)
   })
 
   it('GateSlots / GateActions: the 확인 결과 line and the two actions disabled with the reason before a run; nothing on a non-gate without a document', () => {
@@ -333,16 +369,24 @@ describe('card documents tab parts', () => {
 })
 
 describe('card header parts', () => {
-  it('WorkPlanActions: ⇉ 전개 · ⇉ 재전개 ▾ disabled with the reason; WorkPlanOrigin: 작성 사람', () => {
+  // flowgate.v02.0074 T#5: two icon buttons of the ⋯ kind (no text label; the name and the reason in the tooltip).
+  it('WorkPlanActions: ⇉ 전개 · ⇉ 재전개 ▾ disabled with the reason', async () => {
+    deployStatusRead.mockReset()
+    deployStatusRead.mockResolvedValue({
+      docId: REQ.docId, flowId: REQ.flowId, wpNodeKey: 'gn_wp', ownership: 'v01', wpRevisionNo: 1, deployable: false, reason: 'flow_owned_by_v01',
+      deployedCount: 0, targetCount: 2, missingCount: 2, orphanCount: 0, mismatchCount: 0, cards: [], modes: { first: false, add: false, cleanup: false },
+    })
     const w = mount(WorkPlanActions, { props: { target: facts(REQ, 'WP') }, global })
-    const buttons = w.findAll('button')
-    expect(buttons.map((button) => button.text())).toEqual(['⇉ 전개', '⇉ 재전개 ▾'])
+    await flushPromises()
+    expect(deployStatusRead).toHaveBeenCalledWith(REQ.docId)
+    const buttons = [w.get('[data-test="work-plan-deploy"]'), w.get('[data-test="work-plan-redeploy"]')]
+    expect(buttons.map((button) => button.classes())).toEqual([expect.arrayContaining(['ui-icon-btn', 'ui-icon-btn--sm', 'ui-icon-btn--secondary']), expect.arrayContaining(['ui-icon-btn--sm', 'ui-icon-btn--secondary'])])
+    expect(buttons.map((button) => button.attributes('aria-label'))).toEqual(['전개', '재전개'])
     for (const button of buttons) {
+      expect(button.text()).not.toMatch(/전개/)
       expect(button.attributes('disabled')).toBeDefined()
-      expect(button.attributes('title')).toBe('WP 전개는 아직 연결되지 않았습니다 (0048 D#1 §8.4).')
+      expect(button.attributes('title')).toMatch(/ — v0\.1이 진행하는 흐름입니다$/)
     }
-    const origin = mount(WorkPlanOrigin, { props: { target: facts(REQ, 'WP') }, global })
-    expect(origin.get('[data-test="work-plan-author"]').text()).toBe('작성 사람')
   })
 
   // flowgate.v02.0052 T#3: run control lives in the top Menu Bar / Toolbar (실행 중지 · 재실행); the card

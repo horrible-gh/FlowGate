@@ -66,9 +66,10 @@ CARD_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_#.:-]{0,63}$")
 # Fields a step may omit. ``card_id`` is optional on the wire: a new card is sent without
 # one and the server assigns it (assign_card_ids), and a legacy body without any card_id is
 # filled with ``card_id = key`` in memory when read.
-OPTIONAL_STEP_FIELDS = frozenset({"card_id"})
+OPTIONAL_STEP_FIELDS = frozenset({"card_id", "instruction_mode"})
 
 from modules.flow_gate.documents.type_code import STEP_KEY_RE as KEY_PATTERN
+from modules.flow_gate.services import work_plan_card_stages as card_stages
 PROVIDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 # L0010 §1.1 note_forbidden_chars: C0 controls plus DEL. Newlines and tabs are
 # included on purpose — a one-line note never legitimately holds them, and
@@ -84,6 +85,7 @@ ORIGINS = ("human", "ai_suggested", "system")
 
 TOP_LEVEL_ORDER = (
     "wp_version",
+    "card_stage_model",
     "binding",
     "counted_types",
     "quantities",
@@ -109,6 +111,7 @@ STEP_FIELD_ORDER = (
     "locked",
     "locked_reason",
     "origin",
+    "instruction_mode",
 )
 CANDIDATE_FIELD_ORDER = ("provider_id", "display_name", "group_label")
 DEFAULTS_FIELD_ORDER = ("provider_id", "note")
@@ -154,7 +157,11 @@ def step_contract() -> dict:
         "origins": list(ORIGINS),
         "locked_reason_values": list(LOCKED_REASON_VALUES),
         "pair_map": dict(WORK_PLAN_PAIR_MAP),
-        "single_types": list(WORK_PLAN_SHEET_TYPES),
+        "single_types": list(WORK_PLAN_SHEET_TYPES),  # legacy v0.1 shape only
+        "card_stage_model": {"value": "paired", "design_types": list(card_stages.DESIGN_TYPES),
+                             "instruction_type": "DS", "instruction_key": "DS{design_type}#{ordinal}",
+                             "roles": ["instruction", "result"], "shared_card_id": True,
+                             "result_pre_instruction_types": list(card_stages.DESIGN_TYPES)},
         "locked_types": sorted(WORK_PLAN_LOCKED_TYPES),
         "review_count_choices": list(review_count_choices()),
         "pre_instruction_text_max_chars": PRE_INSTRUCTION_TEXT_MAX_CHARS,
@@ -333,6 +340,11 @@ _ERROR_COPY: dict[str, dict[str, str]] = {
         "ko": "card_id({value})의 카드 타입을 바꿀 수 없습니다.",
         "en": "The card type of card_id {value} cannot change.",
         "ja": "card_id({value})のカードタイプは変更できません。",
+    },
+    "instruction_mode_started": {
+        "ko": "이미 실행을 시작한 카드(card_id {value})는 지시서 생략 설정을 바꿀 수 없습니다.",
+        "en": "The instruction omission of card_id {value} cannot change: the card already started.",
+        "ja": "実行を開始したカード(card_id {value})は指示書省略の設定を変更できません。",
     },
     "locked_flag_mismatch": {
         "ko": "잠금 표시가 타입과 다릅니다.",
@@ -1342,6 +1354,10 @@ def _check_step_shape(step: Any, loc: str) -> list[dict]:
         errors.append(_error(
             "card_id_invalid", f"{loc}.card_id", key, value=card_id, max=CARD_ID_MAX_CHARS,
         ))
+    mode = step.get("instruction_mode")
+    if mode is not None and (mode not in ("use", "omit") or not instruction_mode_allowed(step)):
+        errors.append(_error("enum_not_allowed", f"{loc}.instruction_mode", key,
+                             field=f"{loc}.instruction_mode"))
     type_code = step.get("type")
     if type_code not in WORK_PLAN_STEP_TYPES:
         errors.append(_error("enum_not_allowed", f"{loc}.type", key, field=f"{loc}.type"))
@@ -1428,7 +1444,7 @@ def _structure_errors(steps: list[dict], expected_by_key: dict[str, dict]) -> li
     seen_ordinals: dict[str, int] = {}
     for index, step in enumerate(steps):
         expected = expected_by_key[step["key"]]
-        code = expected["type"]
+        code = expected["key"].split("#")[0]
         ordinal = expected["ordinal"]
         if ordinal != seen_ordinals.get(code, 0) + 1:
             errors.append(_error("ordinal_order_invalid", f"steps[{index}]", step["key"]))
@@ -1514,6 +1530,8 @@ def validate(
         elif not isinstance(body[field], expected):
             errors.append(_error("type_invalid", field, field=field))
     errors.extend(_unknown_fields(body, TOP_LEVEL_ORDER, ""))
+    if "card_stage_model" in body and body["card_stage_model"] != card_stages.MODEL:
+        errors.append(_error("enum_not_allowed", "card_stage_model", field="card_stage_model"))
     if body.get("binding") != BINDING_ADVISORY:
         errors.append(_error("binding_not_allowed", "binding"))
     if errors:
@@ -1617,6 +1635,8 @@ def validate(
     #       alone — a set card moves as one unit;
     #   (b) inside one type, ordinals appear in order 1..n.
     expected_steps = expand_steps(counted_types, quantities, project_id)
+    if body.get("card_stage_model") == card_stages.MODEL:
+        expected_steps = card_stages.upgrade({"steps": expected_steps})["steps"]
     expected_by_key = {step["key"]: step for step in expected_steps}
     if {s["key"] for s in steps} != set(expected_by_key) or len(steps) != len(expected_steps):
         errors.append(_error("steps_quantity_mismatch", "steps"))
@@ -1693,7 +1713,9 @@ def validate(
                         "provider_not_candidate", f"{loc}.provider_id", key,
                         value=step["provider_id"],
                     ))
-            if step.get("pair_role") == "result" and (
+            if step.get("pair_role") == "result" and not (
+                body.get("card_stage_model") == card_stages.MODEL and step.get("type") in card_stages.DESIGN_TYPES
+            ) and (
                 pre_text not in (None, "") or pre_attachment is not None
             ):
                 errors.append(_error(
@@ -1738,6 +1760,8 @@ def canonicalize(body: dict) -> dict:
     """Fixed key order, `x_` extras preserved at the end of their own object."""
     out: dict[str, Any] = {}
     out["wp_version"] = WP_VERSION_SUPPORTED
+    if body.get("card_stage_model") == card_stages.MODEL:
+        out["card_stage_model"] = card_stages.MODEL
     out["binding"] = BINDING_ADVISORY
     out["counted_types"] = list(body.get("counted_types") or [])
     quantities = body.get("quantities") or {}
@@ -1770,6 +1794,7 @@ def canonicalize(body: dict) -> dict:
             **{
                 field: _canonical_step_value(step, field)
                 for field in STEP_FIELD_ORDER
+                if field != "instruction_mode" or field in step
             },
             **{k: v for k, v in step.items() if str(k).startswith("x_")},
         }
@@ -1931,6 +1956,8 @@ def new_card_id(taken: Iterable[str] = ()) -> str:
 def card_type_of_step(step: dict) -> Optional[str]:
     """The type that names a card: the instruction (or single) step's type."""
     code = step.get("type")
+    if card_stages.is_instruction(step):
+        return card_stages.card_type(step)
     if step.get("pair_role") == "result":
         for instruction, result in WORK_PLAN_PAIR_MAP.items():
             if result == code:
@@ -1981,6 +2008,8 @@ def assign_card_ids(
     """
     if not isinstance(body, dict) or not isinstance(body.get("steps"), list):
         return body
+    if (previous or {}).get("card_stage_model") == card_stages.MODEL:
+        body = card_stages.upgrade(body)
     steps = body["steps"]
     if any(not isinstance(step, dict) for step in steps):
         return body
@@ -2227,6 +2256,81 @@ def ensure_revision_snapshot(
 
 # ── Derived views (P0009 §4.4: computed on read, never stored) ───────────────
 
+INSTRUCTION_MODE_PAIR_TYPES = ("N", "T")
+INSTRUCTION_MODE_DESIGN_TYPES = ("D", "P", "L", "DB")
+
+
+def instruction_mode_allowed(step: dict) -> bool:
+    """The step carries its card's instruction choice (``instruction_mode``): an N/T instruction step, or a
+    D/P/L/DB design step, whose own pre-instruction is the card's 설계 지시 (DS) line (T0017 rework)."""
+    return (card_stages.is_instruction(step) or (step.get("type") in INSTRUCTION_MODE_PAIR_TYPES and step.get("pair_role") == "instruction")
+            or (step.get("type") in INSTRUCTION_MODE_DESIGN_TYPES and step.get("pair_role") == "single"))
+
+
+def instruction_omitted(step: dict) -> bool:
+    """A stored N/T instruction remains intact but contributes no execution stage. An omitted design card's step
+    is not this: it is the card's 설계서 and still runs; only the card's 설계 지시 stage goes."""
+    return (instruction_mode_allowed(step) and step.get("pair_role") == "instruction"
+            and step.get("instruction_mode") == "omit")
+
+
+def _carries_instruction_mode(step: Any) -> bool:
+    return isinstance(step, dict) and instruction_mode_allowed(step) and isinstance(step.get("card_id"), str)
+
+
+def instruction_mode_changes(previous: Optional[dict], plan: dict) -> list[tuple[int, dict]]:
+    """``(index, step)`` of the plan's steps carrying an instruction choice (N/T instruction, D/P/L/DB design)
+    whose card had another instruction choice in ``previous`` (the body the save replaces; no field counts as
+    ``use``). A card the previous body did not have is new and has no run, so it is never listed (T0017: a started
+    card's choice is locked on save)."""
+    before = {
+        step["card_id"]: step.get("instruction_mode") or "use"
+        for step in ((previous or {}).get("steps") or []) if _carries_instruction_mode(step)
+    }
+    return [
+        (index, step) for index, step in enumerate(plan.get("steps") or [])
+        if _carries_instruction_mode(step) and step["card_id"] in before
+        and before[step["card_id"]] != (step.get("instruction_mode") or "use")
+    ]
+
+
+def instruction_mode_defaults(previous: Optional[dict], plan: dict) -> dict:
+    """``plan`` with ``instruction_mode: "use"`` written on each step carrying an instruction choice that has none
+    (no field or null) while its card had an explicit choice in ``previous`` (the body the save replaces).
+
+    No field reads as ``use`` wherever a plan is shown or counted, but the deploy leaves a card's setting alone on no
+    field (a legacy plan never chose). Once a plan has chosen for a card, a body that drops the field (a JSON import,
+    an AI edit, an older revision restored) withdraws that choice: it is stored as ``use``, so the read, the counts
+    and the deploy agree (T0017 rework). The field is the step's last canonical field, before its ``x_`` fields."""
+    if (previous or {}).get("card_stage_model") == card_stages.MODEL:
+        plan = card_stages.upgrade(plan)
+    chosen = {
+        step["card_id"] for step in ((previous or {}).get("steps") or [])
+        if _carries_instruction_mode(step) and step.get("instruction_mode") in ("use", "omit")
+    }
+    if not chosen:
+        return plan
+    steps, changed = [], False
+    for step in plan.get("steps") or []:
+        if (_carries_instruction_mode(step) and step["card_id"] in chosen
+                and step.get("instruction_mode") is None):
+            fields = {k: v for k, v in step.items() if k != "instruction_mode" and not str(k).startswith("x_")}
+            extensions = {k: v for k, v in step.items() if str(k).startswith("x_")}
+            step = {**fields, "instruction_mode": "use", **extensions}
+            changed = True
+        steps.append(step)
+    return {**plan, "steps": steps} if changed else plan
+
+
+def instruction_mode_started_errors(changes: list[tuple[int, dict]], locked: set) -> list[dict]:
+    """The field errors (``instruction_mode_started``) of the changed steps whose card is in ``locked``."""
+    return [
+        _error("instruction_mode_started", f"steps[{index}].instruction_mode", step.get("key"),
+               value=step["card_id"], field=f"steps[{index}].instruction_mode")
+        for index, step in changes if step["card_id"] in locked
+    ]
+
+
 def totals(body: dict) -> dict:
     quantities = body.get("quantities") or {}
     design_sheets = sum(
@@ -2242,7 +2346,7 @@ def totals(body: dict) -> dict:
     return {
         "design_sheets": design_sheets,
         "work_sets": work_sets,
-        "steps": len(body.get("steps") or []),
+        "steps": sum(1 for step in (body.get("steps") or []) if not instruction_omitted(step)),
     }
 
 
@@ -2260,7 +2364,7 @@ def unassigned_step_count(body: dict) -> int:
     return sum(
         1
         for step in (body.get("steps") or [])
-        if not step.get("locked") and not step.get("provider_id")
+        if not step.get("locked") and not step.get("provider_id") and not instruction_omitted(step)
     )
 
 
@@ -2279,6 +2383,8 @@ def assignment_summary(body: dict, providers: Optional[list[dict]] = None) -> li
     counts: dict[str, int] = {}
     order: list[str] = []
     for step in body.get("steps") or []:
+        if instruction_omitted(step):
+            continue
         provider_id = step.get("provider_id")
         if not provider_id:
             continue
@@ -2617,10 +2723,10 @@ def _contract_rule_lines(locale: str) -> list[str]:
     if locale == "en":
         return [
             f"Every steps[] entry must carry exactly these {len(required_fields)} required fields, in any JSON key order: {fields}. Never omit a key just because its value is null. Extra fields are rejected unless their name starts with x_, which is preserved as an optional extension.",
-            "card_id is the one optional field: keep the value an existing card already has (also when the card moves), and omit it only on a brand-new card so the server can assign one.",
+            "card_id and instruction_mode are optional fields. instruction_mode is use/omit on an N/T instruction or a D/P/L/DB design step (omit drops the card's instruction / design instruction stage); it preserves every step. Removing the field (or null) from a card that had a choice saves it as use. For card_id, keep the value an existing card already has (also when the card moves), and omit it only on a brand-new card so the server can assign one.",
             f"pair_role allowed values: {pair_roles}. origin allowed values: {origins}. locked_reason allowed values: {locked_reasons}.",
             f"A set type's instruction/result steps pair with each other: {pairs}. The instruction step has pair_role=instruction and pair_key = the result step's key; the result step has pair_role=result and pair_key = the instruction step's key.",
-            f"Sheet types ({single_types}) are unpaired single steps: pair_role=single, pair_key=null.",
+            f"Sheet types ({single_types}) are unpaired single steps (pair_role=single, pair_key=null) in a body without card_stage_model. With card_stage_model=paired each design card is two steps sharing its card_id: its design instruction (type DS, key DS{{type}}#{{n}}, pair_role=instruction, pair_key = the result key) then the design result (pair_role=result, pair_key = the instruction key); each step has its own provider, review, note and pre-instruction, and instruction_mode sits on the DS instruction step.",
             "A non-locked step with no provider chosen represents that with BOTH fields null: provider_id=null AND provider_display_name=null. provider_id=null with a non-null provider_display_name is invalid and validate() rejects it.",
             "TSR is assembled by the server from a finished test run, never written by a human or an AI: provider_id=null, provider_display_name=null, note=null, locked=true, locked_reason=server_assembled, origin=system.",
             "This same schema is also published as data in this item's `contract` field; `example` is a whole minimal body that passes validate() unchanged, while `examples` carries one filled sample step per pair_role.",
@@ -2628,20 +2734,20 @@ def _contract_rule_lines(locale: str) -> list[str]:
     if locale == "ja":
         return [
             f"steps[] の各項目は必ず次の{len(required_fields)}個の必須フィールドを持ちます(JSON内の順序は問いません): {fields}。値が null でもキー自体を省略しません。x_ で始まる名前の追加フィールドは任意の拡張として許可され、それ以外の未知のフィールドは拒否されます。",
-            "card_id だけは任意フィールドです。既存カードが持つ値は(カードを移動しても)そのまま保ち、まったく新しいカードでだけ省略してサーバーに付与させます。",
+            "card_id と instruction_mode は任意フィールドです。instruction_mode は N/T の指示段階または D/P/L/DB の設計段階で use/omit を取り(omit はカードの指示・設計指示の段階を省きます)、すべての段階を保存します。選択のあったカードからこのフィールドを外す(または null にする)と use として保存します。既存の card_id はカードを移動しても保持し、新しいカードでだけ省略してサーバーに付与させます。",
             f"pair_role の許容値: {pair_roles}。origin の許容値: {origins}。locked_reason の許容値: {locked_reasons}。",
             f"セット型の instruction/result 段階は互いに対になります: {pairs}。instruction 段階は pair_role=instruction、pair_key=result 段階の key。result 段階は pair_role=result、pair_key=instruction 段階の key です。",
-            f"シート型({single_types})は対のない単独段階です: pair_role=single, pair_key=null。",
+            f"card_stage_model のない本文ではシート型({single_types})は対のない単独段階です(pair_role=single, pair_key=null)。card_stage_model=paired では各設計カードが card_id を共有する2段階です: 設計指示(type DS, key DS{{type}}#{{n}}, pair_role=instruction, pair_key=結果の key)と設計結果(pair_role=result, pair_key=指示の key)。各段階は提供者・検収・メモ・事前指示を個別に持ち、instruction_mode は DS 指示段階に置きます。",
             "提供者を選ばない非ロック段階は provider_id=null と provider_display_name=null の両方で表します。provider_id が null なのに provider_display_name だけ値がある状態は無効で、validate() が拒否します。",
             "TSR はサーバーが完了したテスト実行から組み立てる段階で、人間もAIも書きません: provider_id=null, provider_display_name=null, note=null, locked=true, locked_reason=server_assembled, origin=system。",
             "同じ契約はこの項目の `contract` フィールドにもデータとして載っており、`example` は validate() をそのまま通る最小の本文全体、`examples` は pair_role ごとに値を埋めた単一段階の見本です。",
         ]
     return [
         f"steps[] 각 항목은 JSON 키 순서와 무관하게 반드시 다음 {len(required_fields)}개 필수 필드를 가져야 합니다: {fields}. 값이 null이어도 키 자체를 생략하지 않습니다. x_ 로 시작하는 이름의 추가 필드는 선택적 확장으로 허용되며, 그 외 알 수 없는 필드는 거부됩니다.",
-        "card_id 만 선택 필드입니다. 기존 카드가 가진 값은 (카드를 옮겨도) 그대로 두고, 완전히 새 카드에서만 생략해 서버가 부여하게 합니다.",
+        "card_id와 instruction_mode는 선택 필드입니다. instruction_mode는 N/T 지시 단계 또는 D/P/L/DB 설계 단계의 use/omit 설정이며(omit은 카드의 지시·설계 지시 단계를 생략), 단계 데이터는 모두 보존합니다. 설정이 있던 카드에서 이 필드를 빼거나 null로 보내면 use로 저장합니다. 기존 card_id는 카드를 옮겨도 그대로 두고, 새 카드에서만 생략해 서버가 부여하게 합니다.",
         f"pair_role 허용값: {pair_roles}. origin 허용값: {origins}. locked_reason 허용값: {locked_reasons}.",
         f"set 타입의 instruction/result 단계는 서로 짝입니다: {pairs}. instruction 단계는 pair_role=instruction, pair_key=result 단계의 key이고, result 단계는 pair_role=result, pair_key=instruction 단계의 key입니다.",
-        f"sheet 타입({single_types})은 짝이 없는 단일 단계입니다: pair_role=single, pair_key=null.",
+        f"card_stage_model이 없는 본문에서 sheet 타입({single_types})은 짝이 없는 단일 단계입니다(pair_role=single, pair_key=null). card_stage_model=paired에서는 각 설계 카드가 card_id를 공유하는 두 단계입니다: 설계 지시(type DS, key DS{{type}}#{{n}}, pair_role=instruction, pair_key=결과 key) 다음에 설계 결과(pair_role=result, pair_key=지시 key). 각 단계는 공급자·검수·한줄 멘트·사전 지시를 따로 가지며, instruction_mode는 DS 지시 단계에 둡니다.",
         "공급자를 고르지 않은 non-locked 단계는 provider_id=null 과 provider_display_name=null 둘 다로 표시합니다. provider_id 가 null인데 provider_display_name 만 값이 있는 상태는 무효이며 validate() 가 거부합니다.",
         "TSR은 서버가 완료된 test run에서 조립하는 단계이며 사람도 AI도 작성하지 않습니다: provider_id=null, provider_display_name=null, note=null, locked=true, locked_reason=server_assembled, origin=system.",
         "같은 계약이 이 항목의 `contract` 필드에도 데이터로 실려 있고, `example`은 validate()를 그대로 통과하는 최소 본문 전체이며, `examples`는 pair_role 별로 값을 채운 단일 단계 견본입니다.",

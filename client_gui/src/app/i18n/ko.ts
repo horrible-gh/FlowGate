@@ -1525,7 +1525,8 @@ export default {
     },
     // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
     types: {
-      DS: '설계 지시서',
+      // flowgate.v02.0074 T#3 (D#1 §7.6): 「설계 지시」 everywhere — R §3 forbids 「설계 지시서」.
+      DS: '설계 지시',
       D: '기본 설계',
       P: '프로토콜',
       L: '로직',
