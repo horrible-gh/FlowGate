@@ -128,6 +128,29 @@ case "$DB_TYPE" in
         ;;
 esac
 
+# Agent Registry pepper (0078 T0004) — HMAC key for every Agent enrollment token
+# and credential (modules/flow_gate/services/agent_registry.py). No install path
+# created it, so token issue answered 503 on every fresh container. Like the keys
+# above it is generated once and persisted to the data volume, so restarts and
+# container re-creation keep the same value. It is generated AFTER the DB wait on
+# purpose: check_agent_pepper.py refuses (exit != 0) when Agent credentials already
+# exist — they were issued under an original pepper that has been lost, and a new
+# value would never authenticate them — or when the DB cannot be inspected yet.
+# Then nothing is generated and the original must be restored by hand.
+if [ -z "${FLOWGATE_AGENT_PEPPER:-}" ]; then
+    if python "${FLOWGATE_SERVER_DIR:-/app/server}/check_agent_pepper.py" --quiet; then
+        FLOWGATE_AGENT_PEPPER="$(gen)"
+        export FLOWGATE_AGENT_PEPPER
+        persist FLOWGATE_AGENT_PEPPER "$FLOWGATE_AGENT_PEPPER"
+        chmod 600 "$SECRETS_FILE" 2>/dev/null || true
+        echo "[entrypoint] generated a new Agent pepper (persisted to the data volume)"
+    else
+        echo "[entrypoint] WARNING: FLOWGATE_AGENT_PEPPER not generated (reason above). Agent token"
+        echo "[entrypoint]   issue / enrollment / heartbeat answer 503 until it is set in $SECRETS_FILE"
+        echo "[entrypoint]   or the container environment, and the container restarts."
+    fi
+fi
+
 # ── Optional admin bootstrap (idempotent; every engine) ──────────────────────
 # 0273 NR0003 P1-1: this was SQLite-only because create_dev_user.py opened the DB
 # with `import sqlite3`, so a mysql/postgres container came up with no account

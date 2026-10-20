@@ -743,7 +743,7 @@ describe('V17 Agent 민감 동작 — token, revoke, delete, refusals', () => {
   const REFUSALS = [
     { status: 403, data: { detail: 'Forbidden' }, text: '권한이 없습니다.' },
     { status: 409, data: { ok: false, error: { code: 'enrollment_not_allowed', message: 'x', details: {} } }, text: '사용 중인 원격 Agent만 등록 토큰을 발급할 수 있습니다.' },
-    { status: 503, data: { ok: false, error: { code: 'temporarily_unavailable', message: 'x', details: {} } }, text: 'Agent 비밀 서비스를 지금 쓸 수 없습니다. 잠시 후 다시 시도하세요.' },
+    { status: 503, data: { ok: false, error: { code: 'temporarily_unavailable', message: 'x', details: {} } }, text: '서버에 Agent 비밀키(FLOWGATE_AGENT_PEPPER)가 설정되어 있지 않습니다. 다시 시도해도 해결되지 않으니 서버 관리자에게 비밀 설정 확인과 서버 재시작을 요청하세요.' },
   ]
 
   it.each(REFUSALS)('토큰 발급 refused with $status: its message stays, no token, no success, the list is read again', async ({ status, data, text }) => {

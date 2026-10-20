@@ -228,6 +228,29 @@ if (-not (Test-EnvSet 'FLOWGATE_GIT_ENCRYPT_KEY')) {
 if (-not (Test-EnvSet 'FLOWGATE_AI_ENCRYPT_KEY')) {
     Set-EnvVar 'FLOWGATE_AI_ENCRYPT_KEY' (New-B64Key)
 }
+# Agent Registry pepper (0078 T0004) -- every Agent enrollment token and credential
+# is stored as an HMAC keyed by it; no install path created it, so token issue
+# answered 503 on every fresh install. Generate once, never rotate -- and only when
+# no Agent is registered yet: a credential stored under a lost original pepper never
+# matches a new one, so in that case the original has to be restored by hand.
+if (-not (Test-EnvSet 'FLOWGATE_AGENT_PEPPER')) {
+    # try/catch: with $ErrorActionPreference = 'Stop', PowerShell 7.4+ may turn the
+    # helper's non-zero "do not generate" exit into a terminating error.
+    $pepperCheck = 2
+    try {
+        & $VenvPython (Join-Path $Root 'server\check_agent_pepper.py') --quiet
+        $pepperCheck = $LASTEXITCODE
+    } catch {
+        $pepperCheck = if ($LASTEXITCODE) { $LASTEXITCODE } else { 2 }
+    }
+    if ($pepperCheck -eq 0) {
+        Set-EnvVar 'FLOWGATE_AGENT_PEPPER' (New-Secret)
+        Write-Host "[i] Generated FLOWGATE_AGENT_PEPPER in $EnvFile (back it up; never change it)."
+    } else {
+        Write-Host '[!] FLOWGATE_AGENT_PEPPER was NOT generated (reason above). Agent token issue,'
+        Write-Host "    enrollment and heartbeat answer 503 until it is set in $EnvFile and the server restarts."
+    }
+}
 
 # Listen address — recorded in .env so server\stg.py and run.bat agree (P1-2).
 Set-EnvVar 'FLOWGATE_PORT' "$Port"

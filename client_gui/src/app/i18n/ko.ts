@@ -2773,7 +2773,7 @@ export default {
       agent_not_found: 'Agent를 찾을 수 없습니다.',
       enrollment_not_allowed: '사용 중인 원격 Agent만 등록 토큰을 발급할 수 있습니다.',
       agent_has_registration_history: '등록 이력이 있는 Agent는 삭제할 수 없습니다.',
-      temporarily_unavailable: 'Agent 비밀 서비스를 지금 쓸 수 없습니다. 잠시 후 다시 시도하세요.',
+      temporarily_unavailable: '서버에 Agent 비밀키(FLOWGATE_AGENT_PEPPER)가 설정되어 있지 않습니다. 다시 시도해도 해결되지 않으니 서버 관리자에게 비밀 설정 확인과 서버 재시작을 요청하세요.',
       validation_failed: '입력값이 올바르지 않습니다.',
     },
   },

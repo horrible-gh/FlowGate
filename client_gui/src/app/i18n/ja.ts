@@ -2763,7 +2763,7 @@ export default {
       agent_not_found: 'Agent が見つかりません。',
       enrollment_not_allowed: '使用中のリモート Agent のみ登録トークンを発行できます。',
       agent_has_registration_history: '登録履歴のある Agent は削除できません。',
-      temporarily_unavailable: 'Agent のシークレットサービスを現在使用できません。しばらくしてから再試行してください。',
+      temporarily_unavailable: 'サーバーに Agent のシークレット (FLOWGATE_AGENT_PEPPER) が設定されていません。再試行では解決しないため、サーバー管理者にシークレット設定の確認とサーバーの再起動を依頼してください。',
       validation_failed: '入力値が正しくありません。',
     },
   },

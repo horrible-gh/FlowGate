@@ -17,7 +17,9 @@ def secret(prefix):
  return prefix+secrets.token_urlsafe(32)
 def digest(domain,raw):
  pepper=os.environ.get("FLOWGATE_AGENT_PEPPER")
- if not pepper: raise AgentError(503,"temporarily_unavailable","Agent secret service is unavailable")
+ # 0078 T0004: a missing pepper is a server configuration gap, not a transient outage —
+ # say which setting, never its value. Code/status stay as the published contract.
+ if not pepper: raise AgentError(503,"temporarily_unavailable","Agent secret is not configured on the server (FLOWGATE_AGENT_PEPPER)",{"reason":"agent_pepper_not_configured"})
  return hmac.new(pepper.encode(),(domain+"\0"+raw).encode(),hashlib.sha256).hexdigest()
 def pepper_id():
  return os.environ.get("FLOWGATE_AGENT_PEPPER_ID","primary")
