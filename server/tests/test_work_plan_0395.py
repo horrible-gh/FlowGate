@@ -136,7 +136,8 @@ def test_canonical_dump_is_stable():
         "wp_version", "binding", "counted_types", "quantities",
         "provider_candidates", "defaults", "steps",
     ]
-    assert list(parsed["steps"][0]) == list(wp.STEP_FIELD_ORDER)
+    assert list(parsed["steps"][0]) == [field for field in wp.STEP_FIELD_ORDER if field != "instruction_mode"]
+    assert all("instruction_mode" not in step for step in parsed["steps"])
     assert '\n  "binding": "advisory"' in text
     # Same input, same bytes — a revision diff must only show real changes.
     assert wp.dumps(wp.validate(json.loads(text))) == text

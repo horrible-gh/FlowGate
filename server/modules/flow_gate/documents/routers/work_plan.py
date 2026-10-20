@@ -325,13 +325,23 @@ def _started_card_ids(doc: dict, body: dict) -> set:
 
     A read failure only drops the editor's early lock; apply/pour/PATCH still refuse a plan
     that moves or removes a started card (O2 and the post-write check).
+
+    T0017: a card whose deployed v0.2 Graph card ran (or cannot be judged) is started too, also
+    after the Flow's run lock is released, so the editor locks its instruction choice; the save
+    (``wpa.instruction_mode_lock_errors``) and the deploy refuse that change on their own.
     """
+    started: set = set()
     try:
-        return set(wpa.started_card_ids(doc, body))
+        started |= set(wpa.started_card_ids(doc, body))
     except Exception as exc:  # noqa: BLE001
         import LogAssist.log as logger
         logger.warning(f"[work-plan] started card lookup failed (ignored): {exc}")
-        return set()
+    try:
+        started |= wpa.graph_started_card_ids(doc)
+    except Exception as exc:  # noqa: BLE001
+        import LogAssist.log as logger
+        logger.warning(f"[work-plan] Graph started card lookup failed (ignored): {exc}")
+    return started
 
 
 def _read_view(doc: dict, body: dict) -> dict:
@@ -823,6 +833,19 @@ def restore_work_plan_revision(
         path = _plan_path(fresh)
         if not path.exists():
             raise HTTPException(status_code=422, detail="Current work plan body is missing.")
+        # T0017: a restore replaces the current body like a save does, so the same instruction choice rules
+        # apply before anything is written — a started card keeps its choice, a dropped choice is stored as use.
+        current_body = wp.load_previous_body(fresh)
+        locked_errors = wpa.instruction_mode_lock_errors(fresh, current_body, restored_body)
+        if locked_errors:
+            rendered = wp.render_errors(locked_errors, locale)
+            return JSONResponse(status_code=422, content={
+                "code": "wp_revision_not_restorable",
+                "message": rendered[0]["msg"],
+                "reason": "instruction_mode_started",
+                "errors": rendered,
+            })
+        restored_body = wp.instruction_mode_defaults(current_body, restored_body)
 
         # 0599: revision 0 is immutable and, once this document has been saved at least
         # once, already owns a `document_revisions` row from creation time
@@ -1011,6 +1034,14 @@ def save_work_plan(
             return _revision_conflict_response(
                 fresh, locale, body.base_revision_no, current_revision,
             )
+        # T0017: a card that already started (v0.1 sequence or v0.2 Graph) keeps its instruction
+        # choice — the deploy could not apply the change, so the save does not take it either.
+        previous = wp.load_previous_body(fresh)
+        locked_errors = wpa.instruction_mode_lock_errors(fresh, previous, plan)
+        if locked_errors:
+            return _validation_response(wp.WorkPlanValidationError(locked_errors, action="save"), locale)
+        # A card whose choice the plan made and this body dropped is stored as ``use`` (what the editor shows).
+        plan = wp.instruction_mode_defaults(previous, plan)
 
         title_locale = wp.resolve_title_locale(
             fresh.get("meta"), current_title=fresh.get("title"),
@@ -1194,7 +1225,7 @@ async def upload_pre_instruction_attachment(
     )
     if step is None:
         raise HTTPException(status_code=422, detail="Unknown WorkPlan step_key.")
-    if step.get("locked") or step.get("pair_role") == "result":
+    if step.get("locked") or (step.get("pair_role") == "result" and step.get("type") not in ("D", "P", "L", "DB")):
         raise HTTPException(
             status_code=422,
             detail="Pre-instruction attachments are allowed only on editable instruction steps.",

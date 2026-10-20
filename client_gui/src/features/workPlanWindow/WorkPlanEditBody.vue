@@ -158,7 +158,7 @@
                   data-test="wp-edit-card-toggle"
                 >
                   <svg class="wpe-icon wpe-caret" :class="{ 'is-open': isOpen(shown.card.id) }" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
-                  <WorkPlanTypeIcon :type="shown.card.steps[0].type" />
+                  <WorkPlanTypeIcon :type="cardType(shown.card)" />
                   <span class="wpe-card-name" data-test="wp-edit-card-name">{{ cardName(shown.card) }}</span>
                   <span class="wpe-card-summary" data-test="wp-edit-card-summary">
                     <span v-for="row in shown.rows" :key="row.rowId" class="wpe-card-doc" data-test="wp-edit-card-doc">
@@ -168,6 +168,13 @@
                 </button>
                 <span v-if="cardHasErrors(shown)" class="wpe-card-error" role="img" :aria-label="t('card.has_errors')" :title="t('card.has_errors')" data-test="wp-edit-card-error">!</span>
                 <span class="wpe-card-controls" @click.stop>
+                  <label v-if="instructionModeEligible(shown.card.steps[0])" class="wpe-instruction-mode">
+                    <input type="checkbox" data-test="wp-edit-instruction-mode"
+                      :checked="instructionOmitted(shown.card.steps[0])"
+                      :disabled="inputsLocked || editor.cardStarted(shown.card.id)"
+                      @change="editor.setInstructionMode(shown.card.id + '|main', ($event.target as HTMLInputElement).checked)" />
+                    {{ t('omit.toggle') }}
+                  </label>
                   <span
                     class="wpe-handle"
                     :class="{ 'is-disabled': !canDrag(shown.card.id) }"
@@ -315,6 +322,11 @@
 // 「지시 생략」 (「설계 지시 생략」 on a design row): the editor writes the fixed text, saves once and deploys
 // (useWorkPlanEditor.omitStep). Its tooltip names it and, when it is off, why in a word (내용 있음 · 먼저 저장 · 전개 불가 · the
 // window's lock); after a saved but failed deploy it is 「전개 재시도」. The row's last column holds the two icons.
+// flowgate.v02.0074 T0017 (card-owned stages, server/flowgate/work_plan_deploy/CARD_STAGES.md): a D / P / L / DB card is
+// two Steps like an N / T card — its 「설계 지시」 (type DS, pair_role instruction) above its 「설계서」 (pair_role result).
+// Each row has its own AI, review, note and ✎; the 설계 지시 row also has 「설계 지시 생략」 (✓✓). Every card with an
+// instruction has the header's 「지시서 생략」 check: on, its instruction row and summary entry go and are not counted;
+// the result row stays, and nothing of the instruction Step is erased.
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
@@ -337,6 +349,10 @@ import {
   quantityBoxes,
   shownCardsOf,
   stepHasInstruction,
+  designInstructionStep,
+  cardType,
+  instructionModeEligible,
+  instructionOmitted,
   stepKeyShown,
   totalsOf,
   unassignedByShown,
@@ -394,14 +410,15 @@ function quantityName(box: WorkPlanQuantityBox): string {
 }
 
 function documentName(step: WorkPlanEditStep): string {
-  return t(workPlanDocumentNameKey(step.type, step.pair_role))
+  return designInstructionStep(step) ? t('document.design_instruction') : t(workPlanDocumentNameKey(step.type, step.pair_role))
 }
 
 /** A card's name: its quantity name and ordinal (조사 1, 작업 1, 기본 설계 1). */
 function cardName(card: WorkPlanCard): string {
   const head = card.steps[0]
-  const unit = draft.value ? unitOf(draft.value.body, head.type) : 'sheet'
-  return t('card.name', { name: gt(`gui.document_window.${workPlanQuantityNameKey({ type: head.type, unit })}`), n: head.ordinal })
+  const type = cardType(card)
+  const unit = draft.value ? unitOf(draft.value.body, type) : 'sheet'
+  return t('card.name', { name: gt(`gui.document_window.${workPlanQuantityNameKey({ type, unit })}`), n: head.ordinal })
 }
 
 function findingLabel(finding: WorkPlanCapabilityFinding): string {
@@ -480,7 +497,7 @@ const omitOf = (row: WorkPlanRowRef) => props.editor.omitState(row.rowId)
 
 function omitTitle(row: WorkPlanRowRef): string {
   const state = omitOf(row)
-  const name = state.action === 'retry' ? t('omit.retry') : t(row.step.pair_role === 'single' ? 'omit.design' : 'omit.instruction')
+  const name = state.action === 'retry' ? t('omit.retry') : t(designInstructionStep(row.step) || row.step.pair_role === 'single' ? 'omit.design' : 'omit.instruction')
   return state.reason ? `${name} — ${t(state.reason)}` : name
 }
 
@@ -540,6 +557,7 @@ function onDragEnd(): void {
 </script>
 
 <style scoped>
+.wpe-instruction-mode { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; white-space: nowrap; }
 .wpe {
   display: flex;
   flex-direction: column;

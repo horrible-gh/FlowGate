@@ -52,8 +52,9 @@ RESULT_TYPE = "result_type"
 AI_WORKING = "ai_working"
 INSTRUCTION_DOCUMENT = "instruction_document"
 APPROVE_INSTRUCTION = "approve_instruction"
+REVIEW_INSTRUCTION = "review_instruction"
 NODE_RUNNING = "node_running"
-PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, NODE_RUNNING)
+PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -137,3 +138,9 @@ def node_running(flow_id: str, node_key: str) -> bool:
     if handler is None:
         return False
     return bool(handler(flow_id, node_key))
+
+
+def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id: str, attempt_id=None) -> bool:
+    """True means instruction review owns the handoff (including a refused/failed review start)."""
+    handler = _handler(REVIEW_INSTRUCTION)
+    return bool(handler(flow_id, node, doc_id, actor, run_id, attempt_id)) if handler else False

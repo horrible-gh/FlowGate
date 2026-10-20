@@ -1483,6 +1483,7 @@ export default {
         card_id_missing: '기존 카드의 card_id 가 빠졌습니다. 카드를 옮기거나 다시 번호를 매겨도 card_id 는 그대로 보내야 합니다.',
         card_id_unknown: '직전 본문에 없는 card_id({value})입니다. 새 카드는 card_id 없이 보내면 서버가 부여합니다.',
         card_id_type_changed: 'card_id({value})의 카드 타입을 바꿀 수 없습니다.',
+        instruction_mode_started: '이미 실행을 시작한 카드(card_id {value})는 지시서 생략 설정을 바꿀 수 없습니다.',
       },
       // T0007 rev1 §1 — `empty_selection`의 `what_key` param을 현재 UI locale로 옮기는 표.
       // work_plan_service._EMPTY_SELECTION_WHAT과 키를 맞춘다.

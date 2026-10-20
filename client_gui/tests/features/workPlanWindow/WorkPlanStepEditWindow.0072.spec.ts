@@ -125,7 +125,7 @@ describe('separate draft and modeless window', () => {
     await click(q('wp-step-save', child()))
     expect(api.putRequest).not.toHaveBeenCalled()
     await click(q('wp-edit-save'))
-    expect(lastBody!.steps[1]).toMatchObject({ review_count: 3, pre_instruction_text: 'compact draft', pre_instruction_attachment: { original_filename: 'compact.txt' } })
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#1')).toMatchObject({ review_count: 3, pre_instruction_text: 'compact draft', pre_instruction_attachment: { original_filename: 'compact.txt' } })
   })
 
   it('pencil opens a sibling shell; moving/resizing it leaves the parent in place', async () => {
@@ -183,7 +183,7 @@ describe('separate draft and modeless window', () => {
     expect(api.putRequest).toHaveBeenCalledTimes(1)
     expect(lastBody!.steps.find((s: any) => s.key === 'T#1').pre_instruction_text).toBe('first child')
     expect(lastBody!.steps.find((s: any) => s.key === 'T#2').pre_instruction_text).toBe('second child')
-    expect(lastBody!.steps[0].note).toBe('parent note')
+    expect(lastBody!.steps.find((s: any) => s.key === 'DSD#1').note).toBe('parent note')
     expect(lastBody!.x_origin_note).toEqual({ kept: true })
     expect(lastBody!.steps.find((s: any) => s.key === 'TR#1').pre_instruction_text).toBeNull()
   })
@@ -217,13 +217,13 @@ describe('separate draft and modeless window', () => {
     expect(q('wp-step-title', panel()).textContent).toContain('작업 1 · 지시서')
     expect(q('wp-step-title', panel()).textContent).toContain('단계 편집')
     expect(q('wp-step-heading', child()).textContent).toContain('지시서')
-    expect(q('wp-step-heading', child()).textContent).toContain('2번째 단계')
+    expect(q('wp-step-heading', child()).textContent).toContain('3번째 단계')
     expect(q('wp-step-heading', child()).textContent).not.toContain('작업 1')
     expect(panel().textContent).not.toMatch(/T#1|TR#1|검수/)
     await click(q('wp-step-cancel', child()))
     await pencil('c_t1|result')
     expect(q('wp-step-heading', child()).textContent).toContain('레포트')
-    expect(q('wp-step-heading', child()).textContent).toContain('3번째 단계')
+    expect(q('wp-step-heading', child()).textContent).toContain('4번째 단계')
     expect(panel().textContent).not.toMatch(/T#1|TR#1|검수/)
     expect(q('wp-step-text', child())).toBeNull()
     expect(q('wp-step-file', child())).toBeNull()
@@ -251,7 +251,7 @@ describe('separate draft and modeless window', () => {
     await type(q('wp-step-text', child()), '😀가')
     await click(q('wp-step-save', child()))
     await click(q('wp-edit-save'))
-    expect(lastBody!.steps[1].pre_instruction_text).toBe('😀가')
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#1').pre_instruction_text).toBe('😀가')
   })
 
   it('parent close confirms child-only edits and disposes child sessions', async () => {
@@ -364,7 +364,7 @@ describe('identity and external state', () => {
     await flushPromises()
     await click(q('wp-step-save', child()))
     await click(q('wp-edit-save'))
-    expect(lastBody!.steps[1].pre_instruction_text).toBe('keep while locked')
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#1').pre_instruction_text).toBe('keep while locked')
   })
 
   it.each(['final_approved', 'ai_running'])('refresh detects %s without dropping the child draft', async (reason) => {
@@ -391,7 +391,7 @@ describe('identity and external state', () => {
     await click(q('wp-step-cancel', child()))
     await click(q('wp-edit-save'))
     expect(api.putRequest).toHaveBeenCalledTimes(2)
-    expect(lastBody!.steps[1].pre_instruction_text).toBe('survives failed save')
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#1').pre_instruction_text).toBe('survives failed save')
   })
 
   it('conflicting parent details cannot be overwritten by a stale child Save', async () => {
@@ -427,7 +427,7 @@ describe('reserved attachment lifecycle', () => {
     await click(q('wp-step-save', child()))
     await click(q('wp-edit-save'))
     expect(reserved.size).toBe(0)
-    expect(lastBody!.steps[1].pre_instruction_attachment).toBeNull()
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#1').pre_instruction_attachment).toBeNull()
   })
 
   it('cancel leaves the original reference intact, makes no implicit PUT, and cleanup waits for later successful PUT', async () => {
@@ -447,7 +447,7 @@ describe('reserved attachment lifecycle', () => {
     expect(reserved.size).toBe(1)
     await click(q('wp-edit-save'))
     expect(reserved.size).toBe(0)
-    expect(lastBody!.steps[1].pre_instruction_attachment).toEqual(original)
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#1').pre_instruction_attachment).toEqual(original)
   })
 
   it.each([403, 413, 422, 500])('upload HTTP %s preserves the previous reference and allows retry', async (status) => {
@@ -530,7 +530,7 @@ describe('reserved attachment lifecycle', () => {
     expect(workPlanStepPending(DOC)).toBe(false)
     expect(disabled(q('wp-edit-save'))).toBe(false)
     await click(q('wp-edit-save'))
-    expect(lastBody!.steps[1].pre_instruction_attachment.original_filename).toBe('brief.txt')
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#1').pre_instruction_attachment.original_filename).toBe('brief.txt')
   })
 
   it('deletion during upload drops the late reference; restoring the row never revives the old child', async () => {
@@ -564,7 +564,7 @@ describe('reserved attachment lifecycle', () => {
     await flushPromises()
     await click(q('wp-step-save', child()))
     await click(q('wp-edit-save'))
-    expect(lastBody!.steps[1].pre_instruction_attachment).toEqual(refFile())
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#1').pre_instruction_attachment).toEqual(refFile())
   })
 
   it('malformed server references are rejected before changing the child', async () => {
@@ -597,7 +597,7 @@ describe('the review popover and the Step window (0073 T#2)', () => {
     expect(workPlanStepWindowList()).toHaveLength(0)
     await click(q('wp-edit-save'))
     expect(api.putRequest).toHaveBeenCalledTimes(1)
-    expect(lastBody!.steps[1]).toMatchObject({ key: 'T#1', review_count: 3, reviewer_provider_id: 'aip_opus', reviewer_provider_display_name: 'Opus', pre_instruction_text: 'child text' })
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#1')).toMatchObject({ key: 'T#1', review_count: 3, reviewer_provider_id: 'aip_opus', reviewer_provider_display_name: 'Opus', pre_instruction_text: 'child text' })
   })
 
   it('cancelling the Step window keeps the popover review and drops only the child text', async () => {
@@ -609,7 +609,7 @@ describe('the review popover and the Step window (0073 T#2)', () => {
     expect(workPlanStepWindowList()).toHaveLength(0)
     expect(q('wp-edit-step-review-summary', row('c_t1|main')).textContent).toBe('검수 없음')
     await click(q('wp-edit-save'))
-    expect(lastBody!.steps[1]).toMatchObject({ review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null, pre_instruction_text: '사전 지시' })
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#1')).toMatchObject({ review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null, pre_instruction_text: '사전 지시' })
   })
 
   it('a clean Step window stays clean when the review changes; saving it applies nothing and the review stays', async () => {
@@ -622,7 +622,7 @@ describe('the review popover and the Step window (0073 T#2)', () => {
     expect(win().draft.preInstructionText).toBeNull()
     await click(q('wp-step-cancel', child()))
     await click(q('wp-edit-save'))
-    expect(lastBody!.steps[3]).toMatchObject({ key: 'T#2', review_count: 2, reviewer_provider_id: 'aip_sonnet', pre_instruction_text: null })
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#2')).toMatchObject({ key: 'T#2', review_count: 2, reviewer_provider_id: 'aip_sonnet', pre_instruction_text: null })
   })
 
   it('Esc in the Step window stays the Step window’s: it asks about its unsaved text, the popover behind takes neither the key nor the focus', async () => {
@@ -667,7 +667,7 @@ describe('the review popover and the Step window (0073 T#2)', () => {
     await review('c_t1|result', '-1', 'aip_sonnet')
     await click(q('wp-step-save', child()))
     await click(q('wp-edit-save'))
-    expect(lastBody!.steps[2]).toMatchObject({ key: 'TR#1', review_count: -1, reviewer_provider_id: 'aip_sonnet', pre_instruction_text: null, pre_instruction_attachment: null })
+    expect(lastBody!.steps.find((s: any) => s.key === 'TR#1')).toMatchObject({ key: 'TR#1', review_count: -1, reviewer_provider_id: 'aip_sonnet', pre_instruction_text: null, pre_instruction_attachment: null })
   })
 })
 
@@ -719,7 +719,7 @@ describe('the attachment area: drop, replace, remove and the moved notes (0073 T
     expect(q('wp-step-file-name', child()).textContent).toBe('picked.txt')
     await click(q('wp-step-save', child()))
     await click(q('wp-edit-save'))
-    expect(lastBody!.steps[1].pre_instruction_attachment).toEqual(refFile('picked.txt'))
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#1').pre_instruction_attachment).toEqual(refFile('picked.txt'))
     expect(reserved).toEqual(new Set([refFile('picked.txt').filename]))
     // remove: the area goes back to its empty state; the parent PUT clears the reference
     await pencil('c_t1|main')
@@ -730,7 +730,7 @@ describe('the attachment area: drop, replace, remove and the moved notes (0073 T
     expect(q('wp-step-remove', child())).toBeNull()
     await click(q('wp-step-save', child()))
     await click(q('wp-edit-save'))
-    expect(lastBody!.steps[1].pre_instruction_attachment).toBeNull()
+    expect(lastBody!.steps.find((s: any) => s.key === 'T#1').pre_instruction_attachment).toBeNull()
     expect(reserved.size).toBe(0)
   })
 

@@ -5608,10 +5608,11 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         try:
             # 0649 T#1 (NR0003 §5.1): same card-id save checks as the human PUT — the AI
             # path may not invent ids or drop an existing card's id either.
+            wp_previous = work_plan_service.load_previous_body(existing_doc)
             wp_plan = work_plan_service.validate(
                 work_plan_service.assign_card_ids(
                     wp_parsed,
-                    work_plan_service.load_previous_body(existing_doc),
+                    wp_previous,
                     project_id=project,
                     action="save",
                 ),
@@ -5620,6 +5621,14 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 action="save",
                 allow_pre_instruction_attachments=False,
             )
+            # T0017: same as the human PUT — a started card (v0.1 or v0.2 Graph) keeps its
+            # instruction choice.
+            from modules.flow_gate.services import work_plan_apply_service
+
+            wp_locked = work_plan_apply_service.instruction_mode_lock_errors(existing_doc, wp_previous, wp_plan)
+            if wp_locked:
+                raise work_plan_service.WorkPlanValidationError(wp_locked, action="save")
+            wp_plan = work_plan_service.instruction_mode_defaults(wp_previous, wp_plan)
         except work_plan_service.WorkPlanValidationError as exc:
             return _fail(
                 400,

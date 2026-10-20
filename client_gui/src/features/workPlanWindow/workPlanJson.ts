@@ -18,6 +18,8 @@ import {
   WORK_PLAN_SET_TYPES,
   WORK_PLAN_SHEET_TYPES,
   bodyOf,
+  cardType,
+  designInstructionStep,
   editBodyOf,
   groupSteps,
   lastStartedIndex,
@@ -182,10 +184,10 @@ function pairIssues(steps: readonly WorkPlanEditStep[]): WorkPlanJsonIssue[] {
     if (step.pair_role === 'instruction') {
       const next = steps[i + 1]
       const ok =
-        !!WORK_PLAN_PAIR[step.type] &&
+        (!!WORK_PLAN_PAIR[step.type] || designInstructionStep(step)) &&
         !!next &&
         next.pair_role === 'result' &&
-        next.type === WORK_PLAN_PAIR[step.type] &&
+        (next.type === WORK_PLAN_PAIR[step.type] || (designInstructionStep(step) && ['D', 'P', 'L', 'DB'].includes(next.type))) &&
         next.ordinal === step.ordinal &&
         step.pair_key === next.key &&
         next.pair_key === step.key
@@ -202,7 +204,10 @@ function pairIssues(steps: readonly WorkPlanEditStep[]): WorkPlanJsonIssue[] {
 function countIssues(quantities: Raw, cards: readonly WorkPlanEditStep[][]): WorkPlanJsonIssue[] {
   const issues: WorkPlanJsonIssue[] = []
   const have = new Map<string, number>()
-  for (const card of cards) have.set(card[0].type, (have.get(card[0].type) ?? 0) + 1)
+  for (const steps of cards) {
+    const type = cardType({ id: '', steps })
+    have.set(type, (have.get(type) ?? 0) + 1)
+  }
   for (const [type, box] of Object.entries(quantities)) {
     if ((box as { count: number }).count !== (have.get(type) ?? 0)) issues.push({ code: 'step_count', type })
   }
@@ -289,8 +294,8 @@ export function readWorkPlanJson(text: string, current: WorkPlanDraft, started: 
   if (last >= 0) {
     const kept = current.cards.slice(0, last + 1).map((card) => card.id)
     const coming = cards.slice(0, last + 1).map(cardIdOf)
-    const types = current.cards.slice(0, last + 1).map((card) => card.steps[0].type)
-    if (kept.some((id, index) => coming[index] !== id || cards[index]?.[0].type !== types[index])) return fail([{ code: 'started' }])
+    const types = current.cards.slice(0, last + 1).map((card) => cardType(card))
+    if (kept.some((id, index) => coming[index] !== id || (!cards[index] || cardType({ id: '', steps: cards[index] }) !== types[index]))) return fail([{ code: 'started' }])
   }
 
   return { ok: true, body: editBodyOf(raw) }

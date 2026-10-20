@@ -79,6 +79,9 @@ approval and the result stage, the result's review or approval, a passed review'
 that ended with no result and asked questions has them answered too and writes again. Every run end of the Flow is
 followed by ``question_wait.follow`` (a responder's end, a question waiting for one).
 """
+# T0017 supersedes the original no-review instruction policy described above:
+# instruction_review_count/AI gate all configured card-owned instructions (including design),
+# while zero preserves the existing approval behavior. See work_plan_deploy/CARD_STAGES.md.
 from __future__ import annotations
 
 import logging
@@ -129,7 +132,8 @@ def _followed_node(flow_id: str, run: dict) -> Optional[str]:
     result run ended on its own with its own result (the review or the approval follows)."""
     if run.get("document_review_loop"):
         loop = legacy.review_loop_row(run["run_id"]) or run.get("document_review_loop") or {}
-        node = legacy.node_of_result(flow_id, run.get("doc_ref")) if loop.get("stop_reason") == PASSED else None
+        instruction = legacy.instruction_node_of_document(flow_id, run.get("doc_ref"))
+        node = (instruction[0] if instruction else legacy.node_of_result(flow_id, run.get("doc_ref"))) if loop.get("stop_reason") == PASSED else None
         return node["node_key"] if node else None
     if run.get("mode") != "single" or run.get("action_scope") != "new" or not ended_cleanly(run):
         return None
@@ -196,6 +200,8 @@ def _after_instruction(flow_id: str, run: dict, node: dict, row: dict) -> None:
         _log.info("card instruction stage failed flow=%s node=%s run=%s: no instruction written",
                   flow_id, key, run.get("run_id"))
         legacy.instruction_stage_failed(flow_id, row["run_id"], key, attempt_id)
+        return
+    if review_instruction(flow_id, node, doc_id, issuer, row["run_id"], attempt_id):
         return
     jobs: list = []
     with legacy.attempt_hold(row["run_id"], key, attempt_id, "instruction_approval") as owned:
@@ -288,6 +294,24 @@ def _after_work(flow_id: str, run: dict) -> None:
 def _after_review(flow_id: str, run: dict) -> None:
     """A review loop on a node's result ended: a passed result is approved."""
     doc_id = run.get("doc_ref")
+    instruction = legacy.instruction_node_of_document(flow_id, doc_id)
+    if instruction is not None:
+        node, row = instruction
+        loop = legacy.review_loop_row(run["run_id"]) or run.get("document_review_loop") or {}
+        if loop.get("stop_reason") != PASSED:
+            return
+        if question_wait.hold(flow_id, run, node, asked_by_instruction=True):
+            return
+        jobs: list = []
+        with legacy.attempt_hold(row["run_id"], node["node_key"], legacy.attempt_of_ai_run(run), "instruction_review_approval") as owned:
+            if not owned:
+                return
+            approve_instruction(flow_id, node, doc_id, run.get("issued_to") or "")
+            legacy.start_result_stage(flow_id, row["run_id"], node["node_key"], doc_id,
+                                      run.get("issued_to") or "", legacy.attempt_of_ai_run(run), defer=jobs)
+        for job in jobs:
+            job()
+        return
     node = legacy.node_of_result(flow_id, doc_id)
     if node is None:
         return
@@ -316,3 +340,31 @@ def ai_working(flow_id: str, node_key: str, doc_id: Optional[str]) -> bool:
     about to follow the node's run that just released the lease (flowgate.v02.0061 T#2, ``on_run_ending``)."""
     return (_handoff_pending(flow_id, node_key) or legacy.node_ai_run_active(flow_id, node_key)
             or review_running(flow_id, node_key, doc_id))
+
+
+def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id: str, attempt_id=None) -> bool:
+    """A configured instruction review gates the result; 0 retains existing automatic approval.
+
+    Reuse the durable review/rework loop, with instruction-specific AI/count and rework provider.
+    Missing providers, failed admission and a rejected review leave the instruction pending.
+    """
+    stored = repository.values(flow_id, node["node_key"])
+    count = stored.get("instruction_review_count") or 0
+    if count == 0 or (approvals.document(doc_id) or {}).get("doc_review_status") in APPROVED:
+        return False
+    if not legacy.attempt_owns(run_id, node["node_key"], attempt_id, "instruction_review_start"):
+        return True
+    if legacy.review_loop_active(doc_id):
+        return True
+    project_id = legacy.project_of(flow_id)
+    reviewer = stored.get("instruction_review_ai") or legacy.default_reviewer(project_id)
+    reworker = fields.instruction_provider(stored) or node.get("assignee_provider_id")
+    if not reviewer or not reworker:
+        _log.warning("instruction review missing provider flow=%s node=%s", flow_id, node["node_key"])
+        return True
+    loop = fields.review_loop({**stored, "review_count": count}, reviewer=reviewer, reworker=reworker)
+    criteria = loop["review_criteria"]
+    legacy.start_review_loop(project_id, flow_id, doc_id, actor, loop,
+                             lambda last: fields.review_basis_note(criteria, last), node["node_key"],
+                             attempt_id=attempt_id)
+    return True

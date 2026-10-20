@@ -1,14 +1,8 @@
-"""What a work plan deploys (flowgate.v02.0074 T#4, D0006 §3.3 / §3.4) — pure, no storage.
+"""WP-to-card deployment; v0.2 paired stage contract is in CARD_STAGES.md.
 
-A deploy target is one WP card id: the steps sharing it (an N / T / TS instruction with its result, or one design
-step D / P / L / DB) make one Designer card of the card id's type. Plan order is the order in which each card id first
-appears in the steps. DS and T2 / TR2 steps (hidden in the editor, kept for v0.1) make no card; neither does any other
-type (``skipped_type``). The card id, not a sequence number, links a card to its step, so reordering the plan or
-changing quantities keeps every card on its own step.
-
-A card's instruction text comes from one step's pre-instruction (its attachment and text): the instruction step of
-N / T, the design step itself for D / P / L / DB. TS takes none (its instruction is a person's scenario document).
-The step note is never a source.
+Each card ID owns an instruction/result pair. Design instructions retain the DS document type
+for storage compatibility, but are real card-owned steps; standalone legacy DS records deploy
+no card. Older single-step plans remain readable. Stage settings and edit inputs are independent.
 """
 from __future__ import annotations
 
@@ -37,14 +31,17 @@ class Target:
         if self.doc_type not in INSTRUCTION_TYPES:
             return None
         if self.doc_type in DESIGN_TYPES:
-            return next((s for s in self.steps if s.get("pair_role") == "single"), None)
+            return next((s for s in self.steps if s.get("pair_role") == "instruction"), None) or next(
+                (s for s in self.steps if s.get("pair_role") == "single"), None)
         return next((s for s in self.steps if s.get("pair_role") == "instruction"), None)
 
     @property
     def run_step(self) -> Optional[dict]:
         """The step whose AI runs the card's result (a pair's result step, else the card's one step)."""
-        if self.doc_type in ("N", "T"):
-            return next((s for s in self.steps if s.get("pair_role") == "result"), None)
+        if self.doc_type in ("N", "T") + DESIGN_TYPES:
+            result = next((s for s in self.steps if s.get("pair_role") == "result"), None)
+            if result is not None:
+                return result
         return next((s for s in self.steps if s.get("pair_role") in ("single", "instruction")), None)
 
 
@@ -71,7 +68,7 @@ def targets(body: dict, type_of_step: Callable[[dict], Optional[str]]) -> tuple[
 def pre_instruction(target: Target) -> tuple[Optional[str], Optional[dict]]:
     """(text, attachment reference) of the card's instruction source; (None, None) when it has none."""
     step = target.instruction_step
-    if step is None:
+    if instruction_mode(target) == "omit" or step is None:
         return None, None
     text = step.get("pre_instruction_text")
     text = text.strip() if isinstance(text, str) and text.strip() else None
@@ -79,14 +76,25 @@ def pre_instruction(target: Target) -> tuple[Optional[str], Optional[dict]]:
     return text, reference if isinstance(reference, dict) else None
 
 
+def instruction_mode(target: Target) -> Optional[str]:
+    """Explicit instruction choice of an N / T card (its instruction step) or a D / P / L / DB card (its design
+    step: the 설계 지시 line); None leaves pre-existing card settings alone."""
+    step = target.instruction_step or {}
+    mode = step.get("instruction_mode")
+    return mode if target.doc_type in ("N", "T") + DESIGN_TYPES and mode in ("use", "omit") else None
+
+
 def initial_settings(target: Target) -> list[tuple[str, Any]]:
     """``(field, value)`` the new card's settings start with (D0006 §3.4); unset WP values are left out.
 
     instruction AI: a pair's instruction step AI (N / T); run AI: a pair's result step AI, the design / test step's
-    AI; review AI and review count: of that same run step. The instruction use is never set (the instruction
-    omission of the WP editor is a written instruction, not ``omit``)."""
+    AI; review AI and review count: of that same run step. An explicit instruction_mode maps to the
+    existing card execution setting; legacy plans retain their defaults."""
     out: list[tuple[str, Any]] = []
-    if target.doc_type in ("N", "T"):
+    mode = instruction_mode(target)
+    if mode is not None:
+        out.append(("instruction", mode))
+    if target.doc_type in INSTRUCTION_TYPES:
         instruction = target.instruction_step or {}
         if instruction.get("provider_id"):
             out.append(("instruction_ai", instruction["provider_id"]))
@@ -98,7 +106,32 @@ def initial_settings(target: Target) -> list[tuple[str, Any]]:
     count = run.get("review_count")
     if isinstance(count, int) and not isinstance(count, bool) and count != 0:
         out.append(("review_count", count))
+    instruction = target.instruction_step or {}
+    if instruction.get("pair_role") == "instruction":
+        out.extend([
+            ("instruction_review_count", instruction.get("review_count") or 0),
+            ("instruction_note", instruction.get("note") or ""),
+            ("run_note", run.get("note") or ""),
+        ])
+        if instruction.get("reviewer_provider_id"):
+            out.append(("instruction_review_ai", instruction["reviewer_provider_id"]))
+    if run.get("_run_prompt") is not None:
+        out.append(("run_pre_instruction", run["_run_prompt"]))
     return out
+
+
+def stage_settings(target: Target) -> list[tuple[str, Any]]:
+    """A paired card's explicit settings, including clears, for pre-start redeploys."""
+    instruction, result = target.instruction_step or {}, target.run_step or {}
+    if instruction.get("pair_role") != "instruction":
+        return []
+    return [("instruction_ai", instruction.get("provider_id")),
+            ("instruction_review_ai", instruction.get("reviewer_provider_id")),
+            ("instruction_review_count", instruction.get("review_count") or 0),
+            ("instruction_note", instruction.get("note") or ""),
+            ("run_ai", result.get("provider_id")), ("review_ai", result.get("reviewer_provider_id")),
+            ("review_count", result.get("review_count") or 0), ("run_note", result.get("note") or ""),
+            ("run_pre_instruction", result.get("_run_prompt") or "")]
 
 
 def source_value(wp_doc_id: str, target: Target, wp_revision_no: int, instruction_doc_id: Optional[str] = None,

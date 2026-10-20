@@ -641,3 +641,18 @@ def settle_graph_run(flow_id: str) -> None:
         run_service.settle_if_needed(flow_id, project_of(flow_id))
     except Exception:  # noqa: BLE001 — the stage's own end is not failed by the run's judgement
         _log.warning("graph run settle after the card stage failed flow=%s", flow_id, exc_info=True)
+
+
+def instruction_node_of_document(flow_id: str, doc_id: str) -> Optional[tuple[dict, dict]]:
+    """The active instruction stage owning this document; result stages cannot consume this review."""
+    run = run_store.active_run(flow_id)
+    if run is None or not doc_id:
+        return None
+    record = definition_store.revision(flow_id, int(run["revision_no"])) or {}
+    for row in run_store.node_runs(run["run_id"]):
+        if row.get("stage") != "instruction" or row.get("status") != OPEN_NODE_STATUS or row.get("instruction_doc_id") != doc_id:
+            continue
+        node = next((n for n in record.get("nodes") or [] if n["node_key"] == row["node_key"]), None)
+        if node:
+            return node, row
+    return None

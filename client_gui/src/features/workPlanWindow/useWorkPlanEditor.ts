@@ -67,6 +67,10 @@ import {
   applyQuantity,
   applyStepDraft,
   bodyOf,
+  cardType,
+  pairedDesignBody,
+  instructionEligible,
+  setInstructionMode as setInstructionModeIn,
   omitCardVerdict,
   canMoveShownCardBy,
   draftOf,
@@ -266,6 +270,7 @@ export interface WorkPlanEditor {
   cardStarted(cardId: string): boolean
   setStepProvider(rowId: string, providerId: string | null): void
   setStepNote(rowId: string, note: string): void
+  setInstructionMode(rowId: string, omitted: boolean): void
   /** The review popover: a count the server offers (or the row's own), and a reviewer (null = project default). */
   setStepReview(rowId: string, reviewCount: number, reviewerProviderId: string | null): void
   /** The review counts the server takes (GET review_count_choices). */
@@ -401,7 +406,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     view.value = next
     // A plan read anew may be editable again; a discarded Flow is not (the read does not say so).
     if (refused.value !== 'disposed') refused.value = null
-    draft.value = draftOf(next.body)
+    draft.value = draftOf(pairedDesignBody(next.body))
     dirty.value = false
     capability.value = null
     externalRevision.value = null
@@ -615,6 +620,13 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     edit((d) => setStepProviderIn(d, rowId, providerId, providerId ? nameOf(providerId) : null))
   }
 
+  function setInstructionMode(rowId: string, omitted: boolean): void {
+    const current = draft.value
+    const row = current && rowOf(current, rowId)
+    if (!current || !row || started().has(current.cards[row.cardIndex].id)) return
+    edit((value) => setInstructionModeIn(value, rowId, omitted))
+  }
+
   function setStepNote(rowId: string, note: string): void {
     edit((d) => setStepNoteIn(d, rowId, note))
   }
@@ -669,8 +681,8 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
       stepNo: shown?.no ?? row.no,
       type: row.step.type,
       pairRole: row.step.pair_role,
-      cardType: head.type,
-      cardUnit: unitOf(current.body, head.type),
+      cardType: cardType(current.cards[row.cardIndex]),
+      cardUnit: unitOf(current.body, cardType(current.cards[row.cardIndex])),
       cardOrdinal: head.ordinal,
     }
   }
@@ -711,10 +723,11 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
       attachmentStepKey: () => {
         if (!valid.value || !alive.value || !draft.value || !view.value) return null
         const row = rowOf(draft.value, resolve(rowId))
-        if (!row || row.step.locked || row.step.pair_role === 'result') return null
+        if (!row || !instructionEligible(row.step)) return null
         const card = draft.value.cards[row.cardIndex]
-        const stored = draftOf(view.value.body).cards.find((item) => item.id === card.id)
-        return stored?.steps.find((step) => step.pair_role === row.step.pair_role)?.key ?? null
+        return view.value.body.steps.find((step) => step.card_id === card.id
+          && (step.pair_role === row.step.pair_role
+            || (row.step.pair_role === 'result' && step.pair_role === 'single')))?.key ?? null
       },
     }
   }
@@ -879,7 +892,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     if (options.stepPending?.()) return { status: 'step_pending' }
     const read = readWorkPlanJson(text, current, started())
     if (!read.ok) return { status: 'invalid', issues: read.issues }
-    const next = draftOf(read.body)
+    const next = draftOf(pairedDesignBody(read.body))
     if (JSON.stringify(bodyOf(next)) === JSON.stringify(bodyOf(current))) {
       notice.value = { key: 'imported_unchanged', tone: 'success' }
       return { status: 'unchanged' }
@@ -955,6 +968,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     cardStarted: (cardId) => started().has(cardId),
     setStepProvider,
     setStepNote,
+    setInstructionMode,
     setStepReview,
     reviewCountChoices,
     reviewerOptions,

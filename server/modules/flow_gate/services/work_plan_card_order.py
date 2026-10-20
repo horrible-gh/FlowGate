@@ -94,7 +94,8 @@ def plan_cards(plan: dict) -> list[dict]:
         s.get("pair_key"): s for s in steps if s.get("pair_role") == "result" and s.get("pair_key")
     }
     for step in steps:
-        code = str(step.get("type") or "").upper()
+        from modules.flow_gate.services.work_plan_service import card_type_of_step
+        code = str(card_type_of_step(step) or "").upper()
         if step.get("pair_role") == "result" or code in report_types:
             continue
         if code not in WORK_PLAN_STEP_TYPES or code in _server_assembled():

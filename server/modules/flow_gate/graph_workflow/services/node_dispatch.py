@@ -212,6 +212,10 @@ def _instruction_job(job: dict) -> Optional[dict]:
                            job.get("project_id"), attempt_id=attempt_id)
         return None
     if found.get("written"):
+        _record_instruction(job, found["doc_id"])
+        if card_settings_ports.review_instruction(job["flow_id"], job["node"], found["doc_id"],
+                                                  job["issued_to"], job["run_id"], attempt_id):
+            return None
         # 0061 T#7: a job of an attempt that is no longer the node's active one approves nothing (recorded); the
         # approval and the result stage's commit run under the Stop gate's shared hold, judged for the job's attempt.
         jobs: list = []

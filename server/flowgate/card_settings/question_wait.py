@@ -117,7 +117,8 @@ def _waiting(flow_id: str, run: dict) -> Optional[tuple[str, dict, Optional[dict
     run_id = run["run_id"]
     loop = run.get("document_review_loop")
     if loop:
-        node = legacy.node_of_result(flow_id, run.get("doc_ref"))
+        instruction = legacy.instruction_node_of_document(flow_id, run.get("doc_ref"))
+        node = instruction[0] if instruction else legacy.node_of_result(flow_id, run.get("doc_ref"))
         if loop.get("stop_reason") != PASSED or node is None or legacy.review_loop_active(run.get("doc_ref")):
             return None
         return "review", node, None

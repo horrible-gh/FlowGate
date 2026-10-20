@@ -134,5 +134,5 @@ export function hiddenPlanBody(): Record<string, unknown> {
 
 /** The Steps of the hidden types in a body, in order. */
 export function hiddenSteps(body: Record<string, any>): Array<Record<string, unknown>> {
-  return (body.steps as Array<Record<string, unknown>>).filter((s) => ['DS', 'T2', 'TR2'].includes(s.type as string))
+  return (body.steps as Array<Record<string, unknown>>).filter((s) => (['DS', 'T2', 'TR2'].includes(s.type as string) && !(s.type === 'DS' && s.pair_role === 'instruction')))
 }

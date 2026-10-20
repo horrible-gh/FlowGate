@@ -117,8 +117,10 @@ afterEach(() => {
 const q = (id: string, root: ParentNode = document.body) => root.querySelector<HTMLElement>(`[data-test="${id}"]`)
 const text = (node: Element | null | undefined) => node?.textContent?.replace(/\s+/g, ' ').trim() ?? null
 const row = (rowId: string) => document.body.querySelector<HTMLElement>(`[data-test="wp-edit-step"][data-row="${rowId}"]`)
-const omit = (rowId: string) => q('wp-edit-step-omit', row(rowId)!) as HTMLButtonElement | null
-const mark = (rowId: string) => q('wp-edit-step-instruction', row(rowId)!)
+// A design card's 「설계 지시 생략」 and pre-instruction mark are on its 설계 지시 row, which edits the same Step (same data-row).
+const inRow = (rowId: string, id: string) => document.body.querySelector<HTMLElement>(`[data-row="${rowId}"] [data-test="${id}"]`)
+const omit = (rowId: string) => inRow(rowId, 'wp-edit-step-omit') as HTMLButtonElement | null
+const mark = (rowId: string) => inRow(rowId, 'wp-edit-step-instruction')
 const puts = () => api.putRequest.mock.calls.map(([, payload]) => payload as { base_revision_no: number; body: Record<string, any> })
 const postsTo = (path: string) => api.postRequest.mock.calls.filter(([p]) => p === path).map(([, body]) => body as Record<string, unknown>)
 const statusReads = () => api.getRequest.mock.calls.filter(([p]) => p === DEPLOY).length
@@ -250,7 +252,7 @@ describe('「지시 생략」: one click — write, save once, deploy', () => {
     deployStatus = statusAnswer({ deployed_count: 2, modes: { first: false, add: true, cleanup: true } })
     await open()
     await click(omit('c_d1|main'))
-    expect(sentStep(puts()[0], 'D#1')).toMatchObject({ pre_instruction_text: '승인 되었습니다', origin: 'human' })
+    expect(sentStep(puts()[0], 'DSD#1')).toMatchObject({ pre_instruction_text: '승인 되었습니다', origin: 'human' })
     expect(postsTo(PREVIEW)).toEqual([{ mode: 'add', wp_revision_no: 3 }])
     expect(postsTo(DEPLOY)[0]).toMatchObject({ mode: 'add', plan_digest: 'digest-1', draft_version: 41 })
     expect(notice()?.dataset.key).toBe('omitted')
@@ -423,7 +425,7 @@ describe('「지시 생략」: one click — write, save once, deploy', () => {
     expect(omit('c_t2|main')!.dataset.action).toBe('retry')
     await click(omit('c_d1|main'))
     expect(puts()).toHaveLength(2)
-    expect(sentStep(puts()[1], 'D#1').pre_instruction_text).toBe(WORK_PLAN_OMIT_TEXT)
+    expect(sentStep(puts()[1], 'DSD#1').pre_instruction_text).toBe(WORK_PLAN_OMIT_TEXT)
     expect(notice()?.dataset.key).toBe('omit_deploy_failed')
     // Both rows: the first one's retry is not overwritten by the second.
     for (const id of ['c_t2|main', 'c_d1|main']) {

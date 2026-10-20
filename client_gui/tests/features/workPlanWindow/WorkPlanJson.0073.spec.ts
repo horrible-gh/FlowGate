@@ -1,3 +1,4 @@
+import { pairedDesignBody } from '../../../src/features/workPlanWindow/workPlanEditModel'
 /**
  * flowgate.v02.0073 T#4 — JSON in and out of the work plan edit window, on the client only (no server API):
  * - the model (workPlanJson): the export is the body the save sends (bodyOf: wp_version as it is, DS / T2 Steps,
@@ -356,10 +357,10 @@ describe('the JSON buttons of the plan window (0073 T#4)', () => {
     expect(text(q('wp-json-heading'))).toContain('작업계획 JSON')
     const raw = q('wp-json-raw') as HTMLTextAreaElement
     expect(raw.readOnly).toBe(true)
-    expect(JSON.parse(raw.value)).toEqual(hiddenPlanBody())
+    expect(JSON.parse(raw.value)).toEqual(pairedDesignBody(hiddenPlanBody() as any))
 
     await type(q('wp-edit-step-note', row('c_t2|main')!), '원문 확인')
-    expect(JSON.parse((q('wp-json-raw') as HTMLTextAreaElement).value).steps[6].note).toBe('원문 확인')
+    expect(JSON.parse((q('wp-json-raw') as HTMLTextAreaElement).value).steps.find((s: any) => s.key === 'T#2').note).toBe('원문 확인')
 
     await click(q('wp-json-close'))
     expect(q('wp-json-window')).toBeNull()
@@ -374,7 +375,7 @@ describe('the JSON buttons of the plan window (0073 T#4)', () => {
     expect((q('wp-json-apply') as HTMLButtonElement).disabled).toBe(true)
 
     const incoming = hiddenPlanBody() as Record<string, any>
-    incoming.steps[6].note = '가져온 메모'
+    incoming.steps.find((s: any) => s.key === 'T#2').note = '가져온 메모'
     incoming.steps[0].note = '가져온 설계 지시' // a hidden DS Step
     incoming.steps[4].review_count = 3 // a hidden T2 Step
     incoming.x_imported = { from: 'paste' }
@@ -391,7 +392,7 @@ describe('the JSON buttons of the plan window (0073 T#4)', () => {
     await click(q('wp-edit-save'))
     expect(api.putRequest).toHaveBeenCalledTimes(1)
     expect(lastPut().base_revision_no).toBe(2)
-    expect(lastPut().body).toEqual(incoming)
+    expect(lastPut().body).toEqual(pairedDesignBody(incoming as any))
     expect(q('wp-edit-dirty')).toBeNull()
   })
 
@@ -407,7 +408,7 @@ describe('the JSON buttons of the plan window (0073 T#4)', () => {
 
     expect(q('wp-edit-dirty')).not.toBeNull()
     await click(q('wp-edit-save'))
-    expect(lastPut().body).toEqual(incoming)
+    expect(lastPut().body).toEqual(pairedDesignBody(incoming as any))
   })
 
   it('a JSON the client refuses: why, in names (no type code or Step key); the draft and the server untouched', async () => {
@@ -474,7 +475,7 @@ describe('the JSON buttons of the plan window (0073 T#4)', () => {
       const exported = await readBlob(files[0].blob)
       const expected = hiddenPlanBody() as Record<string, any>
       expected.steps[2].note = '내보낼 메모'
-      expect(JSON.parse(exported)).toEqual(expected)
+      expect(JSON.parse(exported)).toEqual(pairedDesignBody(expected as any))
       expect(api.putRequest).not.toHaveBeenCalled()
       expect(q('wp-edit-dirty')).not.toBeNull()
 
@@ -485,7 +486,7 @@ describe('the JSON buttons of the plan window (0073 T#4)', () => {
       expect(q('wp-json-window')).toBeNull()
       expect(q('wp-edit-notice')?.dataset.key).toBe('imported_unchanged')
       await click(q('wp-edit-save'))
-      expect(lastPut().body).toEqual(expected)
+      expect(lastPut().body).toEqual(pairedDesignBody(expected as any))
     } finally {
       anchorClick.mockRestore()
       URL.createObjectURL = original.create
@@ -510,7 +511,7 @@ describe('the JSON buttons of the plan window (0073 T#4)', () => {
     const external = ref<'read_only' | 'run_locked' | null>(null)
     await open({ external: () => external.value })
     await click(q('wp-edit-json-import'))
-    await typeArea(q('wp-json-input'), json((b) => (b.steps[6].note = '잠금 뒤')))
+    await typeArea(q('wp-json-input'), json((b) => (b.steps.find((s: any) => s.key === 'T#2').note = '잠금 뒤')))
 
     external.value = 'run_locked'
     await flushPromises()
@@ -563,8 +564,8 @@ describe('the JSON buttons of the plan window (0073 T#4)', () => {
     expect((q('wp-edit-step-note', row('c_t1|main')!) as HTMLInputElement).value).toBe('')
     await click(q('wp-edit-save'))
     const expected = hiddenPlanBody() as Record<string, any>
-    expected.steps[6].note = '두 번째 작업'
-    expect(lastPut().body).toEqual(expected)
+    expected.steps.find((s: any) => s.key === 'T#2').note = '두 번째 작업'
+    expect(lastPut().body).toEqual(pairedDesignBody(expected as any))
   })
 
   it('a file still being read when the import window is cancelled, closed or turned into the raw view is dropped', async () => {
@@ -572,7 +573,7 @@ describe('the JSON buttons of the plan window (0073 T#4)', () => {
     vi.stubGlobal('FileReader', HeldReader)
     try {
       await open()
-      const incoming = json((b) => (b.steps[6].note = '취소한 파일'))
+      const incoming = json((b) => (b.steps.find((s: any) => s.key === 'T#2').note = '취소한 파일'))
       const untouched = () => {
         expect(q('wp-edit-dirty')).toBeNull()
         expect(q('wp-edit-notice')).toBeNull()
@@ -616,7 +617,7 @@ describe('the JSON buttons of the plan window (0073 T#4)', () => {
       HeldReader.held[2].finish(incoming)
       await flushPromises()
       expect(q('wp-json-window')?.dataset.mode).toBe('raw')
-      expect(JSON.parse((q('wp-json-raw') as HTMLTextAreaElement).value)).toEqual(hiddenPlanBody())
+      expect(JSON.parse((q('wp-json-raw') as HTMLTextAreaElement).value)).toEqual(pairedDesignBody(hiddenPlanBody() as any))
       untouched()
 
       // a read that ends with its window open is taken as before
@@ -736,7 +737,7 @@ describe('the document [업로드] opens this window’s [JSON 가져오기]; th
   it('the import only replaces the draft; [저장] is the one PUT with base_revision_no', async () => {
     openWorkPlanEditImport(DOC, { projectId: 'flowgate', groupId: null })
     await flushPromises()
-    await typeArea(q('wp-json-input'), json((b) => (b.steps[6].note = '업로드로 가져옴')))
+    await typeArea(q('wp-json-input'), json((b) => (b.steps.find((s: any) => s.key === 'T#2').note = '업로드로 가져옴')))
     await click(q('wp-json-apply'))
     expect(q('wp-edit-dirty')).not.toBeNull()
     expect(workPlanEditWindowOf(DOC)?.dirty).toBe(true)
@@ -744,7 +745,7 @@ describe('the document [업로드] opens this window’s [JSON 가져오기]; th
     await click(q('wp-edit-save'))
     expect(api.putRequest).toHaveBeenCalledTimes(1)
     expect(lastPut().base_revision_no).toBe(2)
-    expect(lastPut().body.steps[6].note).toBe('업로드로 가져옴')
+    expect(lastPut().body.steps.find((s: any) => s.key === 'T#2').note).toBe('업로드로 가져옴')
     expect(workPlanEditWindowOf(DOC)?.dirty).toBe(false)
   })
 

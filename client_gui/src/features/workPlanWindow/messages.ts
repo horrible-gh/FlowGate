@@ -74,6 +74,7 @@ const ko = {
   },
   instruction: '사전 지시서 있음',
   omit: {
+    toggle: '지시서 생략',
     instruction: '지시 생략',
     design: '설계 지시 생략',
     retry: '저장됨 · 전개 실패 — 전개 재시도',
@@ -285,6 +286,7 @@ const en: typeof ko = {
   },
   instruction: 'Has a pre-instruction',
   omit: {
+    toggle: 'Omit instruction document',
     instruction: 'Skip instruction',
     design: 'Skip design instruction',
     retry: 'Saved · deploy failed — retry deploy',
@@ -496,6 +498,7 @@ const ja: typeof ko = {
   },
   instruction: '事前指示あり',
   omit: {
+    toggle: '指示書を省略',
     instruction: '指示を省略',
     design: '設計指示を省略',
     retry: '保存済み · 展開失敗 — 展開を再試行',

@@ -294,13 +294,10 @@ describe('WP summary — reading (flowgate.v02.0048 T#13, 0056 F1)', () => {
   })
 
   // flowgate.v02.0074 T#1 (R §1.1): no cards is a wordless dashed block, not a sentence.
-  it('a plan without Steps: no cards — the wordless dashed block', async () => {
+  it('a plan without Steps: no cards — no progress placeholder', async () => {
     wp().steps = []
     const w = await mountTab(target())
-    expect(textOf(w, 'work-plan-progress')).toBe('')
-    expect(el(w, 'work-plan-progress').classes()).toContain('is-empty')
-    expect(el(w, 'work-plan-progress').attributes('aria-hidden')).toBe('true')
-    expect(el(w, 'work-plan-progress').attributes('data-cards')).toBe('0')
+    expect(el(w, 'work-plan-progress').exists()).toBe(false)
   })
 
   it('the English and Japanese wording', async () => {
@@ -341,7 +338,7 @@ describe('flowgate.v02.0074 T#1', () => {
     expect(planRead).not.toHaveBeenCalled()
   })
 
-  it('(b) no cards: a normal plan line, the wordless dashed block, no text and no pane state', async () => {
+  it('(b) no cards: a normal plan line, no progress placeholder, no text and no pane state', async () => {
     wp().steps = []
     for (const locale of ['ko', 'en', 'ja'] as const) {
       i18n.global.locale.value = locale
@@ -352,11 +349,7 @@ describe('flowgate.v02.0074 T#1', () => {
       for (const name of ['inspector-slot-open', 'inspector-slot-history', 'document-io-upload', 'document-io-download']) {
         expect(planLine(w).find(`[data-test="${name}"]`).exists(), name).toBe(true)
       }
-      const progress = el(w, 'work-plan-progress')
-      expect(progress.classes()).toContain('is-empty')
-      expect(progress.attributes('data-cards')).toBe('0')
-      expect(progress.attributes('aria-hidden')).toBe('true')
-      expect(progress.text()).toBe('')
+      expect(el(w, 'work-plan-progress').exists()).toBe(false)
       const text = el(w, 'inspector-work-plan').text()
       for (const old of OLD_NO_CARDS) expect(text).not.toContain(old)
       expect(paneState(w).exists()).toBe(false)

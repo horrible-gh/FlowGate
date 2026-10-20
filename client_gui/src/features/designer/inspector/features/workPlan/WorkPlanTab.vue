@@ -13,8 +13,9 @@
        ⇉ 전개 actions stay as they were). Its document icon / name open the plan in the v0.2 work plan edit window
        (features/workPlanWindow through openDocument.ts: quantities, Steps, ✎ → the Step window), not the document
        window; the line's history, [업로드][다운로드], [작성] (no document yet) and [AI 호출] stay the card line's.
-       flowgate.v02.0074 T#1 (R §1.1 · §1.3) — one way in: the line has no ✎ (the document icon / name open it), and a
-       plan with no cards shows a wordless dashed block where the progress goes (no "카드 없음" text). -->
+       flowgate.v02.0074 T#1 (R §1.3) — one way in: the line has no ✎ (the document icon / name open it).
+       flowgate.v02.0074 T0017: no dashed block under the line — a plan with no started cards shows no progress line
+       (the block was not a drop target; the T#1 placeholder is gone). -->
   <section class="inspector-work-plan" data-test="inspector-work-plan" :data-status="status" :data-has-document="hasDocument ? 'true' : 'false'">
     <InspectorSlotList :slots="lines" @open="openLine" @history="historyLine" @action="actionLine">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
@@ -29,7 +30,6 @@
         <span v-if="progress.cards" class="inspector-work-plan-progress" data-test="work-plan-progress" :data-started="progress.started" :data-cards="progress.cards">
           {{ t(k('progress'), { ...progress }) }}
         </span>
-        <span v-else class="inspector-work-plan-progress is-empty" data-test="work-plan-progress" :data-started="progress.started" data-cards="0" aria-hidden="true"></span>
         <span v-if="view.unassignedSteps" class="inspector-work-plan-warning" role="status" data-test="work-plan-unassigned">
           <span aria-hidden="true">⚠</span>{{ t(k('unassigned'), { count: view.unassignedSteps }) }}
         </span>
@@ -142,14 +142,6 @@ const lines = computed<InspectorSlotView[]>(() => {
 .inspector-work-plan-progress {
   color: var(--fg2-muted);
   font-size: 11.5px;
-}
-
-/* flowgate.v02.0074 T#1 (R §1.1): no cards yet — a wordless dashed block (the .inspector-pane-disabled dashed token). */
-.inspector-work-plan-progress.is-empty {
-  flex: 1 1 100%;
-  min-height: 18px;
-  border: 1px dashed #2b4562;
-  border-radius: 8px;
 }
 
 .inspector-work-plan-warning {

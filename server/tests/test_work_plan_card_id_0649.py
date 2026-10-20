@@ -447,7 +447,7 @@ def test_template_rules_describe_mixed_order_and_card_id(locale):
     assert "card_id" in text
     assert "순서까지 같아야" not in text
     assert "in the same order" not in text
-    assert payload["contract"]["optional_step_fields"] == ["card_id"]
+    assert payload["contract"]["optional_step_fields"] == ["card_id", "instruction_mode"]
 
 
 def test_ai_inbox_edit_follows_the_same_card_id_contract(seed, storage_root, tmp_path):

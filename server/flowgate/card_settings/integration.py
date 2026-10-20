@@ -38,6 +38,7 @@ def register() -> None:
     ports.register(ports.AI_WORKING, review_stage.ai_working)
     ports.register(ports.INSTRUCTION_DOCUMENT, settings.instruction_document)
     ports.register(ports.APPROVE_INSTRUCTION, review_stage.approve_instruction)
+    ports.register(ports.REVIEW_INSTRUCTION, review_stage.review_instruction)
     ports.register(ports.NODE_RUNNING, legacy_adapter.node_running)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDED, review_stage.on_run_ended)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDING, review_stage.on_run_ending)

@@ -6,8 +6,9 @@
 export function workPlanDocumentNameKey(type: string, pairRole: string): string {
   if (type === 'TS') return 'document.scenario'
   if (type === 'TSR') return 'document.test_report'
+  if (type === 'DS') return 'document.design_instruction'
+  if (['D', 'P', 'L', 'DB'].includes(type)) return 'document.design'
   if (pairRole === 'instruction') return 'document.instruction'
   if (pairRole === 'result') return 'document.report'
-  if (type === 'DS') return 'document.design_instruction'
   return 'document.design'
 }

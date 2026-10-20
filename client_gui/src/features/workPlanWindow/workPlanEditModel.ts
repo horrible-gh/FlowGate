@@ -78,6 +78,8 @@ export interface WorkPlanEditStep {
   locked: boolean
   locked_reason: string | null
   origin: string
+  /** Explicit card execution choice; absent keeps legacy behavior. Both document steps remain stored. */
+  instruction_mode?: 'use' | 'omit' | null
   [field: string]: unknown
 }
 
@@ -151,6 +153,30 @@ export function draftOf(body: WorkPlanEditBody): WorkPlanDraft {
   return { body: copy, cards, removed: {} }
 }
 
+/** v0.2 uses two stored stages for every design card. Legacy standalone DS values stay intact. */
+export function cardType(card: WorkPlanCard): string {
+  return designInstructionStep(card.steps[0]) ? card.steps[1].type : card.steps[0].type
+}
+
+export function pairedDesignBody(body: WorkPlanEditBody): WorkPlanEditBody {
+  const copy = clone(body)
+  copy.card_stage_model = 'paired'
+  copy.steps = copy.steps.flatMap((step) => {
+    if (step.pair_role !== 'single' || !['D', 'P', 'L', 'DB'].includes(step.type)) return [step]
+    const instruction = blankStep('DS', 'instruction')
+    Object.assign(instruction, {
+      key: `DS${step.key}`, card_id: step.card_id, ordinal: step.ordinal, pair_key: step.key,
+      provider_id: step.provider_id, provider_display_name: step.provider_display_name,
+      pre_instruction_text: step.pre_instruction_text, pre_instruction_attachment: clone(step.pre_instruction_attachment ?? null),
+      instruction_mode: step.instruction_mode ?? 'use',
+    })
+    const result = { ...step, pair_role: 'result' as const, pair_key: instruction.key }
+    delete result.instruction_mode
+    return [instruction, result]
+  })
+  return copy
+}
+
 /** The body as it is sent: a copy with the Steps of the cards in order. */
 export function bodyOf(draft: WorkPlanDraft): WorkPlanEditBody {
   return clone({ ...draft.body, steps: draft.cards.flatMap((card) => card.steps) })
@@ -168,11 +194,12 @@ export function renumber(cards: readonly WorkPlanCard[]): WorkPlanCard[] {
   const seen = new Map<string, number>()
   return cards.map((card) => {
     const head = card.steps[0]
-    const n = (seen.get(head.type) ?? 0) + 1
-    seen.set(head.type, n)
+    const type = cardType(card)
+    const n = (seen.get(type) ?? 0) + 1
+    seen.set(type, n)
     if (card.steps.length === 1) return { id: card.id, steps: [{ ...head, ordinal: n, key: makeKey(head.type, n) }] }
     const result = card.steps[1]
-    const headKey = makeKey(head.type, n)
+    const headKey = designInstructionStep(head) ? `DS${makeKey(type, n)}` : makeKey(head.type, n)
     const resultKey = makeKey(result.type, n)
     return {
       id: card.id,
@@ -238,12 +265,47 @@ export function stepHasValue(step: WorkPlanEditStep): boolean {
 }
 
 /** A result Step (a report) takes no pre-instruction; a locked Step takes nothing. */
-export function instructionEligible(step: Pick<WorkPlanEditStep, 'pair_role' | 'locked'>): boolean {
-  return !step.locked && step.pair_role !== 'result'
+export function instructionEligible(step: Pick<WorkPlanEditStep, 'type' | 'pair_role' | 'locked'>): boolean {
+  return !step.locked && (step.pair_role !== 'result' || ['D', 'P', 'L', 'DB'].includes(step.type))
 }
 
 export function stepHasInstruction(step: WorkPlanEditStep): boolean {
   return instructionEligible(step) && ((step.pre_instruction_text ?? '').trim() !== '' || !!step.pre_instruction_attachment)
+}
+
+/**
+ * A card's instruction can be omitted without erasing its content, provider or paired report: the instruction Step of
+ * an N / T card, and the Step of a D / P / L / DB card, whose pre-instruction is the card's 「설계 지시」 (DS) line.
+ */
+export function instructionModeEligible(step: Pick<WorkPlanEditStep, 'type' | 'pair_role' | 'locked'>): boolean {
+  if (step.locked) return false
+  return (step.pair_role === 'instruction' && ['N', 'T'].includes(step.type)) || designInstructionStep(step)
+}
+
+/** The card's instruction is omitted (the Step keeps everything; only the execution choice changes). */
+export function instructionOmitted(step: WorkPlanEditStep): boolean {
+  return instructionModeEligible(step) && step.instruction_mode === 'omit'
+}
+
+/**
+ * The Step itself is not drawn nor counted: an omitted N / T instruction. A design Step stays, as it is the card's
+ * 「설계서」 — only its 「설계 지시」 line goes.
+ */
+export function stepOmitted(step: WorkPlanEditStep): boolean {
+  return step.pair_role === 'instruction' && instructionOmitted(step)
+}
+
+export function setInstructionMode(draft: WorkPlanDraft, rowId: string, omitted: boolean): WorkPlanDraft {
+  const row = rowOf(draft, rowId)
+  if (!row || !instructionModeEligible(row.step)) return draft
+  const mode = omitted ? 'omit' : 'use'
+  if (row.step.instruction_mode === mode) return draft
+  return replaceStep(draft, row, { ...row.step, instruction_mode: mode, origin: 'human' })
+}
+
+/** A design card's pre-instruction belongs to its DS document, independently of the design result. */
+export function designInstructionStep(step: Pick<WorkPlanEditStep, 'type' | 'pair_role'>): boolean {
+  return step.pair_role === 'instruction' && step.type === 'DS'
 }
 
 // --- Quantities ---------------------------------------------------------------------------------------
@@ -284,7 +346,7 @@ function cardStarted(card: WorkPlanCard, started: ReadonlySet<string>): boolean 
 }
 
 function removalFor(draft: WorkPlanDraft, type: string, count: number, started: ReadonlySet<string>): WorkPlanCard[] | null {
-  const ofType = draft.cards.filter((card) => card.steps[0].type === type)
+  const ofType = draft.cards.filter((card) => cardType(card) === type)
   if (count >= ofType.length) return []
   const removable = ofType.filter((card) => !cardStarted(card, started))
   const need = ofType.length - count
@@ -327,6 +389,9 @@ function blankStep(type: string, pairRole: WorkPlanPairRole): WorkPlanEditStep {
 
 /** A new card of the type: no card_id (the server assigns one on save) and no AI — never a default filled in. */
 function newCard(body: WorkPlanEditBody, type: string): WorkPlanCard {
+  if (body.card_stage_model === 'paired' && ['D', 'P', 'L', 'DB'].includes(type)) {
+    return { id: tempCardId(), steps: [blankStep('DS', 'instruction'), blankStep(type, 'result')] }
+  }
   if (unitOf(body, type) === 'sheet') return { id: tempCardId(), steps: [blankStep(type, 'single')] }
   return { id: tempCardId(), steps: [blankStep(type, 'instruction'), blankStep(WORK_PLAN_PAIR[type], 'result')] }
 }
@@ -353,7 +418,7 @@ export function applyQuantity(draft: WorkPlanDraft, type: string, next: number, 
     for (let i = cards.length - 1; i >= 0; i--) if (cardStarted(cards[i], started)) return i
     return -1
   }
-  let have = cards.filter((card) => card.steps[0].type === type).length
+  let have = cards.filter((card) => cardType(card) === type).length
   while (have < count) {
     const restored = stack.pop()
     if (restored) cards.splice(Math.max(lastStarted() + 1, Math.min(restored.index, cards.length)), 0, restored.card)
@@ -402,7 +467,7 @@ export function canMoveCardBy(draft: WorkPlanDraft, index: number, delta: number
 
 /** The window draws this card (its head Step's type is not hidden). */
 export function cardShown(card: WorkPlanCard): boolean {
-  return typeShown(card.steps[0].type)
+  return typeShown(cardType(card))
 }
 
 /** A card the window draws: `index` is its place in draft.cards, `position` its place among the shown cards. */
@@ -420,7 +485,8 @@ export function shownCardsOf(draft: WorkPlanDraft): WorkPlanShownCard[] {
   let no = 0
   draft.cards.forEach((card, index) => {
     if (!cardShown(card)) return
-    const rows = card.steps.map((step, stepIndex) => {
+    const rows = card.steps.flatMap((step, stepIndex) => {
+      if (stepOmitted(step)) return []
       no += 1
       return { rowId: workPlanRowId(card.id, rowRoleOf(step)), cardIndex: index, stepIndex, step, no }
     })
@@ -429,9 +495,9 @@ export function shownCardsOf(draft: WorkPlanDraft): WorkPlanShownCard[] {
   return out
 }
 
-/** Row ids of the cards the window does not draw. */
+/** Row ids the window does not draw: the rows of hidden cards and omitted instructions (T0017). */
 export function hiddenRowIds(draft: WorkPlanDraft): Set<string> {
-  return new Set(rowsOf(draft).filter((row) => !cardShown(draft.cards[row.cardIndex])).map((row) => row.rowId))
+  return new Set(rowsOf(draft).filter((row) => !cardShown(draft.cards[row.cardIndex]) || stepOmitted(row.step)).map((row) => row.rowId))
 }
 
 /** A Step key (a server finding's) names a Step the window draws; an unknown key is judged by its type when given. */
@@ -640,7 +706,7 @@ const OMIT_DESIGN_TYPES: ReadonlySet<string> = new Set(['D', 'P', 'L', 'DB'])
 /** The row offers 「지시 생략」: an N / T instruction Step or a D / P / L / DB Step, not locked. */
 export function omitEligible(step: Pick<WorkPlanEditStep, 'type' | 'pair_role' | 'locked'>): boolean {
   if (step.locked) return false
-  if (step.pair_role === 'instruction') return OMIT_INSTRUCTION_TYPES.has(step.type)
+  if (step.pair_role === 'instruction') return OMIT_INSTRUCTION_TYPES.has(step.type) || designInstructionStep(step)
   if (step.pair_role === 'single') return OMIT_DESIGN_TYPES.has(step.type)
   return false
 }
@@ -738,7 +804,7 @@ export function savedDraft(before: WorkPlanDraft, saved: WorkPlanEditBody): { dr
 
 // --- Summary ---------------------------------------------------------------------------------------------
 
-const unassigned = (step: WorkPlanEditStep) => !step.locked && !step.provider_id
+const unassigned = (step: WorkPlanEditStep) => !step.locked && !stepOmitted(step) && !step.provider_id
 
 /** Steps that are not locked and have no AI (the server's unassigned_step_count; hidden types included). */
 export function unassignedSteps(draft: WorkPlanDraft): number {
@@ -770,7 +836,7 @@ export function totalsOf(draft: WorkPlanDraft): { designSheets: number; workSets
     if (unitOf(draft.body, type) === 'set') workSets += box.count
     else designSheets += box.count
   }
-  return { designSheets, workSets, steps: draft.cards.filter(cardShown).reduce((sum, card) => sum + card.steps.length, 0) }
+  return { designSheets, workSets, steps: draft.cards.filter(cardShown).reduce((sum, card) => sum + card.steps.filter((step) => !stepOmitted(step)).length, 0) }
 }
 
 // --- Type icons (0073 T#1) -----------------------------------------------------------------------------------

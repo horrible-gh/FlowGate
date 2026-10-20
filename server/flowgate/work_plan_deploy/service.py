@@ -164,6 +164,16 @@ def _instructions(state: State, locale: str) -> dict[str, dict]:
     pre-instruction file that is not the registered one: 409 ``wp_attachment_unreadable``, nothing written."""
     out: dict[str, dict] = {}
     for target in state.targets:
+        result = target.run_step or {}
+        if result.get("pair_role") == "result" and target.doc_type in deploy_plan.DESIGN_TYPES:
+            reference = result.get("pre_instruction_attachment")
+            try:
+                attachment = legacy.attachment_text(state.doc["doc_id"], reference) if reference else None
+            except legacy.wp_attach.PreInstructionAttachmentError as exc:
+                raise DeployError(409, "wp_attachment_unreadable", {
+                    "doc_id": state.doc["doc_id"], "card_id": target.card_id, "reason": exc.code}) from exc
+            document = legacy.instruction_text.instruction_document(result.get("pre_instruction_text"), reference, attachment)
+            result["_run_prompt"] = legacy.instruction_text.instruction_body("설계서 작성 지시", document, locale) if document else ""
         text, reference = deploy_plan.pre_instruction(target)
         attachment_text = None
         if reference is not None:
@@ -175,6 +185,33 @@ def _instructions(state: State, locale: str) -> dict[str, dict]:
         document = legacy.instruction_text.instruction_document(text, reference, attachment_text)
         if document is not None:
             out[target.card_id] = document
+    return out
+
+
+def card_starts(doc: dict) -> dict[str, Optional[bool]]:
+    """``card_id -> started`` of the plan's deployed cards (``wp_source``; the current draft, else the latest
+    revision): True when a node of the card ran (``legacy.node_started``), None when its run facts cannot be read,
+    else False. A card id with several nodes is started when any of them is. Read-only: the WP read and the WP saves
+    lock the card's ``instruction_mode`` with it, the same judgement the deploy makes before it changes the setting
+    (``instruction_mode_locked``)."""
+    flow_id, doc_id = doc.get("group_id"), doc.get("doc_id")
+    if not flow_id or not doc_id:
+        return {}
+    record, _draft_version, _base = _graph_record(flow_id)
+    out: dict[str, Optional[bool]] = {}
+    for node in record.get("nodes", []):
+        key = node["node_key"]
+        source = card_settings.values(flow_id, key).get(SOURCE_FIELD)
+        if not deploy_plan.is_source(source, doc_id):
+            continue
+        try:
+            started: Optional[bool] = bool(legacy.node_started(flow_id, key))
+        except Exception as exc:  # noqa: BLE001 — unreadable run facts protect the card
+            legacy.log_warning("work plan card starts: run facts unreadable for %s: %s", key, exc)
+            started = None
+        card_id = source["card_id"]
+        before = out.get(card_id, False)
+        out[card_id] = True if True in (before, started) else None if None in (before, started) else False
     return out
 
 
@@ -193,6 +230,7 @@ class Work:
     cards: list = field(default_factory=list)          # one entry per card id / node (the answer)
     creates: list = field(default_factory=list)        # targets to make, plan order
     fills: list = field(default_factory=list)          # instruction writes on existing cards
+    settings: list = field(default_factory=list)       # explicit instruction modes on existing cards
     removes: list = field(default_factory=list)        # node keys to remove (cleanup)
     blockers: list = field(default_factory=list)
     chain: Optional[deploy_chain.Chain] = None
@@ -202,7 +240,7 @@ class Work:
 
     @property
     def writes(self) -> bool:
-        return bool(self.creates or self.fills or self.removes)
+        return bool(self.creates or self.fills or self.removes or self.settings)
 
 
 def _instruction_slot(node: dict) -> Optional[cs.CardSlot]:
@@ -313,6 +351,22 @@ def _plan_work(state: State, mode: str, instructions: dict[str, dict], registere
             work.cards.append(entry)
             continue
         entry["result"] = "already_deployed"
+        instruction_mode = deploy_plan.instruction_mode(target)
+        if instruction_mode is not None and card_settings.values(state.flow_id, key).get("instruction", "use") != instruction_mode:
+            if started(key) is not False:
+                work.blockers.append({"code": "instruction_mode_locked", "node_key": key})
+            else:
+                work.settings.append((key, "instruction", instruction_mode))
+                entry["instruction_mode"] = instruction_mode
+        if state.body.get("card_stage_model") == "paired":
+            stored = card_settings.values(state.flow_id, key)
+            for name, value in deploy_plan.stage_settings(target):
+                if stored.get(name) == value or (stored.get(name) is None and value in (None, "", 0)):
+                    continue
+                if started(key) is not False:
+                    work.blockers.append({"code": "card_stage_settings_locked", "node_key": key, "field": name})
+                elif value is None or _setting_problem(setting_fields.card_kind(deploy_plan.NODE_TYPE, target.doc_type), name, value) is None:
+                    work.settings.append((key, name, value))
         instruction_of(entry, key, node, target)
         work.cards.append(entry)
 
@@ -653,6 +707,11 @@ def _write(state: State, work: Work, instructions: dict, registered: set[str], u
                 card_settings.put(state.flow_id, key, name, checked, user_id)
         if target.card_id in instructions:
             instruction_line(key, target)
+    for key, name, value in work.settings:
+        if value is None:
+            card_settings.remove(state.flow_id, key, name)
+        else:
+            card_settings.put(state.flow_id, key, name, value, user_id)
     for fill in work.fills:
         if fill.verdict is None:                   # the line had no document when judged
             instruction_line(fill.node_key, fill.target)
