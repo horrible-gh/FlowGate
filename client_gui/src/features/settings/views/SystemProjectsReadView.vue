@@ -1,13 +1,16 @@
 <template>
-  <SettingsShell :crumbs="crumbs" scope="system">
+  <SettingsShell scope="system">
     <template #nav>
-      <SettingsSubnav :title="t('gui.settings.scope.system')" :items="systemNav" active="projects" />
+      <SettingsSubnav :items="systemNav" active="projects" />
     </template>
 
     <section class="fgs-panel" data-panel="system-projects">
       <div class="fgs-phead">
         <span class="fgs-tico"><SettingsIcon name="folder" size="lg" /></span>
-        <h2>{{ t('gui.settings.system_nav.projects') }}</h2>
+        <div class="fgs-ptitle">
+          <h2>{{ t('gui.settings.system_nav.projects') }}</h2>
+          <p>{{ t('gui.settings.page_sub.system_projects') }}</p>
+        </div>
         <div class="fgs-push">
           <button type="button" class="fgs-btn sm" :disabled="loading" data-testid="projects-refresh" @click="load">
             <SettingsIcon name="reset" size="sm" />{{ t('gui.settings.projects.refresh') }}
@@ -113,12 +116,6 @@ const { t } = useI18n()
 const systemNav = useSystemNav()
 const { projects, loading, error, lost, load } = useProjectList()
 const filter = ref<Filter>('all')
-
-const crumbs = computed(() => [
-  { label: t('gui.settings.title'), to: '/settings' },
-  { label: t('gui.settings.scope.system') },
-  { label: t('gui.settings.system_nav.projects') },
-])
 
 const counts = computed<Record<Filter, number>>(() => {
   const list = projects.value ?? []

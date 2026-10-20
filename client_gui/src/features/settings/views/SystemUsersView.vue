@@ -1,13 +1,16 @@
 <template>
-  <SettingsShell :crumbs="crumbs" scope="system">
+  <SettingsShell scope="system">
     <template #nav>
-      <SettingsSubnav :title="t('gui.settings.scope.system')" :items="systemNav" active="users" />
+      <SettingsSubnav :items="systemNav" active="users" />
     </template>
 
     <section class="fgs-panel" data-panel="users">
       <div class="fgs-phead">
         <span class="fgs-tico"><SettingsIcon name="users" size="lg" /></span>
-        <h2>{{ t('gui.settings.users.title') }}</h2>
+        <div class="fgs-ptitle">
+          <h2>{{ t('gui.settings.users.title') }}</h2>
+          <p>{{ t('gui.settings.page_sub.system_users') }}</p>
+        </div>
         <div class="fgs-push">
           <button type="button" class="fgs-iconbtn" :title="t('gui.settings.csv')" :aria-label="t('gui.settings.csv')" @click="exportUsers">
             <SettingsIcon name="download" />
@@ -336,12 +339,6 @@ const { t, locale } = useI18n()
 const route = useRoute()
 const systemNav = useSystemNav()
 const { toasts, pushToast, dismissToast } = useSettingsToasts()
-
-const crumbs = computed(() => [
-  { label: t('gui.settings.title'), to: '/settings' },
-  { label: t('gui.settings.scope.system') },
-  { label: t('gui.settings.users.title') },
-])
 
 const data = ref<SystemUsersResponse | null>(null)
 const loading = ref(false)

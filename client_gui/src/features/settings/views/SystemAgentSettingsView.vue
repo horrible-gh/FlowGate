@@ -1,16 +1,19 @@
 <template>
-  <SettingsShell :crumbs="crumbs" scope="system">
+  <SettingsShell scope="system">
     <template #nav>
-      <SettingsSubnav :title="t('gui.settings.scope.system')" :items="systemNav" active="agents" />
+      <SettingsSubnav :items="systemNav" active="agents" />
     </template>
 
     <section class="fgs-panel" data-panel="system-agents">
       <div class="fgs-phead">
-        <span class="fgs-tico"><SettingsIcon name="agent" size="lg" /></span>
-        <h2>{{ t('gui.settings.system_nav.agents') }}</h2>
+        <span class="fgs-tico"><SettingsIcon name="bot" size="lg" /></span>
+        <div class="fgs-ptitle">
+          <h2>{{ t('gui.settings.system_nav.agents') }}</h2>
+          <p>{{ t('gui.settings.agents.sub') }}</p>
+        </div>
         <div class="fgs-push">
           <button type="button" class="fgs-btn pri" :disabled="busy || !agents" data-testid="agent-new" @click="startCreate">
-            <SettingsIcon name="plus" />{{ t('gui.settings.agents.create') }}
+            <SettingsIcon name="plus" size="sm" />{{ t('gui.settings.agents.create') }}
           </button>
         </div>
       </div>
@@ -25,7 +28,7 @@
 
         <template v-else-if="agents">
           <!-- A failed re-read with a list on screen: the list is the last one read, not the current state. -->
-          <div v-if="listError" class="fgs-refresh-error" data-testid="agents-refresh-error">
+          <div v-if="listError" class="refresh-error" data-testid="agents-refresh-error">
             <ErrorState compact :title="t('gui.settings.agents.errors.refresh_failed')" :message="listError">
               <template #action>
                 <Button variant="secondary" data-testid="agents-refresh-retry" :disabled="loading" @click="load">{{ t('gui.common.retry') }}</Button>
@@ -33,221 +36,376 @@
             </ErrorState>
           </div>
 
-          <div class="agents-grid">
-            <div class="fgs-card agents-list" data-testid="agent-list">
-              <p v-if="!agents.length" class="fgs-empty" data-testid="agents-empty">{{ t('gui.settings.agents.empty') }}</p>
+          <div class="fgs-stats" style="--n: 3" data-testid="agent-stats">
+            <div class="fgs-stat" data-stat="registered">
+              <div class="l">{{ t('gui.settings.agents.stats.registered') }}</div>
+              <div class="v">{{ counts.registered }}<small>{{ t('gui.settings.agents.stats.unit') }}</small></div>
+            </div>
+            <div class="fgs-stat" data-stat="online">
+              <div class="l">{{ t('gui.settings.agents.stats.online') }}</div>
+              <div class="v">{{ counts.online }}<small>{{ t('gui.settings.agents.stats.unit') }}</small></div>
+            </div>
+            <div class="fgs-stat" :class="{ warn: counts.attention > 0 }" data-stat="attention">
+              <div class="l">{{ t('gui.settings.agents.stats.attention') }}</div>
+              <div class="v">{{ counts.attention }}<small>{{ t('gui.settings.agents.stats.unit') }}</small></div>
+            </div>
+          </div>
+
+          <div class="fgs-toolbar">
+            <div class="fgs-chips" role="group" :aria-label="t('gui.settings.agents.filter_aria')">
               <button
-                v-for="row in agents"
-                :key="row.agent_id"
+                v-for="key in FILTERS"
+                :key="key"
                 type="button"
-                class="agent-row"
-                :class="{ sel: mode === 'view' && row.agent_id === selectedId }"
-                :disabled="busy"
-                :data-agent="row.agent_id"
-                @click="select(row)"
+                class="fgs-chip"
+                :class="{ on: filter === key }"
+                :aria-pressed="filter === key ? 'true' : 'false'"
+                :data-filter="key"
+                @click="filter = key"
               >
-                <span class="who">
-                  <b>{{ row.name }}</b>
-                  <small>{{ t(`gui.settings.agents.location.${row.location}`) }} · {{ t(`gui.settings.agents.registration.${row.registration_status}`) }}</small>
-                </span>
-                <span class="badges">
-                  <span v-if="!row.enabled" class="fgs-pill off" data-testid="agent-row-disabled">{{ t('gui.settings.agents.enabled.off') }}</span>
-                  <span class="fgs-pill" :class="RUNTIME_TONE[runtimeState(row)]" :data-runtime="runtimeState(row)">{{ t(`gui.settings.agents.runtime.${runtimeState(row)}`) }}</span>
-                </span>
+                {{ t(`gui.settings.agents.filters.${key}`) }}<span class="n">{{ groups[key].length }}</span>
               </button>
             </div>
+            <label class="fgs-search">
+              <SettingsIcon name="search" class="fgs-search-icon" />
+              <input v-model="query" class="fgs-input" type="search" :placeholder="t('gui.settings.agents.search')" :aria-label="t('gui.settings.agents.search')" data-testid="agent-search" />
+            </label>
+          </div>
 
-            <!-- 등록: POST /system/agents -->
-            <form v-if="mode === 'create'" class="fgs-card agent-detail" data-testid="agent-create-form" @submit.prevent="submitCreate">
-              <div class="fgs-card-h"><span class="fgs-tico sm"><SettingsIcon name="plus" /></span><b>{{ t('gui.settings.agents.create') }}</b></div>
-              <div class="pad">
-                <div class="fgs-formfield">
-                  <label for="agent-new-name">{{ t('gui.settings.agents.fields.name') }}</label>
-                  <input id="agent-new-name" v-model="form.name" class="fgs-input" maxlength="100" autocomplete="off" :disabled="busy" data-testid="agent-name" />
-                  <span v-if="form.name && createNameProblem" class="fgs-error" data-testid="agent-name-invalid">{{ createNameProblem }}</span>
-                </div>
-                <div class="fgs-formfield">
-                  <span class="label">{{ t('gui.settings.agents.fields.location') }}</span>
-                  <div class="fgs-chips" data-testid="agent-location">
-                    <button v-for="loc in LOCATIONS" :key="loc" type="button" class="fgs-chip" :class="{ on: form.location === loc }" :disabled="busy" :data-location="loc" @click="form.location = loc">
-                      {{ t(`gui.settings.agents.location.${loc}`) }}
-                    </button>
-                  </div>
-                  <span class="fgs-muted">{{ t('gui.settings.agents.location_fixed') }}</span>
-                </div>
-                <div v-if="form.location === 'remote'" class="fgs-formfield" data-testid="agent-remote-fields">
-                  <span class="label">{{ t('gui.settings.agents.fields.connection') }}</span>
-                  <span class="mono">{{ t('gui.settings.agents.connection.agent_pull') }}</span>
-                  <span class="fgs-muted">{{ t('gui.settings.agents.connection_hint') }}</span>
-                </div>
-                <div v-else class="fgs-formfield" data-testid="agent-local-fields">
-                  <label for="agent-new-path">{{ t('gui.settings.agents.fields.path') }}</label>
-                  <input id="agent-new-path" v-model="form.path" class="fgs-input mono" autocomplete="off" :disabled="busy" placeholder="/opt/flowgate-agent" data-testid="agent-path" />
-                </div>
-                <div class="fgs-formfield">
-                  <span class="label">{{ t('gui.settings.agents.fields.capabilities') }}</span>
-                  <div class="caps">
-                    <label v-for="cap in CAPS" :key="cap" class="cap"><input v-model="form.caps[cap]" type="checkbox" :disabled="busy" :data-cap="cap" /> {{ t(`gui.settings.agents.caps.${cap}`) }}</label>
-                  </div>
-                  <span class="fgs-muted">{{ t('gui.settings.agents.storage_hint') }}</span>
-                </div>
-                <div class="fgs-formfield">
-                  <label class="cap"><input v-model="form.enabled" type="checkbox" :disabled="busy" data-testid="agent-enabled" /> {{ t('gui.settings.agents.create_enabled') }}</label>
-                </div>
-                <p v-if="formError" class="fgs-error" role="alert" data-testid="agent-form-error">{{ formError }}</p>
-                <div class="fgs-modal-actions">
-                  <button type="button" class="fgs-btn" :disabled="busy" data-testid="agent-create-cancel" @click="cancelCreate">{{ t('gui.common.cancel') }}</button>
-                  <button type="button" class="fgs-btn pri" :disabled="!createCanSave" data-testid="agent-create-submit" @click="submitCreate">{{ busy ? t('gui.settings.saving') : t('gui.settings.agents.create_submit') }}</button>
-                </div>
+          <div class="fgs-table-wrap" data-testid="agent-list">
+            <table class="fgs-t agent-table">
+              <thead>
+                <tr>
+                  <th>{{ t('gui.settings.agents.cols.agent') }}</th>
+                  <th>{{ t('gui.settings.agents.cols.state') }}</th>
+                  <th :title="t('gui.settings.agents.cols.caps_title')">{{ t('gui.settings.agents.cols.caps') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="row in visibleAgents"
+                  :key="row.agent_id"
+                  class="agent-row click"
+                  :class="{ sel: mode === 'view' && row.agent_id === selectedId }"
+                  tabindex="0"
+                  :data-agent="row.agent_id"
+                  @click="select(row)"
+                  @keydown.enter.prevent="select(row)"
+                >
+                  <td>
+                    <div class="fgs-who">
+                      <span class="fgs-sq" :class="{ local: row.location === 'local' }"><SettingsIcon :name="row.location === 'local' ? 'server' : 'bot'" size="sm" /></span>
+                      <div class="txt">
+                        <strong>{{ row.name }}</strong>
+                        <small>{{ platformLine(row) }}</small>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="fgs-state" :class="STATE_TONE[agentState(row)]" :data-runtime="agentState(row)">{{ t(`gui.settings.agents.state.${agentState(row)}`) }}</span>
+                    <span class="fgs-sub2">{{ stateSub(row) }}</span>
+                  </td>
+                  <td>
+                    <span class="fgs-caps">
+                      <span v-for="cap in CAPS" :key="cap" class="fgs-cap" :class="capTone(row, cap)" :title="capTitle(row, cap)" :data-cap-tag="cap">{{ t(`gui.settings.agents.caps_short.${cap}`) }}</span>
+                    </span>
+                  </td>
+                </tr>
+                <tr v-if="!visibleAgents.length">
+                  <td colspan="3">
+                    <div v-if="agents.length" class="fgs-empty" data-testid="agents-no-match"><strong>{{ t('gui.settings.agents.no_match') }}</strong></div>
+                    <div v-else class="fgs-empty">
+                      <strong data-testid="agents-empty">{{ t('gui.settings.agents.empty') }}</strong>
+                      {{ t('gui.settings.agents.empty_hint') }}<br />
+                      <button type="button" class="fgs-btn pri" :disabled="busy" data-testid="agent-new-empty" @click="startCreate">
+                        <SettingsIcon name="plus" size="sm" />{{ t('gui.settings.agents.create_first') }}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="fgs-hintline legend">
+            {{ t('gui.settings.agents.legend.title') }}
+            <span class="fgs-cap on">CLI</span> {{ t('gui.settings.agents.legend.on') }} ·
+            <span class="fgs-cap miss">CLI</span> {{ t('gui.settings.agents.legend.miss') }} ·
+            <span class="fgs-cap extra">CLI</span> {{ t('gui.settings.agents.legend.extra') }} ·
+            <span class="fgs-cap">CLI</span> {{ t('gui.settings.agents.legend.off') }}
+          </p>
+        </template>
+      </div>
+    </section>
+
+    <!-- 상세 · 등록: 목록 위에 여는 서랍. 바깥 · Esc · 닫기로 닫는다 (미저장이면 먼저 묻는다). -->
+    <div v-if="drawerOpen" class="fgs-backdrop" data-testid="agent-drawer" @click.self="closeDrawer">
+      <aside class="fgs-drawer" :class="{ narrow: mode === 'create' }" role="dialog" :aria-label="drawerTitle">
+        <!-- 등록: POST /system/agents -->
+        <template v-if="mode === 'create'">
+          <div class="fgs-d-head">
+            <div>
+              <h2>{{ t('gui.settings.agents.create') }}</h2>
+              <p>{{ t('gui.settings.agents.create_sub') }}</p>
+            </div>
+            <button type="button" class="fgs-iconbtn" :title="t('gui.common.close')" :aria-label="t('gui.common.close')" :disabled="busy" data-testid="agent-drawer-close" @click="closeDrawer">
+              <SettingsIcon name="x" />
+            </button>
+          </div>
+          <form class="fgs-d-main" data-testid="agent-create-form" @submit.prevent="submitCreate">
+            <div class="fgs-d-body">
+              <div class="fgs-formfield">
+                <label for="agent-new-name">{{ t('gui.settings.agents.fields.name') }}</label>
+                <input id="agent-new-name" v-model="form.name" class="fgs-input" maxlength="100" autocomplete="off" :disabled="busy" placeholder="debian-dev-02" data-testid="agent-name" />
+                <span v-if="form.name && createNameProblem" class="fgs-error" data-testid="agent-name-invalid">{{ createNameProblem }}</span>
+                <span v-else class="fgs-hintline">{{ t('gui.settings.agents.name_hint', { max: NAME_MAX }) }}</span>
               </div>
-            </form>
-
-            <!-- 선택한 Agent -->
-            <div v-else-if="selected" class="fgs-card agent-detail" data-testid="agent-detail" :data-agent="selected.agent_id">
-              <div class="fgs-card-h">
-                <span class="fgs-tico sm"><SettingsIcon name="agent" /></span>
-                <b data-testid="agent-detail-name">{{ selected.name }}</b>
-                <span class="fgs-pill off">{{ t(`gui.settings.agents.location.${selected.location}`) }}</span>
-                <span class="fgs-pill" :class="selected.enabled ? 'ok' : 'off'" data-testid="agent-enabled-state">{{ t(`gui.settings.agents.enabled.${selected.enabled ? 'on' : 'off'}`) }}</span>
-              </div>
-
-              <div v-if="actionError" class="fgs-line">
-                <span class="fgs-error" role="alert" data-testid="agent-action-error">{{ actionError }}</span>
-              </div>
-
-              <!-- 이름 · 실행 경로 · capability: PATCH 에는 바꾼 필드만 -->
-              <div class="sec">
-                <h3>{{ t('gui.settings.agents.sections.settings') }}</h3>
-                <div class="fgs-formfield">
-                  <label for="agent-edit-name">{{ t('gui.settings.agents.fields.name') }}</label>
-                  <input id="agent-edit-name" v-model="edit.name" class="fgs-input" maxlength="100" autocomplete="off" :disabled="busy" data-testid="edit-name" />
-                  <span v-if="editNameProblem" class="fgs-error" data-testid="edit-name-invalid">{{ editNameProblem }}</span>
-                </div>
-                <div class="fgs-formfield">
-                  <span class="label">{{ t('gui.settings.agents.fields.location') }}</span>
-                  <span data-testid="edit-location">{{ t(`gui.settings.agents.location.${selected.location}`) }}<template v-if="selected.location === 'remote'"> · {{ t('gui.settings.agents.connection.agent_pull') }}</template></span>
-                  <span class="fgs-muted">{{ t('gui.settings.agents.location_fixed') }}</span>
-                </div>
-                <div v-if="selected.location === 'local'" class="fgs-formfield">
-                  <label for="agent-edit-path">{{ t('gui.settings.agents.fields.path') }}</label>
-                  <input id="agent-edit-path" v-model="edit.path" class="fgs-input mono" autocomplete="off" :disabled="busy" placeholder="/opt/flowgate-agent" data-testid="edit-path" />
-                </div>
-                <div class="fgs-formfield">
-                  <span class="label">{{ t('gui.settings.agents.fields.capabilities') }}</span>
-                  <div class="caps">
-                    <label v-for="cap in CAPS" :key="cap" class="cap"><input v-model="edit.caps[cap]" type="checkbox" :disabled="busy" :data-edit-cap="cap" /> {{ t(`gui.settings.agents.caps.${cap}`) }}</label>
-                  </div>
-                  <span class="fgs-muted">{{ t('gui.settings.agents.storage_hint') }}</span>
-                </div>
-                <div class="row">
-                  <button type="button" class="fgs-btn pri sm" :disabled="!editCanSave" data-testid="edit-save" @click="saveEdit">{{ saving ? t('gui.settings.saving') : t('gui.settings.general.save') }}</button>
-                  <span v-if="editSaved && !editDirty" class="fgs-muted" data-testid="edit-saved">{{ t('gui.settings.saved') }}</span>
-                </div>
-              </div>
-
-              <!-- 사용 여부: enabled 만 PATCH. 삭제 · 자격 해지와 다르다 -->
-              <div class="sec">
-                <h3>{{ t('gui.settings.agents.sections.enabled') }}</h3>
-                <div class="row">
-                  <span>{{ t(`gui.settings.agents.enabled.${selected.enabled ? 'on' : 'off'}`) }}</span>
-                  <span class="fgs-spacer" />
-                  <button v-if="selected.enabled" type="button" class="fgs-btn sm" :disabled="busy" data-testid="agent-disable" @click="askDisable">
-                    <SettingsIcon name="pause" size="sm" />{{ t('gui.settings.agents.disable') }}
-                  </button>
-                  <button v-else type="button" class="fgs-btn sm pri" :disabled="busy" data-testid="agent-enable" @click="enableAgent">
-                    <SettingsIcon name="power" size="sm" />{{ t('gui.settings.agents.enable') }}
+              <div class="fgs-formfield">
+                <span class="label">{{ t('gui.settings.agents.create_location') }}</span>
+                <div class="fgs-segment" role="group" :aria-label="t('gui.settings.agents.create_location')" data-testid="agent-location">
+                  <button v-for="loc in LOCATIONS" :key="loc" type="button" :class="{ on: form.location === loc }" :aria-pressed="form.location === loc ? 'true' : 'false'" :disabled="busy" :data-location="loc" @click="form.location = loc">
+                    {{ t(`gui.settings.agents.location_option.${loc}`) }}
                   </button>
                 </div>
-                <span class="fgs-muted">{{ t('gui.settings.agents.disable_hint') }}</span>
+                <span v-if="form.location === 'remote'" class="fgs-hintline" data-testid="agent-remote-fields">{{ t('gui.settings.agents.fields.connection') }} {{ t('gui.settings.agents.connection.agent_pull') }} · {{ t('gui.settings.agents.connection_hint') }}</span>
+                <span v-else class="fgs-hintline">{{ t('gui.settings.agents.local_hint') }}</span>
+                <span class="fgs-hintline">{{ t('gui.settings.agents.location_fixed') }}</span>
               </div>
+              <div v-if="form.location === 'local'" class="fgs-formfield" data-testid="agent-local-fields">
+                <label for="agent-new-path">{{ t('gui.settings.agents.fields.path') }}</label>
+                <input id="agent-new-path" v-model="form.path" class="fgs-input mono" autocomplete="off" :disabled="busy" placeholder="/opt/flowgate-agent" data-testid="agent-path" />
+              </div>
+              <div class="fgs-formfield">
+                <span class="label">{{ t('gui.settings.agents.create_caps') }}</span>
+                <div class="fgs-checks">
+                  <label v-for="cap in CAPS" :key="cap" class="fgs-check-row">
+                    <input v-model="form.caps[cap]" type="checkbox" :disabled="busy" :data-cap="cap" />
+                    <span>
+                      <strong>{{ t(`gui.settings.agents.caps.${cap}`) }}</strong>
+                      <small>{{ t(`gui.settings.agents.caps_desc.${cap}`) }}</small>
+                    </span>
+                  </label>
+                </div>
+                <span class="fgs-hintline">{{ t('gui.settings.agents.caps_hint') }} {{ t('gui.settings.agents.storage_hint') }}</span>
+              </div>
+              <div class="fgs-formfield">
+                <div class="fgs-checks">
+                  <label class="fgs-check-row">
+                    <input v-model="form.enabled" type="checkbox" :disabled="busy" data-testid="agent-enabled" />
+                    <span><strong>{{ t('gui.settings.agents.create_enabled') }}</strong></span>
+                  </label>
+                </div>
+              </div>
+              <p v-if="formError" class="fgs-error" role="alert" data-testid="agent-form-error">{{ formError }}</p>
+            </div>
+            <div class="fgs-d-foot">
+              <div class="l" />
+              <div class="r">
+                <button type="button" class="fgs-btn ghost" :disabled="busy" data-testid="agent-create-cancel" @click="cancelCreate">{{ t('gui.common.cancel') }}</button>
+                <button type="button" class="fgs-btn pri" :disabled="!createCanSave" data-testid="agent-create-submit" @click="submitCreate">{{ busy ? t('gui.settings.saving') : t('gui.settings.agents.create_submit') }}</button>
+              </div>
+            </div>
+          </form>
+        </template>
 
-              <!-- 상태: 관리 GET 의 값 그대로 -->
-              <div class="sec">
-                <h3>{{ t('gui.settings.agents.sections.status') }}</h3>
-                <dl class="kv" data-testid="agent-status">
-                  <dt>{{ t('gui.settings.agents.fields.registration') }}</dt>
-                  <dd data-field="registration_status">{{ t(`gui.settings.agents.registration.${selected.registration_status}`) }}</dd>
-                  <dt>{{ t('gui.settings.agents.fields.credential') }}</dt>
-                  <dd data-field="credential_status">{{ t(`gui.settings.agents.credential.${selected.credential_status}`) }}</dd>
-                  <dt>{{ t('gui.settings.agents.fields.enrollment') }}</dt>
-                  <dd data-field="enrollment_status">
-                    <template v-if="selected.enrollment_status === 'pending'">{{ t('gui.settings.agents.enrollment.pending', { at: selected.enrollment_expires_at ?? '—' }) }}</template>
-                    <template v-else>{{ t('gui.settings.agents.enrollment.none') }}</template>
-                  </dd>
-                  <dt>{{ t('gui.settings.agents.fields.online') }}</dt>
-                  <dd data-field="online_status">{{ t(`gui.settings.agents.online.${selected.online_status}`) }}</dd>
-                  <dt>{{ t('gui.settings.agents.fields.last_seen') }}</dt>
-                  <dd data-field="last_seen_at" class="mono">{{ selected.last_seen_at ?? t('gui.settings.agents.never') }}</dd>
-                  <dt>{{ t('gui.settings.agents.fields.protocol') }}</dt>
-                  <dd data-field="protocol_compatibility">
-                    {{ selected.protocol_version ?? '—' }} · {{ t(`gui.settings.agents.protocol.${selected.protocol_compatibility}`) }}
-                    <template v-if="selected.protocol_compatibility === 'incompatible'"> · {{ t('gui.settings.agents.protocol_rejected', { version: selected.last_rejected_protocol_version ?? '—', at: selected.last_protocol_rejection_at ?? '—' }) }}</template>
-                  </dd>
-                  <dt>{{ t('gui.settings.agents.fields.version') }}</dt>
-                  <dd data-field="agent_version">{{ selected.agent_version ?? '—' }}</dd>
-                  <dt>{{ t('gui.settings.agents.fields.platform') }}</dt>
-                  <dd data-field="platform">{{ [selected.os, selected.architecture].filter(Boolean).join(' / ') || '—' }}</dd>
+        <!-- 선택한 Agent -->
+        <template v-else-if="selected">
+          <div class="fgs-d-head">
+            <div>
+              <h2>
+                <span data-testid="agent-detail-name">{{ selected.name }}</span>
+                <span class="fgs-state" :class="STATE_TONE[agentState(selected)]">{{ t(`gui.settings.agents.state.${agentState(selected)}`) }}</span>
+              </h2>
+              <p>
+                {{ t(`gui.settings.agents.kind.${selected.location}`) }} ·
+                <span data-testid="agent-enabled-state">{{ t(`gui.settings.agents.enabled.${selected.enabled ? 'on' : 'off'}`) }}</span>
+              </p>
+            </div>
+            <button type="button" class="fgs-iconbtn" :title="t('gui.common.close')" :aria-label="t('gui.common.close')" :disabled="busy" data-testid="agent-drawer-close" @click="closeDrawer">
+              <SettingsIcon name="x" />
+            </button>
+          </div>
+
+          <div class="fgs-d-main" data-testid="agent-detail" :data-agent="selected.agent_id">
+            <div class="fgs-d-body">
+              <div v-if="actionError" class="fgs-note bad" role="alert"><SettingsIcon name="info" size="sm" /><span data-testid="agent-action-error">{{ actionError }}</span></div>
+              <div v-if="banner" class="fgs-note" :class="banner.tone" data-testid="agent-banner"><SettingsIcon name="info" size="sm" /><span>{{ banner.text }}</span></div>
+
+              <!-- 연결 · 실행 상태: 관리 GET 의 값 그대로 -->
+              <div class="fgs-d-sec">
+                <h3>{{ t(selected.location === 'local' ? 'gui.settings.agents.sections.run' : 'gui.settings.agents.sections.connection') }}</h3>
+                <dl class="fgs-kv" data-testid="agent-status">
+                  <template v-if="selected.location === 'remote'">
+                    <div><dt>{{ t('gui.settings.agents.fields.registration') }}</dt><dd data-field="registration_status">{{ t(`gui.settings.agents.registration.${selected.registration_status}`) }}</dd></div>
+                    <div><dt>{{ t('gui.settings.agents.fields.credential') }}</dt><dd data-field="credential_status">{{ t(`gui.settings.agents.credential.${selected.credential_status}`) }}</dd></div>
+                    <div class="span2">
+                      <dt>{{ t('gui.settings.agents.fields.enrollment') }}</dt>
+                      <dd data-field="enrollment_status">
+                        <template v-if="selected.enrollment_status === 'pending'"><span :title="selected.enrollment_expires_at ?? undefined">{{ t('gui.settings.agents.enrollment.pending', { at: ago(selected.enrollment_expires_at) }) }}</span></template>
+                        <template v-else>{{ t('gui.settings.agents.enrollment.none') }}</template>
+                      </dd>
+                    </div>
+                  </template>
+                  <div><dt>{{ t('gui.settings.agents.fields.online') }}</dt><dd data-field="online_status">{{ t(`gui.settings.agents.online.${selected.online_status}`) }}</dd></div>
+                  <div><dt>{{ t('gui.settings.agents.fields.last_seen') }}</dt><dd data-field="last_seen_at" :title="selected.last_seen_at ?? undefined">{{ selected.last_seen_at ? ago(selected.last_seen_at) : t('gui.settings.agents.never') }}</dd></div>
+                  <template v-if="selected.location === 'remote'">
+                    <div>
+                      <dt>{{ t('gui.settings.agents.fields.protocol') }}</dt>
+                      <dd data-field="protocol_compatibility">
+                        {{ selected.protocol_version ?? '—' }} · {{ t(`gui.settings.agents.protocol.${selected.protocol_compatibility}`) }}
+                        <template v-if="selected.protocol_compatibility === 'incompatible'"> · {{ t('gui.settings.agents.protocol_rejected', { version: selected.last_rejected_protocol_version ?? '—', at: selected.last_protocol_rejection_at ?? '—' }) }}</template>
+                      </dd>
+                    </div>
+                    <div><dt>{{ t('gui.settings.agents.fields.version') }}</dt><dd data-field="agent_version">{{ selected.agent_version ?? '—' }}</dd></div>
+                    <div><dt>{{ t('gui.settings.agents.fields.platform') }}</dt><dd data-field="platform">{{ [selected.os, selected.architecture].filter(Boolean).join(' / ') || '—' }}</dd></div>
+                    <div><dt>{{ t('gui.settings.agents.fields.connection') }}</dt><dd>{{ t('gui.settings.agents.connection.agent_pull') }}</dd></div>
+                  </template>
+                  <div v-else><dt>{{ t('gui.settings.agents.fields.connection') }}</dt><dd>{{ t('gui.settings.agents.connection.local') }}</dd></div>
+                  <div class="span2"><dt>{{ t('gui.settings.agents.fields.agent_id') }}</dt><dd class="fgs-mono">{{ selected.agent_id }}</dd></div>
                 </dl>
-                <div class="caps-table" data-testid="agent-caps">
-                  <div class="caps-tr head">
-                    <div />
-                    <div>{{ t('gui.settings.agents.caps_cols.configured') }}</div>
-                    <div>{{ t('gui.settings.agents.caps_cols.reported') }}</div>
-                    <div>{{ t('gui.settings.agents.caps_cols.effective') }}</div>
-                  </div>
-                  <div v-for="cap in CAPS" :key="cap" class="caps-tr" :data-cap-row="cap">
-                    <div>{{ t(`gui.settings.agents.caps.${cap}`) }}</div>
-                    <div data-col="configured">{{ onOff(selected.configured_capabilities[cap]) }}</div>
-                    <div data-col="reported">{{ onOff(selected.reported_capabilities[cap]) }}</div>
-                    <div data-col="effective">{{ onOff(selected.effective_capabilities[cap]) }}</div>
-                  </div>
-                </div>
-                <span class="fgs-muted" data-testid="agent-online-note">{{ t(selected.location === 'local' ? 'gui.settings.agents.local_note' : 'gui.settings.agents.online_note') }}</span>
+                <p class="fgs-hintline note-line" data-testid="agent-online-note">{{ t(selected.location === 'local' ? 'gui.settings.agents.local_note' : 'gui.settings.agents.online_note') }}</p>
+                <p v-if="selected.location === 'local'" class="fgs-hintline" data-testid="issue-local">{{ t('gui.settings.agents.issue_local') }}</p>
               </div>
 
-              <!-- 등록 토큰 · 자격 해지 -->
-              <div class="sec">
-                <h3>{{ t('gui.settings.agents.sections.registration') }}</h3>
-                <div class="row">
-                  <button v-if="selected.location === 'remote' && selected.enabled" type="button" class="fgs-btn sm" :disabled="busy" data-testid="agent-issue" @click="askIssue">
-                    <SettingsIcon name="key" size="sm" />{{ t('gui.settings.agents.issue') }}
-                  </button>
-                  <button v-if="selected.credential_status === 'active'" type="button" class="fgs-btn sm danger" :disabled="busy" data-testid="agent-revoke" @click="askRevoke">
-                    <SettingsIcon name="ban" size="sm" />{{ t('gui.settings.agents.revoke') }}
-                  </button>
+              <!-- 기능: 서버 허용(편집) × Agent 보고 = 결과 -->
+              <div class="fgs-d-sec">
+                <h3>{{ t('gui.settings.agents.sections.caps') }}</h3>
+                <div class="fgs-table-wrap">
+                  <table class="fgs-t cap-table" data-testid="agent-caps">
+                    <thead>
+                      <tr>
+                        <th>{{ t('gui.settings.agents.caps_cols.cap') }}</th>
+                        <th>{{ t('gui.settings.agents.caps_cols.configured') }}</th>
+                        <th>{{ t('gui.settings.agents.caps_cols.reported') }}</th>
+                        <th>{{ t('gui.settings.agents.caps_cols.effective') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="cap in CAPS" :key="cap" :data-cap-row="cap">
+                        <td><strong>{{ t(`gui.settings.agents.caps.${cap}`) }}</strong><span class="fgs-sub2">{{ t(`gui.settings.agents.caps_desc.${cap}`) }}</span></td>
+                        <td data-col="configured">
+                          <label class="fgs-toggle" :class="{ dirty: touched.caps[cap] }">
+                            <input v-model="edit.caps[cap]" type="checkbox" :disabled="busy" :data-edit-cap="cap" :aria-label="t('gui.settings.agents.caps_allow', { cap: t(`gui.settings.agents.caps.${cap}`) })" />
+                            <span class="fgs-track" />
+                          </label>
+                        </td>
+                        <td data-col="reported">
+                          <span v-if="selected.location === 'local'" class="fgs-dim">—</span>
+                          <span v-else-if="selected.reported_capabilities[cap] === null" class="fgs-dim">{{ t('gui.settings.agents.caps_none') }}</span>
+                          <span v-else class="fgs-badge" :class="selected.reported_capabilities[cap] ? 'teal' : 'dim'">{{ t(selected.reported_capabilities[cap] ? 'gui.settings.agents.reported.yes' : 'gui.settings.agents.reported.no') }}</span>
+                        </td>
+                        <td data-col="effective">
+                          <template v-if="selected.location === 'local'">
+                            <span v-if="selected.configured_capabilities[cap]" class="fgs-badge teal">{{ t('gui.settings.agents.result.used') }}</span>
+                            <span v-else class="fgs-dim">—</span>
+                          </template>
+                          <span v-else-if="selected.effective_capabilities[cap]" class="fgs-badge teal">{{ t('gui.settings.agents.result.usable') }}</span>
+                          <span v-else-if="selected.configured_capabilities[cap] && selected.reported_capabilities[cap] === false" class="fgs-badge amber">{{ t('gui.settings.agents.result.mismatch') }}</span>
+                          <span v-else class="fgs-dim">—</span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
-                <span v-if="selected.location === 'local'" class="fgs-muted" data-testid="issue-local">{{ t('gui.settings.agents.issue_local') }}</span>
-                <span v-else-if="!selected.enabled" class="fgs-muted" data-testid="issue-disabled">{{ t('gui.settings.agents.issue_disabled') }}</span>
+                <p class="fgs-hintline note-line">{{ t('gui.settings.agents.caps_edit_hint') }} {{ t('gui.settings.agents.storage_hint') }}</p>
+              </div>
+
+              <!-- 이름 · 실행 경로: PATCH 에는 바꾼 필드만 -->
+              <div class="fgs-d-sec">
+                <h3>{{ t('gui.settings.agents.sections.settings') }}</h3>
+                <div class="fgs-rows">
+                  <div class="fgs-row">
+                    <div class="fgs-row-label">
+                      <label for="agent-edit-name">{{ t('gui.settings.agents.fields.name') }}</label>
+                      <small v-if="editNameProblem" class="fgs-error" data-testid="edit-name-invalid">{{ editNameProblem }}</small>
+                    </div>
+                    <div class="fgs-row-ctrl">
+                      <input id="agent-edit-name" v-model="edit.name" class="fgs-input" :class="{ dirty: touched.name }" maxlength="100" autocomplete="off" :disabled="busy" data-testid="edit-name" />
+                    </div>
+                  </div>
+                  <div class="fgs-row">
+                    <div class="fgs-row-label">
+                      <strong>{{ t('gui.settings.agents.fields.location') }}</strong>
+                      <small>{{ t('gui.settings.agents.location_fixed') }}</small>
+                    </div>
+                    <div class="fgs-row-ctrl">
+                      <span data-testid="edit-location">{{ t(`gui.settings.agents.location.${selected.location}`) }}<template v-if="selected.location === 'remote'"> · {{ t('gui.settings.agents.connection.agent_pull') }}</template></span>
+                    </div>
+                  </div>
+                  <div v-if="selected.location === 'local'" class="fgs-row">
+                    <div class="fgs-row-label"><label for="agent-edit-path">{{ t('gui.settings.agents.fields.path') }}</label></div>
+                    <div class="fgs-row-ctrl">
+                      <input id="agent-edit-path" v-model="edit.path" class="fgs-input mono" :class="{ dirty: touched.path }" autocomplete="off" :disabled="busy" placeholder="/opt/flowgate-agent" data-testid="edit-path" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 등록 토큰 · 자격 해지 (원격) -->
+              <div v-if="selected.location === 'remote'" class="fgs-d-sec">
+                <h3>{{ t('gui.settings.agents.sections.registration') }}</h3>
+                <div class="fgs-rows">
+                  <div class="fgs-row">
+                    <div class="fgs-row-label">
+                      <strong>{{ t('gui.settings.agents.fields.enrollment') }}</strong>
+                      <small v-if="!selected.enabled" data-testid="issue-disabled">{{ t('gui.settings.agents.issue_disabled') }}</small>
+                      <small v-else>{{ issueHint }}</small>
+                    </div>
+                    <div class="fgs-row-ctrl">
+                      <button v-if="selected.enabled" type="button" class="fgs-btn sm" :disabled="busy" data-testid="agent-issue" @click="askIssue">
+                        <SettingsIcon name="key" size="sm" />{{ t(selected.enrollment_status === 'pending' || selected.registration_status !== 'unregistered' ? 'gui.settings.agents.reissue' : 'gui.settings.agents.issue_short') }}
+                      </button>
+                    </div>
+                  </div>
+                  <div v-if="selected.credential_status === 'active'" class="fgs-row">
+                    <div class="fgs-row-label">
+                      <strong>{{ t('gui.settings.agents.revoke') }}</strong>
+                      <small>{{ t('gui.settings.agents.revoke_hint') }}</small>
+                    </div>
+                    <div class="fgs-row-ctrl">
+                      <button type="button" class="fgs-btn sm danger" :disabled="busy" data-testid="agent-revoke" @click="askRevoke">
+                        <SettingsIcon name="ban" size="sm" />{{ t('gui.settings.agents.revoke_short') }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
 
                 <!-- 발급 응답 때만 이 메모리에서 보인다. GET 으로는 다시 얻을 수 없다. -->
                 <div v-if="shownEnrollment" ref="secretRef" class="enrollment" data-testid="enrollment-secret">
                   <span class="fgs-hint"><SettingsIcon name="alert" size="sm" />{{ t('gui.settings.agents.token_once') }}</span>
                   <div class="fgs-secret" data-testid="enrollment-token">{{ shownEnrollment.enrollment_token }}</div>
-                  <span class="fgs-muted" data-testid="enrollment-expires">{{ t('gui.settings.agents.token_expires', { at: shownEnrollment.expires_at }) }}</span>
-                  <div class="row">
+                  <span class="fgs-hintline" data-testid="enrollment-expires">{{ t('gui.settings.agents.token_expires', { at: shownEnrollment.expires_at }) }}</span>
+                  <div class="enrollment-actions">
                     <button type="button" class="fgs-link" data-testid="enrollment-copy" @click="copyToken"><SettingsIcon name="check" size="sm" />{{ t('gui.settings.users.copy') }}</button>
                     <button type="button" class="fgs-link" data-testid="enrollment-dismiss" @click="clearEnrollment"><SettingsIcon name="x" size="sm" />{{ t('gui.settings.agents.token_hide') }}</button>
                   </div>
                 </div>
               </div>
-
-              <!-- 삭제: 등록 이력이 없는 Agent 만 -->
-              <div class="sec">
-                <h3>{{ t('gui.settings.agents.sections.delete') }}</h3>
-                <div v-if="!selected.has_registration_history" class="row">
-                  <button type="button" class="fgs-btn sm danger" :disabled="busy" data-testid="agent-delete" @click="askDelete">
-                    <SettingsIcon name="trash" size="sm" />{{ t('gui.settings.agents.delete') }}
-                  </button>
-                </div>
-                <span v-else class="fgs-muted" data-testid="delete-protected">{{ t('gui.settings.agents.delete_protected') }}</span>
-              </div>
             </div>
 
-            <div v-else class="fgs-card agent-detail" data-testid="agent-none"><p class="fgs-empty">{{ t('gui.settings.agents.pick') }}</p></div>
+            <div class="fgs-d-foot">
+              <div class="l">
+                <!-- 삭제: 등록 이력이 없는 Agent 만 -->
+                <button v-if="!selected.has_registration_history" type="button" class="fgs-btn ghost" :disabled="busy" data-testid="agent-delete" @click="askDelete">
+                  <SettingsIcon name="trash" size="sm" />{{ t('gui.settings.agents.delete_short') }}
+                </button>
+                <span v-else class="fgs-hintline" :title="t('gui.settings.agents.delete_protected')" data-testid="delete-protected">{{ t('gui.settings.agents.delete_protected_short') }}</span>
+              </div>
+              <div class="r">
+                <span v-if="editSaved && !editDirty" class="fgs-muted" data-testid="edit-saved">{{ t('gui.settings.saved') }}</span>
+                <!-- 사용 여부: enabled 만 PATCH. 삭제 · 자격 해지와 다르다 -->
+                <button v-if="selected.enabled" type="button" class="fgs-btn" :disabled="busy" :title="t('gui.settings.agents.disable_hint')" data-testid="agent-disable" @click="askDisable">
+                  <SettingsIcon name="pause" size="sm" />{{ t('gui.settings.agents.disable') }}
+                </button>
+                <button v-else type="button" class="fgs-btn" :disabled="busy" data-testid="agent-enable" @click="enableAgent">
+                  <SettingsIcon name="power" size="sm" />{{ t('gui.settings.agents.enable') }}
+                </button>
+                <button type="button" class="fgs-btn pri" :disabled="!editCanSave" data-testid="edit-save" @click="saveEdit">{{ saving ? t('gui.settings.saving') : t('gui.settings.general.save') }}</button>
+              </div>
+            </div>
           </div>
         </template>
-      </div>
-    </section>
+      </aside>
+    </div>
 
     <!-- 민감 동작 확인: 취소하면 요청 0건, 확인 후 응답까지 다시 누를 수 없다 -->
     <ModalShell :open="!!pending" size="sm" :aria-label="pending?.title" @close="closePending">
@@ -311,6 +469,12 @@
 // log, browser storage, the URL or a toast, and no GET can bring it back. /agent/enrollments and
 // /agent/heartbeat belong to the Agent runtime and are never called from here.
 //
+// Screen (mockup ⑩ 시스템 Agent, flowgate.v02.0077): the list is a table with counts, filter chips
+// and a search over what the GET returned; one Agent's detail and 새 Agent open in a drawer above
+// the list instead of a form kept open beside it. The state shown per row follows the server's
+// order (local → 사용 중지 → 미등록 / 등록 대기 → 해지 → 프로토콜 비호환 → 온라인 / 오프라인); the
+// counts and filters are this screen's reading of the same answer, not another request.
+//
 // Every request belongs to the epoch it was sent in. Leaving the screen, losing the token, another
 // person signing in or the administrator role going away ends the epoch: an answer arriving after
 // that is dropped — no token kept, no re-read, no notice.
@@ -319,7 +483,7 @@
 // the fields nobody touched to the server's new value (another administrator's change shows and is
 // never sent back), keeps the touched ones, and PATCH carries the touched fields only.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -329,6 +493,8 @@ import ToastHost from '@/components/ui/ToastHost.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import { copyToClipboard } from '@/core/interaction/clipboard'
 import { currentSettingsAccess } from '../access'
+import { relativeTime } from '../format'
+import { AGENT_CAPS, AGENT_STATE_TONE, agentState, agentStateSub, capMissing, needsAttention } from '../agentState'
 import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
@@ -346,29 +512,18 @@ import {
 } from '../api'
 import type { AgentCapabilities, AgentCapability, AgentEnrollment, AgentLocation, SystemAgent, SystemAgentChanges } from '../types'
 
-const CAPS: readonly AgentCapability[] = ['ai_cli', 'ai_api', 'storage']
+const CAPS = AGENT_CAPS
 const LOCATIONS: readonly AgentLocation[] = ['remote', 'local']
 const NAME_MAX = 100
 
-type RuntimeState = 'not_applicable' | 'unregistered' | 'revoked' | 'incompatible' | 'online' | 'offline'
-const RUNTIME_TONE: Record<RuntimeState, string> = {
-  not_applicable: 'off',
-  unregistered: 'off',
-  revoked: 'warn',
-  incompatible: 'warn',
-  online: 'ok',
-  offline: 'off',
-}
+const STATE_TONE = AGENT_STATE_TONE
 
-const { t } = useI18n()
+type AgentFilter = 'all' | 'online' | 'attention' | 'remote' | 'local'
+const FILTERS: readonly AgentFilter[] = ['all', 'online', 'attention', 'remote', 'local']
+
+const { t, locale } = useI18n()
 const systemNav = useSystemNav()
 const { toasts, pushToast, dismissToast } = useSettingsToasts()
-
-const crumbs = computed(() => [
-  { label: t('gui.settings.title'), to: '/settings' },
-  { label: t('gui.settings.scope.system') },
-  { label: t('gui.settings.system_nav.agents') },
-])
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
@@ -381,17 +536,30 @@ function isAgent(value: unknown): value is SystemAgent {
     && typeof a.online_status === 'string' && typeof a.has_registration_history === 'boolean'
 }
 
-/** One badge for the list: the runtime facts in the order they decide what the Agent can do. */
-function runtimeState(a: SystemAgent): RuntimeState {
-  if (a.location === 'local') return 'not_applicable'
-  if (a.registration_status === 'unregistered') return 'unregistered'
-  if (a.registration_status === 'revoked') return 'revoked'
-  if (a.protocol_compatibility === 'incompatible') return 'incompatible'
-  return a.online_status === 'online' ? 'online' : 'offline'
+const ago = (value: string | null) => relativeTime(value, locale.value)
+const stateSub = (a: SystemAgent) => agentStateSub(a, t, locale.value)
+
+function platformLine(a: SystemAgent): string {
+  const platform = [a.os, a.architecture].filter(Boolean).join('/')
+  return [t(`gui.settings.agents.location.${a.location}`), platform, a.agent_version ? `v${a.agent_version}` : '']
+    .filter(Boolean).join(' · ')
 }
 
-function onOff(value: boolean | null): string {
-  return value === null ? t('gui.settings.agents.caps_none') : t(value ? 'gui.settings.agents.on' : 'gui.settings.agents.off')
+/** The tag of one capability in the list: usable / allowed but not reported / only reported / off. */
+function capTone(a: SystemAgent, cap: AgentCapability): string {
+  if (a.location === 'local') return a.configured_capabilities[cap] ? 'on' : ''
+  if (a.effective_capabilities[cap]) return 'on'
+  if (capMissing(a, cap)) return 'miss'
+  if (!a.configured_capabilities[cap] && a.reported_capabilities[cap] === true) return 'extra'
+  return ''
+}
+
+function capTitle(a: SystemAgent, cap: AgentCapability): string {
+  const tone = capTone(a, cap)
+  const name = t(`gui.settings.agents.caps.${cap}`)
+  if (a.location === 'local') return t(`gui.settings.agents.cap_title.${tone === 'on' ? 'local_on' : 'local_off'}`, { cap: name })
+  if (tone) return t(`gui.settings.agents.cap_title.${tone}`, { cap: name })
+  return t(`gui.settings.agents.cap_title.${a.configured_capabilities[cap] ? 'waiting' : 'off'}`, { cap: name })
 }
 
 function nameProblem(name: string): string {
@@ -416,8 +584,60 @@ const actionError = ref('')
 const selected = computed(() =>
   mode.value === 'view' ? agents.value?.find((a) => a.agent_id === selectedId.value) ?? null : null)
 
+// ── 목록 보기: 집계 · 필터 · 검색 (GET 응답 그대로, 요청 없음) ──
+const filter = ref<AgentFilter>('all')
+const query = ref('')
+
+const groups = computed<Record<AgentFilter, SystemAgent[]>>(() => {
+  const all = agents.value ?? []
+  return {
+    all,
+    online: all.filter((a) => agentState(a) === 'online'),
+    attention: all.filter(needsAttention),
+    remote: all.filter((a) => a.location === 'remote'),
+    local: all.filter((a) => a.location === 'local'),
+  }
+})
+
+const visibleAgents = computed(() => {
+  const q = query.value.trim().toLowerCase()
+  return groups.value[filter.value].filter((a) => !q || `${a.name} ${a.agent_id}`.toLowerCase().includes(q))
+})
+
+const counts = computed(() => ({
+  registered: groups.value.remote.filter((a) => a.registration_status === 'registered').length,
+  online: groups.value.online.length,
+  attention: groups.value.attention.length,
+}))
+
+/** What the selected Agent's state means and what to do about it (the drawer's notice). */
+const banner = computed<{ tone: string; text: string } | null>(() => {
+  const a = selected.value
+  if (!a || a.location === 'local') return null
+  const missing = CAPS.filter((cap) => capMissing(a, cap)).map((cap) => t(`gui.settings.agents.caps.${cap}`))
+  if (a.protocol_compatibility === 'incompatible') {
+    return { tone: 'bad', text: t('gui.settings.agents.banner.incompatible', { version: a.last_rejected_protocol_version ?? '—' }) }
+  }
+  if (a.registration_status === 'revoked' && a.enrollment_status !== 'pending') return { tone: 'bad', text: t('gui.settings.agents.banner.revoked') }
+  if (!a.enabled) return { tone: 'warn', text: t('gui.settings.agents.banner.disabled') }
+  if (a.enrollment_status === 'pending') return { tone: 'warn', text: t('gui.settings.agents.banner.pending', { at: ago(a.enrollment_expires_at) }) }
+  if (a.registration_status === 'unregistered') return { tone: '', text: t('gui.settings.agents.banner.unregistered') }
+  if (missing.length) return { tone: 'warn', text: t('gui.settings.agents.banner.mismatch', { caps: missing.join(', ') }) }
+  if (a.online_status !== 'online') return { tone: 'warn', text: t('gui.settings.agents.banner.offline') }
+  return null
+})
+
+const issueHint = computed(() => {
+  const a = selected.value
+  if (!a) return ''
+  if (a.enrollment_status === 'pending') return t('gui.settings.agents.issue_hint.pending', { at: ago(a.enrollment_expires_at) })
+  if (a.registration_status === 'registered') return t('gui.settings.agents.issue_hint.registered')
+  return t('gui.settings.agents.issue_hint.none')
+})
+
 // ── 응답의 수명: 화면 이탈 · 세션/권한 변경 뒤에 도착한 응답은 버린다 ──
 const route = useRoute()
+const router = useRouter()
 const { user } = useCurrentUser()
 /** Thrown by live() for an answer of an ended epoch; the caller just stops. */
 const STALE = Symbol('stale')
@@ -568,6 +788,32 @@ function cancelCreate() {
   syncEdit() // back on the Agent shown before: its confirmed values as last read
 }
 
+// ── 서랍: 상세 또는 새 Agent. 닫으면 선택 · 입력 · 토큰이 함께 사라진다 ──
+const drawerOpen = computed(() => mode.value === 'create' || !!selected.value)
+const drawerTitle = computed(() => (mode.value === 'create' ? t('gui.settings.agents.create') : selected.value?.name ?? ''))
+
+/** 닫기 · 바깥 · Esc: unsaved input is asked about first, nothing is sent. */
+async function closeDrawer() {
+  if (busy.value || !drawerOpen.value) return
+  const at = epoch
+  if (formDirty.value && !(await ask())) return
+  if (!sameSession(at)) return
+  if (mode.value === 'create') Object.assign(form, blankForm())
+  mode.value = 'view'
+  formError.value = ''
+  selectedId.value = null
+  actionError.value = ''
+  editSaved.value = false
+  clearEnrollment()
+  discardEdit()
+}
+
+function onKeydown(event: KeyboardEvent) {
+  // A dialog above the drawer (confirmation, unsaved question) answers Esc itself.
+  if (event.key !== 'Escape' || !drawerOpen.value || pending.value || leaveOpen.value) return
+  void closeDrawer()
+}
+
 async function submitCreate() {
   if (!createCanSave.value) return
   const remote = form.location === 'remote'
@@ -630,6 +876,16 @@ function confirmedValues(a: SystemAgent): EditValues {
 const nameTouched = (base: EditValues) => edit.name.trim() !== base.name
 const pathTouched = (base: EditValues) => (edit.path.trim() || null) !== base.path
 const capTouched = (base: EditValues, cap: AgentCapability) => edit.caps[cap] !== base.caps[cap]
+
+/** Which inputs differ from the confirmed values (marked as unsaved on screen). */
+const touched = computed(() => {
+  const base = editBase.value?.values
+  return {
+    name: !!base && nameTouched(base),
+    path: !!base && pathTouched(base),
+    caps: Object.fromEntries(CAPS.map((cap) => [cap, !!base && capTouched(base, cap)])) as Record<AgentCapability, boolean>,
+  }
+})
 
 /** Put the confirmed values of the selected Agent into the form; nothing typed is kept. */
 function syncEdit() {
@@ -943,155 +1199,70 @@ async function copyToken() {
 const formDirty = computed(() => (mode.value === 'create' ? createDirty.value : editDirty.value))
 const { open: leaveOpen, answer: answerLeave, ask } = useUnsavedLeaveGuard(() => formDirty.value || saving.value)
 
+/** 개요 › 확인 필요 opens one Agent here with ?agent=<id>; the query is dropped once it is read. */
+function openFromQuery() {
+  const id = route.query.agent
+  if (typeof id !== 'string' || !id) return
+  void router.replace({ query: {} })
+  if (!agents.value?.some((a) => a.agent_id === id)) return
+  mode.value = 'view'
+  selectedId.value = id
+  syncEdit()
+}
+
 onMounted(() => {
-  void load()
+  document.addEventListener('keydown', onKeydown)
+  void load().then((ok) => {
+    if (ok) openFromQuery()
+  })
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onKeydown)
   disposed = true
   expire() // the token goes with the screen, and so does every answer still out
 })
 </script>
 
 <style scoped>
-.fgs-refresh-error {
+.refresh-error {
   margin-bottom: 12px;
 }
 
-.agents-grid {
-  display: grid;
-  grid-template-columns: minmax(240px, 32%) 1fr;
-  gap: 16px;
-  align-items: start;
+.agent-table {
+  min-width: 600px;
 }
 
-.agents-list {
-  overflow: hidden;
+.agent-table td:first-child {
+  width: 42%;
 }
 
-.agent-row {
-  width: 100%;
-  border: 0;
-  border-bottom: 1px solid var(--fg2-border-subtle, #22344a);
-  background: transparent;
-  color: inherit;
-  padding: 12px 14px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  text-align: left;
-  cursor: pointer;
+.legend {
+  margin: 10px 0 0;
 }
 
-.agent-row.sel {
-  background: rgba(59, 130, 246, 0.12);
+.legend .fgs-cap {
+  margin: 0 2px;
 }
 
-.agent-row:disabled {
-  cursor: default;
+.note-line {
+  margin: 8px 0 0;
 }
 
-.agent-row .who {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.agent-row small {
-  color: #8398ae;
-}
-
-.agent-row .badges {
-  display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.agent-detail .pad,
-.agent-detail .sec {
-  padding: 14px 16px;
-}
-
-.agent-detail .sec {
-  border-top: 1px solid var(--fg2-border-subtle, #22344a);
-  display: grid;
-  gap: 10px;
-}
-
-.agent-detail .sec h3 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.mono {
-  font-family: var(--fg2-font-mono, ui-monospace, monospace);
-  word-break: break-all;
-}
-
-.caps {
-  display: flex;
-  gap: 18px;
-  flex-wrap: wrap;
-}
-
-.cap {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.kv {
-  display: grid;
-  grid-template-columns: 150px 1fr;
-  gap: 7px 12px;
-  margin: 0;
-  font-size: 13px;
-}
-
-.kv dt {
-  color: #8398ae;
-}
-
-.kv dd {
-  margin: 0;
-}
-
-.caps-table {
-  display: grid;
-  font-size: 12px;
-}
-
-.caps-tr {
-  display: grid;
-  grid-template-columns: 110px repeat(3, 1fr);
-  gap: 8px;
-  padding: 5px 0;
-  border-bottom: 1px solid var(--fg2-border-subtle, #22344a);
-}
-
-.caps-tr.head {
-  color: #8398ae;
+.cap-table td,
+.cap-table th {
+  padding: 10px 12px;
 }
 
 .enrollment {
   display: grid;
   gap: 8px;
+  margin-top: 12px;
 }
 
-.enrollment .fgs-secret {
-  user-select: all;
-  word-break: break-all;
+.enrollment-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .confirm {
@@ -1130,11 +1301,5 @@ onBeforeUnmount(() => {
   text-align: left;
   font-size: 13px;
   line-height: 1.6;
-}
-
-@media (max-width: 800px) {
-  .agents-grid {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

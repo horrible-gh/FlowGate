@@ -1,7 +1,7 @@
 <template>
-  <SettingsShell :crumbs="crumbs" scope="system">
+  <SettingsShell scope="system">
     <template #nav>
-      <SettingsSubnav :title="t('gui.settings.scope.system')" :items="systemNav" active="security" />
+      <SettingsSubnav :items="systemNav" active="security" />
     </template>
 
     <section class="fgs-panel" data-panel="security">
@@ -205,12 +205,6 @@ const { t } = useI18n()
 const systemNav = useSystemNav()
 const { toasts, pushToast, dismissToast } = useSettingsToasts()
 const autosave = useAutosave()
-
-const crumbs = computed(() => [
-  { label: t('gui.settings.title'), to: '/settings' },
-  { label: t('gui.settings.scope.system'), to: '/settings/system/users' },
-  { label: t('gui.settings.security.title') },
-])
 
 const policy = ref<SecurityPolicy | null>(null)
 const people = ref<SecurityPerson[]>([])

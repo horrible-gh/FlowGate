@@ -1,5 +1,5 @@
 <template>
-  <SettingsShell :crumbs="crumbs" scope="workspace">
+  <SettingsShell scope="workspace">
     <template #nav>
       <SettingsSubnav
         :title="detail?.name ?? ''"
@@ -513,12 +513,6 @@ const tab = computed<DetailTab>(() => {
   const value = route.query.tab
   return value === 'projects' || value === 'policy' ? value : 'members'
 })
-
-const crumbs = computed(() => [
-  { label: t('gui.settings.title'), to: '/settings' },
-  { label: t('gui.settings.scope.workspace'), to: '/settings/workspaces' },
-  { label: detail.value?.name ?? '…' },
-])
 
 const tabItems = computed<SubnavItem[]>(() => [
   { key: 'members', label: t('gui.settings.detail.members'), icon: 'users' },

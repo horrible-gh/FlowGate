@@ -1,22 +1,41 @@
 <template>
-  <SettingsShell :crumbs="crumbs" scope="project">
+  <SettingsShell scope="project">
     <template #nav>
-      <SettingsSubnav
-        :title="selected ? selected.project_name : t('gui.settings.scope.project')"
-        :items="sectionNav"
-        :active="section ?? ''"
-        head-icon="folder"
-      />
+      <SettingsSubnav :items="sectionNav" :active="section ?? ''">
+        <template #head>
+          <div class="proj-pick">
+            <div v-if="projects && projects.length" data-card="project-picker">
+              <label for="settings-project-select">{{ t('gui.settings.projects.picker') }}</label>
+              <select
+                id="settings-project-select"
+                class="fgs-input"
+                :value="selected ? selected.project_id : ''"
+                data-testid="project-select"
+                @change="choose(($event.target as HTMLSelectElement).value)"
+              >
+                <option v-if="!selected" value="" disabled>{{ t('gui.settings.projects.choose') }}</option>
+                <option v-for="p in options" :key="p.project_id" :value="p.project_id">{{ optionLabel(p) }}</option>
+              </select>
+              <label class="fgs-check">
+                <input v-model="includeInactive" type="checkbox" data-testid="project-include-inactive" />
+                {{ t('gui.settings.projects.include_inactive', { n: inactiveCount }) }}
+              </label>
+            </div>
+            <button type="button" class="fgs-link" :disabled="loading" data-testid="projects-refresh" @click="refresh">
+              <SettingsIcon name="reset" size="sm" />{{ t('gui.settings.projects.refresh') }}
+            </button>
+          </div>
+        </template>
+      </SettingsSubnav>
     </template>
 
-    <section class="fgs-panel" data-panel="project-select">
+    <!-- 프로젝트를 고르기 전 · 목록을 못 읽었을 때 · 찾을 수 없을 때만. 고른 뒤에는 그 구역 화면만 보인다. -->
+    <section v-if="!selected" class="fgs-panel" data-panel="project-select">
       <div class="fgs-phead">
         <span class="fgs-tico"><SettingsIcon name="folder" size="lg" /></span>
-        <h2>{{ t('gui.settings.project_nav.select') }}</h2>
-        <div class="fgs-push">
-          <button type="button" class="fgs-btn sm" :disabled="loading" data-testid="projects-refresh" @click="refresh">
-            <SettingsIcon name="reset" size="sm" />{{ t('gui.settings.projects.refresh') }}
-          </button>
+        <div class="fgs-ptitle">
+          <h2>{{ t('gui.settings.project_nav.select') }}</h2>
+          <p>{{ t('gui.settings.page_sub.project_select') }}</p>
         </div>
       </div>
 
@@ -29,58 +48,35 @@
         </ErrorState>
         <Alert v-else-if="lost" tone="warning" data-testid="projects-session-lost">{{ t('gui.settings.projects.session_lost') }}</Alert>
         <template v-else-if="projects">
+          <Alert
+            v-if="removedId"
+            class="project-removed"
+            tone="warning"
+            dismissible
+            :dismiss-label="t('gui.settings.notice_close')"
+            data-testid="project-removed"
+            @dismiss="removedId = null"
+          >
+            {{ t('gui.settings.projects.removed', { id: removedId }) }}
+          </Alert>
           <EmptyState v-if="!projects.length" :title="t('gui.settings.projects.empty')" data-testid="projects-empty" />
-          <div v-else class="fgs-card" data-card="project-picker">
-            <div class="fgs-line">
-              <label class="k" for="settings-project-select">{{ t('gui.settings.projects.picker') }}</label>
-              <div class="v row">
-                <select
-                  id="settings-project-select"
-                  class="fgs-input picker"
-                  :value="selected ? selected.project_id : ''"
-                  data-testid="project-select"
-                  @change="choose(($event.target as HTMLSelectElement).value)"
-                >
-                  <option v-if="!selected" value="" disabled>{{ t('gui.settings.projects.choose') }}</option>
-                  <option v-for="p in options" :key="p.project_id" :value="p.project_id">{{ optionLabel(p) }}</option>
-                </select>
-                <label class="fgs-check">
-                  <input v-model="includeInactive" type="checkbox" data-testid="project-include-inactive" />
-                  {{ t('gui.settings.projects.include_inactive', { n: inactiveCount }) }}
-                </label>
-              </div>
-            </div>
-            <div class="fgs-line">
-              <span class="fgs-muted" data-testid="project-filter-hint">{{ t('gui.settings.projects.filter_hint') }}</span>
-            </div>
-          </div>
+          <EmptyState
+            v-else-if="routeProjectId"
+            :title="t('gui.settings.projects.not_found')"
+            :description="t('gui.settings.projects.not_found_id', { id: routeProjectId })"
+            data-testid="project-not-found"
+          />
+          <template v-else>
+            <EmptyState :title="t('gui.settings.projects.select_hint')" data-testid="project-select-hint" />
+            <p class="fgs-hintline filter-hint" data-testid="project-filter-hint">{{ t('gui.settings.projects.filter_hint') }}</p>
+          </template>
         </template>
       </div>
     </section>
 
-    <template v-if="projects">
-      <Alert
-        v-if="removedId"
-        class="project-removed"
-        tone="warning"
-        dismissible
-        :dismiss-label="t('gui.settings.notice_close')"
-        data-testid="project-removed"
-        @dismiss="removedId = null"
-      >
-        {{ t('gui.settings.projects.removed', { id: removedId }) }}
-      </Alert>
-      <EmptyState v-if="!routeProjectId" :title="t('gui.settings.projects.select_hint')" data-testid="project-select-hint" />
-      <EmptyState
-        v-else-if="!selected"
-        :title="t('gui.settings.projects.not_found')"
-        :description="t('gui.settings.projects.not_found_id', { id: routeProjectId })"
-        data-testid="project-not-found"
-      />
-      <RouterView v-else v-slot="{ Component }">
-        <component :is="Component" :key="selected.project_id" :project="selected" />
-      </RouterView>
-    </template>
+    <RouterView v-else v-slot="{ Component }">
+      <component :is="Component" :key="selected.project_id" :project="selected" />
+    </RouterView>
   </SettingsShell>
 </template>
 
@@ -91,6 +87,10 @@
 // existing GET /projects?status=all once per entry (../components/useProjectList) and keeps it
 // while the person moves between projects and sections.
 //
+// - Screen (mockup ⑩, flowgate.v02.0077): the picker and 다시 불러오기 sit in the navigation above
+//   the project's sections; the 프로젝트 선택 panel is shown only while no listed project is open
+//   (hint, loading, failure, 찾을 수 없음), so a section is no longer stacked under a second panel.
+//   The picker names projects by their name; the ID stays in the URL.
 // - The picker shows active projects by default; 비활성 포함 adds the inactive ones. This filter is
 //   the screen's display rule only — the server's list is not a permission filter (D §0.2).
 // - No project in the URL: a selection hint, and no detail GET.
@@ -125,7 +125,7 @@ import type { ProjectRow } from '../types'
 type Section = 'general' | 'paths' | 'git'
 
 const SECTIONS: { key: Section; icon: SettingsIconName; labelKey: string }[] = [
-  { key: 'general', icon: 'info', labelKey: 'gui.settings.project_nav.general' },
+  { key: 'general', icon: 'folder', labelKey: 'gui.settings.project_nav.general' },
   { key: 'paths', icon: 'storage', labelKey: 'gui.settings.project_nav.paths' },
   { key: 'git', icon: 'code', labelKey: 'gui.settings.project_nav.git' },
 ]
@@ -163,21 +163,8 @@ const sectionNav = computed<SubnavItem[]>(() => {
   return SECTIONS.map((s) => ({ key: s.key, label: t(s.labelKey), icon: s.icon, to: `${base}/${s.key}` }))
 })
 
-const crumbs = computed(() => {
-  const list: { label: string; to?: string }[] = [
-    { label: t('gui.settings.title'), to: '/settings' },
-    { label: t('gui.settings.scope.project'), to: selected.value ? '/settings/project' : undefined },
-  ]
-  if (selected.value) {
-    list.push({ label: selected.value.project_name })
-    if (section.value) list.push({ label: t(`gui.settings.project_nav.${section.value}`) })
-  }
-  return list
-})
-
 function optionLabel(p: ProjectRow): string {
-  const label = `${p.project_name} · ${p.project_id}`
-  return p.is_active ? label : `${label} (${t('gui.settings.projects.inactive')})`
+  return p.is_active ? p.project_name : `${p.project_name} (${t('gui.settings.projects.inactive')})`
 }
 
 function errorTitle(err: ReadError): string {
@@ -207,30 +194,43 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
+.proj-pick {
+  display: grid;
+  gap: 7px;
+  padding: 6px 10px 8px;
 }
 
-.picker {
-  min-width: 320px;
+.proj-pick [data-card='project-picker'] {
+  display: grid;
+  gap: 7px;
+}
+
+.proj-pick label[for] {
+  font-size: 10.5px;
+  color: #647e99;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.proj-pick .fgs-link {
+  justify-self: start;
+  padding-left: 0;
 }
 
 .fgs-check {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: #b9c9da;
-  font-size: 13px;
+  color: #9db0c4;
+  font-size: 12px;
 }
 
 .project-removed {
-  margin-top: 14px;
+  margin-bottom: 14px;
 }
 
-.settings-shell-view :deep(.ui-empty-state) {
-  margin-top: 14px;
+.filter-hint {
+  margin: 10px 0 0;
+  text-align: center;
 }
 </style>

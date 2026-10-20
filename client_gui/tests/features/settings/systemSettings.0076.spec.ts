@@ -278,7 +278,7 @@ describe('V01 (시스템 부분) — 일반 joins the menus', () => {
     const hub = await open('/settings')
     expect(hub.get('[data-scope-card="system"] a').attributes('href')).toBe('/app/settings/system/general')
     expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 Agent', '사용자', '전체 프로젝트'])
-    expect(net.requests).toEqual([])
+    expect(net.requests).toEqual(['GET /api/v1/system/agents']) // the overview's 확인 필요 read (0077)
     hub.unmount()
     const page = await open('/settings/system/general')
     expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'users', 'projects'])

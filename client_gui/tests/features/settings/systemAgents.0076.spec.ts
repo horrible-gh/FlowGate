@@ -373,9 +373,12 @@ describe('V16 Agent 등록·상태 — list, status display, register, enable to
     expect(w.get('.subnav [data-subnav="agents"]').attributes('aria-current')).toBe('page')
     const rows = w.findAll('.agent-row')
     expect(rows.map((r) => r.attributes('data-agent'))).toEqual(['agt_a_online', 'agt_b_offline', 'agt_c_incompat', 'agt_d_revoked', 'agt_e_new', 'agt_f_local'])
-    expect(rows.map((r) => r.get('[data-runtime]').attributes('data-runtime'))).toEqual(['online', 'offline', 'incompatible', 'revoked', 'unregistered', 'not_applicable'])
-    expect(rows.map((r) => r.get('[data-runtime]').text())).toEqual(['온라인', '오프라인', '호환되지 않음', '자격 해지됨', '미등록', '해당 없음'])
-    expect(w.get('[data-testid="agent-none"]').text()).toContain('Agent를 고르세요')
+    expect(rows.map((r) => r.get('[data-runtime]').attributes('data-runtime'))).toEqual(['online', 'offline', 'incompatible', 'revoked', 'unregistered', 'local'])
+    expect(rows.map((r) => r.get('[data-runtime]').text())).toEqual(['온라인', '오프라인', '프로토콜 비호환', '자격 증명 해지', '미등록', '로컬 실행'])
+    // flowgate.v02.0077 (시안 ⑩): no form or detail kept open beside the list — nothing is open until a row is chosen.
+    expect(w.find('[data-testid="agent-drawer"]').exists()).toBe(false)
+    expect(w.find('[data-testid="agent-create-form"]').exists()).toBe(false)
+    expect(w.find('[data-testid="agent-detail"]').exists()).toBe(false)
     expect(writes()).toEqual([])
   })
 
@@ -386,16 +389,18 @@ describe('V16 Agent 등록·상태 — list, status display, register, enable to
     expect(field(w, 'credential_status')).toBe('사용 중')
     expect(field(w, 'enrollment_status')).toBe('없음')
     expect(field(w, 'online_status')).toBe('온라인')
-    expect(field(w, 'last_seen_at')).toBe('2026-10-20T04:00:00Z')
+    expect(w.get('[data-field="last_seen_at"]').attributes('title')).toBe('2026-10-20T04:00:00Z') // shown as relative time
     expect(field(w, 'protocol_compatibility')).toBe('1 · 호환')
     expect(field(w, 'agent_version')).toBe('1.4.2')
     expect(field(w, 'platform')).toBe('linux / amd64')
     expect(w.get('[data-testid="agent-enabled-state"]').text()).toBe('사용 중')
-    // configured (ai_cli, storage) / reported (ai_cli, ai_api) / effective = both
+    // configured (ai_cli, storage) / reported (ai_cli, ai_api) / effective = both; storage is allowed but not reported
     const cell = (cap: string, col: string) => w.get(`[data-cap-row="${cap}"] [data-col="${col}"]`).text()
-    expect(['ai_cli', 'ai_api', 'storage'].map((c) => [cell(c, 'configured'), cell(c, 'reported'), cell(c, 'effective')])).toEqual([
-      ['켬', '켬', '켬'], ['끔', '켬', '끔'], ['켬', '끔', '끔'],
+    expect(['ai_cli', 'ai_api', 'storage'].map((c) => capChecked(w, c))).toEqual([true, false, true])
+    expect(['ai_cli', 'ai_api', 'storage'].map((c) => [cell(c, 'reported'), cell(c, 'effective')])).toEqual([
+      ['가능', '사용 가능'], ['가능', '—'], ['불가', '불일치'],
     ])
+    expect(w.get('[data-testid="agent-banner"]').text()).toContain('Storage을(를) 허용했지만')
     const note = w.get('[data-testid="agent-online-note"]').text()
     expect(note).toContain('실행할 수 있거나 실행 중이라는 뜻은 아닙니다')
 
@@ -413,7 +418,8 @@ describe('V16 Agent 등록·상태 — list, status display, register, enable to
     await pick(w, 'agt_f_local')
     expect(field(w, 'online_status')).toBe('해당 없음 (로컬)')
     expect(field(w, 'last_seen_at')).toBe('기록 없음')
-    expect(w.get('[data-cap-row="ai_cli"] [data-col="reported"]').text()).toBe('보고 없음')
+    expect(w.get('[data-cap-row="ai_cli"] [data-col="reported"]').text()).toBe('—')
+    expect(w.get('[data-cap-row="ai_cli"] [data-col="effective"]').text()).toBe('사용')
     expect(w.get('[data-testid="agent-online-note"]').text()).toContain('heartbeat를 보내지 않으므로')
     expect(w.find('[data-testid="agent-issue"]').exists()).toBe(false)
     expect(w.get('[data-testid="issue-local"]').exists()).toBe(true)
@@ -449,7 +455,7 @@ describe('V16 Agent 등록·상태 — list, status display, register, enable to
     expect(w.get('[data-testid="agent-detail"]').attributes('data-agent')).toBe('agt_new1')
     expect(w.get('[data-testid="agent-detail-name"]').text()).toBe('local-two')
     expect(field(w, 'online_status')).toBe('해당 없음 (로컬)')
-    expect(w.get('.agent-row[data-agent="agt_new1"] [data-runtime]').attributes('data-runtime')).toBe('not_applicable')
+    expect(w.get('.agent-row[data-agent="agt_new1"] [data-runtime]').attributes('data-runtime')).toBe('local')
     expect(server('agt_new1')).toMatchObject({ location: 'local', connection_mode: null, local_executable_path: '/opt/agent-2' })
     expect(toastText(w)).toContain('local-two 등록됨')
   })
@@ -822,6 +828,132 @@ describe('V17 Agent 민감 동작 — token, revoke, delete, refusals', () => {
     expect(writeText).toHaveBeenCalledWith(token)
     expect(toastText(w)).toContain('복사했습니다')
     expectTokenOnlyInBox(w, token, true)
+  })
+})
+
+describe('flowgate.v02.0077 시안 ⑩ — counts, filters, search and the drawer', () => {
+  it('counts, filter chips and search read the one GET: no further request', async () => {
+    const w = await open('/settings/system/agents')
+    const stat = (key: string) => w.get(`[data-stat="${key}"] .v`).text()
+    expect([stat('registered'), stat('online'), stat('attention')]).toEqual(['3대', '1대', '4대'])
+    expect(['all', 'online', 'attention', 'remote', 'local'].map((key) => w.get(`[data-filter="${key}"] .n`).text())).toEqual(['6', '1', '4', '5', '1'])
+    const ids = () => w.findAll('.agent-row').map((r) => r.attributes('data-agent'))
+    await click(w, '[data-filter="attention"]')
+    expect(ids()).toEqual(['agt_a_online', 'agt_b_offline', 'agt_c_incompat', 'agt_d_revoked'])
+    await click(w, '[data-filter="local"]')
+    expect(ids()).toEqual(['agt_f_local'])
+    await click(w, '[data-filter="all"]')
+    await type(w, '[data-testid="agent-search"]', 'BUILD-O')
+    expect(ids()).toEqual(['agt_a_online', 'agt_b_offline'])
+    await type(w, '[data-testid="agent-search"]', 'agt_e')
+    expect(ids()).toEqual(['agt_e_new'])
+    await type(w, '[data-testid="agent-search"]', 'nothing-here')
+    expect(ids()).toEqual([])
+    expect(w.get('[data-testid="agents-no-match"]').text()).toContain('조건에 맞는 Agent가 없습니다')
+    expect(w.find('[data-testid="agents-empty"]').exists()).toBe(false)
+    expect(net.requests).toEqual(['GET /api/v1/system/agents'])
+  })
+
+  it('the capability tags tell usable / allowed but not reported / reported but not allowed apart', async () => {
+    const w = await open('/settings/system/agents')
+    const tags = (id: string) => w.findAll(`.agent-row[data-agent="${id}"] [data-cap-tag]`)
+      .map((c) => c.classes().filter((k) => ['on', 'miss', 'extra'].includes(k)).join(''))
+    expect(tags('agt_a_online')).toEqual(['on', 'extra', 'miss'])
+    expect(tags('agt_e_new')).toEqual(['', '', ''])
+    expect(tags('agt_f_local')).toEqual(['on', '', ''])
+  })
+
+  it('the drawer closes with 닫기, the backdrop and Esc; an unsaved edit is asked about first and nothing is sent', async () => {
+    const w = await open('/settings/system/agents')
+    await pick(w, 'agt_e_new')
+    expect(w.get('[data-testid="agent-detail"]').attributes('data-agent')).toBe('agt_e_new')
+    await click(w, '[data-testid="agent-drawer-close"]')
+    expect(w.find('[data-testid="agent-drawer"]').exists()).toBe(false)
+
+    await pick(w, 'agt_e_new')
+    await w.get('[data-testid="agent-drawer"]').trigger('click') // the backdrop itself
+    await flushPromises()
+    expect(w.find('[data-testid="agent-drawer"]').exists()).toBe(false)
+
+    await pick(w, 'agt_e_new')
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(w.find('[data-testid="agent-drawer"]').exists()).toBe(false)
+
+    await pick(w, 'agt_e_new')
+    await type(w, '[data-testid="edit-name"]', 'half-typed')
+    await click(w, '[data-testid="agent-drawer-close"]')
+    expect(w.get('[data-testid="leave-confirm"]').text()).toContain('저장하지 않은 Agent 입력')
+    await click(w, '[data-testid="leave-stay"]')
+    expect(w.get('[data-testid="agent-detail"]').attributes('data-agent')).toBe('agt_e_new')
+    expect(editName(w)).toBe('half-typed')
+    await click(w, '[data-testid="agent-drawer-close"]')
+    await click(w, '[data-testid="leave-discard"]')
+    expect(w.find('[data-testid="agent-drawer"]').exists()).toBe(false)
+    await pick(w, 'agt_e_new')
+    expect(editName(w)).toBe('fresh-remote')
+    expect(writes()).toEqual([])
+  })
+
+  it('새 Agent opens in the drawer and closing it keeps nothing typed', async () => {
+    const w = await open('/settings/system/agents')
+    await click(w, '[data-testid="agent-new"]')
+    expect(w.get('[data-testid="agent-drawer"]').find('[data-testid="agent-create-form"]').exists()).toBe(true)
+    await type(w, '[data-testid="agent-name"]', 'not-sent')
+    await click(w, '[data-testid="agent-drawer-close"]')
+    await click(w, '[data-testid="leave-discard"]')
+    expect(w.find('[data-testid="agent-drawer"]').exists()).toBe(false)
+    await click(w, '[data-testid="agent-new"]')
+    expect((w.get('[data-testid="agent-name"]').element as HTMLInputElement).value).toBe('')
+    expect(writes()).toEqual([])
+  })
+
+  it('closing the drawer drops a token shown in it', async () => {
+    const w = await open('/settings/system/agents')
+    await pick(w, 'agt_e_new')
+    await click(w, '[data-testid="agent-issue"]')
+    await click(w, '[data-testid="agent-confirm-ok"]')
+    const token = server('agt_e_new')!.pending!.token
+    expectTokenOnlyInBox(w, token, true)
+    expect(w.get('.agent-row[data-agent="agt_e_new"] [data-runtime]').attributes('data-runtime')).toBe('pending')
+    await click(w, '[data-testid="agent-drawer-close"]')
+    expectTokenOnlyInBox(w, token, false)
+    await pick(w, 'agt_e_new')
+    expectTokenOnlyInBox(w, token, false)
+  })
+})
+
+describe('flowgate.v02.0077 개요 › 확인 필요', () => {
+  it('the administrator overview reads the list once and lists what needs a look; 확인 opens that Agent', async () => {
+    const w = await open('/settings')
+    expect(net.requests).toEqual(['GET /api/v1/system/agents'])
+    const items = w.findAll('[data-attention]')
+    expect(items.map((i) => i.attributes('data-attention'))).toEqual(['agt_a_online', 'agt_b_offline', 'agt_b_offline', 'agt_c_incompat', 'agt_d_revoked'])
+    expect(items[0].text()).toContain('build-online 기능 불일치')
+    expect(items[1].text()).toContain('build-offline 오프라인')
+    expect(items[3].text()).toContain('build-incompatible 프로토콜 비호환')
+    await items[1].get('[data-testid="hub-attention-go"]').trigger('click')
+    await waitForPath('/settings/system/agents')
+    for (let i = 0; i < 50 && !w.find('[data-testid="agent-detail"]').exists(); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      await flushPromises()
+    }
+    expect(w.get('[data-testid="agent-detail"]').attributes('data-agent')).toBe('agt_b_offline')
+    expect(router.currentRoute.value.query).toEqual({})
+    expect(writes()).toEqual([])
+  })
+
+  it('nothing to look at: the empty notice; a non-administrator overview sends nothing and shows no 확인 필요', async () => {
+    net.agents = [rec('agt_f_local', 'local-runner', { location: 'local', connection_mode: null })]
+    let w = await open('/settings')
+    expect(w.get('[data-testid="hub-attention-empty"]').text()).toContain('확인이 필요한 항목이 없습니다')
+    w.unmount()
+    wrapper = null
+    net.requests.length = 0
+    setCurrentUser({ ...ADMIN, isAdmin: false })
+    w = await open('/settings')
+    expect(w.find('[data-testid="hub-attention"]').exists()).toBe(false)
+    expect(net.requests).toEqual([])
   })
 })
 

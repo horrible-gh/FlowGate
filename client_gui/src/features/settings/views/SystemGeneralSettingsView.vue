@@ -1,146 +1,145 @@
 <template>
-  <SettingsShell :crumbs="crumbs" scope="system">
+  <SettingsShell scope="system">
     <template #nav>
-      <SettingsSubnav :title="t('gui.settings.scope.system')" :items="systemNav" active="general" />
+      <SettingsSubnav :items="systemNav" active="general" />
     </template>
 
     <section class="fgs-panel" data-panel="system-general">
       <div class="fgs-phead">
         <span class="fgs-tico"><SettingsIcon name="gear" size="lg" /></span>
-        <h2>{{ t('gui.settings.system_nav.general') }}</h2>
+        <div class="fgs-ptitle">
+          <h2>{{ t('gui.settings.system_nav.general') }}</h2>
+          <p>{{ t('gui.settings.page_sub.system_general') }}</p>
+        </div>
       </div>
 
       <div class="fgs-panel-body">
         <!-- 저장 Root: GET /system/storage-root, 읽기 전용 -->
-        <div class="fgs-card" data-card="storage-root">
-          <div class="fgs-card-h">
-            <span class="fgs-tico sm"><SettingsIcon name="storage" /></span>
-            <b>{{ t('gui.settings.general.root.title') }}</b>
+        <div class="fgs-sec" data-card="storage-root">
+          <div class="fgs-sec-head">
+            <h3>{{ t('gui.settings.general.root.title') }}</h3>
+            <div class="meta">{{ t('gui.settings.general.root.readonly_hint') }}</div>
           </div>
-          <div v-if="rootLoading" class="fgs-line"><LoadingState inline size="sm" :label="t('gui.common.loading')" /></div>
-          <div v-else-if="rootError" class="fgs-line">
-            <ErrorState compact :title="t('gui.settings.general.errors.root_failed')" :message="rootError" data-testid="root-error">
+          <div class="fgs-rows">
+            <div v-if="rootLoading" class="fgs-row"><LoadingState inline size="sm" :label="t('gui.common.loading')" /></div>
+            <div v-else-if="rootError" class="fgs-row">
+              <ErrorState compact :title="t('gui.settings.general.errors.root_failed')" :message="rootError" data-testid="root-error">
+                <template #action>
+                  <Button variant="secondary" @click="loadRoot">{{ t('gui.common.retry') }}</Button>
+                </template>
+              </ErrorState>
+            </div>
+            <template v-else-if="root">
+              <div class="fgs-row">
+                <div class="fgs-row-label">
+                  <strong>{{ t('gui.settings.general.root.effective') }}</strong>
+                  <small>{{ t('gui.settings.general.root.source') }} · <span data-testid="root-source">{{ sourceLabel(root.effective_source) }}</span></small>
+                </div>
+                <div class="fgs-row-ctrl fgs-mono" data-testid="root-effective">{{ root.effective_value }}</div>
+              </div>
+              <div class="fgs-row">
+                <div class="fgs-row-label"><strong>{{ t('gui.settings.general.root.configured') }}</strong></div>
+                <div class="fgs-row-ctrl fgs-mono" data-testid="root-configured">{{ root.configured_value ?? t('gui.settings.general.root.unset') }}</div>
+              </div>
+              <div v-if="root.env_override" class="fgs-row sub">
+                <span class="fgs-hint" data-testid="root-env-override"><SettingsIcon name="info" size="sm" />{{ t('gui.settings.general.root.env_override') }}</span>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div v-if="settingsLoading" class="fgs-rows"><div class="fgs-row"><LoadingState inline size="sm" :label="t('gui.common.loading')" /></div></div>
+        <div v-else-if="settingsError" class="fgs-rows">
+          <div class="fgs-row">
+            <ErrorState compact :title="t('gui.settings.general.errors.settings_failed')" :message="settingsError" data-testid="settings-error">
               <template #action>
-                <Button variant="secondary" @click="loadRoot">{{ t('gui.common.retry') }}</Button>
+                <Button variant="secondary" @click="loadSettings">{{ t('gui.common.retry') }}</Button>
               </template>
             </ErrorState>
           </div>
-          <template v-else-if="root">
-            <div class="fgs-line">
-              <div class="k">{{ t('gui.settings.general.root.configured') }}</div>
-              <div class="v mono" data-testid="root-configured">{{ root.configured_value ?? t('gui.settings.general.root.unset') }}</div>
-            </div>
-            <div class="fgs-line">
-              <div class="k">{{ t('gui.settings.general.root.effective') }}</div>
-              <div class="v mono" data-testid="root-effective">{{ root.effective_value }}</div>
-            </div>
-            <div class="fgs-line">
-              <div class="k">{{ t('gui.settings.general.root.source') }}</div>
-              <div class="v" data-testid="root-source">{{ sourceLabel(root.effective_source) }}</div>
-            </div>
-            <div v-if="root.env_override" class="fgs-line">
-              <span class="fgs-hint" data-testid="root-env-override"><SettingsIcon name="info" size="sm" />{{ t('gui.settings.general.root.env_override') }}</span>
-            </div>
-            <div class="fgs-line">
-              <span class="fgs-muted">{{ t('gui.settings.general.root.readonly_hint') }}</span>
-            </div>
-          </template>
-        </div>
-
-        <div v-if="settingsLoading" class="fgs-card"><LoadingState inline size="sm" :label="t('gui.common.loading')" /></div>
-        <div v-else-if="settingsError" class="fgs-card">
-          <ErrorState compact :title="t('gui.settings.general.errors.settings_failed')" :message="settingsError" data-testid="settings-error">
-            <template #action>
-              <Button variant="secondary" @click="loadSettings">{{ t('gui.common.retry') }}</Button>
-            </template>
-          </ErrorState>
         </div>
         <template v-else>
           <!-- Scratch 보존 기간: scratch_ttl_value + scratch_ttl_unit, PATCH 한 건에 둘 다 -->
-          <div class="fgs-card" data-card="scratch">
-            <div class="fgs-card-h">
-              <span class="fgs-tico sm"><SettingsIcon name="timer" /></span>
-              <b>{{ t('gui.settings.general.scratch.title') }}</b>
-            </div>
-            <div class="fgs-line">
-              <label class="k" for="sys-scratch-value">{{ t('gui.settings.general.scratch.label') }}</label>
-              <div class="v row">
-                <input
-                  id="sys-scratch-value"
-                  v-model="scratchValue"
-                  class="fgs-input num"
-                  inputmode="numeric"
-                  autocomplete="off"
-                  :disabled="scratchSaving"
-                  data-testid="scratch-value"
-                />
-                <select v-model="scratchUnit" class="fgs-input unit" :aria-label="t('gui.settings.general.scratch.unit')" :disabled="scratchSaving" data-testid="scratch-unit">
-                  <option v-for="unit in SCRATCH_UNITS" :key="unit" :value="unit">{{ t(`gui.settings.general.scratch.units.${unit}`) }}</option>
-                </select>
-                <button
-                  type="button"
-                  class="fgs-btn pri"
-                  :disabled="!scratchCanSave"
-                  data-testid="scratch-save"
-                  @click="saveScratch"
-                >{{ scratchSaving ? t('gui.settings.saving') : t('gui.settings.general.save') }}</button>
+          <div class="fgs-sec" data-card="scratch">
+            <div class="fgs-sec-head"><h3>{{ t('gui.settings.general.scratch.title') }}</h3></div>
+            <div class="fgs-rows">
+              <div class="fgs-row">
+                <div class="fgs-row-label">
+                  <label for="sys-scratch-value">{{ t('gui.settings.general.scratch.label') }}</label>
+                  <small>{{ t('gui.settings.general.scratch.hint') }}</small>
+                </div>
+                <div class="fgs-row-ctrl">
+                  <span v-if="scratchSaved && !scratchDirty && !scratchError" class="fgs-muted" data-testid="scratch-saved">{{ t('gui.settings.saved') }}</span>
+                  <input
+                    id="sys-scratch-value"
+                    v-model="scratchValue"
+                    class="fgs-input num"
+                    :class="{ dirty: scratchDirty }"
+                    inputmode="numeric"
+                    autocomplete="off"
+                    :disabled="scratchSaving"
+                    data-testid="scratch-value"
+                  />
+                  <select v-model="scratchUnit" class="fgs-input unit" :aria-label="t('gui.settings.general.scratch.unit')" :disabled="scratchSaving" data-testid="scratch-unit">
+                    <option v-for="unit in SCRATCH_UNITS" :key="unit" :value="unit">{{ t(`gui.settings.general.scratch.units.${unit}`) }}</option>
+                  </select>
+                  <button
+                    type="button"
+                    class="fgs-btn pri"
+                    :disabled="!scratchCanSave"
+                    data-testid="scratch-save"
+                    @click="saveScratch"
+                  >{{ scratchSaving ? t('gui.settings.saving') : t('gui.settings.general.save') }}</button>
+                </div>
               </div>
-            </div>
-            <div v-if="scratchDirty && scratchProblem" class="fgs-line">
-              <span class="fgs-error" data-testid="scratch-invalid">{{ scratchProblem }}</span>
-            </div>
-            <div v-if="scratchError" class="fgs-line">
-              <span class="fgs-error" role="alert" data-testid="scratch-error">{{ scratchError }}</span>
-            </div>
-            <div v-else-if="scratchSaved && !scratchDirty" class="fgs-line">
-              <span class="fgs-muted" data-testid="scratch-saved">{{ t('gui.settings.saved') }}</span>
-            </div>
-            <div class="fgs-line">
-              <span class="fgs-muted">{{ t('gui.settings.general.scratch.hint') }}</span>
+              <div v-if="scratchDirty && scratchProblem" class="fgs-row sub">
+                <span class="fgs-error" data-testid="scratch-invalid">{{ scratchProblem }}</span>
+              </div>
+              <div v-if="scratchError" class="fgs-row sub">
+                <span class="fgs-error" role="alert" data-testid="scratch-error">{{ scratchError }}</span>
+              </div>
             </div>
           </div>
 
           <!-- AI 반복 상한: ai_repeat_count_max 하나만 -->
-          <div class="fgs-card" data-card="repeat">
-            <div class="fgs-card-h">
-              <span class="fgs-tico sm"><SettingsIcon name="reset" /></span>
-              <b>{{ t('gui.settings.general.repeat.title') }}</b>
-            </div>
-            <div class="fgs-line">
-              <label class="k" for="sys-repeat-max">{{ t('gui.settings.general.repeat.label') }}</label>
-              <div class="v row">
-                <input
-                  id="sys-repeat-max"
-                  v-model="repeatValue"
-                  class="fgs-input num"
-                  inputmode="numeric"
-                  autocomplete="off"
-                  :disabled="repeatSaving"
-                  data-testid="repeat-value"
-                />
-                <button
-                  type="button"
-                  class="fgs-btn pri"
-                  :disabled="!repeatCanSave"
-                  data-testid="repeat-save"
-                  @click="askRepeat"
-                >{{ repeatSaving ? t('gui.settings.saving') : t('gui.settings.general.save') }}</button>
+          <div class="fgs-sec" data-card="repeat">
+            <div class="fgs-sec-head"><h3>{{ t('gui.settings.general.repeat.title') }}</h3></div>
+            <div class="fgs-rows">
+              <div class="fgs-row">
+                <div class="fgs-row-label">
+                  <label for="sys-repeat-max">{{ t('gui.settings.general.repeat.label') }}</label>
+                  <small>{{ t('gui.settings.general.repeat.hint') }}</small>
+                </div>
+                <div class="fgs-row-ctrl">
+                  <span v-if="repeatSaved && !repeatDirty && !repeatError" class="fgs-muted" data-testid="repeat-saved">{{ t('gui.settings.saved') }}</span>
+                  <input
+                    id="sys-repeat-max"
+                    v-model="repeatValue"
+                    class="fgs-input num"
+                    :class="{ dirty: repeatDirty }"
+                    inputmode="numeric"
+                    autocomplete="off"
+                    :disabled="repeatSaving"
+                    data-testid="repeat-value"
+                  />
+                  <button
+                    type="button"
+                    class="fgs-btn pri"
+                    :disabled="!repeatCanSave"
+                    data-testid="repeat-save"
+                    @click="askRepeat"
+                  >{{ repeatSaving ? t('gui.settings.saving') : t('gui.settings.general.save') }}</button>
+                </div>
               </div>
-            </div>
-            <div v-if="repeatDirty && repeatProblem" class="fgs-line">
-              <span class="fgs-error" data-testid="repeat-invalid">{{ repeatProblem }}</span>
-            </div>
-            <div v-if="repeatLowering" class="fgs-line">
-              <span class="fgs-hint" data-testid="repeat-lower-hint"><SettingsIcon name="alert" size="sm" />{{ t('gui.settings.general.repeat.lower_impact') }}</span>
-            </div>
-            <div v-if="repeatError" class="fgs-line">
-              <span class="fgs-error" role="alert" data-testid="repeat-error">{{ repeatError }}</span>
-            </div>
-            <div v-else-if="repeatSaved && !repeatDirty" class="fgs-line">
-              <span class="fgs-muted" data-testid="repeat-saved">{{ t('gui.settings.saved') }}</span>
-            </div>
-            <div class="fgs-line">
-              <span class="fgs-muted">{{ t('gui.settings.general.repeat.hint') }}</span>
+              <div v-if="repeatDirty && repeatProblem" class="fgs-row sub">
+                <span class="fgs-error" data-testid="repeat-invalid">{{ repeatProblem }}</span>
+              </div>
+              <div v-if="repeatLowering" class="fgs-row sub">
+                <span class="fgs-hint" data-testid="repeat-lower-hint"><SettingsIcon name="alert" size="sm" />{{ t('gui.settings.general.repeat.lower_impact') }}</span>
+              </div>
+              <div v-if="repeatError" class="fgs-row sub">
+                <span class="fgs-error" role="alert" data-testid="repeat-error">{{ repeatError }}</span>
+              </div>
             </div>
           </div>
         </template>
@@ -228,12 +227,6 @@ const REPEAT_MAX = 30
 
 const { t } = useI18n()
 const systemNav = useSystemNav()
-
-const crumbs = computed(() => [
-  { label: t('gui.settings.title'), to: '/settings' },
-  { label: t('gui.settings.scope.system') },
-  { label: t('gui.settings.system_nav.general') },
-])
 
 // ── 저장 Root ──
 const root = ref<SystemStorageRoot | null>(null)
@@ -465,28 +458,12 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.fgs-line .k {
-  min-width: 150px;
-}
-
-.v.mono {
-  font-family: var(--fg2-font-mono, ui-monospace, monospace);
-  word-break: break-all;
-}
-
-.v.row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 .fgs-input.num {
-  width: 120px;
+  width: 110px;
 }
 
 .fgs-input.unit {
-  width: 110px;
+  width: 100px;
 }
 
 .confirm {

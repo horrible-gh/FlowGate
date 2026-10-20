@@ -1,93 +1,89 @@
 <template>
-  <SettingsShell :crumbs="crumbs" scope="me">
+  <SettingsShell scope="me">
     <template #nav>
-      <SettingsSubnav :title="t('gui.settings.scope.me')" :items="meNav" active="account" head-icon="user" />
+      <SettingsSubnav :items="meNav" active="account" />
     </template>
 
     <section class="fgs-panel" data-panel="me-account">
       <div class="fgs-phead">
         <span class="fgs-tico"><SettingsIcon name="user" size="lg" /></span>
-        <h2>{{ t('gui.settings.me_nav.account') }}</h2>
+        <div class="fgs-ptitle">
+          <h2>{{ t('gui.settings.me_nav.account') }}</h2>
+          <p>{{ t('gui.settings.page_sub.me_account') }}</p>
+        </div>
       </div>
 
       <div class="fgs-panel-body">
         <!-- 로그인 정보: GET /auth/me 그대로, 읽기 전용 -->
-        <div class="fgs-card" data-card="profile">
-          <div class="fgs-card-h">
-            <span class="fgs-tico sm"><SettingsIcon name="user" /></span>
-            <b>{{ t('gui.settings.self.account.profile') }}</b>
+        <div class="fgs-sec">
+          <div class="fgs-sec-head">
+            <h3>{{ t('gui.settings.self.account.profile') }}</h3>
+            <div class="meta">{{ t('gui.settings.self.account.readonly_hint') }}</div>
           </div>
-          <div class="fgs-line">
-            <div class="k">{{ t('gui.settings.self.account.username') }}</div>
-            <div class="v" data-testid="me-username">{{ user?.username ?? '—' }}</div>
-          </div>
-          <div class="fgs-line">
-            <div class="k">{{ t('gui.settings.self.account.email') }}</div>
-            <div class="v" data-testid="me-email">{{ user?.email || t('gui.settings.self.account.no_email') }}</div>
-          </div>
-          <div class="fgs-line">
-            <span class="fgs-muted">{{ t('gui.settings.self.account.readonly_hint') }}</span>
-          </div>
-        </div>
-
-        <!-- 표시 언어: 공유 i18n의 ko/ja/en, preferred_locale -->
-        <div class="fgs-card" data-card="language">
-          <div class="fgs-card-h">
-            <span class="fgs-tico sm"><SettingsIcon name="globe" /></span>
-            <b>{{ t('gui.settings.self.account.language') }}</b>
-          </div>
-          <div class="fgs-line">
-            <div class="fgs-segment" role="group" :aria-label="t('gui.settings.self.account.language')">
-              <button
-                v-for="code in LOCALES"
-                :key="code"
-                type="button"
-                :class="{ on: locale === code }"
-                :aria-pressed="locale === code ? 'true' : 'false'"
-                :data-locale="code"
-                @click="setLocale(code)"
-              >
-                {{ LOCALE_NAMES[code] }}
-              </button>
+          <div class="fgs-rows" data-card="profile">
+            <div class="fgs-row">
+              <div class="fgs-row-label"><strong>{{ t('gui.settings.self.account.username') }}</strong></div>
+              <div class="fgs-row-ctrl" data-testid="me-username">{{ user?.username ?? '—' }}</div>
+            </div>
+            <div class="fgs-row">
+              <div class="fgs-row-label"><strong>{{ t('gui.settings.self.account.email') }}</strong></div>
+              <div class="fgs-row-ctrl fgs-muted" data-testid="me-email">{{ user?.email || t('gui.settings.self.account.no_email') }}</div>
             </div>
           </div>
-          <div class="fgs-line">
-            <span class="fgs-muted">{{ t('gui.settings.self.account.language_hint') }}</span>
-          </div>
         </div>
 
-        <!-- 완료 카드 유지 시간: GET/PATCH /me/ui-settings -->
-        <div class="fgs-card" data-card="retention">
-          <div class="fgs-card-h">
-            <span class="fgs-tico sm"><SettingsIcon name="timer" /></span>
-            <b>{{ t('gui.settings.self.account.retention') }}</b>
-          </div>
-          <div v-if="loading" class="fgs-line"><LoadingState inline size="sm" :label="t('gui.common.loading')" /></div>
-          <div v-else-if="loadError" class="fgs-line">
-            <ErrorState compact :title="t('gui.settings.self.errors.load_failed')" :message="loadError" data-testid="me-retention-load-error">
-              <template #action>
-                <Button variant="secondary" @click="load">{{ t('gui.common.retry') }}</Button>
-              </template>
-            </ErrorState>
-          </div>
-          <template v-else>
-            <div class="fgs-line">
-              <label class="k" for="me-retention">{{ t('gui.settings.self.account.retention_label') }}</label>
-              <div class="v">
-                <select id="me-retention" v-model.number="selected" class="fgs-input" :disabled="saving" data-testid="me-retention" @change="save">
-                  <option v-for="minutes in choices" :key="minutes" :value="minutes">{{ optionLabel(minutes) }}</option>
-                </select>
-                <span v-if="saving" class="fgs-muted">{{ t('gui.settings.saving') }}</span>
-                <span v-else-if="saved" class="fgs-muted" data-testid="me-retention-saved">{{ t('gui.settings.saved') }}</span>
+        <div class="fgs-sec">
+          <div class="fgs-sec-head"><h3>{{ t('gui.settings.hub.tags.display') }}</h3></div>
+          <div class="fgs-rows">
+            <!-- 표시 언어: 공유 i18n의 ko/ja/en, preferred_locale -->
+            <div class="fgs-row" data-card="language">
+              <div class="fgs-row-label">
+                <strong>{{ t('gui.settings.self.account.language') }}</strong>
+                <small>{{ t('gui.settings.self.account.language_hint') }}</small>
+              </div>
+              <div class="fgs-row-ctrl">
+                <div class="fgs-segment" role="group" :aria-label="t('gui.settings.self.account.language')">
+                  <button
+                    v-for="code in LOCALES"
+                    :key="code"
+                    type="button"
+                    :class="{ on: locale === code }"
+                    :aria-pressed="locale === code ? 'true' : 'false'"
+                    :data-locale="code"
+                    @click="setLocale(code)"
+                  >
+                    {{ LOCALE_NAMES[code] }}
+                  </button>
+                </div>
               </div>
             </div>
-            <div v-if="saveError" class="fgs-line">
+
+            <!-- 완료 카드 유지 시간: GET/PATCH /me/ui-settings -->
+            <div class="fgs-row" data-card="retention">
+              <div class="fgs-row-label">
+                <label for="me-retention">{{ t('gui.settings.self.account.retention') }}</label>
+                <small>{{ t('gui.settings.self.account.retention_hint') }}</small>
+              </div>
+              <div class="fgs-row-ctrl">
+                <LoadingState v-if="loading" inline size="sm" :label="t('gui.common.loading')" />
+                <ErrorState v-else-if="loadError" compact :title="t('gui.settings.self.errors.load_failed')" :message="loadError" data-testid="me-retention-load-error">
+                  <template #action>
+                    <Button variant="secondary" @click="load">{{ t('gui.common.retry') }}</Button>
+                  </template>
+                </ErrorState>
+                <template v-else>
+                  <span v-if="saving" class="fgs-muted">{{ t('gui.settings.saving') }}</span>
+                  <span v-else-if="saved" class="fgs-muted" data-testid="me-retention-saved">{{ t('gui.settings.saved') }}</span>
+                  <select id="me-retention" v-model.number="selected" class="fgs-input retention" :disabled="saving" data-testid="me-retention" @change="save">
+                    <option v-for="minutes in choices" :key="minutes" :value="minutes">{{ optionLabel(minutes) }}</option>
+                  </select>
+                </template>
+              </div>
+            </div>
+            <div v-if="saveError" class="fgs-row sub">
               <span class="fgs-error" role="alert" data-testid="me-retention-error">{{ saveError }}</span>
             </div>
-            <div class="fgs-line">
-              <span class="fgs-muted">{{ t('gui.settings.self.account.retention_hint') }}</span>
-            </div>
-          </template>
+          </div>
         </div>
       </div>
     </section>
@@ -106,7 +102,7 @@
 //   envelope's choices (kept to the shared domain -1, 0, 30 … 1440), save on change, the value
 //   the server answered becomes the confirmed one, a failed save puts the last confirmed value
 //   back and says so. A failed GET is an error with a retry, not a default value.
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -127,12 +123,6 @@ const LOCALE_NAMES: Record<Locale, string> = { ko: '한국어', ja: '日本語',
 const { t, locale } = useI18n()
 const { user } = useCurrentUser()
 const meNav = useMeNav()
-
-const crumbs = computed(() => [
-  { label: t('gui.settings.title'), to: '/settings' },
-  { label: t('gui.settings.scope.me') },
-  { label: t('gui.settings.me_nav.account') },
-])
 
 function setLocale(code: Locale) {
   locale.value = code
@@ -221,11 +211,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.fgs-line .k {
-  min-width: 150px;
-}
-
-.fgs-line select.fgs-input {
-  max-width: 280px;
+.retention {
+  width: 200px;
 }
 </style>
