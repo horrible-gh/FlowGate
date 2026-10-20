@@ -155,6 +155,30 @@ def _existing_root(flow_id: str, doc_type: str):
     return free[0] if len(free) == 1 else None
 
 
+def disposed_documents(flow_id: str, removed_keys: Iterable[str]) -> list[str]:
+    """The documents a draft save that removes the nodes ``removed_keys`` deletes with them (flowgate.v02.0074 T#4):
+    the release of those nodes and ``_dispose``, read only. A line a confirmed revision of the node shows stays, and
+    so does its document; a document another line still holds stays too."""
+    if not repository.available():
+        return []
+    by_node = _rows_by_node(flow_id)
+    linked = {_line_id(r): r["doc_id"] for r in repository.rows(flow_id)}
+    out: list[str] = []
+    for key in removed_keys:                    # one release after another, as ``sync_draft`` does them
+        rows = _released(flow_id, key, by_node.get(key, []), set())
+        for row in rows:
+            linked.pop(_line_id(row), None)
+        still_linked = set(linked.values())
+        for doc_id in dict.fromkeys(r["doc_id"] for r in rows if r["owned"]):
+            if doc_id not in still_linked and doc_id not in out and cs.is_disposable_draft(legacy.document(doc_id)):
+                out.append(doc_id)
+    return out
+
+
+def _line_id(row: dict) -> tuple:
+    return row["node_key"], row["slot"], row["doc_type"]
+
+
 def _dispose(flow_id: str, rows: list[dict], user_id: Optional[str]) -> None:
     """Unlink lines; the card's own documents that are still drafts are deleted with them."""
     for row in rows:

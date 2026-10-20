@@ -1467,12 +1467,13 @@ class NextApprovedError(Exception):
 WORK_PLAN_INSTRUCTION_CONTENT_SOURCE = "work_plan_instruction_document"
 WORK_PLAN_STEP_NOTE_CONTENT_SOURCE = "work_plan_step_note"
 WORK_PLAN_LEGACY_CONTENT_SOURCE = "work_plan_legacy_generated"
-_WORK_PLAN_INSTRUCTION_EXTRA_HEADING = {
-    "ko": "추가 지시",
-    "ja": "追加指示",
-    "en": "Additional instruction",
-}
-_LEADING_FRONTMATTER_RE = _re.compile(r"\A---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)", _re.DOTALL)
+# flowgate.v02.0074 T#4 (D0006 §3.5): the composition rule lives in one place, shared with the v0.2 work plan deploy.
+from modules.flow_gate.services.work_plan_instruction_text import (  # noqa: E402
+    EXTRA_HEADING as _WORK_PLAN_INSTRUCTION_EXTRA_HEADING,
+    LEADING_FRONTMATTER_RE as _LEADING_FRONTMATTER_RE,
+    instruction_body as _shared_instruction_body,
+    instruction_document as _shared_instruction_document,
+)
 
 
 def _work_plan_instruction_document(head: dict) -> Optional[dict]:
@@ -1492,35 +1493,12 @@ def _work_plan_instruction_document(head: dict) -> Optional[dict]:
         attachment_text = _wpa.read_reference_text(attachment) if attachment else None
     except _wpa.PreInstructionAttachmentError as exc:
         raise NextApprovedError(409, f"WorkPlan instruction file is not readable: {exc.code}") from exc
-    document = {
-        "text": (pre.get("text") or "").strip(),
-        "attachment": dict(attachment) if isinstance(attachment, dict) else None,
-        "attachment_markdown": "",
-    }
-    if attachment_text is not None:
-        normalized = attachment_text.replace("\r\n", "\n").replace("\r", "\n")
-        document["attachment_markdown"] = _LEADING_FRONTMATTER_RE.sub("", normalized, count=1).strip()
-    if not document["text"] and not document["attachment_markdown"]:
-        return None
-    return document
+    return _shared_instruction_document(pre.get("text"), attachment, attachment_text)
 
 
 def _work_plan_instruction_body(title: str, document: dict, locale: str) -> str:
     """Compose the canonical Markdown: the instruction file first, then the written text."""
-    from modules.flow_gate.template_provision import normalize_locale
-
-    file_md = document.get("attachment_markdown") or ""
-    text = document.get("text") or ""
-    if file_md and text:
-        heading = _WORK_PLAN_INSTRUCTION_EXTRA_HEADING.get(
-            normalize_locale(locale), _WORK_PLAN_INSTRUCTION_EXTRA_HEADING["ko"]
-        )
-        body = f"{file_md}\n\n## {heading}\n\n{text}"
-    else:
-        body = file_md or text
-    if not body.lstrip().startswith("#"):
-        body = f"# {title}\n\n{body}"
-    return body.rstrip() + "\n"
+    return _shared_instruction_body(title, document, locale)
 
 
 def _work_plan_step_note(head: dict) -> Optional[str]:
@@ -3360,33 +3338,51 @@ def update_document_content(
         target = _save_target(fresh)
         existed = target.is_file()
         relative = storage_paths.to_storage_relative(target, fresh.get("project_id"))
-        updated = document_service.update_document(
-            doc_id, {"file_path": relative}, actor_user_id=current_user["user_id"],
-        )
         data = body.content.encode("utf-8")
         from modules.flow_gate.storage.files import overwrite_file, write_new_file
-        from modules.flow_gate.storage.body import record_body_saved
-        from modules.flow_gate.db.connection import after_commit
 
-        if existed:
-            overwrite_file(target, data)
-        else:
-            write_new_file(target, data)
-        record_body_saved(fresh, source="console_save", file_path=relative, size=len(data))
-        after_commit(lambda: _broadcast_document_refresh(fresh))
-        if fresh.get("group_id"):
-            from modules.flow_gate.graph_workflow.services.canvas_events import (
-                CANVAS_REASON_DOCUMENTS, publish_canvas_changed,
-            )
-            publish_canvas_changed(project_id=fresh.get("project_id"), flow_id=fresh["group_id"],
-                                   reason=CANVAS_REASON_DOCUMENTS, actor_user_id=current_user["user_id"],
-                                   origin_client_id=None)
+        def write_file() -> None:
+            if existed:
+                overwrite_file(target, data)
+            else:
+                write_new_file(target, data)
+
+        updated = stage_body_save(fresh, relative=relative, size=len(data), actor_user_id=current_user["user_id"],
+                                  source="console_save", write_file=write_file)
         return {"data": updated, "content": body.content}
 
     try:
         return _run_body_save_guard(doc, save)
     except _BodyUnavailable as exc:
         return exc.response()
+
+
+def stage_body_save(doc: dict, *, relative: str, size: int, actor_user_id: str, source: str,
+                    write_file=None, canvas_event: bool = True) -> dict:
+    """The rows of a body save, inside the caller's guard transaction (flowgate.v02.0074 T#4, D0006 §2).
+
+    The document row points at ``relative``; ``write_file`` (when given) puts the bytes there; the save evidence
+    (``record_body_saved`` with ``source``) is written in the same transaction and the document refresh is queued
+    after the commit, with the Canvas' document event unless ``canvas_event`` is off. The content PATCH above writes
+    its file here; the work plan deploy (``flowgate.work_plan_deploy``) passes no ``write_file`` because it replaces
+    the file itself as the last, restorable step of its own guard, and announces its draft change once.
+    """
+    from modules.flow_gate.storage.body import record_body_saved
+    from modules.flow_gate.db.connection import after_commit
+
+    updated = document_service.update_document(doc["doc_id"], {"file_path": relative}, actor_user_id=actor_user_id)
+    if write_file is not None:
+        write_file()
+    record_body_saved(doc, source=source, file_path=relative, size=size)
+    after_commit(lambda: _broadcast_document_refresh(doc))
+    if canvas_event and doc.get("group_id"):
+        from modules.flow_gate.graph_workflow.services.canvas_events import (
+            CANVAS_REASON_DOCUMENTS, publish_canvas_changed,
+        )
+        publish_canvas_changed(project_id=doc.get("project_id"), flow_id=doc["group_id"],
+                               reason=CANVAS_REASON_DOCUMENTS, actor_user_id=actor_user_id,
+                               origin_client_id=None)
+    return updated
 
 
 def _run_body_save_guard(doc: dict, call):

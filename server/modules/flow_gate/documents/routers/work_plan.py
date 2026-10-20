@@ -261,18 +261,9 @@ def _unreadable_response(doc: dict, exc: wp.WorkPlanUnreadable, locale: str) -> 
 # Same mechanism and same reason as document-number reservation (numbering_service._get_lock):
 # every invariant of the form "two concurrent requests, only one wins" rests on this
 # in-process lock. The lock is per document, so requests saving different plans never wait
-# on each other.
-_save_locks: dict[str, threading.Lock] = {}
-_save_locks_meta = threading.Lock()
-
-
-def _plan_save_lock(doc_id: str) -> threading.Lock:
-    with _save_locks_meta:
-        lock = _save_locks.get(doc_id)
-        if lock is None:
-            lock = threading.Lock()
-            _save_locks[doc_id] = lock
-        return lock
+# on each other. flowgate.v02.0074 T#4 (D0006 §3.6.3): the lock lives in work_plan_locks, so
+# the v0.2 work plan deploy takes the very same lock object as the save and the restore here.
+from modules.flow_gate.services.work_plan_locks import plan_save_lock as _plan_save_lock  # noqa: E402
 
 
 def _revision_conflict_response(
@@ -1446,6 +1437,12 @@ async def apply_work_plan(
     )
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    # flowgate.v02.0074 T#4 (D0006 §3.8): a Flow the Graph owns (or both engines claim) gets no v0.1
+    # sequence from a plan; its cards come from the v0.2 deploy. Same flat refusal as an advance.
+    from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact
+    refused = _graph_contact.progress_refusal(doc)
+    if refused is not None:
+        return JSONResponse(status_code=_graph_contact.REFUSAL_STATUS, content=refused[1])
 
     return await anyio.to_thread.run_sync(partial(
         _apply_sync,

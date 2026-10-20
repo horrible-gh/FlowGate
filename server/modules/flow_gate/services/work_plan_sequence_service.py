@@ -1017,12 +1017,38 @@ def _classify_for_candidates(doc: dict, plan: dict, items: list[dict]) -> Option
         return None
 
 
+def _deployed_by_graph(doc: dict) -> bool:
+    """flowgate.v02.0074 T#4 (D0006 §3.8): the plan of a Designer card (``meta.graph_card``, also on a Flow that only
+    has a draft), or a plan of a Flow the Graph owns or both engines claim, is turned into cards by the v0.2 work
+    plan deploy. Approving it never writes a v0.1 sequence (which would make the Flow a ``conflict``)."""
+    import json
+
+    meta = doc.get("meta")
+    try:
+        parsed = json.loads(meta) if isinstance(meta, str) and meta.strip() else meta
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict) and parsed.get("graph_card"):
+        return True
+    flow_id = doc.get("group_id")
+    if not flow_id:
+        return False
+    from modules.flow_gate.graph_workflow.services.engine_router import read_ownership
+    from modules.flow_gate.graph_workflow.store import definition_store
+
+    if not definition_store.available():
+        return False
+    return read_ownership(flow_id).state in ("graph", "conflict")
+
+
 def expand_final_work_plan(*, doc: dict, plan: dict, locale: str = "ko") -> dict:
     """Persist a final WP through the shared sequence-edit SSOT exactly once."""
     if str(doc.get("doc_review_status") or "") != "approved":
         return {"status": "skipped", "reason": "not_final"}
     wp_doc_id = str(doc.get("doc_id") or "")
     revision_no = _int(doc.get("revision_no"), 0)
+    if _deployed_by_graph(doc):
+        return {"status": "skipped", "reason": "graph_flow", "revision_no": revision_no}
     owner_doc_id = doc.get("target_id") or doc.get("triggered_by")
     if not wp_doc_id or not owner_doc_id:
         return {"status": "skipped", "reason": "missing_workflow_owner"}
