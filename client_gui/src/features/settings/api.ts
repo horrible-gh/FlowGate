@@ -12,6 +12,8 @@ import type {
   PolicyResource,
   ProjectAccess,
   ProjectCreatePolicy,
+  ProjectGitConfigView,
+  ProjectStorageRoot,
   ResourceType,
   SecurityPolicy,
   ScratchUnit,
@@ -33,9 +35,11 @@ const API = '/api/v1'
 const ws = (id: string) => `${API}/workspaces/${encodeURIComponent(id)}`
 const user = (id: string) => `${API}/system/users/${encodeURIComponent(id)}`
 const agent = (id: string) => `${API}/system/agents/${encodeURIComponent(id)}`
+const project = (id: string) => `${API}/projects/${encodeURIComponent(id)}`
 
 export class SettingsRequestError extends Error {
-  constructor(message: string, readonly code: string | null) {
+  /** `status` is the HTTP status when there was a response (401 / 403 / 500 …), else null. */
+  constructor(message: string, readonly code: string | null, readonly status: number | null = null) {
     super(message)
     this.name = 'SettingsRequestError'
   }
@@ -55,7 +59,7 @@ async function call<T>(request: () => Promise<{ data: T }>, fallbackKey: string)
     const key = code ? `gui.settings.errors.${code}` : ''
     const fallback = String(i18n.global.t(`gui.settings.errors.${fallbackKey}`))
     const message = key && i18n.global.te(key) ? String(i18n.global.t(key)) : extractApiErrorMessage(error, fallback)
-    throw new SettingsRequestError(message, code)
+    throw new SettingsRequestError(message, code, normalizeApiError(error).status)
   }
 }
 
@@ -216,6 +220,23 @@ export const revokeAgentCredential = (id: string) =>
 
 export const deleteSystemAgent = (id: string) =>
   call(() => deleteRequest<unknown>(agent(id)), 'action_failed')
+
+// ── 프로젝트 조회 · 시스템 › 전체 프로젝트 (flowgate.v02.0076 T#5, D §2.3/§2.4/§2.8) ──────
+// Three existing GETs and nothing else: the project list (status=all; the 활성 filter is the
+// screen's own display rule, not a server permission filter), one project's storage Root and one
+// project's Git config. No settings / paths GET, no /system/settings/storage-root, no legacy
+// /projects · /list/projects, and no write of any kind (settings / paths PATCH, storage migrate,
+// Git PUT / DELETE / test-connection / provision / reconnect / finalize). The answers are returned
+// as sent; the views check their shape.
+
+export const listAllProjects = async () =>
+  (await call(() => getRequest<{ projects?: unknown } | null>(`${API}/projects`, { status: 'all' }), 'load_failed'))?.projects
+
+export const getProjectStorageRoot = (id: string) =>
+  call(() => getRequest<ProjectStorageRoot>(`${project(id)}/storage-root`), 'load_failed')
+
+export const getProjectGitConfig = (id: string) =>
+  call(() => getRequest<ProjectGitConfigView>(`${project(id)}/git/config`), 'load_failed')
 
 // ── System › 보안 (시안 14) ───────────────────────────────────────────────────
 

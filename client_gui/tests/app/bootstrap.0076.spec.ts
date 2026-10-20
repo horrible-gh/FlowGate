@@ -19,8 +19,9 @@ const net = vi.hoisted(() => ({
 vi.mock('@shared/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@shared/api')>()
   const record = (method: string) =>
-    vi.fn(async (path: string) => {
-      net.requests.push(`${method} ${path}`)
+    vi.fn(async (path: string, params?: Record<string, string>) => {
+      const query = method === 'GET' && params && Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : ''
+      net.requests.push(`${method} ${path}${query}`)
       if (method === 'GET' && path === '/auth/me') {
         return new Promise((resolve, reject) => {
           net.me = { resolve, reject }
@@ -28,6 +29,13 @@ vi.mock('@shared/api', async (importOriginal) => {
       }
       if (method === 'GET' && path === '/api/v1/system/users') return { data: net.users }
       if (method === 'GET' && path === '/api/v1/system/agents') return { data: { agents: [] } }
+      if (method === 'GET' && path === '/api/v1/projects' && query === '?status=all') {
+        return { data: { projects: [{ project_id: 'p1', project_name: 'Alpha', description: null, is_active: 1, modules: [] }] } }
+      }
+      if (method === 'GET' && path === '/api/v1/projects/p1/storage-root') {
+        return { data: { project_id: 'p1', configured_value: null, project_override: null, effective_value: '/srv/flowgate', effective_source: 'default', env_override: false } }
+      }
+      if (method === 'GET' && path === '/api/v1/projects/p1/git/config') return { data: { ok: true, configured: false, config: null } }
       throw Object.assign(new Error(`unexpected request in test: ${method} ${path}`), { response: { status: 500 } })
     })
   return {
@@ -69,6 +77,8 @@ const controlsIn = (root: string) => document.querySelectorAll(FORM_CONTROLS.map
 function expectNoManagementDom(): void {
   expect($('[data-panel="users"]')).toBeNull()
   expect($('[data-panel="system-agents"]')).toBeNull()
+  expect($('[data-panel="system-projects"]')).toBeNull()
+  expect($('[data-panel^="project-"]')).toBeNull()
   expect($('.settings-shell-view')).toBeNull()
   expect(controlsIn('.gui-route-content')).toHaveLength(0)
 }
@@ -170,21 +180,25 @@ describe('V03 실제 초기 진입 — main.ts shows a neutral loading state unt
     expect(managementRequests()).toEqual(['GET /api/v1/system/agents'])
   }, 15000)
 
-  it.each(LOADING_URLS.filter((url) => url !== '/settings/system/users' && url !== '/settings/system/agents'))(
-    '%s, answer A → no view is registered for it yet, so the overview; no request',
-    async (url) => {
-      const router = await startApp(url)
-      expectStartupLoadingOnly(router, url)
+  // flowgate.v02.0076 T#5 registered 전체 프로젝트 and the 프로젝트 sections: the same rule — the view,
+  // the project list GET and then that project's one GET start only after the answer.
+  it.each([
+    ['/settings/system/projects', '[data-panel="system-projects"]', ['GET /api/v1/projects?status=all']],
+    ['/settings/project/p1/paths', '[data-panel="project-paths"]', ['GET /api/v1/projects?status=all', 'GET /api/v1/projects/p1/storage-root']],
+    ['/settings/project/p1/git', '[data-panel="project-git"]', ['GET /api/v1/projects?status=all', 'GET /api/v1/projects/p1/git/config']],
+  ])('%s, answer A → the view mounts and starts its GETs only after the answer', async (url, panel, calls) => {
+    const router = await startApp(url)
+    expectStartupLoadingOnly(router, url)
 
-      net.me!.resolve({ data: ADMIN_ME })
-      await waitUntil(() => $('.settings-hub') !== null)
-      expect(router.currentRoute.value.fullPath).toBe('/settings')
-      expect($('[data-testid="app-startup-loading"]')).toBeNull()
-      expect($('[data-testid="settings-access-notice"]')).toBeNull()
-      expect(managementRequests()).toEqual([])
-    },
-    15000,
-  )
+    net.me!.resolve({ data: ADMIN_ME })
+    await waitUntil(() => $(panel) !== null)
+    expect(router.currentRoute.value.fullPath).toBe(url)
+    expect(location()).toBe(`/app${url}`)
+    expect($('[data-testid="app-startup-loading"]')).toBeNull()
+    expect($(`.gui-app-shell ${panel}`)).not.toBeNull()
+    expect(net.requests[0]).toBe('GET /auth/me')
+    expect(managementRequests()).toEqual(calls)
+  }, 15000)
 
   it('outside /settings the requested URL is kept as before (/projects?tab=x)', async () => {
     const router = await startApp('/projects?tab=x')

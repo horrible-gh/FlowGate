@@ -369,7 +369,7 @@ describe('V16 Agent 등록·상태 — list, status display, register, enable to
   it('entry: one GET, the six fixtures with online / offline / incompatible / revoked / unregistered / local told apart', async () => {
     const w = await open('/settings/system/agents')
     expect(net.requests).toEqual(['GET /api/v1/system/agents'])
-    expect(w.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'users'])
+    expect(w.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'users', 'projects'])
     expect(w.get('.subnav [data-subnav="agents"]').attributes('aria-current')).toBe('page')
     const rows = w.findAll('.agent-row')
     expect(rows.map((r) => r.attributes('data-agent'))).toEqual(['agt_a_online', 'agt_b_offline', 'agt_c_incompat', 'agt_d_revoked', 'agt_e_new', 'agt_f_local'])

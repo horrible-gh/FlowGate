@@ -257,3 +257,52 @@ export interface AgentEnrollment {
   enrollment_token: string
   expires_at: string
 }
+
+// ── 프로젝트 조회 · 시스템 › 전체 프로젝트 (flowgate.v02.0076 T#5, D §2.3/§2.4/§2.8) ─────
+
+/** One module of a project row (GET /projects attaches `name` and `title`). */
+export interface ProjectModuleRef {
+  name: string
+  title: string
+}
+
+/** One row of GET /projects?status=all, read as the server sends it. `is_active` is the stored
+ *  archive flag (1/0 from the database, a boolean from some stores) — not "the current project". */
+export interface ProjectRow {
+  project_id: string
+  project_name: string
+  description: string | null
+  is_active: boolean
+  modules: ProjectModuleRef[]
+}
+
+/** GET /projects/{project_id}/storage-root (storage/paths.describe_storage_root). Read only here.
+ *  A different contract from GET /system/settings/storage-root, which this screen never calls. */
+export interface ProjectStorageRoot {
+  project_id: string
+  /** The stored system_settings.storage_root; null when unset. */
+  configured_value: string | null
+  /** The stored project storage_root_override; null when unset. */
+  project_override: string | null
+  effective_value: string
+  effective_source: 'env' | 'project_override' | 'system_setting' | 'default'
+  env_override: boolean
+}
+
+/** `config` of GET /projects/{project_id}/git/config (services/git/config._config_view): the secret
+ *  is only reported as registered or not (and masked); this screen shows only whether it is. */
+export interface ProjectGitConfig {
+  repo_url: string
+  provider: string
+  enabled: boolean
+  base_branch: string
+  default_finalize_action: string
+  author_name: string | null
+  author_email: string | null
+  has_secret: boolean
+}
+
+/** GET /projects/{project_id}/git/config. `configured: false` with `config: null` is 미설정, not an error. */
+export type ProjectGitConfigView =
+  | { configured: true; config: ProjectGitConfig }
+  | { configured: false; config: null }

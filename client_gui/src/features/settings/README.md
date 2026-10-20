@@ -12,8 +12,8 @@ v0.2 환경 설정 (flowgate.v02.0020, approved mockups 11~14; reorganised by fl
   GUI exposure rule only — the server's permission checks are unchanged.
 - Menus (`settingsMenu.ts`): the hub cards, the scope tabs of `SettingsShell` and the 시스템
   sub-navigation list a screen only once its route is registered, so nothing is shown as
-  "준비 중" or disabled. Registered today: the overview, 내 설정 › 계정 · 화면 / 보안 · 세션 and
-  시스템 › 일반 / 시스템 Agent / 사용자.
+  "준비 중" or disabled. Registered today: the overview, 내 설정 › 계정 · 화면 / 보안 · 세션,
+  프로젝트 (selection + 기본 정보 / 저장 경로 / Git) and 시스템 › 일반 / 시스템 Agent / 사용자 / 전체 프로젝트.
 - 시스템 › 일반 (`SystemGeneralSettingsView`; flowgate.v02.0076 T#3, D §2.5), administrators only:
   - 저장 Root: GET `/api/v1/system/storage-root` (configured_value / effective_value /
     effective_source / env_override), read only — no input, save or move, and `storage_root` is
@@ -58,6 +58,43 @@ v0.2 환경 설정 (flowgate.v02.0020, approved mockups 11~14; reorganised by fl
   - Unsaved name / path / capability or create input is guarded like 시스템 › 일반, also when
     switching to another Agent or starting 새 Agent inside the screen. 저장하지 않고 나가기 throws
     the typed values away: cancelling 새 Agent shows the confirmed values again.
+- 프로젝트 (flowgate.v02.0076 T#5, D §2.3 / §2.4), administrators only, read only:
+  - `ProjectSettingsLayout` is the parent of `/settings/project` and
+    `/settings/project/:projectId/{general,paths,git}`. It reads GET `/api/v1/projects?status=all`
+    once per entry (`components/useProjectList.ts`); the picker shows active projects by default and
+    `비활성 포함` adds the rest — a display rule, not a server permission filter. `__SYSTEM__` is dropped
+    like every other list consumer does.
+  - No project in the URL: a selection hint, no detail GET. A projectId missing from the list:
+    찾을 수 없음, no detail GET (navigation only, not a permission check). `/settings/project/p1`
+    without a section is an unknown settings URL (the overview).
+  - Only a listed project mounts its section view, keyed by the project, so switching project
+    unmounts the old view and its late answers are dropped. 다시 불러오기 repeats the list GET only;
+    a selected project gone from the new list clears the selection (notice, back to the picker).
+  - 기본 정보 (`ProjectGeneralReadView`): the list row's ID / name / description / active / modules;
+    no request, no save.
+  - 저장 경로 (`ProjectPathsReadView`): GET `/api/v1/projects/{id}/storage-root` only —
+    configured_value / project_override / effective_value / effective_source / env_override as
+    answered, null = 미설정. Never `/system/settings/storage-root`, settings or paths, not even as a
+    fallback; no path is worked out on the client.
+  - Git (`ProjectGitReadView`): GET `/api/v1/projects/{id}/git/config` only. configured=false /
+    config=null is 미설정, apart from a failed read. Shows repo_url, provider, enabled, base_branch,
+    default_finalize_action, author name / email and whether a secret is registered — the masked
+    secret is not kept or shown. No secret input, author save, merge / push / wait edit, disconnect or
+    connection test; the Designer's GitConnectWindow / DesignerGitPanel stay where they are.
+  - 401 / 403 / 500 are shown as errors (접근 불가 / 실패) with a retry of the same GET — never as an
+    empty list, 미설정 or success. Requests live in an epoch (`components/useLiveRequests.ts`, the
+    시스템 Agent rule): leaving, sign-out, a lost administrator role or a lost token drops the data and
+    every answer still out. A lost token is the whole project area's: whichever project view finds it
+    (before sending — every GET asks first —, on an answer, or on the 1 s token check of a screen with
+    nothing out) ends the list, the picker and every section view together and shows a notice; after
+    that 다시 불러오기 / 다시 시도 send nothing.
+  - Never sent from here: PATCH settings / paths, storage migrate, Git PUT / DELETE / test-connection /
+    provision / reconnect / finalize, legacy `/projects` · `/list/projects` · `/project-settings/pick-folder`.
+- 시스템 › 전체 프로젝트 (`SystemProjectsReadView`; T#5, D §2.8): the same list GET and handling,
+  active and inactive rows with a 전체 / 활성 / 비활성 display filter; a row opens
+  `/settings/project/:projectId/general`. No Root / Git GET on entry, no create / archive / restore /
+  delete. The server answers this list to any signed-in person (`get_current_user` only); the
+  administrator-only GUI does not close that existing 0075 gap.
 - 시스템 › 사용자 (`SystemUsersView`, `/api/v1/system/users…`): T#3 removed the Workspace tile,
   filter, column, drawer chips and create-time picker; the create body has no `workspace_id`.
   After every change the list is read again; only when that GET succeeds is the change reported

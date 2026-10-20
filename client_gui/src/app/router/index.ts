@@ -1,3 +1,4 @@
+import { defineComponent } from 'vue'
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { installAuthGuard } from '@/core/router/guard'
 import { AiSettingsView } from '@/features/ai'
@@ -31,13 +32,16 @@ const placeholderRoutes: RouteRecordRaw[] = PLACEHOLDER_NAV_KEYS.map((key) => ({
 // child of SettingsLayout. `meta.settingsAccess: 'admin'` marks the 프로젝트/시스템 screens that only
 // a system administrator is shown (the access guard also treats every /settings/project… and
 // /settings/system… path that way). 내 설정's me/account and me/security (T#2) are open to every
-// signed-in person. 시스템 › 일반 (system/general, T#3), 시스템 Agent (system/agents, T#4) and 사용자 are
-// administrator screens. D §1.2's other URLs — system/projects, project and
-// project/:projectId/{general,paths,git} — are registered by the steps that build their views;
-// until then they, the retired
+// signed-in person. 시스템 › 일반 (system/general, T#3), 시스템 Agent (system/agents, T#4), 사용자 and
+// 전체 프로젝트 (system/projects, T#5) are administrator screens, and so is 프로젝트 (T#5): the
+// selection area `project` (ProjectSettingsLayout, which reads the project list once) with its
+// read-only sections project/:projectId/{general,paths,git} as children. The retired
 // /settings/workspaces[/…] and /settings/system/security, and any other unknown /settings/* path
-// are replaced by the overview (installSettingsAccessGuard). The settings menus list a screen
-// only once its route below exists.
+// (e.g. /settings/project/p1 without a section), are replaced by the overview
+// (installSettingsAccessGuard). The settings menus list a screen only once its route below exists.
+// /settings/project without a project: ProjectSettingsLayout renders the hint, nothing renders here.
+const ProjectSelectionBody = defineComponent({ name: 'ProjectSelectionBody', render: () => null })
+
 const settingsRoute: RouteRecordRaw = {
   path: '/settings',
   component: SettingsLayout,
@@ -71,6 +75,36 @@ const settingsRoute: RouteRecordRaw = {
       name: 'settings-system-users',
       component: () => import('@/features/settings/views/SystemUsersView.vue'),
       meta: { settingsAccess: 'admin' },
+    },
+    {
+      path: 'system/projects',
+      name: 'settings-system-projects',
+      component: () => import('@/features/settings/views/SystemProjectsReadView.vue'),
+      meta: { settingsAccess: 'admin' },
+    },
+    {
+      path: 'project',
+      component: () => import('@/features/settings/views/ProjectSettingsLayout.vue'),
+      meta: { settingsAccess: 'admin' },
+      children: [
+        // The layout itself shows the selection hint; this child only names the bare URL.
+        { path: '', name: 'settings-project', component: ProjectSelectionBody },
+        {
+          path: ':projectId/general',
+          name: 'settings-project-general',
+          component: () => import('@/features/settings/views/ProjectGeneralReadView.vue'),
+        },
+        {
+          path: ':projectId/paths',
+          name: 'settings-project-paths',
+          component: () => import('@/features/settings/views/ProjectPathsReadView.vue'),
+        },
+        {
+          path: ':projectId/git',
+          name: 'settings-project-git',
+          component: () => import('@/features/settings/views/ProjectGitReadView.vue'),
+        },
+      ],
     },
     // Never rendered: the access guard replaces every path it matches by the overview.
     { path: ':rest(.*)*', name: SETTINGS_UNKNOWN_ROUTE, component: NotFoundView },
