@@ -6,6 +6,7 @@ import router from './router'
 import { registerAppMessages } from './i18n'
 import './styles/theme.css'
 import App from './App.vue'
+import StartupLoadingView from './views/StartupLoadingView.vue'
 import { ensureValidAccessToken, startTokenAutoRefresh } from '@shared/api'
 import { loadCurrentUser, setCurrentUser } from '@/core/auth/currentUser'
 
@@ -17,10 +18,19 @@ const getStoredAccessToken = (): string | null =>
   window.__accessToken__ || sessionStorage.getItem('fg_access_token') || null
 
 async function initializeApp() {
+  registerAppMessages(i18n)
+
+  // flowgate.v02.0076 T#1 (D §1.2, §5.2 V03): until /auth/me answers, the start screen shows
+  // only a neutral loading state. The router is not installed yet, so no route — and no
+  // settings view, project picker or system/project request — exists before the answer.
+  let startup: ReturnType<typeof createApp> | null = null
   const token = getStoredAccessToken()
   if (token) {
     window.__accessToken__ = token
     sessionStorage.setItem('fg_access_token', token)
+
+    startup = createApp(StartupLoadingView, { label: i18n.global.t('gui.common.loading') })
+    startup.mount('#app')
 
     await ensureValidAccessToken()
 
@@ -36,8 +46,6 @@ async function initializeApp() {
     }
   }
 
-  registerAppMessages(i18n)
-
   const app = createApp(App)
   app.use(createPinia())
   app.use(i18n)
@@ -52,10 +60,13 @@ async function initializeApp() {
     // redirect in flight) and aborted this initial navigation, so isReady() rejects with
     // an `aborted` NavigationFailure. Nothing to mount — don't let it surface as an
     // "Uncaught (in promise) Error" in the console on every logged-out /app visit.
+    // The startup loading state stays up while the browser leaves for /login.
     if (isNavigationFailure(error, NavigationFailureType.aborted)) return
+    startup?.unmount()
     throw error
   }
 
+  startup?.unmount()
   app.mount('#app')
 }
 

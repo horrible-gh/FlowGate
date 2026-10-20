@@ -1966,6 +1966,9 @@ export default {
     scope_aria: '설정 범위',
     not_ready: '준비 중',
     admin_only: '시스템 관리자 전용',
+    loading: '설정을 불러오는 중…',
+    access_denied: '시스템 관리자만 열 수 있는 화면이라 설정 개요로 이동했습니다.',
+    notice_close: '닫기',
     more: '더보기',
     me: '나',
     search: '검색',
@@ -1979,6 +1982,7 @@ export default {
     save_failed: '저장 실패',
     autosave: '자동 저장',
     scope: {
+      me: '내 설정',
       user: '사용자',
       workspace: '워크스페이스',
       system: '시스템',
@@ -1986,6 +1990,7 @@ export default {
     },
     hub: {
       open: '열기',
+      empty: '열 수 있는 설정 화면이 없습니다.',
       who_me: '나',
       who_team: '팀',
       who_all: '전체',
@@ -2170,6 +2175,16 @@ export default {
       environment: '작업 환경',
       logs: '로그 / 감사',
       info: '시스템 정보',
+      general: '일반',
+      agents: '시스템 Agent',
+      projects: '전체 프로젝트',
+    },
+    me_nav: {
+      account: '계정 · 화면',
+      security: '보안 · 세션',
+    },
+    project_nav: {
+      select: '프로젝트 선택',
     },
     security: {
       title: '보안',

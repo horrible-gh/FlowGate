@@ -1,19 +1,18 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useSettingsMenu } from '../settingsMenu'
 import type { SubnavItem } from './SettingsSubnav.vue'
 
-/** 시스템 sub-navigation (시안 13/14): 사용자 and 보안 are this step; the other system settings
- *  (저장소, 작업 환경, 로그 / 감사, 시스템 정보) are later steps and stay inert. */
+/** 시스템 sub-navigation (시안 13, flowgate.v02.0076 T#1 D §1.1): 일반 · 시스템 Agent · 사용자 ·
+ *  전체 프로젝트, each listed once its screen is registered (../settingsMenu). The retired
+ *  Workspace · 저장소 · 작업 환경 · 로그 · 보안 정책 · 시스템 정보 entries are gone, and nothing is
+ *  shown as a disabled "준비 중" item. */
 export function useSystemNav() {
   const { t } = useI18n()
-  return computed<SubnavItem[]>(() => [
-    { key: 'g-manage', group: t('gui.settings.system_nav.manage') },
-    { key: 'users', label: t('gui.settings.users.title'), icon: 'users', to: '/settings/system/users' },
-    { key: 'g-settings', group: t('gui.settings.system_nav.settings') },
-    { key: 'storage', label: t('gui.settings.system_nav.storage'), icon: 'storage', disabled: true },
-    { key: 'environment', label: t('gui.settings.system_nav.environment'), icon: 'swap', disabled: true },
-    { key: 'logs', label: t('gui.settings.system_nav.logs'), icon: 'log', disabled: true },
-    { key: 'security', label: t('gui.settings.security.title'), icon: 'shield', to: '/settings/system/security' },
-    { key: 'info', label: t('gui.settings.system_nav.info'), icon: 'info', disabled: true },
-  ])
+  const menu = useSettingsMenu()
+  return computed<SubnavItem[]>(() =>
+    menu.value
+      .filter((page) => page.scope === 'system')
+      .map((page) => ({ key: page.key, label: t(page.labelKey), icon: page.icon, to: page.path })),
+  )
 }

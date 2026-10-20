@@ -1956,6 +1956,9 @@ export default {
     scope_aria: 'Settings scope',
     not_ready: 'Coming soon',
     admin_only: 'System administrators only',
+    loading: 'Loading settings…',
+    access_denied: 'That screen is for system administrators only, so you are back on the settings overview.',
+    notice_close: 'Close',
     more: 'More',
     me: 'me',
     search: 'Search',
@@ -1969,6 +1972,7 @@ export default {
     save_failed: 'Save failed',
     autosave: 'Auto-save',
     scope: {
+      me: 'My settings',
       user: 'User',
       workspace: 'Workspace',
       system: 'System',
@@ -1976,6 +1980,7 @@ export default {
     },
     hub: {
       open: 'Open',
+      empty: 'There is no settings screen you can open.',
       who_me: 'Me',
       who_team: 'Team',
       who_all: 'Everyone',
@@ -2160,6 +2165,16 @@ export default {
       environment: 'Work environment',
       logs: 'Logs / audit',
       info: 'System info',
+      general: 'General',
+      agents: 'System agents',
+      projects: 'All projects',
+    },
+    me_nav: {
+      account: 'Account · display',
+      security: 'Security · sessions',
+    },
+    project_nav: {
+      select: 'Choose a project',
     },
     security: {
       title: 'Security',

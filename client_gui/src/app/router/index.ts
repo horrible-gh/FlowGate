@@ -2,13 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { installAuthGuard } from '@/core/router/guard'
 import { AiSettingsView } from '@/features/ai'
 import { DesignerShell } from '@/features/designer'
-import {
-  SettingsHubView,
-  SystemSecurityView,
-  SystemUsersView,
-  WorkspaceDetailView,
-  WorkspaceListView,
-} from '@/features/settings'
+import { installSettingsAccessGuard, SettingsLayout, SETTINGS_UNKNOWN_ROUTE } from '@/features/settings/routing'
 import DashboardView from '../dashboard/DashboardView.vue'
 import { PLACEHOLDER_NAV_KEYS } from '../navigation'
 import ComingSoonView from '../views/ComingSoonView.vue'
@@ -21,13 +15,11 @@ import NotFoundView from '../views/NotFoundView.vue'
 // (flowgate.v02.0017 T0004 §1). /app/designer (and everything below it) is the Designer
 // Shell (flowgate.v02.0025); sub-paths are not interpreted yet, they keep the same Shell.
 // `meta.fullscreen` makes App.vue drop its Topbar / Sidebar for the Designer (0025 T0006 §1).
-// /app/settings is 환경 설정 (flowgate.v02.0020 시안 11~14): the
-// scope hub, 워크스페이스 목록/상세 and 시스템 › 사용자 / 보안; any other /settings path keeps the
-// section highlighted and renders NotFoundView in place.
 //
-// Nothing here redirects: a `redirect` rewrites the URL bar, and the T#1 contract is that an
-// authenticated deep link (e.g. `/app/projects?tab=x`) and a browser refresh keep exactly the
-// URL that was requested. Unknown paths render NotFoundView in place for the same reason.
+// Nothing outside /settings redirects: a `redirect` rewrites the URL bar, and the T#1 contract
+// is that an authenticated deep link (e.g. `/app/projects?tab=x`) and a browser refresh keep
+// exactly the URL that was requested. Unknown paths render NotFoundView in place for the same
+// reason.
 const placeholderRoutes: RouteRecordRaw[] = PLACEHOLDER_NAV_KEYS.map((key) => ({
   path: `/${key}/:rest(.*)*`,
   name: key,
@@ -35,22 +27,37 @@ const placeholderRoutes: RouteRecordRaw[] = PLACEHOLDER_NAV_KEYS.map((key) => ({
   meta: { navKey: key },
 }))
 
+// /app/settings is 환경 설정 (flowgate.v02.0076 T#1, D §1.2): every screen is a lazily loaded
+// child of SettingsLayout. `meta.settingsAccess: 'admin'` marks the 프로젝트/시스템 screens that only
+// a system administrator is shown (the access guard also treats every /settings/project… and
+// /settings/system… path that way). D §1.2's other URLs — me/account, me/security,
+// system/general, system/agents, system/projects, project and project/:projectId/{general,paths,git}
+// — are registered by the steps that build their views; until then they, the retired
+// /settings/workspaces[/…] and /settings/system/security, and any other unknown /settings/* path
+// are replaced by the overview (installSettingsAccessGuard). The settings menus list a screen
+// only once its route below exists.
+const settingsRoute: RouteRecordRaw = {
+  path: '/settings',
+  component: SettingsLayout,
+  meta: { navKey: 'settings' },
+  children: [
+    { path: '', name: 'settings', component: () => import('@/features/settings/views/SettingsHubView.vue') },
+    {
+      path: 'system/users',
+      name: 'settings-system-users',
+      component: () => import('@/features/settings/views/SystemUsersView.vue'),
+      meta: { settingsAccess: 'admin' },
+    },
+    // Never rendered: the access guard replaces every path it matches by the overview.
+    { path: ':rest(.*)*', name: SETTINGS_UNKNOWN_ROUTE, component: NotFoundView },
+  ],
+}
+
 const routes: RouteRecordRaw[] = [
   { path: '/', name: 'dashboard', component: DashboardView, meta: { navKey: 'dashboard' } },
   { path: '/ai/:rest(.*)*', name: 'ai', component: AiSettingsView, meta: { navKey: 'ai' } },
   { path: '/designer/:rest(.*)*', name: 'designer', component: DesignerShell, meta: { navKey: 'designer', fullscreen: true } },
-  { path: '/settings', name: 'settings', component: SettingsHubView, meta: { navKey: 'settings' } },
-  { path: '/settings/workspaces', name: 'settings-workspaces', component: WorkspaceListView, meta: { navKey: 'settings' } },
-  {
-    path: '/settings/workspaces/:workspaceId',
-    name: 'settings-workspace',
-    component: WorkspaceDetailView,
-    props: true,
-    meta: { navKey: 'settings' },
-  },
-  { path: '/settings/system/users', name: 'settings-system-users', component: SystemUsersView, meta: { navKey: 'settings' } },
-  { path: '/settings/system/security', name: 'settings-system-security', component: SystemSecurityView, meta: { navKey: 'settings' } },
-  { path: '/settings/:rest(.*)*', name: 'settings-not-found', component: NotFoundView, meta: { navKey: 'settings' } },
+  settingsRoute,
   ...placeholderRoutes,
   { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView },
 ]
@@ -61,5 +68,6 @@ const router = createRouter({
 })
 
 installAuthGuard(router)
+installSettingsAccessGuard(router)
 
 export default router

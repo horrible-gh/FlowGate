@@ -1956,6 +1956,9 @@ export default {
     scope_aria: '設定の範囲',
     not_ready: '準備中',
     admin_only: 'システム管理者専用',
+    loading: '設定を読み込み中…',
+    access_denied: 'システム管理者専用の画面のため、設定の概要に移動しました。',
+    notice_close: '閉じる',
     more: 'その他',
     me: '自分',
     search: '検索',
@@ -1969,6 +1972,7 @@ export default {
     save_failed: '保存失敗',
     autosave: '自動保存',
     scope: {
+      me: '個人設定',
       user: 'ユーザー',
       workspace: 'ワークスペース',
       system: 'システム',
@@ -1976,6 +1980,7 @@ export default {
     },
     hub: {
       open: '開く',
+      empty: '開ける設定画面はありません。',
       who_me: '自分',
       who_team: 'チーム',
       who_all: '全体',
@@ -2160,6 +2165,16 @@ export default {
       environment: '作業環境',
       logs: 'ログ / 監査',
       info: 'システム情報',
+      general: '一般',
+      agents: 'システム Agent',
+      projects: '全プロジェクト',
+    },
+    me_nav: {
+      account: 'アカウント · 画面',
+      security: 'セキュリティ · セッション',
+    },
+    project_nav: {
+      select: 'プロジェクト選択',
     },
     security: {
       title: 'セキュリティ',
