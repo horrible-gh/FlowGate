@@ -3,12 +3,13 @@
     <RouterLink v-if="back" :to="back.to" class="subnav-back">
       <SettingsIcon name="back" size="sm" />{{ back.label }}
     </RouterLink>
-    <div class="subnav-head">
+    <div v-if="title" class="subnav-head">
       <slot name="mark">
         <span class="fgs-tico sm" :class="headTone"><SettingsIcon :name="headIcon" /></span>
       </slot>
       <h3>{{ title }}</h3>
     </div>
+    <slot name="head" />
     <div class="subnav-list">
       <template v-for="item in items" :key="item.key">
         <div v-if="item.group" class="subnav-group">{{ item.group }}</div>
@@ -25,8 +26,8 @@
           :data-subnav="item.key"
           @click="!item.to && !item.disabled && emit('select', item.key)"
         >
-          <span class="si"><SettingsIcon :name="item.icon!" /></span>
-          <b>{{ item.label }}</b>
+          <SettingsIcon :name="item.icon!" />
+          <span>{{ item.label }}</span>
         </component>
       </template>
     </div>
@@ -34,9 +35,11 @@
 </template>
 
 <script setup lang="ts">
-// Left sub-navigation of a settings scope (워크스페이스 목록/상세 탭, 시스템 메뉴). An item with
-// `to` is a route link, an item without one emits `select` (in-page tabs), a disabled item is
-// a scope that is not part of this step ("준비 중").
+// The pages of one settings scope, drawn under that scope in the settings navigation
+// (SettingsNav; mockup ⑩, flowgate.v02.0077). An item with `to` is a route link, an item without
+// one emits `select` (in-page tabs), a disabled item is a scope that is not part of this step
+// ("준비 중"), a `group` item is a small heading. `title` (with the `mark` slot) and `back` are only
+// used by the retired Workspace views; the `head` slot holds a picker above the items.
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -55,14 +58,14 @@ export interface SubnavItem {
 
 withDefaults(
   defineProps<{
-    title: string
+    title?: string
     items: SubnavItem[]
     active: string
     headIcon?: SettingsIconName
     headTone?: string
     back?: { to: string; label: string } | null
   }>(),
-  { headIcon: 'globe', headTone: '', back: null },
+  { title: '', headIcon: 'globe', headTone: '', back: null },
 )
 
 const emit = defineEmits<{ select: [key: string] }>()
@@ -76,92 +79,92 @@ const notReady = computed(() => t('gui.settings.not_ready'))
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 11px 16px;
-  border-bottom: 1px solid var(--fg2-line);
+  padding: 8px 10px;
   font-size: 12px;
   color: #83a5c8;
+  border-radius: 8px;
 }
 
 .subnav-back:hover {
   color: #cbe0f6;
-  background: #0e2036;
+  background: #132b44;
 }
 
 .subnav-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--fg2-line);
+  gap: 9px;
+  padding: 6px 10px 8px;
 }
 
 .subnav-head h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.subnav-list {
-  padding: 8px;
-}
-
 .subnav-group {
-  padding: 12px 10px 6px;
-  font-size: 10px;
+  padding: 10px 10px 4px;
+  color: #647e99;
+  font-size: 10.5px;
   font-weight: 800;
-  letter-spacing: 0.9px;
-  color: #6f87a0;
-}
-
-.subnav-group:first-child {
-  padding-top: 6px;
+  letter-spacing: 0.5px;
 }
 
 .subitem {
-  width: 100%;
-  min-height: 46px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: #a7bad0;
-  display: grid;
-  grid-template-columns: 34px 1fr;
+  display: flex;
   align-items: center;
-  text-align: left;
-  padding: 0 10px;
-  margin-bottom: 3px;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #9db0c4;
   font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
   cursor: pointer;
 }
 
-.subitem b {
-  font-size: 13px;
-  color: #d3deea;
-}
-
-.subitem .si {
-  display: grid;
-  place-items: center;
-  color: #8fb1d3;
-}
-
-.subitem.on {
-  background: #12345a;
-  border-color: #225184;
-}
-
-.subitem.on .si {
-  color: #fff;
+.subitem :deep(.fgs-icon) {
+  width: 16px;
+  height: 16px;
 }
 
 .subitem:hover:not(.disabled) {
-  background: #102945;
+  background: #132b44;
+  color: #e7f2ff;
+}
+
+.subitem.on {
+  background: #173a61;
+  border-color: #265e9d;
+  color: #eef7ff;
 }
 
 .subitem.disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+@media (max-width: 780px) {
+  .subnav-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .subnav-list .subnav-group {
+    display: none;
+  }
+
+  .subitem {
+    width: auto;
+    border-color: #22405f;
+  }
 }
 </style>

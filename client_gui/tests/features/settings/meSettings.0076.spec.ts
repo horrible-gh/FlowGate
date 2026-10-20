@@ -329,6 +329,9 @@ describe('V09 보안 / 세션 (s1 = 현재, s2 = 다른 세션)', () => {
   it('wrong current password: no success, old password still valid; right one: success, other sessions gone', async () => {
     net.sessions.push(session('s3', false))
     const w = await open('/settings/me/security')
+    // The three inputs open with 변경 (시안 ⑩); a closed form has none.
+    expect(w.find('[data-testid="current-password"]').exists()).toBe(false)
+    await w.get('[data-testid="password-open"]').trigger('click')
     const fill = async (current: string, next: string, confirm = next) => {
       await w.get('[data-testid="current-password"]').setValue(current)
       await w.get('[data-testid="new-password"]').setValue(next)
@@ -414,6 +417,19 @@ describe('V09 보안 / 세션 (s1 = 현재, s2 = 다른 세션)', () => {
     await w.get('[data-testid="sessions-load-error"] button').trigger('click')
     await flushPromises()
     expect(w.findAll('[data-session]').map((r) => r.attributes('data-session'))).toEqual(['s1', 's2'])
+  })
+})
+
+describe('비밀번호 변경 열기 (flowgate.v02.0077 시안 ⑩)', () => {
+  it('변경 opens the inputs, 취소 closes them and forgets the input; nothing is sent', async () => {
+    const w = await open('/settings/me/security')
+    await w.get('[data-testid="password-open"]').trigger('click')
+    await w.get('[data-testid="current-password"]').setValue(OLD_PASSWORD)
+    await w.get('[data-testid="password-open"]').trigger('click') // now 취소
+    expect(w.find('[data-testid="current-password"]').exists()).toBe(false)
+    await w.get('[data-testid="password-open"]').trigger('click')
+    expect((w.get('[data-testid="current-password"]').element as HTMLInputElement).value).toBe('')
+    expect(writes()).toEqual([])
   })
 })
 

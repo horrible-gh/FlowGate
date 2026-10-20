@@ -1,5 +1,5 @@
 <template>
-  <SettingsShell :crumbs="crumbs" scope="workspace">
+  <SettingsShell scope="workspace">
     <template #nav>
       <SettingsSubnav
         :title="t('gui.settings.scope.workspace')"
@@ -220,11 +220,6 @@ const { t } = useI18n()
 const router = useRouter()
 const { user } = useCurrentUser()
 const { toasts, pushToast, dismissToast } = useSettingsToasts()
-
-const crumbs = computed(() => [
-  { label: t('gui.settings.title'), to: '/settings' },
-  { label: t('gui.settings.scope.workspace') },
-])
 
 const workspaces = ref<WorkspaceSummary[]>([])
 const canCreate = ref(false)

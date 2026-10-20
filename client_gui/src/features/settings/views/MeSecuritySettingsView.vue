@@ -1,128 +1,151 @@
 <template>
-  <SettingsShell :crumbs="crumbs" scope="me">
+  <SettingsShell scope="me">
     <template #nav>
-      <SettingsSubnav :title="t('gui.settings.scope.me')" :items="meNav" active="security" head-icon="user" />
+      <SettingsSubnav :items="meNav" active="security" />
     </template>
 
     <section class="fgs-panel" data-panel="me-security">
       <div class="fgs-phead">
         <span class="fgs-tico"><SettingsIcon name="shield" size="lg" /></span>
-        <h2>{{ t('gui.settings.me_nav.security') }}</h2>
+        <div class="fgs-ptitle">
+          <h2>{{ t('gui.settings.me_nav.security') }}</h2>
+          <p>{{ t('gui.settings.page_sub.me_security') }}</p>
+        </div>
       </div>
 
       <div class="fgs-panel-body">
+        <!-- 비밀번호 변경: POST /auth/password/change. 변경을 누르면 입력이 열린다. -->
+        <div class="fgs-sec">
+          <form class="fgs-rows" data-card="password" novalidate @submit.prevent="submitPassword">
+            <div class="fgs-row">
+              <div class="fgs-row-label">
+                <strong>{{ t('gui.settings.self.security.password') }}</strong>
+                <small>{{ t('gui.settings.self.security.password_hint') }}</small>
+              </div>
+              <div class="fgs-row-ctrl">
+                <span v-if="passwordDone && !passwordOpen" class="fgs-muted" data-testid="password-done">{{ t('gui.settings.self.security.password_changed') }}</span>
+                <button type="button" class="fgs-btn sm" :disabled="passwordBusy" :aria-expanded="passwordOpen ? 'true' : 'false'" data-testid="password-open" @click="togglePassword">
+                  {{ passwordOpen ? t('gui.common.cancel') : t('gui.settings.self.security.password_open') }}
+                </button>
+              </div>
+            </div>
+            <template v-if="passwordOpen">
+              <div class="fgs-row sub">
+                <div class="fgs-row-label"><label for="me-current-password">{{ t('gui.settings.self.security.current_password') }}</label></div>
+                <div class="fgs-row-ctrl">
+                  <input id="me-current-password" v-model="password.current" class="fgs-input" type="password" autocomplete="current-password" :disabled="passwordBusy" data-testid="current-password" />
+                </div>
+              </div>
+              <div class="fgs-row sub">
+                <div class="fgs-row-label"><label for="me-new-password">{{ t('gui.settings.self.security.new_password') }}</label></div>
+                <div class="fgs-row-ctrl">
+                  <input id="me-new-password" v-model="password.next" class="fgs-input" type="password" autocomplete="new-password" :disabled="passwordBusy" data-testid="new-password" />
+                </div>
+              </div>
+              <div class="fgs-row sub">
+                <div class="fgs-row-label"><label for="me-confirm-password">{{ t('gui.settings.self.security.confirm_password') }}</label></div>
+                <div class="fgs-row-ctrl">
+                  <input id="me-confirm-password" v-model="password.confirm" class="fgs-input" type="password" autocomplete="new-password" :disabled="passwordBusy" data-testid="confirm-password" />
+                </div>
+              </div>
+              <div class="fgs-row sub">
+                <div class="fgs-row-label">
+                  <div v-if="passwordError" class="fgs-error" role="alert" data-testid="password-error">
+                    {{ passwordError }}
+                    <ul v-if="passwordViolations.length" class="violations">
+                      <li v-for="violation in passwordViolations" :key="violation">{{ violation }}</li>
+                    </ul>
+                  </div>
+                  <span v-else-if="passwordDone" class="fgs-muted" data-testid="password-done">{{ t('gui.settings.self.security.password_changed') }}</span>
+                </div>
+                <div class="fgs-row-ctrl">
+                  <button type="submit" class="fgs-btn pri sm" :disabled="!passwordReady" data-testid="password-submit">
+                    {{ passwordBusy ? t('gui.settings.saving') : t('gui.settings.self.security.password_submit') }}
+                  </button>
+                </div>
+              </div>
+            </template>
+          </form>
+        </div>
+
         <!-- 로그인 세션: GET /auth/sessions, DELETE /auth/sessions/{sid}, POST revoke-others, 현재 세션은 logout -->
-        <div class="fgs-card" data-card="sessions">
-          <div class="fgs-card-h">
-            <span class="fgs-tico sm"><SettingsIcon name="key" /></span>
-            <b>{{ t('gui.settings.self.security.sessions') }}</b>
-            <div class="fgs-push">
+        <div class="fgs-sec" data-card="sessions">
+          <div class="fgs-sec-head">
+            <h3>{{ t('gui.settings.self.security.sessions') }}</h3>
+            <div class="meta">
               <button
                 v-if="sessions && others.length"
                 type="button"
-                class="fgs-btn sm danger"
+                class="fgs-btn sm ghost"
                 :disabled="busy"
                 data-testid="revoke-others"
                 @click="confirmOthers = true"
               >
-                <SettingsIcon name="logout" />{{ t('gui.settings.self.security.revoke_others') }}
+                <SettingsIcon name="logout" size="sm" />{{ t('gui.settings.self.security.revoke_others') }}
               </button>
             </div>
           </div>
 
-          <div v-if="loading && !sessions" class="fgs-line"><LoadingState inline size="sm" :label="t('gui.common.loading')" /></div>
-          <div v-else-if="loadError" class="fgs-line">
-            <ErrorState compact :title="t('gui.settings.self.errors.sessions_failed')" :message="loadError" data-testid="sessions-load-error">
-              <template #action>
-                <Button variant="secondary" @click="loadSessions">{{ t('gui.common.retry') }}</Button>
-              </template>
-            </ErrorState>
-          </div>
-          <div v-else-if="sessions && !sessions.length" class="fgs-line">
+          <div v-if="actionError" class="fgs-note bad" role="alert"><SettingsIcon name="info" size="sm" /><span data-testid="sessions-error">{{ actionError }}</span></div>
+          <div v-else-if="actionNotice" class="fgs-note ok"><SettingsIcon name="check" size="sm" /><span data-testid="sessions-notice">{{ actionNotice }}</span></div>
+
+          <LoadingState v-if="loading && !sessions" inline size="sm" :label="t('gui.common.loading')" />
+          <ErrorState v-else-if="loadError" compact :title="t('gui.settings.self.errors.sessions_failed')" :message="loadError" data-testid="sessions-load-error">
+            <template #action>
+              <Button variant="secondary" @click="loadSessions">{{ t('gui.common.retry') }}</Button>
+            </template>
+          </ErrorState>
+          <div v-else-if="sessions && !sessions.length" class="fgs-rows">
             <EmptyState compact :title="t('gui.settings.self.security.sessions_empty')" data-testid="sessions-empty" />
           </div>
-          <template v-else-if="sessions">
-            <div v-for="session in sessions" :key="session.session_id" class="fgs-line" :data-session="session.session_id">
-              <div class="k">
-                <b>{{ session.device_label || t('gui.settings.self.security.unknown_device') }}</b>
-                <span v-if="session.is_current" class="fgs-pill ok" data-testid="session-current">{{ t('gui.settings.self.security.current') }}</span>
-              </div>
-              <div class="v">
-                <span class="fgs-muted">{{ session.ip_display || '—' }} · {{ t('gui.settings.self.security.last_used') }} {{ formatDate(session.last_used_at) }}</span>
-              </div>
-              <div class="v end">
-                <button
-                  v-if="session.is_current"
-                  type="button"
-                  class="fgs-btn sm"
-                  :disabled="busy"
-                  data-testid="logout-current"
-                  @click="signOut"
-                >
-                  <SettingsIcon name="logout" />{{ t('gui.settings.self.security.sign_out_here') }}
-                </button>
-                <button
-                  v-else
-                  type="button"
-                  class="fgs-btn sm"
-                  :disabled="busy"
-                  data-testid="revoke-session"
-                  @click="revoke(session.session_id)"
-                >
-                  {{ t('gui.settings.self.security.sign_out') }}
-                </button>
-              </div>
-            </div>
-          </template>
-
-          <div v-if="actionError" class="fgs-line">
-            <span class="fgs-error" role="alert" data-testid="sessions-error">{{ actionError }}</span>
-          </div>
-          <div v-else-if="actionNotice" class="fgs-line">
-            <span class="fgs-muted" data-testid="sessions-notice">{{ actionNotice }}</span>
+          <div v-else-if="sessions" class="fgs-table-wrap">
+            <table class="fgs-t">
+              <thead>
+                <tr>
+                  <th>{{ t('gui.settings.self.security.col_device') }}</th>
+                  <th>{{ t('gui.settings.self.security.col_ip') }}</th>
+                  <th>{{ t('gui.settings.self.security.last_used') }}</th>
+                  <th class="r" />
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="session in sessions" :key="session.session_id" :data-session="session.session_id">
+                  <td>
+                    <div class="fgs-who">
+                      <span class="fgs-sq local"><SettingsIcon name="monitor" size="sm" /></span>
+                      <strong>{{ session.device_label || t('gui.settings.self.security.unknown_device') }}</strong>
+                    </div>
+                  </td>
+                  <td class="fgs-muted">{{ session.ip_display || '—' }}</td>
+                  <td class="fgs-muted" :title="formatDate(session.last_used_at)">{{ relativeTime(session.last_used_at, locale) }}</td>
+                  <td class="r">
+                    <span v-if="session.is_current" class="fgs-badge teal" data-testid="session-current">{{ t('gui.settings.self.security.current') }}</span>
+                    <button
+                      v-if="session.is_current"
+                      type="button"
+                      class="fgs-link"
+                      :disabled="busy"
+                      data-testid="logout-current"
+                      @click="signOut"
+                    >
+                      {{ t('gui.settings.self.security.sign_out_here') }}
+                    </button>
+                    <button
+                      v-else
+                      type="button"
+                      class="fgs-link"
+                      :disabled="busy"
+                      data-testid="revoke-session"
+                      @click="revoke(session.session_id)"
+                    >
+                      {{ t('gui.settings.self.security.sign_out') }}
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
-
-        <!-- 비밀번호 변경: POST /auth/password/change -->
-        <form class="fgs-card" data-card="password" novalidate @submit.prevent="submitPassword">
-          <div class="fgs-card-h">
-            <span class="fgs-tico sm"><SettingsIcon name="pw" /></span>
-            <b>{{ t('gui.settings.self.security.password') }}</b>
-          </div>
-          <div class="fgs-line password-fields">
-            <div class="fgs-formfield">
-              <label for="me-current-password">{{ t('gui.settings.self.security.current_password') }}</label>
-              <input id="me-current-password" v-model="password.current" class="fgs-input" type="password" autocomplete="current-password" :disabled="passwordBusy" data-testid="current-password" />
-            </div>
-            <div class="fgs-formfield">
-              <label for="me-new-password">{{ t('gui.settings.self.security.new_password') }}</label>
-              <input id="me-new-password" v-model="password.next" class="fgs-input" type="password" autocomplete="new-password" :disabled="passwordBusy" data-testid="new-password" />
-            </div>
-            <div class="fgs-formfield">
-              <label for="me-confirm-password">{{ t('gui.settings.self.security.confirm_password') }}</label>
-              <input id="me-confirm-password" v-model="password.confirm" class="fgs-input" type="password" autocomplete="new-password" :disabled="passwordBusy" data-testid="confirm-password" />
-            </div>
-          </div>
-          <div v-if="passwordError" class="fgs-line">
-            <div class="fgs-error" role="alert" data-testid="password-error">
-              {{ passwordError }}
-              <ul v-if="passwordViolations.length" class="violations">
-                <li v-for="violation in passwordViolations" :key="violation">{{ violation }}</li>
-              </ul>
-            </div>
-          </div>
-          <div v-else-if="passwordDone" class="fgs-line">
-            <span class="fgs-muted" data-testid="password-done">{{ t('gui.settings.self.security.password_changed') }}</span>
-          </div>
-          <div class="fgs-line">
-            <span class="fgs-muted">{{ t('gui.settings.self.security.password_hint') }}</span>
-            <div class="fgs-push">
-              <button type="submit" class="fgs-btn pri" :disabled="!passwordReady" data-testid="password-submit">
-                {{ passwordBusy ? t('gui.settings.saving') : t('gui.settings.self.security.password_submit') }}
-              </button>
-            </div>
-          </div>
-        </form>
       </div>
     </section>
 
@@ -170,6 +193,7 @@ import LoadingState from '@/components/ui/LoadingState.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 import { logout } from '@/core/auth/logout'
 import SettingsIcon from '../SettingsIcon.vue'
+import { relativeTime } from '../format'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import { useMeNav } from '../components/meNav'
@@ -177,12 +201,6 @@ import { changePassword, listSessions, MeRequestError, revokeOtherSessions, revo
 
 const { t, locale } = useI18n()
 const meNav = useMeNav()
-
-const crumbs = computed(() => [
-  { label: t('gui.settings.title'), to: '/settings' },
-  { label: t('gui.settings.scope.me') },
-  { label: t('gui.settings.me_nav.security') },
-])
 
 const sessions = ref<AuthSession[] | null>(null)
 const others = computed(() => (sessions.value ?? []).filter((session) => !session.is_current))
@@ -257,7 +275,20 @@ const passwordBusy = ref(false)
 const passwordError = ref('')
 const passwordViolations = ref<string[]>([])
 const passwordDone = ref(false)
+const passwordOpen = ref(false)
 const passwordReady = computed(() => !passwordBusy.value && Boolean(password.current && password.next && password.confirm))
+
+/** 변경 opens the three inputs; 취소 closes them and forgets what was typed (nothing is sent). */
+function togglePassword() {
+  if (passwordBusy.value) return
+  passwordOpen.value = !passwordOpen.value
+  password.current = ''
+  password.next = ''
+  password.confirm = ''
+  passwordError.value = ''
+  passwordViolations.value = []
+  if (passwordOpen.value) passwordDone.value = false
+}
 
 async function submitPassword() {
   if (!passwordReady.value) return
@@ -289,19 +320,12 @@ onMounted(loadSessions)
 </script>
 
 <style scoped>
-.fgs-line .k {
-  min-width: 220px;
+.fgs-t td.r {
+  white-space: nowrap;
 }
 
-.password-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
-  align-items: end;
-}
-
-.password-fields .fgs-formfield {
-  margin-bottom: 0;
+.fgs-t td.r .fgs-badge {
+  margin-right: 6px;
 }
 
 .violations {
@@ -343,7 +367,7 @@ onMounted(loadSessions)
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--fg2-line-strong);
+  border: 1px solid #35516d;
   border-radius: 999px;
   padding: 5px 10px;
   font-size: 12px;

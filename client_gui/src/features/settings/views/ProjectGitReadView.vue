@@ -2,7 +2,10 @@
   <section class="fgs-panel" data-panel="project-git">
     <div class="fgs-phead">
       <span class="fgs-tico"><SettingsIcon name="code" size="lg" /></span>
-      <h2>{{ t('gui.settings.project_nav.git') }}</h2>
+      <div class="fgs-ptitle">
+        <h2>{{ t('gui.settings.project_nav.git') }}</h2>
+        <p><b>{{ project.project_name }}</b> · {{ t('gui.settings.page_sub.project_git') }}</p>
+      </div>
       <div class="fgs-push">
         <button type="button" class="fgs-btn sm" :disabled="loading" data-testid="git-refresh" @click="load">
           <SettingsIcon name="reset" size="sm" />{{ t('gui.settings.projects.refresh') }}
@@ -176,10 +179,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.fgs-panel {
-  margin-top: 14px;
-}
-
 .v.mono {
   font-family: var(--fg2-font-mono, ui-monospace, monospace);
   word-break: break-all;

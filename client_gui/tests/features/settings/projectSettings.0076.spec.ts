@@ -201,7 +201,8 @@ afterEach(() => {
   wrapper = null
   // D §2.3 / §2.4 / §2.8, T#5 지시 7 (V25 GUI part): GETs of the three existing contracts only — no
   // settings / paths GET, no /system/settings/storage-root, no legacy list, and no write at all.
-  for (const call of net.requests) {
+  // flowgate.v02.0077: the administrator overview's 확인 필요 read is not a project request.
+  for (const call of net.requests.filter((r) => r !== 'GET /api/v1/system/agents')) {
     expect(call).toMatch(/^GET \/api\/v1\/projects(\?status=all|\/[^/?]+\/(storage-root|git\/config))$/)
   }
   expect(writes()).toEqual([])
@@ -224,7 +225,7 @@ describe('V05 관리자 프로젝트 조회 — list, selection and the three re
 
     await w.get('[data-testid="project-include-inactive"]').setValue(true)
     expect(options(w)).toEqual(['', 'p1', 'p2', 'p3'])
-    expect(w.get('[data-testid="project-select"] option[value="p2"]').text()).toBe('Bravo (archived) · p2 (비활성)')
+    expect(w.get('[data-testid="project-select"] option[value="p2"]').text()).toBe('Bravo (archived) (비활성)') // the name; the ID stays in the URL
     expect(net.requests).toEqual([LIST]) // the filter is the screen's own rule: no new request
   })
 
@@ -233,7 +234,8 @@ describe('V05 관리자 프로젝트 조회 — list, selection and the three re
     await w.get('[data-testid="project-select"]').setValue('p1')
     await waitForPath('/settings/project/p1/general')
     await waitFor(w, '[data-panel="project-general"]')
-    expect(text(w, 'project-id')).toBe('p1')
+    expect(text(w, 'project-name')).toBe('Alpha')
+    expect(w.find('[data-panel="project-select"]').exists()).toBe(false) // the section alone, no second panel above it
     expect(net.requests).toEqual([LIST])
 
     await router.push('/settings/project/p1/paths')
@@ -245,10 +247,10 @@ describe('V05 관리자 프로젝트 조회 — list, selection and the three re
     expect(net.requests).toEqual([LIST, ROOT('p1'), ROOT('p3')]) // the list is read once per entry
   })
 
-  it('p1/general direct entry: ID / 이름 / 설명 / 상태 / 모듈 of the list row, no request of its own', async () => {
+  it('p1/general direct entry: 이름 / 설명 / 상태 / 모듈 of the list row (no internal ID), no request of its own', async () => {
     const w = await open('/settings/project/p1/general')
     await waitFor(w, '[data-panel="project-general"]')
-    expect(text(w, 'project-id')).toBe('p1')
+    expect(w.find('[data-testid="project-id"]').exists()).toBe(false)
     expect(text(w, 'project-name')).toBe('Alpha')
     expect(text(w, 'project-description')).toBe('First project')
     expect(text(w, 'project-status')).toBe('활성')
@@ -256,8 +258,8 @@ describe('V05 관리자 프로젝트 조회 — list, selection and the three re
     expect(subnav(w)).toEqual(['general', 'paths', 'git'])
     expect(w.get('.subnav [data-subnav="general"]').attributes('aria-current')).toBe('page')
     expect(w.get('.subnav [data-subnav="paths"]').attributes('href')).toBe('/app/settings/project/p1/paths')
-    expect(w.get('.subnav h3').text()).toBe('Alpha')
-    expect(w.findAll('.crumbs .crumb-link, .crumbs .crumb-current').map((c) => c.text())).toEqual(['환경 설정', '프로젝트', 'Alpha', '기본 정보'])
+    expect(w.get('[data-panel="project-general"] .fgs-phead').text()).toContain('Alpha')
+    expect(w.find('.crumbs').exists()).toBe(false)
     expect((w.get('[data-testid="project-select"]').element as HTMLSelectElement).value).toBe('p1')
     expectReadOnly(w, 'project-general')
     expect(w.text()).not.toContain('#ff0000') // only the five contract fields are shown
@@ -300,7 +302,7 @@ describe('V05 관리자 프로젝트 조회 — list, selection and the three re
     await open('/settings/project/p1')
     await waitForPath('/settings')
     expect(router.currentRoute.value.fullPath).toBe('/settings')
-    expect(net.requests).toEqual([])
+    expect(net.requests).toEqual(['GET /api/v1/system/agents']) // no project request; the overview's 확인 필요 read only
   })
 
   it('system/projects: p1 · p2 · p3 read only with 활성 / 비활성, the p2 row opens p2/general; no Root / Git GET', async () => {
@@ -329,7 +331,7 @@ describe('V05 관리자 프로젝트 조회 — list, selection and the three re
     await w.get('[data-project-row="p2"]').trigger('click')
     await waitForPath('/settings/project/p2/general')
     await waitFor(w, '[data-panel="project-general"]')
-    expect(text(w, 'project-id')).toBe('p2')
+    expect(text(w, 'project-name')).toBe('Bravo (archived)')
     expect(text(w, 'project-status')).toBe('비활성')
     expect(net.requests).toEqual([LIST, LIST]) // the selection area reads the same list; no Root / Git
   })
@@ -340,7 +342,7 @@ describe('V05 관리자 프로젝트 조회 — list, selection and the three re
     expect(hub.get('[data-scope-card="project"] a').attributes('href')).toBe('/app/settings/project')
     expect(hub.get('[data-scope-card="project"]').findAll('.tag').map((t) => t.text())).toEqual(['프로젝트 선택'])
     expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 Agent', '사용자', '전체 프로젝트'])
-    expect(net.requests).toEqual([])
+    expect(net.requests).toEqual(['GET /api/v1/system/agents'])
   })
 })
 
@@ -419,7 +421,7 @@ describe('V22 프로젝트 Root · Git 계약 — values as answered, null = 미
   ])('%s offers no change control: only 다시 불러오기 / 다시 시도 buttons and the picker as the only input', async (url, ready) => {
     const w = await open(url)
     await waitFor(w, ready)
-    const body = w.get('.settings-shell-view .body')
+    const body = w.get('.settings-shell-view') // the picker sits in the navigation (시안 ⑩)
     for (const b of body.findAll('button')) expect(b.attributes('data-testid')).toMatch(/-(refresh|retry)$/)
     expect(body.findAll('input, select, textarea').map((e) => e.attributes('data-testid'))).toEqual(['project-select', 'project-include-inactive'])
     expect(body.findAll('form').length).toBe(0)
@@ -563,7 +565,7 @@ describe('V23 조회 전환 · 실패 — late answers dropped, failures never s
     await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe('/settings/project/p1/general')
     expect(w.find('[data-testid="project-removed"]').exists()).toBe(false)
-    expect(text(w, 'project-id')).toBe('p1')
+    expect(text(w, 'project-name')).toBe('Alpha')
     w.unmount()
     w = await open('/settings/project/p404/general')
     await w.get('[data-testid="projects-refresh"]').trigger('click')

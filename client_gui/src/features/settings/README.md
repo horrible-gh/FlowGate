@@ -1,6 +1,14 @@
 # Settings Feature
 
-v0.2 환경 설정 (flowgate.v02.0020, approved mockups 11~14; reorganised by flowgate.v02.0076).
+v0.2 환경 설정 (flowgate.v02.0020, approved mockups 11~14; reorganised by flowgate.v02.0076; laid
+out after the MirageGlass deck `1jnmunhp` screen ⑩ "환경 설정" by flowgate.v02.0077).
+
+- Screen (flowgate.v02.0077, mockup ⑩): every settings screen is the settings navigation
+  (`components/SettingsNav.vue`: 환경 설정 개요, the scopes of the shared menu with their reach, and
+  under the scope shown the page's own sub-navigation) beside one content card — head (icon, title,
+  one-line description, actions) and a body of sections / setting rows / tables (`settings.css`).
+  The 0076 breadcrumb, scope tab row and sub-navigation title are gone. The overview uses the same
+  navigation without `SettingsShell`. 시스템's pages are listed under 운영 / 실행 자원 / 계정 · 프로젝트.
 
 - Routes: every `/app/settings` screen is a lazily loaded child of `SettingsLayout`
   (`routing.ts`, registered in `app/router/index.ts`). The layout shows a neutral loading state
@@ -10,7 +18,7 @@ v0.2 환경 설정 (flowgate.v02.0020, approved mockups 11~14; reorganised by fl
   `/settings/workspaces[/…]` and `/settings/system/security` URLs, and any `/settings/*` path
   without a registered view, are replaced onto the overview (no query/hash kept). This is a
   GUI exposure rule only — the server's permission checks are unchanged.
-- Menus (`settingsMenu.ts`): the hub cards, the scope tabs of `SettingsShell` and the 시스템
+- Menus (`settingsMenu.ts`): the hub cards, the scope headings of `SettingsNav` and the 시스템
   sub-navigation list a screen only once its route is registered, so nothing is shown as
   "준비 중" or disabled. Registered today: the overview, 내 설정 › 계정 · 화면 / 보안 · 세션,
   프로젝트 (selection + 기본 정보 / 저장 경로 / Git) and 시스템 › 일반 / 시스템 Agent / 사용자 / 전체 프로젝트.
@@ -32,6 +40,18 @@ v0.2 환경 설정 (flowgate.v02.0020, approved mockups 11~14; reorganised by fl
 - 시스템 › 시스템 Agent (`SystemAgentSettingsView`; flowgate.v02.0076 T#4, D §2.6), administrators
   only, on the single `/api/v1/system/agents` family (`api/v1/agent_routes.py`, the one the old
   `client/src/settings` AgentsView used):
+  - Screen (flowgate.v02.0077): counts (등록된 원격 Agent / 온라인 / 확인 필요), filter chips (전체 /
+    온라인 / 확인 필요 / 원격 / 로컬) and a name · ID search over the one GET answer, then a table of
+    Agent / 상태 / 기능. The state per row (`agentState.ts`) follows the server's order: local →
+    사용 중지 → 미등록 / 등록 대기 → 해지 → 프로토콜 비호환 → 온라인 / 오프라인; 확인 필요 = an enabled
+    remote Agent that is waiting, refused, offline or has a capability allowed but not reported.
+    The capability tags read 사용 가능 / 허용했지만 보고 안 함 / 보고했지만 허용 안 함 / 허용 안 함.
+  - A row opens the Agent in a drawer above the list (닫기, the backdrop and Esc close it; unsaved
+    input is asked about first; closing drops the selection, the typed values and a shown token).
+    The drawer holds the state notice, 연결 / 실행 (the GET's fields), 기능 (서버 허용 switch ×
+    Agent 보고 = 결과), 설정 (name, local path), 등록 · 자격 증명 and, in its foot, 삭제 / 사용 중지 ·
+    다시 사용 / 저장. 새 Agent opens in the same drawer. No form stays open beside the list.
+  - `?agent=<id>` (the overview's 확인) opens that Agent once the list is read; the query is dropped.
   - GET `/system/agents` (the list answer carries each Agent's detail); POST `/system/agents` for a
     local (`connection_mode` null, optional executable path) or remote (`agent_pull`, no path)
     Agent with the ai_cli / ai_api / storage capabilities (settings only — no storage, AI-job or
@@ -58,7 +78,10 @@ v0.2 환경 설정 (flowgate.v02.0020, approved mockups 11~14; reorganised by fl
   - Unsaved name / path / capability or create input is guarded like 시스템 › 일반, also when
     switching to another Agent or starting 새 Agent inside the screen. 저장하지 않고 나가기 throws
     the typed values away: cancelling 새 Agent shows the confirmed values again.
-- 프로젝트 (flowgate.v02.0076 T#5, D §2.3 / §2.4), administrators only, read only:
+- 프로젝트 (flowgate.v02.0076 T#5, D §2.3 / §2.4), administrators only, read only. Screen
+  (flowgate.v02.0077): the picker (by project name) and 다시 불러오기 sit in the navigation; the 프로젝트
+  선택 panel shows only while no listed project is open, so a section is the only card. 기본 정보 no
+  longer shows the project ID (an internal key, kept in the URL).
   - `ProjectSettingsLayout` is the parent of `/settings/project` and
     `/settings/project/:projectId/{general,paths,git}`. It reads GET `/api/v1/projects?status=all`
     once per entry (`components/useProjectList.ts`); the picker shows active projects by default and
@@ -100,7 +123,9 @@ v0.2 환경 설정 (flowgate.v02.0020, approved mockups 11~14; reorganised by fl
   After every change the list is read again; only when that GET succeeds is the change reported
   done. A failed re-read keeps its error above the last list (retry = that GET only, never the
   change), closes the drawer and shows a "not confirmed" warning instead of the success notice.
-- 내 설정 (`meApi.ts`, `components/meNav.ts`; flowgate.v02.0076 T#2), open to every signed-in person:
+- 내 설정 (`meApi.ts`, `components/meNav.ts`; flowgate.v02.0076 T#2), open to every signed-in person.
+  Screen (flowgate.v02.0077): sections of setting rows; 보안 · 세션 lists the sessions as a table and
+  opens the three password inputs with 변경 (취소 closes them and forgets the input).
   - 계정 · 화면 (`MeAccountSettingsView`): `/auth/me` username/email read-only, 표시 언어 ko/ja/en
     (`preferred_locale`; `@shared/api` sends it as X-Locale), 완료 카드 유지 시간 on
     GET/PATCH `/api/v1/me/ui-settings` (shared domain -1, 0, 30 … 1440; a failed save restores the
@@ -109,5 +134,9 @@ v0.2 환경 설정 (flowgate.v02.0020, approved mockups 11~14; reorganised by fl
     other sessions, POST `/auth/sessions/revoke-others` after a confirmation, the current session via
     POST `/auth/logout` (`core/auth/logout.ts`), POST `/auth/password/change`. No TOTP control: no
     self-service API reports the person's TOTP state and `/auth/totp/setup` would replace a secret.
+- 개요 › 확인 필요 (flowgate.v02.0077, mockup ⑩): for a system administrator the overview reads
+  GET `/api/v1/system/agents` once and lists the Agents that need a look, each with 확인 (→ 시스템
+  Agent with that Agent open). A non-administrator's overview sends nothing, and an answer that
+  arrives after leaving or after the role went is dropped.
 - The Workspace and 시스템 › 보안 views and their API adapter functions stay in the source, but no
   route opens them any more.

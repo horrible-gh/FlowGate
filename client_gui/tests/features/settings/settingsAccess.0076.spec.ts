@@ -116,6 +116,8 @@ async function enterDirectly(url: string): Promise<VueWrapper> {
 const location = () => window.location.pathname + window.location.search + window.location.hash
 const hrefs = (w: VueWrapper) => w.findAll('a[href]').map((a) => a.attributes('href') ?? '')
 const settingsRequests = () => net.requests.filter((r) => r !== 'GET /auth/me')
+/** flowgate.v02.0077: an administrator's overview reads the Agent list once for 확인 필요 (시안 ⑩). */
+const HUB_ADMIN_READ = ['GET /api/v1/system/agents']
 
 function expectNoManagementDom(w: VueWrapper): void {
   expect(w.find('[data-panel="users"]').exists()).toBe(false)
@@ -184,13 +186,14 @@ describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
     expect(hub.get('[data-scope-card="system"] a').attributes('href')).toBe('/app/settings/system/general')
     expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 Agent', '사용자', '전체 프로젝트'])
     expectNoRetiredOrInertEntries(hub)
-    expect(settingsRequests()).toEqual([]) // the overview loads no page data
+    expect(settingsRequests()).toEqual(HUB_ADMIN_READ) // the overview's only read: 확인 필요 (0077)
     hub.unmount()
 
     const page = await enterDirectly('/settings/system/users')
     expect(page.findAll('[data-scope]').map((t) => t.attributes('data-scope'))).toEqual(['me', 'project', 'system'])
     expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'users', 'projects'])
-    expect(page.find('.subnav-group').exists()).toBe(false)
+    // flowgate.v02.0077 (시안 ⑩): the four pages under their group headings — headings only, no extra entry.
+    expect(page.findAll('.subnav-group').map((g) => g.text())).toEqual(['운영', '실행 자원', '계정 · 프로젝트'])
     for (const href of hrefs(page)) expect(href).not.toMatch(/\/settings\/(workspaces|system\/security)/)
     for (const key of ['storage', 'environment', 'logs', 'security', 'info', 'workspace']) {
       expect(page.find(`[data-subnav="${key}"]`).exists()).toBe(false)
@@ -321,7 +324,7 @@ describe('V03 권한 로딩 — neutral loading only until /auth/me answers', ()
     await waitForRoute('/settings')
     expect(w.find('.settings-hub').exists()).toBe(true)
     expect(w.find('[data-testid="settings-access-notice"]').exists()).toBe(false)
-    expect(settingsRequests()).toEqual([])
+    expect(settingsRequests()).toEqual(HUB_ADMIN_READ) // no project request; only the overview's 확인 필요 read
   })
 
   it('a failed /auth/me never opens an admin screen', async () => {
@@ -344,11 +347,11 @@ describe('V04 폐지 URL — replaced by the overview, no old screen, Back does 
       expect(w.find('.settings-hub').exists()).toBe(true)
       expect(w.find('[data-testid="settings-access-notice"]').exists()).toBe(false)
       expect(w.find('[data-workspace], [data-tfa-scope], [data-testid="ws-search"]').exists()).toBe(false)
-      expect(net.requests).toEqual([])
+      expect(net.requests).toEqual(label === 'A' ? HUB_ADMIN_READ : [])
     })
   }
 
-  it.each([['A', ADMIN], ['P', NON_ADMINS[0][1]]] as const)('%s: Back onto an old Workspace entry lands on the overview once, then moves on', async (_label, person) => {
+  it.each([['A', ADMIN], ['P', NON_ADMINS[0][1]]] as const)('%s: Back onto an old Workspace entry lands on the overview once, then moves on', async (label, person) => {
     setCurrentUser(person)
     await router.push('/projects') // an earlier screen
     // The entry an earlier build's Workspace screen left in this tab's history (vue-router state included).
@@ -381,7 +384,7 @@ describe('V04 폐지 URL — replaced by the overview, no old screen, Back does 
     await waitForRoute('/projects')
     expect(router.currentRoute.value.fullPath).toBe('/projects')
     expect(w.find('[data-workspace], [data-testid="ws-search"]').exists()).toBe(false)
-    expect(net.requests).toEqual([])
+    expect(net.requests).toEqual(label === 'A' ? HUB_ADMIN_READ : [])
   })
 
   it('other unknown /settings/* paths go to the overview; paths outside /settings keep their URL', async () => {
