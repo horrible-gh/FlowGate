@@ -133,12 +133,13 @@ export interface SystemUsersResponse {
   workspaces: { workspace_id: string; name: string }[]
 }
 
+/** POST /system/users. flowgate.v02.0076 T#3: the screen no longer picks a workspace, so the
+ *  body carries no workspace_id at all (not even an empty one); the server's field stays. */
 export interface CreateUserInput {
   name: string
   email: string
   start: 'invite' | 'password'
   is_admin: boolean
-  workspace_id: string | null
 }
 
 /** A one-time credential the administrator hands over: an invitation link or a temporary
@@ -178,3 +179,130 @@ export interface SecurityResponse {
   people: SecurityPerson[]
   signed_out?: number
 }
+
+// ── 시스템 › 일반 (flowgate.v02.0076 T#3, D §2.5) ─────────────────────────────
+
+/** GET /system/storage-root (storage/paths.describe_storage_root). Read only here. */
+export interface SystemStorageRoot {
+  project_id: string | null
+  /** The stored system_settings.storage_root; null when unset. */
+  configured_value: string | null
+  project_override: string | null
+  effective_value: string
+  effective_source: 'env' | 'project_override' | 'system_setting' | 'default'
+  env_override: boolean
+}
+
+/** One row of GET /system/settings `settings` and PATCH `updated`. */
+export interface SystemSettingRow {
+  setting_key: string
+  setting_value: string | null
+  value_type: string
+}
+
+export type ScratchUnit = 'minute' | 'hour' | 'day'
+
+// ── 시스템 › 시스템 Agent (flowgate.v02.0076 T#4, D §2.6) ─────────────────────
+
+export type AgentLocation = 'local' | 'remote'
+export type AgentCapability = 'ai_cli' | 'ai_api' | 'storage'
+export type AgentCapabilities = Record<AgentCapability, boolean>
+
+/** One Agent of GET /system/agents (services/agent_registry.detail); also the answer of POST, PATCH
+ *  and credential/revoke. Holds no secret: the enrollment token is only in AgentEnrollment. */
+export interface SystemAgent {
+  agent_id: string
+  name: string
+  enabled: boolean
+  location: AgentLocation
+  /** 'agent_pull' for remote, null for local. */
+  connection_mode: 'agent_pull' | null
+  local_executable_path: string | null
+  configured_capabilities: AgentCapabilities
+  /** null until the Agent reported (heartbeat); local never reports. */
+  reported_capabilities: Record<AgentCapability, boolean | null>
+  effective_capabilities: AgentCapabilities
+  registration_status: 'registered' | 'revoked' | 'unregistered'
+  credential_status: 'active' | 'revoked' | 'none'
+  has_registration_history: boolean
+  enrollment_status: 'pending' | 'none'
+  enrollment_expires_at: string | null
+  online_status: 'online' | 'offline' | 'not_applicable'
+  last_seen_at: string | null
+  agent_version: string | null
+  protocol_version: number | null
+  protocol_compatibility: 'unknown' | 'compatible' | 'incompatible'
+  last_rejected_protocol_version: number | null
+  last_protocol_rejection_at: string | null
+  os: string | null
+  architecture: string | null
+}
+
+/** POST /system/agents: every field (the route has no defaults). */
+export interface SystemAgentCreate {
+  name: string
+  enabled: boolean
+  location: AgentLocation
+  connection_mode: 'agent_pull' | null
+  local_executable_path: string | null
+  configured_capabilities: AgentCapabilities
+}
+
+/** PATCH /system/agents/{aid}: only the changed fields; location / connection_mode are never sent. */
+export type SystemAgentChanges = Partial<Pick<SystemAgent, 'name' | 'enabled' | 'local_executable_path' | 'configured_capabilities'>>
+
+/** POST /system/agents/{aid}/enrollments (201): the token exists only in this answer. */
+export interface AgentEnrollment {
+  agent_id: string
+  enrollment_token: string
+  expires_at: string
+}
+
+// ── 프로젝트 조회 · 시스템 › 전체 프로젝트 (flowgate.v02.0076 T#5, D §2.3/§2.4/§2.8) ─────
+
+/** One module of a project row (GET /projects attaches `name` and `title`). */
+export interface ProjectModuleRef {
+  name: string
+  title: string
+}
+
+/** One row of GET /projects?status=all, read as the server sends it. `is_active` is the stored
+ *  archive flag (1/0 from the database, a boolean from some stores) — not "the current project". */
+export interface ProjectRow {
+  project_id: string
+  project_name: string
+  description: string | null
+  is_active: boolean
+  modules: ProjectModuleRef[]
+}
+
+/** GET /projects/{project_id}/storage-root (storage/paths.describe_storage_root). Read only here.
+ *  A different contract from GET /system/settings/storage-root, which this screen never calls. */
+export interface ProjectStorageRoot {
+  project_id: string
+  /** The stored system_settings.storage_root; null when unset. */
+  configured_value: string | null
+  /** The stored project storage_root_override; null when unset. */
+  project_override: string | null
+  effective_value: string
+  effective_source: 'env' | 'project_override' | 'system_setting' | 'default'
+  env_override: boolean
+}
+
+/** `config` of GET /projects/{project_id}/git/config (services/git/config._config_view): the secret
+ *  is only reported as registered or not (and masked); this screen shows only whether it is. */
+export interface ProjectGitConfig {
+  repo_url: string
+  provider: string
+  enabled: boolean
+  base_branch: string
+  default_finalize_action: string
+  author_name: string | null
+  author_email: string | null
+  has_secret: boolean
+}
+
+/** GET /projects/{project_id}/git/config. `configured: false` with `config: null` is 미설정, not an error. */
+export type ProjectGitConfigView =
+  | { configured: true; config: ProjectGitConfig }
+  | { configured: false; config: null }

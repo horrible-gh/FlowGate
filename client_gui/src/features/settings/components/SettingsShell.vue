@@ -8,24 +8,20 @@
       </template>
     </nav>
 
-    <div class="scope-switch" role="tablist" :aria-label="t('gui.settings.scope_aria')">
-      <component
-        :is="tab.to && !tab.disabled ? RouterLinkComp : 'button'"
+    <div v-if="tabs.length" class="scope-switch" role="tablist" :aria-label="t('gui.settings.scope_aria')">
+      <RouterLink
         v-for="tab in tabs"
         :key="tab.key"
-        :to="tab.to && !tab.disabled ? tab.to : undefined"
-        :type="tab.to && !tab.disabled ? undefined : 'button'"
+        :to="tab.to"
         class="scope-tab"
-        :class="[tab.key, { on: tab.key === scope, disabled: tab.disabled }]"
+        :class="[tab.key, { on: tab.key === scope }]"
         role="tab"
         :aria-selected="tab.key === scope"
-        :aria-disabled="tab.disabled || undefined"
-        :title="tab.disabled ? tab.reason : undefined"
         :data-scope="tab.key"
       >
         <SettingsIcon :name="tab.icon" size="lg" />
         <b>{{ tab.label }}</b>
-      </component>
+      </RouterLink>
     </div>
 
     <div class="shell">
@@ -40,19 +36,22 @@
 </template>
 
 <script setup lang="ts">
-// The frame every Environment Settings screen renders in (시안 11~14): breadcrumb, the four
-// scope tabs (사용자 / 워크스페이스 / 시스템 / 프로젝트) and a sub-navigation + body split.
-// 사용자 and 프로젝트 settings are not part of this step, so their tabs are shown but inert
-// ("준비 중"); 시스템 is for system administrators only.
+// The frame every Environment Settings screen renders in (시안 11~14): breadcrumb, the scope
+// tabs and a sub-navigation + body split. flowgate.v02.0076 T#1: the tabs are the scopes of the
+// shared settings menu (../settingsMenu) — 내 설정 / 프로젝트 / 시스템, each shown only when one of
+// its screens is registered and allowed (프로젝트/시스템: system administrators) and opening the
+// first of them. Workspace and "준비 중" tabs are gone. Loading the page's data stays with the
+// page itself.
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useCurrentUser } from '@/core/auth/currentUser'
 import SettingsIcon from '../SettingsIcon.vue'
 import type { SettingsIconName } from '../icons'
+import { useSettingsMenu, type SettingsScopeKey } from '../settingsMenu'
 import '../settings.css'
 
-export type SettingsScope = 'user' | 'workspace' | 'system' | 'project'
+/** 'workspace' is only passed by the Workspace views, which no route opens any more (0076 T#1). */
+export type SettingsScope = SettingsScopeKey | 'workspace'
 export interface SettingsCrumb {
   label: string
   to?: string
@@ -61,31 +60,27 @@ export interface SettingsCrumb {
 defineProps<{ crumbs: SettingsCrumb[]; scope: SettingsScope }>()
 
 const { t } = useI18n()
-const { user } = useCurrentUser()
-const RouterLinkComp = RouterLink
+const menu = useSettingsMenu()
 
 interface ScopeTab {
-  key: SettingsScope
+  key: SettingsScopeKey
   icon: SettingsIconName
   label: string
-  to?: string
-  disabled: boolean
-  reason?: string
+  to: string
 }
 
-const tabs = computed<ScopeTab[]>(() => [
-  { key: 'user', icon: 'user', label: t('gui.settings.scope.user'), disabled: true, reason: t('gui.settings.not_ready') },
-  { key: 'workspace', icon: 'grid', label: t('gui.settings.scope.workspace'), to: '/settings/workspaces', disabled: false },
-  {
-    key: 'system',
-    icon: 'globe',
-    label: t('gui.settings.scope.system'),
-    to: '/settings/system/users',
-    disabled: !user.value?.isAdmin,
-    reason: t('gui.settings.admin_only'),
-  },
-  { key: 'project', icon: 'folder', label: t('gui.settings.scope.project'), disabled: true, reason: t('gui.settings.not_ready') },
-])
+const SCOPES: { key: SettingsScopeKey; icon: SettingsIconName; labelKey: string }[] = [
+  { key: 'me', icon: 'user', labelKey: 'gui.settings.scope.me' },
+  { key: 'project', icon: 'folder', labelKey: 'gui.settings.scope.project' },
+  { key: 'system', icon: 'globe', labelKey: 'gui.settings.scope.system' },
+]
+
+const tabs = computed<ScopeTab[]>(() =>
+  SCOPES.flatMap((scope) => {
+    const first = menu.value.find((page) => page.scope === scope.key)
+    return first ? [{ key: scope.key, icon: scope.icon, label: t(scope.labelKey), to: first.path }] : []
+  }),
+)
 </script>
 
 <style scoped>
@@ -126,7 +121,8 @@ const tabs = computed<ScopeTab[]>(() => [
 
 .scope-switch {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 8px;
   margin-bottom: 16px;
 }
@@ -156,11 +152,6 @@ const tabs = computed<ScopeTab[]>(() => [
   background: #112c4d;
   color: #fff;
   box-shadow: inset 0 0 20px rgba(44, 124, 255, 0.08);
-}
-
-.scope-tab.disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
 }
 
 .shell {

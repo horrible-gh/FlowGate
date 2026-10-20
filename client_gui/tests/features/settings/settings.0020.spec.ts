@@ -37,10 +37,10 @@ function makeRouter(): Router {
   return createRouter({
     history: createMemoryHistory('/app'),
     routes: [
-      { path: '/settings', component: SettingsHubView },
+      { path: '/settings', name: 'settings', component: SettingsHubView },
       { path: '/settings/workspaces', component: WorkspaceListView },
       { path: '/settings/workspaces/:workspaceId', component: WorkspaceDetailView, props: true },
-      { path: '/settings/system/users', component: SystemUsersView },
+      { path: '/settings/system/users', name: 'settings-system-users', component: SystemUsersView },
       { path: '/settings/system/security', component: SystemSecurityView },
       { path: '/:rest(.*)*', component: stub },
     ],
@@ -152,19 +152,23 @@ afterEach(() => {
 })
 
 describe('환경 설정 hub (시안 11 #hub)', () => {
-  it('opens 워크스페이스 and, for an administrator, 시스템; 사용자/프로젝트 stay inert', async () => {
+  // flowgate.v02.0076 T#1: the cards come from the registered settings routes; Workspace and the
+  // inert "준비 중" cards are gone. 내 설정 / 프로젝트 appear once their views' routes exist.
+  it('opens 시스템 for an administrator and shows no Workspace, inert or "준비 중" card', async () => {
     const { wrapper } = await mountAt('/settings')
-    expect(wrapper.find('[data-scope-card="workspace"] a').attributes('href')).toBe('/app/settings/workspaces')
+    expect(wrapper.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['system'])
     expect(wrapper.find('[data-scope-card="system"] a').attributes('href')).toBe('/app/settings/system/users')
-    expect(wrapper.find('[data-scope-card="user"] a').exists()).toBe(false)
-    expect(wrapper.find('[data-scope-card="project"] a').exists()).toBe(false)
+    expect(wrapper.find('[data-scope-card="workspace"]').exists()).toBe(false)
+    expect(wrapper.find('.openbtn.disabled').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('준비 중')
   })
 
   it('keeps 시스템 closed to a non-administrator', async () => {
     setCurrentUser({ username: 'kim', email: null, isAdmin: false })
     const { wrapper } = await mountAt('/settings')
-    expect(wrapper.find('[data-scope-card="system"] a').exists()).toBe(false)
-    expect(wrapper.find('[data-scope-card="system"]').text()).toContain('시스템 관리자 전용')
+    expect(wrapper.find('[data-scope-card="system"]').exists()).toBe(false)
+    expect(wrapper.find('a[href^="/app/settings/system"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="settings-hub-empty"]').exists()).toBe(true)
   })
 })
 
@@ -329,8 +333,8 @@ describe('시스템 › 사용자 (시안 13)', () => {
     expect(wrapper.get('[data-testid="users-total"]').text()).toBe('3')
     await wrapper.get('[data-testid="tile-2fa"]').trigger('click')
     expect(wrapper.findAll('[data-user]').map((r) => r.attributes('data-user'))).toEqual(['u2', 'u3'])
-    await wrapper.get('[data-testid="tile-nows"]').trigger('click')
-    expect(wrapper.findAll('[data-user]').map((r) => r.attributes('data-user'))).toEqual(['u3'])
+    // flowgate.v02.0076 T#3: the Workspace tile / filter is gone (D §2.7).
+    expect(wrapper.find('[data-testid="tile-nows"]').exists()).toBe(false)
   })
 
   it('opens the 2FA-missing filter from the 보안 link (#2fa=none)', async () => {
@@ -362,11 +366,12 @@ describe('시스템 › 사용자 (시안 13)', () => {
     await wrapper.get('[data-testid="user-create"]').trigger('click')
     await wrapper.get('[data-testid="new-user-name"]').setValue('Han Seojun')
     await wrapper.get('[data-testid="new-user-email"]').setValue('han@example.com')
-    await wrapper.get('[data-testid="new-user-ws"]').setValue('ws_default')
+    // flowgate.v02.0076 T#3: no Workspace picker; the create input carries no workspace_id.
+    expect(wrapper.find('[data-testid="new-user-ws"]').exists()).toBe(false)
     await wrapper.get('[data-testid="user-create-confirm"]').trigger('click')
     await flushPromises()
     expect(m.createSystemUser).toHaveBeenCalledWith({
-      name: 'Han Seojun', email: 'han@example.com', start: 'invite', is_admin: false, workspace_id: 'ws_default',
+      name: 'Han Seojun', email: 'han@example.com', start: 'invite', is_admin: false,
     })
     expect(wrapper.get('[data-testid="credential-value"]').text()).toContain('/login?invite=tok123')
 
