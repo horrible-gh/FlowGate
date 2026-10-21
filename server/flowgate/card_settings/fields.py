@@ -17,7 +17,11 @@ Pure. The 0053 CH agreement (§4 "settings as drawn") and the v7 settings blocks
   an explicit AI assignee -> AI; else a person, the default) runs as one AI run of its own: ``run_plan`` hands on its
   work AI, time limit and restarts (no instruction stage, no result type: the AI writes the WP itself, the type the
   result binder binds), and ``after_result`` gives it the run cards' review / approval. A plan card a person writes is
-  unchanged: its result waits for a person's approval of the card. Still no engine reads the switch (no
+  unchanged: its result waits for a person's approval of the card. flowgate.v02.0083 WP-4 (a new path): a plan card a
+  person writes takes the same ``after_result`` once its result is bound (``review_stage.person_result``) — every
+  submission (the result, a new revision, a ``mark_revised``) gets one AI review with no AI rework (count 1 or more and
+  until it passes run the same), or with review 'none' the automatic approval under the run issuer's authority; any
+  other end waits for a person's approval as before. Still no engine reads the switch (no
   pre-instruction writer exists), and the run block is not the Steps' own AI / review AI inside the WP document body
   (``provider_id`` / ``reviewer_provider_id``), which nothing here reads or changes. Turning the switch off deletes no
   Step's pre-instruction.
@@ -317,11 +321,14 @@ def after_result(kind: Optional[str], stored: dict) -> Optional[str]:
     return APPROVE
 
 
-def review_loop(stored: dict, *, reviewer: str, reworker: str) -> dict:
+def review_loop(stored: dict, *, reviewer: str, reworker: Optional[str]) -> dict:
     """The v0.1 document review loop request of a card's review (``after_result`` = ``REVIEW``).
 
     Review count and basis are the card's; the reviewer is its review AI (resolved by the caller,
     the project default when the card names none) and the rework goes to the AI that runs the node.
+    flowgate.v02.0083 WP-4: a work plan a person writes has no rework AI (``reworker`` None): its author revises, and
+    each submission is reviewed once (its caller asks ``review_count`` 1, whatever the card's count of 1 or more, or
+    until it passes: the same for a person's WP). The count of an AI card's loop (review + rework pairs) is unchanged.
     The rework hop gets the longest loop budget within the card's time limit, failure restarts follow
     the card's restart within the loop's own range, and the loop as a whole gets its longest budget.
     """

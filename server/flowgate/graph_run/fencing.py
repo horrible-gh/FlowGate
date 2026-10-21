@@ -399,19 +399,32 @@ def node_refused(run_id: str, node_key: str, operation: str, attempt_id: Optiona
 
 
 @contextlib.contextmanager
-def node_hold(run_id: str, node_key: str, attempt_id: Optional[str], operation: str):
+def node_hold(run_id: str, node_key: str, attempt_id: Optional[str], operation: str, *, idle_ok: bool = False,
+              also=None):
     """The run-end stage's side effect for the attempt ``attempt_id`` an execution was made for (the instruction's
     automatic approval and the result stage, the result's automatic approval): judged as ``node_refused`` under the
     shared hold of the Flow's gate, kept until the body (its approval and commits) is over — so no ``stopping``
     commits between the judgement and the approval. Yields True to go on, False when refused (the refusal is
-    recorded after the hold is released). Outside every Flow guard."""
+    recorded after the hold is released). Outside every Flow guard.
+
+    flowgate.v02.0083 WP-4: a person's result stage (its review's start, its automatic approval) is taken on an idle
+    run too (``idle_ok``: ``IDLE_EXCEPTED``, as Q439 takes a person's own step), and ``also`` — the stage's own
+    conditions, a reason or None (the run still the Flow's, not stopped, no Time Machine operation unfinished) — is
+    judged under the same hold, so a Stop or a Time Machine rewind (both take the gate exclusively) commits either
+    before the judgement, which then refuses, or after the body. Its refusal is recorded as the attempt's."""
     run = run_store.run_by_id(run_id)
     if run is None:
         yield False
         return
     found = None
     with shared(run["group_id"]):
-        found = _node_judgement(run_id, node_key, attempt_id)
+        found = _node_judgement(run_id, node_key, attempt_id, IDLE_EXCEPTED if idle_ok else WRITABLE)
+        why = also() if found is None and also is not None else None
+        if why:
+            active = attempt_id or run_store.active_attempt_id(run_id, node_key)
+            row = attempt_row(active) if active else None
+            found = (row or {"run_id": run_id, "group_id": run["group_id"], "attempt_id": active,
+                             "node_key": node_key}, why, {})
         if found is None:
             yield True
             return

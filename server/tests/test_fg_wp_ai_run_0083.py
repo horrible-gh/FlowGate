@@ -22,8 +22,9 @@ to a person — open / active, no job. Covered here:
 (e) the reported state (a person's token, open / active, no job, the work AI stored) is reassigned to the AI by one
     resume (``go_on_command`` -> ``needs_ai_dispatch``);
 
-and the regressions: run / test cards still approve by themselves, person-assigned WP / run cards keep a person's
-writing and approval wait, and a step command keeps the next card pending.
+and the regressions: run / test cards still approve by themselves, person-assigned run cards keep a person's
+writing and approval (0083 WP-4 개정: a person's WP takes its card's review / approval, ``test_fg_person_wp_review_0083``),
+and a step command keeps the next card pending.
 
 On the card settings suites' real SQLite DB, routes and fixtures (``test_fg_card_settings``,
 ``test_fg_card_settings_review``, ``test_fg_card_approval_0056``); the AI invoke admission is a recorder, as there.
@@ -448,8 +449,11 @@ def test_r_run_and_test_cards_keep_their_judgement(env):
     assert f.run_plan(f.TEST, {"time_limit": 120, "restart": 1}) == {"settings": {}}     # TEST: as before
 
 
-@pytest.mark.parametrize("doc_type, typ", [("WP", "WP"), ("T", "T")])
-def test_r_a_person_assigned_wp_or_run_card_keeps_a_person_s_writing_and_approval(env, decided, doc_type, typ):
+@pytest.mark.parametrize("doc_type, typ", [("T", "T")])
+def test_r_a_person_assigned_run_card_keeps_a_person_s_writing_and_approval_revised_0083_wp4(env, decided, doc_type, typ):
+    """0083 WP-4 개정 (revised): the WP case is gone from here. A work plan a person writes now takes its card's review
+    or, review 'none' (this card), its automatic approval (``test_fg_person_wp_review_0083``); a person's run card still
+    waits for a person's approval."""
     _admin_and_reviewer(env)
     [key] = _cards(env, [(doc_type, LEE)], {0: (("run_ai", "aip_card"),)})
     _start(env)

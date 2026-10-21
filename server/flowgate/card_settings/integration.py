@@ -19,6 +19,8 @@ root (``startup.py``) calls :func:`register` once at startup.
     token_step_type  the source tools' step type of a node token (``settings.token_step_type``)
     node_running     a card title save: the card is running (``legacy_adapter.node_running``, the card settings lock;
                      0064 T-B4b)
+    person_result    result binding: a person's work plan result takes its card's review or automatic approval
+                     (``review_stage``, flowgate.v02.0083 WP-4)
     after_registration   the inbox's card title candidate of a registration (``modules.flow_gate.services.
                      node_title_hooks``): the Graph's AI naming applies it (``node_title_ai``, 0064 T-B4d)
 """
@@ -40,6 +42,7 @@ def register() -> None:
     ports.register(ports.APPROVE_INSTRUCTION, review_stage.approve_instruction)
     ports.register(ports.REVIEW_INSTRUCTION, review_stage.review_instruction)
     ports.register(ports.NODE_RUNNING, legacy_adapter.node_running)
+    ports.register(ports.PERSON_RESULT, review_stage.person_result)          # flowgate.v02.0083 WP-4
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDED, review_stage.on_run_ended)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDING, review_stage.on_run_ending)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_QUESTION_ANSWERED, question_wait.on_question_answered)

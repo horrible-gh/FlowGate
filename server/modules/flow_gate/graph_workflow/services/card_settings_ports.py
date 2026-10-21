@@ -24,6 +24,10 @@ named ports the Graph calls and the composition root (``startup.py``) registers 
     node_running     a card title save, inside its Flow guard (0064 T-B4b, 0062 L0006 2.7 step 4): the card is
                      running — open in the active run, or in review while its AI review works — the same
                      judgement that locks the card settings
+    person_result    result binding, inside its Flow guard before its settlement (flowgate.v02.0083 WP-4): a result
+                     of the node was submitted, revised or put back in review (``mark_revised``); the card answers the
+                     step that follows it after the commit (a person's work plan: its AI review or its automatic
+                     approval) as a callable the binder runs with its post-commit jobs, or None
 
 ``run_settings`` answers a dict; every key is optional and an absent key keeps the existing default:
 
@@ -54,7 +58,9 @@ INSTRUCTION_DOCUMENT = "instruction_document"
 APPROVE_INSTRUCTION = "approve_instruction"
 REVIEW_INSTRUCTION = "review_instruction"
 NODE_RUNNING = "node_running"
-PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING)
+PERSON_RESULT = "person_result"                                  # flowgate.v02.0083 WP-4
+PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING,
+              PERSON_RESULT)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -144,3 +150,13 @@ def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id
     """True means instruction review owns the handoff (including a refused/failed review start)."""
     handler = _handler(REVIEW_INSTRUCTION)
     return bool(handler(flow_id, node, doc_id, actor, run_id, attempt_id)) if handler else False
+
+
+def person_result(flow_id: str, node: dict, doc_id: str) -> Optional[Callable[[], None]]:
+    """``node`` (the run's node row) has ``doc_id`` as its result just submitted, revised or put back in review: the
+    card's step after the commit, or None (no handler: None, the result waits for a person's approval as before)."""
+    handler = _handler(PERSON_RESULT)
+    if handler is None:
+        return None
+    job = handler(flow_id, node, doc_id)
+    return job if callable(job) else None

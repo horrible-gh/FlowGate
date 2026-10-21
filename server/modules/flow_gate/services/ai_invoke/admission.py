@@ -973,6 +973,7 @@ def start_run(
     # 0417 D0007/P0008: stage selection precedes provider-chain selection. In particular,
     # an unaddressed rejection starts with the fixed rework provider, never the reviewer.
     graph_loop_state = None
+    author_revision = False
     if document_review_loop is not None:
         graph_loop_state = graph_execution_hooks.call("loop_state", graph_exec_id) if graph_exec_id else None
         if graph_loop_state:
@@ -984,6 +985,9 @@ def start_run(
             initial_stage = (
                 REWORK_HOP_KIND if document_review_loop["starts_with_rework"] else REVIEW_HOP_KIND
             )
+        # flowgate.v02.0083 WP-4: a loop with no rework AI (its author revises) is refused in rework and stores its
+        # reviewer in the row's rework column; the run carries the fact for its checkpoints (``review_loop_author_revision``).
+        author_revision = review.admit_author_revision_loop(document_review_loop, initial_stage)
         provider_id = review.resolve_loop_provider(document_review_loop, initial_stage)
         provider_pinned = True
     continuation_instruction_mode = normalize_continuation_instruction_mode(
@@ -1907,6 +1911,7 @@ def start_run(
         "continuation_review_count_overrides": review_count_overrides,
         "continuation_reviewer_overrides": reviewer_overrides,
         "document_review_loop": document_review_loop,
+        "review_loop_author_revision": author_revision,      # 0083 WP-4: read by the loop's checkpoint
         "hop_kind": hop_kind,
         "hop_review_count": hop_review_count,
         "hop_reviewer_provider_id": hop_reviewer_provider_id,

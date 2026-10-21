@@ -64,6 +64,13 @@ def after_inbox_registered(flow_id: Optional[str], doc_id: str, doc_type: str, t
                                   {"doc_id": doc_id, "doc_type": doc_type, "token_id": token_id})
 
 
+def after_inbox_edited(flow_id: Optional[str], doc_id: str, revision_no: int, token_id: Optional[str]) -> None:
+    """inbox edit committed: the document's new revision ``revision_no`` registered in place (flowgate.v02.0083 WP-4: a
+    node's result revised in place is a new submission its card follows). Never raises, never changes the response."""
+    _contact.after_document_event("inbox_edited", flow_id,
+                                  {"doc_id": doc_id, "revision_no": revision_no, "token_id": token_id})
+
+
 def after_review_decided(flow_id: Optional[str], doc_id: str, action: str) -> None:
     """review decision committed (approve / reject / mark_revised). Never raises."""
     _contact.after_document_event("review_decided", flow_id, {"doc_id": doc_id, "action": action})

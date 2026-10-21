@@ -237,6 +237,14 @@ describe('the WP card’s settings form (flowgate.v02.0072 T#3)', () => {
     expect(w.get('[data-test="settings-pre-instruction-label"]').text()).toBe('AI事前指示書の作成')
     expect(rowLabels(w)[0]).toBe('作業AI')
   })
+
+  it('flowgate.v02.0083 WP-4 — the 검수 횟수 label tells that a person’s WP is reviewed once per submission', async () => {
+    const w = await mountTab()
+    const label = (name: string) =>
+      w.findAll('[data-test="inspector-control-row"]').find((row) => row.attributes('data-label') === name)!.get('.inspector-control-label')
+    expect(label('검수 횟수').attributes('title')).toBe('사람이 쓴 WP는 제출마다 검수 1회 · 1회 이상과 통과할 때까지가 같게 동작')
+    expect(label('재시작').attributes('title')).toBeUndefined()
+  })
 })
 
 // --- The switch --------------------------------------------------------------------------------------------

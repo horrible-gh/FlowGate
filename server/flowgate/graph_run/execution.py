@@ -298,9 +298,9 @@ def handoff_end(run):
         ledger.end_handoff(run["graph_exec_id"])
 
 
-def node_hold(run_id, node_key, attempt_id, operation):
-    """``graph_execution_hooks`` ``node_hold``: ``fencing.node_hold``."""
-    return fencing.node_hold(run_id, node_key, attempt_id, operation)
+def node_hold(run_id, node_key, attempt_id, operation, **options):
+    """``graph_execution_hooks`` ``node_hold``: ``fencing.node_hold`` (0083 WP-4: its ``idle_ok`` / ``also`` options)."""
+    return fencing.node_hold(run_id, node_key, attempt_id, operation, **options)
 
 
 def transition(run, loop):

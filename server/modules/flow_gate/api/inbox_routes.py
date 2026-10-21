@@ -6130,6 +6130,11 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             logger.warning(f"[inbox edit] Step 7.5 transition skipped ({doc_id}): {_tr_exc}")
         # T0007: the response was already written atomically with the revision CAS.
 
+    # flowgate.v02.0083 WP-4: a Graph-owned Flow hands the new revision to the result binder, as a registration's
+    # contact does (before the consume): a node's result revised in place is a new submission its card follows.
+    from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact
+    _graph_contact.after_inbox_edited(group["group_id"], doc_id, new_revision_no, token_rec.get("token_id"))
+
     # ── Step 8: Token consumption ────────────────────────────────────────────────────
     token_service.consume(
         token_id=token_rec["token_id"],
