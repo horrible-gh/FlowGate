@@ -597,29 +597,7 @@ def migrated_sqlite_db(tmp_path_factory):
         conn.execute("PRAGMA foreign_keys = ON")
         try:
             for migration_file in get_migration_files():
-                sql = migration_file.read_text(encoding="utf-8")
-                if migration_file.name == "138_chat_activity_anchor.sql":
-                    previous = (_MIGRATIONS_DIR / "137_chat_activity_anchor.sql").read_text(encoding="utf-8")
-                    statements = lambda text: "\n".join(
-                        line.strip() for line in text.splitlines()
-                        if line.strip() and not line.lstrip().startswith("--"))
-                    assert statements(sql) == statements(previous), "anchor migration drift"
-                    continue  # the exact same statements already ran in 137
-                if migration_file.name == "137_chat_command_execution.sql":
-                    # 136 and 137 came from separate branches. Only their four
-                    # identical indexes overlap; do not swallow migration errors.
-                    for name in ("idx_chat_cmd_run", "idx_chat_cmd_doc",
-                                 "idx_chat_cmd_status", "idx_run_changes_doc"):
-                        statement = next(line for line in sql.splitlines()
-                                         if line.startswith(f"CREATE INDEX {name} "))
-                        existing = conn.execute(
-                            "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
-                            (name,),
-                        ).fetchone()
-                        if existing is not None:
-                            assert existing[0].rstrip(";") == statement.rstrip(";"), name
-                            sql = sql.replace(statement, "-- identical index already created by 136")
-                conn.executescript(sql)
+                conn.executescript(migration_file.read_text(encoding="utf-8"))
             if seed_sql:
                 conn.executescript(seed_sql)
             conn.commit()

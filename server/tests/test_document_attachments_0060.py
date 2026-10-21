@@ -37,25 +37,13 @@ OTHER_DOC_ID = "flowgate.default.0060.0002-N"
 
 # ── fixtures ────────────────────────────────────────────────────────────────────
 
-# 0064 T#3: the base tree carries main's 136/137_chat_* next to v0.2's 137/138_chat_* (the same chat
-# tables, index and columns twice), so the strict conftest builder stops at 137_chat_command_execution.sql
-# ("index idx_chat_cmd_run already exists") before any test here runs. Only those two duplicates may fail,
-# and only with "already exists" / "duplicate column name"; every other migration error still fails.
-_BASE_DUPLICATE_MIGRATIONS = {"137_chat_command_execution.sql", "138_chat_activity_anchor.sql"}
-
-
 def _migrated_sqlite_db(tmp_path_factory, name: str, seed_sql: str) -> str:
     db_path = str(tmp_path_factory.mktemp("db") / name)
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON")
     try:
         for migration in sorted((_SERVER_DIR / "sql" / "migrations" / "sqlite").glob("*.sql")):
-            try:
-                conn.executescript(migration.read_text(encoding="utf-8"))
-            except sqlite3.OperationalError as exc:
-                duplicate = "already exists" in str(exc) or "duplicate column name" in str(exc)
-                if migration.name not in _BASE_DUPLICATE_MIGRATIONS or not duplicate:
-                    raise
+            conn.executescript(migration.read_text(encoding="utf-8"))
         conn.executescript(seed_sql)
         conn.commit()
     finally:
