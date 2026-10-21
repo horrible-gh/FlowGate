@@ -32,6 +32,9 @@ candidate opened by it — the step's boundary stays). ``idle_reason`` judges in
 person must act on comes before the Hold, which a person chose; a run with a held target left is never ``completed``
 (the completion policy needs every target done). ``no_targets`` means nothing was there to run: an empty run scope, a
 step that opened no target, or a full command with no run candidate left.
+
+0083 WP-2 (0061 T#2 개정, idle reason only): ``waiting_approval`` also covers an open card a person writes (its token
+issued, no dispatch failure, not an AI card) — it was ``no_targets`` before. No new idle reason value is added.
 """
 from __future__ import annotations
 
@@ -56,10 +59,14 @@ def _node_type(ctx, key: str) -> Optional[str]:
 
 
 def _waits_on_person(ctx, row: dict) -> bool:
-    """A gate open for its decision, or a card in review awaiting a person's approval."""
+    """0083 WP-2 / 0061 T#2 개정: an open human writer also uses waiting_approval."""
     node_type = _node_type(ctx, row["node_key"])
     if row["status"] == "open":
-        return node_type == engine.GATE_NODE_TYPE
+        if node_type == engine.GATE_NODE_TYPE:
+            return True
+        from modules.flow_gate.graph_workflow.services import card_settings_ports
+        return (bool(row.get("dispatch_token_issued")) and not _failed(ctx, row)
+                and not card_settings_ports.uses_ai(ctx.flow_id, ctx.node_rows.get(row["node_key"]) or {}))
     return row["status"] == "review" and engine.awaiting_approval(ctx.flow_id, row, node_type)
 
 

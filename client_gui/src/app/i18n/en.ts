@@ -661,7 +661,7 @@ export default {
       run_idle_reasons: {
         completed: 'Completed',
         no_targets: 'No card to run',
-        waiting_approval: 'Waiting for approval',
+        waiting_approval: 'Waiting for a person (writing or approval)',  // 0083 WP-2: an open human writer waits here too
         blocked_rejected: 'Stopped by a rejection',
         error: 'Stopped by an error',
         stopped: 'Stopped',

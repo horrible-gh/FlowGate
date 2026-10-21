@@ -151,10 +151,44 @@ def unconfirmed(run_id: str) -> list[str]:
     return [r["exec_id"] for r in rows if not _process_ended(r)]
 
 
-def _revoke(token_ids) -> None:
+def _revoke(token_ids, reason: str = INVALIDATED_REASON) -> None:
     from modules.flow_gate.services import ai_invoke_service
     for token_id in token_ids:
-        ai_invoke_service._reclaim_orphan_lease_token({"token_id": token_id}, INVALIDATED_REASON)
+        ai_invoke_service._reclaim_orphan_lease_token({"token_id": token_id}, reason)
+
+
+def invalidate_attempt(attempt_id: str, reason: str) -> bool:
+    """Inside the Flow guard and exclusive fence: invalidate and reclaim its tokens (0083 WP-2)."""
+    changed = run_store._affected(
+        "UPDATE graph_node_attempts SET status = 'invalidated', active_node_key = NULL, "
+        "invalidated_reason = ?, ended_at = ? WHERE attempt_id = ? AND status = 'active'",
+        [reason, ledger.now(), attempt_id])
+    if changed:
+        _revoke((r["token_id"] for r in run_store._all(
+            "SELECT token_id FROM graph_run_token_map WHERE attempt_id = ?", [attempt_id])), reason)
+    return bool(changed)
+
+
+def reset_node(ctx, row: dict, cause: str) -> bool:
+    """Shared Stop / recovery reset. Callers decide which nodes may be reset; done/root nodes stay intact."""
+    if row["status"] == "done" or int(row.get("root_bound") or 0):
+        return False
+    from modules.flow_gate.graph_workflow.services import run_apply
+    run_id = row["run_id"]
+    moved = run_store._affected(
+        "UPDATE graph_node_runs SET status = 'pending', result_doc_id = NULL, opened_at = NULL, "
+        "finished_at = NULL, dispatch_token_issued = NULL, dispatch_issued_to = NULL, "
+        "dispatch_mention_id = NULL, dispatch_error_code = NULL, stage = NULL, "
+        "instruction_doc_id = NULL, result_event_floor = NULL, updated_at = ? "
+        "WHERE run_id = ? AND node_key = ? AND status = ?",
+        [run_store.utc_now_ms(), run_id, row["node_key"], row["status"]])
+    if moved:
+        # A node opened before migration 151 has tokens of no attempt: they are revoked with it.
+        _revoke((r["token_id"] for r in run_store._all(
+            "SELECT token_id FROM graph_run_token_map WHERE run_id = ? AND node_key = ? AND attempt_id IS NULL",
+            [run_id, row["node_key"]])), cause)
+        run_apply.emit_node_state(ctx, row["node_key"], row["status"], "pending", cause, None)
+    return bool(moved)
 
 
 def _settle_executions(run: dict, actor: Optional[str]) -> list[str]:
@@ -170,30 +204,13 @@ def _settle_executions(run: dict, actor: Optional[str]) -> list[str]:
     active = [r["attempt_id"] for r in run_store._all(
         "SELECT attempt_id FROM graph_node_attempts WHERE run_id = ? AND status = 'active' "
         "AND COALESCE(integration_status, 'none') <> 'integrating'", [run_id])]
-    run_store._affected("UPDATE graph_node_attempts SET status = 'invalidated', active_node_key = NULL, "
-                        "invalidated_reason = ?, ended_at = ? WHERE run_id = ? AND status = 'active' "
-                        "AND COALESCE(integration_status, 'none') <> 'integrating'",
-                        [INVALIDATED_REASON, stamp, run_id])
     for attempt_id in active:
-        _revoke(r["token_id"] for r in run_store._all(
-            "SELECT token_id FROM graph_run_token_map WHERE attempt_id = ?", [attempt_id]))
+        invalidate_attempt(attempt_id, INVALIDATED_REASON)
     ctx = _context(run, actor)
     for row in run_store.node_runs(run_id):
         if row["status"] not in RESET_STATUSES or int(row.get("root_bound") or 0) or row["node_key"] in merging:
             continue
-        moved = run_store._affected(
-            "UPDATE graph_node_runs SET status = 'pending', result_doc_id = NULL, opened_at = NULL, "
-            "finished_at = NULL, dispatch_token_issued = NULL, dispatch_issued_to = NULL, "
-            "dispatch_mention_id = NULL, dispatch_error_code = NULL, stage = NULL, "
-            "instruction_doc_id = NULL, result_event_floor = NULL, updated_at = ? "
-            "WHERE run_id = ? AND node_key = ? AND status = ?",
-            [run_store.utc_now_ms(), run_id, row["node_key"], row["status"]])
-        if moved:
-            # A node opened before migration 151 has tokens of no attempt: they are revoked with it.
-            _revoke(r["token_id"] for r in run_store._all(
-                "SELECT token_id FROM graph_run_token_map WHERE run_id = ? AND node_key = ? AND attempt_id IS NULL",
-                [run_id, row["node_key"]]))
-            run_apply.emit_node_state(ctx, row["node_key"], row["status"], "pending", CAUSE_STOP, None)
+        reset_node(ctx, row, CAUSE_STOP)
     return stopped_attempts(run_id)
 
 

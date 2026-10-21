@@ -661,7 +661,7 @@ export default {
       run_idle_reasons: {
         completed: '完了',
         no_targets: '実行するカードなし',
-        waiting_approval: '承認待ち',
+        waiting_approval: '担当者の作成・承認待ち',  // 0083 WP-2: an open human writer waits here too
         blocked_rejected: '差し戻しで停止',
         error: 'エラーで停止',
         stopped: '停止済み',

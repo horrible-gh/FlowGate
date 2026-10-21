@@ -42,6 +42,7 @@ export interface RunCurrent {
   readonly runId: string
   /** `running` | `stopped` | `completed` as sent. */
   readonly status: string
+  readonly idleReason?: string | null
   readonly nodes: readonly RunNodeState[]
   /** flowgate.v02.0056 F2-1: cards approved while the run was stopped (their successors wait); absent when not sent. */
   readonly pendingPropagationCount?: number
@@ -59,6 +60,7 @@ export function toRunCurrent(raw: unknown): RunCurrent | null {
   return {
     runId: run.run_id,
     status: typeof run.status === 'string' ? run.status : '',
+    ...('idle_reason' in run ? { idleReason: text(run.idle_reason) } : {}),
     nodes: rows
       .filter((row): row is Raw => !!row && typeof row === 'object' && typeof (row as Raw).node_key === 'string')
       .map((row) => ({
@@ -79,6 +81,12 @@ const texts = (value: unknown): string[] => (Array.isArray(value) ? value.filter
 /** The Flow's running or stopped run with its nodes, or null. */
 export async function runCurrentRead(flowId: string): Promise<RunCurrent | null> {
   const response = await getRequest<Raw>(`${API}/flows/${encodeURIComponent(flowId)}/runs/current`)
+  return toRunCurrent(response.data?.run)
+}
+
+/** 0083 WP-2: reset one idle open card; its next explicit resume allocates a new attempt. */
+export async function runCardRecover(runId: string, nodeKey: string): Promise<RunCurrent | null> {
+  const response = await postRequest<Raw>(`${API}/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeKey)}/recover`, {})
   return toRunCurrent(response.data?.run)
 }
 
