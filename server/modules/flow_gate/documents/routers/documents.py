@@ -2742,7 +2742,7 @@ def get_document_rpc(
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     """Fetch a single document (RPC style — query param)."""
-    return get_document(doc_id, current_user)
+    return get_document(doc_id, include=None, current_user=current_user)
 
 
 @router.get("/content")
