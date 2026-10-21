@@ -9,13 +9,14 @@ from __future__ import annotations
 import json as _json
 import logging
 import re
+from contextlib import contextmanager
 from typing import Optional
 
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.workflow_sequences import is_started_row, protected_row_ids
-from modules.flow_gate.db.connection import get_store
+from modules.flow_gate.db.connection import get_store, in_transaction
 from modules.flow_gate.db.document_type_labels import get_type_name
 from modules.flow_gate.documents.constants import (
     INSTRUCTION_AUTO_TYPES,
@@ -793,6 +794,24 @@ def expand_steps_with_reports(sequence: list[dict], locale: str = "ko") -> list[
 
 # ── Workflow decision save ────────────────────────────────────────────────────────
 
+@contextmanager
+def _best_effort_savepoint(name: str):
+    """A best-effort write inside an open transaction: its failure rolls back to the savepoint
+    instead of aborting the caller's transaction. Outside a transaction it is a plain block."""
+    if not in_transaction():
+        yield
+        return
+    store = get_store()
+    store._execute(f"SAVEPOINT {name}")
+    try:
+        yield
+    except BaseException:
+        store._execute(f"ROLLBACK TO SAVEPOINT {name}")
+        store._execute(f"RELEASE SAVEPOINT {name}")
+        raise
+    store._execute(f"RELEASE SAVEPOINT {name}")
+
+
 def decide_workflow(
     doc_id: str,
     doc_class: str,
@@ -870,17 +889,20 @@ def decide_workflow(
     # R0001 group 0125 / NR0003 recommendation 1: record an explicit "start" signal now that the document
     # entered wf_in_progress. This feeds the dashboard state board only (get_work_state_summary);
     # it is intentionally NOT a notification-feed event. Never let an event-log failure break the
-    # decision itself — the workflow is already persisted above.
+    # decision itself — the workflow is already persisted above. Inside a caller's transaction (the
+    # Graph Flow guard of an unassigned Flow) a failed INSERT would abort it on PostgreSQL, so the
+    # signal runs under its own savepoint and only its own write is lost.
     try:
         from modules.flow_gate.workflow import event_logger as _event_logger
 
-        _event_logger.log_work_started(
-            project_id=doc["project_id"],
-            actor_user_id=doc.get("owner_id") or "system",
-            document_id=doc["id"],
-            doc_id=doc_id,
-            group_id=doc.get("group_id"),
-        )
+        with _best_effort_savepoint("work_started_signal"):
+            _event_logger.log_work_started(
+                project_id=doc["project_id"],
+                actor_user_id=doc.get("owner_id") or "system",
+                document_id=doc["id"],
+                doc_id=doc_id,
+                group_id=doc.get("group_id"),
+            )
     except Exception:  # noqa: BLE001 — state-board signal is best-effort, never fatal
         _log.warning("work_started signal failed for %s", doc_id, exc_info=True)
 
