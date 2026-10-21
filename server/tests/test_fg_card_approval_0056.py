@@ -29,6 +29,11 @@ registered as ``startup`` does, the card approval route mounted as ``routers/mai
 - [다음 단계] stop is not "awaiting approval": an approval while the run is stopped — a person's card approval
   or the card's automatic approval — makes the node done at once and only its propagation waits.
 
+0083 WP-3 (0061 T#2 개정, revised): a person's approval on an idle run propagates at once again (``frontier.defers``,
+``test_fg_idle_approval_0083``), and a run's states are 0061 T#2's (migration 151): a done run is ``idle`` with the
+idle reason ``completed`` and keeps its Flow. Two tests read the old ``completed`` run status and were revised to it
+(``..._revised_0061_t2``); what they check of the card approval is unchanged.
+
 The v0.1 AI invoke admission is replaced by a recorder; the Flow's group AI lease is stubbed where a test says
 an AI run holds it. Auth, RBAC and SSE delivery are stubbed as in the card settings tests.
 """
@@ -255,7 +260,7 @@ def test_the_node_approval_judgement_by_state():
 
 # ── the card approval: documents, order, one node event ──────────────────────
 
-def test_the_card_approval_approves_the_instruction_first_and_only_the_result_moves_the_node(
+def test_the_card_approval_approves_the_instruction_first_and_only_the_result_moves_the_node_revised_0061_t2(
         env, decided, monkeypatch):
     from modules.flow_gate.graph_workflow.api import v01_contact
 
@@ -278,8 +283,10 @@ def test_the_card_approval_approves_the_instruction_first_and_only_the_result_mo
     new_causes = [r["cause"] for r in _sql(env["db"], "SELECT cause FROM graph_run_events WHERE event_seq > ? "
                                                       "AND node_key = ? ORDER BY event_seq", (seq, key))]
     assert new_causes == ["review_approved"]                             # one node event: the result's
-    assert run["status"] == "completed"                                  # R -> T: the run is done
-    assert _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_propagations WHERE node_key = ?", (key,))[0]["n"] == 1
+    # 0061 T#2 개정 (0083 WP-3): a done run is idle with the reason ``completed`` (migration 151), and the person's
+    # approval on the idle run propagated at once (one propagation, done).
+    assert (run["status"], run["idle_reason"]) == ("idle", "completed")  # R -> T: the run is done
+    assert _sql(env["db"], "SELECT status FROM graph_propagations WHERE node_key = ?", (key,)) == [{"status": "done"}]
 
 
 def test_an_instruction_approval_makes_no_node_event(env, decided, monkeypatch):
@@ -462,7 +469,7 @@ def test_the_approval_targets_of_each_card_kind():
 
 # ── 409 / 403 / 404 ──────────────────────────────────────────────────────────
 
-def test_a_card_that_is_not_awaiting_approval_is_refused_with_its_reason(env, decided):
+def test_a_card_that_is_not_awaiting_approval_is_refused_with_its_reason_revised_0061_t2(env, decided):
     _admin_and_reviewer(env)
     t1, t2 = _chain(env, [("T", LEE), ("T", LEE)])
     _start(env)
@@ -483,8 +490,11 @@ def test_a_card_that_is_not_awaiting_approval_is_refused_with_its_reason(env, de
     _approve(env, t2, 409)                                               # t2 is open now: no result
     result2 = _human_result(env, t2, 82)
     _approve(env, t2, body={"result_doc_id": result2})                   # the run completes
+    # 0061 T#2 개정 (0083 WP-3): a done run is idle (reason ``completed``) and keeps its Flow (migration 151), so a
+    # second approval is refused by the card's own state.
+    assert (_current(env)["status"], _current(env)["idle_reason"]) == ("idle", "completed")
     finished = _approve(env, t2, 409)["error"]
-    assert (finished["code"], finished["params"]["status"]) == ("run_not_active", "completed")
+    assert (finished["code"], finished["params"]["status"]) == ("already_approved", "done")
 
 
 class _GatePolicy:

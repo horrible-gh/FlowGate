@@ -12,6 +12,15 @@ records it through here:
 - ``record_step_targets``: a step's targets are the nodes its command's decision opens (the drained propagations and
   the run candidates of the moment); a full command has none. T#11: never a held node (the decision opens none; one is
   dropped all the same, so a refill of the step cannot open it either).
+
+0083 WP-3 (0061 T#2 개정, revised): a person's approval is the exception path of a card (a review that did not pass or
+spent its count, a card a person writes) and moves the node on with no further resume (the flowgate.v02.0056 T#1
+contract). ``approval_wakes`` judges whether a person's decision on an idle run may open the next cards — the
+conditions of ``card_settings.legacy_adapter.wake_graph_run`` (the Flow's active run, idle, not ``stopped``, no Time
+Machine operation unfinished), outside an explicit command (it drains what waits itself), and not a step that has no
+targets yet — and ``wake_approval`` takes the run back to running before those openings, as ``resume_approval`` wakes
+it (cause ``work_resumed``, reason ``approval``). A step still opens only its targets (``frontier.RunState.in_command``),
+and a paused run still waits.
 """
 from __future__ import annotations
 
@@ -85,8 +94,11 @@ def resume_approval(ctx, decision) -> bool:
 
     Keep the run, revision, mode and step targets. A deferred code approval still goes through
     its existing integration before becoming done; a failed/rejected approval never gets here.
+
+    0083 WP-3 (0061 T#2 개정): only a run ``approval_wakes`` admits — a stopped run and one under a Time Machine operation
+    are not woken here either (their propagation waits for the next command), as ``wake_graph_run``.
     """
-    if ctx.run.get("status") != engine.IDLE or ctx.run.get("idle_reason") != "waiting_approval":
+    if ctx.run.get("idle_reason") != "waiting_approval" or not approval_wakes(ctx):
         return False
     if not any(t.to_status == "done" and t.cause in ("review_approved", "gate_confirmed")
                for t in decision.node_transitions):
@@ -102,6 +114,34 @@ def resume_approval(ctx, decision) -> bool:
     ctx.run["idle_reason"] = None
     engine.emit_run_status(ctx, engine.IDLE, engine.RUNNING, "work_resumed", "approval")
     return True
+
+
+def approval_wakes(ctx) -> bool:
+    """0083 WP-3 (0061 T#2 개정): may a person's decision on this idle run open its next cards at once
+    (``frontier.defers``)? ``wake_graph_run``'s conditions, judged on the guarded context: idle, the Flow's active run,
+    not stopped, no Time Machine operation unfinished; and not inside an explicit command, nor a step with no targets."""
+    run = ctx.run
+    if run.get("status") != engine.IDLE or run.get("idle_reason") == "stopped" or ctx.command_pending:
+        return False
+    if run.get("active_group_id") != ctx.flow_id:
+        return False
+    if run.get("run_mode") == engine.MODE_STEP and run.get("step_node_keys") is None:
+        return False
+    from flowgate.graph_time_machine.operation import busy
+    return not busy(ctx.flow_id)
+
+
+def wake_approval(ctx) -> None:
+    """0083 WP-3 (0061 T#2 개정): before a person's decision opens the next cards of an idle run, the run goes running
+    in the same guard (cause ``work_resumed``, reason ``approval``, as ``resume_approval``), so an AI card's dispatch
+    requests its execution on a running run; the settlement after the openings judges it idle again when nothing
+    works. Only a run ``approval_wakes`` admits gets here (the decision deferred otherwise)."""
+    if not approval_wakes(ctx):
+        raise AssertionError("an idle run opened nodes it may not wake for")
+    if engine.set_run_status(ctx.run_id, engine.IDLE, engine.RUNNING) != 1:
+        raise AssertionError("approval wake missed its run")
+    ctx.run["idle_reason"] = None
+    engine.emit_run_status(ctx, engine.IDLE, engine.RUNNING, "work_resumed", "approval")
 
 
 def continue_approval(ctx) -> None:

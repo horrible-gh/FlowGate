@@ -27,8 +27,10 @@ def request_write(job):
     attempt = run_store.active_attempt_id(job["run_id"], job["node_key"])
     if not attempt:
         raise ledger.LeaseLost("write has no active attempt")
-    # T#7: a stopping run requests nothing (inside the guard). The engine's own opening of a node (a person's approval
-    # on an idle run opens the next one) is no attempt token's write: idle opens, the acquire needs running / paused.
+    # T#7: a stopping run requests nothing (inside the guard). The engine's own opening of a node is no attempt token's
+    # write. 0083 WP-3 (0061 T#2 개정): a person's approval on an idle run opens the next one at once
+    # (``frontier.defers``) after taking the run back to running (``command.wake_approval``), so the opening requests on
+    # a running run; ``OPENING`` still admits idle as before (the settlement below), the acquire needs running / paused.
     fencing.check(attempt, "request_write", statuses=fencing.OPENING)
     _refuse_time_machine(job["flow_id"], attempt, "request_write")
     job["graph_attempt_id"] = attempt
@@ -602,6 +604,8 @@ _ACTIONS = {
     "execution_attempt": fencing.execution_attempt, "handoff_end": handoff_end, "node_hold": node_hold,
     # T#9: an approved code node is done once its result is merged into the Flow's branch.
     "resume_approval": command.resume_approval, "continue_approval": command.continue_approval,
+    # 0083 WP-3 (0061 T#2 개정): a person's decision on an idle run opens the next cards, the run woken first.
+    "approval_wakes": command.approval_wakes, "wake_approval": command.wake_approval,
     "defer_done": result_merge.defer_done, "integration_waiting": result_merge.integration_waiting,
     "integration_wire": result_merge.integration_wire, "retry_integrations": result_merge.retry_integrations,
     "hold_command": result_merge.hold_command, "propagation_held": result_merge.propagation_held,

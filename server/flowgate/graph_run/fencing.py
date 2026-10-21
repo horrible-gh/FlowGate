@@ -15,9 +15,12 @@ the result binder, the result stage, a review / rework hop) is taken only while
     its lease token is the current one, and the run is ``running`` or ``paused``. A report that cannot show its live
     execution is refused.
 
-The engine's own start of a new execution (``request_write`` when a person's approval opens the next node of an idle
-run) is no attempt token's write: it refuses only a run that is not running, paused or idle (``OPENING``); the
-execution itself then needs ``execution_store.eligible`` (running / paused) to acquire.
+The engine's own start of a new execution (``request_write`` when a node opens) is no attempt token's write: it refuses
+only a run that is not running, paused or idle (``OPENING``); the execution itself then needs
+``execution_store.eligible`` (running / paused) to acquire. 0083 WP-3 (0061 T#2 개정): a person's approval on an idle
+run opens the next node at once (``frontier.defers``; before, its propagation waited for the next command) and takes
+the run back to running first (``command.wake_approval``), so that opening's execution is requested on a running run
+and can acquire; a stopped run and one under a Time Machine operation are not woken and their propagation waits.
 
 The Stop gate: the side effects of an attempt token (a source write, a document registration or verdict and its
 commit, a chat command's creation or spawn) run under the shared hold of the Flow's gate (``hold``), judged again
