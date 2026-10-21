@@ -745,3 +745,197 @@ def test_without_the_095_carryover_it_really_does_rerun_and_fail(tmp_path):
     message = str(caught.value)
     assert MIGRATION_095_FINAL_NAME in message, message
     assert "duplicate column name: operator_api_base" in message, message
+
+
+# ── 11. v0.2 의 136/137 사본이 남지 않고, 세 DB 이력이 모두 부팅되는가 (flowgate.v02.0081) ──
+#
+# v0.2 는 main 의 136_chat_command_execution / 137_chat_activity_anchor 를 137/138 로 다시
+# 구현해 들고 있었다. 10-08 에 main 의 136/137 이 머지되자 같은 표·인덱스·컬럼을 두 번 만드는
+# 파일이 세 방언 모두에 생겼고, STG 부팅이 "idx_chat_cmd_run already exists" 로 섰다. 사본은
+# 지웠고, 사본에만 있던 stdout/stderr_truncated 두 컬럼은 157 이 채운다.
+# 아래는 그 자리를 지나는 DB 이력 셋을 `config.py` `run_migrations()` 와 같은 순서(migrator
+# 생성 -> reconcile_renamed_migrations -> apply_migrations)로 실제 재부팅한다.
+#   빈 DB      처음부터 157 까지
+#   main 먼저  main 의 136/137 까지 적용된 DB(STG 와 같은 이력)에 v0.2 가 올라온다
+#   v0.2 먼저  10-06~10-08 에 v0.2 사본 137/138 로 적용된 DB. 장부의 137/138 행은
+#              migration_rename_repair 2패스가 136/137 로 옮겨 적는다
+
+MAIN_CHAT_FILES = ("136_chat_command_execution.sql", "137_chat_activity_anchor.sql")
+V02_CHAT_COPIES = {
+    "136_chat_command_execution.sql": "137_chat_command_execution.sql",
+    "137_chat_activity_anchor.sql": "138_chat_activity_anchor.sql",
+}
+TRUNCATION_FILE = "157_chat_command_output_truncation.sql"
+CHAT_COMMAND_COLUMNS = {
+    "request_id", "ai_run_id", "doc_id", "project_id", "group_id", "token_id", "issued_to",
+    "provider_name", "program", "args_json", "cwd_relative", "timeout_seconds", "category",
+    "policy", "status", "decision_source", "decided_by", "decided_at", "started_at",
+    "finished_at", "duration_ms", "exit_code", "timed_out", "stdout_tail", "stderr_tail",
+    "stdout_truncated", "stderr_truncated", "error_code", "created_at", "updated_at",
+    "run_start_seq", "anchor_seq", "anchor_position", "anchor_state",
+}
+CHAT_COMMAND_INDEXES = {"idx_chat_cmd_run", "idx_chat_cmd_doc", "idx_chat_cmd_status", "idx_chat_cmd_anchor"}
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_the_v02_copies_of_main_chat_migrations_are_gone(dialect):
+    names = {p.name for p in _files(dialect)}
+    assert set(MAIN_CHAT_FILES) | {TRUNCATION_FILE} <= names
+    revived = sorted(set(V02_CHAT_COPIES.values()) & names)
+    assert revived == [], (
+        f"{dialect}: v0.2 사본 {revived} 이 되살아났다. main 의 136/137 과 같은 표·인덱스·컬럼을 "
+        f"다시 만들어 부팅이 idx_chat_cmd_run already exists 로 선다."
+    )
+
+
+def _boot_like_config(db_path: str) -> list[tuple[str, str]]:
+    from sqloader import SQLiteWrapper, DatabaseMigrator
+    from migration_rename_repair import reconcile_renamed_migrations
+
+    db = SQLiteWrapper(db_name=db_path)
+    migrator = DatabaseMigrator(db, str(MIGRATIONS_DIR / "sqlite"), False)
+    pairs = reconcile_renamed_migrations(db, str(MIGRATIONS_DIR / "sqlite"))
+    migrator.apply_migrations()
+    return pairs
+
+
+def _db_from_history(tmp_path, name: str, files: dict[str, str]) -> str:
+    """주어진 파일 집합만 든 임시 디렉터리로 실제 migrator 를 돌려 그 이력의 DB 를 만든다."""
+    from sqloader import SQLiteWrapper, DatabaseMigrator
+
+    history_dir = tmp_path / f"{name}_migrations"
+    history_dir.mkdir()
+    for filename, body in files.items():
+        (history_dir / filename).write_text(body, encoding="utf-8")
+    db_path = str(tmp_path / f"{name}.db")
+    DatabaseMigrator(SQLiteWrapper(db_name=db_path), str(history_dir), True)
+    return db_path
+
+
+def _main_first_history() -> dict[str, str]:
+    """main 의 136/137 까지 — STG 에서 v0.2 부팅이 멈춘 바로 그 자리."""
+    return {
+        p.name: p.read_text(encoding="utf-8")
+        for p in _files("sqlite") if p.name <= MAIN_CHAT_FILES[-1]
+    }
+
+
+def _v02_first_history() -> dict[str, str]:
+    """main 의 136/137 대신 v0.2 사본 137/138 로 적용된 이력. 사본은 truncated 두 컬럼을 더 가졌다."""
+    files = _main_first_history()
+    command = files.pop(MAIN_CHAT_FILES[0])
+    marker = "    stderr_tail      TEXT NULL,\n"
+    assert marker in command, "136 의 표 정의가 바뀌었다 — 사본 재현을 다시 맞춰야 한다"
+    files[V02_CHAT_COPIES[MAIN_CHAT_FILES[0]]] = command.replace(
+        marker,
+        marker
+        + "    stdout_truncated INTEGER NOT NULL DEFAULT 0 CHECK (stdout_truncated IN (0, 1)),\n"
+        + "    stderr_truncated INTEGER NOT NULL DEFAULT 0 CHECK (stderr_truncated IN (0, 1)),\n",
+    )
+    files[V02_CHAT_COPIES[MAIN_CHAT_FILES[1]]] = files.pop(MAIN_CHAT_FILES[1])
+    return files
+
+
+def _insert_command_row(db_path: str, extra: dict[str, int] | None = None) -> None:
+    row = {
+        "request_id": "ccr_history", "ai_run_id": "aiv_history", "doc_id": "p.v.0001.0001-CH",
+        "project_id": "p", "group_id": "p.v.0001", "program": "git", "args_json": "[]",
+        "cwd_relative": ".", "timeout_seconds": 60, "category": "git_read",
+        "policy": "always_approve", "status": "succeeded", "stdout_tail": "out",
+        "stderr_tail": "err", "created_at": "2026-10-21T00:00:00+09:00",
+        "updated_at": "2026-10-21T00:00:00+09:00", "anchor_seq": 3,
+        **(extra or {}),
+    }
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            f"INSERT INTO chat_command_requests ({', '.join(row)}) "
+            f"VALUES ({', '.join('?' for _ in row)})",
+            tuple(row.values()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _chat_command_shape(db_path: str):
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(chat_command_requests)")}
+        indexes = {
+            r["name"] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='chat_command_requests' "
+                "AND name NOT LIKE 'sqlite_autoindex_%'"
+            )
+        }
+        rows = [dict(r) for r in conn.execute("SELECT * FROM chat_command_requests")]
+        applied = {r["filename"] for r in conn.execute("SELECT filename FROM migrations")}
+        return columns, indexes, rows, applied
+    finally:
+        conn.close()
+
+
+def test_a_fresh_db_gets_the_whole_chat_command_shape_and_reboots(tmp_path):
+    db_path = _fresh_real_db(tmp_path, "chat_fresh.db")
+    assert _boot_like_config(db_path) == []
+    columns, indexes, _rows, applied = _chat_command_shape(db_path)
+    assert columns == CHAT_COMMAND_COLUMNS
+    assert indexes == CHAT_COMMAND_INDEXES
+    assert {*MAIN_CHAT_FILES, TRUNCATION_FILE} <= applied
+
+
+def test_a_main_first_db_boots_v02_and_keeps_its_rows(tmp_path):
+    """STG 이력. 이 DB 에서 v0.2 부팅이 idx_chat_cmd_run already exists 로 섰다."""
+    db_path = _db_from_history(tmp_path, "chat_main_first", _main_first_history())
+    _insert_command_row(db_path)
+
+    assert _boot_like_config(db_path) == [], "main 이력에는 옮겨 적을 이름이 없다"
+
+    columns, indexes, rows, applied = _chat_command_shape(db_path)
+    assert columns == CHAT_COMMAND_COLUMNS
+    assert indexes == CHAT_COMMAND_INDEXES
+    assert TRUNCATION_FILE in applied
+    assert [(r["request_id"], r["stdout_tail"], r["anchor_seq"], r["stdout_truncated"]) for r in rows] == [
+        ("ccr_history", "out", 3, 0)
+    ]
+    assert _boot_like_config(db_path) == []  # 재부팅은 아무것도 하지 않는다
+
+
+def test_a_v02_first_db_carries_its_copies_over_and_boots(tmp_path):
+    """10-06~10-08 v0.2 이력. 장부의 137/138 은 136/137 로 옮겨 적힐 뿐 다시 실행되지 않는다.
+
+    SQLite 의 157 은 표를 재생성하며 두 이력에 공통인 컬럼만 옮기므로, 이 이력의 기존 행은
+    truncated 표시만 0 으로 돌아간다(출력 tail 은 남는다). PostgreSQL/MySQL 의 157 은
+    ADD COLUMN IF NOT EXISTS 라 값도 남는다.
+    """
+    db_path = _db_from_history(tmp_path, "chat_v02_first", _v02_first_history())
+    _insert_command_row(db_path, {"stdout_truncated": 1})
+
+    assert sorted(_boot_like_config(db_path)) == sorted(
+        (copy, main) for main, copy in V02_CHAT_COPIES.items()
+    )
+
+    columns, indexes, rows, applied = _chat_command_shape(db_path)
+    assert columns == CHAT_COMMAND_COLUMNS
+    assert indexes == CHAT_COMMAND_INDEXES
+    assert {*MAIN_CHAT_FILES, TRUNCATION_FILE} <= applied
+    assert [(r["request_id"], r["stdout_tail"], r["anchor_seq"], r["stdout_truncated"]) for r in rows] == [
+        ("ccr_history", "out", 3, 0)
+    ]
+    assert _boot_like_config(db_path) == []
+
+
+def test_without_the_carryover_a_v02_first_db_really_reruns_136_and_fails(tmp_path):
+    """대조군. 위 초록불이 "136 재실행이 원래 무해해서"가 아님을 보인다."""
+    from sqloader import SQLiteWrapper, DatabaseMigrator
+
+    db_path = _db_from_history(tmp_path, "chat_v02_control", _v02_first_history())
+
+    # reconcile_renamed_migrations() 를 일부러 호출하지 않는다.
+    with pytest.raises(Exception) as caught:
+        DatabaseMigrator(SQLiteWrapper(db_name=db_path), str(MIGRATIONS_DIR / "sqlite"), True)
+
+    message = str(caught.value)
+    assert MAIN_CHAT_FILES[0] in message, message
+    assert "already exists" in message, message
