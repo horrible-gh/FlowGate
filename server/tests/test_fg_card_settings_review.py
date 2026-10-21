@@ -97,6 +97,28 @@ def _write_written(doc_id, body="## 작업\n\n지시 AI가 쓴 지시서 본문\
     db_documents.update(doc_id, {"file_path": f"docs/{doc_id}.md"})
 
 
+def _executions_ended():
+    """flowgate.v02.0083 T#1 (T0 baseline, harness): the end of the Flow's Graph executions in the 0061 T#4 ledger
+    (``graph_attempt_runs``), as ``terminal.cleanup`` -> ``graph_run.execution.finish`` ends them before an AI run's
+    lease is released and its run-end hooks run. The recorder standing in for the AI invoke start never launches, so its
+    execution is still ``requested``: it ends as the finish of a launcher that holds no lease token ends it (cancelled);
+    an acquired one ends ``ended``. Without it the ledger keeps the node worked on (``ai_running``, ``LeaseLost: attempt
+    already has an execution``), which these suites model by the Flow's group AI lease alone. Called once the result
+    is registered (``_in_review``); an instruction stage's execution is left to ``request_write``, which hands it off
+    to the result stage as the run-end hand-off does."""
+    from flowgate.graph_run import execution_store as ledger
+    from modules.flow_gate.db.connection import get_store
+
+    rows = get_store()._fetch_all(
+        "SELECT e.exec_id, e.status, e.lease_token FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
+        "WHERE r.group_id = ? AND e.status IN ('requested', 'running')", [FA])
+    for row in rows or []:
+        if row["status"] == "requested":
+            ledger.cancel(row["exec_id"], None, "requested")
+        else:
+            ledger.finish(row["exec_id"], row["lease_token"], "ended")
+
+
 def _run_ended(run_id, **fields):
     """An AI run of the card ended on its own (unless ``fields`` say how) and released its lease."""
     from modules.flow_gate.services import ai_run_end_hooks
@@ -140,6 +162,7 @@ def _in_review(env, monkeypatch, settings=(), written="TR"):
     v01_contact.after_inbox_registered(FA, result, written, token)
     token_service.consume(token, "flowgate", result)
     assert _node(env, key) == ("review", result)
+    _executions_ended()       # T0 harness: its process ended; an AI still working is the lease (``_lease``)
     return key, result, token
 
 

@@ -11,11 +11,16 @@ Pure. The 0053 CH agreement (§4 "settings as drawn") and the v7 settings blocks
   values only, no delegation engine (0053 CH: out of this scope);
 - check cards (gate): usage, Git apply mode, merge target, push, keep branch;
 - work plan cards (WP, flowgate.v02.0072 T#3): the AI pre-instruction writing switch, and the run block the
-  v7 plan settings draw (work AI, restart, review AI, review count, the advanced time limit and review basis) —
-  values only. No engine reads them yet: the plan card is no AI run of its own (``run_plan`` / ``after_result``
-  hand nothing on, ``settings.uses_ai`` stays false), no pre-instruction writer exists, and they are not the
-  Steps' own AI / review AI inside the WP document body (``provider_id`` / ``reviewer_provider_id``), which
-  nothing here reads or changes. Turning the switch off deletes no Step's pre-instruction.
+  v7 plan settings draw (work AI, restart, review AI, review count, the advanced time limit and review basis).
+  flowgate.v02.0083 T#1 — 0072 T#3 개정 (revised): the run block is no longer values only. A plan card whose writer is
+  an AI (``settings.uses_ai``: an explicit person assignee -> a person; else the card's work AI ``run_ai`` -> AI; else
+  an explicit AI assignee -> AI; else a person, the default) runs as one AI run of its own: ``run_plan`` hands on its
+  work AI, time limit and restarts (no instruction stage, no result type: the AI writes the WP itself, the type the
+  result binder binds), and ``after_result`` gives it the run cards' review / approval. A plan card a person writes is
+  unchanged: its result waits for a person's approval of the card. Still no engine reads the switch (no
+  pre-instruction writer exists), and the run block is not the Steps' own AI / review AI inside the WP document body
+  (``provider_id`` / ``reviewer_provider_id``), which nothing here reads or changes. Turning the switch off deletes no
+  Step's pre-instruction.
 
 A field with no stored value shows its default. The default is what the engine does without the
 setting today, so storing nothing and storing the default run the same way. ``None`` as a default
@@ -159,7 +164,8 @@ class InvalidValue(ValueError):
 
 def card_kind(node_type: Optional[str], doc_type: Optional[str]) -> Optional[str]:
     """The settings kind of a card, or None (an unknown type has no settings). flowgate.v02.0072 T#3: a work plan
-    card keeps the plan settings (values only, see the head of this module)."""
+    card keeps the plan settings (flowgate.v02.0083 T#1, 0072 T#3 개정: its run block runs an AI writer, see the head
+    of this module)."""
     if node_type == "custom":
         return RUN                               # a palette [+] card works like research / work
     if node_type == "gate":
@@ -302,8 +308,9 @@ def _count(value: Any) -> Optional[int]:
 
 def after_result(kind: Optional[str], stored: dict) -> Optional[str]:
     """What follows a node's AI result: the card's AI review (``REVIEW``: review count not 0), else an
-    approval at once (``APPROVE``: no review); None for a card kind without a run (a person decides)."""
-    if kind not in (RUN, TEST):
+    approval at once (``APPROVE``: no review); None for a card kind without a run (a person decides).
+    flowgate.v02.0083 T#1 (0072 T#3 개정): a work plan card's AI result too; requirement and check cards stay None."""
+    if kind not in (RUN, TEST, PLAN):
         return None
     if _count(stored.get("review_count")) not in (None, 0):
         return REVIEW
@@ -361,8 +368,11 @@ def run_plan(kind: Optional[str], stored: dict, node_type: Optional[str] = None,
 
     Only stored values are handed on, except the two stages of instruction use (flowgate.v02.0056 T#2), which
     is the default: ``instruction`` (the instruction stage's type and AI) and the report as ``result_doc_type``.
+    flowgate.v02.0083 T#1 (0072 T#3 개정): a work plan card hands on its work AI, time limit and restarts as a run card
+    does; it has no instruction stage and no result type of its own (``instruction_stage`` / ``result_doc_type`` are
+    None for WP), so its AI runs the result stage alone and writes the WP the result binder binds.
     """
-    if kind not in (RUN, TEST):
+    if kind not in (RUN, TEST, PLAN):
         return {}
     plan: dict = {"settings": {f.name: stored[f.name] for f in fields_of(kind) if f.name in stored}}
     written = result_doc_type(node_type, doc_type, stored)
@@ -373,8 +383,8 @@ def run_plan(kind: Optional[str], stored: dict, node_type: Optional[str] = None,
         plan["instruction"] = {"doc_type": instruction, "provider_id": instruction_provider(stored)}
     if stored.get("run_ai"):
         plan["provider_id"] = stored["run_ai"]
-    if kind == RUN and stored.get("time_limit") in TIME_LIMIT_MINUTES:
+    if kind in (RUN, PLAN) and stored.get("time_limit") in TIME_LIMIT_MINUTES:
         plan["step_timeout_sec"] = int(stored["time_limit"]) * 60
-    if kind == RUN and isinstance(stored.get("restart"), int) and not isinstance(stored.get("restart"), bool):
+    if kind in (RUN, PLAN) and isinstance(stored.get("restart"), int) and not isinstance(stored.get("restart"), bool):
         plan["restart_max"] = stored["restart"]
     return plan

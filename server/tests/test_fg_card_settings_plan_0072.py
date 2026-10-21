@@ -6,8 +6,11 @@ through the existing card settings GET / PATCH (one value per change, the same l
 - the switch (``pre_instruction_auto``) is its own card value — stored, read again, back to the default with null —
   and turning it off (or on) touches no document: the plan's Steps keep their pre-instructions and attachments;
 - the run block (work AI, restart, review AI, review count, time limit, review basis) is the card's, not the
-  plan's Steps' ``provider_id`` / ``reviewer_provider_id``, and no run reads it: ``run_plan`` / ``after_result``
-  hand nothing on and ``uses_ai`` stays false for the plan kind (no pre-instruction writer, no new run inheritance).
+  plan's Steps' ``provider_id`` / ``reviewer_provider_id``. flowgate.v02.0083 T#1 — 0072 T#3 개정 (revised): a run
+  reads it now. ``uses_ai`` is true for a plan card with its work AI stored (or an explicit AI assignee), ``run_plan``
+  hands that AI, the time limit and the restarts on (no instruction stage, no result type) and ``after_result`` gives
+  its AI result the run cards' review / approval. The switch is still read by nothing (no pre-instruction writer).
+  The run itself is tested in ``test_fg_wp_ai_run_0083``.
 
 The fixtures are the card settings suite's (``test_fg_card_settings``: a real SQLite DB with every migration and the
 Graph / card settings routes over a TestClient).
@@ -52,7 +55,8 @@ def _files(root: Path) -> dict[str, str]:
 
 # ── pure ─────────────────────────────────────────────────────────────────────
 
-def test_a_work_plan_card_has_the_plan_settings_and_no_run_takes_them():
+def test_a_work_plan_card_has_the_plan_settings_and_its_run_takes_the_run_block_revised_0072_t3():
+    """0072 T#3 개정 (flowgate.v02.0083 T#1): the plan settings are as before; the run block now reaches the run."""
     from flowgate.card_settings import fields as f
 
     assert f.card_kind("document", "WP") == f.PLAN and f.card_kind("document", "wp") == f.PLAN
@@ -63,9 +67,14 @@ def test_a_work_plan_card_has_the_plan_settings_and_no_run_takes_them():
     assert (switch.kind, switch.default) == (f.FLAG, False)
     stored = {"pre_instruction_auto": True, "run_ai": "aip_card", "restart": 1, "review_count": 2,
               "time_limit": 120, "review_basis": "last"}
-    # Values only: no run plan, no review step, no instruction stage, no result type.
-    assert f.run_plan(f.PLAN, stored, "document", "WP") == {}
-    assert f.after_result(f.PLAN, stored) is None
+    # 0072 T#3 개정: the work AI, time limit and restarts reach the run; the review step follows the review count;
+    # still no instruction stage and no result type (the AI writes the WP itself).
+    assert f.run_plan(f.PLAN, stored, "document", "WP") == {
+        "settings": stored, "provider_id": "aip_card", "step_timeout_sec": 7200, "restart_max": 1}
+    assert f.run_plan(f.PLAN, {}, "document", "WP") == {"settings": {}}
+    assert f.after_result(f.PLAN, stored) == f.REVIEW
+    assert f.after_result(f.PLAN, {"run_ai": "aip_card"}) == f.APPROVE
+    assert f.after_result(f.REQUIREMENT, {"review_count": 1}) is None and f.after_result(f.CHECK, {}) is None
     assert f.instruction_stage("document", "WP", stored) is None
     assert f.result_doc_type("document", "WP", {"instruction": "omit"}) is None
 
@@ -145,15 +154,22 @@ def test_the_switch_and_the_run_block_touch_no_document(env, tmp_path):
     assert stored_rows(env, FB, key) == {(key, "review_count"): "1", (key, "run_ai"): '"aip_card"'}
 
 
-def test_a_work_plan_node_hands_nothing_to_a_run(env):
+def test_a_work_plan_node_with_its_work_ai_hands_it_to_a_run_revised_0072_t3(env):
+    """0072 T#3 개정 (flowgate.v02.0083 T#1; formerly ``test_a_work_plan_node_hands_nothing_to_a_run``): a plan card
+    with its work AI stored is an AI node and its run takes the work AI, time limit and restarts; it still has no
+    result type of its own and no instruction stage. With nothing stored it stays a person's card."""
     from flowgate.card_settings import settings
 
     key = _plan_card(env)
+    row = {"node_key": key, "node_type": "document", "doc_type": "WP", "assignee_kind": None}
+    assert settings.uses_ai(FB, row) is False                          # nothing stored: a person writes it
     for field, value in (("pre_instruction_auto", True), ("run_ai", "aip_card"), ("review_count", 2),
                          ("time_limit", 120), ("restart", 1)):
         setting(env, FB, key, field, value)
-    row = {"node_key": key, "node_type": "document", "doc_type": "WP", "assignee_kind": None}
-    assert settings.uses_ai(FB, row) is False
-    assert settings.run_settings(FB, row) == {}
+    assert settings.uses_ai(FB, row) is True
+    plan = settings.run_settings(FB, row)
+    assert {k: plan.get(k) for k in ("provider_id", "step_timeout_sec", "restart_max")} == {
+        "provider_id": "aip_card", "step_timeout_sec": 7200, "restart_max": 1}
+    assert "instruction" not in plan and "result_doc_type" not in plan
     assert settings.result_type(FB, row) is None
     assert settings.instruction_document(FB, row) == {}
