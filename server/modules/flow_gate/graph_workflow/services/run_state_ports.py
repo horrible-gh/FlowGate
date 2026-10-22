@@ -37,8 +37,9 @@ REQUIRE_EDITABLE = "require_editable"
 PROTECT_DEFINITION = "protect_definition"
 ADOPT_REVISION = "adopt_revision"
 STOP = "stop"
+RECOVER_CARD = "recover_card"
 PORT_NAMES = (SETTLE, SETTLE_PLAN, COMMAND_OF, RECORD_COMMAND, RECORD_STEP_TARGETS,
-              REQUIRE_EDITABLE, PROTECT_DEFINITION, ADOPT_REVISION, STOP)
+              REQUIRE_EDITABLE, PROTECT_DEFINITION, ADOPT_REVISION, STOP, RECOVER_CARD)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -101,6 +102,11 @@ def record_command(ctx: Any, mode: str) -> None:
 
 def record_step_targets(ctx: Any, mode: str, decision: Any) -> None:
     _handler(RECORD_STEP_TARGETS)(ctx, mode, decision)
+
+
+def recover_card(group: dict, run_id: str, node_key: str, reason: Optional[str], user_id: str) -> dict:
+    """0083 WP-2: a single idle card recovery, separate from Stop."""
+    return _handler(RECOVER_CARD)(group, run_id, node_key, reason, user_id)
 
 
 def stop(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:

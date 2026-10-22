@@ -151,6 +151,7 @@ export function toCardDocuments(raw: unknown): FlowCanvasCardDocument[] {
 
 // flowgate.v02.0061 TR0031 rev1: the top-level `run` block — its status keeps the run lock while the run read is
 // pending or failed. A block without a run id and status is no run. T#15: its `last_event_seq`, kept only when sent.
+// flowgate.v02.0083 T#4 rev1: and the run band's facts of the same read, each kept only when sent.
 function toRun(raw: Raw | null | undefined): FlowCanvasRun | null {
   if (!raw || typeof raw.run_id !== 'string' || typeof raw.status !== 'string') return null
   const lastEventSeq = count(raw.last_event_seq)
@@ -159,6 +160,24 @@ function toRun(raw: Raw | null | undefined): FlowCanvasRun | null {
     status: raw.status,
     revisionNo: num(raw.revision_no),
     ...(lastEventSeq !== null ? { lastEventSeq } : {}),
+    ...toRunBand(raw),
+  }
+}
+
+function toRunBand(raw: Raw): Partial<FlowCanvasRun> {
+  const running = count(raw.running_execution_count)
+  const requested = count(raw.requested_execution_count)
+  const pending = count(raw.pending_propagation_count)
+  return {
+    ...('mode' in raw ? { mode: str(raw.mode) } : {}),
+    ...('idle_reason' in raw ? { idleReason: str(raw.idle_reason) } : {}),
+    ...(running !== null ? { runningExecutionCount: running } : {}),
+    ...(requested !== null ? { requestedExecutionCount: requested } : {}),
+    ...('execution_limit' in raw ? { executionLimit: num(raw.execution_limit) } : {}),
+    ...(pending !== null ? { pendingPropagationCount: pending } : {}),
+    ...(Array.isArray(raw.pending_node_keys)
+      ? { pendingNodeKeys: raw.pending_node_keys.filter((key: unknown): key is string => typeof key === 'string') }
+      : {}),
   }
 }
 

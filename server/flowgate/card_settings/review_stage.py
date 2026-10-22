@@ -78,6 +78,38 @@ approval and the result stage, the result's review or approval, a passed review'
 (``question_wait``: the card's instruction AI answers first, the step goes on after the last answer); a result writer
 that ended with no result and asked questions has them answered too and writes again. Every run end of the Flow is
 followed by ``question_wait.follow`` (a responder's end, a question waiting for one).
+
+flowgate.v02.0083 WP-4 (a new path, kept apart from the AI cards' one above): a work plan card a person writes follows its
+result as an AI card does once the result binder bound it (``person_result``, the ``card_settings_ports`` port, inside the
+binder's Flow guard; the step itself is a job after its commit, ``follow_person_result``). Every submission — the result,
+a new revision of it (``revised``), the same document put back in review (``mark_revised``) — is followed:
+
+- review count not 0 (any count, or until it passes: the same here): one AI review of that submission, a loop of its own
+  with no rework AI (``review_count`` 1, ``rework_provider_id`` None). A pass is approved by ``_after_review`` as an AI
+  card's is (``legacy.node_of_result`` takes a person's reviewed plan node); ``issues`` rejects the document and ends the
+  loop (the engine's ``awaiting_author_revision`` stop) — no AI reworks it, the node stays in review and its author
+  revises and submits again; a hold or any other end waits for a person's approval. The AI never repeats on its own;
+- review 'none': the automatic approval at once (``legacy.approve``: the run issuer's ``document.approve`` resolved as
+  the approve button resolves it, the v0.1 transition rules and the TR hook; without it nothing is tried and a person
+  approves). Never the author's own authority.
+
+A person's run / test card is not followed: a person approves it. The guards are the existing parts: the binder marks the
+node as worked on (``_handoffs``, as 0061 T#2's run end does) before its own settlement, so the run is not judged waiting
+for an approval until the job has started or refused the step; the job takes nothing on a stopped run or while a Time
+Machine operation is unfinished (``legacy.person_stage_open``, ``wake_graph_run``'s conditions); it is judged for the
+attempt the result was bound on (its start ``review_start``, its approval ``result_approval``; a pass is approved under the
+review execution's own attempt, ``review_approval``) — an old attempt's step is refused and recorded; and a review starts
+only when none works on the document, the document is not rejected (a submission not yet made) and no verdict answers its
+current submission yet (``legacy.submission_judged``), so a bind told twice starts one loop. On an idle run the review is
+requested as a person's explicit review request (Q439, ``legacy.explicit_request``), which takes the run back to running.
+Both steps are judged under the Stop gate's shared hold, kept for the step (``legacy.person_hold``: the attempt, an idle run
+taken too, and the run's Stop / Time Machine conditions judged again under the hold), so a Stop or a Time Machine rewind
+between the job's start and its approval refuses it (recorded) instead of being crossed.
+
+The submissions it follows: the binder's (a result, a new revision, ``mark_revised``, and the same document's new revision
+an inbox edit registers — ``inbox_edited``), its reconciliation's (a submission bound after a lost contact), and one made
+while a loop worked on an earlier one: when that loop ends, the node's current submission no verdict answers takes its
+review (``_take_over_submission``; a pass of an older revision of the same document approves nothing).
 """
 # T0017 supersedes the original no-review instruction policy described above:
 # instruction_review_count/AI gate all configured card-owned instructions (including design),
@@ -314,12 +346,17 @@ def _after_review(flow_id: str, run: dict) -> None:
         return
     node = legacy.node_of_result(flow_id, doc_id)
     if node is None:
+        _take_over_submission(flow_id, run)     # 0083 WP-4: a person's newer submission made while it worked
         return
     loop = legacy.review_loop_row(run["run_id"]) or run.get("document_review_loop") or {}
     if loop.get("stop_reason") != PASSED:
+        _take_over_submission(flow_id, run)     # 0083 WP-4: likewise (a person's revision made in place)
         return                                  # hold, count spent, stalled, failure: a person approves
     run_id = legacy.active_run_id(flow_id)
     if run_id is None:
+        return
+    if legacy.person_plan_reviewed(flow_id, node) and not legacy.submission_passed(doc_id):
+        _take_over_submission(flow_id, run)     # 0083 WP-4: the pass answers an older revision; the current one waits
         return
     if question_wait.hold(flow_id, run, node):
         return                                  # 0063: its questions are answered first
@@ -340,6 +377,126 @@ def ai_working(flow_id: str, node_key: str, doc_id: Optional[str]) -> bool:
     about to follow the node's run that just released the lease (flowgate.v02.0061 T#2, ``on_run_ending``)."""
     return (_handoff_pending(flow_id, node_key) or legacy.node_ai_run_active(flow_id, node_key)
             or review_running(flow_id, node_key, doc_id))
+
+
+# ── a person's work plan (flowgate.v02.0083 WP-4) ───────────────────────────
+
+PERSON_HANDOFF = "person:"                      # the hand-off mark of a person's result: "person:<its document>"
+
+
+def person_result(flow_id: str, node: dict, doc_id: str):
+    """``card_settings_ports.person_result`` handler (0083 WP-4), inside the result binder's Flow guard before its
+    settlement: a result of ``node`` was submitted, revised or put back in review. A work plan card a person writes
+    whose run may take the step marks the node as worked on and answers the job that follows it after the commit
+    (``follow_person_result``, for the attempt bound now); anything else None (an AI card follows its AI run's end, a
+    person's run / test card waits for a person's approval)."""
+    key = node.get("node_key")
+    if not key or not doc_id or not repository.available():
+        return None
+    if fields.card_kind(node.get("node_type"), node.get("doc_type")) != fields.PLAN or settings.uses_ai(flow_id, node):
+        return None
+    if fields.after_result(fields.PLAN, repository.values(flow_id, key)) is None:
+        return None
+    run = legacy.active_run(flow_id)
+    if run is None or not legacy.person_stage_open(flow_id, run):
+        return None                             # stopped, stopping, a Time Machine operation: a person decides
+    return _person_job(flow_id, run["run_id"], key, doc_id, legacy.active_attempt_id(run["run_id"], key))
+
+
+def _person_job(flow_id: str, run_id: str, node_key: str, doc_id: str, attempt_id: Optional[str]):
+    """The node is marked as worked on (0061 T#2's ``_handoffs``, owner ``person:<doc>``) and the step that follows the
+    submission ``doc_id`` for ``attempt_id`` is answered."""
+    with _handoff_lock:
+        _handoffs[(flow_id, node_key)] = (PERSON_HANDOFF + doc_id, time.monotonic() + STAGE_HANDOFF_TTL_SEC)
+    return lambda: follow_person_result(flow_id, run_id, node_key, doc_id, attempt_id)
+
+
+def _take_over_submission(flow_id: str, run: dict) -> None:
+    """0083 WP-4: a review loop of a person's work plan ended (``_after_review``) while the plan was submitted again — a
+    new revision, or the same document revised in place — which no loop took then (one loop at a time). That current
+    submission now takes its own review through the same post-commit step (``follow_person_result``), for the attempt the
+    ended review's execution was made for: a Stop, a Time Machine operation or an attempt invalidated since takes nothing
+    over (the step's guards and ``legacy.person_hold``), and a submission a verdict already answers starts nothing."""
+    attempt_id = legacy.attempt_of_ai_run(run)
+    found = legacy.attempt_node(attempt_id)
+    if found is None:
+        return
+    run_id, key = found
+    node = legacy.node_of_key(flow_id, key)
+    if node is None or not legacy.person_plan_reviewed(flow_id, node):
+        return                                  # an AI card's loop: a person approves what it left
+    active, row = legacy.active_run(flow_id), legacy.node_run(run_id, key)
+    if active is None or active["run_id"] != run_id or row is None or row["status"] != legacy.REVIEW_NODE_STATUS:
+        return
+    doc_id = row.get("result_doc_id")
+    if not doc_id or (approvals.document(doc_id) or {}).get("doc_review_status") in APPROVED:
+        return
+    if legacy.review_loop_active(doc_id) or legacy.submission_judged(doc_id):
+        return                                  # another loop works on it, or a verdict answers it
+    _person_job(flow_id, run_id, key, doc_id, attempt_id)()
+
+
+def follow_person_result(flow_id: str, run_id: str, node_key: str, doc_id: str, attempt_id: Optional[str]) -> None:
+    """After the binder's commit (0083 WP-4): the card's review of a person's submission starts, or its automatic
+    approval is made; the node's mark is then cleared whatever happened and the run judged again (running while the
+    review works, else waiting for a person's approval)."""
+    try:
+        _follow_person_result(flow_id, run_id, node_key, doc_id, attempt_id)
+    except Exception:  # noqa: BLE001 — a post-commit step: the result stays in review for a person
+        _log.warning("person work plan stage failed flow=%s node=%s doc=%s", flow_id, node_key, doc_id, exc_info=True)
+    finally:
+        if _clear_handoffs(PERSON_HANDOFF + doc_id):
+            legacy.settle_graph_run(flow_id)
+
+
+def _follow_person_result(flow_id: str, run_id: str, node_key: str, doc_id: str, attempt_id: Optional[str]) -> None:
+    run = legacy.active_run(flow_id)
+    if run is None or run["run_id"] != run_id or not legacy.person_stage_open(flow_id, run):
+        return                                  # another run, stopped, stopping, a Time Machine operation
+    row = legacy.node_run(run_id, node_key)
+    node = legacy.node_of_key(flow_id, node_key)
+    if row is None or node is None or row["status"] != legacy.REVIEW_NODE_STATUS or row.get("result_doc_id") != doc_id:
+        return                                  # not (any more) the node's result in review
+    doc = approvals.document(doc_id) or {}
+    if doc.get("doc_review_status") in APPROVED:
+        return
+    stored = repository.values(flow_id, node_key)
+    step = fields.after_result(fields.PLAN, stored)
+    issuer = legacy.run_issuer(run)
+    if step == fields.REVIEW:
+        _start_person_review(flow_id, run, node_key, {**doc, "doc_id": doc_id}, stored, issuer, attempt_id)
+    elif step == fields.APPROVE:
+        # 0061 T#7: the attempt bound must still work on the node, on a run that may take the stage, judged under the
+        # Stop gate's shared hold kept until the approval — its transition, TR hook and Graph contact — is over.
+        with legacy.person_hold(flow_id, run_id, node_key, attempt_id, "result_approval") as owned:
+            if owned:
+                legacy.approve(flow_id, doc_id, issuer)     # the issuer's own authority, or nothing is tried
+
+
+def _start_person_review(flow_id: str, run: dict, node_key: str, doc: dict, stored: dict, issuer: str,
+                         attempt_id: Optional[str]) -> None:
+    """One AI review of a person's submission: a loop of its own, review count 1, no rework AI (0083 WP-4)."""
+    doc_id = doc["doc_id"]
+    if legacy.review_loop_active(doc_id):
+        return                                  # a review works on it: one loop
+    if doc.get("doc_review_status") == "rejected" or legacy.submission_judged(doc_id):
+        return                                  # not submitted again yet, or this submission has its verdict
+    project_id = legacy.project_of(flow_id)
+    reviewer = stored.get("review_ai") or legacy.default_reviewer(project_id)
+    if not reviewer:
+        _log.warning("person work plan review not started flow=%s node=%s: no reviewer", flow_id, node_key)
+        return
+    loop = fields.review_loop({**stored, "review_count": 1}, reviewer=reviewer, reworker=None)
+    criteria = loop["review_criteria"]
+    # The attempt bound, the run and its Stop / Time Machine conditions judged under the Stop gate's shared hold, kept
+    # while the review is requested (its own request judges the attempt again, ``execution.request_loop``).
+    with legacy.person_hold(flow_id, run["run_id"], node_key, attempt_id, "review_start") as owned:
+        if not owned:
+            return
+        with legacy.explicit_request():         # Q439: an idle run takes it and goes back to running
+            legacy.start_review_loop(project_id, flow_id, doc_id, issuer, loop,
+                                     lambda last: fields.review_basis_note(criteria, last), node_key,
+                                     attempt_id=attempt_id)
 
 
 def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id: str, attempt_id=None) -> bool:

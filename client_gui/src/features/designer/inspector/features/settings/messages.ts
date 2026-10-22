@@ -21,6 +21,8 @@ export default {
     },
     plan: {
       run_ai: '작업 AI',
+      // flowgate.v02.0083 WP-4 — the 검수 횟수 tooltip of a WP card: a person's WP is reviewed once per submission.
+      review_count_hint: '사람이 쓴 WP는 제출마다 검수 1회 · 1회 이상과 통과할 때까지가 같게 동작',
     },
     instruction_ai: {
       label: '지시 AI',
@@ -121,6 +123,7 @@ export default {
     },
     plan: {
       run_ai: 'Work AI',
+      review_count_hint: "A person's WP: one review per submission · any count and until it passes work the same",
     },
     instruction_ai: {
       label: 'Instruction AI',
@@ -219,6 +222,7 @@ export default {
     },
     plan: {
       run_ai: '作業AI',
+      review_count_hint: '人が書いた WP は提出ごとにレビュー1回 · 1回以上と合格するまでは同じ動作',
     },
     instruction_ai: {
       label: '指示AI',

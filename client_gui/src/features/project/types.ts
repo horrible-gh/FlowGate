@@ -584,6 +584,17 @@ export interface FlowCanvasRun {
   revisionNo: number | null
   /** flowgate.v02.0061 T#15: the run's event sequence (grows with every run event); absent when not sent. */
   lastEventSeq?: number
+  /**
+   * flowgate.v02.0083 T#4 rev1: the run band's facts of the same read (the run read's names) — its command, idle reason,
+   * AI executions and the Flow's limit, and the cards waiting for the next command. Each absent when not sent.
+   */
+  mode?: string | null
+  idleReason?: string | null
+  runningExecutionCount?: number
+  requestedExecutionCount?: number
+  executionLimit?: number | null
+  pendingPropagationCount?: number
+  pendingNodeKeys?: string[]
 }
 
 /** GET /api/v1/flows/{flowId}/canvas. */

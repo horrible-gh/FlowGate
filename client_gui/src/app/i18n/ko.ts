@@ -223,6 +223,9 @@ export default {
       card_states: {
         no_result: '결과 없음',
         incomplete: '실행 미완료',
+        // flowgate.v02.0083 T#4: an open card no AI execution works on — it waits for an answer or for its writer.
+        waiting_answer: '응답 대기',
+        waiting_writer: '작성 대기',
         writing_instruction: '지시서 작성 중',
         writing_result: '결과 작성 중',
         working: '작업 중',
@@ -671,7 +674,7 @@ export default {
       run_idle_reasons: {
         completed: '완료',
         no_targets: '실행할 카드 없음',
-        waiting_approval: '승인 대기',
+        waiting_approval: '사람 작성·승인 대기',  // 0083 WP-2: an open human writer waits here too
         blocked_rejected: '반려로 멈춤',
         error: '오류로 멈춤',
         stopped: '중지됨',

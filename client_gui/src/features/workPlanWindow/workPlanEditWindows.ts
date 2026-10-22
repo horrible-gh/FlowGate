@@ -16,8 +16,13 @@
 // base_revision_no). A window opened from there gets its opener's verdict and save callback through the opener the
 // Inspector registers (setWorkPlanEditOpener); without one the window is run-locked, as workPlanFlowLock without a reader.
 // Each window tells whether its draft holds unsaved edits (dirty), so a download of the plan can say they are not in it.
+//
+// flowgate.v02.0083 T#3 (D-1 / D-2) — the card line's opener (the Inspector's openWorkPlan) also hands the plan's WP card:
+// a reader of its latest node run (`card`), so the run card's own plan locks only on an ownership conflict or the card's
+// own AI and offers [제출]; and `submitted`, told after a [제출] (the opener reads its Flow's Canvas again).
 import { reactive, shallowRef } from 'vue'
 import type { WorkPlanStepEditSession, WorkPlanStepEditTarget } from './useWorkPlanEditor'
+import type { WorkPlanRunCard } from './workPlanEditModel'
 
 /** What the window edits and whom it tells. */
 export interface WorkPlanEditRequest {
@@ -34,6 +39,10 @@ export interface WorkPlanEditRequest {
   readonly saved?: (revisionNo: number) => void
   /** flowgate.v02.0074 T#2: 'import' opens [JSON 가져오기] once the plan is read (once per request); absent or null: as before. */
   readonly initialMode?: 'import' | null
+  /** flowgate.v02.0083 T#3: the plan's WP card as the Designer knows it now, read reactively; absent / null: none. */
+  readonly card?: () => WorkPlanRunCard | null
+  /** flowgate.v02.0083 T#3: told after a [제출] the server took (the opener reads its Flow again). */
+  readonly submitted?: () => void
 }
 
 /** The opener's part of a request for a window opened from outside the Inspector's work plan line (T#2). */

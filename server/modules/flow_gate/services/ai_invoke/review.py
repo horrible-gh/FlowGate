@@ -1856,6 +1856,39 @@ def compute_review_baseline(doc_id: str) -> dict:
     return {"review_baseline_id": latest_id, "starts_with_rework": starts_with_rework, "baseline_revision_no": int(doc.get("revision_no") or 0)}
 
 
+# flowgate.v02.0083 WP-4 (a person's work plan reviewed by AI, 0004-CH seq 8): a document review loop asked for with no
+# rework AI (``rework_provider_id`` None — the Graph card stage of a work plan a person writes) is the author's to
+# revise: its review never hands the document to a rework hop. Each submission of the author is its own loop with one
+# review (``review_count`` 1), so the loop's own rounds are those of that submission alone. No migration (the schema is
+# unchanged): the loop row keeps ``rework_provider_id`` NOT NULL, so admission stores the reviewer there — never used,
+# no rework hop is ever taken — and the run carries the fact (``review_loop_author_revision``); a Graph replay asks
+# again from its execution journal, which keeps the loop as it was asked. The stop on ``issues`` is told by its
+# ``stop_detail`` (as ``stop_for_checkpoint_failure`` tells its cause) under the existing ``review_count_exhausted``:
+# the stop_reason CHECK (migration 107) lists no new value, and the submission's one review is indeed spent.
+AUTHOR_REVISION_STOP_DETAIL = "awaiting_author_revision"
+AUTHOR_REVISION_STOP_REASON = "review_count_exhausted"
+AUTHOR_REVISION_REWORK_START_CODE = "review_loop_rework_without_reworker"
+
+
+def author_revision_loop(loop: Optional[dict]) -> bool:
+    """0083 WP-4: a loop asked for with no rework AI — its author revises."""
+    return loop is not None and not loop.get("rework_provider_id")
+
+
+def admit_author_revision_loop(loop: dict, initial_stage: str) -> bool:
+    """0083 WP-4, at admission: True for a loop with no rework AI, whose stored row then takes its reviewer in the
+    rework column (``loop`` is admission's own copy). Its start in rework — the document is rejected
+    (``compute_review_baseline`` ``starts_with_rework``) — is refused (409): with no rework AI that first hop would be
+    an AI rework of the author's document."""
+    if not author_revision_loop(loop):
+        return False
+    if initial_stage == REWORK_HOP_KIND:
+        raise _http_error(409, AUTHOR_REVISION_REWORK_START_CODE,
+                          "A review loop with no rework AI does not start on a rejected document.")
+    loop["rework_provider_id"] = loop["reviewer_provider_id"]
+    return True
+
+
 def resolve_loop_provider(bundle: dict, stage: str) -> str:
     if stage == REVIEW_HOP_KIND:
         return bundle["reviewer_provider_id"]
@@ -2012,6 +2045,11 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
     # Only 'issues' is a real rejection here: 'pass' returned at the top of this function
     # and 'hold' returned just below it.
     if latest.get("verdict") == "issues":
+        if bundle.get("author_revision"):
+            # 0083 WP-4: no rework AI — the rejection above (``_auto_reject``) stands and the loop ends; its author
+            # revises and submits again, which starts a loop of its own.
+            return {**common, "current_stage": "stopped", "stop_reason": AUTHOR_REVISION_STOP_REASON,
+                    "stop_detail": AUTHOR_REVISION_STOP_DETAIL}
         return {**common, "current_stage": REWORK_HOP_KIND, "round_no": rounds_used + 1, "attempts_used": 0}
     if int(doc.get("revision_no") or 0) > int(history_latest.get("revision_no") or bundle.get("baseline_revision_no") or 0):
         return {**common, "current_stage": REVIEW_HOP_KIND, "round_no": rounds_used + 1, "attempts_used": 0}
@@ -2214,6 +2252,7 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
         # so it can neither name a round nor a hop (0486 NR0028 F1).
         "review_run_id": run["run_id"],
         "graph_review_run_ids": run.get("graph_review_run_ids") or [],
+        "author_revision": bool(run.get("review_loop_author_revision")),     # 0083 WP-4
     }
     if succeeded and not check_expected_progress(bundle, doc or {}, reviews):
         if late_recheck:

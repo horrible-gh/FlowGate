@@ -24,6 +24,11 @@ import pytest
 
 os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
+# flowgate.v02.0083 T#1 (T0 baseline): the app settings these suites reach (the card approval's v0.1 approval)
+# need these when the module runs on its own, as the other suites set them (a Self-check passes no env).
+os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost")
+os.environ.setdefault("CONTEXT", "/flowgate")
+os.environ.setdefault("DB_TYPE", "sqlite3")
 
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 _MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"

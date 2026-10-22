@@ -262,11 +262,12 @@ def attempt_owns(run_id: str, node_key: str, attempt_id: Optional[str], operatio
 
 
 @contextmanager
-def attempt_hold(run_id: str, node_key: str, attempt_id: Optional[str], operation: str) -> Iterator[bool]:
+def attempt_hold(run_id: str, node_key: str, attempt_id: Optional[str], operation: str, **options) -> Iterator[bool]:
     """0061 T#7, outside a guard: ``attempt_owns`` judged under the Stop gate's shared hold, kept for the body — an
     automatic approval and the step after it commit before a Stop's ``stopping`` does, or are refused after it.
-    Yields whether the body may go on (a refusal is recorded after the hold). No Graph handler: True."""
-    hold = graph_execution_hooks.call("node_hold", run_id, node_key, attempt_id, operation)
+    Yields whether the body may go on (a refusal is recorded after the hold). No Graph handler: True.
+    ``options``: the Graph's own (0083 WP-4, a person's result stage: ``idle_ok``, ``also``)."""
+    hold = graph_execution_hooks.call("node_hold", run_id, node_key, attempt_id, operation, **options)
     if hold is None:
         yield True
         return

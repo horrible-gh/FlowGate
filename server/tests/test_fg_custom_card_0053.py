@@ -44,7 +44,7 @@ def test_a_custom_card_needs_what_a_work_card_needs():
 
     custom = _graph([("gn_r", "document", "R", None), ("gn_c", "custom", None, "custom.1")], [("gn_r", "gn_c")])
     work = _graph([("gn_r", "document", "R", None), ("gn_c", "document", "T", "task")], [("gn_r", "gn_c")])
-    assert rp.required_policies(custom, "gn_r", "approved") == rp.required_policies(work, "gn_r", "approved") == {
+    assert rp.required_policies(custom, "gn_r") == rp.required_policies(work, "gn_r") == {
         "start_node", "completion", "rejection_path", "report_pair"}
 
 

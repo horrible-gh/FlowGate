@@ -20,9 +20,9 @@ of the active run and turned into a node event for the resolver:
 flowgate.v02.0056 T#1 (0002-CH turn 5~10): a rejection of a node's result — a person's (the v0.1
 ``review_transitions/reject`` route, kept for v0.1) or the one the card's AI review writes on the way to
 a rework or when its count is spent — is not a node event of the v0.2 contract: the node stays in review
-and waits for the card's approval (``node_approval``). The one exception is a root bound in the rejected
-state at the run start: it keeps L0009 §2.6.5 (``run_service._root_bound_start`` applies ``review_rejected``),
-as answered on the T#1 TR's question. A gate's confirm / reject is its own event and does not change.
+and waits for the card's approval (``node_approval``). 0056 T#1 개정: bound root input is already done
+at run start regardless of its document's review status (``run_service._root_bound_start``).
+A gate's confirm / reject is its own event and does not change.
 
 flowgate.v02.0056 T#2: an AI card with its instruction used runs an instruction stage before its result stage
 (``node_dispatch``, the node run's ``stage``). Only the result stage's document is the node's result: while the
@@ -50,6 +50,16 @@ flowgate.v02.0061 T#7: a stopping run binds nothing (no contact, no reconciliati
 token of an attempt that may not write any more (invalidated, its run stopping) is refused and recorded
 (``graph_execution_hooks`` ``result_refused``). An invalidated attempt's tokens are no evidence any more
 (``run_store.token_ids``), so a node opened again never takes the old attempt's result.
+
+flowgate.v02.0083 WP-4: a node's result just submitted (``result_submitted``), revised (``revised``) or put back in review
+on its v0.1 review route (``mark_revised``, no node event) is handed to the card (``card_settings_ports.person_result``)
+before this step's settlement: a work plan a person writes takes its card's review or automatic approval as a post-commit
+job (the card marks the node as worked on meanwhile). Nothing else changes here; a rejection is still no node event.
+The same goes for the two other ways a submission reaches the node: a new revision of the node's result registered in
+place (the inbox edit's contact, ``inbox_edited``: the same document, its ``revision_no`` raised — no node event, the node
+keeps its result and stays in review), and a submission the reconciliation binds after a lost contact (``reconcile_node``,
+on a run read or a resume): its ``result_submitted`` / ``revised`` goes to the card as the contact's would have, into the
+same post-commit jobs. A reconciliation that finds nothing missing hands nothing, so a repeated read starts nothing.
 """
 from __future__ import annotations
 
@@ -71,11 +81,14 @@ from .run_apply import RunContext, apply_decision, fill_line, load_context, read
 
 _log = logging.getLogger(__name__)
 
-EVENT_KINDS = ("inbox_registered", "review_decided")
+EDITED = "inbox_edited"                                         # 0083 WP-4: a revision registered in place
+EVENT_KINDS = ("inbox_registered", "review_decided", EDITED)
 INSTRUCTION_STAGE = "instruction"
 RECONCILE_MAX_STEPS_PER_NODE = 64
 # Only an approval moves a node on; a rejection is no node event (flowgate.v02.0056 T#1).
 _DECISIONS = {"approve": "review_approved", "approved": "review_approved"}
+_SUBMISSIONS = ("result_submitted", "revised")                  # 0083 WP-4: a submission the card follows
+_RESUBMISSIONS = ("mark_revised",)                              # 0083 WP-4: the same document back in review
 CANCELLED = "cancelled"
 STOPPING = "stopping"                                           # 0061 T#7
 
@@ -108,14 +121,19 @@ def on_document_event(kind: str, flow_id: str, payload: dict) -> None:
             return                                               # 0061 T#7: fenced, recorded, nothing moves
         ctx = load_context(run, _project_id(flow_id), None, jobs)
         found = locate(ctx, kind, payload)
+        gap = found is not None and found.kind == "revised" and _next_in_chain(ctx, found.replaces) != found.doc_id
+        if not gap:
+            _hand_to_card(ctx, kind, payload, found)             # 0083 WP-4: before the settlement below
         if found is None:
+            if kind == EDITED:
+                return                                           # 0083 WP-4: no node event; the card's job settles
             if kind == "review_decided" and _approval(payload):
                 _follow_card(ctx)                                # another document of a card approved
             settle_run(ctx)                                      # 0061 T#2: a review ended with no node event
             return
         policies = policies_of(run_store.policy_entries(ctx.run_id))      # E-33 -> rollback
-        if found.kind == "revised" and _next_in_chain(ctx, found.replaces) != found.doc_id:
-            reconcile_node(ctx, found.node, policies)            # chain gap: one hop at a time
+        if gap:
+            reconcile_node(ctx, found.node, policies)            # chain gap: one hop at a time (each handed on)
             return
         d = resolve(ctx.revision, read_run_state(ctx), found, policies)
         if not d.ignored:
@@ -123,6 +141,25 @@ def on_document_event(kind: str, flow_id: str, payload: dict) -> None:
 
     with_flow_guard(flow_id, body)
     _run_jobs(jobs)
+
+
+def _hand_to_card(ctx: RunContext, kind: str, payload: dict, found: Optional[RunEvent]) -> None:
+    """0083 WP-4, inside the guard: the node's result submitted, revised (a new document, or the same one's new
+    revision registered in place: ``inbox_edited``) or put back in review goes to its card, whose answer (the step after
+    the commit) joins the post-commit jobs."""
+    if found is not None and found.kind in _SUBMISSIONS:
+        key, doc_id = found.node, found.doc_id
+    elif found is None and (kind == EDITED or (kind == "review_decided" and _decision(payload) in _RESUBMISSIONS)):
+        row = run_store.node_run_by_result(ctx.run_id, payload.get("doc_id")) if payload.get("doc_id") else None
+        if row is None or row["status"] != "review":
+            return
+        key, doc_id = row["node_key"], row["result_doc_id"]
+    else:
+        return
+    node = ctx.node_rows.get(key)
+    job = card_settings_ports.person_result(ctx.flow_id, node, doc_id) if node is not None and doc_id else None
+    if job is not None:
+        ctx.jobs.append(job)
 
 
 def locate(ctx: RunContext, kind: str, payload: dict) -> Optional[RunEvent]:
@@ -311,6 +348,7 @@ def reconcile_node(ctx: RunContext, key: str, policies: dict) -> None:
         if d.ignored:
             _log.warning("graph reconcile stopped run=%s node=%s event=%s", ctx.run_id, key, event.kind)
             return
+        _hand_to_card(ctx, "reconcile", {}, event)               # 0083 WP-4: a bound submission, as on its contact
         apply_decision(ctx, d)
     _log.warning("graph reconcile_step_limit run=%s node=%s", ctx.run_id, key)
 

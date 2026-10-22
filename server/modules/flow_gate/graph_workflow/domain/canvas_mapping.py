@@ -66,8 +66,15 @@ def document_state(doc_review_status, type_code) -> Optional[str]:
     return _STATE_BY_REVIEW.get(str(doc_review_status))
 
 
-def node_run_state(status) -> Optional[str]:
-    """State of a Graph node from its ``node_run.status`` (P0008 §2.3 'Graph 노드 → state')."""
+def node_run_state(status, run: Optional[dict] = None) -> Optional[str]:
+    """State of a Graph node from its ``node_run.status`` (P0008 §2.3 'Graph 노드 → state').
+
+    flowgate.v02.0083 T#4: ``run`` is the node's run wire (``node_run_wire``). An open node whose writer ended
+    without a result — the wire's ``dispatch.error_code`` (``no_result``, a failed AI start or run) — is ``blocked``,
+    not ``in_progress``: nothing works on it until a person resumes or recovers it. Any other open node stays
+    ``in_progress`` (there is no Canvas state for a writer still to come)."""
+    if status == "open" and ((run or {}).get("dispatch") or {}).get("error_code"):
+        return "blocked"
     return _STATE_BY_NODE_RUN.get(str(status)) if status is not None else "draft"
 
 

@@ -9,9 +9,6 @@
        flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons (it checks what 실행
        would take); it is available while the open Flow's edited structure can be checked
        (`canValidate`).
-       flowgate.v02.0053 T#9: the run buttons drive the server run (the Shell sends the commands to the
-       Center session); `runMode` is the server's run as this tab knows it. Next to them one dot shows the
-       Flow's run — ● running, ❚❚ stopped, ✓ completed — its name in the tooltip only.
        flowgate.v02.0059 T#1 (0011-CH contract A): [선택] is back for multi-selection only (no add
        node / connect mode): a toggle whose ON / OFF (`selectMode`, the Center session's) shows on the
        button; it emits `edit.select-mode` and the Shell switches the mode.
@@ -22,15 +19,9 @@
        flowgate.v02.0059 0017-T: the zoom is one control — it shows the Canvas zoom (also one that is no
        preset, e.g. 115%) and chooses a preset; the zoom is never shown twice. The density radios set the
        step a card drag moves in.
-       flowgate.v02.0056 F2-1: a stopped run with cards approved meanwhile says so beside the dot — "멈춤 · 다음
-       카드 N개 대기" (the waiting cards' keys in its tooltip). That is the run's stop, not a card waiting for
-       approval: the Canvas keeps those cards 승인됨.
-       flowgate.v02.0061 T#14 (R §실행 제어): the two run buttons are the open Flow's run phase's (`runPhase`) — idle:
-       다음 단계 · 전체 실행; running: 일시정지 · 중지; paused: 재개 · 중지; stopping: one 중지 중 in their place, off.
-       No standing button; 0038's "the pressed button turns into ■ 중지" is gone. Every run button (and 검증) is off
-       while a run command is answered (`targets.runBusy`). The dot shows the phase and the band beside it — in the
-       place of the waiting cards line — the run's status, its command, why an idle run is idle, its running /
-       requested executions against the Flow's limit and the cards waiting for the next command (keys in its tooltip). -->
+       flowgate.v02.0061 T#14: runPhase controls the run buttons; runBusy disables commands while pending.
+       flowgate.v02.0083 T0024 revision: the entire status area beside the run buttons is removed.
+       Run state and command handling remain unchanged. -->
   <div
     class="designer-toolbar"
     :class="{ 'is-unavailable': disabled }"
@@ -224,7 +215,7 @@ const props = withDefaults(
     selectMode?: boolean
     /** flowgate.v02.0059 T#2: what the 정렬 / 배치 ▾ commands act on (the Menu Bar's targets). */
     targets?: DesignerMenuTargets
-    /** flowgate.v02.0061 T#14: the open Flow's run band (runBandView), or null (no run). */
+    /** Retained input contract for run state; the toolbar renders no status area. */
     runBand?: DesignerRunBand | null
   }>(),
   { disabled: false, canValidate: false, canUndo: true, canRedo: true, selectMode: false, targets: () => ALL_MENU_TARGETS, runBand: null },

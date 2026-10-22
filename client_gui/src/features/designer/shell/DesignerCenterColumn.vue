@@ -73,6 +73,20 @@ provide(Symbol.for('flowgate.designer.bottomDockInspector'), {
     : null,
   // flowgate.v02.0072 TR0012 rev1: a work plan window follows its own Flow's run lock, also when another Flow is active.
   flowRunLock: (flowId: string) => props.center.runMarks(flowId).lock,
+  // flowgate.v02.0083 T#3: and its WP card's latest node run — the run read's (the latest) over the Canvas read's, the
+  // bound result and the plan line from the Canvas read. Null while the Flow's Graph is not shown.
+  cardRun(flowId: string, nodeKey: string) {
+    const load = props.center.state.graphs?.[flowId]
+    const node = load?.status === 'ready' ? (load.graph as FlowGraph).nodes.find((item) => item.id === nodeKey) : undefined
+    if (!node) return null
+    const run = props.center.runMarks(flowId).nodeRuns.get(nodeKey)
+    return {
+      status: run?.status ?? node.nodeRun?.status ?? null,
+      resultDocId: node.nodeRun?.resultDocId ?? null,
+      runningExecutionCount: run?.runningExecutionCount ?? node.nodeRun?.runningExecutionCount ?? 0,
+      lineDocId: node.cardDocuments?.find((line) => line.slot === 'plan')?.docId ?? null,
+    }
+  },
   host(intent: { readonly kind: string; readonly nodeId?: string; readonly tool?: string; readonly flowId?: string }) {
     const flowId = props.center.state.activeFlowId
     if (intent.kind === 'select-node' && flowId !== null && intent.nodeId) props.center.selectNode(flowId, intent.nodeId)

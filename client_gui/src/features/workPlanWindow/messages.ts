@@ -135,7 +135,7 @@ const ko = {
     validation: '저장하지 못했습니다. 표시된 값을 확인하세요.',
     not_editable: '더 이상 편집할 수 없는 작업계획입니다.',
     disposed: '폐기된 플로우의 작업계획입니다.',
-    ai_running: 'AI 실행 중이라 저장할 수 없습니다.',
+    ai_running: '다른 AI 작업 중이라 저장할 수 없습니다.',
     forbidden: '작업계획을 저장할 권한이 없습니다.',
     not_found: '작업계획 문서를 찾을 수 없습니다.',
     network: '서버에 연결하지 못했습니다.',
@@ -160,6 +160,8 @@ const ko = {
     omit_unconfirmed: '저장했지만 전개 결과에서 이 카드의 지시 기록을 확인하지 못했습니다.',
     omit_no_change: '저장했습니다. 전개할 변경이 없습니다.',
     omit_deploy_failed: '저장됨 · 전개 실패',
+    submitted: '제출했습니다. 카드의 검수·승인으로 넘어갑니다.',
+    submit_failed: '제출하지 못했습니다',
   },
   confirm: {
     quantity_title: '값이 있는 단계 {n}개가 지워집니다',
@@ -214,6 +216,28 @@ const ko = {
   saving: '저장 중...',
   save: '저장',
   close: '닫기',
+  submit: {
+    label: '제출',
+    submitting: '제출 중...',
+    hint: {
+      write: '저장한 작업계획을 이 카드의 결과로 제출합니다.',
+      mark_revised: '반려 뒤 고친 작업계획을 다시 검수에 올립니다.',
+    },
+    reason: {
+      busy: '처리 중',
+      dirty: '먼저 저장하세요',
+    },
+    failure: {
+      empty: '작업이 0세트인 작업계획은 제출할 수 없습니다.',
+      ai_working: '이 카드의 AI(검수)가 작업 중입니다.',
+      taken: '이미 제출된 작업계획입니다.',
+      ai_running: '다른 AI 작업 중입니다.',
+      conflict: '카드 상태가 바뀌었습니다. 다시 읽어 주세요.',
+      forbidden: '제출할 권한이 없습니다.',
+      network: '서버에 연결하지 못했습니다.',
+      other: '서버가 제출을 받지 않았습니다.',
+    },
+  },
 }
 
 const en: typeof ko = {
@@ -347,7 +371,7 @@ const en: typeof ko = {
     validation: 'Could not save. Check the marked values.',
     not_editable: 'This work plan can no longer be edited.',
     disposed: 'The flow of this work plan was discarded.',
-    ai_running: 'An AI run is in progress; the plan cannot be saved.',
+    ai_running: 'Another AI is working; the plan cannot be saved.',
     forbidden: 'You may not save this work plan.',
     not_found: 'The work plan document was not found.',
     network: 'Could not reach the server.',
@@ -372,6 +396,8 @@ const en: typeof ko = {
     omit_unconfirmed: 'Saved; the deploy result does not show this card’s instruction written.',
     omit_no_change: 'Saved. Nothing to deploy.',
     omit_deploy_failed: 'Saved · deploy failed',
+    submitted: 'Submitted. The card goes on to its review and approval.',
+    submit_failed: 'Not submitted',
   },
   confirm: {
     quantity_title: '{n} step(s) with values will be removed',
@@ -426,6 +452,28 @@ const en: typeof ko = {
   saving: 'Saving...',
   save: 'Save',
   close: 'Close',
+  submit: {
+    label: 'Submit',
+    submitting: 'Submitting...',
+    hint: {
+      write: 'Submit the saved plan as this card’s result.',
+      mark_revised: 'Send the plan revised after its rejection to review again.',
+    },
+    reason: {
+      busy: 'Working',
+      dirty: 'Save first',
+    },
+    failure: {
+      empty: 'A plan with no work set cannot be submitted.',
+      ai_working: 'This card’s AI (its review) is working.',
+      taken: 'The plan was already submitted.',
+      ai_running: 'Another AI is working.',
+      conflict: 'The card has moved on. Read it again.',
+      forbidden: 'You may not submit it.',
+      network: 'Could not reach the server.',
+      other: 'The server did not take the submission.',
+    },
+  },
 }
 
 const ja: typeof ko = {
@@ -559,7 +607,7 @@ const ja: typeof ko = {
     validation: '保存できませんでした。表示された値を確認してください。',
     not_editable: 'この作業計画はもう編集できません。',
     disposed: '破棄されたフローの作業計画です。',
-    ai_running: 'AI 実行中のため保存できません。',
+    ai_running: '他の AI が作業中のため保存できません。',
     forbidden: 'この作業計画を保存する権限がありません。',
     not_found: '作業計画の文書が見つかりません。',
     network: 'サーバーに接続できませんでした。',
@@ -584,6 +632,8 @@ const ja: typeof ko = {
     omit_unconfirmed: '保存しましたが、展開結果でこのカードの指示の記録を確認できませんでした。',
     omit_no_change: '保存しました。展開する変更はありません。',
     omit_deploy_failed: '保存済み · 展開失敗',
+    submitted: '提出しました。カードのレビュー・承認に進みます。',
+    submit_failed: '提出できませんでした',
   },
   confirm: {
     quantity_title: '値のあるステップ {n}件が削除されます',
@@ -638,6 +688,28 @@ const ja: typeof ko = {
   saving: '保存中...',
   save: '保存',
   close: '閉じる',
+  submit: {
+    label: '提出',
+    submitting: '提出中...',
+    hint: {
+      write: '保存した作業計画をこのカードの結果として提出します。',
+      mark_revised: '差し戻し後に直した作業計画を再びレビューに出します。',
+    },
+    reason: {
+      busy: '処理中',
+      dirty: '先に保存してください',
+    },
+    failure: {
+      empty: '作業が 0 セットの作業計画は提出できません。',
+      ai_working: 'このカードの AI（レビュー）が作業中です。',
+      taken: 'すでに提出された作業計画です。',
+      ai_running: '他の AI が作業中です。',
+      conflict: 'カードの状態が変わりました。読み直してください。',
+      forbidden: '提出する権限がありません。',
+      network: 'サーバーに接続できませんでした。',
+      other: 'サーバーが提出を受け付けませんでした。',
+    },
+  },
 }
 
 export const workPlanWindowMessages = { ko, en, ja }

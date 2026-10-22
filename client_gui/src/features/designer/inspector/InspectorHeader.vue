@@ -140,6 +140,7 @@
         data-test="designer-inspector-pill"
         :data-tone="pill.tone"
         :data-state="target.canvasState ?? ''"
+        :data-card-state="cardState?.key ?? ''"
         :data-doc-status="target.docReviewStatus ?? ''"
         :data-run-status="target.nodeRun?.status ?? ''"
       >
@@ -200,7 +201,7 @@ import Dropdown from '../../../components/ui/Dropdown.vue'
 import IconButton from '../../../components/ui/IconButton.vue'
 import { flowNodeKindView, flowNodeStateDisplay } from '../center/canvas/flowNodeKinds'
 import { INSPECTOR_HOST } from './inspectorHost'
-import { NODE_TITLE_MAX_CHARS, checkNodeTitle, type InspectorTarget, type NodeTitleSaveOutcome } from './inspectorTarget'
+import { NODE_TITLE_MAX_CHARS, checkNodeTitle, inspectorCardState, type InspectorTarget, type NodeTitleSaveOutcome } from './inspectorTarget'
 
 const props = defineProps<{
   target: InspectorTarget
@@ -212,6 +213,8 @@ const { t, te } = useI18n()
 const kind = computed(() => flowNodeKindView(props.target.nodeKind, props.target.docType))
 const kindLabelKey = computed(() => kind.value.labelKey)
 const state = computed(() => flowNodeStateDisplay(props.target.canvasState))
+// flowgate.v02.0083 T#4: a Graph card with a run says what its Canvas card says (작업 중 · 작성 대기 · 결과 없음 …).
+const cardState = computed(() => inspectorCardState(props.target))
 
 type PillTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 
@@ -293,7 +296,12 @@ const pill = computed<HeaderPill | null>(() => {
   const runText = runStatusText.value
   let label: string
   let tone: PillTone
-  if (canvas?.key === 'blocked' && doc === REJECTED && docText) {
+  const card = cardState.value
+  if (card) {
+    // The card state leads (center/graph/cardStateView.ts — the run's own facts, never the Canvas `in_progress`).
+    label = t(card.labelKey)
+    tone = card.tone
+  } else if (canvas?.key === 'blocked' && doc === REJECTED && docText) {
     // A rejected document: 반려됨, not the Canvas word for it.
     label = docText
     tone = REVIEW_TONES[doc] ?? canvas.tone
@@ -314,7 +322,9 @@ const pill = computed<HeaderPill | null>(() => {
   }
   // The sub: a server state with a display name that says something else than the label.
   const subs: (string | null)[] = []
-  if (canvas) {
+  if (card) {
+    if (doc) subs.push(docText)
+  } else if (canvas) {
     if (doc && STATE_BY_REVIEW[doc] !== canvas.key) subs.push(docText)
     if (run && STATE_BY_RUN[run] !== canvas.key) subs.push(runText)
   } else if (doc && run && label === docText && STATE_BY_RUN[run] !== STATE_BY_REVIEW[doc]) {

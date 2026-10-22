@@ -11,7 +11,13 @@ structure does not need (``run_policies.required_policies``) is not asked — a 
 out-edge is simply followed and a node with one in-edge simply opens.
 
 flowgate.v02.0061 T#2: a propagation waits (``pending``) whenever the run is not ``running`` (paused, idle), and in
-a step command also when it would open a node outside the step's targets (``RunState.in_command``). A command
+a step command also when it would open a node outside the step's targets (``RunState.in_command``).
+0083 WP-3 (0061 T#2 개정, revised): an idle run is no longer one wait — a person's decision on an idle run that may be
+taken back to running (``RunState.approval_wakes``: not stopped, no Time Machine operation unfinished, not inside an
+explicit command, the run holding its Flow; ``wake_graph_run``'s conditions) propagates at once and opens the next
+cards, as on a running run (``defers``); the caller takes the run back to running before the openings
+(``graph_execution_hooks`` ``wake_approval``). A paused run, a stopped one and one under a Time Machine operation still
+wait, and a step still opens only its targets. A command
 (``start``, ``command`` = a new step / full command, ``resume`` = the paused command going on) drains what waits
 and then opens the run candidates (``run_candidates``: run scope targets that are pending with every predecessor
 done), so a node that became runnable without a propagation (a node added after a done node) opens as well.
@@ -80,6 +86,7 @@ class RunState:
     mode: str = MODE_FULL              # the command the run goes on with (0061 T#2)
     step_targets: Optional[frozenset] = None   # a step's targets; None: a full command or a step not begun yet
     held: frozenset = frozenset()      # 0061 T#11: never opened — the held node keys (and a bound node waiting for its root)
+    approval_wakes: bool = False       # 0083 WP-3 (0061 T#2 개정): an idle run a person's decision takes back to running
 
     def node(self, key: str) -> Optional[NodeRun]:
         return self.node_runs.get(key)
@@ -157,7 +164,8 @@ def virtual(s: RunState, d: Decision) -> RunState:
     done = set(d.propagation_done)
     status = "idle" if d.run_transition == "completed" else s.status
     return RunState(status, nodes, [p for p in s.pending if p not in done],
-                    s.open_decided | frozenset(d.open), s.has_active_attempts, s.mode, s.step_targets, s.held)
+                    s.open_decided | frozenset(d.open), s.has_active_attempts, s.mode, s.step_targets, s.held,
+                    s.approval_wakes)
 
 
 def transition_doc(s: RunState, nr: NodeRun, event: RunEvent) -> Any:
@@ -189,8 +197,15 @@ def resolve(revision: Graph, state: RunState, event: RunEvent, policies: Mapping
 
 
 def defers(s: RunState) -> bool:
-    """0061 T#2: a result's propagation waits unless the run is running (paused, idle)."""
-    return s.status != "running"
+    """0061 T#2: a result's propagation waits unless the run is running (paused, idle).
+
+    0083 WP-3 (0061 T#2 개정, revised): nor on an idle run a person's decision takes back to running
+    (``RunState.approval_wakes``) — the flowgate.v02.0056 T#1 contract that a person's approval moves the node on, with
+    no further resume. A paused run, a stopped run (idle reason ``stopped``) and a run under a Time Machine operation
+    still wait for the next command; a step still opens only its targets (``RunState.in_command``)."""
+    if s.status == "running":
+        return False
+    return not (s.status == "idle" and s.approval_wakes)
 
 
 def resolve_node_event(revision: Graph, s: RunState, event: RunEvent, policies: Mapping[str, Any],

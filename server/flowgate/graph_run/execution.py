@@ -27,8 +27,10 @@ def request_write(job):
     attempt = run_store.active_attempt_id(job["run_id"], job["node_key"])
     if not attempt:
         raise ledger.LeaseLost("write has no active attempt")
-    # T#7: a stopping run requests nothing (inside the guard). The engine's own opening of a node (a person's approval
-    # on an idle run opens the next one) is no attempt token's write: idle opens, the acquire needs running / paused.
+    # T#7: a stopping run requests nothing (inside the guard). The engine's own opening of a node is no attempt token's
+    # write. 0083 WP-3 (0061 T#2 개정): a person's approval on an idle run opens the next one at once
+    # (``frontier.defers``) after taking the run back to running (``command.wake_approval``), so the opening requests on
+    # a running run; ``OPENING`` still admits idle as before (the settlement below), the acquire needs running / paused.
     fencing.check(attempt, "request_write", statuses=fencing.OPENING)
     _refuse_time_machine(job["flow_id"], attempt, "request_write")
     job["graph_attempt_id"] = attempt
@@ -296,9 +298,9 @@ def handoff_end(run):
         ledger.end_handoff(run["graph_exec_id"])
 
 
-def node_hold(run_id, node_key, attempt_id, operation):
-    """``graph_execution_hooks`` ``node_hold``: ``fencing.node_hold``."""
-    return fencing.node_hold(run_id, node_key, attempt_id, operation)
+def node_hold(run_id, node_key, attempt_id, operation, **options):
+    """``graph_execution_hooks`` ``node_hold``: ``fencing.node_hold`` (0083 WP-4: its ``idle_ok`` / ``also`` options)."""
+    return fencing.node_hold(run_id, node_key, attempt_id, operation, **options)
 
 
 def transition(run, loop):
@@ -446,27 +448,14 @@ def recover():
                 return
             ledger.mark_lost(row["exec_id"], row["lease_token"])
             attempt = run_store._one("SELECT * FROM graph_node_attempts WHERE attempt_id = ?", [row["attempt_id"]])
-            changed = run_store._affected(
-                "UPDATE graph_node_attempts SET status = 'invalidated', active_node_key = NULL, "
-                "invalidated_reason = 'lease_expired', ended_at = ? WHERE attempt_id = ? AND status = 'active'",
-                [ledger.now(), row["attempt_id"]])
-            if not changed:
+            if not stop.invalidate_attempt(row["attempt_id"], "lease_expired"):
                 return
-            for token in run_store._all("SELECT token_id FROM graph_run_token_map WHERE attempt_id = ?", [row["attempt_id"]]):
-                ai_invoke_service._reclaim_orphan_lease_token(token, "lease_expired")
             run = run_store.run_by_id(row["run_id"])
             node = next((n for n in run_store.node_runs(row["run_id"]) if n["node_key"] == attempt["node_key"]), None)
             if not node or node["status"] == "done":
                 return
-            run_store._affected(
-                "UPDATE graph_node_runs SET status = 'pending', result_doc_id = NULL, opened_at = NULL, "
-                "finished_at = NULL, dispatch_token_issued = NULL, dispatch_issued_to = NULL, "
-                "dispatch_mention_id = NULL, dispatch_error_code = NULL, stage = NULL, "
-                "instruction_doc_id = NULL, result_event_floor = NULL, updated_at = ? "
-                "WHERE run_id = ? AND node_key = ? AND status <> 'done'",
-                [ledger.now(), row["run_id"], attempt["node_key"]])
             ctx = run_apply.load_context(run, (db_groups.get_by_id(snapshot["group_id"]) or {}).get("project_id"), None, jobs)
-            run_apply.emit_node_state(ctx, attempt["node_key"], node["status"], "pending", "lease_expired", None)
+            stop.reset_node(ctx, node, "lease_expired")
             run_apply.settle_run(ctx)  # T#2 command candidates preserve the step target set.
         try:
             # T#7: a lease-expired attempt is invalidated under the Stop gate's exclusive hold, as a Stop and a failed
@@ -615,6 +604,8 @@ _ACTIONS = {
     "execution_attempt": fencing.execution_attempt, "handoff_end": handoff_end, "node_hold": node_hold,
     # T#9: an approved code node is done once its result is merged into the Flow's branch.
     "resume_approval": command.resume_approval, "continue_approval": command.continue_approval,
+    # 0083 WP-3 (0061 T#2 개정): a person's decision on an idle run opens the next cards, the run woken first.
+    "approval_wakes": command.approval_wakes, "wake_approval": command.wake_approval,
     "defer_done": result_merge.defer_done, "integration_waiting": result_merge.integration_waiting,
     "integration_wire": result_merge.integration_wire, "retry_integrations": result_merge.retry_integrations,
     "hold_command": result_merge.hold_command, "propagation_held": result_merge.propagation_held,

@@ -25,6 +25,11 @@
 // now (TR0012 rev1: the Frame's reader, provideWorkPlanFlowRunLock), whatever is selected — no card, another card or
 // another Flow. A run status not confirmed, or no Designer to tell it, locks the window too. A save of the plan asks
 // the Designer to read that Flow's Canvas again.
+// flowgate.v02.0083 T#3 (D-1) — a WP card's 「작업계획」 line also hands the window its card (`card`): the latest node run of
+// that card as the Center session knows it now (the Frame's reader, provideWorkPlanCardRun — status, bound result, running
+// AI executions, the document its plan line shows) and whether its Flow is read only for an ownership conflict. The run
+// card's own plan is then locked only by that conflict or the card's own AI; the revision view and the run lock stay the
+// structure locks they are. A [제출] there reads the Flow's Canvas again (`submitted`).
 import { reactive, shallowRef } from 'vue'
 import {
   DocumentIoGroup,
@@ -45,7 +50,7 @@ import {
 } from '@/features/documentWindow'
 import QnaTab from './features/qna/QnaTab.vue'
 import type { InspectorHost } from './inspectorHost'
-import { inspectorCardNodeKey, type InspectorCardDocument, type InspectorTarget } from './inspectorTarget'
+import { inspectorCardNodeKey, type InspectorCardDocument, type InspectorReadOnly, type InspectorTarget } from './inspectorTarget'
 import { slotLineCard, type SlotLineCard } from './parts/slotStateView'
 
 export type OpenDocumentMode = DocumentWindowMode
@@ -95,8 +100,20 @@ export function workPlanOpenerLock(target: Pick<InspectorTarget, 'readOnly' | 'e
  */
 export type WorkPlanFlowRunLock = (flowId: string) => 'run' | 'unknown' | null
 
-/** Whether the Inspector last showed each Flow read only (reactive: an open window follows it). */
-const workPlanReadOnlyFlows = reactive(new Map<string, boolean>())
+/** Why the Inspector last showed each Flow read only, or null (reactive: an open window follows it). */
+const workPlanReadOnlyFlows = reactive(new Map<string, InspectorReadOnly>())
+
+/** flowgate.v02.0083 T#3 — the WP card a work plan window reads (WorkPlanEditRequest `card`). */
+export type WorkPlanCardView = NonNullable<ReturnType<NonNullable<WorkPlanEditRequest['card']>>>
+
+/**
+ * flowgate.v02.0083 T#3 — a Graph card's latest node run as the Designer knows it now (the Center session's run read and
+ * Canvas read), or null when its Flow's Graph is not shown.
+ */
+export type WorkPlanCardRun = (flowId: string, nodeKey: string) => Omit<WorkPlanCardView, 'flowId' | 'nodeKey' | 'conflict'> | null
+
+/** The Frame's reader of the cards' node runs while it is mounted (reactive: an open window follows it). */
+const workPlanCardRunReader = shallowRef<WorkPlanCardRun | null>(null)
 
 /** The Frame's reader of the Flows' run locks while it is mounted (reactive: an open window follows it). */
 const workPlanRunLockReader = shallowRef<WorkPlanFlowRunLock | null>(null)
@@ -104,8 +121,7 @@ const workPlanRunLockReader = shallowRef<WorkPlanFlowRunLock | null>(null)
 /** flowgate.v02.0072 T#3 — the Frame notes the read-only verdict of every target it shows (by its Flow). */
 export function noteWorkPlanOpener(target: InspectorTarget | null): void {
   if (!target) return
-  const readOnly = target.readOnly !== null
-  if (workPlanReadOnlyFlows.get(target.flowId) !== readOnly) workPlanReadOnlyFlows.set(target.flowId, readOnly)
+  if (workPlanReadOnlyFlows.get(target.flowId) !== target.readOnly) workPlanReadOnlyFlows.set(target.flowId, target.readOnly)
 }
 
 /**
@@ -119,9 +135,26 @@ export function provideWorkPlanFlowRunLock(reader: WorkPlanFlowRunLock): () => v
   }
 }
 
+/**
+ * flowgate.v02.0083 T#3 — the Frame tells the work plan windows every shown card's latest node run. Returns the undo (the
+ * Frame's end: no card is known, and the run card's plan locks as any plan).
+ */
+export function provideWorkPlanCardRun(reader: WorkPlanCardRun): () => void {
+  workPlanCardRunReader.value = reader
+  return () => {
+    if (workPlanCardRunReader.value === reader) workPlanCardRunReader.value = null
+  }
+}
+
+/** flowgate.v02.0083 T#3 — the WP card `nodeKey` of the Flow as an open work plan window reads it now, or null. */
+export function workPlanCardOf(flowId: string, nodeKey: string): WorkPlanCardView | null {
+  const run = workPlanCardRunReader.value?.(flowId, nodeKey) ?? null
+  return run ? { ...run, flowId, nodeKey, conflict: workPlanReadOnlyFlows.get(flowId) === 'conflict' } : null
+}
+
 /** What an open work plan window of the Flow reads now: read only, else the Flow's run lock (`unknown` locks too). */
 export function workPlanFlowLock(flowId: string): WorkPlanOpenerLock {
-  if (workPlanReadOnlyFlows.get(flowId) === true) return 'read_only'
+  if (workPlanReadOnlyFlows.get(flowId)) return 'read_only'
   const reader = workPlanRunLockReader.value
   return reader === null || reader(flowId) !== null ? 'run_locked' : null
 }
@@ -141,12 +174,17 @@ export function openWorkPlan(target: InspectorTarget, docId: string, host: Inspe
   noteWorkPlanOpener(target)
   const flowId = target.flowId
   const line = target.cardDocuments.find((item) => item.docId === docId)
+  // flowgate.v02.0083 T#3: a Graph WP card hands its card (its node key, read from the session as it changes).
+  const nodeKey = (target.cardDocType ?? '').trim().toUpperCase() === 'WP' ? inspectorCardNodeKey(target) : null
   openWorkPlanEditWindow({
     docId,
     projectId: target.projectId,
     groupId: flowId,
     title: line?.title || null,
     ...workPlanOpener(flowId, host),
+    ...(nodeKey !== null
+      ? { card: () => workPlanCardOf(flowId, nodeKey), submitted: () => host?.request({ kind: 'refresh-flow', flowId }) }
+      : {}),
   })
 }
 

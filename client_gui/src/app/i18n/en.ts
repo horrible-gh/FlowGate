@@ -220,6 +220,9 @@ export default {
       card_states: {
         no_result: 'No result',
         incomplete: 'Incomplete',
+        // flowgate.v02.0083 T#4: an open card no AI execution works on — it waits for an answer or for its writer.
+        waiting_answer: 'Waiting for an answer',
+        waiting_writer: 'Waiting for its writer',
         writing_instruction: 'Writing instruction',
         writing_result: 'Writing result',
         working: 'Working',
@@ -661,7 +664,7 @@ export default {
       run_idle_reasons: {
         completed: 'Completed',
         no_targets: 'No card to run',
-        waiting_approval: 'Waiting for approval',
+        waiting_approval: 'Waiting for a person (writing or approval)',  // 0083 WP-2: an open human writer waits here too
         blocked_rejected: 'Stopped by a rejection',
         error: 'Stopped by an error',
         stopped: 'Stopped',

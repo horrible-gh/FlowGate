@@ -37,7 +37,6 @@ RULE_REF = {
 }
 # L0009 §2.0 지시 타입 (AUTO_REPORT_MAP keys).
 INSTRUCTION_DOC_TYPES = frozenset({"N", "T", "T2", "TS"})
-DONE_REVIEW_STATUSES = frozenset({"approved", "wf_done"})
 
 
 class PolicyUndecided(Exception):
@@ -104,15 +103,16 @@ def policies_of(entries: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     return out
 
 
-def required_policies(revision: Graph, bound_node_key: Optional[str] = None,
-                      bound_review_status: Optional[str] = None) -> set[str]:
-    """L0009 §2.6.3 ``required_policies`` for one revision and its root binding."""
+def required_policies(revision: Graph, bound_node_key: Optional[str] = None) -> set[str]:
+    """L0009 §2.6.3 ``required_policies`` for one revision and its root binding.
+
+    flowgate.v02.0083 T#1 (0056 T#1 개정): the bound root is the run's input and is done at start whatever its
+    document's review status, so it never takes the rejection path; only the other cards need ``rejection_path``."""
     targets = run_scope(revision).targets
     nodes = [n for n in revision.nodes if n.key in targets]
     live = [e for e in revision.live_edges() if e.source in targets and e.target in targets]
     req = {"start_node", "completion"}
-    bound_done = bound_review_status in DONE_REVIEW_STATUSES
-    if any(not (n.key == bound_node_key and bound_done) for n in nodes):
+    if any(n.key != bound_node_key for n in nodes):
         req.add("rejection_path")
     if any((run_doc_type(n.node_type, n.doc_type) or "").upper() in INSTRUCTION_DOC_TYPES for n in nodes):
         req.add("report_pair")

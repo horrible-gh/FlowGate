@@ -39,11 +39,18 @@
 // failed (`failed`), and a Flow not read yet (`unread`), are not "no run": the Center session then keeps the run lock
 // (its Canvas read's run status, or the run last known locked) and lets no command, edit or source mode change go until
 // it is confirmed (`read`: a run read or a command's answer told it; `run` null = no run).
+//
+// flowgate.v02.0083 T#4 rev1 — an AI execution read while still requested turns running with no run event of its own (the
+// AI start's frame may come before it): while the run read shows a running run with a requested execution, it is read
+// again after REQUESTED_REREAD_MS, so the band's executions and a card's running lock (its WP window) follow it.
 import { cardApprovalFailureView, cardApprovalRefusalOf, type CardApprovalFailureView, type CardApprovalRefusal } from '../graph/cardStateView'
 import type { FlowGraphSource, FlowRunError, FlowRunInfo, FlowTimeMachineRefusal, FlowTimeMachineResult } from '../graph/flowGraphSource'
 import { isRunLocked } from './flowRunLock'
 
 export type FlowRunMode = 'next' | 'all'
+
+/** flowgate.v02.0083 T#4 rev1: how soon a run read showing a requested AI execution is read again. */
+export const REQUESTED_REREAD_MS = 2000
 
 /** flowgate.v02.0061 T#14: what this tab is doing to the run — a command, Pause, Resume or Stop (T#15: or 되돌리기). */
 export type FlowRunAction = FlowRunMode | 'pause' | 'resume' | 'stop' | 'time_machine'
@@ -197,6 +204,23 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
   const reads = new Map<string, number>()
   let seq = 0
   let failures = 0
+  // flowgate.v02.0083 T#4 rev1: the next read of a Flow whose run read showed a requested execution.
+  const rereads = new Map<string, ReturnType<typeof setTimeout>>()
+
+  function dropReread(flowId: string) {
+    const timer = rereads.get(flowId)
+    if (timer !== undefined) clearTimeout(timer)
+    rereads.delete(flowId)
+  }
+
+  function rereadWhileRequested(flowId: string, run: FlowRunInfo | null) {
+    dropReread(flowId)
+    if (run?.status !== 'running' || (run.requestedExecutionCount ?? 0) <= 0) return
+    rereads.set(flowId, setTimeout(() => {
+      rereads.delete(flowId)
+      read(flowId)
+    }, REQUESTED_REREAD_MS))
+  }
 
   // Read back through `runs` (a reactive record): the object assigned is the raw one, its proxy is what changes show.
   const stateOf = (flowId: string): FlowRunState => {
@@ -218,6 +242,7 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
         if (state.action) return
         state.run = run
         state.readState = 'read'
+        rereadWhileRequested(flowId, run)
       },
       () => {
         if (reads.get(flowId) !== token) return
@@ -396,10 +421,12 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     timeMachine,
     forget: (flowId) => {
       reads.delete(flowId)
+      dropReread(flowId)
       delete runs[flowId]
     },
     clear: () => {
       reads.clear()
+      for (const flowId of [...rereads.keys()]) dropReread(flowId)
       for (const flowId of Object.keys(runs)) delete runs[flowId]
     },
   }

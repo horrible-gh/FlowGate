@@ -30,6 +30,11 @@ SOURCE_MESSAGES = {
 }
 
 RUN_EDIT_MESSAGES = {
+    "card_recovery_refused": {
+        "ko": "이 카드는 복구할 수 없습니다. 중지되지 않은 유휴 실행의 결과 없는 개방 카드이며 AI 작업이 없어야 합니다.",
+        "en": "This card cannot be recovered. It must be open without a result or active AI work in an idle, non-stopped run.",
+        "ja": "このカードは復旧できません。停止されていない待機中の実行で、結果と AI 作業のない開放カードが対象です。",
+    },
     "graph_time_machine_blocked": {
         "ko": "Graph Time Machine을 안전하게 실행할 수 없습니다. 차단 사유를 확인하세요.",
         "en": "Graph Time Machine cannot run safely. Check the blocking reasons.",

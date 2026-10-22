@@ -33,9 +33,8 @@ def adopt_revision(group: dict, run: dict, actor: str, jobs: list) -> bool:
     ctx = load_context(candidate, group.get("project_id"), actor, jobs)
     targets = run_scope(ctx.revision).targets
     snapshot = policy_snapshot.policy_set_for_run(flow_id)
-    root = ctx.root_document() if ctx.binding else None
-    missing = undecided_for(required_policies(ctx.revision, (ctx.binding or {}).get("node_key"),
-                                             (root or {}).get("doc_review_status")), snapshot["entries"])
+    missing = undecided_for(required_policies(ctx.revision, (ctx.binding or {}).get("node_key")),
+                            snapshot["entries"])
     if missing:
         raise GraphApiError(409, "run_policy_undecided", {
             "flow_id": flow_id, "revision_no": latest, "undecided_policies": missing})

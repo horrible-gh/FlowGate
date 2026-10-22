@@ -10,7 +10,7 @@ opens on its ``start`` control event:
 - A path the start nodes do not reach is never opened (turn 15 rule 4): the resolver (``frontier``) opens only
   what ``select`` returns and what an approval propagates to along its out-edges, so nothing reaches a node the
   run scope leaves out. New runs do not create node run rows for left-out nodes.
-- The root-bound start node (``run_service._root_bound_start``) is already ``done`` / ``review`` when ``select``
+- 0056 T#1 개정: the root-bound input (``run_service._root_bound_start``) is already ``done`` when ``select``
   is asked; ``openable_only`` skips it and its recorded propagation is drained by the same ``start`` decision,
   as before. A root start node that is not bound is ``pending`` and is opened like any other node.
 

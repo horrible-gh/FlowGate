@@ -282,12 +282,17 @@ const runFields = computed<InspectorRunSettingsFields>(() => {
       value: view.value,
       options: view.options.map((option) => ({ value: option.value, label: labelOf(option) })),
       disabled: view.disabled,
-      reason: view.reason ? t(k(view.reason)) : null,
+      reason: view.reason ? t(k(view.reason)) : planHint(name),
       failure: failureOf(name),
     }
   }
   return out
 })
+
+/** flowgate.v02.0083 WP-4 — a WP card's 검수 횟수 says how a person's WP is reviewed (once per submission). */
+function planHint(name: InspectorRunSettingsField): string | null {
+  return kind.value === 'plan' && name === 'review_count' ? t(k('plan.review_count_hint')) : null
+}
 
 function onChange(field: CardSettingsField, text: string) {
   if (views.value[field].disabled) return

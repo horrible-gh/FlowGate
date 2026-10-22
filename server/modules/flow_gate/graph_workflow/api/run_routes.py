@@ -98,6 +98,15 @@ def post_run_stop(run_id: str, request: Request, body: Any = Body(default=None))
     return envelope.run(request, lambda: _control(request, run_id, body, run_service.stop_run))
 
 
+@router.post("/runs/{run_id}/nodes/{node_key}/recover")
+def post_card_recover(run_id: str, node_key: str, request: Request, body: Any = Body(default=None)):
+    """0083 WP-2: the same authentication and write permission as Stop / Resume."""
+    from modules.flow_gate.graph_workflow.services.run_state_ports import recover_card
+    return envelope.run(request, lambda: _control(
+        request, run_id, body,
+        lambda group, rid, reason, user: recover_card(group, rid, node_key, reason, user)))
+
+
 @router.post("/runs/{run_id}/resume")
 def post_run_resume(run_id: str, request: Request, body: Any = Body(default=None)):
     """flowgate.v02.0061 T#2: a paused / idle run goes on; ``mode`` (step / full) makes it a new command."""

@@ -128,6 +128,9 @@
 // - flowgate.v02.0074 T#2: the document [업로드] of the plan (any DocumentIoGroup) is this window's [JSON 가져오기]: a request
 //   with initialMode 'import' opens the import window once the plan is read; the window tells its dirty state for the
 //   plan's .json download.
+// - flowgate.v02.0083 T#3: the plan of a WP card in its Flow's run (the request's `card`) is edited by its writer while the
+//   Flow runs, and the bar's [제출] (after [저장], off while edits are unsaved) registers it as the card's result — or, after a
+//   rejection, puts it back in review (useWorkPlanEditor.submit).
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
@@ -178,6 +181,8 @@ const editor = useWorkPlanEditor({
   external: () => props.win.request.external?.() ?? null,
   saved: (revisionNo) => props.win.request.saved?.(revisionNo),
   stepOpen: (rowId) => workPlanStepEditOpen(props.win.docId, rowId),
+  card: () => props.win.request.card?.() ?? null,
+  submitted: () => props.win.request.submitted?.(),
 })
 const { view, draft, dirty, saving, canSave, notice, pendingQuantity } = editor
 

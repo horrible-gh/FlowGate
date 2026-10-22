@@ -18,15 +18,20 @@ answer what a node's AI start takes from its card.
 - The requirement card's AI delegation on / off adds / removes the card's AI delegation document
   line (``card_documents.lines.set_delegation``), in the same guard.
 - flowgate.v02.0072 T#3: a work plan card (WP) reads and writes its plan settings (``fields.PLAN``: the AI
-  pre-instruction writing switch and the run block) by the same GET / PATCH, locks and failures. They are values
-  only: nothing here touches the plan document (its Steps' AI, review AI, pre-instructions and attachments), and
-  ``run_settings`` / ``uses_ai`` hand nothing on for the plan kind.
+  pre-instruction writing switch and the run block) by the same GET / PATCH, locks and failures. Nothing here touches
+  the plan document (its Steps' AI, review AI, pre-instructions and attachments). flowgate.v02.0083 T#1 — 0072 T#3 개정
+  (revised): the run block is read by a run now. ``uses_ai`` judges the plan card's writer (an explicit person assignee,
+  else the card's work AI, else an explicit AI assignee, else a person) and ``run_settings`` hands an AI writer its
+  work AI, time limit and restarts (``fields.run_plan``).
 - ``run_settings`` is the Graph's ``card_settings_ports.run_settings`` handler: only stored values are
   handed on, so a card with nothing stored starts exactly as before. ``result_type`` is its
   ``result_type`` handler: the type an AI node's result is bound as (the dispatch told the AI the same).
 - ``token_step_type`` is the source tools' ``worker_step_type_hooks`` handler: the token of an open AI
   node whose card changes what it writes is judged by that type (an omitted instruction's report),
-  so the source access of the token follows what the AI was told to write.
+  so the source access of the token follows what the AI was told to write. flowgate.v02.0083 T#2: a card
+  that changes nothing (a WP / TS card, an omitted D / P / L / DB / T2 instruction, a card run opened before
+  migration 148, a person's node) answers its node's own type, as the result binder binds it
+  (``result_binder.result_type``) — never None, which the source tools read as the Flow root's type.
 - flowgate.v02.0056 T#2: ``instruction_document`` is the Graph's ``card_settings_ports.instruction_document``
   handler — an AI card that runs an instruction stage (instruction use) names its instruction type and its
   instruction line's document, and whether that document is written (``card_documents.lines.has_body``: its
@@ -130,15 +135,24 @@ def _write_hold(group: dict, node_key: str, value: Any, user_id: Optional[str]) 
     return _payload(flow_id, node, repository.values(flow_id, node_key))
 
 
-def uses_ai(_flow_id: str, node: dict) -> bool:
+def uses_ai(flow_id: str, node: dict) -> bool:
     """0063 B7: Designer cards have no explicit assignee. Runnable cards use their run AI,
     then the invoke service's project default. An explicit human assignment is never overridden;
-    requirement delegation, gates and cards without a run plan retain their own contracts."""
+    requirement delegation, gates and cards without a run plan retain their own contracts.
+
+    flowgate.v02.0083 T#1 (0072 T#3 개정): a work plan card (WP) is judged in this order — an explicit person assignee:
+    a person; the card's work AI (``run_ai``) stored: AI; an explicit AI assignee: AI; nothing: a person (the default
+    stays a person's writing, so a WP a person already writes is never handed to an AI by a later command). Run / test
+    cards keep their judgement (unassigned: AI, the project default when the card names none)."""
     assignment = node.get("assignee_kind")
     if assignment is not None:
         return assignment == "ai"
-    return repository.available() and fields.card_kind(node.get("node_type"), node.get("doc_type")) in (
-        fields.RUN, fields.TEST)
+    if not repository.available():
+        return False
+    kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
+    if kind == fields.PLAN:
+        return bool(node.get("node_key")) and bool(repository.values(flow_id, node["node_key"]).get("run_ai"))
+    return kind in (fields.RUN, fields.TEST)
 
 
 def run_settings(flow_id: str, node: dict) -> dict:
@@ -193,6 +207,8 @@ def token_step_type(token_rec: dict) -> Optional[str]:
     start's retries minted) counts, and only while the node is open in its Flow's active run: the card is
     locked then, so this is the type the dispatch told the AI and the result binder binds (``result_type``)
     — or, while the node is in its instruction stage, the instruction type that stage writes.
+    flowgate.v02.0083 T#2: when the card changes nothing it is the node's own type (``graph_model.run_doc_type``,
+    the result binder's fallback), so the token is never judged by its ``doc_ref`` (the Flow's root R / B).
     """
     if not repository.available():
         return None
@@ -205,4 +221,4 @@ def token_step_type(token_rec: dict) -> Optional[str]:
                                            repository.values(flow_id, node["node_key"]))
         if written:
             return written
-    return result_type(flow_id, node)
+    return result_type(flow_id, node) or legacy.run_doc_type(node.get("node_type"), node.get("doc_type"))

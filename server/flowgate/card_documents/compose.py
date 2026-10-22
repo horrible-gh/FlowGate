@@ -29,6 +29,14 @@ result path), is refused (409 ``slot_has_document``): that document is opened an
 line of a test card shows its instruction's document and is never written on its own. The write runs inside the
 Flow guard; only the result path's Graph contact follows its commit, taking the Graph's own guard as the inbox's
 does.
+
+flowgate.v02.0083 T#3 (0014-CH turn 8 D-2): a work plan card a person writes has its plan on its line from the start
+(the card's empty draft, filled in the work plan editor and saved by ``PUT …/work-plan``), so its result path takes
+no text and makes no document: the write registers that very draft — the same guard, refusals, token claim and
+submission (``register_result``) — and the line already holds it. A plan of no work set (or one that cannot be read)
+is refused as empty (422 ``empty_body``), a line not holding the card's own untouched-by-workflow draft as
+``slot_has_document``. While the card's AI or review still works on the node, whatever its state, a work plan line
+write is refused (409 ``node_ai_working``).
 """
 from __future__ import annotations
 
@@ -134,6 +142,9 @@ def write_line(group: dict, node_key: str, slot_key: str, content: Optional[str]
         running = legacy.running_node(flow_id, node_key)       # judged under the guard: one writer at a time
         if running is not None and running["result_type"] == slot.doc_type:
             return _reserve_result(group, node, slot, ordinal, running, content, user_id), None
+        if slot.doc_type == "WP" and legacy.card_working(flow_id, node_key):     # 0083 T#3: e.g. its review loop
+            raise _refused(409, "node_ai_working", {"flow_id": flow_id, "node_key": node_key, "slot": slot.slot},
+                           "The card's AI is still working on it.")
         row, doc = _line(flow_id, node, slot)
         if doc is not None:
             raise _refused(409, "slot_has_document", {"flow_id": flow_id, "node_key": node_key, "slot": slot.slot,
@@ -160,6 +171,8 @@ def _reserve_result(group: dict, node: dict, slot: cs.CardSlot, ordinal: int, ru
         raise _refused(409, "node_in_instruction_stage", params, "The card is writing its instruction now.")
     if running["ai_working"]:
         raise _refused(409, "node_ai_working", params, "The card's AI is still working on it.")
+    if slot.doc_type == "WP":
+        return _reserve_plan(node, slot, running, user_id, params)
     if not (content or "").strip():
         raise _invalid("content", "empty_body")               # a result is approved only with a body
     token_id = running["token_id"]
@@ -178,6 +191,24 @@ def _reserve_result(group: dict, node: dict, slot: cs.CardSlot, ordinal: int, ru
     else:                                                      # the card's empty draft: superseded by the result
         card_lines.adopt_result(flow_id, node_key, doc_id)
     return doc_id, token_id
+
+
+def _reserve_plan(node: dict, slot: cs.CardSlot, running: dict, user_id: str, params: dict) -> tuple[str, str]:
+    """flowgate.v02.0083 T#3: the result path of a work plan line — the card's own plan draft on the line, as its editor
+    saved it, registered with the node's dispatch token (no new document; the line already holds it)."""
+    flow_id = params["flow_id"]
+    row, doc = _line(flow_id, node, slot)
+    if doc is None or legacy.work_sets(doc) < 1:
+        raise _invalid("content", "empty_body")               # 작업 0세트: nothing to approve
+    token_id = running["token_id"]
+    if not token_id:
+        raise _refused(409, "node_token_unavailable", params, "The card's run token is already used.")
+    if not (row and row["owned"] and row["doc_id"] == doc["doc_id"] and cs.is_disposable_draft(doc)):
+        raise _refused(409, "slot_has_document", {**params, "doc_id": doc["doc_id"]},
+                       "This line already has a document.")
+    if not legacy.register_result(doc["doc_id"], token_id, user_id):    # another writer spent the token first
+        raise _refused(409, "node_token_unavailable", params, "The card's run token is already used.")
+    return doc["doc_id"], token_id
 
 
 def _bound(flow_id: str, node_key: str, doc_id: str) -> bool:

@@ -105,7 +105,7 @@ def test_node_transition_table():
 
 def test_required_policies_match_the_p0008_s5_1_example():
     g = graph([doc_node("gn_r", "R"), doc_node("gn_n", "N"), doc_node("gn_d", "D")], [("gn_r", "gn_n"), ("gn_n", "gn_d")])
-    req = rp.required_policies(g, "gn_r", "approved")
+    req = rp.required_policies(g, "gn_r")
     assert req == {"start_node", "report_pair", "rejection_path", "completion"}
     entries = pol.system_default_set()["entries"]
     assert rp.undecided_for(req, entries) == [
@@ -116,9 +116,12 @@ def test_required_policies_match_the_p0008_s5_1_example():
 
 def test_required_policies_by_structure():
     only_root = graph([doc_node("gn_r", "R")], [])
-    assert rp.required_policies(only_root, "gn_r", "approved") == {"start_node", "completion"}
-    assert rp.required_policies(only_root, "gn_r", "pending_review") == {"start_node", "completion", "rejection_path"}
-    assert rp.required_policies(LINEAR) == {"start_node", "completion", "rejection_path"}
+    # 0061 run scope: an isolated root is no run start, so a run targets nothing of it
+    assert rp.required_policies(only_root, "gn_r") == rp.required_policies(only_root) == {"start_node", "completion"}
+    # flowgate.v02.0083 T#1 (0056 T#1 개정): the bound root is a done input whatever its review status (no status
+    # input); the rejection path is asked for the cards after it, which a bound run start always has
+    assert rp.required_policies(LINEAR, "gn_r") == rp.required_policies(LINEAR) == {
+        "start_node", "completion", "rejection_path"}
     branch = graph([doc_node("a", "D"), doc_node("b", "P"), doc_node("c", "L"), doc_node("j", "DB")],
                    [("a", "b"), ("a", "c"), ("b", "j"), ("c", "j")])
     assert {"edge_condition", "parallelism", "join"} <= rp.required_policies(branch)

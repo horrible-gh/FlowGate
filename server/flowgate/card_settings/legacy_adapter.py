@@ -9,7 +9,8 @@ node an AI run or a result document belongs to, the project default reviewer, th
 loop (started as the AI invoke route starts it, its review hops told the card's review basis, and its
 state) and the v0.1 approval as the unmanned chain makes it, followed by the Graph contact a person's
 approval reaches, and whether the AI run of a node still holds the Flow's group AI lease (flowgate.v02.0056
-T#1). The source tools' step type judgement takes the open run node a token was mapped to.
+T#1). The source tools' step type judgement takes the open run node a token was mapped to, and the type a node's run
+writes and binds when its card changes nothing (``graph_model.run_doc_type``, flowgate.v02.0083 T#2).
 flowgate.v02.0056 T#3: an AI run's node result is the one registered with that run's own tokens
 (``node_of_ai_run``), so the review stage never takes a result someone else registered as the run's.
 
@@ -24,6 +25,15 @@ flowgate.v02.0061 T#2: after the review stage followed a node's AI run, the Grap
 flowgate.v02.0063 (the card's question wait, ``question_wait``): an ended AI run as its durable row tells it, the node
 whose result writer ended with no result, the card's node row by its key, whether the Flow's AI is busy (the group
 lease or a Graph execution), the Graph's retry of a result writer and the wake of an idle run.
+
+flowgate.v02.0083 WP-4 (a person's work plan reviewed by AI): the result of a node in review is also a person's work plan
+card whose card reviews it (``node_of_result``: an AI node, or a person's plan node with a review count — so a passed
+review of it is approved as an AI card's is), and the person's result stage reads the Flow's active run and a node run of
+it, the node's active attempt and the node an attempt is of, the run's issuer, whether that run may take the stage
+(``wake_graph_run``'s conditions: not stopped, no Time Machine operation unfinished), whether a verdict already answers a
+document's current submission (and whether it passed it), and the span of an explicit review request
+(``graph_execution_hooks.explicit_request``, Q439). Its steps run under the Stop gate's shared hold (``person_hold``: the
+run-end stage's ``attempt_hold`` taking an idle run too, those conditions judged again under the hold).
 """
 from __future__ import annotations
 
@@ -39,6 +49,7 @@ from modules.flow_gate.db import group_ai_leases as db_leases
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.graph_workflow.api import envelope, v01_contact
+from modules.flow_gate.graph_workflow.domain.graph_model import run_doc_type
 from modules.flow_gate.graph_workflow.projection.flow_snapshot import registered_doc_types
 from modules.flow_gate.graph_workflow.projection.run_documents import registered_documents
 from modules.flow_gate.graph_workflow.services import canvas_service, card_settings_ports, graph_service, node_dispatch
@@ -51,13 +62,16 @@ from modules.flow_gate.settings import ai_execution_policy_service
 __all__ = ["GraphApiError", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid",
            "run", "load_flow", "require_writable", "repeat_choices", "ai_exists", "team_exists",
            "node_running", "graph_owned", "project_of", "node_of_ai_run", "node_of_result", "open_node_of_token",
+           "run_doc_type",
            "node_ai_run_active", "instruction_node_of_ai_run", "registered_instructions", "start_result_stage",
            "instruction_stage_failed", "attempt_of_ai_run", "attempt_owns", "attempt_hold", "active_run_id",
            "invalidated_documents", "ai_run_record", "no_result_node_of_ai_run", "node_of_key", "nodes_of_ai_run",
            "flow_ai_busy", "retry_result_stage", "wake_graph_run", "open_questions_of_ai_run", "open_ai_questions",
            "askers_answered_by", "ask_responder",
            "default_reviewer", "last_rejection", "start_review_loop", "review_loop_row", "review_loop_active",
-           "approve", "settle_graph_run"]
+           "approve", "settle_graph_run",
+           "person_plan_reviewed", "active_run", "node_run", "active_attempt_id", "run_issuer", "person_stage_open",
+           "person_hold", "attempt_node", "submission_judged", "submission_passed", "explicit_request"]
 
 _log = logging.getLogger(__name__)
 
@@ -140,14 +154,18 @@ def _module_of(flow_id: str) -> Optional[str]:
     return parts[1] if len(parts) > 2 and parts[1] != "none" else None
 
 
-def _ai_node_in_review(run_row: dict, node_key: str) -> Optional[tuple[dict, str]]:
-    """(the run revision's node row, its result) when the AI node is in review with a result."""
+def _ai_node_in_review(run_row: dict, node_key: str, person_reviewed: bool = False) -> Optional[tuple[dict, str]]:
+    """(the run revision's node row, its result) when the AI node is in review with a result. ``person_reviewed``
+    (0083 WP-4): a person's work plan node whose card reviews its result too (``person_plan_reviewed``)."""
     row = next((r for r in run_store.node_runs(run_row["run_id"]) if r["node_key"] == node_key), None)
     if row is None or row["status"] != REVIEW_NODE_STATUS or not row.get("result_doc_id"):
         return None
     record = definition_store.revision(run_row["group_id"], int(run_row["revision_no"])) or {}
     node = next((n for n in record.get("nodes") or [] if n["node_key"] == node_key), None)
-    if node is None or not card_settings_ports.uses_ai(run_row["group_id"], node):
+    if node is None:
+        return None
+    if not card_settings_ports.uses_ai(run_row["group_id"], node) and not (
+            person_reviewed and person_plan_reviewed(run_row["group_id"], node)):
         return None
     return node, row["result_doc_id"]
 
@@ -216,11 +234,24 @@ def node_ai_run_active(flow_id: str, node_key: str) -> bool:
 
 
 def node_of_result(flow_id: str, doc_id: Optional[str]) -> Optional[dict]:
-    """The AI node of the Flow's active run whose result in review is ``doc_id`` (its node row)."""
+    """The node of the Flow's active run whose result in review is ``doc_id`` (its node row): an AI node, or — 0083
+    WP-4 — a person's work plan node whose card reviews its result (``person_plan_reviewed``), so the review stage
+    approves a passed review of it and the node moves on as an AI card's does."""
     run_row = run_store.active_run(flow_id)
     row = run_store.node_run_by_result(run_row["run_id"], doc_id) if run_row and doc_id else None
-    found = _ai_node_in_review(run_row, row["node_key"]) if row else None
+    found = _ai_node_in_review(run_row, row["node_key"], person_reviewed=True) if row else None
     return found[0] if found else None
+
+
+def person_plan_reviewed(flow_id: str, node: dict) -> bool:
+    """0083 WP-4: ``node`` is a work plan card a person writes whose card reviews its result (review count not 0)."""
+    from flowgate.card_settings import fields, repository  # noqa: PLC0415 — the card's own settings
+
+    if not node.get("node_key") or not repository.available() or card_settings_ports.uses_ai(flow_id, node):
+        return False
+    if fields.card_kind(node.get("node_type"), node.get("doc_type")) != fields.PLAN:
+        return False
+    return fields.after_result(fields.PLAN, repository.values(flow_id, node["node_key"])) == fields.REVIEW
 
 
 def open_node_of_token(token_rec: dict) -> Optional[tuple[str, dict]]:
@@ -641,6 +672,115 @@ def settle_graph_run(flow_id: str) -> None:
         run_service.settle_if_needed(flow_id, project_of(flow_id))
     except Exception:  # noqa: BLE001 — the stage's own end is not failed by the run's judgement
         _log.warning("graph run settle after the card stage failed flow=%s", flow_id, exc_info=True)
+
+
+# ── a person's work plan result (flowgate.v02.0083 WP-4) ────────────────────
+
+def active_run(flow_id: str) -> Optional[dict]:
+    return run_store.active_run(flow_id)
+
+
+def node_run(run_id: str, node_key: str) -> Optional[dict]:
+    return next((r for r in run_store.node_runs(run_id) if r["node_key"] == node_key), None)
+
+
+def active_attempt_id(run_id: str, node_key: str) -> Optional[str]:
+    return run_store.active_attempt_id(run_id, node_key)
+
+
+def run_issuer(run_row: dict) -> str:
+    """The Graph run's issuer (its starter): the authority of the run's automatic approvals, as a node dispatch issues
+    an AI card's run to it (``node_dispatch.dispatch_document``) — never the author of the result."""
+    return run_row.get("started_by") or ""
+
+
+def person_stage_open(flow_id: str, run_row: dict) -> bool:
+    """The run may take a person's result stage (its review's start, its automatic approval): running, paused or idle
+    — on the conditions ``wake_graph_run`` wakes an idle run on: not stopped (``idle_reason`` stopped), and no Time
+    Machine operation unfinished. A stopping run takes nothing."""
+    return _person_stage_refusal(flow_id, run_row) is None
+
+
+def _person_stage_refusal(flow_id: str, run_row: Optional[dict]) -> Optional[str]:
+    """Why the run may not take a person's result stage now (``person_stage_open``), or None."""
+    from flowgate.graph_time_machine.operation import busy  # noqa: PLC0415
+
+    if run_row is None:
+        return "run_not_active"
+    status = run_row.get("status")
+    if status not in (run_store.RUNNING, run_store.PAUSED, run_store.IDLE):
+        return "run_" + str(status)
+    if status == run_store.IDLE and run_row.get("idle_reason") == "stopped":
+        return "run_stopped"
+    return "time_machine_in_progress" if busy(flow_id) else None
+
+
+def person_hold(flow_id: str, run_id: str, node_key: str, attempt_id: Optional[str], operation: str):
+    """0083 WP-4: a person's result stage — its review's start, its automatic approval — judged as ``attempt_hold``
+    judges the run-end stage, under the Stop gate's shared hold kept for the ``with`` body (the approval's transition, its
+    TR hook and its Graph contact; the review's request), with an idle run taken too (Q439: a person's own step) and the
+    stage's conditions judged again under that hold: ``run_id`` still the Flow's active run, not stopped, no Time Machine
+    operation unfinished (``person_stage_open``). A Stop and a Time Machine rewind take the gate exclusively, so they commit
+    before the judgement — which then refuses — or after the body. Yields whether the body may go on; a refusal is
+    recorded (operation ``operation``)."""
+    def closed() -> Optional[str]:
+        active = run_store.active_run(flow_id)
+        if active is None or active["run_id"] != run_id:
+            return "run_not_active"
+        return _person_stage_refusal(flow_id, active)
+
+    return node_dispatch.attempt_hold(run_id, node_key, attempt_id, operation, idle_ok=True, also=closed)
+
+
+def attempt_node(attempt_id: Optional[str]) -> Optional[tuple[str, str]]:
+    """(run id, node key) of a node attempt, or None."""
+    if not attempt_id or not get_store().table_exists("graph_node_attempts"):
+        return None
+    row = get_store()._fetch_one("SELECT run_id, node_key FROM graph_node_attempts WHERE attempt_id = ?", [attempt_id])
+    return (row["run_id"], row["node_key"]) if row else None
+
+
+def submission_judged(doc_id: str) -> bool:
+    """A review verdict already answers the document's current submission: the latest review of its current revision
+    — unless that was an ``issues`` the document was rejected for (its ``rejection_history`` names the review) and the
+    document was put back in review since (``mark_revised``): that is a new submission of the same revision."""
+    from modules.flow_gate.db import document_reviews as db_reviews  # noqa: PLC0415
+    from modules.flow_gate.db import documents as db_documents  # noqa: PLC0415
+    from modules.flow_gate.services.ai_invoke import review as v01_review  # noqa: PLC0415
+    from modules.flow_gate.workflow.pipeline_service import parse_rejection_history  # noqa: PLC0415
+
+    doc = db_documents.get_by_id(doc_id) or {}
+    revision = int(doc.get("revision_no") or 0)
+    reviews = [r for r in db_reviews.list_by_doc(doc_id) or [] if int(r.get("revision_no") or 0) == revision]
+    if not reviews:
+        return False
+    latest = max(reviews, key=lambda r: int(r.get("id") or 0))
+    if str(latest.get("verdict") or "").lower() != "issues":
+        return True                                 # passed or held: decided (a person approves what is left)
+    slot = {"doc_id": doc_id, "rejection_history": parse_rejection_history(doc.get("rejection_history"))}
+    resubmitted = (v01_review._review_already_rejected(latest, slot, None)
+                   and doc.get("doc_review_status") != "rejected")
+    return not resubmitted
+
+
+def submission_passed(doc_id: str) -> bool:
+    """0083 WP-4: the latest review of the document's current revision passed it — a pass of an older revision (the
+    document revised in place while its review worked) does not answer the current submission."""
+    from modules.flow_gate.db import document_reviews as db_reviews  # noqa: PLC0415
+    from modules.flow_gate.db import documents as db_documents  # noqa: PLC0415
+
+    revision = int((db_documents.get_by_id(doc_id) or {}).get("revision_no") or 0)
+    reviews = [r for r in db_reviews.list_by_doc(doc_id) or [] if int(r.get("revision_no") or 0) == revision]
+    latest = max(reviews, key=lambda r: int(r.get("id") or 0)) if reviews else {}
+    return str(latest.get("verdict") or "").lower() == "pass"
+
+
+def explicit_request():
+    """The span of a person's explicit review request (Q439, ``graph_execution_hooks.explicit_request``): a review hop
+    requested inside it is also taken on an idle run, which it takes back to running."""
+    from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
+
+    return graph_execution_hooks.explicit_request()
 
 
 def instruction_node_of_document(flow_id: str, doc_id: str) -> Optional[tuple[dict, dict]]:
