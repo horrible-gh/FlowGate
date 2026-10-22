@@ -9,7 +9,8 @@ node an AI run or a result document belongs to, the project default reviewer, th
 loop (started as the AI invoke route starts it, its review hops told the card's review basis, and its
 state) and the v0.1 approval as the unmanned chain makes it, followed by the Graph contact a person's
 approval reaches, and whether the AI run of a node still holds the Flow's group AI lease (flowgate.v02.0056
-T#1). The source tools' step type judgement takes the open run node a token was mapped to.
+T#1). The source tools' step type judgement takes the open run node a token was mapped to, and the type a node's run
+writes and binds when its card changes nothing (``graph_model.run_doc_type``, flowgate.v02.0083 T#2).
 flowgate.v02.0056 T#3: an AI run's node result is the one registered with that run's own tokens
 (``node_of_ai_run``), so the review stage never takes a result someone else registered as the run's.
 
@@ -48,6 +49,7 @@ from modules.flow_gate.db import group_ai_leases as db_leases
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.graph_workflow.api import envelope, v01_contact
+from modules.flow_gate.graph_workflow.domain.graph_model import run_doc_type
 from modules.flow_gate.graph_workflow.projection.flow_snapshot import registered_doc_types
 from modules.flow_gate.graph_workflow.projection.run_documents import registered_documents
 from modules.flow_gate.graph_workflow.services import canvas_service, card_settings_ports, graph_service, node_dispatch
@@ -60,6 +62,7 @@ from modules.flow_gate.settings import ai_execution_policy_service
 __all__ = ["GraphApiError", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid",
            "run", "load_flow", "require_writable", "repeat_choices", "ai_exists", "team_exists",
            "node_running", "graph_owned", "project_of", "node_of_ai_run", "node_of_result", "open_node_of_token",
+           "run_doc_type",
            "node_ai_run_active", "instruction_node_of_ai_run", "registered_instructions", "start_result_stage",
            "instruction_stage_failed", "attempt_of_ai_run", "attempt_owns", "attempt_hold", "active_run_id",
            "invalidated_documents", "ai_run_record", "no_result_node_of_ai_run", "node_of_key", "nodes_of_ai_run",

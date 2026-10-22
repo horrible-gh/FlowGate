@@ -28,7 +28,10 @@ answer what a node's AI start takes from its card.
   ``result_type`` handler: the type an AI node's result is bound as (the dispatch told the AI the same).
 - ``token_step_type`` is the source tools' ``worker_step_type_hooks`` handler: the token of an open AI
   node whose card changes what it writes is judged by that type (an omitted instruction's report),
-  so the source access of the token follows what the AI was told to write.
+  so the source access of the token follows what the AI was told to write. flowgate.v02.0083 T#2: a card
+  that changes nothing (a WP / TS card, an omitted D / P / L / DB / T2 instruction, a card run opened before
+  migration 148, a person's node) answers its node's own type, as the result binder binds it
+  (``result_binder.result_type``) — never None, which the source tools read as the Flow root's type.
 - flowgate.v02.0056 T#2: ``instruction_document`` is the Graph's ``card_settings_ports.instruction_document``
   handler — an AI card that runs an instruction stage (instruction use) names its instruction type and its
   instruction line's document, and whether that document is written (``card_documents.lines.has_body``: its
@@ -204,6 +207,8 @@ def token_step_type(token_rec: dict) -> Optional[str]:
     start's retries minted) counts, and only while the node is open in its Flow's active run: the card is
     locked then, so this is the type the dispatch told the AI and the result binder binds (``result_type``)
     — or, while the node is in its instruction stage, the instruction type that stage writes.
+    flowgate.v02.0083 T#2: when the card changes nothing it is the node's own type (``graph_model.run_doc_type``,
+    the result binder's fallback), so the token is never judged by its ``doc_ref`` (the Flow's root R / B).
     """
     if not repository.available():
         return None
@@ -216,4 +221,4 @@ def token_step_type(token_rec: dict) -> Optional[str]:
                                            repository.values(flow_id, node["node_key"]))
         if written:
             return written
-    return result_type(flow_id, node)
+    return result_type(flow_id, node) or legacy.run_doc_type(node.get("node_type"), node.get("doc_type"))

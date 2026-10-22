@@ -52,6 +52,7 @@ from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import tr_commit_service
 from modules.flow_gate.services import tr_scope_service
 from modules.flow_gate.services import work_plan_service
+from modules.flow_gate.services import worker_step_type_hooks
 from modules.flow_gate.storage.paths import (
     get_storage_root,
     group_path,
@@ -4750,6 +4751,28 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                         submitted_type=submitted_type,
                     ),
                 )
+    # flowgate.v02.0083 T#2: a Graph node's token (mapped to a node open in its Flow's active run) writes the
+    # type the server recorded for it (``worker_step_type_hooks.token_step_type``: the node's card, else the
+    # node's own type, as the result binder binds it). A Graph Flow has no v0.1 sequence, so the head check
+    # above never sees it; another type is refused the same way, before numbering / storage and for a
+    # dry-run too. Only M / CH pass; a WP is not exempt here — a WP card's token writes its WP.
+    # A local import as Step 7.5's below: this handler binds AUTO_COMPLETE_TYPES as a local name.
+    from modules.flow_gate.documents.constants import AUTO_COMPLETE_TYPES
+    node_token_type: Optional[str] = None
+    if doc_type.upper() not in AUTO_COMPLETE_TYPES:
+        try:
+            node_token_type = str(worker_step_type_hooks.token_step_type(token_rec) or "").upper() or None
+        except Exception:
+            # Same as the head lookup above: a failed lookup keeps the submission's legacy path.
+            node_token_type = None
+        if node_token_type is not None and node_token_type != doc_type.upper():
+            return _fail(
+                409,
+                _WORKFLOW_HEAD_MISMATCH_COPY[_locale].format(
+                    expected_head_type=node_token_type,
+                    submitted_type=doc_type.upper(),
+                ),
+            )
 
     # ── Step 5.9: block real registration of corrupted text + body-fingerprint match
     # (0391 B0001 proposal 3+4, T0005 §5-1/§6) ──
@@ -4786,6 +4809,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     new_checks = ["auth", "context_binding", "permission", "doc_type", "referential_integrity"]
     if workflow_head is not None:
         new_checks.append("workflow_head")
+    if node_token_type is not None:
+        new_checks.append("node_token_type")
     if doc_path is not None:
         new_checks.append("doc_path")
     if body_for_guards is not None:
