@@ -181,7 +181,8 @@ def _run_probe(
     Returns (timed_out, exit_code, stdout, stderr). On timeout the whole process tree is
     killed (reusing the invoke path's primitives) and partial output is recovered.
     """
-    kwargs = process_runner.popen_kwargs(root, env, include_stdio=True)
+    kwargs = process_runner.popen_kwargs(root, env, include_stdio=True,
+                                         policy=process_runner.CHILD_ENV_POLICY_CLI)
     kwargs["stdin"] = subprocess.PIPE
 
     proc = subprocess.Popen(cmd, **kwargs)

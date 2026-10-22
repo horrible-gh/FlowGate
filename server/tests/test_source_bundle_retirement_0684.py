@@ -124,7 +124,7 @@ def _launch(monkeypatch, tmp_path, scope):
     monkeypatch.setattr(provider_cli, "_stop_progress_watchdog", lambda *_a: None)
     monkeypatch.setattr(provider_cli, "_absolute_remaining_sec", lambda _run: 30)
     monkeypatch.setattr(provider_cli.process_runner, "WindowsProcessOwner", Owner)
-    monkeypatch.setattr(provider_cli.process_runner, "popen_kwargs", lambda _cwd, env: captured.update(env=dict(env)) or {})
+    monkeypatch.setattr(provider_cli.process_runner, "popen_kwargs", lambda _cwd, env, **_kw: captured.update(env=dict(env)) or {})
     monkeypatch.setattr(provider_cli.process_runner, "communicate_with_cleanup", communicate)
     monkeypatch.setattr(provider_cli.process_runner, "kill_process_tree", lambda *_a: None)
     monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_k: Proc())

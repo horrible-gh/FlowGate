@@ -21,7 +21,6 @@ kind=system rows stay admin-only on top of that.
 from __future__ import annotations
 
 import locale
-import os
 import platform
 import re
 import subprocess
@@ -36,6 +35,7 @@ from modules.flow_gate.rbac.decorators import _has_permission
 from modules.flow_gate.db import env_vars as _ev_db
 from modules.flow_gate.db import commands as _cmd_db
 from modules.flow_gate.commands import resolve_template
+from modules.flow_gate.services import process_runner
 
 router = APIRouter(tags=["EnvVarsCommands"])
 
@@ -300,11 +300,12 @@ def execute_command(
     resolved = resolve_template(cmd["template"])["resolved"]
     executed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    # Merge env_overrides (e.g. FLOWGATE_TOKEN, FLOWGATE_SCRATCH) into the subprocess env
-    env = None
+    # Merge env_overrides (e.g. FLOWGATE_TOKEN, FLOWGATE_SCRATCH) into the subprocess env.
+    # Always an explicit env under the CLI allowlist -- with or without overrides the
+    # command never inherits the server's secrets (v02.0089 T0004).
     env_overrides: Optional[Dict[str, str]] = (body or {}).get("env_overrides")
-    if env_overrides:
-        env = {**os.environ, **{str(k): str(v) for k, v in env_overrides.items()}}
+    overrides = {str(k): str(v) for k, v in env_overrides.items()} if env_overrides else {}
+    env = process_runner.child_env(overrides, policy=process_runner.CHILD_ENV_POLICY_CLI)
 
     try:
         result = subprocess.run(
