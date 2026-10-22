@@ -349,18 +349,19 @@ def test_start_binds_the_root_and_opens_the_next_node(env, decided):
     assert [r["event_seq"] for r in _sql(env["db"], "SELECT event_seq FROM graph_run_events ORDER BY event_seq")] == [1, 2, 3]
 
 
-def test_a_rejected_root_starts_blocked_and_waits(env, decided):
-    """L0009 §2.6.5 kept for a bound root (flowgate.v02.0056 T#1, the answer to the TR's question): the
-    rejected root takes ``review_rejected`` at the start, is no card awaiting approval, nothing opens."""
+def test_0056_T1_개정_rejected_root_starts_done_and_opens_work(env, decided):
+    """0056 T#1 개정: root input bypasses review without changing the rejected document."""
     run = start(env, FH).json()["run"]
     root = nodes_of(run)["gn_r"]
-    assert (root["status"], root["awaiting_approval"], run["open_node_keys"]) == ("rejected", False, [])
+    assert (root["status"], root["awaiting_approval"], run["open_node_keys"]) == ("done", False, ["gn_d"])
     evs = [e.payload for e in env["events"]]
-    assert [(p["node_key"], p["from"], p["to"], p["cause"], p["canvas_state"]) for p in evs[1:]] == [
-        ("gn_r", "pending", "review", "root_bound_start", "blocked"),
-        ("gn_r", "review", "rejected", "review_rejected", "blocked")]
+    assert not any(p.get("cause") == "review_rejected" for p in evs)
+    assert any(p.get("node_key") == "gn_r" and p.get("to") == "done"
+               and p.get("cause") == "root_bound_start" for p in evs)
     props = _sql(env["db"], "SELECT outcome, status, source_event_seq FROM graph_propagations")
-    assert props == [{"outcome": "rejected", "status": "done", "source_event_seq": 3}]
+    assert props == [{"outcome": "approved", "status": "done", "source_event_seq": 2}]
+    assert _sql(env["db"], "SELECT doc_review_status FROM documents WHERE doc_id = ?",
+                (f"{FH}.0001-R",))[0]["doc_review_status"] == "rejected"
 
 
 # ── result binding (L0009 §2.6.8) ────────────────────────────────────────────
@@ -499,16 +500,12 @@ def test_a_lost_delegation_is_recovered_before_a_run_read(env, decided, monkeypa
 # ── dispatch (L0009 §2.6.6, E-22 / E-23) ─────────────────────────────────────
 
 def test_a_failed_token_issue_keeps_the_run_and_is_retried_on_resume(env, decided):
+    # flowgate.v02.0083 T#1 (0056 T#1 개정): the rejected bound root is the run's input, done at start;
+    # gn_d opens at once and its token issue to u_ghost (no users row) fails. No root revision is needed.
     res = start(env, FH)
     assert res.status_code == 201
     run = res.json()["run"]
-    assert run["open_node_keys"] == [] and nodes_of(run)["gn_r"]["status"] == "rejected"
-    from modules.flow_gate.db import documents as db_documents
-
-    r2 = _doc(FH, 2, "R", "approved")                              # the rejected root is revised and approved
-    db_documents.set_superseded_by(f"{FH}.0001-R", r2)
-    submit(FH, r2, "R", None)
-    decide_review(FH, r2, "approve", "approved")
+    assert run["open_node_keys"] == ["gn_d"] and nodes_of(run)["gn_r"]["status"] == "done"
     d = nodes_of(current(env, FH))["gn_d"]
     assert d["status"] == "open" and d["dispatch"] == {
         "token_issued": False, "mention_id": None, "issued_to": "u_ghost", "error_code": "token_issue_failed"}
@@ -516,11 +513,12 @@ def test_a_failed_token_issue_keeps_the_run_and_is_retried_on_resume(env, decide
     _sql(env["db"], "INSERT INTO users (user_id, username, email, password, created_at, updated_at) "
                     "VALUES ('u_ghost', 'u_ghost', 'g@x', 'x', 't', 't')")
     rid = run["run_id"]
-    control(env, rid, "stop")
+    # 0061 T#7: the run waits idle on gn_d and an idle run is not stopped; resume goes on and re-dispatches it
+    seen = len(run_events(env))
     assert control(env, rid, "resume").status_code == 200
     d = nodes_of(current(env, FH))["gn_d"]
     assert d["dispatch"] == {"token_issued": True, "mention_id": None, "issued_to": "u_ghost"}
-    assert [c for *_x, c in run_events(env)][-1] == "redispatched"
+    assert "redispatched" in [c for *_x, c in run_events(env)[seen:]]
 
 
 def test_an_ai_node_is_started_after_the_commit(env, decided):

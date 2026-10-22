@@ -8,10 +8,8 @@ Until D0004 §8 is answered every policy is ``undecided``, so a start is refused
 flowgate.v02.0056 T#1: a run read also tells the run band how many approved cards' propagations wait
 for the run to go on (``pending_propagation_count`` / ``pending_node_keys``: "멈춤 · 다음 카드 N개 대기")
 and each node run whether its card waits for a person's approval (``awaiting_approval``,
-``node_approval``). A root bound in the rejected state keeps the root bound start contract (L0009
-§2.6.5 step 2): it takes ``review_rejected`` at the run start, the card is rejected, its card approval is
-refused (409 ``node_not_in_review``) and nothing follows it — the one exception to "a person's rejection
-is no node event" (T0004 §5), as answered on this TR's question.
+``node_approval``). 0056 T#1 개정: a bound root is existing input accepted by Run, including a rejected
+root. Its card becomes done and propagates approved without changing the document's review status.
 
 flowgate.v02.0056 T#2: each node run also tells the stage of its card run (``stage``: ``instruction`` while the
 card's instruction AI writes its instruction, ``result`` while its run AI writes the result) and the instruction
@@ -31,10 +29,10 @@ Flow): a run written before migration 151 that completed gave the Flow up and ta
 holds or follows it.
 
 flowgate.v02.0061 T#11: each node run tells whether its card is held (``hold``, ``graph_execution_hooks`` ``held_nodes``).
-A held root-bound node does not take its root document's state at the run start either (``_take_root_binding``): it
+A held root-bound input is not marked done at the run start either (``_take_root_binding``): it
 stays ``pending``, no propagation is recorded and nothing follows it. Released, nothing happens until the next step /
-full command, which takes the root's state first (done / review, an approved root's propagation, a rejected root's
-``review_rejected``) and then goes on as the start would have — never an ordinary opening of the R / B card
+full command, which marks the root input done and records its approved propagation (0056 T#1 개정),
+then goes on as the start would have — never an ordinary opening of the R / B card
 (``run_apply.read_run_state`` keeps such a node out of every opening).
 
 flowgate.v02.0064 T#4: each node run also tells whether its card is running now (``node_running``): the running lock the
@@ -46,7 +44,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from modules.flow_gate.graph_workflow.domain.frontier import MODE_FULL, RunEvent, resolve, resolve_node_event
+from modules.flow_gate.graph_workflow.domain.frontier import MODE_FULL, RunEvent, resolve
 from modules.flow_gate.graph_workflow.domain.run_policies import (
     PolicyUndecided,
     RULE_REF,
@@ -110,9 +108,7 @@ def _undecided(flow_id: str, revision_no: int, missing: list[dict]) -> GraphApiE
 
 def _missing(ctx: RunContext, entries: dict, extra: frozenset = frozenset()) -> list[dict]:
     """L0009 §2.6.3 ``undecided_for``; ``extra`` adds what one step needs on top (gate: ``gate_node``)."""
-    root = ctx.root_document() if ctx.binding else None
-    required = required_policies(ctx.revision, (ctx.binding or {}).get("node_key"),
-                                 (root or {}).get("doc_review_status"))
+    required = required_policies(ctx.revision, (ctx.binding or {}).get("node_key"))
     return undecided_for(required | set(extra), entries)
 
 
@@ -221,7 +217,7 @@ def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
     """The second half of ``_go_on``, inside the run's Flow guard: re-dispatch -> drain -> run candidates (a step
     records its targets). 0061 T#9: also the end of a command's integration hold, once its waiting integrations were
     asked (``flowgate.graph_run.result_merge``). 0061 T#11: a bound node its Hold kept pending at the start takes its
-    root's state first, once released (``_take_root_binding``)."""
+    input completion first, once released (``_take_root_binding``, 0056 T#1 개정)."""
     run_id = ctx.run_id
     _take_root_binding(ctx, policies)
     for row in run_store.node_runs(run_id):                                      # 5-3 re-dispatch
@@ -267,8 +263,8 @@ def _hold_flow(run: dict) -> None:
 
 
 def _take_root_binding(ctx: RunContext, policies: dict, root: Optional[dict] = None) -> None:
-    """0061 T#11: the bound node takes its root document's state (``_root_bound_start``) while it is ``pending`` and
-    has not taken it yet — at the run start, or at the first command after its Hold is released. A held one stays
+    """0061 T#11 / 0056 T#1 개정: the bound input is marked done (``_root_bound_start``) while it is ``pending`` and
+    has not been bound yet — at the run start, or at the first command after its Hold is released. A held one stays
     pending (the Hold bounds this as it bounds an opening); a root lost by then is refused as at the start (409
     ``root_binding_lost``)."""
     if ctx.binding is None:
@@ -288,23 +284,17 @@ def _take_root_binding(ctx: RunContext, policies: dict, root: Optional[dict] = N
 
 
 def _root_bound_start(ctx: RunContext, root: dict, policies: dict) -> None:
-    """L0009 §2.6.5 step 2: the bound node takes its root document's state; no token.
+    """0056 T#1 개정: Run accepts the bound root as input, regardless of its review status.
 
-    flowgate.v02.0056 T#1: kept as it is for a rejected root (the answer to this TR's question) — the root
-    bound start's ``review_rejected`` is the one rejection that is still a node event; the card is rejected,
-    not awaiting approval, and nothing follows it until its root is revised."""
+    The input consumes neither approval nor a Step; only its card becomes done. The document's
+    review status stays unchanged, and the existing approved propagation opens the first work card.
+    """
     key, doc_id = ctx.binding["node_key"], root["doc_id"]
-    review = root.get("doc_review_status")
-    to = "done" if review in ("approved", "wf_done") else "review"
+    to = "done"
     if run_store.set_root_bound(ctx.run_id, key, to, doc_id) != 1:
         raise AssertionError(f"root bound start missed node {key}")
     seq = emit_node_state(ctx, key, "pending", to, "root_bound_start", doc_id)
-    if to == "done":
-        run_store.insert_propagation(ctx.run_id, seq, key, "approved", "pending")
-    if review == "rejected":
-        event = RunEvent("review_rejected", key, doc_id=doc_id)
-        apply_decision(ctx, resolve_node_event(ctx.revision, read_run_state(ctx), event, policies, defer=True),
-                       settle=False)                                  # 0061 T#2: the start's command follows
+    run_store.insert_propagation(ctx.run_id, seq, key, "approved", "pending")
 
 
 def _guarded_run(run_id: str, body_of) -> dict:

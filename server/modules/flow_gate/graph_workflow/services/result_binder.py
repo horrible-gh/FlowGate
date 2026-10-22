@@ -20,9 +20,9 @@ of the active run and turned into a node event for the resolver:
 flowgate.v02.0056 T#1 (0002-CH turn 5~10): a rejection of a node's result — a person's (the v0.1
 ``review_transitions/reject`` route, kept for v0.1) or the one the card's AI review writes on the way to
 a rework or when its count is spent — is not a node event of the v0.2 contract: the node stays in review
-and waits for the card's approval (``node_approval``). The one exception is a root bound in the rejected
-state at the run start: it keeps L0009 §2.6.5 (``run_service._root_bound_start`` applies ``review_rejected``),
-as answered on the T#1 TR's question. A gate's confirm / reject is its own event and does not change.
+and waits for the card's approval (``node_approval``). 0056 T#1 개정: bound root input is already done
+at run start regardless of its document's review status (``run_service._root_bound_start``).
+A gate's confirm / reject is its own event and does not change.
 
 flowgate.v02.0056 T#2: an AI card with its instruction used runs an instruction stage before its result stage
 (``node_dispatch``, the node run's ``stage``). Only the result stage's document is the node's result: while the

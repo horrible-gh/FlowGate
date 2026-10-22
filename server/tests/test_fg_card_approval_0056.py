@@ -18,8 +18,8 @@ registered as ``startup`` does, the card approval route mounted as ``routers/mai
   the card; only the card's untouched empty draft is skipped;
 - the card approval needs ``document.approve`` only: an approver without the author's edit permission
   approves a rejected result and a written draft as well;
-- a root bound in the rejected state keeps L0009 §2.6.5 (the answer to the TR's question): the card is rejected,
-  its card approval is refused with 409 ``node_not_in_review`` and nothing follows it;
+- 0056 T#1 개정: a rejected bound root is input; its card is done and the next card opens,
+  while its document stays rejected and card approval is refused with 409 ``already_approved``;
 - an AI run that bound its result and then did not end on its own (cancelled, timeout, paused, providers
   exhausted, a provider failure) approves nothing and starts no review: the card awaits its approval;
 - a result approved while its card waits for its other documents and then revised is followed by the
@@ -629,9 +629,8 @@ def test_a_review_that_spent_its_count_leaves_the_card_to_its_approval(env, deci
     assert (_node(env, key)[0], _review_status(result)) == ("done", "approved")
 
 
-def test_a_rejected_root_keeps_its_rejection_and_its_card_approval_is_refused(env, decided):
-    """L0009 §2.6.5 kept for a bound root (the answer to the TR's question): the root takes ``review_rejected``,
-    the card is rejected and not awaiting approval, the card approval is 409 and nothing follows it."""
+def test_0056_T1_개정_rejected_root_is_input_and_its_card_approval_is_refused(env, decided):
+    """0056 T#1 개정: Run accepts rejected root input; its document stays rejected."""
     from modules.flow_gate.db import documents as db_documents
 
     _admin_and_reviewer(env)
@@ -643,16 +642,16 @@ def test_a_rejected_root_keeps_its_rejection_and_its_card_approval_is_refused(en
     run = _current(env)
     root_run = next(n for n in run["node_runs"] if n["root_bound"])
     r_key = root_run["node_key"]
-    assert (root_run["status"], root_run["result_doc_id"], root_run["awaiting_approval"]) == ("rejected", root, False)
-    assert "review_rejected" in _events(env, r_key) and run["open_node_keys"] == []
+    assert (root_run["status"], root_run["result_doc_id"], root_run["awaiting_approval"]) == ("done", root, False)
+    assert "review_rejected" not in _events(env, r_key) and run["open_node_keys"] == [t1]
     assert _sql(env["db"], "SELECT outcome FROM graph_propagations WHERE node_key = ?", (r_key,)) == [
-        {"outcome": "rejected"}]
+        {"outcome": "approved"}]
     refused = _approve(env, r_key, 409, body={"result_doc_id": root})["error"]
-    assert (refused["code"], refused["params"]["status"]) == ("node_not_in_review", "rejected")
+    assert (refused["code"], refused["params"]["status"]) == ("already_approved", "done")
     assert _review_status(root) == "rejected"                            # nothing written
-    run = _current(env)                                                  # nothing follows the rejected root
+    run = _current(env)                                                  # the first work card follows the root input
     nodes = {n["node_key"]: n for n in run["node_runs"]}
-    assert (nodes[r_key]["status"], nodes[t1]["status"], run["open_node_keys"]) == ("rejected", "pending", [])
+    assert (nodes[r_key]["status"], nodes[t1]["status"], run["open_node_keys"]) == ("done", "open", [t1])
 
 
 # ── an AI run that did not end on its own approves nothing ──────────────────
