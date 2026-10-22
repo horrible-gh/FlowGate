@@ -33,7 +33,7 @@ vi.mock('@main/components/common/useToast', () => ({ useToast: () => ({ showToas
 import AiInvokeDialog from '@main/components/AiInvokeDialog.vue'
 import ContinuousWorkDialog from '@main/components/ContinuousWorkDialog.vue'
 import ContinuousWarningDialog from '@main/components/ContinuousWarningDialog.vue'
-import MainPanel from '@main/components/MainPanel.vue'
+import { expectDocumentBranchMounted, mountMainPanel } from '../helpers/mountMainPanel'
 import { useAiProviderStore } from '@main/stores/aiProvider'
 
 const PROJECT = 'flowgate'
@@ -276,8 +276,11 @@ describe('MainPanel is the hop between the two dialogs (0448 T0005 §7-8)', () =
     // startAiInvoke() directly, so the map must reach the server as
     // continuation_provider_overrides without the dialog ever going visible.
     await loadedStore()
-    const wrapper = mount(MainPanel, { attachTo: document.body, shallow: true, global: { plugins: [i18n] } })
-    await flushPromises()
+    const wrapper = await mountMainPanel({
+      attachTo: document.body,
+      stubs: { ContinuousWorkDialog: false, WorkflowStepPicker: false, AiProviderSelect: false },
+    })
+    expectDocumentBranchMounted(wrapper)
     // The action-bar entry point (onActionBarContinuousWork) normally stamps these from the
     // active tab; the consent gate refuses to open the invoke dialog without them.
     const vm = wrapper.vm as any
@@ -285,18 +288,29 @@ describe('MainPanel is the hop between the two dialogs (0448 T0005 §7-8)', () =
     vm.continuousGroupId = 'flowgate.default.0448'
     vm.continuousDocRef = ROOT
 
-    await wrapper.findComponent(ContinuousWorkDialog).vm.$emit('confirm', {
-      targetSeq: 2, targetType: 'P', targetLabel: 'Plan', reviewMode: false,
-      instructionMode: 'auto_approved', stepCount: 2, fromDecision: false,
-      providerOverrides: { 1: 'aip_plan' },
-      defaultMessage: '', messageOverrides: {}, autoApproveItemSeqs: [],
-      stepTimeoutSec: 3600, restartMaxAttempts: 1,
-    })
+    // v02.0087 B0001: use the real provider tab so both the override and removed choices
+    // are checked through ContinuousWorkDialog -> MainPanel -> warning -> HTTP.
+    vm.continuousDialogVisible = true
     await flushPromises()
+    expect(wrapper.findComponent(ContinuousWorkDialog).props('visible')).toBe(true)
+    ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement).click()
+    await flushPromises()
+    const select = document.querySelector('.cwd-override-select .aip-select-input') as HTMLSelectElement
+    expect(select).not.toBeNull()
+    select.value = 'aip_plan'
+    select.dispatchEvent(new Event('change'))
+    await flushPromises()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(wrapper.findComponent(ContinuousWarningDialog).props('visible')).toBe(true)
     await wrapper.findComponent(ContinuousWarningDialog).vm.$emit('confirm')
     await flushPromises()
 
-    expect(startBody().continuation_provider_overrides).toEqual({ 1: 'aip_plan' })
+    const body = startBody()
+    expect(body.continuation_provider_overrides).toEqual({ 1: 'aip_plan' })
+    expect(body.provider_id).toBe('aip_default')
+    expect(Object.prototype.hasOwnProperty.call(body, 'requested_ai_group_id')).toBe(false)
+    expect(Object.prototype.hasOwnProperty.call(body, 'continuation_reworker_provider_id')).toBe(false)
     expect(wrapper.findComponent(AiInvokeDialog).props('visible')).toBe(false)
     wrapper.unmount()
   })
