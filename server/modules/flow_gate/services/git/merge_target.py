@@ -607,6 +607,36 @@ def raise_if_workspace_unavailable(project_id: str, branch: str) -> str:
     return verdict
 
 
+def raise_if_base_checkout_off_branch(project_id: str, base_branch: str) -> None:
+    """Invariant: the shared base checkout has the project ``base_branch`` checked out.
+
+    flowgate.v02.0086 NR0003 §5.2: a base checkout switched to another branch makes a
+    non-base attempt fail at ``worktree add`` (the branch is "already used") and a base
+    attempt merge into the wrong branch. Read-only — one ``symbolic-ref`` — and never
+    switches, stashes or resets the checkout. A base slot that is not ``checkout``
+    (empty, adopt pending, base ref missing) is left to the existing base-slot guards."""
+    from modules.flow_gate.services import git_service as _gs
+    base_root = _gs._base_root_of(project_id)
+    if base_root is None or not _gs.git_available():
+        return
+    if _gs._judge_base_slot(base_root, base_branch) != "checkout":
+        return
+    proc = _gs._run_git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd=base_root)
+    checked_out = (proc.stdout or "").strip() if proc.returncode == 0 else ""
+    if checked_out == base_branch:
+        return
+    shown = f"'{checked_out}'" if checked_out else "a detached HEAD"
+    raise GitServiceError(
+        409, "base_checkout_branch_mismatch",
+        f"base checkout is on {shown} but the project base branch is '{base_branch}'",
+        details={
+            "base_branch": base_branch,
+            "checked_out_branch": checked_out or None,
+            "base_root": str(base_root),
+        },
+    )
+
+
 def fixed_target_of_group(group_id: str) -> Optional[MergeTargetContext]:
     """The target pinned by this group's open finalize attempt, if any."""
     from modules.flow_gate.services import git_service as _gs
@@ -661,6 +691,9 @@ def plan_finalize_target(
     if fixed is not None:
         return fixed
     base_branch = project_base_branch(cfg)
+    # flowgate.v02.0086: before the base/non-base split and outside the work-base
+    # re-wrap below, so the code reaches the caller unchanged and no attempt opens.
+    raise_if_base_checkout_off_branch(project_id, base_branch)
     # flowgate.default.0665 T0004 (W7): an omitted target is the GROUP's work base,
     # never the project base -- merging a branch forked from ``v0.2`` into ``main``
     # would carry the whole ``main..v0.2`` history along.  The project's remembered

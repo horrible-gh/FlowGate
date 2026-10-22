@@ -1486,3 +1486,114 @@ def test_0683_interrupted_group_attempt_is_reclaimed_by_the_next_finalize(proj):
     assert db_git.get_state(gid_a)["status"] == "waiting"
     assert "b.txt" in proj.origin_files("develop")
     assert held_locks(proj.pid) == []
+
+
+# ── flowgate.v02.0086 — base checkout off the project base branch (NR0003 §5.3) ──
+
+def _merge_rows(gid: str) -> list[dict]:
+    from modules.flow_gate.db.connection import get_store
+    return get_store()._fetch_all("SELECT * FROM git_merge_session WHERE group_id = ?", [gid])
+
+
+def _assert_off_branch(exc) -> None:
+    assert (exc.status, exc.code) == (409, "base_checkout_branch_mismatch")
+    assert exc.details["checked_out_branch"] == "develop"
+    assert exc.details["base_branch"] == "main"
+    assert "'develop'" in exc.message and "'main'" in exc.message
+
+
+@needs_git
+def test_0086_off_branch_base_refuses_a_non_base_target_before_any_attempt(proj, monkeypatch):
+    """§5.3-1: base checkout on develop, target develop — named and omitted (work base)."""
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services import git_service as svc
+
+    gid = proj.group(1)
+    proj.local_branch("develop")
+    (proj.wt(gid) / "x.txt").write_text("x\n", encoding="utf-8")
+    proj.ready(gid)
+    _git(["checkout", "develop"], cwd=proj.base)
+
+    calls = (
+        lambda: svc.finalize(gid, "merge", target_branch="develop"),
+        lambda: svc.precheck_approve_git_target(gid, "merge", "develop"),
+        lambda: svc.finalize(gid, "merge"),       # omitted → work base; never re-wrapped
+    )
+    monkeypatch.setattr(svc, "resolve_group_work_base_ref", lambda *_a, **_k: "develop")
+    for call in calls:
+        with pytest.raises(svc.GitServiceError) as caught:
+            call()
+        _assert_off_branch(caught.value)
+    assert _merge_rows(gid) == []
+    assert not proj.workspace("develop").exists()
+    assert db_git.get_state(gid)["status"] == "awaiting_choice"
+
+
+@needs_git
+def test_0086_off_branch_base_never_merges_into_the_checked_out_branch(proj, monkeypatch):
+    """§5.3-2: target main is refused at plan time and, if the checkout is switched after
+    planning, again right before the merge (attempt error keeps the details)."""
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.services.git import merge_target as mt
+
+    gid = proj.group(1)
+    proj.local_branch("develop")
+    (proj.wt(gid) / "y.txt").write_text("y\n", encoding="utf-8")
+    proj.ready(gid)
+    _git(["checkout", "develop"], cwd=proj.base)
+
+    def refs() -> list[str]:
+        return (_git(["rev-parse", "main", "develop"], cwd=proj.base).split()
+                + _git(["rev-parse", "main", "develop"], cwd=proj.bare).split())
+
+    before = refs()
+    with pytest.raises(svc.GitServiceError) as caught:
+        svc.finalize(gid, "merge", target_branch="main")
+    _assert_off_branch(caught.value)
+    assert _merge_rows(gid) == []
+    assert refs() == before
+
+    # final defense: let every plan-time check pass, as if the switch came after planning
+    real_check, real_plan = mt.raise_if_base_checkout_off_branch, mt.plan_finalize_target
+    planning = {"on": False}
+
+    def plan(*args, **kwargs):
+        planning["on"] = True
+        try:
+            return real_plan(*args, **kwargs)
+        finally:
+            planning["on"] = False
+
+    def check(project_id, base_branch):
+        if not planning["on"]:
+            real_check(project_id, base_branch)
+
+    monkeypatch.setattr(mt, "plan_finalize_target", plan)
+    monkeypatch.setattr(mt, "raise_if_base_checkout_off_branch", check)
+    with pytest.raises(svc.GitServiceError) as caught:
+        svc.finalize(gid, "merge", target_branch="main")
+    _assert_off_branch(caught.value)
+    rows = _merge_rows(gid)
+    assert len(rows) == 1 and rows[0]["status"] == "aborted"
+    error = db_git.session_context(rows[0])["attempt_error"]
+    assert error["code"] == "base_checkout_branch_mismatch"
+    assert error["details"]["checked_out_branch"] == "develop"
+    assert refs() == before
+    assert proj.base_head_branch() == "develop"           # never switched by the server
+
+
+@needs_git
+def test_0086_open_attempt_keeps_its_pinned_target_off_branch(proj):
+    """§5.3-3: the open attempt's pinned target (fixed path) is returned before the check."""
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services.git import merge_target as mt
+
+    gid = proj.group(1)
+    proj.local_branch("develop")
+    proj.local_branch("release")
+    merge_id = _conflict_on(proj, gid, "develop")["merge_id"]
+    _git(["checkout", "release"], cwd=proj.base)
+    cfg = db_git.get_config(proj.pid)
+    fixed = mt.plan_finalize_target(gid, proj.pid, cfg, None)
+    assert fixed.target_branch == "develop" and fixed.merge_id == merge_id
