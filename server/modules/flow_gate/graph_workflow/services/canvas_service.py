@@ -205,8 +205,7 @@ def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], colla
         "edges": proj.edges,
         "external_relations": proj.external_relations,
         "viewport": layout_store.viewport(flow_id, user_id) if user_id else None,
-        "run": {k: run[k] for k in ("run_id", "status", "revision_no", "open_node_keys", "last_event_seq")}
-        if run else None,
+        "run": _run_block(run) if run else None,
         "identity": {
             "sequence_tag": ident.sequence_tag,
             "rematched": ident.rematched,
@@ -214,6 +213,20 @@ def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], colla
         },
         "collapsed": {"applied": applied, "ignored_keys": ignored, "hidden_counts": hidden_counts},
     }
+
+
+# flowgate.v02.0083 T#4 rev1: the run band's facts of the same run read (``run_payload``) — command, idle reason,
+# AI executions and waiting cards — so a Canvas read newer than the client's last run read tells them as of itself,
+# never beside an older read's. Only what that read carries (no execution hook: no counts).
+_RUN_BAND_KEYS = ("mode", "idle_reason", "running_execution_count", "requested_execution_count", "execution_limit",
+                  "pending_propagation_count", "pending_node_keys")
+
+
+def _run_block(run: dict) -> dict:
+    """P0008 S1-3 ``run``: the run's identity and event sequence, with its band facts (0083 T#4 rev1)."""
+    out = {k: run[k] for k in ("run_id", "status", "revision_no", "open_node_keys", "last_event_seq")}
+    out.update({k: run[k] for k in _RUN_BAND_KEYS if k in run})
+    return out
 
 
 def current_node_keys(flow_id: str) -> set[str]:

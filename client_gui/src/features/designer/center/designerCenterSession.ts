@@ -622,32 +622,51 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   /**
    * flowgate.v02.0061 TR0031 rev1: the run the Canvas read shows, with what the run last read adds when it is the same
    * run (its band and node runs; event sequence decides which status is newer). A Canvas showing no run means no locked run.
+   *
+   * flowgate.v02.0083 T#4 rev1: a Canvas read newer than the run read (by event sequence) tells the run as of itself —
+   * status and the band's facts it sent (command, idle reason, executions, waiting cards) — and nothing of the older run
+   * read is shown as now: its idle reason, executions or waiting cards were another moment's (a 사람 작성·승인 대기 or
+   * 실행 1/4 beside a completed run). Of its node runs only those of nodes the Canvas sends none of (`graph`: a draft
+   * view) stay, until the run read answers. Without both sequences (an older server) nothing tells which is newer: the
+   * Canvas status over the run read, as before.
    */
-  function canvasRunInfo(shown: FlowGraphRun | null, last: FlowRunInfo | null): FlowRunInfo | null {
+  function canvasRunInfo(shown: FlowGraphRun | null, last: FlowRunInfo | null, graph: FlowGraph | null = null): FlowRunInfo | null {
     if (shown === null) return last && !isRunLocked(last) ? last : null
     if (last?.runId === shown.runId) {
+      if (last.lastEventSeq === undefined || shown.lastEventSeq === undefined) {
+        return { ...last, status: shown.status, lastEventSeq: shown.lastEventSeq }
+      }
       // A background Canvas read can predate a run command's response. Keep the newer server state.
-      if (last.lastEventSeq !== undefined && shown.lastEventSeq !== undefined && last.lastEventSeq >= shown.lastEventSeq) return last
-      return { ...last, status: shown.status, lastEventSeq: shown.lastEventSeq }
+      if (last.lastEventSeq >= shown.lastEventSeq) return last
+      const shownNodeRuns = new Set((graph?.nodes ?? []).filter((node) => node.nodeRun).map((node) => node.id))
+      const nodeRuns = last.nodeRuns?.filter((nodeRun) => !shownNodeRuns.has(nodeRun.nodeKey)) ?? []
+      return { ...canvasRunFacts(shown), ...(nodeRuns.length > 0 ? { nodeRuns } : {}) }
     }
-    return { runId: shown.runId, status: shown.status, lastEventSeq: shown.lastEventSeq, openNodeKeys: [] }
+    return canvasRunFacts(shown)
+  }
+
+  /** flowgate.v02.0083 T#4 rev1: the run as the Canvas read alone tells it (the band's facts only when it sent them). */
+  function canvasRunFacts(shown: FlowGraphRun): FlowRunInfo {
+    const { runId, status, revisionNo, lastEventSeq, ...band } = shown
+    return { ...band, runId, status, lastEventSeq, ...(revisionNo !== undefined ? { revisionNo } : {}), openNodeKeys: [] }
   }
 
   // flowgate.v02.0061 TR0031 rev1: the run status the lock and the run commands follow (see the head of this file).
   function runStatus(flowId: string): FlowRunStatus {
     const run = state.runs[flowId]
-    const shown = readyGraph(flowId)?.run
+    const graph = readyGraph(flowId)
+    const shown = graph?.run
     if (!runControl.available) return shown ? { run: canvasRunInfo(shown, null), known: true } : KNOWN_NO_RUN
     if (run?.readState === 'read') {
       const last = run.run
       // Conversely, a newer Canvas event must not be hidden by an older run response.
       if (shown && last?.runId === shown.runId && shown.lastEventSeq !== undefined &&
           last.lastEventSeq !== undefined && shown.lastEventSeq > last.lastEventSeq) {
-        return { run: canvasRunInfo(shown, last), known: true }
+        return { run: canvasRunInfo(shown, last, graph), known: true }
       }
       return { run: last, known: true }
     }
-    if (shown !== undefined) return { run: canvasRunInfo(shown, run?.run ?? null), known: true }
+    if (shown !== undefined) return { run: canvasRunInfo(shown, run?.run ?? null, graph), known: true }
     return { run: run?.run ?? null, known: false }
   }
 
@@ -1178,6 +1197,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   function dispose() {
     disposed = true
     layoutRuns.clear()
+    // flowgate.v02.0083 T#4 rev1: no run read again after it (a requested execution's).
+    runControl.clear()
     drafts.closeAll()
     layoutQueue.flushAll()
     stopWatching?.()

@@ -155,7 +155,7 @@ def _graph_nodes(out: Projection, view: GraphView, ownership: str, by_id: dict, 
         if run is not None:
             node["node_run"] = run
             if not bound:
-                node["state"] = cm.node_run_state(run.get("status"))
+                node["state"] = cm.node_run_state(run.get("status"), run)
         out.nodes.append(node)
         out.graph_nodes.append(node["node_key"])
         if doc is not None:

@@ -220,6 +220,9 @@ export default {
       card_states: {
         no_result: '結果なし',
         incomplete: '実行未完了',
+        // flowgate.v02.0083 T#4: an open card no AI execution works on — it waits for an answer or for its writer.
+        waiting_answer: '回答待ち',
+        waiting_writer: '作成待ち',
         writing_instruction: '指示書作成中',
         writing_result: '結果作成中',
         working: '作業中',

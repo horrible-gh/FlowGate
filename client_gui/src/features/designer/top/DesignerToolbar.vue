@@ -30,7 +30,10 @@
        No standing button; 0038's "the pressed button turns into ■ 중지" is gone. Every run button (and 검증) is off
        while a run command is answered (`targets.runBusy`). The dot shows the phase and the band beside it — in the
        place of the waiting cards line — the run's status, its command, why an idle run is idle, its running /
-       requested executions against the Flow's limit and the cards waiting for the next command (keys in its tooltip). -->
+       requested executions against the Flow's limit and the cards waiting for the next command (keys in its tooltip).
+       flowgate.v02.0083 T#4: the band is drawn beside the run buttons (`runBand`, runBandView): the status — an idle run's
+       reason in its place (사람 작성·승인 대기 · 오류로 멈춤 · 완료 …) — coloured by runBandTone, and under it the command,
+       the executions, the requests and the waiting cards. Every word is the server run's; nothing is guessed here. -->
   <div
     class="designer-toolbar"
     :class="{ 'is-unavailable': disabled }"
@@ -141,6 +144,20 @@
         <svg v-else class="is-run" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 4l8 6-8 6zM10 4l8 6-8 6z" /></svg>
         <span>{{ t(`gui.designer.top.tools.${run.label}`) }}</span>
       </button>
+      <div
+        v-if="runBand && !disabled"
+        class="designer-run-band"
+        :class="`is-${bandTone}`"
+        role="status"
+        :title="bandTitle"
+        data-test="designer-run-band"
+        :data-phase="runBand.phase"
+        :data-reason="runBand.idleReason ?? ''"
+        :data-tone="bandTone"
+      >
+        <span class="designer-run-band-head"><span class="designer-run-dot" aria-hidden="true" /><span data-test="designer-run-band-status">{{ bandStatus }}</span></span>
+        <span v-if="bandDetail" class="designer-run-band-detail" data-test="designer-run-band-detail">{{ bandDetail }}</span>
+      </div>
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
@@ -199,6 +216,7 @@ import {
   DESIGNER_DENSITIES,
   autoLayoutDirectionOf,
   isMenuCommandEnabled,
+  runBandTone,
   type DesignerDensity,
   type DesignerMenuTargets,
   type DesignerRunBand,
@@ -253,7 +271,32 @@ function chooseZoom(event: Event) {
   })
 }
 
-const { t } = useI18n()
+const { t, te } = useI18n()
+
+// flowgate.v02.0083 T#4: the run band's words — an idle run's reason leads in place of 대기; an unknown key shows nothing new.
+const bandTone = computed(() => (props.runBand ? runBandTone(props.runBand) : 'neutral'))
+const bandStatus = computed(() => {
+  const band = props.runBand
+  if (!band) return ''
+  const reason = band.idleReason ? `gui.designer.top.run_idle_reasons.${band.idleReason}` : null
+  return reason && te(reason) ? t(reason) : t(`gui.designer.top.run_status.${band.phase}`)
+})
+const bandDetail = computed(() => {
+  const band = props.runBand
+  if (!band) return ''
+  const parts: string[] = []
+  const command = band.command ? `gui.designer.top.run_command.${band.command}` : null
+  if (command && te(command)) parts.push(t(command))
+  if (band.phase === 'running' || band.running > 0) parts.push(t('gui.designer.top.run_executions', { running: band.running, limit: band.limit ?? '—' }))
+  if (band.requested > 0) parts.push(t('gui.designer.top.run_requested', { n: band.requested }))
+  if (band.pendingCount > 0) parts.push(t('gui.designer.top.run_waiting_cards', { n: band.pendingCount }))
+  return parts.join(' · ')
+})
+const bandTitle = computed(() =>
+  props.runBand && props.runBand.pendingNodeKeys.length > 0
+    ? t('gui.designer.top.run_pending_keys', { keys: props.runBand.pendingNodeKeys.join(', ') })
+    : undefined,
+)
 
 // flowgate.v02.0061 T#14 (R §실행 제어): the two run buttons of each run phase, in place; 중지 중 is one, off.
 type RunIcon = 'next' | 'all' | 'pause' | 'stop'
@@ -371,6 +414,51 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
 .designer-tool.is-compact {
   min-width: 46px;
 }
+
+/* flowgate.v02.0083 T#4: the run band beside the run buttons — the status (a dot in the band's tone) over its details. */
+.designer-run-band {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-width: 96px;
+  max-width: 220px;
+  height: 50px;
+  padding: 0 8px;
+  color: #aebfd2;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.designer-run-band-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg2-text);
+  font-weight: 600;
+}
+
+.designer-run-band-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.designer-run-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6b7f96;
+}
+
+.designer-run-band.is-info .designer-run-dot { background: var(--fg2-status-info-fg); }
+.designer-run-band.is-warning .designer-run-dot { background: var(--fg2-status-warning-fg); }
+.designer-run-band.is-danger .designer-run-dot { background: var(--fg2-status-danger-fg); }
+.designer-run-band.is-success .designer-run-dot { background: #22c98c; }
+.designer-run-band.is-warning .designer-run-band-head { color: var(--fg2-status-warning-fg); }
+.designer-run-band.is-danger .designer-run-band-head { color: var(--fg2-status-danger-fg); }
 
 .designer-tool svg {
   width: 19px;

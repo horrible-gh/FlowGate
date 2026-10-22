@@ -6,6 +6,11 @@
 //   승인 대기 awaiting_approval true (a review node with a result no AI works on any more)
 //   승인됨   done
 //
+// flowgate.v02.0083 T#4: an open card no AI execution works on (the node's running / requested executions are
+// both 0) is not 작업 중 — it waits: for an answer to its document's question (응답 대기) or for its writer, a
+// person or the next AI start (작성 대기). Its writer that ended without a result keeps 결과 없음 / 실행 미완료.
+// Without the counts (an older server) the open card keeps 작업 중 as before.
+//
 // A rejected node (a rejected R/B root the run started with, a gate rejection) shows 반려됨 and never offers
 // [승인]; pending / closed nodes show what they are. The [다음 단계] stop of the run is not a card state: a
 // card approved (done) while the run is stopped stays 승인됨 — its successors wait in the run band, never as
@@ -23,15 +28,20 @@ export interface CardRunFacts {
   readonly status: string | null
   readonly awaitingApproval?: boolean
   readonly stage?: string | null
+  /** flowgate.v02.0083 T#4: the node attempt's running / requested AI executions (absent: not known). */
+  readonly runningExecutionCount?: number
+  readonly requestedExecutionCount?: number
+  /** flowgate.v02.0083 T#4: the card's document holds a question still unanswered. */
+  readonly question?: boolean
 }
 
-export const CARD_STATE_KEYS = ['no_result', 'incomplete', 'writing_instruction', 'writing_result', 'working', 'awaiting_approval', 'approved', 'rejected', 'pending', 'closed'] as const
+export const CARD_STATE_KEYS = ['no_result', 'incomplete', 'waiting_answer', 'waiting_writer', 'writing_instruction', 'writing_result', 'working', 'awaiting_approval', 'approved', 'rejected', 'pending', 'closed'] as const
 
 export type CardStateKey = (typeof CARD_STATE_KEYS)[number]
 
 export type CardStateTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 
-/** The three states the user is told apart (작업 중 · 승인 대기 · 승인됨), and the rest. */
+/** The three states the user is told apart (작업 중 · 승인 대기 · 승인됨), and the rest (0083 T#4: 응답 · 작성 대기 is awaiting). */
 export type CardStatePhase = 'working' | 'awaiting' | 'approved' | 'other'
 
 export interface CardStateView {
@@ -52,6 +62,12 @@ const view = (key: CardStateKey, phase: CardStatePhase, tone: CardStateTone): Ca
   approvable: key === 'awaiting_approval',
 })
 
+/** flowgate.v02.0083 T#4: an AI execution of the node runs or is requested; null when the server sent no counts. */
+function executing(run: CardRunFacts): boolean | null {
+  if (run.runningExecutionCount === undefined && run.requestedExecutionCount === undefined) return null
+  return (run.runningExecutionCount ?? 0) + (run.requestedExecutionCount ?? 0) > 0
+}
+
 /** The card state of a node run, or null (no run, or a status this screen does not know). */
 export function cardStateView(run: CardRunFacts | null | undefined): CardStateView | null {
   const status = run?.status?.trim() ?? ''
@@ -63,6 +79,7 @@ export function cardStateView(run: CardRunFacts | null | undefined): CardStateVi
     case 'open':
       if (!run?.resultDocId && run?.dispatchErrorCode === 'no_result') return view('no_result', 'other', 'warning')
       if (!run?.resultDocId && run?.dispatchErrorCode) return view('incomplete', 'other', 'warning')
+      if (run && executing(run) === false) return view(run.question === true ? 'waiting_answer' : 'waiting_writer', 'awaiting', 'neutral')
       if (run?.stage === 'instruction') return view('writing_instruction', 'working', 'info')
       if (run?.stage === 'result') return view('writing_result', 'working', 'info')
       return view('working', 'working', 'info')

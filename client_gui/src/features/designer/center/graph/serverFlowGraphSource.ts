@@ -40,7 +40,7 @@ import type {
   FlowRun,
   FlowRunTimeMachine,
 } from '@/features/project'
-import type { FlowGraph, FlowGraphDraftInfo } from './flowGraph'
+import type { FlowGraph, FlowGraphDraftInfo, FlowGraphRun } from './flowGraph'
 import type {
   FlowDocumentLink,
   FlowDraftContent,
@@ -184,19 +184,14 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
     hiddenNodeCount: Object.values(canvas.collapsed?.hiddenCounts ?? {}).reduce((sum, count) => sum + (Number(count) || 0), 0),
     // flowgate.v02.0061 TR0031 rev1: the run block's status (the run lock while the run read is pending or failed).
     // T#15: with the revision it runs and its event sequence (the Time Machine confirmation's basis).
-    ...(canvas.run !== undefined
-      ? {
-          run: canvas.run
-            ? {
-                runId: canvas.run.runId,
-                status: canvas.run.status,
-                revisionNo: canvas.run.revisionNo,
-                ...(canvas.run.lastEventSeq !== undefined ? { lastEventSeq: canvas.run.lastEventSeq } : {}),
-              }
-            : null,
-        }
-      : {}),
+    // flowgate.v02.0083 T#4 rev1: and the band's facts it sent (toRun keeps only those).
+    ...(canvas.run !== undefined ? { run: canvas.run ? toGraphRun(canvas.run) : null } : {}),
   }
+}
+
+function toGraphRun(run: NonNullable<FlowCanvas['run']>): FlowGraphRun {
+  const { runId, status, revisionNo, lastEventSeq, ...band } = run
+  return { runId, status, revisionNo, ...(lastEventSeq !== undefined ? { lastEventSeq } : {}), ...band }
 }
 
 export function toLayoutInput(change: FlowLayoutChange): FlowCanvasLayoutInput {

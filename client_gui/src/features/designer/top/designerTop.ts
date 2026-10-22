@@ -394,6 +394,30 @@ export function runBandView(run: DesignerRunFacts | null | undefined): DesignerR
   }
 }
 
+/**
+ * flowgate.v02.0083 T#4 — the band's colour, by the server's run status and idle reason only: a running run (its AI
+ * executions are counted beside it) is `info`; an idle run waiting for a person (사람 작성·승인 대기, Hold) or a paused
+ * run is `warning`; one stopped by an error, a rejection or a merge conflict is `danger`; a completed run is
+ * `success`; anything else (다음 단계 완료, 실행할 카드 없음, 중지됨, an unknown reason) is `neutral`.
+ */
+export type DesignerRunBandTone = 'info' | 'warning' | 'danger' | 'success' | 'neutral'
+
+const IDLE_REASON_TONES: Readonly<Record<string, DesignerRunBandTone>> = {
+  completed: 'success',
+  waiting_approval: 'warning',
+  hold: 'warning',
+  error: 'danger',
+  blocked_rejected: 'danger',
+  merge_conflict: 'danger',
+}
+
+export function runBandTone(band: Pick<DesignerRunBand, 'phase' | 'idleReason'>): DesignerRunBandTone {
+  if (band.phase === 'running') return 'info'
+  if (band.phase === 'paused') return 'warning'
+  if (band.phase === 'idle') return IDLE_REASON_TONES[band.idleReason ?? ''] ?? 'neutral'
+  return 'neutral'
+}
+
 // --- menu targets (flowgate.v02.0039 T#3 / v02.0042 / v02.0043) ---------------------------------
 
 /**

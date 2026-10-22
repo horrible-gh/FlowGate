@@ -223,6 +223,9 @@ export default {
       card_states: {
         no_result: '결과 없음',
         incomplete: '실행 미완료',
+        // flowgate.v02.0083 T#4: an open card no AI execution works on — it waits for an answer or for its writer.
+        waiting_answer: '응답 대기',
+        waiting_writer: '작성 대기',
         writing_instruction: '지시서 작성 중',
         writing_result: '결과 작성 중',
         working: '작업 중',

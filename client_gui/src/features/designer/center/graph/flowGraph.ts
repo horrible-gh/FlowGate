@@ -282,6 +282,17 @@ export interface FlowGraphRun {
    */
   readonly revisionNo?: number | null
   readonly lastEventSeq?: number
+  /**
+   * flowgate.v02.0083 T#4 rev1: the run band's facts of the same read (FlowRunInfo's names), each absent when not sent —
+   * a Canvas read newer than the run read tells the band as of itself, not beside the older run read's facts.
+   */
+  readonly mode?: string | null
+  readonly idleReason?: string | null
+  readonly runningExecutionCount?: number
+  readonly requestedExecutionCount?: number
+  readonly executionLimit?: number | null
+  readonly pendingPropagationCount?: number
+  readonly pendingNodeKeys?: readonly string[]
 }
 
 /** flowgate.v02.0048 T#1: the selected Node with the Flow and project it belongs to (Center session -> Inspector). */

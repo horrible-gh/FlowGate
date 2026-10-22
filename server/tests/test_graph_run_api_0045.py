@@ -609,8 +609,9 @@ def test_canvas_shows_the_run(env, decided):
     d = _doc(FG, 2, "D")
     submit(FG, d, "D", token_of(env))
     body = env["client"].get(f"/api/v1/flows/{FG}/canvas", headers=_h()).json()
-    assert body["run"] == {"run_id": run_id, "status": "running", "revision_no": 1, "open_node_keys": [],
-                           "last_event_seq": 4}
+    assert {k: body["run"][k] for k in ("run_id", "status", "revision_no", "open_node_keys", "last_event_seq")} ==         {"run_id": run_id, "status": "running", "revision_no": 1, "open_node_keys": [], "last_event_seq": 4}
+    # flowgate.v02.0083 T#4 rev1: with the band's facts of the same run read
+    assert body["run"]["idle_reason"] is None and body["run"]["pending_node_keys"] == []
     nodes = {n["node_key"]: n for n in body["nodes"]}
     assert nodes["gn_r"]["state"] == "done" and nodes["gn_r"]["node_run"]["status"] == "done"
     assert nodes["gn_d"]["state"] == "review" and nodes["gn_d"]["document"]["doc_id"] == d
