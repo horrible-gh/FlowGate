@@ -5,7 +5,6 @@ Auth: login session cookie (get_current_user dependency)
 """
 from __future__ import annotations
 
-import os
 import subprocess
 from typing import Optional
 
@@ -15,7 +14,7 @@ from pydantic import BaseModel
 
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.rbac.permission_service import has_permission
-from modules.flow_gate.services import qa_service
+from modules.flow_gate.services import process_runner, qa_service
 from modules.flow_gate.db import commands as db_commands
 from modules.flow_gate.commands import resolve_template
 from modules.flow_gate.utils.help_url import help_url
@@ -376,11 +375,11 @@ def _execute_command(command_id: str, raw_token: str, scratch_dir: str) -> None:
     except Exception:
         return
 
-    env = {
-        **os.environ,
+    # The template may launch an AI CLI: CLI allowlist, never the server env (v02.0089 T0004).
+    env = process_runner.child_env({
         "FLOWGATE_TOKEN": raw_token,
         "FLOWGATE_SCRATCH": scratch_dir,
-    }
+    }, policy=process_runner.CHILD_ENV_POLICY_CLI)
     try:
         subprocess.Popen(
             resolved,

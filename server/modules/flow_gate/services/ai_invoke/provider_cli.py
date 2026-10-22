@@ -396,7 +396,10 @@ def _cli_scratch_env(scratch: Path) -> dict[str, str]:
 
 
 def _cli_popen_kwargs(decision: dict, env: dict[str, str]) -> dict:
-    kwargs = process_runner.popen_kwargs(Path(decision["agent_cwd"]), env)
+    # Allowlisted inheritance (v02.0089 T0004): a CLI child gets the OS/home/locale/proxy
+    # and vendor-login variables it needs plus `env`, never the server's secrets.
+    kwargs = process_runner.popen_kwargs(Path(decision["agent_cwd"]), env,
+                                         policy=process_runner.CHILD_ENV_POLICY_CLI)
     kwargs["cwd"] = decision["spawn_cwd"]
     kwargs["stdin"] = subprocess.PIPE
     return kwargs

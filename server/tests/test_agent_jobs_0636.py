@@ -1,7 +1,9 @@
 """Server Remote CLI Job contract and Agent registry regression tests."""
 from __future__ import annotations
 
+import json
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -298,3 +300,96 @@ def test_api_contract_and_heartbeat_regression(setup, monkeypatch):
         "reported_capabilities": {"ai_cli": True, "ai_api": False, "storage": False},
     })
     assert heartbeat["accepted"] is True
+
+
+# ── v02.0089 T0004 (NR0003 §2-4/§5-E): no env field in any layer of the Job contract ──
+
+PAYLOAD_KEYS = {"execution_type", "command_line", "stdin_text", "cwd", "timeout_seconds",
+                "target_agent_id"}
+CLAIM_KEYS = {"protocol_version", "job_id", "attempt_id", "execution_type", "command_line",
+              "stdin_text", "cwd", "timeout_seconds", "cancel_requested", "lease_token",
+              "lease_expires_at"}
+# FLOWGATE_AGENT_PEPPER keeps its test value (credential digests depend on it); that value
+# is scanned for as well.
+FAKE_SERVER_SECRETS = {"SECRET_KEY": "FAKE_SECRET_KEY_DO_NOT_USE",
+                       "FLOWGATE_TOKEN_PEPPER_V1": "FAKE_TOKEN_PEPPER_DO_NOT_USE",
+                       "FLOWGATE_AI_ENCRYPT_KEY": "FAKE_AI_ENCRYPT_KEY_DO_NOT_USE",
+                       "DB_PASSWORD": "FAKE_DB_PASSWORD_DO_NOT_USE"}
+
+
+def _leaked(text):
+    secrets_ = {**FAKE_SERVER_SECRETS, "FLOWGATE_AGENT_PEPPER": os.environ["FLOWGATE_AGENT_PEPPER"]}
+    return [name for name, value in secrets_.items() if value in text]
+
+
+def _no_env_key(keys):
+    return [key for key in keys if "env" in key.lower()]
+
+
+def _capture_enqueue_payload(svc, monkeypatch, **kwargs):
+    payloads = []
+    real_hash = jobs._hash
+
+    def recording_hash(value):
+        payloads.append(dict(value))
+        return real_hash(value)
+
+    monkeypatch.setattr(jobs, "_hash", recording_hash)
+    enqueue(svc, **kwargs)
+    monkeypatch.setattr(jobs, "_hash", real_hash)
+    assert len(payloads) == 1
+    return payloads[0]
+
+
+def _assert_claim(job, *, job_id, attempt_id):
+    assert set(job) == CLAIM_KEYS and "target_agent_id" not in job and _no_env_key(job) == []
+    assert job["protocol_version"] == 1 and job["job_id"] == job_id and job["attempt_id"] == attempt_id
+    assert job["lease_token"].startswith("lsh_") and isinstance(job["lease_expires_at"], str)
+    assert job["cancel_requested"] is False
+
+
+def test_job_contract_layers_carry_no_env_field(setup, monkeypatch):
+    store, svc, creds = setup
+    for name, value in FAKE_SERVER_SECRETS.items():
+        monkeypatch.setenv(name, value)
+    # ① enqueue internal payload (hash input)
+    payload = _capture_enqueue_payload(svc, monkeypatch, job_id="j", attempt_id="a", target_agent_id="agt_a")
+    assert set(payload) == PAYLOAD_KEYS and payload["execution_type"] == "remote_cli"
+    assert _no_env_key(payload) == []
+    # ② stored row: no env-like column, data columns as enqueued
+    row = store._fetch_one("SELECT * FROM agent_jobs WHERE job_id=? AND attempt_id=?", ["j", "a"])
+    assert _no_env_key(row) == []
+    assert (row["command_line"], row["stdin_text"], row["cwd"], row["timeout_seconds"],
+            row["target_agent_id"]) == ("codex exec --json", "안녕\nこんにちは", "/workspace", 120, "agt_a")
+    # ③ claim object returned by the service
+    claim = svc.claim(creds["agt_a"])
+    assert set(claim) == {"job"}
+    _assert_claim(claim["job"], job_id="j", attempt_id="a")
+    # end to end: no fake server secret value anywhere in the row or the claim
+    serialized = json.dumps([row, claim], ensure_ascii=False, default=str)
+    assert _leaked(serialized) == []
+
+
+def test_job_claim_wire_carries_no_env_field(setup, monkeypatch):
+    _store, svc, creds = setup
+    for name, value in FAKE_SERVER_SECRETS.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(routes, "svc", lambda: svc)
+    app = FastAPI()
+    app.include_router(routes.router, prefix="/flowgate/api/v1")
+    with TestClient(app) as client:
+        enqueue(svc, job_id="w", attempt_id="1")
+        response = client.post("/flowgate/api/v1/agent/jobs/claim",
+                               headers={"Authorization": "Bearer " + creds["agt_a"]}, json={})
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"job"}
+    _assert_claim(body["job"], job_id="w", attempt_id="1")
+    assert _leaked(response.text) == []
+
+
+def test_job_schemas_define_no_env_column():
+    for dialect in ("sqlite", "mysql", "postgres"):
+        sql = (MIG / dialect / "124_agent_jobs.sql").read_text()
+        assert "CREATE TABLE agent_jobs" in sql
+        assert re.findall(r"(?i)\w*env\w*", sql) == [], dialect

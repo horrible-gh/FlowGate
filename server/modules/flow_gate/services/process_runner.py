@@ -371,17 +371,105 @@ def communicate_with_cleanup(
     return result.get("value", (None, None))
 
 
+# Child environment policies (flowgate.v02.0089 T0004 / NR0003 §3). The server's own
+# os.environ carries its signing key, token/Agent peppers, storage encryption keys and DB
+# credentials (stg.py/dev.py load_dotenv, config.py mirroring, docker-entrypoint exports);
+# none of that may reach a child by inheritance. Only the INHERITED part is filtered --
+# what a caller passes explicitly (FLOWGATE_TOKEN, FLOWGATE_SCRATCH, FLOWGATE_TEST_*, ...)
+# is its own contract and is applied unchanged on top.
+CHILD_ENV_POLICY_CLI = "cli"
+CHILD_ENV_POLICY_DEFAULT = "default"
+
+# "default" (tests, gates, command runs, Spec execution): everything but server secrets.
+# FLOWGATE_* covers the token/Agent peppers, *_ENCRYPT_KEY(_PREV), the evaluation HMAC key
+# and the internal paths (FLOWGATE_STORAGE_DIR, FLOWGATE_PROJECT_ROOT_OVERRIDE_*).
+_SERVER_SECRET_NAMES = frozenset({"SECRET_KEY"})
+_SERVER_SECRET_PREFIXES = ("FLOWGATE_", "DB_")
+
+# "cli" (AI CLIs and command templates that may launch one): an allowlist. Shell/executable
+# resolution (Windows needs SYSTEMROOT/COMSPEC/PATHEXT), the home/profile directories the
+# CLI's own login lives under, locale, proxy/CA, and named vendor credentials -- whole
+# vendor prefixes (GH_*, GITHUB_*, ...) are deliberately NOT passed.
+_CLI_ENV_NAMES = frozenset({
+    "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "SHELL", "OS",
+    "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER", "PROCESSOR_LEVEL", "PROCESSOR_REVISION",
+    "NUMBER_OF_PROCESSORS", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432",
+    "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432", "COMPUTERNAME",
+    "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+    "ALLUSERSPROFILE", "PUBLIC", "USER", "USERNAME", "LOGNAME", "USERDOMAIN",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
+    "TMP", "TEMP", "TMPDIR",
+    "LANG", "LANGUAGE", "TZ", "TERM", "COLORTERM",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS",
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR",
+    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+    "OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_HOME",
+    "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN",
+})
+_CLI_ENV_PREFIXES = ("LC_",)
+# Operator escape hatch for a host-specific variable a CLI needs: a comma-separated list
+# of names, read from the real OS environment only. It can never re-admit a server secret.
+CLI_ENV_PASSTHROUGH_VAR = "FLOWGATE_CLI_ENV_PASSTHROUGH"
+
+
+def _is_server_secret(upper_key: str) -> bool:
+    return upper_key in _SERVER_SECRET_NAMES or upper_key.startswith(_SERVER_SECRET_PREFIXES)
+
+
+def _cli_passthrough(base) -> frozenset:
+    raw = next((v for k, v in base.items() if k.upper() == CLI_ENV_PASSTHROUGH_VAR), "")
+    names = {name.strip().upper() for name in raw.split(",") if name.strip()}
+    return frozenset(name for name in names if not _is_server_secret(name))
+
+
+def _inherits(upper_key: str, policy: str, passthrough: frozenset) -> bool:
+    if _is_server_secret(upper_key):
+        return False
+    if policy == CHILD_ENV_POLICY_DEFAULT:
+        return True
+    return (upper_key in _CLI_ENV_NAMES or upper_key.startswith(_CLI_ENV_PREFIXES)
+            or upper_key in passthrough)
+
+
+def child_env(
+    extra: Optional[dict[str, str]] = None,
+    *,
+    policy: str = CHILD_ENV_POLICY_DEFAULT,
+    base=None,
+) -> dict[str, str]:
+    """The complete env for a child: filtered inheritance plus the caller's explicit keys.
+
+    `base` (default os.environ) is filtered by `policy`; key names compare upper-cased, as
+    Windows does. `extra` is applied unfiltered afterwards, replacing an inherited key that
+    differs only in case so the child never sees two spellings of one variable.
+    """
+    if policy not in (CHILD_ENV_POLICY_CLI, CHILD_ENV_POLICY_DEFAULT):
+        raise ValueError(f"unknown child env policy: {policy!r}")
+    base = os.environ if base is None else base
+    passthrough = _cli_passthrough(base) if policy == CHILD_ENV_POLICY_CLI else frozenset()
+    env = {key: value for key, value in base.items()
+           if _inherits(key.upper(), policy, passthrough)}
+    if extra:
+        explicit = {key.upper() for key in extra}
+        env = {key: value for key, value in env.items() if key.upper() not in explicit}
+        env.update(extra)
+    return env
+
+
 def popen_kwargs(
     root: Path,
     env: Optional[dict[str, str]],
     *,
     include_stdio: bool = True,
+    policy: str = CHILD_ENV_POLICY_DEFAULT,
 ) -> dict:
     """Popen kwargs that guarantee the child owns a fresh process group.
 
     CREATE_NEW_PROCESS_GROUP (nt) / start_new_session (posix) is what makes
     kill_process_tree able to reap grandchildren (node/agent workers) instead
-    of only the shell.
+    of only the shell. `env` is ALWAYS set explicitly (child_env under `policy`):
+    leaving it out would let Popen inherit the server environment unfiltered.
     """
     kwargs = {
         "cwd": str(root),
@@ -390,10 +478,7 @@ def popen_kwargs(
     if include_stdio:
         kwargs["stdout"] = subprocess.PIPE
         kwargs["stderr"] = subprocess.PIPE
-    if env is not None:
-        merged_env = os.environ.copy()
-        merged_env.update(env)
-        kwargs["env"] = merged_env
+    kwargs["env"] = child_env(env, policy=policy)
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:

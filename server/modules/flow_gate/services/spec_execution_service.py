@@ -14,7 +14,6 @@ measures the live source once to decide whether the result counts for it.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sys
 import threading
@@ -23,7 +22,7 @@ from pathlib import Path
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db.connection import now_iso
-from modules.flow_gate.services import test_basis_service, test_spec_service
+from modules.flow_gate.services import process_runner, test_basis_service, test_spec_service
 
 
 class AutomationRefResolver:
@@ -313,7 +312,11 @@ class ExistingRunnerAdapter:
         from modules.flow_gate.services import test_run_service as runner
         from modules.flow_gate.services import tr_self_check_executor as executor
         junit_path = scratch / ("junit_" + str(abs(hash(nodeid))) + ".xml")
-        env = {**os.environ, **runner._execution_env(runner._allocate_port(), scratch)}
+        # Server secrets filtered out, project variables kept (v02.0089 T0004). This one env
+        # is every sink executor.spawn feeds: the Windows child, the POSIX supervisor and
+        # the supervisor->child JSON.
+        env = process_runner.child_env(runner._execution_env(runner._allocate_port(), scratch),
+                                       policy=process_runner.CHILD_ENV_POLICY_DEFAULT)
         argv = [_python(env), "-m", "pytest", nodeid, "-q", "-p", "no:cacheprovider",
                 "--junitxml=" + str(junit_path)]
         timeout = runner.CASE_TIMEOUT_SEC
