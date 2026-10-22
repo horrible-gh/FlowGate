@@ -401,6 +401,8 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
   const card = computed(() => options.card?.() ?? null)
   const cardTarget = computed(() => workPlanCardTarget(options.docId(), card.value))
   const submitting = ref(false)
+  const retrySubmission = ref(false)
+  const submittedRevision = ref<string | null>(null)
 
   const lockInput = () => ({
     external: options.external(),
@@ -429,7 +431,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
       submitting.value ||
       capability.value !== null,
   )
-  const canSave = computed(() => dirty.value && !inputsLocked.value && !options.stepPending?.())
+  const canSave = computed(() => (dirty.value || (submitState.value.enabled && submittedRevision.value !== `${submitState.value.action}:${view.value?.revisionNo}`)) && !inputsLocked.value && !options.stepPending?.())
   const unassigned = computed(() => (draft.value ? unassignedSteps(draft.value) : 0))
   const started = () => view.value?.startedCardIds ?? new Set<string>()
 
@@ -535,7 +537,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
   async function send(acks: readonly string[]): Promise<'saved' | 'capability' | 'failed' | 'blocked'> {
     const current = view.value
     const sending = draft.value
-    if (!current || !sending || saving.value || reloading.value || phase.value !== 'ready' || lockReason.value !== null || options.stepPending?.()) return 'blocked'
+    if (!current || !sending || saving.value || submitting.value || reloading.value || phase.value !== 'ready' || lockReason.value !== null || options.stepPending?.()) return 'blocked'
     let reread = false
     saving.value = true
     clearSaveState()
@@ -596,8 +598,23 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     }
   }
 
-  const save = () => send([])
-  const confirmCapability = () => (capability.value ? send(capability.value.map((finding) => finding.stepKey)) : Promise.resolve('blocked' as const))
+  // T0024: Save is the only user action. The existing result path starts review and propagation.
+  async function saveAndAdvance(acks: readonly string[]): Promise<'saved' | 'capability' | 'failed' | 'blocked'> {
+    if (inputsLocked.value && capability.value === null) return 'blocked'
+    if (!dirty.value && submittedRevision.value === `${submitState.value.action}:${view.value?.revisionNo}`) return 'blocked'
+    const result = retrySubmission.value && !dirty.value ? 'saved' : await send(acks)
+    if (result !== 'saved' || !alive.value) return result
+    if (submitState.value.enabled) {
+      const key = `${submitState.value.action}:${view.value?.revisionNo}`
+      const outcome = await submit()
+      if (outcome === 'submitted') submittedRevision.value = key
+      retrySubmission.value = outcome === 'failed'
+      if (outcome !== 'submitted') return 'failed'
+    }
+    return 'saved'
+  }
+  const save = () => saveAndAdvance([])
+  const confirmCapability = () => (capability.value ? saveAndAdvance(capability.value.map((finding) => finding.stepKey)) : Promise.resolve('blocked' as const))
 
   const submitState = computed<WorkPlanSubmitState>(() =>
     workPlanSubmitState({

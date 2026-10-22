@@ -9,9 +9,6 @@
        flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons (it checks what 실행
        would take); it is available while the open Flow's edited structure can be checked
        (`canValidate`).
-       flowgate.v02.0053 T#9: the run buttons drive the server run (the Shell sends the commands to the
-       Center session); `runMode` is the server's run as this tab knows it. Next to them one dot shows the
-       Flow's run — ● running, ❚❚ stopped, ✓ completed — its name in the tooltip only.
        flowgate.v02.0059 T#1 (0011-CH contract A): [선택] is back for multi-selection only (no add
        node / connect mode): a toggle whose ON / OFF (`selectMode`, the Center session's) shows on the
        button; it emits `edit.select-mode` and the Shell switches the mode.
@@ -22,18 +19,9 @@
        flowgate.v02.0059 0017-T: the zoom is one control — it shows the Canvas zoom (also one that is no
        preset, e.g. 115%) and chooses a preset; the zoom is never shown twice. The density radios set the
        step a card drag moves in.
-       flowgate.v02.0056 F2-1: a stopped run with cards approved meanwhile says so beside the dot — "멈춤 · 다음
-       카드 N개 대기" (the waiting cards' keys in its tooltip). That is the run's stop, not a card waiting for
-       approval: the Canvas keeps those cards 승인됨.
-       flowgate.v02.0061 T#14 (R §실행 제어): the two run buttons are the open Flow's run phase's (`runPhase`) — idle:
-       다음 단계 · 전체 실행; running: 일시정지 · 중지; paused: 재개 · 중지; stopping: one 중지 중 in their place, off.
-       No standing button; 0038's "the pressed button turns into ■ 중지" is gone. Every run button (and 검증) is off
-       while a run command is answered (`targets.runBusy`). The dot shows the phase and the band beside it — in the
-       place of the waiting cards line — the run's status, its command, why an idle run is idle, its running /
-       requested executions against the Flow's limit and the cards waiting for the next command (keys in its tooltip).
-       flowgate.v02.0083 T#4: the band is drawn beside the run buttons (`runBand`, runBandView): the status — an idle run's
-       reason in its place (사람 작성·승인 대기 · 오류로 멈춤 · 완료 …) — coloured by runBandTone, and under it the command,
-       the executions, the requests and the waiting cards. Every word is the server run's; nothing is guessed here. -->
+       flowgate.v02.0061 T#14: runPhase controls the run buttons; runBusy disables commands while pending.
+       flowgate.v02.0083 T0024 revision: the entire status area beside the run buttons is removed.
+       Run state and command handling remain unchanged. -->
   <div
     class="designer-toolbar"
     :class="{ 'is-unavailable': disabled }"
@@ -144,20 +132,6 @@
         <svg v-else class="is-run" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 4l8 6-8 6zM10 4l8 6-8 6z" /></svg>
         <span>{{ t(`gui.designer.top.tools.${run.label}`) }}</span>
       </button>
-      <div
-        v-if="runBand && !disabled"
-        class="designer-run-band"
-        :class="`is-${bandTone}`"
-        role="status"
-        :title="bandTitle"
-        data-test="designer-run-band"
-        :data-phase="runBand.phase"
-        :data-reason="runBand.idleReason ?? ''"
-        :data-tone="bandTone"
-      >
-        <span class="designer-run-band-head"><span class="designer-run-dot" aria-hidden="true" /><span data-test="designer-run-band-status">{{ bandStatus }}</span></span>
-        <span v-if="bandDetail" class="designer-run-band-detail" data-test="designer-run-band-detail">{{ bandDetail }}</span>
-      </div>
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
@@ -216,7 +190,6 @@ import {
   DESIGNER_DENSITIES,
   autoLayoutDirectionOf,
   isMenuCommandEnabled,
-  runBandTone,
   type DesignerDensity,
   type DesignerMenuTargets,
   type DesignerRunBand,
@@ -242,7 +215,7 @@ const props = withDefaults(
     selectMode?: boolean
     /** flowgate.v02.0059 T#2: what the 정렬 / 배치 ▾ commands act on (the Menu Bar's targets). */
     targets?: DesignerMenuTargets
-    /** flowgate.v02.0061 T#14: the open Flow's run band (runBandView), or null (no run). */
+    /** Retained input contract for run state; the toolbar renders no status area. */
     runBand?: DesignerRunBand | null
   }>(),
   { disabled: false, canValidate: false, canUndo: true, canRedo: true, selectMode: false, targets: () => ALL_MENU_TARGETS, runBand: null },
@@ -271,32 +244,7 @@ function chooseZoom(event: Event) {
   })
 }
 
-const { t, te } = useI18n()
-
-// flowgate.v02.0083 T#4: the run band's words — an idle run's reason leads in place of 대기; an unknown key shows nothing new.
-const bandTone = computed(() => (props.runBand ? runBandTone(props.runBand) : 'neutral'))
-const bandStatus = computed(() => {
-  const band = props.runBand
-  if (!band) return ''
-  const reason = band.idleReason ? `gui.designer.top.run_idle_reasons.${band.idleReason}` : null
-  return reason && te(reason) ? t(reason) : t(`gui.designer.top.run_status.${band.phase}`)
-})
-const bandDetail = computed(() => {
-  const band = props.runBand
-  if (!band) return ''
-  const parts: string[] = []
-  const command = band.command ? `gui.designer.top.run_command.${band.command}` : null
-  if (command && te(command)) parts.push(t(command))
-  if (band.phase === 'running' || band.running > 0) parts.push(t('gui.designer.top.run_executions', { running: band.running, limit: band.limit ?? '—' }))
-  if (band.requested > 0) parts.push(t('gui.designer.top.run_requested', { n: band.requested }))
-  if (band.pendingCount > 0) parts.push(t('gui.designer.top.run_waiting_cards', { n: band.pendingCount }))
-  return parts.join(' · ')
-})
-const bandTitle = computed(() =>
-  props.runBand && props.runBand.pendingNodeKeys.length > 0
-    ? t('gui.designer.top.run_pending_keys', { keys: props.runBand.pendingNodeKeys.join(', ') })
-    : undefined,
-)
+const { t } = useI18n()
 
 // flowgate.v02.0061 T#14 (R §실행 제어): the two run buttons of each run phase, in place; 중지 중 is one, off.
 type RunIcon = 'next' | 'all' | 'pause' | 'stop'
@@ -414,51 +362,6 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
 .designer-tool.is-compact {
   min-width: 46px;
 }
-
-/* flowgate.v02.0083 T#4: the run band beside the run buttons — the status (a dot in the band's tone) over its details. */
-.designer-run-band {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 3px;
-  min-width: 96px;
-  max-width: 220px;
-  height: 50px;
-  padding: 0 8px;
-  color: #aebfd2;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.designer-run-band-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--fg2-text);
-  font-weight: 600;
-}
-
-.designer-run-band-detail {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.designer-run-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #6b7f96;
-}
-
-.designer-run-band.is-info .designer-run-dot { background: var(--fg2-status-info-fg); }
-.designer-run-band.is-warning .designer-run-dot { background: var(--fg2-status-warning-fg); }
-.designer-run-band.is-danger .designer-run-dot { background: var(--fg2-status-danger-fg); }
-.designer-run-band.is-success .designer-run-dot { background: #22c98c; }
-.designer-run-band.is-warning .designer-run-band-head { color: var(--fg2-status-warning-fg); }
-.designer-run-band.is-danger .designer-run-band-head { color: var(--fg2-status-danger-fg); }
 
 .designer-tool svg {
   width: 19px;

@@ -27,12 +27,6 @@
       <InspectorPaneState v-else-if="errorKey && !view" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
       <template v-else-if="view">
         <InspectorPaneState v-if="errorKey" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
-        <span v-if="progress.cards" class="inspector-work-plan-progress" data-test="work-plan-progress" :data-started="progress.started" :data-cards="progress.cards">
-          {{ t(k('progress'), { ...progress }) }}
-        </span>
-        <span v-if="view.unassignedSteps" class="inspector-work-plan-warning" role="status" data-test="work-plan-unassigned">
-          <span aria-hidden="true">⚠</span>{{ t(k('unassigned'), { count: view.unassignedSteps }) }}
-        </span>
       </template>
     </div>
   </section>
@@ -59,7 +53,7 @@ const host = inject(INSPECTOR_HOST, null)
 
 const k = (key: string) => `gui.inspector.workPlan.${key}`
 
-const { view, progress, status, errorKey, reload } = useWorkPlan(() => props.target)
+const { view, status, errorKey, reload } = useWorkPlan(() => props.target)
 
 const hasDocument = computed(() => props.target.docId !== null)
 

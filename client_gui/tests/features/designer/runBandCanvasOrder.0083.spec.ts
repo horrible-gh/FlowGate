@@ -151,7 +151,7 @@ describe('Center session — a newer Canvas read tells the band as of itself (00
 
   const band = (session: DesignerCenterSession) => runBandView(session.activeRunStatus.value.run)
 
-  /** The band as the toolbar draws it (ko): status words and detail line. */
+  /** Internal run facts still update; the toolbar renders neither status nor detail. */
   function drawn(session: DesignerCenterSession) {
     i18n.global.locale.value = 'ko'
     toolbar?.unmount()
@@ -165,37 +165,37 @@ describe('Center session — a newer Canvas read tells the band as of itself (00
     const source = orderSource(canvasBlock('idle', 10, idleBand('waiting_approval')))
     const session = await open(source)
     await answer(source, runRead('idle', 10, { idleReason: 'waiting_approval' }))
-    expect(drawn(session)).toEqual({ status: '사람 작성·승인 대기', detail: null })
+    expect(drawn(session)).toEqual({ status: null, detail: null })
 
     // The person's card was approved and the run completed: the Canvas read (seq 15) comes first, its run read waits.
     await canvasRead(session, source, canvasBlock('idle', 15, idleBand('completed')))
     expect(session.state.runs[F].readState).toBe('reading')
     expect(band(session)).toMatchObject({ phase: 'idle', idleReason: 'completed', running: 0 })
-    expect(drawn(session)).toEqual({ status: '완료', detail: null })
+    expect(drawn(session)).toEqual({ status: null, detail: null })
 
     // That run read answers with a response older than the Canvas read (seq 10): the order is reversed, the band is not.
     await answer(source, runRead('idle', 10, { idleReason: 'waiting_approval' }))
     expect(session.state.runs[F].readState).toBe('read')
-    expect(drawn(session)).toEqual({ status: '완료', detail: null })
+    expect(drawn(session)).toEqual({ status: null, detail: null })
 
     // A run read as new as the Canvas read takes over (the same facts).
     await canvasRead(session, source, canvasBlock('idle', 15, idleBand('completed')))
     await answer(source, runRead('idle', 15, { idleReason: 'completed' }))
     expect(session.activeRunStatus.value.run).toMatchObject({ idleReason: 'completed', lastEventSeq: 15 })
-    expect(drawn(session)).toEqual({ status: '완료', detail: null })
+    expect(drawn(session)).toEqual({ status: null, detail: null })
   })
 
   it('running → idle: a completed run shows no AI execution of the run read before it', async () => {
     const source = orderSource(canvasBlock('running', 12, { ...idleBand('completed'), idle_reason: null, running_execution_count: 1 }))
     const session = await open(source)
     await answer(source, runRead('running', 12, { runningExecutionCount: 1 }))
-    expect(drawn(session)).toEqual({ status: '실행 중', detail: '전체 실행 · 실행 1/4' })
+    expect(drawn(session)).toEqual({ status: null, detail: null })
 
     await canvasRead(session, source, canvasBlock('idle', 15, idleBand('completed')))
     expect(band(session)).toMatchObject({ phase: 'idle', idleReason: 'completed', running: 0, requested: 0, command: null })
-    expect(drawn(session)).toEqual({ status: '완료', detail: null })
+    expect(drawn(session)).toEqual({ status: null, detail: null })
     await answer(source, runRead('running', 12, { runningExecutionCount: 1 }))      // late and older
-    expect(drawn(session)).toEqual({ status: '완료', detail: null })
+    expect(drawn(session)).toEqual({ status: null, detail: null })
   })
 
   it('an older Canvas read never hides a newer run read', async () => {
@@ -203,9 +203,9 @@ describe('Center session — a newer Canvas read tells the band as of itself (00
     const session = await open(source)
     await answer(source, runRead('idle', 15, { idleReason: 'completed' }))
     await canvasRead(session, source, canvasBlock('idle', 10, idleBand('waiting_approval')))
-    expect(drawn(session)).toEqual({ status: '완료', detail: null })                    // run read pending: the one read
+    expect(drawn(session)).toEqual({ status: null, detail: null })                    // run read pending: the one read
     await answer(source, runRead('idle', 15, { idleReason: 'completed' }))
-    expect(drawn(session)).toEqual({ status: '완료', detail: null })
+    expect(drawn(session)).toEqual({ status: null, detail: null })
   })
 
   it('a newer Canvas read of an older server (no band facts) shows no older reason or execution', async () => {

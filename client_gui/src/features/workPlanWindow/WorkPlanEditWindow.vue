@@ -60,18 +60,6 @@
         <Button size="sm" variant="primary" :disabled="!canSave" :loading="saving" data-test="wp-edit-save" @click="editor.save()">
           <span class="wp-window-save"><svg v-if="!saving" viewBox="0 0 24 24" aria-hidden="true"><path :d="SAVE_PATH" /></svg>{{ saving ? t('saving') : t('save') }}</span>
         </Button>
-        <Button
-          v-if="submitState.visible"
-          size="sm"
-          variant="secondary"
-          :disabled="!submitState.enabled"
-          :loading="submitting"
-          :title="submitState.reason ? t(submitState.reason) : t(`submit.hint.${submitState.action}`)"
-          data-test="wp-edit-submit"
-          :data-action="submitState.action"
-          :data-reason="submitState.reason ?? undefined"
-          @click="editor.submit()"
-        >{{ submitting ? t('submit.submitting') : t('submit.label') }}</Button>
       </div>
     </div>
   </ModelessShell>
@@ -196,7 +184,7 @@ const editor = useWorkPlanEditor({
   card: () => props.win.request.card?.() ?? null,
   submitted: () => props.win.request.submitted?.(),
 })
-const { view, draft, dirty, saving, canSave, notice, pendingQuantity, submitState, submitting } = editor
+const { view, draft, dirty, saving, canSave, notice, pendingQuantity } = editor
 
 /** Phosphor Icons `upload-simple` / `download-simple` / `code` (regular, 256 viewBox; MIT — client/shared/iconData). */
 const UPLOAD_PATH =

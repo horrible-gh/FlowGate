@@ -5,8 +5,7 @@
  *   with an unanswered question, else 작성 대기 — never 작업 중; a writer that ended without a result keeps 결과 없음 /
  *   실행 미완료; an AI that runs or is requested keeps 결과 작성 중; without the counts the card keeps 작업 중 as before.
  * - the Canvas card: a waiting card shows the clock, not the spinning 작업 중 mark.
- * - the run band beside the run buttons: the idle reason in place of 대기 (사람 작성·승인 대기 · 오류로 멈춤 · 완료 …), its
- *   tone (runBandTone), the command and the executions of a running run.
+ * - run state remains available internally; the toolbar has no status area in any phase (T0024 revision).
  * - the Inspector pill: a Graph card with a run leads with its card state — the Canvas card's word, not 진행 중.
  */
 import { mount, type VueWrapper } from '@vue/test-utils'
@@ -155,52 +154,40 @@ describe('the run band (designerTop.runBandTone, DesignerToolbar)', () => {
     toolbar = mount(DesignerToolbar, { props: { runPhase: runBand?.phase ?? 'idle', density: 'normal', zoom: 100, runBand, ...extra }, global: { plugins: [i18n] } })
     return toolbar
   }
-  const text = (w: VueWrapper<any>, test: string) => (w.find(`[data-test="${test}"]`).exists() ? w.get(`[data-test="${test}"]`).text() : null)
-
-  it('an idle run names why it is idle — a person, a failure, the end — each in its own tone', () => {
-    i18n.global.locale.value = 'ko'
-    const cases = [
-      [{ status: 'idle', idleReason: 'waiting_approval', executionLimit: 4 }, '사람 작성·승인 대기', 'warning'],
-      [{ status: 'idle', idleReason: 'error', executionLimit: 4 }, '오류로 멈춤', 'danger'],
-      [{ status: 'idle', idleReason: 'completed', executionLimit: 4 }, '완료', 'success'],
-      [{ status: 'idle', idleReason: 'step_done', executionLimit: 4 }, '다음 단계 완료', 'neutral'],
-      [{ status: 'idle', idleReason: null, executionLimit: 4 }, '대기', 'neutral'],
-    ] as const
-    for (const [facts, words, tone] of cases) {
-      const w = mountToolbar(runBandView(facts))
-      const el = w.get('[data-test="designer-run-band"]')
-      expect(text(w, 'designer-run-band-status')).toBe(words)
-      expect(el.attributes('data-tone')).toBe(tone)
-      expect(el.attributes('data-phase')).toBe('idle')
-      expect(text(w, 'designer-run-band-detail')).toBeNull()
-      w.unmount()
-      toolbar = null
+  it.each([
+    { status: 'idle', idleReason: 'completed' },
+    { status: 'idle', idleReason: 'waiting_approval' },
+    { status: 'idle', idleReason: 'error' },
+    { status: 'idle', idleReason: 'blocked_rejected' },
+    { status: 'idle', idleReason: 'merge_conflict' },
+    { status: 'idle', idleReason: 'hold' },
+    { status: 'idle', idleReason: 'step_done' },
+    { status: 'running', mode: 'full', runningExecutionCount: 1, requestedExecutionCount: 1, executionLimit: 4, pendingPropagationCount: 2, pendingNodeKeys: ['gn_a'] },
+    { status: 'paused' },
+    { status: 'stopping' },
+  ] as const)('removes the entire status area for %o while preserving run commands', async (facts) => {
+    const w = mountToolbar(runBandView(facts), { canValidate: true })
+    expect(w.find('[data-test="designer-run-band"]').exists()).toBe(false)
+    expect(w.find('.designer-run-band, .designer-run-dot, [role="status"]').exists()).toBe(false)
+    expect(w.find('[data-test="designer-run-band-status"], [data-test="designer-run-band-detail"]').exists()).toBe(false)
+    const commands = facts.status === 'running' ? ['run.pause', 'run.stop']
+      : facts.status === 'paused' ? ['run.resume', 'run.stop']
+      : facts.status === 'stopping' ? ['run.stop'] : ['run.next', 'run.all']
+    const buttons = w.findAll('[data-test="designer-tool-run"]')
+    expect(buttons.map(button => button.attributes('data-command'))).toEqual(commands)
+    expect(w.find('[data-command="run.validate"]').exists()).toBe(true)
+    if (facts.status === 'stopping') {
+      expect(buttons[0].attributes('disabled')).toBeDefined()
+    } else {
+      await buttons[0].trigger('click')
+      expect(w.emitted('command')).toEqual([[commands[0]]])
     }
   })
 
-  it('a running run says its command and its AI executions against the limit; requests and waiting cards follow', () => {
-    i18n.global.locale.value = 'ko'
-    const w = mountToolbar(runBandView({ status: 'running', mode: 'full', runningExecutionCount: 1, requestedExecutionCount: 1, executionLimit: 4, pendingPropagationCount: 2, pendingNodeKeys: ['gn_a', 'gn_b'] }))
-    expect(text(w, 'designer-run-band-status')).toBe('실행 중')
-    expect(text(w, 'designer-run-band-detail')).toBe('전체 실행 · 실행 1/4 · 요청 1 · 다음 카드 2개 대기')
-    expect(w.get('[data-test="designer-run-band"]').attributes('title')).toBe('다음으로 넘어갈 카드: gn_a, gn_b')
-    w.unmount()
-    const quiet = mountToolbar(runBandView({ status: 'running', mode: 'step', runningExecutionCount: 0, requestedExecutionCount: 0, executionLimit: null }))
-    expect(text(quiet, 'designer-run-band-detail')).toBe('다음 단계 · 실행 0/—')
-  })
-
-  it('no run or no work target: no band', () => {
-    expect(mountToolbar(null).find('[data-test="designer-run-band"]').exists()).toBe(false)
+  it('has no status area without a run or work target', () => {
+    expect(mountToolbar(null).find('[role="status"]').exists()).toBe(false)
     toolbar!.unmount()
-    expect(mountToolbar(runBandView({ status: 'idle', idleReason: 'error' }), { disabled: true }).find('[data-test="designer-run-band"]').exists()).toBe(false)
-  })
-
-  it('en / ja words come from the same keys', () => {
-    i18n.global.locale.value = 'en'
-    expect(text(mountToolbar(runBandView({ status: 'idle', idleReason: 'error' })), 'designer-run-band-status')).toBe(en.designer.top.run_idle_reasons.error)
-    toolbar!.unmount()
-    i18n.global.locale.value = 'ja'
-    expect(text(mountToolbar(runBandView({ status: 'idle', idleReason: 'waiting_approval' })), 'designer-run-band-status')).toBe(ja.designer.top.run_idle_reasons.waiting_approval)
+    expect(mountToolbar(runBandView({ status: 'idle', idleReason: 'error' }), { disabled: true }).find('[role="status"]').exists()).toBe(false)
   })
 })
 

@@ -20,7 +20,7 @@ import DesignerInspector from '@/features/designer/inspector/DesignerInspector.v
 import type { InspectorHostIntent } from '@/features/designer/inspector/inspectorHost'
 import { forgetWorkPlanOpeners } from '@/features/designer/inspector/openDocument'
 import { closeAllDocumentWindows } from '@/features/documentWindow'
-import { closeAllWorkPlanEditWindows, WorkPlanEditWindows, workPlanEditWindowList } from '@/features/workPlanWindow'
+import { closeAllWorkPlanEditWindows, openWorkPlanEditWindow, WorkPlanEditWindows, workPlanEditWindowList } from '@/features/workPlanWindow'
 import {
   workPlanCardAiRunning,
   workPlanCardTarget,
@@ -252,21 +252,16 @@ async function openPlan() {
 }
 
 describe('a person’s WP while its Flow runs (flowgate.v02.0083 T#3, window)', () => {
-  it('revision view of a running Flow, the card open: edit → [저장] → [제출] (the card line write, no body) → the Flow is read again', async () => {
+  it('revision view of a running Flow, the card open: edit → [저장] → automatic registration (the card line write, no body) → the Flow is read again', async () => {
     await mountAll(selection(wpCard({ status: 'open' })))
     await openPlan()
     expect(q('wp-edit-lock')).toBeNull()                                  // not 'read_only' / 'run_locked' any more
     expect(disabled(note())).toBe(false)
-    expect(q('wp-edit-submit')!.dataset.action).toBe('write')
-    expect(disabled(q('wp-edit-submit'))).toBe(false)
+    expect(q('wp-edit-submit')).toBeNull()
     await type(note(), '사람이 쓴 작업계획')
-    expect(disabled(q('wp-edit-submit'))).toBe(true)                      // unsaved edits: save first
-    expect(q('wp-edit-submit')!.dataset.reason).toBe('submit.reason.dirty')
+    intents.length = 0
     await click(q('wp-edit-save'))
     expect(api.putRequest).toHaveBeenCalledTimes(1)
-    expect(disabled(q('wp-edit-submit'))).toBe(false)
-    intents.length = 0
-    await click(q('wp-edit-submit'))
     expect(posts()).toEqual([[SUBMIT, { content: null }]])
     expect(q('wp-edit-notice')!.dataset.key).toBe('submitted')
     expect(intents).toContainEqual({ kind: 'refresh-flow', flowId: FLOW })
@@ -282,8 +277,8 @@ describe('a person’s WP while its Flow runs (flowgate.v02.0083 T#3, window)', 
     await flushPromises()
     expect(q('wp-edit-lock')!.dataset.reason).toBe('ai_running')
     expect(disabled(note())).toBe(true)
-    expect(disabled(q('wp-edit-submit'))).toBe(true)
-    await click(q('wp-edit-submit'))
+    expect(disabled(q('wp-edit-save'))).toBe(true)
+    await click(q('wp-edit-save'))
     expect(api.postRequest).not.toHaveBeenCalled()
   })
 
@@ -302,18 +297,17 @@ describe('a person’s WP while its Flow runs (flowgate.v02.0083 T#3, window)', 
     await mountAll(selection(wpCard({ status: 'open' }), 'conflict'))
     await openPlan()
     expect(q('wp-edit-lock')!.dataset.reason).toBe('read_only')
-    expect(disabled(q('wp-edit-submit'))).toBe(true)
+    expect(disabled(q('wp-edit-save'))).toBe(true)
   })
 
-  it('a rejected plan of a card in review: edit → [저장] → [제출] is mark_revised', async () => {
+  it('a rejected plan of a card in review: edit → [저장] → automatic registration is mark_revised', async () => {
     answer = readAnswer({ status: 'open', doc_review_status: 'rejected' })
     await mountAll(selection(wpCard({ status: 'review', resultDocId: DOC })))
     await openPlan()
     expect(q('wp-edit-lock')).toBeNull()
-    expect(q('wp-edit-submit')!.dataset.action).toBe('mark_revised')
+    expect(q('wp-edit-submit')).toBeNull()
     await type(note(), '반려 뒤 고침')
     await click(q('wp-edit-save'))
-    await click(q('wp-edit-submit'))
     expect(posts()).toEqual([[REVISED, {}]])
     expect(q('wp-edit-notice')!.dataset.key).toBe('submitted')
   })
@@ -324,7 +318,7 @@ describe('a person’s WP while its Flow runs (flowgate.v02.0083 T#3, window)', 
     })
     await mountAll(selection(wpCard({ status: 'open' })))
     await openPlan()
-    await click(q('wp-edit-submit'))
+    await click(q('wp-edit-save'))
     const shown = q('wp-edit-notice')!
     expect(shown.dataset.key).toBe('submit_failed')
     expect(shown.textContent).toContain('작업이 0세트인 작업계획은 제출할 수 없습니다.')
@@ -339,4 +333,57 @@ describe('a person’s WP while its Flow runs (flowgate.v02.0083 T#3, window)', 
     expect(omit).not.toBeNull()
     expect(disabled(omit)).toBe(true)
   })
+  it('failed PUT never registers a result and keeps the edits', async () => {
+    api.putRequest.mockRejectedValue(reject(409, { detail: 'conflict' }))
+    await mountAll(selection(wpCard({ status: 'open' })))
+    await openPlan()
+    await type(note(), 'keep this edit')
+    await click(q('wp-edit-save'))
+    expect(api.postRequest).not.toHaveBeenCalled()
+    expect((note() as HTMLInputElement).value).toBe('keep this edit')
+  })
+
+  it('registration failure retries through Save without writing the saved body twice', async () => {
+    api.postRequest.mockRejectedValueOnce(reject(503, {}))
+    await mountAll(selection(wpCard({ status: 'open' })))
+    await openPlan()
+    await type(note(), 'retry saved plan')
+    await click(q('wp-edit-save'))
+    expect(q('wp-edit-notice')!.dataset.key).toBe('submit_failed')
+    expect(disabled(q('wp-edit-save'))).toBe(false)
+    await click(q('wp-edit-save'))
+    expect(api.putRequest).toHaveBeenCalledTimes(1)
+    expect(posts()).toEqual([[SUBMIT, { content: null }], [SUBMIT, { content: null }]])
+    expect(disabled(q('wp-edit-save'))).toBe(true)
+  })
+
+
+  it('locks Save during automatic registration and ignores repeated clicks', async () => {
+    let finish!: (value: unknown) => void
+    api.postRequest.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    await mountAll(selection(wpCard({ status: 'open' })))
+    await openPlan()
+    await type(note(), 'only once')
+    await click(q('wp-edit-save'))
+    expect(disabled(q('wp-edit-save'))).toBe(true)
+    expect(disabled(note())).toBe(true)
+    await click(q('wp-edit-save'))
+    expect(api.putRequest).toHaveBeenCalledTimes(1)
+    expect(api.postRequest).toHaveBeenCalledTimes(1)
+    finish({ data: { flow_id: FLOW, node_key: 'gn_wp', slot: 'plan', doc_type: 'WP', doc_id: DOC, bound_as_result: true, line: null } })
+    await flushPromises()
+    expect(q('wp-edit-notice')!.dataset.key).toBe('submitted')
+  })
+
+  it('ordinary editing keeps Save as a body update only', async () => {
+    host = mount(WorkPlanEditWindows, { global: { plugins: [i18n] }, attachTo: document.body })
+    openWorkPlanEditWindow({ docId: DOC, projectId: 'flowgate', title: '작업계획' })
+    await flushPromises()
+    await type(note(), 'ordinary edit')
+    await click(q('wp-edit-save'))
+    expect(api.putRequest).toHaveBeenCalledTimes(1)
+    expect(api.postRequest).not.toHaveBeenCalled()
+    expect(q('wp-edit-submit')).toBeNull()
+  })
+
 })
