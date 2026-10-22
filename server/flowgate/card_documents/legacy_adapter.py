@@ -15,6 +15,10 @@ Flow's active run - the Graph's own judgements of what its result is (``result_b
 and the registration of a result made with that token: inside the line write's Flow guard the token is claimed
 (the compare-and-swap consume, ``token_consumed``) and the document submitted; after the commit the Graph is told
 (the inbox's contact, ``after_inbox_registered``).
+
+flowgate.v02.0083 T#3: a person's work plan is registered as it is (the card's own plan draft, filled in its editor):
+the work sets its stored plan counts (``work_plan_service.totals``), and whether the card's AI or review still works
+on the node whatever its state (``card_settings_ports.ai_working`` with the node's bound result).
 """
 from __future__ import annotations
 
@@ -47,7 +51,7 @@ __all__ = ["CANCELLED_STATUS", "is_alive", "live_end", "flow_documents", "docume
            "create_document", "delete_document", "approvable_body", "review_counts", "rejection_count",
            "GraphApiError", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid", "run",
            "load_flow", "require_writable", "running_node", "node_result", "register_result", "discard_file",
-           "tell_graph"]
+           "tell_graph", "work_sets", "card_working"]
 
 CREATE_PERMISSION = "perm_document_create"     # the v0.1 document create routes' permission
 
@@ -277,6 +281,31 @@ def running_node(flow_id: str, node_key: str) -> Optional[dict]:
             "instruction_stage": result_binder.in_instruction_stage(row),
             "ai_working": card_settings_ports.ai_working(flow_id, node_key, None),
             "token_id": _dispatch_token(run_row["run_id"], node_key)}
+
+
+def card_working(flow_id: str, node_key: str) -> bool:
+    """flowgate.v02.0083 T#3: the node of the Flow's active run (open or in review) has its AI or its card's review
+    still working on it — the card's review loop is judged on the node's bound result."""
+    run_row = run_store.active_run(flow_id)
+    if run_row is None:
+        return False
+    row = next((r for r in run_store.node_runs(run_row["run_id"]) if r["node_key"] == node_key), None)
+    if row is None:
+        return False
+    return card_settings_ports.ai_working(flow_id, node_key, row.get("result_doc_id"))
+
+
+def work_sets(doc: dict) -> int:
+    """flowgate.v02.0083 T#3: the work sets the stored work plan of ``doc`` counts (``work_plan_service.totals``, the
+    「작업 n세트」 of its derived title); 0 when the plan cannot be read."""
+    from modules.flow_gate.services import work_plan_service as wp   # noqa: PLC0415
+
+    try:
+        body = wp.load_body(wp.plan_path_for_doc(doc), project_id=doc.get("project_id"), doc_id=doc.get("doc_id"))
+    except Exception:  # noqa: BLE001 — an unreadable plan is no written plan
+        _log.warning("card work plan not read doc=%s", doc.get("doc_id"), exc_info=True)
+        return 0
+    return int(wp.totals(body).get("work_sets") or 0)
 
 
 def node_result(flow_id: str, node_key: str) -> Optional[str]:

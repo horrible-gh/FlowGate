@@ -7,6 +7,8 @@
 //   approve / reject   POST /api/v1/documents/{doc_id}/review_transitions/{approve|reject}
 //                      body { comment } (reject: the reason, required -> rejection_reason)
 //                      -> { document, tr_commit? } (tr_commit only on a TR approval)
+//   mark_revised       POST /api/v1/documents/{doc_id}/review_transitions/mark_revised (flowgate.v02.0083 T#3:
+//                      the work plan window's [제출] of a rejected plan — rejected -> pending_review, document.update)
 //   run / rework       POST /api/v1/ai-invoke/start  { project, module, group, doc_ref,
 //                      action_scope: edit | rework, mode: single } -> { run_id, status, … }
 //   AI running         GET  /api/v1/ai-invoke/active?group_id= -> { active, run_id, status, doc_ref, … }
@@ -80,7 +82,7 @@ export function toReviewTransitionResult(raw: unknown): ReviewTransitionResult {
   return { document: toDocumentRecord(row.document), trCommit: toReviewTrCommit(row.tr_commit) }
 }
 
-async function reviewTransition(docId: string, action: 'approve' | 'reject', comment?: string): Promise<ReviewTransitionResult> {
+async function reviewTransition(docId: string, action: 'approve' | 'reject' | 'mark_revised', comment?: string): Promise<ReviewTransitionResult> {
   const response = await postRequest<unknown>(
     `${API}/documents/${encodeURIComponent(docId)}/review_transitions/${action}`,
     comment === undefined ? {} : { comment },
@@ -96,6 +98,11 @@ export function reviewApprove(docId: string): Promise<ReviewTransitionResult> {
 /** Rejects a document under review with its reason (-> rejected, the reason joins the history). */
 export function reviewReject(docId: string, reason: string): Promise<ReviewTransitionResult> {
   return reviewTransition(docId, 'reject', reason)
+}
+
+/** flowgate.v02.0083 T#3 — puts a rejected document back in review after its author revised it (rejected -> pending_review). */
+export function reviewMarkRevised(docId: string): Promise<ReviewTransitionResult> {
+  return reviewTransition(docId, 'mark_revised')
 }
 
 /** `project.module.group` -> its parts; null when the id is not a v0.1 group id. */

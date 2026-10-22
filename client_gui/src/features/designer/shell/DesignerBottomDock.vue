@@ -7,7 +7,8 @@
        flowgate.v02.0048 T#1 (D#1 §4.2 / §5.7): the Inspector gets the selection context and its
        Host intents are passed up unchanged — the Dock knows no Inspector feature.
        flowgate.v02.0070 T#1: so is the card title save the Center column gives (the Inspector header's).
-       flowgate.v02.0072 TR0012 rev1: and the session's run lock of any Flow (the work plan windows'). -->
+       flowgate.v02.0072 TR0012 rev1: and the session's run lock of any Flow (the work plan windows').
+       flowgate.v02.0083 T#3: and the session's latest node run of any shown card (a WP card's plan window). -->
   <section
     class="designer-bottom-dock"
     data-test="designer-bottom-dock"
@@ -18,6 +19,7 @@
       :unselected="unselected"
       :save-title="inspector?.saveTitle ?? null"
       :flow-run-lock="inspector?.flowRunLock ?? null"
+      :card-run="inspector?.cardRun ?? null"
       @host="inspector?.host($event)"
     />
     <aside
@@ -83,6 +85,15 @@ interface BottomDockInspector {
   readonly saveTitle?: DesignerCenterSession['saveNodeTitle'] | null
   /** flowgate.v02.0072 TR0012 rev1: any open Flow's run lock now (the session's run marks), for the work plan windows. */
   readonly flowRunLock?: ((flowId: string) => 'run' | 'unknown' | null) | null
+  /** flowgate.v02.0083 T#3: any shown card's latest node run (the session's), for a WP card's plan window. */
+  readonly cardRun?:
+    | ((flowId: string, nodeKey: string) => {
+        readonly status: string | null
+        readonly resultDocId: string | null
+        readonly runningExecutionCount: number
+        readonly lineDocId: string | null
+      } | null)
+    | null
 }
 const inspector = inject<BottomDockInspector | null>(Symbol.for('flowgate.designer.bottomDockInspector'), null)
 

@@ -1018,14 +1018,119 @@ export interface WorkPlanLockInput {
   readonly editable: boolean
   readonly editLockedReason: string | null
   readonly refused?: WorkPlanRefusal | null
+  /**
+   * flowgate.v02.0083 T#3 (D-1): the plan is its run card's own (workPlanCardTarget) — then only the Flow's ownership
+   * conflict and the card's own AI (its write or its review) lock the content, not `external` (the revision view, the
+   * run lock: structure locks) nor `aiRunning` (the Flow's AI run). Absent or null: the plan locks as before.
+   */
+  readonly card?: { readonly conflict: boolean; readonly aiRunning: boolean } | null
 }
 
 export function workPlanLockReason(input: WorkPlanLockInput): WorkPlanLockReason | null {
-  if (input.external) return input.external
-  if (input.aiRunning) return 'ai_running'
+  if (input.card) {
+    if (input.card.conflict) return 'read_only'
+    if (input.card.aiRunning) return 'ai_running'
+  } else {
+    if (input.external) return input.external
+    if (input.aiRunning) return 'ai_running'
+  }
   if (input.uploadGuarded) return 'upload'
   if (!input.editable) return input.editLockedReason === 'final_approved' ? 'final_approved' : 'status'
   return input.refused ?? null
+}
+
+// --- The run card's own plan (flowgate.v02.0083 T#3) -----------------------------------------------------------
+
+/**
+ * A WP card of a Flow's run as the Designer knows it now (the opener's reader of the Center session): its node, its latest
+ * node run (state, bound result, running AI executions), the document its 「작업계획」 line shows and whether the Flow is
+ * read only for an ownership conflict.
+ */
+export interface WorkPlanRunCard {
+  readonly flowId: string
+  readonly nodeKey: string
+  readonly status: string | null
+  readonly resultDocId: string | null
+  readonly runningExecutionCount: number
+  readonly lineDocId: string | null
+  readonly conflict: boolean
+}
+
+/**
+ * Whether the plan is its run card's own (D-1): `write` — the card is open with no result and the plan is its line's
+ * document (the person writes it, then [제출] registers it); `revise` — the card is in review with the plan as its result
+ * (the author revises it after a rejection). null: any other plan (it locks as before).
+ */
+export type WorkPlanCardTarget = 'write' | 'revise'
+
+export function workPlanCardTarget(docId: string, card: WorkPlanRunCard | null | undefined): WorkPlanCardTarget | null {
+  if (!card || !docId) return null
+  if (card.status === 'open' && !card.resultDocId && card.lineDocId === docId) return 'write'
+  if (card.status === 'review' && card.resultDocId === docId) return 'revise'
+  return null
+}
+
+/** The card's own AI works on it (its write or its review: running executions) or a document AI run on the plan. */
+export function workPlanCardAiRunning(card: Pick<WorkPlanRunCard, 'runningExecutionCount'>, documentAiRunning: boolean): boolean {
+  return card.runningExecutionCount > 0 || documentAiRunning
+}
+
+export interface WorkPlanSubmitInput {
+  readonly target: WorkPlanCardTarget | null
+  /** The plan's review status as last read. */
+  readonly docReviewStatus: string | null
+  readonly lockReason: WorkPlanLockReason | null
+  /** No control may change the plan now (a save, a read again, a capability confirmation, not ready). */
+  readonly inputsLocked: boolean
+  /** The window or one of its Step windows holds unsaved edits. */
+  readonly dirty: boolean
+  /** A [제출] is on its way. */
+  readonly busy: boolean
+}
+
+export interface WorkPlanSubmitState {
+  readonly visible: boolean
+  readonly enabled: boolean
+  /** `write`: the card line write of the open card (POST …/slots/plan/document); `mark_revised`: a rejected plan back in review. */
+  readonly action: 'write' | 'mark_revised'
+  /** Message key (this window's) of why it is off, or null. */
+  readonly reason: string | null
+}
+
+/** [제출] of the run card's own plan (D-2 / D-3): shown, usable now, and why not (unsaved edits first save). */
+export function workPlanSubmitState(input: WorkPlanSubmitInput): WorkPlanSubmitState {
+  const action = input.target === 'revise' ? 'mark_revised' : 'write'
+  const shown = input.target === 'write' || (input.target === 'revise' && input.docReviewStatus === 'rejected')
+  if (!shown) return { visible: false, enabled: false, action, reason: null }
+  const off = (reason: string): WorkPlanSubmitState => ({ visible: true, enabled: false, action, reason })
+  if (input.busy) return off('submit.reason.busy')
+  if (input.lockReason) return off(`lock.${input.lockReason}`)
+  if (input.inputsLocked) return off('submit.reason.busy')
+  if (input.dirty) return off('submit.reason.dirty')
+  return { visible: true, enabled: true, action, reason: null }
+}
+
+/**
+ * Why a [제출] was refused: a plan of no work set (422 empty_body), the card's own AI or review works (409
+ * node_ai_working), already submitted (409 node_token_unavailable / slot_has_document), another AI run owns the Flow (423
+ * GROUP_AI_RUN_LOCKED: '다른 AI 작업 중'), the card moved on (another 409), forbidden, no answer, or other.
+ */
+export type WorkPlanSubmitFailure = 'empty' | 'ai_working' | 'taken' | 'ai_running' | 'conflict' | 'forbidden' | 'network' | 'other'
+
+export function workPlanSubmitFailure(error: {
+  readonly status: number | null
+  readonly code: string | null
+  readonly reason?: string | null
+  readonly network?: boolean
+}): WorkPlanSubmitFailure {
+  if (error.network) return 'network'
+  if (error.reason === 'empty_body') return 'empty'
+  if (error.code === 'node_ai_working') return 'ai_working'
+  if (error.code === 'node_token_unavailable' || error.code === 'slot_has_document') return 'taken'
+  if (error.status === 423 || error.code === 'GROUP_AI_RUN_LOCKED') return 'ai_running'
+  if (error.status === 409) return 'conflict'
+  if (error.status === 403) return 'forbidden'
+  return 'other'
 }
 
 /** Row errors of a failed save, pinned to the row identity of the Step key the server named (0649 T#3). */

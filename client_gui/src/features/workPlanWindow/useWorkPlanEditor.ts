@@ -41,8 +41,20 @@
 //   the execution or from a preview with no change. A deploy that fails after the save (or whose answer does not show the
 //   row's card) leaves that row's button as 「전개 재시도」 — each row its own, until a deploy answer settles its card or the
 //   row is gone: the preview and the execution again (a new preview each time), never the save.
+// - flowgate.v02.0083 T#3 (D-1 · D-2 · D-3): the plan of a WP card in its Flow's run (`card`, the opener's reader —
+//   workPlanCardTarget: open with no result and the plan on its line, or in review with the plan as its result) is the
+//   person's to write: its content locks only on the Flow's ownership conflict or the card's own AI (its running
+//   executions, a document AI run on the plan), besides the server's editable, an upload and a refused save. The revision
+//   view and the run lock stay structure locks: 「지시 생략」 (and its deploy) still reads them (`structureLockReason`).
+//   [제출] (`submit`, workPlanSubmitState: never with unsaved edits) is the existing server path — on the open card the
+//   card line write of its plan line (cardLineWrite, no body: the card's own draft is registered with the node's token),
+//   on a rejected plan `mark_revised`; then the opener reads its Flow again and the plan is read again.
 import { computed, onScopeDispose, ref, shallowRef, watch, type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import {
+  cardLineErrorOf,
+  cardLineWrite,
+  reviewErrorOf,
+  reviewMarkRevised,
   workPlanDeployExecute,
   workPlanDeployFailureOf,
   workPlanDeployPreview,
@@ -59,7 +71,7 @@ import {
 } from '@/features/document'
 import type { WpFieldError } from '@shared/workPlanErrors'
 import type { SelectOption } from '@/components/ui/Select.vue'
-import { documentAiActivityOf, readDocumentAiActivity } from '@/features/documentWindow/documentAiWindows'
+import { documentAiActivityOf, documentAiRunning, readDocumentAiActivity } from '@/features/documentWindow/documentAiWindows'
 import { documentIoGuarded, registerDocumentEditEntry } from '@/features/documentWindow/documentEditRegistry'
 import {
   WORK_PLAN_OMIT_TEXT,
@@ -92,8 +104,14 @@ import {
   toWorkPlanEditView,
   unassignedSteps,
   unitOf,
+  workPlanCardAiRunning,
+  workPlanCardTarget,
   workPlanLockReason,
   workPlanOmitState,
+  workPlanSubmitFailure,
+  workPlanSubmitState,
+  type WorkPlanCardTarget,
+  type WorkPlanRunCard,
   type WorkPlanDraft,
   type WorkPlanOmitCardVerdict,
   type WorkPlanOmitDeployCard,
@@ -103,6 +121,8 @@ import {
   type WorkPlanPairRole,
   type WorkPlanRefusal,
   type WorkPlanStepDraft,
+  type WorkPlanSubmitFailure,
+  type WorkPlanSubmitState,
 } from './workPlanEditModel'
 import { readWorkPlanJson, workPlanJsonText, type WorkPlanJsonIssue } from './workPlanJson'
 
@@ -128,6 +148,8 @@ export interface WorkPlanEditorNotice {
     | 'omit_unconfirmed'
     | 'omit_no_change'
     | 'omit_deploy_failed'
+    | 'submitted'
+    | 'submit_failed'
   readonly params?: Readonly<Record<string, string | number>>
   readonly tone: 'success' | 'warning'
   /** A second message key (this window's) said after the first, e.g. why a deploy failed. */
@@ -224,6 +246,10 @@ export interface WorkPlanEditorOptions {
   saved?(revisionNo: number): void
   /** The row's Step window is open (its 「지시 생략」 waits for it). */
   stepOpen?(rowId: string): boolean
+  /** flowgate.v02.0083 T#3: the plan's WP card as the Designer knows it now (the opener's reader); null / absent: none. */
+  card?(): WorkPlanRunCard | null
+  /** flowgate.v02.0083 T#3: told after a [제출] (the opener reads its Flow again). */
+  submitted?(): void
 }
 
 export interface WorkPlanEditor {
@@ -238,6 +264,12 @@ export interface WorkPlanEditor {
   /** A read again over the shown plan is on its way (every input waits for it). */
   readonly reloading: Readonly<Ref<boolean>>
   readonly lockReason: ComputedRef<WorkPlanLockReason | null>
+  /** flowgate.v02.0083 T#3: the plan is its run card's own (write / revise), or null. */
+  readonly cardTarget: ComputedRef<WorkPlanCardTarget | null>
+  /** flowgate.v02.0083 T#3: [제출] shown, usable now, and why not. */
+  readonly submitState: ComputedRef<WorkPlanSubmitState>
+  /** flowgate.v02.0083 T#3: a [제출] is on its way. */
+  readonly submitting: Readonly<Ref<boolean>>
   /** No control may change the plan now (lock, save running, read again running, capability confirmation pending, not ready). */
   readonly inputsLocked: ComputedRef<boolean>
   readonly canSave: ComputedRef<boolean>
@@ -259,6 +291,8 @@ export interface WorkPlanEditor {
   refreshActivity(): void
   save(): Promise<'saved' | 'capability' | 'failed' | 'blocked'>
   confirmCapability(): Promise<'saved' | 'capability' | 'failed' | 'blocked'>
+  /** flowgate.v02.0083 T#3: [제출] — the card line write of the open card, or mark_revised of a rejected plan. */
+  submit(): Promise<'submitted' | 'failed' | 'blocked'>
   cancelCapability(): void
   setQuantity(type: string, next: number): void
   confirmQuantity(): void
@@ -364,16 +398,27 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     return groupId !== null && documentAiActivityOf(groupId)?.active === true
   })
 
-  const lockReason = computed<WorkPlanLockReason | null>(() =>
-    workPlanLockReason({
-      external: options.external(),
-      aiRunning: aiRunning.value,
-      uploadGuarded: documentIoGuarded(options.docId()),
-      editable: view.value?.editable ?? true,
-      editLockedReason: view.value?.editLockedReason ?? null,
-      refused: refused.value,
-    }),
-  )
+  const card = computed(() => options.card?.() ?? null)
+  const cardTarget = computed(() => workPlanCardTarget(options.docId(), card.value))
+  const submitting = ref(false)
+
+  const lockInput = () => ({
+    external: options.external(),
+    aiRunning: aiRunning.value,
+    uploadGuarded: documentIoGuarded(options.docId()),
+    editable: view.value?.editable ?? true,
+    editLockedReason: view.value?.editLockedReason ?? null,
+    refused: refused.value,
+  })
+  const lockReason = computed<WorkPlanLockReason | null>(() => {
+    const own = card.value
+    return workPlanLockReason({
+      ...lockInput(),
+      card: cardTarget.value && own ? { conflict: own.conflict, aiRunning: workPlanCardAiRunning(own, documentAiRunning(options.docId())) } : null,
+    })
+  })
+  /** flowgate.v02.0083 T#3: the structure actions (「지시 생략」, its deploy) keep the opener's verdict as before. */
+  const structureLockReason = computed<WorkPlanLockReason | null>(() => lockReason.value ?? workPlanLockReason(lockInput()))
   const inputsLocked = computed(
     () =>
       phase.value !== 'ready' ||
@@ -381,6 +426,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
       lockReason.value !== null ||
       saving.value ||
       reloading.value ||
+      submitting.value ||
       capability.value !== null,
   )
   const canSave = computed(() => dirty.value && !inputsLocked.value && !options.stepPending?.())
@@ -552,6 +598,51 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
 
   const save = () => send([])
   const confirmCapability = () => (capability.value ? send(capability.value.map((finding) => finding.stepKey)) : Promise.resolve('blocked' as const))
+
+  const submitState = computed<WorkPlanSubmitState>(() =>
+    workPlanSubmitState({
+      target: cardTarget.value,
+      docReviewStatus: view.value?.docReviewStatus ?? null,
+      lockReason: lockReason.value,
+      inputsLocked: inputsLocked.value,
+      dirty: dirty.value || options.stepPending?.() === true,
+      busy: submitting.value,
+    }),
+  )
+
+  /** flowgate.v02.0083 T#3 — [제출]: the existing server path of the state the card is in (never a new one). */
+  async function submit(): Promise<'submitted' | 'failed' | 'blocked'> {
+    const state = submitState.value
+    const own = card.value
+    if (!state.enabled || own === null) return 'blocked'
+    submitting.value = true
+    notice.value = null
+    try {
+      if (state.action === 'write') await cardLineWrite(own.flowId, own.nodeKey, 'plan', null)
+      else await reviewMarkRevised(options.docId())
+      if (!alive.value) return 'submitted'
+      notice.value = { key: 'submitted', tone: 'success' }
+      return 'submitted'
+    } catch (error) {
+      if (!alive.value) return 'failed'
+      let kind: WorkPlanSubmitFailure
+      if (state.action === 'write') kind = workPlanSubmitFailure(cardLineErrorOf(error))
+      else {
+        const refused = reviewErrorOf(error)
+        kind = workPlanSubmitFailure({ status: refused.status, code: refused.code, network: refused.kind === 'network' })
+      }
+      notice.value = { key: 'submit_failed', tone: 'warning', detail: `submit.failure.${kind}` }
+      if (kind === 'ai_running' || kind === 'ai_working') readActivity()
+      return 'failed'
+    } finally {
+      submitting.value = false
+      if (alive.value) {
+        // The card moved on (or was found to have): its Flow and the plan are read again.
+        options.submitted?.()
+        void refresh()
+      }
+    }
+  }
   function cancelCapability(): void {
     capability.value = null
   }
@@ -781,7 +872,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     if (!row) return { visible: false, enabled: false, action: 'omit', reason: null }
     return workPlanOmitState({
       step: row.step,
-      lockReason: lockReason.value,
+      lockReason: structureLockReason.value,
       inputsLocked: inputsLocked.value,
       dirty: dirty.value || options.stepPending?.() === true,
       stepOpen: options.stepOpen?.(id) === true,
@@ -943,6 +1034,9 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     saving,
     reloading,
     lockReason,
+    cardTarget,
+    submitState,
+    submitting,
     inputsLocked,
     canSave,
     failure,
@@ -958,6 +1052,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     refreshActivity: readActivity,
     save,
     confirmCapability,
+    submit,
     cancelCapability,
     setQuantity,
     confirmQuantity,

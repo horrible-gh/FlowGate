@@ -118,10 +118,12 @@ import {
   forgetDocumentIo,
   leaveDocumentIo,
   noteWorkPlanOpener,
+  provideWorkPlanCardRun,
   provideWorkPlanFlowRunLock,
   setWorkPlanEditOpener,
   settleCardLinesWritten,
   workPlanOpener,
+  type WorkPlanCardRun,
   type WorkPlanFlowRunLock,
 } from './openDocument'
 import { useInspectorEvents } from './useInspectorResource'
@@ -141,8 +143,13 @@ const props = withDefaults(
      * the selection tells it (its own Flow; any other Flow is not confirmed).
      */
     flowRunLock?: WorkPlanFlowRunLock | null
+    /**
+     * flowgate.v02.0083 T#3: any shown card's latest node run as the Center session knows it now; null = only the selection
+     * tells it (its own card).
+     */
+    cardRun?: WorkPlanCardRun | null
   }>(),
-  { unselected: false, registry: () => inspectorRegistry, saveTitle: null, flowRunLock: null },
+  { unselected: false, registry: () => inspectorRegistry, saveTitle: null, flowRunLock: null, cardRun: null },
 )
 
 const emit = defineEmits<{ host: [intent: InspectorHostIntent] }>()
@@ -188,6 +195,21 @@ onBeforeUnmount(
     if (props.flowRunLock) return props.flowRunLock(flowId)
     const current = readTarget.value
     return current?.flowId === flowId ? (current.editLock ?? null) : 'unknown'
+  }),
+)
+// flowgate.v02.0083 T#3: and the WP card of a plan window its latest node run, also when another card or Flow is selected
+// (the selected card's own read when the session tells none).
+onBeforeUnmount(
+  provideWorkPlanCardRun((flowId, nodeKey) => {
+    if (props.cardRun) return props.cardRun(flowId, nodeKey)
+    const current = readTarget.value
+    if (current?.flowId !== flowId || current.nodeId !== nodeKey) return null
+    return {
+      status: current.nodeRun?.status ?? null,
+      resultDocId: current.nodeRun?.resultDocId ?? null,
+      runningExecutionCount: current.nodeRun?.runningExecutionCount ?? 0,
+      lineDocId: current.cardDocuments.find((line) => line.slot === 'plan')?.docId ?? null,
+    }
   }),
 )
 // flowgate.v02.0074 T#2: a work plan window the document [업로드] asks for (its JSON import) gets the same opener as the
