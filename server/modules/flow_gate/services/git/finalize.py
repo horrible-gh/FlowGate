@@ -4,6 +4,7 @@ Extracted from git_service.py (flowgate.default.0550 T0015, D0006 §3.2/부록 A
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import uuid
@@ -1629,11 +1630,25 @@ def _finalize_execute(
     except BaseException as exc:
         # Only an attempt still in progress is closed as failed — one that has
         # already become a conflict session or completed is left as it is.
-        merge_target.fail_attempt(attempt, {
-            "code": getattr(exc, "code", None) or type(exc).__name__,
-            "message": str(getattr(exc, "message", "") or exc)[:500],
-        })
+        merge_target.fail_attempt(attempt, _attempt_error(exc))
         raise
+
+
+def _attempt_error(exc: BaseException) -> dict:
+    """The failed attempt's ``attempt_error``: code + message as before, plus the
+    error's details/diagnostic when it has them (flowgate.v02.0086 NR0003 §5.2-5)."""
+    error = {
+        "code": getattr(exc, "code", None) or type(exc).__name__,
+        "message": str(getattr(exc, "message", "") or exc)[:500],
+    }
+    details = getattr(exc, "details", None)
+    if isinstance(details, dict) and details:
+        # stored in the session context JSON: never let a non-JSON value mask ``exc``
+        error["details"] = json.loads(json.dumps(details, ensure_ascii=False, default=str))
+    diagnostic = getattr(exc, "diagnostic", None)
+    if isinstance(diagnostic, str) and diagnostic:
+        error["diagnostic"] = diagnostic[:500]
+    return error
 
 
 def _finish_unpushed_merge_recovery(
@@ -1692,10 +1707,7 @@ def _finish_unpushed_merge_recovery(
             wants_push, attempt, recovered=True,
         )
     except BaseException as exc:
-        merge_target.fail_attempt(attempt, {
-            "code": getattr(exc, "code", None) or type(exc).__name__,
-            "message": str(getattr(exc, "message", "") or exc)[:500],
-        })
+        merge_target.fail_attempt(attempt, _attempt_error(exc))
         raise
 
 
@@ -1719,6 +1731,10 @@ def _finalize_merge_attempt(
     merge_root = attempt.root
     if merge_root is None:
         raise GitServiceError(409, "invalid_state", "target checkout is not available")
+    if attempt.is_project_base:
+        # flowgate.v02.0086: last line before merging in the shared base checkout — it
+        # may have been switched while this attempt waited on its locks.
+        merge_target.raise_if_base_checkout_off_branch(project_id, attempt.base_branch)
     if attempt.is_project_base and _gs._dirty(base_root, include_untracked=False):
         # E3 — never auto-stash the server's own checkout. Name the dirty files
         # so the FE can tell the operator exactly what to commit or revert in
