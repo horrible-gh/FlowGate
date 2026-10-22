@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -80,7 +81,7 @@ def test_active_token_and_active_ai_references_are_preserved(owned):
     assert active.is_dir() and run_path.is_dir() and lease_path.is_dir()
 
 
-def test_terminal_expired_and_manifest_proven_orphan_retention(owned):
+def test_terminal_expired_and_manifest_proven_orphan_retention(owned, monkeypatch):
     root, rows, _ = owned
     consumed_id, consumed = _scratch(root, 4)
     rows[consumed_id] = _row(consumed_id, consumed, consumed_at=OLD)
@@ -92,9 +93,14 @@ def test_terminal_expired_and_manifest_proven_orphan_retention(owned):
         young_id, young, consumed_at=datetime.now(timezone.utc).isoformat()
     )
 
+    lookups = []
+    monkeypatch.setattr(token_scratch.db_projects, "get_by_id",
+                        lambda project_id: lookups.append(project_id) or {"project_name": "Project"})
+
     assert token_scratch.sweep(PROJECT) == 3
     assert not consumed.exists() and not expired.exists() and not orphan.exists()
     assert young.exists()
+    assert lookups == [PROJECT]  # one project-root lookup per sweep, not per folder
 
 
 def test_relative_tokens_scratch_dir_resolves_to_owned_path(owned, monkeypatch):
@@ -173,6 +179,74 @@ def test_successful_issue_records_manifest_and_db_scratch_path(owned, monkeypatc
     assert manifest["project_id"] == PROJECT
     assert manifest["token_id"] == token_id
     assert manifest["scratch_path"] == str(path)
+
+
+def test_issue_returns_before_background_sweep_finishes(owned, monkeypatch):
+    token_id = "tok_20261009_000097"
+    started, release = threading.Event(), threading.Event()
+    threads = []
+
+    def slow_sweep(project_id):
+        started.set()
+        release.wait(10)
+        return 0
+
+    original = token_scratch.sweep_on_issue
+    monkeypatch.setattr(token_service, "_next_token_id", lambda: token_id)
+    monkeypatch.setattr(token_service, "_active_pepper", lambda: ("v1", "pepper"))
+    monkeypatch.setattr(token_service, "to_storage_relative", lambda path, _: str(path))
+    monkeypatch.setattr(token_service, "get_store", lambda: _Store())
+    monkeypatch.setattr(token_service.db_tokens, "create", lambda _: {})
+    monkeypatch.setattr(token_service.db_events, "create", lambda _: None)
+    monkeypatch.setattr(token_scratch, "sweep", slow_sweep)
+    monkeypatch.setattr(token_scratch, "_last_sweep", {})
+    monkeypatch.setattr(token_scratch, "_sweeping", set())
+    monkeypatch.setattr(token_scratch, "sweep_on_issue", lambda project: threads.append(original(project)))
+
+    try:
+        issued = token_service.issue(PROJECT, None, "new", None, "user")
+        assert issued["token_id"] == token_id
+        assert started.wait(5)
+        assert threads[0] is not None and threads[0].is_alive()
+    finally:
+        release.set()
+    threads[0].join(5)
+    assert not threads[0].is_alive()
+    assert token_scratch._sweeping == set()
+
+
+def test_issue_sweep_keeps_hourly_interval_and_single_flight(monkeypatch, caplog):
+    calls, release = [], threading.Event()
+
+    def slow_sweep(project_id):
+        calls.append(project_id)
+        release.wait(10)
+        if len(calls) > 1:
+            raise RuntimeError("sweep boom")
+        return 0
+
+    monkeypatch.setattr(token_scratch, "sweep", slow_sweep)
+    monkeypatch.setattr(token_scratch, "_last_sweep", {})
+    monkeypatch.setattr(token_scratch, "_sweeping", set())
+
+    first = token_scratch.sweep_on_issue(PROJECT)
+    try:
+        assert first is not None
+        assert token_scratch.sweep_on_issue(PROJECT) is None  # within the hour
+        token_scratch._last_sweep[PROJECT] -= 3601
+        assert token_scratch.sweep_on_issue(PROJECT) is None  # previous sweep still running
+    finally:
+        release.set()
+    first.join(5)
+    assert calls == [PROJECT]
+
+    second = token_scratch.sweep_on_issue(PROJECT)  # hour elapsed and nothing running
+    assert second is not None
+    second.join(5)
+    assert calls == [PROJECT, PROJECT]
+    assert "token scratch issue sweep failed" in caplog.text
+    assert token_scratch._sweeping == set()
+    assert token_scratch.sweep_on_issue(PROJECT) is None
 
 
 @pytest.mark.parametrize("scope,fail_at", [

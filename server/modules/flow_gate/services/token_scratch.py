@@ -56,6 +56,7 @@ RETENTION_DAYS = 7  # legacy manifest format only; GC reads system settings
 _TOKEN_ID = re.compile(r"\Atok_[0-9]{8}_[0-9]{6}\Z")
 _sweep_lock = threading.Lock()
 _last_sweep: dict[str, float] = {}
+_sweeping: set[str] = set()
 
 
 def _unsafe_link(path: Path) -> bool:
@@ -79,11 +80,13 @@ def _same_path(left: Path, right: Path) -> bool:
     return os.path.normcase(str(left)) == os.path.normcase(str(right))
 
 
-def _checked_child(project_id: str, token_id: str, candidate: Path) -> Path | None:
+def _checked_child(project_id: str, token_id: str, candidate: Path,
+                   root: Path | None = None) -> Path | None:
     if not _TOKEN_ID.fullmatch(token_id):
         return None
     try:
-        root = _root(project_id)
+        # sweep() passes the root it computed once; every other caller looks it up.
+        root = _root(project_id) if root is None else root
         if (_unsafe_link(root.parent.parent) or _unsafe_link(root.parent)
                 or _unsafe_link(root) or _unsafe_link(candidate)):
             return None
@@ -138,8 +141,9 @@ def create(project_id: str, token_id: str, scratch: Path) -> None:
         raise
 
 
-def _manifest(project_id: str, token_id: str, scratch: Path) -> dict | None:
-    resolved = _checked_child(project_id, token_id, scratch)
+def _manifest(project_id: str, token_id: str, scratch: Path,
+              root: Path | None = None) -> dict | None:
+    resolved = _checked_child(project_id, token_id, scratch, root)
     if resolved is None:
         return None
     path = resolved / MANIFEST_NAME
@@ -187,8 +191,9 @@ def _referenced(project_id: str, token_id: str, scratch: Path) -> bool:
     return False
 
 
-def _eligible(project_id: str, token_id: str, scratch: Path, now: datetime) -> bool:
-    manifest = _manifest(project_id, token_id, scratch)
+def _eligible(project_id: str, token_id: str, scratch: Path, now: datetime,
+              root: Path | None = None) -> bool:
+    manifest = _manifest(project_id, token_id, scratch, root)
     if manifest is None:
         return False
     row = db_tokens.get_by_id(token_id)
@@ -218,16 +223,18 @@ def _eligible(project_id: str, token_id: str, scratch: Path, now: datetime) -> b
     return not _referenced(project_id, token_id, scratch)
 
 
-def delete_owned(project_id: str, token_id: str, scratch: Path, *, rollback: bool = False) -> bool:
+def delete_owned(project_id: str, token_id: str, scratch: Path, *, rollback: bool = False,
+                 root: Path | None = None) -> bool:
     """Revalidate immediately before deletion; rollback is for this call's mkdir."""
     try:
-        if _manifest(project_id, token_id, scratch) is None:
+        if _manifest(project_id, token_id, scratch, root) is None:
             return False
-        if not rollback and not _eligible(project_id, token_id, scratch, datetime.now(timezone.utc)):
+        if not rollback and not _eligible(project_id, token_id, scratch,
+                                          datetime.now(timezone.utc), root):
             return False
         if not rollback and _referenced(project_id, token_id, scratch):
             return False
-        if _manifest(project_id, token_id, scratch) is None:
+        if _manifest(project_id, token_id, scratch, root) is None:
             return False
         shutil.rmtree(scratch)
         return not (scratch.exists() or scratch.is_symlink())
@@ -244,23 +251,48 @@ def sweep(project_id: str) -> int:
     deleted = 0
     try:
         for child in root.iterdir():
-            if _TOKEN_ID.fullmatch(child.name) and delete_owned(project_id, child.name, child):
+            if (_TOKEN_ID.fullmatch(child.name)
+                    and delete_owned(project_id, child.name, child, root=root)):
                 deleted += 1
     except Exception:
         _log.warning("token scratch sweep failed for project %s", project_id, exc_info=True)
     return deleted
 
 
-def sweep_on_issue(project_id: str) -> None:
-    now = time.monotonic()
-    with _sweep_lock:
-        if now - _last_sweep.get(project_id, float("-inf")) < 3600:
-            return
-        _last_sweep[project_id] = now
+def _sweep_in_background(project_id: str) -> None:
     try:
         sweep(project_id)
     except Exception:
         _log.warning("token scratch issue sweep failed for project %s", project_id, exc_info=True)
+    finally:
+        with _sweep_lock:
+            _sweeping.discard(project_id)
+
+
+def sweep_on_issue(project_id: str) -> threading.Thread | None:
+    """Start at most one hourly sweep per project off the token-issue request path.
+
+    flowgate.v02.0084 T#1: a synchronous sweep over thousands of tok_* folders
+    made the issuing /ai-invoke/start request exceed the 30s client timeout.
+    """
+    now = time.monotonic()
+    with _sweep_lock:
+        if project_id in _sweeping:
+            return None
+        if now - _last_sweep.get(project_id, float("-inf")) < 3600:
+            return None
+        _last_sweep[project_id] = now
+        _sweeping.add(project_id)
+    thread = threading.Thread(target=_sweep_in_background, args=(project_id,),
+                              name="token-scratch-sweep", daemon=True)
+    try:
+        thread.start()
+    except Exception:
+        with _sweep_lock:
+            _sweeping.discard(project_id)
+        _log.warning("token scratch issue sweep failed for project %s", project_id, exc_info=True)
+        return None
+    return thread
 
 
 def startup_sweep() -> int:

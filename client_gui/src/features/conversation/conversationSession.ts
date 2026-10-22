@@ -38,6 +38,9 @@ export const CATCHUP_MAX_ROUNDS = 20
 export const SEND_RETRY_MAX = 2
 export const RUN_POLL_MS = 2500
 export const RUN_POLL_MAX = 480
+// flowgate.v02.0084 T#2: a run adopted before the server has registered it (409 right after the
+// lease, or a /start that timed out) reads 404 for a while; it is polled this long before giving up.
+export const RUN_ADOPT_GRACE_MS = 60_000
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -153,6 +156,11 @@ export interface ConversationSessionOptions {
  */
 function isSourceLocked(error: unknown): boolean {
   return error instanceof ConversationRequestError && error.code === 'graph_run_locked'
+}
+
+/** flowgate.v02.0084 T#2: the request got no answer (timeout / network); the server may still have acted. */
+function isNoResponse(error: unknown): boolean {
+  return error instanceof ConversationRequestError && error.status === null
 }
 
 function messageOf(error: unknown): string {
@@ -697,6 +705,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
   async function pollRun(chatId: string, runId: string, gen: number): Promise<void> {
     state.runId = runId
     const baseline = state.turns.filter((t) => t.speaker === 'ai').length
+    // flowgate.v02.0084 T#2: until the run has been read once, 404 / 410 may only mean the server
+    // has not registered it yet, so it is polled through RUN_ADOPT_GRACE_MS before being let go.
+    let seen = false
+    let unseenGone = 0
+    const unseenGoneMax = Math.ceil(RUN_ADOPT_GRACE_MS / RUN_POLL_MS)
     for (let i = 0; i < RUN_POLL_MAX; i++) {
       await sleep(RUN_POLL_MS)
       if (disposed || gen !== chatGen) return
@@ -706,10 +719,15 @@ export function createConversationSession(options: ConversationSessionOptions = 
       } catch (error) {
         const status = error instanceof ConversationRequestError ? error.status : null
         // Only a gone run is terminal; a blip keeps polling (L0008 §3).
-        if (status === 404 || status === 410) break
+        if (status === 404 || status === 410) {
+          unseenGone += 1
+          if (seen || unseenGone >= unseenGoneMax) break
+          continue
+        }
         await loadActivities(chatId, gen)
         continue
       }
+      seen = true
       // No server push in v0.2 yet: the reply lands through the same catch-up as a gap, and
       // the run's command requests through an activity read on the same tick (D0006 §3.9.2).
       await catchUp()
@@ -761,10 +779,29 @@ export function createConversationSession(options: ConversationSessionOptions = 
         void pollRun(chatId, error.runId, gen)
         return
       }
+      // flowgate.v02.0084 T#2: a /start without an answer may still have made the run. Ask the
+      // server for the chat's active run and adopt it; state.runId stays 'starting' meanwhile, so
+      // another click cannot send a second /start.
+      if (isNoResponse(error)) {
+        const adopted = await findActiveRun(chatId)
+        if (disposed || gen !== chatGen) return
+        if (adopted) {
+          void pollRun(chatId, adopted, gen)
+          return
+        }
+      }
       state.runId = null
       // flowgate.v02.0061 T#14: an edit / edit-once call while the Flow's Graph run is locked (WP answer 2).
       if (isSourceLocked(error)) notify('warning', 'source_locked')
       else notify('danger', 'invoke_failed', messageOf(error))
+    }
+  }
+
+  async function findActiveRun(chatId: string): Promise<string | null> {
+    try {
+      return await source.fetchActiveChatRun(chatId)
+    } catch {
+      return null
     }
   }
 
