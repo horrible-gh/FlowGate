@@ -16,6 +16,7 @@ from modules.flow_gate.db import system_settings as db_settings
 from modules.flow_gate.services import ai_invoke_service as ai
 from modules.flow_gate.services import token_scratch
 from modules.flow_gate.settings import system_settings_service
+from modules.flow_gate.storage import filesystem as storage_fs
 
 PROJECT = "project-0610-ttl"
 OLD = datetime(2000, 1, 1, tzinfo=timezone.utc)
@@ -192,14 +193,15 @@ def test_failed_filesystem_delete_keeps_expired_token_row(connected, monkeypatch
     system_settings_service.set_values({"scratch_ttl_value": "1", "scratch_ttl_unit": "minute"})
     token_id, path, row = _token(root, 401, OLD, expired=True)
     tokens[token_id] = row
-    original = token_scratch.shutil.rmtree
+    # flowgate.v02.0090 T#1: the delete now runs through storage_fs.remove_managed_tree.
+    original = storage_fs.shutil.rmtree
 
     def fail_for_token(candidate, *args, **kwargs):
-        if Path(candidate) == path:
+        if Path(candidate).resolve() == path.resolve():
             raise OSError("simulated delete failure")
         return original(candidate, *args, **kwargs)
 
-    monkeypatch.setattr(token_scratch.shutil, "rmtree", fail_for_token)
+    monkeypatch.setattr(storage_fs.shutil, "rmtree", fail_for_token)
     startup.run_all()
     assert path.exists() and token_id in tokens
     assert "purge" not in events

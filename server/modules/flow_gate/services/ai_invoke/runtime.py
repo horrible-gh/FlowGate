@@ -29,11 +29,12 @@ object this module created until a test replaces it.
 from __future__ import annotations
 
 import hashlib
+from contextlib import ExitStack
 from contextvars import ContextVar
 import json
 import logging
+import os
 import re
-import shutil
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +47,7 @@ from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.settings import ai_execution_policy_service
 from modules.flow_gate.settings import scratch_retention
+from modules.flow_gate.storage import filesystem as storage_fs
 from modules.flow_gate.storage import paths as storage_paths
 
 # The engine's log channel keeps its historical name: `caplog`/handler
@@ -841,17 +843,34 @@ def _create_scratch(project_id: str, run_id: str) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     root_resolved = root.resolve(strict=True)
     scratch = root / run_id
-    scratch.mkdir(exist_ok=False)
-    try:
-        if _svc()._is_reparse_or_symlink(scratch) or scratch.resolve(strict=True).parent != root_resolved:
-            raise ValueError("scratch is not a direct managed child")
-        (scratch / "tmp").mkdir()
-        (scratch / "cache").mkdir()
-        _atomic_write_manifest(scratch, _manifest_for(project_id, run_id, scratch))
-    except Exception:
-        if scratch.exists() and not _svc()._is_reparse_or_symlink(scratch):
-            shutil.rmtree(scratch)
-        raise
+    # mkdir(exist_ok=False) excludes other creators without requiring writable G.
+    with storage_fs.journal_lock("ai-run", project_id, run_id, interprocess=False):
+        if storage_fs.journal_exists("ai-run", project_id, run_id):
+            raise ValueError("ai-invoke scratch has a pending delete record")
+        created_at = datetime.now(timezone.utc).isoformat()
+        scratch.mkdir(exist_ok=False)
+        identity = None
+        try:
+            identity = storage_fs.path_identity(scratch)
+            if _svc()._is_reparse_or_symlink(scratch) or scratch.resolve(strict=True).parent != root_resolved:
+                raise ValueError("scratch is not a direct managed child")
+            (scratch / "tmp").mkdir()
+            (scratch / "cache").mkdir()
+            _atomic_write_manifest(scratch, _manifest_for(project_id, run_id, scratch))
+        except Exception:
+            try:
+                if identity is None or not storage_fs.same_identity(scratch, identity):
+                    raise storage_fs.DeleteJournalError("identity_mismatch")
+                with storage_fs.journal_file_lock("ai-run", project_id, run_id):
+                    record = _scratch_delete_record(project_id, run_id, scratch,
+                        kind="rollback", reason="create_rollback",
+                        eligibility={"basis": "created_at", "at": created_at},
+                        planned={"owner": "flowgate.ai-invoke", "id": run_id, "created_at": created_at},
+                        target_identity=identity)
+                    _remove_journaled_scratch(project_id, run_id, record)
+            except Exception as exc:
+                _scratch_delete_failure(run_id, "rollback", exc)
+            raise
     _safe_scratch_log(project_id, run_id, scratch, "created", "manifest_written")
     return scratch
 
@@ -888,34 +907,107 @@ def _validate_scratch_manifest(project_id: str, run_id: str, scratch: Path) -> t
 
 
 def _mark_scratch_completed(project_id: str, run_id: str, scratch: Path, completed_at: str) -> bool:
-    manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
-    if manifest is None:
-        _safe_scratch_log(project_id, run_id, scratch, "retained", reason)
-        return False
-    manifest["completed_at"] = completed_at
     try:
-        target = scratch / SCRATCH_MANIFEST_NAME
-        temporary = scratch / (SCRATCH_MANIFEST_NAME + ".update")
-        temporary.write_text(json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")), encoding="utf-8")
-        temporary.replace(target)
-        return True
-    except OSError:
+        with storage_fs.journal_lock("ai-run", project_id, run_id, interprocess=False), ExitStack() as locks:
+            try:
+                locks.enter_context(storage_fs.journal_file_lock("ai-run", project_id, run_id))
+            except storage_fs.DeleteJournalError as exc:
+                # An unusable G also prevents deletion. A held OS lock still excludes us.
+                if exc.code == "journal_busy":
+                    raise
+            if storage_fs.journal_exists("ai-run", project_id, run_id):
+                return False
+            manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
+            if manifest is None:
+                _safe_scratch_log(project_id, run_id, scratch, "retained", reason)
+                return False
+            manifest["completed_at"] = completed_at
+            target = scratch / SCRATCH_MANIFEST_NAME
+            temporary = scratch / (SCRATCH_MANIFEST_NAME + ".update")
+            temporary.write_text(json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+            temporary.replace(target)
+            return True
+    except Exception as exc:
+        _scratch_delete_failure(run_id, "mark_completed", exc)
         _safe_scratch_log(project_id, run_id, scratch, "retained", "manifest_update_failed")
         return False
 
 
 def _delete_owned_scratch(project_id: str, run_id: str, scratch: Path) -> tuple[bool, str]:
-    manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
-    if manifest is None:
-        return False, reason
     try:
-        shutil.rmtree(scratch)
-    except Exception:
+        with storage_fs.journal_lock("ai-run", project_id, run_id):
+            manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
+            if manifest is None:
+                return False, reason
+            # A previous failure is resumed only by the retained sweep's policy.
+            if storage_fs.journal_exists("ai-run", project_id, run_id):
+                return False, "delete_failed"
+            record = _scratch_delete_record(project_id, run_id, scratch,
+                manifest=manifest, reason="owned_delete",
+                eligibility={"basis": "owned_manifest", "at": manifest.get("completed_at") or manifest.get("created_at")})
+            _remove_journaled_scratch(project_id, run_id, record)
+    except Exception as exc:
+        _scratch_delete_failure(run_id, "owned_delete", exc)
         return False, "delete_failed"
-    if scratch.exists() or scratch.is_symlink():
-        return False, "delete_incomplete"
     _safe_scratch_log(project_id, run_id, scratch, "deleted", "verified_absent")
     return True, "deleted"
+
+
+def _scratch_delete_failure(run_id: str, stage: str, exc: BaseException) -> None:
+    operation = "completion update" if stage == "mark_completed" else "delete"
+    logger.warning("ai scratch %s failed: owner=ai-run id=%s stage=%s code=%s errno=%s winerror=%s path=%s",
+        operation, run_id if _RUN_ID_RE.fullmatch(str(run_id)) else "<invalid>", stage,
+        getattr(exc, "code", None) or type(exc).__name__, getattr(exc, "errno", None),
+        getattr(exc, "winerror", None),
+        str(run_id) if _RUN_ID_RE.fullmatch(str(run_id)) else "<outside-managed-root>")
+
+
+def _scratch_path_key(path) -> str:
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def _scratch_delete_record(project_id: str, run_id: str, scratch: Path, *,
+                           kind="delete", manifest=None, planned=None, reason: str,
+                           eligibility: dict, target_identity=None) -> dict:
+    root = _project_scratch_root(project_id)
+    eligibility = {**eligibility, "project_storage_root": os.path.abspath(root.parent.parent)}
+    record = storage_fs.new_journal_record("ai-run", kind, project_id, run_id,
+        managed_root=root, target=scratch, manifest=manifest, planned=planned,
+        completed_at=manifest.get("completed_at") if manifest else eligibility.get("finished_at"),
+        reason=reason, eligibility=eligibility, target_identity=target_identity)
+    if not _check_scratch_record_target(project_id, run_id, record):
+        raise storage_fs.DeleteJournalError("target_missing")
+    return storage_fs.write_journal(record, extra_roots=(
+        storage_paths.get_storage_root() / "src", root.parent.parent / "src"))
+
+
+def _check_scratch_record_target(project_id: str, run_id: str, record: dict) -> bool:
+    """Validate the recorded Sp-to-target chain before treating a target as absent."""
+    root = _project_scratch_root(project_id)
+    target, managed_root = Path(record["target"]), Path(record["managed_root"])
+    if (not _RUN_ID_RE.fullmatch(run_id) or target.name != run_id
+            or _scratch_path_key(target.parent) != _scratch_path_key(managed_root)
+            or _scratch_path_key(managed_root) != _scratch_path_key(root)
+            or record["eligibility"].get("project_storage_root") != os.path.abspath(root.parent.parent)):
+        raise storage_fs.DeleteJournalError("record_target_mismatch")
+    project_storage = Path(record["eligibility"]["project_storage_root"])
+    for part in (project_storage, project_storage / "scratch", root, target):
+        if not storage_fs.path_present(part):
+            return False
+        if _svc()._is_reparse_or_symlink(part) or not part.is_dir():
+            raise storage_fs.DeleteJournalError("unsafe_path")
+    if not (storage_fs.same_identity(managed_root, record["root_identity"])
+            and storage_fs.same_identity(target, record["target_identity"])):
+        raise storage_fs.DeleteJournalError("identity_mismatch")
+    return True
+
+
+def _remove_journaled_scratch(project_id: str, run_id: str, record: dict) -> None:
+    if _check_scratch_record_target(project_id, run_id, record):
+        storage_fs.remove_managed_tree(record["target"], record["managed_root"])
+    if storage_fs.path_present(record["target"]):
+        raise storage_fs.DeleteJournalError("delete_incomplete")
+    storage_fs.remove_journal("ai-run", project_id, run_id)
 
 
 # 503daac8 introduced manifests on 2026-08-28. The run ID has only a date,
@@ -988,31 +1080,116 @@ def _legacy_candidate(project_id: str, run_id: str, child: Path, now: datetime) 
 
 def _delete_legacy_scratch(project_id: str, run_id: str, child: Path, now: datetime) -> tuple[bool, str]:
     """Recheck path, manifest absence, and durable state immediately before removal."""
-    valid, reason = _legacy_candidate(project_id, run_id, child, now)
-    if not valid:
-        return False, reason
-    row, reason = _terminal_scratch_run(project_id, run_id, now)
-    if row is None:
-        return False, reason
     try:
-        shutil.rmtree(child)
-    except Exception:
+        with storage_fs.journal_lock("ai-run", project_id, run_id):
+            valid, reason = _legacy_candidate(project_id, run_id, child, now)
+            if not valid:
+                return False, reason
+            row, reason = _terminal_scratch_run(project_id, run_id, now)
+            if row is None:
+                return False, reason
+            if storage_fs.journal_exists("ai-run", project_id, run_id):
+                return False, "delete_failed"
+            modified = datetime.fromtimestamp(child.stat().st_mtime, timezone.utc).isoformat()
+            record = _scratch_delete_record(project_id, run_id, child, reason="legacy_terminal",
+                eligibility={"basis": "legacy_mtime", "at": modified, "finished_at": row["finished_at"]})
+            _remove_journaled_scratch(project_id, run_id, record)
+    except Exception as exc:
+        _scratch_delete_failure(run_id, "legacy_delete", exc)
         return False, "delete_failed"
-    if child.exists() or child.is_symlink():
-        return False, "delete_incomplete"
     _safe_scratch_log(project_id, run_id, child, "deleted", "verified_legacy_terminal")
     return True, "deleted"
+
+
+def _recorded_scratch_eligible(project_id: str, run_id: str, record: dict, now: datetime) -> bool:
+    """Resume evidence only; never broaden the ordinary manifest/legacy validators."""
+    if _svc().is_run_live(run_id) or db_group_ai_leases.get_by_run_id(run_id) is not None:
+        return False
+    row = db_ai_invoke_runs.get(run_id)
+    if record["kind"] == "rollback":
+        planned = record["planned"] or {}
+        created = _aware_time(planned.get("created_at"))
+        return (planned.get("owner") == "flowgate.ai-invoke" and planned.get("id") == run_id
+                and row is None and created is not None
+                and now - created >= scratch_retention.effective_retention())
+    manifest = record["manifest"]
+    if manifest is None:
+        modified = _aware_time(record["eligibility"].get("at"))
+        if (record["reason"] != "legacy_terminal" or record["eligibility"].get("basis") != "legacy_mtime"
+                or datetime.strptime(run_id[4:12], "%Y%m%d").date() >= _MANIFEST_INTRODUCED_DATE
+                or modified is None or now - modified < scratch_retention.effective_retention()):
+            return False
+        # The original mtime is authoritative after our own partial deletion.
+        for name in (SCRATCH_MANIFEST_NAME, SCRATCH_MANIFEST_NAME + ".tmp", SCRATCH_MANIFEST_NAME + ".update"):
+            if storage_fs.path_present(Path(record["target"]) / name):
+                return False
+        return _terminal_scratch_run(project_id, run_id, now)[0] is not None
+    valid_policies = (
+        {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True},
+        {"retention_source": "system_settings", "delete_on_complete": True},
+    )
+    if (manifest.get("schema") != SCRATCH_MANIFEST_SCHEMA or manifest.get("owner") != "flowgate.ai-invoke"
+            or manifest.get("project_id") != project_id or manifest.get("run_id") != run_id
+            or manifest.get("scratch_path") != str(Path(record["target"]).resolve(strict=True))
+            or manifest.get("policy") not in valid_policies
+            or manifest.get("completed_at") != record["completed_at"]):
+        return False
+    completed = _aware_time(manifest.get("completed_at"))
+    if completed is None:
+        if manifest.get("completed_at") is not None:
+            return False
+        created = _aware_time(manifest.get("created_at"))
+        terminal, _ = _terminal_scratch_run(project_id, run_id, now)
+        finished = _aware_time(terminal.get("finished_at")) if terminal else None
+        return created is not None and finished is not None and created <= finished
+    # Completed manifests retain the existing sweep's authority without a DB row.
+    # If a row exists, contradictory or active durable ownership blocks resumption.
+    if row is not None:
+        started, finished = _aware_time(row.get("started_at")), _aware_time(row.get("finished_at"))
+        if (row.get("project_id") != project_id or row.get("status") != "finished"
+                or started is None or finished is None or finished < started
+                or started.strftime("%Y%m%d") != run_id[4:12]):
+            return False
+    return now - completed >= scratch_retention.effective_retention()
+
+
+def _resume_pending_scratches(project_id: str, now: datetime) -> set[str]:
+    entries = storage_fs.list_journals("ai-run", project_id)
+    pending = {entry.record_id for entry in entries}
+    for entry in entries:
+        try:
+            if entry.error:
+                raise storage_fs.DeleteJournalError(entry.error)
+            with storage_fs.journal_lock("ai-run", project_id, entry.record_id):
+                record = storage_fs.read_journal("ai-run", project_id, entry.record_id)
+                if not _check_scratch_record_target(project_id, entry.record_id, record):
+                    storage_fs.remove_journal("ai-run", project_id, entry.record_id)
+                    continue
+                target = Path(record["target"])
+                manifest_path = target / SCRATCH_MANIFEST_NAME
+                if storage_fs.path_present(manifest_path):
+                    if (_svc()._is_reparse_or_symlink(manifest_path) or not manifest_path.is_file()
+                            or json.loads(manifest_path.read_text(encoding="utf-8")) != record["manifest"]):
+                        raise storage_fs.DeleteJournalError("manifest_conflict")
+                if _recorded_scratch_eligible(project_id, entry.record_id, record, now):
+                    _remove_journaled_scratch(project_id, entry.record_id, record)
+        except Exception as exc:
+            _scratch_delete_failure(entry.record_id, "resume", exc)
+    return pending
 
 
 def _cleanup_retained_scratches(project_id: str) -> None:
     """Sweep proven retained, crash orphan, and pre-manifest run scratch."""
     try:
         root = _project_scratch_root(project_id)
+        now = datetime.now(timezone.utc)
+        pending = _resume_pending_scratches(project_id, now)
         if not root.is_dir() or _svc()._is_reparse_or_symlink(root):
             return
-        now = datetime.now(timezone.utc)
         for child in root.iterdir():
             run_id = child.name
+            if run_id in pending:
+                continue
             if not child.is_dir() or _svc()._is_reparse_or_symlink(child):
                 _safe_scratch_log(project_id, run_id, child, "skipped", "not_owned_directory")
                 continue
@@ -1061,8 +1238,8 @@ def _cleanup_retained_scratches(project_id: str) -> None:
             deleted, delete_reason = _svc()._delete_owned_scratch(project_id, run_id, child)
             if not deleted:
                 _safe_scratch_log(project_id, run_id, child, "retained", delete_reason)
-    except Exception:
-        logger.warning("ai-invoke scratch sweep failed")
+    except Exception as exc:
+        _scratch_delete_failure("", "sweep", exc)
 
 
 def startup_sweep_run_scratches() -> int:

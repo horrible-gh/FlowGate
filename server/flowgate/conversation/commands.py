@@ -29,13 +29,14 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import shutil
 import tempfile
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Callable, Optional
+
+from modules.flow_gate.storage import filesystem as storage_fs
 
 from flowgate.conversation import activity
 from flowgate.conversation import command_policy as policy
@@ -897,7 +898,14 @@ def _execute_owned(request_id: str, expected_root: Optional[str]) -> None:
         with _lock:
             _controls.pop(request_id, None)
         if runtime is not None:
-            shutil.rmtree(runtime, ignore_errors=True)
+            try:
+                storage_fs.remove_managed_tree(runtime, Path(tempfile.gettempdir()), missing_ok=True)
+            except Exception as exc:
+                logger.warning(
+                    "scratch cleanup failed: owner=chat-command id=%s stage=runtime code=%s errno=%s winerror=%s path=%s",
+                    request_id, getattr(exc, "code", "cleanup_failed"),
+                    getattr(exc, "errno", None), getattr(exc, "winerror", None), runtime.name,
+                )
         note_progress(_live_run((final or row)["ai_run_id"]))
         _notify(final or repo.get_command(request_id))
 

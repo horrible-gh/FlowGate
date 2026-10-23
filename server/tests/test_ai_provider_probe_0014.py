@@ -220,8 +220,9 @@ def test_api_without_a_handle_keeps_the_plain_urlopen_path(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def scratch_root(monkeypatch, tmp_path):
-    root = tmp_path / "scratch-root"
+    root = tmp_path / "scratch" / "probe"
     monkeypatch.setattr(probe, "_project_scratch_root", lambda project_id: root)
+    monkeypatch.setattr(probe.storage_paths, "get_storage_root", lambda *_a, **_k: tmp_path)
     return root
 
 

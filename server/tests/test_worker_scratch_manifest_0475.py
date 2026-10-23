@@ -207,21 +207,23 @@ def test_symlink_candidate_never_deletes_external_sentinel(monkeypatch, tmp_path
     except OSError:
         monkeypatch.setattr(svc, "_is_reparse_or_symlink", lambda p: p == candidate)
         candidate.mkdir()
-    real_rmtree = svc.shutil.rmtree
-    def dangerous_following_delete(path):
+    from modules.flow_gate.storage import filesystem as storage_fs
+    real_remove = storage_fs.remove_managed_tree
+    def dangerous_following_delete(path, root):
         resolved = Path(path).resolve()
         if resolved == external.resolve():
             sentinel.unlink(missing_ok=True)
             return
-        real_rmtree(path)
-    monkeypatch.setattr(svc.shutil, "rmtree", dangerous_following_delete)
+        real_remove(path, root)
+    monkeypatch.setattr(storage_fs, "remove_managed_tree", dangerous_following_delete)
     svc._cleanup_retained_scratches("project-0475")
     assert sentinel.read_text() == "safe" and external.exists()
 
 
 def test_delete_exception_and_partial_failure_are_retained(monkeypatch, tmp_path):
     run_id, scratch = _new(monkeypatch, tmp_path)
-    monkeypatch.setattr(svc.shutil, "rmtree", lambda _p: (_ for _ in ()).throw(OSError("secret")))
+    monkeypatch.setattr("modules.flow_gate.storage.filesystem.remove_managed_tree",
+                        lambda *_a, **_k: (_ for _ in ()).throw(OSError("secret")))
     assert svc._delete_owned_scratch("project-0475", run_id, scratch) == (False, "delete_failed")
     assert scratch.exists()
 

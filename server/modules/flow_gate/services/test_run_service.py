@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import socket
 import subprocess
 import threading
@@ -30,6 +29,7 @@ from modules.flow_gate.services import (
     process_runner,
     test_spec_service,
 )
+from modules.flow_gate.storage import filesystem as storage_fs
 from modules.flow_gate.storage import paths as storage_paths
 
 logger = logging.getLogger(__name__)
@@ -3008,11 +3008,18 @@ def _read_tail(path: Path, chars: int) -> str:
     return text[-chars:]
 
 
-def _remove_scratch(path: Path) -> None:
+def _remove_scratch(path: Path) -> bool:
+    # _scratch_dir returns a direct child of the project's managed test_runs root.
     try:
-        shutil.rmtree(path, ignore_errors=True)
-    except Exception:
-        logger.warning("test run scratch cleanup failed: %s", path, exc_info=True)
+        storage_fs.remove_managed_tree(path, path.parent, missing_ok=True)
+    except Exception as exc:
+        logger.warning(
+            "scratch cleanup failed: owner=test-run id=%s stage=cleanup code=%s errno=%s winerror=%s path=%s",
+            path.name, getattr(exc, "code", "cleanup_failed"),
+            getattr(exc, "errno", None), getattr(exc, "winerror", None), path.name,
+        )
+        return False
+    return True
 
 
 def _kill_process_tree(proc: subprocess.Popen) -> None:
@@ -4073,7 +4080,7 @@ def startup() -> None:
             if run is not None and doc is not None:
                 _settle_execution_tsr(doc, run)
                 # 0684 T#2 (D#1 §3-3): the disposable run copy a restart left behind.
-                shutil.rmtree(_scratch_dir(doc, run["run_id"]), ignore_errors=True)
+                _remove_scratch(_scratch_dir(doc, run["run_id"]))
         _resume_failure_origin_after_restart()
     except Exception:
         logger.warning("failed to recover test runs", exc_info=True)

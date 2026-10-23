@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import stat
 import threading
 import uuid
@@ -21,6 +20,8 @@ from modules.flow_gate.db import workflow_events
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services import git_service, token_service
 from modules.flow_gate.services.snapshot_request_service import SnapshotRequestError
+from modules.flow_gate.storage import filesystem as storage_fs
+from modules.flow_gate.storage import paths as storage_paths
 # 0672 T0004 stage 3: the capture exclusion policy and worker-facing locator redaction moved to
 # source_common (shared with the source fingerprint); re-exported here for the legacy Snapshot code and tests.
 from modules.flow_gate.services.source_common import (  # noqa: F401
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 SNAPSHOT_SCHEMA = 1
 SNAPSHOT_OWNER = "flowgate.source-snapshot"
 SNAPSHOT_NAMESPACE = "source-snapshots"
+JOURNAL_OWNER = "snapshot"  # delete journal owner (storage_fs.JOURNAL_OWNERS)
 # Reserved system user seeded by migration 038 (see services/q_service.py AI_SYSTEM_USER);
 # every users(user_id) FK in this environment is guaranteed to resolve it. Snapshot audit
 # events with no real human/AI-run actor record this instead of a free-text label, so
@@ -516,6 +518,21 @@ def _manifest(row: dict, revision: str, dirty: bool, fingerprint: str, entries: 
     }
 
 
+def _manifest_owned(manifest: object, row: dict) -> bool:
+    expected = {
+        "schema": SNAPSHOT_SCHEMA,
+        "owner": SNAPSHOT_OWNER,
+        "snapshot_id": row["snapshot_id"],
+        "project_id": row["project_id"],
+        "group_id": row["group_id"],
+        "run_id": row["run_id"],
+        "token_id": row["token_id"],
+        "source_kind": "current_worktree",
+    }
+    return isinstance(manifest, dict) and all(
+        manifest.get(key) == value for key, value in expected.items())
+
+
 def _load_manifest(path: Path, row: dict) -> dict:
     if _is_reparse_or_symlink(path):
         raise SnapshotRequestError(409, "snapshot_integrity_error", "snapshot directory is a link/reparse point")
@@ -529,17 +546,7 @@ def _load_manifest(path: Path, row: dict) -> dict:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise SnapshotRequestError(409, "snapshot_integrity_error", "snapshot manifest is missing or invalid") from exc
-    expected = {
-        "schema": SNAPSHOT_SCHEMA,
-        "owner": SNAPSHOT_OWNER,
-        "snapshot_id": row["snapshot_id"],
-        "project_id": row["project_id"],
-        "group_id": row["group_id"],
-        "run_id": row["run_id"],
-        "token_id": row["token_id"],
-        "source_kind": "current_worktree",
-    }
-    if any(manifest.get(key) != value for key, value in expected.items()):
+    if not _manifest_owned(manifest, row):
         raise SnapshotRequestError(409, "snapshot_integrity_error", "snapshot manifest ownership does not match")
     # The payload roots are checked without following links: a ``source`` swapped for a
     # symlink/junction to another directory would otherwise pass here (is_dir() follows
@@ -790,6 +797,23 @@ def cleanup(snapshot_id: str, actor: str, *, trigger: str = "explicit",
         if row["status"] == "deleted":
             return row
         try:
+            recorded = _record_pending(row)
+        except Exception as exc:
+            _log_delete_failure("record_lookup", snapshot_id, exc)
+            if row["status"] != "created":
+                return _with_warning(row, exc)
+            return _cleanup_failed(row, actor, trigger, exc, source=source)
+        if recorded:
+            # A started delete continues from its record, never from the payload
+            # checks of _load_manifest that a partial delete may already defeat.
+            try:
+                return _resume_recorded(row, actor, trigger, source=source)
+            except Exception as exc:
+                _log_resume_stop(snapshot_id, "unintentional", exc)
+                if row["status"] != "created":
+                    return _with_warning(row, exc)
+                return _cleanup_failed(row, actor, trigger, exc, source=source)
+        try:
             final = snapshot_path(row)
         except SnapshotRequestError as exc:
             if row["status"] != "created":
@@ -802,28 +826,374 @@ def cleanup(snapshot_id: str, actor: str, *, trigger: str = "explicit",
             try:
                 manifest = _load_manifest(final, row)
                 if manifest:
-                    shutil.rmtree(final)
+                    _delete_published(row, final, manifest, "terminal_orphan", trigger)
+                    _drop_record(row["project_id"], row["snapshot_id"])
             except Exception as exc:
-                logger.warning("terminal snapshot %s orphan cleanup failed", snapshot_id, exc_info=True)
-                result = dict(row)
-                result["cleanup_warning"] = public_failure_reason(exc, row)
-                return result
+                _log_delete_failure("terminal_cleanup", snapshot_id, exc)
+                return _with_warning(row, exc)
             return row
 
         garbage = _garbage_summary(final)
-        if not final.exists() and not final.is_symlink():
+        try:
+            present = storage_fs.path_present(final)
+        except storage_fs.PresenceUnknown as exc:
+            # A failed lookup is never "already gone": the row stays created.
+            return _cleanup_failed(row, actor, trigger, exc, source=source)
+        if not present:
             return _finish_deleted(row, actor, trigger, garbage, recovery="directory_already_absent", source=source)
         try:
             if _is_reparse_or_symlink(final):
                 raise SnapshotRequestError(409, "snapshot_cleanup_failed", "snapshot directory became a link/reparse point")
             if final.resolve(strict=True).parent != final.parent.resolve(strict=True):
                 raise SnapshotRequestError(409, "snapshot_cleanup_failed", "snapshot directory escaped its namespace")
-            shutil.rmtree(final)
-            if final.exists() or final.is_symlink():
-                raise OSError("snapshot directory remains after deletion")
+            # Returns only once the directory is confirmed absent.
+            _delete_published(row, final, _recorded_manifest(final, row), "created_cleanup", trigger)
         except Exception as exc:
             return _cleanup_failed(row, actor, trigger, exc, source=source)
-        return _finish_deleted(row, actor, trigger, garbage, source=source)
+        # The record outlives the DB update: a failed update is finished by the resume.
+        updated = _finish_deleted(row, actor, trigger, garbage, source=source)
+        _drop_record(row["project_id"], row["snapshot_id"])
+        return updated
+
+
+# ── Delete journal (flowgate.v02.0090 T#3, NR0003 §5.2) ─────────────────────
+#
+# A published snapshot is deleted only after its owner evidence (DB row,
+# token namespace, snapshot.json when still readable) is recorded outside
+# the token scratch at G/snapshot/<project-key>/<snapshot-id>.json, with the
+# token as ``parent`` so the token row purge waits for it.  A delete that
+# stops half way is continued from that record by ``_resume_recorded``, whose
+# checks do not need snapshot.json, README.md or source to remain.
+
+
+def _with_warning(row: dict, exc: BaseException) -> dict:
+    result = dict(row)
+    result["cleanup_warning"] = public_failure_reason(exc, row)
+    return result
+
+
+def _record_pending(row: dict) -> bool:
+    """True while any record file — valid or not — exists for this snapshot."""
+    try:
+        return storage_fs.journal_exists(JOURNAL_OWNER, row["project_id"], row["snapshot_id"])
+    except ValueError:
+        return False  # an id the journal cannot name never had a record
+
+
+def _recorded_manifest(final: Path, row: dict) -> dict | None:
+    """snapshot.json for the record when it still proves this row's ownership."""
+    path = final / "snapshot.json"
+    try:
+        if _is_reparse_or_symlink(path) or not path.is_file():
+            return None
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return manifest if _manifest_owned(manifest, row) else None
+
+
+def _journal_extra_roots() -> list[Path]:
+    # The record must stay outside the source tree too (NR0003 §5.2).
+    return [storage_paths.get_storage_root() / "src"]
+
+
+def _delete_published(row: dict, final: Path, manifest: dict | None, basis: str,
+                      trigger: str) -> None:
+    """Record the verified owner evidence, then delete *final* until it is absent.
+
+    The caller has already checked the DB row and that *final* is a plain direct
+    child of the token's snapshot namespace.  A record that cannot be written
+    and re-read raises before anything is deleted; a failed delete keeps it.
+    """
+    snapshot_id, project_id = row["snapshot_id"], row["project_id"]
+    with storage_fs.journal_lock(JOURNAL_OWNER, project_id, snapshot_id):
+        resolved = final.resolve(strict=True)
+        record = storage_fs.new_journal_record(
+            JOURNAL_OWNER, "delete", project_id, snapshot_id,
+            managed_root=resolved.parent, target=resolved, manifest=manifest,
+            reason=f"snapshot_{basis}",
+            eligibility={
+                "basis": basis, "at": _utcnow().isoformat(), "trigger": trigger,
+                "status": row["status"], "expires_at": row.get("expires_at"),
+                "group_id": row.get("group_id"), "run_id": row.get("run_id"),
+                "checks": ["db_row", "token_namespace", "direct_child", "no_link"]
+                          + (["manifest_owner"] if manifest is not None else []),
+            },
+            parent={"owner": "token", "id": row["token_id"]})
+        stored = storage_fs.write_journal(record, extra_roots=_journal_extra_roots())
+        _remove_recorded(stored)
+
+
+def _remove_recorded(record: dict) -> None:
+    """Delete the recorded target unless it is already gone (a real ENOENT)."""
+    target, managed_root = Path(record["target"]), Path(record["managed_root"])
+    if not storage_fs.path_present(target):
+        return
+    if not (storage_fs.same_identity(managed_root, record["root_identity"])
+            and storage_fs.same_identity(target, record["target_identity"])):
+        raise storage_fs.DeleteJournalError("identity_mismatch")
+    storage_fs.remove_managed_tree(target, managed_root)
+
+
+def _drop_record(project_id: str, snapshot_id: str) -> None:
+    try:
+        storage_fs.remove_journal(JOURNAL_OWNER, project_id, snapshot_id)
+    except Exception as exc:
+        # The target is gone; the record stays pending and the next sweep drops it.
+        _log_delete_failure("record_remove", snapshot_id, exc)
+
+
+def _recorded_target(project_id: str, snapshot_id: str, record: dict) -> Path | None:
+    """Resume-only check of the recorded paths; None when the target is already gone.
+
+    Unlike _load_manifest this needs no snapshot.json, README.md or source: the
+    record must name a direct child of the snapshot namespace of its parent
+    token, and every path from the token's work root down to the target must be
+    a plain directory.  Only a real ENOENT on that chain counts as "gone".
+    """
+    parent = record["parent"] or {}
+    target, managed_root = Path(record["target"]), Path(record["managed_root"])
+    token_root = Path(token_service.scratch_dir_path(project_id, parent["id"])).resolve(strict=False)
+    namespace = token_root / SNAPSHOT_NAMESPACE
+    if (not _ID_RE.fullmatch(snapshot_id) or target.name != snapshot_id
+            or not _same_path(target.parent, managed_root)
+            or not _same_path(managed_root, namespace)):
+        raise storage_fs.DeleteJournalError("record_target_mismatch")
+    for part in (token_root.parent, token_root, namespace, target):
+        if not storage_fs.path_present(part):
+            return None
+        if _is_reparse_or_symlink(part) or not part.is_dir():
+            raise storage_fs.DeleteJournalError("unsafe_path")
+    if not (storage_fs.same_identity(managed_root, record["root_identity"])
+            and storage_fs.same_identity(target, record["target_identity"])):
+        raise storage_fs.DeleteJournalError("identity_mismatch")
+    return target
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
+
+
+_RECORD_BASES = ("created_cleanup", "terminal_orphan")
+_RECORD_ELIGIBILITY = frozenset({
+    "basis", "at", "trigger", "status", "expires_at", "group_id", "run_id", "checks"})
+_RECORD_CHECKS = ["db_row", "token_namespace", "direct_child", "no_link"]
+
+
+def _check_record_basis(record: dict) -> str:
+    """The recorded delete basis is complete and self-consistent; returns it.
+
+    read_journal only checks that ``eligibility`` is a dict, so a lost or
+    foreign basis must be refused here before the record authorizes a delete
+    or a DB update.
+    """
+    eligibility = record["eligibility"]
+    if (not _RECORD_ELIGIBILITY <= set(eligibility)
+            or not all(isinstance(eligibility[key], str) and eligibility[key]
+                       for key in ("basis", "trigger", "status"))
+            or _parse_time(eligibility["at"]) is None
+            or not isinstance(eligibility["checks"], list)):
+        raise storage_fs.DeleteJournalError("eligibility_missing")
+    basis = eligibility["basis"]
+    if basis not in _RECORD_BASES:
+        raise storage_fs.DeleteJournalError("basis_unknown")
+    checks = _RECORD_CHECKS + (["manifest_owner"] if record["manifest"] is not None else [])
+    if (set(eligibility) != _RECORD_ELIGIBILITY or record["kind"] != "delete"
+            or record["reason"] != f"snapshot_{basis}" or eligibility["checks"] != checks
+            or (basis == "created_cleanup") != (eligibility["status"] == "created")
+            or eligibility["status"] == "deleted"):
+        raise storage_fs.DeleteJournalError("eligibility_mismatch")
+    return basis
+
+
+def _check_recorded_owner(row: dict | None, record: dict, *, target_present: bool) -> None:
+    """The record's basis, the DB row and any remaining snapshot.json still match.
+
+    Also required when the recorded target is gone: its absence says nothing
+    about a row that now names another token's snapshot.  Only a record whose
+    row and target are both gone is left to be dropped.
+    """
+    basis = _check_record_basis(record)
+    if row is None and not target_present:
+        return
+    eligibility = record["eligibility"]
+    if (row is None or row["project_id"] != record["project_id"]
+            or record["parent"] != {"owner": "token", "id": row["token_id"]}
+            or eligibility["group_id"] != row.get("group_id")
+            or eligibility["run_id"] != row.get("run_id")):
+        raise storage_fs.DeleteJournalError("owner_evidence_lost")
+    if row["status"] == "deleted" and not target_present:
+        pass  # the delete finished; only the record removal failed
+    elif (row["status"] == "deleted"
+            or (basis == "created_cleanup") != (row["status"] == "created")):
+        raise storage_fs.DeleteJournalError("owner_state_mismatch")
+    if record["manifest"] is not None and not _manifest_owned(record["manifest"], row):
+        raise storage_fs.DeleteJournalError("owner_evidence_lost")
+    if not target_present:
+        return
+    manifest_path = Path(record["target"]) / "snapshot.json"
+    if storage_fs.path_present(manifest_path) and _recorded_manifest(Path(record["target"]), row) is None:
+        raise storage_fs.DeleteJournalError("manifest_conflict")
+
+
+def _resume_recorded(row: dict, actor: str, trigger: str, *, source: str | None = None) -> dict:
+    """Continue a recorded delete; the DB is finished only after the target is absent."""
+    snapshot_id, project_id = row["snapshot_id"], row["project_id"]
+    with storage_fs.journal_lock(JOURNAL_OWNER, project_id, snapshot_id):
+        record = storage_fs.read_journal(JOURNAL_OWNER, project_id, snapshot_id)
+        target = _recorded_target(project_id, snapshot_id, record)
+        # Checked before the DB is touched, whether or not the recorded target remains.
+        _check_recorded_owner(row, record, target_present=target is not None)
+        garbage = {"categories": [], "path_count": 0, "byte_size": 0}
+        if target is not None:
+            garbage = _garbage_summary(target)
+            try:
+                _remove_recorded(record)
+            except Exception as exc:
+                _log_delete_failure("resume", snapshot_id, exc)
+                if row["status"] != "created":
+                    return _with_warning(row, exc)
+                return _cleanup_failed(row, actor, trigger, exc, source=source)
+        result = row
+        if row["status"] == "created":
+            result = _finish_deleted(row, actor, trigger, garbage,
+                                     recovery="delete_record_resumed", source=source)
+        _drop_record(row["project_id"], row["snapshot_id"])
+        return result
+
+
+def _recorded_project_ids() -> list[str]:
+    """Projects with snapshot records: each directory is sha256(project_id).
+
+    Only the candidate project id is taken from a record here; list_journals
+    then validates every record of that project.
+    """
+    base = storage_fs.journal_storage_root() / storage_fs.GC_DIR_NAME / JOURNAL_OWNER
+    try:
+        if _is_reparse_or_symlink(base) or not base.is_dir():
+            return []
+        keys = sorted(entry.path for entry in os.scandir(base) if entry.is_dir(follow_symlinks=False))
+    except OSError as exc:
+        _log_delete_failure("resume_list", None, exc)
+        return []
+    found = []
+    for key in keys:
+        project_id = None
+        try:
+            for entry in sorted(os.scandir(key), key=lambda item: item.name):
+                if not entry.name.endswith(".json") or not entry.is_file(follow_symlinks=False):
+                    continue
+                try:
+                    candidate = json.loads(Path(entry.path).read_text(encoding="utf-8")).get("project_id")
+                except (OSError, ValueError, AttributeError):
+                    continue
+                if isinstance(candidate, str) and storage_fs.project_key(candidate) == Path(key).name:
+                    project_id = candidate
+                    break
+        except OSError as exc:
+            _log_delete_failure("resume_list", None, exc)
+            continue
+        if project_id is None:
+            logger.warning("snapshot delete records unusable: owner=%s project_key=%s code=%s",
+                           JOURNAL_OWNER, Path(key).name, "project_unknown")
+        else:
+            found.append(project_id)
+    return found
+
+
+def _resume_pending_records() -> int:
+    """Continue recorded snapshot deletes before the ordinary orphan scan.
+
+    A created row whose snapshot still exists stays with the existing retry
+    policy (sweep_expired's attempts/backoff through cleanup()); this pass only
+    finishes such a row once its target is confirmed absent.
+    """
+    resumed = 0
+    for project_id in _recorded_project_ids():
+        try:
+            entries = storage_fs.list_journals(JOURNAL_OWNER, project_id)
+        except Exception as exc:
+            _log_delete_failure("resume_list", None, exc)
+            continue
+        for entry in entries:
+            if entry.error is not None:
+                _log_resume_stop(entry.record_id, "unintentional",
+                                 storage_fs.DeleteJournalError(entry.error))
+                continue
+            lock = _operation_lock(entry.record_id)
+            if not lock.acquire(blocking=False):
+                continue  # a cleanup of this snapshot is running; the next sweep retries
+            try:
+                if _resume_entry(project_id, entry.record_id):
+                    resumed += 1
+            except Exception as exc:
+                _log_resume_stop(entry.record_id, "unintentional", exc)
+            finally:
+                lock.release()
+    return resumed
+
+
+def _resume_entry(project_id: str, snapshot_id: str) -> bool:
+    row = db.get(snapshot_id)
+    if row is not None and row["status"] == "created":
+        with storage_fs.journal_lock(JOURNAL_OWNER, project_id, snapshot_id):
+            record = storage_fs.read_journal(JOURNAL_OWNER, project_id, snapshot_id)
+            target = _recorded_target(project_id, snapshot_id, record)
+        if target is not None:
+            attempts = int(row.get("cleanup_attempts") or 0)
+            if attempts >= SNAPSHOT_CLEANUP_MAX_ATTEMPTS:
+                _log_resume_stop(snapshot_id, "intentional",
+                                 storage_fs.DeleteJournalError("retry_limit_reached"))
+            return False  # cleanup() continues it within the retry policy
+        result = _resume_recorded(row, SYSTEM_ACTOR_USER_ID, "recovery", source="snapshot_recovery")
+        return result.get("status") == "deleted"
+    with storage_fs.journal_lock(JOURNAL_OWNER, project_id, snapshot_id):
+        record = storage_fs.read_journal(JOURNAL_OWNER, project_id, snapshot_id)
+        target = _recorded_target(project_id, snapshot_id, record)
+        _check_recorded_owner(row, record, target_present=target is not None)
+        if target is not None:
+            # A terminal row's leftover tree: no DB state to change.
+            try:
+                _remove_recorded(record)
+            except Exception as exc:
+                _log_delete_failure("resume", snapshot_id, exc)
+                return False
+        # Confirmed absent (also when the parent token scratch took it) and the
+        # row, if any, still matches the record: only the record is left.
+        _drop_record(project_id, snapshot_id)
+    return True
+
+
+def _log_delete_failure(stage: str, snapshot_id: str | None, exc: BaseException) -> None:
+    """owner/id/stage/errno/winerror and a storage-relative path only."""
+    logger.warning(
+        "snapshot delete failed: owner=%s id=%s stage=%s code=%s errno=%s winerror=%s path=%s",
+        JOURNAL_OWNER, snapshot_id, stage, getattr(exc, "code", None) or type(exc).__name__,
+        getattr(exc, "errno", None), getattr(exc, "winerror", None),
+        _storage_relative(getattr(exc, "filename", None)))
+
+
+def _log_resume_stop(snapshot_id: str | None, kind: str, exc: BaseException) -> None:
+    """``intentional`` = the existing retry policy stopped it; ``unintentional`` =
+    the owner evidence could not be verified (the record is kept)."""
+    logger.warning(
+        "snapshot delete resume stopped: owner=%s id=%s stop=%s code=%s errno=%s winerror=%s path=%s",
+        JOURNAL_OWNER, snapshot_id, kind, getattr(exc, "code", None) or type(exc).__name__,
+        getattr(exc, "errno", None), getattr(exc, "winerror", None),
+        _storage_relative(getattr(exc, "filename", None)))
+
+
+def _storage_relative(filename: object) -> str:
+    if not filename:
+        return "-"
+    try:
+        storage_root = os.path.abspath(storage_paths.get_storage_root())
+        path = os.path.abspath(str(filename))
+        if os.path.normcase(os.path.commonpath([path, storage_root])) == os.path.normcase(storage_root):
+            return Path(os.path.relpath(path, storage_root)).as_posix()
+    except (OSError, TypeError, ValueError):
+        pass
+    return "<outside-storage>"
 
 
 def _finish_deleted(row: dict, actor: str, trigger: str, garbage: dict,
@@ -866,9 +1236,13 @@ def _cleanup_failed(row: dict, actor: str, trigger: str, exc: Exception,
             trigger=trigger,
             source=source,
         )
+    # No traceback: the raw exception text names live scratch paths.
     logger.warning(
-        "snapshot cleanup failed snapshot_id=%s trigger=%s attempt=%s reason=%s",
-        row["snapshot_id"], trigger, current_attempt, reason, exc_info=True,
+        "snapshot cleanup failed snapshot_id=%s trigger=%s attempt=%s reason=%s "
+        "code=%s errno=%s winerror=%s path=%s",
+        row["snapshot_id"], trigger, current_attempt, reason,
+        getattr(exc, "code", None) or type(exc).__name__, getattr(exc, "errno", None),
+        getattr(exc, "winerror", None), _storage_relative(getattr(exc, "filename", None)),
     )
     return updated
 
@@ -960,6 +1334,9 @@ def _orphan_candidates(namespace: Path, snapshot_id: str | None = None) -> list[
 
 
 def cleanup_orphans(*, startup: bool = False) -> int:
+    # Recorded deletes first: a partial delete may already have removed the
+    # snapshot.json/README.md/source that the ordinary checks below depend on.
+    _resume_pending_records()
     removed = 0
     for row in db.list_materialization_candidates():
         try:
@@ -976,13 +1353,13 @@ def cleanup_orphans(*, startup: bool = False) -> int:
                 if _is_reparse_or_symlink(candidate):
                     continue
                 if candidate.is_dir():
-                    shutil.rmtree(candidate)
+                    storage_fs.remove_managed_tree(candidate, namespace)
                 else:
                     candidate.unlink()
                 removed += 1
                 had_orphan = True
-            except OSError:
-                logger.warning("snapshot orphan staging cleanup failed", exc_info=True)
+            except OSError as exc:
+                _log_delete_failure("staging_orphan", row["snapshot_id"], exc)
         final = namespace / row["snapshot_id"]
         if row["status"] == "approved" and final.exists():
             try:
@@ -998,7 +1375,7 @@ def cleanup_orphans(*, startup: bool = False) -> int:
                 )
             except Exception:
                 logger.warning("snapshot interrupted creation recovery failed for %s", row["snapshot_id"], exc_info=True)
-        elif row["status"] == "created" and not final.exists():
+        elif row["status"] == "created" and _confirmed_absent(final):
             try:
                 _finish_deleted(
                     row, SYSTEM_ACTOR_USER_ID, "recovery",
@@ -1009,6 +1386,14 @@ def cleanup_orphans(*, startup: bool = False) -> int:
             except Exception:
                 logger.warning("snapshot deleted-state recovery failed for %s", row["snapshot_id"], exc_info=True)
     return removed
+
+
+def _confirmed_absent(path: Path) -> bool:
+    """Only a real ENOENT lets the deleted state be recorded (a failed lookup is not)."""
+    try:
+        return not storage_fs.path_present(path)
+    except storage_fs.PresenceUnknown:
+        return False
 
 
 def sweep_expired(now: datetime | None = None) -> dict:

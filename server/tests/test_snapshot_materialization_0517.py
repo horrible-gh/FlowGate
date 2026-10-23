@@ -139,6 +139,10 @@ def snapshot_env(tmp_path, monkeypatch):
 
     scratch = tmp_path / "token-scratch"
     scratch.mkdir()
+    # flowgate.v02.0090 T#3: a snapshot delete is recorded under S0/.flowgate-gc first.
+    storage = tmp_path / "storage"
+    storage.mkdir(exist_ok=True)
+    monkeypatch.setattr(materialize.storage_paths, "get_storage_root", lambda *_a, **_k: storage)
     row = {
         "snapshot_id": "snap_test",
         "project_id": "project",
@@ -195,7 +199,7 @@ def snapshot_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(materialize.git_service, "_run_git", fake_git)
     return SimpleNamespace(
-        worktree=worktree, scratch=scratch, row=row, state=state,
+        worktree=worktree, scratch=scratch, storage=storage, row=row, state=state,
         final=lambda: scratch / materialize.SNAPSHOT_NAMESPACE / row["snapshot_id"],
     )
 
