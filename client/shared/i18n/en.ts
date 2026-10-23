@@ -884,6 +884,14 @@ export default {
     mail: {
       badge_wip: 'In Development',
     },
+    agent_http_risk: {
+      title: 'Connecting to the server',
+      https: 'HTTPS is recommended when an Agent connects to the server.',
+      allow: 'To connect to an HTTP address, the HTTP risk must be explicitly allowed on the Agent when it is registered.',
+      plain: 'HTTP is not encrypted, so the enrollment token and job content can be exposed or tampered with.',
+      trusted: 'Use HTTP only on a trusted internal network or an encrypted VPN.',
+      effect: 'An HTTP connection needs the risk allowed on the Agent, and the token may be sent in plain text.',
+    },
     numbering: {
       confirm_title: 'Confirm Numbering Change',
       type_project_name: 'Type project name',

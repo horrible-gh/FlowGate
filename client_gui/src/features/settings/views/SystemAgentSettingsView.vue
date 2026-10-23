@@ -369,6 +369,17 @@
                   </div>
                 </div>
 
+                <!-- HTTP 위험 안내: 이 화면은 Agent 의 서버 주소와 허용 상태를 모른다. 안내만 하고 상태는 표시하지 않는다. -->
+                <div class="fgs-hintline note-line http-note" data-testid="agent-http-note">
+                  <strong>{{ t('gui.settings.agents.http_risk_title') }}</strong>
+                  <ul>
+                    <li>{{ t('gui.settings.agents.http_risk_https') }}</li>
+                    <li>{{ t('gui.settings.agents.http_risk_allow') }}</li>
+                    <li>{{ t('gui.settings.agents.http_risk_plain') }}</li>
+                    <li>{{ t('gui.settings.agents.http_risk_trusted') }}</li>
+                  </ul>
+                </div>
+
                 <!-- 발급 응답 때만 이 메모리에서 보인다. GET 으로는 다시 얻을 수 없다. -->
                 <div v-if="shownEnrollment" ref="secretRef" class="enrollment" data-testid="enrollment-secret">
                   <span class="fgs-hint"><SettingsIcon name="alert" size="sm" />{{ t('gui.settings.agents.token_once') }}</span>
@@ -1092,6 +1103,7 @@ function askIssue() {
       t(a.enrollment_status === 'pending' ? 'gui.settings.agents.effects.issue_replaces_pending' : 'gui.settings.agents.effects.issue_replaces_any'),
       ...(a.credential_status === 'active' ? [t('gui.settings.agents.effects.issue_replaces_credential')] : []),
       t('gui.settings.agents.effects.issue_once'),
+      t('gui.settings.agents.effects.issue_http'),
     ],
     label: t('gui.settings.agents.issue_confirm'),
     run: async (at) => {
@@ -1252,6 +1264,11 @@ onBeforeUnmount(() => {
 .cap-table td,
 .cap-table th {
   padding: 10px 12px;
+}
+
+.http-note ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
 }
 
 .enrollment {

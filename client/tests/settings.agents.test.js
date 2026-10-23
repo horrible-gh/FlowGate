@@ -73,6 +73,30 @@ describe('AgentsView',()=>{
     expect(wrapper.get('[data-testid="enrollment-secret"]').text()).toContain('enr_secret')
   })
 
+  it('shows the HTTPS/HTTP risk guidance for Remote Agents only and adds it to the issue confirmation without changing token handling',async()=>{
+    const original=agent()
+    api.postRequest.mockResolvedValue({data:{agent_id:'agt_1',enrollment_token:'enr_secret',expires_at:'2026-09-27T12:00:00Z'}})
+    const wrapper=await mounted([original,agent({agent_id:'agt_2',name:'Local one',location:'local',connection_mode:null})])
+    const rows=wrapper.findAll('.agent-row')
+    await rows[1].trigger('click')
+    expect(wrapper.find('[data-testid="agent-http-note"]').exists()).toBe(false)
+    await rows[0].trigger('click')
+    const note=wrapper.get('[data-testid="agent-http-note"]').text()
+    expect(note).toContain('HTTPS is recommended')
+    expect(note).toContain('explicitly allowed on the Agent')
+    expect(note).toContain('not encrypted')
+    expect(note).toContain('trusted internal network or an encrypted VPN')
+    expect(wrapper.text()).not.toMatch(/HTTP allowed|Secure connection/i)
+    await wrapper.get('[data-testid="issue-enrollment"]').trigger('click')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('sent in plain text'))
+    expect(api.postRequest).toHaveBeenCalledWith('/api/v1/system/agents/agt_1/enrollments',{})
+    expect(wrapper.html().split('enr_secret').length-1).toBe(1)
+    for(const store of [window.sessionStorage,window.localStorage]){
+      for(let i=0;i<store.length;i+=1)expect(store.getItem(store.key(i))??'').not.toContain('enr_secret')
+    }
+  })
+
   it('renders Online and runtime metadata supplied by server TTL evaluation',async()=>{
     const wrapper=await mounted([agent({online_status:'online',last_seen_at:'2026-09-27T11:59:30Z',agent_version:'1.2.3',protocol_version:1,protocol_compatibility:'compatible',os:'linux',architecture:'amd64'})])
     await wrapper.get('.agent-row').trigger('click')
