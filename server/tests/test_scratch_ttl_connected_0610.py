@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -97,6 +98,15 @@ def connected(monkeypatch, tmp_path):
         ai._runs.update(old_runs)
 
 
+def _run_all_and_wait():
+    """flowgate.v02.0090 T0015: run_all() only starts the scratch sweeps; wait for that thread."""
+    startup.run_all()
+    for thread in threading.enumerate():
+        if thread.name == "startup-scratch-sweep":
+            thread.join(10)
+            assert not thread.is_alive()
+
+
 def _run_row(run_id, finished):
     started = datetime.strptime(run_id[4:12], "%Y%m%d").replace(tzinfo=timezone.utc)
     return {"run_id": run_id, "project_id": PROJECT, "status": "finished",
@@ -178,7 +188,7 @@ def test_setting_change_reuses_legacy_manifests_and_startup_orders_purge(connect
     unknown = root / "work" / "Flowgate" / "tok_20261009_000004"
     unknown.mkdir()
 
-    startup.run_all()
+    _run_all_and_wait()
     assert events[:3] == ["recover", "run_sweep", "token_sweep"]
     assert "purge" in events and events.index("purge") > events.index("token_sweep")
     assert not recent_run.exists() and not legacy.exists() and not crash.exists()
@@ -202,7 +212,7 @@ def test_failed_filesystem_delete_keeps_expired_token_row(connected, monkeypatch
         return original(candidate, *args, **kwargs)
 
     monkeypatch.setattr(storage_fs.shutil, "rmtree", fail_for_token)
-    startup.run_all()
+    _run_all_and_wait()
     assert path.exists() and token_id in tokens
     assert "purge" not in events
 

@@ -66,6 +66,7 @@ def test_startup_calls_deployment_marker_once(monkeypatch):
     monkeypatch.setattr(startup, "recover_ai_invoke_leases", lambda: None)
     monkeypatch.setattr(startup, "recover_git_sessions", lambda: None)
     monkeypatch.setattr(startup, "encrypt_ai_provider_keys", lambda: None)
+    monkeypatch.setattr(startup, "start_scratch_sweeps", lambda: None)
     startup.run_all()
     assert calls == [1]
 

@@ -787,10 +787,30 @@ def _remaining_count(path: Path) -> int:
     return count
 
 
+def _cleanup_busy(snapshot_id: str) -> dict:
+    """Another cleanup of this snapshot holds it: answer at once with a retryable result.
+
+    flowgate.v02.0090 T0015: the first TTL sweep runs after startup() returns, so its
+    backlog delete can overlap a request for the same snapshot. The holder finishes or
+    records the delete (and its retry state); this caller never waits on it or deletes twice.
+    """
+    row = db.get(snapshot_id)
+    if row is None:
+        raise SnapshotRequestError(404, "not_found", "snapshot request not found")
+    result = dict(row)
+    if row["status"] != "deleted":
+        result["cleanup_busy"] = True
+        result["cleanup_warning"] = "snapshot cleanup is already running; retry later"
+    return result
+
+
 def cleanup(snapshot_id: str, actor: str, *, trigger: str = "explicit",
            source: str | None = None) -> dict:
     lock = _operation_lock(snapshot_id)
-    with lock:
+    if not lock.acquire(blocking=False):
+        return _cleanup_busy(snapshot_id)
+    with ExitStack() as held:
+        held.callback(lock.release)
         row = db.get(snapshot_id)
         if row is None:
             raise SnapshotRequestError(404, "not_found", "snapshot request not found")
@@ -1433,10 +1453,19 @@ def startup() -> None:
         _sweep_stop.clear()
     from modules.flow_gate.services import snapshot_request_service
     snapshot_request_service.retire_unmaterialized(SYSTEM_ACTOR_USER_ID)
-    cleanup_orphans(startup=True)
-    sweep_expired()
 
     def _loop() -> None:
+        # flowgate.v02.0090 T0015: the first (startup=True) recovery and TTL sweep run as
+        # this thread's first pass, not before startup() returns, so a backlog never holds
+        # the lifespan. A failed first pass is logged and the periodic sweep still follows.
+        try:
+            cleanup_orphans(startup=True)
+        except Exception:
+            logger.warning("snapshot startup orphan cleanup failed", exc_info=True)
+        try:
+            sweep_expired()
+        except Exception:
+            logger.warning("snapshot TTL sweep failed", exc_info=True)
         while not _sweep_stop.wait(SNAPSHOT_SWEEP_INTERVAL_SECONDS):
             try:
                 sweep_expired()

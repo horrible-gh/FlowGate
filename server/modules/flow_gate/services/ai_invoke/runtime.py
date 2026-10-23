@@ -1242,11 +1242,81 @@ def _cleanup_retained_scratches(project_id: str) -> None:
         _scratch_delete_failure("", "sweep", exc)
 
 
+# flowgate.v02.0090 T0015 (NR0014 §4.1-1): one AI-run scratch sweep per project at a time, off
+# the caller's thread. Since 0090 a retained backlog is really deleted, so a sweep awaited inside
+# start_run kept the request -- and the bootstrap's Graph recovery replay -- open for minutes.
+# A request that finds its project already sweeping only asks for one more pass after it.
+_run_sweep_lock = threading.Lock()
+_run_sweeping: set[str] = set()
+_run_sweep_again: set[str] = set()
+
+
+def _claim_run_sweep(project_id: str) -> bool:
+    with _run_sweep_lock:
+        if project_id in _run_sweeping:
+            _run_sweep_again.add(project_id)
+            return False
+        _run_sweeping.add(project_id)
+        return True
+
+
+def _run_claimed_sweep(project_id: str, sweep: Callable[[str], None]) -> None:
+    """Sweep under the project's claim, again while a pass was asked for; always release."""
+    try:
+        while True:
+            sweep(project_id)
+            with _run_sweep_lock:
+                if project_id not in _run_sweep_again:
+                    _run_sweeping.discard(project_id)
+                    return
+                _run_sweep_again.discard(project_id)
+    except BaseException:
+        with _run_sweep_lock:
+            _run_sweeping.discard(project_id)
+            _run_sweep_again.discard(project_id)
+        raise
+
+
+def _run_sweep_in_background(project_id: str, sweep: Callable[[str], None]) -> None:
+    try:
+        _run_claimed_sweep(project_id, sweep)
+    except Exception:
+        logger.warning("ai-run scratch sweep failed for project %s", project_id, exc_info=True)
+
+
+def request_run_scratch_sweep(project_id: str) -> threading.Thread | None:
+    """Start the project's retained-scratch sweep on a daemon thread and return at once.
+
+    The delete rules, ownership/lease checks and records are _cleanup_retained_scratches'
+    own, unchanged. A thread that cannot start is only logged: the next request or the
+    next boot sweeps again, never a synchronous fallback (0084 T#1's sweep_on_issue shape).
+    """
+    sweep = _svc()._cleanup_retained_scratches
+    if not _claim_run_sweep(project_id):
+        return None
+    thread = threading.Thread(target=_run_sweep_in_background, args=(project_id, sweep),
+                              name="ai-run-scratch-sweep", daemon=True)
+    try:
+        thread.start()
+    except Exception:
+        with _run_sweep_lock:
+            _run_sweeping.discard(project_id)
+            _run_sweep_again.discard(project_id)
+        logger.warning("ai-run scratch sweep could not start for project %s", project_id, exc_info=True)
+        return None
+    return thread
+
+
 def startup_sweep_run_scratches() -> int:
-    """Sweep all known projects after startup lease recovery, including inactive ones."""
+    """Sweep all known projects after startup lease recovery, including inactive ones.
+
+    Runs on the bootstrap's scratch sweep thread under the same per-project claim, so a
+    project a request is already sweeping gets one more pass there instead of a second sweep.
+    """
     projects = db_projects.list_projects()
     for project in projects:
-        _cleanup_retained_scratches(project["project_id"])
+        if _claim_run_sweep(project["project_id"]):
+            _run_claimed_sweep(project["project_id"], _cleanup_retained_scratches)
     return len(projects)
 
 

@@ -1548,7 +1548,9 @@ def start_run(
         # launched below, so the baseline cannot include the work this run is about to do.
         completion_oracle = oracle._scope_oracle(action_scope, issue.get("token_id"), doc_ref)
 
-    _svc()._cleanup_retained_scratches(project_id)
+    # 0090 T0015 (NR0014 2.6): the retained-scratch sweep runs on its own thread; a
+    # request -- or the bootstrap's Graph recovery replay -- never waits for a backlog.
+    _svc().request_run_scratch_sweep(project_id)
     # 0357 T0004: the chain identity/counters this hop inherits. `run_id` is allocated
     # once, above, and stays the hop's own id — the CHAIN id is what travels hop to hop.
     if mode == "continuous":

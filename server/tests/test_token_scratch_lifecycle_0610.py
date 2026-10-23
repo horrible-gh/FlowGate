@@ -279,8 +279,16 @@ def test_startup_sweeps_after_lease_recovery(monkeypatch):
                  "recover_ai_invoke_leases", "sweep_ai_run_scratches", "sweep_token_scratches",
                  "recover_git_sessions", "encrypt_ai_provider_keys"):
         monkeypatch.setattr(startup, name, lambda name=name: calls.append(name))
+    threads = []
+    real_start = startup.start_scratch_sweeps
+    monkeypatch.setattr(startup, "start_scratch_sweeps", lambda: threads.append(real_start()) or threads[-1])
     startup.run_all()
-    assert calls.index("recover_ai_invoke_leases") < calls.index("sweep_token_scratches")
+    # flowgate.v02.0090 T0015: the sweeps run on one background thread started after lease recovery.
+    assert len(threads) == 1 and threads[0].name == "startup-scratch-sweep"
+    threads[0].join(10)
+    assert not threads[0].is_alive()
+    assert (calls.index("recover_ai_invoke_leases") < calls.index("sweep_ai_run_scratches")
+            < calls.index("sweep_token_scratches"))
 
 
 def test_startup_sweep_reclaims_old_manifest_orphan(owned, monkeypatch):

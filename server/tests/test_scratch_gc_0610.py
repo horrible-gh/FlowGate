@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -195,5 +196,10 @@ def test_startup_bootstrap_sweeps_legacy_crash_and_retained_without_new_admissio
                  "recover_git_sessions", "encrypt_ai_provider_keys"):
         monkeypatch.setattr(startup, hook, lambda: None)
     startup.run_all()
+    # flowgate.v02.0090 T0015: run_all() only starts the sweeps; wait for their thread.
+    for thread in threading.enumerate():
+        if thread.name == "startup-scratch-sweep":
+            thread.join(10)
+            assert not thread.is_alive()
     assert not legacy.exists() and not crash.exists() and not retained.exists()
     assert young.exists()
