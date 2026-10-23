@@ -66,7 +66,7 @@
               </div>
               <div class="fgs-row-ctrl">
                 <LoadingState v-if="loading" inline size="sm" :label="t('gui.common.loading')" />
-                <ErrorState v-else-if="loadError" compact :title="t('gui.settings.self.errors.load_failed')" :message="loadError" data-testid="me-retention-load-error">
+                <ErrorState v-else-if="loadError" compact :title="t(LOAD_FAILED)" :message="loadErrorDetail" data-testid="me-retention-load-error">
                   <template #action>
                     <Button variant="secondary" @click="load">{{ t('gui.common.retry') }}</Button>
                   </template>
@@ -81,7 +81,7 @@
               </div>
             </div>
             <div v-if="saveError" class="fgs-row sub">
-              <span class="fgs-error" role="alert" data-testid="me-retention-error">{{ saveError }}</span>
+              <span class="fgs-error" role="alert" data-testid="me-retention-error">{{ saveErrorText }}</span>
             </div>
           </div>
         </div>
@@ -102,18 +102,19 @@
 //   envelope's choices (kept to the shared domain -1, 0, 30 … 1440), save on change, the value
 //   the server answered becomes the confirmed one, a failed save puts the last confirmed value
 //   back and says so. A failed GET is an error with a retry, not a default value.
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
+import { renderUiText, uiKey, uiRaw, type UiText } from '@/core/i18n/uiText'
 import { RETENTION_IMMEDIATE, RETENTION_NEVER, writeRetentionMirror } from '@shared/aiFinishedCardRetention'
 import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import { useMeNav } from '../components/meNav'
-import { getUiSettings, retentionChoices, retentionIn, saveRetention } from '../meApi'
+import { getUiSettings, MeRequestError, retentionChoices, retentionIn, saveRetention } from '../meApi'
 
 const LOCALES = ['ko', 'ja', 'en'] as const
 type Locale = (typeof LOCALES)[number]
@@ -134,9 +135,23 @@ const selected = ref<number | null>(null)
 // The last value the server confirmed (GET or a successful PATCH); a failed save returns here.
 const confirmed = ref<number | null>(null)
 const loading = ref(true)
-const loadError = ref('')
+// flowgate.v02.0088 F17: the errors this screen keeps on display are kept as their key (or, for an unexpected
+// error, its own words) and translated when they render, so the language buttons right above change them too.
+const LOAD_FAILED = 'gui.settings.self.errors.load_failed'
+const loadError = ref<UiText | null>(null)
+// The title already says load_failed; a more specific reason is added under it, never the same sentence twice.
+const loadErrorDetail = computed(() => {
+  const error = loadError.value
+  return error && !('key' in error && error.key === LOAD_FAILED) ? renderUiText(t, error) : undefined
+})
 const saving = ref(false)
-const saveError = ref('')
+const saveError = ref<UiText | null>(null)
+const saveErrorText = computed(() => renderUiText(t, saveError.value))
+
+function errorText(err: unknown): UiText {
+  if (err instanceof MeRequestError && err.messageKey) return uiKey(err.messageKey)
+  return uiRaw(err instanceof Error ? err.message : String(err))
+}
 const saved = ref(false)
 
 function optionLabel(minutes: number): string {
@@ -149,16 +164,16 @@ function optionLabel(minutes: number): string {
 
 async function load() {
   loading.value = true
-  loadError.value = ''
+  loadError.value = null
   try {
     const body = await getUiSettings()
     const value = retentionIn(body)
-    if (value === null) throw new Error(t('gui.settings.self.errors.load_failed'))
+    if (value === null) throw new MeRequestError(t(LOAD_FAILED), null, null, [], LOAD_FAILED)
     choices.value = retentionChoices(body)
     confirmed.value = value
     selected.value = value
   } catch (err) {
-    loadError.value = err instanceof Error ? err.message : String(err)
+    loadError.value = errorText(err)
   } finally {
     loading.value = false
   }
@@ -182,14 +197,14 @@ async function save() {
   const requested = selected.value
   if (requested === null || requested === confirmed.value || saving.value) return
   saving.value = true
-  saveError.value = ''
+  saveError.value = null
   saved.value = false
   try {
     const body = await saveRetention(requested)
     const value = retentionIn(body)
     if (value === null) {
       selected.value = confirmed.value
-      saveError.value = t('gui.settings.self.errors.save_unconfirmed')
+      saveError.value = uiKey('gui.settings.self.errors.save_unconfirmed')
       await reread()
       return
     }
@@ -201,7 +216,7 @@ async function save() {
     saved.value = true
   } catch (err) {
     selected.value = confirmed.value
-    saveError.value = err instanceof Error ? err.message : String(err)
+    saveError.value = errorText(err)
   } finally {
     saving.value = false
   }

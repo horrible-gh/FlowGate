@@ -156,7 +156,7 @@ describe('separate draft and modeless window', () => {
     await type(q('wp-step-text', child()), 'keep this')
     const id = win().id
     const panel = child().closest('.ui-modeless-panel')!
-    await click(panel.querySelector<HTMLElement>('[aria-label="Minimize"]')!)
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="minimize"]')!)
     expect(win().minimized).toBe(true)
     await pencil('c_t1|main')
     expect(workPlanStepWindowList()).toHaveLength(1)
@@ -192,7 +192,7 @@ describe('separate draft and modeless window', () => {
     await open()
     await type(q('wp-step-text', child()), 'discard')
     if (how === 'cancel') await click(q('wp-step-cancel', child()))
-    else if (how === 'close') await click(child().closest('.ui-modeless-panel')!.querySelector<HTMLElement>('[aria-label="Close"]')!)
+    else if (how === 'close') await click(child().closest('.ui-modeless-panel')!.querySelector<HTMLElement>('[data-modeless-action="close"]')!)
     else {
       child().closest('.ui-modeless-panel')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
       await flushPromises()

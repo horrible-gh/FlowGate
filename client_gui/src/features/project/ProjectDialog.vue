@@ -3,10 +3,10 @@
     <template #header="{ titleId }">
       <div class="pd-head">
         <div class="pd-head-titles">
-          <h2 :id="titleId" class="pd-head-title">프로젝트 열기</h2>
-          <p class="pd-head-sub">기존 프로젝트를 선택하거나 새 프로젝트를 만드세요.</p>
+          <h2 :id="titleId" class="pd-head-title">{{ t('gui.project.dialog.title') }}</h2>
+          <p class="pd-head-sub">{{ t('gui.project.dialog.subtitle') }}</p>
         </div>
-        <IconButton label="닫기" variant="ghost" @click="store.closeDialog()">✕</IconButton>
+        <IconButton :label="t('gui.common.close')" variant="ghost" @click="store.closeDialog()">✕</IconButton>
       </div>
     </template>
 
@@ -14,7 +14,7 @@
       <div class="pd-body">
         <div v-if="isAdmin" class="pd-intro">
           <Button type="button" variant="primary" size="sm" @click="createDialogOpen = true">
-            + 새 프로젝트
+            {{ t('gui.project.dialog.new_project') }}
           </Button>
         </div>
 
@@ -24,8 +24,8 @@
             v-model="searchQuery"
             type="search"
             class="pd-search-input"
-            placeholder="프로젝트 검색..."
-            aria-label="프로젝트 검색"
+            :placeholder="t('gui.project.dialog.search_placeholder')"
+            :aria-label="t('gui.project.dialog.search_aria')"
             autocomplete="off"
             data-modal-autofocus
           />
@@ -46,15 +46,15 @@
 
     <template #footer>
       <div class="pd-foot">
-        <span><b>Enter</b> 선택 / 열기</span>
-        <span><b>Esc</b> 닫기</span>
+        <span><b>Enter</b> {{ t('gui.project.dialog.hint_open') }}</span>
+        <span><b>Esc</b> {{ t('gui.common.close') }}</span>
       </div>
     </template>
   </ModalShell>
 
   <ProjectCreateDialog :open="createDialogOpen" @close="createDialogOpen = false" @created="handleCreated" />
 
-  <ToastHost :toasts="toasts" @dismiss="dismissToast" />
+  <ToastHost :toasts="shownToasts" :dismiss-label="t('gui.common.close')" @dismiss="dismissToast" />
 </template>
 
 <script setup lang="ts">
@@ -75,6 +75,7 @@
 // App Shell (the single mount, reached from both Sidebar and Dashboard) does the move to the
 // Designer.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Button from '../../components/ui/Button.vue'
 import IconButton from '../../components/ui/IconButton.vue'
 import Input from '../../components/ui/Input.vue'
@@ -89,6 +90,7 @@ import type { Project } from './types'
 const emit = defineEmits<{ opened: [project: Project] }>()
 
 const store = useProjectStore()
+const { t } = useI18n()
 const { user } = useCurrentUser()
 
 // Admin-only "+ 새 프로젝트" entry point (D0004 §3.6, T#2 §5).
@@ -98,7 +100,21 @@ const searchQuery = ref('')
 const selectedId = ref<string | null>(null)
 const createDialogOpen = ref(false)
 const searchInputRef = ref<InstanceType<typeof Input> | null>(null)
-const toasts = ref<ToastHostItem[]>([])
+// flowgate.v02.0088 F05: a toast keeps the created Project's name, not a sentence translated at
+// creation time — the sentence is built in the current locale whenever it renders, and the
+// Project name itself is only interpolated, never translated.
+interface CreatedToast {
+  id: string
+  projectName: string
+}
+const toasts = ref<CreatedToast[]>([])
+const shownToasts = computed<ToastHostItem[]>(() =>
+  toasts.value.map((item) => ({
+    id: item.id,
+    message: t('gui.project.dialog.created_toast', { name: item.projectName }),
+    tone: 'success',
+  })),
+)
 
 const filteredProjects = computed<Project[]>(() => {
   const q = searchQuery.value.trim().toLowerCase()
@@ -191,7 +207,7 @@ function handleCreated(project: Project): void {
   createDialogOpen.value = false
   searchQuery.value = ''
   selectedId.value = project.id
-  toasts.value = [...toasts.value, { id: `project-created-${project.id}-${Date.now()}`, message: `${project.name} 프로젝트를 생성했습니다.`, tone: 'success' }]
+  toasts.value = [...toasts.value, { id: `project-created-${project.id}-${Date.now()}`, projectName: project.name }]
 }
 </script>
 

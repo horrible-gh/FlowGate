@@ -187,7 +187,7 @@ describe('document window follows the server on the v0.2 project event hub (flow
     expect(connection.url).toContain('project=flowgate')
     expect(connection.listened('document_explorer_refresh')).toBe(1)
     expect(connection.listened('doc_review_status_changed')).toBe(1)
-    await click(panel.querySelector<HTMLElement>('[aria-label="Close"]'))
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="close"]'))
     expect(stream.connections()).toHaveLength(0)
   })
 
@@ -482,7 +482,7 @@ describe('an open window reads again on a period, for writes that send no event 
 
     documentWindowList()[0].minimized = false
     await flushPromises()
-    await click(panel.querySelector<HTMLElement>('[aria-label="Close"]'))
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="close"]'))
     expect(documentWindowList()).toHaveLength(0)
     await vi.advanceTimersByTimeAsync(DOCUMENT_WINDOW_POLL_MS * 3)
     await flushPromises()

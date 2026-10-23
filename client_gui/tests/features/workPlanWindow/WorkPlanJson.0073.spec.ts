@@ -601,7 +601,7 @@ describe('the JSON buttons of the plan window (0073 T#4)', () => {
       pickFile(incoming)
       await flushPromises()
       const panel = q('wp-json-window')?.closest('.ui-modeless-panel') as HTMLElement
-      await click(panel.querySelector<HTMLElement>('[aria-label="Close"]'))
+      await click(panel.querySelector<HTMLElement>('[data-modeless-action="close"]'))
       expect(q('wp-json-window')).toBeNull()
       HeldReader.held[1].finish(incoming)
       await flushPromises()

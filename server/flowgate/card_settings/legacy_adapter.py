@@ -60,7 +60,7 @@ from modules.flow_gate.graph_workflow.store import definition_store, run_store
 from modules.flow_gate.settings import ai_execution_policy_service
 
 __all__ = ["GraphApiError", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid",
-           "run", "load_flow", "require_writable", "repeat_choices", "ai_exists", "team_exists",
+           "locale_of", "run", "load_flow", "require_writable", "repeat_choices", "ai_exists", "team_exists",
            "node_running", "graph_owned", "project_of", "node_of_ai_run", "node_of_result", "open_node_of_token",
            "run_doc_type",
            "node_ai_run_active", "instruction_node_of_ai_run", "registered_instructions", "start_result_stage",
@@ -95,6 +95,11 @@ def authorize(user_id: str, group: dict, required: str) -> None:
 
 def invalid(request, errors: list[dict]) -> GraphApiError:
     return envelope.invalid(request, errors)
+
+
+def locale_of(request) -> str:
+    """The request's X-Locale as the Graph envelope normalizes it (ko / ja / en, else ko)."""
+    return envelope.locale_of(request)
 
 
 def run(request, handler, status: int = 200):

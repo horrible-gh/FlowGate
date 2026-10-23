@@ -181,7 +181,9 @@ export const useProjectStore = defineStore('project', () => {
     } catch (err) {
       if (epoch !== requestEpoch.value) return
       projects.value = []
-      error.value = err instanceof Error ? err.message : 'Failed to load projects.'
+      // flowgate.v02.0088 F10: only the server's own words ('' when there are none) — ProjectList
+      // shows the localized general text itself.
+      error.value = err instanceof Error ? err.message.trim() : ''
     } finally {
       if (epoch === requestEpoch.value) loading.value = false
     }

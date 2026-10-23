@@ -167,7 +167,8 @@ const noticeText = computed(() => {
   if (!notice) return ''
   const key = `gui.conversation.notice.${notice.code}`
   const label = te(key) ? t(key) : notice.code
-  return notice.detail ? `${label} (${notice.detail})` : label
+  // flowgate.v02.0088 F12: only a separate server diagnostic is added, never the notice again.
+  return notice.detail && notice.detail !== label ? `${label} (${notice.detail})` : label
 })
 
 function onCreate(): void {

@@ -673,7 +673,7 @@ def _write(state: State, work: Work, instructions: dict, registered: set[str], u
     # document a confirmed revision (or another line) keeps stays with its whole history.
     for doc_id in card_lines.disposed_documents(state.flow_id, work.removes):
         legacy.drop_deploy_save_evidence(doc_id)
-    saved = legacy.write_draft(state.group, user_id, work.draft, registered)
+    saved = legacy.write_draft(state.group, user_id, work.draft, registered, locale)
     key_map = saved.get("key_map") or {}
 
     written: list[tuple] = []                      # (node_key, target, doc, path, identity, text)
@@ -769,10 +769,13 @@ def _create_line(state: State, key: str, node: dict, slot, target, instructions:
                  revision: int) -> None:
     """The instruction line has no document even after the draft save: one is made with the body (the card line
     write's own creation) and linked, with the deploy's body save evidence in the same transaction — so the cleanup
-    may take it back like any line only the deploy wrote. Its file goes with a rollback (``write_new_file``)."""
-    title = card_docs_legacy._title(node.get("label") or "", slot)
+    may take it back like any line only the deploy wrote. Its file goes with a rollback (``write_new_file``).
+    flowgate.v02.0088: its title is decided once, in the request's ``locale``, and that one title is the body's
+    heading and the document's row and front matter title (``resolved_title``)."""
+    title = card_docs_legacy._title(node.get("label") or "", slot, locale)
     body = legacy.instruction_text.instruction_body(title, instructions[target.card_id], locale)
-    doc_id = card_docs_legacy.create_document(state.group, node, slot, user_id, body)
+    doc_id = card_docs_legacy.create_document(state.group, node, slot, user_id, body, locale=locale,
+                                              resolved_title=title)
     ordinal = [s.slot for s in cs.card_slots(node["node_type"], node["doc_type"])].index(slot.slot)
     card_lines_store.insert(state.flow_id, key, slot.slot, slot.doc_type, doc_id, True, ordinal, user_id)
     doc = legacy.document(doc_id) or {}

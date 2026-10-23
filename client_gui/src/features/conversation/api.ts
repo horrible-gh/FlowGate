@@ -59,26 +59,64 @@ export class ConversationRequestError extends Error {
   }
 }
 
+function messageOf(value: unknown): string | null {
+  const message = (value as { message?: unknown } | null | undefined)?.message
+  return typeof message === 'string' && message.trim() ? message.trim() : null
+}
+
 function codeOf(value: unknown): string | null {
   const code = (value as { code?: unknown } | null | undefined)?.code
   return typeof code === 'string' && code ? code : null
 }
 
-function toRequestError(error: unknown, fallback: string): ConversationRequestError {
+/** Whether the response body itself carries `text` (a string anywhere in its first levels). */
+function bodyCarries(value: unknown, text: string, depth = 0): boolean {
+  if (typeof value === 'string') return value.trim() === text
+  if (depth > 3 || !value || typeof value !== 'object') return false
+  return Object.values(value as Record<string, unknown>).some((child) => bodyCarries(child, text, depth + 1))
+}
+
+/**
+ * flowgate.v02.0088 F12: the server's own diagnostic of a failed request — '' without an answer (network /
+ * timeout), with an empty body, or when the transport only repeats its own English line. It is told apart
+ * by where it came from: a text the response body carries is kept even when the Error repeats it.
+ */
+function serverDetailOf(error: unknown, answered: boolean, data: Record<string, unknown> | null, code: string | null): string {
+  if (!answered) return ''
+  const detail = extractApiErrorMessage(error, '').trim() || (messageOf(data?.error) ?? messageOf(data) ?? messageOf(data?.detail) ?? '')
+  if (!detail || detail === code) return ''
+  const transport = error instanceof Error ? error.message.trim() : ''
+  return detail === transport && !bodyCarries(data, detail) ? '' : detail
+}
+
+/**
+ * flowgate.v02.0088 F12: a check this app makes itself (an answer without its required field, an id that
+ * is not a document id) is no server diagnostic, so it carries no words — the session shows its localized
+ * notice only. Status and code stay null as before.
+ */
+function clientCheckFailure(): ConversationRequestError {
+  return new ConversationRequestError('', null, null)
+}
+
+// flowgate.v02.0088 F12: the message is only the server's own diagnostic ('' when it sent none).
+// The session reports a failure as a gui.conversation.notice.* code and passes this message on as
+// the notice detail, so a localized notice is never followed by an English general line meaning
+// the same thing.
+function toRequestError(error: unknown): ConversationRequestError {
   const response = (error as { response?: { status?: number; data?: unknown } } | null)?.response
   const data = (response?.data ?? null) as Record<string, unknown> | null
   // Flat `code` (ai-invoke), the `{ ok: false, error: { code } }` envelope (Conversation
   // contract, D0006 §5.1) or a `detail` object.
   const code = codeOf(data) ?? codeOf(data?.error) ?? codeOf(data?.detail)
   const runId = typeof data?.run_id === 'string' ? data.run_id : null
-  return new ConversationRequestError(extractApiErrorMessage(error, fallback), response?.status ?? null, code, runId)
+  return new ConversationRequestError(serverDetailOf(error, response != null, data, code), response?.status ?? null, code, runId)
 }
 
-async function call<T>(request: () => Promise<{ data: T }>, fallback: string): Promise<T> {
+async function call<T>(request: () => Promise<{ data: T }>): Promise<T> {
   try {
     return (await request()).data
   } catch (error) {
-    throw toRequestError(error, fallback)
+    throw toRequestError(error)
   }
 }
 
@@ -115,13 +153,12 @@ function newestFirst(a: { updatedAt: string | null }, b: { updatedAt: string | n
 export async function fetchChats(scope: ConversationScope): Promise<ChatSummary[]> {
   const data = await call(
     () => getRequest<unknown>(`${API}/documents`, { project_id: scope.projectId, group_id: scope.groupId, type_code: 'CH', limit: 200 }),
-    'Failed to load the chat list.',
   )
   return rawDocuments(data).map(toChatSummary).sort(newestFirst)
 }
 
 export async function renameChat(chatId: string, title: string): Promise<ChatSummary> {
-  const data = await call(() => patchRequest<RawDocument>(doc(chatId), { title }), 'Failed to rename the chat.')
+  const data = await call(() => patchRequest<RawDocument>(doc(chatId), { title }))
   return toChatSummary({ ...data, doc_id: data?.doc_id || chatId, title: data?.title ?? title })
 }
 
@@ -139,9 +176,8 @@ export async function createChat(scope: ConversationScope, title: string, option
   const body = { project_id: scope.projectId, group_id: scope.groupId, title, ...(options.autoTitle ? { auto_title: true } : {}) }
   const created = await call(
     () => postRequest<RawDocument>(`${API}/conversations`, body),
-    'Failed to create a chat.',
   )
-  if (!created?.doc_id) throw new ConversationRequestError('The server returned no document id.', null, null)
+  if (!created?.doc_id) throw clientCheckFailure()
   return toChatSummary({ ...created, title: created.title ?? title })
 }
 
@@ -154,7 +190,6 @@ export async function createChat(scope: ConversationScope, title: string, option
 export async function autoTitleChat(chatId: string, providerId: string): Promise<ChatSummary> {
   const data = await call(
     () => postRequest<RawDocument>(`${API}/conversations/${encodeURIComponent(chatId)}/auto-title`, { provider_id: providerId }),
-    'Failed to title the chat.',
   )
   return toChatSummary({ ...data, doc_id: data?.doc_id || chatId, title: data?.title ?? '' })
 }
@@ -264,7 +299,6 @@ export function toRunChange(raw: RawRunChange): WorkChangeActivity {
 export async function fetchActivities(chatId: string): Promise<ConversationActivity[]> {
   const data = await call(
     () => getRequest<{ commands?: RawCommand[] | null; changes?: RawRunChange[] | null }>(`${API}/chat-activity/${encodeURIComponent(chatId)}`),
-    'Failed to load the chat activity.',
   )
   const commands = (data?.commands ?? []).filter((c) => c && typeof c.request_id === 'string').map(toCommand)
   const changes = (data?.changes ?? []).filter((c) => c && typeof c.run_id === 'string').map(toRunChange)
@@ -275,9 +309,8 @@ export async function fetchActivities(chatId: string): Promise<ConversationActiv
 export async function decideCommand(_chatId: string, commandId: string, decision: CommandDecision): Promise<CommandRequestActivity> {
   const data = await call(
     () => postRequest<{ request?: RawCommand | null }>(`${API}/chat-commands/${encodeURIComponent(commandId)}/decision`, { decision }),
-    'Failed to decide the command request.',
   )
-  if (!data?.request?.request_id) throw new ConversationRequestError('The server returned no request.', null, null)
+  if (!data?.request?.request_id) throw clientCheckFailure()
   return toCommand(data.request)
 }
 
@@ -299,7 +332,6 @@ export async function fetchRunFileDiff(chatId: string, runId: string, path: stri
         `${API}/chat-activity/${encodeURIComponent(chatId)}/runs/${encodeURIComponent(runId)}/diff`,
         { path },
       ),
-    'Failed to load the file change.',
   )
   const body = data?.data
   return { runId, path: body?.path || path, status: body?.status || 'M', old: toDiffSide(body?.old), new: toDiffSide(body?.new) }
@@ -367,7 +399,7 @@ export async function fetchTurns(chatId: string, query: TurnsQuery): Promise<Tur
   if (query.includeHead) params.include_head = 1
   if (query.afterSeq != null) params.after_seq = query.afterSeq
   if (query.beforeSeq != null) params.before_seq = query.beforeSeq
-  const data = await call(() => getRequest<RawTurnsPage>(`${doc(chatId)}/conversation/turns`, params), 'Failed to load the conversation.')
+  const data = await call(() => getRequest<RawTurnsPage>(`${doc(chatId)}/conversation/turns`, params))
   return {
     turns: (data?.turns ?? []).map(toTurn),
     participants: (data?.participants ?? []).filter((p) => p?.participant_key).map(toParticipant),
@@ -396,7 +428,6 @@ export async function postTurn(chatId: string, input: PostTurnInput): Promise<{ 
       idempotency_key: input.idempotencyKey,
       based_on_seq: input.basedOnSeq,
     }),
-    'Failed to send the message.',
   )
   return { turn: data?.turn ? toTurn(data.turn) : null, headSeq: Number(data?.head_seq) || 0 }
 }
@@ -404,7 +435,6 @@ export async function postTurn(chatId: string, input: PostTurnInput): Promise<{ 
 export async function markRead(chatId: string, lastReadSeq: number): Promise<number | null> {
   const data = await call(
     () => postRequest<{ me?: RawParticipant | null }>(`${doc(chatId)}/conversation/read`, { last_read_seq: lastReadSeq, reason: 'viewed' }),
-    'Failed to report the read position.',
   )
   return data?.me ? Number(data.me.last_read_seq) || 0 : null
 }
@@ -416,7 +446,6 @@ export async function fetchProviders(projectId: string): Promise<ProviderList> {
       `${API}/ai-invoke/providers`,
       { project: projectId },
     ),
-    'Failed to load the AI list.',
   )
   const providers: ChatProvider[] = (data?.providers ?? [])
     .filter((p) => p && typeof p.id === 'string')
@@ -427,7 +456,7 @@ export async function fetchProviders(projectId: string): Promise<ProviderList> {
 // ── Chat AI run ──────────────────────────────────────────────────────────────────────
 export async function startChatRun(chatId: string, providerId: string | null): Promise<string | null> {
   const parts = splitGroupId(chatId)
-  if (!parts) throw new ConversationRequestError(`Not a document id: ${chatId}`, null, null)
+  if (!parts) throw clientCheckFailure()
   // A CH id is `project.module.group.seq-TYPE`; the group is the third segment.
   const group = chatId.split('.')[2]
   const data = await call(
@@ -440,7 +469,6 @@ export async function startChatRun(chatId: string, providerId: string | null): P
       mode: 'single',
       provider_id: providerId || undefined,
     }),
-    'Failed to call the AI.',
   )
   return data?.run_id ?? null
 }
@@ -448,13 +476,12 @@ export async function startChatRun(chatId: string, providerId: string | null): P
 export async function fetchRun(runId: string): Promise<AiRunState> {
   const data = await call(
     () => getRequest<{ status?: string; end_reason?: string | null }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
-    'Failed to read the AI run.',
   )
   return { runId, status: data?.status === 'finished' ? 'finished' : 'running', endReason: data?.end_reason ?? null }
 }
 
 export async function cancelRun(runId: string): Promise<void> {
-  await call(() => postRequest<unknown>(`${API}/ai-invoke/${encodeURIComponent(runId)}/cancel`, {}), 'Failed to stop the AI run.')
+  await call(() => postRequest<unknown>(`${API}/ai-invoke/${encodeURIComponent(runId)}/cancel`, {}))
 }
 
 /** The chat run still owning this CH document, if any (re-attach after a remount). */
@@ -462,7 +489,6 @@ export async function fetchActiveChatRun(chatId: string): Promise<string | null>
   const groupId = chatId.split('.').slice(0, 3).join('.')
   const data = await call(
     () => getRequest<{ active?: boolean; run_id?: string; status?: string; doc_ref?: string }>(`${API}/ai-invoke/active`, { group_id: groupId }),
-    'Failed to read the active AI run.',
   )
   if (!data?.active || !data.run_id || data.doc_ref !== chatId || data.status === 'finished') return null
   return data.run_id
@@ -520,18 +546,18 @@ export function toChatSettings(raw: RawChatSettings | null | undefined): ChatSet
 }
 
 export async function fetchChatSettings(): Promise<ChatSettings> {
-  return toChatSettings(await call(() => getRequest<RawChatSettings>(`${API}/me/chat-settings`), 'Failed to load chat settings.'))
+  return toChatSettings(await call(() => getRequest<RawChatSettings>(`${API}/me/chat-settings`)))
 }
 
 export async function saveChatSettings(patch: ChatSettingsPatch): Promise<ChatSettings> {
-  return toChatSettings(await call(() => patchRequest<RawChatSettings>(`${API}/me/chat-settings`, patch), 'Failed to save chat settings.'))
+  return toChatSettings(await call(() => patchRequest<RawChatSettings>(`${API}/me/chat-settings`, patch)))
 }
 
 // ── Mention copy ─────────────────────────────────────────────────────────────────────
 /** The compact chat mention the server builds with an edit token (0293, action_scope chat). */
 export async function issueChatMention(chatId: string): Promise<string> {
   const parts = splitGroupId(chatId)
-  if (!parts) throw new ConversationRequestError(`Not a document id: ${chatId}`, null, null)
+  if (!parts) throw clientCheckFailure()
   const data = await call(
     () => postRequest<{ mention?: string | null }>(`${API}/token/issue`, {
       project: parts.project,
@@ -540,8 +566,7 @@ export async function issueChatMention(chatId: string): Promise<string> {
       doc_ref: chatId,
       action_scope: 'chat',
     }),
-    'Failed to issue the mention.',
   )
-  if (!data?.mention) throw new ConversationRequestError('The server returned no mention.', null, null)
+  if (!data?.mention) throw clientCheckFailure()
   return data.mention
 }

@@ -234,6 +234,21 @@ export function readPaletteDragData(transfer: Pick<DataTransfer, 'getData'> | nu
 }
 
 /**
+ * flowgate.v02.0088 F13: the definition a new node is made from, at the moment it is placed. A
+ * selection, a drag or a context-menu entry may have been made in another language, so a default
+ * item's label is built again from its item id in the language of the placing moment; a
+ * user-defined item keeps its own words. Existing Graph labels are never touched by this.
+ */
+export function placedPaletteDefinition(
+  definition: PaletteItemDefinition,
+  translate: (key: string) => string,
+): PaletteItemDefinition {
+  if (definition.custom) return definition
+  const item = DEFAULT_PALETTE_ITEMS.find((candidate) => candidate.id === definition.itemId)
+  return item ? { ...definition, label: translate(`gui.designer.palette.items.${item.labelKey}`) } : definition
+}
+
+/**
  * flowgate.v02.0045 S3 (P0008 §5.1): the Graph node a dropped item stands for. A default item with
  * a document type is a document node; the `confirm` card is a gate node; a user-defined item is a
  * custom node. The node kind for drawing is the item's own kind key.

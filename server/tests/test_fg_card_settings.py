@@ -673,3 +673,32 @@ def test_the_feature_is_in_the_v02_package_and_the_graph_holds_only_the_port():
     imported = {(n.module or "").split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     imported |= {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     assert imported <= {"__future__", "threading", "typing"}
+
+
+
+# ── flowgate.v02.0088 T#1: the AI delegation line's document in the PATCH request's language ─────────────────────
+
+@pytest.mark.parametrize("locale, name", [("ko", "AI 위임"), ("ja", "AI委任"), ("en", "AI delegation")])
+def test_turning_ai_delegation_on_titles_its_new_document_in_the_request_s_language(env, locale, name):
+    from modules.flow_gate.db import documents as db_documents
+
+    key = put_draft(env, FB, 0, [node("tmp_r", "R")])["key_map"]["tmp_r"]
+    in_locale = {**_h(), "x-locale": locale}
+    res = env["client"].patch(f"/api/v1/flows/{FB}/nodes/{key}/settings", json={"field": "delegation", "value": "on"},
+                              headers=in_locale)
+    assert res.status_code == 200, res.text
+    lines, rows = _card_lines(env, FB, key)
+    assert lines == [("requirement", "R"), ("delegation", "M")]
+    delegation_doc = rows[1]["doc_id"]
+    assert db_documents.get_by_id(delegation_doc)["title"] == f"R · {name}"
+    assert db_documents.get_by_id(rows[0]["doc_id"])["title"] == "R · 요구사항"         # placed in ko: kept
+    other = "ja" if locale != "ja" else "en"
+    again = env["client"].patch(f"/api/v1/flows/{FB}/nodes/{key}/settings",
+                                json={"field": "delegation", "value": "on"}, headers={**_h(), "x-locale": other})
+    assert again.status_code == 200, again.text                                  # on again: the same line, no new title
+    assert _card_lines(env, FB, key)[1] == rows
+    assert db_documents.get_by_id(delegation_doc)["title"] == f"R · {name}"
+    resaved = env["client"].put(f"/api/v1/flows/{FB}/graph/draft", headers={**_h(), "x-locale": other},
+                                json={"draft_version": 1, "nodes": [node(key, "R")], "edges": []})
+    assert resaved.status_code == 200, resaved.text                              # a re-save keeps it too
+    assert _card_lines(env, FB, key)[1] == rows and db_documents.get_by_id(delegation_doc)["title"] == f"R · {name}"

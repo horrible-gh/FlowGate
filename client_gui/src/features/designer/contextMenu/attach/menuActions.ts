@@ -78,8 +78,11 @@ export interface DesignerMenuServerDeps {
   readonly remove: (projectId: string, flowId: string, kind: 'folder' | 'file', path: string) => Promise<MenuActionResult>
   /** One file of the Flow's worktree against the project Base (read from the project's Git status, named in the diff). */
   readonly fileDiff: (projectId: string, flowId: string, path: string) => Promise<MenuActionResult<MenuActionDiff>>
-  /** A short note outside a window (파일 다운로드 runs without one). */
-  readonly notify?: (message: string, tone: 'success' | 'warning' | 'danger') => void
+  /**
+   * A short note outside a window (파일 다운로드 runs without one). flowgate.v02.0088 F16: a function is called each time
+   * the note renders, so its words follow a language switch; a string is shown as given.
+   */
+  readonly notify?: (message: string | (() => string), tone: 'success' | 'warning' | 'danger') => void
 }
 
 /** The dialog the host shows: the request and the re-check of the menu that made it. */

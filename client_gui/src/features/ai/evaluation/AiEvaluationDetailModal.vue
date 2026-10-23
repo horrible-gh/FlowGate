@@ -163,7 +163,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ close: []; changed: [] }>()
-const { t, te } = useI18n()
+const { t, te, locale } = useI18n()
 
 const evaluation = ref<AiEvaluation | null>(null)
 const humanScore = ref<string | number>('')
@@ -273,10 +273,13 @@ function lifecycleTone(lifecycle: EvaluationLifecycle): 'neutral' | 'info' | 'su
   return 'info'
 }
 
+// flowgate.v02.0088 F09: the app's language, not the browser's. Called from the template, so
+// reading `locale` here makes an open list / detail re-render on a language switch; the stored
+// timestamp itself is never changed.
 function formatDate(value?: string | null): string {
   if (!value) return '—'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale.value)
 }
 </script>
 

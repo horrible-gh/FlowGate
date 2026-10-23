@@ -407,7 +407,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       expect(document.body.querySelector('[data-test="qna-window-mode"]')?.getAttribute('title')).toBe('Flow 소유가 충돌해 읽기 전용입니다.')
       expect(win.querySelector('[data-test="qna-window-form"]')).toBeNull()
       expect(win.querySelector('[data-test="qna-window-ai"]')).toBeNull()
-      win.closest('.ui-modeless-panel')!.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click()
+      win.closest('.ui-modeless-panel')!.querySelector<HTMLButtonElement>('[data-modeless-action="close"]')!.click()
       await flushPromises()
       expect(windowOf(13)).toBeNull()
       await open(w, 10)

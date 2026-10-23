@@ -28,6 +28,6 @@ def write_card_line(flow_id: str, node_key: str, slot: str, request: Request, bo
             raise legacy.invalid(request, errors)
         group = legacy.load_flow(flow_id)
         legacy.authorize(user_id, group)
-        return compose.write_line(group, node_key, slot, content, user_id)
+        return compose.write_line(group, node_key, slot, content, user_id, legacy.locale_of(request))
 
     return legacy.run(request, handle, 201)

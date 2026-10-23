@@ -74,8 +74,10 @@ def read(group: dict, node_key: str) -> dict:
     return _payload(flow_id, node, repository.values(flow_id, node_key))
 
 
-def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[str]) -> dict:
-    """``PATCH /flows/{flow_id}/nodes/{node_key}/settings`` — one field, saved at once."""
+def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[str],
+          locale: Optional[str] = None) -> dict:
+    """``PATCH /flows/{flow_id}/nodes/{node_key}/settings`` — one field, saved at once. ``locale`` (the request's)
+    titles an AI delegation line document the change makes (flowgate.v02.0088)."""
     flow_id = group["group_id"]
     legacy.require_writable(flow_id)
     if not repository.available():
@@ -109,7 +111,8 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
             repository.put(flow_id, node_key, name, checked, user_id)
         stored = repository.values(flow_id, node_key)
         if name == DELEGATION_FIELD:
-            card_lines.set_delegation(group, node, stored.get(DELEGATION_FIELD) == "on", user_id, registered)
+            card_lines.set_delegation(group, node, stored.get(DELEGATION_FIELD) == "on", user_id, registered,
+                                      locale)
         return _payload(flow_id, node, stored)
 
     return legacy.with_flow_guard(flow_id, body)

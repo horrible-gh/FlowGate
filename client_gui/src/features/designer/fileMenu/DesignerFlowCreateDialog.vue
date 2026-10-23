@@ -13,7 +13,7 @@
     </template>
 
     <template #default>
-      <Alert v-if="submitError" :id="errorId" tone="danger" class="dfm-alert" data-test="designer-flow-create-error">{{ submitError }}</Alert>
+      <Alert v-if="submitError" :id="errorId" tone="danger" class="dfm-alert" data-test="designer-flow-create-error">{{ submitErrorText }}</Alert>
       <form class="dfm-form" data-test="designer-flow-create" @submit.prevent="submit">
         <div class="dfm-field">
           <label class="dfm-label" for="dfc-group">{{ t('gui.designer.file_menu.group') }}</label>
@@ -97,7 +97,20 @@ const loading = ref(false)
 const groupId = ref('')
 const title = ref('')
 const submitting = ref(false)
-const submitError = ref<string | null>(null)
+// flowgate.v02.0088 F10: the server's own words raw, otherwise the localized fallback key —
+// rendered in the current locale while it stays on screen. (The adapter leaves only the server's
+// words in Error.message; an empty one means there were none.)
+type SubmitError = { readonly key: string } | { readonly raw: string }
+const submitError = ref<SubmitError | null>(null)
+const submitErrorText = computed(() => {
+  const error = submitError.value
+  return error ? ('raw' in error ? error.raw : t(error.key)) : ''
+})
+
+function failureOf(err: unknown, key: string): SubmitError {
+  const message = err instanceof Error ? err.message.trim() : ''
+  return message ? { raw: message } : { key }
+}
 const attemptedSubmit = ref(false)
 
 const groups = computed<ExplorerGroup[]>(() =>
@@ -127,7 +140,7 @@ async function load() {
     if (!groups.value.some((group) => group.id === groupId.value)) groupId.value = groups.value[0]?.id ?? ''
   } catch (err) {
     if (myGeneration !== generation) return
-    submitError.value = err instanceof Error && err.message ? err.message : t('gui.designer.file_menu.load_failed')
+    submitError.value = failureOf(err, 'gui.designer.file_menu.load_failed')
   } finally {
     if (myGeneration === generation) loading.value = false
   }
@@ -162,7 +175,7 @@ async function submit() {
     emit('created', { id: created.id, title: created.title, groupId: group.id, groupName: group.name })
   } catch (err) {
     if (myGeneration !== generation) return
-    submitError.value = err instanceof Error && err.message ? err.message : t('gui.designer.file_menu.create_failed')
+    submitError.value = failureOf(err, 'gui.designer.file_menu.create_failed')
   } finally {
     if (myGeneration === generation) submitting.value = false
   }

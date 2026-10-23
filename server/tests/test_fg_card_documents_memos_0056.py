@@ -1191,3 +1191,28 @@ def test_startup_registers_the_memo_port_and_the_port_is_stdlib_only():
     assert callers == ["modules/flow_gate/api/v1/ai_invoke_routes.py",
                        "modules/flow_gate/graph_workflow/services/ai_node_starter.py",
                        "modules/flow_gate/services/q_answer_invoke_service.py"]
+
+
+
+# ── flowgate.v02.0088 T#1: a person's result is titled in the language of its own POST ───────────────────────────
+
+@pytest.mark.parametrize("locale, name", [("ko", "지시서"), ("ja", "指示書"), ("en", "Instruction")])
+def test_a_person_s_result_is_titled_in_the_language_of_its_own_request(env, decided, locale, name):
+    """The result path (``_reserve_result``) is the same POST: its X-Locale titles the result; the card's empty draft
+    it supersedes keeps the title it was made with."""
+    _admin_and_reviewer(env)
+    (key,) = _chain(env, [("T", LEE)])
+    _start(env)
+    placeholder = _line_doc(env, FA, key, "instruction")["doc_id"]
+    before = _doc_row(placeholder)["title"]
+    res = env["client"].post(f"/api/v1/flows/{FA}/nodes/{key}/slots/instruction/document",
+                             json={"content": "## Work\n\nthe person's result\n"}, headers={**_h(), "x-locale": locale})
+    assert res.status_code == 201, res.text
+    made = res.json()
+    result = made["doc_id"]
+    assert made["bound_as_result"] is True and made["line"]["doc_id"] == result
+    row = _doc_row(result)
+    front = _body_of(env, result).split("\n---", 1)[0]
+    assert made["line"]["title"] == row["title"] == f"T · {name}" and f"\ntitle: T · {name}\n" in front + "\n"
+    assert _canvas_lines(env, FA, key)["instruction"]["title"] == f"T · {name}"
+    assert _doc_row(placeholder)["title"] == before == "T · 지시서"            # placed in ko, never retitled

@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '@/features/project/types'
+import { setTestLocale } from './projectI18n'
 
 const fetchActiveProjects = vi.hoisted(() => vi.fn())
 const createProjectApi = vi.hoisted(() => vi.fn())
@@ -638,5 +639,46 @@ describe('features/project/ProjectDialog', () => {
 
     expect(document.activeElement).not.toBe(document.querySelector('.pd-search-input'))
     wrapper.unmount()
+  })
+
+  // flowgate.v02.0088 F02/F05: the Dialog's words and accessible names follow the language; the created-Project toast
+  // is built in the current language whenever it renders, the Project name only interpolated, and its close button is
+  // named with gui.common.close.
+  it('shows its words in ja and keeps a created toast in the language of the moment', async () => {
+    setTestLocale('ja')
+    currentUser.value = { username: 'admin', email: null, isAdmin: true }
+    fetchActiveProjects.mockResolvedValueOnce([]).mockResolvedValueOnce([project('np', { name: '새 프로젝트 가' })])
+    createProjectApi.mockResolvedValue(project('np', { name: '새 프로젝트 가' }))
+    const wrapper = mountDialog()
+    useProjectStore().openDialog()
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    expect(document.querySelector('.pd-head-title')?.textContent).toBe('プロジェクトを開く')
+    expect(document.querySelector('.pd-search-input')?.getAttribute('aria-label')).toBe('プロジェクトを検索')
+    expect(document.querySelector('.pd-head .ui-icon-btn')?.getAttribute('aria-label')).toBe('閉じる')
+    expect(document.querySelector('.pd-foot')?.textContent).toContain('選択 / 開く')
+
+    ;(document.querySelector('.pd-intro .ui-btn') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+    ;(document.querySelector('#pcd-name') as HTMLInputElement).value = '새 프로젝트 가'
+    ;(document.querySelector('#pcd-name') as HTMLInputElement).dispatchEvent(new Event('input'))
+    ;(document.querySelector('#pcd-id') as HTMLInputElement).value = 'np'
+    ;(document.querySelector('#pcd-id') as HTMLInputElement).dispatchEvent(new Event('input'))
+    await wrapper.vm.$nextTick()
+    ;(document.querySelector('.pcd-actions .ui-btn--primary') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    const toast = () => document.querySelector('.ui-toast')
+    expect(toast()?.querySelector('.ui-toast-content')?.textContent?.trim()).toBe('プロジェクト「새 프로젝트 가」を作成しました。')
+    expect(toast()?.querySelector('.ui-toast-close')?.getAttribute('aria-label')).toBe('閉じる')
+    setTestLocale('en')
+    await wrapper.vm.$nextTick()
+    expect(toast()?.querySelector('.ui-toast-content')?.textContent?.trim()).toBe('Created project 새 프로젝트 가.')
+    expect(toast()?.querySelector('.ui-toast-close')?.getAttribute('aria-label')).toBe('Close')
+    expect(document.querySelector('.pd-head-title')?.textContent).toBe('Open project')
+    wrapper.unmount()
+    document.body.querySelectorAll('.ui-toast-host').forEach((el) => el.remove())
   })
 })

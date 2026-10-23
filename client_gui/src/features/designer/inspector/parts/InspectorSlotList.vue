@@ -159,6 +159,12 @@ export interface InspectorSlotView {
   readonly key?: string
   readonly kind?: 'document' | 'result'
   readonly name: string
+  /**
+   * flowgate.v02.0088 F14/F15: the i18n key `name` was made from, when the line's kind is a UI word. UI only: it is
+   * handed to the [작성] / [AI 호출] windows so they show the kind in the current language, and is never sent to an
+   * API or stored.
+   */
+  readonly nameKey?: string | null
   readonly id?: string | null
   readonly bodyState?: string | null
   readonly empty?: boolean

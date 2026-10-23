@@ -23,6 +23,7 @@ import {
   openDocumentAiWindow,
 } from '@/features/documentWindow'
 import { documentAiFailure, documentAiMessages, documentAiPhase, documentAiRunnable } from '@/features/documentWindow/documentAiModel'
+import taskMessages from '@/features/designer/inspector/features/taskCard/messages'
 
 const api = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
 
@@ -241,5 +242,46 @@ describe('the AI call window (flowgate.v02.0056 F2-2)', () => {
     api.postRequest.mockRejectedValue({ isAxiosError: true, response: { status: 403, data: { code: 'permission_denied', message: '권한 없음' } } })
     await click(q('document-ai-run'))
     expect(text(q('document-ai-failure'))).toBe('AI를 실행할 권한이 없습니다. — 권한 없음')
+  })
+})
+
+// flowgate.v02.0088 F15 (D0004 §3.2): the AI window's kind follows the language from the line's nameKey; the document
+// title, the AI choices and the opinion stay as they are. Without a key, or with one the catalog does not have, the
+// name as it came. The window stays keyed by docId: opening it again with a key is the same window.
+describe('the kind name of the AI call window (0088 F15)', () => {
+  const KEY = 'gui.inspector.taskCard.slot.report'
+  for (const locale of ['ko', 'en', 'ja'] as const) {
+    i18n.global.mergeLocaleMessage(locale, { gui: { inspector: { taskCard: taskMessages[locale] } } })
+  }
+
+  it('changes only the kind on a language switch, keeping the title, the opinion and the window', async () => {
+    openDocumentAiWindow({ docId: DOC, groupId: FLOW, projectId: 'flowgate', name: '레포트', nameKey: KEY, title: '작업레포트 원제목' })
+    await flushPromises()
+    expect(text(q('document-ai-doc'))).toBe('레포트 · 작업레포트 원제목')
+    expect(q('document-ai-doc')?.getAttribute('title')).toBe('레포트 · 작업레포트 원제목')
+    const opinion = document.body.querySelector<HTMLTextAreaElement>('textarea')
+    if (opinion) {
+      opinion.value = '의견 원문'
+      opinion.dispatchEvent(new Event('input'))
+    }
+    i18n.global.locale.value = 'ja'
+    await flushPromises()
+    expect(text(q('document-ai-doc'))).toBe('レポート · 작업레포트 원제목')
+    expect(q('document-ai-doc')?.getAttribute('title')).toBe('レポート · 작업레포트 원제목')
+    if (opinion) expect(opinion.value).toBe('의견 원문')
+    openDocumentAiWindow({ docId: DOC, groupId: FLOW, projectId: 'flowgate', name: '레포트', nameKey: KEY, title: '작업레포트 원제목' })
+    await flushPromises()
+    expect(documentAiWindowList()).toHaveLength(1)
+    expect(api.postRequest).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['no nameKey', {}],
+    ['an unknown nameKey', { nameKey: 'gui.inspector.taskCard.slot.nope' }],
+  ])('shows name as it came for %s', async (_label, extra) => {
+    i18n.global.locale.value = 'en'
+    openDocumentAiWindow({ docId: DOC, groupId: FLOW, projectId: 'flowgate', name: '레포트', title: '작업레포트', ...extra })
+    await flushPromises()
+    expect(text(q('document-ai-doc'))).toBe('레포트 · 작업레포트')
   })
 })

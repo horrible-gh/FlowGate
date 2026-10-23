@@ -19,9 +19,9 @@
         </span>
         <span v-if="project.description" class="project-row-desc">{{ project.description }}</span>
       </span>
-      <span v-if="project.updatedAt" class="project-row-updated">최종 수정 {{ formattedUpdatedAt }}</span>
+      <span v-if="project.updatedAt" class="project-row-updated">{{ t('gui.project.row.updated', { date: formattedUpdatedAt }) }}</span>
     </button>
-    <Button type="button" variant="secondary" size="sm" class="project-row-open" @click="emit('open', project)">열기</Button>
+    <Button type="button" variant="secondary" size="sm" class="project-row-open" @click="emit('open', project)">{{ t('gui.project.row.open') }}</Button>
   </li>
 </template>
 
@@ -46,6 +46,7 @@
 // the one focusable control the state actually belongs to (project-row-main), not on the
 // non-interactive <li>.
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Button from '../../components/ui/Button.vue'
 import type { Project } from './types'
 
@@ -54,6 +55,7 @@ const props = defineProps<{
   selected: boolean
 }>()
 const emit = defineEmits<{ select: [project: Project]; open: [project: Project] }>()
+const { t } = useI18n()
 
 // "최종 수정" only — never framed as "최근 사용/최근 열기" (D0004 §2.3, T#2 §3). A computed,
 // not a plain value read once at setup: ProjectList's keyed rows are reused across a list

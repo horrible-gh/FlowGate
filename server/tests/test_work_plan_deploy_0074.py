@@ -1094,10 +1094,10 @@ def _no_instruction_drafts(monkeypatch):
 
     real = lines._line_document
 
-    def skip(group, node_, slot, made, registered, user_id):
+    def skip(group, node_, slot, made, registered, user_id, locale=None):     # 0088: the save's locale goes on
         if slot.slot == cs.INSTRUCTION:
             return None, False
-        return real(group, node_, slot, made, registered, user_id)
+        return real(group, node_, slot, made, registered, user_id, locale)
 
     monkeypatch.setattr(lines, "_line_document", skip)
 
@@ -1248,3 +1248,97 @@ def test_a_final_graph_with_an_edge_to_a_missing_node_is_refused_before_any_writ
     assert _execute(dep, wp_doc, "first", expect=409, baseline=preview["baseline"])["code"] == "deploy_blocked"
     assert (_draft(dep), _group_docs(dep), _storage_files(dep), _all_saves(dep)) == before
     assert _chain(dep, wp_key) == []
+
+
+
+# ── flowgate.v02.0088 T#1: the instruction documents a deploy makes are titled in its request's language ────────
+
+INSTRUCTION_NAMES = {"ko": "지시서", "ja": "指示書", "en": "Instruction"}
+
+
+def _execute_in(env, wp_doc, mode, locale):
+    baseline = _preview(env, wp_doc, mode)["baseline"]
+    res = env["deploy"].post(f"/api/v1/documents/{wp_doc}/work-plan/deploy", json={"mode": mode, **baseline},
+                             headers={**_h(), "x-locale": locale})
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def _front_title(doc_id):
+    head = _text(doc_id).split("\n---", 1)[0]
+    return next(line[len("title: "):] for line in head.splitlines() if line.startswith("title: "))
+
+
+def _heading(doc_id):
+    body = _text(doc_id).split("\n---", 1)[1]
+    return next(line[2:] for line in body.splitlines() if line.startswith("# "))
+
+
+def _canvas_title(env, key, slot="instruction"):
+    res = env["client"].get(f"/api/v1/flows/{FA}/canvas", headers=_h())
+    assert res.status_code == 200, res.text
+    shown = next(n for n in res.json()["nodes"] if n["node_key"] == key)
+    return next(line["title"] for line in shown["card_documents"] if line["slot"] == slot)
+
+
+@pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+def test_a_deploy_s_graph_save_titles_the_new_cards_documents_in_its_language(dep, locale):
+    """The deploy's draft save (the route's own X-Locale down the Graph port): heading = row = front matter = line."""
+    _wp_key, wp_doc, _km = _flow(dep)
+    _write_plan(wp_doc, {"T": 1}, texts={"T#1": "작업 지시"})
+    answer = _execute_in(dep, wp_doc, "first", locale)
+    key = _key_of(answer, "T#1")
+    doc_id = _line_doc(dep, key)
+    title = _doc_row(doc_id)["title"]
+    assert title.endswith(" · " + INSTRUCTION_NAMES[locale]) or title == INSTRUCTION_NAMES[locale]
+    assert _heading(doc_id) == _front_title(doc_id) == _canvas_title(dep, key) == title
+    report = _line_doc(dep, key, "report")
+    assert _doc_row(report)["title"].endswith({"ko": "레포트", "ja": "レポート", "en": "Report"}[locale])
+    assert _text(doc_id).rstrip().endswith("작업 지시") and _body_saves(dep, doc_id) == ["work_plan_deploy"]
+
+
+@pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+def test_a_deploy_s_new_instruction_line_is_titled_once_for_its_heading_row_and_front_matter(dep, monkeypatch, locale):
+    """The direct branch (``_create_line``, reached as above: the draft save leaves the instruction line without a
+    document): the title is decided once in the request's locale and is the heading, the row, the front matter and
+    the line's title."""
+    _wp_key, wp_doc, _km = _flow(dep)
+    _write_plan(wp_doc, {"T": 1}, texts={"T#1": "새로 만든 지시 문서"})
+    made = []
+    with monkeypatch.context() as m:
+        _no_instruction_drafts(m)
+        _count_creations(m, made)
+        answer = _execute_in(dep, wp_doc, "first", locale)
+    [key] = answer["created_node_keys"]
+    assert made == [key] and [c["instruction"] for c in answer["cards"]] == ["instruction_write"]
+    doc_id = _line_doc(dep, key)
+    title = _doc_row(doc_id)["title"]
+    assert title == INSTRUCTION_NAMES[locale]                                    # the deploy's node has no label
+    assert _heading(doc_id) == _front_title(doc_id) == _canvas_title(dep, key) == title
+    assert _text(doc_id).rstrip().endswith("새로 만든 지시 문서") and _body_saves(dep, doc_id) == ["work_plan_deploy"]
+    assert _source(dep, key)["instruction_doc_id"] == doc_id
+
+
+def test_a_deploy_in_another_language_fills_an_existing_instruction_under_its_own_title(dep):
+    """``_instruction_file``: the card's empty draft keeps its doc id, front matter and title (made in ko)."""
+    wp_doc, [key] = _deployed_t(dep)
+    doc_id = _line_doc(dep, key)
+    title = _doc_row(doc_id)["title"]
+    assert title.endswith("지시서")
+    _execute_in(dep, wp_doc, "add", "ja")
+    assert _line_doc(dep, key) == doc_id and _doc_row(doc_id)["title"] == title
+    assert _heading(doc_id) == _front_title(doc_id) == title and _text(doc_id).rstrip().endswith("지시 1")
+
+
+def test_a_work_plan_card_made_in_japanese_has_a_japanese_title_and_the_same_plan_contract(dep):
+    first = dep["client"].put(f"/api/v1/flows/{FA}/graph/draft", headers={**_h(), "x-locale": "ja"},
+                              json={"draft_version": 0, "nodes": [node("tmp_r", "R"), node("tmp_wp", "WP")],
+                                    "edges": [edge("tmp_e", "tmp_r", "tmp_wp")]})
+    assert first.status_code == 200, first.text
+    body = first.json()
+    wp_lines = body["card_documents"][body["key_map"]["tmp_wp"]]
+    wp_doc = next(line["doc_id"] for line in wp_lines if line["slot"] == "plan")
+    assert _doc_row(wp_doc)["title"].startswith("作業計画 — ")
+    _write_plan(wp_doc, {"T": 1})                                                # the plan reads, saves and deploys
+    assert _status(dep, wp_doc)["deployable"] is True
+    assert _execute(dep, wp_doc, "first")["created_node_keys"]

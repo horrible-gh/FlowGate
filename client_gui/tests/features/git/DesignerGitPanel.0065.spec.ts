@@ -167,7 +167,7 @@ describe('DesignerGitPanel — Git 연결 modeless', () => {
     await click('git-unlinked-connect')
     expect(q('git-connect-window')).not.toBeNull()
     expect(text('git-connect-title')).toBe('⑂ Git 연결')
-    document.body.querySelector<HTMLButtonElement>('.ui-modeless-titlebar-actions button[aria-label="Close"]')?.click()
+    document.body.querySelector<HTMLButtonElement>('.ui-modeless-titlebar-actions button[data-modeless-action="close"]')?.click()
     await flushPromises()
     expect(q('git-connect-window')).toBeNull()
     // The window is the panel's own: the 0033 window list never carries it.
@@ -178,7 +178,7 @@ describe('DesignerGitPanel — Git 연결 modeless', () => {
   it('minimize / restore keep the window open', async () => {
     await mountPanel(createFakeGitSource({ status: off() }))
     await click('git-unlinked-connect')
-    document.body.querySelector<HTMLButtonElement>('.ui-modeless-titlebar-actions button[aria-label="Minimize"]')?.click()
+    document.body.querySelector<HTMLButtonElement>('.ui-modeless-titlebar-actions button[data-modeless-action="minimize"]')?.click()
     await flushPromises()
     expect(text('git-connect-restore')).toBe('⑂ Git 연결 창 복원')
     await click('git-connect-restore')

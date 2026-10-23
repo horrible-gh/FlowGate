@@ -276,7 +276,7 @@ describe('review history window (flowgate.v02.0056 F1)', () => {
 
   it('a second open request is the same window, restored from minimized and read again; a failed read again keeps what is shown', async () => {
     const panel = await open(DOC)
-    await click(panel.querySelector<HTMLElement>('[aria-label="Minimize"]'))
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="minimize"]'))
     expect(documentHistoryWindowList()[0].minimized).toBe(true)
     historyRead.mockImplementationOnce(async () => {
       throw axiosError(500)
@@ -293,7 +293,7 @@ describe('review history window (flowgate.v02.0056 F1)', () => {
     const panel = await open(DOC)
     await open(BARE)
     expect(panels()).toHaveLength(2)
-    await click(panel.querySelector<HTMLElement>('[aria-label="Close"]'))
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="close"]'))
     expect(documentHistoryWindowList().map((win) => win.docId)).toEqual([BARE])
     expect(panels()).toHaveLength(1)
     closeAllDocumentWindows()

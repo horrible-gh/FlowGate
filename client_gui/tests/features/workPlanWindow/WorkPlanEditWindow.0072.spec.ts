@@ -205,17 +205,17 @@ describe('modeless behavior (ModelessShell)', () => {
     document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
     await flushPromises()
     expect(parseInt(panel.style.left, 10)).toBe(left + 40)
-    await click(panel.querySelector<HTMLElement>('[aria-label="Minimize"]'))
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="minimize"]'))
     expect(workPlanEditWindowList()[0].minimized).toBe(true)
     expect((panel.querySelector('.ui-modeless-body') as HTMLElement).style.display).toBe('none')
-    await click(panel.querySelector<HTMLElement>('[aria-label="Restore"]'))
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="restore"]'))
     expect(workPlanEditWindowList()[0].minimized).toBe(false)
   })
 
   it('× of the titlebar closes like [닫기] (asks first when dirty)', async () => {
     await open()
     await type(q('wp-edit-step-note', row('c_d1|main')!) as HTMLInputElement, '변경')
-    await click(document.body.querySelector<HTMLElement>('.ui-modeless-panel [aria-label="Close"]'))
+    await click(document.body.querySelector<HTMLElement>('.ui-modeless-panel [data-modeless-action="close"]'))
     expect(text(document.body.querySelector('.ui-confirm-title'))).toBe('저장하지 않은 변경을 버리고 닫을까요?')
     await click(confirmButtons()[1])
     expect(workPlanEditWindowList()).toHaveLength(0)
@@ -1091,10 +1091,10 @@ describe('the review popover (0073 T#2)', () => {
     await click(button('c_t1|main'))
     expect(popover()).not.toBeNull()
     const panel = q('wp-edit-window')!.closest<HTMLElement>('.ui-modeless-panel')!
-    await click(panel.querySelector<HTMLElement>('[aria-label="Minimize"]'))
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="minimize"]'))
     expect(workPlanEditWindowList()[0].minimized).toBe(true)
     expect(popover()).toBeNull()
-    await click(panel.querySelector<HTMLElement>('[aria-label="Restore"]'))
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="restore"]'))
     expect(workPlanEditWindowList()[0].minimized).toBe(false)
     expect(popover()).toBeNull()
     // the registry minimizing it (the window list) does the same

@@ -59,11 +59,27 @@ describe('fetchActiveProjects', () => {
     expect(projects.map((p) => p.id)).toEqual(['a'])
   })
 
-  it('propagates a normalized error message on failure', async () => {
-    getRequest.mockRejectedValue(new Error('network down'))
-    extractApiErrorMessage.mockReturnValueOnce('Failed to load projects.')
-    await expect(fetchActiveProjects()).rejects.toThrow('Failed to load projects.')
-    expect(extractApiErrorMessage).toHaveBeenCalledWith(expect.any(Error), 'Failed to load projects.')
+  // flowgate.v02.0088 F10: the adapter keeps only the server's own diagnostic; the screen owns the localized
+  // general text, so no English default is put in its place.
+  it('propagates the server diagnostic as it was sent', async () => {
+    getRequest.mockRejectedValue({ isAxiosError: true, response: { status: 500, data: { detail: '서버 점검 중입니다.' } } })
+    extractApiErrorMessage.mockReturnValueOnce('서버 점검 중입니다.')
+    await expect(fetchActiveProjects()).rejects.toThrow('서버 점검 중입니다.')
+    expect(extractApiErrorMessage).toHaveBeenCalledWith(expect.anything(), '')
+  })
+
+  it('leaves the message empty without a server diagnostic (no English fallback, no transport line)', async () => {
+    getRequest.mockRejectedValueOnce(new Error('boom'))
+    await expect(fetchActiveProjects()).rejects.toThrow(/^$/)
+    // The transport's own English line ("Request failed with status code 500") is not a server diagnostic.
+    const transport = Object.assign(new Error('Request failed with status code 500'), {
+      isAxiosError: true,
+      response: { status: 500, data: '' },
+    })
+    getRequest.mockRejectedValueOnce(transport)
+    extractApiErrorMessage.mockReturnValueOnce('Request failed with status code 500')
+    const error = await fetchActiveProjects().catch((e: unknown) => e)
+    expect((error as Error).message).toBe('')
   })
 })
 

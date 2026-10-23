@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import { setCurrentUser } from '@/core/auth/currentUser'
+import AiEvaluationDetailModal from '@/features/ai/evaluation/AiEvaluationDetailModal.vue'
 import AiEvaluationPanel from '@/features/ai/evaluation/AiEvaluationPanel.vue'
 import * as api from '@/features/ai/api'
 import type { AiEvaluation, ProviderItem } from '@/features/ai/types'
@@ -161,5 +162,50 @@ describe('AiEvaluationPanel (0015 T0003, judge-scored since 0017)', () => {
     expect(wrapper.find('.detail-actions').exists()).toBe(false)
     expect(wrapper.findAll('.evaluation-detail-row')).toHaveLength(1)
     expect(wrapper.find('.action-btn--danger').exists()).toBe(false)
+  })
+})
+
+// flowgate.v02.0088 F09: evaluation dates follow the app's language, not the browser's default (jsdom's here), and an
+// open list / detail re-renders on a language switch; the stored timestamp is not changed.
+describe('evaluation dates follow the app language (0088 F09)', () => {
+  const STAMP = '2026-09-30T00:00:00Z'
+  const shown = (locale: string) => new Date(STAMP).toLocaleString(locale)
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    i18n.global.locale.value = 'ja'
+    setCurrentUser({ username: 'admin', email: null, isAdmin: true })
+    vi.spyOn(api, 'fetchEvaluationHistory').mockResolvedValue({ items: [evaluation({})], next_cursor: null })
+    vi.spyOn(api, 'listEvaluationSets').mockResolvedValue([])
+    vi.spyOn(api, 'fetchEvaluationDetail').mockResolvedValue(evaluation({ started_at: STAMP, finished_at: null }))
+  })
+
+  afterEach(() => {
+    mounted.splice(0).forEach((wrapper) => wrapper.unmount())
+    setCurrentUser(null)
+    document.body.innerHTML = ''
+    i18n.global.locale.value = 'ko'
+  })
+
+  it('the list uses the app language and changes with it', async () => {
+    expect(shown('ja')).not.toBe(shown('en'))
+    const wrapper = await mountPanel()
+    expect(wrapper.find('.date-cell').text()).toBe(shown('ja'))
+    i18n.global.locale.value = 'en'
+    await flushPromises()
+    expect(wrapper.find('.date-cell').text()).toBe(shown('en'))
+    expect(api.fetchEvaluationHistory).toHaveBeenCalledTimes(1)
+  })
+
+  it('the open detail uses the app language and changes with it', async () => {
+    const wrapper = mount(AiEvaluationDetailModal, { props: { open: true, evaluationId: 'ev-1' }, attachTo: document.body, global: { plugins: [i18n] } })
+    mounted.push(wrapper)
+    await flushPromises()
+    const meta = () => document.querySelector('.meta')?.textContent ?? ''
+    expect(meta()).toContain(shown('ja'))
+    i18n.global.locale.value = 'ko'
+    await flushPromises()
+    expect(meta()).toContain(shown('ko'))
+    expect(meta()).not.toContain(shown('ja'))
   })
 })

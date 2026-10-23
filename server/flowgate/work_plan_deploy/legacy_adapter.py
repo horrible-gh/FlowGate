@@ -146,8 +146,9 @@ def latest_revision(flow_id: str) -> tuple[Optional[int], Optional[dict]]:
     return latest_no, (definition_store.revision(flow_id, latest_no) if latest_no else None)
 
 
-def write_draft(group_row: dict, user_id: Optional[str], req, registered: set[str]) -> dict:
-    return graph_service.write_draft(group_row, user_id, req, None, registered)
+def write_draft(group_row: dict, user_id: Optional[str], req, registered: set[str],
+                locale: Optional[str] = None) -> dict:
+    return graph_service.write_draft(group_row, user_id, req, None, registered, locale)
 
 
 def protected_nodes(flow_id: str) -> set[str]:

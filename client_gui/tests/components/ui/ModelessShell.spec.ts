@@ -1,5 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
+import i18n from '@shared/i18n'
+import { registerAppMessages } from '@/app/i18n'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 
 // T0006 §6/§12: open/close, no backdrop, no focus trap, drag, resize, minimize/restore,
@@ -227,5 +229,63 @@ describe('components/ui/ModelessShell (T0006)', () => {
 
     first.unmount()
     second.unmount()
+  })
+
+  // flowgate.v02.0088 F06: the shell's own controls are named in the app's current language (gui.common.*), follow a
+  // switch while the window stays open, and an explicit label given by the caller wins over that default.
+  describe('accessible names of the shell controls (F06)', () => {
+    const setLocale = (locale: string) => {
+      ;(i18n.global.locale as unknown as { value: string }).value = locale
+    }
+    const control = (action: string) => document.querySelector<HTMLButtonElement>(`[data-modeless-action="${action}"]`)
+
+    afterEach(() => setLocale('ko'))
+
+    it.each([
+      ['ko', '최소화', '복원', '닫기'],
+      ['ja', '最小化', '元に戻す', '閉じる'],
+      ['en', 'Minimize', 'Restore', 'Close'],
+    ])('names minimize / restore / close in %s', async (locale, minimize, restore, close) => {
+      registerAppMessages(i18n)
+      setLocale(locale)
+      const wrapper = mountPanel()
+      expect(control('minimize')?.getAttribute('aria-label')).toBe(minimize)
+      expect(control('close')?.getAttribute('aria-label')).toBe(close)
+      control('minimize')!.click()
+      await wrapper.vm.$nextTick()
+      expect(document.querySelector('.ui-modeless-panel')?.classList.contains('is-minimized')).toBe(true)
+      expect(control('restore')?.getAttribute('aria-label')).toBe(restore)
+      wrapper.unmount()
+    })
+
+    it('follows a language switch while the window stays open, keeping its state and its icons', async () => {
+      registerAppMessages(i18n)
+      setLocale('ko')
+      const wrapper = mountPanel()
+      control('minimize')!.click()
+      await wrapper.vm.$nextTick()
+      setLocale('ja')
+      await wrapper.vm.$nextTick()
+      expect(control('restore')?.getAttribute('aria-label')).toBe('元に戻す')
+      expect(control('close')?.getAttribute('aria-label')).toBe('閉じる')
+      expect(document.querySelector('.ui-modeless-panel')?.classList.contains('is-minimized')).toBe(true)
+      expect(control('restore')?.textContent?.trim()).toBe('□')
+      expect(control('close')?.textContent?.trim()).toBe('×')
+      control('close')!.click()
+      expect(wrapper.emitted('close')).toHaveLength(1)
+      wrapper.unmount()
+    })
+
+    it('an explicit label wins over the localized default', async () => {
+      registerAppMessages(i18n)
+      setLocale('ja')
+      const wrapper = mountPanel({ minimizeLabel: 'Fold window', restoreLabel: 'Unfold window', closeLabel: 'Dismiss window' })
+      expect(control('minimize')?.getAttribute('aria-label')).toBe('Fold window')
+      expect(control('close')?.getAttribute('aria-label')).toBe('Dismiss window')
+      control('minimize')!.click()
+      await wrapper.vm.$nextTick()
+      expect(control('restore')?.getAttribute('aria-label')).toBe('Unfold window')
+      wrapper.unmount()
+    })
   })
 })

@@ -296,7 +296,7 @@ describe('`Diff` tab — the file detail (R §6-2–§6-5)', () => {
     await click(row('src/b.ts'))
     expect(q('git-center-diff')).not.toBeNull()
     const shell = q('git-window')!.closest<HTMLElement>('.ui-modeless-panel')!
-    await click(shell.querySelector<HTMLElement>('button[aria-label="Close"]'))
+    await click(shell.querySelector<HTMLElement>('button[data-modeless-action="close"]'))
     expect(q('git-window')).toBeNull()
     await click(document.body.querySelector<HTMLElement>('[data-test="git-worktree-entry"][data-tab="diff"]'))
     expect(q('git-center-diff')).toBeNull()

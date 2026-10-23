@@ -720,3 +720,102 @@ def test_the_feature_code_is_in_the_v02_package_and_the_graph_holds_only_ports()
                      and p.name != "card_document_ports.py")
     assert callers == ["services/canvas_service.py", "services/graph_service.py",
                        "services/run_apply.py", "services/v01_contact.py"]
+
+
+
+# ── flowgate.v02.0088 T#1: the documents a request makes are titled in its language (D0010 §3 / §6) ─────────────
+
+REQUIREMENT_NAMES = {"ko": "요구사항", "ja": "要件", "en": "Requirement"}
+
+
+def _in(locale):
+    return {**_h(), "x-locale": locale}
+
+
+def put_draft_in(env, flow, version, nodes, locale, edges=()):
+    res = env["client"].put(f"/api/v1/flows/{flow}/graph/draft",
+                            json={"draft_version": version, "nodes": nodes, "edges": list(edges)}, headers=_in(locale))
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def _front_title(env, d):
+    head = (env["storage"] / d["file_path"]).read_text(encoding="utf-8").split("\n---", 1)[0]
+    return next(line[len("title: "):] for line in head.splitlines() if line.startswith("title: "))
+
+
+def _canvas_line(env, flow, key, slot):
+    shown = next(n for n in canvas(env, flow)["nodes"] if n["node_key"] == key)
+    return next(line for line in shown["card_documents"] if line["slot"] == slot)
+
+
+@pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+def test_a_graph_save_titles_a_new_requirement_in_its_language_everywhere_alike(env, locale):
+    """The draft PUT's X-Locale reaches the document generator: the save response's line, the row, the front matter
+    and the Canvas read carry the one title (default label, a B card name on a B card, a person's label)."""
+    body = put_draft_in(env, FB, 0, [node("tmp_r", "R", "요구사항"), node("tmp_t", "T", "로그인")], locale)
+    km = body["key_map"]
+    line = body["card_documents"][km["tmp_r"]][0]
+    row = doc(line["doc_id"])
+    assert line["title"] == row["title"] == _front_title(env, row) == REQUIREMENT_NAMES[locale]
+    assert _canvas_line(env, FB, km["tmp_r"], "requirement")["title"] == REQUIREMENT_NAMES[locale]
+    instruction = body["card_documents"][km["tmp_t"]][0]
+    row = doc(instruction["doc_id"])
+    expected = "로그인 · " + {"ko": "지시서", "ja": "指示書", "en": "Instruction"}[locale]
+    assert instruction["title"] == row["title"] == _front_title(env, row) == expected
+
+
+@pytest.mark.parametrize("locale, expected", [("ko", "요구사항"), ("ja", "バグレポート"), ("en", "Requirement")])
+def test_a_graph_save_titles_a_new_bug_by_its_type_not_its_card_name(env, locale, expected):
+    body = put_draft_in(env, FB, 0, [node("tmp_b", "B", {"ko": "버그", "ja": "バグ", "en": "Bug"}[locale])], locale)
+    line = body["card_documents"][body["key_map"]["tmp_b"]][0]
+    assert line["title"] == doc(line["doc_id"])["title"] == _front_title(env, doc(line["doc_id"])) == expected
+
+
+def test_a_save_in_another_language_keeps_every_stored_title(env):
+    """Reused roots, kept lines and a re-save never retitle: only a document a save makes takes its language."""
+    shown = put_draft_in(env, FA, 0, [node("tmp_r", "R", "要件")], "ja")      # FA: the live root R is reused
+    key = shown["key_map"]["tmp_r"]
+    assert shown["card_documents"][key][0]["doc_id"] == f"{FA}.0001-R"
+    assert shown["card_documents"][key][0]["title"] == doc(f"{FA}.0001-R")["title"] == "R 1"
+    first = put_draft_in(env, FB, 0, [node("tmp_r", "R", "Requirement")], "en")
+    rkey = first["key_map"]["tmp_r"]
+    doc_id = first["card_documents"][rkey][0]["doc_id"]
+    again = put_draft_in(env, FB, 1, [node(rkey, "R", "要件"), node("tmp_t", "T", "要件")], "ja")
+    kept = again["card_documents"][rkey][0]
+    assert (kept["doc_id"], kept["title"]) == (doc_id, "Requirement")
+    assert doc(doc_id)["title"] == _front_title(env, doc(doc_id)) == "Requirement"
+    assert again["card_documents"][again["key_map"]["tmp_t"]][0]["title"] == "要件 · 指示書"
+
+
+@pytest.mark.parametrize("locale, prefix", [("ko", "작업계획 — "), ("ja", "作業計画 — "), ("en", "Work plan — ")])
+def test_a_new_work_plan_card_derives_its_title_in_the_save_s_language(env, locale, prefix):
+    body = put_draft_in(env, FB, 0, [node("tmp_wp", "WP", "계획")], locale)
+    plan_line, deploy_line = body["card_documents"][body["key_map"]["tmp_wp"]]
+    wp = doc(plan_line["doc_id"])
+    assert plan_line["title"] == wp["title"] and wp["title"].startswith(prefix)
+    plan = json.loads((env["storage"] / wp["file_path"]).read_text(encoding="utf-8"))
+    assert plan["binding"] == "advisory"                                            # the plan contract is the same
+    assert deploy_line["title"] == "계획 · " + {"ko": "전개", "ja": "展開", "en": "Deploy"}[locale]
+
+
+@pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+def test_a_person_s_line_write_titles_its_new_document_in_the_request_s_language(env, monkeypatch, locale):
+    """Slot POST, the general write: ``{content}`` only; the request's X-Locale titles the new document."""
+    from flowgate.card_documents import legacy_adapter, routes
+    from modules.flow_gate.db import documents as db_documents
+
+    env["client"].app.include_router(routes.router)
+    monkeypatch.setattr(legacy_adapter, "has_permission", lambda *args: True)
+    body = put_draft(env, FB, 0, [node("tmp_r", "R", "요구사항")])                    # placed in ko
+    key = body["key_map"]["tmp_r"]
+    old = body["card_documents"][key][0]["doc_id"]
+    db_documents.update(old, {"status": "cancelled"})                                 # the line keeps no live document
+    res = env["client"].post(f"/api/v1/flows/{FB}/nodes/{key}/slots/requirement/document",
+                             json={"content": "## 내용\n"}, headers=_in(locale))
+    assert res.status_code == 201, res.text
+    made = res.json()
+    row = doc(made["doc_id"])
+    assert made["line"]["title"] == row["title"] == _front_title(env, row) == REQUIREMENT_NAMES[locale]
+    assert _canvas_line(env, FB, key, "requirement")["title"] == REQUIREMENT_NAMES[locale]
+    assert doc(old)["title"] == "요구사항"                                           # the old one keeps its own

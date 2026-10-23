@@ -165,7 +165,8 @@ describe('header — [업로드][다운로드] │ [copy / edit][minimize][close
       (node) => node.getAttribute('data-test') ?? node.getAttribute('aria-label'),
     )
     expect(order.slice(0, 3)).toEqual(['document-io-upload', 'document-io-download', 'document-io-divider'])
-    expect(order.slice(-2)).toEqual(['Minimize', 'Close'])
+    // flowgate.v02.0088 F06: the shell's controls are named in the app's language (ko in this spec).
+    expect(order.slice(-2)).toEqual(['최소화', '닫기'])
     const up = q(titlebar(DOC), 'document-io-upload')!
     expect(up.getAttribute('aria-label')).toBe('업로드')
     expect(up.getAttribute('title')).toBe('파일 내용으로 문서 전체를 교체')
@@ -175,7 +176,8 @@ describe('header — [업로드][다운로드] │ [copy / edit][minimize][close
   it('in the editor the group comes before ✎ (the edit icon); the group acts on the edited document', async () => {
     await open(DOC, 'edit')
     const order = [...titlebar(DOC).querySelectorAll('button')].map((node) => node.getAttribute('data-test') ?? node.getAttribute('aria-label'))
-    expect(order).toEqual(['document-io-upload', 'document-io-download', 'document-window-edit', 'Minimize', 'Close'])
+    // flowgate.v02.0088 F06: the shell's controls are named in the app's language (ko in this spec).
+    expect(order).toEqual(['document-io-upload', 'document-io-download', 'document-window-edit', '최소화', '닫기'])
     expect(q(titlebar(DOC), 'document-io')!.getAttribute('data-doc')).toBe(DOC)
   })
 
@@ -186,7 +188,8 @@ describe('header — [업로드][다운로드] │ [copy / edit][minimize][close
     await flushPromises()
     expect(q(titlebar(DOC), 'document-io')).toBeNull()
     const after = [...titlebar(DOC).querySelectorAll('button')].map((node) => node.getAttribute('aria-label'))
-    expect(after.slice(-2)).toEqual(['Restore', 'Close'])
+    // flowgate.v02.0088 F06: the shell's controls are named in the app's language (ko in this spec).
+    expect(after.slice(-2)).toEqual(['복원', '닫기'])
     expect(after.slice(0, -2)).toEqual(before.slice(2, -2))
     setDocumentWindowMinimized(DOC, false)
     await flushPromises()
