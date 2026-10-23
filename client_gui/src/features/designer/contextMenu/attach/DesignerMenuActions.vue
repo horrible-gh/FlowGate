@@ -427,8 +427,12 @@ async function downloadFileNow(seq: number, target: { projectId: string; flowId:
   const answer = await server.download(target.projectId, target.flowId, 'file', target.path, baseName(target.path) || 'download')
   if (answer.ok) {
     save(answer.value)
-    server.notify?.(t('download.done', { name: answer.value.filename }), 'success')
-  } else server.notify?.(`${t('download.failed')} — ${t(`refusal.${answer.refusal.reason}`)}`, 'danger')
+    const filename = answer.value.filename
+    server.notify?.(() => t('download.done', { name: filename }), 'success')
+  } else {
+    const reason = answer.refusal.reason
+    server.notify?.(() => `${t('download.failed')} — ${t(`refusal.${reason}`)}`, 'danger')
+  }
 }
 
 watch(() => pending.value?.seq, () => {
@@ -510,7 +514,7 @@ async function submit() {
   if (target.kind === 'folder.download') {
     const file = answer.value as { filename: string; blob: Blob }
     save(file)
-    server.notify?.(t('download.done', { name: file.filename }), 'success')
+    server.notify?.(() => t('download.done', { name: file.filename }), 'success')
   }
   close()
 }

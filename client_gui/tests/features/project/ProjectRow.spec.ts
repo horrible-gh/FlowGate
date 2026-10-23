@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import ProjectRow from '@/features/project/ProjectRow.vue'
 import type { Project } from '@/features/project/types'
+import { setTestLocale } from './projectI18n'
 
 // WP0005 T#2 §2.3/§8: selected is a non-color-only signal, and the row never nests one
 // interactive element inside another. flowgate.v02.0040: the row no longer marks the
@@ -132,5 +133,18 @@ describe('features/project/ProjectRow', () => {
     await wrapper.setProps({ project: project({ updatedAt: '2026-09-26T00:00:00+09:00' }) })
     expect(wrapper.find('.project-row-updated').exists()).toBe(true)
     expect(wrapper.find('.project-row-updated').text()).toContain('2026-09-26')
+  })
+
+  // flowgate.v02.0088 F04: the row's words follow the language; the Project name and the date are data.
+  it.each([
+    ['ja', '最終更新 2026-09-20', '開く'],
+    ['en', 'Last modified 2026-09-20', 'Open'],
+  ] as const)('labels the date and the open action in %s, leaving name and date as they are', async (locale, updated, open) => {
+    const wrapper = mount(ProjectRow, { props: { project: project({ name: '데모 프로젝트' }), selected: false } })
+    setTestLocale(locale)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.project-row-updated').text()).toBe(updated)
+    expect(wrapper.find('.project-row-open').text()).toBe(open)
+    expect(wrapper.find('.project-row-name').text()).toBe('데모 프로젝트')
   })
 })

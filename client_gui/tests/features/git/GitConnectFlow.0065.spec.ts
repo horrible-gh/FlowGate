@@ -523,7 +523,7 @@ describe('project switch / closing while a request runs', () => {
     await mountPanel(fake)
     await openAndFill()
     await click('git-connect-submit')
-    document.body.querySelector<HTMLButtonElement>('.ui-modeless-titlebar-actions button[aria-label="Close"]')?.click()
+    document.body.querySelector<HTMLButtonElement>('.ui-modeless-titlebar-actions button[data-modeless-action="close"]')?.click()
     await flushPromises()
     expect(q('git-connect-window')).toBeNull()
     const reads = fake.source.loadStatus.mock.calls.length
@@ -587,7 +587,7 @@ describe('one change request per project — reopening never runs a second one b
 
   const formB = { repoUrl: URL_B, provider: 'github', username: 'dev', secret: '', baseBranch: 'v0.2' }
   const closeButton = () =>
-    document.body.querySelector<HTMLButtonElement>('.ui-modeless-titlebar-actions button[aria-label="Close"]')
+    document.body.querySelector<HTMLButtonElement>('.ui-modeless-titlebar-actions button[data-modeless-action="close"]')
 
   it.each(['save', 'provision'] as const)(
     'Git 연결 clicked again while the %s runs: the same window comes back as it was, nothing new is sent',

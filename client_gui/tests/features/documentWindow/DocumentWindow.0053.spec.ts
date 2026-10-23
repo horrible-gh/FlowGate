@@ -154,7 +154,8 @@ describe('document window — view (flowgate.v02.0053 T#3)', () => {
       (node) => node.getAttribute('data-test') ?? node.getAttribute('aria-label'),
     )
     // flowgate.v02.0056 F1 moved the view's [편집] to the footer; the title line keeps the body copy.
-    expect(order).toEqual(['document-window-title', 'document-window-dot', 'md-viewer-copy', 'Minimize', 'Close'])
+    // flowgate.v02.0088 F06: the shell's controls are named in the app's language (ko in this spec).
+    expect(order).toEqual(['document-window-title', 'document-window-dot', 'md-viewer-copy', '최소화', '닫기'])
     expect(footer(panel)).toEqual(['document-window-edit', 'document-window-close'])
     expect(q(panel, 'document-window-edit')!.textContent!.trim()).toBe('편집')
     expect(q(panel, 'document-window-body')!.getAttribute('data-view')).toBe('markdown')
@@ -174,12 +175,12 @@ describe('document window — view (flowgate.v02.0053 T#3)', () => {
 
   it('minimize folds the window to its title line and keeps it; close removes it', async () => {
     const panel = await open(REPORT)
-    await click(panel.querySelector<HTMLElement>('[aria-label="Minimize"]'))
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="minimize"]'))
     expect(panel.classList.contains('is-minimized')).toBe(true)
     expect(documentWindowList()[0].minimized).toBe(true)
-    await click(panel.querySelector<HTMLElement>('[aria-label="Restore"]'))
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="restore"]'))
     expect(panel.classList.contains('is-minimized')).toBe(false)
-    await click(panel.querySelector<HTMLElement>('[aria-label="Close"]'))
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="close"]'))
     expect(panels()).toHaveLength(0)
     expect(windows()).toEqual([])
   })
@@ -272,7 +273,7 @@ describe('document window — ✎ editing (flowgate.v02.0053 T#3)', () => {
   it('closing a window with unsaved text asks once; 버리기 closes it', async () => {
     const panel = await open(REPORT, 'edit')
     await type(q(panel, 'document-window-textarea'), '저장 안 한 글')
-    await click(panel.querySelector<HTMLElement>('[aria-label="Close"]'))
+    await click(panel.querySelector<HTMLElement>('[data-modeless-action="close"]'))
     expect(confirmTitle()).toBe('저장하지 않은 내용을 버릴까요?')
     expect(panels()).toHaveLength(1)
     await click(confirmButtons()[1])

@@ -232,13 +232,15 @@ function pickMode(location: ExecLocation, execType: ProviderExecType) {
   form.value.exec_type = execType
 }
 
-const kindOptions = [
+// flowgate.v02.0088 F08: product names stay as they are; only the generic "Custom" kind is a UI
+// word, shown in the current language. The sent kind value stays 'custom'.
+const kindOptions = computed(() => [
   { value: 'claude', label: 'Claude (Anthropic)' },
   { value: 'openai', label: 'OpenAI' },
   { value: 'codex', label: 'Codex' },
   { value: 'gemini', label: 'Gemini (Google)' },
-  { value: 'custom', label: 'Custom' },
-]
+  { value: 'custom', label: t('gui.ai.providers.kind_custom') },
+])
 
 // Re-filled on every open, so a second add does not start from the first add's values.
 watch(

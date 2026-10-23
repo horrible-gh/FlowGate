@@ -57,11 +57,13 @@ describe('fetchProjectGroupTree (api)', () => {
     ])
   })
 
-  it('throws a plain Error on failure', async () => {
+  // flowgate.v02.0088 F10: the Error carries only the server's own words; without them it is empty and the screen
+  // shows its localized load_failed instead of an English default from the adapter.
+  it('throws a plain Error on failure, empty when the server said nothing', async () => {
     getRequest.mockRejectedValue(new Error('boom'))
-    await expect(fetchProjectGroupTree('p', { includeTerminal: true, force: false })).rejects.toThrow(
-      'Failed to load the project tree.',
-    )
+    const error = await fetchProjectGroupTree('p', { includeTerminal: true, force: false }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('')
   })
 })
 

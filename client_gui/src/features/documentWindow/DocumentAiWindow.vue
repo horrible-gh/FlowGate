@@ -84,19 +84,21 @@ import ModelessShell from '@/components/ui/ModelessShell.vue'
 import Select, { type SelectOption } from '@/components/ui/Select.vue'
 import Textarea from '@/components/ui/Textarea.vue'
 import { closeDocumentAiWindow, setDocumentAiWindowMinimized, type DocumentAiWindowState } from './documentAiWindows'
+import { lineKindName } from './lineKindName'
 import { useDocumentAi } from './useDocumentAi'
 
 const props = defineProps<{
   win: DocumentAiWindowState
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const k = (key: string) => `gui.document_window.ai.${key}`
 
 const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 
 const request = computed(() => props.win.request)
-const docTitle = computed(() => [request.value.name, request.value.title || props.win.docId].filter(Boolean).join(' · '))
+// flowgate.v02.0088 F15: only the kind follows the language (lineKindName); the document title is shown as stored.
+const docTitle = computed(() => [lineKindName(request.value, t, te), request.value.title || props.win.docId].filter(Boolean).join(' · '))
 
 const { providers, choicesState, providerId, opinion, run, phase, runnable, otherRun, failure, readChoices, start } = useDocumentAi(() => props.win)
 

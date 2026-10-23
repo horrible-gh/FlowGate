@@ -12,7 +12,7 @@
     </template>
 
     <template #default>
-      <Alert v-if="submitError" :id="errorId" tone="danger" class="dfm-alert" data-test="designer-group-create-error">{{ submitError }}</Alert>
+      <Alert v-if="submitError" :id="errorId" tone="danger" class="dfm-alert" data-test="designer-group-create-error">{{ submitErrorText }}</Alert>
       <form class="dfm-form" data-test="designer-group-create" @submit.prevent="submit">
         <div class="dfm-field">
           <label class="dfm-label" for="dgc-title">{{ t('gui.designer.file_menu.name') }}</label>
@@ -88,7 +88,20 @@ const name = ref('')
 const nameTouched = ref(false)
 const suggesting = ref(false)
 const submitting = ref(false)
-const submitError = ref<string | null>(null)
+// flowgate.v02.0088 F10: the server's own words raw, otherwise the localized fallback key —
+// rendered in the current locale while it stays on screen. (The adapter leaves only the server's
+// words in Error.message; an empty one means there were none.)
+type SubmitError = { readonly key: string } | { readonly raw: string }
+const submitError = ref<SubmitError | null>(null)
+const submitErrorText = computed(() => {
+  const error = submitError.value
+  return error ? ('raw' in error ? error.raw : t(error.key)) : ''
+})
+
+function failureOf(err: unknown, key: string): SubmitError {
+  const message = err instanceof Error ? err.message.trim() : ''
+  return message ? { raw: message } : { key }
+}
 const attemptedSubmit = ref(false)
 
 // Same key rule as the server (module_routes.validate_module_name, M031).
@@ -199,7 +212,7 @@ async function submit() {
     emit('created', created)
   } catch (err) {
     if (myGeneration !== generation) return
-    submitError.value = err instanceof Error && err.message ? err.message : t('gui.designer.file_menu.create_failed')
+    submitError.value = failureOf(err, 'gui.designer.file_menu.create_failed')
   } finally {
     if (myGeneration === generation) submitting.value = false
   }

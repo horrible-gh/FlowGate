@@ -637,6 +637,13 @@ describe('2-B in the Shell — the File Explorer commands on the open Flow workt
     expect(downloadBlobRequest).toHaveBeenCalledWith('/api/v1/projects/p/files/download', { path: 'src/app.ts', group_id: 'p.ui.0002' })
     expect(saved).toEqual(['app.ts'])
     expect(document.body.textContent).toContain('다운로드했습니다: app.ts')
+    // flowgate.v02.0088 F16: the toast still on screen is said again in the language switched to; the file name stays.
+    i18n.global.locale.value = 'ja'
+    await settle()
+    expect(document.body.textContent).toContain('ダウンロードしました: app.ts')
+    expect(document.body.textContent).not.toContain('다운로드했습니다: app.ts')
+    i18n.global.locale.value = 'ko'
+    await settle()
     downloadBlobRequest.mockRejectedValueOnce(axiosError(404, new Blob([JSON.stringify({ error: { code: 'FILE_NOT_FOUND', message: 'file does not exist' } })])))
     rightClick(file(w, 'src/util.ts'))
     await settle()

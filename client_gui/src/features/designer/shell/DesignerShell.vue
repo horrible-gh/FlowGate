@@ -113,7 +113,7 @@
     />
     <DesignerContextMenu :host="contextMenu.host" @request="contextMenu.run" />
     <component :is="contextMenu.dialogs" v-if="contextMenu.actions" :actions="contextMenu.actions" />
-    <ToastHost :toasts="toasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
+    <ToastHost :toasts="shownToasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
   </div>
 </template>
 
@@ -233,7 +233,7 @@ import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSour
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
 import DesignerOpenDialog from '../fileMenu/DesignerOpenDialog.vue'
-import { paletteNodeSpec, readPaletteDragData, PALETTE_DRAG_MIME, type PaletteItemDefinition } from '../palette/paletteCatalog'
+import { paletteNodeSpec, placedPaletteDefinition, readPaletteDragData, PALETTE_DRAG_MIME, type PaletteItemDefinition } from '../palette/paletteCatalog'
 import DesignerContextMenu from '../contextMenu/DesignerContextMenu.vue'
 import { useDesignerContextMenu, type DesignerMenuServerDeps, type MenuActionResult } from '../contextMenu/attach/designerMenuConnector'
 import {
@@ -303,9 +303,11 @@ const center = createDesignerCenterSession({
   // flowgate.v02.0059 T#2: the document read lets 자동 배치 follow a v0.1 sequence root's supersede chain.
   // flowgate.v02.0061 T#15: the card Hold of the card context menu goes through the card settings.
   source: createServerFlowGraphSource(projectStore, documentRead, { write: settingsNodeHoldWrite }),
+  // flowgate.v02.0088 F13: every placement (click, drag, context menu) passes here, so a default
+  // card's label is made in the language of the placing moment, not of the selection.
   readDrop: (transfer) => {
     const definition = readPaletteDragData(transfer)
-    return definition ? paletteNodeSpec(definition) : null
+    return definition ? paletteNodeSpec(placedPaletteDefinition(definition, (key) => t(key))) : null
   },
 })
 
@@ -342,7 +344,20 @@ const runBand = computed(() => (hasWorkTarget.value ? runBandView(center.activeR
 // its run status is not confirmed (the session's `unknown` lock). Messages, viewing, panning and zooming go on.
 const sourceLocked = computed(() => hasWorkTarget.value && center.activeRunMarks.value.lock !== null)
 
-const toasts = ref<ToastHostItem[]>([])
+// flowgate.v02.0088 F16: a toast keeps what it says as meaning — the refusal, the notice, the menu's own words —
+// and its sentence is built in the current language each time it renders, so a toast still on screen (a refused
+// document's stays until it is closed) follows a language switch. The server's message and the document ids it
+// names stay as they were sent.
+interface ShellToast {
+  readonly id: string
+  readonly tone: NonNullable<ToastHostItem['tone']>
+  readonly duration: number | null
+  readonly text: () => string
+}
+const toasts = ref<ShellToast[]>([])
+const shownToasts = computed<ToastHostItem[]>(() =>
+  toasts.value.map((item) => ({ id: item.id, tone: item.tone, duration: item.duration, message: item.text() })),
+)
 let toastSeq = 0
 
 function dismissToast(id: string | number) {
@@ -402,11 +417,11 @@ watch(
     const error = center.activeRun.value?.error
     if (!seq || !error) return
     toastSeq += 1
-    const message = error.kind === 'approval' ? approvalErrorText(error) : error.kind === 'hold' ? holdErrorText(error) : runErrorText(error)
+    const text = () => (error.kind === 'approval' ? approvalErrorText(error) : error.kind === 'hold' ? holdErrorText(error) : runErrorText(error))
     const tone = error.kind === 'approval' && error.approval?.keepButton ? 'warning' : 'danger'
     // A refused document is read, not glanced at: that toast stays until it is closed.
     const duration = error.kind === 'approval' && error.approval?.kind === 'refused' ? null : 4000
-    toasts.value = [...toasts.value.slice(-2), { id: `run-${toastSeq}`, message, tone, duration }]
+    toasts.value = [...toasts.value.slice(-2), { id: `run-${toastSeq}`, text, tone, duration }]
   },
 )
 
@@ -417,13 +432,13 @@ watch(
     const notice = center.layoutNotice.value
     if (!seq || !notice) return
     const base = 'gui.designer.top.layout_notices'
-    const message = `${t(`${base}.invalid`)} ${t(`${base}.invalid_reasons.${notice.reason}`)}`
+    const reason = notice.reason
     toastSeq += 1
     toasts.value = [
       ...toasts.value.slice(-2),
       {
         id: `layout-${toastSeq}`,
-        message,
+        text: () => `${t(`${base}.invalid`)} ${t(`${base}.invalid_reasons.${reason}`)}`,
         tone: 'warning',
         duration: 6000,
       },
@@ -822,9 +837,10 @@ function renameFlowTab(pid: string, flowId: string, name: string) {
   if (active !== null && active !== flowId) center.activateFlow(active)
 }
 
-function menuToast(message: string, tone: 'success' | 'warning' | 'danger') {
+function menuToast(message: string | (() => string), tone: 'success' | 'warning' | 'danger') {
   toastSeq += 1
-  toasts.value = [...toasts.value.slice(-2), { id: `menu-${toastSeq}`, message, tone, duration: 4000 }]
+  const text = typeof message === 'function' ? message : () => message
+  toasts.value = [...toasts.value.slice(-2), { id: `menu-${toastSeq}`, text, tone, duration: 4000 }]
 }
 
 const menuServer: DesignerMenuServerDeps = {

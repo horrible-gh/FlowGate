@@ -40,6 +40,9 @@ function lineOf(slot: RequirementSlot): InspectorSlotView {
     key: slot.key,
     kind: slot.kind,
     name: t(k(`slot.${slot.name}`)),
+    // flowgate.v02.0088 F14/F15: the kind's key travels with the line so an open [작성] / [AI 호출] window
+    // shows the kind in the current language.
+    nameKey: k(`slot.${slot.name}`),
     id: slot.id,
     empty: slot.empty,
     emptyText: slot.emptyKey ? t(k(slot.emptyKey)) : null,

@@ -278,6 +278,35 @@ describe('V08 완료 카드 유지 시간', () => {
     await flushPromises()
     expect((w.get('[data-testid="me-retention"]').element as HTMLSelectElement).value).toBe('30')
   })
+
+  // flowgate.v02.0088 F17: the errors kept on screen are kept as their key, so the language buttons right above change
+  // them without a new request; the failed save still returns to the confirmed value, and the load error title is not
+  // repeated as its own message.
+  it('a save error and a load error on screen follow the language buttons', async () => {
+    const w = await open('/settings/me/account')
+    net.ui.failPatch = 500
+    await w.get('[data-testid="me-retention"]').setValue('120')
+    await flushPromises()
+    const patches = net.bodies.length
+    expect(w.get('[data-testid="me-retention-error"]').text()).toBe('저장하지 못했습니다. 이전 값으로 되돌렸습니다.')
+    await w.get('[data-locale="ja"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-testid="me-retention-error"]').text()).toBe(i18n.global.t('gui.settings.self.errors.save_failed'))
+    expect(w.get('[data-testid="me-retention-error"]').text()).not.toBe('저장하지 못했습니다. 이전 값으로 되돌렸습니다.')
+    expect((w.get('[data-testid="me-retention"]').element as HTMLSelectElement).value).toBe('30')
+    expect(net.bodies).toHaveLength(patches)
+
+    net.ui.failGet = 500
+    await go('/settings/me/security')
+    await go('/settings/me/account')
+    const loadError = () => w.get('[data-testid="me-retention-load-error"]')
+    expect(loadError().find('.ui-error-state-title').text()).toBe(i18n.global.t('gui.settings.self.errors.load_failed'))
+    expect(loadError().find('.ui-error-state-message').exists()).toBe(false)
+    await w.get('[data-locale="en"]').trigger('click')
+    await flushPromises()
+    expect(loadError().find('.ui-error-state-title').text()).toBe(i18n.global.t('gui.settings.self.errors.load_failed'))
+    expect(i18n.global.locale.value).toBe('en')
+  })
 })
 
 describe('V09 보안 / 세션 (s1 = 현재, s2 = 다른 세션)', () => {

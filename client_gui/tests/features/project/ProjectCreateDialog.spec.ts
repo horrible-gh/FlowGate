@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '@/features/project/types'
+import { setTestLocale } from './projectI18n'
 
 const fetchActiveProjects = vi.hoisted(() => vi.fn())
 const createProjectApi = vi.hoisted(() => vi.fn())
@@ -568,6 +569,59 @@ describe('features/project/ProjectCreateDialog', () => {
     await wrapper.vm.$nextTick()
 
     expect(document.querySelector('.ui-alert')).toBeNull()
+    wrapper.unmount()
+  })
+
+  // flowgate.v02.0088 F01/F10: the Dialog's own words, field errors, color names and its general failure follow the
+  // language; what the person typed is sent as typed.
+  it.each([
+    ['ja', '新しいプロジェクト', '名前を入力してください。', '色 #2563eb', 'プロジェクトを作成できませんでした。'],
+    ['en', 'New project', 'Enter a name.', 'Color #2563eb', 'Could not create the project.'],
+  ] as const)('shows its words in %s and sends the input unchanged', async (locale, title, nameRequired, colorName, failed) => {
+    setTestLocale(locale)
+    createProjectApi.mockRejectedValueOnce(new Error(''))
+    const wrapper = mountDialog()
+    expect(document.querySelector('.pcd-title')?.textContent).toBe(title)
+    expect(document.querySelector('.pcd-color')?.getAttribute('aria-label')).toBe(colorName)
+    setInput('#pcd-id', 'demo')
+    click('.pcd-actions .ui-btn--primary')
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.pcd-field-error')?.textContent).toBe(nameRequired)
+
+    setInput('#pcd-name', '  프로젝트 가  ')
+    setInput('#pcd-desc', '설명 원문')
+    await wrapper.vm.$nextTick()
+    click('.pcd-actions .ui-btn--primary')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(createProjectApi).toHaveBeenCalledWith({ name: '프로젝트 가', id: 'demo', description: '설명 원문', color: '#2563eb' })
+    // No server words: the localized general failure, never an English default.
+    expect(document.querySelector('.ui-alert')?.textContent?.trim()).toBe(failed)
+    wrapper.unmount()
+  })
+
+  it('re-renders a general failure still on screen in the new language, and keeps a server diagnostic as sent', async () => {
+    createProjectApi.mockRejectedValueOnce(new Error(''))
+    const wrapper = mountDialog()
+    setInput('#pcd-name', 'Demo')
+    setInput('#pcd-id', 'demo')
+    await wrapper.vm.$nextTick()
+    click('.pcd-actions .ui-btn--primary')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.ui-alert')?.textContent?.trim()).toBe('프로젝트를 생성하지 못했습니다.')
+    setTestLocale('en')
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.ui-alert')?.textContent?.trim()).toBe('Could not create the project.')
+    // A language switch is not an edit: the input stays and nothing is sent again.
+    expect((document.querySelector('#pcd-name') as HTMLInputElement).value).toBe('Demo')
+    expect(createProjectApi).toHaveBeenCalledTimes(1)
+
+    createProjectApi.mockRejectedValueOnce(new Error('같은 식별자의 프로젝트가 있습니다.'))
+    click('.pcd-actions .ui-btn--primary')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.ui-alert')?.textContent?.trim()).toBe('같은 식별자의 프로젝트가 있습니다.')
     wrapper.unmount()
   })
 })

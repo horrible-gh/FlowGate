@@ -39,6 +39,7 @@ import {
   readRecentGroups,
   readRecentProjects,
 } from '@/features/project/recentStorage'
+import './projectI18n'
 
 function project(id: string, name = id): Project {
   return { id, name, description: '', color: null, isActive: true, createdAt: null, updatedAt: null, modules: [] }

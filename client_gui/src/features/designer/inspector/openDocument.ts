@@ -224,6 +224,8 @@ export function openDocumentHistory(docId: string): void {
 /** The line of a card a row action was pressed on (what the slot list hands back). */
 export interface CardLineActionLine {
   readonly name: string
+  /** flowgate.v02.0088 F14/F15: the key `name` was made from (UI only; see InspectorSlotView.nameKey). */
+  readonly nameKey?: string | null
   readonly id?: string | null
   /** The card line (its slot) behind the row. */
   readonly cardSlot?: string | null
@@ -262,6 +264,7 @@ export function openCardLineAction(target: InspectorTarget, line: CardLineAction
       slot,
       docType: card?.docType ?? null,
       name: line.name,
+      nameKey: line.nameKey ?? null,
       cardTitle: target.title,
       nodeRunning: target.nodeRun?.status === 'open',
       written: refresh,
@@ -276,6 +279,7 @@ export function openCardLineAction(target: InspectorTarget, line: CardLineAction
       groupId: target.flowId,
       projectId: target.projectId,
       name: line.name,
+      nameKey: line.nameKey ?? null,
       title: target.cardDocuments.find((item) => item.docId === docId)?.title ?? '',
       finished: refresh,
     })

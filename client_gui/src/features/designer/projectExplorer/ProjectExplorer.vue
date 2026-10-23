@@ -58,7 +58,7 @@
         v-else-if="projectId && error !== null"
         compact
         :title="t('gui.designer.project_explorer.load_failed')"
-        :message="error"
+        :message="error || undefined"
         data-test="project-explorer-error"
       >
         <template #action>
@@ -370,8 +370,11 @@ let requestSeq = 0
 // with a Project change is left for the Project watch, whichever of the two runs first.
 let shownProjectId: string | null = null
 
+// flowgate.v02.0088 F10: the localized general text is the ErrorState / Alert title, rendered in
+// the current locale; only the server's own diagnostic ('' when it sent none) is kept here, so the
+// same failure is never shown twice and an English fallback never stands in for it.
 function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : t('gui.designer.project_explorer.load_failed')
+  return err instanceof Error ? err.message.trim() : ''
 }
 
 async function load(force: boolean) {

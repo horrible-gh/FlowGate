@@ -322,7 +322,7 @@ describe('Designer Shell x Git tab — the diff in the Git modeless `Diff` tab (
     await openFlow(w, 'Designer v0.2')
     await openFileDiff(w)
     const win = find('git-window')!.closest<HTMLElement>('.ui-modeless-panel')!
-    win.querySelector<HTMLElement>('button[aria-label="Close"]')!.click()
+    win.querySelector<HTMLElement>('button[data-modeless-action="close"]')!.click()
     await settle()
     expect(find('git-window')).toBeNull()
     await openGitWindow('diff')

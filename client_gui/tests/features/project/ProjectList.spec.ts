@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import ProjectList from '@/features/project/ProjectList.vue'
 import type { Project } from '@/features/project/types'
+import { setTestLocale } from './projectI18n'
 
 // WP0005 T#2 §2.1/§3.1/§4: loading/error/empty(none)/empty(search) are distinct, and
 // selecting vs opening a row is delegated straight through to the caller.
@@ -66,5 +67,33 @@ describe('features/project/ProjectList', () => {
     expect(wrapper.emitted('select')?.[0]).toEqual([project('a')])
     await wrapper.find('.project-row-open').trigger('click')
     expect(wrapper.emitted('open')?.[0]).toEqual([project('a')])
+  })
+
+  // flowgate.v02.0088 F03/F10: the list's own words follow the language; the server's diagnostic stays as sent and the
+  // localized title stands alone when there is none.
+  it.each([
+    ['ja', 'プロジェクトを読み込めませんでした。', '再試行', 'プロジェクトがありません。', 'プロジェクト一覧'],
+    ['en', 'Could not load projects.', 'Retry', 'No projects yet.', 'Project list'],
+  ] as const)('shows its states in %s, keeping the server words and project data as they came', async (locale, failed, retry, none, aria) => {
+    setTestLocale(locale)
+    const error = mount(ProjectList, { props: { ...baseProps(), error: '서버 점검 중' } })
+    expect(error.find('.ui-error-state-title').text()).toBe(failed)
+    expect(error.find('.ui-error-state-message').text()).toBe('서버 점검 중')
+    expect(error.find('.ui-error-state button').text()).toBe(retry)
+    const silent = mount(ProjectList, { props: { ...baseProps(), error: '' } })
+    expect(silent.find('.ui-error-state-title').text()).toBe(failed)
+    expect(silent.find('.ui-error-state-message').exists()).toBe(false)
+    expect(mount(ProjectList, { props: { ...baseProps(), hasAnyProjects: false } }).find('.ui-empty-state-title').text()).toBe(none)
+    const list = mount(ProjectList, { props: { ...baseProps(), projects: [project('프로젝트-가')], hasAnyProjects: true } })
+    expect(list.find('ul').attributes('aria-label')).toBe(aria)
+    expect(list.find('.project-row-name').text()).toBe('프로젝트-가')
+  })
+
+  it('changes its words on a language switch while it stays mounted', async () => {
+    const wrapper = mount(ProjectList, { props: { ...baseProps(), error: '' } })
+    expect(wrapper.find('.ui-error-state-title').text()).toBe('프로젝트를 불러오지 못했습니다.')
+    setTestLocale('ja')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.ui-error-state-title').text()).toBe('プロジェクトを読み込めませんでした。')
   })
 })

@@ -46,6 +46,8 @@ function lineOf(slot: TaskSlot): InspectorSlotView {
     key: slot.key,
     kind: slot.kind,
     name: t(k(`slot.${slot.key}`)),
+    // flowgate.v02.0088 F14/F15: the kind's key travels with the line (see openCardLineAction).
+    nameKey: k(`slot.${slot.key}`),
     id: slot.id,
     empty: slot.empty,
     emptyText: slot.emptyKey ? t(k(slot.emptyKey)) : null,

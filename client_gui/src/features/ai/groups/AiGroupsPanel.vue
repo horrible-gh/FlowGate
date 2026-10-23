@@ -273,6 +273,8 @@
       :title="t('gui.ai.groups.delete_confirm_title')"
       :message="t('gui.ai.groups.delete_confirm_msg', { name: deleting?.name })"
       danger
+      :confirm-label="t('gui.common.delete')"
+      :cancel-label="t('gui.common.cancel')"
       @confirm="onDeleteGroup"
       @cancel="deleting = null"
     />
@@ -281,6 +283,8 @@
       :title="t('gui.ai.groups.role_delete_title')"
       :message="t('gui.ai.groups.role_delete_msg', { name: deletingRole?.name })"
       danger
+      :confirm-label="t('gui.common.delete')"
+      :cancel-label="t('gui.common.cancel')"
       @confirm="onDeleteRole"
       @cancel="deletingRole = null"
     />

@@ -2,9 +2,10 @@
 // AI evaluation and AI groups belong to no project (flowgate.v02.0017 CH0006 (4)); only the
 // connection test still runs under a project.
 
-import { deleteRequest, extractApiErrorMessage, getRequest, patchRequest, postRequest, putRequest } from '@shared/api'
+import { deleteRequest, getRequest, patchRequest, postRequest, putRequest } from '@shared/api'
 import { normalizeApiError } from '@shared/apiErrors'
 import i18n from '@shared/i18n'
+import { serverDetailOf } from '../../core/i18n/serverDetail'
 import { PROVIDERS_MAX } from './limits'
 import type {
   AiConnectionTest,
@@ -63,26 +64,30 @@ function fieldErrorsOf(source: Readonly<Record<string, unknown>>): AiFieldError[
 
 // The AI routes answer {"error": {"code"}}; show the localized reason for a known code
 // (gui.ai.errors.<code>) instead of one generic "failed" line, and keep an unknown code visible.
-function aiErrorMessage(error: unknown, fallback: string, fieldErrors: AiFieldError[]): string {
+// flowgate.v02.0088 F11: every call names its operation's localized fallback by key, used for a
+// network failure, an empty body or an unknown code without the server's own words; the server's
+// own diagnostic is kept as it came, and an axios transport line never stands in for it.
+function aiErrorMessage(error: unknown, fallbackKey: string, fieldErrors: AiFieldError[]): string {
   const { code, network } = normalizeApiError(error)
+  const fallback = () => String(i18n.global.t(fallbackKey))
   if (!network && code) {
     if (code === 'validation_failed' && fieldErrors.some((e) => e.field === 'providers' && e.reason === 'too_many')) {
       return String(i18n.global.t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX }))
     }
     const key = `gui.ai.errors.${code}`
     if (i18n.global.te(key)) return String(i18n.global.t(key))
-    return `${extractApiErrorMessage(error, fallback)} (${code})`
+    return `${serverDetailOf(error) || fallback()} (${code})`
   }
-  return extractApiErrorMessage(error, fallback)
+  return serverDetailOf(error) || fallback()
 }
 
-async function call<T>(request: () => Promise<{ data: T }>, fallback: string): Promise<T> {
+async function call<T>(request: () => Promise<{ data: T }>, fallbackKey: string): Promise<T> {
   try {
     return (await request()).data
   } catch (error) {
     const { code, source } = normalizeApiError(error)
     const fieldErrors = fieldErrorsOf(source)
-    throw new AiRequestError(aiErrorMessage(error, fallback, fieldErrors), code, fieldErrors)
+    throw new AiRequestError(aiErrorMessage(error, fallbackKey, fieldErrors), code, fieldErrors)
   }
 }
 
@@ -95,7 +100,7 @@ export interface SequenceStep {
 export async function listSequenceSteps(docRef: string): Promise<SequenceStep[]> {
   const data = await call(
     () => getRequest<{ items?: SequenceStep[] }>('/api/v1/workflow/sequence', { doc_id: docRef }),
-    'Failed to load the workflow sequence.',
+    'gui.ai.request_failed.sequence_load',
   )
   return data.items ?? []
 }
@@ -103,13 +108,13 @@ export async function listSequenceSteps(docRef: string): Promise<SequenceStep[]>
 // ── Owned AI lists: 시스템 AI (administrator) / 내 AI (the signed-in user) ────────
 
 export async function fetchSystemAi(): Promise<SystemAiSettings> {
-  return call(() => getRequest<SystemAiSettings>('/api/v1/system/ai-settings'), 'Failed to load system AI.')
+  return call(() => getRequest<SystemAiSettings>('/api/v1/system/ai-settings'), 'gui.ai.request_failed.system_load')
 }
 
 export async function saveSystemAi(providers: ProviderItem[], defaultProviderId: string | null): Promise<SystemAiSettings> {
   return call(
     () => putRequest<SystemAiSettings>('/api/v1/system/ai-settings', { providers, default_provider_id: defaultProviderId }),
-    'Failed to save system AI.',
+    'gui.ai.request_failed.system_save',
   )
 }
 
@@ -127,22 +132,22 @@ export async function probeSystemAi(provider: ProviderItem): Promise<AiProbeResu
 
 // Read-only system AI for users who are not administrators (the AI 관리 list shows both owners).
 export async function fetchVisibleSystemAi(): Promise<VisibleSystemAi> {
-  return call(() => getRequest<VisibleSystemAi>('/api/v1/system/ai-providers'), 'Failed to load system AI.')
+  return call(() => getRequest<VisibleSystemAi>('/api/v1/system/ai-providers'), 'gui.ai.request_failed.system_load')
 }
 
 export async function fetchMyAi(): Promise<UserAiSettings> {
-  return call(() => getRequest<UserAiSettings>('/api/v1/me/ai-providers'), 'Failed to load my AI.')
+  return call(() => getRequest<UserAiSettings>('/api/v1/me/ai-providers'), 'gui.ai.request_failed.my_load')
 }
 
 export async function saveMyAi(providers: ProviderItem[]): Promise<UserAiSettings> {
-  return call(() => putRequest<UserAiSettings>('/api/v1/me/ai-providers', { providers }), 'Failed to save my AI.')
+  return call(() => putRequest<UserAiSettings>('/api/v1/me/ai-providers', { providers }), 'gui.ai.request_failed.my_save')
 }
 
 // null = follow the system default.
 export async function saveMyAiDefault(providerId: string | null): Promise<UserAiSettings> {
   return call(
     () => putRequest<UserAiSettings>('/api/v1/me/ai-default', { provider_id: providerId }),
-    'Failed to save my default AI.',
+    'gui.ai.request_failed.my_default_save',
   )
 }
 
@@ -156,7 +161,7 @@ export async function startConnectionTest(projectId: string, providerId: string)
 export async function fetchCurrentConnectionTest(projectId: string, providerId: string): Promise<AiConnectionTestCurrent> {
   return call(
     () => getRequest<AiConnectionTestCurrent>(`${project(projectId)}/ai-connection-tests/current`, { provider_id: providerId }),
-    'Failed to load the connection test.',
+    'gui.ai.request_failed.connection_test_load',
   )
 }
 
@@ -164,7 +169,7 @@ export async function fetchCurrentConnectionTest(projectId: string, providerId: 
 export async function saveRepeatCountMax(value: number): Promise<void> {
   await call(
     () => patchRequest('/api/v1/system/settings', { updates: { ai_repeat_count_max: String(value) } }),
-    'Failed to save the repeat limit.',
+    'gui.ai.request_failed.repeat_limit_save',
   )
 }
 
@@ -199,21 +204,21 @@ export async function fetchEvaluationHistory(
   if (cursor) params.cursor = cursor
   return call(
     () => getRequest<AiEvaluationHistoryResponse>(`${API}/ai-evaluations`, params),
-    'Failed to load evaluation history.',
+    'gui.ai.evaluation.load_failed',
   )
 }
 
 export async function fetchEvaluationDetail(evaluationId: string): Promise<AiEvaluation> {
   return call(
     () => getRequest<AiEvaluation>(`${API}/ai-evaluations/${encodeURIComponent(evaluationId)}`),
-    'Failed to load evaluation details.',
+    'gui.ai.evaluation.load_failed',
   )
 }
 
 export async function cancelEvaluation(evaluationId: string): Promise<AiEvaluation> {
   return call(
     () => postRequest<AiEvaluation>(`${API}/ai-evaluations/${encodeURIComponent(evaluationId)}/cancel`, {}),
-    'Failed to cancel evaluation.',
+    'gui.ai.evaluation.cancel_failed',
   )
 }
 
@@ -223,14 +228,14 @@ export async function saveHumanReview(
 ): Promise<AiEvaluation> {
   return call(
     () => putRequest<AiEvaluation>(`${API}/ai-evaluations/${encodeURIComponent(evaluationId)}/human-review`, input),
-    'Failed to save the human review.',
+    'gui.ai.request_failed.human_review_save',
   )
 }
 
 export async function listEvaluationSets(): Promise<AiEvaluationSet[]> {
   const data = await call(
     () => getRequest<{ items: AiEvaluationSet[] }>(`${API}/ai-evaluation-sets`),
-    'Failed to load evaluation sets.',
+    'gui.ai.request_failed.evaluation_sets_load',
   )
   return data?.items ?? []
 }
@@ -244,14 +249,14 @@ export async function saveEvaluationSet(
     () => (setId
       ? putRequest<AiEvaluationSet>(`${base}/${encodeURIComponent(setId)}`, input)
       : postRequest<AiEvaluationSet>(base, input)),
-    'Failed to save the evaluation set.',
+    'gui.ai.request_failed.evaluation_set_save',
   )
 }
 
 export async function deleteEvaluationSet(setId: string): Promise<void> {
   await call(
     () => deleteRequest(`${API}/ai-evaluation-sets/${encodeURIComponent(setId)}`),
-    'Failed to delete the evaluation set.',
+    'gui.ai.request_failed.evaluation_set_delete',
   )
 }
 
@@ -260,41 +265,41 @@ export async function deleteEvaluationSet(setId: string): Promise<void> {
 const group = (groupId: string) => `${API}/ai-groups/${encodeURIComponent(groupId)}`
 
 export async function listAiGroups(): Promise<AiGroup[]> {
-  const data = await call(() => getRequest<{ items: AiGroup[] }>(`${API}/ai-groups`), 'Failed to load AI groups.')
+  const data = await call(() => getRequest<{ items: AiGroup[] }>(`${API}/ai-groups`), 'gui.ai.groups.load_failed')
   return data?.items ?? []
 }
 
 export async function getAiGroup(groupId: string): Promise<AiGroup> {
-  return call(() => getRequest<AiGroup>(group(groupId)), 'Failed to load AI group.')
+  return call(() => getRequest<AiGroup>(group(groupId)), 'gui.ai.groups.load_failed')
 }
 
 export async function createAiGroup(input: AiGroupInput): Promise<AiGroup> {
-  return call(() => postRequest<AiGroup>(`${API}/ai-groups`, input), 'Failed to create AI group.')
+  return call(() => postRequest<AiGroup>(`${API}/ai-groups`, input), 'gui.ai.groups.save_failed')
 }
 
 export async function updateAiGroup(groupId: string, input: AiGroupUpdateInput): Promise<AiGroup> {
-  return call(() => putRequest<AiGroup>(group(groupId), input), 'Failed to update AI group.')
+  return call(() => putRequest<AiGroup>(group(groupId), input), 'gui.ai.groups.save_failed')
 }
 
 export async function setAiGroupState(groupId: string, input: AiGroupStateInput): Promise<AiGroup> {
-  return call(() => putRequest<AiGroup>(`${group(groupId)}/state`, input), 'Failed to update AI group.')
+  return call(() => putRequest<AiGroup>(`${group(groupId)}/state`, input), 'gui.ai.groups.save_failed')
 }
 
 export async function deleteAiGroup(groupId: string): Promise<void> {
-  await call(() => deleteRequest(group(groupId)), 'Failed to delete AI group.')
+  await call(() => deleteRequest(group(groupId)), 'gui.ai.request_failed.group_delete')
 }
 
 export async function addAiGroupMember(groupId: string, providerId: string): Promise<AiGroup> {
   return call(
     () => postRequest<AiGroup>(`${group(groupId)}/members`, { provider_id: providerId }),
-    'Failed to add the member.',
+    'gui.ai.request_failed.member_add',
   )
 }
 
 export async function removeAiGroupMember(groupId: string, memberId: string): Promise<AiGroup> {
   return call(
     () => deleteRequest<AiGroup>(`${group(groupId)}/members/${encodeURIComponent(memberId)}`),
-    'Failed to remove the member.',
+    'gui.ai.request_failed.member_remove',
   )
 }
 
@@ -305,12 +310,12 @@ export async function setAiGroupMemberRoles(
 ): Promise<AiGroup> {
   return call(
     () => putRequest<AiGroup>(`${group(groupId)}/members/${encodeURIComponent(memberId)}/roles`, { role_ids: roleIds }),
-    'Failed to update the role mapping.',
+    'gui.ai.request_failed.role_mapping_update',
   )
 }
 
 export async function createAiGroupRole(groupId: string, input: AiGroupRoleInput): Promise<AiGroup> {
-  return call(() => postRequest<AiGroup>(`${group(groupId)}/roles`, input), 'Failed to add the role.')
+  return call(() => postRequest<AiGroup>(`${group(groupId)}/roles`, input), 'gui.ai.request_failed.role_add')
 }
 
 export async function updateAiGroupRole(
@@ -320,13 +325,13 @@ export async function updateAiGroupRole(
 ): Promise<AiGroup> {
   return call(
     () => putRequest<AiGroup>(`${group(groupId)}/roles/${encodeURIComponent(roleId)}`, input),
-    'Failed to update the role.',
+    'gui.ai.request_failed.role_update',
   )
 }
 
 export async function deleteAiGroupRole(groupId: string, roleId: string): Promise<AiGroup> {
   return call(
     () => deleteRequest<AiGroup>(`${group(groupId)}/roles/${encodeURIComponent(roleId)}`),
-    'Failed to delete the role.',
+    'gui.ai.request_failed.role_delete',
   )
 }

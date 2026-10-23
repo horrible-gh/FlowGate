@@ -28,7 +28,7 @@
           v-else-if="error !== null"
           compact
           :title="t('gui.designer.file_menu.load_failed')"
-          :message="error"
+          :message="error || undefined"
           data-test="designer-open-error"
         >
           <template #action>
@@ -139,7 +139,8 @@ async function load(force = false) {
     nodes.value = next
   } catch (err) {
     if (seq !== readSeq) return
-    error.value = err instanceof Error && err.message ? err.message : t('gui.designer.file_menu.load_failed')
+    // flowgate.v02.0088 F10: the title says load_failed in the current locale; keep only the server's words.
+    error.value = err instanceof Error ? err.message.trim() : ''
   } finally {
     if (seq === readSeq) loading.value = false
   }

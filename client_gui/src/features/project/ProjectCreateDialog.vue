@@ -8,49 +8,49 @@
   >
     <template #header="{ titleId }">
       <div class="pcd-head">
-        <h2 :id="titleId" class="pcd-title">새 프로젝트</h2>
-        <IconButton label="닫기" variant="ghost" @click="requestClose">✕</IconButton>
+        <h2 :id="titleId" class="pcd-title">{{ t('gui.project.create.title') }}</h2>
+        <IconButton :label="t('gui.common.close')" variant="ghost" @click="requestClose">✕</IconButton>
       </div>
     </template>
 
     <template #default>
-      <Alert v-if="submitError" :id="errorId" tone="danger" class="pcd-alert">{{ submitError }}</Alert>
+      <Alert v-if="submitError" :id="errorId" tone="danger" class="pcd-alert">{{ submitErrorText }}</Alert>
       <form class="pcd-form" @submit.prevent="handleSubmit">
         <div class="pcd-field">
-          <label class="pcd-label" for="pcd-name">이름</label>
+          <label class="pcd-label" for="pcd-name">{{ t('gui.designer.file_menu.name') }}</label>
           <Input
             id="pcd-name"
             :model-value="name"
-            placeholder="프로젝트 이름"
+            :placeholder="t('gui.project.create.name_placeholder')"
             :invalid="showNameError"
             @update:model-value="onNameChange"
           />
-          <p v-if="showNameError" class="pcd-field-error">이름을 입력하세요.</p>
+          <p v-if="showNameError" class="pcd-field-error">{{ t('gui.designer.file_menu.name_required') }}</p>
         </div>
 
         <div class="pcd-field">
-          <label class="pcd-label" for="pcd-id">식별자</label>
+          <label class="pcd-label" for="pcd-id">{{ t('gui.designer.file_menu.id') }}</label>
           <div class="pcd-id-row">
             <Input
               id="pcd-id"
               :model-value="id"
-              placeholder="예: my-project"
+              :placeholder="t('gui.project.create.id_placeholder')"
               :invalid="showIdError"
               @update:model-value="onIdChange"
             />
-            <Button type="button" variant="secondary" size="sm" :loading="suggesting" @click="suggestNow">제안</Button>
+            <Button type="button" variant="secondary" size="sm" :loading="suggesting" @click="suggestNow">{{ t('gui.designer.file_menu.suggest') }}</Button>
           </div>
-          <p v-if="showIdEmptyError" class="pcd-field-error">식별자를 입력하세요.</p>
-          <p v-else-if="showIdFormatError" class="pcd-field-error">영문 소문자, 숫자, -, _ 만 사용할 수 있습니다.</p>
+          <p v-if="showIdEmptyError" class="pcd-field-error">{{ t('gui.designer.file_menu.id_required') }}</p>
+          <p v-else-if="showIdFormatError" class="pcd-field-error">{{ t('gui.designer.file_menu.id_format') }}</p>
         </div>
 
         <div class="pcd-field">
-          <label class="pcd-label" for="pcd-desc">설명 <span class="pcd-optional">(선택)</span></label>
-          <Textarea id="pcd-desc" v-model="description" placeholder="프로젝트 설명" :rows="2" />
+          <label class="pcd-label" for="pcd-desc">{{ t('gui.project.create.description') }} <span class="pcd-optional">{{ t('gui.project.create.optional') }}</span></label>
+          <Textarea id="pcd-desc" v-model="description" :placeholder="t('gui.project.create.description_placeholder')" :rows="2" />
         </div>
 
         <div class="pcd-field">
-          <span class="pcd-label" id="pcd-color-label">색상</span>
+          <span class="pcd-label" id="pcd-color-label">{{ t('gui.project.create.color') }}</span>
           <div class="pcd-colors" role="radiogroup" aria-labelledby="pcd-color-label">
             <button
               v-for="c in COLOR_OPTIONS"
@@ -61,7 +61,7 @@
               :style="{ background: c }"
               role="radio"
               :aria-checked="color === c"
-              :aria-label="`색상 ${c}`"
+              :aria-label="t('gui.project.create.color_option', { color: c })"
               @click="color = c"
             >
               <span v-if="color === c" aria-hidden="true">✓</span>
@@ -73,19 +73,19 @@
 
     <template #footer>
       <div class="pcd-actions">
-        <Button variant="secondary" @click="requestClose">취소</Button>
-        <Button variant="primary" :disabled="submitting" :loading="submitting" @click="handleSubmit">생성</Button>
+        <Button variant="secondary" @click="requestClose">{{ t('gui.common.cancel') }}</Button>
+        <Button variant="primary" :disabled="submitting" :loading="submitting" @click="handleSubmit">{{ t('gui.designer.file_menu.create') }}</Button>
       </div>
     </template>
   </ModalShell>
 
   <ConfirmDialog
     :open="confirmDiscardOpen"
-    title="변경사항을 버리시겠습니까?"
-    message="입력한 내용이 저장되지 않습니다."
+    :title="t('gui.project.create.discard_title')"
+    :message="t('gui.project.create.discard_message')"
     danger
-    confirm-label="버리기"
-    cancel-label="계속 작성"
+    :confirm-label="t('gui.project.create.discard_confirm')"
+    :cancel-label="t('gui.project.create.discard_cancel')"
     @confirm="confirmDiscard"
     @cancel="cancelDiscard"
   />
@@ -108,6 +108,7 @@
 // both (T#1 §5 "Dialog-local 상태는 store에 없다" extends to "child open/close state is
 // the parent's").
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Alert from '../../components/ui/Alert.vue'
 import Button from '../../components/ui/Button.vue'
 import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
@@ -115,6 +116,7 @@ import IconButton from '../../components/ui/IconButton.vue'
 import Input from '../../components/ui/Input.vue'
 import ModalShell from '../../components/ui/ModalShell.vue'
 import Textarea from '../../components/ui/Textarea.vue'
+import { failureText, renderUiText, type UiText } from '../../core/i18n/uiText'
 import { suggestProjectSlug } from './api'
 import { useProjectStore } from './store'
 import type { Project } from './types'
@@ -123,6 +125,7 @@ const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; created: [project: Project] }>()
 
 const store = useProjectStore()
+const { t } = useI18n()
 
 const errorId = 'project-create-error'
 
@@ -140,7 +143,10 @@ const color = ref(DEFAULT_COLOR)
 
 const suggesting = ref(false)
 const submitting = ref(false)
-const submitError = ref<string | null>(null)
+// flowgate.v02.0088 F01/F10: kept as meaning (the server's own words raw, otherwise the localized
+// fallback key) so an error still on screen follows a language switch.
+const submitError = ref<UiText | null>(null)
+const submitErrorText = computed(() => renderUiText(t, submitError.value))
 const attemptedSubmit = ref(false)
 const confirmDiscardOpen = ref(false)
 
@@ -349,7 +355,7 @@ async function handleSubmit(): Promise<void> {
     if (created) emit('created', created)
   } catch (err) {
     if (myGeneration !== generation.value) return
-    submitError.value = err instanceof Error ? err.message : 'Failed to create project.'
+    submitError.value = failureText(err, 'gui.project.create.failed')
   } finally {
     if (myGeneration === generation.value) submitting.value = false
   }

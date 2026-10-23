@@ -245,7 +245,7 @@ describe('GitConnectWindow — test / connect', () => {
 describe('GitConnectWindow — window behaviour and the token', () => {
   it('minimize hides the body and shows "Git 연결 창 복원"; restore brings it back', async () => {
     const w = await mountWindow()
-    const minimize = document.body.querySelector<HTMLButtonElement>('.ui-modeless-titlebar-actions button[aria-label="Minimize"]')
+    const minimize = document.body.querySelector<HTMLButtonElement>('.ui-modeless-titlebar-actions button[data-modeless-action="minimize"]')
     minimize?.click()
     await flushPromises()
     expect(w.emitted('update:minimized')).toEqual([[true]])
@@ -276,7 +276,7 @@ describe('GitConnectWindow — window behaviour and the token', () => {
   it('× and Esc close and empty the token', async () => {
     const w = await mountWindow()
     await type('git-connect-secret', TYPED)
-    document.body.querySelector<HTMLButtonElement>('.ui-modeless-titlebar-actions button[aria-label="Close"]')?.click()
+    document.body.querySelector<HTMLButtonElement>('.ui-modeless-titlebar-actions button[data-modeless-action="close"]')?.click()
     await flushPromises()
     expect(w.emitted('close')).toHaveLength(1)
     expect(q<HTMLInputElement>('git-connect-secret')?.value).toBe('')
@@ -315,7 +315,7 @@ describe('GitConnectWindow — fits the viewport', () => {
 
   const panel = () => document.body.querySelector<HTMLElement>('.ui-modeless-panel') as HTMLElement
   const titleButton = (label: string) =>
-    document.body.querySelector<HTMLButtonElement>(`.ui-modeless-titlebar-actions button[aria-label="${label}"]`)
+    document.body.querySelector<HTMLButtonElement>(`.ui-modeless-titlebar-actions button[data-modeless-action="${label.toLowerCase()}"]`)
   const CONTROLS = [
     'git-connect-remote',
     'git-connect-provider',

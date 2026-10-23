@@ -226,7 +226,7 @@ describe('Git modeless (0067-R §3)', () => {
     expect(t.wt.source.loadTargetChanges).not.toHaveBeenCalled()
     await click(windowTab('diff'))
     expect(t.wt.source.loadTargetChanges).toHaveBeenCalledTimes(1)
-    await click(shell()!.querySelector<HTMLElement>('button[aria-label="Close"]'))
+    await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="close"]'))
     expect(q('git-window')).toBeNull()
     // Closed, a refresh reads no comparison list.
     await click('git-refresh')
@@ -237,7 +237,7 @@ describe('Git modeless (0067-R §3)', () => {
     const t = setup()
     await mountPanel(t)
     await click(entry('merge'))
-    await click(shell()!.querySelector<HTMLElement>('button[aria-label="Minimize"]'))
+    await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="minimize"]'))
     expect(shell()!.classList.contains('is-minimized')).toBe(true)
     await click(entry('status'))
     expect(shell()!.classList.contains('is-minimized')).toBe(false)
@@ -269,7 +269,7 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     expect(disabled('git-apply-merge')).toBe(false)
     expect(q('git-apply-reason')).toBeNull()
     expect(q('git-result-push')).toBeNull()
-    await click(shell()!.querySelector<HTMLElement>('button[aria-label="Close"]'))
+    await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="close"]'))
     expect(q('git-window')).toBeNull()
 
     // Meanwhile, outside this screen and with the 0033 pending row unchanged: another file, a Stage,
@@ -310,7 +310,7 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     await mountPanel(t)
     await click(entry('diff'))
     expect(t.wt.source.loadTargetChanges).toHaveBeenCalledTimes(1)
-    await click(shell()!.querySelector<HTMLElement>('button[aria-label="Close"]'))
+    await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="close"]'))
     await click(entry('diff'))
     expect(t.wt.source.loadTargetChanges).toHaveBeenCalledTimes(2)
   })
@@ -329,14 +329,14 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
       expect(q('git-window')!.dataset.tab).toBe(tab)
     }
     // Minimized, the other in front: restored from its titlebar…
-    await click(shell()!.querySelector<HTMLElement>('button[aria-label="Minimize"]'))
+    await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="minimize"]'))
     await pressOther()
     expect(z(shell())).toBeLessThan(z(otherShell()))
-    await click(shell()!.querySelector<HTMLElement>('button[aria-label="Restore"]'))
+    await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="restore"]'))
     expect(shell()!.classList.contains('is-minimized')).toBe(false)
     expect(z(shell())).toBeGreaterThan(z(otherShell()))
     // …or from an entry.
-    await click(shell()!.querySelector<HTMLElement>('button[aria-label="Minimize"]'))
+    await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="minimize"]'))
     await pressOther()
     await click(entry('merge'))
     expect(shell()!.classList.contains('is-minimized')).toBe(false)
@@ -352,7 +352,7 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     expect([b.left >= 0, b.top >= 0, b.right <= 640, b.bottom <= 480]).toEqual([true, true, true, true])
     expect(b.width).toBeLessThan(700)
     expect(b.height).toBeLessThan(560)
-    for (const label of ['Minimize', 'Close']) expect(shell()!.querySelector(`button[aria-label="${label}"]`), label).not.toBeNull()
+    for (const label of ['Minimize', 'Close']) expect(shell()!.querySelector(`button[data-modeless-action="${label.toLowerCase()}"]`), label).not.toBeNull()
     expect(qa('[data-test="git-window-tab"]')).toHaveLength(4)
     expect(q('git-commit-bar')).not.toBeNull()
     // The tab row stays; only the body scrolls inside the smaller window.
@@ -378,15 +378,15 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     expect(q('git-window')!.dataset.tab).toBe('files')
     expect((q('git-commit-message') as HTMLInputElement).value).toBe('wip')
 
-    await click(shell()!.querySelector<HTMLElement>('button[aria-label="Minimize"]'))
+    await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="minimize"]'))
     setViewport(480, 360)
-    await click(shell()!.querySelector<HTMLElement>('button[aria-label="Restore"]'))
+    await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="restore"]'))
     b = box(shell()!)
     expect([b.left >= 0, b.top >= 0, b.right <= 480, b.bottom <= 360]).toEqual([true, true, true, true])
     expect((q('git-commit-message') as HTMLInputElement).value).toBe('wip')
 
     // Closed and opened again on a normal screen: the v27 size and place again.
-    await click(shell()!.querySelector<HTMLElement>('button[aria-label="Close"]'))
+    await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="close"]'))
     setViewport(1280, 800)
     await click(entry('status'))
     expect(box(shell()!)).toMatchObject({ left: 200, top: 88, width: 700, height: 560 })

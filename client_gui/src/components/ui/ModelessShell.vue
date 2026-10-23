@@ -17,15 +17,16 @@
         <span class="ui-modeless-titlebar-actions">
           <slot name="actions" />
           <IconButton
-            :label="isMinimized ? 'Restore' : 'Minimize'"
+            :label="isMinimized ? restoreName : minimizeName"
             variant="ghost"
             size="sm"
+            :data-modeless-action="isMinimized ? 'restore' : 'minimize'"
             @mousedown.stop
             @click="setMinimized(!isMinimized)"
           >
             <span aria-hidden="true">{{ isMinimized ? '□' : '−' }}</span>
           </IconButton>
-          <IconButton label="Close" variant="ghost" size="sm" @mousedown.stop @click="emit('close')">
+          <IconButton :label="closeName" variant="ghost" size="sm" data-modeless-action="close" @mousedown.stop @click="emit('close')">
             <span aria-hidden="true">{{ '×' }}</span>
           </IconButton>
         </span>
@@ -48,6 +49,7 @@
 // size/minimized/open-close/drag-resize lifecycle; it knows nothing about Git branches,
 // AI runs, Projects, Documents or Approvals (T0006 §6/§15).
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import i18n from '@shared/i18n'
 import IconButton from './IconButton.vue'
 import { allocateOverlayZIndex } from '../../core/overlay/zIndex'
 import { captureFocusedElement, returnFocusTo } from '../../core/overlay/focusReturn'
@@ -69,6 +71,11 @@ const props = withDefaults(
     // state (e.g. a window list shown elsewhere) passes it in and hears every toggle. Left
     // unset, the shell keeps minimized state to itself exactly as before.
     minimized?: boolean
+    // flowgate.v02.0088 F06: explicit accessible names for the shell's own controls. Each one
+    // given wins over the default, which follows the app's current language (gui.common.*).
+    minimizeLabel?: string
+    restoreLabel?: string
+    closeLabel?: string
   }>(),
   {
     title: '',
@@ -82,10 +89,24 @@ const props = withDefaults(
     resizable: true,
     closeOnEscape: true,
     minimized: undefined,
+    minimizeLabel: undefined,
+    restoreLabel: undefined,
+    closeLabel: undefined,
   },
 )
 
 const emit = defineEmits<{ close: []; 'update:minimized': [value: boolean] }>()
+
+// flowgate.v02.0088 F06: the default accessible names read the shared i18n instance directly
+// (this shell is domain-free and is mounted with or without the app's i18n plugin), so they
+// follow a language switch while the window stays open. The English words remain only as the
+// last resort when the app catalog is not registered at all.
+function controlName(key: string, last: string): string {
+  return i18n.global.te(key) ? String(i18n.global.t(key)) : last
+}
+const minimizeName = computed(() => props.minimizeLabel ?? controlName('gui.common.minimize', 'Minimize'))
+const restoreName = computed(() => props.restoreLabel ?? controlName('gui.common.restore', 'Restore'))
+const closeName = computed(() => props.closeLabel ?? controlName('gui.common.close', 'Close'))
 
 const panelRef = ref<HTMLElement | null>(null)
 const x = ref(props.initialX)

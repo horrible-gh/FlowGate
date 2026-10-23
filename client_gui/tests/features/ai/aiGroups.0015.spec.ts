@@ -152,3 +152,43 @@ describe('AiGroupsPanel (0015 T0003, teams since 0017)', () => {
     wrapper.unmount()
   })
 })
+
+// flowgate.v02.0088 F07: the team and role delete confirms name their actions with gui.common.delete / cancel in the
+// current language (ConfirmDialog's own default stays as it is); 취소 sends nothing.
+describe('AiGroupsPanel delete confirms (0088 F07)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    setCurrentUser({ username: 'admin', email: null, isAdmin: true })
+  })
+  afterEach(() => {
+    setCurrentUser(null)
+    document.body.innerHTML = ''
+    i18n.global.locale.value = 'ko'
+  })
+  const buttons = () => Array.from(document.querySelectorAll<HTMLButtonElement>('.ui-confirm-actions .ui-btn')).map((b) => b.textContent?.trim())
+
+  it.each([
+    ['ko', '삭제', '취소'],
+    ['ja', '削除', 'キャンセル'],
+    ['en', 'Delete', 'Cancel'],
+  ] as const)('the team and the role delete say %s: %s / %s, and cancel deletes nothing', async (locale, del, cancel) => {
+    i18n.global.locale.value = locale
+    const deleteGroup = vi.spyOn(api, 'deleteAiGroup').mockResolvedValue()
+    const deleteRole = vi.spyOn(api, 'deleteAiGroupRole').mockResolvedValue(teamA)
+    const wrapper = mountPanel()
+
+    await wrapper.find('.head-actions .danger-icon').trigger('click')
+    expect(buttons()).toEqual([cancel, del])
+    ;(document.querySelector('.ui-confirm-actions .ui-btn--secondary') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(deleteGroup).not.toHaveBeenCalled()
+
+    const roleDelete = wrapper.get('.role-card-actions .danger-icon')
+    await roleDelete.trigger('click')
+    expect(buttons()).toEqual([cancel, del])
+    ;(document.querySelector('.ui-confirm-actions .ui-btn--secondary') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(deleteRole).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})

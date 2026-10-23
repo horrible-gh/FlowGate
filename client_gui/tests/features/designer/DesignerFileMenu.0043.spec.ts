@@ -423,7 +423,8 @@ describe('Group commands', () => {
     await typeIn('[data-test="designer-group-create-title"]', 'Infra')
     await typeIn('[data-test="designer-group-create-name"]', 'infra')
     await clickIn('[data-test="designer-group-create-submit"]')
-    expect(dialog('[data-test="designer-group-create-error"]').textContent).toContain('Failed to create the group.')
+    // flowgate.v02.0088 F10: no server words -> the dialog's localized create_failed, never the adapter's English default.
+    expect(dialog('[data-test="designer-group-create-error"]').textContent?.trim()).toBe('생성하지 못했습니다.')
     expect(rowLabels(w)).toEqual(['Alpha', 'UI 개선', 'core'])
   })
 })

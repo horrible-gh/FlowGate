@@ -14,7 +14,7 @@
   >
     <template #header>
       <span class="slot-write-heading" data-test="slot-write-heading">
-        <span class="slot-write-kind">{{ t(k('title'), { name: request.name }) }}</span>
+        <span class="slot-write-kind">{{ t(k('title'), { name: kindName }) }}</span>
         <span class="slot-write-card" :title="request.cardTitle" data-test="slot-write-card">{{ request.cardTitle }}</span>
       </span>
     </template>
@@ -75,6 +75,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
+import { lineKindName } from './lineKindName'
 import type { SlotWriteFailure } from './slotWriteModel'
 import { closeSlotWriteWindow, setSlotWriteWindowMinimized, type SlotWriteWindowState } from './slotWriteWindows'
 import { useSlotWrite } from './useSlotWrite'
@@ -83,12 +84,15 @@ const props = defineProps<{
   win: SlotWriteWindowState
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const k = (key: string) => `gui.document_window.write.${key}`
 
 const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 
 const { request, contentless, text, saving, failure, existing, problemKey, save } = useSlotWrite(() => props.win)
+
+// flowgate.v02.0088 F14: the line's kind in the current language (its key), or the name it came with.
+const kindName = computed(() => lineKindName(request.value, t, te))
 
 /** The code's words, then the server's message when it says more. */
 function failureText(item: SlotWriteFailure): string {

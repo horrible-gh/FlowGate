@@ -99,13 +99,15 @@ const lines = computed<InspectorSlotView[]>(() => {
       ? {
           key: 'plan',
           name: t(k('slot.plan')),
+          // flowgate.v02.0088 F14/F15: the kind's key travels with the line (see openCardLineAction).
+          nameKey: k('slot.plan'),
           id: planId,
           state: planState.view,
           focus: workPlanSlotFocus(planState.state),
           danger: planState.state?.tone === 'danger',
           open: 'enabled',
         }
-      : { key: 'plan', name: t(k('slot.plan')), empty: true }
+      : { key: 'plan', name: t(k('slot.plan')), nameKey: k('slot.plan'), empty: true }
   // flowgate.v02.0056 F2-2: 문서 없음 [작성] · the history number · [AI 호출] of the card's own line (a WP / M line is
   // never "비어 있음" — O3 §4-1 has_body is always true there).
   return [{ ...plan, ...cardLineRow(target, plan, 'plan') }]

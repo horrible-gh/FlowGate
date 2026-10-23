@@ -297,3 +297,49 @@ describe('AiProvidersPanel (0015 T0003, AI 목록 since 0017 CH0006)', () => {
     wrapper.unmount()
   })
 })
+
+// flowgate.v02.0088 F07/F08: the provider delete confirm names its actions in the current language and 취소 saves
+// nothing; the generic kind Custom is a UI word while the kind sent stays 'custom'.
+describe('AiProvidersPanel delete confirm and the Custom kind (0088 F07/F08)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    setCurrentUser({ username: 'member', email: null, isAdmin: false })
+    mockLists()
+  })
+  afterEach(() => {
+    setCurrentUser(null)
+    document.body.innerHTML = ''
+    i18n.global.locale.value = 'ko'
+  })
+
+  it.each([
+    ['ko', '삭제', '취소'],
+    ['ja', '削除', 'キャンセル'],
+    ['en', 'Delete', 'Cancel'],
+  ] as const)('the delete confirm says %s: %s / %s, and cancel saves nothing', async (locale, del, cancel) => {
+    i18n.global.locale.value = locale
+    const save = vi.spyOn(api, 'saveMyAi')
+    const wrapper = await mountPanel()
+    const trash = wrapper.findAll('.danger-icon')
+    await trash[trash.length - 1].trigger('click')
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.ui-confirm-actions .ui-btn')).map((b) => b.textContent?.trim())
+    expect(buttons).toEqual([cancel, del])
+    ;(document.querySelector('.ui-confirm-actions .ui-btn--secondary') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(save).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('labels the Custom kind in the current language and keeps the product names and the custom value', async () => {
+    i18n.global.locale.value = 'ja'
+    const wrapper = mount(AiProviderEditDialog, { props: { open: true, provider: null }, global: { plugins: [i18n] }, attachTo: document.body })
+    await flushPromises()
+    const options = () => Array.from(document.querySelectorAll<HTMLOptionElement>('#provider-kind option')).map((o) => [o.value, o.textContent?.trim()])
+    expect(options()).toContainEqual(['custom', 'カスタム'])
+    expect(options()).toContainEqual(['claude', 'Claude (Anthropic)'])
+    i18n.global.locale.value = 'ko'
+    await flushPromises()
+    expect(options()).toContainEqual(['custom', '사용자 정의'])
+    wrapper.unmount()
+  })
+})

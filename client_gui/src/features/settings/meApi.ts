@@ -31,6 +31,11 @@ export class MeRequestError extends Error {
     readonly code: string | null,
     readonly status: number | null,
     readonly violations: string[] = [],
+    /**
+     * flowgate.v02.0088 F17: the gui.settings.self.errors.* key `message` was made from, so a screen that keeps the
+     * error on display can show it again in the current language.
+     */
+    readonly messageKey: string | null = null,
   ) {
     super(message)
     this.name = 'MeRequestError'
@@ -61,8 +66,8 @@ async function call<T>(request: () => Promise<{ data: T }>, fallbackKey: string)
   } catch (error) {
     const { code, status, violations } = describe(error)
     const key = code ? `gui.settings.self.errors.${code}` : ''
-    const message = key && i18n.global.te(key) ? String(i18n.global.t(key)) : String(i18n.global.t(`gui.settings.self.errors.${fallbackKey}`))
-    throw new MeRequestError(message, code, status, violations)
+    const messageKey = key && i18n.global.te(key) ? key : `gui.settings.self.errors.${fallbackKey}`
+    throw new MeRequestError(String(i18n.global.t(messageKey)), code, status, violations, messageKey)
   }
 }
 

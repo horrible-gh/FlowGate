@@ -27,6 +27,7 @@ import api, {
   postRequest,
   putRequest,
 } from '@shared/api'
+import { serverDetailOf } from '../../core/i18n/serverDetail'
 import type {
   BaseFileDiff,
   CreateFlowInput,
@@ -54,6 +55,12 @@ import type {
   SourceMutationRefusal,
   SourceUploadResult,
 } from './types'
+
+// flowgate.v02.0088 F10: the Project / Group / Flow list and create calls below throw an Error whose
+// message is only the server's own diagnostic ('' when it sent none). The screen that shows the
+// failure owns the localized general text (gui.project.* / gui.designer.file_menu.* /
+// gui.designer.project_explorer.*), so an English transport line or an English default from this
+// adapter is never what a ko/ja person reads first.
 
 interface RawProjectModule {
   name: string
@@ -106,7 +113,7 @@ export async function fetchActiveProjects(): Promise<Project[]> {
     const raw = Array.isArray(response.data) ? response.data : response.data?.projects ?? []
     return raw.filter((p) => p.project_id !== SYSTEM_PROJECT_ID).map(toProject)
   } catch (error) {
-    throw new Error(extractApiErrorMessage(error, 'Failed to load projects.'))
+    throw new Error(serverDetailOf(error))
   }
 }
 
@@ -126,7 +133,7 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
     })
     return toProject(response.data)
   } catch (error) {
-    throw new Error(extractApiErrorMessage(error, 'Failed to create project.'))
+    throw new Error(serverDetailOf(error))
   }
 }
 
@@ -203,7 +210,7 @@ export async function fetchProjectGroupTree(
     const raw = response.data?.data?.nodes ?? []
     return raw.map(toGroupTreeNode).filter((n): n is GroupTreeNode => n !== null)
   } catch (error) {
-    throw new Error(extractApiErrorMessage(error, 'Failed to load the project tree.'))
+    throw new Error(serverDetailOf(error))
   }
 }
 
@@ -666,7 +673,7 @@ export async function createGroup(projectId: string, input: CreateGroupInput): P
     const name = response.data?.name || input.name
     return { id: `module:${projectId}:${name}`, name, title: response.data?.title || input.title }
   } catch (error) {
-    throw new Error(extractApiErrorMessage(error, 'Failed to create the group.'))
+    throw new Error(serverDetailOf(error))
   }
 }
 
@@ -687,7 +694,7 @@ export async function createFlow(input: CreateFlowInput): Promise<CreatedFlow> {
     })
     return { id: response.data.group_id, title: input.title }
   } catch (error) {
-    throw new Error(extractApiErrorMessage(error, 'Failed to create the flow.'))
+    throw new Error(serverDetailOf(error))
   }
 }
 

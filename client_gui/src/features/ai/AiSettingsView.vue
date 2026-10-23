@@ -154,17 +154,17 @@ async function loadData() {
     } else {
       groups.value = []
       sectionErrors.value = {
-        groups: grpRes.reason instanceof Error ? grpRes.reason.message : 'Failed to load AI groups',
+        groups: grpRes.reason instanceof Error && grpRes.reason.message ? grpRes.reason.message : t('gui.ai.groups.load_failed'),
       }
     }
 
     if (systemRes.status === 'rejected') {
-      error.value = systemRes.reason instanceof Error ? systemRes.reason.message : 'Failed to load AI settings'
+      error.value = systemRes.reason instanceof Error && systemRes.reason.message ? systemRes.reason.message : t('gui.ai.request_failed.settings_load')
     }
     loaded.value = true
   } catch (err: unknown) {
     if (epoch === requestEpoch) {
-      error.value = err instanceof Error ? err.message : 'Failed to load AI settings'
+      error.value = err instanceof Error && err.message ? err.message : t('gui.ai.request_failed.settings_load')
     }
   } finally {
     if (epoch === requestEpoch) {
