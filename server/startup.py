@@ -1,6 +1,7 @@
 """Server initialization helper — bootstrap logic extracted from main.py."""
 import sys
 import io
+import threading
 import time
 import LogAssist.log as logger
 
@@ -61,6 +62,37 @@ def sweep_token_scratches():
         logger.info(f"[startup] swept token scratch for {projects} project(s); purged {purged} expired token row(s)")
     except Exception as exc:
         logger.warning(f"[startup] token scratch sweep failed: {exc}")
+
+
+def _sweep_scratches_in_background():
+    """The bootstrap's AI-run -> Token scratch sweep order, on its own thread."""
+    logger.info("[startup] scratch sweep thread started")
+    try:
+        sweep_ai_run_scratches()
+        sweep_token_scratches()
+    except Exception as exc:
+        logger.warning(f"[startup] scratch sweep thread failed: {exc}")
+        return
+    logger.info("[startup] scratch sweep thread finished")
+
+
+def start_scratch_sweeps():
+    """flowgate.v02.0090 T0015 (NR0014 §4.1-3): start the scratch sweeps off the lifespan.
+
+    Since 0090 the backlog of ReadOnly Git objects is really deleted, and deleting it
+    inside the lifespan kept the port closed for minutes. One daemon thread runs the
+    sweeps in their old order once lease recovery has returned; the token row purge
+    still follows the token disk sweep. A thread that cannot start is only logged —
+    the issue/admission sweeps and the next boot take over, never a synchronous fallback.
+    """
+    try:
+        thread = threading.Thread(target=_sweep_scratches_in_background,
+                                  name="startup-scratch-sweep", daemon=True)
+        thread.start()
+    except Exception as exc:
+        logger.warning(f"[startup] scratch sweep thread could not start: {exc}")
+        return None
+    return thread
 
 
 def register_server_instance():
@@ -396,8 +428,7 @@ def run_all():
     record_deployment()
     preload_singletons()
     recover_ai_invoke_leases()
-    sweep_ai_run_scratches()
-    sweep_token_scratches()
+    start_scratch_sweeps()           # 0090 T0015: AI-run -> Token -> purge, never awaited here
     register_server_instance()
     recover_git_sessions()
     start_conversation_integration()
@@ -409,7 +440,9 @@ def run_all():
     start_graph_validation_integration()
     start_graph_run_integration()
     start_work_plan_deploy_integration()
-    # T#4: all Graph ports are ready; orphan AI cleanup has already completed above.
+    # T#4: all Graph ports are ready; orphan AI lease recovery has already completed above
+    # (the scratch sweep may still be running: the recovery reads DB state, not scratch, and
+    # a replayed AI start only requests its project's sweep on its own thread - 0090 T0015).
     recover_graph_time_machine()     # T#13: before any replay of the Flow's executions
     try:
         from flowgate.graph_run.execution import recover as recover_graph_executions
