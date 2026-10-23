@@ -5,6 +5,10 @@ Migration 146_graph_node_settings.sql. One row per (Flow, node, field) holding t
 the draft or in confirmed revisions (a removed node's key is retired and never reused, and the Flow's
 rows go with the Flow). A value is replaced on its own, inside the caller's Flow guard.
 0061 T#11: Hold is the field ``hold`` (true) of the same table, kept by node key across revisions like any setting.
+flowgate.v02.0085 T#1 (migration 158): a card's settings version (``graph_node_settings_version``) counts the writes that
+changed a stored value; a gate settings PATCH is checked against it (``settings.write``). A card that never changed has
+version 0, also before the migration. ``put`` / ``remove`` tell whether the stored value changed; the version itself is
+moved by the caller (``bump_version``, inside the same Flow guard).
 
 Reads ``graph_draft_nodes`` / ``graph_revision_nodes`` (which card a node key is) and never writes them.
 """
@@ -17,6 +21,7 @@ from typing import Any, Optional
 from modules.flow_gate.db.connection import get_store
 
 SETTINGS_TABLE = "graph_node_settings"
+VERSION_TABLE = "graph_node_settings_version"
 _NODE_COLUMNS = "node_key, node_type, doc_type, label"
 
 
@@ -64,22 +69,60 @@ def keys_with(flow_id: str, field: str, value: Any) -> frozenset:
     return frozenset(out)
 
 
-def put(flow_id: str, node_key: str, field: str, value: Any, by: Optional[str]) -> None:
-    """Replace one value (delete + insert: the same statements on every dialect)."""
+def put(flow_id: str, node_key: str, field: str, value: Any, by: Optional[str]) -> bool:
+    """Replace one value (delete + insert: the same statements on every dialect). True when the stored value changed."""
     store = get_store()
+    new_json = json.dumps(value, ensure_ascii=False)
+    before = store._fetch_one(
+        "SELECT value_json FROM graph_node_settings WHERE group_id = ? AND node_key = ? AND field = ?",
+        [flow_id, node_key, field])
     store._execute("DELETE FROM graph_node_settings WHERE group_id = ? AND node_key = ? AND field = ?",
                    [flow_id, node_key, field])
     store._execute(
         "INSERT INTO graph_node_settings (group_id, node_key, field, value_json, updated_at, updated_by) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        [flow_id, node_key, field, json.dumps(value, ensure_ascii=False), _now(), by],
+        [flow_id, node_key, field, new_json, _now(), by],
     )
+    return before is None or before["value_json"] != new_json
 
 
-def remove(flow_id: str, node_key: str, field: str) -> None:
-    """Back to the default."""
-    get_store()._execute("DELETE FROM graph_node_settings WHERE group_id = ? AND node_key = ? AND field = ?",
-                         [flow_id, node_key, field])
+def remove(flow_id: str, node_key: str, field: str) -> bool:
+    """Back to the default. True when there was a stored value."""
+    return get_store()._execute_affected(
+        "DELETE FROM graph_node_settings WHERE group_id = ? AND node_key = ? AND field = ?",
+        [flow_id, node_key, field]) > 0
+
+
+def version_available() -> bool:
+    """False until migration 158 is applied: every card then has version 0 and nothing moves it."""
+    return get_store().table_exists(VERSION_TABLE)
+
+
+def settings_version(flow_id: str, node_key: str) -> int:
+    """The card's settings version: the number of writes that changed it (0 = never, or no version table yet)."""
+    if not version_available():
+        return 0
+    row = get_store()._fetch_one(
+        "SELECT version FROM graph_node_settings_version WHERE group_id = ? AND node_key = ?", [flow_id, node_key])
+    return int(row["version"]) if row else 0
+
+
+def bump_version(flow_id: str, node_key: str) -> int:
+    """Move the card's settings version up by one and return it, inside the caller's Flow guard (the one writer of a
+    Flow's cards, so read + write is safe). No version table yet: nothing moves, 0."""
+    if not version_available():
+        return 0
+    store = get_store()
+    row = store._fetch_one(
+        "SELECT version FROM graph_node_settings_version WHERE group_id = ? AND node_key = ?", [flow_id, node_key])
+    if row is None:
+        store._execute("INSERT INTO graph_node_settings_version (group_id, node_key, version, updated_at) "
+                       "VALUES (?, ?, ?, ?)", [flow_id, node_key, 1, _now()])
+        return 1
+    version = int(row["version"]) + 1
+    store._execute("UPDATE graph_node_settings_version SET version = ?, updated_at = ? "
+                   "WHERE group_id = ? AND node_key = ?", [version, _now(), flow_id, node_key])
+    return version
 
 
 def card_node(flow_id: str, node_key: str) -> Optional[dict]:

@@ -272,7 +272,7 @@ def test_card_kinds_and_their_settings_follow_the_v7_blocks():
         f.TEST: ["instruction", "run_ai", "review_ai", "review_count"],
         f.REQUIREMENT: ["delegation", "scope", "team", "limit_max_nodes", "limit_total_reviews",
                         "limit_retries_per_card", "limit_replans"],
-        f.CHECK: ["usage", "merge_mode", "merge_target", "push", "keep_branch"],
+        f.CHECK: ["archive", "merge_mode", "merge_target", "push", "keep_branch"],       # 0085 T#1: no usage
         f.PLAN: ["pre_instruction_auto", "run_ai", "restart", "review_ai", "review_count", "time_limit",
                  "review_basis"],
     }
@@ -359,11 +359,14 @@ def test_each_card_kind_keeps_its_own_settings(env):
     assert {k: v for k, v in shown(req).items()} == {
         "delegation": "off", "scope": "confirm", "team": "team_auth", "limit_max_nodes": 12,
         "limit_total_reviews": 30, "limit_retries_per_card": None, "limit_replans": None}
-    for field, value in (("usage", "end"), ("merge_mode", "merge"), ("merge_target", "release/v0.2"),
+    # flowgate.v02.0085 T#1: a check card has the archive flag and a remote (null | origin) as merge target, no usage.
+    for field, value in (("archive", True), ("merge_mode", "merge"), ("merge_target", "origin"),
                          ("push", True), ("keep_branch", False)):
         gate = setting(env, FB, km["tmp_g"], field, value)
     assert gate["card_kind"] == "check" and shown(gate) == {
-        "usage": "end", "merge_mode": "merge", "merge_target": "release/v0.2", "push": True, "keep_branch": False}
+        "archive": True, "merge_mode": "merge", "merge_target": "origin", "push": True, "keep_branch": False,
+        "hold": False}
+    setting(env, FB, km["tmp_g"], "usage", "end", expect=422)
     # flowgate.v02.0072 T#3: a work plan card keeps the plan settings; a run card's instruction is not one of them.
     plan = setting(env, FB, km["tmp_wp"], "restart", 1)
     assert plan["card_kind"] == "plan" and shown(plan)["restart"] == 1
@@ -396,7 +399,7 @@ def test_other_refusals(env):
         "unknown_team"
     for bad in (0, 1000, "3"):
         setting(env, FB, r, "limit_replans", bad, expect=422)
-    for bad in ("a..b", "-x", "main.lock", "x/", "has space"):
+    for bad in ("a..b", "-x", "main.lock", "x/", "has space", "release/v0.2", "upstream"):      # a remote, never a branch
         setting(env, FB, g, "merge_target", bad, expect=422)
     setting(env, FB, g, "push", "yes", expect=422)
     bodies = [({"value": 1}, [{"field": "field", "reason": "required"}]),

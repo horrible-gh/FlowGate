@@ -89,8 +89,19 @@ def reconcile_retry_interval_sec() -> int:
 
 KINDS = ("final_approval_publish", "branch_merge_publish", "worktree_provision",
          "worktree_cleanup", "base_publish", "archive_preserve", "archive_restore",
-         "archive_purge", "project_provision")
+         "archive_purge", "project_provision", "gate_publish")
 FREEZE_KINDS = frozenset(("final_approval_publish",))
+
+# flowgate.v02.0085 T#1 (D0007 §7.2 operation job): ``gate_publish`` is one confirm gate decision's Git apply, archive
+# and completion. Its request key is the decision id (never a client key), so a decision has at most one job and a
+# decision's key can never be reused. It has no freeze phase and, until the gate card installs its executor, no
+# executor: the runner never claims it. A gate job ends ``succeeded`` or ``cancelled``; why it was cancelled is told by
+# the job's ``phase_note``: a cancel with no external effect, or a recovery abandon. A finished job is never resumed
+# (I5), and ``recovery_required`` is an unfinished job (it holds the gate until it is resolved).
+GATE_PUBLISH = "gate_publish"
+GATE_CANCEL_NO_EFFECT = "no_effect_canceled"
+GATE_CANCEL_ABANDONED = "recovery_abandoned"
+GATE_CANCEL_REASONS = (GATE_CANCEL_NO_EFFECT, GATE_CANCEL_ABANDONED)
 
 # Meaning fields per kind — requester and time excluded (L 2.13.1).
 _CANONICAL_FIELDS = {
@@ -104,6 +115,7 @@ _CANONICAL_FIELDS = {
     "archive_restore": ("archive_id", "action_seq"),
     "archive_purge": ("archive_id", "action_seq"),
     "project_provision": ("project_id", "config_generation"),
+    "gate_publish": ("decision_id", "group_id", "run_id", "node_key"),
 }
 
 PUBLISH = "publish"
@@ -167,6 +179,8 @@ def derive_request_key(kind: str, project_id: str, req: dict) -> str:
     """L 2.13.1. A client-supplied key wins; otherwise the kind's deterministic key."""
     if kind not in KINDS:
         raise JobProgramError("unknown_job_kind", kind=kind)
+    if kind == GATE_PUBLISH:
+        return "gpb:" + _require(kind, req, "decision_id")[0]          # the decision id is the key, nothing else
     client_key = req.get("client_request_key")
     if client_key:
         return f"{kind}:{client_key}"

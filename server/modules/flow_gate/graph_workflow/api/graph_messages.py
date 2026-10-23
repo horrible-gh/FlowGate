@@ -72,6 +72,19 @@ RUN_EDIT_MESSAGES = {
         "en": "The run cannot adopt the latest revision while an attempt is active.",
         "ja": "進行中の attempt があるため最新リビジョンへ移行できません。",
     },
+    # flowgate.v02.0085 T#1: a confirm gate's settings are locked outside the pending / open gate of a running or idle
+    # run (a reserved decision, a finished gate, a pause, a Time Machine, a conflict, a pending round split)
+    "gate_settings_locked": {
+        "ko": "지금은 이 확인 카드의 설정을 바꿀 수 없습니다.",
+        "en": "The settings of this confirm card cannot be changed now.",
+        "ja": "現在、この確認カードの設定は変更できません。",
+    },
+    # flowgate.v02.0085 T#1: the screen the request was made from is out of date (settings version / attempt / decision)
+    "gate_context_changed": {
+        "ko": "화면의 내용이 최신이 아닙니다. 다시 불러온 뒤 시도하세요.",
+        "en": "The screen is out of date. Reload and try again.",
+        "ja": "画面の内容が最新ではありません。再読み込みしてからやり直してください。",
+    },
     # flowgate.v02.0061 T#11: Hold cannot be set on a node done in the Flow's run
     "graph_hold_done_node": {
         "ko": "완료된 노드에는 Hold를 설정할 수 없습니다.",
