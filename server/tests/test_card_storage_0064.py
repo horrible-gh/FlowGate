@@ -271,3 +271,96 @@ def test_japanese_slot_names_match_client_messages(env):
                 actual.setdefault(key, set()).add(value)
     expected = {key: {value} if isinstance(value, str) else set(value) for key, value in slots.SLOT_TITLES["ja"].items()}
     assert expected == actual
+
+
+
+# ── flowgate.v02.0088 T#1: a new document's title in the request's language (D0010 §3.2 / §6) ──────────────
+
+R_NAMES = {"ko": "요구사항", "ja": "要件", "en": "Requirement"}
+B_NAMES = {"ko": "요구사항", "ja": "バグレポート", "en": "Requirement"}      # ko / en: one requirement name for R and B
+DEFAULT_LABELS = ["", "요구사항", "要件", "Requirement", "버그", "バグ", "Bug", "バグレポート"]
+
+
+def _requirement(doc_type):
+    return slots.card_slots("document", doc_type)[0]
+
+
+@pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+@pytest.mark.parametrize("label", DEFAULT_LABELS)
+def test_a_default_label_takes_the_name_of_the_new_document_s_type_in_the_request_locale(label, locale):
+    """Blank, the R names, the B card names (버그 / バグ / Bug) and the ja B document name are all default names: the
+    title is the name of the type the document is (R or B), never the label plus a suffix (``バグ · バグレポート``)."""
+    r_title = legacy._title(label, _requirement("R"), locale)
+    b_title = legacy._title(label, _requirement("B"), locale)
+    assert (r_title, b_title) == (R_NAMES[locale], B_NAMES[locale])
+    assert " · " not in r_title and " · " not in b_title
+
+
+def test_the_type_of_a_new_document_is_its_line_s_never_its_label():
+    """``バグレポート`` on an R document stays R (要件); ``Bug`` on an R document is no longer ``Bug · Requirement``
+    (before 0088 the B card names were not default names) — an intended change, fixed here (review 2183)."""
+    assert legacy._title("バグレポート", _requirement("R"), "ja") == "要件"
+    assert legacy._title("Bug", _requirement("R"), "en") == "Requirement"
+    assert legacy._title("Bug", _requirement("R")) == "요구사항"
+    assert legacy._title("요구사항", _requirement("B"), "ja") == "バグレポート"
+
+
+@pytest.mark.parametrize("locale, expected", [("ko", "로그인 오류 · 요구사항"), ("ja", "로그인 오류 · バグレポート"),
+                                              ("en", "로그인 오류 · Requirement")])
+def test_a_person_s_label_keeps_its_text_and_takes_the_type_s_name_in_the_request_locale(locale, expected):
+    assert legacy._title("로그인 오류", _requirement("B"), locale) == expected
+    assert legacy._title("로그인 오류", _requirement("R"), locale) == "로그인 오류 · " + R_NAMES[locale]
+    long = legacy._title("긴" * 200, _requirement("B"), locale)
+    assert len(long) == legacy.TITLE_MAX_LEN and long.endswith(" · " + B_NAMES[locale])
+
+
+@pytest.mark.parametrize("locale", [None, "", "zh", "JA", "ja-JP", "en-US"])
+def test_no_blank_or_unsupported_locale_is_korean(locale):
+    """The request normalization (``envelope.locale_of``) is not widened: anything but ko / ja / en is ko."""
+    assert legacy._title("", _requirement("B"), locale) == "요구사항"
+    assert legacy._title("로그인 오류", _requirement("B"), locale) == "로그인 오류 · 요구사항"
+    assert legacy._title("R", slots.CardSlot("delegation", "M", "run"), locale) == "R · AI 위임"
+
+
+@pytest.mark.parametrize("locale, name", [("ko", "AI 위임"), ("ja", "AI委任"), ("en", "AI delegation")])
+def test_other_lines_take_their_own_name_and_keep_their_own_default_names(locale, name):
+    delegation = slots.CardSlot("delegation", "M", "run")
+    assert legacy._title("", delegation, locale) == name
+    assert legacy._title("AI\t  delegation", delegation, locale) == name
+    assert legacy._title("Bug", delegation, locale) == "Bug · " + name          # the R / B card names: requirement only
+    instruction = slots.card_slots("document", "T")[0]
+    assert legacy._title("指示書", instruction, locale) == slots.slot_title("instruction", locale)
+
+
+@pytest.mark.parametrize("locale, prefix", [("ko", "작업계획 — "), ("ja", "作業計画 — "), ("en", "Work plan — "),
+                                            (None, "작업계획 — "), ("ja-JP", "작업계획 — ")])
+def test_a_new_work_plan_derives_its_title_in_the_request_locale_with_the_same_plan(locale, prefix):
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body, title = legacy._work_plan_body("flowgate", locale)
+    plan = json.loads(body)
+    assert title.startswith(prefix) and title == wp.derived_title(plan, slots.title_locale(locale))
+    assert body == legacy._work_plan_body("flowgate")[0]                     # the plan JSON does not depend on it
+
+
+def test_a_resolved_title_is_used_as_is_for_the_row_and_front_matter(env, monkeypatch):
+    """The deploy decides a new instruction's title once and hands it over (``resolved_title``); no second decision."""
+    from modules.flow_gate.db import groups
+
+    monkeypatch.setattr(legacy, "_title", lambda *a, **k: pytest.fail("the title was decided again"))
+    slot = slots.card_slots("document", "T")[0]
+    doc_id = legacy.create_document(groups.get_by_id(FB), {"node_key": "gn_test", "label": "구현"}, slot, "u_kim",
+                                    "# 구현 · 指示書\n\n본문\n", locale="ja", resolved_title="구현 · 指示書")
+    row = documents.get_by_id(doc_id)
+    text = (env["storage"] / row["file_path"]).read_text(encoding="utf-8")
+    assert row["title"] == "구현 · 指示書" and "\ntitle: 구현 · 指示書\n" in text and text.endswith("# 구현 · 指示書\n\n본문\n")
+
+
+def test_without_a_resolved_title_the_generator_decides_it_once_in_the_locale(env):
+    from modules.flow_gate.db import groups
+
+    doc_id = legacy.create_document(groups.get_by_id(FB), {"node_key": "gn_test", "label": "バグ"},
+                                    _requirement("B"), "u_kim", locale="ja")
+    row = documents.get_by_id(doc_id)
+    text = (env["storage"] / row["file_path"]).read_text(encoding="utf-8")
+    assert row["title"] == "バグレポート" and "\ntitle: バグレポート\n" in text

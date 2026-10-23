@@ -125,8 +125,10 @@ def _shown_line(flow_id: str, node: dict, slot: cs.CardSlot) -> Optional[dict]:
     return {k: v for k, v in found.items() if k != "document"} if found else None
 
 
-def write_line(group: dict, node_key: str, slot_key: str, content: Optional[str], user_id: str) -> dict:
-    """``POST /flows/{flow_id}/nodes/{node_key}/slots/{slot}/document``."""
+def write_line(group: dict, node_key: str, slot_key: str, content: Optional[str], user_id: str,
+               locale: Optional[str] = None) -> dict:
+    """``POST /flows/{flow_id}/nodes/{node_key}/slots/{slot}/document``; a document it makes (also a result) is
+    titled in ``locale``, the request's (flowgate.v02.0088)."""
     flow_id = group["group_id"]
     legacy.require_writable(flow_id)
     if not repository.available():
@@ -141,7 +143,7 @@ def write_line(group: dict, node_key: str, slot_key: str, content: Optional[str]
     def body() -> tuple[Optional[tuple[str, str]], Optional[dict]]:
         running = legacy.running_node(flow_id, node_key)       # judged under the guard: one writer at a time
         if running is not None and running["result_type"] == slot.doc_type:
-            return _reserve_result(group, node, slot, ordinal, running, content, user_id), None
+            return _reserve_result(group, node, slot, ordinal, running, content, user_id, locale), None
         if slot.doc_type == "WP" and legacy.card_working(flow_id, node_key):     # 0083 T#3: e.g. its review loop
             raise _refused(409, "node_ai_working", {"flow_id": flow_id, "node_key": node_key, "slot": slot.slot},
                            "The card's AI is still working on it.")
@@ -149,7 +151,7 @@ def write_line(group: dict, node_key: str, slot_key: str, content: Optional[str]
         if doc is not None:
             raise _refused(409, "slot_has_document", {"flow_id": flow_id, "node_key": node_key, "slot": slot.slot,
                                                       "doc_id": doc["doc_id"]}, "This line already has a document.")
-        doc_id = legacy.create_document(group, node, slot, user_id, content)
+        doc_id = legacy.create_document(group, node, slot, user_id, content, locale=locale)
         _link(flow_id, node_key, slot, ordinal, row, doc_id, user_id)
         return None, _answer(flow_id, node, slot, doc_id, False)
 
@@ -162,7 +164,7 @@ def write_line(group: dict, node_key: str, slot_key: str, content: Optional[str]
 
 
 def _reserve_result(group: dict, node: dict, slot: cs.CardSlot, ordinal: int, running: dict,
-                    content: Optional[str], user_id: str) -> tuple[str, str]:
+                    content: Optional[str], user_id: str, locale: Optional[str] = None) -> tuple[str, str]:
     """Inside the Flow guard: the node's result made, its dispatch token claimed, the document submitted and the
     line holding it — ``(doc_id, token_id)``. Any refusal raises, so the guard's transaction leaves nothing."""
     flow_id, node_key = group["group_id"], node["node_key"]
@@ -182,7 +184,7 @@ def _reserve_result(group: dict, node: dict, slot: cs.CardSlot, ordinal: int, ru
     if doc is not None and not _untouched_draft(row, doc):
         raise _refused(409, "slot_has_document", {**params, "doc_id": doc["doc_id"]},
                        "This line already has a document.")
-    doc_id = legacy.create_document(group, node, slot, user_id, content)
+    doc_id = legacy.create_document(group, node, slot, user_id, content, locale=locale)
     if not legacy.register_result(doc_id, token_id, user_id):    # another writer spent the token first
         legacy.discard_file(doc_id)                            # the rollback removes its rows, not its file
         raise _refused(409, "node_token_unavailable", params, "The card's run token is already used.")

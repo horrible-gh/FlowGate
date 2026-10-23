@@ -54,6 +54,6 @@ def patch_card_settings(flow_id: str, node_key: str, request: Request, body: Any
             raise legacy.invalid(request, errors)
         group = legacy.load_flow(flow_id)
         legacy.authorize(user_id, group, "write")
-        return settings.write(group, node_key, name, value, user_id)
+        return settings.write(group, node_key, name, value, user_id, legacy.locale_of(request))
 
     return legacy.run(request, handle)

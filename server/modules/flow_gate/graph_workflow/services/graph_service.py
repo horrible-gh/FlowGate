@@ -199,22 +199,24 @@ def _resolve(req: dr.DraftRequest, taken: set[str]) -> tuple[list[dict], list[di
     return nodes, edges, key_map
 
 
-def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optional[str]) -> dict:
-    """P0008 S3-1~S3-4 ``PUT /flows/{flow_id}/graph/draft``."""
+def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optional[str],
+               locale: Optional[str] = None) -> dict:
+    """P0008 S3-1~S3-4 ``PUT /flows/{flow_id}/graph/draft``; ``locale`` is the request's (flowgate.v02.0088)."""
     flow_id = group["group_id"]
     require_writable(flow_id)
     registered = registered_doc_types(group.get("project_id"))
-    return with_flow_guard(flow_id, lambda: write_draft(group, user_id, req, client_id, registered))
+    return with_flow_guard(flow_id, lambda: write_draft(group, user_id, req, client_id, registered, locale))
 
 
 def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, client_id: Optional[str],
-                registered: set[str]) -> dict:
+                registered: set[str], locale: Optional[str] = None) -> dict:
     """The draft save inside the caller's Flow guard of ``group`` (flowgate.v02.0074 T#4, D0006 §2 초안 저장 내부 함수).
 
     ``save_draft`` runs it in a guard of its own; the work plan deploy runs it in the guard that also writes its
     cards' settings and instructions, so the draft, the card lines and those writes commit together or not at all.
     Every check and write of a draft save is here (ownership, run lock, version CAS, protected nodes, keys, card
     documents); the Canvas event is queued after the commit, so a rolled-back caller announces nothing.
+    ``locale`` (the saving request's) goes to the card documents port: the documents the save makes are titled in it.
     """
     flow_id, project_id = group["group_id"], group.get("project_id")
     assert held_guard() == ("flow", flow_id), "write_draft runs inside the Flow guard of its Flow"
@@ -251,7 +253,8 @@ def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, clien
             layout_store.retire(flow_id, key, "draft_removed")
         try:
             card_documents = card_document_ports.draft_saved(group, user_id, nodes, removed_nodes, registered,
-                                                             ((current or latest) or {}).get("nodes", []))
+                                                             ((current or latest) or {}).get("nodes", []),
+                                                             locale=locale)
         except GraphApiError as exc:
             if exc.code == "document_storage_unwritable":
                 reverse_keys = {value: key for key, value in key_map.items()}

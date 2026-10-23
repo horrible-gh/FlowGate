@@ -55,10 +55,12 @@ DELEGATION_SETTING = "delegation"
 # ── draft save ───────────────────────────────────────────────────────────────
 
 def sync_draft(group: dict, user_id: Optional[str], nodes: list[dict], removed_keys: Iterable[str],
-               registered: set[str], previous_nodes: Iterable[dict] = ()) -> dict[str, list[dict]]:
+               registered: set[str], previous_nodes: Iterable[dict] = (), locale: Optional[str] = None
+               ) -> dict[str, list[dict]]:
     """Bring the card lines in line with the saved draft; returns the lines of the draft's nodes.
 
     ``previous_nodes`` are the nodes of the draft (or, for a new draft, the revision) the save replaces.
+    ``locale`` is the saving request's: the documents this save makes are titled in it (flowgate.v02.0088).
     """
     flow_id = group["group_id"]
     if not repository.available():
@@ -80,7 +82,7 @@ def sync_draft(group: dict, user_id: Optional[str], nodes: list[dict], removed_k
         for ordinal, slot in enumerate(spec):
             if slot.slot in made:
                 continue
-            doc_id, owned = _line_document(group, node, slot, made, registered, user_id)
+            doc_id, owned = _line_document(group, node, slot, made, registered, user_id, locale)
             if doc_id is None:
                 continue
             repository.insert(flow_id, node["node_key"], slot.slot, slot.doc_type, doc_id, owned, ordinal, user_id)
@@ -125,8 +127,9 @@ def _released(flow_id: str, node_key: str, rows: list[dict], wanted: set) -> lis
 
 
 def _line_document(group: dict, node: dict, slot: cs.CardSlot, made: dict, registered: set[str],
-                   user_id: Optional[str]) -> tuple[Optional[str], bool]:
-    """(document of a new line, whether the card owns it); (None, _) = the line stays empty."""
+                   user_id: Optional[str], locale: Optional[str] = None) -> tuple[Optional[str], bool]:
+    """(document of a new line, whether the card owns it); (None, _) = the line stays empty. Only a document made
+    here is titled (in ``locale``); a shown root or shared document keeps its own title."""
     if slot.shares:
         return made.get(slot.shares), False
     if slot.doc_type not in registered:
@@ -135,7 +138,7 @@ def _line_document(group: dict, node: dict, slot: cs.CardSlot, made: dict, regis
         root = _existing_root(group["group_id"], slot.doc_type)
         if root is not False:
             return root, False
-    return legacy.create_document(group, node, slot, user_id), True
+    return legacy.create_document(group, node, slot, user_id, locale=locale), True
 
 
 def _existing_root(flow_id: str, doc_type: str):
@@ -191,11 +194,13 @@ def _dispose(flow_id: str, rows: list[dict], user_id: Optional[str]) -> None:
 
 # ── AI delegation setting (T#2) ──────────────────────────────────────────────
 
-def set_delegation(group: dict, node: dict, on: bool, user_id: Optional[str], registered: set[str]) -> None:
+def set_delegation(group: dict, node: dict, on: bool, user_id: Optional[str], registered: set[str],
+                   locale: Optional[str] = None) -> None:
     """The requirement card's AI delegation line follows its setting, inside the caller's Flow guard.
 
-    On: the line gets its empty draft (once). Off: the line is released like a removed card's —
-    unlinked, and its document deleted while it is still the card's own untouched draft.
+    On: the line gets its empty draft (once), titled in ``locale`` (the setting request's, flowgate.v02.0088).
+    Off: the line is released like a removed card's — unlinked, and its document deleted while it is still the
+    card's own untouched draft.
     """
     flow_id = group["group_id"]
     if not repository.available():
@@ -210,7 +215,7 @@ def set_delegation(group: dict, node: dict, on: bool, user_id: Optional[str], re
         return
     if any(_signature(r) == cs.slot_signature(slot) for r in rows):
         return
-    doc_id, owned = _line_document(group, node, slot, {}, registered, user_id)
+    doc_id, owned = _line_document(group, node, slot, {}, registered, user_id, locale)
     if doc_id is not None:
         repository.insert(flow_id, node["node_key"], slot.slot, slot.doc_type, doc_id, owned, spec.index(slot), user_id)
 

@@ -75,12 +75,14 @@ def _handler(name: str) -> Optional[Callable[..., Any]]:
 
 
 def draft_saved(group: dict, user_id: Optional[str], nodes: list[dict], removed_keys: Iterable[str],
-                registered_types: set[str], previous_nodes: Iterable[dict]) -> dict:
-    """``previous_nodes``: the nodes of the draft (or, for a new draft, the revision) the save replaces."""
+                registered_types: set[str], previous_nodes: Iterable[dict], locale: Optional[str] = None) -> dict:
+    """``previous_nodes``: the nodes of the draft (or, for a new draft, the revision) the save replaces.
+    ``locale``: the saving request's, handed on as is (flowgate.v02.0088: the documents made are titled in it)."""
     handler = _handler(ON_DRAFT_SAVED)
     if handler is None:
         return {}
-    return handler(group, user_id, nodes, list(removed_keys), registered_types, list(previous_nodes)) or {}
+    return handler(group, user_id, nodes, list(removed_keys), registered_types, list(previous_nodes),
+                   locale=locale) or {}
 
 
 def card_view(flow_id: str, docs_by_id: dict):

@@ -50,7 +50,7 @@ def put_flow_graph_draft(flow_id: str, request: Request, body: Any = Body(defaul
             raise envelope.invalid(request, sort_errors(req.errors))
         group = canvas_service.load_flow(flow_id)
         envelope.authorize(user_id, group, "write")
-        return graph_service.save_draft(group, user_id, req, client_id)
+        return graph_service.save_draft(group, user_id, req, client_id, envelope.locale_of(request))
 
     return envelope.run(request, handle)
 

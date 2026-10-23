@@ -37,6 +37,7 @@ from modules.flow_gate.graph_workflow.projection.flow_snapshot import registered
 from modules.flow_gate.graph_workflow.services import canvas_service, card_settings_ports, graph_service
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+from modules.flow_gate.graph_workflow.services.root_conversion_cards import ROOT_NAMES
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.rbac.permission_service import has_permission
 
@@ -50,6 +51,7 @@ TITLE_MAX_LEN = 100            # v0.1 related-document title limit
 __all__ = ["CANCELLED_STATUS", "is_alive", "live_end", "flow_documents", "document", "supersede",
            "create_document", "delete_document", "approvable_body", "review_counts", "rejection_count",
            "GraphApiError", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid", "run",
+           "locale_of",
            "load_flow", "require_writable", "running_node", "node_result", "register_result", "discard_file",
            "tell_graph", "work_sets", "card_working"]
 
@@ -109,9 +111,15 @@ def delete_document(doc_id: str, user_id: Optional[str]) -> None:
 
 
 def create_document(group: dict, node: dict, slot: cs.CardSlot, user_id: Optional[str],
-                    body: Optional[str] = None) -> str:
+                    body: Optional[str] = None, *, locale: Optional[str] = None,
+                    resolved_title: Optional[str] = None) -> str:
     """An empty draft of the line's type, numbered and filed like a v0.1 related document; ``body`` (a person's
-    line write, flowgate.v02.0056 T#3) is written after its front matter."""
+    line write, flowgate.v02.0056 T#3) is written after its front matter.
+
+    flowgate.v02.0088 D0010 §3.1: the title is made in ``locale``, the creating request's (ko / ja / en; none or
+    anything else is ko). ``resolved_title`` (internal only, never an API input) is a title the caller already
+    decided with ``_title`` for the same document: a Markdown line takes it as is for its row and front matter. A
+    work plan always derives its own title."""
     from modules.flow_gate.documents import document_service   # noqa: PLC0415
     from modules.flow_gate.numbering import numbering_service  # noqa: PLC0415
 
@@ -120,10 +128,10 @@ def create_document(group: dict, node: dict, slot: cs.CardSlot, user_id: Optiona
     code = numbering_service.reserve_document(group_id=flow_id, doc_type=slot.doc_type, module=module)
     doc_id = f"{flow_id}.{code}"
     created_empty = not (body or "").strip()
-    title = _title(node.get("label") or "", slot)
     if slot.doc_type == "WP":
-        body, title = _work_plan_body(project_id)
+        body, title = _work_plan_body(project_id, locale)
     else:
+        title = resolved_title if resolved_title is not None else _title(node.get("label") or "", slot, locale)
         text = _front_matter(project_id, module, flow_id, slot.doc_type, code, title)
         body = text + body if body else text
     file_path = _write_file(project_id, flow_id, module, code, slot.slot, body, node["node_key"])
@@ -148,17 +156,28 @@ def create_document(group: dict, node: dict, slot: cs.CardSlot, user_id: Optiona
     return doc_id
 
 
-def _title(label: str, slot: cs.CardSlot) -> str:
-    line = cs.slot_title(slot.slot)
+def _title(label: str, slot: cs.CardSlot, locale: Optional[str] = None) -> str:
+    """A new line document's title (flowgate.v02.0088 D0010 §3.2): a blank label or a known default name is the
+    line's default name in ``locale`` for the type the document is (``slot.doc_type``, never guessed from the
+    label); a person's label keeps its text and takes that name after it."""
+    line = cs.slot_title(slot.slot, locale, slot.doc_type)
     label = label.strip()
+    if not label or cs.name_key(label) in _default_names(slot):
+        return line
+    suffix = f" · {line}"
+    return label[: TITLE_MAX_LEN - len(suffix)] + suffix
+
+
+def _default_names(slot: cs.CardSlot) -> set[str]:
+    """The labels taken as no label of their own: the line's names in every locale, and on the requirement line of
+    an R / B document also the R / B card names (``요구사항``, ``버그``, ``バグ``, ``Bug`` ...)."""
     names = set()
     for titles in cs.SLOT_TITLES.values():
         value = titles[slot.slot]
         names.update(cs.name_key(name) for name in ((value,) if isinstance(value, str) else value))
-    if not label or cs.name_key(label) in names:
-        return line
-    suffix = f" · {line}"
-    return label[: TITLE_MAX_LEN - len(suffix)] + suffix
+    if slot.slot == cs.REQUIREMENT and slot.doc_type in cs.ROOT_TYPES:
+        names.update(cs.name_key(name) for kind in cs.ROOT_TYPES for name in ROOT_NAMES[kind].values())
+    return names
 
 
 def _front_matter(project_id: str, module: str, flow_id: str, doc_type: str, code: str, title: str) -> str:
@@ -168,12 +187,13 @@ def _front_matter(project_id: str, module: str, flow_id: str, doc_type: str, cod
     return card_front_matter(project_id, module, flow_id, doc_type, code, title)
 
 
-def _work_plan_body(project_id: str) -> tuple[str, str]:
-    """A valid, undecided plan (the WP reader opens nothing else); WP titles are derived."""
+def _work_plan_body(project_id: str, locale: Optional[str] = None) -> tuple[str, str]:
+    """A valid, undecided plan (the WP reader opens nothing else); WP titles are derived, in the creating
+    request's locale (flowgate.v02.0088 D0010 §3.3)."""
     from modules.flow_gate.services import work_plan_service as wp   # noqa: PLC0415
 
     body = wp.empty_recovery_body(project_id or None)
-    return wp.dumps(body), wp.derived_title(body, cs.DEFAULT_LOCALE)
+    return wp.dumps(body), wp.derived_title(body, cs.title_locale(locale))
 
 
 def _write_file(project_id: str, flow_id: str, module: str, code: str, slot: str, body: str,
@@ -246,6 +266,11 @@ def authorize(user_id: str, group: dict) -> None:
 
 def invalid(request, errors: list[dict]) -> GraphApiError:
     return envelope.invalid(request, errors)
+
+
+def locale_of(request) -> str:
+    """The request's X-Locale as the Graph envelope normalizes it (ko / ja / en, else ko)."""
+    return envelope.locale_of(request)
 
 
 def run(request, handler, status: int = 200):

@@ -131,9 +131,19 @@ def name_key(raw: str) -> str:
     return normalize_title(raw).casefold()
 
 
-def slot_title(slot: str, locale: Optional[str] = None) -> str:
-    value = (SLOT_TITLES.get(locale or DEFAULT_LOCALE) or SLOT_TITLES[DEFAULT_LOCALE])[slot]
-    return value if isinstance(value, str) else value[0]
+def title_locale(locale: Optional[str]) -> str:
+    """The locale a new document's title is made in: ko / ja / en as given, anything else (none, blank, another
+    spelling) ko (flowgate.v02.0088 D0010 §2.1: the request's own normalization is not widened here)."""
+    return locale if locale in SLOT_TITLES else DEFAULT_LOCALE
+
+
+def slot_title(slot: str, locale: Optional[str] = None, doc_type: Optional[str] = None) -> str:
+    """The line's default document name in ``locale``. A pair of names is the R name then the B name of a
+    requirement line (ja ``要件`` / ``バグレポート``, flowgate.v02.0088 D0010 §3.2): the document type picks one."""
+    value = SLOT_TITLES[title_locale(locale)][slot]
+    if isinstance(value, str):
+        return value
+    return value[1] if str(doc_type or "").strip().upper() == "B" and len(value) > 1 else value[0]
 
 
 def author_of(slot: str, doc_type: Optional[str] = None) -> str:
