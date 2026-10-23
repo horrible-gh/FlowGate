@@ -334,6 +334,41 @@ def get_job(job_id: str) -> Optional[dict]:
     return _fresh_job(job_id)
 
 
+def insert_gate_publish(project_id: str, req: dict, *, group_id: str, target_key: str, payload=None,
+                        requested_by: Optional[str] = None) -> dict:
+    """flowgate.v02.0085 T#2 (D0007 §3.3 / §7.3): the ``gate_publish`` job of one confirm, written INSIDE the caller's
+    transaction so the decision intent and its job commit together. Its key is the decision id the same transaction
+    creates, so no unique race can hit it (the reason ``create_or_get_job`` keeps its own transaction does not apply).
+    No wake-up here: the caller signals ``notify_created`` after its commit."""
+    if not in_transaction():
+        raise JobProgramError("gate_publish_outside_transaction", kind=GATE_PUBLISH)
+    key = derive_request_key(GATE_PUBLISH, project_id, req)
+    now = now_iso()
+    job_id = new_job_id()
+    db.insert_job({
+        "job_id": job_id, "kind": GATE_PUBLISH, "project_id": project_id, "group_id": group_id,
+        "target_key": target_key, "request_key": key, "request_key_hash": _sha256_hex(key),
+        "request_fingerprint": fingerprint(GATE_PUBLISH, project_id, req), "payload": _json_or_none(payload),
+        "requested_by": requested_by, "available_at": now, "created_at": now, "updated_at": now,
+        "has_freeze_phase": 0, "status": "pending", "phase": "start",
+    })
+    return db.get_job(job_id)
+
+
+def notify_created(job: Optional[dict]) -> None:
+    """The JOB_CREATED signal of a job written inside a caller's transaction, after that commit."""
+    if job:
+        notifier.job_created(job)
+
+
+def cancel_unstarted_gate_publish(job_id: str, note: str = GATE_CANCEL_NO_EFFECT) -> bool:
+    """A ``gate_publish`` job no worker ever claimed is cancelled at once (no effect outside the DB). False when it was
+    claimed, ran or ended already: then it is not provably without effect."""
+    if note not in GATE_CANCEL_REASONS:
+        raise JobProgramError("unknown_gate_cancel_reason", note=note)
+    return db.cancel_unstarted_gate_publish(job_id, now_iso(), note) == 1
+
+
 # ── claim (L 2.14) ───────────────────────────────────────────────────────────
 
 WON = "won"

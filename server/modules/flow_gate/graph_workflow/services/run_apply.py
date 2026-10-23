@@ -133,11 +133,14 @@ def emit_run_status(ctx: RunContext, from_status: Optional[str], to_status: str,
 def emit_node_state(ctx: RunContext, node_key: str, from_status: str, to_status: str, cause: str,
                     result_doc_id: Optional[str], dispatch: Optional[dict] = None,
                     note: Optional[dict] = None) -> int:
-    """``note`` (``actor_user_id``, ``reason``) is kept in the event log only; the SSE payload is P0008 §8.3."""
+    """``note`` (``actor_user_id``, ``reason``) is kept in the event log only; the SSE payload is P0008 §8.3.
+    flowgate.v02.0085 T#2: ``note["payload"]`` adds fields to the event payload (a gate decision's
+    ``gate_decision_id``: the event belongs to that decision, D0007 §7.2)."""
     seq = int(ctx.run["last_event_seq"]) + 1
     state = canvas_state_of(ctx, node_key, to_status)
     payload = run_events.node_state_payload(ctx.run, seq, node_key, from_status, to_status, state, cause,
                                             result_doc_id, dispatch)
+    payload.update((note or {}).get("payload") or {})
     run_store.append_event(ctx.run_id, seq, run_events.NODE_STATE, payload, node_key=node_key,
                            from_status=from_status, to_status=to_status, cause=cause, result_doc_id=result_doc_id,
                            canvas_state=state, actor_user_id=(note or {}).get("actor_user_id"),
@@ -157,6 +160,7 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
     on (``settle_run``, 0061 T#2; ``settle=False`` for a step that applies its command afterwards).
 
     ``note`` (who decided, the comment) goes with the node transitions of the deciding event (gate).
+    flowgate.v02.0085 T#2 (D0007 §3.2): a gate's reject ends its attempt as a done node's approval does.
 
     0061 T#9: a code node's approval (``review_approved``) is done only once its attempt's result is merged into the
     Flow's branch: until then the decision is held back whole (``defer_done``: the node stays in review, its
@@ -171,7 +175,7 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
         _assert_one(run_store.transition_node_run(
             ctx.run_id, t.node, t.from_status, t.expected_doc_id, t.to_status, t.result_doc_id,
             finished=t.to_status in ("done", "rejected")), f"transition {t.node} {t.cause}")
-        if t.to_status == "done":
+        if t.to_status == "done" or t.cause == "gate_rejected":
             run_store.end_attempt(ctx.run_id, t.node)                  # 0061 T#2: the node's attempt ends
         seq = emit_node_state(ctx, t.node, t.from_status, t.to_status, t.cause, t.result_doc_id, note=note)
         if t.result_doc_id and t.result_doc_id != t.expected_doc_id:

@@ -401,8 +401,25 @@ def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
         attempts = run_store.current_attempts(run_id)
         held = frozenset(graph_execution_hooks.call("held_nodes", run["group_id"]) or ())          # 0061 T#11
         asked = question_nodes(run_id, run["group_id"])                                           # 0063
-        out["node_runs"] = [node_run_wire(r, run["group_id"], attempts.get(r["node_key"]), held, asked) for r in rows]
+        gates = gate_wire(run, rows)                                                              # 0085 T#2
+        out["node_runs"] = [{**node_run_wire(r, run["group_id"], attempts.get(r["node_key"]), held, asked),
+                             **({"gate": gates[r["node_key"]]} if r["node_key"] in gates else {})} for r in rows]
     return out
+
+
+def gate_wire(run: dict, rows: list[dict]) -> dict:
+    """flowgate.v02.0085 T#2 (D0007 §7.2 run read): ``{gate node key: …}`` — the current decision summary, its job, whether
+    a decision can be made now (``can_decide``), the settings lock and whether the current confirm's archive is done.
+    Read by ``gate_service.gate_reader`` - not the decision's choice of the run's own rule, so a run whose stored
+    snapshot is ``undecided`` is read too (``can_decide`` false); none when no gate rule with a reader is registered.
+    A failed read only leaves it out; the run read goes on."""
+    from .gate_service import gate_reader  # noqa: PLC0415 — gate_service imports this module
+    try:
+        reader = gate_reader(run["run_id"])
+        return dict(reader.run_wire(run, rows) or {}) if reader is not None else {}
+    except Exception:  # noqa: BLE001 — the run read goes on
+        _log.warning("graph gate wire read failed run=%s", run.get("run_id"), exc_info=True)
+        return {}
 
 
 def question_nodes(run_id: str, flow_id: str) -> frozenset:

@@ -13,6 +13,8 @@ itself is not moved here. Nothing is registered on import.
                     edge, ``parallelism`` = ``unbounded`` admits every reached node (R §2.4, 0002-CH turn 9)
     join            pure: a join (several incoming edges) — ``join`` = ``and_all`` opens the node once, after
                     every predecessor is approved (R §2.5, 0002-CH turn 11)
+    gate            the confirm card: ``gate_node`` = ``human_confirm_v1`` - a person's confirm / reject; its
+                    ``intake`` is ``flowgate.gate_decisions.intake`` (flowgate.v02.0085 T#2, D0007 §3.1)
     legacy_adapter  the slot registries and the validator's issue shape of the Graph workflow, called only
     integration     registration of every decided slot
 """

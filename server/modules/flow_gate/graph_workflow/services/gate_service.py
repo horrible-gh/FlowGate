@@ -11,13 +11,24 @@ answered the slot is ``undecided`` and every gate decision is refused with
 confirmed either (P0008 S3-5 ``rule_undecided/gate_node``), so the normal path never gets here.
 Slot contract: ``gate_node.judge(node_key, decision, comment) -> "confirmed" | "rejected"``, which
 becomes the node event ``gate_confirmed`` / ``gate_rejected`` of the L0009 §3.2 table.
+
+flowgate.v02.0085 T#2 (D0007 §3.1 / §7.2): Q-11 is answered by the product rule ``human_confirm_v1``
+(``flowgate.graph_policies.gate``). Its implementation carries the decision intake (``intake``): the request key and
+its replay, the stored decision, the confirm's Git apply / archive job, the D0007 refusals. A run whose snapshot holds
+that rule is decided there (``_intake_of``: the run's own snapshot, never the current default); a run on another
+decided rule (a test double) keeps the decision below, and an ``undecided`` one is refused as before.
+
+The gate part of a run read is not that choice (``gate_reader``): a run whose stored snapshot still holds ``undecided``
+(started before the rule was registered, D0007 §3.1: kept as it is) shows its gates' history and state all the same,
+read by the gate rule registered now, with ``can_decide`` false - the decision itself stays refused.
 """
 from __future__ import annotations
 
 from typing import Optional
 
+from modules.flow_gate.graph_workflow.domain import policies as registered_policies
 from modules.flow_gate.graph_workflow.domain.frontier import ProgrammingError, RunEvent, resolve
-from modules.flow_gate.graph_workflow.domain.run_policies import PolicyUndecided, RULE_REF, policies_of
+from modules.flow_gate.graph_workflow.domain.run_policies import PolicyUndecided, RULE_REF, implementation, policies_of
 from modules.flow_gate.graph_workflow.store import run_store
 
 from .engine_router import read_ownership
@@ -37,9 +48,33 @@ def _gate_undecided(flow_id: str, revision_no: int, missing: list[dict]) -> Grap
     return error
 
 
+def _intake_of(run_id: str):
+    """The decision intake of the run's own ``gate_node`` rule (flowgate.v02.0085 T#2), or None: no run, no snapshot
+    entry, an ``undecided`` / unregistered entry, or a rule without an intake."""
+    entry = run_store.policy_entries(run_id).get(GATE_POLICY) if run_store.run_by_id(run_id) else None
+    if not entry:
+        return None
+    impl = implementation(GATE_POLICY, str(entry.get("value")), str(entry.get("impl_version")))
+    intake = getattr(impl, "intake", None) if impl is not None and entry.get("value") != "undecided" else None
+    return intake if intake is not None and callable(getattr(intake, "decide", None)) else None
+
+
+def gate_reader(run_id: str):
+    """The reader of the gate part of a run read (D0007 §7.2, flowgate.v02.0085 T#2), or None: the run's own rule's
+    intake, else the intake of the gate rule registered now. Reading never needs the run's rule to decide: a run whose
+    snapshot is ``undecided`` is read the same way (its decision is still refused by ``decide_gate``)."""
+    own = _intake_of(run_id)
+    if own is not None and callable(getattr(own, "run_wire", None)):
+        return own
+    impl = registered_policies.current().get(GATE_POLICY)
+    reader = getattr(impl, "intake", None) if impl is not None and not isinstance(impl, str) else None
+    return reader if reader is not None and callable(getattr(reader, "run_wire", None)) else None
+
+
 def decide_gate(group: dict, run_id: str, node_key: str, decision: str, comment: Optional[str],
-                user_id: str) -> dict:
-    """-> 200 ``{"run": <run with node_runs>}`` (P0008 S6-1). Order of the checks:
+                user_id: str, intent: Optional[dict] = None) -> dict:
+    """-> 200 ``{"run": <run with node_runs>}`` (P0008 S6-1). flowgate.v02.0085 T#2: a run on the product rule goes
+    to its intake (``intent``: the request key and expected values, D0007 §7.2). Order of the checks:
 
     0. run missing (outside or re-read) -> 404 run_not_found
     1. run not running -> 409 run_not_running (a paused run takes no gate decision, L0009 §2.6.7); 0061 T#2: an
@@ -54,6 +89,9 @@ def decide_gate(group: dict, run_id: str, node_key: str, decision: str, comment:
     """
     require_writable(group["group_id"])
     _restore_check_once()
+    intake = _intake_of(run_id)
+    if intake is not None:
+        return intake.decide(group, run_id, node_key, decision, comment, user_id, intent or {})
 
     def body_of(run: dict, jobs: list) -> dict:
         flow_id, revision_no = run["group_id"], int(run["revision_no"])

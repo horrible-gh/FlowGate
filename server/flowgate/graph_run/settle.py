@@ -27,11 +27,17 @@ held and pending (``hold.blocks``: it, and every target below it, waits for its 
 candidate). "No run candidate" is the whole run candidates (``frontier.run_candidates``), not the current command's: a
 step that ended with a candidate outside its targets waits for the next command and is not ``hold`` (nor is a
 candidate opened by it — the step's boundary stays). ``idle_reason`` judges in this order, the first that holds wins: ``completed`` (completion policy),
-``no_targets`` (an empty run scope), ``waiting_approval``, ``merge_conflict``, ``error``, ``blocked_rejected``,
-``hold``, ``step_done`` (a step command that opened targets ended at its boundary), else ``no_targets``. A reason a
+``no_targets`` (an empty run scope), ``waiting_approval``, ``gate_publish``, ``merge_conflict``, ``error``,
+``blocked_rejected``, ``hold``, ``step_done`` (a step command that opened targets ended at its boundary), else
+``no_targets``. A reason a
 person must act on comes before the Hold, which a person chose; a run with a held target left is never ``completed``
 (the completion policy needs every target done). ``no_targets`` means nothing was there to run: an empty run scope, a
 step that opened no target, or a full command with no run candidate left.
+
+flowgate.v02.0085 T#2 (D0007 §3.3): a confirm gate held by its accepted decision (its Git apply / archive job not
+finished: accepted, failed, recovery_required) is unfinished apply work, not a person's wait. It keeps a running /
+paused run working, like an integration in progress, so the run is never idle or completed meanwhile; an idle run with
+such a gate is idle with the reason ``gate_publish`` (never ``waiting_approval`` for it, never ``completed``).
 """
 from __future__ import annotations
 
@@ -46,8 +52,9 @@ IDLE_STOPPED = "stopped"                                     # T#7: set by a Sto
 IDLE_MERGE_CONFLICT = "merge_conflict"                       # T#9: approved results whose merge waits (conflict / failed)
 IDLE_HOLD = "hold"                                           # T#11: held targets left (open key, no migration)
 IDLE_STEP_DONE = "step_done"                                 # a step that opened targets ended (open key, no migration)
+IDLE_GATE_PUBLISH = "gate_publish"                           # 0085 T#2: a confirm's accepted apply work unfinished
 IDLE_REASONS = (IDLE_COMPLETED, IDLE_NO_TARGETS, IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR,
-                IDLE_STOPPED, IDLE_MERGE_CONFLICT, IDLE_HOLD, IDLE_STEP_DONE)
+                IDLE_STOPPED, IDLE_MERGE_CONFLICT, IDLE_HOLD, IDLE_STEP_DONE, IDLE_GATE_PUBLISH)
 CAUSE_COMPLETED, CAUSE_IDLE, CAUSE_WORK_RESUMED = "completed", "run_idle", "work_resumed"
 
 
@@ -55,11 +62,18 @@ def _node_type(ctx, key: str) -> Optional[str]:
     return (ctx.node_rows.get(key) or {}).get("node_type")
 
 
-def _waits_on_person(ctx, row: dict) -> bool:
-    """A gate open for its decision, or a card in review awaiting a person's approval."""
+def _gate_reserved(ctx) -> dict:
+    """0085 T#2: ``{gate node key: decision}`` of the run's gates held by an accepted decision (apply work unfinished)."""
+    from flowgate.gate_decisions import repository as gate_decisions
+    return gate_decisions.reservations_of_run(ctx.run_id)
+
+
+def _waits_on_person(ctx, row: dict, reserved: Optional[dict] = None) -> bool:
+    """A gate open for its decision (0085 T#2: not one a decision already holds), or a card in review awaiting a
+    person's approval."""
     node_type = _node_type(ctx, row["node_key"])
     if row["status"] == "open":
-        return node_type == engine.GATE_NODE_TYPE
+        return node_type == engine.GATE_NODE_TYPE and row["node_key"] not in (reserved or {})
     return row["status"] == "review" and engine.awaiting_approval(ctx.flow_id, row, node_type)
 
 
@@ -82,7 +96,7 @@ def working(ctx, rows: list[dict]) -> bool:
     if execution_store.working(ctx.run_id):
         return True
     return ctx.run.get("status") in (engine.RUNNING, engine.PAUSED) and (
-        execution_store.handing_off(ctx.run_id) or result_merge.in_progress(ctx.run_id))
+        execution_store.handing_off(ctx.run_id) or result_merge.in_progress(ctx.run_id) or bool(_gate_reserved(ctx)))
 
 
 def _completion(ctx, state) -> tuple[bool, Optional[str]]:
@@ -105,8 +119,11 @@ def idle_reason(ctx, rows: list[dict], state) -> str:
         return IDLE_COMPLETED
     if reason == IDLE_NO_TARGETS:
         return IDLE_NO_TARGETS
-    if any(_waits_on_person(ctx, r) for r in rows):
+    reserved = _gate_reserved(ctx)
+    if any(_waits_on_person(ctx, r, reserved) for r in rows):
         return IDLE_WAITING_APPROVAL
+    if reserved:
+        return IDLE_GATE_PUBLISH                             # 0085 T#2: a confirm's apply work is unfinished
     from flowgate.graph_run import result_merge
     if result_merge.waiting(ctx.run_id):
         return IDLE_MERGE_CONFLICT                           # T#9: conflict / failed merges left

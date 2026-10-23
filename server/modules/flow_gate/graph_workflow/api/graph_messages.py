@@ -67,10 +67,13 @@ RUN_EDIT_MESSAGES = {
         "en": "A deleted node key cannot be reused.",
         "ja": "削除したノードのキーは再利用できません。",
     },
+    # flowgate.v02.0085 T#2: also refused while a confirm card is unresolved (``reason`` gate_rejected /
+    # gate_recovery_reset_required in the params)
     "graph_revision_migration_blocked": {
-        "ko": "진행 중 attempt가 있어 최신 개정으로 이관할 수 없습니다.",
-        "en": "The run cannot adopt the latest revision while an attempt is active.",
-        "ja": "進行中の attempt があるため最新リビジョンへ移行できません。",
+        "ko": "진행 중 attempt나 해결되지 않은 확인 카드(반려·회차 분리 대기)가 있어 최신 개정으로 이관할 수 없습니다.",
+        "en": "The run cannot adopt the latest revision while an attempt is active or a confirm card is unresolved "
+              "(rejected, or waiting for its round split).",
+        "ja": "進行中の attempt または未解決の確認カード（差し戻し・回次分離待ち）があるため最新リビジョンへ移行できません。",
     },
     # flowgate.v02.0085 T#1: a confirm gate's settings are locked outside the pending / open gate of a running or idle
     # run (a reserved decision, a finished gate, a pause, a Time Machine, a conflict, a pending round split)
@@ -84,6 +87,38 @@ RUN_EDIT_MESSAGES = {
         "ko": "화면의 내용이 최신이 아닙니다. 다시 불러온 뒤 시도하세요.",
         "en": "The screen is out of date. Reload and try again.",
         "ja": "画面の内容が最新ではありません。再読み込みしてからやり直してください。",
+    },
+    # flowgate.v02.0085 T#2 (D0007 §7.2): the gate decision intake
+    "gate_request_conflict": {
+        "ko": "같은 요청 ID로 다른 내용의 결정이 이미 접수되었습니다.",
+        "en": "A decision with different content was already received under the same request ID.",
+        "ja": "同じリクエスト ID で内容の異なる決定がすでに受け付けられています。",
+    },
+    "gate_decision_in_progress": {
+        "ko": "이 확인 카드의 이전 결정이 아직 처리 중입니다.",
+        "en": "An earlier decision on this confirm card is still being processed.",
+        "ja": "この確認カードの以前の決定がまだ処理中です。",
+    },
+    "gate_git_unavailable": {
+        "ko": "이 그룹의 Git 작업 공간을 사용할 수 없어 Git 반영이나 아카이브가 필요한 확인을 접수할 수 없습니다.",
+        "en": "The group's Git workspace is not available, so a confirm that needs a Git apply or an archive cannot be "
+              "accepted.",
+        "ja": "このグループの Git 作業領域を使用できないため、Git 反映やアーカイブが必要な確認を受け付けられません。",
+    },
+    "gate_settings_invalid": {
+        "ko": "확인 카드의 Git 반영 설정을 이 조합으로 실행할 수 없습니다. 설정을 고친 뒤 다시 확인하세요.",
+        "en": "The confirm card's Git settings cannot run as they are. Fix the settings and confirm again.",
+        "ja": "確認カードの Git 反映設定はこの組み合わせでは実行できません。設定を直してから再度確認してください。",
+    },
+    "gate_decision_blocked": {
+        "ko": "진행 중인 다른 반영 작업이 있어 지금은 결정할 수 없습니다.",
+        "en": "Another apply operation is in progress, so no decision can be made now.",
+        "ja": "進行中の他の反映作業があるため、現在は決定できません。",
+    },
+    "gate_node_not_found": {
+        "ko": "이 실행에 해당 확인 카드가 없습니다.",
+        "en": "The run has no such confirm card.",
+        "ja": "この実行に該当する確認カードがありません。",
     },
     # flowgate.v02.0061 T#11: Hold cannot be set on a node done in the Flow's run
     "graph_hold_done_node": {

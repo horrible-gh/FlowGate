@@ -29,6 +29,10 @@ group's G, ``result_merge.abort_for_stop``); while one of them is still open (G 
 stopping (``stop_pending``, ``merge_session_abort_pending``) until a repeated Stop or the server start aborts it. An
 attempt whose merge is in progress (``integrating``) is neither invalidated nor reset — it goes on to its end (done
 stays done) and the run stays stopping until then; its end goes on with the Stop (``result_merge``).
+flowgate.v02.0085 T#2 (D0007 §7.3): in (c) a confirm gate held by an accepted decision whose ``gate_publish`` job no
+worker has claimed yet (no effect outside the DB) has its decision canceled and the job cancelled (``no_effect_canceled``);
+the gate then goes back to pending like any open node and its attempt is closed. A gate whose job was claimed (or has
+evidence of effects) keeps its decision and its open state, and the run stays stopping until that job is resolved.
 The Stop goes on when that execution's own end arrives (``on_execution_finished``), on a repeated
 Stop, after Git locks are released (``result_merge.on_lock_released``), and at server start (``recover``);
 each of them retries the removal for the attempts already invalidated. A root-bound node (its root
@@ -167,13 +171,17 @@ def _settle_executions(run: dict, actor: Optional[str]) -> list[str]:
     # T#9: a merge in progress goes on to its end (``result_merge``); its attempt and node are left to it, and the
     # Stop's idle (stopped) waits for it (``finish_stop``: an active attempt).
     merging = {r["node_key"] for r in result_merge.integrating(run_id)}
+    # 0085 T#2: a gate whose accepted job may have acted keeps its attempt and its open state (resolved, not reset).
+    gates_held, gate_notes = _settle_gate_decisions(run_id)
+    keep = sorted(gates_held)
+    keep_sql = f" AND node_key NOT IN ({', '.join('?' for _ in keep)})" if keep else ""
     active = [r["attempt_id"] for r in run_store._all(
         "SELECT attempt_id FROM graph_node_attempts WHERE run_id = ? AND status = 'active' "
-        "AND COALESCE(integration_status, 'none') <> 'integrating'", [run_id])]
+        "AND COALESCE(integration_status, 'none') <> 'integrating'" + keep_sql, [run_id, *keep])]
     run_store._affected("UPDATE graph_node_attempts SET status = 'invalidated', active_node_key = NULL, "
                         "invalidated_reason = ?, ended_at = ? WHERE run_id = ? AND status = 'active' "
-                        "AND COALESCE(integration_status, 'none') <> 'integrating'",
-                        [INVALIDATED_REASON, stamp, run_id])
+                        "AND COALESCE(integration_status, 'none') <> 'integrating'" + keep_sql,
+                        [INVALIDATED_REASON, stamp, run_id, *keep])
     for attempt_id in active:
         _revoke(r["token_id"] for r in run_store._all(
             "SELECT token_id FROM graph_run_token_map WHERE attempt_id = ?", [attempt_id]))
@@ -181,6 +189,8 @@ def _settle_executions(run: dict, actor: Optional[str]) -> list[str]:
     for row in run_store.node_runs(run_id):
         if row["status"] not in RESET_STATUSES or int(row.get("root_bound") or 0) or row["node_key"] in merging:
             continue
+        if row["node_key"] in gates_held:
+            continue                            # 0085 T#2: its job may have acted; it is resolved, not reset
         moved = run_store._affected(
             "UPDATE graph_node_runs SET status = 'pending', result_doc_id = NULL, opened_at = NULL, "
             "finished_at = NULL, dispatch_token_issued = NULL, dispatch_issued_to = NULL, "
@@ -193,8 +203,29 @@ def _settle_executions(run: dict, actor: Optional[str]) -> list[str]:
             _revoke(r["token_id"] for r in run_store._all(
                 "SELECT token_id FROM graph_run_token_map WHERE run_id = ? AND node_key = ? AND attempt_id IS NULL",
                 [run_id, row["node_key"]]))
-            run_apply.emit_node_state(ctx, row["node_key"], row["status"], "pending", CAUSE_STOP, None)
+            run_apply.emit_node_state(ctx, row["node_key"], row["status"], "pending", CAUSE_STOP, None,
+                                      note=gate_notes.get(row["node_key"]))
     return stopped_attempts(run_id)
+
+
+def _settle_gate_decisions(run_id: str) -> tuple[set, dict]:
+    """0085 T#2, inside (c)'s guard: the run's gates held by an accepted decision. One whose job was never claimed is
+    canceled (decision ``canceled``, job ``cancelled`` / ``no_effect_canceled``); the others stay held. Returns (the gates
+    still held, ``{node key: event note}`` linking the stop event of each canceled gate to its decision)."""
+    from flowgate.gate_decisions import history, legacy_adapter as gate_legacy, repository as gate_decisions
+    held, notes = set(), {}
+    for node_key, decision in gate_decisions.reservations_of_run(run_id).items():
+        job_id = decision.get("job_id")
+        no_effect = decision["status"] == gate_decisions.ACCEPTED and not any(
+            e["status"] not in (gate_decisions.PENDING, gate_decisions.SKIPPED)
+            for e in gate_decisions.effects_of(decision["decision_id"]))
+        if no_effect and (job_id is None or gate_legacy.cancel_unstarted_job(job_id)):
+            if not gate_decisions.move(decision["decision_id"], decision["decision_version"], gate_decisions.CANCELED):
+                raise AssertionError("gate decision moved under the stop's guard")
+            notes[node_key] = {"payload": history.decision_link(decision["decision_id"])}
+            continue
+        held.add(node_key)
+    return held, notes
 
 
 def stopped_attempts(run_id: str) -> list[str]:
@@ -272,6 +303,9 @@ def advance(flow_id: str, run_id: str, *, actor: Optional[str] = None,
             return
         if run_store.has_active_attempts(run_id) or ledger.working(run_id) or result_merge.session_pending(run_id):
             return                              # never idle with work; the next advance settles it first
+        from flowgate.gate_decisions import repository as gate_decisions
+        if gate_decisions.reservations_of_run(run_id):
+            return                              # 0085 T#2: a gate job that may have acted is resolved first
         now = run_store.utc_now_ms()
         if run_store._affected("UPDATE graph_runs SET status = 'idle', idle_reason = ?, finished_at = ?, "
                                "updated_at = ? WHERE run_id = ? AND status = 'stopping'",

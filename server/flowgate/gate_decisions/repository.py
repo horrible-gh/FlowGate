@@ -165,6 +165,18 @@ def reservation(run_id: str, node_key: str) -> Optional[dict]:
         "ORDER BY accepted_at DESC, decision_id DESC LIMIT 1", [run_id, node_key, *RESERVING]))
 
 
+def reservations_of_run(run_id: str) -> dict[str, dict]:
+    """flowgate.v02.0085 T#2: ``{node key: decision}`` of every gate of the run held by a decision right now (accepted,
+    failed or recovery_required) - unfinished apply work the run's settlement must not take for done or for a person's
+    wait (D0007 §3.3)."""
+    if not available():
+        return {}
+    marks = ", ".join("?" for _ in RESERVING)
+    rows = _all(f"SELECT * FROM gate_decisions WHERE run_id = ? AND status IN ({marks}) "
+                "ORDER BY accepted_at, decision_id", [run_id, *RESERVING])
+    return {r["node_key"]: _decision(r) for r in rows}
+
+
 def reset_required(group_id: str, node_key: str) -> Optional[dict]:
     """The abandoned decision that still asks for a Time Machine round split of this gate, or None."""
     if not available():

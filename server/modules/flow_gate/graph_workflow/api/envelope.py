@@ -208,10 +208,19 @@ def client_id_of(request: Request) -> Optional[str]:
     return raw
 
 
+# flowgate.v02.0085 T#2: a handler whose answer status depends on the outcome (a gate decision: 200 done / 202
+# accepted) names it under this key of its body; the key itself is never sent.
+STATUS_KEY = "__http_status__"
+
+
 def run(request: Request, handler: Callable[[], dict], status: int = 200) -> JSONResponse:
     """Call the handler and map every outcome onto the P0008 envelope."""
     try:
-        return ok(handler(), status)
+        body = handler()
+        if isinstance(body, dict) and STATUS_KEY in body:
+            body = dict(body)
+            status = int(body.pop(STATUS_KEY))
+        return ok(body, status)
     except GraphApiError as exc:
         params, text = exc.params, exc.message or (message(exc.message_key, request) if exc.message_key else None)
         if exc.code == "graph_validation_failed":

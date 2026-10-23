@@ -376,6 +376,20 @@ def cancel_unfrozen_waiting(job_id: str, now: str, result: str) -> int:
     )
 
 
+def cancel_unstarted_gate_publish(job_id: str, now: str, note: str) -> int:
+    """flowgate.v02.0085 T#2 (D0007 §7.3 Stop): a ``gate_publish`` job no worker ever claimed (still waiting, never
+    run: no attempt, no lease) did nothing outside the DB, so it is cancelled at once; ``phase_note`` tells why."""
+    return get_store()._execute_affected(
+        "UPDATE operation_job "
+        "SET status = 'cancelled', cancel_requested = 1, finished_at = ?, result = ?, phase_note = ?, "
+        "lease_owner = NULL, lease_token = NULL, lease_until = NULL, updated_at = ?, "
+        "touch_seq = touch_seq + 1 "
+        "WHERE job_id = ? AND kind = 'gate_publish' AND status IN ('pending','blocked','retry_wait') "
+        "AND attempt_count = 0 AND lease_token IS NULL",
+        [now, note, note, now, job_id],
+    )
+
+
 def mark_cancel_for_release(job_id: str, release_intent: str, now: str) -> int:
     """(b) Waiting job with a freeze record: flag it so only a release claim picks it up."""
     return get_store()._execute_affected(

@@ -91,6 +91,11 @@ def _entry_of_decision(row: dict) -> dict:
     }
 
 
+def entry(row: dict) -> dict:
+    """The history entry of one stored decision (flowgate.v02.0085 T#2: the decision part of a gate decision answer)."""
+    return _entry_of_decision(row)
+
+
 def legacy_events(flow_id: str, node_key: str) -> list[dict]:
     """The gate's ``gate_confirmed`` / ``gate_rejected`` run events as legacy entries, oldest first. An event that
     names a new decision (``decision_link``) is that decision's, not a legacy entry."""
