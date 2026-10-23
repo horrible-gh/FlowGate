@@ -242,3 +242,29 @@ def read_group_run(request: Request, run_id: str):
     if row is None:
         return _error(selfcheck.SelfCheckError(404, "selfcheck_run_not_found"))
     return {"ok": True, **selfcheck.summary(row)}
+
+
+# ── 0080 T#3: operator re-verification of a protected run (NR0007 §5 item 6) ──
+# A run left recovery_incomplete (owner or tree not proved) keeps its Group closed until a
+# proof exists. A console user with perm_document_update asks the server to run the proof
+# again now; the server refuses when it still proves nothing. No forced release exists, and
+# no worker token reaches this route.
+recovery_router = APIRouter(prefix="/api/v1/self-check/recovery", tags=["TR Self-check"])
+
+
+@recovery_router.post("/runs/{run_id}/reverify")
+def reverify_run(request: Request, run_id: str):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if not auth.get("_is_user_jwt"):
+        return _forbidden()
+    row = selfcheck.group_run(run_id)
+    if row is None:
+        return _error(selfcheck.SelfCheckError(404, "selfcheck_run_not_found"))
+    if not has_permission(auth.get("issued_to"), row["project_id"], "perm_document_update"):
+        return _forbidden()
+    try:
+        return {"ok": True, **selfcheck.reverify(run_id)}
+    except selfcheck.SelfCheckError as exc:
+        return _error(exc)

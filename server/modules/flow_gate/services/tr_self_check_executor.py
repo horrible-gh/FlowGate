@@ -11,6 +11,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from modules.flow_gate.services.process_runner import WindowsProcessOwner
 
@@ -22,11 +23,15 @@ class OwnershipError(RuntimeError):
     """A failed spawn. ``ownership`` is what was learnt about the run's processes before the
     failure (spawn's keys). The failure proves no process absent -- a supervisor or target
     may already exist -- so the caller proves the tree from this and the run's stored
-    ``owner_marker`` before it ends the run or frees anything (0080 T#1)."""
+    ``owner_marker`` before it ends the run or frees anything (0080 T#1).
 
-    def __init__(self, *args, ownership: dict | None = None):
+    ``created=False`` only when spawn knows no process was created (the owner could not be
+    set up, the pre-spawn record failed, or Popen itself raised OSError)."""
+
+    def __init__(self, *args, ownership: dict | None = None, created: bool = True):
         super().__init__(*args)
         self.ownership = dict(ownership or {})
+        self.created = created
 
 
 @dataclass
@@ -210,23 +215,39 @@ class ProcessControl:
 
 
 def spawn(argv: list[str], cwd: Path, env: dict[str, str], timeout_seconds: int,
-          run_id: str, *, job_name: str | None = None) -> tuple[ProcessControl, dict]:
+          run_id: str, *, job_name: str | None = None,
+          record: Callable[[str, dict], None] | None = None) -> tuple[ProcessControl, dict]:
     """``job_name`` (Windows): create the run's Job under that name so a later server can open
     it and prove it empty (Self-check, 0080 T#1). A name already in use fails the spawn.
+
+    ``record(stage, ownership)`` (Self-check, 0080 T#3) persists what is known before it is
+    needed: ``"spawning"`` right before the first Popen, ``"spawned"`` right after each Popen
+    -- on Windows before the Job assignment. A failing record fails the spawn.
 
     On failure the OwnershipError carries the ownership learnt so far (process records are
     taken right after each Popen, before anything can reap the process)."""
     if os.name == "nt":
         owner = WindowsProcessOwner(run_id, job_name=job_name)
         if not owner.active:
-            raise OwnershipError("selfcheck_process_owner_unavailable")
+            raise OwnershipError("selfcheck_process_owner_unavailable", created=False)
         proc = None
         ownership = {"process_owner_kind": "windows_job"}
         try:
-            proc = subprocess.Popen(argv, cwd=cwd, env=env, shell=False, stdin=subprocess.DEVNULL,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    creationflags=owner.creationflags())
+            _record(record, "spawning", ownership)
+        except Exception as exc:
+            owner.close()
+            raise OwnershipError("selfcheck_process_owner_unavailable", created=False) from exc
+        try:
+            try:
+                proc = subprocess.Popen(argv, cwd=cwd, env=env, shell=False, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        creationflags=owner.creationflags())
+            except OSError as exc:
+                owner.close()
+                raise OwnershipError("selfcheck_process_owner_unavailable", created=False) from exc
             ownership.update(target_pid=proc.pid, target_start_identity=start_identity(proc.pid))
+            # Suspended and not yet in the Job: an empty Job proves nothing for it.
+            _record(record, "spawned", ownership)
             if not owner._kernel32.AssignProcessToJobObject(owner.handle, proc._handle):
                 raise OwnershipError("selfcheck_process_owner_unavailable")
             proc._flowgate_process_owner = owner
@@ -234,25 +255,25 @@ def spawn(argv: list[str], cwd: Path, env: dict[str, str], timeout_seconds: int,
             owner._suspended = False
             return ProcessControl(proc, owner), ownership
         except Exception as exc:
-            if proc is not None:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=5)
-                except Exception:
-                    try:
-                        owner.terminate()
-                        proc.wait(timeout=5)
-                    except Exception:
-                        pass   # still running: the caller's tree proof sees it and holds the run
-            owner.close()
+            if isinstance(exc, OwnershipError) and not exc.created:
+                raise                     # Popen raised: no process, the owner is closed
+            _windows_unwind(proc, owner)
             raise OwnershipError("selfcheck_process_owner_unavailable", ownership=ownership) from exc
     module = "modules.flow_gate.services.tr_self_check_supervisor"
-    proc = subprocess.Popen([sys.executable, "-m", module], shell=False,
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            cwd=Path(__file__).resolve().parents[3], env={**env, "PYTHONPATH": str(Path(__file__).resolve().parents[3])})
-    ownership = {"process_owner_kind": "posix_supervisor", "supervisor_pid": proc.pid,
-                 "supervisor_start_identity": start_identity(proc.pid)}
+    ownership = {"process_owner_kind": "posix_supervisor"}
     try:
+        _record(record, "spawning", ownership)
+    except Exception as exc:
+        raise OwnershipError("selfcheck_process_owner_unavailable", created=False) from exc
+    try:
+        proc = subprocess.Popen([sys.executable, "-m", module], shell=False,
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                cwd=Path(__file__).resolve().parents[3], env={**env, "PYTHONPATH": str(Path(__file__).resolve().parents[3])})
+    except OSError as exc:
+        raise OwnershipError("selfcheck_process_owner_unavailable", created=False) from exc
+    ownership.update(supervisor_pid=proc.pid, supervisor_start_identity=start_identity(proc.pid))
+    try:
+        _record(record, "spawned", ownership)
         proc.stdin.write((json.dumps({"argv": argv, "cwd": str(cwd), "env": env,
                                       "timeout_seconds": timeout_seconds}) + "\n").encode("utf-8"))
         proc.stdin.flush()
@@ -262,6 +283,7 @@ def spawn(argv: list[str], cwd: Path, env: dict[str, str], timeout_seconds: int,
         # The supervisor read the target's identity before it could reap it; a read here
         # could meet a reused PID.
         ownership.update(target_pid=started["pid"], target_start_identity=started.get("start_identity"))
+        _record(record, "spawned", ownership)
         return ProcessControl(proc), ownership
     except Exception as exc:
         try:
@@ -270,6 +292,25 @@ def spawn(argv: list[str], cwd: Path, env: dict[str, str], timeout_seconds: int,
         except Exception:
             pass   # the supervisor still runs: the caller's tree proof sees it and holds the run
         raise OwnershipError("selfcheck_process_owner_unavailable", ownership=ownership) from exc
+
+
+def _record(record: Callable[[str, dict], None] | None, stage: str, ownership: dict) -> None:
+    if record is not None:
+        record(stage, dict(ownership))
+
+
+def _windows_unwind(proc, owner: WindowsProcessOwner) -> None:
+    if proc is not None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                owner.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                pass   # still running: the caller's tree proof sees it and holds the run
+    owner.close()
 
 
 def wait(control: ProcessControl, timeout_seconds: int, cancelled: threading.Event) -> ExecutionResult:

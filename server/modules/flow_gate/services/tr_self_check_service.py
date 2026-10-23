@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import tr_self_check_runs as db_runs
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import tr_self_check_executor as executor
+from modules.flow_gate.services import tr_self_check_gate as gate
 from modules.flow_gate.services import tr_self_check_proof as proof
 from modules.flow_gate.services import tr_self_check_policy as policy
 from modules.flow_gate.services.git import lock_manager
@@ -83,9 +85,23 @@ def summary(row: dict) -> dict:
             "owner_kind": "draft" if draft else "tr", "group_read_path": f"/self-check/group/runs/{rid}"}
 
 
+#: 0080 T#3 (NR0007 §5 item 8): the reason-specific code next to a refusal's general code,
+#: as ``details.reason_code`` (409 already_running / cancel_unconfirmed) or as the code of a
+#: refused re-verification. Keys are ``tr_self_check_proof`` reason codes.
+_REASON_CODES = {
+    proof.OWNER_ALIVE: "selfcheck_owner_alive",
+    proof.OWNERSHIP_UNKNOWN: "selfcheck_ownership_unknown",
+    proof.OWNER_SERVER_UNPROVEN: "selfcheck_ownership_unknown",
+    proof.TREE_UNPROVEN: "selfcheck_tree_unproven",
+    "recovery_error": "selfcheck_tree_unproven",
+}
+
+
 def _already_running(run_id: str, target: dict) -> SelfCheckError:
     """``selfcheck_already_running`` with the holder's summary; ``same_owner`` = the caller's
-    own TR or draft token started it."""
+    own TR or draft token started it. A holder of another owner (another TR, another draft
+    token) adds ``reason_code: selfcheck_foreign_run`` -- the caller can read it through the
+    Group route but neither read nor cancel it through its own."""
     details = {}
     try:
         row = db_runs.get_run(run_id)
@@ -96,6 +112,8 @@ def _already_running(run_id: str, target: dict) -> SelfCheckError:
         own_tr = target.get("tr_doc_id") is not None and row.get("tr_doc_id") == target.get("tr_doc_id")
         own_token = target.get("owner_token_id") is not None and row.get("owner_token_id") == target.get("owner_token_id")
         details["run"] = {**summary(row), "same_owner": bool(own_tr or own_token)}
+        if not (own_tr or own_token):
+            details["reason_code"] = "selfcheck_foreign_run"
     return SelfCheckError(409, "selfcheck_already_running", run_id, details=details)
 
 
@@ -306,19 +324,197 @@ def _watch_cancel(run_id: str, control: executor.ProcessControl, cancelled: thre
     return stop
 
 
-def _hold_unsettled(ctx: lock_manager.ExecutionContext, lock_key: str, run_id: str) -> None:
+class _LockKeeper:
+    """0080 T#3 (NR0007 §5 item 7): what a run does once its G heartbeat is declared lost.
+
+    ``_Heartbeats._lost`` drops the hold from the heartbeat for good, so without this the run
+    goes on with an expired, unprotected G. ``lost`` is the context's ``on_lock_lost``; it
+    marks the hold LOSING and starts one retry loop (``lock_manager.selfcheck_regain``) that
+    ends in one of:
+
+    - HELD: the same epoch/holder row was still there and its heartbeat is renewed (a);
+    - PROTECTED: the row is ours but could not be renewed, so it is marked protected -- no
+      one reclaims or takes it; ``_finish`` deletes it once the tree is proved empty (b;
+      ``release()`` never deletes a protected row);
+    - GONE: no row of this epoch/holder -- another holder may be in the worktree. The run
+      is cancelled; ``_finish`` records ``failed(selfcheck_lock_lost)`` once the tree is
+      proved empty, else holds it like any unsettled run (c).
+
+    The worker never decides on a loss the keeper is still judging: ``resolve`` closes the
+    keeper (no later outcome can change the state it returns), waits for a judgement in
+    flight and judges a loss not settled yet itself; one the store cannot settle is
+    UNCONFIRMED and the run is held, not ended.
+
+    It complements the reclaim gate (T#2) and replaces nothing of it: the gate keeps a
+    live owner's G from being deleted, this shortens the time that G stays expired."""
+
+    HELD, LOSING, PROTECTED, GONE, UNCONFIRMED = "held", "losing", "protected", "gone", "unconfirmed"
+    _RESOLVE_ATTEMPTS = 3
+
+    def __init__(self, run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str):
+        self.run_id, self.ctx, self.lock_key = run_id, ctx, lock_key
+        self.state = self.HELD
+        self._stop = threading.Event()
+        self._guard = threading.Lock()
+        self._judging = threading.Lock()       # one selfcheck_regain and its outcome at a time
+        self._closed = False
+        self._resolved = False
+        self._thread: threading.Thread | None = None
+
+    def lost(self, _ctx, _held) -> None:
+        with self._guard:
+            if self._closed:
+                return
+            if self.state == self.HELD:
+                self.state = self.LOSING
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._thread = threading.Thread(target=self._loop, daemon=True,
+                                            name=f"selfcheck-lock-keeper-{self.run_id}")
+            self._thread.start()
+
+    def _regain(self) -> str | None:
+        try:
+            return lock_manager.selfcheck_regain(self.ctx, self.lock_key)
+        except Exception:
+            _log.warning("selfcheck %s: regaining its Group lock failed", self.run_id, exc_info=True)
+            return None
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            with self._judging:
+                if self._closed:
+                    return
+                outcome = self._regain()
+                if outcome is not None:
+                    self._settle(outcome, act=not self._closed)
+                    return
+            if self._stop.wait(lock_manager.heartbeat_interval_sec()):
+                return
+
+    def _settle(self, outcome: str, *, act: bool) -> None:
+        """Record a judgement (under ``_judging``); ``act`` = the run still goes: cancel it on GONE."""
+        with self._guard:
+            if outcome == lock_manager.SELFCHECK_RENEWED:
+                self.state = self.HELD
+            elif outcome == lock_manager.SELFCHECK_PROTECTED:
+                self.state = self.PROTECTED
+            else:
+                self.state = self.GONE
+        if outcome == lock_manager.SELFCHECK_RENEWED:
+            _log.warning("selfcheck %s: Group lock heartbeat renewed after it was lost", self.run_id)
+            return
+        if outcome == lock_manager.SELFCHECK_PROTECTED:
+            _log.warning("selfcheck %s: Group lock could not be renewed; kept protected until the run ends",
+                         self.run_id)
+            return
+        _log.error("selfcheck %s: Group lock is gone; the run is cancelled", self.run_id)
+        if not act:
+            return
+        try:
+            db_runs.request_cancel(self.run_id)
+        except Exception:
+            _log.warning("selfcheck %s: recording the cancel failed", self.run_id, exc_info=True)
+        with _controls_lock:
+            item = _controls.get(self.run_id)
+        if item:
+            item[1].set()
+            item[0].cancel()
+
+    def resolve(self) -> str:
+        """The hold's final state, for the worker's terminal decision (after the tree proof).
+
+        Closes the keeper first, so nothing it learns afterwards changes what the worker acts
+        on; waits for a judgement in flight; then a loss not settled yet (LOSING, or
+        ``ctx.lock_lost`` without a callback, e.g. the instance declared dead) is judged here,
+        a few times. HELD / PROTECTED / GONE, or UNCONFIRMED when the store could not tell --
+        the caller then holds the run. Idempotent."""
+        with self._guard:
+            self._closed = True
+        self._stop.set()
+        with self._judging:
+            if not self._resolved:
+                self._resolved = True
+                with self._guard:
+                    unsettled = self.state == self.LOSING or (self.state == self.HELD and self.ctx.lock_lost)
+                if unsettled:
+                    outcome = None
+                    for attempt in range(self._RESOLVE_ATTEMPTS):
+                        outcome = self._regain()
+                        if outcome is not None:
+                            break
+                        if attempt + 1 < self._RESOLVE_ATTEMPTS:
+                            time.sleep(min(0.5, lock_manager.heartbeat_interval_sec()))
+                    if outcome is None:
+                        with self._guard:
+                            self.state = self.UNCONFIRMED
+                        _log.error("selfcheck %s: whether its Group lock is still held cannot be read; "
+                                   "the run is held", self.run_id)
+                    else:
+                        self._settle(outcome, act=False)
+            with self._guard:
+                return self.state
+
+    def stop(self) -> None:
+        with self._guard:
+            self._closed = True
+        self._stop.set()
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=5)
+
+
+def _lock_state(keeper: "_LockKeeper | None") -> str:
+    return keeper.resolve() if keeper is not None else _LockKeeper.HELD
+
+
+_OWNERSHIP_KEYS = ("process_owner_kind", "target_pid", "target_start_identity",
+                   "supervisor_pid", "supervisor_start_identity")
+
+
+def _store_ownership(run_id: str, ownership: dict) -> None:
+    fields = {key: ownership[key] for key in _OWNERSHIP_KEYS if ownership.get(key) is not None}
+    if fields and not db_runs.record_spawn_ownership(run_id, **fields):
+        raise SelfCheckError(500, "selfcheck_state_conflict")
+
+
+def _record_spawn(run_id: str):
+    """``executor.spawn``'s ``record`` (0080 T#3): the pre-spawn stamp, then each process as
+    soon as it exists, so the stored row never proves more absent than the spawn knows."""
+    def record(stage: str, ownership: dict) -> None:
+        if stage == "spawning":
+            if not db_runs.mark_spawn_started(run_id, ownership["process_owner_kind"]):
+                raise SelfCheckError(500, "selfcheck_state_conflict")
+            return
+        _store_ownership(run_id, ownership)
+
+    return record
+
+
+#: recovery_reason of a run whose G loss could not be judged before its terminal write.
+LOCK_UNCONFIRMED = "lock_unconfirmed"
+
+
+def _hold_unsettled(ctx: lock_manager.ExecutionContext, lock_key: str, run_id: str,
+                    ownership: dict | None = None, reason: str = proof.TREE_UNPROVEN) -> None:
     """No finish_* and no release while the tree is not proved empty (L 2.24.2: the Group's
-    G stays as a protected row; only this Group is blocked)."""
+    G stays as a protected row; only this Group is blocked). What the spawn learnt is
+    stored first: a later reaper proves the tree from the stored row only."""
+    if ownership:
+        try:
+            _store_ownership(run_id, ownership)
+        except Exception:
+            _log.warning("selfcheck %s: storing the spawn's process records failed", run_id, exc_info=True)
     if ctx.find_held(lock_key) is not None:
         lock_manager.protect(ctx, lock_key, "selfcheck_reap_unconfirmed")
     recovering = db_runs.mark_recovering(run_id)
     if recovering:
-        db_runs.mark_recovery_incomplete(run_id, proof.TREE_UNPROVEN)
+        db_runs.mark_recovery_incomplete(run_id, reason)
 
 
 def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root: Path, before: dict,
             runtime: Path, command: policy.ResolvedCommand, args: list[str], cwd: Path,
-            env: dict[str, str], timeout: int) -> None:
+            env: dict[str, str], timeout: int, keeper: "_LockKeeper | None" = None) -> None:
     holder = ctx.ctx_id
     control = None
     ownership = {}
@@ -328,7 +524,7 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
     watch = None
     try:
         control, ownership = executor.spawn([command.executable, *command.argv_prefix, *args], cwd, env, timeout,
-                                            run_id, job_name=proof.job_name(run_id))
+                                            run_id, job_name=proof.job_name(run_id), record=_record_spawn(run_id))
         with _controls_lock:
             _controls[run_id] = control, cancelled
         row = db_runs.mark_running(run_id, source_lock_holder=holder,
@@ -338,18 +534,29 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
         if row is None:
             raise SelfCheckError(500, "selfcheck_state_conflict")
         _emit(row)
-        if db_runs.get_run(run_id)["cancel_requested"]:
+        if db_runs.get_run(run_id)["cancel_requested"] or (keeper is not None and keeper.state == _LockKeeper.GONE):
             cancelled.set()
             control.cancel()
         watch = _watch_cancel(run_id, control, cancelled)
         result = executor.wait(control, timeout, cancelled)
         if not _settle_tree(run_id, row, ownership):
-            _hold_unsettled(ctx, lock_key, run_id)
+            _hold_unsettled(ctx, lock_key, run_id, ownership)
+            return
+        # The tree is empty. A G loss is judged now, and nothing the keeper learns later
+        # changes the decision below.
+        lock = _lock_state(keeper)
+        if lock == _LockKeeper.UNCONFIRMED:
+            _hold_unsettled(ctx, lock_key, run_id, ownership, LOCK_UNCONFIRMED)
             return
         after = _probe(root)
         tails = {"stdout_tail": _redact(result.stdout_tail), "stderr_tail": _redact(result.stderr_tail)}
         fields = _source_fields(before, after)
-        if result.cancelled or db_runs.get_run(run_id)["cancel_requested"]:
+        if lock == _LockKeeper.GONE:
+            # G was gone under the run (NR0007 §5 item 7-c): another holder may have entered.
+            # Stopped and its tree proved empty above; recorded as a failure, not a result.
+            terminal = db_runs.finish_failed(run_id, error_code="selfcheck_lock_lost", exit_code=result.exit_code,
+                                             timed_out=result.timed_out, **tails, **fields)
+        elif result.cancelled or db_runs.get_run(run_id)["cancel_requested"]:
             terminal = db_runs.finish_cancelled(run_id, exit_code=result.exit_code, **tails, **fields)
         else:
             terminal = db_runs.finish_completed(run_id, exit_code=result.exit_code,
@@ -364,20 +571,37 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
         else:
             # spawn() failed. That proves nothing absent: a supervisor, target or Job member
             # may exist (a failed handshake, a cleanup wait that timed out). What spawn learnt
-            # comes with the error; the stored owner_marker covers the rest.
+            # comes with the error; the stored row (owner_marker, the spawn's records) covers
+            # the rest. Only a spawn that knows it created nothing takes its stamp back.
             ownership = dict(getattr(exc, "ownership", None) or {})
+            if getattr(exc, "created", True) is False:
+                ownership = {}
+                try:
+                    db_runs.clear_spawn_started(run_id)
+                except Exception:
+                    _log.warning("selfcheck %s: clearing the spawn stamp failed", run_id, exc_info=True)
         # The target and the supervisor are not the whole run: its group / Job must be
         # empty too, else the failure is not recorded, the run keeps its active_key and G
         # stays protected (recovery_incomplete / tree_unproven).
         if (control is not None and control.proc.poll() is None) or not _settle_tree(run_id, row, ownership):
-            _hold_unsettled(ctx, lock_key, run_id)
+            _hold_unsettled(ctx, lock_key, run_id, ownership)
             return
-        code = exc.code if isinstance(exc, (SelfCheckError, policy.PolicyError)) else (
-            "selfcheck_process_owner_unavailable" if isinstance(exc, executor.OwnershipError) else "selfcheck_internal_error")
+        # A confirmed G loss outranks the error, with the same code as the normal path.
+        lock = _lock_state(keeper)
+        if lock == _LockKeeper.UNCONFIRMED:
+            _hold_unsettled(ctx, lock_key, run_id, ownership, LOCK_UNCONFIRMED)
+            return
+        if lock == _LockKeeper.GONE:
+            code = "selfcheck_lock_lost"
+        else:
+            code = exc.code if isinstance(exc, (SelfCheckError, policy.PolicyError)) else (
+                "selfcheck_process_owner_unavailable" if isinstance(exc, executor.OwnershipError) else "selfcheck_internal_error")
         terminal = db_runs.finish_failed(run_id, error_code=code)
     finally:
         if watch is not None:
             watch.set()
+        if keeper is not None:
+            keeper.stop()
         if control is not None:
             control.close()
         with _controls_lock:
@@ -386,7 +610,16 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
             _log.warning("selfcheck %s lost its Group lock during the run", run_id)
         # A missing terminal commit keeps the Group lock (protected) for startup recovery.
         if terminal is not None:
-            lock_manager.release(ctx, lock_key)
+            if ctx.find_held(lock_key) is not None:
+                lock_manager.release(ctx, lock_key)
+            if keeper is not None and keeper.state == _LockKeeper.PROTECTED:
+                # release() never deletes a protected row (L 2.5.4). The keeper protected this
+                # run's own G after its heartbeat could not be renewed; the tree was proved
+                # empty before the terminal write, so the holder's row goes now.
+                try:
+                    lock_manager.selfcheck_release_recovered(terminal["project_id"], terminal["group_id"], run_id)
+                except Exception:
+                    _log.warning("selfcheck %s: releasing its protected Group lock failed", run_id, exc_info=True)
             _emit(terminal)
             try:
                 shutil.rmtree(runtime)
@@ -429,6 +662,8 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
     # D 3.8 / L 2.24.1: this Group's G for the whole run (long, heartbeated).
     ctx = lock_manager.new_context("scr", run_id)
     holder = ctx.ctx_id
+    keeper = _LockKeeper(run_id, ctx, lock_manager.lock_key("G", project_id, group_id))
+    ctx.on_lock_lost = keeper.lost
     try:
         outcome = lock_manager.acquire("G", project_id, group_id=group_id, holder_kind="selfcheck",
                                        mode="selfcheck_start", ctx=ctx)
@@ -463,7 +698,7 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
             owner_token_id=target.get("owner_token_id"), draft_doc_ref=target.get("draft_doc_ref"),
             owner_instance_id=instance_registry.current_instance_id(), owner_marker=proof.owner_marker(run_id))
         worker = threading.Thread(target=_finish, args=(run_id, ctx, lock_key, root, before,
-            runtime, command, args, cwd, env, timeout), daemon=True, name=f"selfcheck-{run_id}")
+            runtime, command, args, cwd, env, timeout, keeper), daemon=True, name=f"selfcheck-{run_id}")
         try:
             worker.start()
         except Exception as exc:
@@ -484,6 +719,7 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
         raise SelfCheckError(422, exc.code) from exc
     finally:
         if row is None:
+            keeper.stop()
             lock_manager.release(ctx, lock_key)
             if runtime is not None:
                 shutil.rmtree(runtime, ignore_errors=True)
@@ -549,8 +785,10 @@ def _cancel(run_id: str, lookup) -> dict:
         state, reason = "stopped", None
     cancel = {"accepted": bool(row.get("cancel_requested")), "stopped": stopped, "state": state, "reason": reason}
     if state == "unconfirmed":
-        raise SelfCheckError(409, "selfcheck_cancel_unconfirmed", details={
-            "self_check_run_id": run_id, "cancel": cancel, "run": summary(row)})
+        details = {"self_check_run_id": run_id, "cancel": cancel, "run": summary(row)}
+        if _REASON_CODES.get(reason):
+            details["reason_code"] = _REASON_CODES[reason]
+        raise SelfCheckError(409, "selfcheck_cancel_unconfirmed", details=details)
     return {**public(row), "cancel": cancel}
 
 
@@ -767,3 +1005,155 @@ def _hold_recovery_incomplete(row: dict, reason: str, fallback: set[str]) -> Non
         _log.warning("selfcheck %s: G protection not written; recovery_incomplete keeps "
                      "the Group closed", rid)
         fallback.add(project_id)
+
+
+# ── 0080 T#3: periodic reaper and operator re-verification (NR0007 §5 items 5, 6) ──
+
+RELEASED, PROTECTED, KEPT = "released", "protected", "kept"
+
+
+def _reprove(row: dict) -> tuple[str, str | None]:
+    """One judgement of an active run that no worker drives: ``(outcome, reason)``.
+
+    RELEASED: the run is ended (failed / interrupted_by_restart) and its G deleted in the
+    same pass. PROTECTED: fenced but not proved -- recovery_incomplete, G protected.
+    KEPT: nothing written (``reason`` says why).
+
+    The order is ``_recover_row``'s. The owner is judged first, read only, by the four-way
+    proof: another server alive (MATCH) or unproven (UNKNOWN, another node, no instance
+    row, no owner recorded) keeps the run as it is. Instance DEAD, ``status='dead'`` and
+    heartbeat expiry (``step_instance_liveness`` / ``is_stale``) are not read. This server
+    as the owner counts only when the run's worker thread is gone and the run is past its
+    fresh pending state: then nothing can spawn for it any more. Only then the CAS fences the
+    row (none / incomplete -> recovering; a ``recovering`` row left behind is proved under
+    its fence, as the gate does) and the release rule proves the tree, killing only what is
+    verified the run's own, re-checked right before the writes.
+    """
+    rid, state = row["self_check_run_id"], row.get("recovery_state")
+    if row.get("status") not in _ACTIVE or state not in ("none", "incomplete", "recovering"):
+        return KEPT, "not_applicable"
+    if state == "recovering" and not gate._left_behind(row):
+        return KEPT, "recovery_recovering"     # recover(), a cancel or a gate pass is proving it
+    server = proof.owner_server_state(proof.owner_instance_of(row))
+    own = server.state == proof.MATCH and bool(server.detail.get("self"))
+    if own:
+        if _worker_alive(rid) or (row["status"] == "pending" and state == "none"):
+            return KEPT, proof.OWNER_ALIVE
+    elif server.state == proof.MATCH:
+        return KEPT, proof.OWNER_ALIVE
+    elif not server.gone:
+        return KEPT, server.reason or proof.OWNER_SERVER_UNPROVEN
+    if state == "none":
+        current = db_runs.mark_recovering(rid)
+    elif state == "incomplete":
+        current = db_runs.retry_recovery_incomplete(rid)
+    else:
+        current = db_runs.get_run(rid)
+        if current is None or current.get("recovery_state") != "recovering":
+            current = None
+    if current is None:
+        return KEPT, "state_changed"
+    try:
+        if own:
+            ok = (proof.terminate_tree(current).state == proof.ABSENT
+                  and proof.tree_state(current).state == proof.ABSENT)
+            reason = None if ok else proof.TREE_UNPROVEN
+        else:
+            verdict = proof.release_verdict(current, terminate=True)
+            ok, reason = verdict.decision == proof.RELEASE, verdict.reason or proof.TREE_UNPROVEN
+        if ok:
+            finished = db_runs.finish_recovered_interrupted(rid)
+            if finished is None:
+                return KEPT, "state_changed"
+            try:
+                lock_manager.selfcheck_release_recovered(row["project_id"], row["group_id"], rid)
+            except Exception:
+                # The run is ended; its leftover G is a terminal run's, reclaimed by the gate.
+                _log.warning("selfcheck %s: releasing Group lock failed", rid, exc_info=True)
+            _emit(finished)
+            return RELEASED, None
+        _hold_recovery_incomplete(current, reason, set())
+        return PROTECTED, reason
+    except Exception:
+        _log.warning("selfcheck %s: re-proof failed; the run is kept protected", rid, exc_info=True)
+        fenced = db_runs.get_run(rid)
+        if fenced and fenced.get("recovery_state") == "recovering":
+            _hold_recovery_incomplete(fenced, "recovery_error", set())
+        return PROTECTED, "recovery_error"
+
+
+def _reap_terminal_g(lock: dict) -> bool:
+    """A protected Self-check G whose run has ended (the gate protected it while the tree
+    was not proved empty): deleted once the tree is proved empty. An ended run spawns
+    nothing more, so no server proof is needed (gate table, terminal rows)."""
+    rid = gate.run_id_of(lock)
+    run = db_runs.get_run(rid) if rid else None
+    if run is None or run["status"] in _ACTIVE or proof.tree_state(run).state != proof.ABSENT:
+        return False
+    lock_manager.selfcheck_release_recovered(run["project_id"], run["group_id"], rid)
+    _log.warning("selfcheck %s: ended run's protected G released, tree proved empty", rid)
+    return True
+
+
+def reap() -> int:
+    """The sweeper's Self-check reaper step (0080 T#3, NR0007 §5 item 5). Returns the
+    number of runs ended / G rows freed.
+
+    Every active run is judged by ``_reprove`` -- a run whose owner is proved dead (or is
+    this server with no worker left) and whose tree is proved empty ends here, with its G,
+    in one judgement; an unproved one stays (or becomes) recovery_incomplete with G
+    protected, and is tried again next tick (``retry_recovery_incomplete``). An owner that
+    is alive or unproven is not written at all. Then the protected G rows of ended runs.
+    One failing row never stops the others."""
+    reaped = 0
+    for row in db_runs.list_orphan_active_runs():
+        try:
+            outcome, reason = _reprove(row)
+        except Exception:
+            _log.warning("selfcheck %s: reaper failed; the run is kept as it is",
+                         row.get("self_check_run_id"), exc_info=True)
+            continue
+        if outcome == RELEASED:
+            reaped += 1
+        elif outcome == PROTECTED:
+            _log.warning("selfcheck %s: reaper kept the run protected (%s)", row["self_check_run_id"], reason)
+    try:
+        locks = lock_manager.selfcheck_protected_locks()
+    except Exception:
+        _log.warning("selfcheck reaper: listing protected G rows failed", exc_info=True)
+        locks = []
+    for lock in locks:
+        try:
+            reaped += int(_reap_terminal_g(lock))
+        except Exception:
+            _log.warning("selfcheck G %s: reaper failed; kept", lock.get("lock_key"), exc_info=True)
+    return reaped
+
+
+def reverify(run_id: str) -> dict:
+    """An operator's ownership re-verification of a recovery_incomplete run (0080 T#3,
+    NR0007 §5 item 6; the route requires perm_document_update).
+
+    The server runs the reaper's proof (``_reprove``) once, now. Proved -> the run is ended
+    and its G freed. Not proved -> refused with the reason's code (``selfcheck_owner_alive``,
+    ``selfcheck_ownership_unknown``, ``selfcheck_tree_unproven``, ``selfcheck_state_conflict``)
+    and the run keeps its state and protection. There is no forced release."""
+    row = db_runs.get_run(run_id)
+    if row is None:
+        raise SelfCheckError(404, "selfcheck_run_not_found")
+    if row["status"] not in _ACTIVE or row.get("recovery_state") != "incomplete":
+        raise SelfCheckError(409, "selfcheck_reverify_not_applicable",
+                             details={"self_check_run_id": run_id, "run": summary(row)})
+    try:
+        outcome, reason = _reprove(row)
+    except Exception as exc:
+        _log.warning("selfcheck %s: re-verification failed; the run is kept", run_id, exc_info=True)
+        raise SelfCheckError(500, "selfcheck_internal_error") from exc
+    current = db_runs.get_run(run_id) or row
+    _emit(current)
+    if outcome == RELEASED:
+        return {**public(current), "reverify": {"released": True, "reason": None}}
+    code = _REASON_CODES.get(reason, "selfcheck_state_conflict")
+    raise SelfCheckError(409, code, details={"self_check_run_id": run_id,
+                                             "reverify": {"released": False, "reason": reason},
+                                             "run": summary(current)})

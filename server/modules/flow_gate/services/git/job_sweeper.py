@@ -7,6 +7,8 @@ One daemon thread replaces the old 30-minute merge-sweep loop. Every
    instances whose process is gone, become ``dead`` (L 2.8).
 2. step_stale_locks — long locks whose heartbeat lapsed and rows of non-alive owners,
    judged by ``is_stale`` and reclaimed by epoch CAS (L 2.9).
+   step_selfcheck_reaper (0080 T#3) — Self-check runs no worker drives, ended only when
+   their owner is proved dead and their process tree proved empty.
 3. step_expired_leases — running/freezing jobs whose lease lapsed or whose owner is
    not alive: reconcile claim (DB §4(k)), then the Runner's reconcile (L 2.17.3).
 4. step_claim_candidates — round-robin over projects, oldest first inside one, only as
@@ -111,6 +113,18 @@ def step_stale_locks(full: bool = False) -> int:
     return reclaimed
 
 
+def step_selfcheck_reaper() -> int:
+    """0080 T#3 (NR0007 §5 item 5): end Self-check runs no worker drives, on proof only.
+
+    A run whose owning server is proved dead (four-way, ``tr_self_check_proof``) -- or is this
+    server with the run's worker gone -- and whose whole process tree is proved empty is
+    ended and its G deleted in one judgement; UNKNOWN or a remaining member keeps it (or
+    makes it) recovery_incomplete with G protected, retried every tick. The instance DEAD
+    that steps 1 and 2 use is not evidence here and is not read."""
+    from modules.flow_gate.services import tr_self_check_service as selfcheck
+    return selfcheck.reap()
+
+
 def step_expired_leases(full: bool = False) -> int:
     instance_id = store._instance_id()
     if instance_id is None:
@@ -207,6 +221,7 @@ def _safe(name: str, fn, *args) -> None:
 def run_tick(tick_no: int, *, full: bool = False) -> None:
     _safe("instance_liveness", step_instance_liveness)
     _safe("stale_locks", step_stale_locks, full)
+    _safe("selfcheck_reaper", step_selfcheck_reaper)
     _safe("expired_leases", step_expired_leases, full)
     _safe("claim_candidates", step_claim_candidates)
     _safe("recovery_required_retry", step_recovery_required_retry)

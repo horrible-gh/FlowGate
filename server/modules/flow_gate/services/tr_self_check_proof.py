@@ -349,8 +349,9 @@ def _combine(parts: dict) -> Proof:
 def tree_state(row: dict) -> Proof:
     """Is the run's whole process tree empty? Read-only.
 
-    Windows: the run's named Job (from ``owner_marker``) plus the recorded target. A run
-    without a named Job (before 158) cannot be proved: UNKNOWN. POSIX: target and
+    Windows: the run's named Job (from ``owner_marker``) plus the recorded target; a run
+    whose spawn began (``process_owner_kind`` stamped) without a recorded target is UNKNOWN.
+    A run without a named Job (before 158) cannot be proved: UNKNOWN. POSIX: target and
     supervisor identities, the target's process group (pgid = target PID) and, when the
     run carries the marker, the Linux marker scan. With neither a target PID nor a marker
     nothing is known about the tree: UNKNOWN (``ownership_unknown``).
@@ -369,6 +370,11 @@ def tree_state(row: dict) -> Proof:
         parts["job"] = job
         if target_pid:
             parts["target"] = executor.identity_state(target_pid, target_id)
+        elif row.get("process_owner_kind"):
+            # The spawn began (its stamp lands before Popen, 0080 T#3) and no target is on
+            # record: one may exist outside the Job (Popen -> AssignProcessToJobObject), so
+            # an empty or vanished Job proves nothing for it.
+            parts["target"] = UNKNOWN
         return _combine(parts)
     if marker and marker.get("kind") != "posix_marker":
         return Proof(UNKNOWN, TREE_UNPROVEN, {"cause": "foreign_marker"})

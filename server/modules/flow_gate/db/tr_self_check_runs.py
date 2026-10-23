@@ -364,6 +364,55 @@ def mark_running(
     return get_run(run_id)
 
 
+def mark_spawn_started(run_id: str, process_owner_kind: str) -> bool:
+    """0080 T#3: the stamp a spawn writes before its first Popen -- ``process_owner_kind``
+    on a pending row with no process recorded yet. From then on a missing target record
+    means "a process may exist that no record names" (``tr_self_check_proof.tree_state``),
+    not "nothing was spawned". CAS: pending, recovery_state none; False = do not spawn."""
+    return get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET process_owner_kind = ?"
+        " WHERE self_check_run_id = ? AND status = 'pending' AND recovery_state = 'none'"
+        " AND target_pid IS NULL AND supervisor_pid IS NULL",
+        [process_owner_kind, run_id],
+    ) > 0
+
+
+def record_spawn_ownership(
+    run_id: str,
+    *,
+    process_owner_kind: str | None = None,
+    target_pid: int | None = None,
+    target_start_identity: str | None = None,
+    supervisor_pid: int | None = None,
+    supervisor_start_identity: str | None = None,
+) -> bool:
+    """0080 T#3: what a spawn learnt about the run's processes, stored as soon as it is
+    known (right after each Popen, and again when a failed spawn is held) so a later
+    reaper proves the tree from it. Only adds: a recorded value is never cleared."""
+    return get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET"
+        " process_owner_kind = COALESCE(?, process_owner_kind),"
+        " target_pid = COALESCE(?, target_pid),"
+        " target_start_identity = COALESCE(?, target_start_identity),"
+        " supervisor_pid = COALESCE(?, supervisor_pid),"
+        " supervisor_start_identity = COALESCE(?, supervisor_start_identity)"
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running')",
+        [process_owner_kind, target_pid, target_start_identity, supervisor_pid,
+         supervisor_start_identity, run_id],
+    ) > 0
+
+
+def clear_spawn_started(run_id: str) -> bool:
+    """Undo ``mark_spawn_started`` when the spawn knows it created no process (Popen
+    raised). Only while no process is recorded."""
+    return get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET process_owner_kind = NULL"
+        " WHERE self_check_run_id = ? AND status = 'pending'"
+        " AND target_pid IS NULL AND supervisor_pid IS NULL",
+        [run_id],
+    ) > 0
+
+
 def request_cancel(run_id: str) -> bool:
     """CAS 0 -> 1 for cancel_requested on active run."""
     store = get_store()

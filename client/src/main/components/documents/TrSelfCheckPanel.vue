@@ -10,11 +10,20 @@
         <label class="form-label">Timeout (seconds) <input v-model.number="timeout" type="number" min="1" max="1800" class="form-ctrl" :disabled="!enabled || busy" /></label>
       </div>
       <div class="flex" style="gap:8px;margin-top:10px">
-        <button class="btn btn-primary" type="button" :disabled="!enabled || busy || !!active || !program.trim()" @click="run">Run</button>
+        <button class="btn btn-primary" type="button" :disabled="!enabled || busy || !!active || !!foreign || !program.trim()" @click="run">Run</button>
         <button class="btn btn-secondary" type="button" :disabled="!active" @click="cancel">Cancel</button>
         <span v-if="active">{{ active.status }}<span v-if="active.cancel_requested"> · cancellation requested</span></span>
       </div>
       <p v-if="error" class="text-s">{{ error }}</p>
+      <!-- 0080 T#3: the run slot is one per Group; another TR's or a draft run may hold it. -->
+      <div v-if="slotRun && (foreign || slotRun.recovery_state === 'incomplete')" class="form-hint" data-testid="tr-self-check-group-holder" style="margin-top:8px">
+        <span v-if="foreign">이 Group의 실행 슬롯을 {{ foreign.draft ? 'TR 등록 전(draft) run' : `${foreign.tr_doc_id} run` }}이 사용 중입니다</span>
+        <span v-else>이 TR의 run이 복구 미완료 상태입니다</span>
+        ({{ slotRun.status }}<template v-if="slotRun.recovery_state && slotRun.recovery_state !== 'none'"> · {{ slotRun.recovery_state }}</template> · {{ slotRun.created_at }}).
+        <button v-if="foreign && foreign.tr_doc_id" class="btn btn-secondary" type="button" @click="openHolder">TR 열기</button>
+        <button v-if="slotRun.recovery_state === 'incomplete'" class="btn btn-secondary" type="button" :disabled="busy" @click="reverify">소유권 재검증</button>
+      </div>
+      <TrSelfCheckDraftPanel v-if="foreign && foreign.draft" :group-id="groupId" />
       <div v-if="runs.length" style="margin-top:14px">
         <strong>Recent history</strong>
         <select v-model="selectedId" class="form-ctrl" @change="selectRun">
@@ -29,7 +38,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { getRequest, postRequest } from '@shared/api';
-import type { Tab } from '../../stores/tabs';
+import { useTabsStore, type Tab } from '../../stores/tabs';
+import TrSelfCheckDraftPanel from './TrSelfCheckDraftPanel.vue';
 import TrSelfCheckRunDetail, { type SelfCheckRun } from './TrSelfCheckRunDetail.vue';
 import { serializedRefresh } from './selfCheckRefresh';
 
@@ -46,6 +56,21 @@ interface ProjectSettingsResponse {
   tr_self_check_enabled?: boolean;
 }
 
+// 0080 T#2/T#3: who holds the Group's run slot (GET /self-check/group/runs, a summary only).
+interface GroupRunSummary {
+  self_check_run_id: string;
+  tr_doc_id: string | null;
+  draft: boolean;
+  status: string;
+  recovery_state: string | null;
+  created_at: string | null;
+}
+
+interface GroupRunsResponse {
+  ok: boolean;
+  runs: GroupRunSummary[];
+}
+
 const props = defineProps<{ tab: Tab }>();
 const enabled = ref(false);
 const program = ref('pytest');
@@ -59,6 +84,12 @@ const selectedId = ref('');
 const selected = computed(() => runs.value.find((row) => row.self_check_run_id === selectedId.value));
 const active = computed(() => runs.value.find((row) => row.status === 'pending' || row.status === 'running'));
 const base = computed(() => `/api/v1/documents/${props.tab.id}/self-check/runs`);
+const tabsStore = useTabsStore();
+// Same derivation as DocumentBodyRouter's draft panel: a document id is its group id plus one segment.
+const groupId = computed(() => props.tab.id.split('.').slice(0, -1).join('.'));
+const groupRuns = ref<GroupRunSummary[]>([]);
+const slotRun = computed(() => groupRuns.value[0] || null);
+const foreign = computed(() => (slotRun.value && slotRun.value.tr_doc_id !== props.tab.id ? slotRun.value : null));
 let timer: ReturnType<typeof setInterval> | null = null;
 
 // A link event arriving while a list GET is in flight must not reuse that GET's (older) response.
@@ -70,6 +101,44 @@ const refresh = serializedRefresh(async () => {
   } catch { /* REST is authoritative; retain last visible result */ }
 });
 
+const refreshGroup = serializedRefresh(async () => {
+  if (!groupId.value) { groupRuns.value = []; return; }
+  try {
+    const { data } = await getRequest<GroupRunsResponse>('/api/v1/self-check/group/runs', { group_id: groupId.value });
+    groupRuns.value = data.runs || [];
+  } catch { /* REST is authoritative; retain last visible result */ }
+});
+
+function describe(exc: any, fallback: string): string {
+  const err = exc?.response?.data?.error;
+  const holder = err?.details?.run;
+  if (err?.code === 'selfcheck_already_running' && holder) {
+    return `${err.code}: ${holder.draft ? 'TR 등록 전(draft) run' : holder.tr_doc_id} · ${holder.status} · ${holder.created_at}`;
+  }
+  const reason = err?.details?.reason_code;
+  return err?.code ? (reason && reason !== err.code ? `${err.code} (${reason})` : err.code) : fallback;
+}
+
+async function openHolder() {
+  const docId = foreign.value?.tr_doc_id;
+  if (!docId) return;
+  try {
+    const res = await getRequest<any>(`/api/v1/documents/detail?doc_id=${encodeURIComponent(docId)}`);
+    const d = (res.data as any)?.data ?? res.data;
+    if (!d?.doc_id) return;
+    tabsStore.openTab({ id: d.doc_id, title: d.title ?? d.doc_id, path: d.file_path ?? '', type: 'md',
+      mdPath: d.file_path ?? null, typeCode: d.type_code ?? null, projectId: d.project_id ?? props.tab.projectId ?? null });
+  } catch { error.value = 'Could not open the TR'; }
+}
+
+async function reverify() {
+  if (!slotRun.value) return;
+  busy.value = true; error.value = '';
+  try { await postRequest(`/api/v1/self-check/recovery/runs/${slotRun.value.self_check_run_id}/reverify`, {}); }
+  catch (exc: any) { error.value = describe(exc, 'Could not re-verify Self-check'); }
+  finally { busy.value = false; await refresh(); await refreshGroup(); }
+}
+
 async function load() {
   if (props.tab.projectId) {
     try {
@@ -78,6 +147,7 @@ async function load() {
     } catch { enabled.value = false; }
   }
   await refresh();
+  await refreshGroup();
 }
 
 function parseArgs(text: string): string[] {
@@ -91,14 +161,14 @@ async function run() {
     const { data } = await postRequest<SelfCheckRunResponse>(base.value, { program: program.value.trim(), args: parseArgs(argsText.value), cwd: cwd.value, timeout_seconds: timeout.value });
     selectedId.value = data.self_check_run_id;
     await refresh();
-  } catch (exc: any) { error.value = exc?.response?.data?.error?.code || 'Could not start Self-check'; }
+  } catch (exc: any) { error.value = describe(exc, 'Could not start Self-check'); await refreshGroup(); }
   finally { busy.value = false; }
 }
 
 async function cancel() {
   if (!active.value) return;
   try { await postRequest(`${base.value}/${active.value.self_check_run_id}/cancel`, {}); await refresh(); }
-  catch (exc: any) { error.value = exc?.response?.data?.error?.code || 'Could not cancel Self-check'; }
+  catch (exc: any) { error.value = describe(exc, 'Could not cancel Self-check'); }
 }
 
 async function selectRun() {
@@ -112,9 +182,12 @@ async function selectRun() {
 function onUpdate(event: Event) {
   const detail = (event as CustomEvent).detail || {};
   if (detail.tr_doc_id === props.tab.id) refresh();
+  // Another run of this Group (another TR, a draft) took or left the slot; this TR's own run
+  // is followed by its list above (and the slot view by the timer below).
+  else if (detail.group_id === groupId.value) refreshGroup();
 }
 
 watch(() => props.tab.id, load);
-onMounted(() => { load(); window.addEventListener('fg:self_check_run_updated', onUpdate); timer = setInterval(() => { if (active.value) refresh(); }, 1500); });
+onMounted(() => { load(); window.addEventListener('fg:self_check_run_updated', onUpdate); timer = setInterval(() => { if (active.value) refresh(); if (active.value || slotRun.value) refreshGroup(); }, 1500); });
 onBeforeUnmount(() => { window.removeEventListener('fg:self_check_run_updated', onUpdate); if (timer) clearInterval(timer); });
 </script>
