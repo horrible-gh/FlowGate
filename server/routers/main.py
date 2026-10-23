@@ -65,6 +65,8 @@ from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_r
 from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
 from modules.flow_gate.api.v1.self_check_routes import router as _self_check_router
 from modules.flow_gate.api.v1.self_check_routes import draft_router as _self_check_draft_router
+from modules.flow_gate.api.v1.self_check_routes import group_router as _self_check_group_router
+from modules.flow_gate.api.v1.self_check_routes import recovery_router as _self_check_recovery_router
 from modules.flow_gate.api.v1.agent_routes import router as _agent_router
 from modules.flow_gate.api.v1.agent_job_routes import router as _agent_job_router
 from modules.flow_gate.graph_workflow.api.canvas_routes import router as _graph_canvas_router
@@ -222,6 +224,8 @@ app.include_router(_help_router, prefix=f"{CONTEXT}", tags=["Help"])
 app.include_router(_document_router, prefix=f"{CONTEXT}", tags=["OutboundDocument"])
 app.include_router(_self_check_router, prefix=f"{CONTEXT}", tags=["TR Self-check"] )
 app.include_router(_self_check_draft_router, prefix=f"{CONTEXT}", tags=["TR Self-check"])
+app.include_router(_self_check_group_router, prefix=f"{CONTEXT}", tags=["TR Self-check"])
+app.include_router(_self_check_recovery_router, prefix=f"{CONTEXT}", tags=["TR Self-check"])
 app.include_router(_project_router, prefix=f"{CONTEXT}", tags=["OutboundProject"])
 app.include_router(_group_router, prefix=f"{CONTEXT}", tags=["OutboundGroup"])
 app.include_router(_sse_router, prefix=f"{CONTEXT}", tags=["SSE"])

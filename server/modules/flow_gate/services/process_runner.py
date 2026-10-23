@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _CREATE_SUSPENDED = 0x00000004
+_ERROR_ALREADY_EXISTS = 183
 _PROCESS_DRAIN_GRACE_SEC = 3.0
 
 
@@ -102,8 +103,11 @@ class WindowsProcessOwner:
     existing taskkill fallback remains available.
     """
 
-    def __init__(self, run_id: Optional[str] = None):
+    def __init__(self, run_id: Optional[str] = None, *, job_name: Optional[str] = None):
         self.run_id = run_id
+        # A named Job (Self-check, flowgate.v02.0080 T#1) outlives this handle's owner in the
+        # object namespace for as long as it has members, so a restarted server can open it.
+        self.job_name = job_name
         self._handle_lock = threading.RLock()
         self.handle = None
         self._kernel32 = None
@@ -130,9 +134,13 @@ class WindowsProcessOwner:
                 wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD
             ]
             kernel32.SetInformationJobObject.restype = wintypes.BOOL
-            handle = kernel32.CreateJobObjectW(None, None)
+            handle = kernel32.CreateJobObjectW(None, self.job_name)
             if not handle:
                 raise ctypes.WinError(ctypes.get_last_error())
+            if self.job_name and ctypes.get_last_error() == _ERROR_ALREADY_EXISTS:
+                # CreateJobObjectW opened somebody else's Job: never adopt it.
+                kernel32.CloseHandle(handle)
+                raise OSError(f"job name already in use: {self.job_name}")
             info = info_type()
             info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
             if not kernel32.SetInformationJobObject(

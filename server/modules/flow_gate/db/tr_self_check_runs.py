@@ -140,8 +140,15 @@ def create_pending(
     source_lock_holder: str | None = None,
     owner_token_id: str | None = None,
     draft_doc_ref: str | None = None,
+    owner_instance_id: str | None = None,
+    owner_marker: str | None = None,
 ) -> dict:
     """Atomically insert a pending self-check run row with active_key set.
+
+    0080 T#1: ``owner_instance_id`` (the server whose worker runs it) and ``owner_marker``
+    (the run-unit process ownership record, tr_self_check_proof.owner_marker) land with the
+    row, i.e. before anything is spawned, so recovery can judge even a run that never got
+    to ``mark_running``.
 
     0638 T#1: ``tr_doc_id=None`` is a draft run owned by a TR(new) token; it then needs both
     ``owner_token_id`` and ``draft_doc_ref`` (ck_selfcheck_owner, enforced here for MySQL).
@@ -182,13 +189,13 @@ def create_pending(
             " resolved_executable_name, executable_origin, cwd_relative, timeout_seconds,"
             " env_keys_json, status, active_key, exit_code, timed_out, cancel_requested,"
             " source_changed_during_run, worktree_state_changed, recovery_state,"
-            " cleanup_pending, created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, 0, 0, 0, 0, 'none', 0, ?, ?)",
+            " cleanup_pending, created_at, updated_at, owner_instance_id, owner_marker"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, 0, 0, 0, 0, 'none', 0, ?, ?, ?, ?)",
             [
                 rid, project_id, group_id, tr_doc_id, owner_token_id, draft_doc_ref, requested_by,
                 policy_version, program, args_json, resolved_executable_path,
                 resolved_executable_name, executable_origin, cwd_relative, timeout_seconds,
-                env_keys_json, active_key, now, now,
+                env_keys_json, active_key, now, now, owner_instance_id, owner_marker,
             ],
         )
             if draft and not lock_first:
@@ -355,6 +362,55 @@ def mark_running(
     if affected == 0:
         return None
     return get_run(run_id)
+
+
+def mark_spawn_started(run_id: str, process_owner_kind: str) -> bool:
+    """0080 T#3: the stamp a spawn writes before its first Popen -- ``process_owner_kind``
+    on a pending row with no process recorded yet. From then on a missing target record
+    means "a process may exist that no record names" (``tr_self_check_proof.tree_state``),
+    not "nothing was spawned". CAS: pending, recovery_state none; False = do not spawn."""
+    return get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET process_owner_kind = ?"
+        " WHERE self_check_run_id = ? AND status = 'pending' AND recovery_state = 'none'"
+        " AND target_pid IS NULL AND supervisor_pid IS NULL",
+        [process_owner_kind, run_id],
+    ) > 0
+
+
+def record_spawn_ownership(
+    run_id: str,
+    *,
+    process_owner_kind: str | None = None,
+    target_pid: int | None = None,
+    target_start_identity: str | None = None,
+    supervisor_pid: int | None = None,
+    supervisor_start_identity: str | None = None,
+) -> bool:
+    """0080 T#3: what a spawn learnt about the run's processes, stored as soon as it is
+    known (right after each Popen, and again when a failed spawn is held) so a later
+    reaper proves the tree from it. Only adds: a recorded value is never cleared."""
+    return get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET"
+        " process_owner_kind = COALESCE(?, process_owner_kind),"
+        " target_pid = COALESCE(?, target_pid),"
+        " target_start_identity = COALESCE(?, target_start_identity),"
+        " supervisor_pid = COALESCE(?, supervisor_pid),"
+        " supervisor_start_identity = COALESCE(?, supervisor_start_identity)"
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running')",
+        [process_owner_kind, target_pid, target_start_identity, supervisor_pid,
+         supervisor_start_identity, run_id],
+    ) > 0
+
+
+def clear_spawn_started(run_id: str) -> bool:
+    """Undo ``mark_spawn_started`` when the spawn knows it created no process (Popen
+    raised). Only while no process is recorded."""
+    return get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET process_owner_kind = NULL"
+        " WHERE self_check_run_id = ? AND status = 'pending'"
+        " AND target_pid IS NULL AND supervisor_pid IS NULL",
+        [run_id],
+    ) > 0
 
 
 def request_cancel(run_id: str) -> bool:
@@ -561,6 +617,34 @@ def mark_recovering(run_id: str) -> dict | None:
     return get_run(run_id)
 
 
+def claim_recovering(run_id: str) -> str | None:
+    """The CAS of ``mark_recovering`` without its read back (0080 T#2 reclaim gate).
+
+    Returns the ``updated_at`` the CAS wrote -- the caller's handle for
+    ``abandon_recovering`` -- or None when the row was not an active ``none`` row. Nothing
+    runs between the commit and the return, so a caller that got no stamp back never
+    holds a fence it does not know of unless the store itself failed after committing."""
+    now = now_iso()
+    affected = get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET recovery_state = 'recovering', updated_at = ?"
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'none'",
+        [now, run_id],
+    )
+    return now if affected else None
+
+
+def abandon_recovering(run_id: str, claimed_at: str) -> int:
+    """Undo a ``claim_recovering`` whose caller failed before writing any outcome:
+    recovering -> none, only while the row is still active, still ``recovering`` and not
+    written since the claim (``updated_at`` as the claim left it). 0 = not undone."""
+    return get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET recovery_state = 'none', updated_at = ?"
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running')"
+        " AND recovery_state = 'recovering' AND updated_at = ?",
+        [now_iso(), run_id, claimed_at],
+    )
+
+
 def mark_recovery_incomplete(run_id: str, reason: str) -> dict | None:
     """Mark recovery incomplete, retaining active status and active_key."""
     store = get_store()
@@ -614,6 +698,29 @@ def finish_recovered_interrupted(
             1 if cleanup_pending else 0, _truncate_diagnostic(cleanup_error),
             now, now, run_id,
         ],
+    )
+    if affected == 0:
+        return None
+    return get_run(run_id)
+
+
+def finish_recovered_cancelled(run_id: str) -> dict | None:
+    """A cancel of a run no worker of this process drives, after the release proof
+    (0080 T#2, NR0007 §5 item 3-a): cancelled, recovered, active_key cleared.
+
+    Same CAS as ``finish_recovered_interrupted``: only a row this caller took into
+    ``recovering`` moves."""
+    store = get_store()
+    now = now_iso()
+    affected = store._execute_affected(
+        "UPDATE tr_self_check_runs SET"
+        " status = 'cancelled',"
+        " recovery_state = 'recovered',"
+        " active_key = NULL,"
+        " finished_at = ?,"
+        " updated_at = ?"
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'recovering'",
+        [now, now, run_id],
     )
     if affected == 0:
         return None

@@ -13,9 +13,11 @@ router = APIRouter(prefix="/api/v1/documents", tags=["TR Self-check"])
 
 
 def _error(exc: selfcheck.SelfCheckError) -> JSONResponse:
+    # 0080 T#2: already_running also carries the holder's summary (details.run) when known.
     return JSONResponse(status_code=exc.status, content={"ok": False,
         "error": {"code": exc.code, "message": exc.code,
-                  "details": {"self_check_run_id": exc.detail} if exc.code == "selfcheck_already_running" else exc.details}})
+                  "details": {"self_check_run_id": exc.detail, **exc.details}
+                  if exc.code == "selfcheck_already_running" else exc.details}})
 
 
 def _forbidden() -> JSONResponse:
@@ -181,5 +183,88 @@ def cancel_draft_run(request: Request, run_id: str):
         if isinstance(row, JSONResponse):
             return row
         return {"ok": True, **selfcheck.cancel_group_draft(run_id)}
+    except selfcheck.SelfCheckError as exc:
+        return _error(exc)
+
+
+# ── 0080 T#2: who holds the Group's run slot (NR0007 §5 item 1) ──────────────
+# The active-run slot is per Group, so a start can be refused for another TR's run or a
+# draft run its caller can neither read nor cancel on the routes above. These two routes
+# let any worker token of that Group (new / edit / review) and a console user with read
+# permission see the holder's summary. Read only: cancelling stays with the owning TR's
+# edit token, the owning draft token, or a user with perm_document_update.
+group_router = APIRouter(prefix="/api/v1/self-check/group", tags=["TR Self-check"])
+_GROUP_READ_SCOPES = {"new", "edit", "review"}
+
+
+def _group_reader(request: Request):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse) or auth.get("_is_user_jwt"):
+        return auth
+    try:
+        graph_source_hooks.reject_group_source(auth, "self_check")
+    except graph_source_hooks.GraphSourceError as exc:
+        return JSONResponse(status_code=409, content={"ok": False, "error": exc.detail})
+    if auth.get("action_scope") not in _GROUP_READ_SCOPES or not (auth.get("project") and auth.get("group_id")):
+        return _forbidden()
+    return auth
+
+
+@group_router.get("/runs")
+def list_group_runs(request: Request, group_id: str | None = Query(None)):
+    auth = _group_reader(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        if not auth.get("_is_user_jwt"):
+            return {"ok": True, "runs": selfcheck.group_active_runs(auth["project"], auth["group_id"])}
+        if not group_id:
+            return _error(selfcheck.SelfCheckError(422, "selfcheck_invalid_request"))
+        project_id = selfcheck.group_project(group_id)
+        if not has_permission(auth.get("issued_to"), project_id, "perm_document_read"):
+            return _forbidden()
+        return {"ok": True, "runs": selfcheck.group_active_runs(project_id, group_id)}
+    except selfcheck.SelfCheckError as exc:
+        return _error(exc)
+
+
+@group_router.get("/runs/{run_id}")
+def read_group_run(request: Request, run_id: str):
+    auth = _group_reader(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    row = selfcheck.group_run(run_id)
+    if auth.get("_is_user_jwt"):
+        if row is not None and not has_permission(auth.get("issued_to"), row["project_id"], "perm_document_read"):
+            return _forbidden()
+    elif row is not None and (row["project_id"], row["group_id"]) != (auth["project"], auth["group_id"]):
+        row = None      # another Group's run: not found, as for an unknown id
+    if row is None:
+        return _error(selfcheck.SelfCheckError(404, "selfcheck_run_not_found"))
+    return {"ok": True, **selfcheck.summary(row)}
+
+
+# ── 0080 T#3: operator re-verification of a protected run (NR0007 §5 item 6) ──
+# A run left recovery_incomplete (owner or tree not proved) keeps its Group closed until a
+# proof exists. A console user with perm_document_update asks the server to run the proof
+# again now; the server refuses when it still proves nothing. No forced release exists, and
+# no worker token reaches this route.
+recovery_router = APIRouter(prefix="/api/v1/self-check/recovery", tags=["TR Self-check"])
+
+
+@recovery_router.post("/runs/{run_id}/reverify")
+def reverify_run(request: Request, run_id: str):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if not auth.get("_is_user_jwt"):
+        return _forbidden()
+    row = selfcheck.group_run(run_id)
+    if row is None:
+        return _error(selfcheck.SelfCheckError(404, "selfcheck_run_not_found"))
+    if not has_permission(auth.get("issued_to"), row["project_id"], "perm_document_update"):
+        return _forbidden()
+    try:
+        return {"ok": True, **selfcheck.reverify(run_id)}
     except selfcheck.SelfCheckError as exc:
         return _error(exc)

@@ -234,6 +234,27 @@ def list_unprotected_locks_of_non_alive(limit: int) -> list[dict]:
     )
 
 
+def list_protected_locks_of_kind(holder_kind: str, limit: int,
+                                 after: Optional[tuple[str, str]] = None) -> list[dict]:
+    """Protected rows of one holder kind (0080 T#3: the Self-check reaper's candidates).
+
+    Keyset pages on (acquired_at, lock_key): ``after`` is the previous page's last pair,
+    so a caller can visit every row, not only the oldest ``limit``."""
+    if after is None:
+        return get_store()._fetch_all(
+            "SELECT * FROM resource_lock WHERE protected = 1 AND holder_kind = ? "
+            "ORDER BY acquired_at, lock_key LIMIT ?",
+            [holder_kind, int(limit)],
+        )
+    acquired_at, key = after
+    return get_store()._fetch_all(
+        "SELECT * FROM resource_lock WHERE protected = 1 AND holder_kind = ? "
+        "AND (acquired_at > ? OR (acquired_at = ? AND lock_key > ?)) "
+        "ORDER BY acquired_at, lock_key LIMIT ?",
+        [holder_kind, acquired_at, acquired_at, key, int(limit)],
+    )
+
+
 def list_locks_in_scope(project_id: str, group_id: Optional[str] = None) -> list[dict]:
     """Blocker diagnosis by scope (idx_resource_lock_scope, D 3.13)."""
     if group_id is None:

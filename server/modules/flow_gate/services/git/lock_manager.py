@@ -364,11 +364,17 @@ def reclaim_stale_row(row: dict) -> bool:
 
     A row that nevertheless carries an exec record is protected rather than deleted:
     without the gated-spawn contract nothing proves its child process is gone.
+
+    0080 T#2: the one delete both stale-reclaim callers (``job_sweeper.step_stale_locks``,
+    ``_try_acquire_once``) pass. A Self-check-owned G is deleted only when
+    ``selfcheck_reclaim_gate`` says RECLAIM; every other holder kind keeps this path as it was.
     """
     try:
         if row.get("exec_state") or row.get("exec_pid"):
             db.protect_lock(row["lock_key"], row["lock_epoch"], "exec_unrecorded", now_iso())
             _log.error("lock %s has an exec record without gated spawn; protected", row["lock_key"])
+            return False
+        if row.get("holder_kind") == "selfcheck" and selfcheck_reclaim_gate(row) != SELFCHECK_RECLAIM:
             return False
         n = db.reclaim_lock(row["lock_key"], row["lock_epoch"], int(row.get("exec_seq") or 0))
     except Exception:
@@ -404,6 +410,22 @@ def group_recovery_check(project_id: str, group_id: str) -> bool:
 
 def selfcheck_ctx_id(run_id: str) -> str:
     return f"scr:{run_id}"
+
+
+SELFCHECK_RECLAIM = "reclaim"
+
+
+def selfcheck_reclaim_gate(row: dict) -> str:
+    """0080 T#2 (NR0007 §5-0 ⑤): RECLAIM / KEEP / PROTECT for a Self-check-owned G row.
+
+    ``is_stale`` (owner DEAD, heartbeat expired) only nominates the row; the gate proves the
+    run's owner dead and its process tree empty first. Any failure is KEEP."""
+    try:
+        from modules.flow_gate.services import tr_self_check_gate
+        return tr_self_check_gate.reclaim_gate(row)
+    except Exception:
+        _log.warning("selfcheck reclaim gate unavailable for %s; kept", row.get("lock_key"), exc_info=True)
+        return "keep"
 
 
 def selfcheck_release_recovered(project_id: str, group_id: str, run_id: str) -> None:
@@ -449,6 +471,63 @@ def selfcheck_ensure_protected(project_id: str, group_id: str, run_id: str) -> b
         _log.warning("selfcheck recovery: protecting G of %s/%s failed", project_id, group_id,
                      exc_info=True)
         return False
+
+
+SELFCHECK_RENEWED, SELFCHECK_PROTECTED, SELFCHECK_GONE = "renewed", "protected", "gone"
+
+
+def selfcheck_regain(ctx: ExecutionContext, key: str) -> Optional[str]:
+    """0080 T#3 (NR0007 §5 item 7): a Self-check holder after its heartbeat was declared lost.
+
+    RENEWED: the row of this epoch and holder is still there, unprotected, and its heartbeat
+    renewed -- the hold beats again (a). PROTECTED: the row is ours but the renewal failed,
+    so it is marked protected now, or already was (b): ``release()`` will not delete it; the
+    holder deletes it (``selfcheck_release_recovered``) once its run's tree is proved empty.
+    GONE: no row of this epoch and holder (c). None: the store could not be read -- try again.
+    """
+    h = ctx.find_held(key)
+    if h is None:
+        return SELFCHECK_GONE
+    try:
+        row = _fresh_lock_row(key)
+    except Exception:
+        return None
+    if row is None or row.get("lock_epoch") != h.lock_epoch or row.get("holder_ctx_id") != ctx.ctx_id:
+        return SELFCHECK_GONE
+    if int(row.get("protected") or 0) == 1:
+        return SELFCHECK_PROTECTED
+    try:
+        n = db.heartbeat_long_lock(h.lock_key, h.lock_epoch, ctx.ctx_id,
+                                   registry.add_seconds(now_iso(), heartbeat_ttl_sec()))
+    except Exception:
+        n = None
+    if n == 1:
+        h.lost, h.heartbeat_failures = False, 0
+        ctx.lock_lost = any(held.lost for held in ctx.held)
+        _heartbeats.add(ctx, h)
+        return SELFCHECK_RENEWED
+    try:
+        if db.protect_lock(h.lock_key, h.lock_epoch, "selfcheck_lock_lost", now_iso()) == 1:
+            return SELFCHECK_PROTECTED
+    except Exception:
+        pass
+    return None
+
+
+SELFCHECK_PROTECTED_PAGE = 100
+
+
+def selfcheck_protected_locks() -> list:
+    """Every protected Self-check G row (the T#3 reaper re-proves those of ended runs), read
+    page by page: rows that stay unprovable at the head never hide the ones after them.
+    There is at most one G row per Group."""
+    rows, after = [], None
+    while True:
+        page = db.list_protected_locks_of_kind("selfcheck", SELFCHECK_PROTECTED_PAGE, after)
+        rows.extend(page)
+        if len(page) < SELFCHECK_PROTECTED_PAGE:
+            return rows
+        after = (page[-1]["acquired_at"], page[-1]["lock_key"])
 
 
 def _register_lazily() -> Optional[str]:
