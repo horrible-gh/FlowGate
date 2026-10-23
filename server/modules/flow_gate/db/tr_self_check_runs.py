@@ -140,8 +140,15 @@ def create_pending(
     source_lock_holder: str | None = None,
     owner_token_id: str | None = None,
     draft_doc_ref: str | None = None,
+    owner_instance_id: str | None = None,
+    owner_marker: str | None = None,
 ) -> dict:
     """Atomically insert a pending self-check run row with active_key set.
+
+    0080 T#1: ``owner_instance_id`` (the server whose worker runs it) and ``owner_marker``
+    (the run-unit process ownership record, tr_self_check_proof.owner_marker) land with the
+    row, i.e. before anything is spawned, so recovery can judge even a run that never got
+    to ``mark_running``.
 
     0638 T#1: ``tr_doc_id=None`` is a draft run owned by a TR(new) token; it then needs both
     ``owner_token_id`` and ``draft_doc_ref`` (ck_selfcheck_owner, enforced here for MySQL).
@@ -182,13 +189,13 @@ def create_pending(
             " resolved_executable_name, executable_origin, cwd_relative, timeout_seconds,"
             " env_keys_json, status, active_key, exit_code, timed_out, cancel_requested,"
             " source_changed_during_run, worktree_state_changed, recovery_state,"
-            " cleanup_pending, created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, 0, 0, 0, 0, 'none', 0, ?, ?)",
+            " cleanup_pending, created_at, updated_at, owner_instance_id, owner_marker"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, 0, 0, 0, 0, 'none', 0, ?, ?, ?, ?)",
             [
                 rid, project_id, group_id, tr_doc_id, owner_token_id, draft_doc_ref, requested_by,
                 policy_version, program, args_json, resolved_executable_path,
                 resolved_executable_name, executable_origin, cwd_relative, timeout_seconds,
-                env_keys_json, active_key, now, now,
+                env_keys_json, active_key, now, now, owner_instance_id, owner_marker,
             ],
         )
             if draft and not lock_first:

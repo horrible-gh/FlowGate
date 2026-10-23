@@ -18,6 +18,7 @@ from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import tr_self_check_runs as db_runs
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import tr_self_check_executor as executor
+from modules.flow_gate.services import tr_self_check_proof as proof
 from modules.flow_gate.services import tr_self_check_policy as policy
 from modules.flow_gate.services.git import lock_manager
 
@@ -220,16 +221,47 @@ def _validate_request(request: dict) -> tuple[str, list[str], str, int]:
     return program, args, cwd, timeout
 
 
+def _settle_tree(run_id: str, row: dict | None, ownership: dict) -> bool:
+    """0080 T#1 (NR0007 §5-0 ②): the run's whole tree -- named Job, or target group plus run
+    marker -- is proved empty, after a verified kill of what is still its own. The owning
+    server is this one, so no server proof is needed. False = members remain or unseen.
+
+    Without ``row`` (spawn() or mark_running failed) the stored row -- its owner_marker was
+    written before the spawn -- plus what spawn learnt (``ownership``) is what is proved."""
+    try:
+        record = dict(row or db_runs.get_run(run_id) or {})
+        if not record.get("owner_marker"):
+            record["owner_marker"] = proof.owner_marker(run_id)
+        record.update({key: value for key, value in ownership.items() if value is not None})
+        record["self_check_run_id"] = run_id
+        return proof.terminate_tree(record).state == proof.ABSENT
+    except Exception:
+        _log.warning("selfcheck %s: process tree check failed", run_id, exc_info=True)
+        return False
+
+
+def _hold_unsettled(ctx: lock_manager.ExecutionContext, lock_key: str, run_id: str) -> None:
+    """No finish_* and no release while the tree is not proved empty (L 2.24.2: the Group's
+    G stays as a protected row; only this Group is blocked)."""
+    if ctx.find_held(lock_key) is not None:
+        lock_manager.protect(ctx, lock_key, "selfcheck_reap_unconfirmed")
+    recovering = db_runs.mark_recovering(run_id)
+    if recovering:
+        db_runs.mark_recovery_incomplete(run_id, proof.TREE_UNPROVEN)
+
+
 def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root: Path, before: dict,
             runtime: Path, command: policy.ResolvedCommand, args: list[str], cwd: Path,
             env: dict[str, str], timeout: int) -> None:
     holder = ctx.ctx_id
     control = None
     ownership = {}
+    row = None
     cancelled = threading.Event()
     terminal = None
     try:
-        control, ownership = executor.spawn([command.executable, *command.argv_prefix, *args], cwd, env, timeout, run_id)
+        control, ownership = executor.spawn([command.executable, *command.argv_prefix, *args], cwd, env, timeout,
+                                            run_id, job_name=proof.job_name(run_id))
         with _controls_lock:
             _controls[run_id] = control, cancelled
         row = db_runs.mark_running(run_id, source_lock_holder=holder,
@@ -243,6 +275,9 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
             cancelled.set()
             control.cancel()
         result = executor.wait(control, timeout, cancelled)
+        if not _settle_tree(run_id, row, ownership):
+            _hold_unsettled(ctx, lock_key, run_id)
+            return
         after = _probe(root)
         tails = {"stdout_tail": _redact(result.stdout_tail), "stderr_tail": _redact(result.stderr_tail)}
         fields = _source_fields(before, after)
@@ -258,24 +293,17 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
                 control.proc.wait(timeout=5)
             except Exception:
                 pass
-            pid, identity = ownership.get("target_pid"), ownership.get("target_start_identity")
-            if os.name != "nt" and pid and identity and executor.start_identity(pid) == identity:
-                import signal
-                import time
-                try:
-                    os.killpg(pid, signal.SIGKILL)
-                except OSError:
-                    pass
-                deadline = time.monotonic() + 3
-                while executor.start_identity(pid) == identity and time.monotonic() < deadline:
-                    time.sleep(.1)
-            if control.proc.poll() is None or (pid and identity and executor.start_identity(pid) == identity):
-                # L 2.24.2: the Group's G stays as a protected row; only this Group is blocked.
-                lock_manager.protect(ctx, lock_key, "selfcheck_reap_unconfirmed")
-                recovering = db_runs.mark_recovering(run_id)
-                if recovering:
-                    db_runs.mark_recovery_incomplete(run_id, "process tree could not be reaped")
-                return
+        else:
+            # spawn() failed. That proves nothing absent: a supervisor, target or Job member
+            # may exist (a failed handshake, a cleanup wait that timed out). What spawn learnt
+            # comes with the error; the stored owner_marker covers the rest.
+            ownership = dict(getattr(exc, "ownership", None) or {})
+        # The target and the supervisor are not the whole run: its group / Job must be
+        # empty too, else the failure is not recorded, the run keeps its active_key and G
+        # stays protected (recovery_incomplete / tree_unproven).
+        if (control is not None and control.proc.poll() is None) or not _settle_tree(run_id, row, ownership):
+            _hold_unsettled(ctx, lock_key, run_id)
+            return
         code = exc.code if isinstance(exc, (SelfCheckError, policy.PolicyError)) else (
             "selfcheck_process_owner_unavailable" if isinstance(exc, executor.OwnershipError) else "selfcheck_internal_error")
         terminal = db_runs.finish_failed(run_id, error_code=code)
@@ -355,10 +383,15 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
         before = _probe(root)
         runtime = Path(tempfile.mkdtemp(prefix=f"flowgate-{run_id}-"))
         env = policy.scrubbed_env(path_value, runtime)
+        # 0080 T#1: every process of the run inherits the run marker (Linux marker scan).
+        env[proof.MARKER_ENV] = run_id
+        from modules.flow_gate.services.git import instance_registry
+        # Owner instance + run-unit ownership record land before the spawn (NR0007 §5 item 4).
         row = db_runs.create_pending(project_id, group_id, target["tr_doc_id"], requested_by,
             policy.POLICY_VERSION, program, args, command.executable, command.name,
             command.origin, relative_cwd, timeout, list(env), run_id=run_id, source_lock_holder=holder,
-            owner_token_id=target.get("owner_token_id"), draft_doc_ref=target.get("draft_doc_ref"))
+            owner_token_id=target.get("owner_token_id"), draft_doc_ref=target.get("draft_doc_ref"),
+            owner_instance_id=instance_registry.current_instance_id(), owner_marker=proof.owner_marker(run_id))
         worker = threading.Thread(target=_finish, args=(run_id, ctx, lock_key, root, before,
             runtime, command, args, cwd, env, timeout), daemon=True, name=f"selfcheck-{run_id}")
         try:
@@ -486,70 +519,77 @@ def recover() -> set[str]:
     G, an unproven one leaves it protected. Returns the projects whose protection could
     not be written onto G; their run stays recovery_incomplete, which alone keeps the
     Group's G closed (``lock_manager.group_recovery_check``).
-    """
-    import signal
-    import time
 
+    0080 T#1 (NR0007 §5-0, §5 item 4): a run is ended (failed/interrupted_by_restart) and its
+    G deleted only when its owning server is proved dead and THEN its whole process tree
+    (target, supervisor, group / named Job, run marker) is proved empty --
+    ``tr_self_check_proof.release_verdict``. A run whose owner is alive or unproven (MATCH,
+    UNKNOWN, another node, no instance row) is not touched at all: marking it recovering
+    would fence a live owner's own worker. A run with no recorded owner, or whose tree is
+    not proved empty, stays recovery_incomplete with G protected and the reason recorded
+    (ownership_unknown / owner_server_unproven / tree_unproven). Rows recover one by one; a
+    failing row never stops the others.
+    """
     fallback: set[str] = set()
     for row in db_runs.list_orphan_active_runs():
-        rid = row["self_check_run_id"]
-        state = row["recovery_state"]
-        if state == "none":
-            current = db_runs.mark_recovering(rid)
-        elif state == "incomplete":
-            # Re-verification of a protected run must pass incomplete -> recovering first.
-            current = db_runs.retry_recovery_incomplete(rid)
-        else:
-            current = row
-        if current is None:
-            continue
-        target_pid = row.get("target_pid")
-        target_identity = row.get("target_start_identity")
-        supervisor_pid = row.get("supervisor_pid")
-        supervisor_identity = row.get("supervisor_start_identity")
-        safe = bool(target_pid and target_identity)
-        if row.get("process_owner_kind") == "posix_supervisor":
-            safe = safe and bool(supervisor_pid and supervisor_identity)
-        elif row.get("process_owner_kind") != "windows_job":
-            safe = False
-        if safe and os.name != "nt" and executor.start_identity(int(target_pid)) == target_identity:
-            # The target is its own session/group leader. Kill only after verifying
-            # start identity, then wait for the whole group to disappear.
+        try:
+            _recover_row(row, fallback)
+        except Exception:
+            rid = row.get("self_check_run_id")
+            _log.warning("selfcheck %s: recovery failed; the run is kept as it is", rid, exc_info=True)
             try:
-                os.killpg(int(target_pid), signal.SIGTERM)
-                deadline = time.monotonic() + 3
-                while executor.start_identity(int(target_pid)) == target_identity and time.monotonic() < deadline:
-                    time.sleep(.1)
-                if executor.start_identity(int(target_pid)) == target_identity:
-                    os.killpg(int(target_pid), signal.SIGKILL)
-                    time.sleep(.2)
-            except (OSError, ProcessLookupError):
-                pass
-        if safe and executor.start_identity(int(target_pid)) == target_identity:
-            safe = False
-        if safe and supervisor_pid:
-            # Server-death control EOF normally makes the supervisor exit. A live
-            # matching owner after the bounded wait cannot be proved safe.
-            deadline = time.monotonic() + 3
-            while executor.start_identity(int(supervisor_pid)) == supervisor_identity and time.monotonic() < deadline:
-                time.sleep(.1)
-            if executor.start_identity(int(supervisor_pid)) == supervisor_identity:
-                safe = False
-        project_id, group_id = row["project_id"], row["group_id"]
-        if safe:
-            finished = db_runs.finish_recovered_interrupted(rid)
-            if finished:
-                try:
-                    lock_manager.selfcheck_release_recovered(project_id, group_id, rid)
-                except Exception:
-                    _log.warning("selfcheck %s: releasing Group lock failed", rid, exc_info=True)
-                _emit(finished)
-                continue
-        incomplete = db_runs.mark_recovery_incomplete(rid, "process ownership could not be proved absent")
-        if incomplete:
-            _emit(incomplete)
-        if not lock_manager.selfcheck_ensure_protected(project_id, group_id, rid):
-            _log.warning("selfcheck %s: G protection not written; recovery_incomplete keeps "
-                         "the Group closed", rid)
-            fallback.add(project_id)
+                current = db_runs.get_run(rid)
+                # Only a row this pass already took into recovery is protected here; one whose
+                # owner was never judged dead is left exactly as it was.
+                if current and current.get("recovery_state") == "recovering":
+                    _hold_recovery_incomplete(current, "recovery_error", fallback)
+            except Exception:
+                _log.warning("selfcheck %s: keeping the run protected failed", rid, exc_info=True)
     return fallback
+
+
+def _recover_row(row: dict, fallback: set[str]) -> None:
+    rid = row["self_check_run_id"]
+    server = proof.owner_server_state(proof.owner_instance_of(row))
+    if not server.gone and server.reason != proof.OWNERSHIP_UNKNOWN:
+        _log.info("selfcheck %s: owner server %s (%s); not recovered here", rid, server.state,
+                  server.reason or proof.OWNER_ALIVE)
+        return
+    state = row["recovery_state"]
+    if state == "none":
+        current = db_runs.mark_recovering(rid)
+    elif state == "incomplete":
+        # Re-verification of a protected run must pass incomplete -> recovering first.
+        current = db_runs.retry_recovery_incomplete(rid)
+    else:
+        current = row
+    if current is None:
+        return
+    if not server.gone:
+        # Nothing records which server owns the run, so its death can never be proved.
+        _hold_recovery_incomplete(current, proof.OWNERSHIP_UNKNOWN, fallback)
+        return
+    # The CAS above fences the dead owner's worker (mark_running needs recovery_state='none');
+    # release_verdict re-proves the server, kills only a verified own tree, re-checks both.
+    verdict = proof.release_verdict(current, terminate=True)
+    if verdict.decision == proof.RELEASE:
+        finished = db_runs.finish_recovered_interrupted(rid)
+        if finished:
+            try:
+                lock_manager.selfcheck_release_recovered(row["project_id"], row["group_id"], rid)
+            except Exception:
+                _log.warning("selfcheck %s: releasing Group lock failed", rid, exc_info=True)
+            _emit(finished)
+            return
+    _hold_recovery_incomplete(current, verdict.reason or proof.TREE_UNPROVEN, fallback)
+
+
+def _hold_recovery_incomplete(row: dict, reason: str, fallback: set[str]) -> None:
+    rid, project_id, group_id = row["self_check_run_id"], row["project_id"], row["group_id"]
+    incomplete = db_runs.mark_recovery_incomplete(rid, reason)
+    if incomplete:
+        _emit(incomplete)
+    if not lock_manager.selfcheck_ensure_protected(project_id, group_id, rid):
+        _log.warning("selfcheck %s: G protection not written; recovery_incomplete keeps "
+                     "the Group closed", rid)
+        fallback.add(project_id)
