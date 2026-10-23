@@ -261,8 +261,8 @@ class ExecutionRootResolver:
             raise ValueError("ts_changed_before_execution")
         scratch = runner._scratch_dir(doc, run["run_id"])
         root = scratch / "source"
-        if scratch.exists():
-            shutil.rmtree(scratch, ignore_errors=True)  # a retried pickup starts clean
+        if not runner._remove_scratch(scratch):
+            raise ValueError("basis_capture_failed:scratch_cleanup_failed")
         scratch.mkdir(parents=True, exist_ok=True)
         try:
             project_id, group_id = current_doc.get("project_id"), current_doc.get("group_id")
@@ -281,7 +281,7 @@ class ExecutionRootResolver:
                 if lock is not None:
                     lock_manager.release(*lock)
         except Exception:
-            shutil.rmtree(scratch, ignore_errors=True)
+            runner._remove_scratch(scratch)
             raise
         return basis, root, scratch
 
@@ -506,5 +506,5 @@ def execute(run: dict) -> None:
     finally:
 
         if scratch:
-            shutil.rmtree(scratch, ignore_errors=True)
+            runner._remove_scratch(scratch)
         runner._unregister_active_run(run_id)

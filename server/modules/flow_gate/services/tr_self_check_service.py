@@ -5,7 +5,6 @@ import hashlib
 import logging
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -20,6 +19,7 @@ from modules.flow_gate.services import git_service
 from modules.flow_gate.services import tr_self_check_executor as executor
 from modules.flow_gate.services import tr_self_check_policy as policy
 from modules.flow_gate.services.git import lock_manager
+from modules.flow_gate.storage import filesystem as storage_fs
 
 _log = logging.getLogger(__name__)
 _controls: dict[str, tuple[executor.ProcessControl, threading.Event]] = {}
@@ -34,6 +34,24 @@ class SelfCheckError(Exception):
         self.status, self.code, self.detail = status, code, detail or code
         self.details = details or {}
         super().__init__(self.detail)
+
+
+def _cleanup_runtime(runtime: Path, run_id: str, *, tracked: bool = True) -> None:
+    try:
+        storage_fs.remove_managed_tree(runtime, Path(tempfile.gettempdir()), missing_ok=True)
+    except Exception as exc:
+        error = "runtime_cleanup_failed code=%s errno=%s winerror=%s" % (
+            getattr(exc, "code", "cleanup_failed"), getattr(exc, "errno", None),
+            getattr(exc, "winerror", None),
+        )
+        _log.warning("scratch cleanup failed: owner=self-check id=%s stage=runtime %s path=%s",
+                     run_id, error, runtime.name)
+        if tracked:
+            try:
+                db_runs.set_cleanup_result(run_id, cleanup_pending=True, cleanup_error=error)
+            except Exception:
+                _log.warning("scratch cleanup state failed: owner=self-check id=%s stage=cleanup_result",
+                             run_id)
 
 
 def _emit(row: dict | None) -> None:
@@ -290,10 +308,7 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
         if terminal is not None:
             lock_manager.release(ctx, lock_key)
             _emit(terminal)
-            try:
-                shutil.rmtree(runtime)
-            except OSError as exc:
-                db_runs.set_cleanup_result(run_id, cleanup_pending=True, cleanup_error=str(exc))
+            _cleanup_runtime(runtime, run_id)
         elif ctx.find_held(lock_key) is not None:
             lock_manager.protect(ctx, lock_key, "selfcheck_terminal_unrecorded")
 
@@ -368,7 +383,7 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
             if failed is not None:
                 lock_manager.release(ctx, lock_key)
                 _emit(failed)
-                shutil.rmtree(runtime, ignore_errors=True)
+                _cleanup_runtime(runtime, run_id)
             raise SelfCheckError(500, "selfcheck_internal_error") from exc
         _emit(row)
         return public(row)
@@ -383,7 +398,7 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
         if row is None:
             lock_manager.release(ctx, lock_key)
             if runtime is not None:
-                shutil.rmtree(runtime, ignore_errors=True)
+                _cleanup_runtime(runtime, run_id, tracked=False)
 
 
 def read(doc_id: str, run_id: str) -> dict:
