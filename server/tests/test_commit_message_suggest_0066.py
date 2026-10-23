@@ -382,8 +382,9 @@ def test_real_cli_uses_isolated_scratch_and_empty_tokens(repo, provider, monkeyp
         "pathlib.Path(sys.argv[1]).write_text(json.dumps({'cwd':os.getcwd(), 'prompt':prompt,"
         "'env':{k:os.environ.get(k) for k in ['FLOWGATE_TOKEN','FLOWGATE_API_BASE','FLOWGATE_BUNDLE_API']}}))\n"
         "print('fix: isolated cli')\n", encoding="utf-8")
-    scratch_root = tmp_path / "cli-scratch"
+    scratch_root = tmp_path / "scratch" / "commit-suggest"
     monkeypatch.setattr(runtime, "_project_scratch_root", lambda _: scratch_root)
+    monkeypatch.setattr(runtime.storage_paths, "get_storage_root", lambda *_a, **_k: tmp_path)
     monkeypatch.setenv("FLOWGATE_TOKEN", "DO_NOT_INHERIT")
     subject = replace(provider.subject, exec_type="cli", kind="custom",
                       cli_command=f'"{sys.executable}" "{script}" "{output}"')

@@ -320,7 +320,8 @@ def test_cancel_kills_the_cli_process_tree_and_ends_cancelled(monkeypatch, tmp_p
     import sys
     import time
     from modules.flow_gate.services.ai_invoke import runtime as ai_runtime
-    monkeypatch.setattr(ai_runtime, "_project_scratch_root", lambda project_id: tmp_path / "scratch-root")
+    monkeypatch.setattr(ai_runtime, "_project_scratch_root", lambda project_id: tmp_path / "scratch" / "evaluation")
+    monkeypatch.setattr(ai_runtime.storage_paths, "get_storage_root", lambda *_a, **_k: tmp_path)
     harness = _Harness(monkeypatch)
     service = harness.service
     beat = tmp_path / "beat.txt"
@@ -349,7 +350,7 @@ def test_cancel_kills_the_cli_process_tree_and_ends_cancelled(monkeypatch, tmp_p
         first = beat.read_text()
         time.sleep(0.6)
         assert beat.read_text() == first, "the provider process kept running after cancel"
-        assert list((tmp_path / "scratch-root").iterdir()) == [], "the probe scratch was not cleaned up"
+        assert list((tmp_path / "scratch" / "evaluation").iterdir()) == [], "the probe scratch was not cleaned up"
     finally:
         harness.close()
 
