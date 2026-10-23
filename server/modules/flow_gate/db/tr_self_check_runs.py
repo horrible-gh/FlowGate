@@ -568,6 +568,34 @@ def mark_recovering(run_id: str) -> dict | None:
     return get_run(run_id)
 
 
+def claim_recovering(run_id: str) -> str | None:
+    """The CAS of ``mark_recovering`` without its read back (0080 T#2 reclaim gate).
+
+    Returns the ``updated_at`` the CAS wrote -- the caller's handle for
+    ``abandon_recovering`` -- or None when the row was not an active ``none`` row. Nothing
+    runs between the commit and the return, so a caller that got no stamp back never
+    holds a fence it does not know of unless the store itself failed after committing."""
+    now = now_iso()
+    affected = get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET recovery_state = 'recovering', updated_at = ?"
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'none'",
+        [now, run_id],
+    )
+    return now if affected else None
+
+
+def abandon_recovering(run_id: str, claimed_at: str) -> int:
+    """Undo a ``claim_recovering`` whose caller failed before writing any outcome:
+    recovering -> none, only while the row is still active, still ``recovering`` and not
+    written since the claim (``updated_at`` as the claim left it). 0 = not undone."""
+    return get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET recovery_state = 'none', updated_at = ?"
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running')"
+        " AND recovery_state = 'recovering' AND updated_at = ?",
+        [now_iso(), run_id, claimed_at],
+    )
+
+
 def mark_recovery_incomplete(run_id: str, reason: str) -> dict | None:
     """Mark recovery incomplete, retaining active status and active_key."""
     store = get_store()
@@ -621,6 +649,29 @@ def finish_recovered_interrupted(
             1 if cleanup_pending else 0, _truncate_diagnostic(cleanup_error),
             now, now, run_id,
         ],
+    )
+    if affected == 0:
+        return None
+    return get_run(run_id)
+
+
+def finish_recovered_cancelled(run_id: str) -> dict | None:
+    """A cancel of a run no worker of this process drives, after the release proof
+    (0080 T#2, NR0007 §5 item 3-a): cancelled, recovered, active_key cleared.
+
+    Same CAS as ``finish_recovered_interrupted``: only a row this caller took into
+    ``recovering`` moves."""
+    store = get_store()
+    now = now_iso()
+    affected = store._execute_affected(
+        "UPDATE tr_self_check_runs SET"
+        " status = 'cancelled',"
+        " recovery_state = 'recovered',"
+        " active_key = NULL,"
+        " finished_at = ?,"
+        " updated_at = ?"
+        " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'recovering'",
+        [now, now, run_id],
     )
     if affected == 0:
         return None

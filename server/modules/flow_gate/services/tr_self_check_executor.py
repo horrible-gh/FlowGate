@@ -3,14 +3,19 @@ from __future__ import annotations
 
 import ctypes
 import json
+import logging
 import os
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from modules.flow_gate.services.process_runner import WindowsProcessOwner
+
+_log = logging.getLogger(__name__)
+_JOB_TERMINATE_ATTEMPTS = 3
 
 
 class OwnershipError(RuntimeError):
@@ -155,23 +160,47 @@ class ProcessControl:
         self.owner = owner
         self._lock = threading.Lock()
 
-    def cancel(self) -> None:
+    def cancel(self) -> bool:
+        """Deliver the stop. False = it could not be delivered (0080 T#2: reported to the
+        canceller); the worker's tree proof still decides whether the run may end."""
         with self._lock:
             if self.owner:
                 # The Job, not the direct child: a target that already exited may have left
-                # descendants in it (0080 T#1). Terminating an empty or closed Job is a no-op.
-                self.owner.terminate()
-                return
+                # descendants in it (0080 T#1).
+                return self._terminate_job()
             if self.proc.poll() is not None:
                 # The supervisor is gone; it already cleared the group (its finally) or the
                 # run's tree proof catches what it left.
-                return
+                return True
             if self.proc.stdin:
                 try:
                     self.proc.stdin.write(b"cancel\n")
                     self.proc.stdin.flush()
-                except (BrokenPipeError, OSError):
-                    pass
+                except (BrokenPipeError, OSError, ValueError):
+                    return self.proc.poll() is not None
+                return True
+            return False
+
+    def _terminate_job(self) -> bool:
+        """TerminateJobObject, retried (NR0007 §5 item 3-c). If it keeps failing, the direct
+        child is killed through its own handle -- still open, so its PID cannot have been
+        reused -- and False reports the failure: Job members other than the direct child
+        may survive, and the run's tree proof then keeps the run held."""
+        if not self.owner.active:
+            return self.proc.poll() is not None     # closed: the worker is past its wait
+        for attempt in range(_JOB_TERMINATE_ATTEMPTS):
+            if self.owner.terminate():
+                return True
+            if attempt + 1 < _JOB_TERMINATE_ATTEMPTS:
+                time.sleep(0.2)
+        if self.proc.poll() is None:
+            try:
+                self.proc.kill()
+            except OSError:
+                _log.warning("selfcheck %s: direct child kill failed", self.owner.run_id, exc_info=True)
+        _log.error("selfcheck %s: job terminate failed %s times; direct child killed, the rest of the Job unconfirmed",
+                   self.owner.run_id, _JOB_TERMINATE_ATTEMPTS)
+        return False
 
     def close(self) -> None:
         if self.owner:
@@ -256,7 +285,7 @@ def wait(control: ProcessControl, timeout_seconds: int, cancelled: threading.Eve
             proc.wait(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
             timed_out = True
-            control.owner.terminate()
+            control.cancel()
             proc.wait(timeout=5)
         for thread in threads:
             thread.join(timeout=5)

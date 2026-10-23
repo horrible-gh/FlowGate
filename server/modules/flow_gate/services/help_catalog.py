@@ -1217,6 +1217,14 @@ SELF_CHECK_DRAFT_HTTP_OPERATIONS: tuple[tuple[str, str, str, int], ...] = (
     ("list", "GET", "/self-check/draft/runs", 200),
 )
 
+#: 0080 T#2: read-only view of the run that holds a Group's single run slot, for every
+#: worker token of that Group. Owned by self_check_routes.group_router (prefix
+#: /api/v1/self-check/group); a regression test pins it to the routes.
+SELF_CHECK_GROUP_HTTP_OPERATIONS: tuple[tuple[str, str, str, int], ...] = (
+    ("group_read", "GET", "/self-check/group/runs/{run_id}", 200),
+    ("group_list", "GET", "/self-check/group/runs", 200),
+)
+
 _LOCALE_INDEX = {"ko": 1, "en": 2, "ja": 3}
 
 #: (code, ko, en, ja) — meaning and next action, never internal detail.
@@ -1262,13 +1270,17 @@ _SELF_CHECK_ERRORS: tuple[tuple[str, str, str, str], ...] = (
      "Self-check is disabled for this project -> report the returned reason in the TR and do not look for another execution path.",
      "このプロジェクトでは Self-check が無効 → 返された理由を TR に報告し、他の実行手段を探さない。"),
     ("selfcheck_already_running",
-     "이 TR 에 이미 실행 중인 run 이 있다(응답에 기존 self_check_run_id) → 그 run 을 read 로 조회해 끝나기를 기다리거나 cancel 한 뒤 다시 실행한다.",
-     "A run is already active for this TR (the response carries its self_check_run_id) -> read it and wait for it to finish, or cancel it, then run again.",
-     "このTRには実行中の run がある(応答に既存の self_check_run_id) → その run を read で確認して完了を待つか cancel してから再実行する。"),
+     "이 Group 에 이미 실행 중인 run 이 있다. 실행 슬롯은 TR 마다가 아니라 Group 에 하나이므로 다른 TR 이나 TR 등록 전(draft) run 일 수도 있다. 응답 details 의 self_check_run_id 와 run 요약(tr_doc_id·draft·status·created_at·same_owner)을 본다 → same_owner 가 true 이면 read 로 조회해 끝나기를 기다리거나 cancel 한 뒤 다시 실행한다. false 이면 그 run 은 이 토큰으로 취소할 수 없으므로 group_read 경로로 상태만 조회하며 끝나기를 기다리고, 오래 남으면 그 사실과 run 요약을 TR 에 보고한다.",
+     "A run is already active in this Group. The run slot is one per Group, not per TR, so it may belong to another TR or to a draft run (before its TR exists). Read details.self_check_run_id and the run summary (tr_doc_id, draft, status, created_at, same_owner) -> if same_owner is true, read it and wait for it to finish, or cancel it, then run again. If false, this token cannot cancel it: follow its status through the group_read path and wait; if it stays, report that and the run summary in the TR.",
+     "この Group には実行中の run がある。実行スロットは TR ごとではなく Group に1つなので、別の TR や TR 登録前(draft)の run の場合もある。応答 details の self_check_run_id と run 要約(tr_doc_id・draft・status・created_at・same_owner)を見る → same_owner が true なら read で確認して完了を待つか cancel してから再実行する。false ならこのトークンでは取消できないので group_read の経路で状態だけを確認して完了を待ち、長く残る場合はその事実と run 要約を TR に報告する。"),
     ("selfcheck_source_busy",
      "다른 소스 변경 작업이 프로젝트 소스 잠금을 잡고 있다 → 그 작업이 끝난 뒤 잠시 후 다시 시도한다.",
      "Another source operation holds the project source lock -> retry after that operation finishes.",
      "別のソース操作がプロジェクトのソースロックを保持している → その操作の終了後にしばらくして再試行する。"),
+    ("selfcheck_cancel_unconfirmed",
+     "취소 요청은 기록됐지만(details.cancel.accepted) 실행이 멈췄음을 확인하지 못했다. 이 서버에 그 run 의 실행 제어가 없고, 소유 서버의 종료나 프로세스 트리 전체의 부재가 증명되지 않았다(details.cancel.reason). run 상태와 보호는 그대로 유지된다 → 취소를 반복하지 말고 read 로 상태를 지켜보며, 계속 남으면 run 요약과 사유를 TR 에 보고한다.",
+     "The cancel was recorded (details.cancel.accepted) but the run is not confirmed stopped: no control for it exists in this server, and neither the owning server's end nor the absence of the whole process tree is proved (details.cancel.reason). The run keeps its state and protection -> do not repeat the cancel; follow its status with read, and if it stays, report the run summary and the reason in the TR.",
+     "取消要求は記録された(details.cancel.accepted)が、実行の停止は確認できていない。このサーバーにその run の実行制御がなく、所有サーバーの終了もプロセスツリー全体の不在も証明されていない(details.cancel.reason)。run の状態と保護はそのまま維持される → 取消を繰り返さず read で状態を見守り、残り続ける場合は run 要約と理由を TR に報告する。"),
     ("selfcheck_recovery_incomplete",
      "이전 run 의 프로세스 정리가 아직 끝나지 않았다 → 새 run 을 반복해서 밀어 넣지 말고 사유를 보고한 뒤 잠시 후 한 번 더 시도한다.",
      "Cleanup of an earlier run's process tree is unfinished -> do not hammer new runs; report the reason and retry once after a short wait.",
@@ -1294,6 +1306,7 @@ _SELF_CHECK_COPY: dict[str, dict] = {
         },
         "http_note": "tr_doc_id 는 지금 수정 중인 TR 문서 id(토큰에 바인딩된 문서)이고 run_id 는 run 응답의 self_check_run_id 이다. 헤더는 Authorization: Bearer <작업 토큰> 을 그대로 쓴다. 성공 응답은 {ok:true, ...run 필드}, 라우트가 만드는 실패 응답은 {ok:false, error:{code, message, details}} 이며 code 는 아래 오류 표의 selfcheck_* 또는 forbidden 이다. 다른 문서의 토큰이나 edit 가 아닌 토큰은 403 이고 error.code 는 forbidden 이다(message·details 포함). 토큰 자체가 검증에 실패하면(Authorization 헤더 없음 401, 만료·무효 토큰, 권한 없음 403) 라우트가 아니라 인증 계층이 {ok:false, http_status, error_message, help_url} 을 돌려주며 error 객체가 없다. 응답에서 확인할 것: run 은 202 와 self_check_run_id·status, read/cancel 은 200 과 status(아래 statuses 중 하나).",
         "draft_http_note": "TR 작성(new) 단계에서는 TR 문서가 아직 없으므로 문서 id 대신 작업 토큰이 실행의 소유자다. 경로에 문서 id 를 넣지 않고 Authorization: Bearer <작업 토큰> 만 보낸다. run_id 는 run 응답의 self_check_run_id 이다. 목록·조회·취소는 이 토큰이 시작한 실행만 대상으로 한다. 이 토큰으로 TR 을 등록하면 그 실행들은 등록된 TR 에 연결되고(linked_at), 이후에는 TR 문서 경로(/documents/{tr_doc_id}/self-check/runs)로 조회한다. 워크플로 head 가 TR 이 아닌 new 토큰, 다른 그룹·프로젝트의 토큰은 403 이고 error.code 는 forbidden 이다. 성공·실패 응답 형식과 인증 계층 오류 형식은 edit 단계와 같다.",
+        "group_note": "실행 슬롯은 Group 에 하나다. 이 Group 의 작업 토큰(new·edit·review)은 group_read / group_list 로 그 슬롯을 잡은 run 의 요약을 읽을 수 있다(다른 Group 의 run 은 404). 읽기 전용이며 취소는 그 run 을 소유한 TR 의 edit 토큰이나 draft 토큰만 한다. cancel 응답의 cancel 필드는 접수(accepted)와 중단 확인(stopped)을 구분한다.",
         "invalid_note": "위 형식(명령 전체를 program 에 넣음)은 program/args 계약 위반이다. 'pytest' 와 ['-q', 'server/tests/test_x.py'] 로 나누어 보낸다.",
         "lifecycle": "run_self_check → self_check_run_id 수신 → pending/running 동안 read_self_check 로 반복 조회 → completed / failed / cancelled. 필요하면 cancel_self_check.",
         "non_zero": "exit_code 가 0 이 아닌 completed 는 전송 실패가 아니라 실제 검증 실패일 수 있다. stdout_tail/stderr_tail 을 읽고 → 범위 안에서 코드를 고치고 → 새 run_self_check 를 실행하는 것이 정상 절차다.",
@@ -1314,6 +1327,7 @@ _SELF_CHECK_COPY: dict[str, dict] = {
         },
         "http_note": "tr_doc_id is the TR document id you are editing (the document bound to the token) and run_id is the self_check_run_id from the run response. Send the same Authorization: Bearer <work token> header. Success is {ok:true, ...run fields}; route failures are {ok:false, error:{code, message, details}} where code is a selfcheck_* value from the error table below or forbidden. A token for another document or a non-edit token gets 403 with error.code forbidden (message and details included). If the token itself fails verification (missing Authorization header 401, expired or invalid token, no permission 403), the authentication layer answers instead of the route with {ok:false, http_status, error_message, help_url} and no error object. Verify in the response: run returns 202 with self_check_run_id and status; read/cancel return 200 with a status from the statuses list below.",
         "draft_http_note": "In a TR new step the TR document does not exist yet, so the work token, not a document id, owns the run. Put no document id in the path; send only Authorization: Bearer <work token>. run_id is the self_check_run_id from the run response. list/read/cancel only see the runs this token started. When this token registers the TR, those runs are linked to it (linked_at) and are read from then on through the TR document paths (/documents/{tr_doc_id}/self-check/runs). A new token whose workflow head is not a TR, or a token of another group/project, gets 403 with error.code forbidden. Success/failure and authentication-layer error shapes are the same as in the edit step.",
+        "group_note": "The run slot is one per Group. Any work token of this Group (new, edit, review) reads the summary of the run holding it through group_read / group_list (another Group's run answers 404). Read only: only the owning TR's edit token or the owning draft token cancels it. A cancel response's cancel field tells the request being accepted apart from the run being confirmed stopped.",
         "invalid_note": "The form above (whole command in program) violates the program/args contract. Send 'pytest' and ['-q', 'server/tests/test_x.py'] separately.",
         "lifecycle": "run_self_check -> receive self_check_run_id -> read_self_check repeatedly while pending/running -> completed / failed / cancelled. Use cancel_self_check if needed.",
         "non_zero": "A completed run with a non-zero exit_code is not a transport failure; it may be a real verification failure. Read stdout_tail/stderr_tail, fix the code within scope, then start a new run_self_check. That is the normal procedure.",
@@ -1334,6 +1348,7 @@ _SELF_CHECK_COPY: dict[str, dict] = {
         },
         "http_note": "tr_doc_id は今修正中の TR 文書 id(トークンに紐づく文書)、run_id は run 応答の self_check_run_id です。ヘッダーは Authorization: Bearer <作業トークン> をそのまま使います。成功は {ok:true, ...run フィールド}、ルートが返す失敗は {ok:false, error:{code, message, details}} で、code は下のエラー表の selfcheck_* または forbidden です。他文書のトークンや edit 以外のトークンは 403 で error.code は forbidden です(message と details を含む)。トークン自体の検証に失敗した場合(Authorization ヘッダーなし 401、期限切れ・無効トークン、権限なし 403)は、ルートではなく認証層が {ok:false, http_status, error_message, help_url} を返し、error オブジェクトはありません。応答で確認すること: run は 202 と self_check_run_id・status、read/cancel は 200 と status(下の statuses のいずれか)。",
         "draft_http_note": "TR作成(new)段階では TR 文書がまだ無いため、文書 id ではなく作業トークンが実行の所有者です。パスに文書 id を入れず、Authorization: Bearer <作業トークン> だけを送ります。run_id は run 応答の self_check_run_id です。一覧・取得・取消はこのトークンが開始した実行だけが対象です。このトークンで TR を登録すると、それらの実行は登録された TR に連結され(linked_at)、以後は TR 文書のパス(/documents/{tr_doc_id}/self-check/runs)で取得します。ワークフロー head が TR でない new トークンや他グループ・他プロジェクトのトークンは 403 で error.code は forbidden です。成功・失敗の応答形式と認証層エラーの形式は edit 段階と同じです。",
+        "group_note": "実行スロットは Group に1つです。この Group の作業トークン(new・edit・review)は group_read / group_list でそのスロットを持つ run の要約を読めます(他 Group の run は 404)。読み取り専用で、取消はその run を所有する TR の edit トークンか draft トークンだけが行います。cancel 応答の cancel フィールドは受付(accepted)と停止確認(stopped)を区別します。",
         "invalid_note": "上の形式(コマンド全体を program に入れる)は program/args 契約違反です。'pytest' と ['-q', 'server/tests/test_x.py'] に分けて送ってください。",
         "lifecycle": "run_self_check → self_check_run_id を受け取る → pending/running の間 read_self_check を繰り返す → completed / failed / cancelled。必要なら cancel_self_check。",
         "non_zero": "exit_code が 0 以外の completed は通信失敗ではなく、実際の検証失敗の可能性があります。stdout_tail/stderr_tail を読み、範囲内でコードを直し、新しい run_self_check を実行するのが正常な手順です。",
@@ -1364,6 +1379,12 @@ def _content_tr_self_check(ctx: dict) -> dict:
                 {"name": name, "method": method, "path": path,
                  "url": SELF_CHECK_HTTP_BASE + path, "success_status": status}
                 for name, method, path, status in operations
+            ],
+            "group_note": copy["group_note"],
+            "group_operations": [
+                {"name": name, "method": method, "path": path,
+                 "url": SELF_CHECK_HTTP_BASE + path, "success_status": status}
+                for name, method, path, status in SELF_CHECK_GROUP_HTTP_OPERATIONS
             ],
             "run_request_body": "request.example",
             "response_ok_fields": ["ok", "self_check_run_id", "status", *SELF_CHECK_RESULT_FIELDS],

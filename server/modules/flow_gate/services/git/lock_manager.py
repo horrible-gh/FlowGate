@@ -364,11 +364,17 @@ def reclaim_stale_row(row: dict) -> bool:
 
     A row that nevertheless carries an exec record is protected rather than deleted:
     without the gated-spawn contract nothing proves its child process is gone.
+
+    0080 T#2: the one delete both stale-reclaim callers (``job_sweeper.step_stale_locks``,
+    ``_try_acquire_once``) pass. A Self-check-owned G is deleted only when
+    ``selfcheck_reclaim_gate`` says RECLAIM; every other holder kind keeps this path as it was.
     """
     try:
         if row.get("exec_state") or row.get("exec_pid"):
             db.protect_lock(row["lock_key"], row["lock_epoch"], "exec_unrecorded", now_iso())
             _log.error("lock %s has an exec record without gated spawn; protected", row["lock_key"])
+            return False
+        if row.get("holder_kind") == "selfcheck" and selfcheck_reclaim_gate(row) != SELFCHECK_RECLAIM:
             return False
         n = db.reclaim_lock(row["lock_key"], row["lock_epoch"], int(row.get("exec_seq") or 0))
     except Exception:
@@ -404,6 +410,22 @@ def group_recovery_check(project_id: str, group_id: str) -> bool:
 
 def selfcheck_ctx_id(run_id: str) -> str:
     return f"scr:{run_id}"
+
+
+SELFCHECK_RECLAIM = "reclaim"
+
+
+def selfcheck_reclaim_gate(row: dict) -> str:
+    """0080 T#2 (NR0007 §5-0 ⑤): RECLAIM / KEEP / PROTECT for a Self-check-owned G row.
+
+    ``is_stale`` (owner DEAD, heartbeat expired) only nominates the row; the gate proves the
+    run's owner dead and its process tree empty first. Any failure is KEEP."""
+    try:
+        from modules.flow_gate.services import tr_self_check_gate
+        return tr_self_check_gate.reclaim_gate(row)
+    except Exception:
+        _log.warning("selfcheck reclaim gate unavailable for %s; kept", row.get("lock_key"), exc_info=True)
+        return "keep"
 
 
 def selfcheck_release_recovered(project_id: str, group_id: str, run_id: str) -> None:

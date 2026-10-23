@@ -67,6 +67,38 @@ def public(row: dict) -> dict:
     return result
 
 
+_ACTIVE = ("pending", "running")
+
+
+def summary(row: dict) -> dict:
+    """Which run holds a Group's single run slot, for any reader of that Group (0080 T#2,
+    NR0007 §5 item 1). The slot is per Group, not per TR: the holder may be another TR's run
+    or a draft run. No arguments and no output tails -- only what tells the run apart and
+    where it is read (``group_read_path``, under the API base)."""
+    rid = row["self_check_run_id"]
+    draft = row.get("tr_doc_id") is None
+    keep = ("project_id", "group_id", "tr_doc_id", "status", "recovery_state", "cancel_requested",
+            "program", "created_at", "started_at", "updated_at", "linked_at")
+    return {"self_check_run_id": rid, **{key: row.get(key) for key in keep}, "draft": draft,
+            "owner_kind": "draft" if draft else "tr", "group_read_path": f"/self-check/group/runs/{rid}"}
+
+
+def _already_running(run_id: str, target: dict) -> SelfCheckError:
+    """``selfcheck_already_running`` with the holder's summary; ``same_owner`` = the caller's
+    own TR or draft token started it."""
+    details = {}
+    try:
+        row = db_runs.get_run(run_id)
+    except Exception:
+        _log.warning("selfcheck %s: reading the active run failed", run_id, exc_info=True)
+        row = None
+    if row:
+        own_tr = target.get("tr_doc_id") is not None and row.get("tr_doc_id") == target.get("tr_doc_id")
+        own_token = target.get("owner_token_id") is not None and row.get("owner_token_id") == target.get("owner_token_id")
+        details["run"] = {**summary(row), "same_owner": bool(own_tr or own_token)}
+    return SelfCheckError(409, "selfcheck_already_running", run_id, details=details)
+
+
 def _document(doc_id: str) -> dict:
     doc = db_documents.get_by_id(doc_id)
     if not doc or str(doc.get("type_code") or "").upper() != "TR":
@@ -240,6 +272,40 @@ def _settle_tree(run_id: str, row: dict | None, ownership: dict) -> bool:
         return False
 
 
+def _cancel_poll_sec() -> float:
+    try:
+        value = float(os.environ.get("FLOWGATE_SELFCHECK_CANCEL_POLL_SEC") or 2.0)
+    except ValueError:
+        value = 2.0
+    return max(0.2, min(30.0, value))
+
+
+def _watch_cancel(run_id: str, control: executor.ProcessControl, cancelled: threading.Event) -> threading.Event:
+    """0080 T#2 (NR0007 §5 item 3-b): while the worker waits for its child, poll the row's
+    ``cancel_requested`` -- a cancel that reached another server, or this one without the
+    control, still stops the run. Returns the stop event the worker sets when it is done."""
+    stop = threading.Event()
+
+    def loop() -> None:
+        while not stop.wait(_cancel_poll_sec()):
+            if cancelled.is_set():
+                return
+            try:
+                requested = (db_runs.get_run(run_id) or {}).get("cancel_requested")
+            except Exception:
+                continue
+            if requested and not stop.is_set():
+                cancelled.set()
+                try:
+                    control.cancel()
+                except Exception:
+                    _log.warning("selfcheck %s: cancel from the watcher failed", run_id, exc_info=True)
+                return
+
+    threading.Thread(target=loop, daemon=True, name=f"selfcheck-cancel-watch-{run_id}").start()
+    return stop
+
+
 def _hold_unsettled(ctx: lock_manager.ExecutionContext, lock_key: str, run_id: str) -> None:
     """No finish_* and no release while the tree is not proved empty (L 2.24.2: the Group's
     G stays as a protected row; only this Group is blocked)."""
@@ -259,6 +325,7 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
     row = None
     cancelled = threading.Event()
     terminal = None
+    watch = None
     try:
         control, ownership = executor.spawn([command.executable, *command.argv_prefix, *args], cwd, env, timeout,
                                             run_id, job_name=proof.job_name(run_id))
@@ -274,6 +341,7 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
         if db_runs.get_run(run_id)["cancel_requested"]:
             cancelled.set()
             control.cancel()
+        watch = _watch_cancel(run_id, control, cancelled)
         result = executor.wait(control, timeout, cancelled)
         if not _settle_tree(run_id, row, ownership):
             _hold_unsettled(ctx, lock_key, run_id)
@@ -308,6 +376,8 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
             "selfcheck_process_owner_unavailable" if isinstance(exc, executor.OwnershipError) else "selfcheck_internal_error")
         terminal = db_runs.finish_failed(run_id, error_code=code)
     finally:
+        if watch is not None:
+            watch.set()
         if control is not None:
             control.close()
         with _controls_lock:
@@ -354,7 +424,7 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
         raise SelfCheckError(422, exc.code) from exc
     existing = db_runs.get_active(project_id, group_id)
     if existing:
-        raise SelfCheckError(409, "selfcheck_already_running", existing["self_check_run_id"])
+        raise _already_running(existing["self_check_run_id"], target)
     run_id = f"scr_{uuid.uuid4().hex[:24]}"
     # D 3.8 / L 2.24.1: this Group's G for the whole run (long, heartbeated).
     ctx = lock_manager.new_context("scr", run_id)
@@ -379,7 +449,7 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
         cwd = policy.validate_cwd(root, relative_cwd)
         existing = db_runs.get_active(project_id, group_id)
         if existing:
-            raise SelfCheckError(409, "selfcheck_already_running", existing["self_check_run_id"])
+            raise _already_running(existing["self_check_run_id"], target)
         before = _probe(root)
         runtime = Path(tempfile.mkdtemp(prefix=f"flowgate-{run_id}-"))
         env = policy.scrubbed_env(path_value, runtime)
@@ -406,7 +476,7 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
         _emit(row)
         return public(row)
     except db_runs.SelfCheckAlreadyRunningError as exc:
-        raise SelfCheckError(409, "selfcheck_already_running", exc.existing_run_id) from exc
+        raise _already_running(exc.existing_run_id, target) from exc
     except db_runs.DraftOwnerClosedError as exc:
         # The TR registered (or the token was revoked) after draft_target admitted it.
         raise SelfCheckError(403, "selfcheck_forbidden", "draft owner token is no longer open") from exc
@@ -437,19 +507,105 @@ def cancel(doc_id: str, run_id: str) -> dict:
 
 
 def _cancel(run_id: str, lookup) -> dict:
+    """Request a stop and say what is known of it (0080 T#2, NR0007 §5 item 3).
+
+    The response's ``cancel`` tells the request being recorded (``accepted``) apart from the
+    run having stopped (``stopped``); ``state`` is requested / stopped / terminate_failed /
+    not_active. A run this process drives is signalled through its control (its worker ends
+    it). A run no control here drives goes through ``_cancel_unowned``; when that proves
+    nothing the answer is 409 ``selfcheck_cancel_unconfirmed`` and the run keeps its state.
+    """
     row = lookup()
     if row is None:
         raise SelfCheckError(404, "selfcheck_run_not_found")
+    active = row["status"] in _ACTIVE
     db_runs.request_cancel(run_id)
     with _controls_lock:
         item = _controls.get(run_id)
+    state, reason = ("requested" if active else "not_active"), None
     if item:
         item[1].set()
-        item[0].cancel()
+        if not item[0].cancel():
+            state, reason = "terminate_failed", "process_terminate_failed"
+    elif active:
+        try:
+            state, reason = _cancel_unowned(row)
+        except Exception:
+            _log.warning("selfcheck %s: cancel check failed; the run is kept", run_id, exc_info=True)
+            state, reason = "unconfirmed", "check_failed"
+            try:
+                current = db_runs.get_run(run_id)
+                # The row was not in recovery when read above: a recovering row now is this
+                # call's CAS, so it is held like recover() holds a failed row.
+                if current and current.get("recovery_state") == "recovering":
+                    _hold_recovery_incomplete(current, "recovery_error", set())
+            except Exception:
+                _log.warning("selfcheck %s: keeping the run protected failed", run_id, exc_info=True)
     # A draft run may be linked to its TR between the two reads; fall back to the id.
     row = lookup() or db_runs.get_run(run_id)
     _emit(row)
-    return public(row)
+    stopped = row["status"] not in _ACTIVE
+    if stopped and active:
+        state, reason = "stopped", None
+    cancel = {"accepted": bool(row.get("cancel_requested")), "stopped": stopped, "state": state, "reason": reason}
+    if state == "unconfirmed":
+        raise SelfCheckError(409, "selfcheck_cancel_unconfirmed", details={
+            "self_check_run_id": run_id, "cancel": cancel, "run": summary(row)})
+    return {**public(row), "cancel": cancel}
+
+
+def _worker_alive(run_id: str) -> bool:
+    return any(t.name == f"selfcheck-{run_id}" and t.is_alive() for t in threading.enumerate())
+
+
+def _cancel_unowned(row: dict) -> tuple[str, str | None]:
+    """Cancel of an active run with no control in this process (NR0007 §5 item 3-a, §5-0).
+
+    Its worker may run in another server, or nowhere. The run is ended (cancelled, G freed)
+    only on the release rule: the owning server proved dead -- or it is this server and its
+    worker is proved gone, so nothing can spawn for the run any more -- then a verified kill
+    of what is still the run's own and the whole tree proved empty, re-checked after the
+    recovering CAS. An owner that is alive elsewhere is left to its worker, which polls
+    ``cancel_requested``. Returns ``(state, reason)``; ``unconfirmed`` changes neither the
+    run's state nor its protection, except that a run already fenced by the CAS keeps G
+    protected as recovery_incomplete (the same hold as ``recover()``)."""
+    rid = row["self_check_run_id"]
+    if row.get("recovery_state") != "none":
+        return "unconfirmed", f"recovery_{row.get('recovery_state')}"
+    server = proof.owner_server_state(proof.owner_instance_of(row))
+    if server.state == proof.MATCH and not server.detail.get("self"):
+        return "requested", proof.OWNER_ALIVE
+    if server.state == proof.MATCH:
+        # This server owns the run. A pending run's worker may still be about to spawn; a
+        # live worker reads the flag itself.
+        if row["status"] == "pending" or _worker_alive(rid):
+            return "requested", None
+        if proof.terminate_tree(row).state != proof.ABSENT:
+            return "unconfirmed", proof.TREE_UNPROVEN
+        current = db_runs.mark_recovering(rid)
+        if current is None:
+            return "unconfirmed", "state_changed"
+        if proof.tree_state(current).state != proof.ABSENT:
+            _hold_recovery_incomplete(current, proof.TREE_UNPROVEN, set())
+            return "unconfirmed", proof.TREE_UNPROVEN
+    elif not server.gone:
+        return "unconfirmed", server.reason or proof.OWNER_SERVER_UNPROVEN
+    else:
+        current = db_runs.mark_recovering(rid)
+        if current is None:
+            return "unconfirmed", "state_changed"
+        verdict = proof.release_verdict(current, terminate=True)
+        if verdict.decision != proof.RELEASE:
+            _hold_recovery_incomplete(current, verdict.reason or proof.TREE_UNPROVEN, set())
+            return "unconfirmed", verdict.reason or proof.TREE_UNPROVEN
+    finished = db_runs.finish_recovered_cancelled(rid)
+    if finished is None:
+        return "unconfirmed", "state_changed"
+    try:
+        lock_manager.selfcheck_release_recovered(row["project_id"], row["group_id"], rid)
+    except Exception:
+        _log.warning("selfcheck %s: releasing Group lock after cancel failed", rid, exc_info=True)
+    return "stopped", None
 
 
 def read_draft(token: dict, run_id: str) -> dict:
@@ -488,6 +644,24 @@ def list_group_draft_runs(group_id: str, limit: int = 20) -> tuple[str, list[dic
 
 def cancel_group_draft(run_id: str) -> dict:
     return _cancel(run_id, lambda: group_draft_run(run_id))
+
+
+def group_run(run_id: str) -> dict | None:
+    """Any run by id, for a reader of its Group (the route checks the Group, 0080 T#2)."""
+    return db_runs.get_run(run_id)
+
+
+def group_active_runs(project_id: str, group_id: str) -> list[dict]:
+    """The run holding the Group's slot, as a summary list (empty or one)."""
+    row = db_runs.get_active(project_id, group_id)
+    return [summary(row)] if row else []
+
+
+def group_project(group_id: str) -> str:
+    group = db_groups.get_by_id(group_id)
+    if not group:
+        raise SelfCheckError(404, "selfcheck_draft_group_not_found")
+    return group["project_id"]
 
 
 def link_draft_runs(token: dict, tr_doc_id: str | None) -> int:
