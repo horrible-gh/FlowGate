@@ -884,6 +884,14 @@ export default {
     mail: {
       badge_wip: '개발 중',
     },
+    agent_http_risk: {
+      title: 'Agent 서버 연결 안내',
+      https: 'Agent가 서버에 연결할 때는 HTTPS를 권장합니다.',
+      allow: 'HTTP 주소로 연결하려면 Agent를 등록할 때 HTTP 위험을 명시적으로 허용해야 합니다.',
+      plain: 'HTTP는 통신을 암호화하지 않아 등록 토큰과 작업 내용이 노출되거나 변조될 수 있습니다.',
+      trusted: '신뢰하는 내부망이나 암호화된 VPN에서만 사용하세요.',
+      effect: 'HTTP 연결은 Agent에서 위험 허용이 필요하며, 토큰이 평문으로 전송될 수 있습니다.',
+    },
     numbering: {
       confirm_title: '채번 변경 확인',
       type_project_name: '프로젝트명 입력',

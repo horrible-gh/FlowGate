@@ -600,6 +600,41 @@ describe('V17 Agent 민감 동작 — token, revoke, delete, refusals', () => {
     expect(field(w, 'enrollment_status')).toContain('대기 중')
   })
 
+  it('flowgate.v02.0091 T#1: HTTPS 권장 · HTTP 위험 안내가 등록 영역과 발급 확인 창에 보이고(ko/en/ja), 상태 표시는 없고, 토큰은 한 번만 보인다', async () => {
+    const w = await open('/settings/system/agents')
+    await pick(w, 'agt_e_new')
+    const note = w.get('[data-testid="agent-http-note"]')
+    expect(note.text()).toContain('HTTPS를 권장')
+    expect(note.text()).toContain('HTTP 위험을 명시적으로 허용')
+    expect(note.text()).toContain('암호화하지 않아')
+    expect(note.text()).toContain('내부망이나 암호화된 VPN')
+    // The server does not know the Agent's address or its allowance: no such status is shown.
+    expect(w.text()).not.toMatch(/HTTP 허용됨|보안 연결됨/)
+    await click(w, '[data-testid="agent-issue"]')
+    expect(w.get('[data-testid="agent-confirm"]').text()).toContain('토큰이 평문으로 전송될 수 있습니다')
+    await click(w, '[data-testid="agent-confirm-cancel"]')
+    expect(writes()).toEqual([])
+
+    i18n.global.locale.value = 'en'
+    await flushPromises()
+    expect(w.get('[data-testid="agent-http-note"]').text()).toContain('HTTPS is recommended')
+    expect(w.get('[data-testid="agent-http-note"]').text()).toContain('explicitly allowed on the Agent')
+    await click(w, '[data-testid="agent-issue"]')
+    expect(w.get('[data-testid="agent-confirm"]').text()).toContain('sent in plain text')
+    await click(w, '[data-testid="agent-confirm-cancel"]')
+
+    i18n.global.locale.value = 'ja'
+    await flushPromises()
+    expect(w.get('[data-testid="agent-http-note"]').text()).toContain('HTTPS を推奨')
+    expect(w.get('[data-testid="agent-http-note"]').text()).toContain('明示的に許可')
+    await click(w, '[data-testid="agent-issue"]')
+    expect(w.get('[data-testid="agent-confirm"]').text()).toContain('平文で送信')
+    await click(w, '[data-testid="agent-confirm-ok"]')
+    expect(writes()).toEqual(['POST /api/v1/system/agents/agt_e_new/enrollments'])
+    expect(bodiesOf(/enrollments$/)).toEqual([{}])
+    expectTokenOnlyInBox(w, server('agt_e_new')!.pending!.token, true)
+  })
+
   it('토큰 발급 while it is out: further clicks send nothing (1 request)', async () => {
     const w = await open('/settings/system/agents')
     await pick(w, 'agt_e_new')

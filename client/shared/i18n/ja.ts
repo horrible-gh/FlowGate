@@ -884,6 +884,14 @@ export default {
     mail: {
       badge_wip: '開発中',
     },
+    agent_http_risk: {
+      title: 'Agent のサーバー接続について',
+      https: 'Agent がサーバーに接続する際は HTTPS を推奨します。',
+      allow: 'HTTP アドレスで接続するには、Agent の登録時に HTTP のリスクを明示的に許可する必要があります。',
+      plain: 'HTTP は通信が暗号化されないため、登録トークンや作業内容が漏えい・改ざんされるおそれがあります。',
+      trusted: '信頼できる内部ネットワークまたは暗号化された VPN でのみ使用してください。',
+      effect: 'HTTP 接続は Agent 側でリスクの許可が必要で、トークンが平文で送信されるおそれがあります。',
+    },
     numbering: {
       confirm_title: '採番変更確認',
       type_project_name: 'プロジェクト名入力',
