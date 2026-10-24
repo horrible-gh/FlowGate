@@ -332,13 +332,14 @@ describe('test section — reading (flowgate.v02.0048 T#11)', () => {
     expect(opened()).toEqual([[LEGACY_TS_DOC, 'view']])
   })
 
-  it('T2/T3 window entry points remain visibly unconnected in T1; execution is independent', async () => {
+  it('T2 scenario entry is connected while the T3 report stays unconnected; execution is independent', async () => {
     const w = await mountTab(target())
-    for (const name of ['test-card-scenario-open', 'test-spec-open']) {
-      expect(isDisabled(w, name)).toBe(true)
-      expect(el(w, name).attributes('title')).toBe('연결 예정')
-      await click(w, name)
-    }
+    expect(isDisabled(w, 'test-card-scenario-open')).toBe(false)
+    expect(el(w, 'test-card-scenario-open').attributes('title')).not.toBe('연결 예정')
+    await click(w, 'test-card-scenario-open')
+    expect(isDisabled(w, 'test-spec-open')).toBe(true)
+    expect(el(w, 'test-spec-open').attributes('title')).toBe('연결 예정')
+    await click(w, 'test-spec-open')
     expect(opened()).toEqual([])
     expect(startCall).not.toHaveBeenCalled()
   })

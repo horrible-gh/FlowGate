@@ -60,6 +60,15 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   const cases = computed(() => view.value?.details?.cases ?? [])
   const rows = computed(() => view.value?.details?.rows ?? [])
   const formatErrors = computed(() => view.value?.details?.errors ?? [])
+  // Only a successful raw save in an already open scenario may keep its repair surface.
+  const rawSavedInScenario = ref(false)
+  const rawRepairAllowed = computed(() => rawSavedInScenario.value && windows.scenario.open
+    && formatErrors.value.length > 0
+    && !formatErrors.value.some(error => ['missing_spec_section', 'unsupported_contract'].includes(error.code ?? '')))
+  watch(() => windows.scenario.open, (open) => { if (!open) rawSavedInScenario.value = false }, { flush: 'sync' })
+  watch(view, (value) => {
+    if (value?.details?.cases.length || !value?.details?.errors.length) rawSavedInScenario.value = false
+  }, { flush: 'sync' })
   const presentation = computed(() => testCardPresentation(view.value, writing.value, rows.value))
   const instructionOmitted = computed(() => settings.node.value?.fields.instruction?.value === 'omit')
   watch(() => presentation.value.stage, (stage, previous) => {
@@ -87,7 +96,10 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   watch([() => test.status.value, () => writing.value, instructionOmitted], () => {
     if (instructionOmitted.value) windows.brief.open = false
     if (test.status.value !== 'ready' || writing.value) return
-    if (!presentation.value.hasScenario) { windows.scenario.open = false; windows.case.open = false }
+    if (!presentation.value.hasScenario) {
+      if (!rawRepairAllowed.value) windows.scenario.open = false
+      windows.case.open = false
+    }
     if (!presentation.value.hasReport) windows.report.open = false
     if (!presentation.value.canFollow) windows.follow.open = false
   })
@@ -130,7 +142,8 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
       if (operation === 'resultEntry' && found.executionMode === 'automated' && ['case_selectable', 'suite_only'].includes(view.value?.caseCapabilities[caseId!] ?? '')) return item('guard.server_result')
     }
     if (operation === 'rewriteAll' && test.runState.value.active) return item('reason.run_active')
-    if (['caseSave', 'caseDelete', 'rawSave', 'rewriteAll'].includes(operation) && !presentation.value.hasScenario) return item('guard.no_case')
+    if (['caseSave', 'caseDelete', 'rawSave', 'rewriteAll'].includes(operation) && !presentation.value.hasScenario
+      && !(operation === 'rawSave' && rawRepairAllowed.value)) return item('guard.no_case')
     if (missingCommands.includes(operation)) return item('guard.unconnected')
     if (busy.value || test.busy.value) return item('reason.busy')
     return item(null)
@@ -168,7 +181,10 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (!can(operation).enabled) return false
     busy.value = operation; refusal.value = null
     let ok = false
-    try { await call(); ok = true } catch (error) { reject(operation, error) }
+    try {
+      await call(); ok = true
+      if (operation === 'rawSave' && windows.scenario.open) rawSavedInScenario.value = true
+    } catch (error) { reject(operation, error) }
     finally { if (target()) await reload(); busy.value = null }
     return ok
   }

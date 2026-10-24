@@ -188,8 +188,8 @@ describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () =
     const w = await mountFrame(test.node)
     expect(lines(w).map((row) => row.get('[data-test="inspector-slot-name"]').text())).toEqual(['지시서', '시나리오', '레포트'])
     expect(w.find('[data-test="inspector-slot-edit"]').exists()).toBe(false)
-    expect(w.get('[data-test="test-card-brief"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="test-card-scenario-open"]').attributes('title')).toBe('연결 예정')
+    expect(w.get('[data-test="test-card-brief"]').attributes('disabled')).toBeUndefined()
+    expect(w.get('[data-test="test-card-scenario-open"]').attributes('title')).not.toBe('연결 예정')
     expect(w.get('[data-test="test-spec-run"]').exists()).toBe(true)
   })
 

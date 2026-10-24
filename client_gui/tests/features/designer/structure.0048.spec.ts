@@ -256,7 +256,20 @@ function featureViolations(root: string, key: string): string[] {
   for (const name of list(dir)) {
     const label = `features/${key}/${name}`
     if (isDir(join(dir, name))) {
-      out.push(`B8 ${label}: a feature folder holds no sub-folder`)
+      // 0071 D0008 §7.1 explicitly owns these five windows and two local helpers.
+      // Check every nested file rather than exempting an arbitrary sub-tree.
+      if (key === 'testSpec' && name === 'windows') {
+        const allowed = /^(BriefWindow|ScenarioWindow|CaseWindow|ReportWindow|FollowWindow)\.vue$|^(scenarioWindowModel|reportWindowModel)\.ts$/
+        const rule: ImportRule = { allowed: [/^vue$/, /^vue-i18n$/, /^@\/components\/ui\/[A-Za-z]+(\.vue)?$/,
+          /^@\/features\/(document|documentWindow)$/, /^\.\/((scenario|report)WindowModel)$/,
+          /^\.\.\/(useTestCard|testCardSession|testSpecModel)$/, /^\.\.\/\.\.\/\.\.\/parts\/[A-Za-z]+(\.vue)?$/,
+          { re: /^\.\.\/\.\.\/\.\.\/inspectorTarget$/, typeOnly: true }], forbidden: /^@shared\/|^pinia$|^axios$|^vue-router$/, body: BODY_IO }
+        for (const child of list(join(dir, name))) {
+          const file = join(dir, name, child)
+          if (isDir(file) || !allowed.test(child)) out.push(`B8 ${label}/${child}: not a test card window file`)
+          else out.push(...ruleViolations('B8', `${label}/${child}`, read(file), rule))
+        }
+      } else out.push(`B8 ${label}: a feature folder holds no sub-folder`)
       continue
     }
     const src = read(join(dir, name))

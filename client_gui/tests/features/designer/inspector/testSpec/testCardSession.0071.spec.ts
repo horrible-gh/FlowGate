@@ -380,6 +380,23 @@ it('rewrite submission guards immediately, survives stale activity and releases 
   expect(card.writing.value).toBeNull()
 })
 
+it.each(['missing_spec_section', 'unsupported_contract', 'invalid'])('zero-case %s errors do not enable scenario entry or raw saves', async (code) => {
+  views.set(TS_DOC, tsDocument({ cases: [], errors: [{ code, field: 'cases', message: code }], latest_result: null, effective_result: null }))
+  const w = await render(); const card = contexts.one
+  expect(card.presentation.value.stage).toBe(1)
+  expect(card.openReason('scenario', true)).toBe('guard.no_case')
+  expect(w.get('[data-test="test-card-scenario-open"]').attributes('disabled')).toBeDefined()
+  const menu = w.findAllComponents(TestCardMenu)[0].findAll('[data-test="inspector-menu-item"]')[0]
+  expect(menu.attributes('disabled')).toBeDefined()
+  await menu.trigger('click'); await w.get('[data-test="test-card-scenario-open"]').trigger('click')
+  expect(card.windows.scenario.open).toBe(false)
+  expect(card.openWindow('scenario')).toBe(false)
+  expect(card.can('rawSave').reason).toBe('guard.no_case')
+  const save = vi.fn()
+  expect(await card.changeDocument('rawSave', save)).toBe(false)
+  expect(save).not.toHaveBeenCalled()
+})
+
 it('connected windows share stage-specific open reasons with menu and section cards', async () => {
   const { TEST_CARD_WINDOW_LOADERS } = await import('@/features/designer/inspector/features/testSpec/testCardSession')
   const connected = ['./windows/ScenarioWindow.vue', './windows/ReportWindow.vue']
