@@ -6,7 +6,8 @@ completion, rejection_path, report_pair and gate_node are registered through ``l
 Multiple starts remain undecided; ordinary linear/fork/join runs have all required slots.
 
 flowgate.v02.0085 T#2 (D0007 §3.1): gate_node = ``human_confirm_v1`` (``gate``), the same implementation version in
-the validator and the run registry. A new run snapshots it; a run already stored keeps its own snapshot.
+the validator and the run registry. A new run snapshots it; a run already stored keeps its own snapshot. T#3: the
+``gate_publish`` executor (``gate_decisions.publish``) is installed with it.
 
 The registries only add, so there is no ``unregister``; registering again is a no-op.
 """
@@ -23,3 +24,7 @@ def register() -> None:
              + gate.SLOTS)
     for key, value, impl_version, implementation in slots:
         legacy_adapter.register_policy(key, value, impl_version, implementation)
+    # flowgate.v02.0085 T#3: the executor of the confirm's ``gate_publish`` job (the Runner claims only kinds it has one
+    # for); registered with the rule whose intake creates the job.
+    from flowgate.gate_decisions import publish
+    publish.install()

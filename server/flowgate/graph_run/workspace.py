@@ -300,7 +300,13 @@ def _materialize(row, project_id):
     # Reuse the group provisioning/recovery contract only to obtain the required input.
     group_root = git.effective_src_root(project_id, row["group_id"])
     if group_root is None:
-        if git.ensure_worktree(project_id, module, row["group_id"], trigger="graph_attempt") != "ok":
+        # 0085 T#3 (D0007 §7.1): a slot a gate end cleanup let go comes back at its recorded real end HEAD.
+        from flowgate.gate_decisions import cleanup as gate_cleanup
+        start_point, refused = gate_cleanup.restore_point(project_id, row["group_id"])
+        if refused:
+            raise port.GraphSourceError("graph_worktree_unavailable", reason=refused)
+        restore = {"start_point": start_point} if start_point else {}
+        if git.ensure_worktree(project_id, module, row["group_id"], trigger="graph_attempt", **restore) != "ok":
             raise port.GraphSourceError("graph_worktree_unavailable", reason="group_input_missing")
     with _git_locks(row, project_id, branch):
         current = attempt(row["attempt_id"])
@@ -308,6 +314,12 @@ def _materialize(row, project_id):
             raise ledger.LeaseLost("attempt ended before workspace preparation")
         group_root = git.effective_src_root(project_id, row["group_id"])
         if group_root is None:
+            # 0085 T#3 rework: a gate end cleanup let the slot go while this waited for G (its G covers the final
+            # check to the last delete): the next preparation restores it at the recorded end HEAD (``git_busy``
+            # keeps the attempt and its request).
+            from flowgate.gate_decisions import cleanup as gate_cleanup
+            if gate_cleanup.slot_released(row["group_id"]):
+                raise port.GraphSourceError("graph_worktree_unavailable", reason="git_busy")
             raise port.GraphSourceError("graph_worktree_unavailable", reason="group_input_missing")
         group_root = Path(group_root).resolve()
         marker = merge_target.read_owner_marker(directory)

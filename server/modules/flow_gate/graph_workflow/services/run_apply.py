@@ -91,6 +91,8 @@ def read_run_state(ctx: RunContext) -> RunState:
     step = ctx.run.get("step_node_keys")
     status = ctx.run["status"]
     held = frozenset(graph_execution_hooks.call("held_nodes", ctx.flow_id) or ())               # 0061 T#11
+    # flowgate.v02.0085 T#3: a gate waiting for its round split after an abandoned recovery is never opened either.
+    held |= frozenset(graph_execution_hooks.call("opening_held", ctx.flow_id) or ())
     bound = ctx.binding["node_key"] if ctx.binding else None
     if bound and any(r["node_key"] == bound and r["status"] == "pending" and not int(r.get("root_bound") or 0)
                      for r in rows):

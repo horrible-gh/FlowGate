@@ -29,10 +29,13 @@ group's G, ``result_merge.abort_for_stop``); while one of them is still open (G 
 stopping (``stop_pending``, ``merge_session_abort_pending``) until a repeated Stop or the server start aborts it. An
 attempt whose merge is in progress (``integrating``) is neither invalidated nor reset — it goes on to its end (done
 stays done) and the run stays stopping until then; its end goes on with the Stop (``result_merge``).
-flowgate.v02.0085 T#2 (D0007 §7.3): in (c) a confirm gate held by an accepted decision whose ``gate_publish`` job no
-worker has claimed yet (no effect outside the DB) has its decision canceled and the job cancelled (``no_effect_canceled``);
-the gate then goes back to pending like any open node and its attempt is closed. A gate whose job was claimed (or has
-evidence of effects) keeps its decision and its open state, and the run stays stopping until that job is resolved.
+flowgate.v02.0085 T#2/T#3 (D0007 §7.3): in (c) a confirm gate held by a decision whose ``gate_publish`` job did nothing
+outside (no effect evidence) and is not being run has its decision canceled and the job cancelled
+(``no_effect_canceled``); the gate then goes back to pending like any open node and its attempt is closed. A gate whose
+job is running gets its cancel request (the job cancels itself at its next phase boundary when it did nothing outside,
+else it parks for recovery); a waiting job that already acted is parked (``recovery_required``) for a retry or a
+resolve. Such a gate keeps its decision and its open state, and the run stays stopping until that job ended (its end
+lets the Stop go on, ``gate_decisions.publish.after_terminal``).
 The Stop goes on when that execution's own end arrives (``on_execution_finished``), on a repeated
 Stop, after Git locks are released (``result_merge.on_lock_released``), and at server start (``recover``);
 each of them retries the removal for the attempts already invalidated. A root-bound node (its root
@@ -209,21 +212,43 @@ def _settle_executions(run: dict, actor: Optional[str]) -> list[str]:
 
 
 def _settle_gate_decisions(run_id: str) -> tuple[set, dict]:
-    """0085 T#2, inside (c)'s guard: the run's gates held by an accepted decision. One whose job was never claimed is
-    canceled (decision ``canceled``, job ``cancelled`` / ``no_effect_canceled``); the others stay held. Returns (the gates
-    still held, ``{node key: event note}`` linking the stop event of each canceled gate to its decision)."""
-    from flowgate.gate_decisions import history, legacy_adapter as gate_legacy, repository as gate_decisions
+    """0085 T#2/T#3 (D0007 §7.3 Stop), inside (c)'s guard: the run's gates held by a decision (accepted, failed,
+    recovery_required). One with no effect outside and no writer is canceled (decision ``canceled``, job ``cancelled`` /
+    ``no_effect_canceled``): the gate then goes back to pending and its attempt ends with the other open nodes. The others
+    stay held and the run stays stopping: a running job is asked to cancel (it cancels itself at its next phase boundary
+    when it did nothing outside, else it parks for recovery), a waiting job that already acted is parked for a person's
+    retry / resolve (``recovery_required``), a conflict handed to the merge review waits for that review. Returns (the
+    gates still held, ``{node key: event note}`` linking the stop event of each canceled gate to its decision)."""
+    from flowgate.gate_decisions import history, publish, recovery as gate_recovery, repository as gate_decisions
+    from modules.flow_gate.db import operation_job as db_jobs
+    from modules.flow_gate.services.git import job_store
     held, notes = set(), {}
     for node_key, decision in gate_decisions.reservations_of_run(run_id).items():
         job_id = decision.get("job_id")
-        no_effect = decision["status"] == gate_decisions.ACCEPTED and not any(
-            e["status"] not in (gate_decisions.PENDING, gate_decisions.SKIPPED)
-            for e in gate_decisions.effects_of(decision["decision_id"]))
-        if no_effect and (job_id is None or gate_legacy.cancel_unstarted_job(job_id)):
-            if not gate_decisions.move(decision["decision_id"], decision["decision_version"], gate_decisions.CANCELED):
-                raise AssertionError("gate decision moved under the stop's guard")
-            notes[node_key] = {"payload": history.decision_link(decision["decision_id"])}
-            continue
+        job = job_store.get_job(job_id) if job_id else None
+        # T#3 rework: the phases' evidence checked against the decision's own refs (an archive cut off after its ref
+        # is an unknown effect, never none) - a local ref read, no lock and no network.
+        effects = publish.effects_now(decision)
+        writer = job_store.gate_writer_active(job)
+        cancelable = decision["status"] in gate_recovery.CANCELABLE and not gate_recovery._conflict_open(decision)
+        if effects == gate_decisions.EFFECTS_NONE and not writer and cancelable:
+            if job is None or job_store.close_gate_publish(job_id, "cancelled", job_store.GATE_CANCEL_NO_EFFECT,
+                                                          result={"decision_id": decision["decision_id"],
+                                                                  "canceled_by": "stop"}):
+                if not gate_decisions.move(decision["decision_id"], decision["decision_version"],
+                                           gate_decisions.CANCELED):
+                    raise AssertionError("gate decision moved under the stop's guard")
+                notes[node_key] = {"payload": history.decision_link(decision["decision_id"])}
+                continue
+        if job is not None:
+            if writer:
+                db_jobs.mark_cancel_requested(job_id, ledger.now())
+            elif effects != gate_decisions.EFFECTS_NONE and job["status"] in ("pending", "blocked", "retry_wait") \
+                    and job_store.park_gate_publish(job_id, "stop_requested"):
+                if decision["status"] != gate_decisions.RECOVERY_REQUIRED and not gate_decisions.move(
+                        decision["decision_id"], decision["decision_version"], gate_decisions.RECOVERY_REQUIRED,
+                        last_error_code="stop_requested"):
+                    raise AssertionError("gate decision moved under the stop's guard")
         held.add(node_key)
     return held, notes
 

@@ -77,10 +77,12 @@ def _job_wire(job: Optional[dict]) -> Optional[dict]:
 
 
 def _answer(run_id: str, row: dict) -> dict:
-    """200 for a finished decision (rejected, succeeded, canceled, abandoned), 202 while it holds the gate."""
+    """200 for a finished decision (rejected, succeeded, canceled, abandoned), 202 while it holds the gate. T#3: the
+    decision also tells what the common Git job actions may do with it (``recovery.flags``)."""
+    from flowgate.gate_decisions import recovery
     row = repo.get(row["decision_id"]) or row
     status = 202 if row["status"] in repo.RESERVING else 200
-    return {legacy.STATUS_KEY: status, "run": legacy.run_payload(run_id), "decision": history.entry(row),
+    return {legacy.STATUS_KEY: status, "run": legacy.run_payload(run_id), "decision": recovery.decision_wire(row),
             "job": _job_wire(legacy.get_job(row.get("job_id")))}
 
 
@@ -225,6 +227,8 @@ def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Opti
             stored = repo.insert_decision({**base, **target, "status": repo.SUCCEEDED, "settings": snapshot})
             _apply(ctx, state, policies, kind, node_key, user_id, comment, stored)
             return _answer(run_id, stored)
+        from flowgate.gate_decisions import publish
+        publish.install()                            # T#3: the executor that runs it (idempotent)
         decision_id = repo.new_decision_id()
         job = legacy.insert_gate_publish(
             project_id, {"decision_id": decision_id, "group_id": flow_id, "run_id": run_id, "node_key": node_key},
@@ -263,6 +267,11 @@ def _summary(entry: Optional[dict]) -> Optional[dict]:
     return {k: entry.get(k) for k in keys}
 
 
+def recovery_flags(row: dict, job: Optional[dict]) -> dict:
+    from flowgate.gate_decisions import recovery
+    return recovery.flags(row, job)
+
+
 def run_wire(run: dict, rows: list[dict]) -> dict:
     """``{gate node key: …}`` for every gate of the run: the current decision (the newest of the gate's history), whether
     a decision holds the gate and its job, ``can_decide`` (the server's judgement of the confirm / reject buttons:
@@ -286,9 +295,13 @@ def run_wire(run: dict, rows: list[dict]) -> dict:
         held = reserved.get(key)
         lock = settings_lock.lock_reason(flow_id, key)
         reset = repo.reset_required(flow_id, key) is not None
+        job = legacy.get_job(held.get("job_id")) if held else None
         out[key] = {
             "decision": _summary(latest), "decision_in_progress": held is not None,
-            "job": _job_wire(legacy.get_job(held.get("job_id"))) if held else None,
+            "job": _job_wire(job),
+            # T#3 (D0007 §7.3): what the common Git job actions may do with the held decision now
+            "recovery": ({"decision_id": held["decision_id"], "decision_version": held["decision_version"],
+                          "status": held["status"], **recovery_flags(held, job)} if held else None),
             "can_decide": (decided and run["status"] in DECIDABLE_RUN_STATUSES and r["status"] == "open"
                            and held is None and blocked is None and not reset),
             "policy_undecided": not decided, "blocked_reason": blocked, "settings_locked": lock is not None, "settings_lock_reason": lock,

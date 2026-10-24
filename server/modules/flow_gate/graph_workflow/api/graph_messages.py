@@ -120,6 +120,48 @@ RUN_EDIT_MESSAGES = {
         "en": "The run has no such confirm card.",
         "ja": "この実行に該当する確認カードがありません。",
     },
+    # flowgate.v02.0085 T#3 (D0007 §7.2 retry / cancel / resolve of an accepted decision)
+    "gate_decision_not_found": {
+        "ko": "이 확인 카드에 해당 결정이 없습니다.",
+        "en": "The confirm card has no such decision.",
+        "ja": "この確認カードに該当する決定がありません。",
+    },
+    "gate_decision_not_retryable": {
+        "ko": "이 결정은 다시 시도할 수 없습니다.",
+        "en": "This decision cannot be retried.",
+        "ja": "この決定は再試行できません。",
+    },
+    "gate_decision_not_cancelable": {
+        "ko": "이 결정은 지금 취소할 수 없습니다.",
+        "en": "This decision cannot be canceled now.",
+        "ja": "この決定は現在取り消せません。",
+    },
+    "gate_effects_present": {
+        "ko": "이미 반영된 Git 효과가 있어 취소할 수 없습니다. 다시 시도하거나 해결 처리로 종결하세요.",
+        "en": "Git effects already took place, so it cannot be canceled. Retry it or close it through recovery.",
+        "ja": "すでに反映された Git の効果があるため取り消せません。再試行するか、解決処理で終結してください。",
+    },
+    "gate_effects_unknown": {
+        "ko": "Git 효과가 있었는지 확인할 수 없어 취소할 수 없습니다. 다시 시도하거나 해결 처리로 종결하세요.",
+        "en": "Whether Git effects took place is unknown, so it cannot be canceled. Retry it or close it through "
+              "recovery.",
+        "ja": "Git の効果の有無を確認できないため取り消せません。再試行するか、解決処理で終結してください。",
+    },
+    "gate_job_active": {
+        "ko": "이 결정의 Git 작업이 실행 중입니다. 작업이 멈춘 뒤 다시 요청하세요.",
+        "en": "The decision's Git job is running. Request again once it has stopped.",
+        "ja": "この決定の Git 作業が実行中です。作業が止まってから再度リクエストしてください。",
+    },
+    "gate_resolution_not_allowed": {
+        "ko": "복구가 필요한 결정만 해결 처리로 종결할 수 있습니다.",
+        "en": "Only a decision that needs recovery can be closed through recovery.",
+        "ja": "復旧が必要な決定のみ解決処理で終結できます。",
+    },
+    "gate_effects_unverified": {
+        "ko": "필요한 Git 효과의 성공을 확인할 수 없어 효과 확정으로 종결할 수 없습니다.",
+        "en": "The required Git effects cannot be verified, so it cannot be closed as effects confirmed.",
+        "ja": "必要な Git の効果の成功を確認できないため、効果確定で終結できません。",
+    },
     # flowgate.v02.0061 T#11: Hold cannot be set on a node done in the Flow's run
     "graph_hold_done_node": {
         "ko": "완료된 노드에는 Hold를 설정할 수 없습니다.",

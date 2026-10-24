@@ -177,6 +177,25 @@ def reservations_of_run(run_id: str) -> dict[str, dict]:
     return {r["node_key"]: _decision(r) for r in rows}
 
 
+def reservations_of_group(group_id: str) -> list[dict]:
+    """T#3 rework: every decision of the group's gates and runs that holds its gate right now (accepted, failed or
+    recovery_required), in acceptance order - unfinished publish work a group writer or the end cleanup must respect."""
+    if not available():
+        return []
+    marks = ", ".join("?" for _ in RESERVING)
+    return [_decision(r) for r in _all(f"SELECT * FROM gate_decisions WHERE group_id = ? AND status IN ({marks}) "
+                                       "ORDER BY accepted_at, decision_id", [group_id, *RESERVING])]
+
+
+def snapshot_reservations(group_id: str) -> list[dict]:
+    """T#3 rework (D0007 §7.3): the group's accepted publish work whose snapshot is not pinned yet - a confirm holding
+    its gate with a job and no ``frozen_sha``. Until the job pins it, the group result writers (the attempt
+    integration, the end cleanup) leave the group branch alone, so nothing integrated after the acceptance enters an
+    earlier decision's snapshot."""
+    return [row for row in reservations_of_group(group_id)
+            if row["decision"] == CONFIRM and row.get("job_id") and not row.get("frozen_sha")]
+
+
 def reset_required(group_id: str, node_key: str) -> Optional[dict]:
     """The abandoned decision that still asks for a Time Machine round split of this gate, or None."""
     if not available():
@@ -200,6 +219,15 @@ def of_node(group_id: str, node_key: str, *, after: Optional[tuple] = None, limi
         sql += " LIMIT ?"
         params.append(int(limit))
     return [_decision(r) for r in _all(sql, params)]
+
+
+def decisions_of_group(group_id: str) -> list[dict]:
+    """flowgate.v02.0085 T#3: every decision of every gate and round of a group, in decision order (the end cleanup
+    reads the keep-branch requests of all of them, D0007 §7.1)."""
+    if not available():
+        return []
+    return [_decision(r) for r in _all("SELECT * FROM gate_decisions WHERE group_id = ? "
+                                       "ORDER BY accepted_at, decision_id", [group_id])]
 
 
 def insert_decision(row: dict) -> dict:
@@ -367,6 +395,16 @@ def checkpoints_of_group(group_id: str) -> list[dict]:
         "SELECT * FROM gate_archive_checkpoints WHERE group_id = ? ORDER BY preserved_at, archive_id", [group_id])]
 
 
+def checkpoints_of_project(project_id: str) -> list[dict]:
+    """T#3 rework (D0007 §7.1): every gate checkpoint of the project's groups, newest first - one row per round, the
+    rows the existing archive list shows beside the v0.1 group archives."""
+    if not available():
+        return []
+    return [_decoded(r, "restore_info") for r in _all(
+        "SELECT * FROM gate_archive_checkpoints WHERE group_id IN (SELECT group_id FROM groups WHERE project_id = ?) "
+        "ORDER BY preserved_at DESC, archive_id DESC", [project_id])]
+
+
 def mark_restored(archive_id: str) -> bool:
     """A gate checkpoint restore does not consume the checkpoint (D0007 §7.1): it only notes when."""
     return get_store()._execute_affected(
@@ -404,4 +442,98 @@ def cleanups_of_group(group_id: str) -> list[dict]:
         return []
     return [_decoded(r, "evidence_json") for r in _all(
         "SELECT * FROM gate_cleanup_records WHERE group_id = ? ORDER BY created_at, cleanup_id", [group_id])]
+
+
+def cleanup_of_job(job_id: str) -> Optional[dict]:
+    """T#3 rework: the record a ``gate_cleanup`` job wrote (one per job; a resumed job writes it once)."""
+    if not available():
+        return None
+    return _decoded(_one("SELECT * FROM gate_cleanup_records WHERE job_id = ? ORDER BY created_at, cleanup_id",
+                         [job_id]), "evidence_json")
+
+
+# ── flowgate.v02.0085 T#3: what the effects say, and the recovery requests ────
+
+# The phases whose effect is outside the Flow's own records (D0007 §7.3): a target branch merge, a remote push, an
+# archive ref. The snapshot pin is the job's own internal ref and is no external effect.
+EXTERNAL_PHASES = ("merge", "push", "archive")
+EFFECTS_NONE, EFFECTS_PRESENT, EFFECTS_UNKNOWN = "none", "present", "unknown"
+
+
+def _changed(row: dict) -> bool:
+    evidence = row.get("evidence") or {}
+    return evidence.get("changed", True) is not False
+
+
+def effects_state(decision_id: str) -> str:
+    """``unknown`` when a phase's outcome outside is not known (in flight, timed out, unprovable), else ``present``
+    when a phase changed something outside (a merge commit, a pushed ref, an archive ref), else ``none`` - the evidence
+    a cancel with no effect needs (D0007 §7.3.1). A phase that found its result already there changed nothing."""
+    state = EFFECTS_NONE
+    for row in effects_of(decision_id):
+        if row["phase"] not in EXTERNAL_PHASES:
+            continue
+        if row["status"] == UNKNOWN:
+            return EFFECTS_UNKNOWN
+        if row["status"] == DONE and _changed(row):
+            state = EFFECTS_PRESENT
+    return state
+
+
+def evidence_version(decision_id: str) -> int:
+    """One number for the whole evidence of a decision: it moves whenever any phase's evidence moves (each row's
+    version only grows), so a closer can say which evidence it reviewed (D0007 §7.2 resolve)."""
+    return sum(int(r.get("evidence_version") or 0) for r in effects_of(decision_id))
+
+
+def evidence_refs(decision_id: str) -> list[str]:
+    """T#3 rework (D0007 §7.2 resolve: the evidence version and references the person reviewed): one reference per
+    phase evidence row, ``<decision id>/<phase>@<that row's evidence version>``, in phase order. A reference names
+    exactly one state of one row of this decision, so a moved row or another decision's row is told apart."""
+    return sorted(f"{decision_id}/{r['phase']}@{int(r.get('evidence_version') or 0)}"
+                  for r in effects_of(decision_id))
+
+
+# T#3 rework (D0007 §7.3.2): what an abandon could not keep under a recovery ref stays an obligation in the phase's
+# evidence (``retention``: the SHA, the ref it should have, kept or not). Nothing may delete what holds such a SHA:
+# the end cleanup keeps the slot until the ref is written (it tries again itself, under M).
+RETENTION_KEY = "retention"
+
+
+def retention_obligations(group_id: str) -> list[dict]:
+    """The group's unkept recovery obligations: ``[{decision_id, phase, sha, ref}]``."""
+    out = []
+    for row in decisions_of_group(group_id):
+        for eff in effects_of(row["decision_id"]):
+            keep = (eff.get("evidence") or {}).get(RETENTION_KEY) or {}
+            if keep.get("sha") and not keep.get("kept"):
+                out.append({"decision_id": row["decision_id"], "phase": eff["phase"], "sha": keep["sha"],
+                            "ref": keep.get("ref")})
+    return out
+
+
+REQUEST_TABLE = "gate_decision_requests"
+RETRY, CANCEL, RESOLVE = "retry", "cancel", "resolve"
+RECOVERY_ACTIONS = (RETRY, CANCEL, RESOLVE)
+
+
+def recovery_request(decision_id: str, actor_user_id: str, action: str, request_id: str) -> Optional[dict]:
+    """The stored retry / cancel / resolve request of this key (migration 160), or None."""
+    if not get_store().table_exists(REQUEST_TABLE):
+        return None
+    return _decoded(_one("SELECT * FROM gate_decision_requests WHERE decision_id = ? AND actor_user_id = ? "
+                         "AND action = ? AND request_id = ?", [decision_id, actor_user_id, action, request_id]),
+                    "response_json")
+
+
+def insert_recovery_request(decision_id: str, actor_user_id: str, action: str, request_id: str, fingerprint: str,
+                            http_status: int, response: dict) -> None:
+    """Store one accepted request inside the transaction that did what it asked (a refusal stores nothing)."""
+    if action not in RECOVERY_ACTIONS:
+        raise ValueError(f"not a recovery action: {action!r}")
+    get_store()._execute(
+        "INSERT INTO gate_decision_requests (decision_id, actor_user_id, action, request_id, request_fingerprint, "
+        "http_status, response_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [decision_id, actor_user_id, action, request_id, fingerprint, int(http_status), _json(response),
+         utc_now_ms()])
 

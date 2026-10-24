@@ -390,6 +390,52 @@ def cancel_unstarted_gate_publish(job_id: str, now: str, note: str) -> int:
     )
 
 
+def gate_publish_reopen(job_id: str, now: str) -> int:
+    """flowgate.v02.0085 T#3 (D0007 §7.2 retry): a parked ``gate_publish`` job (``recovery_required``, no live lease)
+    goes back to ``pending`` - the same job, its phase and evidence kept. A new claim gives it a new lease, so a lease
+    of an earlier claim can never write again."""
+    return get_store()._execute_affected(
+        "UPDATE operation_job "
+        "SET status = 'pending', available_at = ?, cancel_requested = 0, phase_note = NULL, retryable = 1, "
+        "recovery_since = NULL, attempt_count = 0, lease_owner = NULL, lease_token = NULL, lease_until = NULL, "
+        "updated_at = ?, touch_seq = touch_seq + 1 "
+        "WHERE job_id = ? AND kind = 'gate_publish' AND status = 'recovery_required' "
+        "AND (lease_until IS NULL OR lease_until < ?)",
+        [now, now, job_id, now],
+    )
+
+
+def gate_publish_close(job_id: str, now: str, status: str, result: str, note: Optional[str],
+                       from_statuses: Iterable[str]) -> int:
+    """flowgate.v02.0085 T#3 (D0007 §7.3.1 / §7.3.2): end a ``gate_publish`` job that no writer holds (no live lease):
+    ``succeeded`` (effects confirmed) or ``cancelled`` (no effect / recovery abandoned, told by ``phase_note``). One
+    CAS: a job a worker claimed meanwhile is not closed (0 = the caller answers ``gate_job_active``)."""
+    if status not in ("succeeded", "cancelled"):
+        raise ValueError(f"a gate job does not end {status!r}")
+    status_sql, statuses = _in(from_statuses)
+    return get_store()._execute_affected(
+        "UPDATE operation_job "
+        "SET status = ?, finished_at = ?, result = ?, phase_note = ?, cancel_requested = ?, "
+        "lease_owner = NULL, lease_token = NULL, lease_until = NULL, updated_at = ?, touch_seq = touch_seq + 1 "
+        "WHERE job_id = ? AND kind = 'gate_publish' AND status IN " + status_sql + " "
+        "AND (lease_until IS NULL OR lease_until < ?)",
+        [status, now, result, note, 1 if status == "cancelled" else 0, now, job_id, *statuses, now],
+    )
+
+
+def gate_publish_park(job_id: str, now: str, code: str, note: str) -> int:
+    """flowgate.v02.0085 T#3 (D0007 §7.3 Stop): a waiting ``gate_publish`` job whose earlier claim already acted is
+    parked in ``recovery_required`` (never retried on its own) for a person's retry or resolve."""
+    return get_store()._execute_affected(
+        "UPDATE operation_job "
+        "SET status = 'recovery_required', last_error_code = ?, phase_note = ?, retryable = 1, recovery_since = NULL, "
+        "lease_owner = NULL, lease_token = NULL, lease_until = NULL, updated_at = ?, touch_seq = touch_seq + 1 "
+        "WHERE job_id = ? AND kind = 'gate_publish' AND status IN ('pending','blocked','retry_wait') "
+        "AND lease_token IS NULL",
+        [code, note, now, job_id],
+    )
+
+
 def mark_cancel_for_release(job_id: str, release_intent: str, now: str) -> int:
     """(b) Waiting job with a freeze record: flag it so only a release claim picks it up."""
     return get_store()._execute_affected(

@@ -73,6 +73,7 @@ def _script(name, dialect="sqlite"):
 
 
 M158, M159 = "158_gate_decision_persistence.sql", "159_operation_job_gate_publish_kind.sql"
+M161 = "161_operation_job_gate_cleanup_kind.sql"           # T#3 rework: the end cleanup job kind
 
 
 # ── migrations ───────────────────────────────────────────────────────────────
@@ -80,11 +81,12 @@ M158, M159 = "158_gate_decision_persistence.sql", "159_operation_job_gate_publis
 def test_the_three_dialects_define_the_same_gate_objects():
     from modules.flow_gate.services.git import job_store
 
-    tables, kinds = {}, {}
+    tables, kinds, kinds159 = {}, {}, {}
     for dialect in DIALECTS:
-        sql158, sql159 = _script(M158, dialect), _script(M159, dialect)
+        sql158, sql159, sql161 = _script(M158, dialect), _script(M159, dialect), _script(M161, dialect)
         tables[dialect] = re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", sql158)
-        kinds[dialect] = re.findall(r"'(\w+)'", re.search(r"kind IN \(([^)]*)\)", sql159).group(1))
+        kinds159[dialect] = re.findall(r"'(\w+)'", re.search(r"kind IN \(([^)]*)\)", sql159).group(1))
+        kinds[dialect] = re.findall(r"'(\w+)'", re.search(r"kind IN \(([^)]*)\)", sql161).group(1))
         for needle in ("valid_attempt_key", "run_id, node_key, actor_user_id, request_id", "legacy_merge_target",
                        "158_legacy_merge_target", "recovery_reset_required", "end_head_sha"):
             assert needle in sql158, (dialect, needle)
@@ -99,6 +101,8 @@ def test_the_three_dialects_define_the_same_gate_objects():
     assert tables["sqlite"] == tables["postgres"] == tables["mysql"]
     assert set(GATE_TABLES) <= set(tables["sqlite"]) and "graph_node_settings_version" in tables["sqlite"]
     assert kinds["sqlite"] == kinds["postgres"] == kinds["mysql"] == list(job_store.KINDS)
+    assert kinds159["sqlite"] == kinds159["postgres"] == kinds159["mysql"] == [
+        k for k in job_store.KINDS if k != "gate_cleanup"]                # 161 only adds the end cleanup job
 
 
 def test_the_gate_tables_keep_history_and_enforce_their_keys(tmp_path):
@@ -188,8 +192,9 @@ def test_a_rerun_of_the_migrations_changes_nothing_and_keeps_the_job_table_whole
     before_rows = rows()
     conn.execute("INSERT INTO gate_data_migrations (name, applied_at) VALUES ('probe', 't')")
     conn.commit()
-    for _ in range(2):                                               # 159 twice, then 158 again
+    for _ in range(2):                                               # 159 twice (and 161), then 158 again
         conn.executescript(_script(M159))
+        conn.executescript(_script(M161))
     conn.executescript(_script(M158))
     conn.execute("PRAGMA foreign_keys = OFF")
     assert rows() == before_rows and columns() == old_columns        # every row and column kept
@@ -414,7 +419,11 @@ def test_the_gate_publish_job_kind_is_keyed_by_the_decision(gate_db):
     other = job_store.create_or_get_job("gate_publish", "flowgate", {**request, "node_key": "gn_x"}, group_id=FA,
                                         wake=False)
     assert other.outcome == job_store.REJECTED and other.code == "request_key_conflict"
-    assert "gate_publish" not in job_runner.executable_kinds()          # no executor yet: the runner never claims it
+    # flowgate.v02.0085 T#3: the gate card's executor runs it now (installed with the gate rule).
+    from flowgate.gate_decisions import publish
+    publish.install()
+    with job_runner._reg_guard:
+        assert job_runner._executors.get("gate_publish") is publish.run
     assert job_store.GATE_CANCEL_REASONS == ("no_effect_canceled", "recovery_abandoned")
     for status in ("succeeded", "cancelled"):                           # a finished job is not resumed
         _sql(gate_db, "UPDATE operation_job SET status = ? WHERE job_id = ?", (status, made.job["job_id"]))

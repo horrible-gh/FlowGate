@@ -367,6 +367,17 @@ def _trailer(row: dict) -> str:
     return f"FlowGate-Attempt: {row['attempt_id']}\nFlowGate-Result: {row['result_commit']}"
 
 
+# 0085 T#3 rework (D0007 §7.3): a confirm accepted with a publish job holds the group branch until its job pinned the
+# snapshot - an integration then waits (``pending``, retried by the release of the job's G like any busy one), so a
+# result integrated after the acceptance never enters that decision's snapshot; it is the next confirm's.
+GATE_SNAPSHOT_RESERVED = "gate_snapshot_reserved"
+
+
+def _gate_snapshot_reserved(flow_id: str) -> bool:
+    from flowgate.gate_decisions import repository as gate_decisions
+    return bool(gate_decisions.snapshot_reservations(flow_id))
+
+
 # The merge session an ``integrating`` attempt opened in this process (its ``conflict`` not recorded yet): a close
 # of exactly that session is the attempt's, however early it comes.
 _opened: dict[str, int] = {}
@@ -388,6 +399,8 @@ def _merge(row: dict) -> tuple[str, object]:
             return PENDING, "session_busy"
         if git.get_branch_merge_group_claim(flow_id) is not None:
             return PENDING, "git_busy"
+        if _gate_snapshot_reserved(flow_id):
+            return PENDING, GATE_SNAPSHOT_RESERVED
         if not root.is_dir():
             return FAILED, "no_group_worktree"
         if branches.check_git_operation_in_progress(root):

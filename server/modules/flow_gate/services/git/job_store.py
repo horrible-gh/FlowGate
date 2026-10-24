@@ -89,7 +89,7 @@ def reconcile_retry_interval_sec() -> int:
 
 KINDS = ("final_approval_publish", "branch_merge_publish", "worktree_provision",
          "worktree_cleanup", "base_publish", "archive_preserve", "archive_restore",
-         "archive_purge", "project_provision", "gate_publish")
+         "archive_purge", "project_provision", "gate_publish", "gate_cleanup")
 FREEZE_KINDS = frozenset(("final_approval_publish",))
 
 # flowgate.v02.0085 T#1 (D0007 §7.2 operation job): ``gate_publish`` is one confirm gate decision's Git apply, archive
@@ -102,6 +102,10 @@ GATE_PUBLISH = "gate_publish"
 GATE_CANCEL_NO_EFFECT = "no_effect_canceled"
 GATE_CANCEL_ABANDONED = "recovery_abandoned"
 GATE_CANCEL_REASONS = (GATE_CANCEL_NO_EFFECT, GATE_CANCEL_ABANDONED)
+# flowgate.v02.0085 T#3 rework (D0007 §7.1 end cleanup, migration 161): ``gate_cleanup`` is the end cleanup of a Flow's
+# group slot after its run completed - its own job, so a lock wait, a crash or a restart resumes it at its recorded
+# step. Its key is a fresh cleanup id per completion (one job per completion, made in the completion's transaction).
+GATE_CLEANUP = "gate_cleanup"
 
 # Meaning fields per kind — requester and time excluded (L 2.13.1).
 _CANONICAL_FIELDS = {
@@ -116,6 +120,7 @@ _CANONICAL_FIELDS = {
     "archive_purge": ("archive_id", "action_seq"),
     "project_provision": ("project_id", "config_generation"),
     "gate_publish": ("decision_id", "group_id", "run_id", "node_key"),
+    "gate_cleanup": ("group_id", "run_id", "cleanup_nonce"),
 }
 
 PUBLISH = "publish"
@@ -181,6 +186,8 @@ def derive_request_key(kind: str, project_id: str, req: dict) -> str:
         raise JobProgramError("unknown_job_kind", kind=kind)
     if kind == GATE_PUBLISH:
         return "gpb:" + _require(kind, req, "decision_id")[0]          # the decision id is the key, nothing else
+    if kind == GATE_CLEANUP:
+        return "gcl:" + ":".join(_require(kind, req, "group_id", "run_id", "cleanup_nonce"))
     client_key = req.get("client_request_key")
     if client_key:
         return f"{kind}:{client_key}"
@@ -339,20 +346,84 @@ def insert_gate_publish(project_id: str, req: dict, *, group_id: str, target_key
     """flowgate.v02.0085 T#2 (D0007 §3.3 / §7.3): the ``gate_publish`` job of one confirm, written INSIDE the caller's
     transaction so the decision intent and its job commit together. Its key is the decision id the same transaction
     creates, so no unique race can hit it (the reason ``create_or_get_job`` keeps its own transaction does not apply).
-    No wake-up here: the caller signals ``notify_created`` after its commit."""
+    No wake-up here: the caller signals ``notify_created`` after its commit.
+
+    T#3 rework (D0007 §7.3: a group's external publishes go in their acceptance order): the payload gets the job's
+    ``group_seq``, one more than any gate job of the group had. The caller's Flow guard serializes the acceptances of
+    a group, so the number is the acceptance order (``created_at`` has a one-second grain, the job id is random)."""
     if not in_transaction():
         raise JobProgramError("gate_publish_outside_transaction", kind=GATE_PUBLISH)
-    key = derive_request_key(GATE_PUBLISH, project_id, req)
+    data = dict(payload or {})
+    data["group_seq"] = next_gate_publish_seq(group_id)
+    return _insert_in_transaction(GATE_PUBLISH, project_id, req, group_id=group_id, target_key=target_key,
+                                  payload=data, requested_by=requested_by)
+
+
+def insert_gate_cleanup(project_id: str, req: dict, *, group_id: str, payload=None,
+                        requested_by: Optional[str] = None) -> dict:
+    """flowgate.v02.0085 T#3 rework (D0007 §7.1): the ``gate_cleanup`` job of a completed run, written INSIDE the
+    completion's transaction (its key is a fresh cleanup id). The caller signals ``notify_created`` after the commit."""
+    if not in_transaction():
+        raise JobProgramError("gate_cleanup_outside_transaction", kind=GATE_CLEANUP)
+    return _insert_in_transaction(GATE_CLEANUP, project_id, req, group_id=group_id, target_key=None,
+                                  payload=payload, requested_by=requested_by)
+
+
+def _insert_in_transaction(kind: str, project_id: str, req: dict, *, group_id: str, target_key: Optional[str],
+                           payload, requested_by: Optional[str]) -> dict:
+    key = derive_request_key(kind, project_id, req)
     now = now_iso()
     job_id = new_job_id()
     db.insert_job({
-        "job_id": job_id, "kind": GATE_PUBLISH, "project_id": project_id, "group_id": group_id,
+        "job_id": job_id, "kind": kind, "project_id": project_id, "group_id": group_id,
         "target_key": target_key, "request_key": key, "request_key_hash": _sha256_hex(key),
-        "request_fingerprint": fingerprint(GATE_PUBLISH, project_id, req), "payload": _json_or_none(payload),
+        "request_fingerprint": fingerprint(kind, project_id, req), "payload": _json_or_none(payload),
         "requested_by": requested_by, "available_at": now, "created_at": now, "updated_at": now,
         "has_freeze_phase": 0, "status": "pending", "phase": "start",
     })
     return db.get_job(job_id)
+
+
+def _payload_of(job: dict) -> dict:
+    raw = job.get("payload")
+    if isinstance(raw, dict):
+        return raw
+    try:
+        value = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _gate_order(job: dict) -> tuple:
+    seq = _payload_of(job).get("group_seq")
+    return (int(seq) if isinstance(seq, int) else 0, str(job.get("created_at") or ""), str(job.get("job_id") or ""))
+
+
+def next_gate_publish_seq(group_id: str) -> int:
+    """One more than the highest ``group_seq`` of the group's gate jobs (1 for the first)."""
+    rows = db.jobs_of_group(group_id, GATE_PUBLISH, db.WAITING_STATUSES + db.EXECUTING_STATUSES + db.TERMINAL_STATUSES
+                            + ("recovery_required",))
+    return 1 + max((_gate_order(r)[0] for r in rows), default=0)
+
+
+def gate_publish_predecessor(job: dict) -> Optional[dict]:
+    """The unfinished gate job of the same group accepted before ``job`` (D0007 §7.3 group serialization), or None.
+    Unfinished = not succeeded / failed / cancelled: waiting, running and parked for a person alike. Once None it stays
+    None: an earlier job never becomes unfinished again (a terminal job is never resumed, I5; a retry only reopens a
+    parked, i.e. still unfinished, job) and no job is ever accepted before an existing one."""
+    if job.get("kind") != GATE_PUBLISH or not job.get("group_id"):
+        return None
+    mine = _gate_order(job)
+    earlier = [r for r in db.active_jobs_of_group(job["group_id"], GATE_PUBLISH)
+               if r["job_id"] != job["job_id"] and _gate_order(r) < mine]
+    return min(earlier, key=_gate_order) if earlier else None
+
+
+def next_gate_publish(group_id: str) -> Optional[dict]:
+    """The group's first unfinished gate job in acceptance order (the one a finished predecessor lets go)."""
+    rows = db.active_jobs_of_group(group_id, GATE_PUBLISH)
+    return min(rows, key=_gate_order) if rows else None
 
 
 def notify_created(job: Optional[dict]) -> None:
@@ -367,6 +438,46 @@ def cancel_unstarted_gate_publish(job_id: str, note: str = GATE_CANCEL_NO_EFFECT
     if note not in GATE_CANCEL_REASONS:
         raise JobProgramError("unknown_gate_cancel_reason", note=note)
     return db.cancel_unstarted_gate_publish(job_id, now_iso(), note) == 1
+
+
+# flowgate.v02.0085 T#3 (D0007 §7.2 / §7.3): a ``gate_publish`` job that waits for a person is ``recovery_required``
+# with one of these ``phase_note`` values and no ``recovery_since``, so the Sweeper never retries it on its own; a
+# conflict hand-off keeps ``recovery_since`` so the job goes on by itself once the merge review closed.
+GATE_PARKED_FAILED = "gate_failed"
+GATE_PARKED_RECOVERY = "gate_recovery"
+GATE_PARKED_CONFLICT = "gate_conflict"
+GATE_PARKED_NOTES = (GATE_PARKED_FAILED, GATE_PARKED_RECOVERY, GATE_PARKED_CONFLICT)
+GATE_CLOSABLE = ("pending", "blocked", "retry_wait", "recovery_required")
+
+
+def reopen_gate_publish(job_id: str) -> bool:
+    """retry: the parked job goes back to pending (same job, phase and evidence; a new lease at its next claim)."""
+    return db.gate_publish_reopen(job_id, now_iso()) == 1
+
+
+def close_gate_publish(job_id: str, status: str, note: Optional[str], result=None,
+                       from_statuses=GATE_CLOSABLE) -> bool:
+    """End a gate job no writer holds: ``succeeded`` or ``cancelled`` (``note``: why). False = a writer holds it or it
+    already ended; nothing was written."""
+    if status == CANCELLED and note not in GATE_CANCEL_REASONS:
+        raise JobProgramError("unknown_gate_cancel_reason", note=note)
+    return db.gate_publish_close(job_id, now_iso(), status, _json_or_none(result) or status, note,
+                                 from_statuses) == 1
+
+
+def park_gate_publish(job_id: str, code: str, note: str = GATE_PARKED_RECOVERY) -> bool:
+    """Stop: a waiting gate job that already acted waits for a person (``recovery_required``)."""
+    return db.gate_publish_park(job_id, now_iso(), code, note) == 1
+
+
+def gate_writer_active(job: Optional[dict]) -> bool:
+    """A writer holds the gate job now: it is executing, or a claim's lease on it has not run out."""
+    if not job:
+        return False
+    if job.get("status") in EXECUTING:
+        return True
+    until = job.get("lease_until")
+    return bool(job.get("lease_token")) and bool(until) and str(until) >= now_iso()
 
 
 # ── claim (L 2.14) ───────────────────────────────────────────────────────────
@@ -399,6 +510,12 @@ def claim(job_id: str, mode: str) -> ClaimResult:
     """One CAS on one job (I1). WON carries a fresh JobContext with a new lease_token."""
     if mode not in _CLAIMS:
         raise JobProgramError("unknown_claim_mode", mode=mode)
+    if mode == PUBLISH:
+        # flowgate.v02.0085 T#3 rework (D0007 §7.3): a group's gate jobs run in their acceptance order - one whose
+        # earlier job is unfinished is not claimed (the predicate only turns true once; see gate_publish_predecessor).
+        job = _fresh_job(job_id)
+        if job is not None and job.get("kind") == GATE_PUBLISH and gate_publish_predecessor(job) is not None:
+            return ClaimResult(LOST)
     instance_id = _instance_id()
     if instance_id is None:
         return ClaimResult(LOST)

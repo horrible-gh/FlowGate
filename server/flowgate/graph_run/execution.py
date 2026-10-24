@@ -602,6 +602,11 @@ def manual_git_blocker(run_id):
     return None
 
 
+def _settle():
+    from flowgate.graph_run import settle
+    return settle
+
+
 _ACTIONS = {
     "manual_git_blocker": manual_git_blocker,
     "admission": scheduling.admission, "admit": scheduling.admit, "legacy_acquire": scheduling.legacy_acquire,
@@ -620,6 +625,8 @@ _ACTIONS = {
     "hold_command": result_merge.hold_command, "propagation_held": result_merge.propagation_held,
     # T#11: the Flow's held node keys, never opened (``run_apply.read_run_state`` -> ``RunState.held``).
     "held_nodes": hold.held,
+    # 0085 T#3: gates waiting for a round split after an abandoned recovery, never opened either (not a Hold).
+    "opening_held": lambda flow_id: _settle().opening_held(flow_id),
     # T#13: an unfinished Graph Time Machine operation refuses a step / full command (``run_service``).
     "time_machine_refusal": lambda flow_id: _time_machine().require_no_operation(flow_id),
     # T#14: a chat's edit / edit-once source access while the Flow's run is locked (``token_service.issue``).
