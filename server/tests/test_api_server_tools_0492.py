@@ -242,7 +242,7 @@ def test_full_remote_source_toolset_is_exposed_without_worktree(monkeypatch, tmp
     # 0672 T0004: TR(new) keeps the full live toolset and no longer receives Bundle tools.
     # 0638 T#1: ...and runs Self-check before its TR exists.
     assert names == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS) + list(tools.SELF_CHECK_NAMES)
-    assert {"read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "patch", "write", "remove"} == set(tools.SOURCE_OPS.values())
+    assert {"read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "patch", "write", "remove", "move"} == set(tools.SOURCE_OPS.values())
     for name in tools.SOURCE_OPS:
         assert tools.SCHEMAS[name]["additionalProperties"] is False
 

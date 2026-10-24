@@ -25,7 +25,7 @@ def test_kind_read_write_for_new_or_edit_tr_tsr(monkeypatch, action_scope, step_
     assert result["kind"] == "read_write"
     assert result["reason"] is None
     assert [item["name"] for item in result["tools"]] == [
-        "read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "write", "patch", "remove"
+        "read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "write", "patch", "move", "remove"
     ]
 
 
@@ -138,7 +138,7 @@ def test_locale_normalization_catalog_order_and_exact_notes(monkeypatch):
     # order, one entry short. Both spellings are asserted: the literal list keeps this a
     # real pin, the derived list keeps "order comes from DISPLAY_ORDER" the reason.
     assert [item["name"] for item in result["tools"]] == [
-        "read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "write", "patch", "remove"
+        "read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "write", "patch", "move", "remove"
     ]
     assert [item["name"] for item in result["tools"]] == [
         name for name in tool_registry.DISPLAY_ORDER
