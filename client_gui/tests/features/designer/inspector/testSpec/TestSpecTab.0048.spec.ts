@@ -302,7 +302,7 @@ describe('test section — reading (flowgate.v02.0048 T#11)', () => {
     expect(el(w, 'test-spec-cancel').exists()).toBe(false)
     expect(el(w, 'test-spec-reason').exists()).toBe(false)
     expect(el(w, 'test-spec-open').exists()).toBe(true)
-    expect(isDisabled(w, 'test-spec-open')).toBe(true)
+    expect(isDisabled(w, 'test-spec-open')).toBe(false)
     expect(el(w, 'test-spec-open-spec').exists()).toBe(false)
     expect(el(w, 'test-spec-gate').exists()).toBe(false)
   })
@@ -332,13 +332,13 @@ describe('test section — reading (flowgate.v02.0048 T#11)', () => {
     expect(opened()).toEqual([[LEGACY_TS_DOC, 'view']])
   })
 
-  it('T2 scenario entry is connected while the T3 report stays unconnected; execution is independent', async () => {
+  it('T2 scenario and T3 report entries are connected; opening them is independent of execution', async () => {
     const w = await mountTab(target())
     expect(isDisabled(w, 'test-card-scenario-open')).toBe(false)
     expect(el(w, 'test-card-scenario-open').attributes('title')).not.toBe('연결 예정')
     await click(w, 'test-card-scenario-open')
-    expect(isDisabled(w, 'test-spec-open')).toBe(true)
-    expect(el(w, 'test-spec-open').attributes('title')).toBe('연결 예정')
+    expect(isDisabled(w, 'test-spec-open')).toBe(false)
+    expect(el(w, 'test-spec-open').attributes('title')).toBe('문서 열기')
     await click(w, 'test-spec-open')
     expect(opened()).toEqual([])
     expect(startCall).not.toHaveBeenCalled()
@@ -487,7 +487,7 @@ describe('test section — ▶ 실행 and ■ 취소 (flowgate.v02.0048 T#11)', 
     // Reading and opening are queries: still possible.
     await click(w, 'test-spec-open')
     expect(opened()).toHaveLength(0)
-    expect(isDisabled(w, 'test-spec-open')).toBe(true)
+    expect(isDisabled(w, 'test-spec-open')).toBe(false)
   })
 
   it('403 holds for the document it was answered on: another TS offers ▶ 실행 again (and is refused again by the server)', async () => {
@@ -655,7 +655,7 @@ describe('test section — read-only Flows (flowgate.v02.0048 T#11)', () => {
     expect(startCall).not.toHaveBeenCalled()
     await click(w, 'test-spec-open')
     expect(opened()).toHaveLength(0)
-    expect(isDisabled(w, 'test-spec-open')).toBe(true)
+    expect(isDisabled(w, 'test-spec-open')).toBe(false)
   })
 
   it('Graph draft view: enabled; ■ 취소 of a live run in revision view is disabled the same way', async () => {
