@@ -184,12 +184,8 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     }
     assert body["context"]["tool_kind"] == "read_write"
     counts = {item["name"]: item["children_count"] for item in body["items"]}
-    # Stays 11: flowgate.default.0482 T0011 registered `resolve_base_dirty` as a
-    # twelfth catalog tool, but tool_registry.SCOPE_BOUND_TOOLS binds it to the
-    # `resolve_base_dirty` action_scope. A TR token is read_write yet would get 403 on
-    # that op, so the catalog it sees keeps the eleven kind-wide tools (0524 T0004 added
-    # `show`, and 0524 T0006 added `merge_preview`).
-    assert counts["source_tools"] == 11
+    # 0092 adds move to the twelve kind-wide tools; resolve_base_dirty stays scope-bound.
+    assert counts["source_tools"] == 12
     assert counts["authoring_guide"] == 1
 
 

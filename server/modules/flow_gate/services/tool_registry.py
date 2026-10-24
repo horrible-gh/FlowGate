@@ -11,9 +11,9 @@ from modules.flow_gate.settings import source_mode_service
 _logger = logging.getLogger(__name__)
 
 VERSION = "v1"
-DISPLAY_ORDER = ("read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "write", "patch", "remove", "resolve_base_dirty")
+DISPLAY_ORDER = ("read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "write", "patch", "move", "remove", "resolve_base_dirty")
 READ_TOOLS = frozenset({"read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview"})
-WRITE_TOOLS = frozenset({"write", "patch", "remove", "resolve_base_dirty"})
+WRITE_TOOLS = frozenset({"write", "patch", "move", "remove", "resolve_base_dirty"})
 MUTATING_STEP_TYPES = frozenset({"TR", "TSR", "TS"})
 
 # Tools that belong to ONE action scope rather than to a kind (0482 T0011 x 0507/0492).
@@ -86,8 +86,8 @@ NOTES = {
         "path_rule": "모든 경로는 프로젝트 소스 루트 기준 상대경로입니다. 절대경로나 '..' 세그먼트를 보내지 마세요.",
         "auth_rule": "요청 헤더는 멘트에서 받은 것과 같은 Authorization: Bearer <작업 토큰> 을 씁니다.",
         "no_disk_edit": "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다.",
-        "read_only": "이 단계는 조사 전용입니다. write / patch / remove 를 호출하지 마세요.",
-        "report_changes": "write/patch/remove가 성공하면 변경한 소스 파일을 작업 레포트에 요약해 남기세요.",
+        "read_only": "이 단계는 조사 전용입니다. write / patch / move / remove 를 호출하지 마세요.",
+        "report_changes": "write/patch/move/remove가 성공하면 변경한 소스 파일을 작업 레포트에 요약해 남기세요.",
         "scratch_rule": "조사·디버깅용 임시 파일, 덤프, 노트는 write/patch로 프로젝트 소스 트리에 남기지 말고 멘트에 동봉된 이 작업 토큰의 scratch 디렉터리에 두세요. 0382에서 소스 트리의 흔적이 finalize 흡수 커밋을 거쳐 main에 들어간 전례를 막기 위한 규정입니다.",
         "see_detail": "사용법 상세는 GET /flowgate/api/v1/help/tools/{name} 으로 도구별로 확인하세요.",
         "see_detail_items": "사용법 상세는 GET /flowgate/api/v1/help/items/source_tools/{name} 으로 도구별로 확인하세요.",
@@ -101,8 +101,8 @@ NOTES = {
         "path_rule": "すべてのパスはプロジェクトソースルートからの相対パスです。絶対パスや '..' セグメントを送らないでください。",
         "auth_rule": "リクエストヘッダーには、メントで受け取ったものと同じ Authorization: Bearer <作業トークン> を使います。",
         "no_disk_edit": "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。",
-        "read_only": "この段階は調査専用です。write / patch / remove を呼ばないでください。",
-        "report_changes": "write / patch / remove が成功したら、変更したソースファイルを作業レポートに要約して残してください。",
+        "read_only": "この段階は調査専用です。write / patch / move / remove を呼ばないでください。",
+        "report_changes": "write / patch / move / remove が成功したら、変更したソースファイルを作業レポートに要約して残してください。",
         "scratch_rule": "調査・デバッグ用の一時ファイル、ダンプ、メモは write / patch でプロジェクトソースツリーに残さず、メントに記載されたこの作業トークンの scratch ディレクトリに置いてください。0382でソースツリーの残骸が finalize の吸収コミットを経て main に入った前例を防ぐための規則です。",
         "see_detail": "使い方の詳細は GET /flowgate/api/v1/help/tools/{name} でツールごとに確認してください。",
         "see_detail_items": "使い方の詳細は GET /flowgate/api/v1/help/items/source_tools/{name} でツールごとに確認してください。",
@@ -116,8 +116,8 @@ NOTES = {
         "path_rule": "All paths are project-source-root relative; do not send absolute paths or '..' segments.",
         "auth_rule": "Use the same Authorization: Bearer <work token> you received in the ment.",
         "no_disk_edit": "Do not edit the project source on disk directly — every source read and change goes through these tools.",
-        "read_only": "This step is investigation-only for source access. Do not call write, patch, or remove.",
-        "report_changes": "After write, patch, or remove succeeds, summarize the changed source files in the task report.",
+        "read_only": "This step is investigation-only for source access. Do not call write, patch, move, or remove.",
+        "report_changes": "After write, patch, move, or remove succeeds, summarize the changed source files in the task report.",
         "scratch_rule": "Put investigation/debugging temporary files, dumps, and notes in this work token's scratch directory supplied in the ment; never leave them in the project source tree via write or patch. This prevents a repeat of incident 0382, where source-tree debris entered main through the finalize absorb commit.",
         "see_detail": "For usage detail, call GET /flowgate/api/v1/help/tools/{name} per tool.",
         "see_detail_items": "For usage detail, call GET /flowgate/api/v1/help/items/source_tools/{name} per tool.",
@@ -603,6 +603,39 @@ ATTACHMENT_EXAMPLE_RESPONSES = {
     "attachment_list": {"ok": True, "doc_id": "flowgate.default.0523.0005-TR", "attachments": [{"filename": "schema.json", "size": 12345, "content_type": "application/json", "uploaded_at": "2026-09-04T09:14:30+09:00"}], "count": 1},
     "attachment_read": {"ok": True, "doc_id": "flowgate.default.0523.0005-TR", "attachment": {"filename": "schema.json", "size": 12345, "content_type": "application/json"}, "kind": "text", "encoding": "utf-8", "content_encoding": "identity", "content": "{\n  \"title\": \"...\"\n}", "truncated": False},
     "attachment_copy": {"ok": True, "doc_id": "flowgate.default.0523.0005-TR", "filename": "schema.json", "destination": {"project_id": "flowgate", "group_id": "flowgate.default.0523", "target_path": "assets/schema.json", "path_base": "source"}, "size": 12345, "content_sha256": "0123456789abcdef", "copied_at": "2026-09-04T09:20:00+09:00"},
+}
+
+
+# 0092: one catalog entry supplies /help/tools, /help source_tools and mentions.
+for _locale, _summary, _source, _target, _caution in (
+    ("ko", "일반 파일 하나를 덮어쓰기 없이 이동하거나 이름을 바꾼다.",
+     "이동할 일반 파일의 소스 루트 상대 경로.", "목표 파일의 소스 루트 상대 경로. 필요한 상위 디렉터리는 자동 생성한다.",
+     "원본과 목표는 같은 배정 워크트리 안이어야 한다. 기존 목표, 동일 경로, symlink/junction, 디렉터리 이동을 거부한다. 내용과 Git staging을 보존하며 commit/push하지 않는다."),
+    ("ja", "通常ファイル1つを上書きせず移動または改名する。",
+     "移動元の通常ファイルのソースルート相対パス。", "移動先ファイルのソースルート相対パス。必要な親ディレクトリは自動作成する。",
+     "同じ作業ツリー内のみ。既存の移動先、同一パス、symlink/junction、ディレクトリ移動は拒否する。内容とGit stagingを保持しcommit/pushしない。"),
+    ("en", "Move or rename one regular file without overwriting a target.",
+     "Source-root-relative path of the regular file to move.", "Source-root-relative target file path. Missing parent directories are created.",
+     "Both paths must be inside the authorized worktree. Existing targets, identical paths, symlink/junction aliases and directory moves are rejected. Preserves bytes and Git staging; never commits or pushes."),
+):
+    SUMMARY[_locale]["move"] = _summary
+    FIELDS.setdefault("move", {})[_locale] = [
+        ("source_path", "string", True, None, _source),
+        ("target_path", "string", True, None, _target),
+    ]
+    CAUTIONS.setdefault("move", {})[_locale] = [_caution]
+    ERRORS.setdefault("move", {})[_locale] = [
+        (404, "not_found", "source_not_found"),
+        (409, "conflict", "target_exists / move_failed / worktree unavailable or busy"),
+        (422, "invalid_request", "same_path / unsafe_move_path / invalid_move_path / invalid fields"),
+        (403, "forbidden", "write scope required / move_access_denied"),
+        (503, "unavailable", "atomic_move_unavailable"),
+    ]
+EXAMPLE_BODIES["move"] = {"source_path": "app/old.py", "target_path": "lib/new.py"}
+EXAMPLE_RESPONSES["move"] = {
+    "ok": True, "op": "move", "server_ts": "2026-10-24T12:00:00+09:00",
+    "source_path": "app/old.py", "target_path": "lib/new.py", "moved": True, "size": 42,
+    "continuation": deepcopy(EXAMPLE_RESPONSES["write"]["continuation"]),
 }
 
 

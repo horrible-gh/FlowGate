@@ -115,6 +115,7 @@ def test_source_alias_to_operation_mapping_is_unchanged():
         "patch_source_file": "patch",
         "write_source_file": "write",
         "remove_source_file": "remove",
+        "move_source_file": "move",
     }
 
 

@@ -19,16 +19,17 @@ DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
 CONFLICT_SCOPE = "resolve_conflict"
 # 0608 T0007: a conflict resolver changes files only through the bound resolve endpoint,
 # which validates every chunk. Whatever the registry grows into, these never reach it.
-_CONFLICT_NEVER_OPS = frozenset({"write", "patch", "remove"})
+_CONFLICT_NEVER_OPS = frozenset({"write", "patch", "remove", "move"})
 BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
 SNAPSHOT_NAMES = ("request_source_snapshot", "access_source_snapshot", "run_source_snapshot")
 SELF_CHECK_NAMES = ("run_self_check", "read_self_check", "cancel_self_check")
-SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file")
+SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file", "move_source_file")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
 SOURCE_OPS = {
     "read_source_file": "read", "search_source": "grep", "glob_source": "glob",
     "stat_source": "stat", "diff_source": "diff", "log_source": "log", "show_commit_source": "show",
     "merge_preview_source": "merge_preview",
+    "move_source_file": "move",
     "patch_source_file": "patch", "write_source_file": "write", "remove_source_file": "remove",
 }
 
@@ -94,6 +95,7 @@ SCHEMAS = {
     "merge_preview_source": _obj({"target_ref": {"type": "string", "minLength": 1}}),
     "patch_source_file": _obj({"path": {"type": "string", "minLength": 1}, "old_string": {"type": "string", "minLength": 1}, "new_string": {"type": "string"}, "replace_all": {"type": "boolean"}, "encoding": {"type": "string"}}, ["path", "old_string", "new_string"]),
     "write_source_file": _obj({"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "mode": {"type": "string", "enum": ["create", "overwrite", "append"]}, "encoding": {"type": "string"}}, ["path", "content"]),
+    "move_source_file": _obj({"source_path": {"type": "string", "minLength": 1}, "target_path": {"type": "string", "minLength": 1}}, ["source_path", "target_path"]),
     "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),
     "run_self_check": _obj({"program": {"type": "string", "minLength": 1}, "args": {"type": "array", "items": {"type": "string"}}, "cwd": {"type": "string"}, "timeout_seconds": {"type": "integer", "minimum": 1}}, ["program"]),
     "read_self_check": _obj({
@@ -140,6 +142,11 @@ REGISTER_SCHEMAS = {
 }
 
 DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *SOURCE_NAMES, *SELF_CHECK_NAMES)}
+DESCRIPTIONS["move_source_file"] = (
+    "Move or rename one regular file inside the authorized worktree without overwriting any target. "
+    "source_path and target_path are source-root-relative; missing target parents are created. "
+    "Preserves bytes and Git staging; rejects aliases, directories, and paths outside the worktree."
+)
 DESCRIPTIONS["run_self_check"] = (
     "The only way a TR edit or TR(new) worker runs tests/verification. Runs program+args[] (cwd, timeout_seconds) in "
     "the current managed worktree and returns a self_check_run_id. In a TR(new) step the TR does not exist yet: the "

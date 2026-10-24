@@ -40,12 +40,12 @@ def test_ops_and_scopes_registered():
     # 0482 T0011 added the group-less base-dirty decision op; it is a real entry in the
     # op registry (scope "write"), advertised only to its own action_scope.
     assert set(svc.OPS) == {"read", "write", "grep", "glob", "remove", "patch", "stat", "diff", "log",
-                            "show", "merge_preview", "resolve_base_dirty"}
+                            "show", "merge_preview", "move", "resolve_base_dirty"}
     # P0004 §0.4 — no new scope value, so remote_tool_grant_scope needs no migration.
     assert svc.OP_SCOPE["patch"] == "write"
     assert svc.OP_SCOPE["stat"] == "read"
     # P0004 §0.5 — patch mutates, stat does not.
-    assert svc._MUTATING_OPS == {"write", "remove", "patch", "resolve_base_dirty"}
+    assert svc._MUTATING_OPS == {"write", "remove", "patch", "move", "resolve_base_dirty"}
     assert "stat" not in svc._MUTATING_OPS
     assert svc._PATH_VALIDATE_SINGLE_FIELD_OPS >= {"patch", "stat"}
 

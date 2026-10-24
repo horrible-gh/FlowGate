@@ -61,7 +61,7 @@ _logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-OPS = ("read", "diff", "log", "show", "merge_preview", "write", "grep", "glob", "remove", "patch", "stat", "resolve_base_dirty")
+OPS = ("read", "diff", "log", "show", "merge_preview", "write", "grep", "glob", "remove", "patch", "stat", "move", "resolve_base_dirty")
 _WORKER_GRANT_PREFIX = "worker_"
 # The mutating step types live in tool_registry.MUTATING_STEP_TYPES — the single judgement
 # point (0349 D0004 D-2). This module reaches them through tool_registry.kind_for_token.
@@ -91,6 +91,7 @@ OP_SCOPE = {
     "glob": "grep",
     "remove": "remove",
     "patch": "write",
+    "move": "write",
     "stat": "read",
     "resolve_base_dirty": "write",
 }
@@ -99,7 +100,7 @@ OP_SCOPE = {
 # three decision points (mutation source-root gate / explorer SSE / continuation ment). patch
 # has to appear at all three, and a single constant is what stops a future op from reaching
 # two of them and silently landing in the base checkout (0205). `stat` is NOT here — it reads.
-_MUTATING_OPS = frozenset({"write", "remove", "patch", "resolve_base_dirty"})
+_MUTATING_OPS = frozenset({"write", "remove", "patch", "move", "resolve_base_dirty"})
 
 # ③ path validation: ops whose only path-bearing field is `path`. grep/glob carry a second
 # pattern field and keep their own branches. Leaving patch/stat out would skip ③ entirely.
@@ -398,6 +399,8 @@ def _present_path_fields(op: str, body: dict) -> list[str]:
     if op in _PATH_VALIDATE_SINGLE_FIELD_OPS:
         if body.get("path") is not None:
             out.append(body["path"])
+    elif op == "move":
+        out.extend(body[key] for key in ("source_path", "target_path") if body.get(key) is not None)
     elif op == "grep":
         if body.get("path") is not None:
             out.append(body["path"])
@@ -448,6 +451,9 @@ def _validate_required(op: str, body: dict) -> None:
         if mode is not None and mode not in ("create", "overwrite", "append"):
             raise _OpError(422)
         _validate_encoding(body)
+    elif op == "move":
+        _require_str(body, "source_path")
+        _require_str(body, "target_path")
     elif op == "remove":
         _require_str(body, "path")
         if body.get("recursive") is not None and not isinstance(body["recursive"], bool):
@@ -541,6 +547,7 @@ _ALLOWED_FIELDS: dict = {
     "write": frozenset({"path", "content", "mode", "encoding"}),
     "patch": frozenset({"path", "old_string", "new_string", "replace_all", "encoding"}),
     "remove": frozenset({"path", "recursive"}),
+    "move": frozenset({"source_path", "target_path"}),
     # 0482 T0011: the base-dirty decision batch. Listed here so main's
     # unknown-field gate (0507 T0004) covers this op too instead of
     # falling through the `allowed is None` escape hatch.
@@ -660,7 +667,7 @@ def _read_worktree_expected_reasons(git_service) -> frozenset:
 def _attempt_source_root(grant: dict, op: str):
     token = _worker_token_for_grant(grant)
     try:
-        if op in {"write", "patch", "remove"}:
+        if op in {"write", "patch", "remove", "move"}:
             # flowgate.v02.0061 T#7: a write / remove of a stopping run's or an inactive attempt's token is refused
             # (409 graph_attempt_inactive, recorded) before its source root is resolved; reads keep their path.
             graph_source_hooks.require_writable(token, "source_" + op)
@@ -875,6 +882,8 @@ def _execute(op: str, body: dict, root: Path, grant: Optional[dict] = None) -> t
         return _exec_merge_preview(body, root)
     if op == "write":
         return _exec_write(body, root)
+    if op == "move":
+        return _exec_move(body, root)
     if op == "remove":
         return _exec_remove(body, root)
     if op == "grep":
@@ -1629,6 +1638,36 @@ def _delete_tree(target: Path) -> int:
     return count
 
 
+def _exec_move(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    from modules.flow_gate.storage.safe_file_move import canonical_move_path, move_file
+    from modules.flow_gate.storage.safe_path import MutationPathUnsafeError
+    import errno
+
+    try:
+        source = canonical_move_path(root, body["source_path"])
+        target = canonical_move_path(root, body["target_path"])
+        if os.path.normcase(source) == os.path.normcase(target):
+            raise _OpError(422, details={"reason": "same_path"})
+        size = move_file(root, source, target)
+    except MutationPathUnsafeError as exc:
+        raise _OpError(422, details={"reason": "unsafe_move_path"}) from exc
+    except FileNotFoundError as exc:
+        raise _OpError(404, details={"reason": "source_not_found"}) from exc
+    except FileExistsError as exc:
+        raise _OpError(409, details={"reason": "target_exists"}) from exc
+    except PermissionError as exc:
+        raise _OpError(403, details={"reason": "move_access_denied"}) from exc
+    except OSError as exc:
+        reason = "move_failed"
+        status = 409
+        if exc.errno in {errno.ENOTDIR, errno.ELOOP, errno.EXDEV, errno.EINVAL}:
+            status, reason = 422, "invalid_move_path"
+        elif exc.errno in {errno.ENOSYS, errno.ENOTSUP}:
+            status, reason = 503, "atomic_move_unavailable"
+        raise _OpError(status, details={"reason": reason}) from exc
+    return {"source_path": source, "target_path": target, "moved": True, "size": size}, size
+
+
 def _exec_remove(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     target = resolve_in_root(root, body["path"])
     if target is None:
@@ -2000,6 +2039,9 @@ def _op_error_message(exc: _OpError, locale: str) -> str:
 def _log_targets(op: str, body: dict) -> tuple[Optional[str], Optional[str]]:
     """(target_path, target_pattern) for op_log (DB0007 §6)."""
     path = body.get("path") if isinstance(body.get("path"), str) else None
+    if op == "move":
+        return tuple(body.get(key) if isinstance(body.get(key), str) else None
+                     for key in ("source_path", "target_path"))
     if op == "grep":
         pattern = body.get("glob") if isinstance(body.get("glob"), str) else None
     elif op == "glob":
@@ -2093,9 +2135,9 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
         attempt_token = _worker_token_for_grant(grant)
         attempt_bound = graph_source_hooks.binding(attempt_token)
         guarded_group_mutation = (
-            op in {"write", "patch", "remove"} and bool(grant.get("group_id"))
+            op in {"write", "patch", "remove", "move"} and bool(grant.get("group_id"))
         )
-        if op in {"write", "patch", "remove"} and attempt_bound:
+        if op in {"write", "patch", "remove", "move"} and attempt_bound:
             with graph_source_hooks.mutation(attempt_token) as attempt_root:
                 extra, nbytes = _execute(op, body, attempt_root, grant)
         elif guarded_group_mutation:
@@ -2112,7 +2154,10 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
                     with tr2_policy.general_source_mutation(
                         grant["project"],
                         grant["group_id"],
-                        exact_paths=[] if recursive else [body["path"]],
+                        exact_paths=(
+                            [body["source_path"], body["target_path"]] if op == "move"
+                            else [] if recursive else [body["path"]]
+                        ),
                         recursive_paths=[body["path"]] if recursive else [],
                         allow_missing_leaf=True,
                     ) as mutation:

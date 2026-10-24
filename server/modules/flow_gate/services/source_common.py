@@ -122,7 +122,7 @@ def redact_error_text(text: str, roots: Iterable[tuple[str, str]]) -> str:
     return _ABSOLUTE_PATH_RE.sub(PATH_REDACTION, redact_locators(str(text), roots))
 
 
-MUTATION_TOOL_NAMES = frozenset({"write_source_file", "patch_source_file", "remove_source_file"})
+MUTATION_TOOL_NAMES = frozenset({"write_source_file", "patch_source_file", "remove_source_file", "move_source_file"})
 _SNAPSHOT_ARTIFACT_RE = re.compile(r"(?:^|/)source-snapshots/(snap_[A-Za-z0-9_-]+)(?:/|$)")
 
 
@@ -139,8 +139,8 @@ def guard_artifact_promotion(tool_name: str, tool_input: dict) -> None:
     """Refuse a live mutation whose path names a legacy Snapshot copy."""
     if tool_name not in MUTATION_TOOL_NAMES:
         return
-    raw = str(tool_input.get("path") or "").replace("\\", "/")
-    if _SNAPSHOT_ARTIFACT_RE.search(raw):
+    paths = (tool_input.get("source_path"), tool_input.get("target_path")) if tool_name == "move_source_file" else (tool_input.get("path"),)
+    if any(_SNAPSHOT_ARTIFACT_RE.search(str(path or "").replace("\\", "/")) for path in paths):
         raise PromotionBlocked(
             403, "snapshot_promotion_blocked",
             "snapshot files cannot be promoted, uploaded, committed, merged, or synced to source; "
