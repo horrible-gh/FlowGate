@@ -143,7 +143,7 @@ const windows = () => documentWindowList().map((win) => [win.docId, win.mode])
 const TYPE_CODE = /\b(?:R|B|M|WP|DS|D|P|L|DB|N|NR|T|TR|T2|TR2|TS|TSC|TSR|AC)\b/
 
 describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () => {
-  it.each(CARDS)('$card: the lines of the table, each without a badge while drafted, with the history button, the document icon and ✎', async ({ node, section, names }) => {
+  it.each(CARDS.filter(({ node }) => node.docType !== 'TS'))('$card: the lines of the table, each without a badge while drafted, with the history button, the document icon and ✎', async ({ node, section, names }) => {
     const w = await mountFrame(node)
     // flowgate.v02.0056 F2-2: the card's memos follow its lines in a draft (unassigned) Flow too.
     expect(w.findAll('[data-test="designer-inspector-section"]').map((part) => part.attributes('data-key'))).toEqual([section, 'cardMemo'])
@@ -167,7 +167,7 @@ describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () =
     for (const word of ['아직 없음', '↗', '설명 대기', '설계 카드는 아직 비워 두었습니다', '작성 필요', '＋']) expect(body).not.toContain(word)
   })
 
-  it.each(CARDS)('$card: the name and the document icon open each line in its window; ✎ straight in the editor', async ({ node }) => {
+  it.each(CARDS.filter(({ node }) => node.docType !== 'TS'))('$card: the name and the document icon open each line in its window; ✎ straight in the editor', async ({ node }) => {
     const w = await mountFrame(node)
     const shown = lines(w)
     const first = shown[0]
@@ -181,6 +181,16 @@ describe('the documents tab of a card just placed (flowgate.v02.0053 T#5)', () =
     closeAllDocumentWindows()
     await last.get('[data-test="inspector-slot-edit"]').trigger('click')
     expect(windows()).toEqual([[last.attributes('data-doc'), 'edit']])
+  })
+
+  it('the v8 test card has status chips and modeless entry points without the old raw-edit actions', async () => {
+    const test = CARDS.find(({ node }) => node.docType === 'TS')!
+    const w = await mountFrame(test.node)
+    expect(lines(w).map((row) => row.get('[data-test="inspector-slot-name"]').text())).toEqual(['지시서', '시나리오', '레포트'])
+    expect(w.find('[data-test="inspector-slot-edit"]').exists()).toBe(false)
+    expect(w.get('[data-test="test-card-brief"]').attributes('disabled')).toBeDefined()
+    expect(w.get('[data-test="test-card-scenario-open"]').attributes('title')).toBe('연결 예정')
+    expect(w.get('[data-test="test-spec-run"]').exists()).toBe(true)
   })
 
   it('a requirement card shows AI 위임 only while the server keeps its line (the setting is on)', async () => {

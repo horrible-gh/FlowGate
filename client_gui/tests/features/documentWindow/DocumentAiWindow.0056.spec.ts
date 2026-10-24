@@ -243,3 +243,17 @@ describe('the AI call window (flowgate.v02.0056 F2-2)', () => {
     expect(text(q('document-ai-failure'))).toBe('AI를 실행할 권한이 없습니다. — 권한 없음')
   })
 })
+
+it('notifies the opener before submitting, permits guard refusal and reports start failure', async () => {
+  const submitting = vi.fn(() => false), rejected = vi.fn()
+  openDocumentAiWindow({ docId: DOC, groupId: FLOW, projectId: 'flowgate', name: 'Scenario', title: '', submitting, rejected })
+  await flushPromises()
+  await click(q('document-ai-run'))
+  expect(submitting).toHaveBeenCalledTimes(1)
+  expect(api.postRequest).not.toHaveBeenCalled()
+  submitting.mockReturnValue(true)
+  api.postRequest.mockImplementation(async () => { expect(submitting).toHaveBeenCalledTimes(2); throw { response: { status: 403, data: {} } } })
+  await click(q('document-ai-run'))
+  expect(api.postRequest).toHaveBeenCalledTimes(1)
+  expect(rejected).toHaveBeenCalledTimes(1)
+})

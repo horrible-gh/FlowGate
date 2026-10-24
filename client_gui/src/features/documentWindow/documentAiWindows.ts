@@ -27,6 +27,9 @@ export interface DocumentAiRequest {
   readonly title: string
   /** Told when a run started here ends (the opener reads the Canvas again). */
   readonly finished?: () => void
+  /** Recheck the opener's guard and lock before the start request is sent. */
+  readonly submitting?: () => boolean
+  readonly rejected?: () => void
 }
 
 export interface DocumentAiWindowState {

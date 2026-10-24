@@ -3,6 +3,10 @@
 // rule 6-2.
 export default {
   ko: {
+    "header": {"open_scenario": "시나리오 열기", "open_report": "레포트 열기"},
+    "stage": {"waiting": "대기", "writing": "시나리오 작성 중", "ready": "실행 대기", "running": "실행 중 {done}/{total}", "confirm": "확인 필요 {count}", "complete": "완료", "unchecked": "기준 미확인"},
+    "card": {"confirmed_counts": "통과 {pass}/{total}", "run": "▶ 테스트 코드 실행", "cancel": "■ 테스트 실행 취소", "write": "＋ 작성", "edit": "✎ 편집", "absent": "없음", "written": "작성 완료", "writing": "작성 중", "to_ai": "→ 시나리오 작성 AI", "reviews": "검수 · 반려 {count}", "history_all": "검수 · 반려 전체보기", "rejected": "반려", "run_number": "실행 #{n}", "follow": "→ 후속 전달", "case_count": "{count} 케이스", "human_count": "사람 확인 {count}", "ignore_count": "실패 무시 {count}", "no_code_count": "코드 없음 {count}", "counts": "통과 {pass} · 실패 {fail} · 막힘 {blocked} · 미실행 {notRun}", "run_counts": "통과 {pass} · 대기 {pending}", "confirmed": "확인 완료", "gate_blocked": "다음 단계 중단", "code_summary": "{file} 외 {n}개"},
+    "guard": {"instruction_omitted": "지시서를 생략하도록 설정했습니다", "writing": "시나리오를 작성하는 중입니다", "approved": "승인된 문서라 편집할 수 없습니다", "unconnected": "연결 예정", "no_result": "아직 표시할 실행 결과가 없습니다", "no_case": "아직 표시할 시나리오가 없습니다", "case_unavailable": "이 케이스는 개별 코드 실행을 지원하지 않습니다", "server_result": "서버가 실행한 케이스의 결과는 직접 입력할 수 없습니다", "save_failed": "케이스를 저장하지 못했습니다", "placing": "카드를 저장하는 중입니다", "locked": "실행 중이라 설정을 바꿀 수 없습니다", "not_read": "설정을 불러오는 중입니다"},
     // flowgate.v02.0051 stage 2 — the v7 slot lines; flowgate.v02.0053 T#5 — 지시서 · 시나리오 · 레포트 (no type
     // code), `empty.*` the hollow dot's tooltip on a line without a document.
     slot: {
@@ -78,6 +82,18 @@ export default {
       busy: '요청을 처리하는 중입니다.',
     },
     failure: {
+      caseSave_forbidden: "케이스를 저장할 권한이 없습니다.",
+      caseDelete_forbidden: "케이스를 삭제할 권한이 없습니다.",
+      rawSave_forbidden: "원문을 저장할 권한이 없습니다.",
+      caseSave_conflict: "서버 상태가 바뀌어 케이스 저장이 거절되었습니다. 상태를 다시 읽었습니다.",
+      caseSave_invalid: "케이스 형식이 올바르지 않아 저장이 거절되었습니다.",
+      caseSave_other: "케이스를 저장하지 못했습니다.",
+      caseDelete_conflict: "서버 상태가 바뀌어 케이스 삭제가 거절되었습니다. 상태를 다시 읽었습니다.",
+      caseDelete_invalid: "케이스 형식이 올바르지 않아 삭제가 거절되었습니다.",
+      caseDelete_other: "케이스를 삭제하지 못했습니다.",
+      rawSave_conflict: "서버 상태가 바뀌어 원문 저장이 거절되었습니다. 상태를 다시 읽었습니다.",
+      rawSave_invalid: "원문 형식이 올바르지 않아 저장이 거절되었습니다.",
+      rawSave_other: "원문을 저장하지 못했습니다.",
       forbidden: '권한이 없어 거절되었습니다. 관리자 또는 테스트 실행 권한이 필요합니다.',
       running: '이미 실행 중이거나 AI 실행 중이라 거절되었습니다. 상태를 다시 읽었습니다.',
       disposed: '폐기된 그룹이라 거절되었습니다.',
@@ -102,6 +118,10 @@ export default {
     },
   },
   en: {
+    "header": {"open_scenario": "Open scenario", "open_report": "Open report"},
+    "stage": {"waiting": "Waiting", "writing": "Writing scenario", "ready": "Ready to run", "running": "Running {done}/{total}", "confirm": "Needs confirmation {count}", "complete": "Complete", "unchecked": "Basis unchecked"},
+    "card": {"confirmed_counts": "Pass {pass}/{total}", "run": "▶ Run test code", "cancel": "■ Cancel test run", "write": "＋ Write", "edit": "✎ Edit", "absent": "None", "written": "Written", "writing": "Writing", "to_ai": "→ Scenario author AI", "reviews": "Reviews · rejections {count}", "history_all": "All reviews and rejections", "rejected": "Rejected", "run_number": "Run #{n}", "follow": "→ Follow-up", "case_count": "{count} cases", "human_count": "Human check {count}", "ignore_count": "Ignore failures {count}", "no_code_count": "No code {count}", "counts": "Pass {pass} · fail {fail} · blocked {blocked} · not run {notRun}", "run_counts": "Passed {pass} · pending {pending}", "confirmed": "Confirmed", "gate_blocked": "Next step stopped", "code_summary": "{file} and {n} more"},
+    "guard": {"instruction_omitted": "The instruction is omitted in settings", "writing": "The scenario is being written", "approved": "An approved document cannot be edited", "unconnected": "Connection planned", "no_result": "No run result to display yet", "no_case": "No scenario to display yet", "case_unavailable": "This case does not support an individual code run", "server_result": "A server-run case cannot receive a manually entered result", "save_failed": "Could not save cases", "placing": "Saving the card", "locked": "Settings are locked while running", "not_read": "Loading settings"},
     slot: {
       instruction: 'Instruction',
       scenario: 'Scenario',
@@ -175,6 +195,18 @@ export default {
       busy: 'Processing the request.',
     },
     failure: {
+      caseSave_forbidden: "You do not have permission to save cases.",
+      caseDelete_forbidden: "You do not have permission to delete cases.",
+      rawSave_forbidden: "You do not have permission to save the source.",
+      caseSave_conflict: "Case save refused: server state changed. State reloaded.",
+      caseSave_invalid: "Case save refused: invalid case format.",
+      caseSave_other: "Could not save cases.",
+      caseDelete_conflict: "Case deletion refused: server state changed. State reloaded.",
+      caseDelete_invalid: "Case deletion refused: invalid case format.",
+      caseDelete_other: "Could not delete the case.",
+      rawSave_conflict: "Source save refused: server state changed. State reloaded.",
+      rawSave_invalid: "Source save refused: invalid format.",
+      rawSave_other: "Could not save the source.",
       forbidden: 'Refused: you need admin or the test run permission.',
       running: 'Refused: a run or an AI run is already in progress. The state was read again.',
       disposed: 'Refused: the group was disposed.',
@@ -199,6 +231,10 @@ export default {
     },
   },
   ja: {
+    "header": {"open_scenario": "シナリオを開く", "open_report": "レポートを開く"},
+    "stage": {"waiting": "待機", "writing": "シナリオ作成中", "ready": "実行待ち", "running": "実行中 {done}/{total}", "confirm": "確認が必要 {count}", "complete": "完了", "unchecked": "基準未確認"},
+    "card": {"confirmed_counts": "通過 {pass}/{total}", "run": "▶ テストコード実行", "cancel": "■ テスト実行取消", "write": "＋ 作成", "edit": "✎ 編集", "absent": "なし", "written": "作成完了", "writing": "作成中", "to_ai": "→ シナリオ作成 AI", "reviews": "レビュー・差戻し {count}", "history_all": "レビュー・差戻しの全履歴", "rejected": "差戻し", "run_number": "実行 #{n}", "follow": "→ 後続への引継ぎ", "case_count": "{count} ケース", "human_count": "人の確認 {count}", "ignore_count": "失敗無視 {count}", "no_code_count": "コードなし {count}", "counts": "通過 {pass} · 失敗 {fail} · 停止 {blocked} · 未実行 {notRun}", "run_counts": "通過 {pass} · 待機 {pending}", "confirmed": "確認完了", "gate_blocked": "次の段階を停止", "code_summary": "{file} ほか {n} 件"},
+    "guard": {"instruction_omitted": "設定で指示書を省略しています", "writing": "シナリオを作成中です", "approved": "承認済みの文書は編集できません", "unconnected": "接続予定", "no_result": "表示する実行結果はまだありません", "no_case": "表示するシナリオはまだありません", "case_unavailable": "このケースは個別コード実行に対応していません", "server_result": "サーバー実行ケースの結果は直接入力できません", "save_failed": "ケースを保存できませんでした", "placing": "カードを保存中です", "locked": "実行中のため設定を変更できません", "not_read": "設定を読込中です"},
     slot: {
       instruction: '指示書',
       scenario: 'シナリオ',
@@ -272,6 +308,18 @@ export default {
       busy: '要求を処理しています。',
     },
     failure: {
+      caseSave_forbidden: "ケースを保存する権限がありません。",
+      caseDelete_forbidden: "ケースを削除する権限がありません。",
+      rawSave_forbidden: "原文を保存する権限がありません。",
+      caseSave_conflict: "状態が変わったためケース保存が拒否されました。再読込しました。",
+      caseSave_invalid: "ケース形式が正しくないため保存が拒否されました。",
+      caseSave_other: "ケースを保存できませんでした。",
+      caseDelete_conflict: "状態が変わったためケース削除が拒否されました。再読込しました。",
+      caseDelete_invalid: "ケース形式が正しくないため削除が拒否されました。",
+      caseDelete_other: "ケースを削除できませんでした。",
+      rawSave_conflict: "状態が変わったため原文保存が拒否されました。再読込しました。",
+      rawSave_invalid: "原文形式が正しくないため保存が拒否されました。",
+      rawSave_other: "原文を保存できませんでした。",
       forbidden: '権限がないため拒否されました。管理者またはテスト実行権限が必要です。',
       running: 'すでに実行中または AI 実行中のため拒否されました。状態を読み直しました。',
       disposed: '破棄されたグループのため拒否されました。',

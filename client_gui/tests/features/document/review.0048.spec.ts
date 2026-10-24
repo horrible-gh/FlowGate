@@ -133,11 +133,11 @@ describe('ai-invoke start / active (flowgate.v02.0048 T#6)', () => {
     getRequest.mockResolvedValue({ data: { ok: true, run_id: 'run_42', status: 'running', active: true, group_id: 'flowgate.v02.0048', doc_ref: DOC } })
     const activity = await reviewActivityRead('flowgate.v02.0048')
     expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/active', { group_id: 'flowgate.v02.0048' })
-    expect(activity).toEqual({ active: true, runId: 'run_42', status: 'running', docRef: DOC })
+    expect(activity).toEqual({ active: true, runId: 'run_42', status: 'running', docRef: DOC, actionScope: null })
   })
 
   it('no run, or a finished one, is not active', () => {
-    expect(toReviewActivity({ ok: true, active: false, group_id: 'g' })).toEqual({ active: false, runId: null, status: null, docRef: null })
+    expect(toReviewActivity({ ok: true, active: false, group_id: 'g' })).toEqual({ active: false, runId: null, status: null, docRef: null, actionScope: null })
     expect(toReviewActivity({ active: true, run_id: 'r', status: 'finished' }).active).toBe(false)
     expect(toReviewActivity(null).active).toBe(false)
   })
@@ -184,3 +184,5 @@ describe('reviewErrorOf (flowgate.v02.0048 T#6)', () => {
     expect(reviewErrorOf(error)).toEqual(expected)
   })
 })
+
+it.each(['new', 'edit', 'rework', 'review', 'chat'])('retains activity action scope %s', (scope) => { expect(toReviewActivity({ active: true, status: 'running', doc_ref: DOC, action_scope: scope }).actionScope).toBe(scope) })

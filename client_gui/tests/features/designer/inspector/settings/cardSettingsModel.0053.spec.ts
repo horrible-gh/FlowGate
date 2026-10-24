@@ -40,7 +40,7 @@ const NODE: CardSettingsFacts = {
 describe('cardSettingsModel — fields and values (flowgate.v02.0053 T#7)', () => {
   it('the fields of each kind follow v7 (T#2 fields._FIELDS)', () => {
     expect(CARD_SETTINGS_FIELDS.run).toEqual(['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis'])
-    expect(CARD_SETTINGS_FIELDS.test).toEqual(['instruction', 'run_ai', 'review_ai', 'review_count'])
+    expect(CARD_SETTINGS_FIELDS.test).toEqual(['instruction', 'run_ai', 'review_ai', 'review_count', 'result_cause', 'follow_scope'])
   })
 
   it('flowgate.v02.0056 F2-1: the progress-after-review field is in no kind and has no string (removed, not hidden)', () => {

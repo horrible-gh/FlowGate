@@ -58,6 +58,7 @@ vi.mock('@/features/document', async (importOriginal) => {
   return {
     ...actual,
     testSpecRead: (...args: unknown[]) => viewRead(...args),
+    documentHistoryRead: async (docId: string) => actual.toDocumentHistory({ doc_id: docId }),
     testSpecRunStart: (...args: unknown[]) => startCall(...args),
     testSpecRunCancel: (...args: unknown[]) => cancelCall(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
@@ -268,7 +269,10 @@ const el = (w: W, name: string) => w.find(`[data-test="${name}"]`)
 const isDisabled = (w: W, name: string) => el(w, name).attributes('disabled') !== undefined
 const stateOf = (w: W) => el(w, 'test-spec-state').attributes('data-state')
 const textOf = (w: W, name: string) => el(w, name).text()
-const historyRuns = (w: W) => w.findAll('[data-test="test-spec-history-row"]').map((row) => row.attributes('data-run'))
+async function historyRuns(w: W) {
+  await click(w, 'test-card-run-history')
+  return [...document.querySelectorAll('[data-test="test-spec-history-row"]')].map((row) => row.getAttribute('data-run'))
+}
 
 async function click(w: W, name: string) {
   await el(w, name).trigger('click')
@@ -290,16 +294,15 @@ describe('test section — reading (flowgate.v02.0048 T#11)', () => {
     expect(viewRead).toHaveBeenCalledWith(TS_DOC)
     expect(el(w, 'inspector-test-spec').attributes('data-form')).toBe('spec')
     expect(stateOf(w)).toBe('done')
-    expect(textOf(w, 'test-spec-state')).toBe('결과 있음')
-    expect(textOf(w, 'test-spec-verdict')).toBe('PASS')
-    expect(textOf(w, 'test-spec-tally')).toBe('케이스 3개 · 자동 2 · 수동 1 · 외부 0 · 서버 실행 대상 2개')
-    expect(textOf(w, 'test-spec-counts')).toBe('PASS 2 · FAIL 0 · BLOCKED 0 · NOT_RUN 1')
-    expect(historyRuns(w)).toEqual(['tr_0'])
+    expect(textOf(w, 'test-spec-state')).toBe('확인 필요 1')
+    expect(textOf(w, 'test-card-scenario-summary')).toContain('3 케이스 · 사람 확인 1')
+    expect(textOf(w, 'test-card-report-summary')).toBe('통과 2 · 실패 0 · 막힘 0 · 미실행 1')
+    expect(await historyRuns(w)).toEqual(['tr_0'])
     expect(isDisabled(w, 'test-spec-run')).toBe(false)
     expect(el(w, 'test-spec-cancel').exists()).toBe(false)
     expect(el(w, 'test-spec-reason').exists()).toBe(false)
     expect(el(w, 'test-spec-open').exists()).toBe(true)
-    expect(el(w, 'test-spec-open-report').exists()).toBe(true)
+    expect(isDisabled(w, 'test-spec-open')).toBe(true)
     expect(el(w, 'test-spec-open-spec').exists()).toBe(false)
     expect(el(w, 'test-spec-gate').exists()).toBe(false)
   })
@@ -307,8 +310,8 @@ describe('test section — reading (flowgate.v02.0048 T#11)', () => {
   it('a TSR: its TS’s runs, the test gate, ↗ 테스트 지시; ▶ 실행 runs its TS', async () => {
     const w = await mountTab(target('v01', TSR_NODE))
     expect(viewRead).toHaveBeenCalledWith(TSR_DOC)
-    expect(textOf(w, 'test-spec-gate')).toBe('테스트 게이트 통과')
-    expect(el(w, 'test-spec-open-spec').exists()).toBe(true)
+    expect(el(w, 'test-spec-gate').exists()).toBe(false)
+    expect(el(w, 'test-card-scenario-open').exists()).toBe(true)
     expect(el(w, 'test-spec-open-report').exists()).toBe(false)
     // A TSR's view carries no Cases: no tally, and the server judges what runs.
     expect(el(w, 'test-spec-tally').exists()).toBe(false)
@@ -329,14 +332,14 @@ describe('test section — reading (flowgate.v02.0048 T#11)', () => {
     expect(opened()).toEqual([[LEGACY_TS_DOC, 'view']])
   })
 
-  it('↗ 열기 / ↗ 결과 보고서 open their document windows in this tab (flowgate.v02.0053 T#3)', async () => {
+  it('T2/T3 window entry points remain visibly unconnected in T1; execution is independent', async () => {
     const w = await mountTab(target())
-    await click(w, 'test-spec-open')
-    await click(w, 'test-spec-open-report')
-    expect(opened()).toEqual([
-      [TS_DOC, 'view'],
-      [TSR_DOC, 'view'],
-    ])
+    for (const name of ['test-card-scenario-open', 'test-spec-open']) {
+      expect(isDisabled(w, name)).toBe(true)
+      expect(el(w, name).attributes('title')).toBe('연결 예정')
+      await click(w, name)
+    }
+    expect(opened()).toEqual([])
     expect(startCall).not.toHaveBeenCalled()
   })
 
@@ -350,7 +353,7 @@ describe('test section — reading (flowgate.v02.0048 T#11)', () => {
     const w = await mountTab(target())
     expect(el(w, 'inspector-pane-state').attributes('data-state')).toBe('error')
     expect(w.text()).toContain(text)
-    expect(el(w, 'test-spec-run').exists()).toBe(false)
+    expect(isDisabled(w, 'test-spec-run')).toBe(true)
     await click(w, 'inspector-pane-retry')
     expect(viewRead).toHaveBeenCalledTimes(2)
     expect(stateOf(w)).toBe('done')
@@ -377,7 +380,7 @@ describe('test section — ▶ 실행 and ■ 취소 (flowgate.v02.0048 T#11)', 
     expect(stateOf(w)).toBe('queued')
     expect(el(w, 'test-spec-run').exists()).toBe(false)
     expect(isDisabled(w, 'test-spec-cancel')).toBe(false)
-    expect(historyRuns(w)).toEqual(['tr_1', 'tr_0'])
+    expect(await historyRuns(w)).toEqual(['tr_1', 'tr_0'])
     expect(el(w, 'test-spec-failure').exists()).toBe(false)
   })
 
@@ -482,7 +485,8 @@ describe('test section — ▶ 실행 and ■ 취소 (flowgate.v02.0048 T#11)', 
     expect(startCall).toHaveBeenCalledTimes(1)
     // Reading and opening are queries: still possible.
     await click(w, 'test-spec-open')
-    expect(opened()).toHaveLength(1)
+    expect(opened()).toHaveLength(0)
+    expect(isDisabled(w, 'test-spec-open')).toBe(true)
   })
 
   it('403 holds for the document it was answered on: another TS offers ▶ 실행 again (and is refused again by the server)', async () => {
@@ -557,7 +561,7 @@ describe('test section — the guard and the TS state (flowgate.v02.0048 T#11)',
     stream.open()
     expect(isDisabled(w, 'test-spec-run')).toBe(true)
     expect(textOf(w, 'test-spec-reason')).toBe('테스트 지시가 승인된 뒤에 실행할 수 있습니다.')
-    expect(textOf(w, 'test-spec-history-empty')).toBe('아직 실행 기록이 없습니다.')
+    expect(el(w, 'test-card-run-history').exists()).toBe(false)
     ts().review = 'approved'
     await emit('doc_review_status_changed', TS_DOC)
     expect(isDisabled(w, 'test-spec-run')).toBe(false)
@@ -579,7 +583,7 @@ describe('test section — run events (flowgate.v02.0048 T#11)', () => {
     await emit('test_run_started', TS_DOC)
     expect(viewRead).toHaveBeenCalledTimes(2)
     expect(stateOf(w)).toBe('executing')
-    expect(textOf(w, 'test-spec-state')).toBe('실행 중 · 0/2')
+    expect(textOf(w, 'test-spec-state')).toBe('실행 중 0/2')
     ts().active = liveRun('tr_9', { reported_case_ids: ['TC-1'] })
     stream.emit('test_case_finished', { docId: TS_DOC, groupId: FLOW })
     stream.emit('test_run_phase', { docId: TS_DOC, groupId: FLOW })
@@ -587,12 +591,12 @@ describe('test section — run events (flowgate.v02.0048 T#11)', () => {
     await flushPromises()
     // Two frames in the window: one read again.
     expect(viewRead).toHaveBeenCalledTimes(3)
-    expect(textOf(w, 'test-spec-state')).toBe('실행 중 · 1/2')
+    expect(textOf(w, 'test-spec-state')).toBe('실행 중 1/2')
     finishLive(TS_DOC, 'passed', 'FAIL')
     await emit('test_run_finished', TS_DOC)
     expect(stateOf(w)).toBe('done')
-    expect(textOf(w, 'test-spec-verdict')).toBe('FAIL')
-    expect(historyRuns(w)).toEqual(['tr_9', 'tr_0'])
+    expect(textOf(w, 'test-card-report-summary')).toContain('통과')
+    expect(await historyRuns(w)).toEqual(['tr_9', 'tr_0'])
     expect(el(w, 'test-spec-run').exists()).toBe(true)
   })
 
@@ -614,7 +618,7 @@ describe('test section — run events (flowgate.v02.0048 T#11)', () => {
     stream.open()
     ts().active = liveRun('tr_9')
     await emit('test_run_started', TS_DOC)
-    expect(viewRead).toHaveBeenCalledTimes(2)
+    expect(viewRead.mock.calls.filter(([id]) => id === TSR_DOC)).toHaveLength(2)
     expect(stateOf(w)).toBe('executing')
   })
 
@@ -649,7 +653,8 @@ describe('test section — read-only Flows (flowgate.v02.0048 T#11)', () => {
     await click(w, 'test-spec-run')
     expect(startCall).not.toHaveBeenCalled()
     await click(w, 'test-spec-open')
-    expect(opened()).toHaveLength(1)
+    expect(opened()).toHaveLength(0)
+    expect(isDisabled(w, 'test-spec-open')).toBe(true)
   })
 
   it('Graph draft view: enabled; ■ 취소 of a live run in revision view is disabled the same way', async () => {

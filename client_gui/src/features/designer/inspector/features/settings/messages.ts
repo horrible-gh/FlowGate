@@ -7,7 +7,11 @@
 // reasons a value is refused are added.
 export default {
   ko: {
+    "result_check": "결과 확인",
+    "result_cause": {"label": "원인 판정", "ai": "AI 판단 후 확정", "human": "사람만"},
+    "follow_scope": {"label": "후속 전달", "summary": "결함 요약", "full": "요약 + 로그 · 증거"},
     instruction: {
+      on: 'ON', off: 'OFF',
       label: '지시서',
       hint: '생략하면 문서 탭에 지시서 줄이 나오지 않습니다',
       use: '사용',
@@ -38,6 +42,8 @@ export default {
     },
     failed: '저장 실패',
     reason: {
+      writing: "시나리오를 작성하는 중입니다",
+      forbidden: "권한이 없습니다",
       read_only_conflict: 'Flow 소유 충돌 · 읽기 전용',
       read_only_revision: '확정된 리비전 보기 · 읽기 전용',
       disposed: '폐기된 그룹',
@@ -99,7 +105,11 @@ export default {
     },
   },
   en: {
+    "result_check": "Result confirmation",
+    "result_cause": {"label": "Cause decision", "ai": "Confirm AI judgment", "human": "Human only"},
+    "follow_scope": {"label": "Follow-up", "summary": "Defect summary", "full": "Summary + logs · evidence"},
     instruction: {
+      on: 'ON', off: 'OFF',
       label: 'Instruction',
       hint: 'When omitted, the documents tab shows no instruction line',
       use: 'Use',
@@ -130,6 +140,8 @@ export default {
     },
     failed: 'Not saved',
     reason: {
+      writing: "The scenario is being written",
+      forbidden: "Permission denied",
       read_only_conflict: 'Ownership conflict · read only',
       read_only_revision: 'Confirmed revision view · read only',
       disposed: 'Disposed group',
@@ -189,7 +201,11 @@ export default {
     },
   },
   ja: {
+    "result_check": "結果確認",
+    "result_cause": {"label": "原因判定", "ai": "AI 判断を確認", "human": "人のみ"},
+    "follow_scope": {"label": "後続への引継ぎ", "summary": "不具合概要", "full": "概要 + ログ・証拠"},
     instruction: {
+      on: 'ON', off: 'OFF',
       label: '指示書',
       hint: '省略すると文書タブに指示書の行が出ません',
       use: '使用',
@@ -220,6 +236,8 @@ export default {
     },
     failed: '保存失敗',
     reason: {
+      writing: "シナリオを作成中です",
+      forbidden: "権限がありません",
       read_only_conflict: '所有の競合 · 読み取り専用',
       read_only_revision: '確定リビジョンの表示 · 読み取り専用',
       disposed: '破棄されたグループ',

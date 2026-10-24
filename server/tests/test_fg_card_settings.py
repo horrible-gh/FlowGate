@@ -268,7 +268,7 @@ def test_card_kinds_and_their_settings_follow_the_v7_blocks():
     names = {kind: [x.name for x in f.fields_of(kind)] for kind in f.CARD_KINDS}
     assert names == {
         f.RUN: RUN_FIELDS,
-        f.TEST: ["instruction", "run_ai", "review_ai", "review_count"],
+        f.TEST: ["instruction", "run_ai", "review_ai", "review_count", "result_cause", "follow_scope"],
         f.REQUIREMENT: ["delegation", "scope", "team", "limit_max_nodes", "limit_total_reviews",
                         "limit_retries_per_card", "limit_replans"],
         f.CHECK: ["usage", "merge_mode", "merge_target", "push", "keep_branch"],
@@ -664,3 +664,23 @@ def test_the_feature_is_in_the_v02_package_and_the_graph_holds_only_the_port():
     imported = {(n.module or "").split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     imported |= {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     assert imported <= {"__future__", "threading", "typing"}
+
+
+# 0071 T1: result confirmation settings are persisted, but never become AI plan settings.
+def test_test_card_confirmation_settings_round_trip_and_stay_out_of_ai_plan(env):
+    from flowgate.card_settings import fields as f
+    first = put_draft(env, FB, 0, [node("tmp_ts", "TS"), node("tmp_t", "T")])
+    ts_key, task_key = first["key_map"]["tmp_ts"], first["key_map"]["tmp_t"]
+    initial = get_settings(env, FB, ts_key)
+    assert shown(initial)["result_cause"] == "ai"
+    assert shown(initial)["follow_scope"] == "summary"
+    assert initial["fields"]["result_cause"]["choices"] == ["ai", "human"]
+    assert initial["fields"]["follow_scope"]["choices"] == ["summary", "full"]
+    for name, value in (("result_cause", "human"), ("follow_scope", "full")):
+        setting(env, FB, ts_key, name, value)
+        assert shown(get_settings(env, FB, ts_key))[name] == value
+        setting(env, FB, ts_key, name, "unsupported", expect=422)
+        assert shown(get_settings(env, FB, ts_key))[name] == value
+        setting(env, FB, task_key, name, value, expect=422)
+    assert f.run_plan(f.TEST, {"run_ai": "aip_card", "result_cause": "human", "follow_scope": "full"}) == {
+        "settings": {"run_ai": "aip_card"}, "provider_id": "aip_card"}

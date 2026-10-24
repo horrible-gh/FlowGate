@@ -143,13 +143,14 @@ export interface ReviewActivity {
   readonly status: string | null
   /** The document the run works on. */
   readonly docRef: string | null
+  readonly actionScope: string | null
 }
 
 /** The /ai-invoke/active response -> ReviewActivity (a finished run is not active). */
 export function toReviewActivity(raw: unknown): ReviewActivity {
   const row = record(raw)
   const status = text(row.status)
-  return { active: row.active === true && status !== 'finished', runId: text(row.run_id), status, docRef: text(row.doc_ref) }
+  return { active: row.active === true && status !== 'finished', runId: text(row.run_id), status, docRef: text(row.doc_ref), actionScope: text(row.action_scope) }
 }
 
 /** Reads whether an AI run owns the group now. */

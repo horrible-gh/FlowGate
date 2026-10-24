@@ -2984,12 +2984,22 @@ def save_test_spec(
         })
     _fields, block, _body = _test_spec_service.split_frontmatter(current)
     locale = body.locale if body.locale in ("ko", "en", "ja") else "ko"
+    if body.locale is None:
+        # Structured callers need not know the document's language. Match the same
+        # first recognized H2 that the specification parser reads.
+        headings = dict(zip(_test_spec_service.SPEC_SECTION_NAMES, ("ko", "en", "ja")))
+        for line in _body.splitlines():
+            heading = line.strip()
+            if heading.startswith("## ") and heading[3:] in headings:
+                locale = headings[heading[3:]]
+                break
     content = _test_spec_service.render_spec_document(
         cases,
         title=(body.title or doc.get("title") or doc_id).strip(),
         frontmatter_block=block,
         locale=locale,
         intro=body.intro if body.intro is not None else _test_spec_service.spec_intro(current),
+        trailing_body=_test_spec_service.spec_trailing_body(current),
     )
     saved = update_document_content(
         doc_id, DocumentContentUpdate(content=content), current_user, request

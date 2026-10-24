@@ -91,6 +91,8 @@ const FIELDS: Record<string, readonly FieldDef[]> = {
     ['run_ai', null, null],
     ['review_ai', null, null],
     ['review_count', 0, REPEAT],
+    ['result_cause', 'ai', ['ai', 'human']],
+    ['follow_scope', 'summary', ['summary', 'full']],
   ],
   requirement: [
     ['delegation', 'off', ['off', 'on']],
@@ -720,12 +722,13 @@ describe('a test card’s settings — v7 testSettings', () => {
     expect(w.get('[data-test="inspector-run-settings"] [data-test="inspector-block-title"]').text()).toBe('시나리오 작성')
     expect(w.find('[data-test="inspector-run-settings"] [data-test="inspector-block-sub"]').exists()).toBe(false)
     expect(w.find('[data-test="inspector-run-settings-advanced"]').exists()).toBe(false)
-    expect(rowLabels(w)).toEqual(['지시서', '작성 AI', '검수 AI', '검수 횟수'])
+    expect(rowLabels(w)).toEqual(['지시서', '작성 AI', '검수 AI', '검수 횟수', '원인 판정', '후속 전달'])
     expect(runSelect(w, 'restart').exists()).toBe(false)
     expect(w.find('[data-test="settings-instruction-ai"]').exists()).toBe(false)
     await pick(w, 'run_ai', 'aip_sol')
     await pick(w, 'review_count', '1')
-    await segmentPick(w, 'settings-instruction-switch', 'omit')
+    await w.get('[data-test="settings-instruction-switch"]').trigger('click')
+    await flushPromises()
     expect(writes.map(([, key, field, value]) => [key, field, value])).toEqual([
       ['gn_test', 'run_ai', 'aip_sol'],
       ['gn_test', 'review_count', 1],
@@ -733,8 +736,8 @@ describe('a test card’s settings — v7 testSettings', () => {
     ])
     const run = await mountPart(TestRunSettings, targetFor(TEST))
     expect(specRead).toHaveBeenCalledWith(doc('0005', 'TS'))
-    expect(run.get('[data-test="inspector-block-title"]').text()).toBe('실행')
-    expect(run.findAll('[data-test^="test-run-mode-"]').map((mode) => mode.text())).toEqual(['자동 2', '수동 1', '외부 1'])
+    expect(run.find('[data-test="inspector-test-run-settings"]').exists()).toBe(false)
+    expect(run.findAll('[data-test^="test-run-mode-"]')).toHaveLength(0)
     for (const text of [w.text(), run.text()]) for (const code of ['TSC', 'TSR', 'TS)', 'automated', 'manual', 'external']) expect(text).not.toContain(code)
   })
 })
@@ -1039,7 +1042,7 @@ describe('the settings tab of a card just placed and of a done card, in the real
   it.each([
     [TASK, ['settings'], ['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
     [CUSTOM, ['settings'], ['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
-    [TEST, ['settings', 'testRunSettings'], ['지시서', '작성 AI', '검수 AI', '검수 횟수', '실행 방식']],
+    [TEST, ['settings', 'testRunSettings'], ['지시서', '작성 AI', '검수 AI', '검수 횟수', '원인 판정', '후속 전달']],
     [REQ, ['requirementSettings'], []],
     [GATE, ['checkSettings'], ['반영 방식', '병합 대상 · 원격']],
   ] as const)('a %s card: its settings form, no "v0.1 단계" line', async (card, parts, labels) => {
@@ -1056,7 +1059,7 @@ describe('the settings tab of a card just placed and of a done card, in the real
   it.each([
     [DONE_RESEARCH, 'NR', ['settings'], ['지시서', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
     [DONE_TASK, 'TR', ['settings'], ['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
-    [DONE_TEST, 'TSR', ['settings', 'testRunSettings'], ['지시서', '작성 AI', '검수 AI', '검수 횟수', '실행 방식']],
+    [DONE_TEST, 'TSR', ['settings', 'testRunSettings'], ['지시서', '작성 AI', '검수 AI', '검수 횟수', '원인 판정', '후속 전달']],
   ] as const)('a done card bound to its result (%#) keeps the same form', async (card, result, parts, labels) => {
     expect(targetFor(card)).toMatchObject({ docType: result, cardDocType: card.definition!.docType })
     const w = await mountFrame(card)

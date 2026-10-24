@@ -90,6 +90,12 @@ const PARTS_RULE: ImportRule = {
 
 /** B8 (with B7 for *Model.ts) — feature folder files by kind (D#1 §2.4). */
 const FEATURE_RULES: readonly { kind: string; file: RegExp; rule: ImportRule }[] = [
+  // 0071 D0008 §7: the shared test-card session composes the existing settings feature.
+  { kind: 'session', file: /^testCardSession\.ts$/, rule: {
+    allowed: [/^vue$/, OWN, /^\.\.\/settings\/(cardSettingsModel|useCardSettings)$/,
+      /^\.\.\/\.\.\/(inspectorTarget|openDocument|useInspectorResource)$/, /^@\/features\/document$/],
+    forbidden: /^@shared\/|^pinia$|^axios$|^vue-router$/,
+  } },
   {
     kind: 'register',
     file: /^register\.ts$/,
@@ -127,6 +133,7 @@ const FEATURE_RULES: readonly { kind: string; file: RegExp; rule: ImportRule }[]
       allowed: [
         /^vue$/,
         /^vue-i18n$/,
+        /^\.\.\/testSpec\/useTestCard$/,
         UI(5),
         OWN,
         /^\.\.\/\.\.\/parts\/[A-Za-z]+(\.vue)?$/,
@@ -255,7 +262,9 @@ function featureViolations(root: string, key: string): string[] {
     const src = read(join(dir, name))
     for (const { spec } of importsOf(src)) {
       const sibling = /^\.\.\/([A-Za-z]+)\//.exec(spec)?.[1] ?? /inspector\/features\/([A-Za-z]+)/.exec(spec)?.[1]
-      if (sibling && others.includes(sibling)) out.push(`B6 ${label}: imports feature '${sibling}'`)
+      const sharedTestSession = (key === 'testSpec' && name === 'testCardSession.ts' && /^\.\.\/settings\/(cardSettingsModel|useCardSettings)$/.test(spec))
+        || (key === 'settings' && name === 'SettingsTab.vue' && spec === '../testSpec/useTestCard')
+      if (sibling && others.includes(sibling) && !sharedTestSession) out.push(`B6 ${label}: imports feature '${sibling}'`)
     }
     const kind = FEATURE_RULES.find((candidate) => candidate.file.test(name))
     if (!kind) {
@@ -362,7 +371,7 @@ function undecidedViolations(root: string): string[] {
       if (isDir(join(dir, name)) || !/\.(ts|vue)$/.test(name)) continue
       const label = `features/${key}/${name}`
       const src = read(join(dir, name)).replace(COMMENTS, '$1')
-      for (const call of src.matchAll(UNDECIDED_CALL)) if (UNDECIDED_MARKER.test(call[1])) out.add(`B14 ${label}: calls '${call[1]}('`)
+      for (const call of src.matchAll(UNDECIDED_CALL)) if (call[1] !== 'effectScope' && UNDECIDED_MARKER.test(call[1])) out.add(`B14 ${label}: calls '${call[1]}('`)
       for (const handler of src.matchAll(UNDECIDED_HANDLER)) if (UNDECIDED_MARKER.test(handler[1])) out.add(`B14 ${label}: handler '${handler[1]}'`)
     }
   }

@@ -25,6 +25,8 @@ export interface TestSpecTargetFacts {
   readonly docId: string | null
   readonly docType: string | null
   readonly cardKind: InspectorCardKind
+  readonly cardDocuments?: readonly InspectorCardDocument[]
+  readonly nodeType?: string | null
 }
 
 /** Document types the section is registered for (D#1 §5.3: V is left out by `docTypes`, not hidden here). */
@@ -32,7 +34,8 @@ export const TEST_SPEC_DOC_TYPES = ['TS', 'TSR'] as const
 
 /** The document whose test view the section reads: the selected Node's own TS or TSR. */
 export function testSpecTargetDocId(target: TestSpecTargetFacts | null): string | null {
-  return target?.docId ?? null
+  const scenario = target?.cardDocuments?.find((line) => line.slot === 'scenario')?.docId ?? null
+  return target?.nodeType != null ? scenario ?? target.docId : target?.docId ?? scenario
 }
 
 /** The parts of a run record the rules read (the `@/features/document` TestSpecRun). */
@@ -43,6 +46,7 @@ export interface TestSpecRunFacts {
   readonly overall: string | null
   readonly runKind: string | null
   readonly caseTotal: number | null
+  readonly passedCases?: number
   readonly selectedCases: number
   readonly reportedCases: number
   readonly counts: TestSpecCountsFacts | null
@@ -259,6 +263,7 @@ export interface TestSpecInput {
   readonly readOnly: InspectorReadOnly
   readonly groupDisposed: boolean
   readonly aiRunning: boolean
+  readonly writing?: boolean
   /** The test view of the target document, null before it is read. */
   readonly view: TestSpecViewFacts | null
   /** The server refused this user a run call on this document (403). */
@@ -283,6 +288,7 @@ export function testSpecRunDisabledReason(input: TestSpecInput): string | null {
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
   if (input.readOnly === 'revision') return 'reason.read_only_revision'
   if (input.groupDisposed) return 'reason.disposed'
+  if (input.writing) return 'guard.writing'
   if (input.aiRunning) return 'reason.ai_running'
   if (input.denied) return 'reason.forbidden'
   const view = input.view
@@ -497,4 +503,57 @@ export function testSpecSlots(view: TestSpecViewFacts | null, target: TestSpecLi
     : emptyLine('report', 'empty.after_run')
 
   return instructionOmitted ? [scenario, report] : [instruction, scenario, report]
+}
+
+
+// v8 card presentation: keep the 0048 result validity rules, with a single-case retry overlay.
+export type TestCardWriting = 'initial' | 'rewrite-all' | 'rewrite-case' | null
+export type TestCardStage = 1 | 2 | 3 | 4 | 5 | 6
+export interface TestCardPresentation {
+  readonly stage: TestCardStage
+  readonly stateKey: string
+  readonly tone: TestSpecSlotTone
+  readonly pending: number
+  readonly runScope: 'all' | 'case' | null
+  readonly retryCaseId: string | null
+  readonly resultState: TestSpecRunState
+  readonly hasScenario: boolean
+  readonly hasReport: boolean
+  readonly canFollow: boolean
+}
+
+export function testCardPresentation(
+  view: TestSpecViewFacts | null,
+  writing: TestCardWriting = null,
+  rows: readonly { readonly caseId: string; readonly status: string | null }[] = [],
+): TestCardPresentation {
+  const hasScenario = !!view?.cases.length
+  const runnable = view?.cases.filter((c) => c.executionMode === 'automated' && RUNNABLE_CAPABILITIES.has(view.caseCapabilities[c.caseId])) ?? []
+  const attempt = testSpecLiveRun(view) ?? view?.lastExecution ?? null
+  const ids = (attempt as (TestSpecRunFacts & { selectedCaseIds?: readonly string[] }) | null)?.selectedCaseIds ?? []
+  const retry = ids.length === 1 && runnable.length > 1
+  const retryCaseId = retry ? ids[0] : null
+  // A retry does not replace the valid aggregate until it supplies a result. Staleness still wins.
+  const base = retry && view && (!view.latest || stamp(attempt) >= stamp(view.latest))
+    ? testSpecRunState({ ...view, activeRun: null, lastExecution: null })
+    : testSpecRunState(view)
+  const live = testSpecLiveRun(view)
+  const resultState = retry ? base : testSpecRunState(view)
+  const counts = testSpecCounts(view)
+  const failed = rows.filter((r) => r.status === 'FAIL' || r.status === 'BLOCKED').length
+  const manual = view?.cases.filter((c) => c.executionMode === 'manual' && !rows.some((r) => r.caseId === c.caseId && ['PASS', 'FAIL', 'BLOCKED'].includes(r.status ?? ''))).length ?? 0
+  const pending = Math.max(failed, (counts?.fail ?? 0) + (counts?.blocked ?? 0)) + manual
+  let stage: TestCardStage
+  if (!hasScenario) stage = writing === 'initial' ? 2 : 1
+  else if (live && !retry) stage = 4
+  else if (!['done', 'unchecked'].includes(resultState.key)) stage = 3
+  else stage = pending ? 5 : 6
+  const hasReport = !!view && (!!live || !!view.latest || !!view.effective)
+  const stateKey = stage === 1 ? 'stage.waiting' : stage === 2 ? 'stage.writing'
+    : stage === 4 ? (live?.status === 'cancelling' ? 'state.cancelling' : 'stage.running')
+    : stage === 5 ? 'stage.confirm' : stage === 6 ? 'stage.complete'
+    : resultState.key === 'none' ? 'stage.ready' : `state.${resultState.key}`
+  return { stage, stateKey, tone: stage === 2 || stage === 4 ? 'info' : stage === 5 ? 'warning' : stage === 6 ? 'success' : resultState.tone,
+    pending, runScope: live ? (retry ? 'case' : 'all') : null, retryCaseId, resultState,
+    hasScenario, hasReport, canFollow: stage === 6 && !live && ['done', 'unchecked'].includes(resultState.key) }
 }

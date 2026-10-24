@@ -4,7 +4,7 @@
        시나리오 작성 (v7 order): 실행 방식 케이스별 — 시나리오에서 정함 and the Case counts by mode, with the v7
        mark that the manual · external result flow is not drawn. No code (TSC / TSR) on screen; the
        explanations are tooltips. `view` may be handed in for a fixture preview. -->
-  <InspectorBlock :title="t(k('run.title'))" class="inspector-test-run-settings" data-test="inspector-test-run-settings">
+  <InspectorBlock v-if="target.cardKind !== 'test'" :title="t(k('run.title'))" class="inspector-test-run-settings" data-test="inspector-test-run-settings">
     <template #head>
       <InspectorTbdNote kind="tag" :label="t(k('run.tbd'))" :title="t(k('run.tbd_title'))" />
     </template>
@@ -44,7 +44,7 @@ const k = (key: string) => `gui.inspector.testRunSettings.${key}`
 
 const MODES = ['automated', 'manual', 'external'] as const
 
-const read = useTestRunSettings(() => (props.view ? null : props.target))
+const read = useTestRunSettings(() => (props.view || props.target.cardKind === 'test' ? null : props.target))
 
 const shown = computed(() => props.view ?? read.view.value)
 </script>

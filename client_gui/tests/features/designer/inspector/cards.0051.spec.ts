@@ -411,18 +411,12 @@ describe('card settings parts', () => {
 
   // flowgate.v02.0053 T#7: the 실행 block only (지시서 · 시나리오 작성 are the settings feature's, in
   // v7 order before it); no code on screen (TSC / TSR, automated / manual / external).
-  it('TestRunSettings: the 실행 block — 케이스별, the counts by mode ("—" while unknown), the TBD tag; no code, no control', () => {
-    const w = mount(TestRunSettings, { props: { target: { ...GRAPH_TS, docId: null, cardDocuments: [] } }, global })
-    expect(w.get('[data-test="inspector-block-title"]').text()).toBe('실행')
-    expect(w.find('[data-test="inspector-block-sub"]').exists()).toBe(false)
-    expect(w.get('[data-test="test-run-modes"]').text()).toContain('케이스별 — 시나리오에서 정함')
-    expect(w.findAll('[data-test^="test-run-mode-"]').map((mode) => mode.text())).toEqual(['자동 —', '수동 —', '외부 —'])
-    expect(w.get('[data-test="inspector-tbd"]').text()).toBe('수동 · 외부 흐름 그리지 않음')
-    expect(w.find('[data-test="inspector-segment-option"]').exists()).toBe(false)
-    expect(w.find('[data-test="test-run-settings-unconnected"]').exists()).toBe(false)
-    for (const code of ['TSC', 'TSR', 'automated', 'manual', 'external']) expect(w.text()).not.toContain(code)
-    const fixture = mount(TestRunSettings, { props: { target: GRAPH_TS, view: { modes: { automated: 49, manual: 6, external: 2 } } }, global })
-    expect(fixture.findAll('[data-test^="test-run-mode-"]').map((mode) => mode.text())).toEqual(['자동 49', '수동 6', '외부 2'])
+  it('v8 test settings omit the former per-case execution block, including fixture previews', () => {
+    for (const view of [null, { modes: { automated: 49, manual: 6, external: 2 } }]) {
+      const w = mount(TestRunSettings, { props: { target: GRAPH_TS, view }, global })
+      expect(w.find('[data-test="inspector-test-run-settings"]').exists()).toBe(false)
+      expect(w.find('[data-test="test-run-modes"]').exists()).toBe(false)
+    }
   })
 
   it('CheckSettings (no card): 용도 with nothing chosen and the 토론 중 tag, the Git card off (reason a tooltip), the summary of nothing chosen', () => {

@@ -424,9 +424,28 @@ def render_spec_body(cases: Iterable[dict], *, title: str, locale: str = "ko",
 
 
 def render_spec_document(cases: Iterable[dict], *, title: str, frontmatter_block: str = "",
-                         locale: str = "ko", intro: str = "") -> str:
+                         locale: str = "ko", intro: str = "", trailing_body: str = "") -> str:
     block = ensure_spec_frontmatter(frontmatter_block)
-    return f"{block}\n{render_spec_body(cases, title=title, locale=locale, intro=intro)}"
+    content = f"{block}\n{render_spec_body(cases, title=title, locale=locale, intro=intro)}"
+    suffix = trailing_body.strip("\n")
+    return content if not suffix.strip() else f"{content.rstrip()}\n\n{suffix}\n"
+
+
+def spec_trailing_body(content: str) -> str:
+    """Preserve everything after the spec's next H2, using the parser's boundary.
+
+    No spec section means the whole body remains intro; never duplicate it here.
+    The suffix comes from the current server document, not an editor's old copy.
+    """
+    _fields, _block, body = split_frontmatter(content)
+    lines = body.split("\n")
+    headings = {f"## {name}" for name in SPEC_SECTION_NAMES}
+    start = next((i + 1 for i, line in enumerate(lines) if line.strip() in headings), None)
+    if start is None:
+        return ""
+    end = next((i for i in range(start, len(lines))
+                if lines[i].startswith("## ") and not lines[i].startswith("### ")), None)
+    return "" if end is None else "\n".join(lines[end:]).strip("\n")
 
 
 def spec_intro(content: str) -> str:

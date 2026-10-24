@@ -1862,3 +1862,57 @@ def test_0684_t2_restart_removes_the_run_copy_and_settles_the_report(env, monkey
     assert run["status"] == "failed" and run["error"] == "orphaned_by_restart"
     assert "PENDING" not in (tmp_path / "0011-TSR_document.md").read_text(encoding="utf-8")
     assert started == [1]
+
+
+# 0071 T1 / D0008 r2: structured edits preserve the current server document's suffix.
+@pytest.mark.parametrize("source_locale", ["ko", "en", "ja"])
+@pytest.mark.parametrize("save_locale", [None, "ko", "en", "ja"])
+def test_structured_editor_preserves_trailing_sections(env, monkeypatch, source_locale, save_locale):
+    from modules.flow_gate.documents.routers import documents as router
+    cases = spec.parse_spec(SPEC)["cases"]
+    suffix = "## Notes / 후속 절\n\nKeep  two spaces · 記録\n\n### Detail\n- custom: untouched\n\n## Evidence\n```text\n  exact indentation\n```"
+    current = spec.render_spec_document(cases, title="Original", frontmatter_block="---\nproject: flowgate\ntype: TS\ncustom: kept\n---", locale=source_locale, intro="Original intro.")
+    env.contents[TS_ID] = current + "\n" + suffix + "\n"
+    saved = {}
+    monkeypatch.setattr(router.document_service, "get_document", lambda doc_id: env.docs.get(doc_id))
+    monkeypatch.setattr(router, "update_document_content", lambda doc_id, body, user, request=None:
+                        saved.update(content=body.content) or {"ok": True})
+    # A late prose change is read at save time. Deleting a case must not delete that prose.
+    latest_suffix = suffix.replace("untouched", "changed after the editor opened")
+    env.contents[TS_ID] = env.contents[TS_ID].replace(suffix, latest_suffix)
+    body = router.TestSpecSaveBody(cases=cases[:2], title="Original", locale=save_locale)
+    router.save_test_spec(TS_ID, body, current_user={"user_id": "usr_admin"})
+    expected_locale = save_locale or source_locale
+    expected_heading = dict(zip(("ko", "en", "ja"), spec.SPEC_SECTION_NAMES))[expected_locale]
+    assert f"## {expected_heading}\n" in saved["content"]
+    assert spec.spec_trailing_body(saved["content"]) == latest_suffix
+    assert saved["content"].rstrip().endswith(latest_suffix)
+    assert spec.spec_intro(saved["content"]) == "Original intro."
+    assert "custom: kept" in saved["content"] and "# Original" in saved["content"]
+    assert spec.parse_spec(saved["content"])["cases"] == cases[:2]
+    assert spec.parse_spec(saved["content"])["errors"] == []
+    before = dict(saved)
+    with pytest.raises(HTTPException) as exc:
+        router.save_test_spec(TS_ID, router.TestSpecSaveBody(cases=[{**cases[0], "category": "invalid"}]), current_user={"user_id": "usr_admin"})
+    assert exc.value.status_code == 422 and saved == before
+    assert env.contents[TS_ID].rstrip().endswith(latest_suffix)
+
+
+def test_structured_editor_without_suffix_keeps_exact_legacy_output_and_intro_once():
+    cases = spec.parse_spec(SPEC)["cases"]
+    expected = spec.render_spec_document(cases, title="t", intro="intro")
+    assert spec.render_spec_document(cases, title="t", intro="intro", trailing_body="") == expected
+    assert spec.spec_trailing_body(SPEC) == ""
+    brief_only = "---\ntest_contract_version: 2\n---\n# Brief\n\nIntroduction\n\n## Extra instructions\nKeep me.\n"
+    assert spec.spec_trailing_body(brief_only) == ""
+    result = spec.render_spec_document(cases, title="Brief", intro=spec.spec_intro(brief_only), trailing_body=spec.spec_trailing_body(brief_only))
+    assert result.count("## Extra instructions") == 1 and result.count("Keep me.") == 1
+
+
+def test_structured_editor_suffix_retains_meaningful_trailing_spaces():
+    cases = spec.parse_spec(SPEC)["cases"]
+    suffix = "## Notes\nA Markdown line break  "
+    source = SPEC + "\n" + suffix + "\n"
+    assert spec.spec_trailing_body(source) == suffix
+    output = spec.render_spec_document(cases, title="t", trailing_body=spec.spec_trailing_body(source))
+    assert output.endswith(suffix + "\n")

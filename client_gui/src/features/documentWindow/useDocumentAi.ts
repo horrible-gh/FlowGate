@@ -66,6 +66,7 @@ export function useDocumentAi(win: () => DocumentAiWindowState): DocumentAiState
   async function start(): Promise<void> {
     if (!runnable.value) return
     const current = win().request
+    if (current.submitting?.() === false) return
     starting.value = true
     failure.value = null
     try {
@@ -73,6 +74,7 @@ export function useDocumentAi(win: () => DocumentAiWindowState): DocumentAiState
       trackDocumentAiRun(current.docId, current.groupId, started, current.finished)
       opinion.value = ''
     } catch (error) {
+      current.rejected?.()
       failure.value = documentAiFailure(documentAiErrorOf(error))
       // The group's live run (the one holding the lease) is read again for the line and the note.
       void readDocumentAiActivity(current.groupId)

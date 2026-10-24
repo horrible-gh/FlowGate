@@ -32,8 +32,9 @@
 // legacy_ts_requires_execution / invalid_spec / no_test_cases / unsupported_contract. The group
 // mutation policy answers 423 `{ error: { code: 'GROUP_AI_RUN_LOCKED' } }` before the route while an
 // AI run owns the group. `/test-document` refuses with a FastAPI `detail` (404, 403).
-import { normalizeApiError } from '@shared/apiErrors'
-import { getRequest, postRequest } from '@shared/api'
+import { documentErrorOf } from '../documentError'
+import { normalizeApiInput, normalizeApiError } from '@shared/apiErrors'
+import { getRequest, postRequest, putRequest } from '@shared/api'
 
 const API = '/api/v1'
 
@@ -74,6 +75,8 @@ export interface TestSpecRun {
   /** `spec_execution` (a server run) or a result record. */
   readonly runKind: string | null
   readonly caseTotal: number | null
+  readonly selectedCaseIds?: readonly string[]
+  readonly passedCases?: number
   readonly selectedCases: number
   readonly reportedCases: number
   readonly counts: TestSpecCounts | null
@@ -105,6 +108,16 @@ export interface TestSpecView {
   /** Case id -> what the server runner can do with it (`case_selectable` | `suite_only` | …). */
   readonly caseCapabilities: Readonly<Record<string, string>>
   readonly specErrors: number
+  /** Full editor data from the same response; existing summary consumers need not use it. */
+  readonly details?: {
+    readonly complete: boolean
+    readonly title: string | null
+    readonly intro: string | null
+    readonly cases: readonly TestSpecCaseDetail[]
+    readonly errors: readonly TestSpecFormatError[]
+    readonly rows: readonly TestSpecRecordRow[]
+    readonly storedRows: readonly TestSpecRecordRow[]
+  }
   /** TS: the newest result record; TSR: the record the report was assembled from. */
   readonly latest: TestSpecRun | null
   readonly activeRun: TestSpecRun | null
@@ -140,6 +153,8 @@ export function toTestSpecRun(raw: unknown): TestSpecRun | null {
     overall: text(row.overall),
     runKind: text(row.run_kind),
     caseTotal: whole(row.case_total),
+    selectedCaseIds: list(row.selected_case_ids).filter((id): id is string => typeof id === 'string'),
+    passedCases: whole(row.case_passed) ?? toTestSpecCounts(record(row.summary).counts)?.pass ?? 0,
     selectedCases: list(row.selected_case_ids).length,
     reportedCases: list(row.reported_case_ids).length,
     counts: toTestSpecCounts(record(row.summary).counts),
@@ -183,6 +198,17 @@ export function toTestSpecView(raw: unknown): TestSpecView {
     cases: list(data.cases).flatMap((item) => toTestSpecCase(item) ?? []),
     caseCapabilities: Object.fromEntries(Object.entries(capabilities).flatMap(([id, value]) => (text(value) ? [[id, value as string]] : []))),
     specErrors: list(data.errors).length,
+    details: {
+      complete: whole(data.contract_version) !== 2 || Array.isArray(data.cases),
+      title: text(data.title) ?? text(data.doc_title), intro: written(data.intro),
+      cases: list(data.cases).flatMap((item) => toTestSpecCaseDetail(item) ?? []),
+      errors: list(data.errors).map((item) => {
+        const error = record(item)
+        return { code: text(error.code), caseId: text(error.case_id), field: text(error.field), message: text(error.message) }
+      }),
+      rows: list(data.effective_result ? effective.cases : record(tsr ? data.report : data.latest_result).cases).flatMap((item) => toTestSpecResultRow(item) ?? []),
+      storedRows: list(record(tsr ? data.report : data.latest_result).cases).flatMap((item) => toTestSpecResultRow(item) ?? []),
+    },
     latest: toTestSpecRun(tsr ? data.report : data.latest_result),
     activeRun: toTestSpecRun(data.active_run),
     lastExecution: toTestSpecRun(data.last_execution),
@@ -291,6 +317,26 @@ export function testSpecErrorOf(error: unknown): TestSpecError {
   return { kind, status, code: code || null }
 }
 
+/** Save refusals use the existing endpoint classifiers, with the content endpoint's detail contracts. */
+export function testSpecMutationErrorOf(error: unknown, rawSave = false) {
+  const parsed = rawSave ? documentErrorOf(error) : testSpecErrorOf(error)
+  const data = record(normalizeApiInput(error).data)
+  const detail = record(data.detail)
+  const body = Object.keys(detail).length ? detail : data
+  const code = parsed.code ?? text(body.error) ?? text(body.code)
+  const detailText = text(data.detail) ?? ''
+  let kind: string = parsed.kind
+  if (['GROUP_AI_RUN_LOCKED', 'run_in_progress', 'group_ai_running'].includes(code ?? '') || parsed.status === 423 || detailText.startsWith('group_ai_running')) kind = 'running'
+  else if (code === 'group_disposed' || detailText.startsWith('group_disposed') || detailText === 'Modification not allowed: the group has been disposed.') kind = 'disposed'
+  else if (detailText.startsWith('Modification not allowed after final approval.') || detailText.startsWith('Modification not allowed for status:') || ['document_not_editable', 'not_editable', 'doc_not_editable'].includes(code ?? '') || (rawSave && parsed.status === 422 && code !== 'invalid_spec')) kind = 'approved'
+  else if (code === 'invalid_spec') kind = 'invalid'
+  const fieldErrors: TestSpecFormatError[] = list(body.errors).map((item) => {
+    const row = record(item)
+    return { code: text(row.code), caseId: text(row.case_id), field: text(row.field), message: text(row.message) }
+  })
+  return { kind, status: parsed.status, code, message: text(body.message) ?? text(data.detail), fieldErrors }
+}
+
 // flowgate.v02.0053 T#4 — the document window's scenario / report views (the v0.1 TestDocumentBody's
 // TestSpecPanel and TestReportPanel, read only) need the Cases' written fields and the report rows of the
 // same `/test-document` answer. Same endpoint, same read; TestSpecView is left as it is.
@@ -303,6 +349,8 @@ export interface TestSpecCaseFields {
   readonly procedure: string | null
   readonly expected: string | null
   readonly checkPoints: string | null
+  readonly automationRef?: string | null
+  readonly testAssets?: string | null
 }
 
 /** A Case of a specification TS as the scenario view shows it. */
@@ -345,6 +393,7 @@ export interface TestSpecDocument {
   readonly title: string | null
   readonly intro: string | null
   readonly cases: readonly TestSpecCaseDetail[]
+  readonly errors: readonly TestSpecFormatError[]
   readonly rows: readonly TestSpecRecordRow[]
   /** The rows of the stored record itself (a TSR's report run, a TS's latest result), whatever the valid result is. */
   readonly storedRows: readonly TestSpecRecordRow[]
@@ -380,6 +429,8 @@ function toTestSpecCaseDetail(raw: unknown): TestSpecCaseDetail | null {
       procedure: written(row.procedure),
       expected: written(row.expected),
       checkPoints: written(row.check_points),
+      automationRef: written(row.automation_ref),
+      testAssets: written(row.test_assets),
     },
   }
 }
@@ -416,6 +467,7 @@ export function toTestSpecDocument(raw: unknown): TestSpecDocument {
     title: text(data.title) ?? text(data.doc_title),
     intro: written(data.intro),
     cases: list(data.cases).flatMap((item) => toTestSpecCaseDetail(item) ?? []),
+    errors: view.details?.errors ?? [],
     rows,
     storedRows: list(stored.cases).flatMap((item) => toTestSpecResultRow(item) ?? []),
     overall: text(summary.overall) ?? text(stored.overall),
@@ -431,4 +483,61 @@ export function toTestSpecDocument(raw: unknown): TestSpecDocument {
 export async function testSpecDocumentRead(docId: string): Promise<TestSpecDocument> {
   const response = await getRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}/test-document`)
   return toTestSpecDocument(response.data)
+}
+
+
+export interface TestSpecFormatError {
+  readonly code: string | null
+  readonly caseId: string | null
+  readonly field: string | null
+  readonly message: string | null
+}
+
+/** The existing structured editor contract. No client copy of trailing prose is sent. */
+export interface TestSpecCasePayload {
+  readonly case_id: string
+  readonly title: string
+  readonly category: string | null
+  readonly requirement: string | null
+  readonly execution_mode: string | null
+  readonly required: boolean
+  readonly precondition: string | null
+  readonly input: string | null
+  readonly procedure: string | null
+  readonly expected: string | null
+  readonly check_points: string | null
+  readonly automation_ref: string | null
+  readonly test_assets: string | null
+}
+
+export function testSpecCasePayload(item: TestSpecCaseDetail): TestSpecCasePayload {
+  return { case_id: item.caseId, title: item.title ?? '', category: item.category,
+    requirement: item.fields.requirement, execution_mode: item.executionMode, required: item.required,
+    precondition: item.fields.precondition, input: item.fields.input, procedure: item.fields.procedure,
+    expected: item.fields.expected, check_points: item.fields.checkPoints,
+    automation_ref: item.fields.automationRef ?? null, test_assets: item.fields.testAssets ?? null }
+}
+
+export async function testSpecSave(docId: string, cases: readonly TestSpecCasePayload[], title: string | null): Promise<void> {
+  await putRequest(`${API}/documents/${encodeURIComponent(docId)}/test-spec`, { cases, ...(title ? { title } : {}) })
+}
+
+export async function testSpecCaseRun(tsDocId: string, caseId: string): Promise<TestSpecRunAck> {
+  const response = await postRequest<unknown>(`${API}/documents/${encodeURIComponent(tsDocId)}/test-spec/cases/${encodeURIComponent(caseId)}/run`, {})
+  return toTestSpecRunAck(response.data)
+}
+
+export interface TestSpecResultEntry {
+  readonly case_id: string
+  readonly status: 'PASS' | 'FAIL' | 'BLOCKED' | 'NOT_RUN'
+  readonly actual?: string
+  readonly evidence?: readonly TestSpecEvidence[]
+}
+
+/** A partial rejection is a refusal too; never show it as a successful result entry. */
+export async function testSpecResultEnter(docId: string, result: TestSpecResultEntry): Promise<void> {
+  const response = await postRequest<unknown>(`${API}/documents/test-results`, { doc_id: docId, results: [result] })
+  if (list(record(response.data).refused_results).length) {
+    throw { response: { status: 422, data: { error: 'invalid_spec', refused_results: record(response.data).refused_results } } }
+  }
 }
