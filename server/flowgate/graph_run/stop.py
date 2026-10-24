@@ -1,5 +1,9 @@
 """0061 T#7 Stop: end a run's work and leave it idle (stopped) — ``POST /runs/{run_id}/stop``.
 
+0085 T#4 (D0007 §7.3.2): idle(blocked_recovery) also accepts Stop via the same stopping path; an
+unfinished Time Machine refuses it with 409 ``graph_time_machine_in_progress``. Stop preserves the
+``recovery_reset_required`` round-split marker.
+
 Pause (``POST /runs/{run_id}/pause``, T#2) keeps the run's work going; Stop ends it, in this order:
 
 (a) one Flow guard transaction, under the exclusive hold of the Flow's Stop gate (``fencing.exclusive``: every
@@ -75,8 +79,9 @@ def _context(run: dict, actor: Optional[str]):
 
 
 def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:
-    """``run_state_ports.stop``. A running or paused run stops; a stopping one goes on with its stop (a repeated Stop);
-    any other is 409 ``run_not_running``. Answers the run as it is: idle (stopped), or still stopping with the
+    """``run_state_ports.stop``. A running, paused or idle(blocked_recovery) run stops; a stopping one goes on with its stop (a repeated Stop);
+    idle(blocked_recovery) with an unfinished Time Machine is 409 ``graph_time_machine_in_progress``;
+    any other entry state is 409 ``run_not_running``. Stop never clears ``recovery_reset_required``. Answers the run as it is: idle (stopped), or still stopping with the
     executions whose end was not confirmed (``unconfirmed_exec_ids``), the stopped attempts whose worktree is not
     removed yet (``cleanup_pending_attempt_ids``) or, T#9, the attempts whose merge session is not aborted yet
     (``merge_session_pending_attempt_ids``)."""
@@ -89,11 +94,15 @@ def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> d
             raise GraphApiError(404, "run_not_found", {"run_id": run_id})
         if run["status"] == STOPPING:
             return
-        if run["status"] not in ("running", "paused"):
+        recovery_idle = run["status"] == IDLE and run.get("idle_reason") == "blocked_recovery"
+        if recovery_idle:
+            from flowgate.graph_time_machine.operation import require_no_operation
+            require_no_operation(flow_id)
+        if run["status"] not in ("running", "paused") and not recovery_idle:
             raise GraphApiError(409, "run_not_running", {"run_id": run_id, "status": run["status"]})
         now = run_store.utc_now_ms()
         if run_store._affected("UPDATE graph_runs SET status = 'stopping', stopped_at = ?, updated_at = ? "
-                               "WHERE run_id = ? AND status IN ('running', 'paused', 'stopped')",
+                               "WHERE run_id = ? AND status IN ('running', 'paused', 'stopped', 'idle')",
                                [now, now, run_id]) != 1:
             raise AssertionError("stop missed its run")
         launchers.extend(r["ai_run_id"] for r in run_store._all(

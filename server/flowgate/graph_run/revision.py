@@ -31,6 +31,13 @@ def adopt_revision(group: dict, run: dict, actor: str, jobs: list) -> bool:
             "flow_id": flow_id, "run_id": run_id, "reason": "active_attempts",
             "from_revision_no": old_no, "to_revision_no": latest})
     _refuse_unresolved_gates(flow_id, run_id, rows, old_no, latest)
+    from flowgate.gate_decisions import rounds, repository as gate_decisions
+    jobs = rounds.unfinished(flow_id)
+    reservations = gate_decisions.reservations_of_group(flow_id)
+    if jobs or reservations:
+        raise GraphApiError(409, "graph_revision_migration_blocked", {
+            "flow_id": flow_id, "run_id": run_id, "reason": "gate_jobs_in_progress",
+            "jobs": jobs, "decision_ids": [r["decision_id"] for r in reservations]})
     record = definition_store.revision(flow_id, latest)
     if record is None:
         raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": latest})

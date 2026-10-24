@@ -190,6 +190,11 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
     missing = _missing(ctx, entries)                                             # 4 (defence)
     if missing:
         raise _undecided(run["group_id"], int(run["revision_no"]), missing)
+    if not adopted and from_status == run_store.IDLE and run.get("idle_reason") == "completed":
+        # 0085 T#4: a completed definition only acknowledges the command. Do not reconcile,
+        # re-dispatch, settle/cleanup or reapply a gate's already recorded result.
+        emit_run_status(ctx, run_store.IDLE, run_store.IDLE, cause, reason)
+        return
     command = run_state_ports.command_of(run, mode)                              # None: the paused command goes on
     if adopted and command is None:
         command = run.get("run_mode") or MODE_FULL

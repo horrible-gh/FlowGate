@@ -35,6 +35,9 @@ def _unresolved_gates(flow_id: str, old: dict, rows: list) -> set:
     gates = {k for k, n in old.items() if n.get("node_type") == "gate"}
     out = {r["node_key"] for r in rows if r["status"] == "rejected" and r["node_key"] in gates}
     out |= {k for k in gates if gate_decisions.reset_required(flow_id, k) is not None}
+    from flowgate.gate_decisions import rounds
+    out |= {r["node_key"] for r in gate_decisions.reservations_of_group(flow_id) if r["node_key"] in gates}
+    out |= {r["target_key"] for r in rounds.unfinished(flow_id) if r.get("target_key") in gates}
     return out
 
 

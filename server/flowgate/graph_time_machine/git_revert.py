@@ -6,7 +6,9 @@ line, against its first parent (``-m 1``): exactly what that merge brought, noth
 attempt with no merge of its own (no source change, a document-only attempt) has no Git step; the plan leaves it out.
 
 The whole step runs in the existing cancel session (``open_cancel_session``: the group's G, the gates of L0007 §4.1 —
-Git active, a registered and clean worktree, no merge in flight, the commits present) and is the only time G is held;
+Git active, a registered and clean worktree, no merge in flight, the commits present). A slot released by gate end
+cleanup is first provisioned at its recorded real end HEAD (its own G/M, outside the Flow guard), then all session
+gates are checked again under G;
 each revert is the existing ``revert_tr_commit`` (one revert commit per merge, our own subject and body). A revert
 that cannot be made safely (conflict, failed commit, timeout, a merge that is not the attempt's) is undone
 (``restore_after_failed_revert``) and every revert this operation made is reverted in turn, newest first, until the
@@ -331,6 +333,37 @@ def _apply(session: dict, flow_id: str, operation_id: str, targets: list[dict], 
     return {"status": OK, "reverts": reverts, "pre_head": base}
 
 
+def _open_session(flow_id: str, targets: list[dict], owned_dirt) -> dict:
+    """Recreate only a slot released by gate cleanup, at its journaled end HEAD, then apply the normal gates.
+
+    Provisioning takes its own G/M outside the Flow guard; open_cancel_session subsequently takes G and rechecks
+    cleanliness, membership and the commits. No older checkpoint is substituted for the actual end HEAD.
+    """
+    shas = [t["commit_sha"] for t in targets]
+    opened = git.open_cancel_session(flow_id, shas, owned_dirt=owned_dirt)
+    if opened.get("ok") or opened.get("blocked_reason") != "no_worktree":
+        return opened
+    from flowgate.gate_decisions import cleanup
+    from modules.flow_gate.db import groups
+    try:
+        if not cleanup.slot_released(flow_id):
+            return opened
+        project_id = (groups.get_by_id(flow_id) or {}).get("project_id")
+        start, refused = cleanup.restore_point(project_id, flow_id)
+        if not refused and not start:
+            return opened                         # existing slot: preserve the original refusal
+        if not refused and git.ensure_worktree(project_id, git._module_of(flow_id), flow_id,
+                                               trigger="graph_time_machine", start_point=start) != "ok":
+            refused = "gate_restore_worktree_failed"
+        if refused:
+            return {"ok": False, "blocked_reason": "git_busy" if refused == "git_busy" else "no_worktree",
+                    "block_sub": refused}
+    except Exception:  # noqa: BLE001 — no revert started; leave the normal gate closed
+        log.exception("Graph Time Machine slot restore failed flow=%s", flow_id)
+        return {"ok": False, "blocked_reason": "no_worktree", "block_sub": "gate_restore_failed"}
+    return git.open_cancel_session(flow_id, shas, owned_dirt=owned_dirt)
+
+
 def apply(flow_id: str, operation_id: str, targets: list[dict], *, resume: bool = False,
           recorded: Optional[list[dict]] = None) -> dict:
     """Outside every Flow guard and DB transaction. ``{"status": ok, "reverts", "pre_head"}``, ``blocked`` (proven:
@@ -340,8 +373,7 @@ def apply(flow_id: str, operation_id: str, targets: list[dict], *, resume: bool 
     the branch."""
     if not targets:
         return {"status": OK, "reverts": [], "pre_head": None}
-    opened = git.open_cancel_session(flow_id, [t["commit_sha"] for t in targets],
-                                     owned_dirt=_owned(operation_id) if resume else None)
+    opened = _open_session(flow_id, targets, _owned(operation_id) if resume else None)
     if not opened.get("ok"):
         # A first run has made nothing yet; a resumed one may have reverts on the branch it cannot see now.
         return {"status": DEFERRED if resume else BLOCKED, "reason": opened.get("blocked_reason"),

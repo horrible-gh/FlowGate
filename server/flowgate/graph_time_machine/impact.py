@@ -31,6 +31,8 @@ class Snapshot:
     integrations: list[dict] = field(default_factory=list)
     conflict_sessions: list[dict] = field(default_factory=list)
     incomplete_operations: list[dict] = field(default_factory=list)
+    gate_decisions: list[dict] = field(default_factory=list)
+    gate_jobs: list[dict] = field(default_factory=list)
 
 
 def input_ids(attempt: dict) -> list[str]:
@@ -78,8 +80,16 @@ def calculate(snapshot: Snapshot, node_key: str) -> dict:
         block("merge_conflict_open", sessions=snapshot.conflict_sessions)
     if snapshot.incomplete_operations:
         block("previous_operation_incomplete", operations=snapshot.incomplete_operations)
-    if nodes.get(node_key, {}).get("status") != "done":
-        block("node_not_done", node_key=node_key, status=nodes.get(node_key, {}).get("status"))
+    if snapshot.gate_jobs:
+        block("gate_jobs_in_progress", jobs=snapshot.gate_jobs)
+    selected_status = nodes.get(node_key, {}).get("status")
+    selected_node = current_graph.node(node_key) if current_graph is not None else None
+    is_gate = selected_node is not None and selected_node.node_type == "gate"
+    reset_required = any(d["node_key"] == node_key and d.get("recovery_reset_required")
+                         for d in snapshot.gate_decisions)
+    if not (selected_status == "done" or is_gate and (
+            selected_status == "rejected" or selected_status == "pending" and reset_required)):
+        block("node_not_done", node_key=node_key, status=selected_status)
     if node_key not in targets:
         block("node_outside_run_scope", node_key=node_key)
 
@@ -195,6 +205,7 @@ def calculate(snapshot: Snapshot, node_key: str) -> dict:
                             key=lambda d: (d["doc_id"], d["attempt_id"])),
         "ledger_rows": sorted(ledger, key=lambda r: r["id"]),
         "commits": commits,
+        "gate_decisions": [d for d in snapshot.gate_decisions if d["node_key"] in affected],
     }
     return {"flow_id": snapshot.flow_id, "run_id": run.get("run_id"), "node_key": node_key,
             "allowed": not reasons, "impact": impact, "reasons": reasons}

@@ -200,6 +200,8 @@ TIME_MACHINE_REASONS = {
     "commit_attribution_missing": (
         "대상의 커밋 귀속 기록이 없습니다.", "Commit attribution is missing for a target.",
         "対象のコミット帰属記録がありません。"),
+    "gate_jobs_in_progress": (
+        "미완료 gate 작업이 있습니다.", "Gate jobs are unfinished.", "未完了の gate ジョブがあります。"),
     "node_not_done": (
         "지정 노드가 완료 상태가 아닙니다.", "The selected node is not done.", "指定ノードは完了していません。"),
     "node_outside_run_scope": (

@@ -8,7 +8,8 @@ One operation, in this order (L0007 §4.3: Git first, the DB after it; no Flow g
     ``integration_commit_shared``) and the journal's ``started`` entry is written with it. From this commit the Flow
     refuses step / full commands, edits and other Time Machine requests (``require_no_operation``), and no integration
     of the Flow starts (``result_merge``) until the operation is finished;
-(b) the Git step (``git_revert``: the group's G for the reverts only) -> ``git_applied``; a revert that cannot be made
+(b) the Git step (``git_revert``: a slot released by gate cleanup is provisioned at its recorded real end HEAD
+    before the normal cancel-session checks; the group's G protects the reverts) -> ``git_applied``; a revert that cannot be made
     safely is compensated and the operation ends ``blocked`` (409 ``graph_time_machine_blocked``, reason
     ``git_revert_blocked``, the branch as it was);
 (c) the DB step (``rewind``) in one Flow guard under the Stop gate's exclusive hold, with the ``completed`` entry;
@@ -92,7 +93,8 @@ def _plan(flow_id: str, assessment: dict, locale: str) -> dict:
     if shared:
         raise _blocked(assessment, [{"code": "integration_commit_shared", "attempts": shared}], locale)
     return {"node_key": assessment["node_key"], "node_keys": impact["node_keys"], "attempt_ids": sorted(attempts),
-            "documents": impact["documents"], "commits": commits}
+            "documents": impact["documents"], "commits": commits,
+            "gate_decisions": impact.get("gate_decisions", [])}
 
 
 def _blocked(assessment: dict, reasons: list[dict], locale: str, **extra) -> GraphApiError:
@@ -189,6 +191,7 @@ def execute(group: dict, run_id: str, node_key: str, user_id: str, locale: str =
         if assessment["run_id"] != run_id:
             raise _blocked(assessment, [{"code": "run_missing", "run_id": run_id}], locale)
         plan = _plan(flow_id, assessment, locale)
+        plan["operation_id"] = operation_id
         ctx = run_apply.load_context(run, group.get("project_id"), user_id)
         journal.emit(ctx, operation_id, journal.STARTED, node_key=node_key, plan=plan)
         return assessment, plan

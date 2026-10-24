@@ -20,6 +20,9 @@ the checks first and writing nothing, then the decision. The checks, in the orde
    -> 409 ``gate_context_changed`` (``reason``: ``attempt`` / ``settings_version``)
 10. a confirm's settings and Git checks (``preflight``) -> 409 ``gate_settings_invalid`` / ``gate_git_unavailable``
 
+Time Machine rounds use ``rounds.insert_decision`` to link ``previous_decision_id`` / ``time_machine_ref``
+and retarget the predecessor's ``superseded_by_decision_id``, including replacement of a no-effect canceled intent.
+
 Then the decision (its run event carries ``gate_decision_id``, ``history.decision_link``):
 
 - reject: stored ``rejected``, the gate ``rejected`` and its attempt ended (``gate_rejected``); what follows stays
@@ -208,6 +211,7 @@ def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Opti
         kind = legacy.GATE_EVENTS.get(outcome)
         if kind is None:
             raise legacy.ProgrammingError(f"gate_node policy returned {outcome!r}")
+        from flowgate.gate_decisions import rounds
         entry = entries.get(legacy.GATE_POLICY) or {}
         base = {"group_id": flow_id, "run_id": run_id, "node_key": node_key, "attempt_id": attempt_id,
                 "revision_no": int(run["revision_no"]),
@@ -216,7 +220,7 @@ def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Opti
                 "request_fingerprint": fp, "decision": decision, "decision_comment": comment,
                 "settings_version": version}
         if outcome == "rejected":
-            stored = repo.insert_decision({**base, "status": repo.REJECTED, "settings": {"shown": shown}})
+            stored = rounds.insert_decision({**base, "status": repo.REJECTED, "settings": {"shown": shown}})
             _apply(ctx, state, policies, kind, node_key, user_id, comment, stored)
             return _answer(run_id, stored)
         plan = preflight.plan(project_id, flow_id, node_key)                            # 10
@@ -224,7 +228,7 @@ def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Opti
         target = {"target_remote": plan["target_remote"], "target_branch": plan["target_branch"],
                   "target_sha": plan["target_sha"]}
         if not plan["needs_work"]:
-            stored = repo.insert_decision({**base, **target, "status": repo.SUCCEEDED, "settings": snapshot})
+            stored = rounds.insert_decision({**base, **target, "status": repo.SUCCEEDED, "settings": snapshot})
             _apply(ctx, state, policies, kind, node_key, user_id, comment, stored)
             return _answer(run_id, stored)
         from flowgate.gate_decisions import publish
@@ -234,7 +238,7 @@ def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Opti
             project_id, {"decision_id": decision_id, "group_id": flow_id, "run_id": run_id, "node_key": node_key},
             group_id=flow_id, target_key=node_key, requested_by=user_id,
             payload={"decision_id": decision_id, "run_id": run_id, "node_key": node_key, "attempt_id": attempt_id})
-        stored = repo.insert_decision({**base, **target, "decision_id": decision_id, "status": repo.ACCEPTED,
+        stored = rounds.insert_decision({**base, **target, "decision_id": decision_id, "status": repo.ACCEPTED,
                                        "settings": {**snapshot, "group_branch": plan["group_branch"],
                                                     "group_head": plan["group_head"]},
                                        "job_id": job["job_id"]})
