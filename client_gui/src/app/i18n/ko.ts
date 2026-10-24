@@ -206,7 +206,7 @@ export default {
         plan: '작업계획',
         task: '작업',
         test: '테스트',
-        approval: '승인',
+        approval: '확인',
         design: '설계',
         memo: '메모',
         unknown: '노드',

@@ -203,7 +203,7 @@ export default {
         plan: 'Work plan',
         task: 'Task',
         test: 'Test',
-        approval: 'Approval',
+        approval: 'Confirm',
         design: 'Design',
         memo: 'Memo',
         unknown: 'Node',

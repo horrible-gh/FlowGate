@@ -203,7 +203,7 @@ export default {
         plan: '作業計画',
         task: '作業',
         test: 'テスト',
-        approval: '承認',
+        approval: '確認',
         design: '設計',
         memo: 'メモ',
         unknown: 'ノード',
