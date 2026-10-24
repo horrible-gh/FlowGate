@@ -741,6 +741,8 @@ export interface FlowRunNode {
   requestedExecutionCount?: number
   /** flowgate.v02.0061 T#15: the node's current attempt (active, else last ended), null when none; absent when not sent. */
   attemptId?: string | null
+  /** D0007 §6: abandoned gate recovery waits for the existing Time Machine. */
+  gateRecoveryResetRequired?: boolean
 }
 
 /** A Graph run (P0008 S5-4). */

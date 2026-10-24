@@ -83,6 +83,7 @@ export interface FlowDraftError extends Error {
  * (`attemptId`, null when none; absent when not known), a basis of the Time Machine confirmation.
  */
 export interface FlowRunNodeInfo {
+  readonly gateRecoveryResetRequired?: boolean
   readonly nodeKey: string
   readonly status: string
   readonly integrationStatus?: string | null

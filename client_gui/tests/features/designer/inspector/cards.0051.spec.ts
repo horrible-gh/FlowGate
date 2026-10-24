@@ -159,7 +159,7 @@ describe('Graph gate (gateCardModel)', () => {
 
   // flowgate.v02.0053 T#9: the gate decision of the Flow's run (P0008 S6-1).
   it('a gate decides while it is open in a running run; a stopped run, another turn, a decision in flight or a conflict wait', () => {
-    const open = { status: 'running', nodes: [{ nodeKey: GATE.nodeId, status: 'open' }] }
+    const open = { status: 'running', nodes: [{ nodeKey: GATE.nodeId, status: 'open', gate: { can_decide: true } as any }] }
     expect(gateActions(GATE, open).confirm).toEqual({ visible: true, enabled: true, reason: null })
     expect(gateActions(GATE, open).reject.enabled).toBe(true)
     expect(gateActions(GATE, { ...open, status: 'stopped' }).confirm.reason).toBe('reason.not_running')
@@ -272,7 +272,8 @@ describe('settings views of a Node without a card', () => {
       usage: null,
       scope: null,
       target: null,
-      targetOptions: [],
+      targetOptions: ['origin'],
+      archive: false,
       push: null,
       keepBranch: null,
       connected: false,
@@ -346,19 +347,13 @@ describe('card documents tab parts', () => {
     for (const word of ['설계 문서', '설계 지시서', '設計指示書']) expect(mount(DesignSlots, { props: { target: DESIGN_CONFLICT }, global }).text()).not.toContain(word)
   })
 
-  it('GateSlots / GateActions: the 확인 결과 line and the two actions disabled with the reason before a run; nothing on a non-gate without a document', () => {
+  it('GateSlots / GateActions: the result box and disabled decisions before a run', () => {
     const slots = mount(GateSlots, { props: { target: GATE }, global })
-    expect(slots.get('[data-test="inspector-slot-name"]').text()).toBe('확인 결과')
-    expect(slots.get('[data-test="inspector-slot-state"]').attributes('title')).toBe('확인 전')
-    const actions = mount(GateActions, { props: { target: GATE }, global })
-    const confirm = actions.get('[data-test="gate-confirm"]')
-    expect(confirm.text()).toBe('✓ 확인')
-    expect(confirm.attributes('disabled')).toBeDefined()
-    expect(confirm.attributes('title')).toBe('실행 중일 때 확인할 수 있습니다')
-    expect(actions.get('[data-test="gate-reject"]').attributes('disabled')).toBeDefined()
-    const none = facts(V01_TR, null, { ...NO_DOCUMENT, nodeType: null })
+    expect(slots.get('[data-test="gate-result"]').text()).toContain('확인 결과')
+    expect(slots.get('[data-test="gate-result-value"]').text()).toBe('확인 전')
+    expect(slots.get('[data-test="gate-confirm"]').attributes('disabled')).toBeDefined()
+    const none = facts(GATE, null, { ...NO_DOCUMENT, nodeType: null })
     expect(mount(GateSlots, { props: { target: none }, global }).find('[data-test="inspector-gate-card"]').exists()).toBe(false)
-    expect(mount(GateActions, { props: { target: none }, global }).find('[data-test="inspector-gate-actions"]').exists()).toBe(false)
   })
 
   it('GateSlots on an open-type document Node: the 문서 line has no type code', () => {
@@ -469,30 +464,13 @@ describe('card settings parts', () => {
     expect(fixture.findAll('[data-test^="test-run-mode-"]').map((mode) => mode.text())).toEqual(['자동 49', '수동 6', '외부 2'])
   })
 
-  it('CheckSettings (no card): 용도 with nothing chosen and the 토론 중 tag, the Git card off (reason a tooltip), the summary of nothing chosen', () => {
-    const w = mount(CheckSettings, { props: { target: V01_TR }, global })
-    const usage = w.get('[data-test="check-settings-usage-value"]')
-    expect(usage.findAll('[data-test="inspector-segment-option"]').map((option) => [option.text(), option.attributes('aria-checked')])).toEqual([
-      ['중간 승인', 'false'],
-      ['그룹 종료', 'false'],
-    ])
-    expect(w.get('[data-test="inspector-tbd"]').text()).toBe('토론 중')
-    for (const option of w.findAll('[data-test="inspector-segment-option"]')) {
-      expect(option.attributes('disabled')).toBeDefined()
-      expect(option.attributes('title')).toBe('이 Flow에는 카드 설정이 없습니다')
-    }
-    expect(w.get('[data-test="check-settings-summary"]').text()).toBe('반영 방식은 최종 확인 때 고름')
-    const view = { usage: 'end', scope: 'merge', target: 'main', targetOptions: ['main', 'release'], push: true, keepBranch: false, connected: true, reason: null, failures: {} } as const
-    const fixture = mount(CheckSettings, { props: { target: V01_TR, view }, global })
-    expect(fixture.get('[data-test="check-settings-usage-value"] [aria-checked="true"]').text()).toBe('그룹 종료')
-    // v7 scopeSummary / confirmSettings on a group-ending card: "→ 그룹 종료", and 보류 marked ⛔.
-    expect(fixture.get('[data-test="check-settings-summary"]').text()).toBe('작업 브랜치를 main에 병합하고 원격 반영 → 그룹 종료')
-    expect(fixture.get('[data-test="check-settings-scope"] [data-value="hold"]').text()).toBe('보류 ⛔')
-    expect(fixture.findAll('[data-test="check-settings-target"] option').map((option) => option.text())).toEqual(['—', 'main', 'release'])
-    expect(fixture.find('[data-test="check-settings-hold-block"]').exists()).toBe(false)
-    const hold = mount(CheckSettings, { props: { target: V01_TR, view: { ...view, scope: 'hold' } }, global })
-    expect(hold.get('[data-test="check-settings-summary"]').text()).toBe('그룹 종료 확인에서는 보류를 고를 수 없음')
-    expect(hold.get('[data-test="check-settings-hold-block"]').text()).toContain('⛔ 보류 + 그룹 종료는 함께 고를 수 없습니다')
+  it('CheckSettings: archive and Git only, with the supported remote choices', () => {
+    const w = mount(CheckSettings, { props: { target: GATE }, global })
+    expect(w.find('[data-test="check-settings-usage"]').exists()).toBe(false)
+    expect(w.find('[data-test="check-settings-summary"]').exists()).toBe(false)
+    expect(w.find('[data-test="check-settings-hold-block"]').exists()).toBe(false)
+    expect(w.get('[data-test="check-settings-archive-value"]').attributes('disabled')).toBeDefined()
+    expect(w.findAll('[data-test="check-settings-target"] option').map(option => option.text())).toEqual(['—', 'origin'])
   })
 
   it('follows the locale', () => {

@@ -889,6 +889,7 @@ export default {
   },
   // flowgate.v02.0033 — Designer Git part (features/git).
   git: {
+    gate_job: {"job": "Job", "decision": "Decision","title": "Git operation failed", "phase": "Phase", "retry": "Retry", "cancel": "Cancel", "reviewed": "I reviewed the phase evidence and remaining effects", "reason": "Resolution reason", "confirm_effects": "Confirm effects", "abandon": "Abandon recovery"}, 
     header: {
       base: 'Base branch',
       none: '—',

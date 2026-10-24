@@ -1,33 +1,14 @@
 <template>
-  <!-- flowgate.v02.0051 stage 2 — the 확인 card's settings tab (0035 v7 confirmSettings): the 용도 line with
-       the v7 토론 중 tag, and the Git 반영 card — 반영 방식 (병합 / 커밋만 / 보류), 병합 대상 · 원격, 원격 반영,
-       브랜치 보관 and the one-line summary. Built from the common parts. A thin container: checkSettingsModel
-       gives the view. `view` may be handed in for a fixture preview.
-       flowgate.v02.0053 T#7 — a Graph gate card keeps these values (T#2): every change is saved at once; none
-       chosen = asked at the final approval as today. As v7: 보류 is marked ⛔ on a group-ending card and the
-       block line shows when both are chosen. A refused change is a red ! beside its control; a v0.1 Flow's
-       확인 Node keeps none (drawn off, the reason a tooltip). The summary reads the merge target and push shown.
-       A failed first read is the read failure icon with its retry in place of the form (no guessed values).
-       The 용도 line wraps: when its choice and tag do not fit beside the label (264px Inspector) they go
-       under it, so both choices stay whole inside the tab. -->
+  <!-- D0007 §6: archive and Git reflection, saved immediately. -->
   <div class="inspector-check-settings" data-test="inspector-check-settings" :data-connected="shown.connected ? 'true' : 'false'">
     <InspectorReadFailure v-if="readFailure" :reason="readFailure" @retry="reload" />
     <template v-else>
-      <div class="inspector-check-settings-usage" data-test="check-settings-usage">
-        <span class="inspector-check-settings-usage-label">{{ t(k('usage.label')) }}</span>
-        <span class="inspector-check-settings-usage-value">
-          <InspectorSegment
-            :model-value="shown.usage"
-            :options="CHECK_USAGES.map((usage) => ({ value: usage, label: t(k(`usage.${usage}`)), title: reasonText }))"
-            :disabled="off"
-            :aria-label="t(k('usage.label'))"
-            data-test="check-settings-usage-value"
-            @update:model-value="(value: string) => onChange('usage', value)"
-          />
-          <InspectorTbdNote kind="tag" :label="t(k('usage.tbd'))" :title="t(k('usage.tbd_title'))" />
-          <InspectorFailureIcon v-if="failureOf('usage')" :name="t(k('failed'))" :reason="failureOf('usage')!" data-field="usage" />
-        </span>
-      </div>
+      <InspectorBlock data-test="check-settings-archive">
+        <InspectorControlRow :label="t(k('archive'))" :hint="reasonText">
+          <Toggle :model-value="shown.archive ?? false" :disabled="off" :aria-label="t(k('archive'))" data-test="check-settings-archive-value" @update:model-value="(value: boolean) => onChange('archive', value)" />
+          <InspectorFailureIcon v-if="failureOf('archive')" :name="t(k('failed'))" :reason="failureOf('archive')!" data-field="archive" />
+        </InspectorControlRow>
+      </InspectorBlock>
 
       <InspectorBlock :title="t(k('git.title'))" data-test="check-settings-git">
         <InspectorControlRow :label="t(k('git.scope'))" :hint="reasonText">
@@ -66,10 +47,6 @@
           </label>
           <InspectorFailureIcon v-for="field in GIT_FIELDS.filter((name) => failureOf(name))" :key="field" :name="t(k('failed'))" :reason="failureOf(field)!" :data-field="field" />
         </InspectorControlRow>
-        <p class="inspector-check-settings-summary" data-test="check-settings-summary">{{ summaryText }}</p>
-        <p v-if="holdBlocked" class="inspector-check-settings-block" data-test="check-settings-hold-block">
-          {{ t(k('git.hold_block')) }} <InspectorTbdNote kind="tag" :label="t(k('git.hold_block_tbd'))" />
-        </p>
       </InspectorBlock>
     </template>
   </div>
@@ -86,13 +63,9 @@ import InspectorControlRow from '../../parts/InspectorControlRow.vue'
 import InspectorFailureIcon from '../../parts/InspectorFailureIcon.vue'
 import InspectorReadFailure from '../../parts/InspectorReadFailure.vue'
 import InspectorSegment from '../../parts/InspectorSegment.vue'
-import InspectorTbdNote from '../../parts/InspectorTbdNote.vue'
 import {
   CHECK_SCOPES,
-  CHECK_USAGES,
   checkSettingsErrorKey,
-  checkSettingsHoldBlocked,
-  checkSettingsSummary,
   checkSettingsView,
   type CheckScope,
   type CheckSettingsView,
@@ -139,27 +112,14 @@ const readFailure = computed(() => {
 })
 
 /** Nothing can change now: the controls are off, the reason their tooltip. */
-const off = computed(() => (props.view ? !props.view.connected : (shown.value.reason ?? null) !== null))
+const off = computed(() => props.view ? !props.view.connected : (shown.value.reason ?? null) !== null || Object.keys(card.pending.value).length > 0 || card.status.value !== 'ready')
 
 const reasonText = computed(() => (off.value && shown.value.reason ? t(k(shown.value.reason)) : null))
 
-/** No target first (`—`: asked at the final approval), then the branches. */
-const targetOptions = computed(() => [{ value: '', label: '—' }, ...shown.value.targetOptions.map((branch) => ({ value: branch, label: branch }))])
+/** Only the supported remote origin; no branch names. */
+const targetOptions = computed(() => [{ value: '', label: '—' }, { value: 'origin', label: 'origin' }])
 
-const holdBlocked = computed(() => checkSettingsHoldBlocked(shown.value))
-
-/** v7 scopeSummary of the values shown: the merge target and push as chosen (or not set yet). */
-const summaryText = computed(() => {
-  const summary = checkSettingsSummary(shown.value)
-  const line = t(k(summary.key), summary.params)
-  return summary.end ? t(k('git.summary_end'), { summary: line }) : line
-})
-
-/** v7: 보류 carries ⛔ on a group-ending card. */
-function scopeLabel(scope: CheckScope): string {
-  const label = t(k(`git.${scope}`))
-  return scope === 'hold' && shown.value.usage === 'end' ? `${label} ⛔` : label
-}
+function scopeLabel(scope: CheckScope): string { return t(k(`git.${scope}`)) }
 
 function failureOf(field: string): string | null {
   const key = shown.value.failures?.[field]
@@ -185,35 +145,6 @@ function reload() {
   font-size: 12px;
 }
 
-/* v7 `.usage-row`: the dashed "under discussion" line. The value goes under the label when it does not fit
-   beside it (its tag wraps after the choice). */
-.inspector-check-settings-usage {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  align-items: center;
-  padding: 6px 11px;
-  border: 1px dashed #6b5a2a;
-  border-radius: 8px;
-  background: #141208;
-}
-
-.inspector-check-settings-usage-label {
-  flex: 0 0 100px;
-  color: #d7c9a0;
-  font-weight: 700;
-}
-
-.inspector-check-settings-usage-value {
-  display: flex;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  color: #d9e5f0;
-}
-
 .inspector-check-settings-target {
   width: 150px;
 }
@@ -227,20 +158,4 @@ function reload() {
   white-space: nowrap;
 }
 
-.inspector-check-settings-summary {
-  margin: 8px 0 0;
-  color: #7f96af;
-  font-size: 11.5px;
-}
-
-/* v7 `.git-block`: 보류 cannot end the group. */
-.inspector-check-settings-block {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin: 6px 0 0;
-  color: #ff9eae;
-  font-size: 11.5px;
-}
 </style>

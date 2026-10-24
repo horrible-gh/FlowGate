@@ -15,11 +15,11 @@
     </div>
     <GitStatusErrorCard v-if="statusReadFailed" :reason="statusReadReason" @retry="session.refresh()" />
     <GitUnlinkedCard v-else-if="unlinked" :disabled="readOnly" @connect="openConnect" />
-    <GitExceptionList v-else />
+    <GitExceptionList v-if="!statusReadFailed && (!unlinked || gateOperations.operations.value.length)" />
     <GitWorktreePanel v-if="worktree.gateOpen.value" />
     <template v-for="win in session.state.windows" :key="win.id">
       <GitConflictWindow v-if="win.kind === 'conflict'" :win="win" />
-      <GitPushErrorWindow v-else :win="win" />
+      <GitPushErrorWindow v-else :win="win" :operation="win.id.startsWith('gate-job:') ? gateOperations.selected.value : null" />
     </template>
     <GitConnectWindow
       v-model:minimized="connectMinimized"
@@ -88,6 +88,7 @@ import GitPushErrorWindow from './GitPushErrorWindow.vue'
 import GitStatusErrorCard from './GitStatusErrorCard.vue'
 import GitUnlinkedCard from './GitUnlinkedCard.vue'
 import GitWorktreePanel from './GitWorktreePanel.vue'
+import { useGateOperations, GATE_OPERATIONS_CONTEXT } from './gateOperations'
 import { gitErrorOf } from './api'
 import { createGitCenterDiff } from './gitCenterDiff'
 import { createHttpGitSource, type GitSource } from './gitSource'
@@ -130,6 +131,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const session = createGitSession({ source: props.source })
+const gateOperations = useGateOperations(() => props.projectId, () => props.flow?.groupId ?? null, () => props.readOnly)
+provide(GATE_OPERATIONS_CONTEXT, gateOperations)
 // The `Diff` tab's one file diff, read through the same kind of GitSource the worktree session uses.
 let diffSource: GitSource | null = props.source ?? null
 const diff = createGitCenterDiff({
@@ -249,6 +252,7 @@ watch(
 // Header refresh, tab activation and the exposed refresh read both sessions (§3-2-1); the
 // worktree reads nothing while its gate is closed.
 function refreshAll(): Promise<void> {
+  void gateOperations.reload()
   worktree.refresh()
   return session.refresh()
 }

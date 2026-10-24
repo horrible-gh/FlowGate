@@ -324,6 +324,8 @@ export interface SettingsNodeField {
 
 /** A card's settings (T#2). */
 export interface SettingsNode {
+  readonly settingsVersion?: number
+  readonly lockReason?: string | null
   readonly cardKind: string | null
   /** A running card: its settings cannot change now. */
   readonly locked: boolean
@@ -343,7 +345,9 @@ export function toSettingsNode(raw: unknown): SettingsNode {
       choices: Array.isArray(field.choices) ? [...field.choices] : null,
     }
   }
-  return { cardKind: text(data.card_kind), locked: data.locked === true, fields }
+  return { cardKind: text(data.card_kind), locked: data.locked === true, fields,
+    ...(typeof data.settings_version === 'number' ? { settingsVersion: data.settings_version } : {}),
+    ...('lock_reason' in data ? { lockReason: text(data.lock_reason) } : {}) }
 }
 
 /** Reads a card's settings. */
@@ -366,11 +370,12 @@ export function settingsInstructionOmitted(node: SettingsNode | null | undefined
 //   teams     GET   /api/v1/ai-groups -> { items: [{ ai_group_id, name, enabled, supervisor: { provider_name } | null }] }
 //             The AI Team choices of a requirement card (the server takes the ids of this table only).
 
-/** Changes one setting of a card; answers the card's settings after the change. */
-export async function settingsNodeWrite(flowId: string, nodeKey: string, field: string, value: unknown): Promise<SettingsNode> {
+/** Changes one setting; gate callers pass the confirmed version for the server's concurrency check. */
+export async function settingsNodeWrite(flowId: string, nodeKey: string, field: string, value: unknown, expectedSettingsVersion?: number): Promise<SettingsNode> {
   const response = await patchRequest<unknown>(`${API}/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/settings`, {
     field,
     value: value ?? null,
+    ...(expectedSettingsVersion === undefined ? {} : { expected_settings_version: expectedSettingsVersion }),
   })
   return toSettingsNode(response.data)
 }
@@ -414,7 +419,7 @@ export function settingsNodeErrorOf(error: unknown): SettingsNodeErrorKind {
   const code = normalized.code
   const status = normalized.status
   if (normalized.network) return 'network'
-  if (code === 'node_settings_locked') return 'locked'
+  if (code === 'node_settings_locked' || code === 'gate_settings_locked') return 'locked'
   if (code === 'flow_disposed' || code === 'group_disposed') return 'disposed'
   if (code === 'card_settings_unavailable') return 'unavailable'
   if (status === 400 || status === 422) return 'invalid'

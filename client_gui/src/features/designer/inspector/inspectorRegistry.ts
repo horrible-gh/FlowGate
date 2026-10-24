@@ -84,6 +84,8 @@ export interface InspectorRegistration {
    * Frame lays out the first that applies; its one input is `target`.
    */
   readonly headerMemo?: Component
+  /** Inline editor below the header, independent of the selected tab. */
+  readonly headerPanel?: Component
   readonly messages: InspectorMessages
 }
 

@@ -149,7 +149,7 @@ describe('the header line (flowgate.v02.0051 stage 2)', () => {
 })
 
 describe('the real registry on Nodes without a document', () => {
-  it('a Graph gate: the documents tab with the 확인 결과 line, ✓ 확인 / ✕ 반려 ▾ disabled in the header', async () => {
+  it('a Graph gate: the document result box owns the decisions; the header has none', async () => {
     const w = mountFrame(SELECTIONS.graphGate)
     await flushPromises()
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
@@ -157,8 +157,9 @@ describe('the real registry on Nodes without a document', () => {
     // flowgate.v02.0056 F2-2: the card's memos sit between the card lines and the approval bar.
     expect(sections(w)).toEqual(['gateCard', 'cardMemo', 'cardApproval'])
     expect(w.find('[data-test="inspector-card-approval"]').exists()).toBe(false)
-    expect(get(w, 'inspector-gate-card').find('[data-test="inspector-slot-name"]').text()).toBe('확인 결과')
-    const confirm = get(w, 'designer-inspector-actions').get('[data-test="gate-confirm"]')
+    expect(get(w, 'gate-result').text()).toContain('확인 결과')
+    expect(get(w, 'designer-inspector-header').find('[data-test="gate-confirm"]').exists()).toBe(false)
+    const confirm = get(w, 'gate-result').get('[data-test="gate-confirm"]')
     expect(confirm.attributes('disabled')).toBeDefined()
   })
 

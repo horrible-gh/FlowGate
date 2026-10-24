@@ -355,7 +355,7 @@ async function copyId() {
 const host = inject(INSPECTOR_HOST, null)
 
 /** The title only repeats the kind name of the badge: not shown again (the ✎ entry stays when it may be edited). */
-const titleRepeatsKind = computed(() => props.target.title.trim() === t(kindLabelKey.value).trim())
+const titleRepeatsKind = computed(() => props.target.nodeType !== 'gate' && props.target.title.trim() === t(kindLabelKey.value).trim())
 const titleEditable = computed(() => props.target.canEditTitle === true && !!host?.saveTitle)
 
 const editing = ref(false)

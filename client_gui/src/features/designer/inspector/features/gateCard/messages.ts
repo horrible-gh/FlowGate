@@ -3,6 +3,7 @@
 // flowgate.v02.0053 T#9 — the gate decision: why it waits, why it was refused, the reject reason dialog.
 export default {
   ko: {
+    result: { before: '확인 전', confirmed: '확인 완료', rejected: '반려', archived: '아카이브됨' },
     label: '확인',
     slot: {
       result: '확인 결과',
@@ -17,7 +18,7 @@ export default {
     confirm: '✓ 확인',
     reject: '✕ 반려',
     reason: {
-      not_running: '실행 중일 때 확인할 수 있습니다',
+      not_running: '실행 중이거나 대기 중인 확인 차례에 확인할 수 있습니다',
       not_open: '이 확인 차례가 오면 확인할 수 있습니다',
       read_only_conflict: '담당이 겹친 흐름이라 확인할 수 없습니다',
       busy: '처리 중',
@@ -28,6 +29,11 @@ export default {
       undecided: '확인 규칙이 아직 정해지지 않아 확인하지 못했습니다',
       forbidden: '확인할 권한이 없습니다',
       network: '연결이 끊겨 확인하지 못했습니다',
+      gate_settings_invalid: '설정 탭에서 병합 대상 원격으로 origin을 선택해 주세요',
+      gate_git_unavailable: '사용 가능한 Git 작업 슬롯이 없어 확인하지 못했습니다',
+      gate_context_changed: '설정 또는 확인 회차가 변경되었습니다. 최신 값을 확인한 뒤 다시 시도해 주세요',
+      gate_decision_in_progress: '다른 확인 요청을 처리 중입니다. 처리가 끝난 뒤 다시 시도해 주세요',
+      gate_request_conflict: '같은 요청 ID의 내용이 달라 확인하지 못했습니다. 최신 상태를 확인한 뒤 다시 시도해 주세요',
       other: '확인하지 못했습니다',
     },
     reject_dialog: {
@@ -38,6 +44,7 @@ export default {
     },
   },
   en: {
+    result: { before: 'Before check', confirmed: 'Confirmed', rejected: 'Rejected', archived: 'Archived' },
     label: 'Check',
     slot: {
       result: 'Check result',
@@ -63,6 +70,11 @@ export default {
       undecided: 'The check rule is not decided yet, so it was not checked',
       forbidden: 'You do not have permission to check it',
       network: 'The connection dropped and it was not checked',
+      gate_settings_invalid: 'Select origin as the merge target remote in the Settings tab',
+      gate_git_unavailable: 'No Git work slot is available for this check',
+      gate_context_changed: 'The settings or check attempt changed. Review the latest values and try again',
+      gate_decision_in_progress: 'Another check request is being processed. Try again after it finishes',
+      gate_request_conflict: 'This request ID was used with different content. Review the latest state and try again',
       other: 'It could not be checked',
     },
     reject_dialog: {
@@ -73,6 +85,7 @@ export default {
     },
   },
   ja: {
+    result: { before: '確認前', confirmed: '確認完了', rejected: '差し戻し', archived: 'アーカイブ済み' },
     label: '確認',
     slot: {
       result: '確認結果',
@@ -98,6 +111,11 @@ export default {
       undecided: '確認ルールがまだ決まっていないため確認できませんでした',
       forbidden: '確認する権限がありません',
       network: '接続が切れたため確認できませんでした',
+      gate_settings_invalid: '設定タブのマージ先リモートで origin を選択してください',
+      gate_git_unavailable: '利用可能な Git 作業スロットがないため確認できませんでした',
+      gate_context_changed: '設定または確認の試行が変更されました。最新の値を確認して再試行してください',
+      gate_decision_in_progress: '別の確認リクエストを処理中です。完了後に再試行してください',
+      gate_request_conflict: '同じリクエスト ID の内容が異なります。最新の状態を確認して再試行してください',
       other: '確認できませんでした',
     },
     reject_dialog: {

@@ -65,6 +65,7 @@ beforeEach(() => {
       { id: 'p.ui.legacy', parent_id: 'module:p:ui', node_type: 'group', label: 'Legacy', number: '0002' },
     ] } } }
     if (url === '/api/v1/flows/p.ui.graph/canvas') return { data: graph }
+    if (url === '/api/v1/flows/p.ui.graph/runs/current') return { data: { ok: true, run: null } }
     if (url === '/api/v1/flows/p.ui.legacy/canvas') return { data: legacy }
     if (url.endsWith('/git/status')) return { data: { ok: true, status: { enabled: false, slots: [] } } }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false } }
@@ -155,8 +156,9 @@ describe('Designer Shell x Inspector (T#2)', () => {
     await openFlow('Graph')
     await selectNode('gn_gate')
     expect(get('designer-inspector-body').attributes('data-tab')).toBe('settings')
-    // flowgate.v02.0053 T#7: the Graph gate's settings tab holds its v7 확인 settings (용도 · Git 반영), read from the card.
-    expect(get('inspector-check-settings').text()).toContain('용도')
+    // D0007 §6: the gate settings show archive and Git reflection without a usage row.
+    expect(get('inspector-check-settings').text()).toContain('아카이브')
+    expect(get('inspector-check-settings').text()).not.toContain('용도')
     expect(get('inspector-check-settings').text()).toContain('Git 반영')
   })
 })

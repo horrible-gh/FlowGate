@@ -52,6 +52,7 @@
           <component :is="entry.headerMenu" v-for="entry in headerMenus" :key="entry.key" :target="target" :close="close" />
         </template>
       </InspectorHeader>
+      <component :is="headerMemo?.headerPanel" v-if="headerMemo?.headerPanel" :target="target" />
       <template v-if="tabs.length">
         <Tabs
           class="designer-inspector-tabs"

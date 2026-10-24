@@ -1,13 +1,15 @@
 <template>
-  <!-- flowgate.v02.0051 stage 2 — the documents tab body of an `other` card kind Node: a Graph gate shows
-       the v7 확인 결과 result line (empty, "확인 전": the gate result is not connected); a document Node of
-       an open type shows its one document line; anything else draws nothing. A thin container:
-       gateCardModel decides; the document icon (or the name) opens a document in its document window, ✎ in its
-       editor. No server call of its own.
-       flowgate.v02.0053 T#5 (0053 CH) — a Custom card shows 지시서 · 레포트 like 조사 · 작업 (its 지시서 line hidden
-       when its settings omit the instruction, useGateCard); a document line's name has no type code. -->
+  <!-- D0007 §6: live gate result and decisions; other card document lines are unchanged. -->
   <section v-if="lines.length" class="inspector-gate-card" data-test="inspector-gate-card" :data-shape="shape">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
+    <div v-if="shape === 'gate'" class="inspector-gate-result" data-test="gate-result" :aria-busy="decision.busy.value !== null">
+      <strong>{{ t(k('slot.result')) }}</strong>
+      <span class="inspector-gate-result-value" :data-tone="decision.result.value.tone" :title="decision.result.value.description" :aria-label="[t(k(`result.${decision.result.value.key}`)), decision.result.value.description].filter(Boolean).join(' · ')" data-test="gate-result-value">
+        <i aria-hidden="true" />{{ t(k(`result.${decision.result.value.key}`)) }}
+      </span>
+      <span v-if="decision.result.value.archived" class="inspector-gate-archive" data-test="gate-archived">{{ t(k('result.archived')) }}</span>
+      <GateActions :target="target" :state="decision" />
+    </div>
+    <InspectorSlotList v-else :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
       <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" /></template>
     </InspectorSlotList>
@@ -22,6 +24,8 @@ import { cardLineRow, DocumentIoGroup, openCardLineAction, openDocument, openDoc
 import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import { gateCardShape, gateCardSlots, type GateSlot } from './gateCardModel'
+import GateActions from './GateActions.vue'
+import { useGateDecision } from './useGateDecision'
 import { useGateCard } from './useGateCard'
 
 const props = defineProps<{
@@ -35,6 +39,7 @@ const host = inject(INSPECTOR_HOST, null)
 const k = (key: string) => `gui.inspector.gateCard.${key}`
 
 const shape = computed(() => gateCardShape(props.target))
+const decision = useGateDecision(() => shape.value === 'gate' ? props.target : null)
 
 const { instructionOmitted } = useGateCard(() => (shape.value === 'custom' ? props.target : null))
 
@@ -95,4 +100,11 @@ function action(line: InspectorSlotView, key: SlotActionKey) {
 .inspector-gate-card {
   min-width: 0;
 }
+.inspector-gate-result { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; min-height: 54px; box-sizing: border-box; border: 1px dashed #28425c; border-radius: 9px; padding: 10px 14px; background: #091a2b; font-size: 12px; }
+.inspector-gate-result strong { min-width: 116px; color: #b8c8db; }
+.inspector-gate-result-value { display: inline-flex; align-items: center; gap: 7px; color: #8ea4bc; }
+.inspector-gate-result-value i { width: 7px; height: 7px; border-radius: 50%; background: #5c7491; }
+.inspector-gate-result-value[data-tone="success"] i { background: #19b68e; }
+.inspector-gate-result-value[data-tone="danger"] i { background: #e56b82; }
+.inspector-gate-archive { padding: 2px 8px; border: 1px solid #28635b; border-radius: 5px; background: #163f37; color: #88d8c2; font-size: 11px; }
 </style>

@@ -69,6 +69,7 @@ describe('features/git structure (flowgate.v02.0033)', () => {
         'gitCenterDiff.ts',
         'gitPanel.css',
         'gitSession.ts',
+        'gateOperations.ts',
         'gitSource.ts',
         'gitWorktreeSession.ts',
         'index.ts',
@@ -105,6 +106,9 @@ describe('features/git structure (flowgate.v02.0033)', () => {
       /^\.\/[A-Za-z]+(\.vue|\.css)?$/,
       /^\.\.\/\.\.\/components\/ui\/[A-Za-z]+\.vue$/,
       /^@\/features\/project$/,
+      // D0007 §6: the gate operation adapter uses the document wire API and the shared event subscription.
+      /^@\/features\/document$/,
+      /^\.\.\/designer\/inspector\/useInspectorResource$/,
       // flowgate.v02.0066 T#6 — the Center Diff reuses the Conversation's pure line diff.
       /^@\/features\/conversation$/,
       /^@shared\/api$/,

@@ -40,6 +40,15 @@ describe('card settings change (flowgate.v02.0053 T#7)', () => {
     ])
   })
 
+  it('sends the gate settings version and reads the version returned by the server', async () => {
+    patchRequest.mockResolvedValue({ data: { ok: true, card_kind: 'check', locked: false, settings_version: 4, fields: {} } })
+    const node = await settingsNodeWrite('f', 'gn_gate', 'archive', true, 3)
+    expect(patchRequest).toHaveBeenCalledWith('/api/v1/flows/f/nodes/gn_gate/settings', {
+      field: 'archive', value: true, expected_settings_version: 3,
+    })
+    expect(node.settingsVersion).toBe(4)
+  })
+
   it('a refusal is thrown as it is', async () => {
     patchRequest.mockRejectedValue(refusal(409, 'node_settings_locked'))
     await expect(settingsNodeWrite('f', 'gn_a', 'restart', 1)).rejects.toMatchObject({ response: { status: 409 } })

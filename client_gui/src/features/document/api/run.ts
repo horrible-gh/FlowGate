@@ -2,7 +2,7 @@
 // new server API: the Graph run routes (server graph_workflow/api/run_routes.py).
 //
 //   current   GET  /api/v1/flows/{flow_id}/runs/current -> { run: { run_id, status, node_runs[] } | null }
-//   decide    POST /api/v1/runs/{run_id}/nodes/{node_key}/gate-decision { decision, comment? } -> { run }
+//   decide    POST /api/v1/runs/{run_id}/nodes/{node_key}/gate-decision { decision, comment?, request_id?, expected_attempt_id?, expected_settings_version? } -> 200/202 { run, decision?, job? }
 //
 // `decision` is `confirm` | `reject`; the comment (a reject's reason) is at most 500 characters. A refusal
 // is thrown as it is (see documentErrorOf): 409 `run_not_running` (a stopped run takes no decision),
@@ -30,6 +30,8 @@ export interface RunNodeState {
   readonly nodeKey: string
   /** `pending` | `open` | `review` | `done` | `rejected` … as sent. */
   readonly status: string
+  readonly attemptId?: string | null
+  readonly gate?: RunGateState | null
   /** flowgate.v02.0056 F2-1: the node's result document; absent when not sent. */
   readonly resultDocId?: string | null
   /** flowgate.v02.0056 F2-1: the card waits for its approval; absent when not sent. */
@@ -64,6 +66,8 @@ export function toRunCurrent(raw: unknown): RunCurrent | null {
       .map((row) => ({
         nodeKey: row.node_key as string,
         status: typeof row.status === 'string' ? row.status : '',
+        ...('attempt_id' in row ? { attemptId: text(row.attempt_id) } : {}),
+        ...('gate' in row ? { gate: toRunGateState(row.gate) } : {}),
         ...('result_doc_id' in row ? { resultDocId: text(row.result_doc_id) } : {}),
         ...(typeof row.awaiting_approval === 'boolean' ? { awaitingApproval: row.awaiting_approval } : {}),
         ...('stage' in row ? { stage: text(row.stage) } : {}),
@@ -82,12 +86,12 @@ export async function runCurrentRead(flowId: string): Promise<RunCurrent | null>
   return toRunCurrent(response.data?.run)
 }
 
-/** Confirms or rejects an open gate node of a running run; answers the run after it. */
-export async function runGateDecide(runId: string, nodeKey: string, decision: RunGateDecision, comment?: string): Promise<RunCurrent | null> {
+/** Decides an open gate of a running/idle run; preserves legacy comments and the optional versioned intent. */
+export async function runGateDecide(runId: string, nodeKey: string, decision: RunGateDecision, comment?: string, intent?: RunGateIntent): Promise<RunCurrent | null> {
   const text = comment?.trim() ?? ''
   const response = await postRequest<Raw>(
     `${API}/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeKey)}/gate-decision`,
-    text ? { decision, comment: text.slice(0, RUN_COMMENT_MAX_LENGTH) } : { decision },
+    { decision, ...(text ? { comment: text.slice(0, RUN_COMMENT_MAX_LENGTH) } : {}), ...intent },
   )
   return toRunCurrent(response.data?.run)
 }
@@ -158,4 +162,83 @@ export function runCardApprovalErrorOf(error: unknown): RunCardApprovalError {
     approvedDocIds: texts(params.approved_doc_ids),
     resultDocId: text(params.result_doc_id),
   }
+}
+
+// D0007 §6/7.2: keep the server's gate facts; no client-side success inference.
+export interface RunGateIntent {
+  readonly request_id: string
+  readonly expected_attempt_id: string
+  readonly expected_settings_version: number
+}
+export interface RunGateRecovery {
+  readonly decision_id: string
+  readonly decision_version: number
+  readonly status: string
+  readonly retryable: boolean
+  readonly cancelable: boolean
+  readonly resolvable: boolean
+  readonly evidence_version: number
+  readonly evidence_refs: readonly string[]
+  readonly phase: string | null
+  readonly error_code: string | null
+}
+export interface RunGateResult {
+  readonly decision_id: string
+  readonly attempt_id: string | null
+  readonly result: string
+  readonly status: string
+  readonly actor_user_id: string | null
+  readonly decided_at: string | null
+  readonly completed_at: string | null
+  readonly comment: string | null
+  readonly archived: boolean
+  readonly archive_id: string | null
+  readonly effects: readonly Record<string, unknown>[] | null
+}
+export interface RunGateState {
+  readonly decision: RunGateResult | null
+  readonly decision_in_progress: boolean
+  readonly can_decide: boolean
+  readonly settings_locked: boolean
+  readonly archived: boolean
+  readonly recovery_reset_required: boolean
+  readonly recovery: RunGateRecovery | null
+  readonly job: { readonly job_id: string; readonly status: string; readonly phase: string | null; readonly last_error_code: string | null } | null
+}
+export function toRunGateState(raw: unknown): RunGateState | null {
+  if (!raw || typeof raw !== 'object') return null
+  const row = raw as Raw
+  // The server owns these versioned read contracts, including phase evidence and receipt ids.
+  return {
+    decision: (row.decision ?? null) as RunGateResult | null,
+    decision_in_progress: row.decision_in_progress === true,
+    can_decide: row.can_decide === true,
+    settings_locked: row.settings_locked === true,
+    archived: row.archived === true,
+    recovery_reset_required: row.recovery_reset_required === true,
+    recovery: (row.recovery ?? null) as RunGateRecovery | null,
+    job: (row.job ?? null) as RunGateState['job'],
+  }
+}
+export interface RunGateHistory {
+  readonly items: readonly RunGateResult[]
+  readonly latest: RunGateResult | null
+  readonly next_cursor: string | null
+}
+const gatePath = (runId: string, nodeKey: string) => `${API}/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeKey)}`
+export async function runGateHistoryRead(runId: string, nodeKey: string): Promise<RunGateHistory> {
+  const response = await getRequest<RunGateHistory>(`${gatePath(runId, nodeKey)}/gate-decisions`)
+  return response.data
+}
+export interface RunGateRecoveryRequest {
+  readonly request_id: string
+  readonly expected_decision_version: number
+  readonly resolution?: 'effects_confirmed' | 'abandon'
+  readonly reason?: string
+  readonly evidence_version?: number
+  readonly evidence_refs?: readonly string[]
+}
+export async function runGateRecover(runId: string, nodeKey: string, decisionId: string, action: 'retry' | 'cancel' | 'resolve', body: RunGateRecoveryRequest): Promise<RunCurrent | null> {
+  const response = await postRequest<Raw>(`${gatePath(runId, nodeKey)}/gate-decisions/${encodeURIComponent(decisionId)}/${action}`, body)
+  return toRunCurrent(response.data?.run)
 }

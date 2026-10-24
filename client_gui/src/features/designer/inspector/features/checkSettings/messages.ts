@@ -4,6 +4,7 @@
 // shown (or that they are not set); a failed read is a tooltip.
 export default {
   ko: {
+    archive: '아카이브',
     usage: {
       label: '용도',
       mid: '중간 승인',
@@ -17,8 +18,8 @@ export default {
       merge: '병합',
       commit: '커밋만',
       hold: '보류',
-      target: '병합 대상 · 원격',
-      push: '원격 반영',
+      target: '병합 대상 원격',
+      push: '원격 병합',
       keep_branch: '브랜치 보관',
       summary_merge: {
         push: '작업 브랜치를 {target}에 병합하고 원격 반영',
@@ -68,6 +69,7 @@ export default {
     },
   },
   en: {
+    archive: 'Archive',
     usage: {
       label: 'Usage',
       mid: 'Mid approval',
@@ -131,6 +133,7 @@ export default {
     },
   },
   ja: {
+    archive: 'アーカイブ',
     usage: {
       label: '用途',
       mid: '中間承認',
