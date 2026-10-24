@@ -15,7 +15,7 @@ import subprocess
 
 import pytest
 
-from test_graph_attempt_runs_0061 import db  # noqa: F401 — shared SQLite execution fixture
+from tests.regression.graph_workflow.test_graph_attempt_runs_0061 import db  # noqa: F401 — shared SQLite execution fixture
 from test_graph_attempt_results_0061 import result_db, BASE, RESULT  # noqa: F401 — T#8 result fixture
 from flowgate.graph_run import result_merge, settle, stop, workspace
 from modules.flow_gate.graph_workflow.domain.frontier import Decision, Transition

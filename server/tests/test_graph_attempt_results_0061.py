@@ -14,7 +14,7 @@ import threading
 
 import pytest
 
-from test_graph_attempt_runs_0061 import db, MIGRATIONS  # shared SQLite execution fixture
+from tests.regression.graph_workflow.test_graph_attempt_runs_0061 import db, MIGRATIONS  # shared SQLite execution fixture
 from flowgate.graph_run import execution_store, fencing, result_commit, workspace
 from modules.flow_gate.db import tr_commit_ledger
 from modules.flow_gate.graph_workflow.store import run_store

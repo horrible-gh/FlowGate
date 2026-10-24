@@ -16,7 +16,7 @@ import pytest
 from inbox_client import post_inbox as route_post_inbox
 from modules.flow_gate.services import ai_invoke_service as svc
 from modules.flow_gate.services.ai_invoke import oracle
-from test_review_doc_path_0393 import DOC_ID, PROJECT, review_env  # noqa: F401
+from tests.modules.flow_gate.test_review_doc_path_0393 import DOC_ID, PROJECT, review_env  # noqa: F401
 
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows launcher E2E")

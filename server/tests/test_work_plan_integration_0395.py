@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
-from tests.test_work_plan_0395 import (
+from tests.modules.flow_gate.test_work_plan_0395 import (
     GROUP,
     ROOT_DOC,
     _client,

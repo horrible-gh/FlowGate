@@ -15,8 +15,8 @@ from modules.flow_gate.services import help_catalog
 from modules.flow_gate.services import snapshot_access_service as access
 from modules.flow_gate.services.ai_invoke import provider_api
 
-from test_snapshot_materialization_0517 import _Store, snapshot_env  # noqa: F401,E402
-from test_snapshot_materialization_0517 import _disguise_same_size_same_mtime  # noqa: E402
+from tests.integration.startup_sweep.test_snapshot_materialization_0517 import _Store, snapshot_env  # noqa: F401,E402
+from tests.integration.startup_sweep.test_snapshot_materialization_0517 import _disguise_same_size_same_mtime  # noqa: E402
 
 
 @pytest.fixture

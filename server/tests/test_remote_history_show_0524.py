@@ -16,7 +16,7 @@ import subprocess
 import pytest
 
 from modules.flow_gate.services import remote_tool_service as svc
-from test_remote_tool_0003_T0012 import RAW_TOKEN, _call, env  # noqa: F401  (env is a fixture)
+from tests.modules.flow_gate.test_remote_tool_0003_T0012 import RAW_TOKEN, _call, env  # noqa: F401  (env is a fixture)
 
 
 def _git(root, *args):

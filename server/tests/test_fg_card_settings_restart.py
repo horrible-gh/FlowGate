@@ -25,7 +25,7 @@ _SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVER_DIR))
 
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
-from test_ai_invoke_no_output_retry_0359 import (  # noqa: E402,F401 — the same harness, fixture included
+from tests.modules.flow_gate.test_ai_invoke_no_output_retry_0359 import (  # noqa: E402,F401 — the same harness, fixture included
     DOC_REF,
     GROUP,
     _scripted_worker,

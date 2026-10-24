@@ -1,0 +1,2994 @@
+"""Work plan (WP) — flowgate.default.0395 T0011.
+
+Covers the three things this task set promised: the SAME validator on both paths, a
+`.json` canonical body with its change summary, and a WP that does not auto-complete.
+
+  1. expansion + canonical form            (L0010 §2.1, P0009 §2.6)
+  2. validation verdicts                    (L0010 §2.3 layers, P0009 §4.7)
+  3. human API create → read → save         (P0009 §4.2 · §4.4 · §4.6 · §4.8)
+  4. AI inbox create                        (P0009 §5.1 · §5.2 · §5.3)
+  5. type registration and the audited sets (D0007 §7)
+"""
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import sys
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+os.environ["TESTING"] = "1"
+os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
+os.environ["FLOWGATE_TOKEN_PEPPER_ACTIVE_ID"] = "wp395"
+os.environ["FLOWGATE_TOKEN_PEPPER_wp395"] = "test-pepper-value-0395"
+
+_SERVER_DIR = Path(__file__).resolve().parents[3]
+_SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
+sys.path.insert(0, str(_SERVER_DIR))
+
+PROJECT = "wpprj"
+GROUP = "wpprj-__ALL__-0402"
+ROOT_DOC = "wpprj-__ALL__-0402-R0001"
+
+
+# ── Part 1: expansion and canonical form (no DB) ─────────────────────────────
+
+def _plan(**over):
+    from modules.flow_gate.services import work_plan_service as wp
+
+    counted = over.pop("counted_types", ["DS", "D", "P", "L", "DB", "N", "T", "TS"])
+    counts = over.pop("counts", {"DS": 1, "D": 2, "P": 1, "L": 1, "DB": 0, "N": 1, "T": 3, "TS": 1})
+    quantities = {
+        code: {"unit": wp.WORK_PLAN_TYPE_UNITS[code], "count": counts[code]}
+        for code in counted
+    }
+    body = {
+        "wp_version": 1,
+        "binding": "advisory",
+        "counted_types": counted,
+        "quantities": quantities,
+        "provider_candidates": [
+            {"provider_id": "aip_opus", "display_name": "Claude Opus", "group_label": "Claude · CLI"},
+            {"provider_id": "aip_sonnet", "display_name": "Claude Sonnet", "group_label": "Claude · CLI"},
+        ],
+        "defaults": {"provider_id": None, "note": ""},
+        "steps": wp.expand_steps(counted, quantities),
+    }
+    body.update(over)
+    return body
+
+
+def _without_card_ids(body):
+    """A body with every step's card_id removed (0649 T#1).
+
+    Used where a test compares a saved body with the body it sent: new cards come back with
+    a random server-assigned id, which the comparison of everything else must not depend on.
+    """
+    import copy
+
+    out = copy.deepcopy(body)
+    for step in out.get("steps") or []:
+        step.pop("card_id", None)
+    return out
+
+
+def _legacy_client_steps(counted_types, quantities):
+    """Steps as a client that predates card ids rebuilds them on a quantity change.
+
+    0649 T#1 (NR0003 §5.1): server-side expand_steps() stamps ``card_id = key`` on a fresh
+    body, but a save that grows the plan must not invent ids for its new cards — an id the
+    previous body never had is ``card_id_unknown``. A body with no card_id at all in the fixed
+    order inherits the previous ids and gets server-assigned ids for the new cards.
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    steps = wp.expand_steps(counted_types, quantities)
+    for step in steps:
+        step.pop("card_id", None)
+    return steps
+
+
+def test_expand_steps_matches_the_designed_order():
+    """P0009 §2.6: DS · D · D · P · L · N · NR · T · TR ×3 · TS · TSR — 15 steps."""
+    from modules.flow_gate.services import work_plan_service as wp
+
+    steps = _plan()["steps"]
+    assert [s["key"] for s in steps] == [
+        "DS#1", "D#1", "D#2", "P#1", "L#1",
+        "N#1", "NR#1",
+        "T#1", "TR#1", "T#2", "TR#2", "T#3", "TR#3",
+        "TS#1", "TSR#1",
+    ]
+    # A count of 0 expands to nothing but keeps its quantity box (P0009 §2.2).
+    assert all(not s["key"].startswith("DB#") for s in steps)
+    assert wp.totals(_plan())["steps"] == 15
+
+
+def test_set_steps_are_paired_and_tsr_is_locked():
+    steps = {s["key"]: s for s in _plan()["steps"]}
+    assert steps["T#2"]["pair_key"] == "TR#2"
+    assert steps["T#2"]["pair_role"] == "instruction"
+    assert steps["TR#2"]["pair_key"] == "T#2"
+    assert steps["TR#2"]["pair_role"] == "result"
+    assert steps["DS#1"]["pair_key"] is None
+    assert steps["DS#1"]["pair_role"] == "single"
+    # DS0006 §2-7: the server assembles TSR, so it can never carry an assignment.
+    assert steps["TSR#1"]["locked"] is True
+    assert steps["TSR#1"]["locked_reason"] == "server_assembled"
+    assert steps["TSR#1"]["origin"] == "system"
+    assert steps["TS#1"]["locked"] is False
+
+
+def test_canonical_dump_is_stable():
+    """P0009 §2.6 결정 3·4: fixed key order, 2-space indent, one trailing newline."""
+    from modules.flow_gate.services import work_plan_service as wp
+
+    text = wp.dumps(wp.validate(_plan()))
+    assert text.endswith("}\n")
+    assert not text.endswith("}\n\n")
+    parsed = json.loads(text)
+    assert list(parsed) == [
+        "wp_version", "binding", "counted_types", "quantities",
+        "provider_candidates", "defaults", "steps",
+    ]
+    assert list(parsed["steps"][0]) == [field for field in wp.STEP_FIELD_ORDER if field != "instruction_mode"]
+    assert all("instruction_mode" not in step for step in parsed["steps"])
+    assert '\n  "binding": "advisory"' in text
+    # Same input, same bytes — a revision diff must only show real changes.
+    assert wp.dumps(wp.validate(json.loads(text))) == text
+
+
+def test_future_x_fields_are_preserved_and_typos_are_not():
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = _plan()
+    body["x_experiment"] = {"a": 1}
+    body["steps"][0]["x_hint"] = "keep me"
+    saved = wp.validate(body)
+    assert saved["x_experiment"] == {"a": 1}
+    assert saved["steps"][0]["x_hint"] == "keep me"
+
+    body = _plan()
+    body["steps"][0]["provider_ids"] = ["aip_opus"]
+    with pytest.raises(wp.WorkPlanValidationError) as exc:
+        wp.validate(body)
+    assert [e["code"] for e in wp.render_errors(exc.value.errors, "ko")] == ["unknown_field"]
+
+
+# ── Part 2: validation verdicts ──────────────────────────────────────────────
+
+def _codes(exc):
+    from modules.flow_gate.services import work_plan_service as wp
+
+    return [e["code"] for e in wp.render_errors(exc.errors, "ko")]
+
+
+def test_locked_step_rejects_provider_and_note():
+    """P0009 §4.7: the screen locks the row, and the server refuses it too."""
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = _plan()
+    tsr = [s for s in body["steps"] if s["key"] == "TSR#1"][0]
+    tsr["provider_id"] = "aip_opus"
+    tsr["provider_display_name"] = "Claude Opus"
+    tsr["note"] = "레포트 정리"
+    tsr["origin"] = "human"
+    with pytest.raises(wp.WorkPlanValidationError) as exc:
+        wp.validate(body)
+    codes = _codes(exc.value)
+    assert "provider_not_allowed" in codes
+    assert "note_not_allowed" in codes
+    assert "origin_not_allowed" in codes
+    keys = {e["key"] for e in wp.render_errors(exc.value.errors, "ko")}
+    assert keys == {"TSR#1"}
+
+
+def test_provider_must_be_a_candidate():
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = _plan()
+    body["steps"][1]["provider_id"] = "aip_gemini"
+    with pytest.raises(wp.WorkPlanValidationError) as exc:
+        wp.validate(body)
+    assert _codes(exc.value) == ["provider_not_candidate"]
+
+
+def test_duplicate_key_stops_before_the_quantity_comparison():
+    """L0010 §2.3 결정 5: one mistake must not be reported as two."""
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = _plan()
+    body["steps"].append(dict(body["steps"][1]))
+    with pytest.raises(wp.WorkPlanValidationError) as exc:
+        wp.validate(body)
+    assert _codes(exc.value) == ["duplicate_key"]
+    assert "steps_quantity_mismatch" not in _codes(exc.value)
+
+
+@pytest.mark.parametrize(
+    "count,expected",
+    [(0, None), (20, None), (21, "count_out_of_range"), (-1, "count_out_of_range"),
+     ("2", "count_not_integer"), (2.0, "count_not_integer")],
+)
+def test_count_boundaries(count, expected):
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = _plan(counted_types=["D"], counts={"D": 1})
+    body["quantities"]["D"]["count"] = count
+    if expected is None:
+        body["steps"] = wp.expand_steps(["D"], body["quantities"])
+        assert len(wp.validate(body)["steps"]) == count
+        return
+    with pytest.raises(wp.WorkPlanValidationError) as exc:
+        wp.validate(body)
+    assert _codes(exc.value) == [expected]
+
+
+def test_note_limits():
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = _plan(counted_types=["D"], counts={"D": 1})
+    body["steps"][0]["note"] = "가" * wp.NOTE_MAX_CHARS
+    wp.validate(body)  # exactly at the limit is fine
+
+    body["steps"][0]["note"] = "가" * (wp.NOTE_MAX_CHARS + 1)
+    with pytest.raises(wp.WorkPlanValidationError) as exc:
+        wp.validate(body)
+    assert _codes(exc.value) == ["note_too_long"]
+
+    # A newline is refused, not silently swallowed — an AI must not believe its
+    # body was stored verbatim when it was not (L0010 §1.5).
+    body["steps"][0]["note"] = "가\n나"
+    with pytest.raises(wp.WorkPlanValidationError) as exc:
+        wp.validate(body)
+    assert _codes(exc.value) == ["note_has_control_char"]
+
+
+def test_binding_and_version_gates():
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = _plan()
+    body["binding"] = "mandatory"
+    with pytest.raises(wp.WorkPlanValidationError) as exc:
+        wp.validate(body)
+    assert "binding_not_allowed" in _codes(exc.value)
+
+    body = _plan()
+    body["wp_version"] = 3
+    with pytest.raises(wp.WorkPlanValidationError) as exc:
+        wp.validate(body)
+    assert _codes(exc.value) == ["wp_version_unsupported"]
+
+
+def test_steps_must_match_quantities():
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = _plan(counted_types=["T"], counts={"T": 2})
+    body["steps"] = body["steps"][:2]
+    with pytest.raises(wp.WorkPlanValidationError) as exc:
+        wp.validate(body)
+    assert _codes(exc.value) == ["steps_quantity_mismatch"]
+
+
+def test_error_messages_follow_the_locale():
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = _plan()
+    body["steps"][1]["provider_id"] = "aip_gemini"
+    with pytest.raises(wp.WorkPlanValidationError) as exc:
+        wp.validate(body)
+    for locale, needle in (("ko", "후보"), ("en", "candidates"), ("ja", "候補")):
+        payload = wp.error_response(exc.value, locale)
+        assert payload["code"] == "wp_validation_failed"
+        assert needle in payload["errors"][0]["msg"]
+
+
+def test_inbox_message_says_where_the_json_broke():
+    """P0009 §5.2: "잘못된 형식입니다" alone makes an unattended worker repeat itself."""
+    from modules.flow_gate.services import work_plan_service as wp
+
+    raw = "# 작업계획\n\n| 타입 | 장수 |\n"
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError as exc:
+        message = wp.inbox_not_json_message(raw, exc, "ko")
+    assert "JSON" in message
+    assert "1행 1열" in message
+    assert "'#'" in message
+    assert "design_template/WP" in message
+
+
+# ── Part 3: derived views and change summary ─────────────────────────────────
+
+def test_assignment_summary_uses_the_current_provider_name():
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = _plan()
+    body["steps"][1]["provider_id"] = "aip_sonnet"
+    body["steps"][1]["provider_display_name"] = "Claude Sonnet"
+    providers = [{"id": "aip_sonnet", "name": "Claude Sonnet 5", "kind": "claude", "exec_type": "cli"}]
+    summary = wp.assignment_summary(body, providers)
+    assert summary == [{"provider_id": "aip_sonnet", "display_name": "Claude Sonnet 5", "step_count": 1}]
+
+    status = {s["provider_id"]: s for s in wp.provider_status(body, providers)}
+    assert status["aip_sonnet"]["name_changed"] is True
+    assert status["aip_opus"]["registered"] is False
+
+
+def test_change_summary_reports_what_changed():
+    from modules.flow_gate.services import work_plan_service as wp
+
+    before = wp.validate(_plan())
+    after_body = _plan(counts={"DS": 1, "D": 2, "P": 1, "L": 1, "DB": 0, "N": 1, "T": 4, "TS": 1})
+    after_body["steps"][1]["provider_id"] = "aip_opus"
+    after_body["steps"][1]["provider_display_name"] = "Claude Opus"
+    after = wp.validate(after_body)
+
+    created = wp.change_summary(after)
+    assert created["kind"] == "work_plan"
+    assert "T 4세트" in created["quantities"]
+    assert created["steps"] == 17
+    # P0009 §5.1 · §5.4: 배정 + 미배정 = 단계 수. 잠긴 TSR 을 어느 쪽에도 넣지
+    # 않으면 무인 작업자가 자기가 보낸 것이 다 저장됐는지 셈으로 확인할 수 없다.
+    assert created["assigned_steps"] + created["unassigned_steps"] == created["steps"]
+    assert created["unassigned_steps"] == wp.unassigned_step_count(after)
+
+    edited = wp.change_summary(after, before)
+    assert "quantities.T.count 3 → 4" in edited["changed"]
+    assert "steps 15 → 17" in edited["changed"]
+    assert any("D#1].provider_id" in line for line in edited["changed"])
+
+
+def test_template_is_json_and_valid():
+    """P0009 §6: an AI can send the template back unchanged and be accepted."""
+    from modules.flow_gate.services import work_plan_service as wp
+
+    payload = wp.template_payload("ko")
+    assert payload["body_format"] == "json"
+    body = json.loads(payload["body"])
+    assert wp.validate(body)["binding"] == "advisory"
+    assert any("advisory" in rule for rule in payload["rules"])
+
+
+def test_template_body_stays_zero_count():
+    """flowgate.default.0488 T0005: adding canonical examples must not touch the
+    zero-count template body itself (NR0003 정정본 §13 — count 0 stays 0; the examples
+    live in the separate `examples` field instead).
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = json.loads(wp.template_body())
+    assert body["steps"] == []
+    assert body["quantities"]
+    for quantity in body["quantities"].values():
+        assert quantity["count"] == 0
+
+
+def test_help_template_examples_match_make_step_and_cover_all_pair_roles():
+    """flowgate.default.0488 T0005: canonical step examples must come from
+    make_step() itself, not hand-authored JSON (NR0003 정정본 §12 R6 drift guard).
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    examples = wp.canonical_step_examples()
+    assert examples["single"] == wp.make_step("D", 1, None, "single")
+    assert examples["paired_instruction"] == wp.make_step("T", 1, "TR#1", "instruction")
+    assert examples["paired_result"] == wp.make_step("TR", 1, "T#1", "result")
+    assert examples["locked"] == wp.make_step("TSR", 1, "TS#1", "result")
+    assert examples["locked"]["locked"] is True
+    assert examples["locked"]["origin"] == "system"
+    assert examples["single"]["origin"] == "human"
+
+    payload = wp.template_payload("ko")
+    assert payload["examples"] == examples
+    for locale in ("ko", "en", "ja"):
+        rules = wp.TEMPLATE_RULES[locale]
+        assert any("pair_role" in rule for rule in rules)
+        assert any("origin" in rule for rule in rules)
+        assert any("examples" in rule for rule in rules)
+
+
+def test_help_template_examples_validate_when_inserted_into_a_body():
+    """Each canonical example must sit inside an otherwise-valid body without
+    tripping validate() — proving the shape is usable, not just structurally similar.
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    def envelope(counted_type, unit, steps):
+        return {
+            "wp_version": 1,
+            "binding": "advisory",
+            "counted_types": [counted_type],
+            "quantities": {counted_type: {"unit": unit, "count": 1}},
+            "provider_candidates": [],
+            "defaults": {"provider_id": None, "note": None},
+            "steps": steps,
+        }
+
+    single_body = envelope("D", "sheet", [wp.make_step("D", 1, None, "single")])
+    assert wp.validate(single_body)["binding"] == "advisory"
+
+    paired_body = envelope("T", "set", [
+        wp.make_step("T", 1, "TR#1", "instruction"),
+        wp.make_step("TR", 1, "T#1", "result"),
+    ])
+    assert wp.validate(paired_body)["binding"] == "advisory"
+
+    locked_body = envelope("TS", "set", [
+        wp.make_step("TS", 1, "TSR#1", "instruction"),
+        wp.make_step("TSR", 1, "TS#1", "result"),
+    ])
+    assert wp.validate(locked_body)["binding"] == "advisory"
+    assert locked_body["steps"][1]["locked"] is True
+
+
+# ── Part 4: type registration and the audited type sets (D0007 §7) ───────────
+
+def test_work_plan_is_not_auto_complete():
+    from modules.flow_gate.documents.constants import (
+        AUTO_COMPLETE_TYPES,
+        FILELESS_APPROVABLE_TYPES,
+        HEAD_TYPE_GUARD_EXEMPT_TYPES,
+        NON_SLOT_WORKFLOW_TYPES,
+        WORK_PLAN_TYPE,
+    )
+
+    # 결정 4: it is created pending_review and reviewed like any other document.
+    assert WORK_PLAN_TYPE not in AUTO_COMPLETE_TYPES
+    # It has a real body file, so it is not a file-less approval either.
+    assert WORK_PLAN_TYPE not in FILELESS_APPROVABLE_TYPES
+    # 결정 5: several plans per group, at any point — so not pinned to the head type.
+    assert WORK_PLAN_TYPE in HEAD_TYPE_GUARD_EXEMPT_TYPES
+    # D0007 §7 은 작업계획이 워크플로 칸을 차지하는지 "명시"하라고 했다. 같은 문서가
+    # 그것을 "요건정의 다음에 오는 일반 칸"으로 정했으므로 칸을 차지한다 — 머리 타입
+    # 검사에서 빠지는 것과 칸을 갖지 않는 것은 다른 이야기다.
+    assert WORK_PLAN_TYPE not in NON_SLOT_WORKFLOW_TYPES
+
+
+def test_work_plan_reaches_the_review_and_linter_type_sets():
+    from modules.flow_gate import linter, process_service
+
+    assert "WP" in linter.VALID_TYPES
+    assert "WP" in process_service.REVIEW_REQUEST_TYPES
+    assert "WP" in process_service.APPROVABLE_TYPES
+    assert process_service.TYPE_ACTIONS["WP"] == ["review_request", "approve", "reject"]
+
+
+def test_type_annotation_marks_countable_types():
+    from modules.flow_gate.services import work_plan_service as wp
+
+    rows = wp.annotate_types([
+        {"type_code": "D", "series": "design"},
+        {"type_code": "T", "series": "instruction", "type_name": "작업지시"},
+        {"type_code": "L", "series": "general"},   # the LOG type, not the logic sheet
+        {"type_code": "WP", "series": "general"},
+        {"type_code": "TR", "series": "work", "type_name": "작업레포트"},
+    ])
+    by_code = {r["type_code"]: r for r in rows}
+    assert by_code["D"]["countable"] is True and by_code["D"]["unit"] == "sheet"
+    assert by_code["T"]["countable"] is True and by_code["T"]["unit"] == "set"
+    assert by_code["T"]["pair_code"] == "TR"
+    # P0009 §4.1: 짝의 이름은 같은 응답 안의 행에서 가져오므로 로케일이 저절로 맞는다.
+    assert by_code["T"]["pair_name"] == "작업레포트"
+    # 짝 행이 목록에 없으면 항목 자체를 만들지 않는다 — 코드를 이름인 척 보이지 않는다.
+    lone = wp.annotate_types([{"type_code": "N", "series": "instruction"}])[0]
+    assert lone["pair_code"] == "NR" and "pair_name" not in lone
+    assert by_code["L"]["countable"] is False   # same letter, different type
+    assert by_code["WP"]["countable"] is False  # a plan never counts itself
+    assert by_code["TR"]["countable"] is False  # the result half is not counted
+
+
+def test_all_three_dialects_seed_the_type():
+    """D0007 §7: fixing one branch and not the others leaves a DB without the type."""
+    roots = _SERVER_DIR / "sql" / "migrations"
+    for dialect in ("sqlite", "postgres", "mysql"):
+        # Not named `path`: the repo-scratch guard (0382) tracks names transitively
+        # derived from __file__ across the whole file, so reusing that name here would
+        # make an unrelated `path.unlink()` on a tmp file below read as a repo write.
+        sql_path = roots / dialect / "078b_seed_work_plan_doctype.sql"
+        assert sql_path.is_file(), f"missing {dialect} migration"
+        sql = sql_path.read_text(encoding="utf-8")
+        assert "'WP'" in sql and "작업계획" in sql
+        assert "'general'" in sql
+
+
+# ── Part 5: DB-backed paths ──────────────────────────────────────────────────
+
+class _MockDB:
+    def __init__(self, db_path: str):
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys = ON")
+
+    def execute(self, sql: str, params=None):
+        self._conn.execute(sql, params or [])
+        self._conn.commit()
+
+    def fetch_one(self, sql: str, params=None):
+        row = self._conn.execute(sql, params or []).fetchone()
+        return dict(row) if row else None
+
+    def fetch_all(self, sql: str, params=None):
+        return [dict(r) for r in self._conn.execute(sql, params or []).fetchall()]
+
+    @contextmanager
+    def begin_transaction(self):
+        yield _MockTxn(self._conn)
+
+    def close(self):
+        self._conn.close()
+
+
+class _MockTxn:
+    def __init__(self, conn):
+        self._conn = conn
+        self._last_cursor = None
+
+    @property
+    def cursor(self):
+        """The affected-row count a guarded write reads (0064 T-B1d: ``regenerate`` runs in the document's guard)."""
+        return self._last_cursor
+
+    def execute(self, sql: str, params=None):
+        self._last_cursor = self._conn.execute(sql, params or [])
+        self._conn.commit()
+
+    def fetch_one(self):
+        if self._last_cursor is None:
+            return None
+        row = self._last_cursor.fetchone()
+        return dict(row) if row else None
+
+    def fetch_all(self):
+        if self._last_cursor is None:
+            return []
+        return [dict(r) for r in self._last_cursor.fetchall()]
+
+
+@pytest.fixture(scope="module")
+def tmp_db(tmp_path_factory):
+    db_path = str(tmp_path_factory.mktemp("wp-db") / "work-plan.db")
+    mock = _MockDB(db_path)
+    for sql_file in sorted(_SCHEMA_DIR.glob("*.sql")):
+        try:
+            mock._conn.executescript(sql_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    mock._conn.commit()
+    yield mock
+    mock.close()
+    os.unlink(db_path)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def patch_store(tmp_db):
+    """Swap the STORE object, not get_store — patching the function leaks into modules
+    imported later in the same session (a "passes alone, fails together" trap)."""
+    from modules.flow_gate.db import connection as conn_mod
+
+    original = conn_mod.STORE
+    prev_pepper = os.environ.get("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID")
+    os.environ["FLOWGATE_TOKEN_PEPPER_ACTIVE_ID"] = "wp395"
+
+    class _PatchedStore(conn_mod.FlowGateStore):
+        def __init__(self):
+            self._db = tmp_db
+            self._sq = None
+
+        def _sql(self, key: str) -> str:
+            raise NotImplementedError
+
+    conn_mod.STORE = _PatchedStore()
+    yield
+    conn_mod.STORE = original
+    if prev_pepper is None:
+        os.environ.pop("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", None)
+    else:
+        os.environ["FLOWGATE_TOKEN_PEPPER_ACTIVE_ID"] = prev_pepper
+
+
+@pytest.fixture(scope="module", autouse=True)
+def storage_root(tmp_path_factory, patch_store):
+    root = tmp_path_factory.mktemp("wp_storage")
+    prev = os.environ.get("FLOWGATE_STORAGE_DIR")
+    os.environ["FLOWGATE_STORAGE_DIR"] = str(root)
+    yield root
+    if prev is None:
+        os.environ.pop("FLOWGATE_STORAGE_DIR", None)
+    else:
+        os.environ["FLOWGATE_STORAGE_DIR"] = prev
+
+
+@pytest.fixture(scope="module")
+def seed(tmp_db, patch_store):
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.db import projects, users
+    from modules.flow_gate.db.connection import get_store, now_iso
+
+    projects.create({"project_id": PROJECT, "project_name": "WP Test"})
+    users.create({
+        "user_id": "usr_wp_001", "username": "wpuser",
+        "email": "wp@example.com", "password": "hashed",
+    })
+    store = get_store()
+    now = now_iso()
+    store._execute(
+        "INSERT OR IGNORE INTO roles (role_id, role_name, created_at, updated_at) VALUES (?,?,?,?)",
+        ["role_wp", "WP Worker", now, now],
+    )
+    # The inbox gate asks for the `perm_*` ids, so those are the ones granted here and
+    # the gate is left to run for real. Mocking has_permission instead only worked while
+    # this file was the first to import inbox_routes — once another module imported it
+    # earlier, the patched name was no longer the one the route had bound, and the mock
+    # silently stopped covering the very check it was hiding.
+    for perm in (
+        "document.create", "document.read", "document.update",
+        "perm_document_create", "perm_document_read", "perm_document_update",
+    ):
+        store._execute(
+            "INSERT OR IGNORE INTO permissions (permission_id, permission_name, created_at) VALUES (?,?,?)",
+            [perm, perm, now],
+        )
+        store._execute(
+            "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?,?)",
+            ["role_wp", perm],
+        )
+    store._execute(
+        "INSERT OR IGNORE INTO user_project_roles (user_id, project_id, role_id, granted_at) VALUES (?,?,?,?)",
+        ["usr_wp_001", PROJECT, "role_wp", now],
+    )
+    # The permission set is cached for 30 minutes per (user, project); drop it so this
+    # module's first check reads the rows just inserted rather than an older empty set.
+    from modules.flow_gate.rbac import permission_service
+
+    permission_service.clear_all_cache()
+    db_groups.create({
+        "group_id": GROUP, "project_id": PROJECT, "module": "__ALL__", "title": "WP Group",
+    })
+    db_docs.create({
+        "doc_id": ROOT_DOC, "project_id": PROJECT, "type_code": "R", "seq": 1,
+        "title": "Root Requirement", "group_id": GROUP, "module": "__ALL__",
+        "owner_id": "usr_wp_001",
+    })
+    yield
+
+
+def _client():
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+
+    from modules.flow_gate.auth.middleware import get_current_user
+    from modules.flow_gate.documents.routers.work_plan import router
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "usr_wp_001"}
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _assert_exact_r0(doc_id: str, canonical: Path):
+    """Return the sole r0 row after proving it is the canonical creation bytes."""
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import work_plan_service as wp
+
+    rows = db_revisions.list_by_doc_revision(doc_id, 0)
+    assert len(rows) == 1
+    doc = db_docs.get_by_id(doc_id)
+    baseline = wp.resolve_revision_snapshot(
+        rows[0], project_id=doc["project_id"], doc_id=doc_id,
+    )
+    assert baseline.resolve() != canonical.resolve()
+    assert baseline.read_bytes() == canonical.read_bytes()
+    return rows[0], baseline
+
+
+def test_human_create_read_save_roundtrip(seed, storage_root):
+    from modules.flow_gate.db import documents as db_docs
+
+    client = _client()
+    parent_before = dict(db_docs.get_by_id(ROOT_DOC))
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0002-WP",
+    ):
+        resp = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "title": "0402 작업계획",
+            "counted_types": ["DS", "D", "P", "L", "N", "T", "TS"],
+            "provider_candidates": ["aip_opus"],
+            # flowgate.default.0423 T0005 item 15: this roundtrip test needs real steps
+            # to exercise save/conflict/reject below, so it sends explicit quantities —
+            # a request that omits them now defaults to 0, not 1 (see
+            # test_human_create_legacy_request_defaults_unspecified_types_to_zero).
+            "quantities": {code: 1 for code in ["DS", "D", "P", "L", "N", "T", "TS"]},
+        })
+    assert resp.status_code == 201, resp.text
+    created = resp.json()
+    doc_id = created["doc_id"]
+
+    # 결정 2: an explicit quantity in the request is honored as-is.
+    assert created["body"]["quantities"]["D"]["count"] == 1
+    assert created["body"]["binding"] == "advisory"
+    # 결정 2 (P0009 §2.6): the canonical body is a .json file, never .md.
+    stored = created["stored_path"]
+    assert stored.endswith("_document.json"), stored
+    assert (storage_root / stored).is_file()
+    assert json.loads((storage_root / stored).read_text(encoding="utf-8"))["wp_version"] == 2
+    _assert_exact_r0(doc_id, storage_root / stored)
+
+    # 결정 4: pending review, and the parent is left exactly as it was.
+    row = db_docs.get_by_id(doc_id)
+    assert row["doc_review_status"] == "pending_review"
+    # §4.2: the parent's state is left exactly as it was — creating a plan is not
+    # progress on the requirement it hangs from.
+    parent_after = dict(db_docs.get_by_id(ROOT_DOC))
+    assert parent_after["status"] == parent_before["status"]
+    assert parent_after["doc_review_status"] == parent_before["doc_review_status"]
+
+    read = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert read.status_code == 200, read.text
+    view = read.json()
+    assert view["revision_no"] == 0
+    assert view["origin"] == "human"
+    assert view["totals"]["steps"] == len(view["body"]["steps"])
+    assert view["unassigned_step_count"] == view["totals"]["steps"] - 1  # TSR is locked
+
+    # Save: assign one provider, then check the revision moved and the file changed.
+    body = view["body"]
+    body["steps"][0]["provider_id"] = "aip_opus"
+    body["steps"][0]["provider_display_name"] = "Claude Opus"
+    # flowgate.default.0533 T0004: T#1/TR#1 stay unassigned here. provider_id=null is a
+    # normal, unassigned WP state and must not trigger the capability confirmation gate
+    # (that gate is only for a provider that is actually specified but incapable), so
+    # this save succeeds directly without any capability_warning_acks.
+    save_payload = {"base_revision_no": 0, "body": body}
+    saved = client.put(f"/api/v1/documents/{doc_id}/work-plan", json=save_payload)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision_no"] == 1
+    assert saved.json()["assignment_summary"][0]["step_count"] == 1
+    # §4.6: saving does not touch the review state.
+    assert db_docs.get_by_id(doc_id)["doc_review_status"] == "pending_review"
+    on_disk = json.loads((storage_root / stored).read_text(encoding="utf-8"))
+    assert on_disk["steps"][0]["provider_id"] == "aip_opus"
+
+    # §4.8: a stale base revision is refused, and nothing is overwritten.
+    body["steps"][0]["note"] = "덮어쓰기 시도"
+    conflict = client.put(f"/api/v1/documents/{doc_id}/work-plan",
+                          json={"base_revision_no": 0, "body": body})
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "wp_revision_conflict"
+    assert conflict.json()["current_revision_no"] == 1
+    assert "body" not in conflict.json()          # 결정 7: no merge, so no rival body
+    assert json.loads((storage_root / stored).read_text(encoding="utf-8")) == on_disk
+
+    # 결정 6: an invalid body is refused BEFORE the revision check, so the user is
+    # never told to discard their edits only to find the values were wrong anyway.
+    bad = json.loads(json.dumps(body))
+    tsr = [s for s in bad["steps"] if s["key"] == "TSR#1"][0]
+    tsr["provider_id"] = "aip_opus"
+    rejected = client.put(f"/api/v1/documents/{doc_id}/work-plan",
+                          json={"base_revision_no": 0, "body": bad})
+    assert rejected.status_code == 422
+    assert rejected.json()["code"] == "wp_validation_failed"
+    assert rejected.json()["errors"][0]["code"] == "provider_not_allowed"
+    assert rejected.json()["errors"][0]["key"] == "TSR#1"
+    # flowgate.default.0576 T0004 (NR0003 §9): the client's JSON upload leans on this same
+    # PUT to mean "invalid input never touches the plan" — pin that the rejected save left
+    # both the file and the revision exactly where the last successful save put them.
+    assert json.loads((storage_root / stored).read_text(encoding="utf-8")) == on_disk
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 1
+
+
+@pytest.mark.parametrize(
+    "locale,doc_code,expected_message,expected_errors",
+    [
+        (
+            "ja",
+            "0997-WP",
+            "作業計画を保存できませんでした。2件の項目が規則に合いません。",
+            {
+                "missing_field": "必須項目 defaults がありません。",
+                "unknown_field": (
+                    "未知の項目 provider_candidatez です。"
+                    "実験用の項目は x_ で始めてください。"
+                ),
+            },
+        ),
+        (
+            "en",
+            "0998-WP",
+            "The work plan was not saved. 2 item(s) break the rules.",
+            {
+                "missing_field": "Required field defaults is missing.",
+                "unknown_field": (
+                    "Unknown field provider_candidatez. "
+                    "Experimental fields must start with x_ to be preserved."
+                ),
+            },
+        ),
+    ],
+)
+def test_save_http_localizes_validation_from_x_locale(
+    seed, locale, doc_code, expected_message, expected_errors,
+):
+    """0589 T#1: header -> route locale -> validator -> localized HTTP response."""
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value=doc_code,
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": ["aip_opus"],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+
+    invalid_body = json.loads(json.dumps(created.json()["body"]))
+    invalid_body.pop("defaults")
+    invalid_body["provider_candidatez"] = []
+    response = client.put(
+        f"/api/v1/documents/{created.json()['doc_id']}/work-plan",
+        json={"base_revision_no": 0, "body": invalid_body},
+        headers={"X-Locale": locale},
+    )
+
+    assert response.status_code == 422, response.text
+    payload = response.json()
+    assert payload["code"] == "wp_validation_failed"
+    assert payload["message"] == expected_message
+    assert {error["code"]: error["msg"] for error in payload["errors"]} == expected_errors
+
+
+def test_save_http_validation_errors_carry_substituted_params():
+    """0589 T0007 §1.1: each errors[] item also carries the substituted `params` a client
+    can re-render under a different locale without a new request — `code`/`loc`/`key`/`msg`
+    stay exactly as before for existing consumers."""
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0999-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": ["aip_opus"],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+
+    invalid_body = json.loads(json.dumps(created.json()["body"]))
+    invalid_body.pop("defaults")
+    invalid_body["provider_candidatez"] = []
+    response = client.put(
+        f"/api/v1/documents/{created.json()['doc_id']}/work-plan",
+        json={"base_revision_no": 0, "body": invalid_body},
+        headers={"X-Locale": "ko"},
+    )
+
+    assert response.status_code == 422, response.text
+    errors = {error["code"]: error for error in response.json()["errors"]}
+    assert errors["missing_field"]["params"] == {"field": "defaults"}
+    assert set(errors["missing_field"].keys()) == {"loc", "key", "code", "params", "msg"}
+    assert errors["unknown_field"]["params"] == {"field": "provider_candidatez"}
+
+
+def test_empty_selection_error_params_stay_locale_independent():
+    """0589 T0007 rev1 §1: `empty_selection`'s translated noun must not be baked into
+    `params` at the request's locale. Before this fix, a ko request's `params` carried
+    `{"what": "수량을 확인할 타입"}`; re-rendering that same params dict under `ja` produced a
+    Korean noun glued to a Japanese sentence. `params` must instead carry the stable
+    `what_key`, resolvable to a word in ANY locale — `msg` (this request's locale only) is
+    the sole place a resolved word may appear."""
+    client = _client()
+    response = client.post(
+        "/api/v1/documents/work-plan",
+        json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": [],
+            "provider_candidates": ["aip_opus"],
+            "quantities": {},
+        },
+        headers={"X-Locale": "ko"},
+    )
+
+    assert response.status_code == 422, response.text
+    errors = {error["code"]: error for error in response.json()["errors"]}
+    empty_selection = errors["empty_selection"]
+    assert empty_selection["params"] == {"what_key": "counted_types"}
+    assert "수량을 확인할 타입" in empty_selection["msg"]
+
+    from modules.flow_gate.services import work_plan_service as wp_service
+
+    rerendered = wp_service.render_errors(
+        [{
+            "loc": empty_selection["loc"],
+            "key": empty_selection["key"],
+            "code": empty_selection["code"],
+            "params": empty_selection["params"],
+        }],
+        "ja",
+    )
+    assert rerendered[0]["params"] == {"what_key": "counted_types"}
+    assert "数量を確認するタイプ" in rerendered[0]["msg"]
+    assert "수량을 확인할 타입" not in rerendered[0]["msg"]
+
+
+def test_capability_warning_findings_distinguishes_unassigned_from_incapable():
+    """flowgate.default.0533 T0004: provider_id=None is a normal unassigned WP state and
+    must not be treated like a specified-but-incapable/unknown/disabled provider by the
+    0492 T0014 capability confirmation gate."""
+    from modules.flow_gate.services import work_plan_service as wp
+
+    effective = {
+        "providers": [
+            {"id": "aip_weak_a", "name": "Weak A", "exec_type": "", "enabled": True},
+            {"id": "aip_weak_b", "name": "Weak B", "exec_type": "", "enabled": True},
+            {"id": "aip_disabled", "name": "Disabled", "exec_type": "cli", "enabled": False},
+        ],
+    }
+
+    def _pair(t_provider, tr_provider):
+        t = wp.make_step("T", 1, "TR#1", "instruction")
+        t["provider_id"] = t_provider
+        tr = wp.make_step("TR", 1, "T#1", "result")
+        tr["provider_id"] = tr_provider
+        return [t, tr]
+
+    with patch(
+        "modules.flow_gate.settings.ai_settings_service.resolve_effective",
+        return_value=effective,
+    ):
+        # 1. Both unassigned: no findings at all, so no ack is required to save.
+        assert wp.capability_warning_findings({"steps": _pair(None, None)}, PROJECT) == []
+
+        # 2. Only T is assigned an incapable provider: only T warns, TR stays unassigned.
+        findings = wp.capability_warning_findings({"steps": _pair("aip_weak_a", None)}, PROJECT)
+        assert [f["step_key"] for f in findings] == ["T#1"]
+
+        # 3. T/TR share the same incapable provider: existing pair dedup keeps one
+        #    representative warning (through the T side), not two.
+        findings = wp.capability_warning_findings(
+            {"steps": _pair("aip_weak_a", "aip_weak_a")}, PROJECT
+        )
+        assert [f["step_key"] for f in findings] == ["T#1"]
+
+        # 4. T/TR assigned different incapable providers: each keeps its own warning.
+        findings = wp.capability_warning_findings(
+            {"steps": _pair("aip_weak_a", "aip_weak_b")}, PROJECT
+        )
+        assert {f["step_key"] for f in findings} == {"T#1", "TR#1"}
+
+        # 5. An actually-specified unknown/disabled provider id keeps the existing
+        #    fail-closed gate — this is not the same as "no provider chosen".
+        findings = wp.capability_warning_findings(
+            {"steps": _pair("aip_never_registered", "aip_disabled")}, PROJECT
+        )
+        assert {f["step_key"] for f in findings} == {"T#1", "TR#1"}
+
+        # 6. The capability gate only ever applies to T/TR; other counted types never
+        #    warn regardless of assignment.
+        d_step = wp.make_step("D", 1, None, "single")
+        p_step = wp.make_step("P", 1, None, "single")
+        p_step["provider_id"] = "aip_weak_a"
+        assert wp.capability_warning_findings({"steps": [d_step, p_step]}, PROJECT) == []
+
+
+def test_human_create_applies_quantities_defaults_and_type_providers(seed):
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0991-WP",
+    ):
+        resp = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "title": "채워진 작업계획",
+            "counted_types": ["D", "T", "TS"],
+            "provider_candidates": ["aip_opus"],
+            "quantities": {"D": 2, "T": 2, "TS": 1},
+            "defaults": {"provider_id": "aip_opus", "note": "공통 멘트"},
+            "type_providers": {"T": "aip_opus", "TS": "aip_opus"},
+        })
+    assert resp.status_code == 201, resp.text
+    created = resp.json()
+    plan = created["body"]
+    assert created["title"] == "작업계획 — 설계 2장 · 작업 3세트"
+    assert plan["quantities"] == {
+        "D": {"unit": "sheet", "count": 2},
+        "T": {"unit": "set", "count": 2},
+        "TS": {"unit": "set", "count": 1},
+    }
+    assert plan["defaults"] == {"provider_id": "aip_opus", "note": "공통 멘트"}
+    assert sum(1 for step in plan["steps"] if not step["locked"] and not step["provider_id"]) == 0
+    assert all(
+        step["provider_id"] == "aip_opus" and step["origin"] == "human"
+        for step in plan["steps"]
+        if not step["locked"]
+    )
+
+
+def test_human_create_assigns_work_provider_to_report_pair_but_not_locked_tsr(seed):
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0992-WP",
+    ):
+        resp = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["T", "TS"],
+            "provider_candidates": ["aip_opus"],
+            # flowgate.default.0423 T0005 item 15: an omitted quantity now defaults to 0,
+            # so this test (about provider assignment, not the default) states its own.
+            "quantities": {"T": 1, "TS": 1},
+            "type_providers": {"T": "aip_opus", "TS": "aip_opus"},
+        })
+    assert resp.status_code == 201, resp.text
+    by_key = {step["key"]: step for step in resp.json()["body"]["steps"]}
+    assert by_key["T#1"]["provider_id"] == "aip_opus"
+    assert by_key["TR#1"]["provider_id"] == "aip_opus"
+    assert by_key["TS#1"]["provider_id"] == "aip_opus"
+    assert by_key["TSR#1"]["provider_id"] is None
+    assert by_key["TSR#1"]["locked"] is True
+    assert by_key["TSR#1"]["origin"] == "system"
+
+
+def test_human_create_rejects_assignment_outside_provider_candidates(seed):
+    client = _client()
+    resp = client.post("/api/v1/documents/work-plan", json={
+        "parent_doc_id": ROOT_DOC,
+        "counted_types": ["D"],
+        "provider_candidates": ["aip_opus"],
+        # flowgate.default.0423 T0005 item 15: a D step must actually exist for the
+        # provider-candidate rejection below to have anything to reject.
+        "quantities": {"D": 1},
+        "type_providers": {"D": "aip_not_a_candidate"},
+    })
+    assert resp.status_code == 422, resp.text
+    assert any(error["code"] == "provider_not_candidate" for error in resp.json()["errors"])
+
+
+def test_save_accepts_registered_provider_outside_candidates_but_rejects_unknown(seed):
+    """0411 T0004: manual assignment is candidate ∪ currently registered, never arbitrary."""
+    client = _client()
+    effective = {
+        "providers": [
+            {"id": "aip_opus", "name": "Claude Opus", "kind": "claude", "exec_type": "cli"},
+            {"id": "aip_sonnet", "name": "Claude Sonnet", "kind": "claude", "exec_type": "cli"},
+        ],
+    }
+    with (
+        patch(
+            "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+            return_value="0994-WP",
+        ),
+        patch(
+            "modules.flow_gate.settings.ai_settings_service.resolve_effective",
+            return_value=effective,
+        ),
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": ["aip_opus"],
+            # flowgate.default.0423 T0005 item 15: the save-time provider check below
+            # needs an actual D step; an omitted quantity now defaults to 0.
+            "quantities": {"D": 1},
+        })
+        assert created.status_code == 201, created.text
+        doc_id = created.json()["doc_id"]
+
+        view = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+        assert view.status_code == 200, view.text
+        assert [provider["id"] for provider in view.json()["registered_providers"]] == [
+            "aip_opus", "aip_sonnet",
+        ]
+        body = view.json()["body"]
+        assert [item["provider_id"] for item in body["provider_candidates"]] == ["aip_opus"]
+
+        body["steps"][0]["provider_id"] = "aip_sonnet"
+        body["steps"][0]["provider_display_name"] = "Claude Sonnet"
+        saved = client.put(
+            f"/api/v1/documents/{doc_id}/work-plan",
+            json={"base_revision_no": 0, "body": body},
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["revision_no"] == 1
+
+        saved_view = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+        assert saved_view.status_code == 200, saved_view.text
+        saved_body = saved_view.json()["body"]
+        assert saved_body["steps"][0]["provider_id"] == "aip_sonnet"
+        assert [item["provider_id"] for item in saved_body["provider_candidates"]] == [
+            "aip_opus",
+        ]
+
+        invalid_body = saved_body
+        invalid_body["steps"][0]["provider_id"] = "aip_never_registered"
+        invalid = client.put(
+            f"/api/v1/documents/{doc_id}/work-plan",
+            json={"base_revision_no": 1, "body": invalid_body},
+        )
+        assert invalid.status_code == 422, invalid.text
+        assert any(
+            error["code"] == "provider_not_candidate" for error in invalid.json()["errors"]
+        )
+
+
+def test_human_create_legacy_request_defaults_unspecified_types_to_zero(seed):
+    """flowgate.default.0423 T0005 item 5/15: a legacy request that omits ``quantities``
+    entirely used to fill every counted type with 1 (NR0003's all-1 defect). It now
+    falls back to the group's workflow_type_counts derivation, or 0 when the group has
+    no sequence yet (this fixture's ROOT_DOC) — never a guessed 1."""
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0993-WP",
+    ):
+        resp = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D", "T"],
+            "provider_candidates": ["aip_opus"],
+        })
+    assert resp.status_code == 201, resp.text
+    created = resp.json()
+    plan = created["body"]
+    assert created["title"] == "작업계획 — 설계 0장 · 작업 0세트"
+    assert {code: item["count"] for code, item in plan["quantities"].items()} == {"D": 0, "T": 0}
+    assert plan["defaults"] == {"provider_id": None, "note": ""}
+    assert plan["steps"] == []
+
+
+def test_human_create_uses_workflow_type_counts_when_quantities_omitted(seed, storage_root):
+    """flowgate.default.0423 T0005 item 6/7/16: an omitted quantity prefers the group's
+    workflow_type_counts derivation over the bare 0 fallback, when the group's sequence
+    already has decided items to derive from. An explicit request value still wins, and
+    a type with neither an explicit value nor a derivation still lands at 0."""
+    from modules.flow_gate.db import documents as db_docs
+
+    # A group_id of its own, not the shared GROUP: get_pending_head_by_group scopes by
+    # group_id alone, and this sequence deliberately stays pending forever (it never
+    # includes "WP"), so sharing GROUP would make it shadow the pending head other
+    # GROUP-scoped slot-filling tests expect (module-scoped seed/tmp_db fixtures share
+    # one DB across this whole file).
+    from modules.flow_gate.db import groups as db_groups
+
+    derivation_group = f"{GROUP}-derivation"
+    root = f"{derivation_group}-R0901"
+    db_groups.create({
+        "group_id": derivation_group, "project_id": PROJECT, "module": "__ALL__",
+        "title": "Derivation Group",
+    })
+    db_docs.create({
+        "doc_id": root, "project_id": PROJECT, "type_code": "R", "seq": 901,
+        "title": "Derivation Root", "group_id": derivation_group, "module": "__ALL__",
+        "owner_id": "usr_wp_001",
+    })
+    with _sequence_sql():
+        _decide_sequence(root, ["D", "D", "T"])
+
+        client = _client()
+        with patch(
+            "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+            return_value="0995-WP",
+        ):
+            resp = client.post("/api/v1/documents/work-plan", json={
+                "parent_doc_id": root,
+                "counted_types": ["D", "T", "P"],
+                "provider_candidates": ["aip_opus"],
+                "quantities": {"T": 3},
+            })
+        assert resp.status_code == 201, resp.text
+        plan = resp.json()["body"]
+        assert {code: item["count"] for code, item in plan["quantities"].items()} == {
+            "D": 2,  # derived from the sequence — the request never mentioned D
+            "T": 3,  # explicit request value wins over the sequence's derived 1
+            "P": 0,  # neither an explicit value nor a derivation exists
+        }
+
+
+def test_suggest_returns_the_documented_shape(seed, storage_root):
+    """§4.9: only the changed cells, and a basis the server can actually name."""
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0006-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC, "title": "제안 대상",
+            "counted_types": ["D", "T"], "provider_candidates": ["aip_opus"],
+        })
+    assert created.status_code == 201, created.text
+    doc_id = created.json()["doc_id"]
+
+    resp = client.post(f"/api/v1/documents/{doc_id}/work-plan/suggest",
+                       json={"base_revision_no": 0})
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["basis"] == "not_specified"
+    assert isinstance(payload["suggested"]["steps"], list)
+    # With no per-doc-type provider rule configured, nothing is invented.
+    assert payload["suggested"]["steps"] == []
+    # Suggesting never saves — the revision is untouched until [저장].
+    assert client.get(f"/api/v1/documents/{doc_id}/work-plan").json()["revision_no"] == 0
+
+
+def test_a_work_plan_body_satisfies_the_approval_body_guard(seed, storage_root):
+    """D0007 §3.6: the plan uses the EXISTING review pipeline, so its JSON body has to
+    read as a real body — otherwise every approval would fail with "빈 본문"."""
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.workflow.pipeline_service import _require_document_body_for_approval
+
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0007-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC, "title": "승인 대상",
+            "counted_types": ["D"], "provider_candidates": ["aip_opus"],
+        })
+    assert created.status_code == 201, created.text
+    doc = db_docs.get_by_id(created.json()["doc_id"])
+    _require_document_body_for_approval(doc)  # raises TransitionError when the body is empty
+
+
+def test_regenerate_recovers_a_work_plan_as_json(seed, storage_root):
+    """P0009 §10: a `.json` canonical body is new, so recovery must not write `.md`.
+
+    Generic recovery synthesizes a Markdown frontmatter stub. For a work plan that
+    produces a file its own reader can only refuse ("표로 열 수 없습니다"), so the plan
+    branch recovers a valid-but-undecided body instead.
+    """
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+
+    from modules.flow_gate.auth.middleware import get_current_user
+    from modules.flow_gate.documents.routers.documents import router as documents_router
+    from modules.flow_gate.documents.routers.work_plan import router as wp_router
+    from modules.flow_gate.services import work_plan_service as wp
+
+    app = FastAPI()
+    app.include_router(wp_router, prefix="/api/v1")
+    app.include_router(documents_router, prefix="/api/v1")
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "usr_wp_001"}
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0008-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC, "title": "복구 대상",
+            "counted_types": ["D"], "provider_candidates": ["aip_opus"],
+        })
+    assert created.status_code == 201, created.text
+    doc_id = created.json()["doc_id"]
+    plan_file = storage_root / created.json()["stored_path"]
+    plan_file.unlink()
+
+    resp = client.post(f"/api/v1/documents/{doc_id}/regenerate")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["file_path"].endswith("_document.json")
+    recovered = storage_root / resp.json()["data"]["file_path"]
+    body = json.loads(recovered.read_text(encoding="utf-8"))
+    # Valid, openable, and honestly empty rather than invented.
+    assert wp.validate(body)["steps"] == []
+    assert client.get(f"/api/v1/documents/{doc_id}/work-plan").status_code == 200
+
+
+def test_help_serves_the_work_plan_template(seed):
+    """P0009 §6: the one type whose body an AI cannot guess must have a template."""
+    from modules.flow_gate.services import help_catalog
+    from modules.flow_gate.services import work_plan_service as wp
+
+    base = {
+        "locale": "ko", "action_scope": "new", "principal_kind": "worker_token",
+        "project": PROJECT, "base_url": "/flowgate/api/v1",
+        "tool_kind": "read_write", "source_mode": "remote",
+    }
+    assert help_catalog.decide_visibility("design_template", dict(base, doc_type="WP")).visible
+    assert help_catalog.decide_visibility("design_template", dict(base, doc_type="D")).visible
+    assert not help_catalog.decide_visibility("design_template", dict(base, doc_type="TR")).visible
+
+    wp_children = [c["name"] for c in
+                   help_catalog.enumerate_children("design_template", dict(base, doc_type="WP"))]
+    assert "WP" in wp_children
+    d_children = [c["name"] for c in
+                  help_catalog.enumerate_children("design_template", dict(base, doc_type="D"))]
+    assert "WP" not in d_children  # a D author has no use for the plan body format
+
+    child = help_catalog.build_child("design_template", "WP", dict(base, doc_type="WP"))
+    assert child["content"]["body_format"] == "json"
+    # The template is not decoration: sending it back unchanged has to be accepted.
+    assert wp.validate(json.loads(child["content"]["body"]))["binding"] == "advisory"
+
+    # The Markdown branch now says its format out loud too — otherwise a worker still
+    # has to infer it from whichever body it happened to receive.
+    d_child = help_catalog.build_child("design_template", "D", dict(base, doc_type="D"))
+    assert d_child["content"]["body_format"] == "markdown"
+
+
+def test_ai_handoff_points_to_the_work_plan_body_template(seed):
+    from modules.flow_gate.services import mention_service
+
+    mention = mention_service.build_mention(
+        project=PROJECT, module="default", group="0402",
+        parent_type="R", parent_doc_number="R0001", parent_title="root",
+        parent_doc_id="R0001", head_type="WP", head_status="pending",
+        scratch_dir="/scratch", raw_token="token",
+        api_base_url="http://localhost:8000/flowgate/api/v1",
+        action_scope="new", locale="ko",
+    )
+    assert "## Document template" in mention
+    assert "GET http://localhost:8000/flowgate/api/v1/help/items/design_template/WP" in mention
+
+
+@pytest.mark.parametrize(("locale", "needle"), [
+    ("ko", "정본 JSON"),
+    ("en", "canonical JSON"),
+    ("ja", "正規 JSON"),
+])
+def test_submit_help_explains_the_work_plan_body_contract(seed, locale, needle):
+    from modules.flow_gate.services import help_catalog
+
+    payload = help_catalog._content_submit({
+        "locale": locale, "action_scope": "new", "doc_type": "WP",
+        "project": PROJECT, "group_id": "wpprj.default.0402",
+        "doc_id": ROOT_DOC, "base_url": "/flowgate/api/v1",
+        "scratch_dir": "/scratch",
+    })
+    assert payload["body"]["content"] == "<Canonical work-plan JSON>"
+    assert payload["content_format"]["format"] == "canonical_json"
+    assert payload["content_format"]["template_url"].endswith("design_template/WP")
+    assert needle in payload["content_format"]["guidance"]
+    assert "title" in payload["content_format"]["guidance"]
+    assert "prev_doc_id" in payload["content_format"]["guidance"]
+
+
+def test_human_create_refuses_an_empty_selection(seed):
+    # flowgate.default.0591 T0005: provider_candidates=[] alone no longer refuses create —
+    # 0411 T0004's registered-project rejection was relaxed once the AI scope dialog's
+    # [전체]/suggest_work_plan.selectable_ids were confirmed to already resolve from the
+    # project's LIVE registered providers, never from this saved snapshot (see
+    # test_work_plan_proposal_0405.test_create_now_accepts_empty_candidates_when_providers_exist
+    # and client WorkPlanEditor.spec.ts). Only an empty counted_types still refuses — [+문서생성]
+    # always needs at least the type structure a canonical (even all-zero) WP requires.
+    from unittest.mock import patch as mock_patch
+
+    client = _client()
+    with mock_patch(
+        "modules.flow_gate.documents.routers.work_plan._providers",
+        return_value=[{"id": "aip_opus", "name": "Claude Opus", "kind": "claude",
+                       "exec_type": "cli", "enabled": True}],
+    ):
+        resp = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC, "title": "빈 선택",
+            "counted_types": [], "provider_candidates": [],
+        })
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert payload["code"] == "wp_validation_failed"
+    assert {e["loc"] for e in payload["errors"]} == {"counted_types"}
+
+
+def _inbox_client():
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+
+    from modules.flow_gate.api import inbox_routes
+
+    app = FastAPI()
+    app.include_router(inbox_routes.router)
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _token(tmp_path):
+    from modules.flow_gate.services import token_service
+
+    result = token_service.issue(
+        project=PROJECT, group_id=GROUP, action_scope="new",
+        doc_ref=ROOT_DOC, issued_to="usr_wp_001",
+    )
+    return result["raw_token"]
+
+
+def _inbox_post(tmp_path, content, doc_code="0003-WP", doc_type="WP", locale=None):
+    headers = {"Authorization": f"Bearer {_token(tmp_path)}"}
+    if locale:
+        headers["X-Locale"] = locale
+    with patch("modules.flow_gate.api.inbox_routes.numbering_service.reserve_document",
+               return_value=doc_code):
+        return _inbox_client().post(
+            "/api/v1/inbox",
+            json={
+                "project": PROJECT, "module": "__ALL__", "group_name": GROUP,
+                "action": "new", "prev_doc_id": ROOT_DOC, "doc_type": doc_type,
+                "title": "0402 작업계획 — AI", "content": content,
+            },
+            headers=headers,
+        )
+
+
+def _inbox_edit(tmp_path, doc_id, content, *, locale=None):
+    from modules.flow_gate.services import token_service
+
+    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
+        token = token_service.issue(
+            project=PROJECT, group_id=GROUP, action_scope="edit",
+            doc_ref=doc_id, issued_to="usr_wp_001",
+            continuation_locale=locale,
+        )["raw_token"]
+    return _inbox_client().post(
+        "/api/v1/inbox",
+        json={
+            "project": PROJECT, "module": "__ALL__", "group_name": GROUP,
+            "action": "edit", "doc_id": doc_id, "edit_reason": "worker_self",
+            "content": content,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def test_ai_inbox_creates_a_json_work_plan(seed, storage_root, tmp_path):
+    from modules.flow_gate.services import work_plan_service as wp
+
+    raw_plan = _plan()
+    for step in raw_plan["steps"]:
+        if not step["locked"]:
+            step["provider_id"] = "aip_opus"
+            step["provider_display_name"] = "Claude Opus"
+            step["note"] = f"AI assignment for {step['key']}"
+    plan = wp.validate(raw_plan)
+    resp = _inbox_post(tmp_path, wp.dumps(plan))
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["stored_path"].endswith("_document.json")
+    assert Path(data["stored_path"]).is_file()
+    # 결정 10: the work-plan flavour of the summary, not the prose one.
+    assert data["change_summary"]["kind"] == "work_plan"
+    assert data["change_summary"]["steps"] == 15
+    assert "T 3세트" in data["change_summary"]["quantities"]
+    assert data["origin"] == "ai"
+    assert data["title"] == wp.derived_title(plan, "ko")
+    # 결정 3 (§2.6): stored in canonical form regardless of how it arrived.
+    assert Path(data["stored_path"]).read_text(encoding="utf-8") == wp.dumps(plan)
+    _assert_exact_r0(data["doc_id"], Path(data["stored_path"]))
+
+    # The same response consumed by WorkPlanEditor opens as a structured table, and
+    # every assignable row supplied by the AI is assigned (the locked TSR is excluded).
+    view_response = _client().get(f"/api/v1/documents/{data['doc_id']}/work-plan")
+    assert view_response.status_code == 200, view_response.text
+    view = view_response.json()
+    assert view["body"]["wp_version"] == 2
+    assert len(view["body"]["steps"]) == 15
+    assert view["unassigned_step_count"] == 0
+
+    # 0599 T#3 E: the real inbox route must expose and restore its own r0 after
+    # canonical corruption, not merely call the snapshot helper.
+    inbox_canonical = Path(data["stored_path"])
+    inbox_initial_bytes = inbox_canonical.read_bytes()
+    inbox_canonical.write_text('{"wp_version":', encoding="utf-8")
+    unreadable = _client().get(
+        f"/api/v1/documents/{data['doc_id']}/work-plan",
+    )
+    assert unreadable.status_code == 409
+    listed_r0 = next(
+        item for item in unreadable.json()["revisions"]
+        if item["revision_no"] == 0
+    )
+    assert listed_r0["restorable"] is True
+    restored = _client().post(
+        f"/api/v1/documents/{data['doc_id']}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 0},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["revision_no"] == 1
+    assert inbox_canonical.read_bytes() == inbox_initial_bytes
+
+
+def test_ai_inbox_edit_reuses_derived_title_and_frozen_creation_locale(
+    seed, storage_root, tmp_path,
+):
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import work_plan_service as wp
+
+    initial = wp.validate(
+        _plan(counted_types=["D", "T"], counts={"D": 2, "T": 1}),
+        project_id=PROJECT,
+    )
+    created_response = _inbox_post(
+        tmp_path, wp.dumps(initial), doc_code="WP0007", locale="en-US",
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    doc_id = created["doc_id"]
+    assert created["title"] == "Work plan — 2 design sheet(s) · 1 work set(s)"
+
+    # 0649 T#1: an AI that grows the plan sends no card ids (fixed order) — the existing
+    # cards inherit theirs and the new ones get server-assigned ids.
+    uploaded = _without_card_ids(wp.validate(
+        _plan(counted_types=["D", "T"], counts={"D": 4, "T": 3}),
+        project_id=PROJECT,
+    ))
+    edited_response = _inbox_edit(
+        tmp_path, doc_id, wp.dumps(uploaded), locale="ja",
+    )
+    assert edited_response.status_code == 200, edited_response.text
+    edited = edited_response.json()
+    assert edited["revision_no"] == 1
+    assert edited["title"] == "Work plan — 4 design sheet(s) · 3 work set(s)"
+    assert _without_card_ids(edited["body"]) == uploaded
+
+    row = db_docs.get_by_id(doc_id)
+    assert row["title"] == edited["title"]
+    assert json.loads(row["meta"])["work_plan"]["title_locale"] == "en"
+    stored = json.loads((storage_root / row["file_path"]).read_text(encoding="utf-8"))
+    assert stored == edited["body"]
+    assert _without_card_ids(stored) == uploaded
+
+    reread = _client().get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert reread.status_code == 200, reread.text
+    assert reread.json()["title"] == edited["title"]
+    assert _without_card_ids(reread.json()["body"]) == uploaded
+    card_ids = {step["key"]: step["card_id"] for step in reread.json()["body"]["steps"]}
+    assert [card_ids[key] for key in ("D#1", "D#2", "T#1", "TR#1")] == ["D#1", "D#2", "T#1", "T#1"]
+    assert all(card_ids[key].startswith("c_") for key in ("D#3", "D#4", "T#2", "T#3"))
+    assert card_ids["T#2"] == card_ids["TR#2"] and card_ids["T#3"] == card_ids["TR#3"]
+
+
+def test_ai_inbox_edit_cas_loser_rolls_back_body_and_keeps_title_meta(
+    seed, storage_root, tmp_path,
+):
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.services import work_plan_service as wp
+
+    initial = wp.validate(
+        _plan(counted_types=["D", "T"], counts={"D": 2, "T": 1}),
+        project_id=PROJECT,
+    )
+    created_response = _inbox_post(
+        tmp_path, wp.dumps(initial), doc_code="WP0008", locale="ja",
+    )
+    assert created_response.status_code == 201, created_response.text
+    doc_id = created_response.json()["doc_id"]
+    before = dict(db_docs.get_by_id(doc_id))
+    before_file = (storage_root / before["file_path"]).read_text(encoding="utf-8")
+
+    uploaded = _without_card_ids(wp.validate(
+        _plan(counted_types=["D", "T"], counts={"D": 4, "T": 3}),
+        project_id=PROJECT,
+    ))
+    store = get_store()
+    execute = store._execute
+
+    def lose_revision_cas(sql, params=None):
+        if str(sql).startswith("UPDATE documents SET revision_no = revision_no + 1"):
+            return None
+        return execute(sql, params)
+
+    with patch.object(store, "_execute", side_effect=lose_revision_cas):
+        rejected = _inbox_edit(
+            tmp_path, doc_id, wp.dumps(uploaded), locale="ko",
+        )
+    assert rejected.status_code == 409, rejected.text
+
+    after = db_docs.get_by_id(doc_id)
+    for field in ("revision_no", "updated_at", "file_path", "title", "meta"):
+        assert after[field] == before[field]
+    assert (storage_root / after["file_path"]).read_text(encoding="utf-8") == before_file
+
+
+def test_ai_inbox_refuses_markdown_and_rule_breaks(seed, tmp_path):
+    from modules.flow_gate.services import work_plan_service as wp
+
+    markdown = _inbox_post(tmp_path, "# 작업계획\n\n| 타입 | 장수 |\n|---|---|\n| D | 2 |\n")
+    assert markdown.status_code == 400
+    assert "JSON" in markdown.json()["error_message"]
+    assert markdown.json()["help_url"].endswith("design_template/WP")
+
+    body = _plan()
+    [s for s in body["steps"] if s["key"] == "TSR#1"][0]["provider_id"] = "aip_opus"
+    broken = _inbox_post(tmp_path, json.dumps(body, ensure_ascii=False))
+    assert broken.status_code == 400
+    # Same verdict as the human path, flattened into the inbox envelope (§5.3).
+    assert "TSR#1" in broken.json()["error_message"]
+
+    # 결정 9: the title lives in the request, so a body that repeats it is refused
+    # rather than silently ignored.
+    titled = _plan()
+    titled["title"] = "본문에 적은 제목"
+    named = _inbox_post(tmp_path, json.dumps(titled, ensure_ascii=False))
+    assert named.status_code == 400
+    assert "title" in named.json()["error_message"]
+
+
+# ── Part 6: 0395 T0021 — 작업계획이 워크플로 시퀀스의 한 칸일 때 ────────────────
+
+
+@contextmanager
+def _sequence_sql():
+    """Let the patched store resolve the workflow_sequences queries for a moment.
+
+    The module store deliberately refuses ``_sql`` so a test cannot lean on the query
+    files by accident. These two tests are about a real sequence in a real table, so
+    they borrow the base implementation (which falls back to the sqlite query files)
+    for the duration of the case and hand it back afterwards.
+    """
+    from modules.flow_gate.db.connection import FlowGateStore, get_store
+
+    store_cls = type(get_store())
+    with patch.object(store_cls, "_sql", FlowGateStore._sql):
+        yield
+
+
+def _decide_sequence(root_doc_id: str, types: list[str]) -> int:
+    """Write a real decided sequence for ``root_doc_id`` and return its id.
+
+    No mock of get_pending_head_by_group here on purpose: the point of the test is
+    that the route reads the head the database actually holds.
+    """
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+
+    db_wfseq.insert_sequence(root_doc_id)
+    seq = db_wfseq.get_sequence_by_doc_id(root_doc_id)
+    for idx, type_ in enumerate(types, start=1):
+        db_wfseq.insert_sequence_item(
+            sequence_id=seq["id"], item_seq=idx, type_=type_,
+            label=type_, doc_class="R", sort_order=idx,
+        )
+    return seq["id"]
+
+
+def test_human_create_fills_a_pending_WP_slot(seed, storage_root):
+    """T0021: 작업계획을 시퀀스 칸으로 놓을 수 있게 되었으니 사람 경로도 그 칸을 채운다.
+
+    D0007 §7 puts WP in a workflow slot (it is deliberately absent from
+    NON_SLOT_WORKFLOW_TYPES) and the AI path already fills the head at inbox step 7.5.
+    Until this change the human dialog did not, so a group whose sequence held a WP
+    step stayed pending forever and the created plan came back as an orphaned member.
+    """
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+
+    root = f"{GROUP}-R0900"
+    db_docs.create({
+        "doc_id": root, "project_id": PROJECT, "type_code": "R", "seq": 900,
+        "title": "Slot Root", "group_id": GROUP, "module": "__ALL__",
+        "owner_id": "usr_wp_001",
+    })
+    with _sequence_sql():
+        seq_id = _decide_sequence(root, ["WP", "T"])
+
+        client = _client()
+        with patch(
+            "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+            return_value="0901-WP",
+        ):
+            resp = client.post("/api/v1/documents/work-plan", json={
+                "parent_doc_id": root,
+                "title": "시퀀스 칸을 채우는 작업계획",
+                "counted_types": ["T"],
+                "provider_candidates": ["aip_opus"],
+            })
+        assert resp.status_code == 201, resp.text
+        doc_id = resp.json()["doc_id"]
+
+        items = db_wfseq.get_sequence_items(seq_id)
+        assert items[0]["type"] == "WP"
+        assert items[0]["result_doc_id"] == doc_id
+        # The next step becomes the head — the sequence actually moved on.
+        head = db_wfseq.get_pending_head_by_group(GROUP, PROJECT)
+        assert head is not None and head["type"] == "T"
+        # And the plan is no longer an orphan the recovery screen has to ask about.
+        assert db_wfseq.is_orphaned_workflow_member(doc_id) is False
+
+
+def test_human_create_leaves_a_non_WP_head_alone(seed, storage_root):
+    """자문형이라는 성질은 그대로다: 머리가 다른 타입이면 그 칸을 가로채지 않는다."""
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+
+    root = f"{GROUP}-R0910"
+    db_docs.create({
+        "doc_id": root, "project_id": PROJECT, "type_code": "R", "seq": 910,
+        "title": "Busy Root", "group_id": GROUP, "module": "__ALL__",
+        "owner_id": "usr_wp_001",
+    })
+    with _sequence_sql():
+        seq_id = _decide_sequence(root, ["DS", "T"])
+
+        client = _client()
+        with patch(
+            "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+            return_value="0911-WP",
+        ):
+            resp = client.post("/api/v1/documents/work-plan", json={
+                "parent_doc_id": root,
+                "title": "진행 중인 그룹의 작업계획",
+                "counted_types": ["T"],
+                "provider_candidates": ["aip_opus"],
+            })
+        assert resp.status_code == 201, resp.text
+
+        items = db_wfseq.get_sequence_items(seq_id)
+        assert [it["result_doc_id"] for it in items] == [None, None]
+
+
+def test_ai_inbox_is_not_blocked_by_a_mismatched_workflow_head(seed, tmp_path):
+    """A plan is advisory: it must be writable while the group sits on another step.
+
+    The workflow head is stubbed to DS so the guard is genuinely in play. The TR control
+    in the same test proves the guard still bites for a step document — otherwise this
+    would pass just as well with the guard removed entirely.
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    head = {"id": 1, "type": "DS", "label": "설계지시", "status": "pending"}
+    with patch("modules.flow_gate.api.inbox_routes.db_wfseq.get_pending_head_by_group",
+               return_value=head):
+        resp = _inbox_post(tmp_path, wp.dumps(wp.validate(_plan())), doc_code="0004-WP")
+        assert resp.status_code == 201, resp.text
+
+        control = _inbox_post(
+            tmp_path, "# 작업 레포트\n\n## 변경 파일\n\n없음\n\n## 단계별 확인\n\n없음\n",
+            doc_code="0005-TR", doc_type="TR",
+        )
+        assert control.status_code == 409
+        assert "DS" in control.json()["error_message"]
+
+
+# ── Part 7: 0395 T0026 재작업 — 생성 대화상자를 거치지 않고 만들어진 작업계획 ────
+#
+# 사용자가 실제로 겪은 일: 워크플로 머리 칸이 WP 인 그룹에서 [빈 문서 만들기]로 작업계획을
+# 만들었더니, 문서를 열 때마다
+#     이 작업계획을 표로 열 수 없습니다. 원문 보기로 확인해 주세요.
+#     Expecting value: line 1 column 1 (char 0)
+# 만 나왔다. 그 길이 마크다운 머리말 뼈대를 정본 자리에 써 버렸기 때문이다.
+
+
+def _seed_providers():
+    """진짜 공급자 두 대와 프로젝트 기본값, 그리고 D 타입 배정 규칙 한 줄.
+
+    auto_plan_body 가 무엇을 읽는지가 이 시험의 핵심이므로 설정 서비스를 가짜로 바꾸지
+    않는다 — 실제 표에 넣고 실제 해석기를 통과시킨다.
+    """
+    from modules.flow_gate.db.connection import get_store, now_iso
+
+    store = get_store()
+    now = now_iso()
+    for provider_id, name, order in (
+        ("aip_seed_a", "Claude Opus", 1),
+        ("aip_seed_b", "GPT", 2),
+    ):
+        store._execute(
+            "INSERT OR IGNORE INTO ai_providers "
+            "(provider_id, project_id, name, exec_type, kind, enabled, sort_order, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [provider_id, PROJECT, name, "cli", "claude", 1, order, now, now],
+        )
+    store._execute(
+        "INSERT INTO project_settings (project_id, ai_mode, ai_default_provider_id, updated_at) "
+        "VALUES (?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET "
+        "ai_mode = excluded.ai_mode, ai_default_provider_id = excluded.ai_default_provider_id",
+        [PROJECT, "custom", "aip_seed_a", now],
+    )
+    store._execute(
+        "DELETE FROM ai_provider_doctype_map WHERE project_id = ? AND doc_type = ?",
+        [PROJECT, "D"],
+    )
+    store._execute(
+        "INSERT INTO ai_provider_doctype_map (project_id, doc_type, provider_id, created_at, updated_at) "
+        "VALUES (?,?,?,?,?)",
+        [PROJECT, "D", "aip_seed_b", now, now],
+    )
+
+
+def _full_client():
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+
+    from modules.flow_gate.auth.middleware import get_current_user
+    from modules.flow_gate.documents.routers.documents import router as documents_router
+    from modules.flow_gate.documents.routers.work_plan import router as wp_router
+
+    app = FastAPI()
+    app.include_router(wp_router, prefix="/api/v1")
+    app.include_router(documents_router, prefix="/api/v1")
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "usr_wp_001"}
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_workflow_type_counts_folds_the_report_half_into_its_set():
+    """짝 레포트 칸은 새 세트가 아니다. 지시 칸이 사라진 시퀀스에서도 세트 수는 유지된다."""
+    from modules.flow_gate.services import work_plan_service as wp
+
+    items = [{"type": t} for t in ("WP", "D", "D", "T", "TR", "TS", "TSR", "AC")]
+    assert wp.workflow_type_counts(items) == {"D": 2, "T": 1, "TS": 1}
+    assert wp.workflow_type_counts([{"type": "TR"}, {"type": "TR"}]) == {"T": 2}
+    assert wp.workflow_type_counts([]) == {}
+
+
+def test_unwritten_plan_is_only_the_never_written_file():
+    """되살리기 대상은 '계획이 들어 있던 적 없는 파일'뿐이다. 내용이 있으면 손대지 않는다."""
+    from modules.flow_gate.services import work_plan_service as wp
+
+    assert wp.is_unwritten_plan("") is True
+    assert wp.is_unwritten_plan("---\ntype: WP\ntitle: ww\n---\n") is True
+    assert wp.is_unwritten_plan("---\ntype: WP\n---\n\n계획을 여기 적었다\n") is False
+    assert wp.is_unwritten_plan('{"wp_version": 1,') is False
+
+
+def test_next_empty_creates_a_plan_that_opens_as_a_table(seed, storage_root):
+    """[빈 문서 만들기]로 만든 작업계획이 표로 열리고, 수량·공급자가 채워져 있다.
+
+    사용자가 신고한 증상(Expecting value: line 1 column 1)이 여기서 나던 것이다. 수량은
+    이 그룹의 워크플로 시퀀스에서, 공급자는 프로젝트 실행 체인과 문서종류 배정표에서 온다.
+    """
+    from modules.flow_gate.db import documents as db_docs
+
+    _seed_providers()
+    root = f"{GROUP}-R0920"
+    db_docs.create({
+        "doc_id": root, "project_id": PROJECT, "type_code": "R", "seq": 920,
+        "title": "Empty-Doc Root", "group_id": GROUP, "module": "__ALL__",
+        "owner_id": "usr_wp_001",
+    })
+    client = _full_client()
+    with _sequence_sql():
+        _decide_sequence(root, ["WP", "D", "D", "T", "TR", "TS", "TSR"])
+        with patch(
+            "modules.flow_gate.documents.routers.documents.numbering_service.reserve_document",
+            return_value="0921-WP",
+        ):
+            created = client.post("/api/v1/documents/next-empty", json={
+                "project_id": PROJECT, "group_id": GROUP, "prev_doc_id": root,
+                "type_code": "WP", "title": "ww", "module": "__ALL__",
+            })
+        assert created.status_code == 201, created.text
+        doc_id = created.json()["doc_id"]
+
+    # 1. 정본은 마크다운이 아니라 JSON 이다.
+    stored = created.json()["data"]["file_path"]
+    assert stored.endswith("_document.json"), stored
+    on_disk = json.loads((storage_root / stored).read_text(encoding="utf-8"))
+    assert on_disk["wp_version"] == 2
+    _assert_exact_r0(doc_id, storage_root / stored)
+
+    # 2. 문서를 열면 표가 나온다 — 409 "표로 열 수 없습니다" 가 아니다.
+    view = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert view.status_code == 200, view.text
+    payload = view.json()
+
+    # 3. 수량은 시퀀스에서 왔고, 미지정 칸이 없다.
+    assert payload["totals"] == {"design_sheets": 2, "work_sets": 2, "steps": 6}
+    assert payload["unassigned_step_count"] == 0
+    by_key = {step["key"]: step for step in payload["body"]["steps"]}
+    assert by_key["D#1"]["provider_id"] == "aip_seed_b"   # 문서종류 배정표가 이긴다
+    assert by_key["T#1"]["provider_id"] == "aip_seed_a"   # 규칙이 없으면 기본 공급자
+    assert by_key["TR#1"]["provider_id"] == "aip_seed_a"  # 짝 레포트도 같은 공급자
+    assert by_key["TSR#1"]["locked"] is True and by_key["TSR#1"]["provider_id"] is None
+
+    # 4. 제목은 canonical totals에서 파생되고 요청 문자열 "ww"는 정본이 아니다.
+    assert payload["title"] == "작업계획 — 설계 2장 · 작업 2세트"
+
+    # 0599 T#3 E: this is deliberately the connected POST /documents/next-empty
+    # route. Corrupting its result must expose the route-created r0 as restorable.
+    next_empty_canonical = storage_root / stored
+    next_empty_initial_bytes = next_empty_canonical.read_bytes()
+    next_empty_canonical.write_text('{"wp_version":', encoding="utf-8")
+    unreadable = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert unreadable.status_code == 409
+    listed_r0 = next(
+        item for item in unreadable.json()["revisions"]
+        if item["revision_no"] == 0
+    )
+    assert listed_r0["restorable"] is True
+    restored = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 0},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["revision_no"] == 1
+    assert next_empty_canonical.read_bytes() == next_empty_initial_bytes
+
+
+def test_next_empty_still_writes_markdown_for_other_types(seed, storage_root):
+    """작업계획만 다르다. 나머지 타입의 빈 문서는 지금까지와 똑같은 마크다운 뼈대다."""
+    from modules.flow_gate.db import documents as db_docs
+
+    root = f"{GROUP}-R0930"
+    db_docs.create({
+        "doc_id": root, "project_id": PROJECT, "type_code": "R", "seq": 930,
+        "title": "Markdown Root", "group_id": GROUP, "module": "__ALL__",
+        "owner_id": "usr_wp_001",
+    })
+    client = _full_client()
+    with _sequence_sql():
+        _decide_sequence(root, ["N", "NR"])
+        with patch(
+            "modules.flow_gate.documents.routers.documents.numbering_service.reserve_document",
+            return_value="0931-N",
+        ):
+            created = client.post("/api/v1/documents/next-empty", json={
+                "project_id": PROJECT, "group_id": GROUP, "prev_doc_id": root,
+                "type_code": "N", "title": "보통 문서", "module": "__ALL__",
+            })
+    assert created.status_code == 201, created.text
+    stored = created.json()["data"]["file_path"]
+    assert stored.endswith("_document.md"), stored
+    text = (storage_root / stored).read_text(encoding="utf-8")
+    assert text.startswith("---") and "type: N" in text
+
+
+def test_an_already_broken_plan_heals_the_first_time_it_is_opened(seed, storage_root):
+    """이미 만들어져 버린 마크다운 작업계획도 열면 되살아난다.
+
+    생성 경로만 고치면 사용자가 이미 갖고 있는 문서는 영원히 못 연다. 계획이 들어 있던 적
+    없는 파일에 한해, 여는 그 자리에서 정본을 만들고 문서가 그 파일을 가리키게 한다.
+    지난 마크다운 파일은 지우지 않는다.
+    """
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.storage import paths as storage_paths
+
+    _seed_providers()
+    root = f"{GROUP}-R0940"
+    db_docs.create({
+        "doc_id": root, "project_id": PROJECT, "type_code": "R", "seq": 940,
+        "title": "Legacy Root", "group_id": GROUP, "module": "__ALL__",
+        "owner_id": "usr_wp_001",
+    })
+    doc_id = f"{GROUP}.0941-WP"
+    stub_path = storage_paths.document_path(
+        project_id=PROJECT, group_code=GROUP, doc_code="0941-WP",
+        filename="document.md", module="__ALL__", branch="main",
+    )
+    stub_path.parent.mkdir(parents=True, exist_ok=True)
+    stub_path.write_text(
+        "---\nproject: wpprj\ntype: WP\ndoc_number: 0941-WP\ntitle: ww\n---\n",
+        encoding="utf-8",
+    )
+    db_docs.create({
+        "doc_id": doc_id, "project_id": PROJECT, "type_code": "WP", "seq": 941,
+        "title": "ww", "group_id": GROUP, "module": "__ALL__",
+        "owner_id": "usr_wp_001", "target_id": root,
+        "file_path": storage_paths.to_storage_relative(stub_path, PROJECT),
+    })
+
+    client = _full_client()
+    view = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert view.status_code == 200, view.text
+    assert view.json()["unassigned_step_count"] == 0
+
+    healed = db_docs.get_by_id(doc_id)["file_path"]
+    assert healed.endswith("_document.json"), healed
+    assert json.loads((storage_root / healed).read_text(encoding="utf-8"))["wp_version"] == 2
+    assert stub_path.is_file()  # 되살리기는 지우는 일이 아니다
+
+    # 두 번째로 열어도 같은 표가 나온다(되살리기는 한 번으로 끝난다).
+    assert client.get(f"/api/v1/documents/{doc_id}/work-plan").status_code == 200
+    # 0599 T#2: self-heal is not evidence of the original creation bytes and must
+    # never fabricate a legacy r0 from today's settings.
+    assert db_revisions.list_by_doc(doc_id) == []
+
+
+def test_a_broken_plan_with_content_is_never_overwritten(seed, storage_root):
+    """반쯤 쓰다 깨진 계획은 서버가 덮어쓰지 않는다 — 원문 보기로 넘긴다."""
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.storage import paths as storage_paths
+
+    doc_id = f"{GROUP}.0951-WP"
+    path = storage_paths.document_path(
+        project_id=PROJECT, group_code=GROUP, doc_code="0951-WP",
+        filename="document.json", module="__ALL__", branch="main",
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    broken = '{"wp_version": 1, "steps": [  '
+    path.write_text(broken, encoding="utf-8")
+    db_docs.create({
+        "doc_id": doc_id, "project_id": PROJECT, "type_code": "WP", "seq": 951,
+        "title": "깨진 계획", "group_id": GROUP, "module": "__ALL__",
+        "owner_id": "usr_wp_001",
+        "file_path": storage_paths.to_storage_relative(path, PROJECT),
+    })
+
+    client = _full_client()
+    resp = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "wp_unreadable"
+    assert resp.json()["revisions"] == []
+    assert path.read_text(encoding="utf-8") == broken
+    assert db_revisions.list_by_doc(doc_id) == []
+
+
+def test_template_includes_real_candidates_and_note_rules(monkeypatch):
+    from modules.flow_gate.services import work_plan_service as wp
+
+    monkeypatch.setattr(wp, "_effective_chain", lambda _project: {
+        "providers": [{
+            "id": "prov-a",
+            "name": "Provider A",
+            "kind": "openai",
+            "exec_type": "api",
+        }]
+    })
+    body = json.loads(wp.template_body("wpprj"))
+    assert body["provider_candidates"] == [{
+        "provider_id": "prov-a",
+        "display_name": "Provider A",
+        "group_label": "Openai · API",
+    }]
+    # flowgate.default.0423 T0005 item 4/16: the template example is a format sample,
+    # never the all-1 shape NR0003 flagged — every countable type renders at 0.
+    assert {code: item["count"] for code, item in body["quantities"].items()} == {
+        code: 0 for code in body["counted_types"]
+    }
+    for locale in ("ko", "en", "ja"):
+        rules = "\n".join(wp.TEMPLATE_RULES[locale])
+        assert "steps[].note" in rules
+        assert "defaults.note" in rules
+        assert "provider_candidates" in rules
+        # flowgate.default.0423 T0005 item 3/16: a quantity-basis rule that points to
+        # workflow_type_counts as evidence (and forbids guessing 1) must be present.
+        assert "workflow_type_counts" in rules
+
+
+def test_work_plan_fill_mention_contains_three_scopes_and_note_instruction(monkeypatch):
+    from modules.flow_gate.services import mention_service
+    from modules.flow_gate.services import work_plan_service as wp
+
+    monkeypatch.setattr(
+        mention_service,
+        "get_type_name",
+        lambda code, locale: {"D": "기본설계"}.get(code, code),
+    )
+    body = wp.initial_body(
+        ["D"],
+        [{"provider_id": "prov-a", "display_name": "Provider A", "group_label": "Openai · API"}],
+        "wpprj",
+    )
+    body["quantities"]["D"]["count"] = 1
+    body["steps"] = wp.expand_steps(body["counted_types"], body["quantities"])
+    scope = {
+        "quantity_type_codes": ["D"],
+        "step_keys": ["D#1"],
+        "provider_ids": ["prov-a"],
+    }
+    sentinel_scratch_dir = r"C:\FLOWGATE_SECRET_SCRATCH\TOKEN_123"
+    mention = mention_service.build_work_plan_fill_mention(
+        token_rec={
+            "project": "wpprj",
+            "group_id": "wpprj.default.0402",
+            "scratch_dir": sentinel_scratch_dir,
+        },
+        target_doc={"doc_id": "wpprj.default.0402.0002-WP"},
+        body=body,
+        scope=scope,
+        api_base_url="http://localhost:8000",
+        raw_token="secret",
+        locale="ko",
+    )
+    assert "D#1 · 기본설계 1장" in mention
+    assert "D#1 · D" not in mention
+    assert "prov-a · Provider A" in mention
+    assert "scratch_dir" not in mention
+    # flowgate.default.0506 TR0005 rev1: a label-only check ("scratch_dir" not in mention)
+    # still passes if the real path leaks without its key (e.g. inside a sentence). Assert
+    # the sentinel path itself is absent, matching the other worker-facing surfaces.
+    assert sentinel_scratch_dir not in mention
+    assert "범위 밖 값은 지금 값 그대로" in mention
+    assert "note를 반드시 채우십시오" in mention
+    assert "design_template/WP" in mention
+    assert '"wp_version"' in mention
+
+
+def test_suggest_scope_validates_and_echoes_the_exact_boundary(seed, storage_root):
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0012-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "title": "범위 제안",
+            "counted_types": ["D", "T"],
+            "provider_candidates": ["aip_opus"],
+            "quantities": {"D": 1, "T": 1},
+        })
+    assert created.status_code == 201, created.text
+    doc_id = created.json()["doc_id"]
+
+    invalid = client.post(f"/api/v1/documents/{doc_id}/work-plan/suggest", json={
+        "scope": {
+            "quantity_type_codes": ["UNKNOWN"],
+            "step_keys": ["missing#1"],
+            "provider_ids": ["outside"],
+        }
+    })
+    assert invalid.status_code == 422
+    assert invalid.json()["code"] == "wp_scope_invalid"
+
+    scope = {
+        "quantity_type_codes": ["D"],
+        "step_keys": [],
+        "provider_ids": ["aip_opus"],
+    }
+    scoped = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/suggest",
+        json={"base_revision_no": 0, "scope": scope},
+    )
+    assert scoped.status_code == 200, scoped.text
+    payload = scoped.json()
+    assert payload["scope_echo"] == scope
+    assert payload["suggested"]["steps"] == []
+    assert set(payload["suggested"]["quantities"]).issubset({"D"})
+    assert payload["basis"] == "project_type_provider_map"
+
+
+def test_suggest_selects_every_registered_provider_from_an_empty_candidate_snapshot(seed, storage_root):
+    """flowgate.default.0591 T0005 §4 — locks the pipeline the T relies on before relaxing
+    create_work_plan()'s provider_candidates pre-check: an empty provider_candidates snapshot
+    must not narrow suggest_work_plan's selectable_ids. 0411 T0004 already unions the live
+    registered providers in (candidate_ids | registered_provider_ids); this pins that union
+    for the specific case (candidate_ids is empty) T0005's create-time relaxation produces.
+    """
+    from unittest.mock import patch as mock_patch
+
+    client = _client()
+    providers = [
+        {"id": "aip_opus", "name": "Claude Opus", "kind": "claude", "exec_type": "cli", "enabled": True},
+        {"id": "aip_sonnet", "name": "Claude Sonnet", "kind": "claude", "exec_type": "cli", "enabled": True},
+    ]
+    with mock_patch(
+        "modules.flow_gate.documents.routers.work_plan._providers", return_value=providers,
+    ), mock_patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0591-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "title": "0591 빈 후보 스냅샷",
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+            "defaults": {"provider_id": None, "note": ""},
+            "type_providers": {},
+        })
+        assert created.status_code == 201, created.text
+        assert created.json()["body"]["provider_candidates"] == []
+        doc_id = created.json()["doc_id"]
+
+        resp = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/suggest",
+            json={"base_revision_no": 0, "scope": {
+                "quantity_type_codes": [],
+                "step_keys": [],
+                "provider_ids": ["aip_opus", "aip_sonnet"],
+            }},
+        )
+    # 두 provider 모두 selectable_ids 안에 있어야 200 — candidate_ids가 비어도
+    # registered_provider_ids 쪽에서 이미 둘 다 들어온다.
+    assert resp.status_code == 200, resp.text
+
+# ── flowgate.default.0591 T#2: canonical totals own the WP title ─────────────
+
+@pytest.mark.parametrize(
+    ("locale", "expected"),
+    [
+        ("ko", "작업계획 — 설계 2장 · 작업 1세트"),
+        ("en-US", "Work plan — 2 design sheet(s) · 1 work set(s)"),
+        ("ja", "作業計画 — 設計2枚 · 作業1セット"),
+        ("unknown", "작업계획 — 설계 2장 · 작업 1세트"),
+    ],
+)
+def test_derived_title_uses_canonical_totals_and_normalized_locale(locale, expected):
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = _plan(counted_types=["D", "T"], counts={"D": 2, "T": 1})
+    assert wp.derived_title(body, locale) == expected
+
+
+def test_title_locale_is_stored_first_then_inferred_once_for_legacy_rows():
+    from modules.flow_gate.services import work_plan_service as wp
+
+    assert wp.resolve_title_locale(
+        {"work_plan": {"title_locale": "en"}},
+        current_title="作業計画 — 設計2枚 · 作業1セット",
+    ) == "en"
+    assert wp.resolve_title_locale(
+        None, current_title="作業計画 — 設計2枚 · 作業1セット",
+    ) == "ja"
+    assert wp.resolve_title_locale(None, current_title="legacy custom title") == "ko"
+    assert wp.metadata_with_title_locale('{"other": 1}', "en-US") == {
+        "other": 1,
+        "work_plan": {"title_locale": "en"},
+    }
+
+
+def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import work_plan_service as wp
+
+    client = _full_client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0996-WP",
+    ):
+        created_response = client.post(
+            "/api/v1/documents/work-plan",
+            json={
+                "parent_doc_id": ROOT_DOC,
+                "title": "x" * 500,
+                "counted_types": ["D", "T"],
+                "provider_candidates": [],
+                "quantities": {"D": 2, "T": 1},
+            },
+            headers={"X-Locale": "ja-JP"},
+        )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    doc_id = created["doc_id"]
+    assert created["title"] == "作業計画 — 設計2枚 · 作業1セット"
+    row = db_docs.get_by_id(doc_id)
+    assert row["title"] == created["title"]
+    assert json.loads(row["meta"])["work_plan"]["title_locale"] == "ja"
+
+    updated_body = json.loads(json.dumps(created["body"]))
+    updated_body["quantities"]["D"]["count"] = 4
+    updated_body["quantities"]["T"]["count"] = 3
+    updated_body["steps"] = _legacy_client_steps(
+        updated_body["counted_types"], updated_body["quantities"],
+    )
+    published = []
+    with patch(
+        "modules.flow_gate.api.v1.events.publisher.publish_event_threadsafe",
+        side_effect=published.append,
+    ):
+        saved_response = client.put(
+            f"/api/v1/documents/{doc_id}/work-plan",
+            json={"base_revision_no": 0, "body": updated_body},
+            headers={"X-Locale": "ko"},
+        )
+    assert saved_response.status_code == 200, saved_response.text
+    saved = saved_response.json()
+    explorer_event = next(
+        event for event in published
+        if getattr(event.event_type, "value", event.event_type) == "document_explorer_refresh"
+    )
+    assert explorer_event.doc_id == doc_id
+    assert explorer_event.payload["title"] == saved["title"]
+    assert explorer_event.payload["revision_no"] == saved["revision_no"]
+    assert saved["revision_no"] == 1
+    assert saved["title"] == "作業計画 — 設計4枚 · 作業3セット"
+    assert _without_card_ids(saved["body"]) == _without_card_ids(
+        wp.validate(updated_body, project_id=PROJECT)
+    )
+    assert saved["totals"] == {"design_sheets": 4, "work_sets": 3, "steps": 10}
+
+    row = db_docs.get_by_id(doc_id)
+    assert row["revision_no"] == 1
+    assert row["title"] == saved["title"]
+    assert json.loads(row["meta"])["work_plan"]["title_locale"] == "ja"
+    reread = client.get(f"/api/v1/documents/{doc_id}/work-plan").json()
+    assert reread["title"] == saved["title"]
+    assert reread["body"] == saved["body"]
+
+    # General document PATCH cannot override a derived WP title, even when it is the
+    # only requested field. Ordinary documents retain their existing title-edit contract.
+    rejected = client.patch(
+        f"/api/v1/documents/{doc_id}", json={"title": "manual override"},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"]["code"] == "wp_title_is_derived"
+    assert db_docs.get_by_id(doc_id)["title"] == saved["title"]
+    ordinary = client.patch(
+        f"/api/v1/documents/{ROOT_DOC}", json={"title": "Renamed root"},
+    )
+    assert ordinary.status_code == 200, ordinary.text
+    assert ordinary.json()["title"] == "Renamed root"
+
+    # Validation failures and stale writers do not touch any member of the saved state.
+    before_rejection = dict(db_docs.get_by_id(doc_id))
+    before_rejection_file = (
+        storage_root / before_rejection["file_path"]
+    ).read_text(encoding="utf-8")
+    invalid_body = json.loads(json.dumps(saved["body"]))
+    invalid_body["quantities"]["D"]["count"] = 21
+    invalid = client.put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 1, "body": invalid_body},
+    )
+    assert invalid.status_code == 422
+
+    stale_body = json.loads(json.dumps(saved["body"]))
+    stale_body["quantities"]["D"]["count"] = 5
+    stale_body["steps"] = _legacy_client_steps(
+        stale_body["counted_types"], stale_body["quantities"],
+    )
+    stale = client.put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 0, "body": stale_body},
+    )
+    assert stale.status_code == 409
+    after_rejections = db_docs.get_by_id(doc_id)
+    for field in ("revision_no", "updated_at", "file_path", "title", "meta"):
+        assert after_rejections[field] == before_rejection[field]
+    assert (
+        storage_root / after_rejections["file_path"]
+    ).read_text(encoding="utf-8") == before_rejection_file
+
+    # A storage failure restores every DB member of the successful-state tuple.
+    before_failure = dict(db_docs.get_by_id(doc_id))
+    before_file = (storage_root / before_failure["file_path"]).read_text(encoding="utf-8")
+    failed_body = json.loads(json.dumps(saved["body"]))
+    failed_body["quantities"]["D"]["count"] = 5
+    failed_body["steps"] = _legacy_client_steps(
+        failed_body["counted_types"], failed_body["quantities"],
+    )
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.wp.write_body_atomically",
+        side_effect=OSError("simulated write failure"),
+    ):
+        failed = client.put(
+            f"/api/v1/documents/{doc_id}/work-plan",
+            json={"base_revision_no": 1, "body": failed_body},
+        )
+    assert failed.status_code == 500
+    after_failure = db_docs.get_by_id(doc_id)
+    for field in ("revision_no", "updated_at", "file_path", "title", "meta"):
+        assert after_failure[field] == before_failure[field]
+    assert (storage_root / after_failure["file_path"]).read_text(encoding="utf-8") == before_file
+
+
+# ── flowgate.default.0599 T#1: durable r0 recovery contract ──────────────────
+
+def test_r0_snapshot_survives_first_save_without_duplicate_or_overwrite(seed, storage_root):
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import work_plan_service as wp
+    from modules.flow_gate.storage import paths as storage_paths
+
+    doc_id = f"{GROUP}-WP0599"
+    canonical = storage_root / "r0-contract" / "document.json"
+    initial = _plan()
+    wp.write_body_atomically(canonical, initial)
+    db_docs.create({
+        "doc_id": doc_id,
+        "project_id": PROJECT,
+        "type_code": "WP",
+        "seq": 599,
+        "title": "R0 contract",
+        "group_id": GROUP,
+        "module": "__ALL__",
+        "owner_id": "usr_wp_001",
+        "file_path": storage_paths.to_storage_relative(canonical, PROJECT),
+    })
+    doc = db_docs.get_by_id(doc_id)
+    initial_bytes = canonical.read_bytes()
+
+    first = wp.ensure_revision_snapshot(
+        doc,
+        canonical,
+        created_by="usr_wp_001",
+    )
+    second = wp.ensure_revision_snapshot(
+        doc,
+        canonical,
+        created_by="usr_wp_001",
+    )
+    assert second["id"] == first["id"]
+    rows = db_revisions.list_by_doc_revision(doc_id, 0)
+    assert len(rows) == 1
+    baseline = wp.resolve_revision_snapshot(rows[0], project_id=PROJECT, doc_id=doc_id)
+    assert baseline.read_bytes() == initial_bytes
+    assert baseline.resolve() != canonical.resolve()
+
+    changed = _plan()
+    changed["quantities"]["D"]["count"] = 3
+    changed["steps"] = _legacy_client_steps(changed["counted_types"], changed["quantities"])
+    saved = _client().put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 0, "body": changed},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision_no"] == 1
+
+    rows = db_revisions.list_by_doc_revision(doc_id, 0)
+    assert len(rows) == 1
+    assert rows[0]["id"] == first["id"]
+    assert baseline.read_bytes() == initial_bytes
+    assert canonical.read_bytes() != initial_bytes
+
+    # Calling the creation contract after the canonical changed still returns the
+    # original r0. It must never recalculate or overwrite the recovery source.
+    again = wp.ensure_revision_snapshot(
+        db_docs.get_by_id(doc_id),
+        canonical,
+        created_by="usr_wp_001",
+    )
+    assert again["id"] == first["id"]
+    assert baseline.read_bytes() == initial_bytes
+
+
+def test_revision_snapshot_fails_closed_for_missing_corrupt_and_ambiguous(seed, storage_root):
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db.connection import get_store, now_iso
+    from modules.flow_gate.services import work_plan_service as wp
+    from modules.flow_gate.storage import paths as storage_paths
+
+    def make_doc(suffix: str, seq: int):
+        doc_id = f"{GROUP}-WP0599{suffix}"
+        canonical = storage_root / f"r0-contract-{suffix}" / "document.json"
+        wp.write_body_atomically(canonical, _plan())
+        db_docs.create({
+            "doc_id": doc_id,
+            "project_id": PROJECT,
+            "type_code": "WP",
+            "seq": seq,
+            "title": f"R0 contract {suffix}",
+            "group_id": GROUP,
+            "module": "__ALL__",
+            "owner_id": "usr_wp_001",
+            "file_path": storage_paths.to_storage_relative(canonical, PROJECT),
+        })
+        doc = db_docs.get_by_id(doc_id)
+        row = wp.ensure_revision_snapshot(
+            doc, canonical, created_by="usr_wp_001",
+        )
+        return doc, canonical, row
+
+    missing_doc, _missing_canonical, missing_row = make_doc("M", 600)
+    missing_path = storage_root / missing_row["backup_path"]
+    missing_path.unlink()
+    with pytest.raises(wp.RevisionSnapshotError):
+        wp.resolve_revision_snapshot(
+            missing_row, project_id=PROJECT, doc_id=missing_doc["doc_id"],
+        )
+
+    corrupt_doc, _corrupt_canonical, corrupt_row = make_doc("C", 601)
+    corrupt_path = storage_root / corrupt_row["backup_path"]
+    corrupt_path.write_text("{not-json", encoding="utf-8")
+    with pytest.raises(wp.RevisionSnapshotError):
+        wp.resolve_revision_snapshot(
+            corrupt_row, project_id=PROJECT, doc_id=corrupt_doc["doc_id"],
+        )
+
+    ambiguous_doc, _ambiguous_canonical, ambiguous_row = make_doc("A", 602)
+    get_store()._execute(
+        "INSERT INTO document_revisions "
+        "(doc_id, revision_no, backup_path, edit_reason, linked_doc_id, created_by, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            ambiguous_doc["doc_id"], 0, ambiguous_row["backup_path"],
+            "user_comment", None, "usr_wp_001", now_iso(),
+        ],
+    )
+    with pytest.raises(db_revisions.RevisionAmbiguityError):
+        db_revisions.get_single_by_doc_revision(ambiguous_doc["doc_id"], 0)
+
+
+# ── flowgate.default.0599 T#2: connected creation and r0 restore ──────────────
+
+def test_created_r0_restores_before_first_save_and_preserves_broken_raw(
+    seed, storage_root,
+):
+    """Creation -> unreadable r0 listing -> guarded CAS restore -> current+1."""
+    from fastapi import HTTPException
+
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import workflow_events as db_events
+    from modules.flow_gate.services import work_plan_service as wp
+
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0603-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+    payload = created.json()
+    doc_id = payload["doc_id"]
+    canonical = storage_root / payload["stored_path"]
+    initial_bytes = canonical.read_bytes()
+    r0, baseline = _assert_exact_r0(doc_id, canonical)
+
+    broken_raw = '{"wp_version":'
+    canonical.write_text(broken_raw, encoding="utf-8")
+    unreadable = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert unreadable.status_code == 409
+    unreadable_body = unreadable.json()
+    assert unreadable_body["code"] == "wp_unreadable"
+    assert unreadable_body["raw"] == broken_raw
+    assert unreadable_body["revision_no"] == 0
+    listed_r0 = next(
+        item for item in unreadable_body["revisions"]
+        if item["revision_no"] == 0
+    )
+    assert listed_r0["restorable"] is True
+    assert listed_r0["restore_unavailable_reason"] is None
+    assert "backup_path" not in listed_r0
+
+    stale = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 9},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "wp_revision_conflict"
+    assert canonical.read_text(encoding="utf-8") == broken_raw
+
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.document_service.is_final_approved",
+        return_value=True,
+    ):
+        guarded = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+            json={"base_revision_no": 0},
+        )
+    assert guarded.status_code == 422
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 0
+
+    with patch(
+        "modules.flow_gate.documents.routers.documents._reject_if_group_disposed",
+        side_effect=HTTPException(status_code=409, detail="disposed"),
+    ):
+        disposed = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+            json={"base_revision_no": 0},
+        )
+    assert disposed.status_code == 409
+
+    with patch(
+        "modules.flow_gate.documents.routers.documents._reject_if_group_ai_running",
+        side_effect=HTTPException(status_code=409, detail="ai running"),
+    ):
+        ai_running = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+            json={"base_revision_no": 0},
+        )
+    assert ai_running.status_code == 409
+    assert canonical.read_text(encoding="utf-8") == broken_raw
+
+    restored = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 0},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["revision_no"] == 1
+    assert canonical.read_bytes() == initial_bytes
+    assert baseline.read_bytes() == initial_bytes
+    assert db_revisions.list_by_doc_revision(doc_id, 0) == [r0]
+    assert db_revisions.list_by_doc_revision(doc_id, 1) == []
+
+    restore_events = [
+        event for event in db_events.list_by_project(PROJECT)
+        if (json.loads(event.get("metadata") or "{}").get("edit_reason")
+            == "work_plan_revision_restore")
+        and json.loads(event.get("metadata") or "{}").get("doc_id") == doc_id
+    ]
+    assert len(restore_events) == 1
+    provenance = json.loads(restore_events[0]["metadata"])
+    assert provenance["restored_revision_no"] == 0
+    assert provenance["restored_revision_id"] == r0["id"]
+    assert provenance["restored_revision_created_by"] == "usr_wp_001"
+    assert provenance["unreadable_backup_is_sidecar"] is True
+    broken_backup = storage_root / provenance["unreadable_backup_path"]
+    assert broken_backup.read_text(encoding="utf-8") == broken_raw
+
+
+def test_r0_restore_after_first_save_keeps_0597_revision_history(seed, storage_root):
+    """The ordinary 0597 N -> N+1 before-image row remains unchanged."""
+    from modules.flow_gate.db import document_revisions as db_revisions
+
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0605-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+    payload = created.json()
+    doc_id = payload["doc_id"]
+    canonical = storage_root / payload["stored_path"]
+    r0_bytes = canonical.read_bytes()
+
+    changed = json.loads(json.dumps(payload["body"]))
+    changed["steps"][0]["note"] = "first save"
+    saved = client.put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 0, "body": changed},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision_no"] == 1
+
+    broken_raw = '{"wp_version":'
+    canonical.write_text(broken_raw, encoding="utf-8")
+    restored = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 1},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["revision_no"] == 2
+    assert canonical.read_bytes() == r0_bytes
+    r1 = db_revisions.get_single_by_doc_revision(doc_id, 1)
+    assert r1 is not None
+    assert (storage_root / r1["backup_path"]).read_text(encoding="utf-8") == broken_raw
+
+
+def test_restore_listing_fails_closed_for_ambiguous_revision(seed, storage_root):
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db.connection import get_store, now_iso
+
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0604-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+    doc_id = created.json()["doc_id"]
+    r0 = db_revisions.get_single_by_doc_revision(doc_id, 0)
+    get_store()._execute(
+        "INSERT INTO document_revisions "
+        "(doc_id, revision_no, backup_path, edit_reason, linked_doc_id, created_by, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [doc_id, 0, r0["backup_path"], "user_comment", None, "usr_wp_001", now_iso()],
+    )
+    canonical = storage_root / created.json()["stored_path"]
+    canonical.write_text('{"wp_version":', encoding="utf-8")
+
+    unreadable = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    listed = unreadable.json()["revisions"]
+    assert len(listed) == 1
+    assert listed[0]["restorable"] is False
+    assert listed[0]["restore_unavailable_reason"] == "revision_ambiguous"
+    restore = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 0},
+    )
+    assert restore.status_code == 422
+    assert restore.json()["reason"] == "revision_ambiguous"
+    assert canonical.read_text(encoding="utf-8") == '{"wp_version":'
+
+
+# ── flowgate.default.0599 T#3: connected recovery regression ────────────────
+
+def _create_connected_r0(client, storage_root, doc_code: str):
+    from modules.flow_gate.db import documents as db_docs
+
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value=doc_code,
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+    payload = created.json()
+    doc_id = payload["doc_id"]
+    canonical = storage_root / payload["stored_path"]
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 0
+    initial_bytes = canonical.read_bytes()
+    r0, baseline = _assert_exact_r0(doc_id, canonical)
+    return payload, canonical, initial_bytes, r0, baseline
+
+
+def test_connected_first_save_keeps_one_original_r0(seed, storage_root):
+    from modules.flow_gate.db import document_revisions as db_revisions
+
+    client = _client()
+    payload, canonical, initial_bytes, r0, baseline = _create_connected_r0(
+        client, storage_root, "0610-WP",
+    )
+    changed = json.loads(json.dumps(payload["body"]))
+    changed["steps"][0]["note"] = "first connected save"
+    saved = client.put(
+        f"/api/v1/documents/{payload['doc_id']}/work-plan",
+        json={"base_revision_no": 0, "body": changed},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision_no"] == 1
+    rows = db_revisions.list_by_doc_revision(payload["doc_id"], 0)
+    assert rows == [r0]
+    assert baseline.read_bytes() == initial_bytes
+    assert canonical.read_bytes() != initial_bytes
+
+
+def test_closed_work_plan_blocks_save_and_r0_restore_without_mutation(
+    seed, storage_root,
+):
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+
+    client = _client()
+    payload, canonical, initial_bytes, r0, baseline = _create_connected_r0(
+        client, storage_root, "0611-WP",
+    )
+    doc_id = payload["doc_id"]
+    db_docs.update(doc_id, {"status": "closed"})
+
+    changed = json.loads(json.dumps(payload["body"]))
+    changed["steps"][0]["note"] = "must not save"
+    save = client.put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 0, "body": changed},
+    )
+    assert save.status_code == 422
+    assert canonical.read_bytes() == initial_bytes
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 0
+
+    broken_raw = '{"wp_version":'
+    canonical.write_text(broken_raw, encoding="utf-8")
+    restore = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 0},
+    )
+    assert restore.status_code == 422
+    assert canonical.read_text(encoding="utf-8") == broken_raw
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 0
+    assert db_revisions.list_by_doc_revision(doc_id, 0) == [r0]
+    assert baseline.read_bytes() == initial_bytes
+
+
+@pytest.mark.parametrize(
+    ("failure", "doc_code", "expected_reason"),
+    [
+        ("missing", "0620-WP", "backup_unavailable"),
+        ("out_of_root", "0621-WP", "backup_unavailable"),
+        ("corrupt", "0622-WP", "not_json"),
+    ],
+)
+def test_restore_bad_r0_backup_fails_closed_without_partial_mutation(
+    seed, storage_root, failure, doc_code, expected_reason, monkeypatch,
+):
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.storage import paths as storage_paths
+
+    client = _client()
+    payload, canonical, initial_bytes, r0, baseline = _create_connected_r0(
+        client, storage_root, doc_code,
+    )
+    doc_id = payload["doc_id"]
+    if failure == "missing":
+        baseline.unlink()
+    elif failure == "out_of_root":
+        outside = storage_root.parent / f"{doc_id}.outside-r0.json"
+        outside.write_bytes(initial_bytes)
+        get_store()._execute(
+            "UPDATE document_revisions SET backup_path = ? WHERE id = ?",
+            [f"../{outside.name}", r0["id"]],
+        )
+        monkeypatch.setattr(
+            storage_paths,
+            "_allowed_roots",
+            lambda _project_id=None: [storage_root.resolve()],
+        )
+    else:
+        baseline.write_text('{"wp_version":', encoding="utf-8")
+
+    broken_raw = '{"wp_version":'
+    canonical.write_text(broken_raw, encoding="utf-8")
+    unreadable = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert unreadable.status_code == 409
+    listed_r0 = next(
+        item for item in unreadable.json()["revisions"]
+        if item["revision_no"] == 0
+    )
+    assert listed_r0["restorable"] is False
+    assert listed_r0["restore_unavailable_reason"] == expected_reason
+
+    restore = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 0},
+    )
+    assert restore.status_code == 422
+    assert restore.json()["reason"] == expected_reason
+    assert canonical.read_text(encoding="utf-8") == broken_raw
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 0
+    assert len(db_revisions.list_by_doc_revision(doc_id, 0)) == 1
+    revisions_dir = canonical.parent / "revisions"
+    assert not list(revisions_dir.glob(
+        f"{doc_id}.r0.unreadable-before-r1*",
+    ))
+
+
+# ── 0597 T0004: unreadable revision restore regression ───────────────────────
+
+def test_unreadable_revision_restore_contract(seed, storage_root):
+    """Connected regression: unreadable listing -> CAS restore -> N+1 history."""
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db.connection import now_iso
+    from modules.flow_gate.services import work_plan_service as wp
+
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0990-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+    payload = created.json()
+    doc_id = payload["doc_id"]
+    canonical = storage_root / payload["stored_path"]
+    valid_raw = canonical.read_text(encoding="utf-8")
+
+    # Make a normal save so r0 is a genuine server-created, readable backup.
+    saved_body = payload["body"]
+    saved_body["steps"][0]["note"] = "restorable revision"
+    saved = client.put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 0, "body": saved_body},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision_no"] == 1
+
+    # Simulate a future writer. The current reader must fail closed but retain raw/history.
+    # wp_version 3 is genuinely beyond WP_VERSION_SUPPORTED (2 in this branch); 2 itself
+    # now parses as a supported-but-incomplete body (schema_invalid), not this reason.
+    future_raw = '{"wp_version":3,"binding":"advisory"}\n'
+    canonical.write_text(future_raw, encoding="utf-8")
+    unreadable = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert unreadable.status_code == 409
+    unreadable_body = unreadable.json()
+    assert unreadable_body["code"] == "wp_unreadable"
+    assert unreadable_body["reason"] == "wp_version_unsupported"
+    assert unreadable_body["raw"] == future_raw
+    r0 = next(row for row in unreadable_body["revisions"] if row["revision_no"] == 0)
+    assert r0["restorable"] is True
+    assert r0["restore_unavailable_reason"] is None
+    assert "backup_path" not in r0
+
+    restored = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 1},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["revision_no"] == 2  # never rewind to r0
+    assert restored.json()["body"]["wp_version"] == wp.WP_VERSION_SUPPORTED
+    assert canonical.read_text(encoding="utf-8") == valid_raw
+    rows = db_revisions.list_by_doc(doc_id)
+    current_backup = next(row for row in rows if row["revision_no"] == 1)
+    assert current_backup["edit_reason"] == "user_comment"
+    assert (storage_root / current_backup["backup_path"]).read_text(encoding="utf-8") == future_raw
+
+    # The restore endpoint must preserve the existing final-approval edit guard.
+    # Exercise the connected HTTP route while the real is_document_editable() decides.
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.document_service.is_final_approved",
+        return_value=True,
+    ):
+        final_approved = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+            json={"base_revision_no": 2},
+        )
+    assert final_approved.status_code == 422
+    assert final_approved.json()["detail"] == "Modification not allowed after final approval."
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 2
+    assert canonical.read_text(encoding="utf-8") == valid_raw
+
+    # A revision number belonging only to another document is indistinguishable from
+    # missing: the route scopes lookup to this doc and never accepts a foreign row.
+    db_revisions.create({
+        "doc_id": ROOT_DOC,
+        "revision_no": 77,
+        "backup_path": payload["stored_path"],
+        "edit_reason": "user_comment",
+        "created_by": "usr_wp_001",
+        "created_at": now_iso(),
+    })
+    foreign = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/77/restore",
+        json={"base_revision_no": 2},
+    )
+    assert foreign.status_code == 404
+
+    # Missing revision, stale CAS, missing backup, unsupported backup, and schema-invalid
+    # backup all refuse without changing the canonical body or current revision.
+    missing = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/999/restore",
+        json={"base_revision_no": 2},
+    )
+    assert missing.status_code == 404
+    stale = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 1},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "wp_revision_conflict"
+
+    bad_dir = canonical.parent / "revisions"
+    cases = [
+        (10, bad_dir / "missing.json", None, "backup_unavailable"),
+        (11, bad_dir / "future.json", '{"wp_version":3}\n', "wp_version_unsupported"),
+        (12, bad_dir / "invalid.json", '{"wp_version":1}\n', "schema_invalid"),
+    ]
+    for revision_no, backup, raw, reason in cases:
+        if raw is not None:
+            backup.write_text(raw, encoding="utf-8")
+        db_revisions.create({
+            "doc_id": doc_id,
+            "revision_no": revision_no,
+            "backup_path": str(backup.relative_to(storage_root)).replace("\\", "/"),
+            "edit_reason": "user_comment",
+            "created_by": "usr_wp_001",
+            "created_at": now_iso(),
+        })
+        response = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/revisions/{revision_no}/restore",
+            json={"base_revision_no": 2},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "wp_revision_not_restorable"
+        assert response.json()["reason"] == reason
+        assert db_docs.get_by_id(doc_id)["revision_no"] == 2
+        assert canonical.read_text(encoding="utf-8") == valid_raw
+
+
+def test_revision_brief_fails_closed_for_untrusted_backup(seed, storage_root):
+    """An out-of-root backup is listed as unavailable and its path never leaks."""
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db.connection import now_iso
+
+    doc_id = "wpprj-__ALL__-0402.0990-WP"
+    db_revisions.create({
+        "doc_id": doc_id,
+        "revision_no": 13,
+        "backup_path": "../outside.json",
+        "edit_reason": "user_comment",
+        "created_by": "usr_wp_001",
+        "created_at": now_iso(),
+    })
+    response = _client().get(f"/api/v1/documents/{doc_id}/work-plan")
+    # The canonical is readable after the preceding restore; inspect the helper through a
+    # temporary unreadable current body to exercise the actual HTTP recovery listing.
+    from modules.flow_gate.db import documents as db_docs
+    row = db_docs.get_by_id(doc_id)
+    canonical = storage_root / row["file_path"]
+    original = canonical.read_text(encoding="utf-8")
+    canonical.write_text('{"wp_version":2}\n', encoding="utf-8")
+    try:
+        response = _client().get(f"/api/v1/documents/{doc_id}/work-plan")
+        assert response.status_code == 409
+        listed = next(item for item in response.json()["revisions"] if item["revision_no"] == 13)
+        assert listed["restorable"] is False
+        assert listed["restore_unavailable_reason"] == "backup_unavailable"
+        assert "backup_path" not in listed
+    finally:
+        canonical.write_text(original, encoding="utf-8")

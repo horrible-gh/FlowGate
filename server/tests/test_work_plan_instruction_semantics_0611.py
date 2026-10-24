@@ -622,7 +622,7 @@ def test_path3_manual_create_approved_expands_real_instruction_without_ai(
     monkeypatch.setattr(wpa_svc, "validate_reference", _REAL_VALIDATE_REFERENCE)
     world = _wire_world(monkeypatch, tmp_path, pre_env["wfseq"])
 
-    import test_next_approved_document as nad
+    import tests.modules.flow_gate.test_next_approved_document as nad
 
     created = docs.create_next_approved_document(
         docs.NextApprovedDocumentCreate(
@@ -663,7 +663,7 @@ def test_manual_and_ai_invoke_paths_expand_byte_identical_instruction(
         events: list = []
         if entry == "manual":
             _trace_auto_path(monkeypatch, events)
-            import test_next_approved_document as nad
+            import tests.modules.flow_gate.test_next_approved_document as nad
 
             docs.create_next_approved_document(
                 docs.NextApprovedDocumentCreate(

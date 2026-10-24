@@ -29,7 +29,7 @@ from modules.flow_gate.services import snapshot_access_service as access
 from modules.flow_gate.services import snapshot_materialization_service as materialize
 from modules.flow_gate.services import snapshot_request_service
 
-from test_ai_invoke_pause_resume_0252 import (  # noqa: F401  (fixtures/helpers reused as-is)
+from tests.modules.flow_gate.test_ai_invoke_pause_resume_0252 import (  # noqa: F401  (fixtures/helpers reused as-is)
     DOC_REF,
     GROUP,
     PY,
@@ -41,7 +41,7 @@ from test_ai_invoke_pause_resume_0252 import (  # noqa: F401  (fixtures/helpers 
     fake_env,
     svc,
 )
-from test_snapshot_materialization_0517 import _Store, snapshot_env  # noqa: F401
+from tests.integration.startup_sweep.test_snapshot_materialization_0517 import _Store, snapshot_env  # noqa: F401
 
 
 def _wait_provider_assigned(run_id: str, timeout: float = 5.0) -> dict:
