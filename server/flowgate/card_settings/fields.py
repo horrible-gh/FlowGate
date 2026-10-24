@@ -9,7 +9,9 @@ Pure. The 0053 CH agreement (§4 "settings as drawn") and the v7 settings blocks
   document (0549 contract 2), so the card stores nothing for it;
 - requirement cards (R / B): AI delegation off / on, its scope, AI Team and the safety limits —
   values only, no delegation engine (0053 CH: out of this scope);
-- check cards (gate): usage, Git apply mode, merge target, push, keep branch;
+- check cards (gate, flowgate.v02.0085 T#1, D0007 §7.1): the archive flag, Git apply mode, the merge target remote
+  (null | origin), push and keep branch. ``usage`` is no setting any more (no UI, no new write; a stored value is
+  kept as history only) and an old ``merge_target`` branch name lives on as ``legacy_merge_target`` (migration 158);
 - work plan cards (WP, flowgate.v02.0072 T#3): the AI pre-instruction writing switch, and the run block the
   v7 plan settings draw (work AI, restart, review AI, review count, the advanced time limit and review basis).
   flowgate.v02.0083 T#1 — 0072 T#3 개정 (revised): the run block is no longer values only. A plan card whose writer is
@@ -100,6 +102,12 @@ REVIEW, APPROVE = "review", "approve"
 LOOP_REWORK_TIMEOUTS_SEC = (1800, 3600, 7200)
 LOOP_TOTAL_TIMEOUT_SEC = 14400
 LOOP_FAILURE_RESTARTS = (-1, 0, 1, 2)
+# D0007 §7.1: ``merge_target`` is the remote the merge goes to (null = local only), never a branch name. The branch
+# to merge into is the group's own work base branch. Only origin is supported.
+MERGE_TARGET_REMOTES = ("origin",)
+# Stored values of a check card that are history only: no field reads or writes them (D0007 §7.1). ``usage`` is the
+# removed mid / end switch; ``legacy_merge_target`` holds the old branch-name ``merge_target`` (migration 158).
+LEGACY_CHECK_FIELDS = ("usage", "legacy_merge_target")
 _ROOT_TYPES = frozenset({"R", "B"})
 _PLAN_TYPES = frozenset({"WP"})
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
@@ -142,11 +150,11 @@ _FIELDS = {
         Field("limit_replans", LIMIT),
     ),
     CHECK: (
-        Field("usage", CHOICE, None, ("mid", "end")),
+        Field("archive", FLAG, False),
         Field("merge_mode", CHOICE, None, ("merge", "commit", "hold")),
-        Field("merge_target", BRANCH),
-        Field("push", FLAG),
-        Field("keep_branch", FLAG),
+        Field("merge_target", CHOICE, None, MERGE_TARGET_REMOTES),
+        Field("push", FLAG, False),
+        Field("keep_branch", FLAG, False),
     ),
     PLAN: (PRE_INSTRUCTION_AUTO, _RUN_AI, _RESTART, _REVIEW_AI, _REVIEW_COUNT, _TIME_LIMIT, _REVIEW_BASIS),
 }
@@ -260,9 +268,30 @@ def view(kind: Optional[str], stored: dict, repeat_choices: Iterable[int]) -> di
     out = {}
     for f in fields_of(kind) + (HOLD,):
         has = f.name in stored
-        out[f.name] = {"value": stored[f.name] if has else f.default, "stored": has,
+        out[f.name] = {"value": _shown(kind, f, stored[f.name]) if has else f.default, "stored": has,
                        "default": f.default, "choices": choices_of(f, choices)}
     return out
+
+
+def _shown(kind: Optional[str], field: Field, value: Any) -> Any:
+    """The value a stored one is shown as. A check card's switches are never null (a null push / keep branch /
+    archive reads as false), and a stored choice that is not one of the field's choices (an old merge target branch
+    name that migration 158 has not moved yet) is not shown as a setting: the default stands."""
+    if kind != CHECK:
+        return value
+    if field.kind == FLAG and value is None:
+        return bool(field.default)
+    if field.kind == CHOICE and value not in field.choices:
+        return field.default
+    return value
+
+
+def legacy_view(kind: Optional[str], stored: dict) -> dict:
+    """``{name: stored value}`` of the history-only values a card keeps (D0007 §7.1): read-only, never a setting,
+    never handed to a run. Empty for any kind but a check card, and for a check card that stored none."""
+    if kind != CHECK:
+        return {}
+    return {name: stored[name] for name in LEGACY_CHECK_FIELDS if name in stored}
 
 
 def _omitted(stored: dict) -> bool:

@@ -417,12 +417,13 @@ describe('header actions in the Frame (real registry)', () => {
     expect(actions.findAll('button').map((b) => b.text())).toEqual(['▶ 실행'])
   })
 
-  it('the gate keeps its ✓ 확인 · ✕ 반려 in the header; there are no document actions there', async () => {
+  it('the gate decisions are in the document result box, with no document header actions', async () => {
     const w = await mountFrame(SELECTIONS.graphGate)
-    const actions = w.get('[data-test="designer-inspector-actions"]')
-    expect(actions.find('[data-test="inspector-actions"]').exists()).toBe(false)
-    expect(actions.find('[data-test="gate-confirm"]').text()).toBe('✓ 확인')
-    expect(actions.find('[data-test="gate-reject"]').text()).toBe('✕ 반려 ▾')
+    const header = w.get('[data-test="designer-inspector-header"]')
+    expect(header.find('[data-test="inspector-actions"]').exists()).toBe(false)
+    expect(header.find('[data-test="gate-confirm"]').exists()).toBe(false)
+    expect(w.get('[data-test="gate-result"] [data-test="gate-confirm"]').text()).toBe('✓ 확인')
+    expect(w.get('[data-test="gate-result"] [data-test="gate-reject"]').text()).toBe('✕ 반려')
     expect(documentRead).not.toHaveBeenCalled()
   })
 

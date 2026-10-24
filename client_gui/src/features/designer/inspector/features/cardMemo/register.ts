@@ -6,6 +6,7 @@
 // flowgate.v02.0056 (0017-CH) — the header ✎ 메모 of these cards opens a new card memo (CardMemoButton) and draws the
 // memo windows; the v0.1 M document memo (features/memo) stays with v0.1 Flows.
 import type { InspectorRegistration } from '../../inspectorRegistry'
+import GateMemoPanel from './GateMemoPanel.vue'
 import CardMemoButton from './CardMemoButton.vue'
 import CardMemoSection from './CardMemoSection.vue'
 import messages from './messages'
@@ -17,6 +18,7 @@ const registration: InspectorRegistration = {
   requiresDocument: false,
   tab: { key: 'documents', component: CardMemoSection },
   headerMemo: CardMemoButton,
+  headerPanel: GateMemoPanel,
   messages,
 }
 

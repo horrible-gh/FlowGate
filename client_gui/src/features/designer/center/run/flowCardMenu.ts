@@ -32,6 +32,8 @@ export interface FlowCardMenuItem {
 export interface FlowCardMenuInput {
   /** The card's state in the Flow's run (`done`, `open`, …), or null when the run has no node run of it. */
   readonly nodeStatus: string | null
+  readonly gate?: boolean
+  readonly gateRecoveryResetRequired?: boolean
   /** The card's Hold, or null when not known. */
   readonly hold: boolean | null
   /** The card is a Graph node stored on the server (not a `tmp_` card of the draft, not a v0.1 document card). */
@@ -74,7 +76,8 @@ export function flowCardMenu(input: FlowCardMenuInput): FlowCardMenuItem[] {
     if (input.hold === true) items.push(item('hold_release', locked))
     else items.push(item('hold_set', (done ? 'done_node' : null) ?? locked))
   }
-  if (input.canTimeMachine && done && input.ownership === 'graph') {
+  const gateRework = input.gate === true && (input.nodeStatus === 'rejected' || (input.nodeStatus === 'pending' && input.gateRecoveryResetRequired === true))
+  if (input.canTimeMachine && (done || gateRework) && input.ownership === 'graph') {
     let reason: FlowCardMenuReason | null = null
     if (!input.known) reason = 'run_unknown'
     else if (input.run?.status !== 'idle') reason = 'run_not_idle'

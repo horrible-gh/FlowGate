@@ -50,6 +50,7 @@ function toRunNode(raw: Raw): FlowRunNode {
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
+    ...(raw.gate && typeof raw.gate === 'object' ? { gateRecoveryResetRequired: (raw.gate as Raw).recovery_reset_required === true } : {}),
   }
 }
 

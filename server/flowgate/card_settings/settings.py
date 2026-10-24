@@ -15,6 +15,13 @@ answer what a node's AI start takes from its card.
   allowed on an open / in-review node (it bounds the opening only). Releasing changes the setting only: nothing opens
   until the next step / full command. Every change is a ``graph_canvas_changed`` (reason ``hold``) after the commit,
   with or without a run, and a ``graph_node_state_changed`` too when the Flow's run has the node.
+- flowgate.v02.0085 T#1 (D0007 §7.2): a confirm gate (check card) is the exception to that lock. Its settings change
+  while the gate is pending or open in a running or idle run (or in a Flow with no run) and nothing holds it - no
+  reserved decision, no finished gate, no Time Machine operation, no open merge conflict, no pending round split
+  (``flowgate.gate_decisions.settings_lock``); anything else is 409 ``gate_settings_locked`` with a reason. Every card
+  has a settings version (``repository.settings_version``) that each write changing a value moves by one; a PATCH may
+  carry ``expected_settings_version`` and a stale one is refused (409 ``gate_context_changed``) before anything is
+  written. The structure lock of the definition is not touched.
 - The requirement card's AI delegation on / off adds / removes the card's AI delegation document
   line (``card_documents.lines.set_delegation``), in the same guard.
 - flowgate.v02.0072 T#3: a work plan card (WP) reads and writes its plan settings (``fields.PLAN``: the AI
@@ -47,6 +54,7 @@ from flowgate.card_documents import slots as card_slots
 from flowgate.card_settings import fields
 from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import repository
+from flowgate.gate_decisions import settings_lock as gate_lock
 from flowgate.graph_run import editing, hold
 
 DELEGATION_FIELD = "delegation"
@@ -62,9 +70,21 @@ def _card(flow_id: str, node_key: str) -> dict:
 
 def _payload(flow_id: str, node: dict, stored: dict) -> dict:
     kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
-    return {"flow_id": flow_id, "node_key": node["node_key"], "card_kind": kind,
-            "locked": editing.settings_locked(flow_id, node["node_key"]) or legacy.node_running(flow_id, node["node_key"]),
-            "fields": fields.view(kind, stored, legacy.repeat_choices())}
+    reason = gate_lock.lock_reason(flow_id, node["node_key"]) if kind == fields.CHECK else None
+    # A gate is open while it waits for the person, so "open in the active run" (``legacy.node_running``) is not a
+    # lock for it: only the gate's own lock decides. Every other card keeps the Graph lock and the running check.
+    if kind == fields.CHECK:
+        locked = reason is not None
+    else:
+        locked = editing.settings_locked(flow_id, node["node_key"]) or legacy.node_running(flow_id, node["node_key"])
+    payload = {"flow_id": flow_id, "node_key": node["node_key"], "card_kind": kind,
+               "locked": locked,
+               "settings_version": repository.settings_version(flow_id, node["node_key"]),
+               "fields": fields.view(kind, stored, legacy.repeat_choices())}
+    if kind == fields.CHECK:
+        payload["lock_reason"] = reason
+        payload["legacy"] = fields.legacy_view(kind, stored)      # history only: usage, the old merge target branch
+    return payload
 
 
 def read(group: dict, node_key: str) -> dict:
@@ -75,9 +95,10 @@ def read(group: dict, node_key: str) -> dict:
 
 
 def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[str],
-          locale: Optional[str] = None) -> dict:
+          locale: Optional[str] = None, expected_version: Optional[int] = None) -> dict:
     """``PATCH /flows/{flow_id}/nodes/{node_key}/settings`` — one field, saved at once. ``locale`` (the request's)
-    titles an AI delegation line document the change makes (flowgate.v02.0088)."""
+    titles an AI delegation line document the change makes (flowgate.v02.0088). ``expected_version`` is the
+    settings version the screen was drawn from (None: not checked)."""
     flow_id = group["group_id"]
     legacy.require_writable(flow_id)
     if not repository.available():
@@ -88,7 +109,11 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
     def body() -> dict:
         if name == fields.HOLD.name:
             return _write_hold(group, node_key, value, user_id)
-        editing.require_editable(flow_id, node_key)
+        found = repository.card_node(flow_id, node_key)
+        if found is not None and fields.card_kind(found.get("node_type"), found.get("doc_type")) == fields.CHECK:
+            gate_lock.require_unlocked(flow_id, node_key)             # D0007 §7.2: the gate's own lock
+        else:
+            editing.require_editable(flow_id, node_key)
         node = _card(flow_id, node_key)
         kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
         field = fields.field_of(kind, name)
@@ -96,11 +121,17 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
             raise legacy.GraphApiError(422, "invalid_request", {"errors": [
                 {"field": "field", "reason": "not_a_setting_of_this_card", "card_kind": kind}]},
                 message="This card has no such setting.")
-        if legacy.node_running(flow_id, node_key):
+        if kind != fields.CHECK and legacy.node_running(flow_id, node_key):     # a gate: gate_lock decided above
             raise legacy.GraphApiError(409, "node_settings_locked", {"flow_id": flow_id, "node_key": node_key},
                                        message="The card is running; its settings cannot change now.")
+        if expected_version is not None:
+            current = repository.settings_version(flow_id, node_key)
+            if expected_version != current:
+                raise legacy.GraphApiError(409, "gate_context_changed", {
+                    "flow_id": flow_id, "node_key": node_key, "reason": "settings_version",
+                    "expected_settings_version": expected_version, "settings_version": current})
         if value is None:
-            repository.remove(flow_id, node_key, name)
+            changed = repository.remove(flow_id, node_key, name)
         else:
             try:
                 checked = fields.check_value(field, value, repeat_choices=legacy.repeat_choices(),
@@ -108,7 +139,9 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
             except fields.InvalidValue as exc:
                 raise legacy.GraphApiError(422, "invalid_request", {"errors": [
                     {"field": "value", "reason": exc.reason}]}, message="The value does not fit this setting.")
-            repository.put(flow_id, node_key, name, checked, user_id)
+            changed = repository.put(flow_id, node_key, name, checked, user_id)
+        if changed:
+            repository.bump_version(flow_id, node_key)
         stored = repository.values(flow_id, node_key)
         if name == DELEGATION_FIELD:
             card_lines.set_delegation(group, node, stored.get(DELEGATION_FIELD) == "on", user_id, registered,

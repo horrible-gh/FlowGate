@@ -1,17 +1,5 @@
-// flowgate.v02.0051 stage 2 — the Graph gate Node's own lines (0035 v7 확인 cards: the 확인 결과 result
-// line, ✓ 확인 · ✕ 반려 in the header). A gate has no document, so 0048 showed it as a header only; v7
-// gives it the result line and the two actions. Their meaning for a gate (중간 승인 / 그룹 종료 / AI
-// 위임 마지막 확인) is still under discussion (v7 §5) and the gate confirm / reject API is not registered
-// (D#1 §8.4), so the actions were drawn disabled with that reason (until 0053 T#9, below).
-// `other` card kind Nodes that are not gates (an unknown document type) get the one document line when
-// they have a document, else nothing. Pure functions over the target.
-// flowgate.v02.0053 T#5 (0053 CH) — a Custom card (palette [+], Graph `custom` node) works like 조사 · 작업: its
-// lines are 지시서 · 레포트, the documents the server made when it was placed (T#1 card lines T / TR); the
-// 지시서 line is hidden when the card's settings omit the instruction. A document line's name carries no type
-// code.
-// flowgate.v02.0053 T#9 — ✓ 확인 · ✕ 반려 decide the gate through the Graph run (P0008 S6-1 gate decision): usable
-// while the Flow's run is running and this gate is open in it; otherwise disabled with the reason. A stopped run
-// takes no decision (it is resumed first, 전체 실행). What a confirm / reject means is the server's gate rule.
+// D0007 §6: gate result and document-tab actions; custom/document card lines retain their existing behavior.
+import type { RunGateState } from '@/features/document'
 import type { InspectorTarget } from '../../inspectorTarget'
 
 export type GateSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'
@@ -109,7 +97,7 @@ export interface GateActionItem {
 /** The Flow's run as the gate decision reads it (features/document `RunCurrent`). */
 export interface GateRunFacts {
   readonly status: string
-  readonly nodes: ReadonlyArray<{ readonly nodeKey: string; readonly status: string }>
+  readonly nodes: ReadonlyArray<{ readonly nodeKey: string; readonly status: string; readonly gate?: RunGateState | null }>
 }
 
 /** Why a gate decision cannot be taken now, or null (it can). */
@@ -119,13 +107,14 @@ export function gateDecisionReason(
   busy: boolean,
 ): string | null {
   if (target.readOnly === 'conflict') return 'reason.read_only_conflict'
-  if (!run || run.status !== 'running') return 'reason.not_running'
+  if (!run || !['running', 'idle'].includes(run.status)) return 'reason.not_running'
   if (run.nodes.find((node) => node.nodeKey === target.nodeId)?.status !== 'open') return 'reason.not_open'
   if (busy) return 'reason.busy'
+  if (run.nodes.find(node => node.nodeKey === target.nodeId)?.gate?.can_decide !== true) return 'reason.not_open'
   return null
 }
 
-/** The two header actions of a gate: shown on a gate, usable while it is open in a running run. */
+/** Document-tab actions: open + server can_decide, running or idle; hidden after a decision. */
 export function gateActions(
   facts: GateCardFacts & Partial<Pick<InspectorTarget, 'nodeId' | 'readOnly'>>,
   run: GateRunFacts | null = null,
@@ -136,13 +125,25 @@ export function gateActions(
     return { confirm: hidden, reject: hidden }
   }
   const reason = gateDecisionReason({ nodeId: facts.nodeId ?? '', readOnly: facts.readOnly ?? null }, run, busy)
-  const item: GateActionItem = { visible: true, enabled: reason === null, reason }
+  const status = run?.nodes.find(node => node.nodeKey === facts.nodeId)?.status
+  const item: GateActionItem = { visible: status !== 'done' && status !== 'rejected', enabled: reason === null, reason }
   return { confirm: item, reject: item }
 }
 
 /** What a refused gate decision shows (the server's code, else the status). */
 export function gateFailureKey(error: { readonly kind: string; readonly status: number | null; readonly code: string | null }): string {
   switch (error.code) {
+    case 'gate_settings_invalid':
+      return 'failure.gate_settings_invalid'
+    case 'gate_git_unavailable':
+      return 'failure.gate_git_unavailable'
+    case 'gate_context_changed':
+      return 'failure.gate_context_changed'
+    case 'gate_decision_in_progress':
+      return 'failure.gate_decision_in_progress'
+    case 'gate_request_conflict':
+      return 'failure.gate_request_conflict'
+
     case 'run_not_running':
       return 'failure.not_running'
     case 'node_not_open':
@@ -154,4 +155,20 @@ export function gateFailureKey(error: { readonly kind: string; readonly status: 
   if (error.kind === 'network') return 'failure.network'
   if (error.status === 403) return 'failure.forbidden'
   return 'failure.other'
+}
+
+/** Only the current successful decision's own completed archive receipt can light the chip. */
+export function gateResult(node: { status: string; attemptId?: string | null; gate?: RunGateState | null } | null) {
+  const gate = node?.gate
+  const result = gate?.decision
+  const finished = !gate?.decision_in_progress && !gate?.recovery_reset_required
+  const confirmed = finished && node?.status === 'done'
+  const rejected = finished && node?.status === 'rejected'
+  const current = !!result && (result.attempt_id === node?.attemptId || result.attempt_id === null)
+  return {
+    key: confirmed ? 'confirmed' : rejected ? 'rejected' : 'before',
+    tone: confirmed ? 'success' : rejected ? 'danger' : 'neutral',
+    archived: !!(confirmed && current && gate?.archived && result?.archived && result.archive_id && result.result === 'confirmed' && result.status === 'succeeded'),
+    description: current && (confirmed || rejected) ? [result.actor_user_id, result.completed_at ?? result.decided_at, result.comment].filter(Boolean).join(' · ') : '',
+  }
 }

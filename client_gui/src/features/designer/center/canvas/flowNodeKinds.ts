@@ -47,7 +47,8 @@ const KIND_TABLE: Record<FlowNodeKindKey, Omit<FlowNodeKindDisplay, 'key'>> = {
   },
   task: { icon: 'M14 6l4 4l-8 8H6v-4l8-8z M12 8l4 4', accent: '#f59e0b' },
   test: { icon: 'M9 3h6 M10 3v6l-5 9h14l-5-9V3 M8 15h8', accent: '#ec4899' },
-  approval: { icon: 'M12 3l8 4v5c0 5-3.5 8-8 9c-4.5-1-8-4-8-9V7z M8.5 12l2.2 2.2l4.8-5', accent: '#22c98c' },
+  // ?? card: the Palette `confirm` card's user glyph (palette/paletteIcons.ts `user`; the Canvas does not import the Palette).
+  approval: { icon: 'M8 8a4 4 0 1 0 8 0a4 4 0 1 0 -8 0z M4 21a8 8 0 0 1 16 0', accent: '#22c98c' },
   design: {
     icon: 'M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z M8 21h8 M12 17v4',
     accent: '#9b72ff',

@@ -46,12 +46,11 @@ describe('the settings tab on a narrow Inspector (flowgate.v02.0053 T#7)', () =>
     expect(row).toMatch(/max-width: 100%;/)
   })
 
-  it('the check card’s 용도 line puts its choice under the label when it does not fit beside it', () => {
+  it('the check card keeps flexible archive/Git boxes and wraps the remote controls', () => {
     const src = source('features/checkSettings/CheckSettings.vue')
-    expect(rule(src, '.inspector-check-settings-usage')).toMatch(/display: flex;[^}]*flex-wrap: wrap;/)
-    expect(rule(src, '.inspector-check-settings-usage-label')).toMatch(/flex: 0 0 100px;/)
-    expect(rule(src, '.inspector-check-settings-usage-value')).toMatch(/flex: 1 1 auto;[^}]*flex-wrap: wrap;[^}]*min-width: 0;/)
-    expect(src).toMatch(/<InspectorControlRow :label="t\(k\('git\.target'\)\)" :hint="reasonText" wrap>/)
+    expect(src).not.toContain('inspector-check-settings-usage')
+    expect(rule(src, '.inspector-check-settings')).toMatch(/display: flex;[^}]*flex-direction: column;/)
+    expect(src).toMatch(/<InspectorControlRow[^>]+wrap>/)
   })
 
   it('flowgate.v02.0056 F2-1: the settings tab has no wrapping row left; the 지시 AI row is one select', () => {

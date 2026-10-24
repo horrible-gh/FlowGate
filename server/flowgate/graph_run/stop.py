@@ -1,5 +1,9 @@
 """0061 T#7 Stop: end a run's work and leave it idle (stopped) — ``POST /runs/{run_id}/stop``.
 
+0085 T#4 (D0007 §7.3.2): idle(blocked_recovery) also accepts Stop via the same stopping path; an
+unfinished Time Machine refuses it with 409 ``graph_time_machine_in_progress``. Stop preserves the
+``recovery_reset_required`` round-split marker.
+
 Pause (``POST /runs/{run_id}/pause``, T#2) keeps the run's work going; Stop ends it, in this order:
 
 (a) one Flow guard transaction, under the exclusive hold of the Flow's Stop gate (``fencing.exclusive``: every
@@ -29,6 +33,13 @@ group's G, ``result_merge.abort_for_stop``); while one of them is still open (G 
 stopping (``stop_pending``, ``merge_session_abort_pending``) until a repeated Stop or the server start aborts it. An
 attempt whose merge is in progress (``integrating``) is neither invalidated nor reset — it goes on to its end (done
 stays done) and the run stays stopping until then; its end goes on with the Stop (``result_merge``).
+flowgate.v02.0085 T#2/T#3 (D0007 §7.3): in (c) a confirm gate held by a decision whose ``gate_publish`` job did nothing
+outside (no effect evidence) and is not being run has its decision canceled and the job cancelled
+(``no_effect_canceled``); the gate then goes back to pending like any open node and its attempt is closed. A gate whose
+job is running gets its cancel request (the job cancels itself at its next phase boundary when it did nothing outside,
+else it parks for recovery); a waiting job that already acted is parked (``recovery_required``) for a retry or a
+resolve. Such a gate keeps its decision and its open state, and the run stays stopping until that job ended (its end
+lets the Stop go on, ``gate_decisions.publish.after_terminal``).
 The Stop goes on when that execution's own end arrives (``on_execution_finished``), on a repeated
 Stop, after Git locks are released (``result_merge.on_lock_released``), and at server start (``recover``);
 each of them retries the removal for the attempts already invalidated. A root-bound node (its root
@@ -68,8 +79,9 @@ def _context(run: dict, actor: Optional[str]):
 
 
 def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:
-    """``run_state_ports.stop``. A running or paused run stops; a stopping one goes on with its stop (a repeated Stop);
-    any other is 409 ``run_not_running``. Answers the run as it is: idle (stopped), or still stopping with the
+    """``run_state_ports.stop``. A running, paused or idle(blocked_recovery) run stops; a stopping one goes on with its stop (a repeated Stop);
+    idle(blocked_recovery) with an unfinished Time Machine is 409 ``graph_time_machine_in_progress``;
+    any other entry state is 409 ``run_not_running``. Stop never clears ``recovery_reset_required``. Answers the run as it is: idle (stopped), or still stopping with the
     executions whose end was not confirmed (``unconfirmed_exec_ids``), the stopped attempts whose worktree is not
     removed yet (``cleanup_pending_attempt_ids``) or, T#9, the attempts whose merge session is not aborted yet
     (``merge_session_pending_attempt_ids``)."""
@@ -82,11 +94,15 @@ def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> d
             raise GraphApiError(404, "run_not_found", {"run_id": run_id})
         if run["status"] == STOPPING:
             return
-        if run["status"] not in ("running", "paused"):
+        recovery_idle = run["status"] == IDLE and run.get("idle_reason") == "blocked_recovery"
+        if recovery_idle:
+            from flowgate.graph_time_machine.operation import require_no_operation
+            require_no_operation(flow_id)
+        if run["status"] not in ("running", "paused") and not recovery_idle:
             raise GraphApiError(409, "run_not_running", {"run_id": run_id, "status": run["status"]})
         now = run_store.utc_now_ms()
         if run_store._affected("UPDATE graph_runs SET status = 'stopping', stopped_at = ?, updated_at = ? "
-                               "WHERE run_id = ? AND status IN ('running', 'paused', 'stopped')",
+                               "WHERE run_id = ? AND status IN ('running', 'paused', 'stopped', 'idle')",
                                [now, now, run_id]) != 1:
             raise AssertionError("stop missed its run")
         launchers.extend(r["ai_run_id"] for r in run_store._all(
@@ -169,7 +185,7 @@ def invalidate_attempt(attempt_id: str, reason: str) -> bool:
     return bool(changed)
 
 
-def reset_node(ctx, row: dict, cause: str) -> bool:
+def reset_node(ctx, row: dict, cause: str, note: Optional[dict] = None) -> bool:
     """Shared Stop / recovery reset. Callers decide which nodes may be reset; done/root nodes stay intact."""
     if row["status"] == "done" or int(row.get("root_bound") or 0):
         return False
@@ -187,7 +203,7 @@ def reset_node(ctx, row: dict, cause: str) -> bool:
         _revoke((r["token_id"] for r in run_store._all(
             "SELECT token_id FROM graph_run_token_map WHERE run_id = ? AND node_key = ? AND attempt_id IS NULL",
             [run_id, row["node_key"]])), cause)
-        run_apply.emit_node_state(ctx, row["node_key"], row["status"], "pending", cause, None)
+        run_apply.emit_node_state(ctx, row["node_key"], row["status"], "pending", cause, None, note=note)
     return bool(moved)
 
 
@@ -201,17 +217,65 @@ def _settle_executions(run: dict, actor: Optional[str]) -> list[str]:
     # T#9: a merge in progress goes on to its end (``result_merge``); its attempt and node are left to it, and the
     # Stop's idle (stopped) waits for it (``finish_stop``: an active attempt).
     merging = {r["node_key"] for r in result_merge.integrating(run_id)}
+    # 0085 T#2: a gate whose accepted job may have acted keeps its attempt and its open state (resolved, not reset).
+    gates_held, gate_notes = _settle_gate_decisions(run_id)
+    keep = sorted(gates_held)
+    keep_sql = f" AND node_key NOT IN ({', '.join('?' for _ in keep)})" if keep else ""
     active = [r["attempt_id"] for r in run_store._all(
         "SELECT attempt_id FROM graph_node_attempts WHERE run_id = ? AND status = 'active' "
-        "AND COALESCE(integration_status, 'none') <> 'integrating'", [run_id])]
+        "AND COALESCE(integration_status, 'none') <> 'integrating'" + keep_sql, [run_id, *keep])]
     for attempt_id in active:
         invalidate_attempt(attempt_id, INVALIDATED_REASON)
     ctx = _context(run, actor)
     for row in run_store.node_runs(run_id):
         if row["status"] not in RESET_STATUSES or int(row.get("root_bound") or 0) or row["node_key"] in merging:
             continue
-        reset_node(ctx, row, CAUSE_STOP)
+        if row["node_key"] in gates_held:
+            continue                            # 0085 T#2: its job may have acted; it is resolved, not reset
+        reset_node(ctx, row, CAUSE_STOP, note=gate_notes.get(row["node_key"]))
     return stopped_attempts(run_id)
+
+
+def _settle_gate_decisions(run_id: str) -> tuple[set, dict]:
+    """0085 T#2/T#3 (D0007 §7.3 Stop), inside (c)'s guard: the run's gates held by a decision (accepted, failed,
+    recovery_required). One with no effect outside and no writer is canceled (decision ``canceled``, job ``cancelled`` /
+    ``no_effect_canceled``): the gate then goes back to pending and its attempt ends with the other open nodes. The others
+    stay held and the run stays stopping: a running job is asked to cancel (it cancels itself at its next phase boundary
+    when it did nothing outside, else it parks for recovery), a waiting job that already acted is parked for a person's
+    retry / resolve (``recovery_required``), a conflict handed to the merge review waits for that review. Returns (the
+    gates still held, ``{node key: event note}`` linking the stop event of each canceled gate to its decision)."""
+    from flowgate.gate_decisions import history, publish, recovery as gate_recovery, repository as gate_decisions
+    from modules.flow_gate.db import operation_job as db_jobs
+    from modules.flow_gate.services.git import job_store
+    held, notes = set(), {}
+    for node_key, decision in gate_decisions.reservations_of_run(run_id).items():
+        job_id = decision.get("job_id")
+        job = job_store.get_job(job_id) if job_id else None
+        # T#3 rework: the phases' evidence checked against the decision's own refs (an archive cut off after its ref
+        # is an unknown effect, never none) - a local ref read, no lock and no network.
+        effects = publish.effects_now(decision)
+        writer = job_store.gate_writer_active(job)
+        cancelable = decision["status"] in gate_recovery.CANCELABLE and not gate_recovery._conflict_open(decision)
+        if effects == gate_decisions.EFFECTS_NONE and not writer and cancelable:
+            if job is None or job_store.close_gate_publish(job_id, "cancelled", job_store.GATE_CANCEL_NO_EFFECT,
+                                                          result={"decision_id": decision["decision_id"],
+                                                                  "canceled_by": "stop"}):
+                if not gate_decisions.move(decision["decision_id"], decision["decision_version"],
+                                           gate_decisions.CANCELED):
+                    raise AssertionError("gate decision moved under the stop's guard")
+                notes[node_key] = {"payload": history.decision_link(decision["decision_id"])}
+                continue
+        if job is not None:
+            if writer:
+                db_jobs.mark_cancel_requested(job_id, ledger.now())
+            elif effects != gate_decisions.EFFECTS_NONE and job["status"] in ("pending", "blocked", "retry_wait") \
+                    and job_store.park_gate_publish(job_id, "stop_requested"):
+                if decision["status"] != gate_decisions.RECOVERY_REQUIRED and not gate_decisions.move(
+                        decision["decision_id"], decision["decision_version"], gate_decisions.RECOVERY_REQUIRED,
+                        last_error_code="stop_requested"):
+                    raise AssertionError("gate decision moved under the stop's guard")
+        held.add(node_key)
+    return held, notes
 
 
 def stopped_attempts(run_id: str) -> list[str]:
@@ -289,6 +353,9 @@ def advance(flow_id: str, run_id: str, *, actor: Optional[str] = None,
             return
         if run_store.has_active_attempts(run_id) or ledger.working(run_id) or result_merge.session_pending(run_id):
             return                              # never idle with work; the next advance settles it first
+        from flowgate.gate_decisions import repository as gate_decisions
+        if gate_decisions.reservations_of_run(run_id):
+            return                              # 0085 T#2: a gate job that may have acted is resolved first
         now = run_store.utc_now_ms()
         if run_store._affected("UPDATE graph_runs SET status = 'idle', idle_reason = ?, finished_at = ?, "
                                "updated_at = ? WHERE run_id = ? AND status = 'stopping'",

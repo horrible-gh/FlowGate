@@ -9,7 +9,7 @@ A PATCH changes exactly one value and answers the card's settings as they are no
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Request
 
@@ -18,7 +18,7 @@ from flowgate.card_settings import settings
 
 router = APIRouter(prefix="/api/v1", tags=["CardSettings"])
 
-_BODY_KEYS = {"field", "value"}
+_BODY_KEYS = {"field", "value", "expected_settings_version"}
 
 
 def parse_change(body: Any) -> tuple[str, Any, list[dict]]:
@@ -32,6 +32,17 @@ def parse_change(body: Any) -> tuple[str, Any, list[dict]]:
     if "value" not in body:
         errors.append({"field": "value", "reason": "required"})
     return (name.strip() if isinstance(name, str) else ""), body.get("value"), errors
+
+
+def parse_expected_version(body: Any) -> tuple[Optional[int], list[dict]]:
+    """flowgate.v02.0085 T#1: the optional ``expected_settings_version`` of a PATCH body - a whole number, never a
+    boolean. ``(version | None, errors)``."""
+    if not isinstance(body, dict) or "expected_settings_version" not in body:
+        return None, []
+    version = body["expected_settings_version"]
+    if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+        return None, [{"field": "expected_settings_version", "reason": "not_a_version"}]
+    return version, []
 
 
 @router.get("/flows/{flow_id}/nodes/{node_key}/settings")
@@ -50,10 +61,13 @@ def patch_card_settings(flow_id: str, node_key: str, request: Request, body: Any
     def handle() -> dict:
         user_id = legacy.authenticate(request)
         name, value, errors = parse_change(body)
+        expected_version, version_errors = parse_expected_version(body)
+        errors = errors + version_errors
         if errors:
             raise legacy.invalid(request, errors)
         group = legacy.load_flow(flow_id)
         legacy.authorize(user_id, group, "write")
-        return settings.write(group, node_key, name, value, user_id, legacy.locale_of(request))
+        return settings.write(group, node_key, name, value, user_id, legacy.locale_of(request),
+                              expected_version=expected_version)
 
     return legacy.run(request, handle)

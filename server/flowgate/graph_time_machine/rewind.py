@@ -70,6 +70,13 @@ def _check(ctx, keys: list[str], plan: dict, reverts: list[dict]) -> list[dict]:
     attempts = run_store._all(
         f"SELECT * FROM graph_node_attempts WHERE run_id = ? AND status IN ('active', 'ended') "
         f"AND node_key IN ({_marks(keys)}) ORDER BY created_at, attempt_id", [ctx.run_id, *keys]) if keys else []
+    if "gate_decisions" in plan:
+        from flowgate.gate_decisions import rounds, repository as gates
+        jobs = rounds.unfinished(ctx.flow_id)
+        reservations = gates.reservations_of_group(ctx.flow_id)
+        if jobs or reservations:
+            raise RewindRefused("gate_jobs_in_progress", jobs=jobs,
+                                decision_ids=[r["decision_id"] for r in reservations])
     planned = set(plan.get("attempt_ids") or ())
     reverted = {r["commit_sha"] for r in reverts}
     for c in plan.get("commits") or ():
@@ -176,6 +183,10 @@ def rewind(ctx, plan: dict, reverts: list[dict]) -> dict:
             canceled.append(int(row["id"]))
 
     flow_id = ctx.flow_id
+    split_decisions = []
+    if plan.get("operation_id"):
+        from flowgate.gate_decisions import rounds
+        split_decisions = rounds.split(flow_id, run_id, keys, ids, plan["operation_id"])
     if not ctx.run.get("active_group_id") and run_store.active_run(flow_id) is None:
         if run_store.claim_flow(run_id, flow_id) != 1:
             raise AssertionError("time machine missed its Flow")
@@ -184,7 +195,7 @@ def rewind(ctx, plan: dict, reverts: list[dict]) -> dict:
         reason = settle.idle_reason(ctx, run_store.node_runs(run_id), run_apply.read_run_state(ctx))
         if reason != ctx.run.get("idle_reason") and run_store.set_idle_reason(run_id, reason) == 1:
             ctx.run["idle_reason"] = reason
-    return {"invalidated_attempt_ids": ids, "active_attempt_ids": [a["attempt_id"] for a in attempts
+    return {"split_decision_ids": split_decisions, "invalidated_attempt_ids": ids, "active_attempt_ids": [a["attempt_id"] for a in attempts
                                                                     if a["status"] == "active"],
             "detached_legacy_attempt_ids": [attempt_id for attempt_id, _tokens in legacy],
             "reset_node_keys": reset, "reopened_document_ids": reopened, "canceled_ledger_row_ids": canceled,

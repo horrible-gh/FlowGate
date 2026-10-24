@@ -1,7 +1,8 @@
 """Run API request checks (P0008 §7 S5-2 / S5-4 / S5-5 / S6-1, L0009 §1.4) — pure, no I/O.
 
 Each returns ``(value, errors)``; ``errors`` uses the P0008 §1.3 ``{"field", "reason"}`` shape.
-A missing or empty body is allowed where every field is optional.
+A missing or empty body is allowed where every field is optional. flowgate.v02.0085 T#2: a gate decision's
+request key and expected round / settings version (``parse_gate_intent``).
 """
 from __future__ import annotations
 
@@ -83,6 +84,44 @@ def parse_gate_decision(body: Any) -> tuple[tuple[Optional[str], Optional[str]],
     if errors:
         return (None, None), errors
     return (decision, comment), []
+
+
+GATE_REQUEST_ID_MAX_LEN = 128
+GATE_ATTEMPT_ID_MAX_LEN = 64
+
+
+def _text_field(raw: dict, name: str, limit: int, errors: list[dict]) -> Optional[str]:
+    value = raw.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        errors.append({"field": name, "reason": "not_a_string"})
+    elif not value.strip() or value != value.strip() or any(ord(c) < 32 for c in value):
+        errors.append({"field": name, "reason": "invalid_format"})
+    elif len(value) > limit:
+        errors.append({"field": name, "reason": "too_long"})
+    else:
+        return value
+    return None
+
+
+def parse_gate_intent(body: Any) -> tuple[dict, list[dict]]:
+    """flowgate.v02.0085 T#2 (D0007 §7.2): the optional fields a new client adds to a gate decision —
+    ``request_id`` (the idempotency key of the request), ``expected_attempt_id`` and ``expected_settings_version``
+    (the gate round and the settings version the screen was drawn from). An old client sends none of them. A body
+    that is no object is ``parse_gate_decision``'s error, not repeated here."""
+    if not isinstance(body, dict):
+        return {}, []
+    errors: list[dict] = []
+    request_id = _text_field(body, "request_id", GATE_REQUEST_ID_MAX_LEN, errors)
+    attempt_id = _text_field(body, "expected_attempt_id", GATE_ATTEMPT_ID_MAX_LEN, errors)
+    version = body.get("expected_settings_version")
+    if version is not None and (not _is_int(version) or version < 0):
+        errors.append({"field": "expected_settings_version", "reason": "not_a_version"})
+        version = None
+    if errors:
+        return {}, errors
+    return {"request_id": request_id, "expected_attempt_id": attempt_id, "expected_settings_version": version}, []
 
 
 def parse_page(limit: Optional[str], offset: Optional[str]) -> tuple[tuple[int, int], list[dict]]:

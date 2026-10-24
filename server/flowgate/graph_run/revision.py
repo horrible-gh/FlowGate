@@ -2,6 +2,11 @@
 
 All checks precede writes. The guard transaction covers the revision, policy entries,
 node rows and audit event; dispatch stays in the existing post-commit job path.
+
+flowgate.v02.0085 T#2 (D0007 §3.2 / §3.4): an unresolved rejected confirm gate refuses the adoption
+(``graph_revision_migration_blocked``, reason ``gate_rejected``) even though its attempt has ended, and so does a gate
+waiting for a round split after an abandoned recovery (reason ``gate_recovery_reset_required``): the Time Machine
+puts the rework range back first. ``editing.protect_definition`` keeps such a gate and its input edges as well.
 """
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.graph_workflow.domain.run_policies import policies_of, required_policies, undecided_for
@@ -25,6 +30,14 @@ def adopt_revision(group: dict, run: dict, actor: str, jobs: list) -> bool:
         raise GraphApiError(409, "graph_revision_migration_blocked", {
             "flow_id": flow_id, "run_id": run_id, "reason": "active_attempts",
             "from_revision_no": old_no, "to_revision_no": latest})
+    _refuse_unresolved_gates(flow_id, run_id, rows, old_no, latest)
+    from flowgate.gate_decisions import rounds, repository as gate_decisions
+    jobs = rounds.unfinished(flow_id)
+    reservations = gate_decisions.reservations_of_group(flow_id)
+    if jobs or reservations:
+        raise GraphApiError(409, "graph_revision_migration_blocked", {
+            "flow_id": flow_id, "run_id": run_id, "reason": "gate_jobs_in_progress",
+            "jobs": jobs, "decision_ids": [r["decision_id"] for r in reservations]})
     record = definition_store.revision(flow_id, latest)
     if record is None:
         raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": latest})
@@ -76,3 +89,23 @@ def adopt_revision(group: dict, run: dict, actor: str, jobs: list) -> bool:
                last_event_seq=seq, step_node_keys=None)
     # The existing command path reloads this context and invokes frontier.resolve(command).
     return True
+
+
+def _refuse_unresolved_gates(flow_id: str, run_id: str, rows: list, old_no: int, latest: int) -> None:
+    """0085 T#2: a rejected gate, or a gate waiting for its round split, blocks the adoption until the Time Machine."""
+    from flowgate.gate_decisions import repository as gate_decisions
+    gates = gate_nodes(flow_id, old_no)
+    params = {"flow_id": flow_id, "run_id": run_id, "from_revision_no": old_no, "to_revision_no": latest}
+    rejected = sorted(r["node_key"] for r in rows if r["status"] == "rejected" and r["node_key"] in gates)
+    if rejected:
+        raise GraphApiError(409, "graph_revision_migration_blocked",
+                            {**params, "reason": "gate_rejected", "node_keys": rejected})
+    reset = sorted(k for k in gates if gate_decisions.reset_required(flow_id, k) is not None)
+    if reset:
+        raise GraphApiError(409, "graph_revision_migration_blocked",
+                            {**params, "reason": "gate_recovery_reset_required", "node_keys": reset})
+
+
+def gate_nodes(flow_id: str, revision_no: int) -> set:
+    record = definition_store.revision(flow_id, int(revision_no)) or {"nodes": []}
+    return {n["node_key"] for n in record["nodes"] if n.get("node_type") == "gate"}

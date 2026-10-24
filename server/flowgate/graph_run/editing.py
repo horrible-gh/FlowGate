@@ -27,6 +27,20 @@ def require_editable(flow_id: str, node_key=None) -> None:
         raise GraphApiError(409, "graph_node_protected", {**params, "node_key": node_key})
 
 
+def _unresolved_gates(flow_id: str, old: dict, rows: list) -> set:
+    """flowgate.v02.0085 T#2 (D0007 §3.2): a rejected confirm gate, and one waiting for its round split after an
+    abandoned recovery, keep their definition and input edges until the Time Machine resolved them (no delete
+    around the rework procedure)."""
+    from flowgate.gate_decisions import repository as gate_decisions
+    gates = {k for k, n in old.items() if n.get("node_type") == "gate"}
+    out = {r["node_key"] for r in rows if r["status"] == "rejected" and r["node_key"] in gates}
+    out |= {k for k in gates if gate_decisions.reset_required(flow_id, k) is not None}
+    from flowgate.gate_decisions import rounds
+    out |= {r["node_key"] for r in gate_decisions.reservations_of_group(flow_id) if r["node_key"] in gates}
+    out |= {r["target_key"] for r in rounds.unfinished(flow_id) if r.get("target_key") in gates}
+    return out
+
+
 def chat_source_refusal(group_id, locale=None) -> None:
     """T#14: a chat token of the group asks for edit / edit-once source access (``token_service.issue``, before the
     token is written or an edit-once claim is taken). Refused with 409 ``graph_run_locked`` (the ai-invoke / token
@@ -63,8 +77,9 @@ def protect_definition(flow_id: str, nodes: list, edges: list, run=None) -> None
         raise GraphApiError(409, "revision_not_found", {"flow_id": flow_id})
     old = {n["node_key"]: n for n in before["nodes"]}
     new = {n["node_key"]: n for n in nodes}
-    protected = {r["node_key"] for r in run_store.node_runs(run["run_id"])
-                 if r["status"] in PROTECTED}
+    rows = run_store.node_runs(run["run_id"])
+    protected = {r["node_key"] for r in rows if r["status"] in PROTECTED}
+    protected |= _unresolved_gates(flow_id, old, rows)
     changed = {k for k in protected if old.get(k) != new.get(k) or k not in new}
     def incoming(items, key):
         return {e["edge_id"]: e for e in items if e["target"] == key}

@@ -134,4 +134,9 @@ def read_snapshot(flow_id: str) -> Snapshot:
         "SELECT id, group_id, doc_id, attempt_id, node_key, state, commit_sha, skip_reason "
         "FROM tr_commit_ledger WHERE group_id = ? AND attempt_id IS NOT NULL ORDER BY id", [flow_id])
     snapshot.documents = _documents(flow_id, current_ids)
+    from flowgate.gate_decisions import rounds
+    graph = snapshot.revisions.get(run["revision_no"])
+    gates = {n.key for n in graph.nodes if n.node_type == "gate"} if graph else set()
+    snapshot.gate_jobs = rounds.unfinished(flow_id)
+    snapshot.gate_decisions = rounds.impact_entries(flow_id, gates)
     return snapshot

@@ -159,7 +159,7 @@ export interface GitSession {
   loadConflicts(): Promise<void>
 
   openConflictWindow(title: string): void
-  openPushErrorWindow(title: string): void
+  openPushErrorWindow(title: string, groupId?: string): void
   restoreWindow(id: string): void
   closeWindow(id: string): void
   setWindowMinimized(id: string, minimized: boolean): void
@@ -901,9 +901,9 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     void loadConflicts()
   }
 
-  function openPushErrorWindow(title: string): void {
-    if (!state.pushFailure) return
-    upsertWindow({ id: PUSH_ERROR_WINDOW_ID, kind: 'push-error', title, minimized: false, groupId: null, mergeId: null })
+  function openPushErrorWindow(title: string, groupId?: string): void {
+    if (!state.pushFailure && !groupId) return
+    upsertWindow({ id: groupId ? `gate-job:${groupId}` : PUSH_ERROR_WINDOW_ID, kind: 'push-error', title, minimized: false, groupId: groupId ?? null, mergeId: null })
   }
 
   function setWindowMinimized(id: string, minimized: boolean): void {

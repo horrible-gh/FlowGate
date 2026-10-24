@@ -208,7 +208,7 @@ export default {
         plan: '작업계획',
         task: '작업',
         test: '테스트',
-        approval: '승인',
+        approval: '확인',
         design: '설계',
         memo: '메모',
         unknown: '노드',
@@ -904,6 +904,7 @@ export default {
   },
   // flowgate.v02.0033 — Designer Git part (features/git).
   git: {
+    gate_job: {"job": "작업", "decision": "결정","title": "Git 작업 실패", "phase": "처리 단계", "retry": "재시도", "cancel": "취소", "reviewed": "단계별 증거와 남은 효과를 확인했습니다", "reason": "해결 사유", "confirm_effects": "효과 확정", "abandon": "복구 포기"}, 
     header: {
       base: 'Base branch',
       none: '—',

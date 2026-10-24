@@ -9,6 +9,7 @@
     :title="reason ?? t(k('add'))"
     :aria-label="reason ?? t(k('add'))"
     data-test="designer-inspector-memo"
+    :aria-expanded="target.nodeType === 'gate' ? gateMemoPanel(target).open : undefined"
     @click="openNew"
   >✎ <span class="inspector-card-memo-button-label">{{ t(k('label')) }}</span></button>
   <CardMemoWindows :target="target" />
@@ -21,6 +22,7 @@ import type { InspectorTarget } from '../../inspectorTarget'
 import CardMemoWindows from './CardMemoWindows.vue'
 import { cardMemoLockedReason } from './cardMemoModel'
 import { openCardMemoWindow } from './useCardMemoWindows'
+import { gateMemoPanel } from './useGateMemo'
 import { cardMemoCardOf } from './useCardMemo'
 
 const props = defineProps<{
@@ -40,7 +42,9 @@ const reason = computed(() => {
 })
 
 function openNew() {
-  if (card.value && reason.value === null) openCardMemoWindow(card.value, null)
+  if (!card.value || reason.value !== null) return
+  if (props.target.nodeType === 'gate') gateMemoPanel(props.target).open = !gateMemoPanel(props.target).open
+  else openCardMemoWindow(card.value, null)
 }
 </script>
 

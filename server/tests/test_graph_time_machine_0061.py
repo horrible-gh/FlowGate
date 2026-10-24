@@ -204,6 +204,12 @@ def history_db(monkeypatch, snapshot):
     """)
     def all_rows(sql, params):
         return [dict(r) for r in connection.execute(sql, params).fetchall()]
+    # 0085 T#4 adds the gate-job read. This pre-gate fixture has no operation_job
+    # table; use its own SQLite catalog rather than the uninitialized global DB.
+    from flowgate.gate_decisions import rounds
+    monkeypatch.setattr(rounds, "get_store", lambda: SimpleNamespace(
+        table_exists=lambda name: connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", [name]).fetchone() is not None))
     monkeypatch.setattr(run_store, "_all", all_rows)
     monkeypatch.setattr(run_store, "available", lambda: True)
     monkeypatch.setattr(run_store, "active_run", lambda _flow: dict(snapshot.run))

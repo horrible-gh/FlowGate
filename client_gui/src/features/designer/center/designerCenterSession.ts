@@ -746,6 +746,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     const flowRun = state.runs[flowId]
     return flowCardMenu({
       nodeStatus: cardStatus(flowId, nodeId),
+      gate: graphNode(flowId, nodeId)?.definition?.nodeType === 'gate',
+      gateRecoveryResetRequired: runMarks(flowId).nodeRuns.get(nodeId)?.gateRecoveryResetRequired === true,
       hold: cardHold(flowId, nodeId),
       stored: cardStored(flowId, nodeId),
       lock: runMarks(flowId).lock,

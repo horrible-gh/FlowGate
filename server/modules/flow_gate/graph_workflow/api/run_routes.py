@@ -6,7 +6,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, Request
 
 from modules.flow_gate.graph_workflow.domain.run_request import (
-    parse_gate_decision, parse_mode, parse_page, parse_reason, parse_start,
+    parse_gate_decision, parse_gate_intent, parse_mode, parse_page, parse_reason, parse_start,
 )
 from modules.flow_gate.graph_workflow.services import canvas_service, gate_service, run_service
 
@@ -115,14 +115,19 @@ def post_run_resume(run_id: str, request: Request, body: Any = Body(default=None
 
 @router.post("/runs/{run_id}/nodes/{node_key}/gate-decision")
 def post_gate_decision(run_id: str, node_key: str, request: Request, body: Any = Body(default=None)):
+    """flowgate.v02.0085 T#2 (D0007 §7.2): a new client also sends ``request_id``, ``expected_attempt_id`` and
+    ``expected_settings_version``; the answer is 200 (rejected / confirmed at once) or 202 (the confirm's Git apply or
+    archive accepted as a job). The actor is the authenticated user, never a body field."""
     def handle() -> dict:
         user_id = envelope.authenticate(request)
         envelope.client_id_of(request)
         (decision, comment), errors = parse_gate_decision(body)
+        intent, intent_errors = parse_gate_intent(body)
+        errors = errors + intent_errors
         if errors:
             raise envelope.invalid(request, errors)
         group = canvas_service.load_flow(run_service.run_flow_id(run_id))
         envelope.authorize(user_id, group, "write")
-        return gate_service.decide_gate(group, run_id, node_key, decision, comment, user_id)
+        return gate_service.decide_gate(group, run_id, node_key, decision, comment, user_id, intent)
 
     return envelope.run(request, handle)

@@ -72,10 +72,100 @@ RUN_EDIT_MESSAGES = {
         "en": "A deleted node key cannot be reused.",
         "ja": "削除したノードのキーは再利用できません。",
     },
+    # flowgate.v02.0085 T#2: also refused while a confirm card is unresolved (``reason`` gate_rejected /
+    # gate_recovery_reset_required in the params)
     "graph_revision_migration_blocked": {
-        "ko": "진행 중 attempt가 있어 최신 개정으로 이관할 수 없습니다.",
-        "en": "The run cannot adopt the latest revision while an attempt is active.",
-        "ja": "進行中の attempt があるため最新リビジョンへ移行できません。",
+        "ko": "진행 중 attempt나 해결되지 않은 확인 카드(반려·회차 분리 대기)가 있어 최신 개정으로 이관할 수 없습니다.",
+        "en": "The run cannot adopt the latest revision while an attempt is active or a confirm card is unresolved "
+              "(rejected, or waiting for its round split).",
+        "ja": "進行中の attempt または未解決の確認カード（差し戻し・回次分離待ち）があるため最新リビジョンへ移行できません。",
+    },
+    # flowgate.v02.0085 T#1: a confirm gate's settings are locked outside the pending / open gate of a running or idle
+    # run (a reserved decision, a finished gate, a pause, a Time Machine, a conflict, a pending round split)
+    "gate_settings_locked": {
+        "ko": "지금은 이 확인 카드의 설정을 바꿀 수 없습니다.",
+        "en": "The settings of this confirm card cannot be changed now.",
+        "ja": "現在、この確認カードの設定は変更できません。",
+    },
+    # flowgate.v02.0085 T#1: the screen the request was made from is out of date (settings version / attempt / decision)
+    "gate_context_changed": {
+        "ko": "화면의 내용이 최신이 아닙니다. 다시 불러온 뒤 시도하세요.",
+        "en": "The screen is out of date. Reload and try again.",
+        "ja": "画面の内容が最新ではありません。再読み込みしてからやり直してください。",
+    },
+    # flowgate.v02.0085 T#2 (D0007 §7.2): the gate decision intake
+    "gate_request_conflict": {
+        "ko": "같은 요청 ID로 다른 내용의 결정이 이미 접수되었습니다.",
+        "en": "A decision with different content was already received under the same request ID.",
+        "ja": "同じリクエスト ID で内容の異なる決定がすでに受け付けられています。",
+    },
+    "gate_decision_in_progress": {
+        "ko": "이 확인 카드의 이전 결정이 아직 처리 중입니다.",
+        "en": "An earlier decision on this confirm card is still being processed.",
+        "ja": "この確認カードの以前の決定がまだ処理中です。",
+    },
+    "gate_git_unavailable": {
+        "ko": "이 그룹의 Git 작업 공간을 사용할 수 없어 Git 반영이나 아카이브가 필요한 확인을 접수할 수 없습니다.",
+        "en": "The group's Git workspace is not available, so a confirm that needs a Git apply or an archive cannot be "
+              "accepted.",
+        "ja": "このグループの Git 作業領域を使用できないため、Git 反映やアーカイブが必要な確認を受け付けられません。",
+    },
+    "gate_settings_invalid": {
+        "ko": "확인 카드의 Git 반영 설정을 이 조합으로 실행할 수 없습니다. 설정을 고친 뒤 다시 확인하세요.",
+        "en": "The confirm card's Git settings cannot run as they are. Fix the settings and confirm again.",
+        "ja": "確認カードの Git 反映設定はこの組み合わせでは実行できません。設定を直してから再度確認してください。",
+    },
+    "gate_decision_blocked": {
+        "ko": "진행 중인 다른 반영 작업이 있어 지금은 결정할 수 없습니다.",
+        "en": "Another apply operation is in progress, so no decision can be made now.",
+        "ja": "進行中の他の反映作業があるため、現在は決定できません。",
+    },
+    "gate_node_not_found": {
+        "ko": "이 실행에 해당 확인 카드가 없습니다.",
+        "en": "The run has no such confirm card.",
+        "ja": "この実行に該当する確認カードがありません。",
+    },
+    # flowgate.v02.0085 T#3 (D0007 §7.2 retry / cancel / resolve of an accepted decision)
+    "gate_decision_not_found": {
+        "ko": "이 확인 카드에 해당 결정이 없습니다.",
+        "en": "The confirm card has no such decision.",
+        "ja": "この確認カードに該当する決定がありません。",
+    },
+    "gate_decision_not_retryable": {
+        "ko": "이 결정은 다시 시도할 수 없습니다.",
+        "en": "This decision cannot be retried.",
+        "ja": "この決定は再試行できません。",
+    },
+    "gate_decision_not_cancelable": {
+        "ko": "이 결정은 지금 취소할 수 없습니다.",
+        "en": "This decision cannot be canceled now.",
+        "ja": "この決定は現在取り消せません。",
+    },
+    "gate_effects_present": {
+        "ko": "이미 반영된 Git 효과가 있어 취소할 수 없습니다. 다시 시도하거나 해결 처리로 종결하세요.",
+        "en": "Git effects already took place, so it cannot be canceled. Retry it or close it through recovery.",
+        "ja": "すでに反映された Git の効果があるため取り消せません。再試行するか、解決処理で終結してください。",
+    },
+    "gate_effects_unknown": {
+        "ko": "Git 효과가 있었는지 확인할 수 없어 취소할 수 없습니다. 다시 시도하거나 해결 처리로 종결하세요.",
+        "en": "Whether Git effects took place is unknown, so it cannot be canceled. Retry it or close it through "
+              "recovery.",
+        "ja": "Git の効果の有無を確認できないため取り消せません。再試行するか、解決処理で終結してください。",
+    },
+    "gate_job_active": {
+        "ko": "이 결정의 Git 작업이 실행 중입니다. 작업이 멈춘 뒤 다시 요청하세요.",
+        "en": "The decision's Git job is running. Request again once it has stopped.",
+        "ja": "この決定の Git 作業が実行中です。作業が止まってから再度リクエストしてください。",
+    },
+    "gate_resolution_not_allowed": {
+        "ko": "복구가 필요한 결정만 해결 처리로 종결할 수 있습니다.",
+        "en": "Only a decision that needs recovery can be closed through recovery.",
+        "ja": "復旧が必要な決定のみ解決処理で終結できます。",
+    },
+    "gate_effects_unverified": {
+        "ko": "필요한 Git 효과의 성공을 확인할 수 없어 효과 확정으로 종결할 수 없습니다.",
+        "en": "The required Git effects cannot be verified, so it cannot be closed as effects confirmed.",
+        "ja": "必要な Git の効果の成功を確認できないため、効果確定で終結できません。",
     },
     # flowgate.v02.0061 T#11: Hold cannot be set on a node done in the Flow's run
     "graph_hold_done_node": {
@@ -115,6 +205,8 @@ TIME_MACHINE_REASONS = {
     "commit_attribution_missing": (
         "대상의 커밋 귀속 기록이 없습니다.", "Commit attribution is missing for a target.",
         "対象のコミット帰属記録がありません。"),
+    "gate_jobs_in_progress": (
+        "미완료 gate 작업이 있습니다.", "Gate jobs are unfinished.", "未完了の gate ジョブがあります。"),
     "node_not_done": (
         "지정 노드가 완료 상태가 아닙니다.", "The selected node is not done.", "指定ノードは完了していません。"),
     "node_outside_run_scope": (

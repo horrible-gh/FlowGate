@@ -61,6 +61,7 @@ vi.mock('@/features/document', async (importOriginal) => {
     settingsTeamsRead: (...args: unknown[]) => teamsRead(...args),
     checkGitRead: (...args: unknown[]) => gitRead(...args),
     testSpecRead: (...args: unknown[]) => specRead(...args),
+    runCurrentRead: async () => ({ runId: 'run_gate', status: 'idle', nodes: [{ nodeKey: 'gn_gate', status: 'open', attemptId: 'attempt_gate', gate: { can_decide: true, settings_locked: false } }] }),
   }
 })
 
@@ -102,7 +103,7 @@ const FIELDS: Record<string, readonly FieldDef[]> = {
     ['limit_replans', null, null],
   ],
   check: [
-    ['usage', null, ['mid', 'end']],
+    ['archive', false, [true, false]],
     ['merge_mode', null, ['merge', 'commit', 'hold']],
     ['merge_target', null, null],
     ['push', null, [true, false]],
@@ -136,7 +137,7 @@ function answer(nodeKey: string) {
   const fields = Object.fromEntries(
     FIELDS[card.kind].map(([name, def, choices]) => [name, { value: name in card.stored ? card.stored[name] : def, stored: name in card.stored, default: def, choices }]),
   )
-  return toSettingsNode({ ok: true, flow_id: FLOW, node_key: nodeKey, card_kind: card.kind, locked: card.locked, fields })
+  return toSettingsNode({ ok: true, flow_id: FLOW, node_key: nodeKey, card_kind: card.kind, locked: card.locked, settings_version: writes.length, fields })
 }
 
 function serve() {
@@ -351,7 +352,6 @@ const retryRead = async (w: VueWrapper<any>) => {
   await flushPromises()
 }
 const networkError = () => ({ isAxiosError: true, message: 'Network Error' })
-const summaryOf = (w: VueWrapper<any>) => w.get('[data-test="check-settings-summary"]').text()
 
 /** The visible labels of a part, in DOM order (v7 items). */
 const rowLabels = (w: VueWrapper<any>) => w.findAll('[data-test="inspector-control-row"]').map((row) => row.attributes('data-label'))
@@ -838,193 +838,25 @@ describe('a requirement card’s settings — v7 reqSettings (values only, no de
 
 // --- Check cards ------------------------------------------------------------------------------------------
 
-describe('a check card’s settings — v7 confirmSettings', () => {
-  it('용도 · 반영 방식 · 병합 대상 · 원격 반영 · 브랜치 보관, each saved at once; the summary and the ⛔ follow v7', async () => {
+describe('a check card’s settings — D0007 §8-10', () => {
+  it('saves the supported remote and Git controls immediately, and hold has no group-ending block', async () => {
     const w = await mountPart(CheckSettings, targetFor(GATE))
-    expect(nodeRead).toHaveBeenCalledWith(FLOW, 'gn_gate')
-    expect(gitRead).toHaveBeenCalledWith(FLOW)
-    expect(rowLabels(w)).toEqual(['반영 방식', '병합 대상 · 원격'])
-    expect(w.get('[data-test="check-settings-usage"]').text()).toContain('용도')
-    expect(w.get('[data-test="check-settings-summary"]').text()).toBe('반영 방식은 최종 확인 때 고름')
-    expect(w.get('[data-test="check-settings-target"]').findAll('option').map((option) => option.text())).toEqual(['—', 'release', 'main'])
-    await segmentPick(w, 'check-settings-usage-value', 'end')
+    expect(rowLabels(w)).toEqual(['아카이브', '반영 방식', '병합 대상 원격'])
+    expect(gitRead).not.toHaveBeenCalled()
     await segmentPick(w, 'check-settings-scope', 'merge')
-    // No target or push chosen yet: the summary says so (not v7's sample "main · 원격 반영").
-    expect(summaryOf(w)).toBe('작업 브랜치를 병합 · 병합 대상 · 원격 반영 미지정 → 그룹 종료')
-    expect(w.get('[data-test="check-settings-scope"] [data-value="hold"]').text()).toBe('보류 ⛔')
-    await w.get('[data-test="check-settings-target"]').setValue('main')
-    await flushPromises()
-    expect(summaryOf(w)).toBe('작업 브랜치를 main에 병합 · 원격 반영 미지정 → 그룹 종료')
-    await w.get('[data-test="check-settings-push"]').trigger('click')
-    await flushPromises()
-    expect(summaryOf(w)).toBe('작업 브랜치를 main에 병합하고 원격 반영 → 그룹 종료')
-    await w.get('[data-test="check-settings-keep-branch"]').trigger('click')
-    await flushPromises()
+    await w.get('[data-test="check-settings-target"]').setValue('origin'); await flushPromises()
+    await w.get('[data-test="check-settings-push"]').trigger('click'); await flushPromises()
+    await w.get('[data-test="check-settings-keep-branch"]').trigger('click'); await flushPromises()
     await segmentPick(w, 'check-settings-scope', 'hold')
-    expect(w.get('[data-test="check-settings-hold-block"]').text()).toContain('⛔ 보류 + 그룹 종료는 함께 고를 수 없습니다')
-    expect(writes.map(([, , field, value]) => [field, value])).toEqual([
-      ['usage', 'end'],
-      ['merge_mode', 'merge'],
-      ['merge_target', 'main'],
-      ['push', true],
-      ['keep_branch', true],
-      ['merge_mode', 'hold'],
+    expect(writes.map(([, , name, value]) => [name, value])).toEqual([
+      ['merge_mode', 'merge'], ['merge_target', 'origin'], ['push', true], ['keep_branch', true], ['merge_mode', 'hold'],
     ])
-    expect(cards.get('gn_gate')!.stored).toEqual({ usage: 'end', merge_mode: 'hold', merge_target: 'main', push: true, keep_branch: true })
-    expect(w.get('[data-test="check-settings-push"]').attributes('aria-checked')).toBe('true')
-  })
-
-  it('the summary is the values shown: release without push is not main with push; a value being sent shows at once', async () => {
-    cards.get('gn_gate')!.stored = { usage: 'mid', merge_mode: 'merge', merge_target: 'main', push: true }
-    const w = await mountPart(CheckSettings, targetFor(GATE))
-    expect(summaryOf(w)).toBe('작업 브랜치를 main에 병합하고 원격 반영')
-    await w.get('[data-test="check-settings-target"]').setValue('release')
-    await flushPromises()
-    await w.get('[data-test="check-settings-push"]').trigger('click')
-    await flushPromises()
-    expect(cards.get('gn_gate')!.stored).toMatchObject({ merge_target: 'release', push: false })
-    expect(summaryOf(w)).toBe('작업 브랜치를 release에 병합 · 원격 반영 안 함')
-    await w.get('[data-test="check-settings-target"]').setValue('')
-    await flushPromises()
-    expect(summaryOf(w)).toBe('작업 브랜치를 병합 · 원격 반영 안 함 · 병합 대상 미지정')
-    // While a change waits for its answer, the summary already follows the value sent.
-    let answerNow: () => void = () => {}
-    nodeWrite.mockImplementationOnce(
-      (flowId: string, nodeKey: string, field: string, value: unknown) =>
-        new Promise((resolve) => {
-          answerNow = () => {
-            writes.push([flowId, nodeKey, field, value])
-            cards.get(nodeKey)!.stored[field] = value
-            resolve(answer(nodeKey))
-          }
-        }),
-    )
-    await w.get('[data-test="check-settings-target"]').setValue('main')
-    await flushPromises()
-    expect(summaryOf(w)).toBe('작업 브랜치를 main에 병합 · 원격 반영 안 함')
-    answerNow()
-    await flushPromises()
-    expect(summaryOf(w)).toBe('작업 브랜치를 main에 병합 · 원격 반영 안 함')
-    await segmentPick(w, 'check-settings-scope', 'commit')
-    expect(summaryOf(w)).toBe('작업 브랜치에 커밋만 남김 (정상 완료)')
-    await segmentPick(w, 'check-settings-usage-value', 'end')
-    expect(summaryOf(w)).toBe('작업 브랜치에 커밋만 남김 (정상 완료) → 그룹 종료')
-  })
-
-  it('the summary follows the locale with the values (en / ja)', async () => {
-    cards.get('gn_gate')!.stored = { usage: 'end', merge_mode: 'merge', merge_target: 'release', push: false }
-    i18n.global.locale.value = 'en'
-    const en = await mountPart(CheckSettings, targetFor(GATE))
-    expect(summaryOf(en)).toBe('Merge the work branch into release · no push → group end')
-    en.unmount()
-    i18n.global.locale.value = 'ja'
-    const ja = await mountPart(CheckSettings, targetFor(GATE))
-    expect(summaryOf(ja)).toBe('作業ブランチを release にマージ · リモート反映なし → グループ終了')
-  })
-
-  it('a failed first read: the read failure icon in place of the form, and its retry recovers the same card', async () => {
-    cards.get('gn_gate')!.stored = { usage: 'end', merge_mode: 'merge', merge_target: 'release', push: false }
-    nodeRead.mockRejectedValueOnce(networkError())
-    const w = await mountPart(CheckSettings, targetFor(GATE))
-    expect(nodeRead).toHaveBeenCalledTimes(1)
-    expect(readFailureOf(w)).toBe('서버에 연결하지 못했습니다')
+    expect(w.get('[data-test="check-settings-scope"] [data-value="hold"]').text()).toBe('보류')
+    expect(w.find('[data-test="check-settings-hold-block"]').exists()).toBe(false)
     expect(w.find('[data-test="check-settings-summary"]').exists()).toBe(false)
-    expect(w.find('[data-test="check-settings-scope"]').exists()).toBe(false)
-    await retryRead(w)
-    expect(nodeRead).toHaveBeenCalledTimes(2)
-    expect(gitRead).toHaveBeenCalledTimes(2)
-    expect(readFailureOf(w)).toBeNull()
-    expect(summaryOf(w)).toBe('작업 브랜치를 release에 병합 · 원격 반영 안 함 → 그룹 종료')
-    await segmentPick(w, 'check-settings-scope', 'commit')
-    expect(writes).toEqual([[FLOW, 'gn_gate', 'merge_mode', 'commit']])
-  })
-
-  /** Every PATCH waits until released (in the order sent); a release with a refusal throws it. */
-  function holdWrites() {
-    const releases: ((fail?: unknown) => void)[] = []
-    nodeWrite.mockImplementation(
-      (flowId: string, nodeKey: string, field: string, value: unknown) =>
-        new Promise((resolve, reject) => {
-          releases.push((fail?: unknown) => {
-            writes.push([flowId, nodeKey, field, value])
-            if (fail) return reject(fail)
-            cards.get(nodeKey)!.stored[field] = value
-            resolve(answer(nodeKey))
-          })
-        }),
-    )
-    return releases
-  }
-
-  it('원격 반영 changed again before its answers (on → off → on): the last value and its summary stay until the last answer', async () => {
-    cards.get('gn_gate')!.stored = { usage: 'mid', merge_mode: 'merge', merge_target: 'main', push: false }
-    const releases = holdWrites()
-    const w = await mountPart(CheckSettings, targetFor(GATE))
-    const push = () => w.get('[data-test="check-settings-push"]')
-    expect(summaryOf(w)).toBe('작업 브랜치를 main에 병합 · 원격 반영 안 함')
-    for (let i = 0; i < 3; i++) {
-      await push().trigger('click')
-      await flushPromises()
-    }
-    expect(push().attributes('aria-checked')).toBe('true')
-    expect(summaryOf(w)).toBe('작업 브랜치를 main에 병합하고 원격 반영')
-    // the first answer (on) and the second (off) are not the latest change: on stays shown
-    releases[0]()
-    await flushPromises()
-    expect(push().attributes('aria-checked')).toBe('true')
-    releases[1]()
-    await flushPromises()
-    expect(cards.get('gn_gate')!.stored.push).toBe(false)
-    expect(push().attributes('aria-checked')).toBe('true')
-    expect(summaryOf(w)).toBe('작업 브랜치를 main에 병합하고 원격 반영')
-    releases[2]()
-    await flushPromises()
-    expect(writes.map(([, , field, value]) => [field, value])).toEqual([
-      ['push', true],
-      ['push', false],
-      ['push', true],
-    ])
-    expect(cards.get('gn_gate')!.stored.push).toBe(true)
-    expect(push().attributes('aria-checked')).toBe('true')
-    expect(summaryOf(w)).toBe('작업 브랜치를 main에 병합하고 원격 반영')
-    expect(failureOf(w, 'push')).toBeNull()
-  })
-
-  it('an earlier change refused while the next one waits: no red ! once the next one is saved', async () => {
-    cards.get('gn_gate')!.stored = { usage: 'mid', merge_mode: 'merge', merge_target: 'main', push: false }
-    const releases = holdWrites()
-    const w = await mountPart(CheckSettings, targetFor(GATE))
-    const push = () => w.get('[data-test="check-settings-push"]')
-    await push().trigger('click')
-    await flushPromises()
-    await push().trigger('click')
-    await flushPromises()
-    expect(push().attributes('aria-checked')).toBe('false')
-    releases[0](axiosError(422, 'invalid_request'))
-    await flushPromises()
-    expect(failureOf(w, 'push')).toBeNull()
-    expect(push().attributes('aria-checked')).toBe('false')
-    releases[1]()
-    await flushPromises()
-    expect(writes.map(([, , field, value]) => [field, value])).toEqual([
-      ['push', true],
-      ['push', false],
-    ])
-    expect(failureOf(w, 'push')).toBeNull()
-    expect(push().attributes('aria-checked')).toBe('false')
-    expect(summaryOf(w)).toBe('작업 브랜치를 main에 병합 · 원격 반영 안 함')
-  })
-
-  it('a refused change: the ! beside its control', async () => {
-    const w = await mountPart(CheckSettings, targetFor(GATE))
-    refusal = axiosError(409, 'node_settings_locked')
-    await w.get('[data-test="check-settings-push"]').trigger('click')
-    await flushPromises()
-    expect(failureOf(w, 'push')).toBe('실행 중이라 바꿀 수 없습니다')
+    expect(w.find('[data-test="check-settings-usage"]').exists()).toBe(false)
   })
 })
-
-// --- The Frame ----------------------------------------------------------------------------------------------
 
 describe('the settings tab of a card just placed and of a done card, in the real Frame and registry (완료 기준)', () => {
   async function mountFrame(card: FlowGraphNode) {
@@ -1041,7 +873,7 @@ describe('the settings tab of a card just placed and of a done card, in the real
     [CUSTOM, ['settings'], ['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
     [TEST, ['settings', 'testRunSettings'], ['지시서', '작성 AI', '검수 AI', '검수 횟수', '실행 방식']],
     [REQ, ['requirementSettings'], []],
-    [GATE, ['checkSettings'], ['반영 방식', '병합 대상 · 원격']],
+    [GATE, ['checkSettings'], ['아카이브', '반영 방식', '병합 대상 원격']],
   ] as const)('a %s card: its settings form, no "v0.1 단계" line', async (card, parts, labels) => {
     const w = await mountFrame(card)
     expect(sections(w)).toEqual(parts)

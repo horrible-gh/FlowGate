@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import pathlib
 import re
@@ -582,6 +583,12 @@ class GitArchiveBody(BaseModel):
     reason: Optional[str] = None
 
 
+class GitArchiveRestoreBody(BaseModel):
+    # flowgate.v02.0085 T#3 rework: a gate checkpoint of the group (``kind`` gate_checkpoint in the archive list);
+    # without it the v0.1 group archive restore runs as before.
+    archive_id: Optional[str] = None
+
+
 def _git_archive_key(group_id: str) -> str:
     return f"{_GIT_ARCHIVE_KEY_PREFIX}{group_id}"
 
@@ -639,9 +646,21 @@ def _project_git_archives(project_id: str) -> list[dict]:
         group = db_groups.get_by_id(record.get("group_id") or "")
         enriched = dict(record)
         enriched["title"] = (group or {}).get("title") or record.get("group_id")
+        enriched.setdefault("kind", "group_archive")
+        enriched.setdefault("consumable", True)
         items.append(enriched)
+    # flowgate.v02.0085 T#3 rework (D0007 §7.1): the gate checkpoints - one per confirm round, never consumed - are
+    # listed beside the group archives and told apart by ``kind`` (``gate_checkpoint``).
+    try:
+        from flowgate.gate_decisions import checkpoints as gate_checkpoints
+        items.extend(gate_checkpoints.list_for_project(project_id))
+    except Exception:  # noqa: BLE001 — the v0.1 list never fails for the gate rows
+        _GATE_ARCHIVE_LOG.warning("gate checkpoints could not be listed for %s", project_id, exc_info=True)
     items.sort(key=lambda item: item.get("archived_at") or "", reverse=True)
     return items
+
+
+_GATE_ARCHIVE_LOG = logging.getLogger(__name__ + ".gate_checkpoints")
 
 
 def _git_archive_error(
@@ -1009,10 +1028,18 @@ def _archive_preserve_locked(
     return record, done_writes
 
 
-def _restore_group_git_archive(group_id: str, actor_user_id: Optional[str]) -> dict:
-    """0669 unit 8b: an ``archive_restore`` job (G + M, no project mutex)."""
+def _restore_group_git_archive(group_id: str, actor_user_id: Optional[str],
+                               archive_id: Optional[str] = None) -> dict:
+    """0669 unit 8b: an ``archive_restore`` job (G + M, no project mutex).
+
+    flowgate.v02.0085 T#3 rework: with ``archive_id`` of a gate checkpoint, its non-consuming restore instead (the
+    checkpoint and its refs stay; ``gate_decisions.checkpoints``)."""
     from modules.flow_gate.services import git_service
     from modules.flow_gate.services.git import archive_publish
+
+    if archive_id:
+        from flowgate.gate_decisions import checkpoints as gate_checkpoints
+        return {"ok": True, "result": gate_checkpoints.restore(group_id, archive_id, actor_user_id)}
 
     record = _git_archive_record(group_id)
     if record is None or record.get("status") not in _GIT_ARCHIVE_STATUSES:
@@ -1251,11 +1278,17 @@ def archive_group_git(
 
 
 @router.post("/groups/{group_id}/git/archive/restore")
-def restore_group_git_archive(group_id: str, user=Depends(get_current_user)):
+def restore_group_git_archive(
+    group_id: str,
+    body: Optional[GitArchiveRestoreBody] = None,
+    user=Depends(get_current_user),
+):
     denied = _require_git_archive_group_permission(user, group_id, "project.settings.edit")
     if denied is not None:
         return denied
-    return _restore_group_git_archive(group_id, user.get("user_id"))
+    return _restore_group_git_archive(
+        group_id, user.get("user_id"), archive_id=body.archive_id if body else None,
+    )
 
 
 @router.delete("/groups/{group_id}/git/archive")
