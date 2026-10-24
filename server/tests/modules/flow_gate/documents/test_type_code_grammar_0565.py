@@ -17,5 +17,5 @@ def test_compact_t2_number_is_not_a_document_code():
 
 def test_client_pattern_matches_server_literal():
     from pathlib import Path
-    client = (Path(__file__).resolve().parents[2] / "client/shared/utils/typeCode.ts").read_text(encoding="utf-8")
+    client = (Path(__file__).resolve().parents[5] / "client/shared/utils/typeCode.ts").read_text(encoding="utf-8")
     assert f"TYPE_CODE_RE = /^{TYPE_CODE_PATTERN}$/" in client

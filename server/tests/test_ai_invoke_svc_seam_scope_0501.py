@@ -102,7 +102,7 @@ def _monkeypatched_seam_names() -> set[str]:
     tests alias it `service`, `invoke`, `ais`, `aiv`, `ai_svc`, `svc_invoke`, ...).
     """
     seams: set[str] = set()
-    for path in _TESTS_DIR.glob("*.py"):
+    for path in _TESTS_DIR.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         aliases = set(_ALIAS_IMPORT_RE.findall(text))
         aliases |= set(_ALIAS_IMPORT_RE2.findall(text))

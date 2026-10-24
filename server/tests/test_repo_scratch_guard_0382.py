@@ -258,7 +258,9 @@ def test_pollution_guard_fails_a_session_that_leaves_ignored_scratch(tmp_path):
 ])
 def test_known_offenders_now_use_the_shared_scratch(spec):
     """이 세 스펙이 이번 사고의 출혈 지점이었다 — 되돌아가면 여기서 걸린다."""
-    text = (_TESTS_DIR / spec).read_text(encoding="utf-8-sig")
+    matches = [path for path in _TESTS_DIR.rglob(spec) if path.is_file()]
+    assert len(matches) == 1, f"{spec}: expected exactly one file under tests, found {len(matches)}"
+    text = matches[0].read_text(encoding="utf-8-sig")
     assert "session_scratch(" in text
     # 주석 줄은 뺀다 — 그 안에는 "예전 기본값이 무엇이었는지"가 일부러 적혀 있다.
     code = "\n".join(
