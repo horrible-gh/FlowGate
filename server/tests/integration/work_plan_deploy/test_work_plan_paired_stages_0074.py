@@ -8,6 +8,7 @@ from test_work_plan_instruction_mode_0074 import (  # noqa: F401
     _read, _save, _preview, _execute, _confirm_and_run_after_the_root, _flow, _write_plan,
     _line_doc, _file, _one_job, _row, _sql, _h, FA,
 )
+import _flowgate_test_imports  # noqa: F401
 from test_fg_instruction_stage_0056 import _record_start, _register
 from test_fg_card_settings_review import (
     _write_written, _run_ended, _review_status, _recorded_start_run, _result,

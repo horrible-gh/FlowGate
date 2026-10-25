@@ -52,7 +52,7 @@ from test_fg_card_settings_review import (
     _run_ended, _start_ai, _work_run_ended, _write_written,
 )
 
-_SERVER_DIR = Path(__file__).resolve().parents[1]
+_SERVER_DIR = Path(__file__).resolve().parents[2]
 ROOT = f"{FA}.0001-R"
 MEMO_ON, MEMO_OFF = "Use the v2 error table", "Private note"
 

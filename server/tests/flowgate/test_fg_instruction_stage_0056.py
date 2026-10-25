@@ -45,7 +45,7 @@ from test_fg_card_settings_review import (
     _source_scopes, _start_ai, _through_instruction, _work_run_ended, _write_written,
 )
 
-_SERVER_DIR = Path(__file__).resolve().parents[1]
+_SERVER_DIR = Path(__file__).resolve().parents[2]
 ROOT = f"{FA}.0001-R"
 
 

@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from fastapi import HTTPException  # noqa: E402
 
+import _flowgate_test_imports  # noqa: F401
 from test_fg_card_documents import db_path  # noqa: E402,F401 — the real SQLite DB fixture
 from modules.flow_gate.documents.routers import documents as docs_mod  # noqa: E402
 from modules.flow_gate import process_service  # noqa: E402

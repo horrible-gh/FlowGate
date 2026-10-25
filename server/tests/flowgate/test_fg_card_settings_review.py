@@ -28,7 +28,7 @@ from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
     setting,
 )
 
-_SERVER_DIR = Path(__file__).resolve().parents[1]
+_SERVER_DIR = Path(__file__).resolve().parents[2]
 WORK_RUN, REVIEW_RUN = "air_card_work", "air_card_review"
 INSTRUCTION_RUN = "air_card_instruction"
 

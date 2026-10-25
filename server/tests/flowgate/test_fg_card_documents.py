@@ -2,7 +2,7 @@
 
 The feature lives in the v0.2 package ``flowgate.card_documents`` (D0006 §2.1); the Graph workflow
 reaches it only through ``card_document_ports``, registered here as ``startup`` does. Flat
-``test_fg_`` placement (D0006 §2.4).
+``tests/flowgate/`` placement (NR0003 §6.3).
 
 On a real SQLite DB (all migrations, TestClient over the Graph routes): a draft save creates each
 card's document lines (요구사항 · 작업계획/전개 · 지시서/레포트 · 테스트 지시서/시나리오/레포트), a re-save
@@ -27,7 +27,7 @@ import pytest
 os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 
-_SERVER_DIR = Path(__file__).resolve().parents[1]
+_SERVER_DIR = Path(__file__).resolve().parents[2]
 _MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 sys.path.insert(0, str(_SERVER_DIR))
 

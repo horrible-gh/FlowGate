@@ -3,7 +3,7 @@
 * ``modules.flow_gate`` never imports the v0.2 application package (it reaches it only
   through the ``chat_run_hooks`` ports registered by the composition root);
 * ``import flowgate`` resolves to ``server/flowgate`` -- not to anything under tests/
-  (the flat ``test_fg_`` layout exists so no test package can shadow it).
+  (the test package layout must not shadow the application package).
 
 Pure text / import checks: fast tier.
 """
@@ -18,7 +18,7 @@ import pytest
 
 pytestmark = pytest.mark.fast
 
-SERVER_DIR = Path(__file__).resolve().parents[1]
+SERVER_DIR = Path(__file__).resolve().parents[2]
 MODULES_DIR = SERVER_DIR / "modules" / "flow_gate"
 FLOWGATE_DIR = SERVER_DIR / "flowgate"
 TESTS_DIR = SERVER_DIR / "tests"
@@ -76,12 +76,9 @@ def test_flowgate_resolves_to_the_application_package():
     assert Path(flowgate.conversation.__file__).resolve().parent == (FLOWGATE_DIR / "conversation").resolve()
 
 
-def test_no_test_module_or_directory_can_shadow_flowgate():
-    assert not (TESTS_DIR / "flowgate").exists()
+def test_tests_root_has_no_flat_flowgate_module_or_package_initializer():
     assert not (TESTS_DIR / "flowgate.py").exists()
     assert not (TESTS_DIR / "__init__.py").exists(), "tests/ must stay a flat rootdir (prepend import mode)"
-    nested = [p for p in TESTS_DIR.rglob("test_fg_*.py") if p.parent != TESTS_DIR]
-    assert nested == []
 
 
 def test_flowgate_has_no_version_namespace_and_the_designed_modules():

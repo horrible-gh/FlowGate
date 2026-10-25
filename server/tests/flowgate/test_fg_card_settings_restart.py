@@ -21,7 +21,7 @@ from pathlib import Path
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 
-_SERVER_DIR = Path(__file__).resolve().parents[1]
+_SERVER_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_SERVER_DIR))
 
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402

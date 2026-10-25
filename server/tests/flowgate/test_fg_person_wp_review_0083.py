@@ -894,7 +894,7 @@ def test_7_the_real_worker_runs_one_review_hop_rejects_and_never_reworks_a_loop_
             revision_no INTEGER NOT NULL, reviewer_id TEXT NOT NULL, verdict TEXT NOT NULL, findings TEXT NOT NULL,
             comment TEXT, reviewed_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     """)
-    migrations = Path(__file__).resolve().parents[1] / "sql/migrations/sqlite"
+    migrations = Path(__file__).resolve().parents[2] / "sql/migrations/sqlite"
     for name in ("091_ai_invoke_document_review_loops.sql", "092_ai_invoke_document_review_loop_live_run.sql",
                  "102_ai_invoke_review_loop_card_dismissed.sql", "105_ai_invoke_document_review_loop_hold_stop_reason.sql",
                  "106_ai_invoke_document_review_loop_restart_orphaned.sql",

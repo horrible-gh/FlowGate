@@ -16,6 +16,7 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 
 import config  # noqa: E402,F401 — its import-time env export happens at collection, not in a test
 
+import _flowgate_test_imports  # noqa: F401
 from test_fg_card_settings import (  # noqa: E402,F401 — fixtures used by name
     FA, _doc, _h, _run_one_card, _sql, _start, db_path, decided, env,
 )

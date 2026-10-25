@@ -24,6 +24,7 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 
 import config  # noqa: E402,F401 — its import-time env export (agent pepper id) happens at collection, not in a test
 
+import _flowgate_test_imports  # noqa: F401
 from test_fg_card_settings import (  # noqa: E402,F401 — fixtures used by name
     AI, FA, FB, _doc, _h, _sql, _start, db_path, decided, edge, env, node, put_draft,
 )

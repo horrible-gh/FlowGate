@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import _flowgate_test_imports  # noqa: F401
 from test_fg_card_documents import FB, _doc, db_path, env
 from fastapi import HTTPException
 

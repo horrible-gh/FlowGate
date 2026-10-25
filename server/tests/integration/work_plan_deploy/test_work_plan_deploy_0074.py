@@ -28,6 +28,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import _flowgate_test_imports  # noqa: F401
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
     FA, _doc, _h, _sql, db_path, decided, edge, env, get_settings, node, put_draft, setting,
 )

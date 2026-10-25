@@ -33,7 +33,7 @@ from flowgate.conversation import routes  # noqa: E402
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
 from modules.flow_gate.services import chat_run_hooks  # noqa: E402
 
-SERVER_DIR = Path(__file__).resolve().parents[1]
+SERVER_DIR = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture()

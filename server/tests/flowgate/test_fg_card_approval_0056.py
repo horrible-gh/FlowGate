@@ -52,7 +52,7 @@ from test_fg_card_settings_review import (
     _review_status, _work_run_ended,
 )
 
-_SERVER_DIR = Path(__file__).resolve().parents[1]
+_SERVER_DIR = Path(__file__).resolve().parents[2]
 LEE = {"kind": "human", "user_id": "u_lee", "provider_id": None}
 APPROVER_ONLY = {"document.read", "document.approve"}      # an approver without the author's edit permission
 

@@ -1,8 +1,8 @@
 """flowgate.v02.0053 T#2 — card (Node) run settings: stored on the card, read and changed one value at a time.
 
 The feature lives in the v0.2 package ``flowgate.card_settings`` (D0006 §2.1); the Graph workflow reaches it
-only through ``card_settings_ports`` (node dispatch), registered here as ``startup`` does. Flat ``test_fg_``
-placement (D0006 §2.4).
+only through ``card_settings_ports`` (node dispatch), registered here as ``startup`` does. ``tests/flowgate/``
+placement (NR0003 §6.3).
 
 On a real SQLite DB (all migrations, TestClient over the Graph routes and the card settings routes): a card
 placed in a draft and a card whose run is done both read and write their settings; every value is saved by
@@ -30,7 +30,7 @@ os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost")
 os.environ.setdefault("CONTEXT", "/flowgate")
 os.environ.setdefault("DB_TYPE", "sqlite3")
 
-_SERVER_DIR = Path(__file__).resolve().parents[1]
+_SERVER_DIR = Path(__file__).resolve().parents[2]
 _MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 sys.path.insert(0, str(_SERVER_DIR))
 

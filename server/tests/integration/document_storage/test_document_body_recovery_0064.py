@@ -15,6 +15,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+import _flowgate_test_imports  # noqa: F401
 from test_fg_card_documents import FA, FB, _doc, _h, _sql, db_path, env, node, put_draft  # noqa: F401 — fixtures
 from modules.flow_gate.db import connection, documents
 from modules.flow_gate.documents import body_recovery

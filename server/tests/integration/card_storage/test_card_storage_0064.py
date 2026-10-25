@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import _flowgate_test_imports  # noqa: F401
 from test_fg_card_documents import (FA, FB, _doc, _h, _sql, db_path, env, node, put_draft)
 from modules.flow_gate.db import connection, documents
 from modules.flow_gate.storage import files, paths
