@@ -33,6 +33,35 @@ from .connection import get_store, now_iso
 SYSTEM_DEFAULT_KEY = "ai_default_provider_id"
 
 
+class ProviderInUseError(Exception):
+    """A missing provider is still referenced; the caller must preserve the whole save."""
+
+
+def _delete_missing(s, where: str, params: list, keep: list[str]) -> None:
+    # Translate only a DELETE's FK violation. The transaction owner still sees an
+    # exception and rolls back before the router answers 409. Do not remove history
+    # or weaken RESTRICT (including references from stopped review loops).
+    try:
+        if keep:
+            placeholders = ", ".join("?" for _ in keep)
+            s._execute(
+                f"DELETE FROM ai_providers WHERE {where} AND provider_id NOT IN ({placeholders})",
+                params + keep,
+            )
+        else:
+            s._execute(f"DELETE FROM ai_providers WHERE {where}", params)
+    except Exception as exc:
+        # psycopg 3 / psycopg2 and SQLite's equivalent used by isolated tests.
+        code = getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None)
+        sqlite_fk = getattr(exc, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_FOREIGNKEY" or (
+            getattr(exc, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_TRIGGER"
+            and str(exc) == "FOREIGN KEY constraint failed"
+        )
+        if code == "23503" or sqlite_fk:
+            raise ProviderInUseError("provider_in_use") from exc
+        raise
+
+
 class _KeepStoredSecret:
     """Sentinel a caller puts in a row's api_key to mean "leave the stored ciphertext
     alone". The service layer merges keep/replace/delete on PLAINTEXT, and a row that
@@ -210,14 +239,7 @@ def _replace_rows(s, scope: tuple[str, list], rows: list[dict], existing_ids: se
     where, params = scope
     stored_keys = {r["provider_id"]: r.get("api_key") for r in _list_where_stored(where, params)}
     keep = [r["provider_id"] for r in rows]
-    if keep:
-        placeholders = ", ".join("?" for _ in keep)
-        s._execute(
-            f"DELETE FROM ai_providers WHERE {where} AND provider_id NOT IN ({placeholders})",
-            params + keep,
-        )
-    else:
-        s._execute(f"DELETE FROM ai_providers WHERE {where}", params)
+    _delete_missing(s, where, params, keep)
 
     for r in rows:
         # project_access only means something on system rows; a caller that does not

@@ -10,6 +10,9 @@
 
     <div class="dialog-form">
       <div v-if="saveError" class="form-error" role="alert">{{ saveError }}</div>
+      <div v-if="validationMessages.length" class="form-error" role="alert">
+        <div v-for="message in validationMessages" :key="message">{{ message }}</div>
+      </div>
 
       <div class="form-group">
         <label class="form-label" for="provider-name">{{ t('gui.ai.providers.field_name') }} *</label>
@@ -125,8 +128,12 @@
             v-model="form.api_key"
             type="password"
             :placeholder="form.api_key_set ? t('gui.ai.providers.placeholder_keep_key') : t('gui.ai.providers.placeholder_api_key')"
-            :disabled="saving"
+            :disabled="saving || clearApiKey"
           />
+          <label v-if="form.api_key_set" class="field-hint">
+            <input v-model="clearApiKey" type="checkbox" :disabled="saving" />
+            {{ t('gui.ai.providers.clear_api_key') }}
+          </label>
           <small v-if="form.exec_type === 'api' && !form.api_key_set" class="field-hint text-warn">
             {{ t('gui.ai.providers.api_key_needed_hint') }}
           </small>
@@ -162,6 +169,7 @@ import Select from '@/components/ui/Select.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import type { AiOwnerScope, ExecLocation, ProviderExecType, ProviderItem } from '../types'
 import { EXEC_LOCATIONS, EXEC_TYPES, isExecTypeSupported } from './providerDisplay'
+import { FIELD_MAX, KINDS, validateProvider } from './providerValidation'
 
 const props = withDefaults(defineProps<{
   open: boolean
@@ -188,6 +196,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const nameTouched = ref(false)
+const clearApiKey = ref(false)
 
 const isEdit = computed(() => !!props.provider?.id)
 
@@ -230,17 +239,15 @@ function pickMode(location: ExecLocation, execType: ProviderExecType) {
   if (!canPick(execType)) return
   form.value.exec_location = location
   form.value.exec_type = execType
+  if (!KINDS[execType].includes(form.value.kind)) form.value.kind = KINDS[execType][0]
 }
 
 // flowgate.v02.0088 F08: product names stay as they are; only the generic "Custom" kind is a UI
 // word, shown in the current language. The sent kind value stays 'custom'.
-const kindOptions = computed(() => [
-  { value: 'claude', label: 'Claude (Anthropic)' },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'codex', label: 'Codex' },
-  { value: 'gemini', label: 'Gemini (Google)' },
-  { value: 'custom', label: t('gui.ai.providers.kind_custom') },
-])
+const kindOptions = computed(() => KINDS[form.value.exec_type].map((value) => ({
+  value,
+  label: value === 'custom' ? t('gui.ai.providers.kind_custom') : value === 'claude' ? 'Claude (Anthropic)' : value === 'openai' ? 'OpenAI' : value === 'copilot' ? 'Copilot' : 'Codex',
+})))
 
 // Re-filled on every open, so a second add does not start from the first add's values.
 watch(
@@ -276,6 +283,7 @@ watch(
       }
     }
     nameTouched.value = false
+    clearApiKey.value = false
   },
   { immediate: true }
 )
@@ -294,7 +302,12 @@ const nameError = computed(() => {
   if (normalizedName.value && duplicateName.value) return t('gui.ai.providers.name_duplicate')
   return props.nameSaveError || ''
 })
-const isValid = computed(() => !!normalizedName.value && !duplicateName.value)
+const fieldIssues = computed(() => validateProvider({ ...form.value, api_key: clearApiKey.value ? '' : form.value.api_key }))
+const validationMessages = computed(() => fieldIssues.value.map(({ field, reason }) => t('settings.ai.saveerr_field', {
+  field: t(`settings.ai.field.${field}`),
+  reason: t(`settings.ai.reason.${reason}`, { max: FIELD_MAX[field] }),
+})))
+const isValid = computed(() => fieldIssues.value.length === 0 && !duplicateName.value)
 
 function onNameChange() {
   nameTouched.value = true
@@ -307,7 +320,7 @@ function onClose() {
 }
 
 function onSave() {
-  if (!isValid.value) return
+  if (props.saving || !isValid.value) return
   emit('save', {
     id: form.value.id || ('prv_' + Math.random().toString(36).substring(2, 9)),
     name: form.value.name.trim(),
@@ -318,7 +331,7 @@ function onSave() {
     cli_command: form.value.exec_type === 'cli' ? form.value.cli_command : null,
     api_base_url: form.value.exec_type === 'api' ? form.value.api_base_url : null,
     api_model: form.value.exec_type === 'api' ? form.value.api_model : null,
-    api_key: form.value.api_key || null,
+    api_key: clearApiKey.value ? '' : form.value.api_key || null,
   }, isEdit.value ? props.owner : selectedOwner.value)
 }
 </script>
@@ -453,6 +466,7 @@ function onSave() {
 }
 
 .form-error {
+  white-space: pre-line;
   padding: 8px 12px;
   border-radius: 6px;
   background: rgba(239, 68, 68, 0.15);

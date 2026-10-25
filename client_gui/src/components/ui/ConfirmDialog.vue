@@ -2,10 +2,10 @@
   <ModalShell
     :open="open"
     size="sm"
-    :close-on-escape="closeOnEscape"
-    :close-on-backdrop="closeOnBackdrop"
+    :close-on-escape="closeOnEscape && !busy"
+    :close-on-backdrop="closeOnBackdrop && !busy"
     :aria-describedby="ariaDescribedby"
-    @close="emit('cancel')"
+    @close="!busy && emit('cancel')"
   >
     <template #header="{ titleId }">
       <div class="ui-confirm-header">
@@ -18,8 +18,8 @@
     </template>
     <template #footer>
       <div class="ui-confirm-actions">
-        <Button variant="secondary" @click="emit('cancel')">{{ cancelLabelText }}</Button>
-        <Button :variant="danger ? 'danger' : 'primary'" @click="emit('confirm')">{{ confirmLabelText }}</Button>
+        <Button variant="secondary" :disabled="busy" @click="!busy && emit('cancel')">{{ cancelLabelText }}</Button>
+        <Button :variant="danger ? 'danger' : 'primary'" :loading="busy" :disabled="busy" @click="!busy && emit('confirm')">{{ confirmLabelText }}</Button>
       </div>
     </template>
   </ModalShell>
@@ -52,6 +52,7 @@ const props = withDefaults(
     confirmLabel?: string
     cancelLabel?: string
     danger?: boolean
+    busy?: boolean
     closeOnEscape?: boolean
     closeOnBackdrop?: boolean
     /** Only needed when the `message` slot's content can't attach the scoped
@@ -64,6 +65,7 @@ const props = withDefaults(
     confirmLabel: undefined,
     cancelLabel: undefined,
     danger: false,
+    busy: false,
     closeOnEscape: true,
     closeOnBackdrop: false,
     ariaDescribedby: undefined,

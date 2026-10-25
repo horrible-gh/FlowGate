@@ -7,6 +7,7 @@ import { normalizeApiError } from '@shared/apiErrors'
 import i18n from '@shared/i18n'
 import { serverDetailOf } from '../../core/i18n/serverDetail'
 import { PROVIDERS_MAX } from './limits'
+import { FIELD_MAX } from './providers/providerValidation'
 import type {
   AiConnectionTest,
   AiConnectionTestCurrent,
@@ -67,13 +68,31 @@ function fieldErrorsOf(source: Readonly<Record<string, unknown>>): AiFieldError[
 // flowgate.v02.0088 F11: every call names its operation's localized fallback by key, used for a
 // network failure, an empty body or an unknown code without the server's own words; the server's
 // own diagnostic is kept as it came, and an axios transport line never stands in for it.
-function aiErrorMessage(error: unknown, fallbackKey: string, fieldErrors: AiFieldError[]): string {
-  const { code, network } = normalizeApiError(error)
+function aiErrorMessage(error: unknown, fallbackKey: string, fieldErrors: AiFieldError[], providers: ProviderItem[]): string {
+  const { code, network, status } = normalizeApiError(error)
+  if (network) return String(i18n.global.t('error.network'))
+  if (status === 401) return String(i18n.global.t('error.unauthorized'))
+  if (status === 403) return String(i18n.global.t('error.forbidden'))
+  if (code === 'provider_in_use') return String(i18n.global.t('common.toast.ai_provider_in_use'))
+  if (fieldErrors.length) {
+    return fieldErrors.map((error) => {
+      const fieldKey = `settings.ai.field.${error.field}`
+      const reasonKey = `settings.ai.reason.${error.reason}`
+      const field = i18n.global.te(fieldKey) ? i18n.global.t(fieldKey) : error.field
+      const reason = i18n.global.te(reasonKey) ? i18n.global.t(reasonKey, {
+        max: error.max ?? FIELD_MAX[error.field] ?? PROVIDERS_MAX,
+      }) : error.reason
+      if (error.index !== undefined) {
+        const name = providers[error.index]?.name || ''
+        return String(i18n.global.t(name ? 'settings.ai.saveerr_row' : 'settings.ai.saveerr_row_noname', {
+          row: error.index + 1, name, field, reason,
+        }))
+      }
+      return String(i18n.global.t('settings.ai.saveerr_field', { field, reason }))
+    }).join('\n')
+  }
   const fallback = () => String(i18n.global.t(fallbackKey))
   if (!network && code) {
-    if (code === 'validation_failed' && fieldErrors.some((e) => e.field === 'providers' && e.reason === 'too_many')) {
-      return String(i18n.global.t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX }))
-    }
     const key = `gui.ai.errors.${code}`
     if (i18n.global.te(key)) return String(i18n.global.t(key))
     return `${serverDetailOf(error) || fallback()} (${code})`
@@ -81,13 +100,13 @@ function aiErrorMessage(error: unknown, fallbackKey: string, fieldErrors: AiFiel
   return serverDetailOf(error) || fallback()
 }
 
-async function call<T>(request: () => Promise<{ data: T }>, fallbackKey: string): Promise<T> {
+async function call<T>(request: () => Promise<{ data: T }>, fallbackKey: string, providers: ProviderItem[] = []): Promise<T> {
   try {
     return (await request()).data
   } catch (error) {
     const { code, source } = normalizeApiError(error)
     const fieldErrors = fieldErrorsOf(source)
-    throw new AiRequestError(aiErrorMessage(error, fallbackKey, fieldErrors), code, fieldErrors)
+    throw new AiRequestError(aiErrorMessage(error, fallbackKey, fieldErrors, providers), code, fieldErrors)
   }
 }
 
@@ -114,7 +133,7 @@ export async function fetchSystemAi(): Promise<SystemAiSettings> {
 export async function saveSystemAi(providers: ProviderItem[], defaultProviderId: string | null): Promise<SystemAiSettings> {
   return call(
     () => putRequest<SystemAiSettings>('/api/v1/system/ai-settings', { providers, default_provider_id: defaultProviderId }),
-    'gui.ai.request_failed.system_save',
+    'gui.ai.request_failed.system_save', providers,
   )
 }
 
@@ -140,7 +159,7 @@ export async function fetchMyAi(): Promise<UserAiSettings> {
 }
 
 export async function saveMyAi(providers: ProviderItem[]): Promise<UserAiSettings> {
-  return call(() => putRequest<UserAiSettings>('/api/v1/me/ai-providers', { providers }), 'gui.ai.request_failed.my_save')
+  return call(() => putRequest<UserAiSettings>('/api/v1/me/ai-providers', { providers }), 'gui.ai.request_failed.my_save', providers)
 }
 
 // null = follow the system default.

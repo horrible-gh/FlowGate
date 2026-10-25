@@ -23,6 +23,7 @@ export default {
     toast: {
       settings_saved: 'Settings saved.',
       settings_save_failed: 'Failed to save settings.',
+      ai_provider_in_use: "This AI is referenced by saved history, including review or rework loops. It cannot be deleted. The settings and history were preserved. Disable it instead.",
       settings_load_failed: 'Failed to load settings.',
       settings_reverted: 'Reverted to the last saved values.',
       delete_failed: 'An error occurred while deleting.',

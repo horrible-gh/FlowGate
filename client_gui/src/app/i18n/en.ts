@@ -1726,6 +1726,8 @@ export default {
       field_api_model: 'Model',
       field_api_key: 'API key',
       key_configured: 'Configured',
+      clear_api_key: "Delete the stored API key on save",
+      save_in_progress: "A save is in progress. Wait for it to finish and try again.",
       placeholder_api_key: 'sk-...',
       placeholder_keep_key: '(leave empty to keep the existing key)',
       field_enabled: 'In use',

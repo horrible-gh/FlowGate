@@ -1737,6 +1737,8 @@ export default {
       field_api_model: '모델명',
       field_api_key: 'API 키',
       key_configured: '설정됨',
+      clear_api_key: "저장할 때 기존 API 키 지우기",
+      save_in_progress: "저장 중입니다. 완료 후 다시 시도해 주세요.",
       placeholder_api_key: 'sk-...',
       placeholder_keep_key: '(기존 키 유지하려면 비워둠)',
       field_enabled: '사용 여부',

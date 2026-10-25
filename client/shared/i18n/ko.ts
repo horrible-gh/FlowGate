@@ -23,6 +23,7 @@ export default {
     toast: {
       settings_saved: '설정이 저장되었습니다.',
       settings_save_failed: '설정을 저장하지 못했습니다.',
+      ai_provider_in_use: "검토·재작업 루프 등 저장된 이력이 이 AI를 참조하여 삭제할 수 없습니다. 설정과 이력을 보존했습니다. 사용 여부를 꺼 주세요.",
       settings_load_failed: '설정을 불러오지 못했습니다.',
       settings_reverted: '마지막으로 저장된 값으로 되돌렸습니다.',
       delete_failed: '삭제 중 오류가 발생했습니다.',

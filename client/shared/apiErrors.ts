@@ -109,6 +109,8 @@ function resolveRegisteredApiErrorMessage(input: unknown, t: Translate): string 
   const error = normalizeApiError(input)
   if (error.network) return t('error.network')
 
+  if (error.code === 'provider_in_use') return t('common.toast.ai_provider_in_use')
+
   if (error.code === 'username_already_exists') {
     return t('settings.users.user_create_modal.username_already_exists')
   }
