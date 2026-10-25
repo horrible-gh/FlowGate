@@ -290,7 +290,7 @@ async function doSave() {
       saveErrors.value = formatErrors(e.response.data?.detail?.errors, providers.value, { t, te });
       showToast(t('settings.ai.toast_invalid'), 'danger');
     } else {
-      showToast(t('common.toast.settings_save_failed'), 'danger');
+      showToast(resolveApiError(e, t, 'common.toast.settings_save_failed'), 'danger');
     }
   }
 }

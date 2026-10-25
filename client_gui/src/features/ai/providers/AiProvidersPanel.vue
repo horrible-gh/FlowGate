@@ -7,7 +7,7 @@
       <div class="detail-actions">
         <Button
           variant="primary"
-          :disabled="loading || !!loadError || addBlocked"
+          :disabled="loading || saving || !!deleting || !!loadError || addBlocked"
           :title="addBlocked ? t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX }) : undefined"
           @click="openAddDialog"
         >
@@ -90,7 +90,7 @@
               type="button"
               class="radio"
               :class="{ on: effectiveDefaultId === row.item.id, follow: myDefaultId === null }"
-              :disabled="saving"
+              :disabled="saving || !!deleting"
               :title="t('gui.ai.owned.my_default')"
               :aria-label="t('gui.ai.owned.my_default')"
               :aria-pressed="effectiveDefaultId === row.item.id"
@@ -156,7 +156,7 @@
                   :label="t('gui.ai.owned.set_system_default')"
                   :title="t('gui.ai.owned.set_system_default')"
                   size="sm"
-                  :disabled="saving"
+                  :disabled="saving || !!deleting"
                   @click="setDefaultProvider(row.item.id)"
                 >
                   <AiIcon name="star" />
@@ -179,7 +179,7 @@
                 >
                   <AiIcon :name="row.item.exec_type === 'cli' ? 'terminal' : 'link'" />
                 </IconButton>
-                <IconButton :label="t('gui.common.edit')" :title="t('gui.common.edit')" size="sm" @click="openEditDialog(row)">
+                <IconButton :label="t('gui.common.edit')" :title="t('gui.common.edit')" size="sm" :disabled="saving || !!deleting" @click="openEditDialog(row)">
                   <AiIcon name="edit" />
                 </IconButton>
                 <IconButton
@@ -187,6 +187,7 @@
                   :label="t('gui.common.delete')"
                   :title="t('gui.common.delete')"
                   size="sm"
+                  :disabled="saving || !!deleting"
                   @click="confirmDelete(row)"
                 >
                   <AiIcon name="trash" />
@@ -251,6 +252,7 @@
       :title="t('gui.ai.providers.delete_confirm_title')"
       :message="t('gui.ai.providers.delete_confirm_msg', { name: deleting?.item.name })"
       danger
+      :busy="saving"
       :confirm-label="t('gui.common.delete')"
       :cancel-label="t('gui.common.cancel')"
       @confirm="onDeleteConfirmed"
@@ -431,7 +433,7 @@ const rows = computed<Row[]>(() => {
 })
 
 function canReorder(owner: AiOwnerScope): boolean {
-  return canEdit(owner) && !searchQuery.value.trim() && !saving.value
+  return canEdit(owner) && !searchQuery.value.trim() && !saving.value && !deleting.value
 }
 
 function pushToast(message: string, tone: ToastHostItem['tone']): void {
@@ -457,7 +459,11 @@ async function persist(
   nextDefault: string | null = systemDefaultId.value,
   showError = true,
 ): Promise<unknown | null> {
-  if (saving.value) return new Error('save_in_progress')
+  if (saving.value) {
+    const error = new Error(t('gui.ai.providers.save_in_progress'))
+    if (showError) pushToast(error.message, 'danger')
+    return error
+  }
   if (list.length > PROVIDERS_MAX) {
     const error = new Error(t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX }))
     if (showError) pushToast(error.message, 'danger')
@@ -492,7 +498,7 @@ const effectiveDefaultId = computed<string | null>(() => {
 })
 
 async function setMyDefault(providerId: string | null): Promise<void> {
-  if (saving.value || myDefaultId.value === providerId) return
+  if (saving.value || deleting.value || myDefaultId.value === providerId) return
   saving.value = true
   try {
     const data = await saveMyAiDefault(providerId)
@@ -513,12 +519,12 @@ function pickMyDefault(row: Row): void {
 }
 
 function setDefaultProvider(providerId: string) {
-  if (!isAdmin.value || systemDefaultId.value === providerId) return
+  if (saving.value || deleting.value || !isAdmin.value || systemDefaultId.value === providerId) return
   void persist('system', systemList.value, providerId)
 }
 
 function toggleEnabled(row: Row, enabled: boolean) {
-  if (!canEdit(row.owner)) return
+  if (saving.value || deleting.value || !canEdit(row.owner)) return
   void persist(row.owner, listOf(row.owner).map((p) => (p.id === row.item.id ? { ...p, enabled } : p)))
 }
 
@@ -579,7 +585,7 @@ function clearDialogErrors() {
 }
 
 function openAddDialog() {
-  if (addBlocked.value) return
+  if (saving.value || deleting.value || addBlocked.value) return
   clearDialogErrors()
   editingProvider.value = null
   editingOwner.value = ownerChoices.value[0]
@@ -587,6 +593,7 @@ function openAddDialog() {
 }
 
 function openEditDialog(row: Row) {
+  if (saving.value || deleting.value || !canEdit(row.owner)) return
   clearDialogErrors()
   editingProvider.value = { ...row.item }
   editingOwner.value = row.owner
@@ -626,20 +633,18 @@ async function runProbe(provider: ProviderItem) {
 }
 
 function confirmDelete(row: Row) {
+  if (saving.value || !canEdit(row.owner)) return
   deleting.value = row
 }
 
-function onDeleteConfirmed() {
+async function onDeleteConfirmed() {
   const target = deleting.value
-  deleting.value = null
-  if (!target) return
+  if (!target || saving.value || !canEdit(target.owner)) return
   const next = listOf(target.owner).filter((p) => p.id !== target.item.id)
-  if (target.owner === 'system') {
-    const nextDefault = systemDefaultId.value === target.item.id ? next[0]?.id ?? null : systemDefaultId.value
-    void persist('system', next, nextDefault)
-  } else {
-    void persist('user', next)
-  }
+  const nextDefault = target.owner === 'system' && systemDefaultId.value === target.item.id
+    ? next[0]?.id ?? null : systemDefaultId.value
+  const error = await persist(target.owner, next, nextDefault)
+  if (error === null) deleting.value = null
 }
 
 async function onSaveProvider(item: ProviderItem, owner: AiOwnerScope) {
@@ -661,6 +666,7 @@ async function onSaveProvider(item: ProviderItem, owner: AiOwnerScope) {
     (field) => field.index === (idx >= 0 ? idx : current.length - 1) && field.field === 'name' && field.reason === 'duplicate_name',
   )) {
     dialogNameError.value = t('gui.ai.providers.name_duplicate')
+    dialogSaveError.value = error.message
   } else {
     dialogSaveError.value = error instanceof Error ? error.message : t('gui.ai.providers.save_failed')
   }

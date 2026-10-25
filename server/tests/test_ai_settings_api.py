@@ -277,9 +277,10 @@ class TestValidation:
     def test_too_many_providers(self):
         from modules.flow_gate.settings.ai_settings_service import validate_settings
 
-        providers = [_cli(name=f"p{i}") for i in range(21)]
-        errors = validate_settings(providers, None, None, None)
-        assert any(e["reason"] == "too_many" for e in errors)
+        providers = [_cli(name=f"p{i}") for i in range(300)]
+        assert validate_settings(providers, None, None, None) == []
+        errors = validate_settings(providers + [_cli(name="p300")], None, None, None)
+        assert errors == [{"field": "providers", "reason": "too_many"}]
 
     def test_inherit_and_disabled_skip_provider_checks(self):
         from modules.flow_gate.settings.ai_settings_service import validate_settings

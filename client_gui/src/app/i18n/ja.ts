@@ -1727,6 +1727,8 @@ export default {
       field_api_model: 'モデル名',
       field_api_key: 'API キー',
       key_configured: '設定済み',
+      clear_api_key: "保存時に既存の API キーを削除",
+      save_in_progress: "保存中です。完了してから再試行してください。",
       placeholder_api_key: 'sk-...',
       placeholder_keep_key: '(既存のキーを維持する場合は空欄)',
       field_enabled: '使用可否',

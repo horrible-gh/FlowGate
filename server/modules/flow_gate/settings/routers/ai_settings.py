@@ -23,6 +23,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from modules.flow_gate.db.ai_providers import ProviderInUseError
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.rbac.decorators import require_permission
 from modules.flow_gate.services import ai_provider_probe_service as _probe
@@ -149,6 +150,8 @@ def put_system_ai_settings(
             body.default_provider_index,
             updated_by=user.get("user_id"),
         )
+    except ProviderInUseError as exc:
+        raise HTTPException(status_code=409, detail={"code": "provider_in_use"}) from exc
     except _svc.AiSettingsValidationError as exc:
         raise _validation_error(exc)
 
@@ -203,6 +206,8 @@ def get_my_ai_providers(user=Depends(get_current_user)):
 def put_my_ai_providers(body: UserAiSettingsPut, user=Depends(get_current_user)):
     try:
         return _svc.save_user_settings(user["user_id"], _providers_payload(body))
+    except ProviderInUseError as exc:
+        raise HTTPException(status_code=409, detail={"code": "provider_in_use"}) from exc
     except _svc.AiSettingsValidationError as exc:
         raise _validation_error(exc)
 

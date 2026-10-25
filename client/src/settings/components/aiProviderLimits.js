@@ -9,7 +9,7 @@ export const CLI_COMMAND_MAX = 4000;
 export const API_BASE_URL_MAX = 500;
 export const API_MODEL_MAX = 200;
 export const API_KEY_MAX = 1000;
-export const PROVIDERS_MAX = 20;
+export const PROVIDERS_MAX = 300;
 
 const FIELD_MAX = {
   name: NAME_MAX,

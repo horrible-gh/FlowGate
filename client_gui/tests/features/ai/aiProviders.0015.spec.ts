@@ -15,13 +15,13 @@ registerAppMessages(i18n)
 // modes (inherit / custom / disabled) were retired with project-owned AI.
 
 const systemAi: ProviderItem[] = [
-  { id: 'sys-1', name: 'Claude Sonnet 5', exec_type: 'cli', kind: 'claude', enabled: true },
+  { id: 'sys-1', name: 'Claude Sonnet 5', exec_type: 'cli', kind: 'claude', enabled: true, cli_command: 'claude -p' },
   { id: 'sys-2', name: 'GPT-4o', exec_type: 'api', kind: 'openai', enabled: true, api_key_set: true },
 ]
 
 const myAi: ProviderItem[] = [
   { id: 'my-1', name: 'My Gemini', exec_type: 'api', kind: 'gemini', enabled: true, api_key_set: false },
-  { id: 'my-2', name: 'My Haiku', exec_type: 'cli', kind: 'claude', enabled: true },
+  { id: 'my-2', name: 'My Haiku', exec_type: 'cli', kind: 'claude', enabled: true, cli_command: 'claude -p' },
 ]
 
 function mockLists() {
@@ -154,6 +154,9 @@ describe('AiProvidersPanel (0015 T0003, AI 목록 since 0017 CH0006)', () => {
     const save = document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement
     const ownerButtons = document.querySelectorAll('.dialog-form .segmented button') as NodeListOf<HTMLButtonElement>
 
+    const command = document.querySelector('#provider-command') as HTMLInputElement
+    command.value = 'claude -p'
+    command.dispatchEvent(new Event('input'))
     name.value = ' GPT-4o '
     name.dispatchEvent(new Event('input'))
     await flushPromises()
@@ -281,6 +284,9 @@ describe('AiProvidersPanel (0015 T0003, AI 목록 since 0017 CH0006)', () => {
     expect(saveBtn.disabled).toBe(true)
     expect(document.querySelector('#provider-name-error')?.textContent).toContain('AI 연결 이름을 입력하세요.')
 
+    const commandInput = document.querySelector('#provider-command') as HTMLInputElement
+    commandInput.value = 'claude -p'
+    commandInput.dispatchEvent(new Event('input'))
     nameInput.value = 'My AI'
     nameInput.dispatchEvent(new Event('input'))
     await wrapper.vm.$nextTick()
