@@ -1,6 +1,6 @@
 """flowgate.v02.0056 T#1 — the card approval of a T2 card (T2 + TR2) through the TR2 approval itself.
 
-On the TR2 connected harness of ``test_tr2_connected_e2e_0565`` (real SQLite DB with every migration, real Git
+On the TR2 connected harness of ``tests.e2e.tr2.test_tr2_connected_e2e_0565`` (real SQLite DB with every migration, real Git
 worktree, real inbox submission with an issued token, real TR2 approval: precheck, source lock, apply,
 validation, ``git commit``, ``tr_commit_ledger``) the card approval's writes (``approval.approve_documents``,
 what ``POST /runs/{run_id}/nodes/{node_key}/approval`` runs after its checks) approve the card's T2 and TR2
@@ -26,9 +26,9 @@ import sqlite3
 
 import pytest
 
-import test_tr2_connected_e2e_0565 as harness
-from test_tr2_connected_e2e_0565 import (  # noqa: F401 — fixtures used by name
-    PROJECT, USER, _Db, _QUERIES, _SCHEMA_DIR, ai_direct_t2, api, env, git, git_head, make_group, repo, submit_tr2,
+import tests.e2e.tr2.test_tr2_connected_e2e_0565 as harness
+from tests.e2e.tr2.test_tr2_connected_e2e_0565 import (  # noqa: F401 — fixtures used by name
+    PROJECT, USER, _Db, _QUERIES, _SCHEMA_DIR, auto_approved_t2, api, env, git, git_head, make_group, repo, submit_tr2,
 )
 
 pytestmark = [pytest.mark.skipif(shutil.which("git") is None, reason="git binary unavailable"),
@@ -89,7 +89,8 @@ def token_scratch_in_storage(monkeypatch):
 
 def _t2_and_tr2(code: str) -> tuple[dict, str, str]:
     group = make_group(code)
-    t2 = ai_direct_t2(group, api())
+    # This consumer suite covers TR2 card approval after its T2 is already approved.
+    t2 = auto_approved_t2(group)
     return group, t2, submit_tr2(group, t2)
 
 

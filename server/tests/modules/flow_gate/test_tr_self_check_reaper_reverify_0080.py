@@ -27,7 +27,7 @@ And the review fixes of the same card, each as the regression it closes:
    such a run protected after its worker is gone;
 6. the reaper reaches an ended run's protected G behind protected rows it cannot prove.
 
-Fixtures: ``flow`` of test_tr_self_check_draft_e2e_0638 and ``world`` of
+Fixtures: ``flow`` of tests.e2e.self_check.test_tr_self_check_draft_e2e_0638 and ``world`` of
 test_tr_self_check_recover_proof_0080 (run rows, owner server rows and G written directly,
 real short python children). Injected, as in T#1/T#2: the identity lookup failure
 (``executor.probe_start_identity``), a failing heartbeat write, the keeper's store read
@@ -44,8 +44,8 @@ from pathlib import Path
 
 import pytest
 
-from test_tr_self_check_draft_e2e_0638 import DRAFT_RUNS, G, P, RAW, USER_JWT, _as, _row, flow  # noqa: F401 -- fixture
-from test_tr_self_check_recover_proof_0080 import _assert_not_released, _g, _lookup_fails, world  # noqa: F401 -- fixture
+from tests.e2e.self_check.test_tr_self_check_draft_e2e_0638 import DRAFT_RUNS, G, P, RAW, USER_JWT, _as, _row, flow  # noqa: F401 -- fixture
+from tests.regression.self_check.test_tr_self_check_recover_proof_0080 import _assert_not_released, _g, _lookup_fails, world  # noqa: F401 -- fixture
 
 from modules.flow_gate.api.v1 import self_check_routes as routes
 from modules.flow_gate.db import git_concurrency as gdb

@@ -41,7 +41,7 @@ os.environ.setdefault("CONTEXT", "/flowgate")
 os.environ.setdefault("ALLOWED_ORIGIN", "")
 
 import startup  # noqa: E402
-from test_token_scratch_delete_journal_0090 import owned, PROJECT  # noqa: F401
+from tests.integration.startup_sweep.test_token_scratch_delete_journal_0090 import owned, PROJECT  # noqa: F401
 from test_ai_scratch_delete_journal_0090 import ai_owned, _new, _journal  # noqa: F401
 from test_snapshot_materialization_0517 import snapshot_env  # noqa: F401
 from test_snapshot_delete_journal_0090 import _publish, _record

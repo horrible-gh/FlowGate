@@ -7,7 +7,7 @@ touching HEAD, the index or the working tree, and reports whether the merge is
 clean and which files would conflict.
 
 Git-level tests reuse the `diverged_repo`/`_git` fixtures from
-test_remote_history_show_0524.py (same base -> target / base -> worker(HEAD)
+tests.integration.remote_tools.test_remote_history_show_0524.py (same base -> target / base -> worker(HEAD)
 divergence, where `shared.txt` is modified differently on each side and
 therefore conflicts). HTTP-pipeline tests reuse the DB-backed harness from
 test_remote_tool_0003_T0012 (`RAW_TOKEN` / `_call` / `env`).
@@ -19,7 +19,7 @@ import re
 import pytest
 
 from modules.flow_gate.services import remote_tool_service as svc
-from test_remote_history_show_0524 import _git, diverged_repo  # noqa: F401  (fixture)
+from tests.integration.remote_tools.test_remote_history_show_0524 import _git, diverged_repo  # noqa: F401  (fixture)
 
 
 @pytest.fixture
@@ -203,7 +203,7 @@ def test_http_merge_preview_200_is_logged_and_never_gets_a_continuation(diverged
     assert recorded[0]["op"] == "merge_preview" and recorded[0]["result"] == "success"
 
 
-# ── Help/registry SSOT parity (mirrors test_remote_history_show_0524.py) ─────────
+# ── Help/registry SSOT parity (mirrors tests.integration.remote_tools.test_remote_history_show_0524.py) ─────────
 
 def test_help_merge_preview_request_fields_match_the_allowed_field_set():
     from modules.flow_gate.services import tool_registry

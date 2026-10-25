@@ -19,7 +19,7 @@ pass after the store recovers proves the row again; a fence whose undo is lost t
 committed, its answer lost) is proved again under the same fence once it is left behind,
 and never while its owner is unproved.
 
-Fixtures: ``flow`` of test_tr_self_check_draft_e2e_0638 and ``world`` of
+Fixtures: ``flow`` of tests.e2e.self_check.test_tr_self_check_draft_e2e_0638 and ``world`` of
 test_tr_self_check_recover_proof_0080 (run rows, owner server rows and G written directly,
 real short python children). Injected, as in T#1: the identity lookup failure
 (``executor.probe_start_identity``). Not covered here: the full path x injection matrix of
@@ -29,8 +29,8 @@ from __future__ import annotations
 
 import pytest
 
-from test_tr_self_check_draft_e2e_0638 import DRAFT_RUNS, G, P, RAW, _as, _row, _wait, flow  # noqa: F401 -- fixture
-from test_tr_self_check_recover_proof_0080 import _assert_not_released, _g, _lookup_fails, world  # noqa: F401 -- fixture
+from tests.e2e.self_check.test_tr_self_check_draft_e2e_0638 import DRAFT_RUNS, G, P, RAW, _as, _row, _wait, flow  # noqa: F401 -- fixture
+from tests.regression.self_check.test_tr_self_check_recover_proof_0080 import _assert_not_released, _g, _lookup_fails, world  # noqa: F401 -- fixture
 
 from modules.flow_gate.api.v1 import self_check_routes as routes
 from modules.flow_gate.db import tr_self_check_runs as db_runs

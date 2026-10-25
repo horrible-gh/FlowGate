@@ -1,6 +1,6 @@
 """TR2 re-approval after a Time Machine rewind (flowgate.default.0658 T0004), connected.
 
-Same real boundaries as ``test_tr2_connected_e2e_0565``: SQLite with every migration, a
+Same real boundaries as ``tests.e2e.tr2.test_tr2_connected_e2e_0565``: SQLite with every migration, a
 real Git worktree in scratch, the real HTTP routes. The rewind is the one the workflow
 strip sends — ``POST /workflow/reopen`` from the step the group had already advanced to.
 
@@ -20,7 +20,7 @@ strip sends — ``POST /workflow/reopen`` from the step the group had already ad
 """
 from __future__ import annotations
 
-from test_tr2_connected_e2e_0565 import (  # noqa: F401 — fixtures are used by name
+from tests.e2e.tr2.test_tr2_connected_e2e_0565 import (  # noqa: F401 — fixtures are used by name
     PROJECT, approve, auto_approved_t2, env, git, make_group, repo, store, submit_tr2,
     tr2_body, view,
 )

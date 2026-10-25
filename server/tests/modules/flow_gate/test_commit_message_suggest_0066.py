@@ -13,7 +13,7 @@ from modules.flow_gate.db import group_ai_leases
 from modules.flow_gate.services.git import commit_suggest as s
 from modules.flow_gate.services.git.credentials import GitServiceError
 from modules.flow_gate.services.ai_invoke import provider_cli, runtime
-from test_group_worktree_stage_0066 import repo, git, put, index, G, SECRET, URL, gs, m, policy, git_routes
+from tests.integration.group_worktree.test_group_worktree_stage_0066 import repo, git, put, index, G, SECRET, URL, gs, m, policy, git_routes
 
 ENDPOINT = URL + "/commit-message/suggest"
 REAL_EXECUTE = s.connection.execute_prompt

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from test_token_scratch_delete_journal_0090 import owned, PROJECT
+from tests.integration.startup_sweep.test_token_scratch_delete_journal_0090 import owned, PROJECT
 from modules.flow_gate.services import ai_invoke_service as svc
 from modules.flow_gate.services.ai_invoke import runtime
 from modules.flow_gate.storage import filesystem as storage_fs

@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from test_group_work_base_scope_0665 import (
+from tests.regression.group_git.test_group_work_base_scope_0665 import (
     _forget_floor, _scope, _state, patch_store, proj, storage_dir,
 )
 

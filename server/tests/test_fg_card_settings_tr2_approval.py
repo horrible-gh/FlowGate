@@ -2,7 +2,7 @@
 
 Both follow paths of the card's review stage (no review, and a passed review) approve with
 ``flowgate.card_settings.legacy_adapter.approve``. On the TR2 connected harness of
-``test_tr2_connected_e2e_0565`` (real DB, real Git worktree, real inbox submission, real TR2 approval:
+``tests.e2e.tr2.test_tr2_connected_e2e_0565`` (real DB, real Git worktree, real inbox submission, real TR2 approval:
 precheck, source lock, apply, validation, commit) it approves as the unmanned chain does: the issuer's own
 permissions, the issuer as the server-owned completion principal (``tr2_principal_required`` no longer
 stops it), the document revision and a TR2 attempt key. Without the approve permission nothing is
@@ -22,8 +22,8 @@ import sqlite3
 import pytest
 
 from test_fg_card_approval_tr2_0056 import token_scratch_in_storage  # noqa: F401 — fixture used by name
-from test_tr2_connected_e2e_0565 import (  # noqa: F401 — fixtures used by name
-    USER, _Db, _QUERIES, _SCHEMA_DIR, ai_direct_t2, api, env, git, git_head, make_group, repo, submit_tr2,
+from tests.e2e.tr2.test_tr2_connected_e2e_0565 import (  # noqa: F401 — fixtures used by name
+    USER, _Db, _QUERIES, _SCHEMA_DIR, auto_approved_t2, api, env, git, git_head, make_group, repo, submit_tr2,
 )
 
 pytestmark = [pytest.mark.skipif(shutil.which("git") is None, reason="git binary unavailable"),
@@ -69,7 +69,7 @@ BASE = b"greeting = 'hello'\ncount = 1\n"
 
 def _pending_tr2(code):
     group = make_group(code)
-    return group, submit_tr2(group, ai_direct_t2(group, api()))
+    return group, submit_tr2(group, auto_approved_t2(group))
 
 
 def test_follow_approves_a_tr2_through_its_own_approval_with_the_issuer_authority(env):

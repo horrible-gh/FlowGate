@@ -329,8 +329,8 @@ PROTECTED = [
             "flowgate.default.0549 T0008: the specification-TS grammar and the TSR test report. Category B (protocol grammar): the ko section heading '시험 사양' and the ko field/boolean aliases ('분류', '대상', '필수', '선택', ...) are INPUT parser tokens a submitted TS is read with (their en/ja siblings parse too). Category A (locale dictionary): the ko branch of _REPORT_STRINGS renders the TSR test report; its en/ja siblings stay Korean-free. Registered instead of raising a line cap, so this T adds zero to the census budget."
         ),
         "tests": [
-            'tests/test_test_spec_0549.py::test_spec_parses_every_structured_field_with_aliases_and_multiline_procedure',
-            'tests/test_test_spec_0549.py::test_tsr_report_lists_every_case_even_when_failing',
+            'tests/modules/flow_gate/services/test_test_spec_0549.py::test_spec_parses_every_structured_field_with_aliases_and_multiline_procedure',
+            'tests/modules/flow_gate/services/test_test_spec_0549.py::test_tsr_report_lists_every_case_even_when_failing',
         ],
     },
     {
@@ -364,7 +364,7 @@ PROTECTED = [
             'flowgate.default.0549 T0008: the ko branch of _TS_SPEC_AUTHORING_TEXT, the specification -TS authoring guide served by the authoring_guide/TS help item. Category A (locale dictionary): the en/ja siblings are scanned by test_server_korean_leak_0355.py.'
         ),
         "tests": [
-            'tests/test_test_spec_0549.py::test_ts_authoring_guide_defaults_to_the_specification_in_every_locale',
+            'tests/modules/flow_gate/services/test_test_spec_0549.py::test_ts_authoring_guide_defaults_to_the_specification_in_every_locale',
         ],
     },
     {
@@ -377,7 +377,7 @@ PROTECTED = [
             'flowgate.default.0549 T0008: the ko branch of _TEST_GATE_MESSAGES (TSR test-gate and TS specification approval refusals). Category A (locale dictionary).'
         ),
         "tests": [
-            'tests/test_test_spec_0549.py::test_approval_guard_blocks_a_non_pass_tsr_and_allows_pass',
+            'tests/modules/flow_gate/services/test_test_spec_0549.py::test_approval_guard_blocks_a_non_pass_tsr_and_allows_pass',
         ],
     },
 ]

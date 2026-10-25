@@ -1,6 +1,6 @@
 """TR2 lifecycle consistency (flowgate.default.0660 T0004), connected.
 
-Same real boundaries as ``test_tr2_connected_e2e_0565``: SQLite with every migration, a
+Same real boundaries as ``tests.e2e.tr2.test_tr2_connected_e2e_0565``: SQLite with every migration, a
 real Git worktree in scratch, the real HTTP routes. The scenarios are the ones 0660 NR0003
 reproduced on the test server:
 
@@ -21,7 +21,7 @@ import pytest
 
 from group_lock_stub import hold_group_lock
 
-from test_tr2_connected_e2e_0565 import (  # noqa: F401 — fixtures are used by name
+from tests.e2e.tr2.test_tr2_connected_e2e_0565 import (  # noqa: F401 — fixtures are used by name
     MODULE, PROJECT, USER, api, approve, auto_approved_t2, edit_spec, env, git, make_group,
     repo, store, submit_tr2, tr2_body, view,
 )

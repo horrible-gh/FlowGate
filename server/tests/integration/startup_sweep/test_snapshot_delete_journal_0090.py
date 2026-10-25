@@ -31,7 +31,7 @@ from modules.flow_gate.services.snapshot_request_service import SnapshotRequestE
 from modules.flow_gate.storage import filesystem as storage_fs
 
 from test_snapshot_materialization_0517 import snapshot_env  # noqa: F401
-from test_token_scratch_delete_journal_0090 import PROJECT, _row, _scratch, owned  # noqa: F401
+from tests.integration.startup_sweep.test_token_scratch_delete_journal_0090 import PROJECT, _row, _scratch, owned  # noqa: F401
 
 PAST = "2000-01-01T00:00:00+00:00"
 

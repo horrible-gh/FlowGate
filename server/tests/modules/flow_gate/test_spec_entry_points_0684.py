@@ -21,7 +21,7 @@ import json
 import pytest
 from fastapi import HTTPException
 
-from test_test_spec_0549 import (  # noqa: F401 -- ``env`` is the fixture these tests use
+from tests.modules.flow_gate.services.test_test_spec_0549 import (  # noqa: F401 -- ``env`` is the fixture these tests use
     CASE_TC1_AUTOMATED,
     CASE_TC2,
     CASE_TC3,

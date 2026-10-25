@@ -14,7 +14,7 @@ import pytest
 from fastapi import HTTPException
 
 from test_graph_attempt_runs_0061 import db  # noqa: F401 — shared SQLite execution fixture
-from test_graph_attempt_results_0061 import result_db  # noqa: F401 — T#8 result fixture (migration 153a)
+from tests.regression.graph_attempt.test_graph_attempt_results_0061 import result_db  # noqa: F401 — T#8 result fixture (migration 153a)
 from flowgate.graph_run import execution, execution_store as ledger, fencing, scheduling
 from flowgate.graph_time_machine import operation
 from modules.flow_gate.graph_workflow.services import run_apply

@@ -34,7 +34,7 @@ from test_fg_card_settings import (  # noqa: E402,F401 — fixtures used by name
     AI, FA, FB, _doc, _h, _sql, _start, db_path, decided, edge, env, node, put_draft,
 )
 from test_fg_card_settings_review import _admin_and_reviewer  # noqa: E402
-from test_graph_attempt_results_0061 import result_db  # noqa: E402,F401 — the execution ledger (M-3 / M-4)
+from tests.regression.graph_attempt.test_graph_attempt_results_0061 import result_db  # noqa: E402,F401 — the execution ledger (M-3 / M-4)
 from test_graph_attempt_runs_0061 import db  # noqa: E402,F401 — used by result_db
 from test_node_title_0064 import canvas_node, put_title, title_events, title_rows  # noqa: E402
 
