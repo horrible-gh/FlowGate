@@ -37,11 +37,12 @@ QNA_RUN = "air_qna_answer"
 BASE, TOKEN = "http://host/flowgate/api/v1", "worker-token"
 # P0006 §2.9 — the rule sentences, pinned here as the protocol fixes them.
 RULES = (
-    "본문 미열람 규칙 1: content가 null이거나 content_state가 readable이 아닌 문서는 '읽지 못한 문서'입니다. "
-    "front matter뿐인 빈 문서(content_state=readable)와 구분해 적으십시오.",
+    "본문 미열람 규칙 1: content가 null이거나 content_state가 readable이 아닌 문서만 '읽지 못한 문서'입니다. "
+    "front matter뿐인 빈 문서(content_state=readable)는 읽은 문서이며, 이 판정은 내부에서만 하고 답변에 나열하지 마십시오.",
     "본문 미열람 규칙 2: 읽지 못한 문서의 내용을 읽은 것처럼 인용하거나 요약하지 마십시오.",
-    "본문 미열람 규칙 3: 답변 첫머리에 (가) 본문을 읽지 못한 문서 번호, (나) 받은 사유(content_state 값), "
-    "(다) 대신 사용한 근거를 밝히십시오.",
+    "본문 미열람 규칙 3: 읽지 못한 문서가 있고 현재 요청 처리에 필요한 경우에만 문서 번호·사유(content_state 값)·"
+    "답변에 미치는 영향·대체 근거(있으면)를 짧게 밝히십시오. 읽지 못한 문서가 없거나 현재 답변과 무관하면 '없음'·'해당 없음' "
+    "같은 열람 상태 보고를 쓰지 말고, 사용자가 근거나 열람 상황을 물으면 그 범위에서 설명하십시오.",
     "본문 미열람 규칙 4: 질문이 그 문서의 내용을 전제로 하면, 다른 자료에서 끌어낸 내용에 "
     "'원문 미확인 상태의 추정'이라고 표시하십시오.",
     "본문 미열람 규칙 5: 이관 조건은 그대로입니다. 사유가 권한 오류(403)이면 기존 '권한' 조건을 적용하십시오.",
@@ -481,6 +482,20 @@ def test_the_help_item_document_access_carries_the_content_states_and_the_rules(
         "path_unresolved": "파일 경로를 저장소 안에서 해석할 수 없다",
     }
     assert {"body", "path", "partial", "note"} <= set(content)                # the current items stay
+
+
+def test_the_rules_do_not_force_an_unconditional_read_status_report(monkeypatch):
+    from modules.flow_gate.services import mention_service
+
+    rules = mention_service.BODY_UNREADABLE_RULES
+    assert len(rules) == 5 and [r.split(":")[0] for r in rules] == [f"본문 미열람 규칙 {n}" for n in range(1, 6)]
+    for marker in ("(가)", "(나)", "(다)", "답변 첫머리", "구분해 적으십시오"):
+        assert not any(marker in rule for rule in rules)
+    assert "경우에만" in rules[2] and "열람 상태 보고를 쓰지 말고" in rules[2]       # conditional, brief report
+    assert "읽은 것처럼 인용하거나 요약하지 마십시오" in rules[1]                           # rule 2 kept
+    assert "원문 미확인 상태의 추정" in rules[3] and "권한 오류(403)" in rules[4]            # rules 4 and 5 kept
+    assert not any(marker in line for line in _help_document_access(monkeypatch)["rules"]
+                   for marker in ("(가)", "(나)", "(다)"))
 
 
 def test_one_constant_feeds_the_lookup_lines_the_help_item_and_the_section(monkeypatch):
