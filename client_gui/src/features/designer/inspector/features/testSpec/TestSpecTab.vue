@@ -5,7 +5,7 @@
     <div class="test-card-lines" data-test="inspector-slot-list">
       <InspectorSlotRow v-for="line in lines" :key="line.key" :name="t(k(`slot.${line.key}`))" :id="line.id" :class="{ 'is-empty': line.blank }" :focus="line.key === 'report' && (stage.stage === 5 || card?.reportRecentlyConfirmed.value)" :data-slot="line.key" :data-doc="line.id" :openable="canOpen(line.kind)" @open="openWindow(line.kind)">
         <template #summary>
-          <InspectorStatusChip v-if="form !== 'legacy' || line.key !== 'report'" :label="line.label" :tone="line.tone" :data-test="line.key === 'report' ? 'test-spec-state' : `test-card-${line.key}-state`" :data-state="line.key === 'report' ? runState.key : undefined" />
+          <InspectorStatusChip :label="line.label" :tone="line.tone" :data-test="line.key === 'report' ? 'test-spec-state' : `test-card-${line.key}-state`" :data-state="line.key === 'report' ? runState.key : undefined" />
           <span class="test-card-summary" :data-test="`test-card-${line.key}-summary`" :title="line.summary">{{ line.summary }}</span>
           <span v-if="line.key === 'report' && stage.resultState.key === 'unchecked'" class="test-card-summary">{{ t(k('stage.unchecked')) }}</span>
           <span v-if="line.key === 'report' && view?.gate?.applies && !view.gate.passed" class="test-card-danger" data-test="test-spec-gate">{{ t(k('card.gate_blocked')) }}</span>
@@ -45,7 +45,6 @@
     </div>
     <InspectorReason v-if="shownReason && form !== 'legacy'" :text="t(k(shownReason))" data-test="test-spec-reason" />
     <InspectorReason v-if="card?.test.failure.value" tone="danger" :text="t(k(card.test.failure.value.key))" data-test="test-spec-failure" />
-    <p v-if="form === 'legacy'" data-test="test-spec-legacy">{{ t(k('legacy')) }}</p>
   </section>
 </template>
 <script setup lang="ts">
@@ -59,7 +58,7 @@ import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { DocumentIoGroup, openDocument, openDocumentHistory } from '../../openDocument'
+import { DocumentIoGroup, openDocumentHistory } from '../../openDocument'
 import { type TestCardWindowKind } from './testCardSession'
 import { testCardPresentation, testSpecLiveRun, type TestSpecSlotTone } from './testSpecModel'
 import { useTestCard } from './useTestCard'
@@ -75,7 +74,6 @@ const runAvailability = computed(() => card.value?.can('run') ?? { enabled: fals
 const shownReason = computed(() => card.value?.test.availability.value.cancel.visible ? card.value.test.availability.value.cancel.reason : runAvailability.value.reason)
 const reviewCount = computed(() => (card.value?.reviewHistory.data.value?.reviews.length ?? 0) + (card.value?.reviewHistory.data.value?.rejections.length ?? 0))
 function canOpen(kind: TestCardWindowKind) {
-  if (form.value === 'legacy') return !!view.value && (kind === 'scenario' || kind === 'report')
   return !!card.value && card.value.openReason(kind) === null
 }
 function openReason(kind: TestCardWindowKind) {
@@ -83,8 +81,7 @@ function openReason(kind: TestCardWindowKind) {
 }
 function openWindow(kind: TestCardWindowKind) {
   if (!canOpen(kind)) return
-  if (form.value === 'legacy' && view.value) openDocument(view.value.docId)
-  else card.value?.openWindow(kind)
+  card.value?.openWindow(kind)
 }
 interface Line { key: 'instruction' | 'scenario' | 'report'; kind: TestCardWindowKind; id: string | null; blank: boolean; label: string; tone: TestSpecSlotTone; summary: string }
 const lines = computed<Line[]>(() => {
@@ -96,8 +93,10 @@ const lines = computed<Line[]>(() => {
   const tally = card.value?.test.tally.value
   const ignored = v?.cases.filter((c) => !c.required).length ?? 0
   const noCode = card.value?.cases.value.filter((c) => c.executionMode === 'automated' && !c.fields.automationRef).length ?? 0
+  const aiChecked = v?.cases.filter((c) => c.executionMode === 'ai').length ?? 0
   const tokens = [t(k('card.case_count'), { count: tally?.total ?? 0 })]
   if (tally?.manual) tokens.push(t(k('card.human_count'), { count: tally.manual }))
+  if (aiChecked) tokens.push(t(k('card.ai_count'), { count: aiChecked }))
   if (ignored) tokens.push(t(k('card.ignore_count'), { count: ignored }))
   if (noCode) tokens.push(t(k('card.no_code_count'), { count: noCode }))
   const counts = card.value?.test.counts.value
@@ -111,7 +110,8 @@ const lines = computed<Line[]>(() => {
     { key: 'scenario', kind: 'scenario', id: tsId, blank: !state.hasScenario, label: t(k(writing ? 'card.writing' : state.hasScenario ? 'card.written' : 'stage.waiting')), tone: writing ? 'running' : state.hasScenario ? 'success' : 'neutral', summary: state.hasScenario ? tokens.join(' · ') : own('scenario')?.title ?? '' },
     { key: 'report', kind: 'report', id: reportId, blank: !state.hasScenario, label: t(k(state.stage <= 2 ? 'empty.after_run' : state.stage === 6 ? 'card.confirmed' : state.stateKey), { count: state.pending, done: runState.value.done, total: runState.value.total }), tone: state.stage === 4 ? 'running' : state.tone, summary: reportSummary },
   ]
-  return card.value?.instructionOmitted.value ? result.filter((line) => line.key !== 'instruction') : result
+  if (card.value?.instructionOmitted.value) { result[0].label = t(k('guard.instruction_omitted')); result[0].tone = 'neutral' }
+  return result
 })
 </script>
 <style scoped>

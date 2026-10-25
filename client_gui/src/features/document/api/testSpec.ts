@@ -518,6 +518,15 @@ export function testSpecCasePayload(item: TestSpecCaseDetail): TestSpecCasePaylo
     automation_ref: item.fields.automationRef ?? null, test_assets: item.fields.testAssets ?? null }
 }
 
+export async function testBriefRead(docId: string): Promise<{ text: string; content: string }> {
+  const response = await getRequest<{ text: string; content: string }>(`${API}/documents/${encodeURIComponent(docId)}/test-brief`)
+  return response.data
+}
+export async function testBriefSave(docId: string, text: string, expectedContent: string): Promise<{ text: string; content: string }> {
+  const response = await putRequest<{ text: string; content: string }>(`${API}/documents/${encodeURIComponent(docId)}/test-brief`, { text, expected_content: expectedContent })
+  return response.data
+}
+
 export async function testSpecSave(docId: string, cases: readonly TestSpecCasePayload[], title: string | null): Promise<void> {
   await putRequest(`${API}/documents/${encodeURIComponent(docId)}/test-spec`, { cases, ...(title ? { title } : {}) })
 }

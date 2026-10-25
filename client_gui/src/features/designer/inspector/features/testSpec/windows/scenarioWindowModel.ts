@@ -23,7 +23,27 @@ export function caseDraft(item: TestSpecCaseDetail, cases: readonly TestSpecCase
     procedure: original.procedure ?? '', expected: original.expected ?? '', automation_ref: original.automation_ref ?? '',
     execution_mode: original.execution_mode ?? '', required: original.required }
 }
-/** Only displayed, changed fields are replaced; hidden fields and untouched nulls survive. */
+export function newCaseDraft(cases: readonly TestSpecCaseDetail[], title: string | null, docId: string | null): CaseDraft {
+  const ids = new Set(cases.map(c => c.caseId.replace(/-0+(\d)/, '-$1')))
+  let n = 1
+  while (ids.has(`TC-${n}`)) n++
+  const original: TestSpecCasePayload = { case_id: `TC-${n}`, title: '', category: 'normal', requirement: '',
+    execution_mode: 'manual', required: true, precondition: '', input: '', procedure: '', expected: '',
+    check_points: '', automation_ref: null, test_assets: null }
+  return { original, docId, snapshot: scenarioSnapshot(cases, title), title: '', requirement: '', precondition: '',
+    procedure: '', expected: '', automation_ref: '', execution_mode: 'manual', required: true }
+}
+export function addedCase(cases: readonly TestSpecCaseDetail[], draft: CaseDraft): TestSpecCasePayload[] {
+  return [...cases.map(testSpecCasePayload), { ...draft.original, title: draft.title, requirement: draft.requirement,
+    precondition: draft.precondition, procedure: draft.procedure, expected: draft.expected, check_points: draft.expected,
+    execution_mode: draft.execution_mode, required: draft.required,
+    automation_ref: draft.execution_mode === 'automated' ? draft.automation_ref || null : null }]
+}
+
+/**
+ * Only displayed, changed fields are replaced; hidden fields and untouched nulls survive. The two hidden
+ * fields the server requires get the same defaults as a new case only when the edited case has none.
+ */
 export function mergeCase(cases: readonly TestSpecCaseDetail[], draft: CaseDraft): TestSpecCasePayload[] {
   return cases.map((item) => {
     const payload = testSpecCasePayload(item)
@@ -33,7 +53,7 @@ export function mergeCase(cases: readonly TestSpecCaseDetail[], draft: CaseDraft
       if (field === 'automation_ref' && draft.execution_mode !== 'automated') continue
       if (draft[field] !== (draft.original[field] ?? '')) edits[field] = draft[field]
     }
-    return { ...payload, ...edits,
+    return { ...payload, ...edits, category: payload.category ?? 'normal', check_points: payload.check_points ?? draft.expected,
       execution_mode: draft.execution_mode !== (draft.original.execution_mode ?? '') ? draft.execution_mode : payload.execution_mode,
       required: draft.required !== draft.original.required ? draft.required : payload.required }
   })

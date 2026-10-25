@@ -54,7 +54,7 @@
         </ul>
         <section v-if="selected" class="detail" data-test="report-detail" :data-case="selected.caseId">
           <header><TestMarkBadge v-if="markOf(selected)" :mark="markOf(selected)!" /><span class="mono id">{{ selected.caseId }}</span><b>{{ selected.title }}</b>
-            <span v-if="selected.executionMode && selected.executionMode !== 'automated'" class="tag">{{ t(k(selected.executionMode === 'manual' ? 'mode_manual' : 'mode_external')) }}</span>
+            <span v-if="selected.executionMode && selected.executionMode !== 'automated'" class="tag">{{ t(k(selected.executionMode === 'manual' ? 'mode_manual' : selected.executionMode === 'ai' ? 'mode_ai' : 'mode_external')) }}</span>
             <span v-if="!selected.required" class="tag">{{ t(k('ignore')) }}</span><span class="ref">{{ selected.requirement }}</span></header>
           <div class="cmp"><div><small>{{ t(k('expected')) }}</small><p>{{ selected.expected ?? '—' }}</p></div>
             <div :data-state="selected.state" data-test="report-actual"><small>{{ t(k('actual')) }}</small><p :class="{ mute: !selected.actual }">{{ actualText(selected) }}</p></div></div>

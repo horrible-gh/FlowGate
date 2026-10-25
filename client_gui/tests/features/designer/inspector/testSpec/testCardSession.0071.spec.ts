@@ -125,7 +125,8 @@ describe('v8 shared test card session (0071 T1)', () => {
     wait.resolve(); expect(await change).toBe(true); await flushPromises()
     expect(card.windows.brief.open).toBe(false)
     expect(card.drafts.brief).toBe('unsaved instruction')
-    expect(w.find('[data-slot="instruction"]').exists()).toBe(false)
+    expect(w.find('[data-slot="instruction"]').exists()).toBe(true)
+    expect(w.get('[data-test="test-card-brief"]').attributes('disabled')).toBeDefined()
   })
   it('a refused scope change restores the server value for every consumer and shows its failure', async () => {
     const w = await render()
@@ -233,7 +234,7 @@ describe('v8 shared test card session (0071 T1)', () => {
     expect(await card.enterResult({ case_id: 'TC-1', status: 'PASS' })).toBe(false)
     expect(await card.enterResult({ case_id: 'TC-3', status: 'PASS' })).toBe(true)
     expect(mocks.enter).toHaveBeenCalledWith(TS_DOC, { case_id: 'TC-3', status: 'PASS' })
-    expect(card.can('caseAdd').reason).toBe('guard.unconnected')
+    expect(card.can('caseAdd').reason).toBeNull()
     expect(card.can('decide').reason).toBe('guard.unconnected')
     expect(await card.rewriteAll()).toBe(true)
     expect(mocks.ai).toHaveBeenCalledWith(TS_DOC, expect.objectContaining({ nodeId: 'gn_a' }), expect.any(Function), expect.objectContaining({ submitting: expect.any(Function), rejected: expect.any(Function) }))
@@ -380,21 +381,21 @@ it('rewrite submission guards immediately, survives stale activity and releases 
   expect(card.writing.value).toBeNull()
 })
 
-it.each(['missing_spec_section', 'unsupported_contract', 'invalid'])('zero-case %s errors do not enable scenario entry or raw saves', async (code) => {
+it.each(['missing_spec_section', 'unsupported_contract', 'invalid'])('zero-case %s errors retain an authoring and raw repair surface', async (code) => {
   views.set(TS_DOC, tsDocument({ cases: [], errors: [{ code, field: 'cases', message: code }], latest_result: null, effective_result: null }))
   const w = await render(); const card = contexts.one
   expect(card.presentation.value.stage).toBe(1)
-  expect(card.openReason('scenario', true)).toBe('guard.no_case')
-  expect(w.get('[data-test="test-card-scenario-open"]').attributes('disabled')).toBeDefined()
+  expect(card.openReason('scenario', true)).toBeNull()
+  expect(w.get('[data-test="test-card-scenario-open"]').attributes('disabled')).toBeUndefined()
   const menu = w.findAllComponents(TestCardMenu)[0].findAll('[data-test="inspector-menu-item"]')[0]
-  expect(menu.attributes('disabled')).toBeDefined()
+  expect(menu.attributes('disabled')).toBeUndefined()
   await menu.trigger('click'); await w.get('[data-test="test-card-scenario-open"]').trigger('click')
-  expect(card.windows.scenario.open).toBe(false)
-  expect(card.openWindow('scenario')).toBe(false)
-  expect(card.can('rawSave').reason).toBe('guard.no_case')
+  expect(card.windows.scenario.open).toBe(true)
+  expect(card.openWindow('scenario')).toBe(true)
+  expect(card.can('rawSave').reason).toBeNull()
   const save = vi.fn()
-  expect(await card.changeDocument('rawSave', save)).toBe(false)
-  expect(save).not.toHaveBeenCalled()
+  expect(await card.changeDocument('rawSave', save)).toBe(true)
+  expect(save).toHaveBeenCalledOnce()
 })
 
 it('connected windows share stage-specific open reasons with menu and section cards', async () => {
@@ -406,9 +407,9 @@ it('connected windows share stage-specific open reasons with menu and section ca
     views.set(TS_DOC, tsDocument({ cases: [], latest_result: null, effective_result: null }))
     const w = await render(); const card = contexts.one
     expect(card.openReason('scenario', false)).toBe('guard.unconnected')
-    expect(card.openReason('scenario', true)).toBe('guard.no_case')
+    expect(card.openReason('scenario', true)).toBeNull()
     expect(card.openReason('report', true)).toBe('guard.no_result')
-    expect(w.get('[data-test="test-card-scenario-open"]').attributes('title')).toBe('아직 표시할 시나리오가 없습니다')
+    expect(w.get('[data-test="test-card-scenario-open"]').attributes('disabled')).toBeUndefined()
     expect(w.get('[data-test="test-spec-open"]').attributes('title')).toBe('아직 표시할 실행 결과가 없습니다')
     card.writing.value = 'initial'; await flushPromises()
     expect(card.openReason('scenario', true)).toBe('guard.writing')

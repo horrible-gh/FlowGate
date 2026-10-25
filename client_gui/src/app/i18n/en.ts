@@ -1579,6 +1579,7 @@ export default {
       },
       mode: {
         automated: 'Automated',
+        ai: 'Checked by AI',
         manual: 'Checked by a person',
         external: 'Checked outside',
       },

@@ -16,7 +16,7 @@
       </Dropdown>
       <Button size="sm" variant="secondary" data-test="scenario-raw" @click="openRaw">{{ t(k('raw')) }}</Button>
       <Button size="sm" variant="secondary" :disabled="!card.can('rewriteAll').enabled" :title="reason('rewriteAll')" data-test="scenario-rewrite" @click="confirming = true">{{ t(k('rewrite')) }}</Button>
-      <Button size="sm" :disabled="!card.can('caseAdd').enabled" :title="reason('caseAdd')" data-test="scenario-add">{{ t(k('add')) }}</Button>
+      <Button size="sm" :disabled="!card.can('caseAdd').enabled" :title="reason('caseAdd')" data-test="scenario-add" @click="card.openWindow('case', '__new__')">{{ t(k('add')) }}</Button>
       </span>
     </template>
     <div class="scenario" data-test="scenario-window">
@@ -32,7 +32,7 @@
         <tbody v-if="card.writing.value"><tr v-for="i in Math.max(3, card.cases.value.length)" :key="i" class="placeholder" data-test="scenario-writing"><td colspan="8">{{ t(k('writing')) }}</td></tr></tbody>
         <tbody v-else><tr v-for="item in card.cases.value" :key="item.caseId" :data-case="item.caseId">
           <td><TestMarkBadge v-if="resultMark(item.caseId)" :mark="resultMark(item.caseId)!" /></td><td class="mono">{{ item.caseId }}</td><td>{{ item.title }}</td><td>{{ item.fields.requirement }}</td>
-          <td>{{ t(k(item.executionMode === 'automated' ? 'code' : item.executionMode === 'manual' ? 'human' : 'external')) }}<span v-if="item.executionMode === 'automated' && !item.fields.automationRef" class="warning"> · {{ t(k('no_code')) }}</span></td>
+          <td>{{ t(k(modeKey(item.executionMode))) }}<span v-if="item.executionMode === 'automated' && !item.fields.automationRef" class="warning"> · {{ t(k('no_code')) }}</span></td>
           <td :class="{ warning: !item.required }">{{ t(k(item.required ? 'stop' : 'ignore')) }}</td><td>—</td>
           <td><Button size="sm" variant="ghost" :aria-label="t(k('edit'), { id: item.caseId })" data-test="scenario-edit" @click="card.openWindow('case', item.caseId)">✎</Button></td>
         </tr></tbody></table></div>
@@ -79,10 +79,12 @@ const reviewCount = computed(() => (card.value?.reviewHistory.data.value?.review
 const summary = computed(() => {
   const cases = card.value?.cases.value ?? []
   const counts = { human: cases.filter(c => c.executionMode === 'manual').length,
+    ai: cases.filter(c => c.executionMode === 'ai').length,
     ignore: cases.filter(c => !c.required).length,
     noCode: cases.filter(c => c.executionMode === 'automated' && !c.fields.automationRef).length }
   return Object.entries(counts).filter(([, n]) => n > 0).map(([key, n]) => t(k(`summary_${key}`), { n })).join(' · ')
 })
+const modeKey = (mode: string | null) => mode === 'automated' ? 'code' : mode === 'ai' ? 'ai' : mode === 'manual' ? 'human' : 'external'
 const reason = (op: TestCardCommand) => { const key = card.value?.can(op).reason; return key ? t(`gui.inspector.testSpec.${key}`) : '' }
 const refusalText = computed(() => { const r = card.value?.refusal.value; return r ? [t(`gui.inspector.testSpec.${r.key}`), r.message].filter(Boolean).join(' · ') : '' })
 function resultMark(id: string) {

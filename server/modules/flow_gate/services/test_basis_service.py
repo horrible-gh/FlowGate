@@ -173,7 +173,7 @@ def locator(case: dict) -> dict:
     else (malformed, product source, a fixture) is ``unbound``.
     """
     mode = case.get("execution_mode")
-    if mode in ("manual", "external"):
+    if mode in ("ai", "manual", "external"):
         return {"capability": mode}
     raw = str(case.get("automation_ref") or "").strip()
     match = _LOCATOR.fullmatch(raw)

@@ -321,15 +321,11 @@ describe('test section — reading (flowgate.v02.0048 T#11)', () => {
     expect(stateOf(w)).toBe('queued')
   })
 
-  it('a legacy executable TS: the v0.1 note and ↗ 열기 only, no run operation', async () => {
+  it('opens the same authoring surface for an existing TS without the retired legacy notice', async () => {
     const w = await mountTab(target('v01', LEGACY_TS_NODE))
     expect(el(w, 'inspector-test-spec').attributes('data-form')).toBe('legacy')
-    expect(textOf(w, 'test-spec-legacy')).toBe('실행형(이전 형식) 테스트 지시입니다. 실행과 결과는 문서 창에서 봅니다.')
-    expect(el(w, 'test-spec-run').exists()).toBe(false)
-    expect(el(w, 'test-spec-cancel').exists()).toBe(false)
-    expect(el(w, 'test-spec-state').exists()).toBe(false)
-    await click(w, 'test-spec-open')
-    expect(opened()).toEqual([[LEGACY_TS_DOC, 'view']])
+    expect(w.find('[data-test="test-spec-legacy"]').exists()).toBe(false)
+    expect(w.findAll('[data-slot]').length).toBe(3)
   })
 
   it('T2 scenario and T3 report entries are connected; opening them is independent of execution', async () => {

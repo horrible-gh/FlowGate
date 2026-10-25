@@ -27,7 +27,7 @@ export const TEST_CARD_WINDOW_LOADERS = import.meta.glob('./windows/*Window.vue'
 export const testCardWindowAvailable = (kind: TestCardWindowKind) => `./windows/${kind[0].toUpperCase() + kind.slice(1)}Window.vue` in TEST_CARD_WINDOW_LOADERS
 const windowKinds: TestCardWindowKind[] = ['brief', 'scenario', 'case', 'report', 'follow']
 const documentCommands: TestCardCommand[] = ['caseSave', 'caseAdd', 'caseDelete', 'rawSave', 'briefSave']
-const missingCommands: TestCardCommand[] = ['caseAdd', 'briefSave', 'rewriteCase', 'decide']
+const missingCommands: TestCardCommand[] = ['rewriteCase', 'decide']
 
 export function createTestCardSession(target: () => InspectorTarget | null) {
   const writing = ref<TestCardWriting>(null)
@@ -59,7 +59,8 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   const view = computed(() => lastNormal.value)
   const cases = computed(() => view.value?.details?.cases ?? [])
   const rows = computed(() => view.value?.details?.rows ?? [])
-  const formatErrors = computed(() => view.value?.details?.errors ?? [])
+  // An emptied specification (its last case deleted) is shown as the empty scenario, not as a format error.
+  const formatErrors = computed(() => (view.value?.details?.errors ?? []).filter((error) => error.code !== 'no_cases' || !!view.value?.details?.cases.length))
   // Only a successful raw save in an already open scenario may keep its repair surface.
   const rawSavedInScenario = ref(false)
   const rawRepairAllowed = computed(() => rawSavedInScenario.value && windows.scenario.open
@@ -97,8 +98,8 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (instructionOmitted.value) windows.brief.open = false
     if (test.status.value !== 'ready' || writing.value) return
     if (!presentation.value.hasScenario) {
-      if (!rawRepairAllowed.value) windows.scenario.open = false
-      windows.case.open = false
+      // The empty scenario is an authoring surface too.
+      if (windows.case.caseId !== '__new__') windows.case.open = false
     }
     if (!presentation.value.hasReport) windows.report.open = false
     if (!presentation.value.canFollow) windows.follow.open = false
@@ -142,8 +143,9 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
       if (operation === 'resultEntry' && found.executionMode === 'automated' && ['case_selectable', 'suite_only'].includes(view.value?.caseCapabilities[caseId!] ?? '')) return item('guard.server_result')
     }
     if (operation === 'rewriteAll' && test.runState.value.active) return item('reason.run_active')
-    if (['caseSave', 'caseDelete', 'rawSave', 'rewriteAll'].includes(operation) && !presentation.value.hasScenario
+    if (['caseSave', 'caseDelete'].includes(operation) && !presentation.value.hasScenario
       && !(operation === 'rawSave' && rawRepairAllowed.value)) return item('guard.no_case')
+    if (documentCommands.includes(operation) && !view.value?.tsDocId) return item('reason.busy')
     if (missingCommands.includes(operation)) return item('guard.unconnected')
     if (busy.value || test.busy.value) return item('reason.busy')
     return item(null)
@@ -156,7 +158,8 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (writing.value === 'initial' || (kind === 'case' && writing.value)) return 'guard.writing'
     if (kind === 'follow') return presentation.value.canFollow ? null : 'guard.no_result'
     if (kind === 'report') return presentation.value.hasReport ? null : 'guard.no_result'
-    return presentation.value.hasScenario ? null : 'guard.no_case'
+    if (kind === 'scenario') return view.value?.tsDocId ? null : 'reason.busy'
+    return presentation.value.hasScenario || can('caseAdd').enabled ? null : 'guard.no_case'
   }
   function canOpen(kind: TestCardWindowKind): boolean { return openReason(kind, true) === null }
   function openWindow(kind: TestCardWindowKind, caseId: string | null = null): boolean {
@@ -173,11 +176,12 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     const { kind, status, code, message, fieldErrors } = parsed
     if (documentCommands.includes(operation) && kind === 'forbidden') documentDenied.value = true
     const shared = ['running', 'disposed', 'forbidden', 'not_found', 'network', 'not_approved', 'report_approved', 'origin_pending', 'no_automated']
-    const key = kind === 'approved' ? 'guard.approved' : kind === 'forbidden' && documentCommands.includes(operation) ? `failure.${operation}_forbidden` : shared.includes(kind) ? `failure.${kind}` : `failure.${operation}_${['conflict', 'invalid'].includes(kind) ? kind : 'other'}`
+    const failureOperation = operation === 'caseAdd' ? 'caseSave' : operation === 'briefSave' ? 'rawSave' : operation
+    const key = kind === 'approved' ? 'guard.approved' : kind === 'forbidden' && documentCommands.includes(operation) ? `failure.${failureOperation}_forbidden` : shared.includes(kind) ? `failure.${kind}` : `failure.${failureOperation}_${['conflict', 'invalid'].includes(kind) ? kind : 'other'}`
     refusal.value = { operation, key, kind, status, code, message, fieldErrors, error }
   }
   /** T2 also uses this for its direct documentContentSave call, so raw saves share the guard/busy/refusal. */
-  async function changeDocument(operation: 'caseSave' | 'caseDelete' | 'rawSave', call: () => Promise<unknown>): Promise<boolean> {
+  async function changeDocument(operation: 'caseSave' | 'caseDelete' | 'caseAdd' | 'rawSave' | 'briefSave', call: () => Promise<unknown>): Promise<boolean> {
     if (!can(operation).enabled) return false
     busy.value = operation; refusal.value = null
     let ok = false
@@ -188,7 +192,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     finally { if (target()) await reload(); busy.value = null }
     return ok
   }
-  async function saveCases(payload: readonly TestSpecCasePayload[], operation: 'caseSave' | 'caseDelete' = 'caseSave'): Promise<boolean> {
+  async function saveCases(payload: readonly TestSpecCasePayload[], operation: 'caseSave' | 'caseDelete' | 'caseAdd' = 'caseSave'): Promise<boolean> {
     const current = view.value
     if (!current?.tsDocId) return false
     return changeDocument(operation, () => testSpecSave(current.tsDocId!, payload, current.details?.title ?? null))
