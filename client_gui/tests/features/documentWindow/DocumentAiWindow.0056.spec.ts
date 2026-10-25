@@ -284,4 +284,18 @@ describe('the kind name of the AI call window (0088 F15)', () => {
     await flushPromises()
     expect(text(q('document-ai-doc'))).toBe('레포트 · 작업레포트')
   })
+}) // the kind name of the AI call window (0088 F15)
+
+it('notifies the opener before submitting, permits guard refusal and reports start failure', async () => {
+  const submitting = vi.fn(() => false), rejected = vi.fn()
+  openDocumentAiWindow({ docId: DOC, groupId: FLOW, projectId: 'flowgate', name: 'Scenario', title: '', submitting, rejected })
+  await flushPromises()
+  await click(q('document-ai-run'))
+  expect(submitting).toHaveBeenCalledTimes(1)
+  expect(api.postRequest).not.toHaveBeenCalled()
+  submitting.mockReturnValue(true)
+  api.postRequest.mockImplementation(async () => { expect(submitting).toHaveBeenCalledTimes(2); throw { response: { status: 403, data: {} } } })
+  await click(q('document-ai-run'))
+  expect(api.postRequest).toHaveBeenCalledTimes(1)
+  expect(rejected).toHaveBeenCalledTimes(1)
 })

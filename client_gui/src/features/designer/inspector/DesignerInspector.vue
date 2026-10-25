@@ -39,6 +39,9 @@
         <template v-if="headerKind" #kind>
           <component :is="headerKind.headerKind" :key="headerKind.key" :target="target" />
         </template>
+        <template v-if="headerState" #state>
+          <component :is="headerState.headerState" :key="headerState.key" :target="target" />
+        </template>
         <template v-if="headerMemo" #memo>
           <component :is="headerMemo.headerMemo" :key="headerMemo.key" :target="target" />
         </template>
@@ -259,6 +262,7 @@ const headerMetas = computed(() => contributions.value.filter((entry) => entry.h
 const headerActions = computed(() => contributions.value.filter((entry) => entry.headerAction))
 const headerKind = computed(() => contributions.value.find((entry) => entry.headerKind) ?? null)
 const headerMenus = computed(() => contributions.value.filter((entry) => entry.headerMenu))
+const headerState = computed(() => contributions.value.find((entry) => entry.headerState) ?? null)
 const headerMemo = computed(() => contributions.value.find((entry) => entry.headerMemo) ?? null)
 
 const tabs = computed(() => target.value && !props.unselected ? INSPECTOR_TABS : [])

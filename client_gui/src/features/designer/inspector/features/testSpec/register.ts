@@ -7,6 +7,8 @@
 import type { InspectorRegistration } from '../../inspectorRegistry'
 import TestSpecTab from './TestSpecTab.vue'
 import messages from './messages'
+import TestCardHeaderState from './TestCardHeaderState.vue'
+import TestCardMenu from './TestCardMenu.vue'
 
 const registration: InspectorRegistration = {
   key: 'testSpec',
@@ -15,6 +17,8 @@ const registration: InspectorRegistration = {
   docTypes: ['TS', 'TSR'],
   requiresDocument: false,
   tab: { key: 'documents', component: TestSpecTab },
+  headerState: TestCardHeaderState,
+  headerMenu: TestCardMenu,
   messages,
 }
 

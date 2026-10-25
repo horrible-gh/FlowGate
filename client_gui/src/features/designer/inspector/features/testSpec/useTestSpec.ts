@@ -13,6 +13,9 @@ import {
   reviewDocumentRead,
   testSpecErrorOf,
   testSpecRead,
+  testSpecCaseRun,
+  testSpecResultEnter,
+  type TestSpecResultEntry,
   testSpecRunCancel,
   testSpecRunStart,
   type TestSpecView,
@@ -36,6 +39,7 @@ import {
   testSpecHistory,
   testSpecLiveRun,
   testSpecRunState,
+  testSpecRunDisabledReason,
   testSpecTally,
   testSpecTargetDocId,
   type TestSpecAvailability,
@@ -82,13 +86,15 @@ function scopeOf(target: InspectorTarget | null): InspectorEventScope | null {
   return target ? { projectId: target.projectId, flowId: target.flowId, docId: testSpecTargetDocId(target) } : null
 }
 
-interface TestSpecGuard {
+export interface TestSpecGuard {
   readonly aiRunning: boolean
   readonly groupDisposed: boolean
+  readonly writingDocument: string | null
+  readonly editable: boolean | null
 }
 
 export interface TestSpecFailure {
-  readonly operation: 'run' | 'cancel'
+  readonly operation: 'run' | 'cancel' | 'rerunCase' | 'resultEntry'
   readonly key: string
 }
 
@@ -101,15 +107,20 @@ export interface TestSpecState {
   readonly counts: ComputedRef<TestSpecCountsFacts | null>
   readonly history: ComputedRef<readonly TestSpecHistoryRow[]>
   readonly availability: ComputedRef<TestSpecAvailability>
+  readonly runDisabledReason: ComputedRef<string | null>
+  readonly caseDisabledReason: ComputedRef<string | null>
   readonly status: Readonly<Ref<InspectorResourceStatus>>
   readonly stale: Readonly<Ref<boolean>>
   /** Message key of the failed read, or null. */
   readonly errorKey: ComputedRef<string | null>
   /** The start / cancel waiting for the server or for the read after it, or null. */
-  readonly busy: Readonly<Ref<'run' | 'cancel' | null>>
+  readonly busy: Readonly<Ref<'run' | 'cancel' | 'rerunCase' | 'resultEntry' | null>>
   /** The last refused start / cancel on this document, or null. */
   readonly failure: Readonly<Ref<TestSpecFailure | null>>
   /** Starts a run of every automated Case of the TS; nothing is sent when starting is disabled. */
+  readonly guard: ComputedRef<TestSpecGuard | null>
+  rerunCase(caseId: string): Promise<boolean>
+  enterResult(result: TestSpecResultEntry): Promise<boolean>
   run(): Promise<boolean>
   /** Cancels the live run; nothing is sent when cancelling is disabled. */
   cancel(): Promise<boolean>
@@ -118,7 +129,7 @@ export interface TestSpecState {
   reload(): Promise<void>
 }
 
-export function useTestSpec(target: () => InspectorTarget | null): TestSpecState {
+export function useTestSpec(target: () => InspectorTarget | null, writing: () => boolean = () => false): TestSpecState {
   const scope = () => scopeOf(target())
   const docId = () => scope()?.docId ?? null
   // The matcher reads the view this resource holds, so a TSR also hears its TS's run frames.
@@ -126,7 +137,13 @@ export function useTestSpec(target: () => InspectorTarget | null): TestSpecState
   const resourceView = () => resource?.data.value ?? null
   resource = useInspectorResource<TestSpecView>({
     target: scope,
-    read: testSpecRead,
+    read: async (id) => {
+      const view = await testSpecRead(id)
+      if (view.kind !== 'TSR' || !view.tsDocId) return view
+      const ts = await testSpecRead(view.tsDocId)
+      return { ...view, cases: ts.cases, caseCapabilities: ts.caseCapabilities,
+        details: ts.details ? { ...ts.details, rows: view.details?.rows ?? [], storedRows: view.details?.storedRows ?? [] } : view.details }
+    },
     events: TEST_SPEC_EVENTS,
     matches: testSpecEventMatches(resourceView),
   })
@@ -137,13 +154,16 @@ export function useTestSpec(target: () => InspectorTarget | null): TestSpecState
       const flowId = target()?.flowId
       if (!flowId) throw new Error('no target Flow')
       const [activity, document] = await Promise.all([reviewActivityRead(flowId), reviewDocumentRead(id)])
-      return { aiRunning: activity.active, groupDisposed: document.groupDisposed }
+      const currentView = resourceView()
+      const tsId = currentView?.docId === id ? currentView.tsDocId : null
+      const specification = tsId && tsId !== id ? await reviewDocumentRead(tsId) : document
+      return { aiRunning: activity.active, groupDisposed: document.groupDisposed, writingDocument: activity.active && ['new', 'edit', 'rework'].includes(activity.actionScope ?? '') ? activity.docRef : null, editable: specification.record.isEditable ?? null }
     },
     events: TEST_SPEC_GUARD_EVENTS,
     matches: testSpecGuardMatches,
   })
 
-  const busy = ref<'run' | 'cancel' | null>(null)
+  const busy = ref<'run' | 'cancel' | 'rerunCase' | 'resultEntry' | null>(null)
   const failure = ref<TestSpecFailure | null>(null)
   const denied = ref(false)
 
@@ -159,22 +179,26 @@ export function useTestSpec(target: () => InspectorTarget | null): TestSpecState
     return data && current && data.docId === current ? data : null
   })
 
-  const availability = computed(() =>
-    testSpecAvailability({
+  // A TSR document node keeps reading its own view, while TS edits use the TS permission facts.
+  watch(() => view.value?.tsDocId ?? null, (id) => { if (id && id !== docId()) void guard.reload() })
+
+  const availabilityInput = () => ({
       readOnly: target()?.readOnly ?? null,
       // An unanswered guard read does not block: the server refuses on the same facts.
       groupDisposed: guard.data.value?.groupDisposed === true,
       aiRunning: guard.data.value?.aiRunning === true,
+      writing: writing(),
       view: view.value,
       denied: denied.value,
       busy: busy.value !== null,
-    }),
-  )
+    })
+  const availability = computed(() => testSpecAvailability(availabilityInput()))
+  const runDisabledReason = computed(() => testSpecRunDisabledReason(availabilityInput()))
 
   const errorKey = computed(() => (read.status.value === 'error' ? testSpecErrorKey(testSpecErrorOf(read.error.value).kind) : null))
 
   /** Runs one call; success or refusal, the view and the guard are read again before it ends. */
-  async function change(operation: 'run' | 'cancel', call: () => Promise<unknown>): Promise<boolean> {
+  async function change(operation: 'run' | 'cancel' | 'rerunCase' | 'resultEntry', call: () => Promise<unknown>): Promise<boolean> {
     const id = docId()
     if (id === null) return false
     busy.value = operation
@@ -187,7 +211,7 @@ export function useTestSpec(target: () => InspectorTarget | null): TestSpecState
       } catch (error) {
         if (docId() === id) {
           const kind = testSpecErrorOf(error).kind
-          failure.value = { operation, key: testSpecFailureKey(operation, kind) }
+          failure.value = { operation, key: testSpecFailureKey(operation === 'cancel' ? 'cancel' : 'run', kind) }
           if (testSpecDeniedBy(kind)) denied.value = true
         }
       }
@@ -211,14 +235,37 @@ export function useTestSpec(target: () => InspectorTarget | null): TestSpecState
     return change('cancel', () => testSpecRunCancel(runId))
   }
 
+  function testSpecRunDisabledReasonForCase(): string | null {
+    const input = { readOnly: target()?.readOnly ?? null, groupDisposed: guard.data.value?.groupDisposed === true,
+      aiRunning: guard.data.value?.aiRunning === true, writing: writing(), denied: denied.value, busy: busy.value !== null,
+      view: view.value ? { ...view.value, kind: 'TSR' } : null }
+    return testSpecRunDisabledReason(input)
+  }
+
   return {
     view,
+    guard: computed(() => guard.data.value),
+    rerunCase: async (caseId) => {
+      const viewNow = view.value
+      if (!viewNow?.tsDocId || testSpecRunDisabledReasonForCase()) return false
+      if (viewNow.caseCapabilities[caseId] !== 'case_selectable' || !viewNow.cases.some((c) => c.caseId === caseId && c.executionMode === 'automated')) return false
+      return change('rerunCase', () => testSpecCaseRun(viewNow.tsDocId!, caseId))
+    },
+    enterResult: async (result) => {
+      const viewNow = view.value
+      if (!viewNow?.tsDocId || testSpecRunDisabledReasonForCase()) return false
+      const item = viewNow.cases.find((c) => c.caseId === result.case_id)
+      if (!item || (item.executionMode === 'automated' && ['case_selectable', 'suite_only'].includes(viewNow.caseCapabilities[item.caseId]))) return false
+      return change('resultEntry', () => testSpecResultEnter(viewNow.tsDocId!, result))
+    },
     form: computed(() => testSpecForm(view.value)),
     tally: computed(() => testSpecTally(view.value)),
     runState: computed(() => testSpecRunState(view.value)),
     counts: computed(() => testSpecCounts(view.value)),
     history: computed(() => testSpecHistory(view.value)),
     availability,
+    runDisabledReason,
+    caseDisabledReason: computed(testSpecRunDisabledReasonForCase),
     status: read.status,
     stale: read.stale,
     errorKey,

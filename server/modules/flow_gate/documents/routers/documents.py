@@ -2879,6 +2879,39 @@ def update_document_content_rpc(
     )
 
 
+class TestBriefSaveBody(BaseModel):
+    text: str = Field(max_length=20000)
+    expected_content: str
+
+
+@router.get("/{doc_id}/test-brief")
+@require_permission("perm_document_read")
+def get_test_brief(doc_id: str, current_user: dict = Depends(get_current_user)) -> dict:
+    from modules.flow_gate.services import test_run_service, test_spec_service
+    doc = document_service.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if str(doc.get("type_code") or "").upper() != "TS":
+        raise HTTPException(status_code=422, detail={"error": "not_ts"})
+    content = test_run_service._read_doc_content_or_empty(doc)
+    return {"text": test_spec_service.brief_parts(content)[1], "content": content}
+
+
+@router.put("/{doc_id}/test-brief")
+@require_permission("perm_document_update")
+def save_test_brief(doc_id: str, body: TestBriefSaveBody,
+                    current_user: dict = Depends(get_current_user), request: Request = None) -> dict:
+    from modules.flow_gate.services import test_spec_service
+    current = get_test_brief(doc_id, current_user)
+    if current["content"] != body.expected_content:
+        raise HTTPException(status_code=409, detail={"error": "content_conflict"})
+    content = test_spec_service.replace_brief(current["content"], body.text)
+    saved = update_document_content(doc_id, DocumentContentUpdate(content=content), current_user, request)
+    if isinstance(saved, JSONResponse):
+        return saved
+    return {**saved, "text": test_spec_service.brief_parts(content)[1], "content": content}
+
+
 class TestSpecSaveBody(BaseModel):
     """Structured TS editor payload (0549 T0008). ``cases`` items use the canonical keys of
     test_spec_service.SPEC_FIELDS plus case_id/title."""
@@ -2962,13 +2995,20 @@ def save_test_spec(
         })
     _fields, block, _body = _test_spec_service.split_frontmatter(current)
     locale = body.locale if body.locale in ("ko", "en", "ja") else "ko"
-    content = _test_spec_service.render_spec_document(
-        cases,
-        title=(body.title or doc.get("title") or doc_id).strip(),
-        frontmatter_block=block,
-        locale=locale,
-        intro=body.intro if body.intro is not None else _test_spec_service.spec_intro(current),
+    if body.locale is None:
+        # Structured callers need not know the document's language. Match the same
+        # first recognized H2 that the specification parser reads.
+        headings = dict(zip(_test_spec_service.SPEC_SECTION_NAMES, ("ko", "en", "ja")))
+        for line in _body.splitlines():
+            heading = line.strip()
+            if heading.startswith("## ") and heading[3:] in headings:
+                locale = headings[heading[3:]]
+                break
+    content = _test_spec_service.replace_spec_cases(
+        current, cases, title=(body.title or doc.get("title") or doc_id).strip(), locale=locale,
     )
+    if body.intro is not None:
+        content = _test_spec_service.replace_brief(content, body.intro)
     saved = update_document_content(
         doc_id, DocumentContentUpdate(content=content), current_user, request
     )

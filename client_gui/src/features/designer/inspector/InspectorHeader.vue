@@ -132,6 +132,7 @@
           data-test="designer-inspector-memo"
         >✎ <span class="inspector-header-memo-label">{{ t('gui.designer.inspector.header.memo') }}</span></button>
       </slot>
+      <slot name="state">
       <span
         v-if="pill"
         class="inspector-header-pill"
@@ -162,6 +163,7 @@
         >{{ runStatusText ?? '' }}</span>
         <span v-if="state" hidden data-test="designer-inspector-state" :data-value="state.key">{{ stateText }}</span>
       </span>
+      </slot>
       <div v-if="$slots.actions" class="inspector-header-actions" data-test="designer-inspector-actions">
         <slot name="actions" />
       </div>

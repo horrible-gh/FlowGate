@@ -37,7 +37,9 @@ SPEC_SECTION_NAMES = ("시험 사양", "Test Specification", "試験仕様")
 _SPEC_SECTION_BY_LOCALE = {"ko": "시험 사양", "en": "Test Specification", "ja": "試験仕様"}
 
 CATEGORIES = ("normal", "negative", "boundary", "regression")
-EXECUTION_MODES = ("automated", "manual", "external")
+# automated = the server runs its code; ai = an AI worker checks it and records the result;
+# manual = a person checks it; external = recorded from outside. Only automated is server-run.
+EXECUTION_MODES = ("automated", "ai", "manual", "external")
 STATUSES = ("PASS", "FAIL", "BLOCKED", "NOT_RUN")
 EVIDENCE_KINDS = (
     "text", "log", "structured", "file", "attachment", "screenshot", "url", "manual_note",
@@ -55,9 +57,10 @@ SPEC_FIELDS = (
     "category", "requirement", "execution_mode", "required", "precondition", "input",
     "procedure", "expected", "check_points", "automation_ref", "test_assets",
 )
+# ``required`` is not listed: an absent flag means required (stop the next step on failure),
+# the same default the structured editor gives a new case and the client reads.
 REQUIRED_SPEC_FIELDS = (
-    "category", "requirement", "execution_mode", "required", "procedure", "expected",
-    "check_points",
+    "category", "requirement", "execution_mode", "procedure", "expected", "check_points",
 )
 _FIELD_ALIASES = {
     "category": "category", "kind": "category", "분류": "category", "分類": "category",
@@ -361,7 +364,7 @@ def _build_case(case_id: str, title: str, values: dict, errors: list[dict]) -> d
         "category": category or None,
         "requirement": values.get("requirement") or "",
         "execution_mode": mode or None,
-        "required": bool(required),
+        "required": True if required is None else required,
         "precondition": values.get("precondition") or "",
         "input": values.get("input") or "",
         "procedure": values.get("procedure") or "",
@@ -380,6 +383,10 @@ def validate_cases_payload(cases: Any) -> tuple[list[dict], list[dict]]:
     """
     if not isinstance(cases, list):
         return [], [_err("invalid_payload", "cases must be a list.")]
+    if not cases:
+        # Deleting the last case leaves an empty specification to author again; approval
+        # and result intake still refuse it through parse_spec's ``no_cases``.
+        return [], []
     body = render_spec_body(cases, title="validation")
     parsed = parse_spec(f"---\n{CONTRACT_KEY}: {CONTRACT_SPEC}\n---\n{body}")
     return parsed["cases"], parsed["errors"]
@@ -413,7 +420,7 @@ def render_spec_body(cases: Iterable[dict], *, title: str, locale: str = "ko",
             value = case.get(field)
             if field == "required":
                 parsed = parse_bool(value)
-                value = "" if parsed is None and value in (None, "") else (
+                value = "true" if parsed is None and value in (None, "") else (
                     "true" if parsed else ("false" if parsed is False else str(value))
                 )
             if field in ("automation_ref", "test_assets") and not str(value or "").strip():
@@ -424,9 +431,63 @@ def render_spec_body(cases: Iterable[dict], *, title: str, locale: str = "ko",
 
 
 def render_spec_document(cases: Iterable[dict], *, title: str, frontmatter_block: str = "",
-                         locale: str = "ko", intro: str = "") -> str:
+                         locale: str = "ko", intro: str = "", trailing_body: str = "") -> str:
     block = ensure_spec_frontmatter(frontmatter_block)
-    return f"{block}\n{render_spec_body(cases, title=title, locale=locale, intro=intro)}"
+    content = f"{block}\n{render_spec_body(cases, title=title, locale=locale, intro=intro)}"
+    suffix = trailing_body.strip("\n")
+    return content if not suffix.strip() else f"{content.rstrip()}\n\n{suffix}\n"
+
+
+def replace_spec_cases(content: str, cases: Iterable[dict], *, title: str, locale: str = "ko") -> str:
+    """Replace only the specification section; prose outside it is never re-rendered."""
+    _fields, block, body = split_frontmatter(content)
+    lines = body.splitlines(keepends=True)
+    headings = {f"## {name}" for name in SPEC_SECTION_NAMES}
+    start = next((i for i, line in enumerate(lines) if line.strip() in headings), None)
+    section = render_spec_body(cases, title=title, locale=locale).split("\n", 2)[2]
+    if start is None:
+        prefix = body if any(line.startswith("# ") for line in lines) else f"# {title}\n\n" + body
+        if prefix and not prefix.endswith("\n"):
+            prefix += "\n"
+        body = prefix + "\n" + section
+    else:
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+        body = "".join(lines[:start]) + section + "".join(lines[end:])
+    return ensure_spec_frontmatter(block) + "\n" + body
+
+
+def brief_parts(content: str) -> tuple[str, str, str]:
+    """Keep frontmatter/title and every H2 section apart from editable introductory prose."""
+    _fields, block, body = split_frontmatter(content)
+    lines = body.splitlines(keepends=True)
+    first_section = next((i for i, line in enumerate(lines) if line.startswith("## ")), len(lines))
+    title = next((i for i in range(first_section) if lines[i].startswith("# ")), None)
+    start = title + 1 if title is not None else 0
+    end = next((i for i in range(start, len(lines)) if lines[i].startswith("## ")), len(lines))
+    prefix = (block + "\n" if block else "") + "".join(lines[:start])
+    return prefix, "".join(lines[start:end]).strip(), "".join(lines[end:])
+
+
+def replace_brief(content: str, text: str) -> str:
+    prefix, _old, suffix = brief_parts(content)
+    return prefix + "\n" + text.strip() + "\n\n" + suffix
+
+
+def spec_trailing_body(content: str) -> str:
+    """Preserve everything after the spec's next H2, using the parser's boundary.
+
+    No spec section means the whole body remains intro; never duplicate it here.
+    The suffix comes from the current server document, not an editor's old copy.
+    """
+    _fields, _block, body = split_frontmatter(content)
+    lines = body.split("\n")
+    headings = {f"## {name}" for name in SPEC_SECTION_NAMES}
+    start = next((i + 1 for i, line in enumerate(lines) if line.strip() in headings), None)
+    if start is None:
+        return ""
+    end = next((i for i in range(start, len(lines))
+                if lines[i].startswith("## ") and not lines[i].startswith("### ")), None)
+    return "" if end is None else "\n".join(lines[end:]).strip("\n")
 
 
 def spec_intro(content: str) -> str:
@@ -435,7 +496,7 @@ def spec_intro(content: str) -> str:
     lines = body.split("\n")
     headings = {f"## {name}" for name in SPEC_SECTION_NAMES}
     out: list[str] = []
-    started = False
+    started = not any(line.startswith("# ") for line in lines)
     for line in lines:
         if not started:
             if line.startswith("# "):

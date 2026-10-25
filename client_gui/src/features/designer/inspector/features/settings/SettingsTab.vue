@@ -46,7 +46,11 @@
       </InspectorBlock>
       <InspectorBlock v-else :locked="locked" class="inspector-settings-line" data-test="settings-instruction">
         <InspectorControlRow :label="t(k('instruction.label'))" :hint="t(k('instruction.hint'))">
-          <InspectorSegment
+          <template v-if="kind === 'test'">
+            <Toggle :model-value="segment('instruction').value === 'use'" :disabled="segment('instruction').disabled" :aria-label="t(k('instruction.label'))" data-test="settings-instruction-switch" @update:model-value="(value: boolean) => onChange('instruction', value ? 'use' : 'omit')" />
+            <span>{{ t(k(segment('instruction').value === 'use' ? 'instruction.on' : 'instruction.off')) }}</span>
+          </template>
+          <InspectorSegment v-else
             :model-value="segment('instruction').value"
             :options="segmentOptions('instruction', ['use', 'omit'])"
             :disabled="segment('instruction').disabled"
@@ -85,6 +89,12 @@
         @update:advanced-open="advancedOpen = $event"
         @update:field="onChange"
       />
+      <InspectorBlock v-if="kind === 'test'" :title="t(k('result_check'))" data-test="settings-result-check">
+        <InspectorControlRow v-for="field in resultFields" :key="field" :label="t(k(`${field}.label`))" :hint="views[field].reason ? t(k(views[field].reason!)) : undefined">
+          <Select :model-value="views[field].value" :options="views[field].options.map((option) => ({ value: option.value, label: labelOf(option) }))" :disabled="views[field].disabled" :aria-label="t(k(`${field}.label`))" :data-test="`settings-${field}`" @update:model-value="(value: string) => onChange(field, value)" />
+          <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" :data-field="field" />
+        </InspectorControlRow>
+      </InspectorBlock>
     </template>
   </div>
 </template>
@@ -92,6 +102,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useTestCard } from '../testSpec/useTestCard'
 import Select from '../../../../../components/ui/Select.vue'
 import Toggle from '../../../../../components/ui/Toggle.vue'
 import InspectorBlock from '../../parts/InspectorBlock.vue'
@@ -138,7 +149,21 @@ const kind = computed<'run' | 'test' | 'plan'>(() => {
   return settingsKind === 'test' || settingsKind === 'plan' ? settingsKind : 'run'
 })
 
-const card = useCardSettings(() => (source.value === 'card' ? props.target : null))
+const testCard = useTestCard(() => kind.value === 'test' ? props.target : null)
+const ownCard = useCardSettings(() => (source.value === 'card' && kind.value !== 'test' ? props.target : null))
+const card = {
+  node: computed(() => kind.value === 'test' ? testCard.value?.settings.node.value ?? null : ownCard.node.value),
+  choices: computed(() => kind.value === 'test' ? testCard.value?.settings.choices.value ?? null : ownCard.choices.value),
+  pending: computed(() => kind.value === 'test' ? testCard.value?.settings.pending.value ?? {} : ownCard.pending.value),
+  status: computed(() => kind.value === 'test' ? testCard.value?.settings.status.value ?? 'idle' : ownCard.status.value),
+  errorKind: computed(() => kind.value === 'test' ? testCard.value?.settings.errorKind.value ?? null : ownCard.errorKind.value),
+  failure: computed(() => kind.value === 'test' ? testCard.value?.settings.failure.value ?? null : ownCard.failure.value),
+  blocked: computed(() => kind.value === 'test' ? testCard.value?.settings.blocked.value ?? null : ownCard.blocked.value),
+  placing: computed(() => kind.value === 'test' ? testCard.value?.settings.placing.value ?? false : ownCard.placing.value),
+  change: (field: CardSettingsField, value: unknown) => kind.value === 'test' ? testCard.value?.changeSetting(field, value) : ownCard.change(field, value),
+  reload: () => kind.value === 'test' ? testCard.value?.reload() : ownCard.reload(),
+}
+const resultFields = ['result_cause', 'follow_scope'] as const
 const sequence = useSettings(() => (source.value === 'sequence' ? props.target : null))
 
 /** The 0048 sequence fields behind the v7 items; the other items have no place on a sequence row. */
@@ -175,15 +200,20 @@ const lockText = computed(() =>
 )
 
 /** Why nothing on a Graph card can change now (message key), or null. */
-const cardReason = computed(() =>
-  cardSettingsDisabledReason({
+const cardReason = computed(() => {
+  if (kind.value === 'test' && testCard.value) {
+    const reason = testCard.value.can('settingChange').reason
+    if (reason === 'guard.writing') return 'reason.writing'
+    if (reason === 'reason.forbidden') return 'reason.forbidden'
+  }
+  return cardSettingsDisabledReason({
     readOnly: props.target.readOnly,
     placing: card.placing.value,
     read: card.node.value !== null,
     locked: card.node.value?.locked === true || !!props.target.editLock,
     blocked: card.blocked.value,
-  }),
-)
+  })
+})
 
 const labelOf = (option: SettingsOption) => option.label ?? t(k(option.key ?? ''), option.params)
 
@@ -202,6 +232,7 @@ function cardField(field: CardSettingsField): FieldView {
   if (cardSettingsIsAiField(field)) options = cardSettingsAiOptions(field, card.choices.value?.providers ?? [], value)
   else options = cardSettingsChoiceOptions(field, node?.fields[field]?.choices, value)
   let reason = cardReason.value
+  if (!reason && field in card.pending.value) reason = 'reason.busy'
   if (reason === null && field === 'review_ai' && cardSettingsReviewOff(cardSettingsValue(node, card.pending.value, 'review_count'))) reason = 'reason.review_off'
   return { value: cardSettingsText(value), options, disabled: reason !== null, reason }
 }
@@ -219,7 +250,7 @@ function sequenceField(field: CardSettingsField): FieldView {
 
 const views = computed(() => {
   const out = {} as Record<CardSettingsField, FieldView>
-  const fields = kind.value === 'plan' ? CARD_SETTINGS_FIELDS.plan : CARD_SETTINGS_FIELDS.run
+  const fields = kind.value === 'plan' ? CARD_SETTINGS_FIELDS.plan : new Set([...CARD_SETTINGS_FIELDS.run, ...CARD_SETTINGS_FIELDS.test])
   for (const field of fields) out[field] = source.value === 'card' ? cardField(field) : sequenceField(field)
   return out
 })

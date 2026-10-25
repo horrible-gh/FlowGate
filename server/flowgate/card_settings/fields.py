@@ -139,7 +139,11 @@ _FIELDS = {
         Field("instruction_note", "stage_text", ""), Field("run_note", "stage_text", ""),
         Field("run_pre_instruction", "stage_text", ""),
     ),
-    TEST: (_INSTRUCTION, _RUN_AI, _REVIEW_AI, _REVIEW_COUNT),
+    TEST: (
+        _INSTRUCTION, _RUN_AI, _REVIEW_AI, _REVIEW_COUNT,
+        Field("result_cause", CHOICE, "ai", ("ai", "human")),
+        Field("follow_scope", CHOICE, "summary", ("summary", "full")),
+    ),
     REQUIREMENT: (
         Field("delegation", CHOICE, "off", ("off", "on")),
         Field("scope", CHOICE, "end", ("end", "confirm")),
@@ -410,7 +414,7 @@ def run_plan(kind: Optional[str], stored: dict, node_type: Optional[str] = None,
     """
     if kind not in (RUN, TEST, PLAN):
         return {}
-    plan: dict = {"settings": {f.name: stored[f.name] for f in fields_of(kind) if f.name in stored}}
+    plan: dict = {"settings": {f.name: stored[f.name] for f in fields_of(kind) if f.name in stored and f.name not in ("result_cause", "follow_scope")}}
     written = result_doc_type(node_type, doc_type, stored)
     if written:
         plan["result_doc_type"] = written

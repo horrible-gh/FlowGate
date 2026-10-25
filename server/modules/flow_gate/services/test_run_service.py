@@ -524,7 +524,9 @@ def _http_error(status_code: int, code: str, **payload) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"error": code, **payload})
 
 
-RESULT_ENTRY_MODES = frozenset({"manual", "external"})
+# The modes whose results are entered rather than produced by a server run: an AI worker's
+# check (ai), a person's (manual) and an outside record (external).
+RESULT_ENTRY_MODES = frozenset({"ai", "manual", "external"})
 
 
 def _automated_case_keys(cases: list[dict]) -> set[str]:
@@ -533,7 +535,7 @@ def _automated_case_keys(cases: list[dict]) -> set[str]:
 
 
 def result_entry_case_ids(cases: list[dict]) -> list[str]:
-    """0684 T#3 (D#1 §3-8, CH S6): the Cases whose results are entered -- manual/external only.
+    """0684 T#3 (D#1 §3-8, CH S6): the Cases whose results are entered -- ai/manual/external only.
 
     Every automated Case gets its official result from a server run only. One no server
     runner exists for yet (runner_unsupported, unbound) is not entered either: it stays
@@ -603,7 +605,7 @@ def _reject_non_legacy_contract(doc_id: str, content: str) -> None:
             contract_version=contract,
             detail=(
                 "This TS is a test specification (test_contract_version: 2). Use the "
-                "test-spec Case/full execution endpoints, or submit manual/external results "
+                "test-spec Case/full execution endpoints, or submit ai/manual/external results "
                 "through POST /documents/test-results. The legacy executable endpoint "
                 "accepts contract 1 only."
             ),
@@ -901,12 +903,14 @@ def _build_spec_result_mention(
     continuous: bool = False,
     locale: Optional[str] = None,
 ) -> str:
-    """Hand-off for a specification TS: manual/external result entry only (0684 T#3).
+    """Hand-off for a specification TS: ai/manual/external result entry only (0684 T#3).
 
     0549 T0008 had the worker run the automated Cases in its own environment and submit
     them. Since 0632/0684 the server runs them (D#1 §3-8): their official result comes from
     a server run only and the inbox refuses them. This token therefore carries only the
-    Cases whose results are entered -- manual and external ones. An automated Case no server
+    Cases whose results are entered -- ai, manual and external ones. An ``ai`` Case (AI 확인)
+    is the worker's own check: it verifies the Case and records the verdict with its evidence,
+    which is how an AI-checked Case gets its result. An automated Case no server
     runner exists for is not entered either; it stays NOT_RUN. POSTing without results hands
     the step to the server run instead.
     """
@@ -945,11 +949,14 @@ def _build_spec_result_mention(
         "type: TS (test specification, test_contract_version: 2)\n"
         f"title: {doc.get('title') or ''}\n\n"
         f"{continuous_block}"
-        "## Manual/external result entry\n"
+        "## AI/manual/external result entry\n"
         "---\n"
         "Read the approved TS. Verify ONLY the Cases listed under \"Cases you record\" and "
         "submit one result per Case ID. The EXPECTED result comes from the requirement, never "
         "from the current implementation.\n"
+        "- `ai` Cases (AI check) are verified by you: follow the procedure against the actual "
+        "behaviour or source, compare it with the expected result and check points, and attach "
+        "the evidence you observed (log, structured output, file, url, screenshot).\n"
         "- Submit PASS/FAIL only for what you actually verified; otherwise BLOCKED (with the "
         "reason) or NOT_RUN.\n"
         "- Never report PASS for a case you did not verify, and never weaken an expected "
@@ -1273,7 +1280,7 @@ def record_spec_results(
             raise _http_error(
                 422, "automated_results_server_only", doc_id=doc_id,
                 detail=("Results for automated Cases are produced by the server run only. "
-                        "Start a run of the TS instead; submit results for manual/external "
+                        "Start a run of the TS instead; submit results for ai/manual/external "
                         "Cases only."),
                 refused_results=refused,
                 entry_case_ids=result_entry_case_ids(parsed["cases"]),
@@ -1916,7 +1923,8 @@ def describe_test_document(doc: dict) -> dict:
         content = _read_doc_content_or_empty(doc)
         contract = test_spec_service.detect_contract_version(content)
         out: dict = {"kind": "TS", "doc_id": doc["doc_id"], "contract_version": contract,
-                     "doc_title": doc.get("title") or ""}
+                     "doc_title": doc.get("title") or "",
+                     "intro": test_spec_service.brief_parts(content)[1]}
         if contract == test_spec_service.CONTRACT_SPEC:
             parsed = test_spec_service.parse_spec(content)
             latest = db_test_runs.latest_spec_run(doc["doc_id"])

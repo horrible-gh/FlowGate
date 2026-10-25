@@ -1586,6 +1586,7 @@ export default {
       },
       mode: {
         automated: '自動実行',
+        ai: 'AIが確認',
         manual: '人が確認',
         external: '外部で確認',
       },

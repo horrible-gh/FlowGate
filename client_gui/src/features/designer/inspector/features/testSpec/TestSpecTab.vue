@@ -1,286 +1,124 @@
 <template>
-  <!-- flowgate.v02.0048 T#11 — the test section of the documents tab (D#1 §10.2 T#11 row): the run state of
-       the selected TS / TSR with its progress, the Case tally, the result summary (and a TSR's test gate),
-       the recent runs, ▶ 실행 / ■ 취소 with the reason when disabled and the refusal the server answered,
-       and ↗ 열기 for everything in detail. A thin container: useTestSpec reads and calls, testSpecModel
-       decides the form, the state and availability.
-       flowgate.v02.0051 stage 2 — the v7 테스트 card (0035 test.*) on top: the three slot lines, built from the
-       common slot list part out of the same test view; the 0048 tally, buttons, reasons and history stay
-       below as reused content.
-       flowgate.v02.0053 T#5 (0053 CH) — 지시서 · 시나리오 · 레포트: the card's documents (made when it was placed),
-       so a test card without a bound document shows and opens them too; the 지시서 line is hidden when the
-       card's settings omit the instruction (useTestCard). The details (and their reads) need a document. -->
-  <section class="inspector-test-spec" data-test="inspector-test-spec" :data-status="status" :data-form="form">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="openLine" @edit="editLine" @history="historyLine" @action="actionLine">
-      <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
-      <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" /></template>
-    </InspectorSlotList>
-
-    <details v-if="target.docId" :key="target.docId" class="inspector-test-spec-details" data-test="test-spec-details">
-      <summary>{{ t('gui.designer.inspector.pane.details') }}</summary>
-    <div class="inspector-test-spec-line">
-      <h4 class="inspector-test-spec-heading">{{ t(k('title')) }}</h4>
-      <span
-        v-if="view && form === 'spec'"
-        class="inspector-test-spec-state"
-        data-test="test-spec-state"
-        :data-state="runState.key"
-        :data-tone="runState.tone"
-      >{{ t(k(`state.${runState.key}`)) }}<template v-if="runState.active && runState.total"> · {{ t(k('progress'), { done: runState.done, total: runState.total }) }}</template></span>
-      <span v-if="runState.overall" class="inspector-test-spec-verdict" data-test="test-spec-verdict">{{ t(k(verdictKey)) }}</span>
+  <section class="inspector-test-spec" data-test="inspector-test-spec" :data-status="card?.test.status.value" :data-form="form">
+    <InspectorPaneState v-if="card?.test.status.value === 'loading' && !view" state="loading" />
+    <InspectorPaneState v-if="card?.test.errorKey.value" state="error" :message="t(k(card.test.errorKey.value))" retryable @retry="card?.reload()" />
+    <div class="test-card-lines" data-test="inspector-slot-list">
+      <InspectorSlotRow v-for="line in lines" :key="line.key" :name="t(k(`slot.${line.key}`))" :id="line.id" :class="{ 'is-empty': line.blank }" :focus="line.key === 'report' && (stage.stage === 5 || card?.reportRecentlyConfirmed.value)" :data-slot="line.key" :data-doc="line.id" :openable="canOpen(line.kind)" @open="openWindow(line.kind)">
+        <template #summary>
+          <InspectorStatusChip :label="line.label" :tone="line.tone" :data-test="line.key === 'report' ? 'test-spec-state' : `test-card-${line.key}-state`" :data-state="line.key === 'report' ? runState.key : undefined" />
+          <span class="test-card-summary" :data-test="`test-card-${line.key}-summary`" :title="line.summary">{{ line.summary }}</span>
+          <span v-if="line.key === 'report' && stage.resultState.key === 'unchecked'" class="test-card-summary">{{ t(k('stage.unchecked')) }}</span>
+          <span v-if="line.key === 'report' && view?.gate?.applies && !view.gate.passed" class="test-card-danger" data-test="test-spec-gate">{{ t(k('card.gate_blocked')) }}</span>
+        </template>
+        <template v-if="line.id" #io><DocumentIoGroup :doc-id="line.id" :project-id="target.projectId" :group-id="target.flowId" /></template>
+        <template v-if="line.key === 'instruction'">
+          <Button size="sm" variant="secondary" :disabled="!canOpen('brief')" :title="openReason('brief')" data-test="test-card-brief" @click="openWindow('brief')">{{ t(k(line.blank ? 'card.write' : 'card.edit')) }}</Button>
+        </template>
+        <template v-if="line.key === 'scenario'">
+          <Dropdown v-if="stage.hasScenario">
+            <template #trigger="{ toggle, triggerAttrs }"><Button size="sm" variant="secondary" v-bind="triggerAttrs" data-test="test-card-review-history" @click="toggle">{{ t(k('card.reviews'), { count: reviewCount }) }} ▾</Button></template>
+            <div class="test-card-history">
+              <p v-if="!reviewCount">{{ t(k('history.empty')) }}</p>
+              <p v-for="review in card?.reviewHistory.data.value?.reviews ?? []" :key="review.id">{{ review.verdict }} · {{ review.reviewerName }} · {{ review.at }} · {{ review.comment }}</p>
+              <p v-for="rejection in card?.reviewHistory.data.value?.rejections ?? []" :key="rejection.id">{{ t(k('card.rejected')) }} · {{ rejection.rejectionProviderName ?? rejection.rejectedBy }} · {{ rejection.rejectedAt }} · {{ rejection.reason }}</p>
+              <Button v-if="line.id" size="sm" variant="ghost" @click="openDocumentHistory(line.id)">{{ t(k('card.history_all')) }}</Button>
+            </div>
+          </Dropdown>
+        </template>
+        <template v-if="line.key === 'report'">
+          <Button v-if="form !== 'legacy' && !card?.test.availability.value.cancel.visible" size="sm" variant="primary" :disabled="!runAvailability.enabled" :loading="card?.test.busy.value === 'run'" :title="shownReason ? t(k(shownReason)) : t(k('run_hint'))" data-test="test-spec-run" @click="card?.run()">{{ t(k('card.run')) }}</Button>
+          <Button v-if="form !== 'legacy' && card?.test.availability.value.cancel.visible" size="sm" variant="secondary" :disabled="!card.test.availability.value.cancel.enabled" :loading="card.test.busy.value === 'cancel'" :title="shownReason ? t(k(shownReason)) : undefined" data-test="test-spec-cancel" @click="card?.cancel()">{{ t(k('card.cancel')) }}</Button>
+          <Dropdown v-if="card?.test.history.value.length">
+            <template #trigger="{ toggle, triggerAttrs }"><Button size="sm" variant="secondary" v-bind="triggerAttrs" data-test="test-card-run-history" @click="toggle">{{ t(k('card.run_number'), { n: card.test.history.value.length }) }} ▾</Button></template>
+            <ul class="test-card-history">
+              <li v-for="(row, index) in card.test.history.value" :key="row.runId" data-test="test-spec-history-row" :data-run="row.runId">
+                #{{ card.test.history.value.length - index }} · {{ t(k(row.statusKey)) }} · {{ row.at }}
+                <span v-if="row.counts">{{ t(k('counts'), { ...row.counts }) }}</span>
+                <span v-if="row.verdictKey">{{ t(k(row.verdictKey)) }}</span>
+              </li>
+            </ul>
+          </Dropdown>
+          <Button v-if="stage.canFollow" size="sm" variant="secondary" :disabled="!canOpen('follow')" :title="openReason('follow')" data-test="test-card-follow" @click="openWindow('follow')">{{ t(k('card.follow')) }}</Button>
+        </template>
+        <InspectorOpenButton v-if="line.key !== 'instruction'" :disabled="!canOpen(line.kind)" :title="openReason(line.kind)" :data-test="line.key === 'report' ? 'test-spec-open' : 'test-card-scenario-open'" @click="openWindow(line.kind)" />
+      </InspectorSlotRow>
     </div>
-
-    <InspectorPaneState v-if="status === 'loading' && !view" state="loading" />
-    <InspectorPaneState v-else-if="errorKey && !view" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
-    <template v-else-if="view">
-      <InspectorPaneState v-if="errorKey" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
-
-      <template v-if="form === 'spec'">
-        <p v-if="view.kind === 'TS'" class="inspector-test-spec-sub" data-test="test-spec-tally">{{ t(k('tally'), { ...tally }) }} · {{ t(k('runnable'), { ...tally }) }}</p>
-        <p v-if="view.specErrors" class="inspector-test-spec-sub" data-test="test-spec-errors">{{ t(k('spec_errors'), { count: view.specErrors }) }}</p>
-        <p v-if="counts" class="inspector-test-spec-sub" data-test="test-spec-counts">{{ t(k('counts'), { ...counts }) }}</p>
-        <p
-          v-if="view.gate?.applies"
-          class="inspector-test-spec-sub"
-          data-test="test-spec-gate"
-          :data-passed="view.gate.passed"
-        >{{ t(k(view.gate.passed ? 'gate.passed' : 'gate.blocked')) }}</p>
-      </template>
-      <p v-else-if="form === 'legacy'" class="inspector-test-spec-sub" data-test="test-spec-legacy">{{ t(k('legacy')) }}</p>
-      <p v-else class="inspector-test-spec-sub" data-test="test-spec-none">{{ t(k('none')) }}</p>
-
-      <div class="inspector-test-spec-line">
-        <Button
-          v-if="availability.run.visible"
-          size="sm"
-          variant="primary"
-          :disabled="!availability.run.enabled"
-          :loading="busy === 'run'"
-          :title="t(k('run_hint'))"
-          data-test="test-spec-run"
-          @click="run"
-        >{{ t(k('run')) }}</Button>
-        <Button
-          v-if="availability.cancel.visible"
-          size="sm"
-          variant="secondary"
-          :disabled="!availability.cancel.enabled"
-          :loading="busy === 'cancel'"
-          data-test="test-spec-cancel"
-          @click="cancel"
-        >{{ t(k('cancel')) }}</Button>
-        <InspectorOpenButton :title="t(k('open_hint'))" data-test="test-spec-open" @click="open(view.docId)" />
-        <Button
-          v-if="view.kind === 'TSR' && view.tsDocId"
-          size="sm"
-          variant="ghost"
-          :title="t(k('open_hint'))"
-          data-test="test-spec-open-spec"
-          @click="open(view.tsDocId)"
-        >{{ t(k('open_spec')) }}</Button>
-        <Button
-          v-if="view.kind === 'TS' && view.tsrDocId"
-          size="sm"
-          variant="ghost"
-          :title="t(k('open_hint'))"
-          data-test="test-spec-open-report"
-          @click="open(view.tsrDocId)"
-        >{{ t(k('open_report')) }}</Button>
-      </div>
-      <div v-if="shownReason" data-test="test-spec-reason">
-        <InspectorReason :text="t(k(shownReason))" />
-      </div>
-      <div v-if="failure" data-test="test-spec-failure">
-        <InspectorReason tone="danger" :text="t(k(failure.key))" />
-      </div>
-
-      <template v-if="form === 'spec'">
-        <h4 class="inspector-test-spec-heading">{{ t(k('history.title')) }}</h4>
-        <p v-if="!history.length" class="inspector-test-spec-sub" data-test="test-spec-history-empty">{{ t(k('history.empty')) }}</p>
-        <ul v-else class="inspector-test-spec-rows">
-          <li v-for="row in history" :key="row.runId" class="inspector-test-spec-row" data-test="test-spec-history-row" :data-run="row.runId">
-            <span>{{ t(k(row.statusKey)) }}</span>
-            <span v-if="row.verdictKey">{{ t(k(row.verdictKey)) }}</span>
-            <span v-if="row.counts" class="inspector-test-spec-sub">{{ t(k('counts'), { ...row.counts }) }}</span>
-            <span v-if="row.at" class="inspector-test-spec-sub">{{ row.at }}</span>
-          </li>
-        </ul>
-      </template>
-    </template>
-    </details>
+    <InspectorReason v-if="shownReason && form !== 'legacy'" :text="t(k(shownReason))" data-test="test-spec-reason" />
+    <InspectorReason v-if="card?.test.failure.value" tone="danger" :text="t(k(card.test.failure.value.key))" data-test="test-spec-failure" />
   </section>
 </template>
-
 <script setup lang="ts">
-import { computed, inject } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../../components/ui/Button.vue'
+import Dropdown from '../../../../../components/ui/Dropdown.vue'
+import InspectorSlotRow from '../../parts/InspectorSlotRow.vue'
+import InspectorStatusChip from '../../parts/InspectorStatusChip.vue'
 import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
-import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { INSPECTOR_HOST } from '../../inspectorHost'
-import { cardLineRow, DocumentIoGroup, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
-import { testSpecSlots, testSpecVerdictKey, type TestSpecSlot } from './testSpecModel'
+import { DocumentIoGroup, openDocumentHistory } from '../../openDocument'
+import { type TestCardWindowKind } from './testCardSession'
+import { testCardPresentation, testSpecLiveRun, type TestSpecSlotTone } from './testSpecModel'
 import { useTestCard } from './useTestCard'
-import { useTestSpec } from './useTestSpec'
-
-const props = defineProps<{
-  target: InspectorTarget
-}>()
-
-const { t, te } = useI18n()
-
-const host = inject(INSPECTOR_HOST, null)
-
+const props = defineProps<{ target: InspectorTarget }>()
+const { t } = useI18n()
 const k = (key: string) => `gui.inspector.testSpec.${key}`
-
-const { view, form, tally, runState, counts, history, availability, status, errorKey, busy, failure, run, cancel, open, reload } = useTestSpec(
-  () => props.target,
-)
-
-const { instructionOmitted } = useTestCard(() => props.target)
-
-const verdictKey = computed(() => testSpecVerdictKey(runState.value.overall))
-
-/** One reason line: the disabled operation that is shown (run or cancel). */
-const shownReason = computed(() => {
-  const { run: start, cancel: stop } = availability.value
-  if (start.visible && start.reason) return start.reason
-  if (stop.visible && stop.reason) return stop.reason
-  return null
+const card = useTestCard(() => props.target)
+const view = computed(() => card.value?.view.value ?? null)
+const stage = computed(() => card.value?.presentation.value ?? testCardPresentation(null))
+const form = computed(() => card.value?.test.form.value ?? 'none')
+const runState = computed(() => card.value?.test.runState.value ?? stage.value.resultState)
+const runAvailability = computed(() => card.value?.can('run') ?? { enabled: false, reason: 'reason.busy' })
+const shownReason = computed(() => card.value?.test.availability.value.cancel.visible ? card.value.test.availability.value.cancel.reason : runAvailability.value.reason)
+const reviewCount = computed(() => (card.value?.reviewHistory.data.value?.reviews.length ?? 0) + (card.value?.reviewHistory.data.value?.rejections.length ?? 0))
+function canOpen(kind: TestCardWindowKind) {
+  return !!card.value && card.value.openReason(kind) === null
+}
+function openReason(kind: TestCardWindowKind) {
+  return t(k(canOpen(kind) ? 'open_hint' : card.value?.openReason(kind) ?? 'reason.busy'))
+}
+function openWindow(kind: TestCardWindowKind) {
+  if (!canOpen(kind)) return
+  card.value?.openWindow(kind)
+}
+interface Line { key: 'instruction' | 'scenario' | 'report'; kind: TestCardWindowKind; id: string | null; blank: boolean; label: string; tone: TestSpecSlotTone; summary: string }
+const lines = computed<Line[]>(() => {
+  const v = view.value, state = stage.value, writing = card.value?.writing.value
+  const own = (slot: string) => props.target.cardDocuments.find((line) => line.slot === slot)
+  const tsId = v?.tsDocId ?? own('scenario')?.docId ?? own('instruction')?.docId ?? (props.target.docType === 'TS' ? props.target.docId : null)
+  const reportId = v?.tsrDocId ?? own('report')?.docId ?? null
+  const intro = v?.details?.intro?.trim().split('\n')[0] ?? ''
+  const tally = card.value?.test.tally.value
+  const ignored = v?.cases.filter((c) => !c.required).length ?? 0
+  const noCode = card.value?.cases.value.filter((c) => c.executionMode === 'automated' && !c.fields.automationRef).length ?? 0
+  const aiChecked = v?.cases.filter((c) => c.executionMode === 'ai').length ?? 0
+  const tokens = [t(k('card.case_count'), { count: tally?.total ?? 0 })]
+  if (tally?.manual) tokens.push(t(k('card.human_count'), { count: tally.manual }))
+  if (aiChecked) tokens.push(t(k('card.ai_count'), { count: aiChecked }))
+  if (ignored) tokens.push(t(k('card.ignore_count'), { count: ignored }))
+  if (noCode) tokens.push(t(k('card.no_code_count'), { count: noCode }))
+  const counts = card.value?.test.counts.value
+  const code = card.value?.cases.value.filter((c) => c.executionMode === 'automated' && c.fields.automationRef).map((c) => c.fields.automationRef!) ?? []
+  const reportSummary = state.stage === 6 ? t(k('card.confirmed_counts'), { pass: counts?.pass ?? 0, total: v?.cases.length ?? 0 })
+    : state.stage >= 5 || state.resultState.key === 'stale' ? counts ? t(k('card.counts'), { ...counts }) : ''
+    : state.stage === 4 ? t(k('card.run_counts'), { pass: testSpecLiveRun(v)?.passedCases ?? 0, pending: Math.max(0, runState.value.total - runState.value.done) })
+    : state.resultState.error ?? (state.resultState.key === 'cancelled' ? v?.lastExecution?.finishedAt ?? '' : code.length > 1 ? t(k('card.code_summary'), { file: code[0], n: code.length - 1 }) : code[0] ?? '')
+  const result: Line[] = [
+    { key: 'instruction', kind: 'brief', id: tsId, blank: !intro, label: t(k(intro ? 'card.written' : 'card.absent')), tone: intro ? 'success' : 'neutral', summary: intro || t(k('card.to_ai')) },
+    { key: 'scenario', kind: 'scenario', id: tsId, blank: !state.hasScenario, label: t(k(writing ? 'card.writing' : state.hasScenario ? 'card.written' : 'stage.waiting')), tone: writing ? 'running' : state.hasScenario ? 'success' : 'neutral', summary: state.hasScenario ? tokens.join(' · ') : own('scenario')?.title ?? '' },
+    { key: 'report', kind: 'report', id: reportId, blank: !state.hasScenario, label: t(k(state.stage <= 2 ? 'empty.after_run' : state.stage === 6 ? 'card.confirmed' : state.stateKey), { count: state.pending, done: runState.value.done, total: runState.value.total }), tone: state.stage === 4 ? 'running' : state.tone, summary: reportSummary },
+  ]
+  if (card.value?.instructionOmitted.value) { result[0].label = t(k('guard.instruction_omitted')); result[0].tone = 'neutral' }
+  return result
 })
-
-/** The pill text: the Frame's wording for a review / document state, this feature's for a run state, the raw value otherwise. */
-function stateLabel(state: NonNullable<TestSpecSlot['state']>): string {
-  const key = state.key.startsWith('state.') ? k(state.key) : `gui.designer.inspector.${state.key}`
-  return te(key) ? t(key) : state.raw
-}
-
-function summaryOf(slot: TestSpecSlot): string | null {
-  switch (slot.summary) {
-    case 'tally':
-      return t(k('tally'), { ...tally.value })
-    case 'counts':
-      return counts.value ? t(k('counts'), { ...counts.value }) : null
-    case 'progress':
-      return t(k('progress'), { done: runState.value.done, total: runState.value.total })
-    default:
-      return null
-  }
-}
-
-const lines = computed<InspectorSlotView[]>(() =>
-  testSpecSlots(view.value, props.target, instructionOmitted.value).map((slot) => ({
-    key: slot.key,
-    kind: slot.kind,
-    name: t(k(`slot.${slot.key}`)),
-    // flowgate.v02.0088 F14/F15: the kind's key travels with the line (see openCardLineAction).
-    nameKey: k(`slot.${slot.key}`),
-    id: slot.id,
-    empty: slot.empty,
-    emptyText: slot.emptyKey ? t(k(slot.emptyKey)) : null,
-    state: slot.state ? { label: stateLabel(slot.state), tone: slot.state.tone } : null,
-    summary: summaryOf(slot),
-    progress: slot.progress,
-    focus: slot.focus,
-    danger: slot.state?.tone === 'danger',
-    open: slot.open,
-    // flowgate.v02.0056 F2-2: 문서 없음 [작성] · 비어 있음 · the history number · [AI 호출] of the card's own line.
-    ...cardLineRow(props.target, slot, slot.key),
-  })),
-)
-
-/** The document icon (or the name): the line's document window. */
-function openLine(line: InspectorSlotView) {
-  if (line.id) open(line.id)
-}
-
-/** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
-function editLine(line: InspectorSlotView) {
-  if (line.id) openDocument(line.id, 'edit')
-}
-
-/** The history button: the line's 검수·반려 이력 window (flowgate.v02.0056 F1). */
-function historyLine(line: InspectorSlotView) {
-  if (line.id) openDocumentHistory(line.id)
-}
-
-/**
- * flowgate.v02.0056 F2-2: a row action of a card line — [작성] opens the line's write window, [AI 호출] the
- * document's AI call window (openCardLineAction; the Canvas is read again after them).
- */
-function actionLine(line: InspectorSlotView, key: SlotActionKey) {
-  openCardLineAction(props.target, line, key, host)
-}
 </script>
-
 <style scoped>
-.inspector-test-spec {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--fg2-line);
-  font-size: 12px;
-}
-
-.inspector-test-spec-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.inspector-test-spec-heading {
-  margin: 0;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--fg2-muted);
-}
-
-.inspector-test-spec-state[data-tone='info'] {
-  color: var(--fg2-status-info-fg, inherit);
-}
-
-.inspector-test-spec-state[data-tone='success'] {
-  color: var(--fg2-status-success-fg, inherit);
-}
-
-.inspector-test-spec-state[data-tone='warning'] {
-  color: var(--fg2-status-warning-fg, inherit);
-}
-
-.inspector-test-spec-state[data-tone='danger'] {
-  color: var(--fg2-status-danger-fg, inherit);
-}
-
-.inspector-test-spec-verdict {
-  font-weight: 600;
-}
-
-.inspector-test-spec-sub {
-  margin: 0;
-  color: var(--fg2-muted);
-  font-size: 11.5px;
-}
-
-.inspector-test-spec-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.inspector-test-spec-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
+.inspector-test-spec, .test-card-lines { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.test-card-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg2-muted); font-size: 11.5px; min-width: 0; }
+.test-card-danger { color: var(--fg2-status-danger-fg); }
+.test-card-history { padding: 8px; margin: 0; max-width: 560px; max-height: 320px; overflow: auto; list-style: none; color: var(--fg2-text); font-size: 12px; }
+.test-card-history li { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px; }
+@container (max-width: 420px) { .test-card-summary { display: none; } }
 </style>

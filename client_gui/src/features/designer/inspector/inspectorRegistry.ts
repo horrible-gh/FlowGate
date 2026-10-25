@@ -74,6 +74,8 @@ export interface InspectorRegistration {
    * kindSwitch). The Frame lays out the first that applies; its one input is `target`.
    */
   readonly headerKind?: Component
+  /** Replaces the default state pill for the first matching feature. */
+  readonly headerState?: Component
   /**
    * flowgate.v02.0051 — ⋯ menu part: the card's own items after the common ID 복사 (실행 이력 · ■ 중단 ·
    * ↻ 재실행 …). Its inputs are `target` and `close` (closes the menu).
@@ -159,7 +161,7 @@ export function registrationViolations(modules: Readonly<Record<string, unknown>
         if (tab.fill !== undefined && typeof tab.fill !== 'boolean') out.push(`${label}: tab fill is not a boolean`)
       }
     }
-    if (!tab && !entry.headerAction && !entry.headerMeta && !entry.headerKind && !entry.headerMenu && !entry.headerMemo) {
+    if (!tab && !entry.headerAction && !entry.headerMeta && !entry.headerKind && !entry.headerState && !entry.headerMenu && !entry.headerMemo) {
       out.push(`${label}: contributes no tab, header action, header meta, header kind, header menu or header memo`)
     }
     const messages = entry.messages

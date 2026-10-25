@@ -6,6 +6,10 @@
 export { default as DocumentWindows } from './DocumentWindows.vue'
 export * from './documentWindows'
 export * from './documentWindowModel'
+export { documentHistoryVerdictKey, documentHistoryWhen } from './documentHistoryModel'
+// 0071 D0008: the scenario table shares the document window's result glyph.
+export { default as TestMarkBadge } from './TestMarkBadge.vue'
+export { testVerdictMark, TEST_PENDING_MARK } from './specialDocumentModel'
 export * from './slotWriteWindows'
 export * from './documentAiWindows'
 // flowgate.v02.0068 T#1 — the document upload / download: the coordinator (documentIo), the edit state registry it

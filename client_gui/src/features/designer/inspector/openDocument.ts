@@ -300,3 +300,11 @@ export function settleCardLinesWritten(target: InspectorTarget | null): void {
   const nodeKey = inspectorCardNodeKey(target)
   if (target && nodeKey) settleWrittenCardLines(target.flowId, nodeKey, target.cardDocuments, (docId) => openDocumentWindow(docId))
 }
+
+
+/** Open the existing AI call window for a TS, including document nodes without a card definition. */
+export function openDocumentAi(docId: string, target: InspectorTarget, finished: () => void, lifecycle?: { submitting: () => boolean; rejected: () => void }): void {
+  openDocumentAiWindow({ docId, groupId: target.flowId, projectId: target.projectId,
+    name: target.title, title: target.cardDocuments.find((line) => line.docId === docId)?.title ?? target.title,
+    finished, ...lifecycle })
+}

@@ -37,7 +37,20 @@ type SubscribeProjectEvents = (projectId: string, subscription: ProjectEventSubs
 
 // The store lives in the app's Pinia. A part mounted without one (a Frame unit test with no app
 // plugins) has no project stream to hear and subscribes to nothing.
+let inheritedSubscriber: SubscribeProjectEvents | null | undefined
+
+/** Capture the owning app stream for retained card scopes resumed outside component setup. */
+export function captureInspectorResourceContext() {
+  const subscriber = projectEventSubscriber()
+  return <T>(create: () => T): T => {
+    const previous = inheritedSubscriber
+    inheritedSubscriber = subscriber
+    try { return create() } finally { inheritedSubscriber = previous }
+  }
+}
+
 function projectEventSubscriber(): SubscribeProjectEvents | null {
+  if (inheritedSubscriber !== undefined) return inheritedSubscriber
   const pinia = getCurrentInstance()?.appContext.config.globalProperties.$pinia
   if (!pinia) return null
   const store = useProjectStore(pinia)

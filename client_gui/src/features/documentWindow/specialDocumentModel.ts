@@ -119,7 +119,7 @@ export function testVerdictMark(status: string | null | undefined): TestMark {
   return VERDICT_MARKS[(status ?? 'NOT_RUN').toUpperCase()] ?? VERDICT_MARKS.NOT_RUN
 }
 
-const MODE_GLYPHS: Readonly<Record<string, string>> = { automated: '⚙', manual: '✍', external: '⇄' }
+const MODE_GLYPHS: Readonly<Record<string, string>> = { automated: '⚙', ai: '✦', manual: '✍', external: '⇄' }
 
 /** An execution mode's glyph and tooltip key; an unknown mode shows nothing. */
 export function testModeMark(mode: string | null | undefined): TestMark | null {
@@ -208,7 +208,7 @@ export function testDocumentStructured(doc: Pick<TestSpecDocument, 'view'> | nul
 // after that. Where the record holds a value the server writes as exactly that cell, the cell is that value.
 
 const REPORT_STATUS = 'PASS|FAIL|BLOCKED|NOT_RUN'
-const REPORT_MODES = new Set(['automated', 'manual', 'external'])
+const REPORT_MODES = new Set(['automated', 'ai', 'manual', 'external'])
 /** Evidence kinds the server keeps (test_spec_service EVIDENCE_KINDS); `None` is an item stored without one. */
 const REPORT_EVIDENCE_KINDS = new Set(['text', 'log', 'structured', 'file', 'attachment', 'screenshot', 'url', 'manual_note', 'None'])
 /** Source identity keys the server keeps (test_spec_service _normalize_source_identity). */
