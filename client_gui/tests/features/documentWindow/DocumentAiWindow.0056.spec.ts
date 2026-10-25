@@ -118,7 +118,7 @@ describe('the AI call window (flowgate.v02.0056 F2-2)', () => {
     expect(api.getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/providers', { project: 'flowgate' })
     expect(api.getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/active', { group_id: FLOW })
     expect(api.postRequest).not.toHaveBeenCalled()
-    expect(text(q('document-ai-hint'))).toContain('검수·대응·카드 승인은 이어지지 않습니다')
+    expect(q('document-ai-hint')).toBeNull()
   })
 
   it('[실행]: edit · single · the pinned AI · the opinion, no review loop; followed until it ends', async () => {

@@ -110,7 +110,9 @@ describe('v8 shared test card session (0071 T1)', () => {
     await w.get('[data-test="test-spec-cancel"]').trigger('click'); await flushPromises()
     expect(mocks.cancel).toHaveBeenCalledWith('run-live')
     expect(w.get('[data-test="test-spec-cancel"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="test-spec-reason"]').text()).toBe('취소를 처리하는 중입니다.')
+    // flowgate.v02.0094: the reason is the button's tooltip; no reason line under the report.
+    expect(w.get('[data-test="test-spec-cancel"]').attributes('title')).toBe('취소를 처리하는 중입니다.')
+    expect(w.find('[data-test="test-spec-reason"]').exists()).toBe(false)
   })
   it('a setting changed by a window updates the settings tab; OFF closes the brief only after acceptance', async () => {
     const w = await render(); const card = contexts.one

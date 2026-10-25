@@ -10,10 +10,16 @@ under the Group's source lock), and that Basis is kept on the run -- no Source B
 Basis on the TS. Cases execute in the copy through the shared process layer
 (tr_self_check_executor). Finalizing records the result under the executed Basis and
 measures the live source once to decide whether the result counts for it.
+
+0094 B0001: a Case runs its own ``run_command`` (any language, any framework) under the TR
+Self-check command policy; the exit code is its verdict, a JUnit XML report it writes to
+``{junit}`` adds the per-test detail. A ``.py`` target saved without a command keeps the
+pytest invocation it always had.
 """
 from __future__ import annotations
 
 import json
+import posixpath
 import shutil
 import sys
 import threading
@@ -23,6 +29,7 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import process_runner, test_basis_service, test_spec_service
+from modules.flow_gate.services import tr_self_check_policy as command_policy
 
 
 class AutomationRefResolver:
@@ -209,12 +216,11 @@ def admit(doc_id: str, *, case_id: str | None, runner_id: str, locale: str,
     """[Run again] / Case run / chain hand-off (D#1 §3-2).
 
     The stored Basis is not asked: the run measures the source when it prepares. The
-    remaining conditions are the existing ones -- approved TS, report not approved, no run
+    remaining conditions are the existing ones -- valid TS, report not approved, no run
     in progress, no FAIL awaiting its origin review.
     """
     from modules.flow_gate.services import test_run_service as runner
     doc, parsed = runner.load_spec_ts(doc_id)
-    runner._require_ts_admissible(doc, doc_id)
     paired = runner._active_tsr_for_ts(doc)
     if paired and paired.get("doc_review_status") == "approved":
         raise runner._http_error(409, "tsr_already_approved", doc_id=doc_id)
@@ -286,7 +292,7 @@ class ExecutionRootResolver:
         return basis, root, scratch
 
 
-# Prepare refusals end the run under their own error, pytest never started: the run could
+# Prepare refusals end the run under their own error, no Case started: the run could
 # not copy and measure its source (source busy or changed mid-copy, a limit, an automated
 # test file missing or not an asset) or the TS changed while queued. None of them is a
 # FAIL (D#1 §3-3 step 6).
@@ -298,6 +304,26 @@ _PREPARE_REFUSALS = {"test_asset_not_captured", "basis_capture_failed",
 
 def _python(env: dict) -> str:
     return shutil.which("python", path=env.get("PATH")) or sys.executable
+
+
+def _env_path(env: dict) -> str:
+    return next((value for key, value in env.items() if key.upper() == "PATH"), "")
+
+
+def _command_args(loc: dict, junit_path: Path) -> list[str]:
+    """run_command arguments with the placeholders filled; ``{target}`` is cwd-relative."""
+    command = loc["command"]
+    folder = command["cwd"]
+    target = loc["path"] if folder == "." else posixpath.relpath(loc["path"], folder)
+    node = loc.get("node") or ""
+    args = []
+    for arg in command["args"]:
+        if arg == test_basis_service.PLACEHOLDER_NODE and not node:
+            continue
+        args.append(arg.replace(test_basis_service.PLACEHOLDER_TARGET, target)
+                    .replace(test_basis_service.PLACEHOLDER_NODE, node)
+                    .replace(test_basis_service.PLACEHOLDER_JUNIT, str(junit_path)))
+    return args
 
 
 class ExistingRunnerAdapter:
@@ -341,6 +367,113 @@ class ExistingRunnerAdapter:
             result = "pass" if outcome.exit_code == 0 else "fail"
         xml = junit_path.read_text(encoding="utf-8") if junit_path.is_file() else ""
         return result, xml, outcome.exit_code, output[-4000:]
+
+    @staticmethod
+    def run_command(case: dict, loc: dict, root: Path, scratch: Path, active, *,
+                    submitted_by: str, source_identity: dict | None) -> dict:
+        """One Case's run_command in the run root; returns its result (0094 B0001).
+
+        The command is resolved and checked again in the run's copy by the TR Self-check
+        command policy (deny list, operators, inline code, launcher rules, cwd inside the
+        root) and runs without a shell through tr_self_check_executor, with the spec run's
+        environment, timeout and cancel. Exit 0 is PASS, any other exit FAIL; a timeout, a
+        refused command or a process that could not start is BLOCKED. A JUnit XML report
+        written to ``{junit}`` is read as evidence and a failed test in it is a FAIL.
+        """
+        from modules.flow_gate.services import test_run_service as runner
+        from modules.flow_gate.services import tr_self_check_executor as executor
+        command = loc["command"]
+        junit_path = scratch / ("junit_" + str(abs(hash(case["case_id"]))) + ".xml")
+        args = _command_args(loc, junit_path)
+        shown = " ".join([command["program"], *args])
+        base = {"case_id": case["case_id"], "execution_mode": "automated",
+                "source_name": loc["path"] + ("::" + loc["node"] if loc.get("node") else ""),
+                "source_identity": source_identity or {}, "checked_by": submitted_by}
+
+        def blocked(actual: str, log: str = "") -> dict:
+            evidence = [{"kind": "structured", "value": f"command: {shown} (cwd {command['cwd']})"}]
+            if log:
+                evidence.append({"kind": "log", "value": log[-4000:]})
+            return {**base, "status": "BLOCKED", "actual": actual, "evidence": evidence}
+
+        env = process_runner.child_env(runner._execution_env(runner._allocate_port(), scratch),
+                                       policy=process_runner.CHILD_ENV_POLICY_DEFAULT)
+        path_value, _ = command_policy.controlled_path(root, _env_path(env))
+        try:
+            cwd = command_policy.validate_cwd(root, command["cwd"])
+            resolved = command_policy.resolve_command(command["program"], args, root, path_value)
+        except command_policy.PolicyError as exc:
+            return blocked("command refused: " + exc.code)
+        env = {key: value for key, value in env.items() if key.upper() != "PATH"}
+        env["PATH"] = path_value
+        argv = [resolved.executable, *resolved.argv_prefix, *args]
+        timeout = runner.CASE_TIMEOUT_SEC
+        cancelled = active.cancel_event if active is not None else threading.Event()
+        try:
+            control, _ownership = executor.spawn(argv, cwd, env, timeout,
+                                                 getattr(active, "run_id", None) or "spec-run")
+        except executor.OwnershipError as exc:
+            return blocked("process owner unavailable: " + str(exc))
+        if active is not None:
+            runner._set_current_control(active, control)
+        try:
+            outcome = executor.wait(control, timeout, cancelled)
+        finally:
+            if active is not None:
+                runner._clear_current_control(active, control)
+            control.close()
+        output = ((outcome.stdout_tail or "") + (outcome.stderr_tail or ""))[-4000:]
+        if outcome.timed_out:
+            return blocked(f"timeout after {timeout}s", output)
+        status = "PASS" if outcome.exit_code == 0 else "FAIL"
+        actual = f"exit {outcome.exit_code}"
+        evidence = [{"kind": "structured",
+                     "value": f"command: {shown} (cwd {command['cwd']}) exit={outcome.exit_code}"}]
+        if junit_path.is_file():
+            try:
+                tests = test_spec_service.parse_junit_xml(
+                    junit_path.read_text(encoding="utf-8"), submitted_by=submitted_by,
+                    now=now_iso(), default_source_identity=source_identity)
+            except test_spec_service.SpecResultError as exc:
+                evidence.append({"kind": "text", "value": "junit report unreadable: " + exc.detail})
+            else:
+                failed = [item for item in tests if item["status"] == "FAIL"]
+                if failed:
+                    status = "FAIL"
+                actual += f", junit {len(tests) - len(failed)}/{len(tests)} passed"
+                if failed:
+                    actual += ": " + (failed[0].get("actual") or failed[0].get("source_name") or "")
+                evidence.extend(item["evidence"][0] for item in tests[:10])
+        if output:
+            evidence.append({"kind": "log", "value": output})
+        return {**base, "status": status, "actual": actual[:4000], "evidence": evidence}
+
+
+def _pytest_results(case: dict, loc: dict, xml: str, exit_code, output: str, *, run: dict,
+                    identity: dict, selected_ids: set, results: list) -> list[dict]:
+    """The legacy pytest node's results (appended to ``results``); returns the mapped ones."""
+    if xml:
+        parsed = test_spec_service.parse_junit_xml(
+            xml, submitted_by=run.get("runner_id") or "system", now=now_iso(),
+            default_source_identity=identity,
+        )
+        if loc["capability"] == "case_selectable" and len(parsed) == 1:
+            parsed[0]["case_id"] = case["case_id"]
+        for item in parsed:
+            if not item.get("case_id") or not any(
+                test_spec_service.case_id_key(item["case_id"]) ==
+                test_spec_service.case_id_key(selected_id) for selected_id in selected_ids
+            ):
+                item["case_id"] = None  # Preserve as unmapped evidence; never run manual/external.
+        results.extend(parsed)
+        return [item for item in parsed if item.get("case_id")]
+    blocked = {"case_id": case["case_id"], "status": "BLOCKED",
+               "actual": "pytest produced no JUnit report",
+               "evidence": [{"kind": "log", "value":
+                             ("pytest exit=" + str(exit_code) + "\n" + output)[-4000:]}],
+               "execution_mode": "automated"}
+    results.append(blocked)
+    return [blocked]
 
 
 def _enter_phase(doc: dict, run: dict, phase: str) -> None:
@@ -415,36 +548,27 @@ def execute(run: dict) -> None:
             if case["case_id"] not in selected_ids or active.cancel_event.is_set():
                 continue
             loc = AutomationRefResolver.resolve(case)
-            nodeid = loc["path"] + ("::" + loc["node"] if loc.get("node") else "")
-            if nodeid in executed_nodes:
-                continue
-            executed_nodes.add(nodeid)
-            _, xml, exit_code, output = ExistingRunnerAdapter.run_pytest(nodeid, root, scratch, active)
-            if active.cancel_event.is_set():
-                break
-            if xml:
-                parsed = test_spec_service.parse_junit_xml(
-                    xml, submitted_by=run.get("runner_id") or "system", now=now_iso(),
-                    default_source_identity=executed_identity,
-                )
-                if loc["capability"] == "case_selectable" and len(parsed) == 1:
-                    parsed[0]["case_id"] = case["case_id"]
-                for item in parsed:
-                    if not item.get("case_id") or not any(
-                        test_spec_service.case_id_key(item["case_id"]) ==
-                        test_spec_service.case_id_key(selected_id) for selected_id in selected_ids
-                    ):
-                        item["case_id"] = None  # Preserve as unmapped evidence; never run manual/external.
-                results.extend(parsed)
-                node_results = [item for item in parsed if item.get("case_id")]
+            if loc.get("command"):
+                # One Case, one command: its verdict belongs to this Case only.
+                outcome = ExistingRunnerAdapter.run_command(
+                    case, loc, root, scratch, active, submitted_by=run.get("runner_id") or "system",
+                    source_identity=executed_identity)
+                if active.cancel_event.is_set():
+                    break
+                exit_code = None
+                results.append(outcome)
+                node_results = [outcome]
             else:
-                blocked = {"case_id": case["case_id"], "status": "BLOCKED",
-                           "actual": "pytest produced no JUnit report",
-                           "evidence": [{"kind": "log", "value":
-                                         ("pytest exit=" + str(exit_code) + "\n" + output)[-4000:]}],
-                           "execution_mode": "automated"}
-                results.append(blocked)
-                node_results = [blocked]
+                nodeid = loc["path"] + ("::" + loc["node"] if loc.get("node") else "")
+                if nodeid in executed_nodes:
+                    continue
+                executed_nodes.add(nodeid)
+                _, xml, exit_code, output = ExistingRunnerAdapter.run_pytest(nodeid, root, scratch, active)
+                if active.cancel_event.is_set():
+                    break
+                node_results = _pytest_results(case, loc, xml, exit_code, output, run=run,
+                                               identity=executed_identity,
+                                               selected_ids=selected_ids, results=results)
             if node_results:
                 # D#1 §3-4: the Case result is kept and shown before the remaining Cases run.
                 reported_ids.extend(item["case_id"] for item in node_results)

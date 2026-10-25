@@ -2,7 +2,7 @@
   <ModelessShell v-if="card && state" ref="shell" :open="state.open" :minimized="state.minimized" :title="t(k('title'))"
     :initial-x="geometry('x', 90)" :initial-y="geometry('y', 80)" :initial-width="geometry('width', 1040)" :initial-height="geometry('height', 640)"
     @update:minimized="state.minimized = $event" @close="close">
-    <template #header><span class="mark">TS</span> {{ t(k('title')) }} · {{ card.view.value?.details?.title }} <small>{{ t(k('count'), { n: card.cases.value.length }) }}</small></template>
+    <template #header>{{ t(k('title')) }}</template>
     <template #actions>
       <span class="window-actions" @mousedown.stop>
       <Dropdown><template #trigger="{ toggle, triggerAttrs }"><Button size="sm" variant="secondary" v-bind="triggerAttrs" data-test="scenario-history" @click="toggle">{{ t(k('history'), { n: reviewCount }) }} ▾</Button></template>
@@ -15,26 +15,21 @@
         </div>
       </Dropdown>
       <Button size="sm" variant="secondary" data-test="scenario-raw" @click="openRaw">{{ t(k('raw')) }}</Button>
-      <Button size="sm" variant="secondary" :disabled="!card.can('rewriteAll').enabled" :title="reason('rewriteAll')" data-test="scenario-rewrite" @click="confirming = true">{{ t(k('rewrite')) }}</Button>
+      <InspectorAiButton :label="t(k('rewrite'))" :title="reason('rewriteAll') || t(k('rewrite'))" :disabled="!card.can('rewriteAll').enabled" data-test="scenario-rewrite" @click="rewrite" />
       <Button size="sm" :disabled="!card.can('caseAdd').enabled" :title="reason('caseAdd')" data-test="scenario-add" @click="card.openWindow('case', '__new__')">{{ t(k('add')) }}</Button>
       </span>
     </template>
     <div class="scenario" data-test="scenario-window">
-      <div v-if="confirming" class="confirm" role="group" data-test="scenario-rewrite-confirm"><span>{{ t(k('keep_unknown')) }}</span>
-        <Button size="sm" variant="secondary" @click="confirming = false">{{ t(k('cancel')) }}</Button>
-        <Button size="sm" :disabled="!card.can('rewriteAll').enabled" :title="reason('rewriteAll')" data-test="scenario-rewrite-submit" @click="rewrite">{{ t(k('rewrite_submit')) }}</Button>
-      </div>
-      <InspectorReason v-for="op in (['rewriteAll', 'caseAdd'] as const)" v-show="reason(op)" :key="op" :text="reason(op)" />
-      <h3>① {{ t(k('cases')) }} <small>{{ t(k('count'), { n: card.cases.value.length }) }}<template v-if="summary"> · {{ summary }}</template></small></h3>
+      <h3>{{ t(k('cases')) }} <small>{{ t(k('count'), { n: card.cases.value.length }) }}<template v-if="summary"> · {{ summary }}</template></small></h3>
       <template v-if="card.formatErrors.value.length"><p class="errors">{{ t(k('errors'), { n: card.formatErrors.value.length }) }}</p><ul class="errors" data-test="scenario-errors"><li v-for="(error, i) in card.formatErrors.value" :key="i">{{ error.caseId }} · {{ error.field }} · {{ error.message }}</li></ul></template>
       <InspectorPaneState v-if="card.test.status.value === 'error'" state="error" retryable @retry="card.reload()" />
       <div class="table-scroll"><table><thead><tr><th v-for="col in columns" :key="col">{{ t(k(col)) }}</th></tr></thead>
-        <tbody v-if="card.writing.value"><tr v-for="i in Math.max(3, card.cases.value.length)" :key="i" class="placeholder" data-test="scenario-writing"><td colspan="8">{{ t(k('writing')) }}</td></tr></tbody>
+        <tbody v-if="card.writing.value"><tr v-for="i in Math.max(3, card.cases.value.length)" :key="i" class="placeholder" data-test="scenario-writing"><td colspan="7">{{ t(k('writing')) }}</td></tr></tbody>
         <tbody v-else><tr v-for="item in card.cases.value" :key="item.caseId" :data-case="item.caseId">
-          <td><TestMarkBadge v-if="resultMark(item.caseId)" :mark="resultMark(item.caseId)!" /></td><td class="mono">{{ item.caseId }}</td><td>{{ item.title }}</td><td>{{ item.fields.requirement }}</td>
-          <td>{{ t(k(modeKey(item.executionMode))) }}<span v-if="item.executionMode === 'automated' && !item.fields.automationRef" class="warning"> · {{ t(k('no_code')) }}</span></td>
-          <td :class="{ warning: !item.required }">{{ t(k(item.required ? 'stop' : 'ignore')) }}</td><td>—</td>
-          <td><Button size="sm" variant="ghost" :aria-label="t(k('edit'), { id: item.caseId })" data-test="scenario-edit" @click="card.openWindow('case', item.caseId)">✎</Button></td>
+          <td><TestMarkBadge v-if="resultMark(item.caseId)" :mark="resultMark(item.caseId)!" /></td><td class="case-id">{{ item.caseId }}</td><td>{{ item.title }}</td><td>{{ item.fields.requirement }}</td>
+          <td>{{ t(k(modeKey(item.executionMode))) }}<span v-if="item.executionMode === 'automated' && !['case_selectable', 'suite_only'].includes(card.view.value?.caseCapabilities[item.caseId] ?? '')" class="warning"> · {{ t(k('no_code')) }}</span></td>
+          <td :class="{ warning: !item.required }">{{ t(k(item.required ? 'stop' : 'ignore')) }}</td>
+          <td><IconButton :label="t(k('edit'), { id: item.caseId })" :title="t(k('edit'), { id: item.caseId })" variant="ghost" size="sm" data-test="scenario-edit" @click="card.openWindow('case', item.caseId)">✎</IconButton></td>
         </tr></tbody></table></div>
       <section v-if="raw.open" class="raw" data-test="scenario-raw-overlay">
         <h3>{{ t(k('raw_title')) }}</h3>
@@ -44,7 +39,7 @@
         <Textarea v-else v-model="raw.text" class="mono raw-text" :rows="16" :disabled="!card.can('rawSave').enabled" data-test="scenario-raw-text" />
         <template v-if="rawConflict"><InspectorReason tone="danger" :text="t(k('conflict'))" /><Button size="sm" variant="secondary" data-test="raw-reload" @click="loadRaw">{{ t(k('reload')) }}</Button></template>
         <InspectorReason v-if="reason('rawSave')" :text="reason('rawSave')" />
-        <InspectorReason v-if="card.refusal.value?.operation === 'rawSave'" tone="danger" :text="refusalText" data-test="raw-refusal" />
+        <InspectorReason v-if="!rawConflict && card.refusal.value?.operation === 'rawSave'" tone="danger" :text="refusalText" data-test="raw-refusal" />
         <footer><Button size="sm" variant="secondary" @click="raw.open = false">{{ t(k('close')) }}</Button>
           <Button size="sm" :disabled="!raw.loaded || reading || !!readError || raw.text === raw.baseline || rawConflict || !card.can('rawSave').enabled" :title="reason('rawSave')" data-test="scenario-raw-save" @click="saveRaw">{{ t(k('save')) }}</Button></footer>
       </section>
@@ -58,12 +53,14 @@ import { useI18n } from 'vue-i18n'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 import Button from '@/components/ui/Button.vue'
 import Dropdown from '@/components/ui/Dropdown.vue'
+import IconButton from '@/components/ui/IconButton.vue'
 import Textarea from '@/components/ui/Textarea.vue'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
 import { documentContentRead, documentContentSave } from '@/features/document'
 import { TestMarkBadge, testVerdictMark, TEST_PENDING_MARK, documentHistoryVerdictKey, documentHistoryWhen } from '@/features/documentWindow'
 import InspectorReason from '../../../parts/InspectorReason.vue'
 import InspectorPaneState from '../../../parts/InspectorPaneState.vue'
+import InspectorAiButton from '../../../parts/InspectorAiButton.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
 import type { TestCardCommand } from '../useTestCard'
 import { sessionDraft, useScenarioWindow, type RawDraft } from './scenarioWindowModel'
@@ -71,17 +68,17 @@ const props = defineProps<{ target: InspectorTarget }>()
 const { t } = useI18n()
 const k = (key: string) => `gui.inspector.testSpec.window.scenario.${key}`
 const { card, shell, state, close, geometry, current } = useScenarioWindow(() => props.target, 'scenario')
-const confirming = ref(false), reading = ref(false), readError = ref(''), rawConflict = ref(false)
+const reading = ref(false), readError = ref(''), rawConflict = ref(false)
 const toasts = ref<ToastHostItem[]>([])
 const raw = computed(() => sessionDraft<RawDraft>(card.value!.drafts, 't2:raw', () => ({ docId: '', baseline: '', text: '', loaded: false, open: false })))
-const columns = ['result', 'id', 'case_title', 'requirement', 'mode', 'required', 'author', 'edit_column']
+const columns = ['result', 'id', 'case_title', 'requirement', 'mode', 'required', 'edit_column']
 const reviewCount = computed(() => (card.value?.reviewHistory.data.value?.reviews.length ?? 0) + (card.value?.reviewHistory.data.value?.rejections.length ?? 0))
 const summary = computed(() => {
   const cases = card.value?.cases.value ?? []
   const counts = { human: cases.filter(c => c.executionMode === 'manual').length,
     ai: cases.filter(c => c.executionMode === 'ai').length,
     ignore: cases.filter(c => !c.required).length,
-    noCode: cases.filter(c => c.executionMode === 'automated' && !c.fields.automationRef).length }
+    noCode: cases.filter(c => c.executionMode === 'automated' && !['case_selectable', 'suite_only'].includes(card.value?.view.value?.caseCapabilities[c.caseId] ?? '')).length }
   return Object.entries(counts).filter(([, n]) => n > 0).map(([key, n]) => t(k(`summary_${key}`), { n })).join(' · ')
 })
 const modeKey = (mode: string | null) => mode === 'automated' ? 'code' : mode === 'ai' ? 'ai' : mode === 'manual' ? 'human' : 'external'
@@ -99,7 +96,6 @@ function resultMark(id: string) {
 }
 async function rewrite() {
   if (!current() || !card.value?.can('rewriteAll').enabled) return
-  confirming.value = false
   await card.value.rewriteAll()
 }
 async function openRaw() {
@@ -118,6 +114,7 @@ async function loadRaw() {
     if (data.missing) { readError.value = t(k('read_failed')); return }
     Object.assign(raw.value, { docId: id, baseline: data.content, text: data.content, loaded: true })
     rawConflict.value = false
+    if (card.value?.refusal.value?.operation === 'rawSave') card.value.refusal.value = null
   } catch { if (current() && sequence === readSequence) readError.value = t(k('read_failed')) }
   finally { if (current() && sequence === readSequence) reading.value = false }
 }
@@ -139,12 +136,14 @@ async function saveRaw() {
 </script>
 <style scoped>
 .scenario { color: var(--fg2-text); font-size: var(--fg2-control-font-size); position: relative; }
-.window-actions { display: flex; gap: 4px; flex-wrap: wrap; max-width: 65vw; }
-.mark { color: var(--fg2-status-info-fg); margin-right: 6px; } small { color: var(--fg2-muted); font-size: 12px; font-weight: normal; }
+.window-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; max-width: 65vw; }
+small { color: var(--fg2-muted); font-size: 12px; font-weight: normal; }
 h3 { display: flex; gap: 14px; align-items: center; font-size: 13px; } h3 small { margin-left: auto; }
 .table-scroll { overflow: auto; } table { width: 100%; border-collapse: collapse; font-size: 12px; } th { text-align: left; color: var(--fg2-muted); font-weight: normal; }
 th, td { padding: 9px 8px; border-bottom: 1px solid var(--fg2-line); vertical-align: top; } td:nth-child(3) { min-width: 170px; } td:nth-child(4) { min-width: 130px; }
-.warning { color: var(--fg2-yellow); } .mono { font-family: monospace; } .errors { color: var(--fg2-status-danger-fg); }
+.warning { color: var(--fg2-yellow); } .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+/* flowgate.v02.0094: a case id is written in the list's own type (no monospace of its own), muted, on one line. */
+.case-id { color: var(--fg2-muted); white-space: nowrap; } .errors { color: var(--fg2-status-danger-fg); }
 .confirm, footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px; } .confirm { border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-control-radius); }
 .raw { position: absolute; inset: 0; min-height: 480px; background: var(--fg2-panel); border: 1px solid var(--fg2-line-strong); padding: 14px; box-sizing: border-box; z-index: 1; }
 .raw-text { width: 100%; } .placeholder { color: var(--fg2-muted); } .history { max-width: 640px; max-height: 400px; overflow: auto; padding: 10px; color: var(--fg2-text); font-size: 12px; } .history article { border-bottom: 1px solid var(--fg2-line); padding: 8px; white-space: pre-wrap; }

@@ -1513,7 +1513,6 @@ export default {
       provider_error: 'AI 목록을 불러오지 못했습니다.',
       opinion: '의견',
       opinion_placeholder: 'AI에게 전할 의견을 적습니다 (비워 둘 수 있습니다).',
-      hint: '[실행]을 누르면 이 문서에 AI를 한 번 실행합니다. 검수·대응·카드 승인은 이어지지 않습니다. 카드의 [AI가 참조] 메모도 함께 전달됩니다.',
       busy_this: '이 문서에서 다른 AI 실행이 진행 중입니다.',
       busy_other: '이 플로우에서 다른 AI 실행이 진행 중입니다.',
       running: 'AI 작업 중 ({id})',

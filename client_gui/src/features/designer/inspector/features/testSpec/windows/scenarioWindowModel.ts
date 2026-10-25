@@ -5,12 +5,15 @@ import type ModelessShell from '@/components/ui/ModelessShell.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
 import { useTestCard, type TestCardWindowKind } from '../useTestCard'
 
-export const caseTextFields = ['title', 'requirement', 'precondition', 'procedure', 'expected', 'automation_ref'] as const
+export const caseTextFields = ['title', 'requirement', 'precondition', 'procedure', 'expected', 'automation_ref', 'run_command', 'run_cwd'] as const
+/** The automated Case's execution settings: target, command and working directory. */
+const executionFields = new Set<string>(['automation_ref', 'run_command', 'run_cwd'])
 export interface CaseDraft {
   docId: string | null
   original: TestSpecCasePayload
   snapshot: string
   title: string; requirement: string; precondition: string; procedure: string; expected: string; automation_ref: string
+  run_command: string; run_cwd: string
   execution_mode: string; required: boolean
 }
 export function scenarioSnapshot(cases: readonly TestSpecCaseDetail[], title: string | null): string {
@@ -21,6 +24,7 @@ export function caseDraft(item: TestSpecCaseDetail, cases: readonly TestSpecCase
   return { original, docId, snapshot: scenarioSnapshot(cases, title),
     title: original.title, requirement: original.requirement ?? '', precondition: original.precondition ?? '',
     procedure: original.procedure ?? '', expected: original.expected ?? '', automation_ref: original.automation_ref ?? '',
+    run_command: original.run_command ?? '', run_cwd: original.run_cwd ?? '',
     execution_mode: original.execution_mode ?? '', required: original.required }
 }
 export function newCaseDraft(cases: readonly TestSpecCaseDetail[], title: string | null, docId: string | null): CaseDraft {
@@ -28,16 +32,18 @@ export function newCaseDraft(cases: readonly TestSpecCaseDetail[], title: string
   let n = 1
   while (ids.has(`TC-${n}`)) n++
   const original: TestSpecCasePayload = { case_id: `TC-${n}`, title: '', category: 'normal', requirement: '',
-    execution_mode: 'manual', required: true, precondition: '', input: '', procedure: '', expected: '',
+    execution_mode: 'automated', required: false, precondition: '', input: '', procedure: '', expected: '',
     check_points: '', automation_ref: null, test_assets: null }
   return { original, docId, snapshot: scenarioSnapshot(cases, title), title: '', requirement: '', precondition: '',
-    procedure: '', expected: '', automation_ref: '', execution_mode: 'manual', required: true }
+    procedure: '', expected: '', automation_ref: '', run_command: '', run_cwd: '', execution_mode: 'automated', required: false }
 }
 export function addedCase(cases: readonly TestSpecCaseDetail[], draft: CaseDraft): TestSpecCasePayload[] {
   return [...cases.map(testSpecCasePayload), { ...draft.original, title: draft.title, requirement: draft.requirement,
     precondition: draft.precondition, procedure: draft.procedure, expected: draft.expected, check_points: draft.expected,
     execution_mode: draft.execution_mode, required: draft.required,
-    automation_ref: draft.execution_mode === 'automated' ? draft.automation_ref || null : null }]
+    automation_ref: draft.execution_mode === 'automated' ? draft.automation_ref || null : null,
+    ...(draft.execution_mode === 'automated' && draft.run_command ? { run_command: draft.run_command } : {}),
+    ...(draft.execution_mode === 'automated' && draft.run_cwd ? { run_cwd: draft.run_cwd } : {}) }]
 }
 
 /**
@@ -50,7 +56,7 @@ export function mergeCase(cases: readonly TestSpecCaseDetail[], draft: CaseDraft
     if (item.caseId !== draft.original.case_id) return payload
     const edits: Partial<Record<typeof caseTextFields[number], string>> = {}
     for (const field of caseTextFields) {
-      if (field === 'automation_ref' && draft.execution_mode !== 'automated') continue
+      if (executionFields.has(field) && draft.execution_mode !== 'automated') continue
       if (draft[field] !== (draft.original[field] ?? '')) edits[field] = draft[field]
     }
     return { ...payload, ...edits, category: payload.category ?? 'normal', check_points: payload.check_points ?? draft.expected,

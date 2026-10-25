@@ -141,7 +141,7 @@ describe('testSpecDocumentRead / toTestSpecDocument (flowgate.v02.0053 T#4)', ()
       executionMode: 'automated',
       required: true,
       category: 'normal',
-      fields: { requirement: '요구 1', precondition: null, input: '입력값', procedure: '1. 연다', expected: '열린다', checkPoints: null, automationRef: 'tests/x.spec.ts', testAssets: null },
+      fields: { requirement: '요구 1', precondition: null, input: '입력값', procedure: '1. 연다', expected: '열린다', checkPoints: null, automationRef: 'tests/x.spec.ts', runCommand: null, runCwd: null, testAssets: null },
     })
     expect(read.cases[1]).toMatchObject({ caseId: 'C-2', category: 'boundary', executionMode: 'manual', required: false })
     expect(read.rows).toEqual([

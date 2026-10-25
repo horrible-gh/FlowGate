@@ -46,6 +46,7 @@ import {
 // The calls are mocked; normalization and error reading stay real.
 const viewRead = vi.fn()
 const startCall = vi.fn()
+const approveCall = vi.fn()
 const cancelCall = vi.fn()
 const activityRead = vi.fn()
 const documentRead = vi.fn()
@@ -60,6 +61,7 @@ vi.mock('@/features/document', async (importOriginal) => {
     testSpecRead: (...args: unknown[]) => viewRead(...args),
     documentHistoryRead: async (docId: string) => actual.toDocumentHistory({ doc_id: docId }),
     testSpecRunStart: (...args: unknown[]) => startCall(...args),
+    reviewApprove: (...args: unknown[]) => approveCall(...args),
     testSpecRunCancel: (...args: unknown[]) => cancelCall(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
     reviewDocumentRead: (...args: unknown[]) => documentRead(...args),
@@ -177,12 +179,21 @@ function serve() {
       (running ? locked() : null) ??
       (disposed ? flat(409, 'group_disposed', { doc_id: tsDocId }) : null) ??
       (state.tsrReview === 'approved' ? flat(409, 'tsr_already_approved', { doc_id: tsDocId }) : null) ??
-      (state.review !== 'approved' ? flat(409, 'doc_not_approved', { doc_id: tsDocId }) : null) ??
       (state.active ? flat(409, 'run_in_progress', { run_id: state.active.run_id }) : null)
     if (refusal) throw refusal
     const runId = `tr_${nextRun++}`
     state.active = liveRun(runId, { phase: 'queued', reported_case_ids: [], created_at: '2026-10-09T11:00:00Z' })
     return toTestSpecRunAck({ ok: true, run_id: runId, doc_id: tsDocId, status: 'running', case_total: 2, selected_case_ids: ['TC-1', 'TC-2'] })
+  })
+  // The TS approval of a specification queues the run of its automated Cases in the same transaction (0684 D#1 §3-1).
+  approveCall.mockImplementation(async (docId: string) => {
+    await waitHold('approve')
+    const state = ts(docId)
+    const refusal = refusalOf('approve') ?? (!['pending_review', 'revised'].includes(state.review) ? axiosError(400, { detail: 'Invalid review transition' }) : null)
+    if (refusal) throw refusal
+    state.review = 'approved'
+    state.active = liveRun(`tr_${nextRun++}`, { phase: 'queued', reported_case_ids: [], created_at: '2026-10-09T11:00:00Z' })
+    return { document: null, trCommit: null }
   })
   cancelCall.mockImplementation(async (runId: string) => {
     await waitHold('cancel')
@@ -234,7 +245,7 @@ beforeEach(() => {
   running = false
   disposed = false
   nextRun = 1
-  for (const mock of [viewRead, startCall, cancelCall, activityRead, documentRead, detailRead, relationsRead, qaReadCall, attachmentsReadCall]) mock.mockReset()
+  for (const mock of [viewRead, startCall, approveCall, cancelCall, activityRead, documentRead, detailRead, relationsRead, qaReadCall, attachmentsReadCall]) mock.mockReset()
   seed()
   serve()
   closeAllDocumentWindows()
@@ -269,6 +280,11 @@ const el = (w: W, name: string) => w.find(`[data-test="${name}"]`)
 const isDisabled = (w: W, name: string) => el(w, name).attributes('disabled') !== undefined
 const stateOf = (w: W) => el(w, 'test-spec-state').attributes('data-state')
 const textOf = (w: W, name: string) => el(w, name).text()
+/** flowgate.v02.0094: why ▶ / ■ cannot be used is the visible button's tooltip (no reason line under the report). */
+const reasonOf = (w: W) => {
+  expect(el(w, 'test-spec-reason').exists()).toBe(false)
+  return (el(w, 'test-spec-cancel').exists() ? el(w, 'test-spec-cancel') : el(w, 'test-spec-run')).attributes('title')
+}
 async function historyRuns(w: W) {
   await click(w, 'test-card-run-history')
   return [...document.querySelectorAll('[data-test="test-spec-history-row"]')].map((row) => row.getAttribute('data-run'))
@@ -295,7 +311,9 @@ describe('test section — reading (flowgate.v02.0048 T#11)', () => {
     expect(el(w, 'inspector-test-spec').attributes('data-form')).toBe('spec')
     expect(stateOf(w)).toBe('done')
     expect(textOf(w, 'test-spec-state')).toBe('확인 필요 1')
-    expect(textOf(w, 'test-card-scenario-summary')).toContain('3 케이스 · 사람 확인 1')
+    // flowgate.v02.0094: the 시나리오 line is its state badge only — no case tally beside it.
+    expect(el(w, 'test-card-scenario-summary').exists()).toBe(false)
+    expect(el(w, 'test-card-instruction-summary').exists()).toBe(false)
     expect(textOf(w, 'test-card-report-summary')).toBe('통과 2 · 실패 0 · 막힘 0 · 미실행 1')
     expect(await historyRuns(w)).toEqual(['tr_0'])
     expect(isDisabled(w, 'test-spec-run')).toBe(false)
@@ -391,7 +409,7 @@ describe('test section — ▶ 실행 and ■ 취소 (flowgate.v02.0048 T#11)', 
     expect(cancelCall).toHaveBeenCalledWith('tr_1')
     expect(stateOf(w)).toBe('cancelling')
     expect(isDisabled(w, 'test-spec-cancel')).toBe(true)
-    expect(textOf(w, 'test-spec-reason')).toBe('취소를 처리하는 중입니다.')
+    expect(reasonOf(w)).toBe('취소를 처리하는 중입니다.')
     await click(w, 'test-spec-cancel')
     expect(cancelCall).toHaveBeenCalledTimes(1)
     finishLive(TS_DOC, 'cancelled', null)
@@ -414,7 +432,7 @@ describe('test section — ▶ 실행 and ■ 취소 (flowgate.v02.0048 T#11)', 
     expect(stateOf(w)).toBe('cancelling')
     expect(el(w, 'test-spec-run').exists()).toBe(false)
     expect(isDisabled(w, 'test-spec-cancel')).toBe(true)
-    expect(textOf(w, 'test-spec-reason')).toBe('취소를 처리하는 중입니다.')
+    expect(reasonOf(w)).toBe('취소를 처리하는 중입니다.')
     finishLive(TS_DOC, 'cancelled', null)
     await emit('test_run_finished', TS_DOC)
     expect(stateOf(w)).toBe('cancelled')
@@ -461,9 +479,9 @@ describe('test section — ▶ 실행 and ■ 취소 (flowgate.v02.0048 T#11)', 
       expect(isDisabled(w, 'test-spec-run')).toBe(false)
     } else if (code === 'tsr_already_approved') {
       expect(isDisabled(w, 'test-spec-run')).toBe(true)
-      expect(textOf(w, 'test-spec-reason')).toBe('결과 보고서가 이미 승인되어 다시 실행할 수 없습니다.')
+      expect(reasonOf(w)).toBe('결과 보고서가 이미 승인되어 다시 실행할 수 없습니다.')
     } else if (code === 'locked') {
-      expect(textOf(w, 'test-spec-reason')).toBe('AI 실행 중이라 테스트를 실행할 수 없습니다.')
+      expect(reasonOf(w)).toBe('AI 실행 중이라 테스트를 실행할 수 없습니다.')
     } else {
       expect(isDisabled(w, 'test-spec-run')).toBe(false)
     }
@@ -477,7 +495,7 @@ describe('test section — ▶ 실행 and ■ 취소 (flowgate.v02.0048 T#11)', 
     await click(w, 'test-spec-run')
     expect(textOf(w, 'test-spec-failure')).toBe('권한이 없어 거절되었습니다. 관리자 또는 테스트 실행 권한이 필요합니다.')
     expect(isDisabled(w, 'test-spec-run')).toBe(true)
-    expect(textOf(w, 'test-spec-reason')).toBe('테스트 실행 권한(관리자 또는 테스트 실행 권한)이 없어 서버가 거절했습니다.')
+    expect(reasonOf(w)).toBe('테스트 실행 권한(관리자 또는 테스트 실행 권한)이 없어 서버가 거절했습니다.')
     await click(w, 'test-spec-run')
     expect(startCall).toHaveBeenCalledTimes(1)
     // Reading and opening are queries: still possible.
@@ -508,7 +526,7 @@ describe('test section — ▶ 실행 and ■ 취소 (flowgate.v02.0048 T#11)', 
     await click(w, 'test-spec-cancel')
     expect(textOf(w, 'test-spec-failure')).toBe('권한이 없어 거절되었습니다. 관리자 또는 테스트 실행 권한이 필요합니다.')
     expect(isDisabled(w, 'test-spec-cancel')).toBe(true)
-    expect(textOf(w, 'test-spec-reason')).toBe('테스트 실행 권한(관리자 또는 테스트 실행 권한)이 없어 서버가 거절했습니다.')
+    expect(reasonOf(w)).toBe('테스트 실행 권한(관리자 또는 테스트 실행 권한)이 없어 서버가 거절했습니다.')
     expect(stateOf(w)).toBe('queued')
     await click(w, 'test-spec-cancel')
     expect(cancelCall).toHaveBeenCalledTimes(1)
@@ -535,7 +553,7 @@ describe('test section — the guard and the TS state (flowgate.v02.0048 T#11)',
     const w = await mountTab(target())
     stream.open()
     expect(isDisabled(w, 'test-spec-run')).toBe(true)
-    expect(textOf(w, 'test-spec-reason')).toBe('AI 실행 중이라 테스트를 실행할 수 없습니다.')
+    expect(reasonOf(w)).toBe('AI 실행 중이라 테스트를 실행할 수 없습니다.')
     await click(w, 'test-spec-run')
     expect(startCall).not.toHaveBeenCalled()
     running = false
@@ -547,17 +565,52 @@ describe('test section — the guard and the TS state (flowgate.v02.0048 T#11)',
     disposed = true
     const w = await mountTab(target())
     expect(isDisabled(w, 'test-spec-run')).toBe(true)
-    expect(textOf(w, 'test-spec-reason')).toBe('폐기된 그룹이라 테스트를 실행할 수 없습니다.')
+    expect(reasonOf(w)).toBe('폐기된 그룹이라 테스트를 실행할 수 없습니다.')
   })
 
-  it('an unapproved TS: disabled until its approval event (doc_review_status_changed) arrives', async () => {
+  // flowgate.v02.0094 #8: written (지시서 · 시나리오 작성 완료) but awaiting its review and never run — nothing on the v0.2
+  // card approves a TS on its own, so ▶ is open and approves it; the approval queues the run.
+  it.each(['draft', 'pending_review', 'revised', 'rejected'])('a written TS (%s, never run) starts without a document approval', async (review) => {
+    ts().review = review
+    ts().history = []
+    ts().last = null
+    const w = await mountTab(target())
+    expect(textOf(w, 'test-card-scenario-state')).toBe('작성 완료')
+    expect(isDisabled(w, 'test-spec-run')).toBe(false)
+    expect(reasonOf(w)).toBe('테스트 코드 실행')
+    await click(w, 'test-spec-run')
+    expect(approveCall).not.toHaveBeenCalled()
+    expect(startCall).toHaveBeenCalledWith(TS_DOC)
+    expect(ts().review).toBe(review)
+    expect(stateOf(w)).toBe('queued')
+    expect(el(w, 'test-spec-failure').exists()).toBe(false)
+  })
+  it('a refused run on ▶ is told under the report and nothing starts', async () => {
+    ts().review = 'pending_review'
+    ts().history = []
+    ts().last = null
+    refusals.set('start', axiosError(403, { detail: 'Insufficient permissions' }))
+    const w = await mountTab(target())
+    await click(w, 'test-spec-run')
+    expect(approveCall).not.toHaveBeenCalled()
+    expect(startCall).toHaveBeenCalledOnce()
+    expect(el(w, 'test-spec-failure').exists()).toBe(true)
+  })
+  it('an approved TS or one that already ran starts its run as before, without an approval', async () => {
+    const w = await mountTab(target())
+    await click(w, 'test-spec-run')
+    expect(startCall).toHaveBeenCalledWith(TS_DOC)
+    expect(approveCall).not.toHaveBeenCalled()
+  })
+
+  it('a draft TS remains runnable before and after a review event', async () => {
     vi.useFakeTimers()
     ts().review = 'draft'
     ts().history = []
     const w = await mountTab(target())
     stream.open()
-    expect(isDisabled(w, 'test-spec-run')).toBe(true)
-    expect(textOf(w, 'test-spec-reason')).toBe('테스트 지시가 승인된 뒤에 실행할 수 있습니다.')
+    expect(isDisabled(w, 'test-spec-run')).toBe(false)
+    expect(reasonOf(w)).toBe('테스트 코드 실행')
     expect(el(w, 'test-card-run-history').exists()).toBe(false)
     ts().review = 'approved'
     await emit('doc_review_status_changed', TS_DOC)
@@ -646,7 +699,7 @@ describe('test section — read-only Flows (flowgate.v02.0048 T#11)', () => {
   it('Graph revision view: ▶ 실행 shown but disabled with the read-only reason; reading and ↗ 열기 work', async () => {
     const w = await mountTab(target('graphRevision'))
     expect(isDisabled(w, 'test-spec-run')).toBe(true)
-    expect(textOf(w, 'test-spec-reason')).toBe('확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 테스트를 실행합니다.')
+    expect(reasonOf(w)).toBe('확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 테스트를 실행합니다.')
     await click(w, 'test-spec-run')
     expect(startCall).not.toHaveBeenCalled()
     await click(w, 'test-spec-open')
@@ -660,13 +713,13 @@ describe('test section — read-only Flows (flowgate.v02.0048 T#11)', () => {
     ts().active = liveRun('tr_9')
     const w = await mountTab(target('graphRevision'))
     expect(isDisabled(w, 'test-spec-cancel')).toBe(true)
-    expect(textOf(w, 'test-spec-reason')).toBe('확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 테스트를 실행합니다.')
+    expect(reasonOf(w)).toBe('확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 테스트를 실행합니다.')
   })
 
   it('ownership conflict: the conflict reason', async () => {
     const w = await mountTab(target('conflict'))
     expect(isDisabled(w, 'test-spec-run')).toBe(true)
-    expect(textOf(w, 'test-spec-reason')).toBe('Flow 소유가 충돌해 읽기 전용입니다.')
+    expect(reasonOf(w)).toBe('Flow 소유가 충돌해 읽기 전용입니다.')
   })
 
   it('unassigned Flow: enabled', async () => {
@@ -768,5 +821,39 @@ describe('test section in the Frame (real registry)', () => {
     await click(w, 'test-spec-run')
     expect(startCall).toHaveBeenCalledWith(TS_DOC)
     expect(stateOf(w)).toBe('queued')
+  })
+})
+
+// flowgate.v02.0094 #1-#3 — the test card lines follow the other cards' slot lines: a state badge without extra words,
+// icon buttons whose names are their tooltips, and no reason line under the report.
+describe('test section — the existing card rules (flowgate.v02.0094)', () => {
+  it('every line button is an icon button with a tooltip; no text button, summary or reason line', async () => {
+    const w = await mountTab(target())
+    const buttons = w.findAll('[data-test="inspector-slot-buttons"] button')
+    expect(buttons.length).toBeGreaterThan(0)
+    for (const button of buttons) {
+      expect(button.classes(), button.attributes('data-test')).toContain('ui-icon-btn')
+      expect(button.attributes('title'), button.attributes('data-test')).toBeTruthy()
+      expect(button.attributes('aria-label'), button.attributes('data-test')).toBeTruthy()
+    }
+    expect(el(w, 'test-card-brief').text()).toBe('✎')
+    expect(el(w, 'test-card-brief').attributes('aria-label')).toBe('편집')
+    expect(el(w, 'test-spec-run').text()).toBe('▶')
+    expect(el(w, 'test-spec-run').attributes('title')).toBe('테스트 코드 실행')
+    expect(el(w, 'test-card-run-history').attributes('title')).toBe('실행 #1')
+    expect(el(w, 'test-card-instruction-summary').exists()).toBe(false)
+    expect(el(w, 'test-card-scenario-summary').exists()).toBe(false)
+    expect(textOf(w, 'test-card-scenario-state')).toBe('작성 완료')
+    expect(el(w, 'test-spec-reason').exists()).toBe(false)
+  })
+  it("the 시나리오 line's AI writing is the cards' [AI 호출] robot button (the 지시서 window only saves)", async () => {
+    const w = await mountTab(target())
+    const ai = el(w, 'test-card-scenario-ai')
+    expect(ai.attributes('data-icon')).toBe('robot')
+    expect(ai.classes()).toEqual(expect.arrayContaining(['ui-icon-btn', 'inspector-slot-ai']))
+    expect(ai.attributes('aria-label')).toBe('AI 호출')
+    expect(ai.attributes('title')).toBe('AI 호출')
+    expect(ai.attributes('disabled')).toBeUndefined()
+    expect(w.find('[data-slot="instruction"] [data-test="test-card-scenario-ai"]').exists()).toBe(false)
   })
 })

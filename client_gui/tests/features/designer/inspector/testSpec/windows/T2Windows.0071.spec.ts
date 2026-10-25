@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { defineComponent, h, shallowRef, watchEffect } from 'vue'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
@@ -94,14 +96,14 @@ describe('0071 T2 preservation model', () => {
 })
 
 describe('0071 T2 brief window', () => {
-  it('renders the writer and saves the instruction through the document API', async () => {
+  // flowgate.v02.0094: the window only saves — no writer AI name, no length line, no 「저장 후 시나리오 다시 작성」.
+  it('saves the instruction through the document API and starts no AI writing', async () => {
     const w = await render('brief')
-    expect(w.text()).toContain('Writer AI'); expect(w.get('[data-test="brief-count"]').text()).toBe('0/20000자')
+    expect(w.text()).not.toContain('Writer AI'); expect(w.find('[data-test="brief-count"]').exists()).toBe(false)
+    expect(w.find('[data-test="brief-rewrite"]').exists()).toBe(false)
     await w.get('[data-test="brief-text"]').setValue('abc')
-    expect(w.get('[data-test="brief-count"]').text()).toBe('3/20000자')
     expect(w.get('[data-test="brief-text"]').attributes('maxlength')).toBe('20000')
     expect(w.get('[data-test="brief-save"]').attributes('disabled')).toBeUndefined()
-    expect(w.get('[data-test="brief-rewrite"]').attributes('disabled')).toBeUndefined()
     await w.get('[data-test="brief-save"]').trigger('click'); await flushPromises()
     expect(mocks.briefSave).toHaveBeenCalledWith(TS_DOC, 'abc', rawSource)
     expect(context.windows.brief.open).toBe(false)
@@ -115,7 +117,7 @@ describe('0071 T2 brief window', () => {
     await w.get('.ui-modeless-titlebar').trigger('mousedown', { clientX: 180, clientY: 150 })
     document.dispatchEvent(new MouseEvent('mousemove', { clientX: 230, clientY: 190 }))
     document.dispatchEvent(new MouseEvent('mouseup'))
-    await w.get('button[aria-label="Minimize"]').trigger('click')
+    await w.get('button[data-modeless-action="minimize"]').trigger('click')
     expect(context.windows.brief.minimized).toBe(true)
     context.closeWindow('brief'); await flushPromises()
     expect(context.windows.brief.geometry.x).toBe(230)
@@ -127,9 +129,9 @@ describe('0071 T2 brief window', () => {
 })
 
 describe('0071 T2 scenario window', () => {
-  it('renders the eight-column table and opens the selected case through the session', async () => {
+  it('renders the case table without the unused author column and opens the selected case through the session', async () => {
     const w = await render('scenario')
-    expect(w.findAll('thead th')).toHaveLength(8); expect(w.findAll('tbody tr')).toHaveLength(2)
+    expect(w.findAll('thead th')).toHaveLength(7); expect(w.findAll('tbody tr')).toHaveLength(2)
     expect(w.get('[data-case="TC-1"]').text()).toContain('R §1'); expect(w.get('[data-case="TC-2"]').text()).toContain('무시하고 진행')
     await w.findAll('[data-test="scenario-edit"]')[1].trigger('click')
     expect(context.windows.case.open).toBe(true); expect(context.windows.case.caseId).toBe('TC-2')
@@ -157,11 +159,11 @@ describe('0071 T2 scenario window', () => {
   })
   it.each(['ko', 'en', 'ja'] as const)('omits zero summary tokens and joins positive counts in %s', async locale => {
     i18n.global.locale.value = locale
-    server.cases = [fullCases()[0]]
+    server.cases = [fullCases()[0]]; server.case_capabilities = { 'TC-1': 'case_selectable' }
     const w = await render('scenario')
     const count = i18n.global.t('gui.inspector.testSpec.window.scenario.count', { n: 1 })
     expect(w.get('h3 small').text()).toBe(count)
-    server.cases = [{ ...fullCases()[0], required: false, automation_ref: '' }]
+    server.cases = [{ ...fullCases()[0], required: false, automation_ref: '' }]; server.case_capabilities = { 'TC-1': 'unbound' }
     await context.reload(); await flushPromises()
     const token = (key: string) => i18n.global.t(`gui.inspector.testSpec.window.scenario.summary_${key}`, { n: 1 })
     expect(w.get('h3 small').text()).toBe([count, token('ignore'), token('noCode')].join(' · '))
@@ -169,11 +171,10 @@ describe('0071 T2 scenario window', () => {
     await context.reload(); await flushPromises()
     expect(w.get('h3 small').text()).toBe([count, token('human')].join(' · '))
   })
-  it('requires confirmation before opening the existing AI rewrite dialog', async () => {
+  it('opens the implemented AI rewrite dialog directly', async () => {
     const w = await render('scenario')
     await w.get('[data-test="scenario-rewrite"]').trigger('click')
-    expect(mocks.ai).not.toHaveBeenCalled(); expect(w.get('[data-test="scenario-rewrite-confirm"]').text()).toContain('사람 작성 —개 유지')
-    await w.get('[data-test="scenario-rewrite-submit"]').trigger('click')
+    expect(w.find('[data-test="scenario-rewrite-confirm"]').exists()).toBe(false)
     expect(mocks.ai).toHaveBeenCalledOnce(); expect(mocks.ai.mock.calls[0][0]).toBe(TS_DOC)
   })
   it('disables whole rewrite during case execution and retains the window with placeholders while writing', async () => {
@@ -254,9 +255,10 @@ describe('0071 T2 scenario window', () => {
     const w = await render('scenario'); await w.get('[data-test="scenario-raw"]').trigger('click'); await flushPromises()
     await w.get('[data-test="scenario-raw-text"]').setValue('my raw draft'); rawSource += 'Someone else'
     await w.get('[data-test="scenario-raw-save"]').trigger('click'); await flushPromises()
-    expect(mocks.rawSave).not.toHaveBeenCalled(); expect(w.text()).toContain('원문이 변경되었습니다')
+    expect(mocks.rawSave).not.toHaveBeenCalled(); expect(w.text()).toContain('내용이 변경되었습니다')
     expect(w.get('[data-test="scenario-raw-text"]').element).toHaveProperty('value', 'my raw draft')
     await w.get('[data-test="raw-reload"]').trigger('click'); await flushPromises()
+    expect(w.find('[data-test="raw-refusal"]').exists()).toBe(false)
     expect(w.get('[data-test="scenario-raw-text"]').element).toHaveProperty('value', rawSource)
   })
   it('prevents a pending raw preflight from saving after a card switch', async () => {
@@ -292,6 +294,20 @@ describe('0071 T2 scenario window', () => {
 })
 
 describe('0071 T2 case window', () => {
+  it('reloads a new-case draft only after a real conflict', async () => {
+    const w = await render('case')
+    context.openWindow('case', '__new__'); await flushPromises()
+    expect(w.find('[data-test="case-reload"]').exists()).toBe(false)
+    await w.get('[data-test="case-title"]').setValue('Unsaved new case')
+    server.cases = fullCases().map((item, i) => i === 1 ? { ...item, test_assets: 'Changed elsewhere' } : item)
+    await context.reload(); await flushPromises()
+    expect(w.find('[data-test="case-conflict"]').exists()).toBe(true)
+    await w.get('[data-test="case-reload"]').trigger('click'); await flushPromises()
+    expect(w.find('[data-test="case-conflict"]').exists()).toBe(false)
+    expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', '')
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
+
   it('renders the mapped fields and saves a whole list with H1, hidden fields and other cases intact', async () => {
     const w = await render('case')
     expect(w.get('[data-test="case-code"]').element).toHaveProperty('value', fullCases()[0].automation_ref)
@@ -300,6 +316,30 @@ describe('0071 T2 case window', () => {
     expect(mocks.save).toHaveBeenCalledWith(TS_DOC, [{ ...fullCases()[0], title: 'Edited title' }, fullCases()[1]], 'Keep H1')
     expect(mocks.save.mock.calls[0]).toHaveLength(3); expect(context.windows.case.open).toBe(false)
     expect(document.body.textContent).toContain('케이스 저장됨')
+  })
+  // flowgate.v02.0094: the execution setting is a target, a command and a working directory — no framework assumed.
+  it('edits the target, command and working directory of a code-run case and saves them', async () => {
+    const w = await render('case')
+    expect(w.get('[data-test="case-code"]').attributes('placeholder')).not.toContain('pytest')
+    expect(w.get('[data-test="case-command"]').attributes('placeholder')).toBe('예) npm test -- {target}')
+    expect(w.text()).not.toContain('pytest')
+    await w.get('[data-test="case-code"]').setValue('client_gui/tests/login.spec.ts')
+    await w.get('[data-test="case-command"]').setValue('npm test -- {target}')
+    await w.get('[data-test="case-cwd"]').setValue('client_gui')
+    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
+    expect(mocks.save.mock.calls[0][1][0]).toEqual({ ...fullCases()[0], automation_ref: 'client_gui/tests/login.spec.ts',
+      run_command: 'npm test -- {target}', run_cwd: 'client_gui' })
+    expect(mocks.save.mock.calls[0][1][1]).toEqual(fullCases()[1])
+  })
+  it('keeps a stored command when verification changes to manual and hides the execution fields', async () => {
+    server.cases = [{ ...fullCases()[0], run_command: 'mvn -q test -Dtest=LoginTest', run_cwd: 'server' }, fullCases()[1]]
+    const w = await render('case')
+    expect(w.get('[data-test="case-command"]').element).toHaveProperty('value', 'mvn -q test -Dtest=LoginTest')
+    expect(w.get('[data-test="case-cwd"]').element).toHaveProperty('value', 'server')
+    await w.get('[data-test="case-mode"]').findAll('button').find(b => b.text() === '사람 확인')!.trigger('click')
+    expect(w.find('[data-test="case-command"]').exists()).toBe(false)
+    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
+    expect(mocks.save.mock.calls[0][1][0]).toMatchObject({ execution_mode: 'manual', run_command: 'mvn -q test -Dtest=LoginTest', run_cwd: 'server' })
   })
   it('requires the fields the server requires and supports custom requirements', async () => {
     const w = await render('case')
@@ -360,7 +400,7 @@ describe('0071 T2 case window', () => {
   })
   it('uses a placeholder only for the case being rewritten and scopes connection reasons to controls', async () => {
     const w = await render('case')
-    expect(w.get('[data-test="case-rewrite"]').attributes('title')).toBe('연결 예정')
+    expect(w.find('[data-test="case-rewrite"]').exists()).toBe(false)
     expect(w.text()).not.toContain('연결 예정')
     context.writing.value = 'rewrite-case'; context.writingCaseId.value = 'TC-2'; await flushPromises()
     expect(w.find('[data-test="case-writing"]').exists()).toBe(false)
@@ -404,6 +444,7 @@ describe('0071 T2 case window', () => {
     await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
     expect(mocks.save).not.toHaveBeenCalled(); expect(w.find('[data-test="case-conflict"]').exists()).toBe(true)
     expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', 'My draft')
+    expect(w.text().split('내용이 변경되었습니다')).toHaveLength(2)
     await w.get('[data-test="case-reload"]').trigger('click'); await flushPromises()
     expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', 'Sort')
   })
@@ -435,7 +476,7 @@ describe('0071 T2 case window', () => {
     await flushPromises()
     expect(w.get('[data-test="case-save"]').attributes('disabled')).toBeDefined()
     expect(w.get('[data-test="case-delete"]').attributes('disabled')).toBeDefined()
-    expect(w.get('button[aria-label="Close"]').attributes('disabled')).toBeUndefined()
+    expect(w.get('button[data-modeless-action="close"]').attributes('disabled')).toBeUndefined()
     expect(mocks.save).not.toHaveBeenCalled()
   })
   it('shows document permission refusal and retains the draft after 403', async () => {
@@ -502,7 +543,7 @@ describe('TR0016 rev1 verification modes and the case save contract', () => {
     await pick(w, 'case-mode', label)
     expect(segmentOn(w, 'case-mode')).toBe(label)
     expect(w.find('[data-test="case-code"]').exists()).toBe(mode === 'automated')
-    expect(w.find('[data-test="case-ai-hint"]').exists()).toBe(mode === 'ai')
+    expect(w.find('[data-test="case-ai-hint"]').exists()).toBe(false)
     if (mode === 'automated') await w.get('[data-test="case-code"]').setValue('tests/test_manual.py::test_visible')
     await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
     const payload = mocks.save.mock.calls[0][1]
@@ -519,36 +560,58 @@ describe('TR0016 rev1 verification modes and the case save contract', () => {
     expect(w.get('[data-case="TC-2"]').text()).toContain('AI 확인')
     expect(w.get('h3 small').text()).toContain('AI 확인 1')
   })
-  it('starts a new case as required and saves it even when every existing case is optional', async () => {
-    server.cases = fullCases().map(c => ({ ...c, required: false })); persist()
+  // flowgate.v02.0094 #7: a new case starts on the leftmost choices; a stored case keeps what it has.
+  it('starts a new case on 코드 실행 · 무시하고 진행 and saves those defaults', async () => {
+    persist()
     const w = await render('case')
     context.closeWindow('case'); context.openWindow('case', '__new__'); await flushPromises()
-    expect(segmentOn(w, 'case-required')).toBe('다음 단계 중단')
-    await w.get('[data-test="case-title"]').setValue('Required by default')
+    expect(segmentOn(w, 'case-mode')).toBe('코드 실행')
+    expect(segmentOn(w, 'case-required')).toBe('무시하고 진행')
+    expect(w.find('[data-test="case-code"]').exists()).toBe(true)
+    await w.get('[data-test="case-title"]').setValue('Defaults')
     await w.get('[data-test="case-requirement"]').setValue('R new')
     await w.get('[data-test="case-procedure"]').setValue('Inspect')
     await w.get('[data-test="case-expected"]').setValue('Visible')
-    await pick(w, 'case-mode', 'AI 확인')
     await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(mocks.save.mock.calls[0][1][2]).toMatchObject({ case_id: 'TC-3', execution_mode: 'ai', required: true, category: 'normal' })
+    expect(mocks.save.mock.calls[0][1].slice(0, 2)).toEqual(fullCases())
+    expect(mocks.save.mock.calls[0][1][2]).toMatchObject({ case_id: 'TC-3', execution_mode: 'automated', required: false, category: 'normal', automation_ref: null })
   })
-  it('explains and blocks a save that would leave no required case, before any request', async () => {
+  it('opens a stored case on its own choices, not the new-case defaults', async () => {
+    const w = await render('case')
+    expect(segmentOn(w, 'case-mode')).toBe('코드 실행'); expect(segmentOn(w, 'case-required')).toBe('다음 단계 중단')
+    context.openWindow('case', 'TC-2'); await flushPromises()
+    expect(segmentOn(w, 'case-mode')).toBe('사람 확인'); expect(segmentOn(w, 'case-required')).toBe('무시하고 진행')
+  })
+  it('saves a new optional case in an all-optional scenario without changing its selection', async () => {
+    server.cases = fullCases().map(c => ({ ...c, required: false })); persist()
+    const w = await render('case')
+    context.closeWindow('case'); context.openWindow('case', '__new__'); await flushPromises()
+    expect(segmentOn(w, 'case-required')).toBe('무시하고 진행')
+    await w.get('[data-test="case-title"]').setValue('Optional by default')
+    await w.get('[data-test="case-requirement"]').setValue('R new')
+    await w.get('[data-test="case-procedure"]').setValue('Inspect')
+    await w.get('[data-test="case-expected"]').setValue('Visible')
+    expect(w.get('[data-test="case-save"]').attributes('disabled')).toBeUndefined()
+    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
+    expect(mocks.save.mock.calls[0][1][2]).toMatchObject({ case_id: 'TC-3', execution_mode: 'automated', required: false })
+  })
+  it('saves all cases as optional and reopens the selected failure policy', async () => {
+    persist()
     const w = await render('case')
     await pick(w, 'case-required', '무시하고 진행')
-    expect(w.get('[data-test="case-save"]').attributes('disabled')).toBeDefined()
-    expect(w.text()).toContain('실패 시 「다음 단계 중단」(필수) 케이스가 최소 1개 있어야 저장할 수 있습니다')
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(mocks.save).not.toHaveBeenCalled()
-    await pick(w, 'case-required', '다음 단계 중단')
     expect(w.get('[data-test="case-save"]').attributes('disabled')).toBeUndefined()
+    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
+    expect(mocks.save.mock.calls[0][1].every((c: { required: boolean }) => !c.required)).toBe(true)
+    context.openWindow('case', 'TC-1'); await flushPromises()
+    expect(segmentOn(w, 'case-required')).toBe('무시하고 진행')
   })
-  it('blocks deleting the only required case with the way out', async () => {
+  it('deletes the only required case without changing remaining optional cases', async () => {
+    persist()
     const w = await render('case')
     await w.get('[data-test="case-delete"]').trigger('click')
-    expect(w.get('[data-test="case-delete-submit"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="case-delete-required"]').text()).toContain('다른 케이스를 먼저 「다음 단계 중단」으로 바꿔 주세요')
+    expect(w.get('[data-test="case-delete-submit"]').attributes('disabled')).toBeUndefined()
     await w.get('[data-test="case-delete-submit"]').trigger('click'); await flushPromises()
-    expect(mocks.save).not.toHaveBeenCalled()
+    expect(mocks.save).toHaveBeenCalledWith(TS_DOC, [fullCases()[1]], 'Keep H1')
   })
   it('deletes the last case and returns to an authorable empty scenario', async () => {
     server.cases = [fullCases()[0]]
@@ -569,5 +632,99 @@ describe('TR0016 rev1 verification modes and the case save contract', () => {
     const payload = mergeCase(cases, draft)
     expect(payload[0]).toMatchObject({ title: 'Edited', category: 'normal', check_points: 'Sorted' })
     expect(payload[1]).toEqual(fullCases()[1])
+  })
+})
+
+// flowgate.v02.0094 #4-#6 — the windows speak the function names, show ids in the identifier type and edit on the
+// document editors' layout.
+describe('0094 test card windows follow the existing window rules', () => {
+  const heading = (w: VueWrapper) => w.get('.ui-modeless-title')
+  it('the scenario window header names 시나리오 without the TS code; ids use the identifier type and ✎ is an icon button', async () => {
+    const w = await render('scenario')
+    expect(heading(w).text()).toBe('시나리오')
+    expect(heading(w).find('.mark').exists()).toBe(false)
+    expect(w.get('[data-case="TC-1"] .case-id').text()).toBe('TC-1')
+    expect(w.find('[data-case="TC-1"] .mono').exists()).toBe(false)
+    const edit = w.findAll('[data-test="scenario-edit"]')[0]
+    expect(edit.classes()).toContain('ui-icon-btn'); expect(edit.attributes('title')).toBe('TC-1 편집')
+  })
+  it('the case window header is the kind, then the case once (id · title, muted), without the TC mark', async () => {
+    const w = await render('case')
+    expect(heading(w).get('.heading-kind').text()).toBe('케이스')
+    expect(heading(w).get('[data-test="case-window-id"]').text()).toBe('TC-1 · Sort')
+    expect(heading(w).get('[data-test="case-window-id"]').classes()).toContain('heading-case')
+    expect(heading(w).find('.mark').exists()).toBe(false)
+    expect(heading(w).text()).not.toContain('—')
+    expect(heading(w).text().match(/TC-1/g)).toHaveLength(1)
+  })
+  it("the case window bar is the card memo window's: [AI 호출] robot, [삭제] · [저장] · [닫기] at the right end", async () => {
+    const w = await render('case')
+    const bar = w.get('.case-bar')
+    expect(bar.findAll('[data-test]').map(b => b.attributes('data-test'))).toEqual(['case-delete', 'case-save', 'case-close'])
+    expect(bar.find('[data-test="case-rewrite"]').exists()).toBe(false)
+    expect(bar.get('[data-test="case-delete"]').classes()).toEqual(expect.arrayContaining(['ui-btn--secondary', 'case-delete']))
+    expect(bar.get('[data-test="case-save"]').classes()).toContain('ui-btn--primary')
+    expect(bar.get('[data-test="case-close"]').classes()).toContain('ui-btn--secondary')
+    await bar.get('[data-test="case-close"]').trigger('click')
+    expect(context.windows.case.open).toBe(false)
+  })
+  it('a new case has no delete or AI button in its bar', async () => {
+    const w = await render('case')
+    context.closeWindow('case'); context.openWindow('case', '__new__'); await flushPromises()
+    expect(w.get('.case-bar').findAll('[data-test]').map(b => b.attributes('data-test'))).toEqual(['case-save', 'case-close'])
+  })
+  it("the scenario window: no number before 케이스, and its whole rewrite is the cards' robot button", async () => {
+    const w = await render('scenario')
+    expect(w.get('.scenario > h3').text()).not.toContain('①')
+    expect(w.get('.scenario > h3').text().startsWith('케이스')).toBe(true)
+    const rewrite = w.get('[data-test="scenario-rewrite"]')
+    expect(rewrite.attributes('data-icon')).toBe('robot'); expect(rewrite.attributes('aria-label')).toBe('전체 다시 작성')
+  })
+  it('the brief window is the requirement document editor: the title alone, the text filling it, [취소] · [저장] · [닫기] in the bar', async () => {
+    const w = await render('brief')
+    expect(heading(w).text()).toBe('지시서')
+    expect(heading(w).find('.mark').exists()).toBe(false)
+    const text = w.get('[data-test="brief-text"]')
+    expect(text.element.tagName).toBe('TEXTAREA'); expect(text.classes()).toContain('brief-textarea')
+    expect(text.attributes('aria-label')).toBe('추가 지시')
+    expect(w.find('[data-test="brief-window"] label').exists()).toBe(false)
+    const bar = w.get('.brief-bar')
+    expect(bar.findAll('[data-test]').map(b => b.attributes('data-test'))).toEqual(['brief-save', 'brief-close'])
+    expect(bar.get('[data-test="brief-save"]').classes()).toContain('ui-btn--primary')
+    expect(bar.get('[data-test="brief-close"]').classes()).toContain('ui-btn--secondary')
+    expect(bar.text().replace(/\s+/g, '')).toBe('저장닫기')
+    expect(w.find('[data-test="brief-reason"]').exists()).toBe(false)
+  })
+  it('has one close action and retains unsaved session text on reopen', async () => {
+    const w = await render('brief')
+    await w.get('[data-test="brief-text"]').setValue('Changed')
+    expect(w.find('[data-test="brief-cancel"]').exists()).toBe(false)
+    await w.get('[data-test="brief-close"]').trigger('click'); await flushPromises()
+    expect(context.windows.brief.open).toBe(false)
+    context.openWindow('brief'); await flushPromises()
+    expect(w.get('[data-test="brief-text"]').element).toHaveProperty('value', 'Changed')
+    expect(mocks.briefSave).not.toHaveBeenCalled()
+  })
+  /* jsdom draws no layout: the rules that make the windows look like the existing ones are kept here. */
+  const WINDOWS = resolve(__dirname, '../../../../../../src/features/designer/inspector/features/testSpec/windows')
+  const rule = (file: string, selector: string) => {
+    const src = readFileSync(resolve(WINDOWS, file), 'utf8'), at = src.indexOf(`\n${selector} {`)
+    expect(at, selector).toBeGreaterThan(0)
+    return src.slice(at, src.indexOf('}', at))
+  }
+  it("the brief window fills the shell and its bar is DocumentWindow's editor bar (whole buttons wrap at the right end)", () => {
+    expect(rule('BriefWindow.vue', '.brief')).toMatch(/height: calc\(100% \+ 24px\);[^}]*margin: -12px -14px;/)
+    const bar = rule('BriefWindow.vue', '.brief-bar')
+    expect(bar).toMatch(/justify-content: flex-end;/); expect(bar).toMatch(/flex-wrap: wrap;/)
+    expect(bar).toMatch(/padding: 10px 12px;/); expect(bar).toMatch(/border-top: 1px solid var\(--fg2-line\);/)
+  })
+  it('case ids are written in the type of the line around them: no monospace of their own, code alone stays monospace', () => {
+    expect(rule('ScenarioWindow.vue', '.case-id')).not.toMatch(/font-family/)
+    const gate = rule('ReportWindow.vue', '.gate-id')
+    expect(gate).toMatch(/font-family: inherit;/); expect(gate).toMatch(/font-size: inherit;/); expect(gate).toMatch(/color: var\(--fg2-status-danger-fg\);/)
+    expect(rule('ReportWindow.vue', '.mono')).toMatch(/font-family: 'JetBrains Mono'/)
+    for (const file of ['ScenarioWindow.vue', 'ReportWindow.vue', 'FollowWindow.vue', 'CaseWindow.vue']) {
+      expect(readFileSync(resolve(WINDOWS, file), 'utf8'), file).not.toMatch(/class="mono id"/)
+    }
   })
 })

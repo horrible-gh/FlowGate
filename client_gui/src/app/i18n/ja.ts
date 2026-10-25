@@ -1503,7 +1503,6 @@ export default {
       provider_error: 'AI の一覧を読み込めませんでした。',
       opinion: '意見',
       opinion_placeholder: 'AI に伝える意見を書きます (空でもかまいません)。',
-      hint: '[実行] を押すとこの文書に AI を一度実行します。レビュー・対応・カード承認は続きません。カードの [AI が参照] メモも一緒に渡されます。',
       busy_this: 'この文書で別の AI 実行が進行中です。',
       busy_other: 'このフローで別の AI 実行が進行中です。',
       running: 'AI 作業中 ({id})',

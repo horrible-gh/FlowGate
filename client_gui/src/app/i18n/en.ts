@@ -1503,7 +1503,6 @@ export default {
       provider_error: 'Could not load the AIs.',
       opinion: 'Opinion',
       opinion_placeholder: 'An opinion for the AI (may be left blank).',
-      hint: '[Run] runs the AI once on this document. No review, rework or card approval follows. The card memos marked [AI refers] go with it.',
       busy_this: 'Another AI run is working on this document.',
       busy_other: 'Another AI run is working in this flow.',
       running: 'AI working ({id})',

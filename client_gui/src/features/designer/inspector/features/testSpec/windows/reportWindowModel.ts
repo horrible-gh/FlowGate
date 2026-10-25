@@ -45,6 +45,7 @@ export interface ReportItem {
   readonly requirement: string | null
   readonly expected: string | null
   readonly automationRef: string | null
+  readonly runCommand: string | null
   /** The result row's verdict (PASS · FAIL · BLOCKED · NOT_RUN), or null. */
   readonly status: string | null
   readonly actual: string | null
@@ -73,7 +74,7 @@ const stamp = (run: { readonly createdAt: string | null; readonly startedAt: str
 function previousItems(stored: readonly TestSpecRecordRow[]): ReportItem[] {
   return stored.map((row) => ({
     caseId: row.caseId, title: row.title ?? '', executionMode: row.executionMode, required: row.required, requirement: null,
-    expected: row.expected, automationRef: null, status: row.status, actual: row.actual, evidence: row.evidence,
+    expected: row.expected, automationRef: null, runCommand: null, status: row.status, actual: row.actual, evidence: row.evidence,
     state: CELL_BY_STATUS[row.status ?? ''] ?? 'not_run', flagged: false, pending: false, manualCheck: false,
     retrying: false, retryOutcome: null, retryError: null, decision: null,
   }))
@@ -105,7 +106,7 @@ export function reportItems(view: TestSpecView | null, cases: readonly TestSpecC
     const retryOutcome = retryEnded?.selectedCaseIds?.[0] === item.caseId ? (retryEnded.status === 'cancelled' ? 'cancelled' : 'failed') : null
     return {
       caseId: item.caseId, title: item.title ?? row?.title ?? '', executionMode: item.executionMode, required: item.required,
-      requirement: item.fields.requirement, expected: row?.expected ?? item.fields.expected, automationRef: item.fields.automationRef ?? null,
+      requirement: item.fields.requirement, expected: row?.expected ?? item.fields.expected, automationRef: item.fields.automationRef ?? null, runCommand: item.fields.runCommand ?? null,
       status, actual: row?.actual ?? null, evidence: row?.evidence ?? [], state, flagged, pending: flagged && !decision, manualCheck,
       retrying: presentation.runScope === 'case' && presentation.retryCaseId === item.caseId,
       retryOutcome, retryError: retryOutcome ? retryEnded!.prepareRefused ?? retryEnded!.error : null, decision,

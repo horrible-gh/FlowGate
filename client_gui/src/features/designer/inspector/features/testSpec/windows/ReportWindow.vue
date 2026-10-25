@@ -2,7 +2,7 @@
   <ModelessShell v-if="card && state && mode" ref="shell" :open="state.open" :minimized="state.minimized" :title="t(k('title'))"
     :initial-x="geometry('x', 120)" :initial-y="geometry('y', 64)" :initial-width="geometry('width', 1080)" :initial-height="geometry('height', 680)"
     @update:minimized="state.minimized = $event" @close="close">
-    <template #header><span class="mark">TR</span> {{ t(k('title')) }} · {{ target.title }} <small data-test="report-tag" :data-mode="mode">{{ tag }}</small></template>
+    <template #header>{{ t(k('title')) }} · {{ target.title }} <small data-test="report-tag" :data-mode="mode">{{ tag }}</small></template>
     <template #actions>
       <span class="window-actions" @mousedown.stop>
         <Dropdown><template #trigger="{ toggle, triggerAttrs }"><Button size="sm" variant="secondary" v-bind="triggerAttrs" data-test="report-runs" @click="toggle">{{ runLabel }} ▾</Button></template>
@@ -45,7 +45,7 @@
         <ul class="list" role="listbox" :aria-label="t(k('cases'))" data-test="report-list">
           <li v-for="item in visible" :key="item.caseId">
             <button type="button" class="row" data-report-row role="option" :aria-selected="item.caseId === selectedId" :class="{ on: item.caseId === selectedId, pend: item.pending }" :data-case="item.caseId" data-test="report-row" @click="pick(item.caseId)">
-              <span class="glyph"><TestMarkBadge v-if="markOf(item)" :mark="markOf(item)!" /></span><span class="mono id">{{ item.caseId }}</span><span class="title">{{ item.title }}</span>
+              <span class="glyph"><TestMarkBadge v-if="markOf(item)" :mark="markOf(item)!" /></span><span class="id">{{ item.caseId }}</span><span class="title">{{ item.title }}</span>
               <span v-if="item.retrying" class="right"><TestMarkBadge :mark="TEST_PENDING_MARK" /></span>
               <span v-else-if="item.pending" class="right dot" :aria-label="t(k('filter_pending'))" />
               <span v-else-if="item.decision" class="right label" :data-cause="item.decision.cause">{{ decisionLabel(item) }}</span>
@@ -53,7 +53,7 @@
           </li>
         </ul>
         <section v-if="selected" class="detail" data-test="report-detail" :data-case="selected.caseId">
-          <header><TestMarkBadge v-if="markOf(selected)" :mark="markOf(selected)!" /><span class="mono id">{{ selected.caseId }}</span><b>{{ selected.title }}</b>
+          <header><TestMarkBadge v-if="markOf(selected)" :mark="markOf(selected)!" /><span class="id">{{ selected.caseId }}</span><b>{{ selected.title }}</b>
             <span v-if="selected.executionMode && selected.executionMode !== 'automated'" class="tag">{{ t(k(selected.executionMode === 'manual' ? 'mode_manual' : selected.executionMode === 'ai' ? 'mode_ai' : 'mode_external')) }}</span>
             <span v-if="!selected.required" class="tag">{{ t(k('ignore')) }}</span><span class="ref">{{ selected.requirement }}</span></header>
           <div class="cmp"><div><small>{{ t(k('expected')) }}</small><p>{{ selected.expected ?? '—' }}</p></div>
@@ -63,22 +63,19 @@
             <template v-else-if="selected.decision">
               <div class="line"><span class="label" :data-cause="selected.decision.cause">{{ decisionLabel(selected) }}</span><span class="note">{{ selected.decision.reason }}</span>
                 <Button v-if="selected.decision.cause === 'scen'" size="sm" variant="ghost" :disabled="!card.canOpen('case')" data-test="report-edit-case" @click="card.openWindow('case', selected.caseId)">{{ t(k('edit_case')) }}</Button>
-                <span class="meta">{{ [selected.decision.by, documentHistoryWhen(selected.decision.at)].filter(Boolean).join(' · ') }}</span>
-                <Button size="sm" variant="ghost" :disabled="!card.can('decide').enabled" :title="reason('decide')" data-test="report-reopen">{{ t(k('change')) }}</Button></div>
+                <span class="meta">{{ [selected.decision.by, documentHistoryWhen(selected.decision.at)].filter(Boolean).join(' · ') }}</span></div>
             </template>
             <template v-else>
               <p v-if="selected.retryOutcome" class="retry" data-test="report-retry-outcome">{{ [t(k(`retry_${selected.retryOutcome}`)), selected.retryError].filter(Boolean).join(' · ') }}</p>
               <div v-if="selected.manualCheck" class="line"><span class="who">{{ t(k('manual')) }}</span><span class="note" />
                 <span class="acts">
-                  <Button size="sm" variant="secondary" disabled :title="t('gui.inspector.testSpec.guard.unconnected')" data-test="report-attach">{{ t(k('attach')) }}</Button>
                   <Button size="sm" variant="secondary" class="ok" :disabled="!entry.enabled" :title="entryReason" data-test="report-manual-pass" @click="enter('PASS')">{{ t(k('pass')) }}</Button>
                   <Button size="sm" variant="danger" :disabled="!entry.enabled" :title="entryReason" data-test="report-manual-fail" @click="enter('FAIL')">{{ t(k('fail')) }}</Button>
                 </span></div>
               <div v-else-if="causeMode === 'human'" class="line"><span class="who">{{ t(k('cause_title')) }}</span><span class="note" />
                 <InspectorSegment :model-value="draft.cause" :options="causeOptions" :aria-label="t(k('cause_title'))" data-test="report-causes" @update:model-value="choose($event as ReportCause)" /></div>
-              <div v-else class="line"><span class="who">{{ t(k('ai')) }}</span><InspectorTbdNote kind="tag" :label="t('gui.inspector.testSpec.guard.unconnected')" /><span class="note" />
+              <div v-else class="line"><span class="note" />
                 <span class="acts">
-                  <Button size="sm" :disabled="!card.can('decide').enabled" :title="reason('decide')" data-test="report-confirm" @click="confirmAi">{{ t(k('confirm')) }}</Button>
                   <Dropdown><template #trigger="{ toggle, triggerAttrs }"><Button size="sm" variant="ghost" v-bind="triggerAttrs" data-test="report-other" @click="toggle">{{ t(k('other')) }}</Button></template>
                     <template #default="{ close: closeMenu }"><div class="causes">
                       <button v-for="option in causeOptions" :key="option.value" type="button" role="menuitem" class="cause" :disabled="option.disabled" :title="option.title ?? undefined" :data-cause="option.value" data-test="report-cause" @click="closeMenu(); choose(option.value as ReportCause)">
@@ -86,16 +83,12 @@
                     </div></template>
                   </Dropdown>
                 </span></div>
-              <div v-if="draft.passFor === selected.caseId" class="reason-row">
-                <Input v-model="draft.reason" :placeholder="t(k('reason_placeholder'))" data-test="report-reason" @keydown.enter.prevent="record" @keydown.esc.stop.prevent="cancelPass" />
-                <Button size="sm" :disabled="!!recordReason" :title="recordReason" data-test="report-record" @click="record">{{ t(k('record')) }}</Button>
-                <Button size="sm" variant="ghost" data-test="report-reason-cancel" @click="cancelPass">{{ t(k('cancel')) }}</Button>
-              </div>
               <InspectorReason v-if="areaReason" :text="areaReason" data-test="report-decision-reason" />
             </template>
           </div>
           <dl class="facts">
-            <template v-if="selected.executionMode === 'automated'"><dt>{{ t(k('code')) }}</dt><dd class="mono">{{ selected.automationRef ?? '—' }}</dd></template>
+            <template v-if="selected.executionMode === 'automated'"><dt>{{ t(k('code')) }}</dt><dd class="mono">{{ selected.automationRef ?? '—' }}</dd>
+              <dt>{{ t(k('command')) }}</dt><dd class="mono" data-test="report-command">{{ selected.runCommand ?? '—' }}</dd></template>
             <dt>{{ t(k('evidence')) }}</dt><dd><span v-for="(item, i) in selected.evidence" :key="i" class="evidence" data-test="report-evidence">▤ {{ item.label ?? item.value }}</span><span v-if="!selected.evidence.length" class="mute">—</span></dd>
             <dt>{{ t(k('previous')) }}</dt><dd :class="{ mute: !previousRun }">{{ previousRun ?? '—' }}</dd>
           </dl>
@@ -111,18 +104,16 @@ import { useI18n } from 'vue-i18n'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 import Button from '@/components/ui/Button.vue'
 import Dropdown from '@/components/ui/Dropdown.vue'
-import Input from '@/components/ui/Input.vue'
 import { TestMarkBadge, testVerdictMark, TEST_PENDING_MARK, documentHistoryWhen } from '@/features/documentWindow'
 import InspectorReason from '../../../parts/InspectorReason.vue'
 import InspectorPaneState from '../../../parts/InspectorPaneState.vue'
 import InspectorSegment from '../../../parts/InspectorSegment.vue'
-import InspectorTbdNote from '../../../parts/InspectorTbdNote.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
 import type { TestCardCommand } from '../useTestCard'
 import { testSpecVerdictKey } from '../testSpecModel'
 import { sessionDraft, useScenarioWindow } from './scenarioWindowModel'
-import { REPORT_CAUSES, reportDefaultFilter, reportDefects, reportGate, reportItems, reportKeyAction, reportLegend, reportMode, reportMove,
-  reportNextPending, reportPrimary, reportReasonReady, reportRerunOutcome, reportRunNumber, reportSelection, reportTagKey, reportVisible,
+import { reportDefaultFilter, reportDefects, reportGate, reportItems, reportKeyAction, reportLegend, reportMode, reportMove,
+  reportNextPending, reportPrimary, reportRerunOutcome, reportRunNumber, reportSelection, reportTagKey, reportVisible,
   type ReportCause, type ReportDecision, type ReportDraft, type ReportFilter, type ReportItem } from './reportWindowModel'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t } = useI18n()
@@ -192,23 +183,16 @@ const followReason = computed(() => { const key = card.value?.openReason('follow
 const reason = (op: TestCardCommand, caseId?: string) => { const key = card.value?.can(op, caseId).reason; return key ? t(`gui.inspector.testSpec.${key}`) : '' }
 const entry = computed(() => card.value?.can('resultEntry', selected.value?.caseId) ?? { enabled: false, reason: 'reason.busy' })
 const entryReason = computed(() => reason('resultEntry', selected.value?.caseId))
-const causeOptions = computed(() => REPORT_CAUSES.map((cause) => {
+const causeOptions = computed(() => (['env'] as const).map((cause) => {
   // 통과 처리 only opens its reason input; recording it is the guarded change.
-  const why = cause === 'pass' ? '' : cause === 'env' ? reason('rerunCase', selected.value?.caseId) : reason('decide')
+  const why = reason('rerunCase', selected.value?.caseId)
   return { value: cause, label: t(k(`cause_${cause}`)), disabled: !!why, title: why || null }
 }))
-/** Read-only and other guards first, then the blank reason, then the missing server path (§7.4 order). */
-const recordReason = computed(() => {
-  const key = card.value?.can('decide').reason
-  if (key && key !== 'guard.unconnected') return t(`gui.inspector.testSpec.${key}`)
-  if (!reportReasonReady(draft.value.reason)) return t(k('reason_required'))
-  return key ? t(`gui.inspector.testSpec.${key}`) : ''
-})
 const areaReason = computed(() => {
   const item = selected.value
   if (!item || item.retrying) return ''
   if (item.manualCheck) return entryReason.value
-  return draft.value.passFor === item.caseId ? '' : reason('decide')
+  return ''
 })
 const refusal = computed(() => {
   const failure = card.value?.test.failure.value
@@ -246,15 +230,7 @@ function setFilter(value: ReportFilter) {
 }
 function choose(cause: ReportCause) {
   const item = selected.value
-  if (!item) return
-  if (cause === 'pass') { draft.value.cause = 'pass'; draft.value.passFor = item.caseId; draft.value.reason = ''; return }
-  if (cause === 'env') { void rerun(item.caseId); return }
-  // 구현 결함 · 시나리오 오류 are decision records: the session keeps them disabled until Q-8 gives them a server path.
-  if (!card.value?.can('decide').enabled) return
-}
-function confirmAi() { if (!card.value?.can('decide').enabled) return }
-function record() {
-  if (recordReason.value || !card.value?.can('decide').enabled) return
+  if (item && cause === 'env') void rerun(item.caseId)
 }
 function cancelPass() { draft.value.passFor = null; draft.value.reason = ''; draft.value.cause = null }
 async function rerun(caseId: string) {
@@ -287,7 +263,6 @@ function runPrimary() {
   const item = selected.value
   const primary = reportPrimary(item, causeMode.value, null)
   if (primary === 'rerun' && item) void rerun(item.caseId)
-  else if (primary === 'confirm') confirmAi()
 }
 function onEscape(event: KeyboardEvent) {
   if (draft.value.passFor) { event.stopPropagation(); cancelPass() }
@@ -314,7 +289,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 <style scoped>
 .report { display: flex; flex-direction: column; gap: 10px; color: var(--fg2-text); font-size: var(--fg2-control-font-size); }
 .window-actions { display: flex; gap: 4px; flex-wrap: wrap; }
-.mark { color: var(--fg2-status-info-fg); margin-right: 6px; } small { color: var(--fg2-muted); font-size: 12px; font-weight: normal; }
+small { color: var(--fg2-muted); font-size: 12px; font-weight: normal; }
 h3 { display: flex; gap: 14px; align-items: center; margin: 4px 0 0; font-size: 13px; } h3 small, h3 .filter { margin-left: auto; }
 .sum { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 26px; padding: 12px 14px; border: 1px solid var(--fg2-line); border-radius: var(--fg2-control-radius); }
 .big { display: flex; align-items: baseline; gap: 7px; min-width: 110px; } .big b { font-size: 26px; line-height: 1; font-variant-numeric: tabular-nums; }
@@ -337,7 +312,8 @@ h3 { display: flex; gap: 14px; align-items: center; margin: 4px 0 0; font-size: 
 .legend i[data-state='running'] { background: var(--fg2-status-info-bg); border-color: var(--fg2-status-info-border); } .legend i[data-state='queued'] { border-style: dashed; }
 .gate { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 7px; font-size: 12px; font-weight: 650; }
 .gate.stop { color: var(--fg2-status-danger-fg); } .gate.go { color: var(--fg2-status-success-fg); }
-.gate-id { padding: 1px 6px; border: 1px solid var(--fg2-status-danger-border); border-radius: var(--fg2-control-radius-sm); background: var(--fg2-status-danger-bg); color: var(--fg2-status-danger-fg); font-family: monospace; font-size: 10.5px; cursor: pointer; }
+/* flowgate.v02.0094: a stopping case id in the line's own type like every case id here (no monospace of its own), the danger colour kept. */
+.gate-id { padding: 1px 6px; border: 1px solid var(--fg2-status-danger-border); border-radius: var(--fg2-control-radius-sm); background: var(--fg2-status-danger-bg); color: var(--fg2-status-danger-fg); font-family: inherit; font-size: inherit; font-weight: 400; cursor: pointer; }
 .note { margin: 0; color: var(--fg2-muted); font-size: 12px; }
 .split { display: grid; grid-template-columns: minmax(250px, 320px) minmax(0, 1fr); gap: 10px; align-items: start; }
 .list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--fg2-line); border-radius: var(--fg2-control-radius); overflow: hidden; }
@@ -345,7 +321,8 @@ h3 { display: flex; gap: 14px; align-items: center; margin: 4px 0 0; font-size: 
 .row.on { background: var(--fg2-status-info-bg); box-shadow: inset 3px 0 0 var(--fg2-status-info-fg); } .row.pend .title { font-weight: 700; }
 .row:focus-visible { outline: 2px solid var(--fg2-focus); outline-offset: -2px; }
 .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.id, .mono { font-family: monospace; font-size: 11px; } .id { color: var(--fg2-muted); }
+/* flowgate.v02.0094: a case id is written in the list's own type, muted; only code (the automation ref) is monospace. */
+.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; } .id { color: var(--fg2-muted); font-size: 12px; white-space: nowrap; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fg2-yellow); }
 .label { font-size: 11px; font-weight: 700; color: var(--fg2-muted); } .label[data-cause='impl'], .label[data-cause='manualF'] { color: var(--fg2-status-danger-fg); }
 .label[data-cause='scen'] { color: var(--fg2-purple); } .label[data-cause='env'] { color: var(--fg2-orange); } .label[data-cause='pass'], .label[data-cause='manual'] { color: var(--fg2-status-success-fg); }

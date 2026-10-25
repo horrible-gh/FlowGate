@@ -144,7 +144,6 @@ def test_spec_parses_every_structured_field_with_aliases_and_multiline_procedure
         (lambda s: s.replace("- check_points: 권한 검사 / 응답 코드", "- cmd: curl http://x"), "legacy_field_in_spec"),
         (lambda s: s.replace("### TC-001: 권한", "### 권한"), "invalid_case_heading"),
         (lambda s: s.replace("## 시험 사양", "## 사양"), "missing_spec_section"),
-        (lambda s: s.replace("- required: true", "- required: false").replace("- 필수: true", "- 필수: false"), "no_required_case"),
         (lambda s: s.replace("- check_points: 로그", "- color: red"), "unknown_field"),
     ],
 )
@@ -536,7 +535,6 @@ def test_junit_and_payload_share_one_submission(env):
     [
         (lambda e: e.contents.__setitem__(TS_ID, LEGACY_TS), 422, "legacy_ts_requires_execution"),
         (lambda e: e.contents.__setitem__(TS_ID, SPEC.replace("- expected: HTTP 403, error.code=forbidden\n", "")), 422, "invalid_spec"),
-        (lambda e: e.docs[TS_ID].__setitem__("doc_review_status", "draft"), 409, "doc_not_approved"),
         (lambda e: e.docs[TS_ID].__setitem__("type_code", "T"), 422, "no_test_cases"),
     ],
 )
@@ -659,6 +657,7 @@ def test_tr_approval_does_not_require_test_pass_or_snapshot(monkeypatch):
     monkeypatch.setattr(pipeline.db_docs, "get_by_id", lambda _id: doc)
     monkeypatch.setattr(pipeline.db_docs, "update", lambda _id, values: {**doc, **values})
     monkeypatch.setattr(pipeline, "_require_document_body_for_approval", lambda *a: None)
+    monkeypatch.setattr(pipeline, "_require_workflow_head_for_approval", lambda *a: None)
     monkeypatch.setattr(pipeline, "log_state_changed", lambda **kw: None)
     monkeypatch.setattr(workflow_rework_service, "clear_return_point_if_complete", lambda *a: None)
     monkeypatch.setattr(runner, "tsr_gate_state", lambda *a: pytest.fail("TR read TSR gate"))
@@ -1916,3 +1915,37 @@ def test_structured_editor_suffix_retains_meaningful_trailing_spaces():
     assert spec.spec_trailing_body(source) == suffix
     output = spec.render_spec_document(cases, title="t", trailing_body=spec.spec_trailing_body(source))
     assert output.endswith(suffix + "\n")
+
+
+@pytest.mark.parametrize("review", ["draft", "pending_review", "revised", "rejected"])
+def test_0094_results_do_not_require_instruction_approval(env, review):
+    env.docs[TS_ID]["doc_review_status"] = review
+    response = env.svc.record_spec_results(doc_id=TS_ID, runner_id="u", triggered_via="ui",
+        results=[{"case_id": "TC-001", "status": "PASS"}])
+    assert response
+    assert not any(t.get("action") == "approve" and t.get("doc_id") == TS_ID for t in env.transitions)
+
+
+def test_0094_optional_results_keep_failure_evidence_without_blocking():
+    from modules.flow_gate.services import test_spec_service as spec
+    result = spec.compute_overall([{"case_id": "TC-1", "required": False, "status": "FAIL"}])
+    assert result["overall"] == "PASS" and result["gate_passed"]
+    assert result["counts"]["fail"] == 1
+    assert spec.compute_overall([])["overall"] == "NOT_RUN"
+
+
+@pytest.mark.parametrize("review", ["draft", "pending_review", "revised", "rejected"])
+def test_0094_run_before_approval_and_later_approval_keeps_report(env, monkeypatch, tmp_path, review):
+    from modules.flow_gate.services import spec_execution_service as execution
+    env.contents[TS_ID] = _spec_doc(CASE_TC1_AUTOMATED).replace("- required: true", "- required: false")
+    env.docs[TS_ID]["doc_review_status"] = review
+    _pass_worker(env, monkeypatch, tmp_path)
+    admitted = execution.admit(TS_ID, case_id=None, runner_id="u", locale="ko")
+    env.svc.execute_run(env.db_test_runs.get_run(admitted["run_id"]))
+    result = env.db_test_runs.latest_by_doc(TS_ID)
+    assert result["overall"] == "PASS"
+    assert env.svc.describe_test_document(env.docs[TS_ID])["latest_result"]["run_id"] == result["run_id"]
+    approval, _ = _approve_ts(env, monkeypatch, tmp_path)
+    assert approval.get("spec_execution") is None
+    assert env.db_test_runs.get_running_by_doc(TS_ID) is None
+    assert env.db_test_runs.latest_by_doc(TS_ID)["run_id"] == result["run_id"]

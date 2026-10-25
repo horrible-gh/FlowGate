@@ -96,9 +96,9 @@ def test_absent_required_flag_means_required_as_the_editor_and_client_read_it():
     assert "- required: true\n" in spec.render_spec_body([payload], title="T")
 
 
-def test_gate_still_needs_one_required_case_but_the_last_case_can_be_deleted():
+def test_all_optional_cases_save_and_the_last_case_can_be_deleted():
     _cases, errors = spec.validate_cases_payload([{**CASE, "required": False}])
-    assert "no_required_case" in {error["code"] for error in errors}
+    assert errors == [] and _cases[0]["required"] is False
     assert spec.validate_cases_payload([]) == ([], [])
     source = "---\ntest_contract_version: 2\n---\n# T\n\n## 시험 사양\n\n### TC-1: One\n- required: true\n\n## Notes\nkeep  \n"
     emptied = spec.replace_spec_cases(source, [], title="T")
@@ -132,7 +132,7 @@ def test_ai_cases_are_recorded_by_the_ai_worker_not_by_the_server_run(monkeypatc
     assert "TC-1" in server_run and "`ai` Cases (AI check) are verified by you" in mention
 
 
-def test_structured_save_api_stores_ai_mode_and_keeps_the_required_rule(brief_client):
+def test_structured_save_api_stores_ai_mode_and_all_optional_cases(brief_client):
     client, state, prefix = brief_client
     url = prefix + "/ts/test-spec"
     saved = client.put(url, json={"cases": [{**CASE, "execution_mode": "ai"},
@@ -144,8 +144,28 @@ def test_structured_save_api_stores_ai_mode_and_keeps_the_required_rule(brief_cl
         ("TC-1", "ai", True), ("TC-2", "manual", False)]
     assert state["content"].endswith("## Notes\nkeep  \n")
     refused = client.put(url, json={"cases": [{**CASE, "required": False}]})
-    assert refused.status_code == 422 and refused.json()["detail"]["errors"][0]["code"] == "no_required_case"
-    assert state["writes"] == 1
+    assert refused.status_code == 200, refused.text
+    assert spec.parse_spec(state["content"])["cases"][0]["required"] is False
+    assert state["writes"] == 2
     emptied = client.put(url, json={"cases": []})
     assert emptied.status_code == 200, emptied.text
     assert spec.parse_spec(state["content"])["cases"] == [] and state["content"].endswith("## Notes\nkeep  \n")
+
+
+@pytest.mark.parametrize("locale", ["ko", "en", "ja"])
+def test_0094_automated_authoring_binds_real_code_and_its_command(locale):
+    from modules.flow_gate.services import mention_service, tool_registry
+    from modules.flow_gate.services.test_basis_service import locator
+    guide = mention_service._TS_SPEC_AUTHORING_TEXT[locale]
+    # No framework is the premise: the target and the command are both written, in any language.
+    assert '- automation_ref: <' in guide and '- run_command: <' in guide and '- run_cwd: <' in guide
+    assert 'assertion' in guide and '{target}' in guide and '{junit}' in guide
+    for example in ('npm test -- {target}', 'mvn -q test -Dtest=LoginTest', 'pytest -q {target}'):
+        assert example in guide
+    assert 'tests/test_x.py::test_tc_001' not in guide and '.py' not in guide
+    assert tool_registry.kind_for_step('edit', 'TS')[0] == 'read_write'
+    automated = {'execution_mode': 'automated'}
+    assert locator({**automated, 'automation_ref': '6', 'run_command': 'npm test'})['capability'] == 'unbound'
+    assert locator({**automated, 'automation_ref': 'client_gui/tests/a.spec.ts'})['capability'] == 'command_missing'
+    assert locator({**automated, 'automation_ref': 'client_gui/tests/a.spec.ts', 'run_command': 'npm test -- {target}',
+                    'run_cwd': 'client_gui'})['capability'] == 'case_selectable'
