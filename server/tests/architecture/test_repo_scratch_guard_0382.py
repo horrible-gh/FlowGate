@@ -23,8 +23,8 @@ from pathlib import Path
 
 import pytest
 
-_TESTS_DIR = Path(__file__).resolve().parent
-_SERVER_DIR = _TESTS_DIR.parent
+_SERVER_DIR = Path(__file__).resolve().parents[2]
+_TESTS_DIR = _SERVER_DIR / "tests"
 _REPO_ROOT = _SERVER_DIR.parent
 
 # 경로 객체에 대고 부르면 디스크에 쓰는 메서드.

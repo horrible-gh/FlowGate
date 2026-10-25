@@ -45,11 +45,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-_SERVER_DIR = Path(__file__).resolve().parents[1]
+_SERVER_DIR = Path(__file__).resolve().parents[2]
 _MODULES_DIR = _SERVER_DIR / "modules"
 _SERVICES_DIR = _MODULES_DIR / "flow_gate" / "services"
 _GIT_PKG_DIR = _SERVICES_DIR / "git"
-_TESTS_DIR = Path(__file__).resolve().parent
+_TESTS_DIR = _SERVER_DIR / "tests"
 
 # Physical module list, globbed rather than hardcoded (design choice 1 above).
 # git_service.py itself (the facade) is not a target: patching its own __dict__ is

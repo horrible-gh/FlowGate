@@ -33,9 +33,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_SERVER_DIR = Path(__file__).resolve().parents[1]
+_SERVER_DIR = Path(__file__).resolve().parents[2]
 _SERVICES_DIR = _SERVER_DIR / "modules" / "flow_gate" / "services"
-_TESTS_DIR = Path(__file__).resolve().parent
+_TESTS_DIR = _SERVER_DIR / "tests"
 
 # Every module of the package, globbed rather than listed: a hardcoded file list is
 # exactly the "physical filenames became a test contract" problem NR0003 §9 named, and

@@ -26,8 +26,8 @@ from pathlib import Path
 
 import pytest
 
-_TESTS_DIR = Path(__file__).resolve().parent
-_SERVER_DIR = _TESTS_DIR.parent
+_SERVER_DIR = Path(__file__).resolve().parents[2]
+_TESTS_DIR = _SERVER_DIR / "tests"
 _REPO_ROOT = _SERVER_DIR.parent
 _CONFTEST_PATH = _TESTS_DIR / "conftest.py"
 _PYTEST_INI = _SERVER_DIR / "pytest.ini"
