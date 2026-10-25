@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from test_git_merge_target_0594 import Proj, _ctx, _git, _seed_wf_done_root, _session, needs_git  # noqa: F401
+from tests.modules.flow_gate.test_git_merge_target_0594 import Proj, _ctx, _git, _seed_wf_done_root, _session, needs_git  # noqa: F401
 from group_lock_stub import held_locks  # noqa: F401
 
 from modules.flow_gate.services.git.credentials import GitServiceError

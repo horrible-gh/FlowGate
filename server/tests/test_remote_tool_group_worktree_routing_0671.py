@@ -36,7 +36,7 @@ _MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 if str(_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVER_DIR))
 
-from test_git_integration_0115 import _git as _git_run  # noqa: E402 -- real git helper
+from tests.modules.flow_gate.test_git_integration_0115 import _git as _git_run  # noqa: E402 -- real git helper
 
 PROJECT_ID = "p_0671rt"
 PROJECT_NAME = "P0671Rt"

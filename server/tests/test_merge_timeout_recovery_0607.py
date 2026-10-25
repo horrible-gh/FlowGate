@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pytest
 
-from test_git_integration_0115 import (  # noqa: F401 — fixtures are used by name
+from tests.modules.flow_gate.test_git_integration_0115 import (  # noqa: F401 — fixtures are used by name
     _git,
     needs_git,
     patch_store,
