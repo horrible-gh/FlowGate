@@ -1,7 +1,8 @@
 // 0071 D0008 §3.6 · §3.7 · §6.8 · §6.9 — the report and follow-up windows' rules. Pure functions over the card
 // session's view, result rows and presentation; the windows draw them and call session commands only.
-import type { TestSpecCaseDetail, TestSpecEvidence, TestSpecRecordRow, TestSpecView } from '@/features/document'
+import { testSpecCasePayload, type TestSpecCaseDetail, type TestSpecEvidence, type TestSpecRecordRow, type TestSpecView } from '@/features/document'
 import type { TestCardPresentation } from '../testSpecModel'
+import { shownCommand } from './scenarioWindowModel'
 
 export type ReportCause = 'impl' | 'scen' | 'env' | 'pass'
 /** `manual` / `manualF` are the human check verdicts of the v8 mockup's decision record. */
@@ -44,7 +45,7 @@ export interface ReportItem {
   readonly required: boolean
   readonly requirement: string | null
   readonly expected: string | null
-  readonly automationRef: string | null
+  /** What runs, as the case window shows it (0094 B0005). */
   readonly runCommand: string | null
   /** The result row's verdict (PASS · FAIL · BLOCKED · NOT_RUN), or null. */
   readonly status: string | null
@@ -74,7 +75,7 @@ const stamp = (run: { readonly createdAt: string | null; readonly startedAt: str
 function previousItems(stored: readonly TestSpecRecordRow[]): ReportItem[] {
   return stored.map((row) => ({
     caseId: row.caseId, title: row.title ?? '', executionMode: row.executionMode, required: row.required, requirement: null,
-    expected: row.expected, automationRef: null, runCommand: null, status: row.status, actual: row.actual, evidence: row.evidence,
+    expected: row.expected, runCommand: null, status: row.status, actual: row.actual, evidence: row.evidence,
     state: CELL_BY_STATUS[row.status ?? ''] ?? 'not_run', flagged: false, pending: false, manualCheck: false,
     retrying: false, retryOutcome: null, retryError: null, decision: null,
   }))
@@ -106,7 +107,7 @@ export function reportItems(view: TestSpecView | null, cases: readonly TestSpecC
     const retryOutcome = retryEnded?.selectedCaseIds?.[0] === item.caseId ? (retryEnded.status === 'cancelled' ? 'cancelled' : 'failed') : null
     return {
       caseId: item.caseId, title: item.title ?? row?.title ?? '', executionMode: item.executionMode, required: item.required,
-      requirement: item.fields.requirement, expected: row?.expected ?? item.fields.expected, automationRef: item.fields.automationRef ?? null, runCommand: item.fields.runCommand ?? null,
+      requirement: item.fields.requirement, expected: row?.expected ?? item.fields.expected, runCommand: shownCommand(testSpecCasePayload(item)) || null,
       status, actual: row?.actual ?? null, evidence: row?.evidence ?? [], state, flagged, pending: flagged && !decision, manualCheck,
       retrying: presentation.runScope === 'case' && presentation.retryCaseId === item.caseId,
       retryOutcome, retryError: retryOutcome ? retryEnded!.prepareRefused ?? retryEnded!.error : null, decision,

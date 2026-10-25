@@ -339,14 +339,11 @@ PROTECTED = [
     {
         "file": 'modules/flow_gate/services/mention_service.py',
         "symbols": [
-            "'- automation_ref: <automated 필수: 실행 대상 테스트 파일[::테스트 이름]>\\n'",
-            "'- run_command: <automated 필수: 실행 명령; 예: npm test -- {target} / mvn -q test -Dtest=LoginTest / pytest -q {target}>\\n'",
-            "'- run_cwd: <선택: 실행 위치, 저장소 기준 상대 경로(기본 .)>\\n'",
+            "'- run_command: <automated 필수: 테스트를 실행하는 명령; 예: node --test tests/login.test.mjs / npm test / go test ./...>\\n'",
             "'automated 케이스는 제출 전에 실제 assertion이 있는 테스트 코드를 소스 도구로 작성하거나 기존 테스트를 확인하십시오. 언어와 테스트 프레임워크는 프로젝트에 맞춥니다.\\n'",
-            "'automation_ref에는 tests/, test/, <모듈>/tests/, src/test/, __tests__ 아래의 테스트 파일 경로를 적습니다.\\n'",
-            "'run_command에는 실행 파일 하나와 인수만 적습니다. 셸, 파이프·리다이렉션, 인라인 코드, git·네트워크·삭제 도구는 거부됩니다.\\n'",
-            "'{target}은 실행 위치 기준 대상 경로, {node}는 :: 뒤의 이름, {junit}은 JUnit XML 보고서 경로로 바뀝니다. 종료 코드 0이 PASS입니다.\\n'",
-            "'숫자, 설명, 존재하지 않는 파일을 실행 대상으로 쓰지 마십시오. 코드를 작성하지 못하면 완료로 보고하지 마십시오.\\n'",
+            "'run_command에는 실행 파일 하나와 인수만 적고, 저장소 루트 기준으로 실행됩니다.\\n'",
+            "'셸, 파이프·리다이렉션, 인라인 코드, git·네트워크·삭제 도구는 거부됩니다. {junit}은 JUnit XML 보고서 경로로 바뀝니다. 종료 코드 0이 PASS입니다.\\n'",
+            "'숫자, 설명, 존재하지 않는 파일을 실행 명령으로 쓰지 마십시오. 코드를 작성하지 못하면 완료로 보고하지 마십시오.\\n'",
             "'새 TS는 사람이 검토·승인하는 시험사양서(test specification)로 작성하십시오. frontmatter에\\n'",
             "'`test_contract_version: 2` 를 반드시 넣으십시오 — 이 표시가 있는 TS는 FlowGate가 셸 명령으로\\n'",
             "'실행하지 않고, 시험 결과를 Case ID별로 받아 시험성적서(TSR)를 조립합니다. 표시가 없는 TS는\\n'",

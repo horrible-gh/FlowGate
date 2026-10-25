@@ -171,7 +171,7 @@ describe('0071 T3 report rules', () => {
     const view = toTestSpecView(server)
     const items = reportItems(view, view.details!.cases, view.details!.rows, testCardPresentation(view, null, view.details!.rows))
     expect(items.map(item => item.caseId)).toEqual(['TC-1', 'TC-2', 'TC-3'])
-    expect(items[0]).toMatchObject({ title: 'Old expiry', expected: 'Old notice', required: true, requirement: null, automationRef: null, status: 'FAIL' })
+    expect(items[0]).toMatchObject({ title: 'Old expiry', expected: 'Old notice', required: true, requirement: null, runCommand: null, status: 'FAIL' })
   })
   it('a full run shows no earlier verdict, actual or evidence as its own', () => {
     server.active_run = liveRun('run-all', { selected_case_ids: ['TC-1', 'TC-2'], reported_case_ids: [], created_at: '2026-10-11T10:00:00Z' })
@@ -201,7 +201,7 @@ describe('0071 T3 report window', () => {
     expect(w.findAll('[data-test="report-gate-case"]').map(item => item.text())).toEqual(['TC-1', 'TC-2'])
     expect(w.get('[data-test="report-filter"] [aria-checked="true"]').text()).toContain('확인 필요')
     expect(detailCase(w)).toBe('TC-1'); expect(w.get('[data-test="report-actual"]').text()).toContain('No notice')
-    expect(w.get('[data-test="report-detail"]').text()).toContain('tests/test_auth.py::test_1'); expect(w.get('[data-test="report-evidence"]').text()).toContain('log_tc1.txt')
+    expect(w.get('[data-test="report-command"]').text()).toBe('—'); expect(w.get('[data-test="report-detail"]').text()).not.toContain('실행 대상'); expect(w.get('[data-test="report-evidence"]').text()).toContain('log_tc1.txt')
     await w.findAll('[data-test="report-gate-case"]')[1].trigger('click')
     expect(detailCase(w)).toBe('TC-2')
   })

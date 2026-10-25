@@ -183,8 +183,10 @@ def test_locator_binds_py_under_every_root_and_asks_other_test_code_for_a_comman
                                 "node": None}
     assert loc(COLOCATED)["capability"] == "command_missing"
     for ref in ("server/app.py", "tests/fixture.json", "tests/../server/app.py",
-                "tests/test_a.py::not a node", "/tests/test_a.py", "tests\\test_a.py", ""):
+                "tests/test_a.py::not a node", "/tests/test_a.py", "tests\\test_a.py"):
         assert loc(ref) == {"capability": "unbound"}
+    # No target and no command (B0005): the command is what is missing.
+    assert loc("") == {"capability": "command_missing"}
     assert loc(CLIENT_SPEC, "external") == {"capability": "external"}
     assert loc(SERVER_TEST, "manual") == {"capability": "manual"}
 

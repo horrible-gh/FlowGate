@@ -140,7 +140,7 @@ async function saveRaw() {
 small { color: var(--fg2-muted); font-size: 12px; font-weight: normal; }
 h3 { display: flex; gap: 14px; align-items: center; font-size: 13px; } h3 small { margin-left: auto; }
 .table-scroll { overflow: auto; } table { width: 100%; border-collapse: collapse; font-size: 12px; } th { text-align: left; color: var(--fg2-muted); font-weight: normal; }
-th, td { padding: 9px 8px; border-bottom: 1px solid var(--fg2-line); vertical-align: top; } td:nth-child(3) { min-width: 170px; } td:nth-child(4) { min-width: 130px; }
+th, td { padding: 9px 8px; border-bottom: 1px solid var(--fg2-line); vertical-align: middle; } td:nth-child(3) { min-width: 170px; } td:nth-child(4) { min-width: 130px; }
 .warning { color: var(--fg2-yellow); } .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 /* flowgate.v02.0094: a case id is written in the list's own type (no monospace of its own), muted, on one line. */
 .case-id { color: var(--fg2-muted); white-space: nowrap; } .errors { color: var(--fg2-status-danger-fg); }

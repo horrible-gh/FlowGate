@@ -349,8 +349,9 @@ export interface TestSpecCaseFields {
   readonly procedure: string | null
   readonly expected: string | null
   readonly checkPoints: string | null
+  /** Kept for a Case saved with a target; a new command names its test files itself (0094 B0005). */
   readonly automationRef?: string | null
-  /** The automated Case's execution command and working directory (any language or framework). */
+  /** The automated Case's execution command (any language or framework); a stored working directory is kept. */
   readonly runCommand?: string | null
   readonly runCwd?: string | null
   readonly testAssets?: string | null

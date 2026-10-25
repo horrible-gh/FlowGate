@@ -21,17 +21,19 @@ asset API and the locator share. Git tracking is not part of it: an asset must b
 measured source with a hash and pass the path safety checks, so untracked test files a TR
 created are assets too.
 
-Execution contract (0094 B0001): no language or test framework is assumed. An automated
-Case names its target (``automation_ref``, a test file) and how it runs (``run_command``:
-one program and its arguments, optionally ``run_cwd``). The command goes through the TR
-Self-check command policy -- no shell, no operators, no inline code, the same deny list --
-and the shared process layer; its exit code is the verdict.
+Execution contract (0094 B0001, B0005): no language or test framework is assumed. An
+automated Case says how it runs in one ``run_command`` (one program and its arguments); the
+test files its arguments name are its targets. The command goes through the TR Self-check
+command policy -- no shell, no operators, no inline code, the same deny list -- and the
+shared process layer; its exit code is the verdict. ``automation_ref`` and ``run_cwd`` are
+still read for Cases saved with them and are not written for new ones.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shlex
 import stat
@@ -187,7 +189,8 @@ def safe_asset_file(root: Path, path: str) -> Path:
 
 
 # run_command placeholders, replaced when the Case runs: the target path (relative to
-# run_cwd), its ``::`` node, and a scratch file a JUnit XML reporter may write.
+# run_cwd), its ``::`` node, and a scratch file a JUnit XML reporter may write. Target and
+# node are only filled for a Case saved with ``automation_ref``.
 PLACEHOLDER_TARGET = "{target}"
 PLACEHOLDER_NODE = "{node}"
 PLACEHOLDER_JUNIT = "{junit}"
@@ -225,14 +228,38 @@ def run_command(text, cwd) -> dict:
     return {"program": program, "args": args, "cwd": folder}
 
 
-def locator(case: dict) -> dict:
-    """Automation Locator: binds ``automation_ref`` and ``run_command`` (0094 B0001).
+def command_tests(command: dict) -> list[dict]:
+    """The test files a checked command's arguments name, source-relative, in order.
 
-    The target must be test code under the Test Asset Policy, in any language; anything
-    else (malformed, product source, a fixture) is ``unbound``. A valid ``run_command``
-    makes the Case ``case_selectable`` with its command; an invalid one is
-    ``command_invalid`` with the policy's reason. Without one, a ``.py`` target saved before
-    run_command existed keeps its pytest invocation (``case_selectable`` with a node,
+    An argument (or the value of a ``--option=value``) is read as ``<path>[::<node>]``
+    relative to the command's cwd; it counts when the path is test code under the Test
+    Asset Policy, in any language. Nothing is looked up on disk.
+    """
+    found: list[dict] = []
+    for arg in command["args"]:
+        value = arg.split("=", 1)[1] if arg.startswith("-") and "=" in arg else arg
+        match = None if value.startswith("-") else _LOCATOR.fullmatch(value)
+        if not match:
+            continue
+        path = posixpath.normpath(posixpath.join(command["cwd"], match.group(1)))
+        if asset_kind(path) in TEST_CODE_KINDS and all(item["path"] != path for item in found):
+            found.append({"path": path, "node": match.group(2)})
+    return found
+
+
+def locator(case: dict) -> dict:
+    """Automation Locator: binds a Case to what runs it (0094 B0001, B0005).
+
+    A Case without ``automation_ref`` is judged by its ``run_command`` alone: missing is
+    ``command_missing``, refused by the policy ``command_invalid`` with the policy's reason,
+    otherwise ``case_selectable``. Naming a test file is not required (``npm test``,
+    ``go test ./...``, a script with arguments); the test files it does name go in ``tests``
+    and the first one is its target.
+
+    A Case saved with ``automation_ref`` keeps the result it had: the target must be test
+    code under the Test Asset Policy, anything else (malformed, product source, a fixture)
+    is ``unbound``. A valid ``run_command`` makes it ``case_selectable``; without one, a
+    ``.py`` target keeps its pytest invocation (``case_selectable`` with a node,
     ``suite_only`` without) and any other target is ``command_missing``. Only
     ``case_selectable`` / ``suite_only`` Cases are run.
     """
@@ -240,6 +267,16 @@ def locator(case: dict) -> dict:
     if mode in ("ai", "manual", "external"):
         return {"capability": mode}
     raw = str(case.get("automation_ref") or "").strip()
+    if not raw:
+        if not str(case.get("run_command") or "").strip():
+            return {"capability": "command_missing"}
+        try:
+            command = run_command(case.get("run_command"), case.get("run_cwd"))
+        except ValueError as exc:
+            return {"capability": "command_invalid", "reason": str(exc)}
+        tests = command_tests(command)
+        return {"capability": "case_selectable", **(tests[0] if tests else {}), "command": command,
+                "tests": [item["path"] for item in tests]}
     match = _LOCATOR.fullmatch(raw)
     kind = asset_kind(match.group(1)) if match else None
     if kind not in TEST_CODE_KINDS:
@@ -269,8 +306,8 @@ def _roles(cases: list[dict]) -> dict[str, str]:
     roles: dict[str, str] = {}
     for case in cases:
         loc = locator(case)
-        if loc.get("path"):
-            roles[loc["path"]] = "test"
+        for path in loc.get("tests") or ([loc["path"]] if loc.get("path") else []):
+            roles[path] = "test"
         for raw in re.split(r"[,\n]", str(case.get("test_assets") or "")):
             # Kept verbatim: the policy refuses a backslash path instead of rewriting it.
             path = raw.strip()

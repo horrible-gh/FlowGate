@@ -84,7 +84,7 @@ describe('0071 T2 preservation model', () => {
     const cases = toTestSpecView(server).details!.cases, draft = caseDraft(cases[0], cases, 'Keep H1')
     draft.title = 'Edited'
     expect(mergeCase(cases, draft)[0]).toMatchObject({ execution_mode: 'external', required: true, automation_ref: fullCases()[0].automation_ref })
-    draft.execution_mode = 'manual'; draft.required = false; draft.automation_ref = ''
+    draft.execution_mode = 'manual'; draft.required = false
     expect(mergeCase(cases, draft)[0]).toMatchObject({ execution_mode: 'manual', required: false, automation_ref: fullCases()[0].automation_ref })
   })
   it('a hidden field or title change changes the original snapshot', () => {
@@ -310,32 +310,61 @@ describe('0071 T2 case window', () => {
 
   it('renders the mapped fields and saves a whole list with H1, hidden fields and other cases intact', async () => {
     const w = await render('case')
-    expect(w.get('[data-test="case-code"]').element).toHaveProperty('value', fullCases()[0].automation_ref)
+    expect(w.get('[data-test="case-command"]').element).toHaveProperty('value', '')
     await w.get('[data-test="case-title"]').setValue('Edited title')
     await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
     expect(mocks.save).toHaveBeenCalledWith(TS_DOC, [{ ...fullCases()[0], title: 'Edited title' }, fullCases()[1]], 'Keep H1')
     expect(mocks.save.mock.calls[0]).toHaveLength(3); expect(context.windows.case.open).toBe(false)
     expect(document.body.textContent).toContain('케이스 저장됨')
   })
-  // flowgate.v02.0094: the execution setting is a target, a command and a working directory — no framework assumed.
-  it('edits the target, command and working directory of a code-run case and saves them', async () => {
+  // flowgate.v02.0094 B0005: one command says what runs — no target or working directory field, no framework assumed.
+  it('edits the one command of a code-run case and saves it in place of the stored target', async () => {
     const w = await render('case')
-    expect(w.get('[data-test="case-code"]').attributes('placeholder')).not.toContain('pytest')
-    expect(w.get('[data-test="case-command"]').attributes('placeholder')).toBe('예) npm test -- {target}')
-    expect(w.text()).not.toContain('pytest')
-    await w.get('[data-test="case-code"]').setValue('client_gui/tests/login.spec.ts')
-    await w.get('[data-test="case-command"]').setValue('npm test -- {target}')
-    await w.get('[data-test="case-cwd"]').setValue('client_gui')
+    expect(w.find('[data-test="case-code"]').exists()).toBe(false); expect(w.find('[data-test="case-cwd"]').exists()).toBe(false)
+    expect(w.get('[data-test="case-command"]').attributes('placeholder')).toBe('테스트 파일을 실행하는 명령')
+    expect(w.text()).not.toContain('pytest'); expect(w.text()).not.toContain('실행 대상'); expect(w.text()).not.toContain('실행 위치')
+    await w.get('[data-test="case-command"]').setValue('node --test tests/login.test.mjs')
     await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(mocks.save.mock.calls[0][1][0]).toEqual({ ...fullCases()[0], automation_ref: 'client_gui/tests/login.spec.ts',
-      run_command: 'npm test -- {target}', run_cwd: 'client_gui' })
+    expect(mocks.save.mock.calls[0][1][0]).toEqual({ ...fullCases()[0], automation_ref: null, run_command: 'node --test tests/login.test.mjs' })
     expect(mocks.save.mock.calls[0][1][1]).toEqual(fullCases()[1])
+  })
+  it('shows a stored target written out in its command and keeps the stored case until the command changes', async () => {
+    server.cases = [{ ...fullCases()[0], automation_ref: 'client_gui/tests/login.spec.ts::login', run_command: 'npm test -- {target} {node}', run_cwd: 'client_gui' }, fullCases()[1]]
+    const w = await render('case')
+    expect(w.get('[data-test="case-command"]').element).toHaveProperty('value', 'npm test -- tests/login.spec.ts login')
+    await w.get('[data-test="case-title"]').setValue('Edited title')
+    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
+    expect(mocks.save.mock.calls[0][1][0]).toEqual({ ...(server.cases as object[])[0], title: 'Edited title' })
+    mocks.save.mockClear()
+    context.openWindow('case', 'TC-1'); await flushPromises()
+    await w.get('[data-test="case-command"]').setValue('npm test -- tests/login.spec.ts')
+    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
+    // The stored cwd stays: the command's path is read from it, as before.
+    expect(mocks.save.mock.calls[0][1][0]).toMatchObject({ automation_ref: null, run_command: 'npm test -- tests/login.spec.ts', run_cwd: 'client_gui' })
+  })
+  it('says under the command why it cannot run and writes nothing', async () => {
+    server.case_capabilities = { 'TC-1': 'unbound' }
+    const w = await render('case')
+    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
+    expect(w.get('[data-test="case-command-error"]').text()).toBe('케이스의 실행 명령을 확인해 주세요.')
+    expect(mocks.save).not.toHaveBeenCalled()
+    await w.get('[data-test="case-command"]').setValue('  ')
+    expect(w.find('[data-test="case-command-error"]').exists()).toBe(false)
+    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
+    expect(w.get('[data-test="case-command-error"]').text()).toBe('케이스에 실행 명령을 입력해 주세요.')
+    expect(mocks.save).not.toHaveBeenCalled()
+    mocks.save.mockRejectedValueOnce(failure(422, 'invalid_spec', { errors: [{ code: 'unbound', case_id: 'TC-1', field: 'run_command', message: 'TC-1: run_command cannot run' }] }))
+    await w.get('[data-test="case-command"]').setValue('6')
+    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
+    expect(w.get('[data-test="case-command-error"]').text()).toBe('케이스의 실행 명령을 확인해 주세요.')
+    expect(w.find('[data-test="case-refusal"]').exists()).toBe(false)
+    expect(context.windows.case.open).toBe(true)
   })
   it('keeps a stored command when verification changes to manual and hides the execution fields', async () => {
     server.cases = [{ ...fullCases()[0], run_command: 'mvn -q test -Dtest=LoginTest', run_cwd: 'server' }, fullCases()[1]]
     const w = await render('case')
     expect(w.get('[data-test="case-command"]').element).toHaveProperty('value', 'mvn -q test -Dtest=LoginTest')
-    expect(w.get('[data-test="case-cwd"]').element).toHaveProperty('value', 'server')
+    expect(w.find('[data-test="case-cwd"]').exists()).toBe(false)
     await w.get('[data-test="case-mode"]').findAll('button').find(b => b.text() === '사람 확인')!.trigger('click')
     expect(w.find('[data-test="case-command"]').exists()).toBe(false)
     await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
@@ -518,11 +547,13 @@ describe('T0015 authoring regression', () => {
     await w.get('[data-test="case-requirement"]').setValue('R new')
     await w.get('[data-test="case-procedure"]').setValue('Inspect')
     await w.get('[data-test="case-expected"]').setValue('Visible')
+    await w.get('[data-test="case-command"]').setValue('node --test tests/new.test.mjs')
     mocks.save.mockImplementation(async (_id, payload) => { server.cases = payload })
     await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
     const payload = mocks.save.mock.calls[0][1]
     expect(payload.slice(0, 2)).toEqual(fullCases())
-    expect(payload[2]).toMatchObject({ case_id: 'TC-3', title: 'New case', requirement: 'R new', procedure: 'Inspect', expected: 'Visible', check_points: 'Visible' })
+    expect(payload[2]).toMatchObject({ case_id: 'TC-3', title: 'New case', requirement: 'R new', procedure: 'Inspect', expected: 'Visible', check_points: 'Visible',
+      automation_ref: null, run_command: 'node --test tests/new.test.mjs' })
     expect(context.windows.case.open).toBe(false)
     context.openWindow('case', 'TC-3'); await flushPromises()
     expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', 'New case')
@@ -542,14 +573,14 @@ describe('TR0016 rev1 verification modes and the case save contract', () => {
     if (mode === 'manual') await pick(w, 'case-mode', 'AI 확인')
     await pick(w, 'case-mode', label)
     expect(segmentOn(w, 'case-mode')).toBe(label)
-    expect(w.find('[data-test="case-code"]').exists()).toBe(mode === 'automated')
+    expect(w.find('[data-test="case-command"]').exists()).toBe(mode === 'automated')
     expect(w.find('[data-test="case-ai-hint"]').exists()).toBe(false)
-    if (mode === 'automated') await w.get('[data-test="case-code"]').setValue('tests/test_manual.py::test_visible')
+    if (mode === 'automated') await w.get('[data-test="case-command"]').setValue('node --test tests/manual.test.mjs')
     await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
     const payload = mocks.save.mock.calls[0][1]
     expect(payload[0]).toEqual(fullCases()[0])
     expect(payload[1]).toMatchObject({ case_id: 'TC-2', execution_mode: mode, required: false,
-      automation_ref: mode === 'automated' ? 'tests/test_manual.py::test_visible' : 'keep/old.py' })
+      automation_ref: mode === 'automated' ? null : 'keep/old.py', ...(mode === 'automated' ? { run_command: 'node --test tests/manual.test.mjs' } : {}) })
     expect(context.windows.case.open).toBe(false)
     context.openWindow('case', 'TC-2'); await flushPromises()
     expect(segmentOn(w, 'case-mode')).toBe(label)
@@ -567,8 +598,9 @@ describe('TR0016 rev1 verification modes and the case save contract', () => {
     context.closeWindow('case'); context.openWindow('case', '__new__'); await flushPromises()
     expect(segmentOn(w, 'case-mode')).toBe('코드 실행')
     expect(segmentOn(w, 'case-required')).toBe('무시하고 진행')
-    expect(w.find('[data-test="case-code"]').exists()).toBe(true)
+    expect(w.find('[data-test="case-command"]').exists()).toBe(true)
     await w.get('[data-test="case-title"]').setValue('Defaults')
+    await w.get('[data-test="case-command"]').setValue('node --test tests/defaults.test.mjs')
     await w.get('[data-test="case-requirement"]').setValue('R new')
     await w.get('[data-test="case-procedure"]').setValue('Inspect')
     await w.get('[data-test="case-expected"]').setValue('Visible')
@@ -588,6 +620,7 @@ describe('TR0016 rev1 verification modes and the case save contract', () => {
     context.closeWindow('case'); context.openWindow('case', '__new__'); await flushPromises()
     expect(segmentOn(w, 'case-required')).toBe('무시하고 진행')
     await w.get('[data-test="case-title"]').setValue('Optional by default')
+    await w.get('[data-test="case-command"]').setValue('node --test tests/optional.test.mjs')
     await w.get('[data-test="case-requirement"]').setValue('R new')
     await w.get('[data-test="case-procedure"]').setValue('Inspect')
     await w.get('[data-test="case-expected"]').setValue('Visible')

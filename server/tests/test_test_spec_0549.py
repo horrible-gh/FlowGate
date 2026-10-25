@@ -1024,7 +1024,16 @@ def test_structured_editor_route_saves_through_the_content_path(env, monkeypatch
                         lambda doc_id, body, user, request=None: saved.update(doc_id=doc_id, content=body.content)
                         or {"data": {"doc_id": doc_id}, "content": body.content})
     env.contents[TS_ID] = "---\nproject: flowgate\ntype: TS\n---\n"
-    cases = spec.parse_spec(SPEC)["cases"]
+    unrunnable = spec.parse_spec(SPEC)["cases"]
+    # 0094 B0005: an automated case the editor adds must be runnable; nothing is written otherwise.
+    with pytest.raises(HTTPException) as exc:
+        documents_router.save_test_spec(TS_ID, documents_router.TestSpecSaveBody(cases=unrunnable, title="t"),
+                                        current_user={"user_id": "usr_admin"})
+    assert exc.value.status_code == 422 and [(e["case_id"], e["field"], e["code"]) for e in exc.value.detail["errors"]] == [
+        ("TC-001", "run_command", "command_missing")]
+    assert saved == {}
+    cases = [{**case, "run_command": "node --test tests/permission.test.mjs"} if case["execution_mode"] == "automated" else case
+             for case in unrunnable]
     body = documents_router.TestSpecSaveBody(cases=cases, title="권한 시험사양", locale="ko")
     documents_router.save_test_spec(TS_ID, body, current_user={"user_id": "usr_admin"})
     assert saved["doc_id"] == TS_ID
@@ -1071,10 +1080,12 @@ def test_0632_locator_is_a_restricted_pytest_locator():
                           "automation_ref": "tests/test_x.py::test_tc_1"})["capability"] == "case_selectable"
     assert basis.locator({"execution_mode": "automated",
                           "automation_ref": "tests/test_x.py"})["capability"] == "suite_only"
-    for raw in ("", "python -m pytest tests/test_x.py", "tests/test_x.py;rm -rf /",
+    for raw in ("python -m pytest tests/test_x.py", "tests/test_x.py;rm -rf /",
                 "tests/../test_x.py", "tests/test_x.py$(id)"):
         assert basis.locator({"execution_mode": "automated", "automation_ref": raw})[
             "capability"] == "unbound"
+    assert basis.locator({"execution_mode": "automated", "automation_ref": ""})[
+        "capability"] == "command_missing"
     assert basis.locator({"execution_mode": "manual", "automation_ref": "tests/test_x.py"})[
         "capability"] == "manual"
 

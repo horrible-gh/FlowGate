@@ -157,15 +157,17 @@ def test_0094_automated_authoring_binds_real_code_and_its_command(locale):
     from modules.flow_gate.services import mention_service, tool_registry
     from modules.flow_gate.services.test_basis_service import locator
     guide = mention_service._TS_SPEC_AUTHORING_TEXT[locale]
-    # No framework is the premise: the target and the command are both written, in any language.
-    assert '- automation_ref: <' in guide and '- run_command: <' in guide and '- run_cwd: <' in guide
-    assert 'assertion' in guide and '{target}' in guide and '{junit}' in guide
-    for example in ('npm test -- {target}', 'mvn -q test -Dtest=LoginTest', 'pytest -q {target}'):
+    # No framework is the premise: one command, in any language, test file or not (B0005).
+    assert '- run_command: <' in guide and '- automation_ref: <' not in guide and '- run_cwd: <' not in guide
+    assert 'assertion' in guide and '{junit}' in guide and '{target}' not in guide and '{node}' not in guide
+    for example in ('node --test tests/login.test.mjs', 'npm test', 'go test ./...'):
         assert example in guide
+        assert locator({'execution_mode': 'automated', 'run_command': example})['capability'] == 'case_selectable', example
     assert 'tests/test_x.py::test_tc_001' not in guide and '.py' not in guide
     assert tool_registry.kind_for_step('edit', 'TS')[0] == 'read_write'
     automated = {'execution_mode': 'automated'}
     assert locator({**automated, 'automation_ref': '6', 'run_command': 'npm test'})['capability'] == 'unbound'
+    assert locator({**automated, 'run_command': 'bash run.sh'})['capability'] == 'command_invalid'
     assert locator({**automated, 'automation_ref': 'client_gui/tests/a.spec.ts'})['capability'] == 'command_missing'
     assert locator({**automated, 'automation_ref': 'client_gui/tests/a.spec.ts', 'run_command': 'npm test -- {target}',
                     'run_cwd': 'client_gui'})['capability'] == 'case_selectable'

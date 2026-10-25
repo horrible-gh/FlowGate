@@ -1,5 +1,6 @@
 """0094: Chromium drives the real card; authoring/run HTTP handlers and the Case's own command execute.
-No test framework is assumed: a JavaScript case runs with `node --test`, a Python case as a plain script.
+No test framework is assumed: a JavaScript case runs with `node --test`, a Python case as a plain script,
+and the one command need not name a test file — a script outside the test folders runs with its arguments (B0005).
 Only authentication, storage and the source Basis are isolated using the existing 0549 fixture.
 """
 import json
@@ -17,14 +18,16 @@ from test_test_spec_0549 import env, TS_ID, _basis_for_test, _measured
 
 
 TARGETS = {
-    'js': ('tests/gui_case.test.mjs', 'node --test {target}',
+    'js': ('tests/gui_case.test.mjs', 'node --test tests/gui_case.test.mjs',
            "import {{ test }} from 'node:test'\nimport assert from 'node:assert/strict'\n"
            "test('saved case', () => {{ assert.equal(2 + 2, {answer}) }})\n"),
-    'py': ('tests/gui_case_check.py', 'python {target}', 'assert 2 + 2 == {answer}\nprint("checked")\n'),
+    'py': ('tests/gui_case_check.py', 'python tests/gui_case_check.py', 'assert 2 + 2 == {answer}\nprint("checked")\n'),
+    'script': ('tools/gui_check.py', 'python tools/gui_check.py --mode fast',
+               'import sys\nassert sys.argv[1:] == ["--mode", "fast"] and 2 + 2 == {answer}\n'),
 }
 
 
-@pytest.mark.parametrize("language,answer,status", [("js", 4, "PASS"), ("js", 5, "FAIL"), ("py", 4, "PASS")])
+@pytest.mark.parametrize("language,answer,status", [("js", 4, "PASS"), ("js", 5, "FAIL"), ("py", 4, "PASS"), ("script", 4, "PASS")])
 def test_gui_save_run_and_read_report(env, monkeypatch, tmp_path, language, answer, status):
     from playwright.sync_api import sync_playwright, expect
     from fastapi import FastAPI
@@ -39,6 +42,7 @@ def test_gui_save_run_and_read_report(env, monkeypatch, tmp_path, language, answ
     (work / 'tests').mkdir(parents=True)
     (work / 'scratch').mkdir()
     target, command, source = TARGETS[language]
+    (work / target).parent.mkdir(parents=True, exist_ok=True)
     (work / target).write_text(source.format(answer=answer), encoding='utf-8')
     measured = _basis_for_test()
     _measured(env, monkeypatch, measured, work)
@@ -137,22 +141,42 @@ def test_gui_save_run_and_read_report(env, monkeypatch, tmp_path, language, answ
             page.evaluate("window.testCard.value.openWindow('scenario')")
             expect(page.locator('.ui-modeless-title')).to_have_text('시나리오')
             page.locator('[data-test="scenario-add"]').click()
-            for field, value in {'title': 'Browser case', 'requirement': 'R1', 'procedure': 'Execute assertion', 'expected': 'Pass', 'code': '6'}.items():
+            for field, value in {'title': 'Browser case', 'requirement': 'R1', 'procedure': 'Execute assertion', 'expected': 'Pass'}.items():
                 page.locator(f'[data-test="case-{field}"]').fill(value)
             expect(page.locator('[data-test="case-required"] [aria-checked="true"]')).to_have_text('무시하고 진행')
             expect(page.locator('[data-test="case-rewrite"]')).to_have_count(0)
+            # B0005: one execution input; what cannot run is said under it at [저장] and nothing is written.
+            expect(page.locator('[data-test="case-code"], [data-test="case-cwd"]')).to_have_count(0)
+            assert 'pytest' not in page.locator('[data-test="case-window"]').inner_text()
+            before = env.contents[TS_ID]
+            for value, reason in (('', '케이스에 실행 명령을 입력해 주세요.'), ('bash -c "exit 0"', '허용되지 않는 실행 명령입니다.')):
+                page.locator('[data-test="case-command"]').fill(value)
+                page.locator('[data-test="case-save"]').click()
+                expect(page.locator('[data-test="case-command-error"]')).to_have_text(reason)
+                expect(page.locator('[data-test="case-window"]')).to_have_count(1)
+                expect(page.locator('[data-test="case-refusal"]')).to_have_count(0)
+                assert env.contents[TS_ID] == before
+            page.screenshot(path=str(tmp_path / 'case-refused.png'))
+            page.locator('[data-test="case-command"]').fill(command)
+            expect(page.locator('[data-test="case-command-error"]')).to_have_count(0)
             page.locator('[data-test="case-save"]').click()
             expect(page.locator('[data-test="case-window"]')).to_have_count(0)
             parsed = spec.parse_spec(env.contents[TS_ID])
             assert not parsed['errors'] and parsed['cases'][0]['required'] is False
+            assert (parsed['cases'][0]['automation_ref'], parsed['cases'][0]['run_command'], parsed['cases'][0]['run_cwd']) == ('', command, '')
             assert 'Keep this note  ' in env.contents[TS_ID]
+            # Rows are centred: as much room above the text as below, the edit button on the text's line (B0005 §2-4).
+            rows = page.evaluate("""() => [...document.querySelectorAll('[data-case] td')].filter(td => td.textContent.trim()).map(td => {
+                const range = document.createRange(); range.selectNodeContents(td)
+                const t = range.getBoundingClientRect(), c = td.getBoundingClientRect(), b = td.closest('tr').querySelector('[data-test="scenario-edit"]').getBoundingClientRect()
+                return { above: t.top - c.top, below: c.bottom - t.bottom, text: (t.top + t.bottom) / 2, button: (b.top + b.bottom) / 2 } })""")
+            assert rows and all(abs(r['above'] - r['below']) <= 1 and abs(r['text'] - r['button']) <= 1 for r in rows), rows
+            page.screenshot(path=str(tmp_path / 'scenario-rows.png'))
             page.locator('[data-test="scenario-edit"]').click()
             expect(page.locator('[data-test="case-title"]')).to_have_value('Browser case')
+            expect(page.locator('[data-test="case-command"]')).to_have_value(command)
             expect(page.locator('[data-test="case-required"] [aria-checked="true"]')).to_have_text('무시하고 진행')
             expect(page.locator('[data-test="test-card-report-summary"]')).to_have_count(0)
-            expect(page.locator('[data-test="test-spec-run"]')).to_be_disabled()
-            expect(page.locator('[data-test="test-spec-run"]')).to_have_attribute('title', '케이스에 실행 대상 테스트 파일을 연결해 주세요.')
-            assert 'pytest' not in page.locator('[data-test="case-window"]').inner_text()
             expect(page.locator('[data-test="case-conflict"]')).to_have_count(0)
             expect(page.locator('[data-test="case-reload"]')).to_have_count(0)
             page.locator('[data-test="case-title"]').fill('Unsaved draft')
@@ -166,24 +190,25 @@ def test_gui_save_run_and_read_report(env, monkeypatch, tmp_path, language, answ
             expect(page.locator('[data-test="case-title"]')).to_have_value('Changed elsewhere')
             expect(page.locator('[data-test="case-conflict"]')).to_have_count(0)
             page.locator('[data-test="case-title"]').fill('Browser case')
-            page.locator('[data-test="case-code"]').fill(target)
             page.locator('[data-test="case-save"]').click()
             expect(page.locator('[data-test="case-window"]')).to_have_count(0)
-            if language == 'js':
-                # A test file without its command is not run as if a framework were implied.
-                expect(page.locator('[data-test="test-spec-run"]')).to_be_disabled()
-                expect(page.locator('[data-test="test-spec-run"]')).to_have_attribute('title', '케이스에 실행 명령을 입력해 주세요.')
+            # A case saved before B0005 with values that cannot run: ▶ says what to fix, and [저장] does too.
+            env.contents[TS_ID] = env.contents[TS_ID].replace(f'- run_command: {command}\n', '- automation_ref: 6\n- run_command: 7\n')
+            page.evaluate("window.testCard.value.reload()")
+            expect(page.locator('[data-test="test-spec-run"]')).to_be_disabled()
+            expect(page.locator('[data-test="test-spec-run"]')).to_have_attribute('title', '케이스의 실행 명령을 확인해 주세요.')
+            expect(page.locator('[data-test="scenario-window"]')).to_contain_text('실행 명령 확인 필요')
             page.locator('[data-test="scenario-edit"]').click()
-            page.locator('[data-test="case-command"]').fill('bash -c "exit 0"')
+            # The TS changed outside the window: its kept draft asks to load the latest first.
+            page.locator('[data-test="case-reload"]').click()
+            expect(page.locator('[data-test="case-command"]')).to_have_value('7')
             page.locator('[data-test="case-save"]').click()
-            expect(page.locator('[data-test="case-window"]')).to_have_count(0)
-            expect(page.locator('[data-test="test-spec-run"]')).to_have_attribute('title', '허용되지 않는 실행 명령입니다.')
-            page.locator('[data-test="scenario-edit"]').click()
+            expect(page.locator('[data-test="case-command-error"]')).to_have_text('케이스의 실행 명령을 확인해 주세요.')
             page.locator('[data-test="case-command"]').fill(command)
             page.locator('[data-test="case-save"]').click()
             expect(page.locator('[data-test="case-window"]')).to_have_count(0)
             saved = spec.parse_spec(env.contents[TS_ID])['cases'][0]
-            assert (saved['automation_ref'], saved['run_command'], saved['run_cwd']) == (target, command, '')
+            assert (saved['automation_ref'], saved['run_command'], saved['run_cwd']) == ('', command, '')
             page.locator('[data-test="scenario-window"]').locator('xpath=ancestor::*[contains(@class,"ui-modeless-panel")]').locator('[data-modeless-action="close"]').click()
             expect(page.locator('[data-test="test-spec-run"]')).to_be_enabled()
             page.locator('[data-test="test-spec-run"]').click()

@@ -59,8 +59,9 @@ SPEC_FIELDS = (
     "test_assets",
 )
 # Optional fields rendered only when set, so a document without them round-trips unchanged.
-# automation_ref is the automated Case's target (a test file in any language), run_command
-# the program and arguments that run it, run_cwd where it runs (0094 B0001).
+# run_command is the program and arguments that run an automated Case (0094 B0005); the
+# test files it names, if any, are recorded in the run's basis. automation_ref (a target) and run_cwd (where it runs) are kept for Cases
+# saved with them (0094 B0001); the editor no longer writes them for a new command.
 OPTIONAL_SPEC_FIELDS = ("automation_ref", "run_command", "run_cwd", "test_assets")
 # ``required`` is not listed: an absent flag means required (stop the next step on failure),
 # the same default the structured editor gives a new case and the client reads.
@@ -395,6 +396,38 @@ def validate_cases_payload(cases: Any) -> tuple[list[dict], list[dict]]:
     body = render_spec_body(cases, title="validation")
     parsed = parse_spec(f"---\n{CONTRACT_KEY}: {CONTRACT_SPEC}\n---\n{body}")
     return parsed["cases"], parsed["errors"]
+
+
+_RUN_SETTINGS = ("execution_mode", "automation_ref", "run_command", "run_cwd")
+
+
+def unrunnable_case_errors(cases: list[dict], previous: list[dict]) -> list[dict]:
+    """The editor's run check (0094 B0005): an automated Case it changed must be runnable.
+
+    Only a Case that is new or whose execution settings differ from ``previous`` (the
+    stored cases) is judged, so a save never fails on a Case it did not touch. The judgment
+    is the Automation Locator's -- the same one the run uses. Each refusal is a
+    ``run_command`` field error with the locator's capability as its code.
+    """
+    from modules.flow_gate.services import test_basis_service
+
+    stored = {case_id_key(case["case_id"]): case for case in previous}
+    errors = []
+    for case in cases:
+        if case.get("execution_mode") != "automated":
+            continue
+        before = stored.get(case_id_key(case["case_id"]))
+        if before is not None and all((before.get(key) or "") == (case.get(key) or "")
+                                      for key in _RUN_SETTINGS):
+            continue
+        loc = test_basis_service.locator(case)
+        if loc["capability"] in ("case_selectable", "suite_only"):
+            continue
+        detail = f" ({loc['reason']})" if loc.get("reason") else ""
+        errors.append(_err(loc["capability"], f"{case['case_id']}: run_command cannot run "
+                           f"({loc['capability']}){detail}.", case_id=case["case_id"],
+                           field="run_command"))
+    return errors
 
 
 # ── Canonical rendering (structured editor → document body) ─────────────────────

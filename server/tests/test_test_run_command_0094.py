@@ -1,11 +1,12 @@
-"""flowgate.v02.0094 B0001 — the automated Case's execution contract is framework-neutral.
+"""flowgate.v02.0094 B0001, B0005 — the automated Case's execution contract is framework-neutral.
 
-An automated Case names its target (``automation_ref``, a test file in any language) and the
-command that runs it (``run_command``, optionally ``run_cwd``). The command is checked by the
-TR Self-check command policy (no shell, operators, inline code or denied program), resolved
-again in the run's copy and executed through the shared process layer; exit 0 is PASS, a
-JUnit XML report written to ``{junit}`` adds per-test detail. A ``.py`` target saved without a
-command keeps its pytest invocation; any other target without one is ``command_missing``.
+An automated Case says what runs in one ``run_command``; naming a test file is not required, and
+the test files its arguments do name are its targets (B0005). The command is checked by the TR Self-check command policy (no shell,
+operators, inline code or denied program), resolved again in the run's copy and executed
+through the shared process layer; exit 0 is PASS, a JUnit XML report written to ``{junit}``
+adds per-test detail. A Case saved with a target (``automation_ref``, optionally ``run_cwd``)
+keeps the result it had: a ``.py`` target without a command keeps its pytest invocation, any
+other target without one is ``command_missing``.
 """
 from __future__ import annotations
 
@@ -29,7 +30,10 @@ NODE_SOURCE = (
 PY_PASS = "tests/check_pass_0094.py"
 PY_FAIL = "tests/check_fail_0094.py"
 PY_JUNIT = "tests/check_junit_0094.py"
+# Outside any test folder, driven by its arguments.
+PY_SCRIPT = "scripts/check_args_0094.py"
 SOURCES = {
+    PY_SCRIPT: "import sys\nprint('args', sys.argv[1:])\nsys.exit(0 if sys.argv[1:] == ['--mode', 'fast'] else 1)\n",
     NODE_TEST: NODE_SOURCE,
     PY_PASS: "import sys\nassert sorted([3, 1, 2]) == [1, 2, 3]\nprint('sorted ok')\nsys.exit(0)\n",
     PY_FAIL: "import sys\nprint('expected 3, got 4')\nsys.exit(1)\n",
@@ -97,8 +101,51 @@ def test_without_a_command_only_a_saved_py_target_keeps_its_pytest_invocation():
         "capability": "case_selectable", "path": "tests/test_a.py", "node": "test_x"}
     for ref in ("client_gui/tests/a.spec.ts", "src/test/java/ATest.java", "tests/a.test.mjs"):
         assert basis.locator(case(ref))["capability"] == "command_missing"
-    for ref in ("6", "server/app.py", "tests/fixture.json", "", "run the login test"):
+    for ref in ("6", "server/app.py", "tests/fixture.json", "run the login test"):
         assert basis.locator(case(ref, "npm test"))["capability"] == "unbound"
+
+
+# ── B0005: the command alone says what runs ─────────────────────────────────
+
+def test_without_a_target_the_command_names_its_test_files():
+    loc = basis.locator(case("", "node --test client_gui/tests/a.test.mjs"))
+    assert loc == {"capability": "case_selectable", "path": "client_gui/tests/a.test.mjs", "node": None,
+                   "command": {"program": "node", "args": ["--test", "client_gui/tests/a.test.mjs"], "cwd": "."},
+                   "tests": ["client_gui/tests/a.test.mjs"]}
+    assert basis.locator(case("", "pytest -q tests/test_a.py::test_x"))["node"] == "test_x"
+    both = basis.locator(case("", "npm test -- --spec=tests/a.spec.ts ./tests/b.spec.ts tests/a.spec.ts"))
+    assert both["tests"] == ["tests/a.spec.ts", "tests/b.spec.ts"]
+    # A stored cwd still counts: the path is read from it, as the run does.
+    assert basis.locator(case("", "npm test -- tests/a.spec.ts", "client_gui"))["path"] == "client_gui/tests/a.spec.ts"
+    assert basis._roles([case("", "node --test tests/a.test.mjs tests/b.test.mjs")]) == {
+        "tests/a.test.mjs": "test", "tests/b.test.mjs": "test"}
+
+
+def test_without_a_target_a_command_need_not_name_a_test_file():
+    assert basis.locator(case("")) == {"capability": "command_missing"}
+    for command in ("npm test", "go test ./...", "cargo test", "python scripts/check.py --mode fast",
+                    "node --test tests/fixture.json", "7"):
+        loc = basis.locator(case("", command))
+        assert loc["capability"] == "case_selectable", command
+        assert loc["tests"] == [] and "path" not in loc, command
+    assert basis._roles([case("", "npm test")]) == {}
+    # The command policy still decides what may run.
+    assert basis.locator(case("", "npx vitest run tests/a.spec.ts")) == {
+        "capability": "command_invalid", "reason": "selfcheck_program_denied"}
+    assert basis.locator(case("", "bash tests/run.sh a b"))["capability"] == "command_invalid"
+    assert [item["case_id"] for item in execution.automated_selection(
+        [case("", "npm test", case_id="TC-1"), case("", "bash run.sh", case_id="TC-2")])] == ["TC-1"]
+
+
+def test_the_editor_save_refuses_a_changed_case_that_cannot_run():
+    stored = [case("6", "7", case_id="TC-1"), case("", "", mode="manual", case_id="TC-2")]
+    # Untouched settings are not judged again, so a save never fails on a case it did not change.
+    assert spec.unrunnable_case_errors(stored, stored) == []
+    changed = [case("", "bash run.sh", case_id="TC-1"), case("", "", case_id="TC-2"),
+               case("", "node --test tests/a.test.mjs", case_id="TC-3"), case("", "npm test", case_id="TC-4")]
+    errors = spec.unrunnable_case_errors(changed, stored)
+    assert [(e["case_id"], e["field"], e["code"]) for e in errors] == [
+        ("TC-1", "run_command", "command_invalid"), ("TC-2", "run_command", "command_missing")]
 
 
 @pytest.mark.parametrize("command, cwd, reason", [
@@ -178,6 +225,22 @@ def test_a_python_check_runs_without_pytest_and_its_exit_code_is_the_verdict(env
     assert failed["status"] == "FAIL" and failed["actual"] == "exit 1"
     assert any("expected 3, got 4" in item["value"] for item in failed["evidence"])
     assert all("pytest" not in item["value"] for item in passed["evidence"] + failed["evidence"])
+
+
+def test_a_command_without_a_target_runs_and_its_exit_code_is_the_verdict(env):
+    passed, failed = _run(env, [case("", f"python {PY_PASS}", case_id="TC-1"),
+                                case("", f"python {PY_FAIL}", case_id="TC-2")])
+    assert (passed["status"], failed["status"]) == ("PASS", "FAIL")
+    assert passed["source_name"] == PY_PASS
+    assert f"command: python {PY_PASS} (cwd .) exit=0" in passed["evidence"][0]["value"]
+
+
+def test_a_script_outside_the_test_folders_runs_with_its_arguments(env):
+    passed, failed = _run(env, [case("", f"python {PY_SCRIPT} --mode fast", case_id="TC-1"),
+                                case("", f"python {PY_SCRIPT} --mode slow", case_id="TC-2")])
+    assert (passed["status"], failed["status"]) == ("PASS", "FAIL"), (passed, failed)
+    # No test file named: the command is the result's source.
+    assert passed["source_name"] == f"python {PY_SCRIPT} --mode fast"
 
 
 def test_a_junit_report_written_to_the_placeholder_is_collected(env):

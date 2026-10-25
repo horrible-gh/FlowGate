@@ -11,9 +11,9 @@ Basis on the TS. Cases execute in the copy through the shared process layer
 (tr_self_check_executor). Finalizing records the result under the executed Basis and
 measures the live source once to decide whether the result counts for it.
 
-0094 B0001: a Case runs its own ``run_command`` (any language, any framework) under the TR
-Self-check command policy; the exit code is its verdict, a JUnit XML report it writes to
-``{junit}`` adds the per-test detail. A ``.py`` target saved without a command keeps the
+0094 B0001, B0005: a Case runs its own ``run_command`` (any language, any framework) under
+the TR Self-check command policy; the exit code is its verdict, a JUnit XML report it writes
+to ``{junit}`` adds the per-test detail. A ``.py`` target saved without a command keeps the
 pytest invocation it always had.
 """
 from __future__ import annotations
@@ -82,13 +82,12 @@ def check_automation_assets(doc: dict, selected: list[dict]) -> None:
     """
     root = test_basis_service.source_root(doc)
     for case in selected:
-        path = AutomationRefResolver.resolve(case).get("path")
-        if not path:
-            continue
-        try:
-            test_basis_service.safe_asset_file(root, path)
-        except ValueError as exc:
-            raise ValueError(f"{exc}: {case['case_id']}: {path}") from exc
+        loc = AutomationRefResolver.resolve(case)
+        for path in loc.get("tests") or ([loc["path"]] if loc.get("path") else []):
+            try:
+                test_basis_service.safe_asset_file(root, path)
+            except ValueError as exc:
+                raise ValueError(f"{exc}: {case['case_id']}: {path}") from exc
 
 
 def admission_blocker(doc_id: str) -> dict | None:
@@ -314,7 +313,8 @@ def _command_args(loc: dict, junit_path: Path) -> list[str]:
     """run_command arguments with the placeholders filled; ``{target}`` is cwd-relative."""
     command = loc["command"]
     folder = command["cwd"]
-    target = loc["path"] if folder == "." else posixpath.relpath(loc["path"], folder)
+    path = loc.get("path") or ""
+    target = path if folder == "." or not path else posixpath.relpath(path, folder)
     node = loc.get("node") or ""
     args = []
     for arg in command["args"]:
@@ -386,8 +386,10 @@ class ExistingRunnerAdapter:
         junit_path = scratch / ("junit_" + str(abs(hash(case["case_id"]))) + ".xml")
         args = _command_args(loc, junit_path)
         shown = " ".join([command["program"], *args])
+        # A command naming no test file is its own source.
+        source = (loc["path"] + ("::" + loc["node"] if loc.get("node") else "")) if loc.get("path") else shown
         base = {"case_id": case["case_id"], "execution_mode": "automated",
-                "source_name": loc["path"] + ("::" + loc["node"] if loc.get("node") else ""),
+                "source_name": source[:500],
                 "source_identity": source_identity or {}, "checked_by": submitted_by}
 
         def blocked(actual: str, log: str = "") -> dict:

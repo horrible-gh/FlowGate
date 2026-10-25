@@ -13,17 +13,14 @@
         <label v-if="requirementChoice === '__custom'"><span>{{ t(k('custom')) }}</span><Input v-model="draft.requirement" :disabled="locked" data-test="case-requirement" /></label>
         <label v-for="field in textFields" :key="field"><span>{{ t(k(field)) }}</span><Textarea v-model="draft[field]" :rows="field === 'precondition' ? 2 : 4" :disabled="locked" :data-test="`case-${field}`" /></label>
         <div class="field" role="group" :aria-label="t(k('mode'))"><span>{{ t(k('mode')) }}</span><div class="control"><InspectorSegment :model-value="draft.execution_mode" :options="modeOptions" :disabled="locked" :aria-label="t(k('mode'))" data-test="case-mode" @update:model-value="draft.execution_mode = $event" /></div></div>
-        <!-- flowgate.v02.0094: no language or framework is assumed; the case names its test file and the command that runs it. -->
-        <template v-if="draft.execution_mode === 'automated'">
-          <label><span>{{ t(k('code')) }}</span><Input v-model="draft.automation_ref" :placeholder="t(k('code_placeholder'))" class="mono" :disabled="locked" data-test="case-code" /></label>
-          <label><span>{{ t(k('command')) }}</span><Input v-model="draft.run_command" :placeholder="t(k('command_placeholder'))" class="mono" :disabled="locked" data-test="case-command" /></label>
-          <label><span>{{ t(k('cwd')) }}</span><Input v-model="draft.run_cwd" placeholder="." class="mono" :disabled="locked" data-test="case-cwd" /></label>
-        </template>
+        <!-- flowgate.v02.0094 B0005: no language or framework is assumed; one command says what runs, and why it cannot run shows under it. -->
+        <label v-if="draft.execution_mode === 'automated'"><span>{{ t(k('command')) }}</span><span class="command"><Input v-model="draft.run_command" :placeholder="t(k('command_placeholder'))" class="mono" :disabled="locked" data-test="case-command" />
+          <InspectorReason v-if="commandCode" tone="danger" :text="commandText" data-test="case-command-error" /></span></label>
         <div class="field" role="group" :aria-label="t(k('required'))"><span>{{ t(k('required')) }}</span><div class="control"><InspectorSegment :model-value="draft.required ? 'stop' : 'ignore'" :options="requiredOptions" :disabled="locked" :aria-label="t(k('required'))" data-test="case-required" @update:model-value="draft.required = $event === 'stop'" /></div></div>
       </template>
       <template v-if="conflict"><InspectorReason tone="danger" :text="t(k('conflict'))" data-test="case-conflict" /><Button size="sm" variant="secondary" data-test="case-reload" @click="resetDraft">{{ t(k('reload')) }}</Button></template>
       <InspectorReason v-if="!conflict && saveReason" :text="saveReason" />
-      <template v-if="refusal && !conflict"><InspectorReason tone="danger" :text="refusalText" data-test="case-refusal" /><ul class="errors"><li v-for="(error, i) in refusal.fieldErrors" :key="i">{{ error.caseId }} · {{ error.field }} · {{ error.message }}</li></ul></template>
+      <template v-if="refusal && !conflict && (!commandCode || otherErrors.length)"><InspectorReason tone="danger" :text="refusalText" data-test="case-refusal" /><ul class="errors"><li v-for="(error, i) in otherErrors" :key="i">{{ error.caseId }} · {{ error.field }} · {{ error.message }}</li></ul></template>
       <div v-if="confirming" class="confirm" role="group" data-test="case-delete-confirm"><span>{{ t(k('delete_confirm'), { id: draft.original.case_id }) }}</span>
         <Button size="sm" variant="secondary" @click="confirming = false">{{ t(k('cancel')) }}</Button>
         <Button size="sm" variant="danger" :disabled="conflict || !card.can('caseDelete').enabled" :title="deleteReason" data-test="case-delete-submit" @click="remove">{{ t(k('delete')) }}</Button>
@@ -50,7 +47,7 @@ import InspectorReason from '../../../parts/InspectorReason.vue'
 import InspectorPaneState from '../../../parts/InspectorPaneState.vue'
 import InspectorSegment from '../../../parts/InspectorSegment.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
-import { caseDraft, newCaseDraft, addedCase, mergeCase, scenarioSnapshot, sessionDraft, useScenarioWindow, notifySaved, type CaseDraft } from './scenarioWindowModel'
+import { caseDraft, newCaseDraft, addedCase, mergeCase, runChanged, scenarioSnapshot, sessionDraft, useScenarioWindow, notifySaved, type CaseDraft } from './scenarioWindowModel'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t } = useI18n()
 const k = (key: string) => `gui.inspector.testSpec.window.case.${key}`
@@ -90,6 +87,20 @@ const deleteReason = computed(() => conflict.value ? t(k('conflict')) : reason('
 function reason(op: 'caseSave' | 'caseAdd' | 'caseDelete' | 'rewriteCase') { const key = card.value?.can(op).reason; return key ? t(`gui.inspector.testSpec.${key}`) : '' }
 const refusal = computed(() => ['caseSave', 'caseAdd', 'caseDelete'].includes(card.value?.refusal.value?.operation ?? '') ? card.value?.refusal.value : null)
 const refusalText = computed(() => refusal.value ? [t(`gui.inspector.testSpec.${refusal.value.key}`), refusal.value.message].filter(Boolean).join(' · ') : '')
+// Why the command cannot run (B0005 §2): the server's run judgment, found before [저장] writes or by the save's refusal.
+const commandCode = ref<string | null>(null)
+const commandText = computed(() => t(`gui.inspector.testSpec.reason.${['command_missing', 'command_invalid'].includes(commandCode.value ?? '') ? commandCode.value : 'automation_unbound'}`))
+const otherErrors = computed(() => refusal.value?.fieldErrors.filter(error => error.field !== 'run_command') ?? [])
+watch(() => [draft.value?.run_command, draft.value?.execution_mode, state.value?.caseId], () => { commandCode.value = null })
+/** An unchanged command keeps the server's judgment of it; a changed one must be written, the server judges it on save. */
+function commandProblem(d: CaseDraft): string | null {
+  if (d.execution_mode !== 'automated') return null
+  if (!adding.value && !runChanged(d)) {
+    const capability = card.value?.view.value?.caseCapabilities[d.original.case_id]
+    return !capability || ['case_selectable', 'suite_only'].includes(capability) ? null : capability
+  }
+  return d.run_command.trim() ? null : 'command_missing'
+}
 const custom = ref(false)
 watch(() => state.value?.caseId, () => { confirming.value = false; custom.value = false })
 const requirements = computed(() => [...new Set(card.value?.cases.value.map(c => c.fields.requirement).filter((s): s is string => !!s))])
@@ -103,6 +114,8 @@ const requiredOptions = computed(() => [{ value: 'ignore', label: t(k('ignore'))
 async function commit(deleting: boolean) {
   const c = card.value, d = draft.value, op = deleting ? 'caseDelete' : adding.value ? 'caseAdd' : 'caseSave'
   if (!current() || !c || !d || checking.value || conflict.value || (!deleting && !valid.value) || !c.can(op).enabled) return
+  commandCode.value = deleting ? null : commandProblem(d)
+  if (commandCode.value) return
   checking.value = true
   try {
     await c.reload()
@@ -110,6 +123,7 @@ async function commit(deleting: boolean) {
     const payload = payloadFor(deleting)
     if (!payload) return
     const ok = await c.saveCases(payload, op)
+    if (!ok && current() && !deleting) commandCode.value = c.refusal.value?.fieldErrors.find(error => error.field === 'run_command')?.code ?? null
     if (!ok || !current() || state.value?.caseId !== (adding.value ? '__new__' : d.original.case_id)) return
     delete c.drafts[`t2:case:${adding.value ? '__new__' : d.original.case_id}`]
     close()
@@ -125,7 +139,8 @@ function resetDraft() { if (card.value && draft.value) { delete card.value.draft
 .case { display: flex; flex-direction: column; gap: 12px; min-height: 100%; color: var(--fg2-text); font-size: var(--fg2-control-font-size); }
 label, .field { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; align-items: start; } label > span, .field > span { color: var(--fg2-muted); padding-top: 7px; }
 .control { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; } .hint { color: var(--fg2-muted); font-size: 11.5px; }
-.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; } /* The command and, under it, why it cannot run; not a label caption (label > span). */
+.command { display: flex; flex-direction: column; min-width: 0; padding-top: 0; color: inherit; }
 /* The write window's heading (SlotWriteWindow): the kind, then the case muted and cut with an ellipsis. */
 .heading { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; } .heading-kind { flex: 0 0 auto; }
 .heading-case { overflow: hidden; color: var(--fg2-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }

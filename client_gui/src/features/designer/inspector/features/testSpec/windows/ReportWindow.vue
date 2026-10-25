@@ -87,8 +87,7 @@
             </template>
           </div>
           <dl class="facts">
-            <template v-if="selected.executionMode === 'automated'"><dt>{{ t(k('code')) }}</dt><dd class="mono">{{ selected.automationRef ?? '—' }}</dd>
-              <dt>{{ t(k('command')) }}</dt><dd class="mono" data-test="report-command">{{ selected.runCommand ?? '—' }}</dd></template>
+            <template v-if="selected.executionMode === 'automated'"><dt>{{ t(k('command')) }}</dt><dd class="mono" data-test="report-command">{{ selected.runCommand ?? '—' }}</dd></template>
             <dt>{{ t(k('evidence')) }}</dt><dd><span v-for="(item, i) in selected.evidence" :key="i" class="evidence" data-test="report-evidence">▤ {{ item.label ?? item.value }}</span><span v-if="!selected.evidence.length" class="mute">—</span></dd>
             <dt>{{ t(k('previous')) }}</dt><dd :class="{ mute: !previousRun }">{{ previousRun ?? '—' }}</dd>
           </dl>
