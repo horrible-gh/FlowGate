@@ -243,11 +243,11 @@ def _reference_doc_lines(doc_dot_dash_path: str, base: str, locale: str = "ko") 
 # answer and chat lookup lines below, the help item ``document_access`` (``help_catalog``) and the unreadable
 # documents section of an AI start (``ai_start_precheck``) all carry this constant; change the wording here only.
 BODY_UNREADABLE_RULES: tuple[str, ...] = (
-    "본문 미열람 규칙 1: content가 null이거나 content_state가 readable이 아닌 문서는 '읽지 못한 문서'입니다. "
-    "front matter뿐인 빈 문서(content_state=readable)와 구분해 적으십시오.",
+    "본문 미열람 규칙 1: content가 null이거나 content_state가 readable이 아닌 문서만 '읽지 못한 문서'입니다. "
+    "front matter뿐인 빈 문서(content_state=readable)는 읽은 문서이며, 이 판정은 내부에서만 하고 답변에 나열하지 마십시오.",
     "본문 미열람 규칙 2: 읽지 못한 문서의 내용을 읽은 것처럼 인용하거나 요약하지 마십시오.",
-    "본문 미열람 규칙 3: 답변 첫머리에 (가) 본문을 읽지 못한 문서 번호, (나) 받은 사유(content_state 값), "
-    "(다) 대신 사용한 근거를 밝히십시오.",
+    "본문 미열람 규칙 3: 읽지 못한 문서가 있고 현재 요청 처리에 필요한 경우에만 문서 번호·사유(content_state 값)·답변에 미치는 영향·대체 근거(있으면)를 짧게 밝히십시오. "
+    "읽지 못한 문서가 없거나 현재 답변과 무관하면 '없음'·'해당 없음' 같은 열람 상태 보고를 쓰지 말고, 사용자가 근거나 열람 상황을 물으면 그 범위에서 설명하십시오.",
     "본문 미열람 규칙 4: 질문이 그 문서의 내용을 전제로 하면, 다른 자료에서 끌어낸 내용에 "
     "'원문 미확인 상태의 추정'이라고 표시하십시오.",
     "본문 미열람 규칙 5: 이관 조건은 그대로입니다. 사유가 권한 오류(403)이면 기존 '권한' 조건을 적용하십시오.",
