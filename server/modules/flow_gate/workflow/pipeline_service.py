@@ -918,8 +918,11 @@ def transition_document_review(
                 # executes. The dry run (precheck) asks the same and writes nothing.
                 selected = spec_execution_service.automated_selection(parsed["cases"])
                 paired = test_run_service._active_tsr_for_ts(doc)
-                if paired and paired.get("doc_review_status") == "approved":
-                    selected = []  # the report is final; nothing may rewrite it
+                if paired and (paired.get("doc_review_status") == "approved"
+                               or test_run_service.tsr_gate_state(paired).get("passed")):
+                    # A card can run before its instruction is approved. Approving that
+                    # card must retain its current passing report, not queue another run.
+                    selected = []
                 if selected:
                     try:
                         spec_execution_service.check_automation_assets(doc, selected)

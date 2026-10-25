@@ -20,18 +20,28 @@ Test Asset Policy (0682 D#1 §3.8): ``asset_kind`` is the one rule the run's man
 asset API and the locator share. Git tracking is not part of it: an asset must be in the
 measured source with a hash and pass the path safety checks, so untracked test files a TR
 created are assets too.
+
+Execution contract (0094 B0001, B0005): no language or test framework is assumed. An
+automated Case says how it runs in one ``run_command`` (one program and its arguments); the
+test files its arguments name are its targets. The command goes through the TR Self-check
+command policy -- no shell, no operators, no inline code, the same deny list -- and the
+shared process layer; its exit code is the verdict. ``automation_ref`` and ``run_cwd`` are
+still read for Cases saved with them and are not written for new ones.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import posixpath
 import re
+import shlex
 import stat
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from modules.flow_gate.services import source_fingerprint
+from modules.flow_gate.services import tr_self_check_policy as command_policy
 from modules.flow_gate.storage import paths as storage_paths
 
 _LOCATOR = re.compile(r"^([A-Za-z0-9_./-]+)(?:::(\w+(?:::\w+)*))?$")
@@ -63,16 +73,25 @@ REASON_NOT_MEASURED = "source_not_measured"
 NO_WORKTREE = "group_worktree_unavailable"
 
 # ── Test Asset Policy (D#1 §3.8) ──────────────────────────────────────────────
-# Roots match case-sensitively. Co-located roots only hold assets under a __tests__ directory.
+# Roots match case-sensitively: ``tests``/``test`` at the top or under one module directory
+# (server/tests, client_gui/tests ...) and the ``src/test`` layout (Maven/Gradle) at the top
+# or under one module directory. Co-located roots only hold assets under ``__tests__``.
+TEST_DIRS = ("tests", "test")
 ASSET_ROOTS = (("tests",), ("test",), ("server", "tests"), ("client", "tests"))
 COLOCATED_ROOTS = (("src",), ("client", "src"))
 COLOCATED_DIR = "__tests__"
-KIND_RUNNABLE = "runnable_test"               # pytest through the existing runner
-KIND_UNSUPPORTED = "runner_unsupported_test"  # stored, pinned and editable; never auto-run
+# Both kinds are test code and both run through the Case's run_command. The stored kind
+# strings stay, so an existing manifest keeps its hash. KIND_RUNNABLE (.py) also keeps the
+# pytest invocation of a Case saved before run_command existed.
+KIND_RUNNABLE = "runnable_test"
+KIND_UNSUPPORTED = "runner_unsupported_test"  # test code that runs through run_command only
 KIND_FIXTURE = "fixture"
+TEST_CODE_KINDS = (KIND_RUNNABLE, KIND_UNSUPPORTED)
 ASSET_SUFFIXES = {
     ".py": KIND_RUNNABLE,
-    **dict.fromkeys((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"), KIND_UNSUPPORTED),
+    **dict.fromkeys((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".java", ".kt", ".kts",
+                     ".groovy", ".scala", ".go", ".rs", ".rb", ".php", ".cs", ".fs", ".vb",
+                     ".swift", ".dart"), KIND_UNSUPPORTED),
     **dict.fromkeys((".json", ".yaml", ".yml", ".toml", ".ini", ".txt", ".csv", ".xml",
                      ".html", ".patch", ".snap"), KIND_FIXTURE),
 }
@@ -114,6 +133,11 @@ def asset_kind(path) -> str | None:
         return None
     head = tuple(parts)
     inside = any(len(parts) > len(root) and head[:len(root)] == root for root in ASSET_ROOTS)
+    if not inside:
+        dirs = parts[:-1]
+        inside = any(len(dirs) > start and dirs[start] in TEST_DIRS or
+                     len(dirs) > start + 1 and dirs[start] == "src" and dirs[start + 1] in TEST_DIRS
+                     for start in (0, 1))
     if not inside:
         inside = any(len(parts) > len(root) + 1 and head[:len(root)] == root
                      and COLOCATED_DIR in parts[len(root):-1] for root in COLOCATED_ROOTS)
@@ -164,27 +188,109 @@ def safe_asset_file(root: Path, path: str) -> Path:
     return current
 
 
-def locator(case: dict) -> dict:
-    """Automation Locator: binds ``automation_ref`` through the Test Asset Policy.
+# run_command placeholders, replaced when the Case runs: the target path (relative to
+# run_cwd), its ``::`` node, and a scratch file a JUnit XML reporter may write. Target and
+# node are only filled for a Case saved with ``automation_ref``.
+PLACEHOLDER_TARGET = "{target}"
+PLACEHOLDER_NODE = "{node}"
+PLACEHOLDER_JUNIT = "{junit}"
 
-    A ``.py`` test under an asset root runs on the existing pytest runner
-    (``case_selectable`` with a node, ``suite_only`` without). A JS/TS test is pinned as a
-    "test" asset but has no runner: ``runner_unsupported``, never auto-selected. Anything
-    else (malformed, product source, a fixture) is ``unbound``.
+
+def run_command(text, cwd) -> dict:
+    """The Case's execution command as ``{program, args, cwd}``, checked lexically.
+
+    ``text`` is split like a POSIX argument list (quotes group, nothing is interpreted) and
+    never reaches a shell. Program and arguments must pass the TR Self-check command policy:
+    one executable name, no shell operator, no inline code, nothing on its deny list
+    (shells, git, network, delete, package publish ...). The executable is resolved in the
+    run's copy when the Case runs. ``cwd`` is relative to the source root. Refusals are
+    ``ValueError(<code>)``.
+    """
+    try:
+        tokens = shlex.split(str(text or ""), posix=True)
+    except ValueError as exc:
+        raise ValueError("command_unparsable") from exc
+    if not tokens:
+        raise ValueError("command_missing")
+    program, args = tokens[0], tokens[1:]
+    try:
+        name = command_policy.canonical_name(program)
+        if name in command_policy.DENIED or name.startswith("git-"):
+            raise command_policy.PolicyError("selfcheck_program_denied")
+        command_policy.validate_args(program, args)
+    except command_policy.PolicyError as exc:
+        raise ValueError(exc.code) from exc
+    folder = str(cwd or "").strip() or "."
+    if (folder.startswith("/") or "\\" in folder or ":" in folder
+            or any(part in ("", "..") or any(ord(c) < 32 or ord(c) == 127 for c in part)
+                   for part in folder.split("/"))):
+        raise ValueError("command_invalid_cwd")
+    return {"program": program, "args": args, "cwd": folder}
+
+
+def command_tests(command: dict) -> list[dict]:
+    """The test files a checked command's arguments name, source-relative, in order.
+
+    An argument (or the value of a ``--option=value``) is read as ``<path>[::<node>]``
+    relative to the command's cwd; it counts when the path is test code under the Test
+    Asset Policy, in any language. Nothing is looked up on disk.
+    """
+    found: list[dict] = []
+    for arg in command["args"]:
+        value = arg.split("=", 1)[1] if arg.startswith("-") and "=" in arg else arg
+        match = None if value.startswith("-") else _LOCATOR.fullmatch(value)
+        if not match:
+            continue
+        path = posixpath.normpath(posixpath.join(command["cwd"], match.group(1)))
+        if asset_kind(path) in TEST_CODE_KINDS and all(item["path"] != path for item in found):
+            found.append({"path": path, "node": match.group(2)})
+    return found
+
+
+def locator(case: dict) -> dict:
+    """Automation Locator: binds a Case to what runs it (0094 B0001, B0005).
+
+    A Case without ``automation_ref`` is judged by its ``run_command`` alone: missing is
+    ``command_missing``, refused by the policy ``command_invalid`` with the policy's reason,
+    otherwise ``case_selectable``. Naming a test file is not required (``npm test``,
+    ``go test ./...``, a script with arguments); the test files it does name go in ``tests``
+    and the first one is its target.
+
+    A Case saved with ``automation_ref`` keeps the result it had: the target must be test
+    code under the Test Asset Policy, anything else (malformed, product source, a fixture)
+    is ``unbound``. A valid ``run_command`` makes it ``case_selectable``; without one, a
+    ``.py`` target keeps its pytest invocation (``case_selectable`` with a node,
+    ``suite_only`` without) and any other target is ``command_missing``. Only
+    ``case_selectable`` / ``suite_only`` Cases are run.
     """
     mode = case.get("execution_mode")
     if mode in ("ai", "manual", "external"):
         return {"capability": mode}
     raw = str(case.get("automation_ref") or "").strip()
+    if not raw:
+        if not str(case.get("run_command") or "").strip():
+            return {"capability": "command_missing"}
+        try:
+            command = run_command(case.get("run_command"), case.get("run_cwd"))
+        except ValueError as exc:
+            return {"capability": "command_invalid", "reason": str(exc)}
+        tests = command_tests(command)
+        return {"capability": "case_selectable", **(tests[0] if tests else {}), "command": command,
+                "tests": [item["path"] for item in tests]}
     match = _LOCATOR.fullmatch(raw)
     kind = asset_kind(match.group(1)) if match else None
-    if kind == KIND_UNSUPPORTED:
-        return {"capability": "runner_unsupported", "path": match.group(1),
-                "node": match.group(2)}
-    if kind != KIND_RUNNABLE:
+    if kind not in TEST_CODE_KINDS:
         return {"capability": "unbound"}
-    return {"capability": "case_selectable" if match.group(2) else "suite_only",
-            "path": match.group(1), "node": match.group(2)}
+    target = {"path": match.group(1), "node": match.group(2)}
+    if str(case.get("run_command") or "").strip():
+        try:
+            command = run_command(case.get("run_command"), case.get("run_cwd"))
+        except ValueError as exc:
+            return {"capability": "command_invalid", **target, "reason": str(exc)}
+        return {"capability": "case_selectable", **target, "command": command}
+    if kind != KIND_RUNNABLE:
+        return {"capability": "command_missing", **target}
+    return {"capability": "case_selectable" if match.group(2) else "suite_only", **target}
 
 
 def source_root(doc: dict) -> Path:
@@ -200,8 +306,8 @@ def _roles(cases: list[dict]) -> dict[str, str]:
     roles: dict[str, str] = {}
     for case in cases:
         loc = locator(case)
-        if loc.get("path"):
-            roles[loc["path"]] = "test"
+        for path in loc.get("tests") or ([loc["path"]] if loc.get("path") else []):
+            roles[path] = "test"
         for raw in re.split(r"[,\n]", str(case.get("test_assets") or "")):
             # Kept verbatim: the policy refuses a backslash path instead of rewriting it.
             path = raw.strip()

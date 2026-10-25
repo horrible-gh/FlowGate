@@ -4,8 +4,9 @@ D#1 §3.8 / §7 T#2 regression set over real git repositories and the production
 capture (see basis_support). One policy (``asset_kind``) decides for the
 approval manifest, the asset API and the locator: ``tests/**``, ``test/**``,
 ``server/tests/**``, ``client/tests/**`` and ``__tests__`` under ``src``/``client/src``;
-``.py`` runs on the existing pytest runner, JS/TS is pinned and editable but
-``runner_unsupported`` (no JS/TS runner in this set), fixtures by extension. Git tracking
+0094 B0001 adds ``<module>/tests|test/**`` and ``[<module>/]src/test/**`` and test code of
+any language. Every test file runs through the Case's run_command; a ``.py`` target saved
+without one keeps the pytest invocation, any other is ``command_missing``. Git tracking
 is not asked any more: an untracked test file a TR created is captured, run and edited
 like a tracked one. Path safety and manifest-only edits stay.
 
@@ -126,6 +127,12 @@ def _hash(root, relative):
     (COLOCATED, basis.KIND_UNSUPPORTED),
     ("client/src/main/__tests__/x.spec.ts", basis.KIND_UNSUPPORTED),
     ("src/__tests__/helper.py", basis.KIND_RUNNABLE),
+    # 0094 B0001: module test directories and the src/test layout, in any language.
+    ("client_gui/tests/login.0094.spec.ts", basis.KIND_UNSUPPORTED),
+    ("Server/tests/test_a.py", basis.KIND_RUNNABLE),
+    ("src/test/java/com/acme/LoginTest.java", basis.KIND_UNSUPPORTED),
+    ("backend/src/test/kotlin/LoginTest.kt", basis.KIND_UNSUPPORTED),
+    ("service/test/login_test.go", basis.KIND_UNSUPPORTED),
     *[("client/tests/fixtures/f" + suffix, basis.KIND_FIXTURE) for suffix in (
         ".json", ".yaml", ".yml", ".toml", ".ini", ".txt", ".csv", ".xml", ".html",
         ".patch", ".snap")],
@@ -139,7 +146,8 @@ def test_policy_accepts_the_real_layout(path, kind):
     # product source, wrong root or co-located file outside __tests__
     "server/app.py", "client/src/main/App.vue", "src/widgets/widget.ts",
     "client/src/main/x.spec.ts", "server/modules/tests/test_x.py", "src/__tests__",
-    "Tests/test_a.py", "Server/tests/test_a.py", "tests", "client/tests",
+    "Tests/test_a.py", "tests", "client/tests", "a/b/tests/test_x.py", "src/main/java/A.java",
+    "client_gui/src/x.spec.ts",
     # extensions without a kind (also case-exact)
     "tests/run.sh", "tests/tool.bin", "client/tests/a.vue", "tests/test_a.PY", "tests/data",
     # path safety
@@ -162,26 +170,28 @@ def test_policy_version_moved_with_the_policy():
     assert basis.ASSET_POLICY_VERSION == "test-asset-v2"
 
 
-# ── locator: pytest stays the only runner ────────────────────────────────────
+# ── locator: the Case's run_command; pytest only for a .py saved without one ──
 
-def test_locator_binds_py_under_every_root_and_marks_js_ts_runner_unsupported():
+def test_locator_binds_py_under_every_root_and_asks_other_test_code_for_a_command():
     def loc(ref, mode="automated"):
         return basis.locator({"execution_mode": mode, "automation_ref": ref})
     assert loc(SERVER_TEST + "::test_srv") == {
         "capability": "case_selectable", "path": SERVER_TEST, "node": "test_srv"}
     assert loc(SERVER_TEST_NEW)["capability"] == "suite_only"
     assert loc("tests/test_a.py::TestX::test_y")["node"] == "TestX::test_y"
-    assert loc(CLIENT_SPEC) == {"capability": "runner_unsupported", "path": CLIENT_SPEC,
+    assert loc(CLIENT_SPEC) == {"capability": "command_missing", "path": CLIENT_SPEC,
                                 "node": None}
-    assert loc(COLOCATED)["capability"] == "runner_unsupported"
+    assert loc(COLOCATED)["capability"] == "command_missing"
     for ref in ("server/app.py", "tests/fixture.json", "tests/../server/app.py",
-                "tests/test_a.py::not a node", "/tests/test_a.py", "tests\\test_a.py", ""):
+                "tests/test_a.py::not a node", "/tests/test_a.py", "tests\\test_a.py"):
         assert loc(ref) == {"capability": "unbound"}
+    # No target and no command (B0005): the command is what is missing.
+    assert loc("") == {"capability": "command_missing"}
     assert loc(CLIENT_SPEC, "external") == {"capability": "external"}
     assert loc(SERVER_TEST, "manual") == {"capability": "manual"}
 
 
-def test_admit_never_selects_runner_unsupported_cases(env, monkeypatch):
+def test_admit_never_selects_cases_without_a_command(env, monkeypatch):
     env.cases = _layout_cases()
     doc = env.ts()
     monkeypatch.setattr(runner, "load_spec_ts",
@@ -192,8 +202,8 @@ def test_admit_never_selects_runner_unsupported_cases(env, monkeypatch):
         execution.admit(doc["doc_id"], case_id="TC-003", runner_id="u", locale="en")
     assert refused.value.status_code == 422
     assert refused.value.detail["error"] == "case_not_selectable"
-    assert refused.value.detail["capability"] == "runner_unsupported"
-    # A suite run picks only the pytest bindings; with JS/TS only there is nothing to run.
+    assert refused.value.detail["capability"] == "command_missing"
+    # A suite run picks only runnable bindings; a JS/TS file without its command is not one.
     env.cases = [case for case in _layout_cases() if case["case_id"] == "TC-003"]
     with pytest.raises(HTTPException) as nothing:
         execution.admit(doc["doc_id"], case_id=None, runner_id="u", locale="en")
@@ -400,9 +410,9 @@ def test_layout_asset_read_and_cas_edit_stales_the_results(env, monkeypatch, pat
     rerun = _measure(env, doc, "run-2")
     assert {e["path"]: e["content_hash"] for e in rerun["manifest"]}[path] == response["content_hash"]
     assert basis.verdict(env.doc(doc["doc_id"]), rerun)["state"] == basis.VALID
-    # The runner-unsupported asset stays unsupported after the edit.
+    # The asset still needs its command after the edit.
     if path == CLIENT_SPEC:
-        assert basis.locator(env.cases[2])["capability"] == "runner_unsupported"
+        assert basis.locator(env.cases[2])["capability"] == "command_missing"
 
 
 def test_edit_outside_the_manifest_is_refused_even_inside_test_roots(env, monkeypatch):

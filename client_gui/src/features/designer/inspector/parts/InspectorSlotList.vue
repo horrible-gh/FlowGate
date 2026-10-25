@@ -72,27 +72,16 @@
         @click="emit('nav', line)"
       >{{ line.nav.label }} ↗</Button>
       <template v-for="action in line.actions ?? []" :key="action.key">
-        <!-- 0017-CH: [AI 호출] is the robot icon (Phosphor Icons, MIT — the same glyph as client/shared/iconData
-             `robot`), its words the tooltip; a running call turns it into a spinner. -->
-        <IconButton
+        <!-- 0017-CH: [AI 호출] is the robot icon, its words the tooltip; a running call turns it into a spinner
+             (InspectorAiButton, flowgate.v02.0094). -->
+        <InspectorAiButton
           v-if="action.key === 'ai_invoke'"
           :label="actionLabel(action)"
-          :title="actionLabel(action)"
-          variant="secondary"
-          size="sm"
-          class="inspector-slot-action inspector-slot-ai"
-          :class="`is-${action.state}`"
+          :state="action.state"
           data-test="inspector-slot-action"
-          data-icon="robot"
           :data-action="action.key"
-          :data-state="action.state"
           @click="emit('action', line, action.key)"
-        >
-          <span v-if="action.state === 'running'" class="inspector-slot-ai-spinner" aria-hidden="true" />
-          <svg v-else viewBox="0 0 256 256" fill="currentColor" aria-hidden="true" focusable="false">
-            <path :d="ROBOT_PATH" />
-          </svg>
-        </IconButton>
+        />
         <Button
           v-else
           size="sm"
@@ -138,6 +127,7 @@
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../components/ui/Button.vue'
 import IconButton from '../../../../components/ui/IconButton.vue'
+import InspectorAiButton from './InspectorAiButton.vue'
 import InspectorHistoryButton from './InspectorHistoryButton.vue'
 import InspectorOpenButton from './InspectorOpenButton.vue'
 import InspectorReviewBadge, { type InspectorReviewState } from './InspectorReviewBadge.vue'
@@ -145,10 +135,6 @@ import InspectorSlotRow, { type InspectorSlotState, type InspectorSlotTestIds } 
 import type { SlotAction, SlotActionKey } from './slotStateView'
 
 export type { SlotAction, SlotActionKey }
-
-/** Phosphor Icons `robot` (regular, 256 viewBox; MIT): the [AI 호출] icon. */
-const ROBOT_PATH =
-  'M200,48H136V16a8,8,0,0,0-16,0V48H56A32,32,0,0,0,24,80V192a32,32,0,0,0,32,32H200a32,32,0,0,0,32-32V80A32,32,0,0,0,200,48Zm16,144a16,16,0,0,1-16,16H56a16,16,0,0,1-16-16V80A16,16,0,0,1,56,64H200a16,16,0,0,1,16,16Zm-52-56H92a28,28,0,0,0,0,56h72a28,28,0,0,0,0-56Zm-24,16v24H116V152ZM80,164a12,12,0,0,1,12-12h8v24H92A12,12,0,0,1,80,164Zm84,12h-8V152h8a12,12,0,0,1,0,24ZM72,108a12,12,0,1,1,12,12A12,12,0,0,1,72,108Zm88,0a12,12,0,1,1,12,12A12,12,0,0,1,160,108Z'
 
 /** A button that exists on the line: usable, or shown disabled (its operation is not connected). */
 export type InspectorSlotButton = 'enabled' | 'disabled' | 'none'
@@ -290,32 +276,5 @@ function historyTitle(line: InspectorSlotView): string | null {
   border-color: var(--fg2-status-info-border);
   background: var(--fg2-status-info-bg);
   color: var(--fg2-status-info-fg);
-}
-
-/* 0017-CH: the robot icon of [AI 호출]; a running call spins in its place. */
-.inspector-slot-action.inspector-slot-ai {
-  flex: 0 0 auto;
-  color: #9fc4e8;
-}
-
-.inspector-slot-action.inspector-slot-ai :deep(svg) {
-  width: 16px;
-  height: 16px;
-}
-
-.inspector-slot-ai-spinner {
-  width: 12px;
-  height: 12px;
-  box-sizing: border-box;
-  border: 2px solid rgba(140, 192, 255, 0.3);
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: inspector-slot-ai-spin 0.7s linear infinite;
-}
-
-@keyframes inspector-slot-ai-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 </style>

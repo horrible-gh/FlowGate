@@ -10,9 +10,8 @@
 // Operations (D#1 §8.3 rule 0): reading and ↗ 열기 are queries, always possible; starting and cancelling a
 // run are changes. Starting is disabled with one reason, in the order of rule 6-1: ownership conflict,
 // revision view, disposed group, AI running, then this feature's own — the server refused the user
-// (403: admin or perm_test_run, D#1 §8.2 — there is no permission list on the client, so the operation is
-// enabled until the server says no), the report is already approved, the TS is not approved (a TS that
-// already ran may run again while its result is reviewed or revised), no automated Case the server can
+// (403: admin or perm_test_run — the server owns permissions), an already approved report,
+// no valid automated Case the server can
 // run (read on a TS only: a TSR's view carries no Cases), a run in flight, a call in flight. Cancelling is offered while a run is live and is disabled by the
 // read-only views, the permission refusal, a cancel already accepted and a call in flight; the server does
 // not refuse a cancel for a disposed group or an AI run, so neither blocks reclaiming a runaway run.
@@ -281,8 +280,6 @@ export interface TestSpecAvailabilityItem {
 
 export type TestSpecAvailability = Readonly<Record<TestSpecOperation, TestSpecAvailabilityItem>>
 
-const RERUN_STATUSES = new Set(['pending_review', 'revised'])
-
 /** Why starting a run is disabled: one reason, in the order of D#1 §8.3 rule 6-1. */
 export function testSpecRunDisabledReason(input: TestSpecInput): string | null {
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
@@ -294,10 +291,17 @@ export function testSpecRunDisabledReason(input: TestSpecInput): string | null {
   const view = input.view
   if (view === null) return 'reason.busy'
   if (view.tsrReviewStatus === 'approved') return 'reason.report_approved'
-  const approved = view.tsReviewStatus === 'approved' || (RERUN_STATUSES.has(view.tsReviewStatus ?? '') && view.history.length > 0)
-  if (!approved) return 'reason.not_approved'
   // Only a TS view carries its Cases; a TSR's run is judged by the server (422 no_automated_bindings).
-  if (view.kind === 'TS' && (view.specErrors > 0 || testSpecTally(view).runnable === 0)) return 'reason.no_automated'
+  if (view.kind === 'TS') {
+    if (view.specErrors > 0) return 'reason.invalid_spec'
+    if (testSpecTally(view).runnable === 0) {
+      const automated = view.cases.filter(c => c.executionMode === 'automated')
+      if (!automated.length) return 'reason.no_automated'
+      const capabilities = automated.map(c => view.caseCapabilities[c.caseId])
+      return capabilities.includes('command_invalid') ? 'reason.command_invalid'
+        : capabilities.includes('command_missing') ? 'reason.command_missing' : 'reason.automation_unbound'
+    }
+  }
   if (testSpecLiveRun(view)) return 'reason.run_active'
   if (input.busy) return 'reason.busy'
   return null

@@ -2,7 +2,7 @@
   <ModelessShell v-if="card && state" ref="shell" :open="state.open" :minimized="state.minimized" :title="t(k('title'))"
     :initial-x="geometry('x', 300)" :initial-y="geometry('y', 110)" :initial-width="geometry('width', 760)" :initial-height="geometry('height', 560)"
     @update:minimized="state.minimized = $event" @close="close">
-    <template #header><span class="mark">→</span> {{ t(k('title')) }} <small>{{ t(k('to_next')) }}</small></template>
+    <template #header>{{ t(k('title')) }} <small>{{ t(k('to_next')) }}</small></template>
     <div class="follow" data-test="follow-window">
       <section>
         <h3>{{ t(k('scope')) }}
@@ -17,7 +17,7 @@
       <section v-if="groups.defects.length" data-test="follow-defects">
         <h3><i class="mk defect" />{{ t(k('defects'), { n: groups.defects.length }) }}</h3>
         <article v-for="item in groups.defects" :key="item.caseId" class="item" :data-case="item.caseId">
-          <span class="mono id">{{ item.caseId }}</span><b>{{ item.title }}</b>
+          <span class="id">{{ item.caseId }}</span><b>{{ item.title }}</b>
           <div class="sub"><span class="mute">{{ t(k('requirement'), { value: item.requirement ?? '—' }) }}</span><span>{{ t(k('expected'), { value: item.expected ?? '—' }) }}</span><span>{{ t(k('actual'), { value: item.actual ?? '—' }) }}</span>
             <span v-if="scope === 'full' && item.evidence.length" class="evidence-list" data-test="follow-evidence"><span v-for="(evidence, i) in item.evidence" :key="i" class="evidence">▤ {{ evidence.label ?? evidence.value }}</span></span></div>
         </article>
@@ -25,7 +25,7 @@
       <section v-if="groups.others.length" data-test="follow-others">
         <h3><i class="mk other" />{{ t(k('others'), { n: groups.others.length }) }}</h3>
         <article v-for="item in groups.others" :key="item.caseId" class="item" :data-case="item.caseId">
-          <span class="mono id">{{ item.caseId }}</span><b>{{ item.title }}</b>
+          <span class="id">{{ item.caseId }}</span><b>{{ item.title }}</b>
           <div class="sub"><span class="mute">{{ [decisionLabel(item), item.decision?.reason].filter(Boolean).join(' · ') }}</span></div>
         </article>
       </section>
@@ -84,13 +84,14 @@ function decisionLabel(item: ReportItem) {
 </script>
 <style scoped>
 .follow { display: flex; flex-direction: column; gap: 12px; color: var(--fg2-text); font-size: var(--fg2-control-font-size); }
-.mark { color: var(--fg2-status-info-fg); margin-right: 6px; } small { color: var(--fg2-muted); font-weight: normal; }
+small { color: var(--fg2-muted); font-weight: normal; }
 section { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--fg2-line); border-radius: var(--fg2-control-radius); }
 h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; } .scope { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 .line { margin: 0; color: var(--fg2-muted); font-size: 12px; }
 .mk { width: 8px; height: 8px; border-radius: 2px; } .mk.defect { background: var(--fg2-status-danger-fg); } .mk.other { background: var(--fg2-status-success-fg); }
 .item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 8px 0; border-top: 1px solid var(--fg2-line); }
-.id { color: var(--fg2-muted); font-family: monospace; font-size: 11px; }
+/* flowgate.v02.0094: a case id in the line's own type, muted (no monospace of its own). */
+.id { color: var(--fg2-muted); white-space: nowrap; }
 .sub { display: flex; flex-direction: column; gap: 3px; width: 100%; font-size: 12px; } .mute { color: var(--fg2-muted); }
 .evidence-list { display: flex; flex-wrap: wrap; gap: 5px; } .evidence { padding: 1px 7px; border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-control-radius-sm); font-size: 11px; }
 footer { display: flex; justify-content: flex-end; }

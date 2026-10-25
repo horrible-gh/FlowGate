@@ -2988,6 +2988,9 @@ def save_test_spec(
         except _test_run_service.TestCaseParseError:
             pass
     cases, errors = _test_spec_service.validate_cases_payload(body.cases)
+    if not errors:
+        errors = _test_spec_service.unrunnable_case_errors(
+            cases, _test_spec_service.parse_spec(current)["cases"])
     if errors:
         raise HTTPException(status_code=422, detail={
             "error": "invalid_spec", "errors": errors,

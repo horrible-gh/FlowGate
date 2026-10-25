@@ -537,10 +537,10 @@ def _automated_case_keys(cases: list[dict]) -> set[str]:
 def result_entry_case_ids(cases: list[dict]) -> list[str]:
     """0684 T#3 (D#1 §3-8, CH S6): the Cases whose results are entered -- ai/manual/external only.
 
-    Every automated Case gets its official result from a server run only. One no server
-    runner exists for yet (runner_unsupported, unbound) is not entered either: it stays
-    NOT_RUN until the runner is extended (S8), so its gate stays closed instead of taking a
-    PASS a person or a worker produced.
+    Every automated Case gets its official result from a server run only. One the server
+    cannot run yet (unbound, command_missing, command_invalid) is not entered either: it
+    stays NOT_RUN until its target and run_command are bound, so its gate stays closed
+    instead of taking a PASS a person or a worker produced.
     """
     return [case["case_id"] for case in cases
             if case.get("execution_mode") in RESULT_ENTRY_MODES]
@@ -620,7 +620,7 @@ def _reject_non_legacy_contract(doc_id: str, content: str) -> None:
 
 
 def _require_ts_admissible(doc: dict, doc_id: str) -> None:
-    """Approval gate shared by the executable runner and specification result intake."""
+    """Approval gate for legacy executable TS documents only."""
     review_status = doc.get("doc_review_status")
     if review_status != "approved":
         # Re-run affordance (0163 / B0001, extended by 0169): an approved TS that has
@@ -1087,7 +1087,8 @@ def _shape_case_item(case: dict) -> dict:
         shaped["case_status"] = row["status"]
         for key in (
             "category", "requirement", "required", "precondition", "input", "procedure",
-            "check_points", "automation_ref", "evidence", "defect_ref", "execution_mode",
+            "check_points", "automation_ref", "run_command", "evidence", "defect_ref",
+            "execution_mode",
             "checked_by", "checked_at", "note", "source_name", "source_identity",
             "result_origin", "mapping_conflict", "result_count", "carried_from_run_id",
         ):
@@ -1197,7 +1198,7 @@ def record_spec_results(
     execution_cases: Optional[list[dict]] = None,
     execution_live: Optional[dict] = None,
 ) -> dict:
-    """Validate and store one result submission for an approved specification TS.
+    """Validate and store one result submission for a valid specification TS (card approval follows results).
 
     Results arrive as an explicit payload (manual/external/AI-scratch/CI) and/or a JUnit
     XML report, and are mapped onto the TS by explicit Case ID. Unless ``replace`` is set,
@@ -1214,7 +1215,6 @@ def record_spec_results(
     no worktree has nothing to measure and is recorded without a Basis.
     """
     doc, parsed = load_spec_ts(doc_id)
-    _require_ts_admissible(doc, doc_id)
     from modules.flow_gate.services import test_basis_service
     if execution_cases is not None:
         parsed = {**parsed, "cases": execution_cases}

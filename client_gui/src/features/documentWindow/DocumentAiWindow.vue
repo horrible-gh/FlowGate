@@ -43,7 +43,6 @@
           data-test="document-ai-opinion"
         />
       </label>
-      <p class="document-ai-hint" data-test="document-ai-hint">{{ t(k('hint')) }}</p>
 
       <p v-if="otherRun" class="document-ai-line is-warning" data-test="document-ai-busy">{{ t(k(otherRun)) }}</p>
       <p v-if="phase === 'running'" class="document-ai-line is-running" data-test="document-ai-status" data-phase="running">{{ t(k('running'), { id: run?.runId ?? '' }) }}</p>
@@ -176,7 +175,6 @@ onMounted(() => {
   font-weight: 650;
 }
 
-.document-ai-hint,
 .document-ai-line {
   margin: 0;
   color: var(--fg2-muted);

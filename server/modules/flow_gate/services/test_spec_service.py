@@ -55,8 +55,14 @@ MAX_JUNIT_BYTES = 5 * 1024 * 1024
 # in render order, plus the aliases a human or an AI may type.
 SPEC_FIELDS = (
     "category", "requirement", "execution_mode", "required", "precondition", "input",
-    "procedure", "expected", "check_points", "automation_ref", "test_assets",
+    "procedure", "expected", "check_points", "automation_ref", "run_command", "run_cwd",
+    "test_assets",
 )
+# Optional fields rendered only when set, so a document without them round-trips unchanged.
+# run_command is the program and arguments that run an automated Case (0094 B0005); the
+# test files it names, if any, are recorded in the run's basis. automation_ref (a target) and run_cwd (where it runs) are kept for Cases
+# saved with them (0094 B0001); the editor no longer writes them for a new command.
+OPTIONAL_SPEC_FIELDS = ("automation_ref", "run_command", "run_cwd", "test_assets")
 # ``required`` is not listed: an absent flag means required (stop the next step on failure),
 # the same default the structured editor gives a new case and the client reads.
 REQUIRED_SPEC_FIELDS = (
@@ -82,6 +88,9 @@ _FIELD_ALIASES = {
     "check_points": "check_points", "checkpoints": "check_points",
     "확인 관점": "check_points", "確認観点": "check_points",
     "automation_ref": "automation_ref", "자동화 참조": "automation_ref",
+    "실행 대상": "automation_ref", "実行対象": "automation_ref",
+    "run_command": "run_command", "실행 명령": "run_command", "実行コマンド": "run_command",
+    "run_cwd": "run_cwd", "실행 위치": "run_cwd", "実行場所": "run_cwd",
     "test_assets": "test_assets", "시험 자산": "test_assets",
 }
 # Legacy executable-TS field names. Inside a contract-2 TS they are a boundary violation,
@@ -314,11 +323,6 @@ def parse_spec(content: str) -> dict:
         case = _build_case(case_id, case_title, values, errors)
         cases.append(case)
 
-    if cases and not any(case.get("required") for case in cases):
-        errors.append(_err(
-            "no_required_case",
-            "At least one case must be required: the TSR gate is computed from required cases.",
-        ))
     return {"contract_version": version, "title": title, "cases": cases, "errors": errors}
 
 
@@ -371,6 +375,8 @@ def _build_case(case_id: str, title: str, values: dict, errors: list[dict]) -> d
         "expected": values.get("expected") or "",
         "check_points": values.get("check_points") or "",
         "automation_ref": values.get("automation_ref") or "",
+        "run_command": values.get("run_command") or "",
+        "run_cwd": values.get("run_cwd") or "",
         "test_assets": values.get("test_assets") or "",
     }
 
@@ -390,6 +396,38 @@ def validate_cases_payload(cases: Any) -> tuple[list[dict], list[dict]]:
     body = render_spec_body(cases, title="validation")
     parsed = parse_spec(f"---\n{CONTRACT_KEY}: {CONTRACT_SPEC}\n---\n{body}")
     return parsed["cases"], parsed["errors"]
+
+
+_RUN_SETTINGS = ("execution_mode", "automation_ref", "run_command", "run_cwd")
+
+
+def unrunnable_case_errors(cases: list[dict], previous: list[dict]) -> list[dict]:
+    """The editor's run check (0094 B0005): an automated Case it changed must be runnable.
+
+    Only a Case that is new or whose execution settings differ from ``previous`` (the
+    stored cases) is judged, so a save never fails on a Case it did not touch. The judgment
+    is the Automation Locator's -- the same one the run uses. Each refusal is a
+    ``run_command`` field error with the locator's capability as its code.
+    """
+    from modules.flow_gate.services import test_basis_service
+
+    stored = {case_id_key(case["case_id"]): case for case in previous}
+    errors = []
+    for case in cases:
+        if case.get("execution_mode") != "automated":
+            continue
+        before = stored.get(case_id_key(case["case_id"]))
+        if before is not None and all((before.get(key) or "") == (case.get(key) or "")
+                                      for key in _RUN_SETTINGS):
+            continue
+        loc = test_basis_service.locator(case)
+        if loc["capability"] in ("case_selectable", "suite_only"):
+            continue
+        detail = f" ({loc['reason']})" if loc.get("reason") else ""
+        errors.append(_err(loc["capability"], f"{case['case_id']}: run_command cannot run "
+                           f"({loc['capability']}){detail}.", case_id=case["case_id"],
+                           field="run_command"))
+    return errors
 
 
 # ── Canonical rendering (structured editor → document body) ─────────────────────
@@ -423,7 +461,7 @@ def render_spec_body(cases: Iterable[dict], *, title: str, locale: str = "ko",
                 value = "true" if parsed is None and value in (None, "") else (
                     "true" if parsed else ("false" if parsed is False else str(value))
                 )
-            if field in ("automation_ref", "test_assets") and not str(value or "").strip():
+            if field in OPTIONAL_SPEC_FIELDS and not str(value or "").strip():
                 continue
             out.append(f"- {field}: {_render_value(value)}".rstrip())
         out.append("")
@@ -769,6 +807,7 @@ def map_results(spec_cases: list[dict], results: list[dict], *,
             "expected": case.get("expected") or "",
             "check_points": case.get("check_points") or "",
             "automation_ref": case.get("automation_ref") or "",
+            "run_command": case.get("run_command") or "",
             "spec_execution_mode": case.get("execution_mode"),
         }
         if len(mapped) == 1:
@@ -871,13 +910,13 @@ def compute_overall(rows: list[dict]) -> dict:
 
     required FAIL → FAIL; else required BLOCKED → BLOCKED; else required NOT_RUN → NOT_RUN
     (gate blocked); else PASS. Optional cases are counted and shown but never move the gate.
-    A specification with no required case cannot reach this point (validation), and an
+    An all-optional specification has no blocking cases; an
     empty row list is never PASS.
     """
     required = [row for row in rows if row.get("required")]
     statuses = {row.get("status") for row in required}
     if not required:
-        overall = "NOT_RUN"
+        overall = "PASS" if rows else "NOT_RUN"
     elif "FAIL" in statuses:
         overall = "FAIL"
     elif "BLOCKED" in statuses:
@@ -909,8 +948,8 @@ def gate_error_code(overall: str) -> Optional[str]:
 
 _CASE_META_KEYS = (
     "category", "requirement", "required", "precondition", "input", "procedure",
-    "check_points", "automation_ref", "spec_execution_mode", "evidence", "defect_ref",
-    "execution_mode", "checked_by", "checked_at", "note", "source_name", "source_identity",
+    "check_points", "automation_ref", "run_command", "spec_execution_mode", "evidence",
+    "defect_ref", "execution_mode", "checked_by", "checked_at", "note", "source_name", "source_identity",
     "result_origin", "mapping_conflict", "result_count", "carried_from_run_id",
 )
 

@@ -349,7 +349,11 @@ export interface TestSpecCaseFields {
   readonly procedure: string | null
   readonly expected: string | null
   readonly checkPoints: string | null
+  /** Kept for a Case saved with a target; a new command names its test files itself (0094 B0005). */
   readonly automationRef?: string | null
+  /** The automated Case's execution command (any language or framework); a stored working directory is kept. */
+  readonly runCommand?: string | null
+  readonly runCwd?: string | null
   readonly testAssets?: string | null
 }
 
@@ -430,6 +434,8 @@ function toTestSpecCaseDetail(raw: unknown): TestSpecCaseDetail | null {
       expected: written(row.expected),
       checkPoints: written(row.check_points),
       automationRef: written(row.automation_ref),
+      runCommand: written(row.run_command),
+      runCwd: written(row.run_cwd),
       testAssets: written(row.test_assets),
     },
   }
@@ -507,6 +513,9 @@ export interface TestSpecCasePayload {
   readonly expected: string | null
   readonly check_points: string | null
   readonly automation_ref: string | null
+  /** Sent only when written, so a case without an execution command keeps its payload shape. */
+  readonly run_command?: string | null
+  readonly run_cwd?: string | null
   readonly test_assets: string | null
 }
 
@@ -515,7 +524,9 @@ export function testSpecCasePayload(item: TestSpecCaseDetail): TestSpecCasePaylo
     requirement: item.fields.requirement, execution_mode: item.executionMode, required: item.required,
     precondition: item.fields.precondition, input: item.fields.input, procedure: item.fields.procedure,
     expected: item.fields.expected, check_points: item.fields.checkPoints,
-    automation_ref: item.fields.automationRef ?? null, test_assets: item.fields.testAssets ?? null }
+    automation_ref: item.fields.automationRef ?? null, test_assets: item.fields.testAssets ?? null,
+    ...(item.fields.runCommand ? { run_command: item.fields.runCommand } : {}),
+    ...(item.fields.runCwd ? { run_cwd: item.fields.runCwd } : {}) }
 }
 
 export async function testBriefRead(docId: string): Promise<{ text: string; content: string }> {

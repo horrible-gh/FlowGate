@@ -171,7 +171,7 @@ describe('0071 T3 report rules', () => {
     const view = toTestSpecView(server)
     const items = reportItems(view, view.details!.cases, view.details!.rows, testCardPresentation(view, null, view.details!.rows))
     expect(items.map(item => item.caseId)).toEqual(['TC-1', 'TC-2', 'TC-3'])
-    expect(items[0]).toMatchObject({ title: 'Old expiry', expected: 'Old notice', required: true, requirement: null, automationRef: null, status: 'FAIL' })
+    expect(items[0]).toMatchObject({ title: 'Old expiry', expected: 'Old notice', required: true, requirement: null, runCommand: null, status: 'FAIL' })
   })
   it('a full run shows no earlier verdict, actual or evidence as its own', () => {
     server.active_run = liveRun('run-all', { selected_case_ids: ['TC-1', 'TC-2'], reported_case_ids: [], created_at: '2026-10-11T10:00:00Z' })
@@ -201,7 +201,7 @@ describe('0071 T3 report window', () => {
     expect(w.findAll('[data-test="report-gate-case"]').map(item => item.text())).toEqual(['TC-1', 'TC-2'])
     expect(w.get('[data-test="report-filter"] [aria-checked="true"]').text()).toContain('확인 필요')
     expect(detailCase(w)).toBe('TC-1'); expect(w.get('[data-test="report-actual"]').text()).toContain('No notice')
-    expect(w.get('[data-test="report-detail"]').text()).toContain('tests/test_auth.py::test_1'); expect(w.get('[data-test="report-evidence"]').text()).toContain('log_tc1.txt')
+    expect(w.get('[data-test="report-command"]').text()).toBe('—'); expect(w.get('[data-test="report-detail"]').text()).not.toContain('실행 대상'); expect(w.get('[data-test="report-evidence"]').text()).toContain('log_tc1.txt')
     await w.findAll('[data-test="report-gate-case"]')[1].trigger('click')
     expect(detailCase(w)).toBe('TC-2')
   })
@@ -215,51 +215,22 @@ describe('0071 T3 report window', () => {
   })
   it('Enter sends nothing while its primary action is disabled (AI confirmation is not connected), nor from a focused button', async () => {
     const w = await render()
-    expect(w.get('[data-test="report-confirm"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="report-decision-reason"]').text()).toBe('연결 예정')
+    expect(w.find('[data-test="report-confirm"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('연결 예정')
     key('Enter'); await flushPromises()
     key('Enter', w.get('[data-test="report-runs"]').element); await flushPromises()
     expect(mocks.retry).not.toHaveBeenCalled(); expect(mocks.enter).not.toHaveBeenCalled(); expect(mocks.setting).not.toHaveBeenCalled()
   })
-  it('통과 처리 requires a reason: blank keeps 기록 disabled, Enter in the input records nothing, Esc closes only the input', async () => {
-    causeMode = 'human'
-    const w = await render()
-    const pass = w.get('[data-test="report-causes"] [data-value="pass"]')
-    expect(pass.attributes('disabled')).toBeUndefined()
-    await pass.trigger('click')
-    const input = w.get('[data-test="report-reason"]')
-    expect(w.get('[data-test="report-record"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="report-record"]').attributes('title')).toBe('통과 처리 사유를 입력해야 기록할 수 있습니다')
-    await input.trigger('keydown', { key: 'Enter' })
-    await input.setValue('   ')
-    expect(w.get('[data-test="report-record"]').attributes('title')).toBe('통과 처리 사유를 입력해야 기록할 수 있습니다')
-    // The test-utils teleport stub re-creates the shell subtree on update, so the input is read again (the real teleport keeps it: next test).
-    await w.get('[data-test="report-reason"]').setValue('Known flaky server')
-    expect((context.drafts['t3:report'] as { reason: string }).reason).toBe('Known flaky server')
-    expect(w.get('[data-test="report-record"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="report-record"]').attributes('title')).toBe('연결 예정')
-    key('j', w.get('[data-test="report-reason"]').element); await flushPromises(); expect(detailCase(w)).toBe('TC-1')
-    await w.get('[data-test="report-reason"]').trigger('keydown', { key: 'Escape' })
-    expect(w.find('[data-test="report-reason"]').exists()).toBe(false); expect(context.windows.report.open).toBe(true)
-    expect(mocks.setting).not.toHaveBeenCalled(); expect(mocks.enter).not.toHaveBeenCalled()
-  })
-  it('typing the reason keeps the same input element (and its focus) under the real teleport', async () => {
-    causeMode = 'human'
-    await render(['report'], null, false)
-    document.querySelector<HTMLElement>('[data-test="report-causes"] [data-value="pass"]')!.click(); await flushPromises()
-    const input = document.querySelector<HTMLInputElement>('[data-test="report-reason"]')!
-    input.focus()
-    for (const text of ['K', 'Kn', 'Known']) { input.value = text; input.dispatchEvent(new Event('input')); await flushPromises() }
-    expect(document.querySelector('[data-test="report-reason"]')).toBe(input); expect(document.activeElement).toBe(input)
-    expect((context.drafts['t3:report'] as { reason: string }).reason).toBe('Known')
-  })
-  it('human mode shows the four causes; decision causes say why they are disabled', async () => {
+  it('hides unimplemented decisions and keeps the implemented retry in human mode', async () => {
     causeMode = 'human'
     const w = await render()
     const options = w.findAll('[data-test="report-causes"] [data-test="inspector-segment-option"]')
-    expect(options.map(option => option.text())).toEqual(['구현 결함', '시나리오 오류', '환경 문제', '통과 처리'])
-    expect(options[0].attributes('disabled')).toBeDefined(); expect(options[0].attributes('title')).toBe('연결 예정')
-    expect(options[2].attributes('disabled')).toBeUndefined()
+    expect(options.map(option => option.text())).toEqual(['환경 문제'])
+    expect(options[0].attributes('disabled')).toBeUndefined()
+    for (const name of ['report-confirm', 'report-reopen', 'report-reason', 'report-record']) {
+      expect(w.find(`[data-test="${name}"]`).exists()).toBe(false)
+    }
+    expect(w.text()).not.toContain('연결 예정')
   })
   it('환경 문제 reruns a case_selectable case through the session; a suite_only case stays disabled and sends nothing', async () => {
     const w = await render()
@@ -283,7 +254,7 @@ describe('0071 T3 report window', () => {
   it('a human check passes through the existing result path and selects the next pending case', async () => {
     mocks.enter.mockImplementation(async () => { server.effective_result = { summary: { overall: 'FAIL', counts: counts(1, 1, 1) }, cases: [...ROWS, { case_id: 'TC-3', status: 'PASS' }] } })
     const w = await render(['report'], 'TC-3')
-    expect(detailCase(w)).toBe('TC-3'); expect(w.get('[data-test="report-attach"]').attributes('disabled')).toBeDefined()
+    expect(detailCase(w)).toBe('TC-3'); expect(w.find('[data-test="report-attach"]').exists()).toBe(false)
     await w.get('[data-test="report-manual-pass"]').trigger('click'); await flushPromises()
     expect(mocks.enter).toHaveBeenCalledWith(TS_DOC, { case_id: 'TC-3', status: 'PASS' })
     expect(detailCase(w)).toBe('TC-1')
