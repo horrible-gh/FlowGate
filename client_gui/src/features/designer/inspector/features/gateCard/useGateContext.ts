@@ -1,7 +1,8 @@
 // D0007 §6: settings, run and gate form one read context, shared across Inspector tabs.
+import { normalizeApiError } from '@shared/apiErrors'
 import { randomUuid } from '@shared/utils/uuid'
 import { computed, ref, shallowRef, watch } from 'vue'
-import { documentErrorOf, runCurrentRead, runGateDecide, settingsNodeRead, settingsNodeWrite, type RunCurrent, type RunGateDecision, type RunGateIntent, type SettingsNode } from '@/features/document'
+import { documentErrorOf, runCurrentRead, runGateReceiptsRead, runGateDecide, settingsNodeRead, settingsNodeWrite, type RunCurrent, type RunGateDecision, type RunGateIntent, type SettingsNode } from '@/features/document'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { useInspectorEvents } from '../../useInspectorResource'
 
@@ -25,13 +26,17 @@ function createContext(flowId: string, nodeKey: string) {
   let epoch = 0
   let request: Request | null = null
   let replaying: Promise<boolean> | null = null
-  async function reload(): Promise<boolean> {
-    if (reading) return reading
+  async function reload(refreshMergeTargets = false): Promise<boolean> {
+    if (reading) {
+      if (!refreshMergeTargets) return reading
+      await reading
+      return reload(true)
+    }
     const at = epoch
     status.value = 'loading'
     reading = (async () => {
       try {
-        const [current, saved] = await Promise.allSettled([runCurrentRead(flowId), settingsNodeRead(flowId, nodeKey)])
+        const [current, saved] = await Promise.allSettled([runCurrentRead(flowId).then(current => runGateReceiptsRead(current, nodeKey)), settingsNodeRead(flowId, nodeKey, refreshMergeTargets)])
         if (at !== epoch) return false
         // Keep each confirmed read even when the other request fails; actions stay locked.
         if (current.status === 'fulfilled') run.value = current.value
@@ -98,23 +103,27 @@ function createContext(flowId: string, nodeKey: string) {
     } finally { busy.value = null }
   }
   async function change(field: string, value: unknown): Promise<boolean> {
-    if (!['archive', 'merge_mode', 'merge_target', 'push', 'keep_branch'].includes(field)) return false
-    if (status.value !== 'ready' || settings.value?.locked || gate.value?.settings_locked || busy.value || request || Object.keys(pending.value).length) return false
+    if (!['archive', 'merge_mode', 'merge_target_branch', 'push', 'keep_branch'].includes(field)) return false
+    if (settings.value?.settingsVersion === undefined || status.value !== 'ready' || settings.value?.locked || gate.value?.settings_locked || busy.value || request || Object.keys(pending.value).length) return false
     epoch++
+    let refreshAfterFailure = false
     pending.value = { [field]: value }
     failure.value = null
     try {
       settings.value = await settingsNodeWrite(flowId, nodeKey, field, value, settings.value?.settingsVersion)
+      decisionError.value = null
       return true
     } catch (cause) {
       failure.value = { field, error: cause }
+      refreshAfterFailure = normalizeApiError(cause).params.reason !== 'legacy_merge_target_conflict'
       return false
     } finally {
       pending.value = {}
       // Invalidates reads started before the write's answer; failed writes keep the confirmed value.
       epoch++
       if (reading) await reading
-      await reload()
+      // A successful PATCH is authoritative. Re-read refused targets/versions; legacy conflicts preserve all saved fields.
+      if (refreshAfterFailure) await reload()
     }
   }
   return { run, settings, node, gate, pending, status, error, failure, busy, decisionError, reload, decide, change, replay, hasRequest: () => request !== null }

@@ -322,8 +322,29 @@ export interface SettingsNodeField {
   readonly choices: readonly unknown[] | null
 }
 
+/** Read-only judgement returned with check card settings (0098 T#1). */
+export interface SettingsMergeTargetEntry {
+  readonly branch: string | null
+  readonly checked: boolean
+  readonly error: string | null
+  readonly unmerge_supported: boolean | null
+  readonly warnings: readonly string[]
+  readonly inherited?: boolean
+}
+export interface SettingsMergeTargetState {
+  readonly status: string
+  readonly code: string | null
+  readonly reason: string | null
+  readonly current: SettingsMergeTargetEntry | null
+  readonly default: SettingsMergeTargetEntry | null
+}
+
 /** A card's settings (T#2). */
 export interface SettingsNode {
+  readonly mergeTargetOptions?: readonly string[]
+  readonly defaultTargetBranch?: string | null
+  readonly mergeTargetState?: SettingsMergeTargetState | null
+  readonly pushRemoteCheckRequired?: boolean
   readonly settingsVersion?: number
   readonly lockReason?: string | null
   readonly cardKind: string | null
@@ -346,13 +367,20 @@ export function toSettingsNode(raw: unknown): SettingsNode {
     }
   }
   return { cardKind: text(data.card_kind), locked: data.locked === true, fields,
+    ...('merge_target_options' in data ? { mergeTargetOptions: list(data.merge_target_options).filter((v): v is string => typeof v === 'string') } : {}),
+    ...('default_target_branch' in data ? { defaultTargetBranch: text(data.default_target_branch) } : {}),
+    ...('merge_target_state' in data ? { mergeTargetState: data.merge_target_state && typeof data.merge_target_state === 'object' ? data.merge_target_state as SettingsMergeTargetState : null } : {}),
+    ...('push_remote_check_required' in data ? { pushRemoteCheckRequired: data.push_remote_check_required === true } : {}),
     ...(typeof data.settings_version === 'number' ? { settingsVersion: data.settings_version } : {}),
     ...('lock_reason' in data ? { lockReason: text(data.lock_reason) } : {}) }
 }
 
 /** Reads a card's settings. */
-export async function settingsNodeRead(flowId: string, nodeKey: string): Promise<SettingsNode> {
-  const response = await getRequest<unknown>(`${API}/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/settings`)
+export async function settingsNodeRead(flowId: string, nodeKey: string, refreshMergeTargets = false): Promise<SettingsNode> {
+  const url = `${API}/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/settings`
+  const response = refreshMergeTargets
+    ? await getRequest<unknown>(url, { refresh_merge_targets: true })
+    : await getRequest<unknown>(url)
   return toSettingsNode(response.data)
 }
 

@@ -17,7 +17,7 @@ const { t } = useI18n()
 const k = (key: string) => `gui.inspector.gateCard.${key}`
 const { actions, busy, failureKey, decide } = props.state ?? useGateDecision(() => props.target)
 function tipOf(reason: string | null): string | undefined {
-  if (failureKey.value) return t(k(failureKey.value))
+  if (failureKey.value) return t(failureKey.value.startsWith('settings:') ? `gui.inspector.checkSettings.${failureKey.value.slice(9)}` : k(failureKey.value))
   return reason ? t(k(reason)) : undefined
 }
 </script>

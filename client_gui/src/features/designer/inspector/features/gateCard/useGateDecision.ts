@@ -3,6 +3,7 @@ import { documentErrorOf, type RunGateDecision } from '@/features/document'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { INSPECTOR_HOST } from '../../inspectorHost'
 import { gateActions, gateFailureKey, gateResult } from './gateCardModel'
+import { checkControlFailure } from '../checkSettings/checkSettingsModel'
 import { useGateContext } from './useGateContext'
 export { GATE_RUN_EVENTS, gateRunEventMatches } from './useGateContext'
 
@@ -15,7 +16,8 @@ export function useGateDecision(target: () => InspectorTarget | null) {
   })
   const failureKey = computed(() => {
     const error = context.value?.decisionError.value ?? context.value?.error.value
-    return error ? gateFailureKey(documentErrorOf(error)) : null
+    const specific = error ? checkControlFailure(error) : null
+    return specific && documentErrorOf(error).code !== 'gate_git_unavailable' ? `settings:${specific.key}` : error ? gateFailureKey(documentErrorOf(error)) : null
   })
   const actions = computed(() => {
     const current = target()
@@ -36,6 +38,14 @@ export function useGateDecision(target: () => InspectorTarget | null) {
     if (!ok && target()?.flowId === current.flowId && target()?.nodeId === current.nodeId && c.gate.value?.decision_in_progress) host?.request({ kind: 'show-tool', tool: 'git' })
     return ok
   }
-  return { actions, busy, failureKey, result, decide }
+  return { actions, busy, failureKey, result, decide,
+    settings: computed(() => context.value?.settings.value ?? null),
+    receipt: computed(() => {
+      const c = context.value
+      const receipt = c?.gate.value?.decision
+      return receipt && (c?.gate.value?.decision_in_progress || receipt.attempt_id === c?.node.value?.attemptId || receipt.attempt_id === null) ? receipt : null
+    }),
+    errorCode: computed(() => context.value?.gate.value?.recovery?.error_code ?? context.value?.gate.value?.job?.last_error_code ?? null),
+  }
 }
 export type GateDecisionState = ReturnType<typeof useGateDecision>

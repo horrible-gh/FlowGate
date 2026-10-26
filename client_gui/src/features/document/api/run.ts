@@ -191,6 +191,16 @@ export interface RunGateRecovery {
   readonly error_code: string | null
 }
 export interface RunGateResult {
+  readonly source?: string
+  /** Client read state: the summary's full receipt could not be obtained. */
+  readonly settingsUnavailable?: boolean
+  readonly target_branch?: string | null
+  readonly last_error_code?: string | null
+  readonly settings?: {
+    readonly shown?: Readonly<Record<string, unknown>>
+    readonly effective?: Readonly<Record<string, unknown>>
+    readonly target_basis?: Readonly<Record<string, unknown>> | null
+  } | null
   readonly decision_id: string
   readonly attempt_id: string | null
   readonly result: string
@@ -249,4 +259,21 @@ export interface RunGateRecoveryRequest {
 export async function runGateRecover(runId: string, nodeKey: string, decisionId: string, action: 'retry' | 'cancel' | 'resolve', body: RunGateRecoveryRequest): Promise<RunCurrent | null> {
   const response = await postRequest<Raw>(`${gatePath(runId, nodeKey)}/gate-decisions/${encodeURIComponent(decisionId)}/${action}`, body)
   return toRunCurrent(response.data?.run)
+}
+
+/** Run summaries omit settings; use only the full history entry with the same decision id. */
+export async function runGateReceiptsRead(run: RunCurrent | null, nodeKey?: string): Promise<RunCurrent | null> {
+  if (!run) return null
+  const nodes = await Promise.all(run.nodes.map(async node => {
+    const summary = node.gate?.decision
+    if ((nodeKey && node.nodeKey !== nodeKey) || !summary || summary.source !== 'gate_decision' || summary.settings !== undefined) return node
+    let receipt: RunGateResult = { ...summary, settingsUnavailable: true }
+    try {
+      const page = await runGateHistoryRead(run.runId, node.nodeKey)
+      const matching = page.latest?.decision_id === summary.decision_id ? page.latest : page.items.find(item => item.decision_id === summary.decision_id)
+      if (matching) receipt = { ...summary, settings: matching.settings, settingsUnavailable: matching.settings == null }
+    } catch { /* A failed receipt read never substitutes live card settings. */ }
+    return { ...node, gate: { ...node.gate!, decision: receipt } }
+  }))
+  return { ...run, nodes }
 }
