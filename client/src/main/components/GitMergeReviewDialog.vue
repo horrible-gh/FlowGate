@@ -349,6 +349,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import { getRequest, postRequest } from '@shared/api'
+import { normalizeApiInput } from '@shared/apiErrors'
 import { resolveGitError } from '@shared/gitErrors'
 import { randomUuid } from '@shared/utils/uuid'
 import AiProviderSelect from './AiProviderSelect.vue'
@@ -510,6 +511,11 @@ interface ApproveResult {
   status?: string
   review_state?: string
   errors?: ApproveError[]
+}
+interface ApproveResponse {
+  ok: boolean
+  result?: ApproveResult
+  error?: any
 }
 interface ReviewDiffData {
   path: string
@@ -1116,15 +1122,52 @@ function refreshTerminalSurfaces(status: string) {
   window.dispatchEvent(new CustomEvent('fg:open_docs_refresh', { detail }))
 }
 
+/**
+ * flowgate.v02.0096 CH — no answer does not mean "not applied". A request that dies without
+ * a response (timeout, dropped connection) says nothing about the server, which may still be
+ * committing and pushing: the 0079 approval of 2026-10-26 10:01 merged, pushed and approved
+ * its AC after the browser had given up, while this screen said only "서버에 연결할 수
+ * 없습니다" and kept [승인] armed. So the same attempt is asked again. The server answers it
+ * idempotently (`already_applied` once that attempt merged) and refuses with `git_busy`
+ * while the first request still holds the session lock, so asking can never apply twice.
+ */
+const LOST_RESPONSE_RECHECK_MS = 5_000
+// As long as the request itself may run (GIT_APPROVAL_TIMEOUT_MS in @shared/api).
+const LOST_RESPONSE_RECHECK_LIMIT_MS = 330_000
+let disposed = false
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function recheckApproval(url: string, body: Record<string, unknown>): Promise<ApproveResponse> {
+  const deadline = Date.now() + LOST_RESPONSE_RECHECK_LIMIT_MS
+  for (;;) {
+    try {
+      return (await postRequest<ApproveResponse>(url, body)).data
+    } catch (e: any) {
+      const busyNow = String(e?.response?.data?.error?.code || '') === 'git_busy'
+      if (!busyNow || disposed || Date.now() >= deadline) throw e
+    }
+    await delay(LOST_RESPONSE_RECHECK_MS)
+  }
+}
+
 async function approve() {
   if (!review.value || busy.value) return
   busy.value = true
   approveOutcome.value = null
   try {
-    const { data } = await postRequest<{ ok: boolean; result?: ApproveResult; error?: any }>(
-      `${reviewApiBase.value}/approve`,
-      { attempt_id: attemptId.value, review_fingerprint: review.value.review_fingerprint },
-    )
+    const url = `${reviewApiBase.value}/approve`
+    const body = { attempt_id: attemptId.value, review_fingerprint: review.value.review_fingerprint }
+    let data: ApproveResponse
+    try {
+      data = (await postRequest<ApproveResponse>(url, body)).data
+    } catch (e: any) {
+      if (!normalizeApiInput(e).network) throw e
+      approveOutcome.value = { status: 'confirming', errors: [], message: t('main.git_review.approve_confirming') }
+      data = await recheckApproval(url, body)
+    }
     const status = String(data.result?.status ?? '')
     // 0668 T0004: a TR conflict is approved here too; its terminal outcome is the TR
     // commit's own `committed` / `empty` (review_state `completed`).
@@ -1150,10 +1193,16 @@ async function approve() {
     attemptId.value = newAttemptId()
     await loadReview({ background: true })
   } catch (e: any) {
-    const message = resolveGitError(e, t, 'main.git_finalize.failed')
-    showToast(message, 'danger')
+    // Still no answer after asking again: the outcome is unknown, not failed. The attempt_id
+    // is kept so the next [승인] is the same, idempotent question.
+    const network = normalizeApiInput(e).network
+    const message = network
+      ? t('main.git_review.approve_unconfirmed')
+      : resolveGitError(e, t, 'main.git_finalize.failed')
+    showToast(message, network ? 'warning' : 'danger')
     const code = String(e?.response?.data?.error?.code || '')
     approveOutcome.value = { status: code, errors: [], message }
+    if (network) await loadReview({ background: true })
     // 0668 T0004: the reviewed tree moved (the server re-froze it) — show the new
     // candidate and its fingerprint so the next [승인] is about what is really there.
     if (code === 'stale_review') {
@@ -1238,7 +1287,10 @@ onMounted(async () => {
   // them go find it in the AI-run dialog.
   if (awaitingReply.value) startPolling()
 })
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => {
+  disposed = true
+  stopPolling()
+})
 </script>
 
 <style scoped>

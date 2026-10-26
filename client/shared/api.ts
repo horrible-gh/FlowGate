@@ -204,6 +204,13 @@ const LONG_RUNNING_PATHS = [
 // call site cannot forget it.
 export const GIT_APPROVAL_TIMEOUT_MS = 330_000
 const GIT_APPROVAL_PATH = /\/documents\/review_transitions\/approve(?:$|\?)/
+// flowgate.v02.0096 CH: the merge-review [승인] (`POST …/git/merge/{id}/approve`, group and
+// project routes) also publishes inside the request — every changed path validated, then
+// commit, push (≤120s), the AC approval and the slot cleanup — before it answers. It matched
+// `/\/git\//` and got 130s, so the 0079 approval of 2026-10-26 (577 changed paths) was
+// abandoned at 130s while the server went on to merge, push and approve; the screen said
+// "서버에 연결할 수 없습니다". This route always publishes, so there is no body test.
+const GIT_MERGE_APPROVE_PATH = /\/git\/merge\/[^/]+\/approve(?:$|\?)/
 
 function carriesGitAction(data: unknown): boolean {
   if (!data || typeof data !== 'object') return false
@@ -224,7 +231,10 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   // Raise the ceiling for known-slow endpoints unless the caller set its own timeout.
   if (config.timeout === DEFAULT_TIMEOUT_MS) {
     const path = config.url || ''
-    if (GIT_APPROVAL_PATH.test(path) && carriesGitAction(config.data)) {
+    if (
+      (GIT_APPROVAL_PATH.test(path) && carriesGitAction(config.data))
+      || GIT_MERGE_APPROVE_PATH.test(path)
+    ) {
       config.timeout = GIT_APPROVAL_TIMEOUT_MS
     } else if (LONG_RUNNING_PATHS.some((re) => re.test(path))) {
       config.timeout = LONG_TIMEOUT_MS

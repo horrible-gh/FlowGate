@@ -4203,6 +4203,9 @@ export default {
       approve_validation_failed: '승인 전 파일 검사에서 막혀 커밋하지 않았습니다. 아래 파일을 고친 뒤 다시 승인하세요.',
       approve_commit_failed: '커밋을 만들지 못했습니다. 대상은 그대로 승인 대기로 남아 있습니다.',
       approve_unknown_status: '서버가 이 화면이 모르는 상태({status})로 답했습니다. 화면을 새로고침해 최신 상태를 확인하세요.',
+      // flowgate.v02.0096 CH — 응답 없이 끊긴 승인은 실패가 아니라 결과 미확인이다.
+      approve_confirming: '서버 응답을 받지 못해 승인 결과를 서버에 다시 확인하는 중입니다.',
+      approve_unconfirmed: '서버 응답을 받지 못해 승인 결과를 확인하지 못했습니다. 서버에서는 반영됐을 수 있으니, 다시 승인하기 전에 화면을 새로고침해 상태를 확인하세요.',
       rejected_toast: '반려하고 리졸버로 되돌렸습니다.',
       resolved_pending_toast: '충돌을 해결했습니다. 승인 대기 화면에서 확인 후 승인하세요.',
       // 0481 T0010 rev5 (반려 #3) — "알아서 승인화면으로 가세요 할게 아니라 대려다줘야 할거

@@ -4197,6 +4197,9 @@ export default {
       approve_validation_failed: 'The pre-commit file check blocked this approval; nothing was committed. Fix the files below and approve again.',
       approve_commit_failed: 'The commit could not be created. The candidate is still waiting for approval.',
       approve_unknown_status: 'The server answered with a state this screen does not know ({status}). Reload to see the current state.',
+      // flowgate.v02.0096 CH — an approval cut off without an answer is unconfirmed, not failed.
+      approve_confirming: 'No response arrived, so the approval result is being checked with the server again.',
+      approve_unconfirmed: 'No response arrived, so the approval result could not be confirmed. The server may have applied it — reload and check the state before approving again.',
       rejected_toast: 'Rejected and returned to the resolver.',
       resolved_pending_toast: 'Conflict resolved. Review it on the approval screen, then approve.',
       resolved_pending_opened: 'Conflict resolved — the approval screen is open. Review it, then approve.',

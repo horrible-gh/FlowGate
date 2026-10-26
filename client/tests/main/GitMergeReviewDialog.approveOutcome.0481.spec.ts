@@ -218,3 +218,103 @@ describe('GitMergeReviewDialog approve outcome (0481 T0010 rev3)', () => {
     expect(wrapper.emitted('close')).toBeUndefined()
   })
 })
+
+// flowgate.v02.0096 CH — the 0079 approval of 2026-10-26 10:01: the browser gave up at 130s
+// while the server went on to merge, push and approve the AC, and this dialog said only
+// "서버에 연결할 수 없습니다". No answer is not "not applied": the same attempt is asked again.
+describe('GitMergeReviewDialog approve without an answer (flowgate.v02.0096)', () => {
+  function lostResponse() {
+    return Object.assign(new Error('timeout of 130000ms exceeded'), {
+      isAxiosError: true, code: 'ECONNABORTED',
+    })
+  }
+  function busyResponse() {
+    return Object.assign(new Error('Request failed with status code 409'), {
+      isAxiosError: true,
+      response: { status: 409, data: { ok: false, error: { code: 'git_busy', message: 'busy' } } },
+    })
+  }
+  const applied = { data: { ok: true, result: { status: 'already_applied', review_state: 'completed', merge_commit: 'dd2bee8' } } }
+
+  function attemptIds(): string[] {
+    return postRequest.mock.calls.map(([, body]) => (body as { attempt_id: string }).attempt_id)
+  }
+
+  it('asks the same attempt again and closes when the server had already applied it', async () => {
+    postRequest.mockRejectedValueOnce(lostResponse()).mockResolvedValueOnce(applied)
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    await approve(wrapper)
+
+    expect(postRequest).toHaveBeenCalledTimes(2)
+    const [first, second] = attemptIds()
+    expect(second).toBe(first)
+    expect(showToast).toHaveBeenLastCalledWith(i18n.global.t('main.git_review.approved_toast'), 'success')
+    expect(wrapper.emitted('resolved')).toBeTruthy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('waits while the first request still holds the session (git_busy), then reports it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      postRequest
+        .mockRejectedValueOnce(lostResponse())
+        .mockRejectedValueOnce(busyResponse())
+        .mockResolvedValueOnce(applied)
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      await approve(wrapper)
+
+      expect(postRequest).toHaveBeenCalledTimes(2)
+      expect(wrapper.find('[data-test="gmr-approve-outcome"]').text()).toContain(
+        i18n.global.t('main.git_review.approve_confirming'),
+      )
+      expect(wrapper.emitted('close')).toBeUndefined()
+
+      await vi.advanceTimersByTimeAsync(5_000)
+      await flushPromises()
+
+      expect(postRequest).toHaveBeenCalledTimes(3)
+      expect(new Set(attemptIds()).size).toBe(1)
+      expect(wrapper.emitted('close')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('says the outcome is unconfirmed — not failed — when asking again gets no answer either', async () => {
+    postRequest.mockRejectedValue(lostResponse())
+    const wrapper = mountDialog()
+    await flushPromises()
+    const reviewReadsBefore = getRequest.mock.calls.filter(([url]) => String(url).endsWith('/review')).length
+
+    await approve(wrapper)
+
+    const unconfirmed = i18n.global.t('main.git_review.approve_unconfirmed')
+    expect(showToast).toHaveBeenLastCalledWith(unconfirmed, 'warning')
+    expect(wrapper.find('[data-test="gmr-approve-outcome"]').text()).toContain(unconfirmed)
+    expect(wrapper.emitted('close')).toBeUndefined()
+    // The review is read again, so a session the server finished stops offering [승인].
+    const reviewReadsAfter = getRequest.mock.calls.filter(([url]) => String(url).endsWith('/review')).length
+    expect(reviewReadsAfter).toBe(reviewReadsBefore + 1)
+
+    // The next [승인] is the same, idempotent question.
+    await approve(wrapper)
+    expect(new Set(attemptIds()).size).toBe(1)
+  })
+
+  it('does not ask again after an answer that is an error', async () => {
+    postRequest.mockRejectedValue(Object.assign(new Error('Request failed with status code 409'), {
+      isAxiosError: true,
+      response: { status: 409, data: { ok: false, error: { code: 'review_not_ready', message: 'x' } } },
+    }))
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    await approve(wrapper)
+
+    expect(postRequest).toHaveBeenCalledTimes(1)
+  })
+})
