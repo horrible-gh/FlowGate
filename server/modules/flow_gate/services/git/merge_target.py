@@ -1439,6 +1439,7 @@ def open_attempt(
             ATTEMPT_STATE_KEY: ATTEMPT_IN_PROGRESS,
         },
     )
+    invalidate_check_targets(target.project_id)
     return replace(
         target, merge_id=merge_id, owner=owner, lock_holder=lock_holder,
         started_at=started_at, legacy=False,
@@ -1451,6 +1452,7 @@ def _update_context(merge_id: int, **values) -> dict:
     context = _gs.db_git.session_context(session)
     context.update(values)
     _gs.db_git.set_session_context(merge_id, context)
+    invalidate_check_targets()
     return context
 
 
@@ -1472,6 +1474,7 @@ def close_attempt(merge_id: int, state: str, *, result: Optional[dict] = None,
         values["attempt_error"] = error
     _update_context(merge_id, **values)
     _gs.db_git.close_session(merge_id, "done" if state == ATTEMPT_COMPLETED else "aborted")
+    invalidate_check_targets()
 
 
 def close_session_attempt(session: dict, state: str, *, error: Optional[dict] = None) -> bool:
@@ -1486,6 +1489,7 @@ def close_session_attempt(session: dict, state: str, *, error: Optional[dict] = 
     merge_id = int(session["merge_id"])
     if target_record(session) is None:
         _gs.db_git.close_session(merge_id, "done" if state == ATTEMPT_COMPLETED else "aborted")
+        invalidate_check_targets()
         return True
     target = resolve_session_target(session)
     verdict = workspace_ownership(target)
@@ -1699,6 +1703,7 @@ def prepare_workspace(ctx: MergeTargetContext, *, detached: bool = False) -> Non
     if read_owner_marker(ctx.workspace_dir) is not None or ctx.root.exists():
         _remove_workspace(ctx.workspace_dir, base_root)
     _write_owner_marker(ctx)
+    invalidate_check_targets(ctx.project_id)
     _gs._run_git(["worktree", "prune"], cwd=base_root)
     add_args = ["worktree", "add"]
     if detached:
@@ -1759,7 +1764,9 @@ def release_workspace(ctx: MergeTargetContext) -> bool:
     base_root = _gs._base_root_of(ctx.project_id)
     if base_root is None:
         return False
-    return _remove_workspace(ctx.workspace_dir, base_root)
+    removed = _remove_workspace(ctx.workspace_dir, base_root)
+    invalidate_check_targets(ctx.project_id)
+    return removed
 
 
 def workspace_ownership(ctx: MergeTargetContext) -> str:
@@ -2091,6 +2098,80 @@ def finish_completed_review(session: dict) -> bool:
 
 
 # ── Completed-attempt readers (unmerge / ledger) ─────────────────────────────
+
+def check_unmerge_target(group_id: str, state: Optional[dict], requested_sha: str) -> Optional[dict]:
+    """Read the completed session/decision evidence before unmerge can enqueue or change anything.
+
+    Only old decisions without the new shown key may use the legacy no-record interpretation.
+    """
+    from modules.flow_gate.services import git_service as gs
+    from flowgate.gate_decisions import repository as decisions
+    session = gs.db_git.get_session(int(state["merge_id"])) if state and state.get("merge_id") is not None else None
+    if session is None:
+        for candidate in gs.db_git.sessions_by_group(group_id):
+            context = gs.db_git.session_context(candidate)
+            result = context.get("attempt_result") or {}
+            sha = result.get("merge_commit_sha") or result.get("merge_commit") or ""
+            if sha and (sha.startswith(requested_sha) or requested_sha.startswith(sha)):
+                session = candidate
+                break
+    context = gs.db_git.session_context(session) if session else {}
+    linked = context.get("gate_decision_id")
+    decision = decisions.get(linked) if linked else None
+    if not linked:
+        # Without a session link, only a completed merge result identifies a decision.
+        # An unfinished decision's target_sha is its acceptance HEAD, not its result.
+        store = decisions.get_store()
+        if store.table_exists("gate_decisions"):
+            rows = store._fetch_all(
+                "SELECT d.decision_id FROM gate_decisions d WHERE d.group_id = ? "
+                "AND (EXISTS (SELECT 1 FROM gate_decision_effects e WHERE e.decision_id = d.decision_id "
+                "AND e.phase = 'merge' AND e.status = ? AND e.sha_after LIKE ?) "
+                "OR (d.status = ? AND d.completed_at IS NOT NULL AND d.target_sha LIKE ?)) "
+                "ORDER BY d.accepted_at DESC, d.decision_id DESC",
+                [group_id, decisions.DONE, requested_sha + "%", decisions.SUCCEEDED, requested_sha + "%"]) or []
+            for row in rows:
+                candidate = decisions.get(dict(row)["decision_id"])
+                if (((candidate or {}).get("settings") or {}).get("effective") or {}).get("merge_mode") == "merge":
+                    decision = candidate
+                    break
+    settings = (decision or {}).get("settings") or {}
+    new = "merge_target_branch" in (settings.get("shown") or {})
+    rec = target_record(session)
+    if linked and decision is None and rec and "accepted_target_sha" in rec:
+        raise GitServiceError(409, "unmerge_target_unknown", "the linked decision cannot be verified",
+                              details={"reason": "decision_missing", "target_branch": rec["branch"]})
+    raw_basis = settings.get("target_basis")
+    basis = raw_basis if isinstance(raw_basis, dict) else {}
+    effect = decisions.effect(decision["decision_id"], "merge") if decision else None
+    requires_session = bool(((effect or {}).get("evidence") or {}).get("merge_id"))
+    if new:
+        valid = (basis.get("target_branch") == decision.get("target_branch") and
+                 isinstance(basis.get("is_project_base"), bool) and
+                 isinstance(basis.get("unmerge_supported"), bool) and
+                 basis.get("unmerge_supported") == basis.get("is_project_base") and
+                 bool(basis.get("project_base_branch")) and bool(basis.get("accepted_target_sha")) and
+                 basis["is_project_base"] == (basis.get("target_branch") == basis["project_base_branch"]))
+        if session is not None or requires_session:
+            valid = valid and bool(rec) and all(rec.get(k) == basis.get(k) for k in (
+                "is_project_base", "unmerge_supported", "project_base_branch", "accepted_target_sha")) and rec.get("branch") == basis.get("target_branch")
+        if not valid:
+            raise GitServiceError(409, "unmerge_target_unknown", "the recorded merge target cannot be verified",
+                                  details={"target_branch": decision.get("target_branch"), "reason": "target_record_missing_or_invalid",
+                                           "recovery_options": ["revert_merge_on_target", "timemachine_reopen", "manual_git"]})
+    non_base = (new and basis.get("is_project_base") is False) or (rec is not None and rec.get("is_project_base") is False)
+    if non_base:
+        raise GitServiceError(409, "unmerge_unsupported_target", "unmerge is unavailable for this target",
+                              details={"target_branch": (basis.get("target_branch") if new else rec["branch"]),
+                                       "reason": "non_project_base_target", "unmerge_supported": False,
+                                       "recovery_options": ["revert_merge_on_target", "timemachine_reopen", "manual_git"]})
+
+    if new:
+        return basis
+    if rec is not None:
+        return {**rec, "target_branch": rec["branch"]}
+    return None
+
 
 def completed_target_of_state(state: Optional[dict]) -> Optional[MergeTargetContext]:
     """The completed attempt the group ledger points at, or None (legacy/none)."""

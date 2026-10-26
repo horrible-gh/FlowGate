@@ -107,6 +107,7 @@ class Plan:
     archive: bool
     target_branch: Optional[str]
     group_branch: Optional[str]
+    target_sha: Optional[str] = None
 
     @property
     def push_branch(self) -> Optional[str]:
@@ -119,7 +120,8 @@ def plan_of(job: dict, decision: dict) -> Plan:
     return Plan(decision["decision_id"], decision["run_id"], decision["node_key"], decision["attempt_id"],
                 decision["group_id"], job["project_id"], mode, bool(eff.get("push")) and mode is not None,
                 bool(eff.get("archive")), decision.get("target_branch"),
-                (decision.get("settings") or {}).get("group_branch"))
+                (decision.get("settings") or {}).get("group_branch"),
+                ((decision.get("settings") or {}).get("target_basis") or {}).get("accepted_target_sha"))
 
 
 def _payload(job: dict) -> dict:
@@ -327,6 +329,9 @@ def _slot(plan: Plan) -> git.Slot:
     try:
         return git.slot_of(plan.group_id)
     except git.git_error_type() as exc:
+        shown = ((repo.get(plan.decision_id) or {}).get("settings") or {}).get("shown") or {}
+        if "merge_target_branch" in shown:
+            raise _Failure("gate_git_unavailable") from exc
         raise _Failure(exc.code or "gate_git_unavailable")
 
 
@@ -393,54 +398,73 @@ def _snapshot(ctx, plan: Plan) -> str:
 
 
 def _merge(ctx, plan: Plan, frozen: str) -> str:
-    """The merge into the work base branch; returns the applied SHA (the target head holding the frozen SHA)."""
+    """The merge into the recorded local target branch; returns the applied SHA (the target head holding the frozen SHA)."""
     done = repo.effect(plan.decision_id, "merge")
     if done and done["status"] == repo.DONE and done.get("sha_after"):
         return done["sha_after"]
     slot = _slot(plan)
     base_branch = (slot.cfg.get("base_branch") or "main").strip() or "main"
+    basis = ((repo.get(plan.decision_id) or {}).get("settings") or {}).get("target_basis") or {}
+    is_base = basis.get("is_project_base", plan.target_branch == base_branch)
     held: list = []
     try:
-        if plan.target_branch == base_branch:
+        if is_base:
             _acquire(ctx, "B", plan, held=held)
         else:
             _acquire(ctx, "W", plan, target_key=plan.target_branch, held=held)
         _phase(ctx, "merge")
-        left = git.merge_state(slot, plan.decision_id, ctx.job_id)
-        if left is not None:
-            return _merge_outcome(ctx, plan, left, frozen)
-
         def started(evidence: dict) -> None:
-            # Before ``git merge``: from here the merge's effect is unknown until its outcome is written.
             _effect(ctx, plan, "merge", status=repo.UNKNOWN, target_ref=f"refs/heads/{plan.target_branch}",
                     sha_before=evidence.get("pre_head"), evidence={**evidence, "frozen_sha": frozen},
                     new_attempt=True)
-
         try:
-            result = git.merge(slot, plan.decision_id, ctx.job_id, plan.target_branch, frozen, started)
+            git.validate_merge_target(slot, repo.get(plan.decision_id), ctx.job_id)
+            left = git.merge_state(slot, plan.decision_id, ctx.job_id)
+            if left is not None:
+                return _merge_outcome(ctx, plan, left, frozen)
+            result = git.merge(slot, plan.decision_id, ctx.job_id, plan.target_branch, frozen, started,
+                               target_sha=plan.target_sha)
         except git.git_error_type() as exc:
             code = exc.code or "merge_failed"
             row = repo.effect(plan.decision_id, "merge")
-            if row is not None and row["status"] == repo.UNKNOWN:
-                _effect(ctx, plan, "merge", status=repo.EFFECT_FAILED, error_code=code,
-                        evidence={**(row.get("evidence") or {}), "changed": False})
-            if int(getattr(exc, "status", 409) or 409) >= 500:
+            prior = (row or {}).get("evidence") or {}
+            safe = {"target_branch": plan.target_branch, "accepted_target_sha": plan.target_sha,
+                    "stage": "merge_check", "merge_id": prior.get("merge_id")}
+            safe.update({k: v for k, v in (exc.details or {}).items() if k in (
+                "target_branch", "accepted_target_sha", "observed_target_sha", "target_deleted", "stage",
+                "merge_id", "reason", "changed", "observed_unavailable")})
+            if row and row["status"] == repo.UNKNOWN and "changed" not in safe:
+                mid = prior.get("merge_id")
+                session = git._gs().db_git.get_session(mid) if mid else None
+                observed = git.rev(slot.base_root, f"refs/heads/{plan.target_branch}")
+                if session and session.get("status") == "aborted" and observed == row.get("sha_before"):
+                    safe.update(changed=False, observed_target_sha=observed, stage="merge_failed_closed")
+            # An unknown effect remains unknown unless no external change is proved.
+            unknown = row is not None and row["status"] == repo.UNKNOWN and safe.get("changed") is not False
+            _effect(ctx, plan, "merge", status=repo.UNKNOWN if unknown else repo.EFFECT_FAILED,
+                    target_ref=f"refs/heads/{plan.target_branch}", error_code=code,
+                    evidence={**prior, **safe, "changed": None if unknown else safe.get("changed", False)})
+            if plan.target_sha is None and int(getattr(exc, "status", 409) or 409) >= 500:
                 raise _Transient(code)
-            raise _Failure(code)
+            raise _Recovery(code) if unknown or safe.get("changed") else _Failure(code)
         return _merge_outcome(ctx, plan, result, frozen)
     finally:
+        git._mt().invalidate_check_targets(plan.project_id)
         _release(ctx, held)
 
 
 def _merge_outcome(ctx, plan: Plan, result: dict, frozen: str) -> str:
     outcome = result.get("outcome")
     target_ref = f"refs/heads/{plan.target_branch}"
+    basis = ((repo.get(plan.decision_id) or {}).get("settings") or {}).get("target_basis") or {}
+    pre_head = result.get("pre_head") or basis.get("accepted_target_sha")
     if outcome == git.CONTAINED:
-        _effect(ctx, plan, "merge", status=repo.DONE, target_ref=target_ref, sha_before=result.get("pre_head"),
+        _effect(ctx, plan, "merge", status=repo.DONE, target_ref=target_ref, sha_before=pre_head,
                 sha_after=result["merge_commit"], evidence={"changed": False, "frozen_sha": frozen})
         return result["merge_commit"]
     if outcome == git.MERGED and result.get("merge_commit"):
-        fields = _clean_effect({"status": repo.DONE, "target_ref": target_ref, "sha_after": result["merge_commit"],
+        fields = _clean_effect({"status": repo.DONE, "target_ref": target_ref, "sha_before": pre_head,
+                                "sha_after": result["merge_commit"],
                                 "evidence": {"changed": True, "merge_id": result.get("merge_id"),
                                              "merge_commit": result["merge_commit"], "frozen_sha": frozen}})
 
@@ -486,24 +510,30 @@ def _push(ctx, plan: Plan, sha: str) -> None:
             if there is True:
                 pushed_before = done is not None and done["status"] in (repo.UNKNOWN, repo.EFFECT_FAILED)
                 _effect(ctx, plan, "push", status=repo.DONE, target_ref=remote_ref, sha_before=h0, sha_after=sha,
-                        evidence={"remote": "origin", "branch": branch, "remote_head": h0, "changed": pushed_before})
+                        evidence={"remote": "origin", "branch": branch, "remote_head": h0, "changed": pushed_before,
+                                  "remote_head_before": h0, "sent_sha": sha, "attempt_kind": "reconcile"})
                 return
             if there is git.READ_ERROR:
                 raise _Transient("remote_head_unknown")
         # Before the push: from here its effect is unknown until its outcome is written.
         _effect(ctx, plan, "push", status=repo.UNKNOWN, target_ref=remote_ref, sha_before=h0 or None, sha_after=sha,
-                evidence={"remote": "origin", "branch": branch, "remote_head_before": h0 or None}, new_attempt=True)
+                evidence={"remote": "origin", "branch": branch, "remote_head_before": h0 or None,
+                          "sent_sha": sha, "attempt_kind": "update" if h0 else "create"}, new_attempt=True)
         _store().ensure_lease(ctx)
         outcome, code = git.push(slot, sha, branch)
         if outcome == git.PUSHED:
             _effect(ctx, plan, "push", status=repo.DONE, target_ref=remote_ref, sha_after=sha,
-                    evidence={"remote": "origin", "branch": branch, "changed": True, "result": code})
+                    evidence={"remote": "origin", "branch": branch, "changed": True, "result": code,
+                              "remote_head_before": h0 or None, "sent_sha": sha,
+                              "attempt_kind": "update" if h0 else "create"})
             return
         if outcome == git.PUSH_UNKNOWN:
             _effect(ctx, plan, "push", status=repo.UNKNOWN, error_code=code)
             raise _Transient(code)
         _effect(ctx, plan, "push", status=repo.EFFECT_FAILED, error_code=code,
-                evidence={"remote": "origin", "branch": branch, "changed": False})
+                evidence={"remote": "origin", "branch": branch, "changed": False,
+                          "remote_head_before": h0 or None, "sent_sha": sha,
+                          "attempt_kind": "update" if h0 else "create"})
         if outcome == git.PUSH_TRANSIENT:
             raise _Transient(code)
         raise _Failure(code)
@@ -700,6 +730,11 @@ def run(ctx, entry: str):
     except _Transient as stop:
         return _transient(ctx, plan, stop.code)
     except _Failure as stop:
+        if plan.mode == "merge" and stop.code == "gate_git_unavailable" and repo.effect(plan.decision_id, "merge") is None:
+            basis = ((repo.get(plan.decision_id) or {}).get("settings") or {}).get("target_basis") or {}
+            _effect(ctx, plan, "merge", status=repo.EFFECT_FAILED, error_code=stop.code,
+                    target_ref=f"refs/heads/{plan.target_branch}", evidence={"changed": False, "stage": "slot_check",
+                    "target_branch": plan.target_branch, "accepted_target_sha": basis.get("accepted_target_sha")})
         _park(ctx, plan, stop.code, note=stop.note, auto=stop.auto,
               force_recovery=getattr(stop, "force_recovery", False))
         return None

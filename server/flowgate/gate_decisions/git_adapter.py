@@ -164,6 +164,7 @@ def create_ref(repo: Path, ref: str, sha: str) -> str:
     if current is not None:
         return "other"
     proc = _git(repo, ["update-ref", ref, sha, ZERO])
+    _mt().invalidate_check_targets()
     if proc.returncode != 0:
         again = rev(repo, ref)
         return "same" if again == sha else ("other" if again not in (None, READ_ERROR) else "error")
@@ -172,7 +173,9 @@ def create_ref(repo: Path, ref: str, sha: str) -> str:
 
 def delete_ref(repo: Path, ref: str, expected: str) -> bool:
     """Delete ``ref`` only while it still points at ``expected`` (CAS)."""
-    return _git(repo, ["update-ref", "-d", ref, expected]).returncode == 0
+    deleted = _git(repo, ["update-ref", "-d", ref, expected]).returncode == 0
+    _mt().invalidate_check_targets()
+    return deleted
 
 
 def uncommitted(wt_path: Path) -> Optional[int]:
@@ -218,6 +221,7 @@ def fetch_branch(slot: Slot, branch: str) -> bool:
         return False
     proc = _git(slot.base_root, ["fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
                 timeout=_gs().GIT_NET_TIMEOUT_SEC, **slot.credentials())
+    _mt().invalidate_check_targets(slot.project_id)
     return proc.returncode == 0
 
 
@@ -312,8 +316,78 @@ def merge_state(slot: Slot, decision_id: str, job_id: str) -> Optional[dict]:
     return None
 
 
-def merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, frozen: str, on_started) -> dict:
-    """Merge the frozen SHA into the group's work base branch (under its B or W). ``{"outcome": contained}`` when the
+def validate_merge_target(slot: Slot, decision: dict, job_id: str) -> None:
+    """Under the recorded B/W lock, compare own evidence before revalidating a new-contract target.
+
+    Legacy decisions retain their recorded target/effective contract. Nothing here repairs a ref or an owner.
+    """
+    settings = decision.get("settings") or {}
+    if "merge_target_branch" not in (settings.get("shown") or {}):
+        return
+    mt, gs = _mt(), _gs()
+    basis = settings.get("target_basis") or {}
+    branch = decision.get("target_branch")
+    accepted = basis.get("accepted_target_sha")
+    evidence = {"target_branch": branch, "accepted_target_sha": accepted, "stage": "target_check",
+                "merge_id": None, "changed": None}
+
+    def refuse(code, **more):
+        raise GitServiceError(409, code, "the accepted merge target cannot be used", details={**evidence, **more})
+
+    if not branch or not accepted or not basis.get("work_base_ref") or not isinstance(basis.get("is_project_base"), bool):
+        refuse("gate_git_unavailable", reason="git_context_changed")
+    rows = _session_rows(slot, decision["decision_id"], job_id)
+    own = rows[0] if rows else None
+    fixed = mt.raise_if_retarget(slot.group_id, branch)
+    if fixed is not None and (own is None or int(fixed.merge_id) != int(own["merge_id"])):
+        refuse("merge_target_busy", merge_id=fixed.merge_id)
+    if own is not None:
+        evidence["merge_id"] = own["merge_id"]
+        rec = mt.target_record(own) or {}
+        if rec.get("branch") != branch:
+            refuse("merge_target_locked")
+        context = gs.db_git.session_context(own)
+        if context.get(mt.ATTEMPT_STATE_KEY) == mt.ATTEMPT_COMPLETED:
+            # A completed attempt is reconciled from its own result, never from today's tip.
+            return
+    if (branch == mt.project_base_branch(slot.cfg)) != basis["is_project_base"]:
+        refuse("gate_git_unavailable", reason="git_context_changed")
+    observed = rev(slot.base_root, f"refs/heads/{branch}")
+    if observed is READ_ERROR:
+        refuse("gate_git_unavailable", reason="probe_failed", observed_unavailable=True)
+    evidence.update(observed_target_sha=observed, target_deleted=observed is None)
+    if observed is None:
+        refuse("merge_target_not_found")
+    own_id = int(own["merge_id"]) if own is not None and own.get("status") == "open" else None
+    if observed == accepted:
+        evidence["changed"] = False
+    if observed != accepted:
+        landed = False
+        if own_id is not None:
+            inputs = gs.db_git.session_context(own).get(mt.MERGE_INPUTS_KEY) or {}
+            ctx = mt.resolve_session_target(own)
+            from modules.flow_gate.services.git.finalize import _merge_commit_landed
+            landed = (inputs.get("pre_head") == accepted and
+                      inputs.get("source_head") == decision.get("frozen_sha") and ctx.root is not None and
+                      _merge_commit_landed(ctx.root, accepted, inputs["source_head"]))
+        if not landed:
+            refuse("target_moved")
+        evidence["changed"] = True
+    try:
+        mt.judge_check_target(slot.project_id, slot.group_id, branch,
+                              work_base_ref=basis["work_base_ref"], scope_floor_sha=basis.get("scope_floor_sha"),
+                              own_merge_id=own_id)
+    except git_error_type() as exc:
+        # Keep only the public context. Git diagnostics, paths and owner markers stay internal.
+        details = {**evidence}
+        if (exc.details or {}).get("reason"):
+            details["reason"] = exc.details["reason"]
+        raise GitServiceError(409, exc.code, "the accepted merge target cannot be used", details=details) from exc
+
+
+def merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, frozen: str, on_started,
+          *, target_sha: Optional[str] = None) -> dict:
+    """Merge the frozen SHA into the recorded local target branch (under its B or W). ``{"outcome": contained}`` when the
     target already holds it (no attempt, no commit), ``merged`` with the merge commit, or ``conflict`` (the attempt is
     the conflict session of the existing merge review). A refusal before the merge is a GitServiceError and leaves
     nothing; ``on_started(evidence)`` is called right before ``git merge`` (its effect is unknown from then on)."""
@@ -323,6 +397,13 @@ def merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, frozen:
     from modules.flow_gate.services.git.finalize import _merge_commit_landed
     target_ref = f"refs/heads/{target_branch}"
     current = rev(slot.base_root, target_ref)
+    if target_sha is not None and (current is READ_ERROR or current != target_sha):
+        details = {"target_branch": target_branch, "accepted_target_sha": target_sha,
+                   "observed_target_sha": None if current is READ_ERROR else current,
+                   "target_deleted": current is None, "stage": "merge_entry", "changed": False}
+        code = "gate_git_unavailable" if current is READ_ERROR else (
+            "merge_target_not_found" if current is None else "target_moved")
+        raise GitServiceError(409, code, "the accepted target changed before merge", details=details)
     if current is READ_ERROR:
         raise GitServiceError(503, "target_ref_unreadable", "the target branch cannot be read")
     if current is None:
@@ -341,7 +422,18 @@ def merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, frozen:
         gs.guard_base_free(slot.project_id)
     attempt = mt.open_attempt(slot.group_id, target, ATTEMPT_ACTION, holder_of(job_id), uuid.uuid4().hex,
                               origin=mt.ORIGIN_MANUAL_MERGE)
-    mt._update_context(attempt.merge_id, **{CONTEXT_KEY: decision_id})
+    from flowgate.gate_decisions import repository as decisions
+    saved = decisions.get(decision_id) or {}
+    basis = (saved.get("settings") or {}).get("target_basis")
+    additions = {CONTEXT_KEY: decision_id}
+    if basis:
+        rec = mt.target_record(gs.db_git.get_session(attempt.merge_id)) or {}
+        additions[mt.TARGET_RECORD_KEY] = {**rec, "project_base_branch": basis["project_base_branch"],
+                                         "is_project_base": basis["is_project_base"],
+                                         "unmerge_supported": basis["unmerge_supported"],
+                                         "warnings": basis["warnings"],
+                                         "accepted_target_sha": basis["accepted_target_sha"]}
+    mt._update_context(attempt.merge_id, **additions)
     landed = False
     try:
         if not attempt.is_project_base:
@@ -355,7 +447,14 @@ def merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, frozen:
                 raise GitServiceError(409, "base_dirty", "the base checkout has local modifications")
         pre_head = gs._rev_parse(root, "HEAD")
         if pre_head != current:
-            raise GitServiceError(409, "target_moved", "the target checkout is not at the target branch head")
+            observed = rev(slot.base_root, target_ref)
+            code = "gate_git_unavailable" if observed is READ_ERROR else (
+                "merge_target_not_found" if observed is None else "target_moved")
+            raise GitServiceError(409, code, "the target checkout is not at the accepted branch head",
+                                  details={"target_branch": target_branch, "accepted_target_sha": target_sha or current,
+                                           "observed_target_sha": None if observed is READ_ERROR else observed,
+                                           "target_deleted": observed is None, "observed_unavailable": observed is READ_ERROR,
+                                           "stage": "target_checkout", "merge_id": attempt.merge_id, "changed": False})
         mt.record_merge_inputs(attempt, pre_head=pre_head, source_head=frozen,
                                expected_remote_head=gs._rev_parse(root, f"refs/remotes/origin/{target_branch}"))
         on_started({"merge_id": attempt.merge_id, "pre_head": pre_head})
@@ -390,6 +489,8 @@ def merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, frozen:
         if not landed:
             mt.fail_attempt(attempt, {"code": redact.safe_code(getattr(exc, "code", None) or type(exc).__name__)})
         raise
+    finally:
+        mt.invalidate_check_targets(slot.project_id)
 
 
 def _hand_off_conflict(slot: Slot, attempt, root: Path, target_branch: str, files: list, decision_id: str) -> None:

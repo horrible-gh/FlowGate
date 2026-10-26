@@ -220,11 +220,15 @@ def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Opti
                 "request_fingerprint": fp, "decision": decision, "decision_comment": comment,
                 "settings_version": version}
         if outcome == "rejected":
-            stored = rounds.insert_decision({**base, "status": repo.REJECTED, "settings": {"shown": shown}})
+            stored = rounds.insert_decision({**base, "status": repo.REJECTED, "settings": {"shown": shown, "effective": preflight.effective(shown),
+                                                                                 "settings_version": version, "group_branch": None,
+                                                                                 "group_head": None, "target_basis": None}})
             _apply(ctx, state, policies, kind, node_key, user_id, comment, stored)
             return _answer(run_id, stored)
         plan = preflight.plan(project_id, flow_id, node_key)                            # 10
-        snapshot = {"shown": plan["settings"], "effective": plan["effective"]}
+        snapshot = {"shown": plan["settings"], "effective": plan["effective"],
+                    "settings_version": plan["settings_version"], "group_branch": plan["group_branch"],
+                    "group_head": plan["group_head"], "target_basis": plan.get("target_basis")}
         target = {"target_remote": plan["target_remote"], "target_branch": plan["target_branch"],
                   "target_sha": plan["target_sha"]}
         if not plan["needs_work"]:
